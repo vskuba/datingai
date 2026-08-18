@@ -1,0 +1,29 @@
+# Образ DatingAi: обычный Python и ничего больше.
+#
+# У соседа образ тяжёлый — там Chromium, torch и модели распознавания. Здесь их
+# нет и быть не должно: браузер водит RhapsodyAi, ответы сочиняет он же, а этот
+# проект держит базу анкет и вебсокет чата. Отсюда и сборка в считанные секунды.
+FROM python:3.11-slim
+
+RUN ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime
+
+# `default-mysql-client` — чтобы можно было заглянуть в базу изнутри контейнера,
+# не поднимая ничего дополнительно.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    default-mysql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY docker/uvicorn/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . /app
+
+# `py_modules` лежит отдельным каталогом и подключается путём, а не установкой:
+# это общая библиотека, живущая своим репозиторием.
+ENV PYTHONPATH="/app:/app/py_modules"
+
+RUN mkdir -p data/log && chmod -R 777 data/log
+
+CMD ["uvicorn", "main_uvicorn:app", "--host", "0.0.0.0", "--port", "8000"]

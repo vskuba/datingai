@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Dating | AI System</title>
+    <link rel="stylesheet" href="{{ base }}/static/css/common.css">
+    <link rel="stylesheet" href="{{ base }}/static/css/notification.css">
+
+    <style>
+        /* Страница отдельная, без базового шаблона: так её и заказывали. Раскладку
+           держит сама — две колонки сверху, журнал во всю ширину снизу. */
+        body { margin: 0; background: #f4f4f9; font-family: system-ui, sans-serif; height: 100vh; overflow: hidden; }
+
+        /* Список анкет идёт во всю высоту, а профиль и журнал делят вторую колонку.
+           Журнал относится к выбранной анкете, а не ко всей странице, поэтому и
+           живёт рядом с её профилем: смотрят их вместе.
+
+           Ширина колонки и высота журнала — в переменных: их тянут разделителями,
+           и обе запоминаются, чтобы не выставлять заново на каждой странице. */
+        .dating-page {
+            --col: 380px;
+            --log: 240px;
+            display: grid;
+            grid-template-columns: var(--col) 6px 1fr;
+            grid-template-rows: auto minmax(0, 1fr);
+            gap: 8px;
+            height: 100vh;
+            padding: 14px 16px;
+            box-sizing: border-box;
+        }
+
+        .dating-right {
+            grid-column: 3; grid-row: 2;
+            display: grid; grid-template-rows: minmax(0, 1fr) 6px var(--log);
+            gap: 8px; min-height: 0;
+        }
+
+        /* Разделители: узкая полоса, которая заметна только под курсором — рамка
+           между панелями не должна спорить с содержимым за внимание. */
+        .split { border-radius: 3px; background: transparent; }
+        .split:hover, .split.drag { background: #c7d2fe; }
+        .split-col { grid-column: 2; grid-row: 2; cursor: col-resize; }
+        .split-row { cursor: row-resize; }
+
+        .dating-head { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .dating-head h1 { margin: 0; font-size: 18px; color: #1e293b; }
+        .dating-head select { max-width: 220px; padding: 6px 9px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
+
+        .dating-girls-pane { grid-column: 1; grid-row: 2; }
+        .dating-log-pane { min-height: 0; }
+
+        .pane {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            background: #fff;
+            overflow: hidden;
+        }
+
+        .pane-head {
+            display: flex; align-items: center; gap: 8px;
+            padding: 8px 12px;
+            border-bottom: 1px solid #f1f5f9;
+            font-size: 12px; font-weight: 700; color: #64748b;
+            text-transform: uppercase; letter-spacing: .04em;
+        }
+
+        .pane-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 10px 12px; }
+
+        /* Поиск живёт в шапке панели и занимает остаток строки: список анкет
+           доходит до сотен, и листать его глазами дольше, чем набрать три буквы. */
+        .pane-find {
+            margin-left: auto; width: 150px; padding: 3px 8px;
+            border: 1px solid #e5e7eb; border-radius: 6px;
+            font-size: 12px; font-family: inherit; text-transform: none; letter-spacing: normal;
+        }
+        .pane-find:focus { outline: none; border-color: #c7d2fe; }
+
+        /* Подвал панели со страницами. Прижат к низу и не прокручивается вместе
+           со списком: иначе до кнопки «дальше» пришлось бы долистывать страницу,
+           ради которой её и нажимают. */
+        .pane-foot {
+            display: none; align-items: center; justify-content: center; gap: 4px;
+            padding: 6px; border-top: 1px solid #f1f5f9; flex: 0 0 auto;
+        }
+        .pane-foot.open { display: flex; }
+        .page-btn {
+            min-width: 26px; padding: 2px 7px; border: 1px solid #e5e7eb; border-radius: 6px;
+            background: #fff; font-size: 12px; font-family: inherit; color: #374151; cursor: pointer;
+        }
+        .page-btn:hover:not(:disabled) { border-color: #c7d2fe; color: #4338ca; }
+        .page-btn.active { background: #4f46e5; border-color: #4f46e5; color: #fff; }
+        .page-btn:disabled { opacity: .4; cursor: default; }
+
+        .dating-btn {
+            padding: 5px 10px; border: 1px solid #d1d5db; border-radius: 6px;
+            background: #fff; font-size: 12px; font-family: inherit; color: #374151; cursor: pointer;
+        }
+        .dating-btn:hover { border-color: #c7d2fe; color: #4338ca; }
+        .dating-btn.primary { background: #4f46e5; border-color: #4f46e5; color: #fff; }
+        .dating-btn.primary:hover { background: #4338ca; }
+        .dating-btn.danger { color: #b91c1c; }
+        .dating-btn:disabled { opacity: .5; cursor: default; }
+
+        /* Чекбокс автоответа стоит в ряду кнопок и должен читаться как их часть,
+           а не как обрывок формы. */
+        .auto-box {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 5px 9px; border: 1px solid #d1d5db; border-radius: 6px;
+            font-size: 12px; color: #374151; cursor: pointer; user-select: none;
+        }
+        .auto-box:hover { border-color: #c7d2fe; color: #4338ca; }
+        .auto-box input { margin: 0; cursor: pointer; }
+
+        .dating-hint { color: #6b7280; font-size: 12px; }
+        .dating-hint.bad { color: #b91c1c; }
+
+        /* Форма заведения — над списком, скрыта до нажатия «+». */
+        .dating-form { display: none; flex-direction: column; gap: 6px; padding: 10px 12px; border-bottom: 1px solid #f1f5f9; }
+        .dating-form.open { display: flex; }
+        .dating-form input { padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; }
+        .dating-form-row { display: flex; gap: 6px; }
+
+        /* ---------- Левая колонка: девушки ---------- */
+
+        /* Сетка, а не flex с переносом: у сетки колонки заданы, и карточка с тремя
+           бейджами остаётся такой же высоты, как карточка без них. При нехватке
+           места сжимается имя (многоточием), а не уезжают кнопки. */
+        .girl {
+            display: grid; grid-template-columns: auto minmax(0, 1fr);
+            align-items: center; gap: 4px 8px;
+            padding: 8px 10px; margin-bottom: 6px;
+            border: 1px solid #e5e7eb; border-radius: 8px; cursor: pointer;
+        }
+        .girl:hover { border-color: #c7d2fe; }
+        .girl.active { border-color: #6366f1; background: #eef2ff; }
+
+        /* Аватар и имя идут первыми: карточку узнают по лицу, а номер анкеты
+           читают уже вторым взглядом. */
+        .girl-face { width: 34px; height: 34px; border-radius: 8px;
+                     object-fit: cover; background: #f1f5f9; }
+        .girl-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        /* Бейджи под именем, а не в общем ряду: их бывает три, и в одну строку с
+           кнопками они не влезают — карточка начинала вылезать за колонку. */
+        .girl-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        /* Кнопки своей строкой: в общем ряду три штуки съедали колонку с именем —
+           карточка оставалась без имени, а высота скакала. Строка предсказуемее. */
+        .girl-act { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap;
+                    justify-content: flex-end; margin-top: 2px; }
+        .girl-name { font-weight: 600; color: #111827; font-size: 13px;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .girl-login { color: #6b7280; font-size: 11px; }
+        .girl-meta { grid-column: 1 / -1; color: #6b7280; font-size: 11px; }
+
+        /* Индикатор: зелёный пульсирует только у живой — «онлайн» должен отличаться
+           от «замерло на экране». */
+        .dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: #cbd5e1; }
+        .dot.online { background: #22c55e; animation: pulse 2s ease-in-out infinite; }
+        .dot.error { background: #ef4444; }
+        @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,.5); } 70% { box-shadow: 0 0 0 6px rgba(34,197,94,0); } }
+        @media (prefers-reduced-motion: reduce) { .dot.online { animation: none; } }
+
+        /* `nowrap` обязателен: бейдж из значка и числа иначе переносится по пробелу,
+           карточка растёт вдвое, а колонка с именем схлопывается в ничто. */
+        .pill { padding: 1px 7px; border-radius: 9px; background: #eef2ff; color: #4338ca;
+                font-size: 11px; font-weight: 700; white-space: nowrap; }
+        .pill.mail { background: #fef3c7; color: #92400e; }
+        /* Новое сообщение в чате пульсирует красным: его замечают краем глаза, а
+           спокойный бейдж рядом с двумя другими сливается с ними. */
+        .pill.chat { background: #fee2e2; color: #b91c1c; animation: alarm 1.4s ease-in-out infinite; }
+        @keyframes alarm { 0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,.55); } 70% { box-shadow: 0 0 0 7px rgba(239,68,68,0); } }
+        @media (prefers-reduced-motion: reduce) { .pill.chat { animation: none; } }
+
+        /* ---------- Правая колонка: профиль и собеседницы ---------- */
+
+        .profile { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+        .profile img { width: 64px; height: 64px; border-radius: 10px; object-fit: cover; background: #f1f5f9; }
+        .profile-name { font-size: 15px; font-weight: 700; color: #111827; }
+        .profile-meta { color: #6b7280; font-size: 12px; }
+
+        /* Диалогов бывают сотни, поэтому свёрнутый вид — основной, а не запасной.
+           В строке ровно то, по чему выбирают, что открыть: кто, когда, о чём и
+           ждут ли ответа. Всё остальное — внутри. */
+        .contact { border-top: 1px solid #f1f5f9; max-width: 45%}
+        .contact-bar {
+            display: grid;
+            grid-template-columns: 14px 28px minmax(70px, auto) auto minmax(0, 1fr) auto auto;
+            /* Столбцы фиксированы: у собеседников без фото строка иначе съезжала. */
+            align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer;
+        }
+        .contact-bar:hover { background: #f8fafc; }
+        /* Место под аватар занято всегда: у многих собеседников фотографии нет, и
+           скрытая картинка оставляла дыру, из-за которой строки не выстраивались
+           в столбец. Под картинкой лежит буква имени — она и видна, если фото нет. */
+        .contact-face {
+            position: relative; width: 28px; height: 28px; border-radius: 6px;
+            background: #e2e8f0; overflow: hidden;
+            display: flex; align-items: center; justify-content: center;
+            color: #64748b; font-size: 12px; font-weight: 700;
+        }
+        .contact-face img { position: absolute; inset: 0; width: 100%; height: 100%;
+                            border-radius: 6px; object-fit: cover; }
+
+        /* Значок свёрнутости: строку и так открывают кликом, но без него не видно,
+           что она вообще открывается. Поворачивается вместо подмены символа —
+           так переход читается как движение, а не как мигание. */
+        .contact-toggle {
+            color: #94a3b8; font-size: 10px; line-height: 1; text-align: center;
+            transition: transform .15s ease;
+        }
+        .contact.open .contact-toggle { transform: rotate(90deg); color: #4338ca; }
+
+        .contact-name { font-weight: 600; color: #111827; font-size: 12px;
+                        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .contact-last { color: #64748b; font-size: 12px;
+                        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .contact-time { color: #94a3b8; font-size: 11px; font-family: ui-monospace, Menlo, monospace; }
+        .contact-id { color: #94a3b8; font-size: 11px; }
+
+        /* Развёрнутая переписка. Скрыта, пока строку не открыли: сто открытых
+           диалогов — это не список, а простыня. */
+        .contact-talk { display: none; padding: 4px 0 8px 36px; }
+        .contact.open .contact-talk { display: block; }
+        .contact.open .contact-bar { background: #f8fafc; }
+
+        /* Диалог как диалог: сверху старое, снизу свежее, свои реплики справа. */
+        .msg { margin-top: 2px; font-size: 12px; display: flex; }
+        .msg.out { justify-content: flex-end; }
+        .msg-body { max-width: 76%; padding: 3px 8px; border-radius: 9px; line-height: 1.35;
+                    background: #f1f5f9; color: #334155; }
+        .msg.out .msg-body { background: #eef2ff; color: #3730a3; }
+        .msg-who { font-size: 10px; color: #94a3b8; margin-right: 5px; }
+
+        /* Последнее слово за собеседником — значит ему не ответили. Метка мигает:
+           это единственная строка в панели, означающая несделанную работу. */
+        .need { padding: 1px 6px; border-radius: 9px; background: #fee2e2; color: #b91c1c;
+                font-size: 10px; font-weight: 700; white-space: nowrap;
+                animation: alarm 1.4s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) { .need { animation: none; } }
+        .contact.wait .contact-bar { background: #fff7f7; }
+
+        /* ---------- Журнал ---------- */
+
+        .log-row { display: flex; gap: 8px; padding: 2px 0; font-size: 12px; border-bottom: 1px solid #f8fafc; }
+        .log-time { flex: 0 0 auto; color: #94a3b8; font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+        .log-text { flex: 1 1 auto; min-width: 0; word-break: break-word; }
+        .log-row.ok .log-text { color: #166534; }
+        .log-row.fail .log-text { color: #b91c1c; font-weight: 600; }
+        .log-row.in .log-text { color: #4338ca; }
+        .log-row.out .log-text { color: #92400e; }
+        .log-row.info .log-text { color: #475569; }
+
+        .empty { padding: 14px; color: #9ca3af; font-size: 12px; text-align: center; }
+    </style>
+</head>
+<body>
+<div class="dating-page">
+
+    <div class="dating-head">
+        <h1>💘 Dating</h1>
+        <select id="siteSelect" title="Сайт, на котором заведены анкеты"></select>
+        <button type="button" class="dating-btn primary" id="addBtn">+ девушка</button>
+        <span class="dating-hint" id="hint"></span>
+    </div>
+
+    <div class="pane dating-girls-pane">
+        <div class="pane-head">
+            Девушки <span id="girlsN"></span>
+            <input type="search" id="girlFind" class="pane-find" placeholder="имя или ID"
+                   spellcheck="false" autocomplete="off" title="Быстрый поиск по имени или номеру анкеты">
+        </div>
+        <div class="dating-form" id="form">
+            <input type="text" id="login" placeholder="логин или почта" spellcheck="false" autocomplete="off">
+            <input type="password" id="password" placeholder="пароль" autocomplete="new-password">
+            <input type="text" id="note" placeholder="пометка (необязательно)">
+            <div class="dating-form-row">
+                <button type="button" class="dating-btn primary" id="saveBtn">Сохранить</button>
+                <button type="button" class="dating-btn" id="cancelBtn">Отмена</button>
+            </div>
+        </div>
+        <div class="pane-body" id="girls"></div>
+        <div class="pane-foot" id="girlsPager"></div>
+    </div>
+
+    <div class="split split-col" id="splitCol" title="Потяните, чтобы изменить ширину"></div>
+
+    <div class="dating-right">
+        <div class="pane">
+            <div class="pane-head">Профиль и собеседницы <span id="profileWho"></span></div>
+            <div class="pane-body" id="profile"></div>
+        </div>
+
+        <div class="split split-row" id="splitRow" title="Потяните, чтобы изменить высоту"></div>
+
+        <div class="pane dating-log-pane">
+            <div class="pane-head">
+                Журнал <span id="logWho"></span>
+                <button type="button" class="dating-btn" id="logReload" style="margin-left:auto">Обновить</button>
+            </div>
+            <div class="pane-body" id="log"></div>
+        </div>
+    </div>
+</div>
+
+<script type="module">
+    import {getData, postData, putData, deleteData} from '{{ base }}/static/js/api.js';
+    import {showNotification} from '{{ base }}/static/js/notification.js';
+
+    // Под каким URI живёт панель. Локально пусто (корень домена), на проде —
+    // `/dating`: домен один на два проекта, и делится он по пути. Прокси префикс
+    // срезает, поэтому сервер видит обычные пути, а вот браузер обязан просить
+    // именно с префиксом — иначе запрос уйдёт соседу.
+    const BASE = '{{ base }}';
+
+    const SITE_KEY = 'dating_site';
+    const OPEN_KEY = 'dating_open_dialog';
+    const SIZE_KEY = 'dating_layout';
+    const PROBE_MS = 15000;
+    // Сколько анкет на странице. Столько влезает в колонку без прокрутки на
+    // обычном экране — прокрутка вместе со страницами это две навигации сразу.
+    const PAGE_SIZE = 8;
+
+    const siteEl = document.getElementById('siteSelect');
+    const girlsEl = document.getElementById('girls');
+    const profileEl = document.getElementById('profile');
+    const logEl = document.getElementById('log');
+    const formEl = document.getElementById('form');
+    const findEl = document.getElementById('girlFind');
+    const pagerEl = document.getElementById('girlsPager');
+    const pageEl = document.querySelector('.dating-page');
+
+    let sites = [], girls = [], currentId = 0, probeBusy = false;
+    let openUid = localStorage.getItem(OPEN_KEY) || '';
+    let girlsPage = 0;
+
+    async function sitesLoad() {
+        try {
+            sites = (await getData(BASE + '/api/site')).result || [];
+        } catch (e) {
+            say('список сайтов не пришёл: ' + e.message, true);
+            return;
+        }
+        const saved = localStorage.getItem(SITE_KEY);
+        siteEl.innerHTML = sites.length
+            ? sites.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('')
+            : '<option value="">сайтов нет</option>';
+        if (saved && sites.some(r => String(r.id) === saved)) siteEl.value = saved;
+        girlsLoad();
+    }
+
+    const siteId = () => Number(siteEl.value || 0);
+
+    async function girlsLoad() {
+        if (!siteId()) {
+            girlsEl.innerHTML = '<div class="empty">заведите сайт на /admin/browser</div>';
+            return;
+        }
+        try {
+            girls = (await getData(BASE + '/api/dating/girl?site_id=' + siteId())).result || [];
+        } catch (e) {
+            say('список не пришёл: ' + e.message, true);
+            return;
+        }
+
+        girlsRender();
+    }
+
+    // Страницы рисуются кнопками, а не «умным» диапазоном: анкет сотни, а не
+    // тысячи, и десяток кнопок читается лучше многоточий.
+    function girlsPagerRender(pages) {
+        pagerEl.classList.toggle('open', pages > 1);
+        if (pages <= 1) {
+            pagerEl.innerHTML = '';
+            return;
+        }
+
+        const button = (label, page, disabled, active) =>
+            `<button type="button" class="page-btn${active ? ' active' : ''}" data-page="${page}"`
+            + `${disabled ? ' disabled' : ''}>${label}</button>`;
+
+        let html = button('‹', girlsPage - 1, girlsPage === 0, false);
+        for (let i = 0; i < pages; i++) html += button(i + 1, i, false, i === girlsPage);
+        html += button('›', girlsPage + 1, girlsPage === pages - 1, false);
+
+        pagerEl.innerHTML = html;
+        pagerEl.querySelectorAll('.page-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                girlsPage = Number(btn.dataset.page);
+                girlsRender();
+                girlsEl.scrollTop = 0;
+            });
+        });
+    }
+
+    // Поиск фильтрует уже загруженный список, а не ходит на сервер: список
+    // приходит целиком на сайт, и лишний запрос на каждую букву ничего не уточнит,
+    // зато отзывчивость потеряет.
+    function girlsMatch(row) {
+        const q = (findEl.value || '').trim().toLowerCase();
+        if (!q) return true;
+
+        return String(row.name || '').toLowerCase().includes(q)
+            || String(row.login || '').toLowerCase().includes(q)
+            || String(row.note || '').toLowerCase().includes(q);
+    }
+
+    function girlsRender() {
+        const found = girls.filter(girlsMatch);
+
+        // В шапке всегда общее число анкет, а при поиске — ещё и сколько нашлось.
+        // «Сколько всего» не должно меняться от того, что набрали в поиске.
+        document.getElementById('girlsN').textContent =
+            found.length === girls.length ? (girls.length || '')
+                                          : `${found.length} из ${girls.length}`;
+
+        // Страница могла уехать за конец списка — после поиска или удаления анкеты.
+        const pages = Math.max(1, Math.ceil(found.length / PAGE_SIZE));
+        if (girlsPage >= pages) girlsPage = pages - 1;
+
+        const shown = found.slice(girlsPage * PAGE_SIZE, (girlsPage + 1) * PAGE_SIZE);
+        girlsPagerRender(pages);
+
+        girlsEl.innerHTML = '';
+        if (!girls.length) {
+            girlsEl.innerHTML = '<div class="empty">девушек нет — добавьте первую</div>';
+            return;
+        }
+        if (!found.length) {
+            girlsEl.innerHTML = '<div class="empty">по запросу никого не нашлось</div>';
+            return;
+        }
+
+        for (const row of shown) {
+            const el = document.createElement('div');
+            el.className = 'girl' + (row.id === currentId ? ' active' : '');
+            el.innerHTML =
+                `<img class="girl-face" src="${esc(row.photo || '')}" alt=""`
+                + ' onerror="this.style.visibility=\'hidden\'">'
+                + '<span class="girl-who">'
+                // Имя режется многоточием в узкой колонке — полное отдаём подсказкой.
+                + `<span class="girl-name" title="${esc(row.name || row.login)}">${esc(row.name || row.login)}</span>`
+                + '<span class="girl-badges">'
+                + `<span class="dot ${esc(row.status)}" title="${esc(statusTitle(row))}"></span>`
+                + (row.name ? `<span class="girl-login">${esc(row.login)}</span>` : '')
+                + (row.unread_chat ? `<span class="pill chat" title="новых сообщений в чате">💬 ${row.unread_chat}</span>` : '')
+                + (row.contacts ? `<span class="pill" title="собеседниц в чате">Собеседников: ${row.contacts}</span>` : '')
+                + (row.unread > 0 ? `<span class="pill mail" title="непрочитанных писем в почте">✉ ${row.unread}</span>` : '')
+                + '</span>'
+                + '</span>'
+                + '<span class="girl-act">'
+                // Вход и отключение — одна кнопка на два состояния: у учётки со
+                // снятым входом «Войти» не значит ничего, а без входа отключать нечего.
+                + (row.has_state
+                    ? '<button type="button" class="dating-btn off-btn">Отключить</button>'
+                    : '<button type="button" class="dating-btn login-btn">Войти</button>')
+                + (row.has_state ? '<button type="button" class="dating-btn dlg-btn">Диалоги</button>' : '')
+                + (row.has_state
+                    ? '<label class="auto-box" title="Отвечать на новые сообщения самостоятельно">'
+                      + `<input type="checkbox" class="auto-chk"${row.auto_answer ? ' checked' : ''}>`
+                      + 'автоответ</label>'
+                    : '')
+                + '<button type="button" class="dating-btn check-btn">Проверка</button>'
+                + '<button type="button" class="dating-btn danger del-btn">✕</button>'
+                + '</span>'
+                + `<span class="girl-meta">${esc(row.last_error || row.note || '')}</span>`;
+
+            el.addEventListener('click', () => girlSelect(row.id));
+            el.querySelector('.check-btn').addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                girlCheck(row, ev.target);
+            });
+            el.querySelector('.del-btn').addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                girlDelete(row);
+            });
+            const loginBtn = el.querySelector('.login-btn');
+            if (loginBtn) loginBtn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                girlLogin(row, ev.target);
+            });
+            const autoChk = el.querySelector('.auto-chk');
+            if (autoChk) {
+                autoChk.addEventListener('click', (ev) => ev.stopPropagation());
+                autoChk.addEventListener('change', (ev) => girlAuto(row, ev.target));
+            }
+            const dlgBtn = el.querySelector('.dlg-btn');
+            if (dlgBtn) dlgBtn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                girlDialog(row, ev.target);
+            });
+            const offBtn = el.querySelector('.off-btn');
+            if (offBtn) offBtn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                girlDisconnect(row, ev.target);
+            });
+            girlsEl.appendChild(el);
+        }
+
+        if (!currentId && girls.length) girlSelect(girls[0].id);
+    }
+
+    // Выбор девушки меняет обе правые области: профиль и журнал раздельные по
+    // учётке — общая лента по сотне анкет ничего не говорит.
+    async function girlSelect(id) {
+        currentId = id;
+        // Карточку открыли — новые сообщения этой учётки перестают быть новыми.
+        // Отметка молчаливая: не вышла, значит бейдж просто повисит лишний круг.
+        try { await postData(`${BASE}/api/dating/girl/${id}/read`, {}); } catch (e) {}
+        girlsLoad();
+        await Promise.all([profileLoad(), logLoad()]);
+    }
+
+    async function profileLoad() {
+        if (!currentId) return;
+        const girl = girls.find(g => g.id === currentId) || {};
+        document.getElementById('profileWho').textContent = girl.login || '';
+
+        let data;
+        try {
+            data = (await getData(`${BASE}/api/dating/girl/${currentId}/profile`)).result || {};
+        } catch (e) {
+            profileEl.innerHTML = `<div class="empty">профиль не пришёл: ${esc(e.message)}</div>`;
+            return;
+        }
+
+        const p = data.profile || {};
+        const head = `<div class="profile">
+            <img src="${esc(p.photo || '')}" alt="" onerror="this.style.visibility='hidden'">
+            <div>
+                <div class="profile-name">${esc(p.name || data.login || '')}</div>
+                <div class="profile-meta">ID ${esc(String(p.id || data.login || ''))}
+                    ${p.age ? ' · ' + p.age : ''}${p.city ? ' · ' + esc(p.city) : ''}</div>
+                <div class="profile-meta">${esc(p.about || 'описание профиля сайт не отдал')}</div>
+            </div></div>`;
+
+        const me = p.name || data.login || 'мы';
+        const contacts = (data.contacts || []).map(c => {
+            const msgs = (c.messages_last || []).map(m => `
+                <div class="msg ${m.direction === 'out' ? 'out' : 'in'}">
+                    <span class="msg-body"><span class="msg-who">${esc(m.direction === 'out' ? me : (c.name || 'он'))}</span>${esc(m.text)}</span>
+                </div>`).join('');
+            const last = (c.messages_last || [])[(c.messages_last || []).length - 1] || {};
+            const open = openUid === String(c.uid);
+            return `<div class="contact${c.needs_answer ? ' wait' : ''}${open ? ' open' : ''}" data-uid="${esc(c.uid)}">
+                <div class="contact-bar">
+                    <span class="contact-toggle" title="Свернуть или развернуть переписку">▶</span>
+                    <span class="contact-face">${esc((c.name || '?').slice(0, 1).toUpperCase())}
+                        ${c.photo ? `<img src="${esc(c.photo)}" alt="" onerror="this.remove()">` : ''}</span>
+                    <span class="contact-name">${esc(c.name || 'без имени')}</span>
+                    <span class="contact-id" title="номер анкеты на сайте">ID ${esc(c.uid)}</span>
+                    <span class="contact-last">${esc(last.direction === 'out' ? 'вы: ' : '')}${esc(last.text || 'сообщений нет')}</span>
+                    <span class="contact-time">${esc(String(last.created_at || '').slice(11, 16))}</span>
+                    ${c.needs_answer ? '<span class="need" title="последнее слово за собеседником">нужен ответ</span>'
+                                     : `<span class="contact-id" title="реплик в переписке">✉ ${c.messages}</span>`}
+                </div>
+                <div class="contact-talk">${msgs || '<div class="msg"><span class="msg-body">сообщений пока нет</span></div>'}</div>
+            </div>`;
+        }).join('');
+
+        // Панель перерисовывается каждые 15 секунд сама, и человек в это время
+        // может читать переписку — прокрутку возвращаем на место, иначе чтение
+        // сбрасывается в начало каждый круг.
+        const scroll = profileEl.scrollTop;
+        profileEl.innerHTML = head + (contacts || '<div class="empty">собеседниц пока нет — запустите «Диалоги»</div>');
+        profileEl.scrollTop = scroll;
+
+        // Открыт один диалог за раз: их бывают сотни, и «раскрыть всё» здесь не
+        // помощь, а простыня. Выбор переживает перерисовку — она идёт каждые 15 с.
+        profileEl.querySelectorAll('.contact-bar').forEach(bar => {
+            bar.addEventListener('click', () => {
+                const box = bar.parentElement;
+                openUid = box.classList.contains('open') ? '' : box.dataset.uid;
+                localStorage.setItem(OPEN_KEY, openUid);
+                profileEl.querySelectorAll('.contact').forEach(el => {
+                    el.classList.toggle('open', el.dataset.uid === openUid);
+                });
+            });
+        });
+    }
+
+    async function logLoad() {
+        if (!currentId) return;
+        const girl = girls.find(g => g.id === currentId) || {};
+        document.getElementById('logWho').textContent = girl.login || '';
+
+        let rows;
+        try {
+            rows = (await getData(`${BASE}/api/dating/girl/${currentId}/log`)).result || [];
+        } catch (e) {
+            logEl.innerHTML = `<div class="empty">журнал не пришёл: ${esc(e.message)}</div>`;
+            return;
+        }
+
+        const logScroll = logEl.scrollTop;
+        logEl.innerHTML = rows.length
+            ? rows.map(r => `<div class="log-row ${esc(r.level)}">
+                   <span class="log-time">${esc(String(r.created_at || '').slice(11, 19))}</span>
+                   <span class="log-text">${esc(r.text)}</span></div>`).join('')
+            : '<div class="empty">записей нет — запустите «Проверку»</div>';
+        logEl.scrollTop = logScroll;
+    }
+
+    // Проверка идёт до минуты: вход, чат, чтение, отправка, закрытие. Пока идёт,
+    // журнал перечитываем — по нему и видно, на каком шаге она сейчас.
+    async function girlCheck(row, button) {
+        button.disabled = true;
+        button.textContent = 'Проверяю…';
+        currentId = row.id;
+        const ticker = setInterval(logLoad, 3000);
+
+        try {
+            const data = await postData(`${BASE}/api/dating/girl/${row.id}/check`, {});
+            const res = data.result || {};
+            showNotification(res.ok ? `Проверка пройдена: ${res.steps.join(', ')}`
+                                    : `Встала на: ${res.error}`, res.ok ? 'success' : 'error');
+        } catch (e) {
+            showNotification('Проверка не состоялась: ' + e.message, 'error');
+        } finally {
+            clearInterval(ticker);
+            button.disabled = false;
+            button.textContent = 'Проверка';
+            await girlsLoad();
+            await Promise.all([profileLoad(), logLoad()]);
+        }
+    }
+
+    // Долгое действие с живым журналом: вход и чтение диалогов идут минутами, и
+    // всё это время человек должен видеть, где оно сейчас, а не пустой экран.
+    // Обновляем и список — статус с бейджами меняется по ходу, а не в конце.
+    async function girlLongRun(row, button, label, url, done) {
+        button.disabled = true;
+        button.textContent = label;
+        currentId = row.id;
+        const ticker = setInterval(() => { logLoad(); girlsLoad(); }, 2000);
+
+        try {
+            const res = (await postData(url, {})).result || {};
+            const said = done(res);
+            showNotification(said.text, said.bad ? 'error' : 'success');
+        } catch (e) {
+            showNotification('Не вышло: ' + e.message, 'error');
+        } finally {
+            clearInterval(ticker);
+            await girlsLoad();
+            await Promise.all([profileLoad(), logLoad()]);
+        }
+    }
+
+    async function girlLogin(row, button) {
+        await girlLongRun(row, button, 'Вхожу…', `${BASE}/api/dating/girl/${row.id}/login`,
+            res => ({bad: res.status === 'error',
+                     text: res.status === 'error' ? `Вход не прошёл: ${res.error}`
+                                                  : `Вход выполнен: ${res.scenario}`}));
+    }
+
+    // Автоответ — основной путь: анкета разговаривает сама, пока подключена.
+    // Включение сразу разбирает накопившееся, поэтому ждать здесь приходится
+    // столько же, сколько у прежней кнопки «Ответить».
+    async function girlAuto(row, box) {
+        const on = box.checked;
+        box.disabled = true;
+        currentId = row.id;
+        const ticker = setInterval(logLoad, 3000);
+
+        try {
+            const res = (await putData(`${BASE}/api/dating/girl/${row.id}/auto`, {auto_answer: on})).result || {};
+            const done = res.answered || {};
+            showNotification(
+                on ? (done.sent ? `Автоответ включён, отправлено ${done.sent}` : 'Автоответ включён')
+                   : 'Автоответ выключен', 'success');
+        } catch (e) {
+            box.checked = !on;
+            showNotification('Не вышло: ' + e.message, 'error');
+        } finally {
+            clearInterval(ticker);
+            box.disabled = false;
+            await girlsLoad();
+            await Promise.all([profileLoad(), logLoad()]);
+        }
+    }
+
+    // Чтение диалогов открывает страницу чата и на это время отбирает у учётки
+    // живое соединение — поэтому кнопка, а не фон.
+    async function girlDialog(row, button) {
+        await girlLongRun(row, button, 'Читаю…', `${BASE}/api/dating/girl/${row.id}/dialog`,
+            res => ({bad: !!res.error,
+                     text: res.error ? `Диалоги не прочитались: ${res.error}`
+                                     : `Диалогов прочитано ${res.contacts}, новых сообщений ${res.saved}`}));
+    }
+
+    // Отключение спрашивают подтверждением: оно рвёт живой чат, и случайный клик
+    // рядом с «Проверкой» стоил бы пропущенных сообщений.
+    async function girlDisconnect(row, button) {
+        if (!confirm(`Отключить «${row.name || row.login}»? Выйдем с сайта, закроем вкладки `
+                     + 'и снимем с опроса. Переписка и журнал останутся.')) return;
+
+        button.disabled = true;
+        button.textContent = 'Отключаю…';
+        currentId = row.id;
+
+        try {
+            const res = (await postData(`${BASE}/api/dating/girl/${row.id}/disconnect`, {})).result || {};
+            showNotification(res.logout ? 'Отключено, выход на сайте выполнен'
+                                        : `Отключено, но выход на сайте не прошёл: ${res.error}`,
+                             res.logout ? 'success' : 'error');
+        } catch (e) {
+            showNotification('Отключить не вышло: ' + e.message, 'error');
+        } finally {
+            await girlsLoad();
+            await Promise.all([profileLoad(), logLoad()]);
+        }
+    }
+
+    async function girlSave() {
+        const login = document.getElementById('login').value.trim();
+        const password = document.getElementById('password').value;
+        if (!siteId()) return say('сначала выберите сайт', true);
+        if (!login || !password) return say('нужны логин и пароль', true);
+
+        try {
+            await postData(BASE + '/api/dating/girl', {site_id: siteId(), login, password,
+                                                note: document.getElementById('note').value.trim()});
+        } catch (e) {
+            return say(e.message, true);
+        }
+        formEl.classList.remove('open');
+        for (const id of ['login', 'password', 'note']) document.getElementById(id).value = '';
+        say('');
+        showNotification('Девушка добавлена', 'success');
+        girlsLoad();
+    }
+
+    async function girlDelete(row) {
+        if (!confirm(`Удалить учётку «${row.login}» вместе с её журналом?`)) return;
+        try {
+            await deleteData(BASE + '/api/dating/girl/' + row.id);
+        } catch (e) {
+            return showNotification('Не удалось: ' + e.message, 'error');
+        }
+        if (row.id === currentId) currentId = 0;
+        showNotification('Учётка удалена', 'success');
+        girlsLoad();
+    }
+
+    // Обновляем всё, что меняется само: список анкет, диалоги и журнал. Работу
+    // ведут воркеры в фоне — сообщения приходят и ответы уходят без участия
+    // страницы, и требовать перезагрузки, чтобы это увидеть, значит показывать
+    // вчерашнюю картину.
+    async function probe() {
+        if (probeBusy || !siteId() || document.hidden) return;
+        probeBusy = true;
+        try {
+            await postData(`${BASE}/api/dating/girl/probe?site_id=${siteId()}`, {});
+            await girlsLoad();
+            // Диалоги и журнал — вместе со списком: свежий ответ агента виден в
+            // переписке, а не только в счётчике.
+            await Promise.all([profileLoad(), logLoad()]);
+        } catch (e) {
+            // Сайт без настроенного опроса — обычное дело: молчим, чтобы не мигать
+            // одной и той же ошибкой каждые 15 секунд.
+        } finally {
+            probeBusy = false;
+        }
+    }
+
+    function statusTitle(row) {
+        if (row.status === 'online') return 'вход подтверждён ' + String(row.last_seen_at || '').slice(0, 19).replace('T', ' ');
+        if (row.status === 'error') return row.last_error || 'опрос не прошёл';
+        return row.has_state ? 'вход протух — залогиньтесь заново' : 'входа ещё не было';
+    }
+
+    function say(text, bad = false) {
+        const el = document.getElementById('hint');
+        el.textContent = text || '';
+        el.classList.toggle('bad', !!bad);
+    }
+
+    function esc(value) {
+        const el = document.createElement('div');
+        el.textContent = value == null ? '' : value;
+        return el.innerHTML;
+    }
+
+    document.getElementById('addBtn').addEventListener('click', () => {
+        formEl.classList.toggle('open');
+        if (formEl.classList.contains('open')) document.getElementById('login').focus();
+    });
+    document.getElementById('saveBtn').addEventListener('click', girlSave);
+    document.getElementById('cancelBtn').addEventListener('click', () => formEl.classList.remove('open'));
+    document.getElementById('logReload').addEventListener('click', logLoad);
+    // Перерисовываем на месте, без запроса: список уже в памяти.
+    findEl.addEventListener('input', () => { girlsPage = 0; girlsRender(); });
+    siteEl.addEventListener('change', () => {
+        localStorage.setItem(SITE_KEY, siteEl.value);
+        currentId = 0;
+        girlsLoad();
+    });
+
+    // Разделители. Тянут не рамку, а переменную сетки — так двигается ровно один
+    // размер, а остальное перекладывается само, без пересчёта в JS.
+    function splitDrag(el, varName, min, max, fromEvent) {
+        el.addEventListener('pointerdown', (ev) => {
+            ev.preventDefault();
+            el.setPointerCapture(ev.pointerId);
+            el.classList.add('drag');
+
+            const move = (e) => {
+                const value = Math.min(max, Math.max(min, fromEvent(e)));
+                pageEl.style.setProperty(varName, value + 'px');
+            };
+            const stop = () => {
+                el.classList.remove('drag');
+                el.removeEventListener('pointermove', move);
+                el.removeEventListener('pointerup', stop);
+                layoutSave();
+            };
+            el.addEventListener('pointermove', move);
+            el.addEventListener('pointerup', stop);
+        });
+    }
+
+    function layoutSave() {
+        const style = pageEl.style;
+        localStorage.setItem(SIZE_KEY, JSON.stringify({
+            col: style.getPropertyValue('--col'),
+            log: style.getPropertyValue('--log'),
+        }));
+    }
+
+    function layoutRestore() {
+        let saved;
+        try { saved = JSON.parse(localStorage.getItem(SIZE_KEY) || '{}'); } catch (e) { return; }
+        if (saved.col) pageEl.style.setProperty('--col', saved.col);
+        if (saved.log) pageEl.style.setProperty('--log', saved.log);
+    }
+
+    // Границы разумного: колонка уже 240 px нечитаема, шире 40% экрана бессмысленна;
+    // журнал ниже 100 px не показывает ни строки.
+    splitDrag(document.getElementById('splitCol'), '--col', 240, Math.round(innerWidth * 0.6),
+              (e) => e.clientX - pageEl.getBoundingClientRect().left);
+    splitDrag(document.getElementById('splitRow'), '--log', 100, Math.round(innerHeight * 0.7),
+              (e) => pageEl.getBoundingClientRect().bottom - e.clientY);
+
+    layoutRestore();
+    sitesLoad();
+    setInterval(probe, PROBE_MS);
+</script>
+</body>
+</html>

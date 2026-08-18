@@ -1,0 +1,3 @@
+[submodule "py_modules"]
+	path = py_modules
+	url = https://github.com/vskuba/py_modules

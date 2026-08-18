@@ -1,0 +1,78 @@
+# CLAUDE.md
+
+## Project Overview
+
+**DatingAi** — панель анкет на сайтах знакомств. Один вход: `main_uvicorn.py`
+(FastAPI + серверные страницы) и один воркер (`rq`, очередь `dating`).
+
+Проект делает ровно одно: **держит учётки девушек, показывает их страницей и ведёт
+живой чат вебсокетом**. Всё, что требует браузера и мозгов, живёт в соседнем
+проекте **RhapsodyAi** и приходит сюда по HTTP:
+
+| Что | Где живёт | Как получаем |
+|-----|-----------|--------------|
+| сценарии сайтов, пул Chromium | RhapsodyAi | `POST /api/browser/scenario/{id}/run` |
+| закладки сайтов и `presence` | RhapsodyAi | `GET /api/browser/site/{id}` |
+| агенты, workflow, факты | RhapsodyAi | `POST /agent/create`, `GET /agent/name/{name}` |
+| ответы в чате (LLM) | RhapsodyAi | `POST /chat/ask` |
+| учётки, переписка, журнал | **здесь** | своя база `dating` |
+
+Единственная дверь наружу — `src/rhapsody/rhapsody_api.py`. Прямых обращений к
+чужим таблицам в коде нет и быть не должно: своей копии сайтов, сценариев и
+агентов здесь не заводится.
+
+`py_modules/` — общая библиотека (отдельный репозиторий) | `src/` — код проекта
+
+См. `.claude/docs/quickstart.md` — запуск и переменные окружения.
+
+**Универсальные правила — в `.claude/docs-common/`** (индекс:
+`.claude/docs-common/readme.md`). Там правила без привязки к проекту: именование,
+контракт API, права, схема БД, деплой, тесты, формат документации.
+`.claude/docs/` описывает, как это реализовано именно здесь. При расхождении
+конкретика из `.claude/docs/` — актуальнее.
+
+## Development Patterns
+
+- **Новая ручка API** → `.claude/docs/api.md`
+- **Обращение к RhapsodyAi** → `.claude/docs/rhapsody_api.md`
+- **Правка страницы** → `.claude/docs/dashboard_frontend.md`
+- **Изменение схемы** → `.claude/docs/database.md` (только `migrations/0001.sql`)
+- **Работа воркера** → `.claude/docs/worker.md`
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `main_uvicorn.py` | Точка входа: middleware, схема на старте, роутеры |
+| `src/rhapsody/rhapsody_api.py` | **Единственная** дверь к RhapsodyAi |
+| `src/dating/dating_chat.py` | Приём сообщений вебсокетом |
+| `src/dating/dating_chat_hold.py` | Держатель сокетов: присутствие и автоответ |
+| `src/dating/dating_send.py` | Отправка сообщения кадром сокета |
+| `src/dating/dating_answer.py` | Ответ агента: кого спросить и что отправить |
+| `src/dating/dating_agent.py` | Агент анкеты: имя, биография, заведение у соседа |
+| `src/dating/dating_check.py` | Полная проверка учётки |
+| `src/uvicorn/routers/dating/dating_girl.py` | Все ручки анкет |
+| `src/auth/auth.py` | Вход в панель: сессия или токен |
+| `src/worker/dating/chat_worker.py` | Смена держателя, очередь `dating` |
+| `migrations/0001.sql` | Единственный источник схемы БД |
+
+## Docs Reference
+
+Две папки: `.claude/docs-common/` — универсальные правила (переносимы в любой
+проект), `.claude/docs/` — устройство этой инсталляции.
+
+### Проектная документация — `.claude/docs/`
+
+| File | Contents |
+|------|----------|
+| `quickstart.md` | Запуск, порты, переменные окружения, первый вход |
+| `architecture.md` | Из чего состоит проект, границы с RhapsodyAi, потоки данных |
+| `rhapsody_api.md` | Контракт с соседом: какие ручки, каким токеном, что при отказе |
+| `auth.md` | Вход в панель, токены, почему нет ролевой матрицы |
+| `database.md` | Схема, порядок таблиц, `site_id` без внешнего ключа |
+| `dating.md` | Предметная часть: присутствие, чат, отправка, диалоги, агент |
+| `worker.md` | Смена держателя сокетов, single-flight, очередь |
+| `dashboard_frontend.md` | Страница анкет: раскладка, обновление, контракты |
+| `api.md` | Все ручки проекта и их поведение |
+| `migration.md` | Как менять схему и что делать с данными |
+| `deploy.md` | Прод: URI на общем домене, чужие MySQL и Redis, маршрут в Caddy, грабли |

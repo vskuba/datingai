@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Вход | DatingAi</title>
+    <link rel="stylesheet" href="{{ base }}/static/css/notification.css">
+    <style>
+        /* Страница из одной формы: базового шаблона у неё нет намеренно — он
+           тянул бы за собой шапку с навигацией, которой до входа не место. */
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f4f4f9;
+            font-family: system-ui, sans-serif;
+        }
+
+        .login-box {
+            width: 320px;
+            padding: 28px;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 2px 16px rgba(0, 0, 0, .08);
+        }
+
+        .login-title {
+            margin: 0 0 4px;
+            font-size: 20px;
+            color: #2c3e50;
+        }
+
+        .login-hint {
+            margin: 0 0 20px;
+            font-size: 12px;
+            color: #8a94a0;
+        }
+
+        .login-box label {
+            display: block;
+            margin-bottom: 4px;
+            font-size: 12px;
+            color: #64748b;
+        }
+
+        .login-box input {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 9px 10px;
+            margin-bottom: 14px;
+            border: 1px solid #d6eaf8;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .login-box input:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 10px;
+            background: #3498db;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background .15s;
+        }
+
+        .login-btn:hover { background: #2c81ba; }
+        .login-btn:disabled { background: #b8c6d1; cursor: default; }
+
+        .login-error {
+            min-height: 16px;
+            margin-top: 12px;
+            font-size: 12px;
+            color: #c0392b;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<!-- Без `novalidate`: пустое поле браузер ловит сам, не гоняя запрос.
+     Ответ сервера остаётся запасным путём — на случай, когда форму шлют мимо
+     страницы. -->
+<form class="login-box" id="loginForm">
+    <h1 class="login-title">DatingAi</h1>
+    <p class="login-hint">Анкеты на сайтах знакомств</p>
+
+    <label for="username">Логин</label>
+    <input type="text" id="username" name="username" autocomplete="username" autofocus required>
+
+    <label for="password">Пароль</label>
+    <input type="password" id="password" name="password" autocomplete="current-password" required>
+
+    <button type="submit" class="login-btn" id="loginBtn">Войти</button>
+    <div class="login-error" id="loginError"></div>
+</form>
+
+<script type="module">
+    import {postData} from '{{ base }}/static/js/api.js';
+
+    // См. пояснение в `admin/dating.html`: путь панели задаёт сервер.
+    const BASE = '{{ base }}';
+
+    const form = document.getElementById('loginForm');
+    const btn = document.getElementById('loginBtn');
+    const errorBox = document.getElementById('loginError');
+
+    // Куда вернуть после входа. Только свой путь: чужой адрес в `next` превратил
+    // бы страницу входа в открытый редирект.
+    const next = new URLSearchParams(location.search).get('next') || (BASE + '/');
+    const target = next.startsWith('/') && !next.startsWith('//') ? next : (BASE + '/');
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        errorBox.textContent = '';
+        btn.disabled = true;
+
+        try {
+            await postData(BASE + '/auth/login', {
+                username: document.getElementById('username').value,
+                password: document.getElementById('password').value,
+            });
+            location.href = target;
+        } catch (e) {
+            errorBox.textContent = e.message || 'Не вышло войти';
+            btn.disabled = false;
+        }
+    });
+</script>
+
+</body>
+</html>

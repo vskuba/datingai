@@ -1,0 +1,33 @@
+# Зависимости DatingAi. Список короткий намеренно: браузер, LLM и векторы живут
+# в RhapsodyAi, и тянуть сюда playwright, torch и fastembed незачем — этот проект
+# ходит к ним по HTTP.
+
+# Веб-слой
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+jinja2==3.1.5
+itsdangerous==2.2.0
+python-multipart==0.0.20
+
+# Обращения к RhapsodyAi и вебсокет живого чата
+httpx==0.28.1
+websockets==14.1
+
+# База: пул для приложения, драйвер и накат схемы
+aiomysql==0.2.0
+pymysql==1.1.1
+# MySQL 8 здоровается `caching_sha2_password`, и без этого пакета pymysql не может
+# зашифровать пароль — соединение падает ещё до первого запроса.
+cryptography==44.0.0
+yoyo-migrations==9.0.0
+
+# Очередь смен держателя чата
+rq==2.1.0
+redis==5.2.1
+
+# Пароли панели и настройки окружения
+bcrypt==4.2.1
+python-dotenv==1.0.1
+
+# Журнал в формате JSON — тот же, что у соседа
+python-json-logger==3.2.1

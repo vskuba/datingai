@@ -1,0 +1,92 @@
+# Состав DatingAi: четыре сервиса и ни одного лишнего.
+#
+# `uvicorn` — панель и API, `worker_dating` — смена держателя чат-сокетов,
+# `mysql` — своя база анкет, `redis` — очередь для смены. Браузера, Qdrant,
+# OpenSearch и прочего здесь нет: это хозяйство RhapsodyAi, к которому проект
+# ходит по HTTP.
+#
+# Сеть внешняя (`rhapsody-net`): контейнеры должны видеть `uvicorn` соседа по
+# имени. Без общей сети адресом пришлось бы делать `host.docker.internal`, а он
+# ведёт себя по-разному на Linux и Mac и ломается на сервере.
+
+# Имена сервисов с префиксом `dating_` — не для красоты. Compose регистрирует имя
+# сервиса псевдонимом в каждой сети, а сеть с RhapsodyAi общая: сервис по имени
+# `uvicorn` перехватывал бы обращения соседа к самому себе. Проверено — так и
+# вышло: в журнал нового контейнера посыпались чужие запросы `/telegram-app/...`.
+services:
+  dating_uvicorn:
+    build:
+      context: .
+      dockerfile: docker/uvicorn/dockerfile
+    container_name: dating_uvicorn
+    ports:
+      - "${UVICORN_PORT:-8021}:8000"
+    volumes:
+      - ./:/app
+    env_file:
+      - .env
+    depends_on:
+      dating_mysql:
+        condition: service_healthy
+    networks:
+      - dating-net
+      - rhapsody-net
+    restart: always
+
+  dating_worker:
+    build:
+      context: .
+      dockerfile: docker/uvicorn/dockerfile
+    container_name: dating_worker
+    command: rq worker --url redis://dating_redis:6379 dating
+    volumes:
+      - ./:/app
+    env_file:
+      - .env
+    depends_on:
+      - dating_redis
+      - dating_uvicorn
+    networks:
+      - dating-net
+      - rhapsody-net
+    restart: always
+
+  dating_mysql:
+    image: mysql:8.0
+    container_name: dating_mysql
+    command: mysqld --sql-mode="NO_ENGINE_SUBSTITUTION"
+    ports:
+      - "${MYSQL_PORT:-3312}:3306"
+    environment:
+      - MYSQL_DATABASE=dating
+      - MYSQL_USER=developer
+      - MYSQL_PASSWORD=password
+      - MYSQL_ROOT_PASSWORD=password
+    volumes:
+      - dating_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-p$$MYSQL_ROOT_PASSWORD", "--protocol", "tcp"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - dating-net
+    restart: always
+
+  dating_redis:
+    image: redis:7-alpine
+    container_name: dating_redis
+    networks:
+      - dating-net
+    restart: always
+
+volumes:
+  dating_mysql_data:
+
+networks:
+  dating-net:
+  rhapsody-net:
+    external: true
+    # Сеть поднимает RhapsodyAi; имя складывается из имени его каталога и имени
+    # сети в его compose. Своей копии этой сети быть не может — она общая.
+    name: rhapsodyai_os-net

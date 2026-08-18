@@ -1,0 +1,7 @@
+.env
+.env.local
+__pycache__/
+*.pyc
+data/log/
+.idea/
+.env.prod
