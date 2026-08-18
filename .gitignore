@@ -5,3 +5,5 @@ __pycache__/
 data/log/
 .idea/
 .env.prod
+data/app.log
+data/*.log
