@@ -35,12 +35,13 @@
 жив; перебор идёт до первой удачной.
 """
 
-import json
 import time
 
 import httpx
 
 from logging_.logging_ import logger_info
+
+from src.dating.dating_json import dating_json_load
 
 # Браузерный `User-Agent`: сайт отдаёт API тому, кто похож на его же страницу.
 DATING_PRESENCE_UA = ('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
@@ -124,7 +125,7 @@ async def dating_presence_beat(girl: dict, presence: dict) -> bool:
 
 def dating_presence_ready(presence) -> bool:
     """Настроен ли у сайта опрос: без него карточка честно молчит, а не врёт нулём."""
-    data = _json_load(presence)
+    data = dating_json_load(presence)
 
     return bool(data.get('base') and (data.get('heartbeat') or data.get('status')))
 
@@ -220,7 +221,7 @@ def _cookies_of(storage_state, base: str) -> dict:
     Берём только его домен: в состоянии лежат и чужие (аналитика, платёжки), а
     слать их на сайт незачем — и лишний повод для отказа.
     """
-    state = _json_load(storage_state)
+    state = dating_json_load(storage_state)
     host = str(base).split('//')[-1].split('/')[0].replace('www.', '')
 
     return {str(c.get('name')): str(c.get('value'))
@@ -239,17 +240,6 @@ def _json_body(response) -> dict:
         return {}
 
     return data if isinstance(data, dict) else {}
-
-
-def _json_load(value) -> dict:
-    """JSON-столбец приезжает то структурой, то строкой — зависит от драйвера."""
-    if isinstance(value, str):
-        try:
-            return json.loads(value or '{}')
-        except Exception:
-            return {}
-
-    return value if isinstance(value, dict) else {}
 
 
 def _result(status: str, unread: int = -1, error: str = '', ms: int = 0) -> dict:

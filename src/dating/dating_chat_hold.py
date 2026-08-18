@@ -33,6 +33,7 @@ from src.dating.dating_auto import DATING_AUTO_PERIOD_SEC, dating_auto_round
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_error_write,
                                        rhapsody_api_site_get)
 from src.dating.dating_chat import dating_chat_listen
+from src.dating.dating_json import dating_json_load
 from src.dating.dating_presence import dating_presence_beat, dating_presence_ready
 from src.dating.dating_ws import dating_ws_capture
 
@@ -218,7 +219,7 @@ async def _girls_ready() -> list[dict]:
                 sites[site_id] = {}
 
         site = sites[site_id]
-        presence = _json_load(site.get('presence'))
+        presence = dating_json_load(site.get('presence'))
         if not dating_presence_ready(presence):
             continue
 
@@ -293,16 +294,3 @@ async def _girl_row(girl_id: int) -> dict | None:
         row = await db.fetchone()
 
     return dict(row) if row else None
-
-
-def _json_load(value) -> dict:
-    """JSON-столбец приезжает то структурой, то строкой — зависит от драйвера."""
-    import json
-
-    if isinstance(value, str):
-        try:
-            return json.loads(value or '{}')
-        except Exception:
-            return {}
-
-    return value if isinstance(value, dict) else {}

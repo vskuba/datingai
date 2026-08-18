@@ -38,6 +38,7 @@ from src.dating.dating_answer import dating_answer_run
 from src.dating.dating_check import dating_check_run
 from src.dating.dating_dialog import dating_dialog_sync
 from src.dating.dating_disconnect import dating_disconnect_run
+from src.dating.dating_json import dating_json_load
 from src.dating.dating_log import dating_log_write
 from src.dating.dating_profile import dating_profile_refresh
 from src.dating.dating_send import dating_send_message
@@ -148,7 +149,7 @@ async def dating_girl_list(site_id: int = 0,
         row['auto_answer'] = bool(row.get('auto_answer'))
         # Имя и фотография — в список: карточку узнают по лицу, а не по номеру.
         # Анкета целиком отдаётся отдельной ручкой: в списке из неё нужны два поля.
-        profile = _json_load(row.pop('profile', None))
+        profile = dating_json_load(row.pop('profile', None))
         row['name'] = str(profile.get('name') or '')
         row['photo'] = str(profile.get('photo') or '')
 
@@ -256,7 +257,7 @@ async def dating_girl_login(girl_id: int, data: DatingGirlLogin,
         # кабинета, то есть настоящего конца входа. Нажатие кнопки «войти» ещё
         # не сессия — снятое сразу после него состояние приходило без cookie
         # сайта, и опрос честно отвечал «сайт не признал вход».
-        profile = await _profile_page(await _girl_row(girl_id), _json_load(site.get('presence')),
+        profile = await _profile_page(await _girl_row(girl_id), dating_json_load(site.get('presence')),
                                       session_id)
         # Снимаем вход: дальше присутствие держит HTTP-опрос по этим cookie, и
         # второй раз через браузер логиниться не придётся.
@@ -272,7 +273,7 @@ async def dating_girl_login(girl_id: int, data: DatingGirlLogin,
         # Опрос годится обеим ролям — в отличие от чтения анкеты, сценарий которой
         # заведён только для женской.
         verify = await dating_presence_probe(await _girl_row(girl_id),
-                                             _json_load(site.get('presence')))
+                                             dating_json_load(site.get('presence')))
         if verify['status'] != 'online':
             # Состояние от неудачного входа стираем: держать cookie, по которым
             # сайт не пускает, значит показывать в карточке вход, которого нет.
@@ -341,7 +342,7 @@ async def dating_girl_send(girl_id: int, data: DatingGirlSend,
     girl = await _girl_row(girl_id)
     site = await _site_check(int(girl['site_id']))
 
-    result = await dating_send_message(girl, _json_load(site.get('presence')), data.to, data.text)
+    result = await dating_send_message(girl, dating_json_load(site.get('presence')), data.to, data.text)
 
     await dating_log_write(girl_id, 'out' if result['ok'] else 'fail',
                            f"#{data.to}: {data.text[:300]}" if result['ok']
@@ -392,11 +393,11 @@ async def dating_girl_auto(girl_id: int, data: DatingGirlAuto, request: Request,
     answered = {}
     if data.auto_answer:
         site = await _site_check(int(girl['site_id']))
-        agent = await dating_agent_ensure(girl, _json_load(girl.get('profile')))
+        agent = await dating_agent_ensure(girl, dating_json_load(girl.get('profile')))
         agent_id = await _agent_id_by_name(agent['name'])
         if agent_id:
             answered = await dating_answer_run({**girl, 'auto_answer': 1},
-                                               _json_load(site.get('presence')),
+                                               dating_json_load(site.get('presence')),
                                                agent_id)
 
     return {'result': {'auto_answer': data.auto_answer, 'answered': answered}}
@@ -413,9 +414,9 @@ async def dating_girl_answer(girl_id: int, request: Request,
     """
     girl = await _girl_row(girl_id)
     site = await _site_check(int(girl['site_id']))
-    presence = _json_load(site.get('presence'))
+    presence = dating_json_load(site.get('presence'))
 
-    agent = await dating_agent_ensure(girl, _json_load(girl.get('profile')))
+    agent = await dating_agent_ensure(girl, dating_json_load(girl.get('profile')))
     agent_id = await _agent_id_by_name(agent['name'])
     if not agent_id:
         raise HTTPException(status_code=422,
@@ -442,11 +443,11 @@ async def dating_girl_dialog(girl_id: int,
     """
     girl = await _girl_row(girl_id)
     site = await _site_check(int(girl['site_id']))
-    presence = _json_load(site.get('presence'))
+    presence = dating_json_load(site.get('presence'))
 
     await _session_close_old(girl['login'], '')
     session_id = await _session_open_for(site, {**girl,
-                                                'storage_state': _json_load(girl.get('storage_state'))})
+                                                'storage_state': dating_json_load(girl.get('storage_state'))})
 
     result = await dating_dialog_sync(girl, presence, session_id, rhapsody_api_scenario_run)
 
@@ -477,8 +478,8 @@ async def dating_girl_disconnect(girl_id: int,
     site = await _site_check(int(girl['site_id']))
 
     result = await dating_disconnect_run(
-        {**girl, 'storage_state': _json_load(girl.get('storage_state'))},
-        site, _json_load(site.get('presence')),
+        {**girl, 'storage_state': dating_json_load(girl.get('storage_state'))},
+        site, dating_json_load(site.get('presence')),
         rhapsody_api_scenario_run, _session_open_for, _session_all, _session_close)
 
     if result['error']:
@@ -501,7 +502,7 @@ async def dating_girl_probe(site_id: int = 0,
     а параллельный укладывается в секунды (`DATING_GIRL_PROBE_PARALLEL`).
     """
     site = await _site_check(site_id) if site_id else None
-    presence = _json_load((site or {}).get('presence'))
+    presence = dating_json_load((site or {}).get('presence'))
     if not dating_presence_ready(presence):
         raise HTTPException(status_code=422,
                             detail='у сайта не настроен опрос присутствия (browser_site.presence)')
@@ -633,7 +634,7 @@ async def dating_girl_check(girl_id: int, request: Request,
     """
     girl = await _girl_row(girl_id)
     site = await _site_check(int(girl['site_id']))
-    presence = _json_load(site.get('presence'))
+    presence = dating_json_load(site.get('presence'))
     if not dating_presence_ready(presence):
         raise HTTPException(status_code=422, detail='у сайта не настроен опрос присутствия')
 
@@ -660,7 +661,7 @@ async def dating_girl_check(girl_id: int, request: Request,
         # биография, из которой workflow добывает факты. Со старой в руках
         # агент завёлся бы по вчерашнему тексту — или вовсе без него.
         girl = await _girl_row(girl_id)
-        agent = await dating_agent_ensure(girl, _json_load(girl.get('profile')))
+        agent = await dating_agent_ensure(girl, dating_json_load(girl.get('profile')))
         if agent['error']:
             await rhapsody_api_error_write('dating', f"агент анкеты не заведён: {agent['error']}",
                                       context={'girl_id': girl_id, 'agent': agent['name']})
@@ -739,7 +740,7 @@ async def dating_girl_profile(girl_id: int,
             contact['needs_answer'] = bool(last and last[0]['direction'] == 'in'
                                            and not last[0]['is_answered'])
 
-    return {'result': {'profile': _json_load(girl.get('profile')),
+    return {'result': {'profile': dating_json_load(girl.get('profile')),
                        'login': girl['login'], 'contacts': contacts}}
 
 
@@ -782,8 +783,8 @@ async def _ws_capture(girl: dict, session_id: str = '') -> str:
     другая держалась за старый.
     """
     site = await _site_check(int(girl['site_id']))
-    url = await dating_ws_capture({**girl, 'storage_state': _json_load(girl.get('storage_state'))},
-                                  _json_load(site.get('presence')), site['url'], session_id)
+    url = await dating_ws_capture({**girl, 'storage_state': dating_json_load(girl.get('storage_state'))},
+                                  dating_json_load(site.get('presence')), site['url'], session_id)
     if not url:
         await rhapsody_api_error_write('dating', 'адрес чат-сокета не снялся',
                                   context={'girl_id': girl['id']})
@@ -929,17 +930,6 @@ async def _site_check(site_id: int) -> dict:
         raise HTTPException(status_code=422, detail=f'нет сайта с номером {site_id}')
 
     return dict(row)
-
-
-def _json_load(value) -> dict:
-    """JSON-столбец приезжает то структурой, то строкой — зависит от драйвера."""
-    if isinstance(value, str):
-        try:
-            return json.loads(value or '{}')
-        except Exception:
-            return {}
-
-    return value if isinstance(value, dict) else {}
 
 
 def _save_error(error: Exception, login: str) -> str:
