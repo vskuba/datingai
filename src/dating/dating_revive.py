@@ -73,45 +73,64 @@ def dating_revive_plan(girl: dict, online: bool, now: datetime) -> dict:
     Returns:
         dict: `action` — `none` (ничего), `clear` (череда кончилась), `wait`
         (череда началась, входить ещё рано), `login` (входить сейчас), `give_up`
-        (сутки вышли); плюс новые значения `relogin_since`, `relogin_tries`,
-        `relogin_next_at` для полей учётки.
+        (сутки вышли, и это первый круг, который это заметил); плюс новые значения
+        `relogin_since`, `relogin_tries`, `relogin_next_at` для полей учётки.
     """
     since = girl.get('relogin_since')
     tries = int(girl.get('relogin_tries') or 0)
+    logged_in_at = girl.get('logged_in_at')
+    old = not logged_in_at or (now - logged_in_at).total_seconds() >= DATING_REVIVE_AGE_SEC
 
-    if online:
-        if since:
-            # Вход вернулся сам (сайт полежал и встал) — череду закрываем.
-            return {'action': 'clear', 'relogin_since': None, 'relogin_tries': 0,
-                    'relogin_next_at': None}
-
-        logged_in_at = girl.get('logged_in_at')
-        old = not logged_in_at or (now - logged_in_at).total_seconds() >= DATING_REVIVE_AGE_SEC
-        if old:
-            # Профилактика. Череду не начинаем: вход жив, и если обновление не
-            # выйдет, это заметит следующий круг — уже как настоящий отказ.
-            return {'action': 'login', 'relogin_since': None, 'relogin_tries': 0,
-                    'relogin_next_at': None}
-
-        return {'action': 'none', 'relogin_since': None, 'relogin_tries': 0,
-                'relogin_next_at': None}
+    if online and not old:
+        # Вход жив и свеж. Череда, если шла, кончилась: либо сайт полежал и встал,
+        # либо вход только что переснят — `dating_login_run` обновляет `logged_in_at`.
+        return ({'action': 'clear', 'relogin_since': None, 'relogin_tries': 0,
+                 'relogin_next_at': None} if since else
+                {'action': 'none', 'relogin_since': None, 'relogin_tries': 0,
+                 'relogin_next_at': None})
 
     if not since:
+        if online:
+            # Профилактика: вход ещё жив, поэтому пробуем сразу, не выжидая минуту.
+            # Но череду начинаем тут же — плановый вход через браузер может не
+            # проходить (капча, сменённый пароль), а опрос по старым cookie всё
+            # это время отвечает «online». Без череды такой вход открывал бы
+            # вкладку Chromium у соседа раз в минуту и бессрочно.
+            return _plan_login(since, tries, now)
+
         # Первый отказ. Входить сразу нельзя: сайт мог моргнуть, и минута ожидания
         # дешевле лишнего прогона браузера.
         return {'action': 'wait', 'relogin_since': now, 'relogin_tries': 0,
                 'relogin_next_at': now + timedelta(seconds=dating_revive_delay(0))}
 
     if dating_revive_state(since, now) == 'given_up':
-        return {'action': 'give_up', 'relogin_since': since, 'relogin_tries': tries,
-                'relogin_next_at': None}
+        # Сдача — переход, а не состояние: череда остаётся в базе до входа вручную,
+        # и круг наткнётся на неё каждую минуту до конца времён. Момент перехода
+        # виден по ещё не стёртому сроку попытки: первый же круг после сдачи
+        # запишет `relogin_next_at = NULL`, и дальше это уже давняя сдача, о которой
+        # и журналу, и вкладке «Ошибки» соседа сказали.
+        announce = bool(girl.get('relogin_next_at'))
+
+        return {'action': 'give_up' if announce else 'none', 'relogin_since': since,
+                'relogin_tries': tries, 'relogin_next_at': None}
 
     if not dating_revive_due(girl.get('relogin_next_at'), now):
         return {'action': 'none', 'relogin_since': since, 'relogin_tries': tries,
                 'relogin_next_at': girl.get('relogin_next_at')}
 
-    return {'action': 'login', 'relogin_since': since, 'relogin_tries': tries + 1,
-            'relogin_next_at': now + timedelta(seconds=dating_revive_delay(tries + 1))}
+    return _plan_login(since, tries, now)
+
+
+def _plan_login(since: datetime | None, tries: int, now: datetime) -> dict:
+    """Решение «входим сейчас»: попытка считается сделанной, следующая — по лестнице.
+
+    Одно место для двух поводов (протухание и профилактика по сроку): лечение у них
+    одно, и разойтись эти две лестницы не должны.
+    """
+    step = tries + 1
+
+    return {'action': 'login', 'relogin_since': since or now, 'relogin_tries': step,
+            'relogin_next_at': now + timedelta(seconds=dating_revive_delay(step))}
 
 
 async def dating_revive_round(login_run=None) -> dict:
@@ -151,25 +170,32 @@ async def dating_revive_round(login_run=None) -> dict:
                                    f"Вход не признан сайтом: {probe['error'] or probe['status']}")
             await _error_write(girl, probe['error'] or probe['status'])
         elif plan['action'] == 'give_up':
+            # Считаем и объявляем переход, а не состояние: решение отдаёт `give_up`
+            # только на том круге, который сдался, — иначе сюда бы попадала одна и
+            # та же анкета каждую минуту, пока её не поднимут руками.
             counts['given_up'] += 1
             await dating_log_write(int(girl['id']), 'fail',
                                    'Сутки не выходит войти — попытки прекращены, нужен вход вручную')
             await _error_write(girl, 'сутки не выходит войти, автовход остановлен')
         elif plan['action'] == 'login':
             counts['tried'] += 1
-            if await _login_try(int(girl['id']), login_run, plan):
+            if await _login_try(int(girl['id']), login_run, plan, online):
                 counts['revived'] += 1
 
     return counts
 
 
-async def _login_try(girl_id: int, login_run, plan: dict) -> bool:
-    """Одна попытка входа. Успех сам обнуляет череду — это делает `dating_login_run`."""
+async def _login_try(girl_id: int, login_run, plan: dict, planned: bool = False) -> bool:
+    """Одна попытка входа. Успех сам обнуляет череду — это делает `dating_login_run`.
+
+    Повод берётся из опроса, а не из череды: череда теперь есть у обоих поводов, а
+    человеку в журнале важно, чинили протухший вход или обновляли живой по сроку.
+    """
     from src.dating.dating_log import dating_log_write
 
     await dating_log_write(girl_id, 'info',
-                           f"Вхожу заново (попытка {plan['relogin_tries']})"
-                           if plan['relogin_since'] else 'Обновляю вход заранее')
+                           f"{'Обновляю вход заранее' if planned else 'Вхожу заново'} "
+                           f"(попытка {plan['relogin_tries']})")
     try:
         result = await login_run(girl_id)
     except Exception as e:

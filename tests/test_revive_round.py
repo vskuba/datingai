@@ -26,9 +26,45 @@ class TestRevivePlan:
         assert dating_revive_plan(_girl(), online=True, now=NOW)['action'] == 'none'
 
     def test_online_but_old_is_refreshed(self):
-        """Профилактика: входу больше двадцати часов — обновляем заранее."""
+        """Профилактика: входу больше двадцати часов — обновляем заранее.
+
+        И заодно заводим череду: плановый вход тоже может не выйти, а без череды
+        круг лез бы за ним в браузер соседа каждую минуту.
+        """
         girl = _girl(logged_in_at=NOW - timedelta(hours=21))
-        assert dating_revive_plan(girl, online=True, now=NOW)['action'] == 'login'
+        plan = dating_revive_plan(girl, online=True, now=NOW)
+
+        assert plan['action'] == 'login'
+        assert plan['relogin_since'] == NOW
+        assert plan['relogin_tries'] == 1
+        assert plan['relogin_next_at'] == NOW + timedelta(minutes=5)
+
+    def test_planned_login_failure_waits_on_ladder(self):
+        """Плановый вход не вышел, опрос всё ещё online — череду не стираем.
+
+        Опрос идёт по старым cookie и говорит «жив», но `logged_in_at` не обновился:
+        значит вход через браузер не прошёл, и повторять его надо по лестнице.
+        """
+        girl = _girl(logged_in_at=NOW - timedelta(hours=21),
+                     relogin_since=NOW - timedelta(minutes=1), relogin_tries=1,
+                     relogin_next_at=NOW + timedelta(minutes=4))
+        plan = dating_revive_plan(girl, online=True, now=NOW)
+
+        assert plan['action'] == 'none'
+        assert plan['relogin_since'] == NOW - timedelta(minutes=1)
+        assert plan['relogin_tries'] == 1
+        assert plan['relogin_next_at'] == NOW + timedelta(minutes=4)
+
+    def test_planned_login_retries_when_due(self):
+        """Срок повторного планового входа настал — входим, лестница едет дальше."""
+        girl = _girl(logged_in_at=NOW - timedelta(hours=21),
+                     relogin_since=NOW - timedelta(minutes=6), relogin_tries=1,
+                     relogin_next_at=NOW - timedelta(seconds=1))
+        plan = dating_revive_plan(girl, online=True, now=NOW)
+
+        assert plan['action'] == 'login'
+        assert plan['relogin_tries'] == 2
+        assert plan['relogin_next_at'] == NOW + timedelta(minutes=15)
 
     def test_offline_starts_chain(self):
         """Первый отказ начинает череду: попытка через минуту, а не сейчас."""
@@ -42,8 +78,12 @@ class TestRevivePlan:
         """Срок не настал — молчим, попытку не двигаем."""
         girl = _girl(relogin_since=NOW - timedelta(minutes=1),
                      relogin_next_at=NOW + timedelta(minutes=4), relogin_tries=1)
+        plan = dating_revive_plan(girl, online=False, now=NOW)
 
-        assert dating_revive_plan(girl, online=False, now=NOW)['action'] == 'none'
+        assert plan['action'] == 'none'
+        assert plan['relogin_since'] == NOW - timedelta(minutes=1)
+        assert plan['relogin_tries'] == 1
+        assert plan['relogin_next_at'] == NOW + timedelta(minutes=4)
 
     def test_offline_logs_in_when_due(self):
         """Срок настал — входим, и следующая попытка назначается по лестнице."""
@@ -62,6 +102,18 @@ class TestRevivePlan:
         plan = dating_revive_plan(girl, online=False, now=NOW)
 
         assert plan['action'] == 'give_up'
+        assert plan['relogin_next_at'] is None
+
+    def test_gives_up_only_once(self):
+        """Сдача объявляется один раз: череда в базе останется, круг придёт ещё
+        тысячу раз, а сосед и журнал должны увидеть только переход."""
+        girl = _girl(relogin_since=NOW - timedelta(hours=30), relogin_next_at=None,
+                     relogin_tries=12)
+        plan = dating_revive_plan(girl, online=False, now=NOW)
+
+        assert plan['action'] == 'none'
+        assert plan['relogin_since'] == NOW - timedelta(hours=30)
+        assert plan['relogin_tries'] == 12
         assert plan['relogin_next_at'] is None
 
     def test_recovery_clears_chain(self):
