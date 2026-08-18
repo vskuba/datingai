@@ -94,3 +94,35 @@ class TestGirlCrud:
         for path in ('log', 'message', 'profile'):
             response = await auth_client.get(f'/api/dating/girl/999999/{path}')
             assert response.status_code == 404, f'{path} ответил {response.status_code}'
+
+
+class TestGirlLogin:
+    """Дверь входа. Сам вход живёт в `src/dating/dating_login.py` и здесь не гоняется:
+    он водит браузер соседа и живой сайт знакомств, то есть стоит минуты и требует
+    рабочей анкеты. Проверяется то, что ломается при переезде кода, — что ручка
+    осталась на месте, закрыта и доходит до модуля входа."""
+
+    async def test_login_closed_without_session(self, client):
+        """Без сессии ручка входа не пускает: под чужой анкетой не входят."""
+        response = await client.post('/api/dating/girl/1/login', json={})
+
+        assert response.status_code == 401
+
+    async def test_login_without_password_is_422(self, auth_client):
+        """Учётка без пароля — 422 внятной фразой, а не сбоем.
+
+        Заодно это проверка, что ручка действительно зовёт модуль входа: фраза
+        приходит оттуда, из `DatingLoginError`.
+        """
+        login = f'test-{uuid.uuid4().hex[:10]}'
+        created = await auth_client.post('/api/dating/girl', json={
+            'site_id': SITE_ID, 'login': login, 'password': ''})
+        girl_id = created.json()['result']
+
+        try:
+            response = await auth_client.post(f'/api/dating/girl/{girl_id}/login', json={})
+
+            assert response.status_code == 422, response.text[:200]
+            assert 'пароль' in response.json()['detail']
+        finally:
+            await auth_client.delete(f'/api/dating/girl/{girl_id}')
