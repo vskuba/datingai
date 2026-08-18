@@ -16,6 +16,19 @@ class TestRhapsodyLink:
         assert isinstance(sites, list) and sites, 'сайтов не пришло — сосед недоступен?'
         assert {'id', 'name', 'url'} <= set(sites[0])
 
+    async def test_site_list_holds_only_dating_sites(self, auth_client):
+        """В списке только сайты с меткой `dating`.
+
+        У соседа в закладках лежит и его собственная админка, и рабочие стенды —
+        анкету на них не заведёшь, а в селекте они путались. Отбор делает он же,
+        по метке; сюда приходит готовое.
+        """
+        sites = (await auth_client.get('/api/site')).json()['result']
+
+        for site in sites:
+            tags = str(site.get('tags') or '').split(',')
+            assert 'dating' in tags, f"«{site.get('name')}» без метки dating: {site.get('tags')!r}"
+
     async def test_site_list_closed_without_login(self, client):
         """Ручка под входом: служебный токен соседа живёт на сервере, и отдавать
         через неё что-либо анониму нельзя."""
