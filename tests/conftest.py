@@ -1,0 +1,47 @@
+"""Общая обвязка тестов.
+
+Сюита ходит по HTTP в **запущенную** панель, а не поднимает приложение в памяти.
+Причина простая: половина того, что стоит проверять, живёт не в коде — сессия в
+куке, срез префикса прокси, ответ соседа. Тест против объекта `app` их не увидит.
+
+Поэтому перед прогоном панель должна работать: `docker compose up -d`. Адрес
+задаётся `BASE_URL` (по умолчанию локальный порт из compose).
+"""
+
+import os
+
+import httpx
+import pytest
+
+# Куда стучаться. На проде — `https://92.5.17.195.sslip.io/dating`, и тогда же
+# проверится работа под префиксом.
+BASE_URL = os.getenv('BASE_URL', 'http://localhost:8021').rstrip('/')
+
+# Учётка панели. Значения по умолчанию — из `.env.dist`; на рабочей установке
+# передаются окружением, чтобы пароль не лежал в репозитории.
+ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', 'admin')
+ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'change-me')
+
+# Сколько ждём ответа. Ручки, которые водят браузер соседа, сюда не входят —
+# их сюита не трогает: они стоят минуту и требуют живого сайта знакомств.
+TIMEOUT = 30.0
+
+
+@pytest.fixture
+async def client():
+    """Клиент без входа — им проверяется, что закрытое закрыто."""
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT,
+                                 follow_redirects=False) as http:
+        yield http
+
+
+@pytest.fixture
+async def auth_client():
+    """Клиент с сессией. Не сошлось — тест падает здесь, а не в середине проверки."""
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT,
+                                 follow_redirects=False) as http:
+        response = await http.post('/auth/login', json={
+            'username': ADMIN_USERNAME, 'password': ADMIN_PASSWORD})
+        assert response.status_code == 200, (
+            f'не вышло войти под {ADMIN_USERNAME}: {response.status_code} {response.text[:200]}')
+        yield http

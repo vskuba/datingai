@@ -32,16 +32,25 @@
 ## 3. Как выложить
 
 ```bash
-# 1. Код на сервер (rsync на сервере нет — архивом)
-tar czf /tmp/datingai.tar.gz --exclude='.git' --exclude='py_modules/.git' \
-  --exclude='__pycache__' --exclude='*.pyc' --exclude='data/log' .
-ssh rhapsody-prod "mkdir -p ~/datingai && tar xzf - -C ~/datingai" < /tmp/datingai.tar.gz
-
-# 2. Сборка и запуск (только два сервиса)
-ssh rhapsody-prod "cd ~/datingai && \
-  docker compose -f docker-compose.yml -f docker-compose.prod.yml build dating_uvicorn && \
-  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d dating_uvicorn dating_worker"
+./deploy.sh              # архив → сервер → сборка → перезапуск → проверка панели
+./deploy.sh --no-build   # только код, без пересборки образа (быстро)
 ```
+
+Скрипт делает четыре шага и в конце **сам дожидается ответа панели** — до десяти
+попыток с паузой. Без этого «выложил» и «работает» — разные события, и разницу
+замечаешь через минуту в виде «почему не обновилось».
+
+Что он исключает из архива и почему: `.env.prod` (на сервере он свой — с паролем
+базы, токеном соседа и ключом сессии; перезаписать его отсюда значит уронить прод),
+`.git`, `py_modules/.git`, логи и `__pycache__`.
+
+Адреса переопределяются переменными: `DEPLOY_HOST`, `DEPLOY_DIR`, `DEPLOY_PANEL_URL`.
+
+**Автовыкладки по пушу нет.** У соседа она есть (GitHub Actions → ssh → `bluegreen.sh`),
+здесь — сознательно нет: для неё в секреты репозитория придётся положить приватный
+ключ от сервера, а это решение владельца, а не скрипта. Заготовка workflow лежит
+в `.github/deploy.yml.example`; чтобы включить, нужны секреты `HOST`,
+`USERNAME`, `SSH_KEY` и `ENV_FILE`.
 
 Схема накатывается сама при старте (`mysql_migration_up`), первый пользователь —
 из `ADMIN_USERNAME` / `ADMIN_PASSWORD` в `.env.prod`, если таблица пуста.

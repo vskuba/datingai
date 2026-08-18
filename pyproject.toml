@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+# `py_modules` — общая библиотека отдельным каталогом, а не установленным пакетом.
+pythonpath = [".", "py_modules"]

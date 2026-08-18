@@ -45,7 +45,16 @@ async def rhapsody_api_site_get(site_id: int) -> dict:
     Отдельной ручкой, а не из списка: в списке `presence` нет — она простыня, и
     возить её в каждой строке селекта незачем.
     """
-    data = await _request('GET', f'/api/browser/site/{int(site_id)}')
+    try:
+        data = await _request('GET', f'/api/browser/site/{int(site_id)}')
+    except RhapsodyError as e:
+        # 404 — «такого сайта нет», законный ответ на неверный номер, а не сбой
+        # связи. Разница видна вызывающему: он превращает пустоту в 422 (ошибка
+        # запроса), а обрыв — в 502 (сосед недоступен). Смешать их значило бы
+        # отвечать «шлюз не отвечает» на опечатку в номере сайта.
+        if ' → 404' in str(e):
+            return {}
+        raise
 
     return data.get('result') or {}
 

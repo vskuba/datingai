@@ -38,6 +38,7 @@
 - **Правка страницы** → `.claude/docs/dashboard_frontend.md`
 - **Изменение схемы** → `.claude/docs/database.md` (только `migrations/0001.sql`)
 - **Работа воркера** → `.claude/docs/worker.md`
+- **Проверка после правок** → `.claude/docs/testing.md`
 
 ## Key Files
 
@@ -76,3 +77,4 @@
 | `api.md` | Все ручки проекта и их поведение |
 | `migration.md` | Как менять схему и что делать с данными |
 | `deploy.md` | Прод: URI на общем домене, чужие MySQL и Redis, маршрут в Caddy, грабли |
+| `testing.md` | Сюита по HTTP, переменные прогона, что она уже нашла |

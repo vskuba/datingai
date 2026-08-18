@@ -1,0 +1,72 @@
+# Автовыкладка DatingAi на прод по пушу в master.
+#
+# ⚠️ Файл — заготовка, а не рабочий workflow, и лежит он **рядом** с `workflows/`,
+# а не внутри. Две причины: внутри его легко принять за действующий, а ещё GitHub
+# не принимает пуш с файлами в `.github/workflows/`, если у токена нет права
+# `workflow` — на этом уже спотыкались.
+#
+# Чтобы включить: скопировать в `.github/workflows/deploy.yml` и завести четыре
+# секрета репозитория:
+#
+#   HOST      — адрес сервера
+#   USERNAME  — пользователь ssh (у нас `ubuntu`)
+#   SSH_KEY   — приватный ключ от сервера
+#   ENV_FILE  — содержимое `.env.prod` целиком
+#
+# Секреты не заводятся автоматически намеренно: приватный ключ от прод-сервера в
+# секретах репозитория — решение владельца. Пока их нет, выкладка идёт скриптом
+# `./deploy.sh` с машины разработчика, и это рабочий вариант, а не временный.
+#
+# Blue-Green здесь не нужен: панель не держит долгих запросов, а перерыв в пару
+# секунд на перезапуск незаметен. У соседа он есть, потому что там workflow-прогоны
+# идут минутами и обрывать их нельзя.
+
+name: Deploy DatingAi
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Копирую код на сервер
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          source: "."
+          target: "~/datingai"
+          # `.env.prod` не перезаписываем содержимым репозитория — его там нет.
+          overwrite: true
+
+      - name: Обновляю окружение и поднимаю сервисы
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd ~/datingai
+            # Окружение прода приходит секретом: пароль базы, токен соседа, ключ сессии.
+            echo "${{ secrets.ENV_FILE }}" > .env.prod
+            COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
+            $COMPOSE build dating_uvicorn
+            $COMPOSE up -d --force-recreate dating_uvicorn dating_worker
+            docker image prune -f
+
+      - name: Проверяю панель
+        run: |
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
+              https://92.5.17.195.sslip.io/dating/health || true)
+            [ "$code" = "200" ] && echo "панель отвечает" && exit 0
+            sleep 6
+          done
+          echo "панель не ответила" && exit 1
