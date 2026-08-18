@@ -35,6 +35,7 @@ from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_error_write,
 from src.dating.dating_chat import dating_chat_listen
 from src.dating.dating_json import dating_json_load
 from src.dating.dating_presence import dating_presence_beat, dating_presence_ready
+from src.dating.dating_revive import DATING_REVIVE_PERIOD_SEC, dating_revive_round
 from src.dating.dating_ws import dating_ws_capture
 
 # Как часто сверять список учёток с базой.
@@ -88,6 +89,10 @@ async def dating_chat_hold_run(seconds: float) -> dict:
     # раз в минуту, по ограничению сайта, и он не должен тормозить приём.
     answer = asyncio.create_task(_answer_loop(deadline))
 
+    # Вход на сайт живёт около суток, и до сих пор его протухание не замечал никто:
+    # держатель шлёт голый heartbeat, а тот на мёртвых cookie молча отвечает False.
+    revive = asyncio.create_task(_revive_loop(deadline))
+
     try:
         while time.monotonic() < deadline:
             girls = await _girls_ready()
@@ -98,6 +103,7 @@ async def dating_chat_hold_run(seconds: float) -> dict:
     finally:
         beat.cancel()
         answer.cancel()
+        revive.cancel()
         for held in holders.values():
             held['task'].cancel()
         # Ждём отмены: без этого соединения закрываются уже после выхода, и в
@@ -274,6 +280,28 @@ async def _answer_loop(deadline: float) -> None:
                 await dating_auto_round(girls)
         except Exception as e:
             logger_info(f'[dating] круг автоответа: {e}')
+
+
+async def _revive_loop(deadline: float) -> None:
+    """Держит вход анкет живым, пока идёт смена.
+
+    Вход на сайт живёт около суток, и его протухание раньше не замечал никто:
+    полный опрос делала только открытая страница панели, а держатель шлёт голый
+    heartbeat, который на мёртвых cookie молча возвращает False.
+
+    Входы идут по одному: круг обходит анкеты последовательно, и каждый вход
+    дожидается предыдущего. Отдельного семафора не нужно — каждый вход открывает
+    вкладку Chromium у соседа, и десяток разом уронил бы пул, а последовательный
+    обход этого просто не допускает. Смена в установке одна (single-flight), так
+    что второго круга параллельно не бывает.
+    """
+    while time.monotonic() < deadline:
+        await asyncio.sleep(min(DATING_REVIVE_PERIOD_SEC,
+                                max(1.0, deadline - time.monotonic())))
+        try:
+            await dating_revive_round()
+        except Exception as e:
+            logger_info(f'[dating] круг восстановления: {e}')
 
 
 async def _error_write(girl_id: int, login: str, what: str, detail: str) -> None:
