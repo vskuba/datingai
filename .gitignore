@@ -9,3 +9,7 @@ data/app.log
 data/*.log
 data/*.log.*
 backups/
+
+.claude-shell
+
+.memsearch
