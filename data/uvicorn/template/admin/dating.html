@@ -117,6 +117,12 @@
         .dating-hint { color: #6b7280; font-size: 12px; }
         .dating-hint.bad { color: #b91c1c; }
 
+        /* Выход прижат к правому краю шапки: кнопка, которую ищут глазами в углу,
+           а не среди рабочих. `margin-left: auto` вместо своей колонки — шапка
+           переносится на узком экране, и колонка увела бы выход на вторую строку. */
+        .dating-user { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+        .dating-user-name { color: #6b7280; font-size: 12px; }
+
         /* Форма заведения — над списком, скрыта до нажатия «+». */
         .dating-form { display: none; flex-direction: column; gap: 6px; padding: 10px 12px; border-bottom: 1px solid #f1f5f9; }
         .dating-form.open { display: flex; }
@@ -263,6 +269,11 @@
         <select id="siteSelect" title="Сайт, на котором заведены анкеты"></select>
         <button type="button" class="dating-btn primary" id="addBtn">+ девушка</button>
         <span class="dating-hint" id="hint"></span>
+
+        <div class="dating-user">
+            <span class="dating-user-name" title="Кто сейчас в панели">{{ user.username }}</span>
+            <button type="button" class="dating-btn" id="logoutBtn" title="Выйти из панели">Logout</button>
+        </div>
     </div>
 
     <div class="pane dating-girls-pane">
@@ -783,6 +794,22 @@
         return el.innerHTML;
     }
 
+    // Выход: гасим сессию и уходим на форму входа. На форму — в любом случае, даже
+    // если запрос не прошёл: человек нажал «выйти», и оставлять его на странице с
+    // живыми анкетами нельзя. Сессия при этом остаётся, но на неё смотрит сервер, а
+    // не браузер — и первый же запрос со страницы входа её обновит.
+    async function logout() {
+        try {
+            await postData(BASE + '/auth/logout', {});
+        } catch (e) {
+            showNotification('Выход не подтверждён: ' + e.message, 'error');
+        }
+
+        // `replace`, а не `href`: «назад» из формы входа обязано вести туда, откуда
+        // человек пришёл, а не обратно в панель, которую он только что закрыл.
+        location.replace(BASE + '/login');
+    }
+
     document.getElementById('addBtn').addEventListener('click', () => {
         formEl.classList.toggle('open');
         if (formEl.classList.contains('open')) document.getElementById('login').focus();
@@ -790,6 +817,7 @@
     document.getElementById('saveBtn').addEventListener('click', girlSave);
     document.getElementById('cancelBtn').addEventListener('click', () => formEl.classList.remove('open'));
     document.getElementById('logReload').addEventListener('click', logLoad);
+    document.getElementById('logoutBtn').addEventListener('click', logout);
     // Перерисовываем на месте, без запроса: список уже в памяти.
     findEl.addEventListener('input', () => { girlsPage = 0; girlsRender(); });
     siteEl.addEventListener('change', () => {
