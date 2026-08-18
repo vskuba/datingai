@@ -509,7 +509,12 @@ async def dating_girl_listen(girl_id: int, seconds: int = 30,
     """
     girl = await _girl_row(girl_id)
     if not str(girl.get('ws_url') or ''):
-        girl['ws_url'] = await dating_login_ws_capture(girl)
+        try:
+            girl['ws_url'] = await dating_login_ws_capture(girl)
+        except DatingLoginError as e:
+            # Модуль входа не знает HTTP-кодов и сигналит исключением; сайт, которого
+            # уже нет у соседа, — это ошибка запроса (422), а не сбой сервера (500).
+            raise HTTPException(status_code=422, detail=str(e))
         if not girl['ws_url']:
             raise HTTPException(status_code=422,
                                 detail='не удалось снять адрес чат-сокета: сначала «Залогиниться»')
@@ -519,7 +524,12 @@ async def dating_girl_listen(girl_id: int, seconds: int = 30,
     # Протухший адрес — обычное дело: токены в нём живут не вечно. Снимаем заново
     # и пробуем ещё раз, чтобы человеку не приходилось гадать, почему пусто.
     if result.get('error') and not result.get('frames'):
-        girl['ws_url'] = await dating_login_ws_capture(girl)
+        try:
+            girl['ws_url'] = await dating_login_ws_capture(girl)
+        except DatingLoginError as e:
+            # Та же причина, что и выше: сайт мог пропасть между первой и повторной
+            # попыткой — и это снова 422, а не 500.
+            raise HTTPException(status_code=422, detail=str(e))
         if girl['ws_url']:
             result = await dating_chat_listen(girl, seconds=max(5, min(int(seconds or 30), 120)))
 
