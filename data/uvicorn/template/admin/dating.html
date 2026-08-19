@@ -313,6 +313,7 @@
         <div class="pane">
             <div class="pane-head">Профиль и собеседницы <span id="profileWho"></span></div>
             <div class="pane-body" id="profile"></div>
+            <div class="pane-foot" id="contactsPager"></div>
         </div>
 
         <div class="split split-row" id="splitRow" title="Потяните, чтобы изменить высоту"></div>
@@ -352,11 +353,16 @@
     const formEl = document.getElementById('form');
     const findEl = document.getElementById('girlFind');
     const pagerEl = document.getElementById('girlsPager');
+    const contactsPagerEl = document.getElementById('contactsPager');
     const pageEl = document.querySelector('.dating-page');
 
     let sites = [], girls = [], currentId = 0, probeBusy = false;
     let openUid = localStorage.getItem(OPEN_KEY) || '';
     let girlsPage = 0;
+    // Страница собеседниц живёт здесь, а не в разметке: карточка перерисовывается
+    // сама каждые 15 секунд, и читай мы номер из пейджера — он бы каждый круг
+    // возвращался на первую, прямо под руками у человека.
+    let contactsPage = 0;
 
     async function sitesLoad() {
         try {
@@ -390,12 +396,16 @@
         girlsRender();
     }
 
-    // Страницы рисуются кнопками, а не «умным» диапазоном: анкет сотни, а не
-    // тысячи, и десяток кнопок читается лучше многоточий.
-    function girlsPagerRender(pages) {
-        pagerEl.classList.toggle('open', pages > 1);
+    // Пейджер один на два списка: анкеты режутся здесь же, собеседницы приходят
+    // страницей с сервера — разная у них только выборка, а кнопки одни и те же.
+    // Номера страниц наружу 0-based: у анкет по ним же считается срез списка.
+    //
+    // Страницы рисуются кнопками, а не «умным» диапазоном: анкет и собеседниц
+    // сотни, а не тысячи, и десяток кнопок читается лучше многоточий.
+    function pagerRender(el, pages, current, pick) {
+        el.classList.toggle('open', pages > 1);
         if (pages <= 1) {
-            pagerEl.innerHTML = '';
+            el.innerHTML = '';
             return;
         }
 
@@ -403,17 +413,13 @@
             `<button type="button" class="page-btn${active ? ' active' : ''}" data-page="${page}"`
             + `${disabled ? ' disabled' : ''}>${label}</button>`;
 
-        let html = button('‹', girlsPage - 1, girlsPage === 0, false);
-        for (let i = 0; i < pages; i++) html += button(i + 1, i, false, i === girlsPage);
-        html += button('›', girlsPage + 1, girlsPage === pages - 1, false);
+        let html = button('‹', current - 1, current === 0, false);
+        for (let i = 0; i < pages; i++) html += button(i + 1, i, false, i === current);
+        html += button('›', current + 1, current === pages - 1, false);
 
-        pagerEl.innerHTML = html;
-        pagerEl.querySelectorAll('.page-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                girlsPage = Number(btn.dataset.page);
-                girlsRender();
-                girlsEl.scrollTop = 0;
-            });
+        el.innerHTML = html;
+        el.querySelectorAll('.page-btn').forEach(btn => {
+            btn.addEventListener('click', () => pick(Number(btn.dataset.page)));
         });
     }
 
@@ -443,7 +449,11 @@
         if (girlsPage >= pages) girlsPage = pages - 1;
 
         const shown = found.slice(girlsPage * PAGE_SIZE, (girlsPage + 1) * PAGE_SIZE);
-        girlsPagerRender(pages);
+        pagerRender(pagerEl, pages, girlsPage, (page) => {
+            girlsPage = page;
+            girlsRender();
+            girlsEl.scrollTop = 0;
+        });
 
         girlsEl.innerHTML = '';
         if (!girls.length) {
@@ -529,6 +539,9 @@
     // учётке — общая лента по сотне анкет ничего не говорит.
     async function girlSelect(id) {
         currentId = id;
+        // Другая анкета — другие собеседницы, и седьмая страница прошлой в ней
+        // ничего не значит: начинаем с первой.
+        contactsPage = 0;
         // Карточку открыли — новые сообщения этой учётки перестают быть новыми.
         // Отметка молчаливая: не вышла, значит бейдж просто повисит лишний круг.
         try { await postData(`${BASE}/api/dating/girl/${id}/read`, {}); } catch (e) {}
@@ -536,6 +549,10 @@
         await Promise.all([profileLoad(), logLoad()]);
     }
 
+    // Собеседницы приходят страницей с сервера, а не целиком: их бывают сотни, а
+    // на каждую показанную сервер ещё и читает последние реплики. Порядок тоже его:
+    // сначала неотвеченные, дальше по свежести — считать это здесь значило бы
+    // раскладывать пятьдесят строк, ничего не зная про остальные триста пятьдесят.
     async function profileLoad() {
         if (!currentId) return;
         const girl = girls.find(g => g.id === currentId) || {};
@@ -543,11 +560,22 @@
 
         let data;
         try {
-            data = (await getData(`${BASE}/api/dating/girl/${currentId}/profile`)).result || {};
+            data = (await getData(`${BASE}/api/dating/girl/${currentId}/profile`
+                                  + `?page=${contactsPage + 1}`)).result || {};
         } catch (e) {
             profileEl.innerHTML = `<div class="empty">профиль не пришёл: ${esc(e.message)}</div>`;
             return;
         }
+
+        // Номер страницы берём из ответа: сервер поправит его, если собеседниц
+        // стало меньше и страница уехала за конец списка. Ручка нумерует с единицы,
+        // пейджер — с нуля.
+        contactsPage = Math.max(0, Number(data.page || 1) - 1);
+
+        // В шапке — сколько собеседниц всего. Без этого показанные пятьдесят
+        // выглядят как весь список, и до пейджера человек просто не долистывает.
+        document.getElementById('profileWho').textContent =
+            `${girl.login || ''}${data.contacts_total ? ` · собеседниц: ${data.contacts_total}` : ''}`;
 
         const p = data.profile || {};
         const head = `<div class="profile">
@@ -589,6 +617,14 @@
         const scroll = profileEl.scrollTop;
         profileEl.innerHTML = head + (contacts || '<div class="empty">собеседниц пока нет — запустите «Диалоги»</div>');
         profileEl.scrollTop = scroll;
+
+        // Листаем запросом: страница собеседниц серверная. Прокрутку после
+        // перехода ставим в начало — на новой странице сохранять место незачем.
+        pagerRender(contactsPagerEl, Number(data.pages || 1), contactsPage, async (page) => {
+            contactsPage = page;
+            await profileLoad();
+            profileEl.scrollTop = 0;
+        });
 
         // Открыт один диалог за раз: их бывают сотни, и «раскрыть всё» здесь не
         // помощь, а простыня. Выбор переживает перерисовку — она идёт каждые 15 с.
