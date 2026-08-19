@@ -233,10 +233,20 @@ async def dating_revive_round(login_run=None) -> dict:
     # Настройка опроса спрашивается на сайт, а не на анкету: двести анкет с трёх
     # сайтов — это три вопроса соседу вместо двухсот, и все опросы круга видят одно
     # и то же. Сосед не ответил — сайт этот круг пропускается целиком.
-    presence_of = {site_id: await _presence_of(site_id)
-                   for site_id in sorted({int(girl['site_id']) for girl in girls})}
+    site_of = {site_id: await _presence_of(site_id)
+               for site_id in sorted({int(girl['site_id']) for girl in girls})}
+    presence_of = {site_id: presence for site_id, (presence, _) in site_of.items()}
 
     kept = [girl for girl in girls if presence_of[int(girl['site_id'])]]
+
+    # Анкеты выпавшего сайта проверить нечем — но и молчать про них нельзя: раньше
+    # такая анкета оставалась в панели с прежним «всё хорошо», хотя её не трогали
+    # уже неделю. Объявление соседу про сам сайт уходит отдельно (`_presence_of`),
+    # здесь помечается каждая анкета: человек смотрит в карточку, а не в чужую
+    # вкладку «Ошибки».
+    for girl in girls:
+        if not presence_of[int(girl['site_id'])]:
+            await _presence_missing_mark(girl, site_of[int(girl['site_id'])][1])
 
     # Ограничитель тот же, что у ручки опроса: разом — не значит все двести сразу.
     limit = asyncio.Semaphore(DATING_REVIVE_PROBE_PARALLEL)
@@ -530,15 +540,18 @@ async def _girls_kept() -> list[dict]:
     return [dict(row) for row in (rows or [])]
 
 
-async def _presence_of(site_id: int) -> dict:
-    """Настройка опроса сайта. Сосед не ответил или опрос не настроен — пустой
-    словарь, и все анкеты сайта выпадают из круга (см. `dating_revive_round`).
+async def _presence_of(site_id: int) -> tuple[dict, str]:
+    """Настройка опроса сайта и причина, если её нет.
 
-    Раньше на этом всё и кончалось: пусто — значит `continue`, а след оставался
+    Возвращает `(presence, why)`: пустой `presence` значит, что все анкеты сайта
+    выпадают из круга, а `why` — человеческая причина для карточки анкеты.
+
+    Раньше на этом всё и кончалось: пусто — значит пропускаем, а след оставался
     только в логе контейнера, который никто не читает. Анкета при этом выглядела
     в панели совершенно здоровой («всё хорошо», раз опрос её просто не коснулся) —
     ровно та беда «никто не замечает», ради которой всю ветку и делали. Поэтому
-    оба пути ниже зовут `_presence_missing_announce`."""
+    причина и уходит наружу: соседу объявлением про сайт, человеку — строкой в
+    карточке каждой анкеты (`_presence_missing_mark`)."""
     from logging_.logging_ import logger_info
     from src.dating.dating_presence import dating_presence_ready
     from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_site_get
@@ -552,11 +565,12 @@ async def _presence_of(site_id: int) -> dict:
         # соседа чинят несколько часов, человек должен понимать, что дело не в
         # настройке сайта.
         await _presence_missing_announce(site_id, 'unavailable', f'сосед не ответил: {e}')
-        return {}
+
+        return {}, 'RhapsodyAi не отвечает — проверить анкету нечем'
 
     presence = dating_json_load(site.get('presence'))
     if dating_presence_ready(presence):
-        return presence
+        return presence, ''
 
     # А это надолго и само не пройдёт: `presence` заводится руками на вкладке
     # «Сайты» соседа, и без человека тут ничего не изменится хоть сутки, хоть
@@ -566,7 +580,7 @@ async def _presence_of(site_id: int) -> dict:
         'у сайта не настроен опрос присутствия (`presence`) — анкеты сайта '
         'проверяться не будут, пока его не заведут на вкладке «Сайты»')
 
-    return {}
+    return {}, 'у сайта не настроен опрос присутствия — заведите его на вкладке «Сайты»'
 
 
 # Когда каждому сайту в последний раз писали объявление о пропавшем опросе — ключ
@@ -610,6 +624,37 @@ async def _presence_missing_announce(site_id: int, reason: str, why: str) -> Non
     await rhapsody_api_error_write(
         'dating', f'сайт #{site_id} выпал из круга проверки: {why}',
         context={'site_id': int(site_id), 'where': 'автовосстановление входа'})
+
+
+async def _presence_missing_mark(girl: dict, why: str) -> None:
+    """Анкета выпавшего сайта: показать это в её карточке, а не только соседу.
+
+    Тревогу (`relogin_since`) **не зажигаем** и лестницу не двигаем: анкета не
+    объявлена вне сети — её просто нечем проверить, и входить под ней бессмысленно
+    (вход всё равно кончается тем же опросом, которого нет). Поэтому только
+    `status` и причина: человек, открывший панель, должен увидеть, что анкету не
+    трогали, а не прежнее «всё хорошо» недельной давности.
+
+    `last_seen_at` не двигаем: у него смысл «когда сайт последний раз признал
+    учётку», и опроса как раз не было.
+
+    Строку в журнал пишем каждый круг намеренно: журнал схлопывает одинаковые
+    подряд (`dating_log_write`), поэтому в ленте останется одна строка со временем
+    последней проверки, а не столбец из полутора тысяч за сутки.
+    """
+    from logging_.logging_ import logger_info
+    from mysql_.mysql_ import mysql_get_db_async
+
+    girl_id = int(girl['id'])
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE dating_girl SET status = %s, last_error = %s '
+                             ' WHERE id = %s', ('error', str(why)[:500], girl_id))
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] пометка о выпавшем сайте не записалась: {e}')
+
+    await _log(girl_id, 'fail', f'Проверить анкету нечем: {why}')
 
 
 async def _probe_save(girl_id: int, probe: dict) -> None:

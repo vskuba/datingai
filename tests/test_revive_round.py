@@ -93,6 +93,9 @@ def round_stub(monkeypatch):
              'probe_pause': 0.0, 'clock': NOW, 'probe_raise': {},
              'probe_live': 0, 'probe_peak': 0, 'login_live': 0, 'login_peak': 0,
              'probed': [], 'saved': [], 'marked': [], 'errors': [], 'logins': [],
+             # Анкеты выпавшего сайта: их не проверить, и они обязаны получить
+             # пометку в карточку, а не остаться с прежним «всё хорошо».
+             'missing': [], 'presence_why': 'у сайта не настроен опрос присутствия',
              # Живые вкладки соседа и те, что круг закрыл. Уборка — единственное,
              # что автомат делает с чужим пулом Chromium, и промах здесь виден
              # человеку: погашенная вкладка, в которой он работал.
@@ -102,7 +105,12 @@ def round_stub(monkeypatch):
         return state['girls']
 
     async def presence_of(site_id):
-        return state['presence'].get(int(site_id), {'base': 'https://site'})
+        presence = state['presence'].get(int(site_id), {'base': 'https://site'})
+
+        return presence, ('' if presence else state['presence_why'])
+
+    async def presence_missing_mark(girl, why):
+        state['missing'].append((int(girl['id']), why))
 
     async def db_now():
         return state['clock']
@@ -154,6 +162,7 @@ def round_stub(monkeypatch):
                        ('_db_now', db_now), ('_probe_one', probe_one),
                        ('_probe_save', probe_save), ('_plan_save', plan_save),
                        ('_log', log), ('_error_write', error_write),
+                       ('_presence_missing_mark', presence_missing_mark),
                        ('_sessions_list', sessions_list), ('_session_close', session_close)):
         monkeypatch.setattr(dating_revive, name, func)
 
@@ -638,6 +647,52 @@ class TestReviveRoundProbeFailure:
         assert (girl_id, plan['action']) == (1, 'wait')
         assert plan['relogin_since'] == NOW
         assert 'TypeError' in round_stub['errors'][0][1]
+
+
+class TestReviveRoundSiteMissing:
+    """Сайт без настройки опроса: анкеты не проверить — но и молчать про них нельзя."""
+
+    async def test_girls_of_a_broken_site_are_marked(self, round_stub):
+        """Каждая анкета выпавшего сайта получает пометку в карточку.
+
+        Раньше круг просто пропускал их, а след оставался в логе контейнера,
+        который никто не читает. Анкета висела в панели с прежним «всё хорошо» —
+        хотя её не трогали неделю. Это ровно та беда «никто не замечает», ради
+        которой всё и делалось.
+        """
+        round_stub['girls'] = _girls(3)
+        round_stub['presence'] = {1: {}}
+
+        counts = await dating_revive_round(login_run=_login_stub(round_stub))
+
+        assert [girl_id for girl_id, _ in round_stub['missing']] == [1, 2, 3]
+        assert all('опрос' in why for _, why in round_stub['missing'])
+        # Проверить их нечем — значит и опрашивать нечего, и входить незачем.
+        assert (counts['online'], counts['tried']) == (0, 0)
+        assert round_stub['probed'] == []
+
+    async def test_marked_girls_keep_their_ladder(self, round_stub):
+        """Пометка — не тревога: лестницу она не двигает и вход не назначает.
+
+        Анкета не объявлена вне сети, её просто нечем проверить. Зажечь тревогу
+        значило бы гонять браузер соседа впустую: вход всё равно кончается тем же
+        опросом, которого нет.
+        """
+        round_stub['girls'] = _girls(2)
+        round_stub['presence'] = {1: {}}
+
+        await dating_revive_round(login_run=_login_stub(round_stub))
+
+        assert round_stub['saved'] == []
+        assert round_stub['logins'] == []
+
+    async def test_healthy_site_marks_nobody(self, round_stub):
+        """У настроенного сайта пометок нет вовсе — иначе она обесценится."""
+        round_stub['girls'] = _girls(2)
+
+        await dating_revive_round(login_run=_login_stub(round_stub))
+
+        assert round_stub['missing'] == []
 
 
 class TestReviveRoundBackoff:
