@@ -60,6 +60,11 @@ DATING_CHAT_HOLD_BEAT_SEC = 15
 # секунд требуют девяти параллельных — берём с запасом.
 DATING_CHAT_HOLD_BEAT_PARALLEL = 16
 
+# Сколько ждём, пока отменённые служебные задачи уберут за собой. Уборка у них —
+# запросы к соседу (закрыть вкладку Chromium), и им нужно время; но зависший сосед
+# не имеет права держать конец смены вечно: за ней стоит очередь со следующей.
+DATING_CHAT_HOLD_SHUTDOWN_SEC = 60
+
 
 async def dating_chat_hold_run(seconds: float) -> dict:
     """Держит сокеты всех готовых учёток заданное время.
@@ -110,11 +115,35 @@ async def dating_chat_hold_run(seconds: float) -> dict:
         # логе появляется хвост из «Task was destroyed but it is pending».
         await asyncio.gather(*(held['task'] for held in holders.values()),
                              return_exceptions=True)
+        await _service_wait(beat, answer, revive)
 
     saved = sum(counters.values())
     logger_info(f'[dating] держатель чата закончил: учёток {len(counters)}, сообщений {saved}')
 
     return {'girls': len(counters), 'saved': saved, 'sec': int(seconds)}
+
+
+async def _service_wait(*tasks) -> None:
+    """Дожидается отменённых служебных задач — так же, как выше дожидаются держатели.
+
+    Отменить мало: у круга восстановления после отмены есть работа. Он ловит
+    `CancelledError` посреди входа и закрывает за собой вкладку Chromium (~143 МБ),
+    а это HTTP-запрос к соседу. Уйди смена отсюда сразу, `asyncio.run` воркера
+    своим `_cancel_all_tasks` отменил бы ту же задачу **второй раз** — ровно посреди
+    уборки, — и вкладка пережила бы смену, которая её открыла. Пул общий с соседом,
+    и такие вкладки копятся от смены к смене.
+
+    Потолок обязателен: уборка стучится к соседу, а он может и не ответить. Ждать
+    его бесконечно значило бы не закончить смену, а за ней стоит следующая.
+    """
+    try:
+        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True),
+                               DATING_CHAT_HOLD_SHUTDOWN_SEC)
+    except (asyncio.TimeoutError, TimeoutError):
+        # Не дождались — уходим всё равно: смена обязана кончиться. Оставшееся
+        # доотменит `asyncio.run`, и хвост в логе честнее запертой очереди.
+        logger_info(f'[dating] служебные задачи не убрались за '
+                    f'{DATING_CHAT_HOLD_SHUTDOWN_SEC} с — заканчиваю смену')
 
 
 async def dating_chat_hold_girl(girl: dict, presence: dict, site_url: str,
