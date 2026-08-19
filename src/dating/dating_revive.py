@@ -23,12 +23,19 @@
 шапка с `mysql_` и `logging_` сделала бы арифметику лестницы непроверяемой.
 """
 
+import asyncio
 from datetime import datetime, timedelta
 
 from src.dating.dating_json import dating_json_load
 
 # Как часто смена сверяет вход анкет с сайтом.
 DATING_REVIVE_PERIOD_SEC = 60
+
+# Сколько опросов идёт разом. Столько же и по той же причине берёт ручка опроса
+# (`DATING_GIRL_PROBE_PARALLEL`): опрос — это единицы килобайт по HTTP, и двести
+# анкет подряд не уложились бы в минуту круга. Входы этим числом не ограничены —
+# они идут строго по одному, вкладка Chromium стоит куда дороже.
+DATING_REVIVE_PROBE_PARALLEL = 16
 
 # Возраст входа, после которого он обновляется профилактически. Сессия сайта живёт
 # около суток, и ловить её протухание в середине разговора незачем.
@@ -193,6 +200,18 @@ def _plan_login(since: datetime | None, tries: int, now: datetime) -> dict:
 async def dating_revive_round(login_run=None) -> dict:
     """Один круг: опросить анкеты под присмотром и починить те, что выпали.
 
+    Опросы идут разом, входы — строго по одному, и это разные вещи по разным причинам.
+
+    Опрос — три-четыре HTTP-запроса с таймаутом в десять секунд; у двухсот анкет
+    последовательный обход занял бы минут семь, и круг «раз в минуту» превратился бы
+    в «раз в семь-десять», а задержка обнаружения росла бы вместе с числом анкет.
+    Тот же приём и по той же причине — в ручке `dating_girl_probe`.
+
+    Вход — наоборот: каждый открывает вкладку Chromium (~143 МБ) в пуле, общем с
+    соседом. Сайт лёг, все анкеты решили входить — и параллельные входы уронили бы
+    пул вместе с собственной работой соседа. Поэтому решения и входы идут в один
+    ряд, после того как опросы кончились.
+
     Вход передаётся параметром, а не импортируется намертво: так круг проверяется
     тестами без браузера, а модуль не тянет за собой половину проекта.
 
@@ -200,71 +219,108 @@ async def dating_revive_round(login_run=None) -> dict:
         dict: `checked`, `online`, `tried` (сколько раз входили), `revived`,
         `given_up`.
     """
-    from src.dating.dating_log import dating_log_write
-    from src.dating.dating_login import dating_login_run
-    from src.dating.dating_presence import dating_presence_probe
+    if login_run is None:
+        # Импорт только когда вход настоящий: с заглушкой круг обязан работать без
+        # браузера и без зависимостей проекта — на этом стоят его тесты.
+        from src.dating.dating_login import dating_login_run
 
-    login_run = login_run or dating_login_run
-    counts = {'checked': 0, 'online': 0, 'tried': 0, 'revived': 0, 'given_up': 0}
-    now = await _db_now()
+        login_run = dating_login_run
 
-    for girl in await _girls_kept():
-        counts['checked'] += 1
-        presence = await _presence_of(int(girl['site_id']))
-        if not presence:
-            continue
+    girls = await _girls_kept()
+    counts = {'checked': len(girls), 'online': 0, 'tried': 0, 'revived': 0, 'given_up': 0}
 
-        probe = await dating_presence_probe(girl, presence)
-        online = probe['status'] == 'online'
+    # Настройка опроса спрашивается на сайт, а не на анкету: двести анкет с трёх
+    # сайтов — это три вопроса соседу вместо двухсот, и все опросы круга видят одно
+    # и то же. Сосед не ответил — сайт этот круг пропускается целиком.
+    presence_of = {site_id: await _presence_of(site_id)
+                   for site_id in sorted({int(girl['site_id']) for girl in girls})}
+
+    kept = [girl for girl in girls if presence_of[int(girl['site_id'])]]
+
+    # Ограничитель тот же, что у ручки опроса: разом — не значит все двести сразу.
+    limit = asyncio.Semaphore(DATING_REVIVE_PROBE_PARALLEL)
+
+    async def probe(girl: dict) -> dict:
+        async with limit:
+            return await _probe_one(girl, presence_of[int(girl['site_id'])])
+
+    probes = await asyncio.gather(*(probe(girl) for girl in kept))
+
+    for girl, result in zip(kept, probes):
+        online = result['status'] == 'online'
         counts['online'] += int(online)
-        await _probe_save(int(girl['id']), probe)
 
-        plan = dating_revive_plan(girl, online, now)
+        # Время — на каждую анкету, а не одно на круг: перед этой строкой мог
+        # пройти вход соседней анкеты, а он стоит минуту-две. По устаревшему `now`
+        # наступивший за это время срок читался бы как ненаступивший, и анкета
+        # ждала бы ещё круг — и так каждый раз, пока в круге есть хоть один вход.
+        plan = dating_revive_plan(girl, online, await _db_now())
         await _plan_save(int(girl['id']), plan)
 
         if plan['action'] == 'wait':
-            await dating_log_write(int(girl['id']), 'fail',
-                                   f"Вход не признан сайтом: {probe['error'] or probe['status']}")
-            await _error_write(girl, probe['error'] or probe['status'])
+            await _log(int(girl['id']), 'fail',
+                       f"Вход не признан сайтом: {result['error'] or result['status']}")
+            await _error_write(girl, result['error'] or result['status'])
         elif plan['action'] == 'give_up':
             # Считаем и объявляем переход, а не состояние: решение отдаёт `give_up`
             # только на том круге, который сдался, — иначе сюда бы попадала одна и
             # та же анкета каждую минуту, пока её не поднимут руками.
             counts['given_up'] += 1
-            await dating_log_write(int(girl['id']), 'fail',
-                                   'Сутки не выходит войти — попытки прекращены, нужен вход вручную')
+            await _log(int(girl['id']), 'fail',
+                       'Сутки не выходит войти — попытки прекращены, нужен вход вручную')
             await _error_write(girl, 'сутки не выходит войти, автовход остановлен')
         elif plan['action'] == 'login':
             counts['tried'] += 1
-            if await _login_try(int(girl['id']), login_run, plan, online):
+            if await _login_try(girl, login_run, plan, online):
                 counts['revived'] += 1
 
     return counts
 
 
-async def _login_try(girl_id: int, login_run, plan: dict, planned: bool = False) -> bool:
+async def _login_try(girl: dict, login_run, plan: dict, planned: bool = False) -> bool:
     """Одна попытка входа. Успех сам снимает откат — это делает `dating_login_run`.
 
     Повод берётся из опроса, а не из полей учётки: откат есть у обоих поводов, а
     человеку в журнале важно, чинили протухший вход или обновляли живой по сроку.
     """
-    from src.dating.dating_log import dating_log_write
-
-    await dating_log_write(girl_id, 'info',
-                           f"{'Обновляю вход заранее' if planned else 'Вхожу заново'} "
-                           f"(попытка {plan['relogin_tries']})")
+    girl_id = int(girl['id'])
+    await _log(girl_id, 'info',
+               f"{'Обновляю вход заранее' if planned else 'Вхожу заново'} "
+               f"(попытка {plan['relogin_tries']})")
     try:
         result = await login_run(girl_id)
     except Exception as e:
-        await dating_log_write(girl_id, 'fail', f'Войти не вышло: {str(e)[:300]}')
+        await _log(girl_id, 'fail', f'Войти не вышло: {str(e)[:300]}')
         return False
 
     ok = str(result.get('status')) == 'success' and not result.get('error')
-    await dating_log_write(girl_id, 'ok' if ok else 'fail',
-                           'Вход восстановлен' if ok
-                           else f"Войти не вышло: {str(result.get('error') or '')[:300]}")
+    await _log(girl_id, 'ok' if ok else 'fail',
+               'Вход восстановлен' if ok
+               else f"Войти не вышло: {str(result.get('error') or '')[:300]}")
 
     return ok
+
+
+async def _probe_one(girl: dict, presence: dict) -> dict:
+    """Опрос одной анкеты вместе с записью его итога в карточку.
+
+    Отдельной функцией, потому что распараллеливается именно эта пара шагов: выше
+    их зовут разом, под общим ограничителем.
+    """
+    from src.dating.dating_presence import dating_presence_probe
+
+    probe = await dating_presence_probe(girl, presence)
+    await _probe_save(int(girl['id']), probe)
+
+    return probe
+
+
+async def _log(girl_id: int, kind: str, text: str) -> None:
+    """Строка в журнал анкеты. Обёртка ради одного импорта: журнал тянет за собой
+    базу, а модуль держит тяжёлые импорты внутри функций (см. шапку)."""
+    from src.dating.dating_log import dating_log_write
+
+    await dating_log_write(int(girl_id), kind, text)
 
 
 async def _db_now() -> datetime:

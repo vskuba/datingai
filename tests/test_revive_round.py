@@ -7,11 +7,20 @@
 (`relogin_tries` + `relogin_next_at`) живут порознь. Тревога зажигается только когда
 анкеты нет в сети, а откат держит паузы между входами при любом поводе и переживает
 гашение тревоги. Слить их обратно в одно — вернуть браузер соседа раз в минуту.
+
+Второе, что здесь стерегут, — порядок работы круга: опросы разом, входы по одному.
+Ошибка в любую сторону не видна глазом и стоит дорого: последовательные опросы
+растягивают круг с минуты до десяти, параллельные входы кладут пул Chromium соседа.
 """
 
+import asyncio
 from datetime import datetime, timedelta
 
-from src.dating.dating_revive import dating_revive_plan
+import pytest
+
+from src.dating import dating_revive
+from src.dating.dating_revive import (DATING_REVIVE_PROBE_PARALLEL, dating_revive_plan,
+                                      dating_revive_round)
 
 NOW = datetime(2026, 8, 18, 12, 0, 0)
 
@@ -28,6 +37,89 @@ def _girl(**kw) -> dict:
     row.update(kw)
 
     return row
+
+
+def _girls(count: int, **kw) -> list[dict]:
+    """Пачка анкет одного сайта — там, где важно не решение, а порядок работы."""
+    return [_girl(id=n, login=f'g{n}', site_id=1, **kw) for n in range(1, count + 1)]
+
+
+def _login_stub(state: dict, pause=timedelta(0), ok: bool = True):
+    """Вход-заглушка: считает, сколько их идёт разом, и двигает часы, как настоящий.
+
+    Настоящий вход занимает минуту-две живого времени, и именно из-за этого круг не
+    имеет права держать одно `now` на всех.
+    """
+    async def login_run(girl_id: int) -> dict:
+        state['login_live'] += 1
+        state['login_peak'] = max(state['login_peak'], state['login_live'])
+        state['logins'].append(int(girl_id))
+        # Уступаем управление: будь входы параллельны, здесь бы они и наложились.
+        await asyncio.sleep(0.01)
+        state['clock'] += pause
+        state['login_live'] -= 1
+
+        return {'status': 'success' if ok else 'error', 'session_id': '', 'error': ''}
+
+    return login_run
+
+
+@pytest.fixture
+def round_stub(monkeypatch):
+    """Круг с подменёнными краями: без базы, без соседа, без живого сайта.
+
+    Подменяется ровно то, чем модуль выходит наружу, — несколько маленьких обёрток
+    (они для того и выделены: тяжёлые импорты живут внутри функций, и сюита
+    запускается без зависимостей проекта). Порядок работы, счётчики и решения при
+    этом настоящие — беды, ради которых написаны эти тесты, живут именно в них.
+    """
+    state = {'girls': [], 'presence': {}, 'status': {}, 'plan_saved': True,
+             'probe_pause': 0.0, 'clock': NOW,
+             'probe_live': 0, 'probe_peak': 0, 'login_live': 0, 'login_peak': 0,
+             'probed': [], 'saved': [], 'marked': [], 'errors': [], 'logins': []}
+
+    async def girls_kept():
+        return state['girls']
+
+    async def presence_of(site_id):
+        return state['presence'].get(int(site_id), {'base': 'https://site'})
+
+    async def db_now():
+        return state['clock']
+
+    async def probe_one(girl, presence):
+        state['probe_live'] += 1
+        state['probe_peak'] = max(state['probe_peak'], state['probe_live'])
+        try:
+            await asyncio.sleep(state['probe_pause'])
+        finally:
+            state['probe_live'] -= 1
+        state['probed'].append(int(girl['id']))
+
+        return {'status': state['status'].get(int(girl['id']), 'online'),
+                'unread': 0, 'error': '', 'ms': 1}
+
+    async def probe_save(girl_id, probe):
+        state['marked'].append((int(girl_id), probe))
+
+    async def plan_save(girl_id, plan):
+        state['saved'].append((int(girl_id), plan))
+
+        return state['plan_saved']
+
+    async def log(girl_id, kind, text):
+        pass
+
+    async def error_write(girl, why, **kw):
+        state['errors'].append((int(girl['id']), why))
+
+    for name, func in (('_girls_kept', girls_kept), ('_presence_of', presence_of),
+                       ('_db_now', db_now), ('_probe_one', probe_one),
+                       ('_probe_save', probe_save), ('_plan_save', plan_save),
+                       ('_log', log), ('_error_write', error_write)):
+        monkeypatch.setattr(dating_revive, name, func)
+
+    return state
 
 
 def _apply(girl: dict, plan: dict) -> dict:
@@ -285,3 +377,66 @@ class TestRevivePlan:
                                    now=NOW + timedelta(minutes=4))
         assert early['action'] == 'none'
         assert early['relogin_next_at'] == NOW + timedelta(minutes=6)
+
+
+class TestReviveRoundOrder:
+    """Порядок работы круга: опросы разом, входы по одному, время — на каждую анкету."""
+
+    async def test_probes_go_at_once(self, round_stub):
+        """Опросы идут разом: подряд они не укладываются в свою минуту.
+
+        Опрос — три-четыре HTTP-запроса с таймаутом в десять секунд. У двухсот
+        анкет, о которых говорит документация, последовательный обход занял бы минут
+        семь: круг «раз в минуту» превратился бы в «раз в семь-десять», а задержка
+        обнаружения росла бы вместе с числом анкет.
+        """
+        round_stub['girls'] = _girls(8)
+        round_stub['probe_pause'] = 0.05
+
+        counts = await dating_revive_round(login_run=_login_stub(round_stub))
+
+        assert counts['checked'] == 8
+        assert counts['online'] == 8
+        assert round_stub['probe_peak'] == 8
+
+    async def test_probes_do_not_flood(self, round_stub):
+        """Разом — но не все: у соседа и у сайта есть предел, отсюда ограничитель."""
+        round_stub['girls'] = _girls(DATING_REVIVE_PROBE_PARALLEL + 5)
+        round_stub['probe_pause'] = 0.02
+
+        await dating_revive_round(login_run=_login_stub(round_stub))
+
+        assert round_stub['probe_peak'] == DATING_REVIVE_PROBE_PARALLEL
+
+    async def test_logins_go_one_at_a_time(self, round_stub):
+        """Входы — строго по одному, и это требование не обсуждается.
+
+        Каждый вход открывает вкладку Chromium (~143 МБ) в пуле, общем с соседом.
+        Сайт лёг, все анкеты пошли входить разом — и пул падает вместе с чужой работой.
+        """
+        round_stub['girls'] = _girls(4, login_age_sec=21 * 3600)
+
+        counts = await dating_revive_round(login_run=_login_stub(round_stub))
+
+        assert counts['tried'] == 4
+        assert counts['revived'] == 4
+        assert round_stub['login_peak'] == 1
+
+    async def test_now_is_taken_for_every_girl(self, round_stub):
+        """Время берётся на каждую анкету, а не одно на весь круг.
+
+        Перед решением по второй анкете проходит вход первой — минута-две живого
+        времени. С одним `now` на круг срок второй, наступивший за это время,
+        читался бы как ненаступивший, и анкета ждала бы ещё круг — и так каждый раз,
+        пока в круге есть хоть один вход.
+        """
+        round_stub['girls'] = [
+            _girl(id=1, login='g1', site_id=1, login_age_sec=21 * 3600),
+            _girl(id=2, login='g2', site_id=1, relogin_since=NOW - timedelta(minutes=1),
+                  relogin_tries=1, relogin_next_at=NOW + timedelta(minutes=2))]
+        round_stub['status'] = {2: 'offline'}
+
+        await dating_revive_round(
+            login_run=_login_stub(round_stub, pause=timedelta(minutes=5)))
+
+        assert round_stub['logins'] == [1, 2]
