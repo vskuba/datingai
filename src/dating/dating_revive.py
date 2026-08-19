@@ -244,9 +244,13 @@ async def dating_revive_round(login_run=None) -> dict:
         async with limit:
             return await _probe_one(girl, presence_of[int(girl['site_id'])])
 
-    probes = await asyncio.gather(*(probe(girl) for girl in kept))
+    # `return_exceptions=True` — тем же приёмом и по той же причине, что в
+    # `_presence_loop` держателя: упавший опрос одной анкеты не имеет права уносить
+    # с собой круг. Разбор — в `_probe_failed`.
+    probes = await asyncio.gather(*(probe(girl) for girl in kept), return_exceptions=True)
 
-    for girl, result in zip(kept, probes):
+    for girl, outcome in zip(kept, probes):
+        result = _probe_failed(outcome) if isinstance(outcome, BaseException) else outcome
         online = result['status'] == 'online'
         counts['online'] += int(online)
 
@@ -284,6 +288,28 @@ async def dating_revive_round(login_run=None) -> dict:
                 counts['revived'] += 1
 
     return counts
+
+
+def _probe_failed(error: BaseException) -> dict:
+    """Упавший опрос — отказом одной анкеты, а не концом круга.
+
+    `dating_presence_probe` ловит своё внутри, но не всё: cookie из
+    `storage_state` читаются **до** его `try`, и кривое состояние (`cookies`
+    списком строк) бросит наружу. Пока `gather` шёл без `return_exceptions`, такая
+    строка обрывала круг целиком — и не разово: следующий круг спотыкался о неё же,
+    и анкеты после сломанной переставали проверяться совсем.
+
+    Отказ считаем «не в сети», а не «пропускаем»: тихо пропущенная анкета висела бы
+    в панели здоровой — ровно та беда «никто не замечает», ради которой всё
+    затевалось. А так зажжётся тревога, и человек увидит причину в карточке.
+
+    Отмену пропускаем наружу: смена кончилась, и продолжать круг незачем.
+    """
+    if isinstance(error, asyncio.CancelledError):
+        raise error
+
+    return {'status': 'error', 'unread': -1, 'ms': 0,
+            'error': f'опрос не отработал: {type(error).__name__}: {error}'}
 
 
 async def _login_try(girl: dict, login_run, plan: dict, planned: bool = False) -> bool:

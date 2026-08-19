@@ -74,7 +74,7 @@ def round_stub(monkeypatch):
     этом настоящие — беды, ради которых написаны эти тесты, живут именно в них.
     """
     state = {'girls': [], 'presence': {}, 'status': {}, 'plan_saved': True,
-             'probe_pause': 0.0, 'clock': NOW,
+             'probe_pause': 0.0, 'clock': NOW, 'probe_raise': {},
              'probe_live': 0, 'probe_peak': 0, 'login_live': 0, 'login_peak': 0,
              'probed': [], 'saved': [], 'marked': [], 'errors': [], 'logins': []}
 
@@ -95,6 +95,9 @@ def round_stub(monkeypatch):
         finally:
             state['probe_live'] -= 1
         state['probed'].append(int(girl['id']))
+        broken = state['probe_raise'].get(int(girl['id']))
+        if broken:
+            raise broken
 
         return {'status': state['status'].get(int(girl['id']), 'online'),
                 'unread': 0, 'error': '', 'ms': 1}
@@ -440,6 +443,45 @@ class TestReviveRoundOrder:
             login_run=_login_stub(round_stub, pause=timedelta(minutes=5)))
 
         assert round_stub['logins'] == [1, 2]
+
+
+class TestReviveRoundProbeFailure:
+    """Упавший опрос — беда одной анкеты, а не конец круга для всех остальных."""
+
+    async def test_broken_probe_does_not_break_the_round(self, round_stub):
+        """Опрос бросил — анкета считается не в сети, остальные проверяются дальше.
+
+        Сейчас круг держится только на том, что `dating_presence_probe` глушит своё
+        внутри. Гарантии нет: cookie из `storage_state` читаются **до** его `try`, и
+        кривое состояние (`cookies` списком строк) бросит наружу. Без перехвата круг
+        обрывался бы целиком — и не разово: следующий круг споткнулся бы о ту же
+        строку, и анкеты после сломанной перестали бы проверяться совсем.
+        """
+        round_stub['girls'] = _girls(3)
+        round_stub['probe_raise'] = {2: TypeError('cookies списком строк')}
+
+        counts = await dating_revive_round(login_run=_login_stub(round_stub))
+
+        assert counts['checked'] == 3
+        # Две живые анкеты посчитаны, сломанная — нет, но круг дошёл до конца.
+        assert counts['online'] == 2
+        assert [girl_id for girl_id, _ in round_stub['saved']] == [1, 2, 3]
+
+    async def test_broken_probe_counts_as_offline(self, round_stub):
+        """Отказ опроса зажигает тревогу — как и любое другое «не в сети».
+
+        Проглотить его тихо было бы хуже поломки: анкета висела бы в панели
+        здоровой, потому что круг её просто не коснулся.
+        """
+        round_stub['girls'] = _girls(1)
+        round_stub['probe_raise'] = {1: TypeError('cookies списком строк')}
+
+        await dating_revive_round(login_run=_login_stub(round_stub))
+
+        girl_id, plan = round_stub['saved'][0]
+        assert (girl_id, plan['action']) == (1, 'wait')
+        assert plan['relogin_since'] == NOW
+        assert 'TypeError' in round_stub['errors'][0][1]
 
 
 class TestReviveRoundBackoff:
