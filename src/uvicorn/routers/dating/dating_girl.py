@@ -135,7 +135,7 @@ async def dating_girl_list(site_id: int = 0,
         await db.execute(
             'SELECT g.id, g.site_id, g.login, g.note, g.status, g.unread, g.last_seen_at, '
             '       g.last_error, g.profile, g.auto_answer, g.auto_answer_only, '
-            '       g.keep_online, g.relogin_since, g.relogin_next_at, '
+            '       g.keep_online, g.relogin_since, g.relogin_next_at, NOW() AS db_now, '
             '       g.password <> %s AS has_password, '
             '       g.storage_state IS NOT NULL AS has_state, '
             '       (SELECT COUNT(DISTINCT m.sender_uid) FROM dating_message m '
@@ -153,7 +153,14 @@ async def dating_girl_list(site_id: int = 0,
         row['keep_online'] = bool(row.get('keep_online'))
         # Состояние считает сервер: страница иначе повторяла бы арифметику суток,
         # и «мигает или горит ровно» решалось бы в двух местах по-разному.
-        row['revive_state'] = dating_revive_state(row.pop('relogin_since', None), datetime.now())
+        #
+        # Время — из той же строки (`NOW()`), а не `datetime.now()`: все времена
+        # анкеты живут по часам базы, и сутки тревоги обязаны считаться ими же.
+        # Часы контейнера и MySQL расходятся молча — `TZ` не задан ни в одном
+        # compose, а прод-MySQL стоит на чужом сервере, — и «сдались» показывалось
+        # бы на час раньше или позже срока, который просил заказчик.
+        row['revive_state'] = dating_revive_state(row.pop('relogin_since', None),
+                                                  row.pop('db_now', None) or datetime.now())
         # Имя и фотография — в список: карточку узнают по лицу, а не по номеру.
         # Анкета целиком отдаётся отдельной ручкой: в списке из неё нужны два поля.
         profile = dating_json_load(row.pop('profile', None))

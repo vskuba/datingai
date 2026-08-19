@@ -17,7 +17,13 @@ NOW = datetime(2026, 8, 18, 12, 0, 0)
 
 
 def _girl(**kw) -> dict:
-    row = {'id': 1, 'login': 'test', 'keep_online': 1, 'logged_in_at': NOW,
+    """Строка учётки такой, какой её отдаёт `_girls_kept`.
+
+    Возраст входа приходит числом секунд, а не моментом времени: `logged_in_at`
+    пишет `NOW()` базы, и вычитать его из `datetime.now()` контейнера значило бы
+    сравнивать двое разных часов. Считает возраст сама база (`TIMESTAMPDIFF`).
+    """
+    row = {'id': 1, 'login': 'test', 'keep_online': 1, 'login_age_sec': 0,
            'relogin_since': None, 'relogin_tries': 0, 'relogin_next_at': None}
     row.update(kw)
 
@@ -49,13 +55,30 @@ class TestRevivePlan:
         бы за ним в браузер соседа каждую минуту. А вот тревогу не зажигаем — анкета
         в сети, человеку тут делать нечего.
         """
-        girl = _girl(logged_in_at=NOW - timedelta(hours=21))
+        girl = _girl(login_age_sec=21 * 3600)
         plan = dating_revive_plan(girl, online=True, now=NOW)
 
         assert plan['action'] == 'login'
         assert plan['relogin_since'] is None
         assert plan['relogin_tries'] == 1
         assert plan['relogin_next_at'] == NOW + timedelta(minutes=5)
+
+    def test_age_is_taken_from_the_database_not_from_the_row(self):
+        """Возраст входа — только число секунд из SQL; момент времени игнорируется.
+
+        `logged_in_at` пишет `NOW()` базы, а вычитали его из `datetime.now()`
+        контейнера. `TZ` не задан ни в одном compose, прод-MySQL живёт на чужом
+        сервере со своими настройками — и профилактика «при двадцати часах»
+        молча превращалась в «двадцать плюс-минус расхождение поясов».
+        """
+        girl = _girl(login_age_sec=3600, logged_in_at=NOW - timedelta(hours=30))
+
+        assert dating_revive_plan(girl, online=True, now=NOW)['action'] == 'none'
+
+    def test_no_age_means_old(self):
+        """Возраст неизвестен (входа не было) — считаем вход протухшим и обновляем."""
+        assert dating_revive_plan(_girl(login_age_sec=None),
+                                  online=True, now=NOW)['action'] == 'login'
 
     def test_planned_login_failure_waits_on_ladder(self):
         """Плановый вход не вышел, опрос всё ещё online — откат не стираем.
@@ -64,7 +87,7 @@ class TestRevivePlan:
         значит вход через браузер не прошёл, и повторять его надо по лестнице.
         Тревоги при этом по-прежнему нет: карточке мигать не о чем.
         """
-        girl = _girl(logged_in_at=NOW - timedelta(hours=21), relogin_tries=1,
+        girl = _girl(login_age_sec=21 * 3600, relogin_tries=1,
                      relogin_next_at=NOW + timedelta(minutes=4))
         plan = dating_revive_plan(girl, online=True, now=NOW)
 
@@ -75,7 +98,7 @@ class TestRevivePlan:
 
     def test_planned_login_retries_when_due(self):
         """Срок повторного планового входа настал — входим, лестница едет дальше."""
-        girl = _girl(logged_in_at=NOW - timedelta(hours=21), relogin_tries=1,
+        girl = _girl(login_age_sec=21 * 3600, relogin_tries=1,
                      relogin_next_at=NOW - timedelta(seconds=1))
         plan = dating_revive_plan(girl, online=True, now=NOW)
 
@@ -158,7 +181,7 @@ class TestRevivePlan:
         так и остался старым. Прежде возраст входа держал тревогу зажжённой, и через
         сутки такой анкете выставлялось «сдались» при живом опросе.
         """
-        girl = _girl(logged_in_at=NOW - timedelta(hours=23),
+        girl = _girl(login_age_sec=23 * 3600,
                      relogin_since=NOW - timedelta(hours=3), relogin_tries=5,
                      relogin_next_at=NOW + timedelta(minutes=30))
         plan = dating_revive_plan(girl, online=True, now=NOW)
@@ -173,7 +196,7 @@ class TestRevivePlan:
 
         Сдача — про «нужен вход вручную». Пока анкета в сети, дёргать человека не о чем.
         """
-        girl = _girl(logged_in_at=NOW - timedelta(hours=30),
+        girl = _girl(login_age_sec=30 * 3600,
                      relogin_since=NOW - timedelta(hours=26), relogin_tries=14,
                      relogin_next_at=NOW + timedelta(hours=1))
         plan = dating_revive_plan(girl, online=True, now=NOW)
@@ -184,7 +207,7 @@ class TestRevivePlan:
     def test_online_and_due_clears_alarm_and_logs_in(self):
         """Тревога шла, анкета вернулась, вход протух и пауза вышла — оба сразу:
         тревогу гасим, вход обновляем, лестница едет дальше."""
-        girl = _girl(logged_in_at=NOW - timedelta(hours=23),
+        girl = _girl(login_age_sec=23 * 3600,
                      relogin_since=NOW - timedelta(hours=3), relogin_tries=3,
                      relogin_next_at=NOW - timedelta(seconds=1))
         plan = dating_revive_plan(girl, online=True, now=NOW)

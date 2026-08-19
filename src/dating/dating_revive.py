@@ -76,6 +76,20 @@ def dating_revive_plan(girl: dict, online: bool, now: datetime) -> dict:
     Отдельно от самого круга, потому что здесь всё интересное: лестница, сдача,
     профилактика. Круг вокруг — это база и вход, их в тестах не прогонишь.
 
+    Часы тут одни на всё — часы базы, и это условие, а не деталь:
+
+    * возраст входа приходит **числом секунд** (`login_age_sec`), посчитанным самой
+      базой (`TIMESTAMPDIFF` в `_girls_kept`): `logged_in_at` пишет её `NOW()`, и
+      момент времени наружу вообще не выходит;
+    * `now` круг берёт у базы же (`_db_now`), поэтому записанные из него
+      `relogin_since` и `relogin_next_at` меряются той же линейкой — и здесь, и в
+      ручке списка анкет, и на карточке рядом с `last_seen_at`.
+
+    Возьми питон свои `datetime.now()`, и всё поехало бы на расхождение поясов: `TZ`
+    не задан ни в одном compose, а прод-MySQL стоит на чужом сервере со своими
+    настройками. Заказчик просил профилактику при двадцати часах, а не при двадцати
+    ± часовой пояс, и молчаливость этой ошибки — худшее в ней.
+
     Три поля тут делят между собой две разные заботы, и путать их нельзя:
 
     * `relogin_since` — **тревога**: анкеты нет в сети. Это она мигает на карточке и
@@ -102,8 +116,11 @@ def dating_revive_plan(girl: dict, online: bool, now: datetime) -> dict:
     since = girl.get('relogin_since')
     tries = int(girl.get('relogin_tries') or 0)
     next_at = girl.get('relogin_next_at')
-    logged_in_at = girl.get('logged_in_at')
-    old = not logged_in_at or (now - logged_in_at).total_seconds() >= DATING_REVIVE_AGE_SEC
+    # Возраст входа считает база (`TIMESTAMPDIFF` в `_girls_kept`), а не питон:
+    # `logged_in_at` пишется её `NOW()`, и разница часов уходила бы прямо в число
+    # часов профилактики. Пусто — входа не было вовсе, и обновить его точно пора.
+    age = girl.get('login_age_sec')
+    old = age is None or int(age) >= DATING_REVIVE_AGE_SEC
 
     if online:
         # Анкета отвечает — тревоге взяться неоткуда, гасим её всегда. Возраст входа
@@ -189,7 +206,7 @@ async def dating_revive_round(login_run=None) -> dict:
 
     login_run = login_run or dating_login_run
     counts = {'checked': 0, 'online': 0, 'tried': 0, 'revived': 0, 'given_up': 0}
-    now = datetime.now()
+    now = await _db_now()
 
     for girl in await _girls_kept():
         counts['checked'] += 1
@@ -250,14 +267,39 @@ async def _login_try(girl_id: int, login_run, plan: dict, planned: bool = False)
     return ok
 
 
+async def _db_now() -> datetime:
+    """Который час — по часам базы, а не контейнера.
+
+    В этих часах живут все времена анкеты: `logged_in_at` и `last_seen_at` пишет
+    сам MySQL своим `NOW()`, а `relogin_since` и `relogin_next_at` пишет питон —
+    но значениями отсюда, так что порода у них одна. Возьми питон свои
+    `datetime.now()`, и сравнение «пора ли входить» поехало бы ровно на
+    расхождение поясов: `TZ` не задан ни в `docker-compose.yml`, ни в
+    `docker-compose.prod.yml`, а прод-MySQL стоит на чужом сервере со своими
+    настройками. Заказчик просил лестницу в минутах, а не в минутах ± часовой пояс.
+    """
+    from mysql_.mysql_ import mysql_get_db_async
+
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT NOW() AS db_now')
+        row = await db.fetchone()
+
+    return (dict(row or {}) or {}).get('db_now') or datetime.now()
+
+
 async def _girls_kept() -> list[dict]:
     """Анкеты под присмотром автомата — те, кого хотя бы раз ввели успешно."""
     from mysql_.mysql_ import mysql_get_db_async
 
     async with mysql_get_db_async() as db:
+        # Возраст входа считает база, а не питон: `logged_in_at` пишется её же
+        # `NOW()`, и вычитание из `datetime.now()` контейнера сравнивало бы двое
+        # разных часов — `TZ` не задан ни в одном compose, а прод-MySQL стоит на
+        # чужом сервере. Наружу уходит число секунд, момент времени тут не нужен.
         await db.execute(
-            'SELECT id, login, site_id, storage_state, keep_online, logged_in_at, '
-            '       relogin_since, relogin_tries, relogin_next_at '
+            'SELECT id, login, site_id, storage_state, status, last_error, '
+            '       relogin_since, relogin_tries, relogin_next_at, '
+            '       TIMESTAMPDIFF(SECOND, logged_in_at, NOW()) AS login_age_sec '
             '  FROM dating_girl WHERE keep_online = 1 ORDER BY id')
         rows = await db.fetchall()
 
