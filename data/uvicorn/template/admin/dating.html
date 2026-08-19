@@ -386,12 +386,21 @@
             girlsEl.innerHTML = '<div class="empty">заведите сайт на /admin/browser</div>';
             return;
         }
+        // Сайт, под который ушёл запрос, запоминаем отдельно от значения в селекте:
+        // girlsLoad() зовёт и фоновый опрос (probe, каждые 15 секунд), и смена сайта
+        // человеком — а пока первый запрос летит, человек успевает выбрать другой
+        // сайт и выстрелить вторым. Если ответ по старому сайту придёт позже ответа
+        // по новому, без сверки siteId() с тем, что было на старте, он перепишет
+        // общий список `girls` данными не того сайта, что выбран сейчас.
+        const requestSite = siteId();
         try {
-            girls = (await getData(BASE + '/api/dating/girl?site_id=' + siteId())).result || [];
+            girls = (await getData(BASE + '/api/dating/girl?site_id=' + requestSite)).result || [];
         } catch (e) {
+            if (siteId() !== requestSite) return;
             say('список не пришёл: ' + e.message, true);
             return;
         }
+        if (siteId() !== requestSite) return;
 
         girlsRender();
     }
@@ -555,17 +564,27 @@
     // раскладывать пятьдесят строк, ничего не зная про остальные триста пятьдесят.
     async function profileLoad() {
         if (!currentId) return;
+        // Анкету, для которой ушёл запрос, запоминаем отдельно от currentId: функцию
+        // зовёт фоновый опрос каждые 15 секунд, и пока ответ летит, человек успевает
+        // выбрать другую анкету — girlSelect() тут же переставит currentId и запустит
+        // свой profileLoad(). Если ответ по старой анкете придёт позже ответа по новой,
+        // без сверки currentId с requestId он перепишет contactsPage и разметку
+        // профиля данными не той анкеты, что выбрана сейчас. Гонка сети, а не логики —
+        // при обычном чтении кода и в автотестах по HTTP она не видна.
+        const requestId = currentId;
         const girl = girls.find(g => g.id === currentId) || {};
         document.getElementById('profileWho').textContent = girl.login || '';
 
         let data;
         try {
-            data = (await getData(`${BASE}/api/dating/girl/${currentId}/profile`
+            data = (await getData(`${BASE}/api/dating/girl/${requestId}/profile`
                                   + `?page=${contactsPage + 1}`)).result || {};
         } catch (e) {
+            if (currentId !== requestId) return;
             profileEl.innerHTML = `<div class="empty">профиль не пришёл: ${esc(e.message)}</div>`;
             return;
         }
+        if (currentId !== requestId) return;
 
         // Номер страницы берём из ответа: сервер поправит его, если собеседниц
         // стало меньше и страница уехала за конец списка. Ручка нумерует с единицы,
@@ -642,16 +661,23 @@
 
     async function logLoad() {
         if (!currentId) return;
+        // Та же гонка, что и в profileLoad(), и тот же приём: logLoad() тоже зовёт
+        // фоновый опрос каждые 15 секунд, и ответ по уже покинутой анкете может
+        // прийти позже ответа по вновь выбранной — без сверки currentId с requestId
+        // он перепишет журнал не той анкеты, что сейчас на экране.
+        const requestId = currentId;
         const girl = girls.find(g => g.id === currentId) || {};
         document.getElementById('logWho').textContent = girl.login || '';
 
         let rows;
         try {
-            rows = (await getData(`${BASE}/api/dating/girl/${currentId}/log`)).result || [];
+            rows = (await getData(`${BASE}/api/dating/girl/${requestId}/log`)).result || [];
         } catch (e) {
+            if (currentId !== requestId) return;
             logEl.innerHTML = `<div class="empty">журнал не пришёл: ${esc(e.message)}</div>`;
             return;
         }
+        if (currentId !== requestId) return;
 
         const logScroll = logEl.scrollTop;
         logEl.innerHTML = rows.length
