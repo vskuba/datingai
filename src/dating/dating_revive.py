@@ -291,6 +291,13 @@ async def _login_try(girl: dict, login_run, plan: dict, planned: bool = False) -
 
     Повод берётся из опроса, а не из полей учётки: откат есть у обоих поводов, а
     человеку в журнале важно, чинили протухший вход или обновляли живой по сроку.
+
+    **Вкладку за собой убираем здесь, на каждом исходе.** Сам вход её не закрывает:
+    для ручки это осознанно — человек нажал «Войти» ради вкладки, о чём и говорит
+    её docstring. У автомата смотреть на вкладку некому, а стоит она ~143 МБ в пуле,
+    общем с соседом. Худший случай не выдуман: сайт лёг, все анкеты под присмотром
+    пошли входить в один круг — и десятки брошенных вкладок кладут пул вместе с
+    собственной работой соседа.
     """
     girl_id = int(girl['id'])
     await _log(girl_id, 'info',
@@ -298,9 +305,24 @@ async def _login_try(girl: dict, login_run, plan: dict, planned: bool = False) -
                f"(попытка {plan['relogin_tries']})")
     try:
         result = await login_run(girl_id)
+    except asyncio.CancelledError:
+        # Смена кончилась, и задачу отменили. `CancelledError` не наследник
+        # `Exception`, и без отдельной ветки вкладка пережила бы саму смену.
+        # Убрав за собой, отмену обязательно пробрасываем дальше: проглоченная
+        # отмена — это смена, которая не заканчивается.
+        await _sessions_drop(girl)
+        raise
     except Exception as e:
+        # Сосед не ответил (`RhapsodyError`), сценария нет, база отвалилась —
+        # вкладка при этом уже открыта, а её номер сгорел вместе с вызовом.
+        await _sessions_drop(girl)
         await _log(girl_id, 'fail', f'Войти не вышло: {str(e)[:300]}')
         return False
+
+    # Вход отдаёт номер живой вкладки, когда сценарий вернул ошибку: свои пути он
+    # закрывает сам, а этот оставляет ручке. Автомату вкладка не нужна ни на одном
+    # исходе — закрываем по результату, пустой номер закрытие просто пропустит.
+    await _session_close(str(result.get('session_id') or ''))
 
     ok = str(result.get('status')) == 'success' and not result.get('error')
     await _log(girl_id, 'ok' if ok else 'fail',
@@ -308,6 +330,44 @@ async def _login_try(girl: dict, login_run, plan: dict, planned: bool = False) -
                else f"Войти не вышло: {str(result.get('error') or '')[:300]}")
 
     return ok
+
+
+async def _sessions_drop(girl: dict) -> None:
+    """Гасит все живые вкладки анкеты — на случай, когда номер той, что открыл вход,
+    до нас не дошёл: исключение оборвало `login_run` до ответа, и известен только
+    логин, а не `session_id`.
+
+    Закрыть «всё под этим логином» безопаснее, чем гадать: `dating_login_run` и сам
+    держит на анкете одну вкладку и гасит прежние при новом входе, так что лишнего
+    здесь не найдётся, а нужная — найдётся всегда.
+
+    `dating_login_session_close_old` уже переживает недоступного соседа сама
+    (`dating_login_session_all` при отказе отвечает пустым списком, а не
+    исключением, `dating_login_session_close` глотает свою ошибку) — здесь не нужно
+    ничего сверх одного вызова с пустым `keep_session_id`: «закрыть все вкладки
+    этой анкеты».
+    """
+    from src.dating.dating_login import dating_login_session_close_old
+
+    await dating_login_session_close_old(str(girl['login']), '')
+
+
+async def _session_close(session_id: str) -> None:
+    """Гасит одну вкладку по номеру. Обёртка ради одного импорта, как у `_log`:
+    уже закрытую вкладку `dating_login_session_close` переживает сама, а
+    исключений наружу не пускает.
+
+    Пустой номер отсекаем ещё до импорта, а не отдаём проверку самой функции: тот
+    же исход (нечего закрывать), но без тяжёлых зависимостей `dating_login.py` —
+    большинство успешных входов приходят сюда именно с пустым номером (вкладку уже
+    закрыл `dating_login_run`), и тащить их ради нуля незачем.
+    """
+    if not session_id:
+        return
+
+    from src.dating.dating_login import dating_login_session_close
+
+    await dating_login_session_close(session_id)
 
 
 async def _probe_one(girl: dict, presence: dict) -> dict:
