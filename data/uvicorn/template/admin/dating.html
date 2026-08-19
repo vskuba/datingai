@@ -151,6 +151,18 @@
         /* Бейджи под именем, а не в общем ряду: их бывает три, и в одну строку с
            кнопками они не влезают — карточка начинала вылезать за колонку. */
         .girl-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+        /* Предупреждение о том, что анкета не входит. Мигает, пока автомат ещё
+           пробует: это то, ради чего человек смотрит в панель. После сдачи горит
+           ровно — вечно мигающее перестаёт читаться как тревога. */
+        .girl-warn { font-size: 12px; line-height: 1; cursor: help; }
+        .girl-warn.failing { animation: girl-warn-blink 1.2s steps(1, end) infinite; }
+        .girl-warn.given_up { color: #b91c1c; }
+
+        @keyframes girl-warn-blink {
+            0%, 49% { opacity: 1; }
+            50%, 100% { opacity: .15; }
+        }
         /* Кнопки своей строкой: в общем ряду три штуки съедали колонку с именем —
            карточка оставалась без имени, а высота скакала. Строка предсказуемее. */
         .girl-act { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap;
@@ -454,6 +466,7 @@
                 + `<span class="girl-name" title="${esc(row.name || row.login)}">${esc(row.name || row.login)}</span>`
                 + '<span class="girl-badges">'
                 + `<span class="dot ${esc(row.status)}" title="${esc(statusTitle(row))}"></span>`
+                + warnBadge(row)
                 + (row.name ? `<span class="girl-login">${esc(row.login)}</span>` : '')
                 + (row.unread_chat ? `<span class="pill chat" title="новых сообщений в чате">💬 ${row.unread_chat}</span>` : '')
                 + (row.contacts ? `<span class="pill" title="собеседниц в чате">Собеседников: ${row.contacts}</span>` : '')
@@ -780,6 +793,21 @@
         if (row.status === 'online') return 'вход подтверждён ' + String(row.last_seen_at || '').slice(0, 19).replace('T', ' ');
         if (row.status === 'error') return row.last_error || 'опрос не прошёл';
         return row.has_state ? 'вход протух — залогиньтесь заново' : 'входа ещё не было';
+    }
+
+    // Значок «не входит». Текст подсказки собираем здесь, а состояние считает
+    // сервер: арифметика суток в двух местах разошлась бы.
+    function warnBadge(row) {
+        if (!row.revive_state || row.revive_state === 'ok') return '';
+
+        const when = row.relogin_next_at
+            ? String(row.relogin_next_at).slice(11, 16) : '';
+        const title = row.revive_state === 'given_up'
+            ? `не удаётся войти: ${row.last_error || 'причина неизвестна'} — попытки прекращены, нужен вход вручную`
+            : `не удаётся войти: ${row.last_error || 'причина неизвестна'}`
+              + (when ? `; следующая попытка в ${when}` : '');
+
+        return `<span class="girl-warn ${esc(row.revive_state)}" title="${esc(title)}">⚠</span>`;
     }
 
     function say(text, bad = false) {
