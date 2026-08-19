@@ -255,7 +255,7 @@ async def dating_revive_round(login_run=None) -> dict:
         # наступивший за это время срок читался бы как ненаступивший, и анкета
         # ждала бы ещё круг — и так каждый раз, пока в круге есть хоть один вход.
         plan = dating_revive_plan(girl, online, await _db_now())
-        await _plan_save(int(girl['id']), plan)
+        saved = await _plan_save(int(girl['id']), plan)
 
         if plan['action'] == 'wait':
             await _log(int(girl['id']), 'fail',
@@ -269,6 +269,15 @@ async def dating_revive_round(login_run=None) -> dict:
             await _log(int(girl['id']), 'fail',
                        'Сутки не выходит войти — попытки прекращены, нужен вход вручную')
             await _error_write(girl, 'сутки не выходит войти, автовход остановлен')
+        elif plan['action'] == 'login' and not saved:
+            # Откат не записался — входить нельзя. Следующий круг увидит прежний,
+            # уже наступивший срок и войдёт снова через минуту, и так до
+            # бесконечности: это единственный путь, где лестницу можно превысить.
+            # Пропущенная попытка дешевле вкладки Chromium раз в минуту, а срок
+            # никуда не делся — войдём следующим кругом.
+            await _log(int(girl['id']), 'info',
+                       'Вход отложен: череду попыток не удалось записать, '
+                       'а без неё лестница пауз не работает')
         elif plan['action'] == 'login':
             counts['tried'] += 1
             if await _login_try(girl, login_run, plan, online):
@@ -397,8 +406,13 @@ async def _probe_save(girl_id: int, probe: dict) -> None:
         logger_info(f'[dating] итог опроса не записался: {e}')
 
 
-async def _plan_save(girl_id: int, plan: dict) -> None:
-    """Новые тревога и откат. Успешный вход перепишет их сам — и это правильно."""
+async def _plan_save(girl_id: int, plan: dict) -> bool:
+    """Новые тревога и откат. Успешный вход перепишет их сам — и это правильно.
+
+    Исключение гасится (журналы работу не роняют), но итог возвращается: круг
+    обязан знать, легла запись или нет. Незаписанный откат — это разрешение войти
+    снова через минуту, и вход после потери записи круг отменяет.
+    """
     from logging_.logging_ import logger_info
     from mysql_.mysql_ import mysql_get_db_async
 
@@ -411,6 +425,9 @@ async def _plan_save(girl_id: int, plan: dict) -> None:
             await db.connection.commit()
     except Exception as e:
         logger_info(f'[dating] череда попыток не записалась: {e}')
+        return False
+
+    return True
 
 
 async def _error_write(girl: dict, why: str) -> None:

@@ -440,3 +440,33 @@ class TestReviveRoundOrder:
             login_run=_login_stub(round_stub, pause=timedelta(minutes=5)))
 
         assert round_stub['logins'] == [1, 2]
+
+
+class TestReviveRoundBackoff:
+    """Откат — единственная защита соседа от входа раз в минуту, и она хрупкая."""
+
+    async def test_lost_backoff_cancels_the_login(self, round_stub):
+        """Запись отката не легла — входить в этом круге нельзя.
+
+        `_plan_save` гасит исключение, как и положено журналам. Но если строка не
+        записалась, а вход всё равно состоялся, следующий круг увидит прежний, уже
+        наступивший срок и войдёт снова через минуту — и так до бесконечности. Это
+        единственный путь, где лестницу можно превысить; пропущенная попытка
+        дешевле вкладки Chromium раз в минуту.
+        """
+        round_stub['girls'] = _girls(2, login_age_sec=21 * 3600)
+        round_stub['plan_saved'] = False
+
+        counts = await dating_revive_round(login_run=_login_stub(round_stub))
+
+        assert round_stub['logins'] == []
+        assert counts['tried'] == 0
+
+    async def test_saved_backoff_lets_the_login_through(self, round_stub):
+        """Откат записан — попытка идёт как обычно: пропускаем только потерю записи."""
+        round_stub['girls'] = _girls(2, login_age_sec=21 * 3600)
+
+        counts = await dating_revive_round(login_run=_login_stub(round_stub))
+
+        assert round_stub['logins'] == [1, 2]
+        assert counts['tried'] == 2
