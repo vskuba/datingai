@@ -11,6 +11,12 @@
 Сутки — рубеж, за которым автомат перестаёт пробовать. Дальше это уже не сбой, а
 поломка: пароль сменили, анкету закрыли, сайт просит подтверждение.
 
+Тревога («анкеты нет в сети», поле `relogin_since`) и откат («не входить чаще
+лестницы», поля `relogin_tries` и `relogin_next_at`) — разные вещи, см. подробности
+в `dating_revive_plan`. Свести их в одно поле тянет каждого, кто сюда заходит, но
+именно из этой экономии выросли обе поломки: и сдача при живом опросе, и вход через
+браузер раз в минуту.
+
 База, сосед и сам вход подтягиваются импортами внутри функций, а не в шапке модуля.
 Правила отсюда читают чистые тесты (`tests/test_revive_schedule.py`,
 `tests/test_revive_round.py`), а сюита нарочно запускается без зависимостей проекта:
@@ -70,53 +76,70 @@ def dating_revive_plan(girl: dict, online: bool, now: datetime) -> dict:
     Отдельно от самого круга, потому что здесь всё интересное: лестница, сдача,
     профилактика. Круг вокруг — это база и вход, их в тестах не прогонишь.
 
+    Три поля тут делят между собой две разные заботы, и путать их нельзя:
+
+    * `relogin_since` — **тревога**: анкеты нет в сети. Это она мигает на карточке и
+      она же через сутки даёт «сдались, нужен вход вручную» — то есть зовёт человека.
+    * `relogin_tries` + `relogin_next_at` — **откат**: не ходить в браузер соседа
+      чаще лестницы. Повод неважен, плановый или аварийный.
+
+    Разведены они потому, что признак у них разный. Тревогу видно по опросу прямо
+    сейчас; неудачу входа — только по тому, что `logged_in_at` не подвинулся. Пока
+    они были одним полем, анкета, у которой череда началась от лежащего сайта, после
+    выздоровления оставалась «в тревоге» из-за возраста входа и через сутки получала
+    сдачу — при том что опрос всё это время отвечал `online`.
+
+    Обратный перекос ровно так же плох: погасить вместе с тревогой и откат — значит
+    после каждой минутной отлёжки сайта разрешить вход через браузер раз в минуту.
+    Откат снимает только удавшийся вход, `_keep_online_set` в `dating_login.py`.
+
     Returns:
-        dict: `action` — `none` (ничего), `clear` (череда кончилась), `wait`
-        (череда началась, входить ещё рано), `login` (входить сейчас), `give_up`
+        dict: `action` — `none` (ничего), `clear` (тревога кончилась), `wait`
+        (тревога началась, входить ещё рано), `login` (входить сейчас), `give_up`
         (сутки вышли, и это первый круг, который это заметил); плюс новые значения
         `relogin_since`, `relogin_tries`, `relogin_next_at` для полей учётки.
     """
     since = girl.get('relogin_since')
     tries = int(girl.get('relogin_tries') or 0)
+    next_at = girl.get('relogin_next_at')
     logged_in_at = girl.get('logged_in_at')
     old = not logged_in_at or (now - logged_in_at).total_seconds() >= DATING_REVIVE_AGE_SEC
 
-    if online and not old:
-        # Вход жив и свеж. Череда, если шла, кончилась: либо сайт полежал и встал,
-        # либо вход только что переснят — `dating_login_run` обновляет `logged_in_at`.
-        return ({'action': 'clear', 'relogin_since': None, 'relogin_tries': 0,
-                 'relogin_next_at': None} if since else
-                {'action': 'none', 'relogin_since': None, 'relogin_tries': 0,
-                 'relogin_next_at': None})
+    if online:
+        # Анкета отвечает — тревоге взяться неоткуда, гасим её всегда. Возраст входа
+        # тут ни при чём: он говорит не «анкеты нет», а «пора обновить cookie».
+        if old and (next_at is None or dating_revive_due(next_at, now)):
+            # Профилактика. Входим, но откат двигаем: плановый вход через браузер
+            # может не проходить (капча, сменённый пароль), а опрос по старым cookie
+            # всё это время отвечает `online`. Без отката такой вход открывал бы
+            # вкладку Chromium у соседа раз в минуту и бессрочно.
+            return _plan_login(None, tries, now)
+
+        # Либо вход свеж, либо пауза лестницы ещё идёт. Откат несём дальше нетронутым.
+        return {'action': 'clear' if since else 'none', 'relogin_since': None,
+                'relogin_tries': tries, 'relogin_next_at': next_at}
 
     if not since:
-        if online:
-            # Профилактика: вход ещё жив, поэтому пробуем сразу, не выжидая минуту.
-            # Но череду начинаем тут же — плановый вход через браузер может не
-            # проходить (капча, сменённый пароль), а опрос по старым cookie всё
-            # это время отвечает «online». Без череды такой вход открывал бы
-            # вкладку Chromium у соседа раз в минуту и бессрочно.
-            return _plan_login(since, tries, now)
-
         # Первый отказ. Входить сразу нельзя: сайт мог моргнуть, и минута ожидания
-        # дешевле лишнего прогона браузера.
+        # дешевле лишнего прогона браузера. Лестницу начинаем с нуля: повод новый,
+        # и наследовать паузу от прошлой, давно закрытой беды незачем.
         return {'action': 'wait', 'relogin_since': now, 'relogin_tries': 0,
                 'relogin_next_at': now + timedelta(seconds=dating_revive_delay(0))}
 
     if dating_revive_state(since, now) == 'given_up':
-        # Сдача — переход, а не состояние: череда остаётся в базе до входа вручную,
+        # Сдача — переход, а не состояние: тревога остаётся в базе до входа вручную,
         # и круг наткнётся на неё каждую минуту до конца времён. Момент перехода
         # виден по ещё не стёртому сроку попытки: первый же круг после сдачи
         # запишет `relogin_next_at = NULL`, и дальше это уже давняя сдача, о которой
         # и журналу, и вкладке «Ошибки» соседа сказали.
-        announce = bool(girl.get('relogin_next_at'))
+        announce = bool(next_at)
 
         return {'action': 'give_up' if announce else 'none', 'relogin_since': since,
                 'relogin_tries': tries, 'relogin_next_at': None}
 
-    if not dating_revive_due(girl.get('relogin_next_at'), now):
+    if not dating_revive_due(next_at, now):
         return {'action': 'none', 'relogin_since': since, 'relogin_tries': tries,
-                'relogin_next_at': girl.get('relogin_next_at')}
+                'relogin_next_at': next_at}
 
     return _plan_login(since, tries, now)
 
@@ -124,12 +147,16 @@ def dating_revive_plan(girl: dict, online: bool, now: datetime) -> dict:
 def _plan_login(since: datetime | None, tries: int, now: datetime) -> dict:
     """Решение «входим сейчас»: попытка считается сделанной, следующая — по лестнице.
 
-    Одно место для двух поводов (протухание и профилактика по сроку): лечение у них
-    одно, и разойтись эти две лестницы не должны.
+    Одно место для двух поводов (протухание и профилактика по сроку): откат у них
+    общий, и разойтись эти две лестницы не должны.
+
+    Тревога приходит сюда готовой и здесь не выдумывается — в этом вся суть развода:
+    плановому входу тревога не нужна (анкета в сети, звать человека не о чем), а
+    аварийному её уже зажёг отказ опроса.
     """
     step = tries + 1
 
-    return {'action': 'login', 'relogin_since': since or now, 'relogin_tries': step,
+    return {'action': 'login', 'relogin_since': since, 'relogin_tries': step,
             'relogin_next_at': now + timedelta(seconds=dating_revive_delay(step))}
 
 
@@ -186,9 +213,9 @@ async def dating_revive_round(login_run=None) -> dict:
 
 
 async def _login_try(girl_id: int, login_run, plan: dict, planned: bool = False) -> bool:
-    """Одна попытка входа. Успех сам обнуляет череду — это делает `dating_login_run`.
+    """Одна попытка входа. Успех сам снимает откат — это делает `dating_login_run`.
 
-    Повод берётся из опроса, а не из череды: череда теперь есть у обоих поводов, а
+    Повод берётся из опроса, а не из полей учётки: откат есть у обоих поводов, а
     человеку в журнале важно, чинили протухший вход или обновляли живой по сроку.
     """
     from src.dating.dating_log import dating_log_write
@@ -260,7 +287,7 @@ async def _probe_save(girl_id: int, probe: dict) -> None:
 
 
 async def _plan_save(girl_id: int, plan: dict) -> None:
-    """Новое состояние череды. Успешный вход перепишет его сам — и это правильно."""
+    """Новые тревога и откат. Успешный вход перепишет их сам — и это правильно."""
     from logging_.logging_ import logger_info
     from mysql_.mysql_ import mysql_get_db_async
 
