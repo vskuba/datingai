@@ -161,7 +161,10 @@ async def _state_clear(girl_id: int) -> None:
     «забудь, что она была».
     """
     async with mysql_get_db_async() as db:
+        # Снимаем и присмотр автомата: «Отключить» — это «не веди её», а не
+        # «выйди и войди снова». Иначе смена вернула бы анкету в сеть через минуту.
         await db.execute("UPDATE dating_girl SET storage_state = NULL, ws_url = '', "
-                         "       status = 'offline', unread = 0, last_error = '' "
-                         ' WHERE id = %s', (int(girl_id),))
+                         "       status = 'offline', unread = 0, last_error = '', "
+                         '       keep_online = 0, relogin_since = NULL, relogin_tries = 0, '
+                         '       relogin_next_at = NULL WHERE id = %s', (int(girl_id),))
         await db.connection.commit()

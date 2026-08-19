@@ -48,6 +48,19 @@ class TestGirlCrud:
         assert 'password' not in row
         assert row['has_password'] is True
 
+    async def test_new_girl_is_not_watched(self, auth_client, girl):
+        """Только что заведённая анкета под присмотр не берётся.
+
+        Присмотр ставит успешный вход: лезть в браузер под учёткой, которую ещё ни
+        разу не проверял человек, система не должна.
+        """
+        response = await auth_client.get(f'/api/dating/girl?site_id={SITE_ID}')
+        row = next(r for r in response.json()['result'] if r['login'] == girl['login'])
+
+        assert row['keep_online'] is False
+        assert row['revive_state'] == 'ok'
+        assert row['relogin_next_at'] is None
+
     async def test_duplicate_login_rejected(self, auth_client, girl):
         """Тот же логин на том же сайте — 409, а не второй такой же."""
         response = await auth_client.post('/api/dating/girl', json={

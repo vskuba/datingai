@@ -45,6 +45,7 @@ from src.dating.dating_login import (DatingLoginError, dating_login_run,
                                      dating_login_session_all, dating_login_session_close,
                                      dating_login_session_close_old, dating_login_ws_capture)
 from src.dating.dating_profile import dating_profile_refresh
+from src.dating.dating_revive import dating_revive_state
 from src.dating.dating_send import dating_send_message
 from src.dating.dating_presence import dating_presence_probe, dating_presence_ready
 
@@ -99,6 +100,10 @@ class DatingGirlResponse(BaseModel):
     last_seen_at: datetime | None = Field(None, description='Когда сайт последний раз подтвердил вход')
     last_error: str = Field('', description='Чем кончился неудачный опрос')
     note: str = Field('', description='Пометка человека')
+    keep_online: bool = Field(False, description='Под присмотром автовхода — держится в сети сама')
+    revive_state: str = Field('ok', description='ok | failing | given_up — состояние автовхода')
+    relogin_next_at: datetime | None = Field(
+        None, description='Срок следующей попытки входа по лестнице отката; не признак тревоги')
 
     model_config = ConfigDict(json_schema_extra={
         'example': {'id': 3, 'site_id': 19, 'login': 'natalia@example.com',
@@ -130,6 +135,7 @@ async def dating_girl_list(site_id: int = 0,
         await db.execute(
             'SELECT g.id, g.site_id, g.login, g.note, g.status, g.unread, g.last_seen_at, '
             '       g.last_error, g.profile, g.auto_answer, g.auto_answer_only, '
+            '       g.keep_online, g.relogin_since, g.relogin_next_at, '
             '       g.password <> %s AS has_password, '
             '       g.storage_state IS NOT NULL AS has_state, '
             '       (SELECT COUNT(DISTINCT m.sender_uid) FROM dating_message m '
@@ -144,6 +150,10 @@ async def dating_girl_list(site_id: int = 0,
         row['has_password'] = bool(row.get('has_password'))
         row['has_state'] = bool(row.get('has_state'))
         row['auto_answer'] = bool(row.get('auto_answer'))
+        row['keep_online'] = bool(row.get('keep_online'))
+        # Состояние считает сервер: страница иначе повторяла бы арифметику суток,
+        # и «мигает или горит ровно» решалось бы в двух местах по-разному.
+        row['revive_state'] = dating_revive_state(row.pop('relogin_since', None), datetime.now())
         # Имя и фотография — в список: карточку узнают по лицу, а не по номеру.
         # Анкета целиком отдаётся отдельной ручкой: в списке из неё нужны два поля.
         profile = dating_json_load(row.pop('profile', None))
