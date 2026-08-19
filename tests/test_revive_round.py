@@ -44,22 +44,38 @@ def _girls(count: int, **kw) -> list[dict]:
     return [_girl(id=n, login=f'g{n}', site_id=1, **kw) for n in range(1, count + 1)]
 
 
-def _login_stub(state: dict, pause=timedelta(0), ok: bool = True):
+def _login_stub(state: dict, pause=timedelta(0), ok: bool = True, opens: tuple = (),
+                raises: BaseException = None, session_id: str = ''):
     """Вход-заглушка: считает, сколько их идёт разом, и двигает часы, как настоящий.
 
     Настоящий вход занимает минуту-две живого времени, и именно из-за этого круг не
     имеет права держать одно `now` на всех.
+
+    Args:
+        opens: вкладки, которые вход успевает открыть, парами `(номер, сайт)` —
+            настоящий `dating_login_run` заводит свою до того, как упасть.
+        raises: чем вход обрывается. `None` — доходит до конца.
+        session_id: номер вкладки в ответе: вход отдаёт её живой, когда сценарий
+            вернул ошибку.
     """
     async def login_run(girl_id: int) -> dict:
         state['login_live'] += 1
         state['login_peak'] = max(state['login_peak'], state['login_live'])
         state['logins'].append(int(girl_id))
-        # Уступаем управление: будь входы параллельны, здесь бы они и наложились.
-        await asyncio.sleep(0.01)
-        state['clock'] += pause
-        state['login_live'] -= 1
+        for opened, site_id in opens:
+            state['sessions'].append({'session_id': opened, 'name': f'g{girl_id}',
+                                      'site_id': site_id})
+        try:
+            # Уступаем управление: будь входы параллельны, здесь бы они и наложились.
+            await asyncio.sleep(0.01)
+            state['clock'] += pause
+        finally:
+            state['login_live'] -= 1
 
-        return {'status': 'success' if ok else 'error', 'session_id': '', 'error': ''}
+        if raises is not None:
+            raise raises
+
+        return {'status': 'success' if ok else 'error', 'session_id': session_id, 'error': ''}
 
     return login_run
 
@@ -76,7 +92,11 @@ def round_stub(monkeypatch):
     state = {'girls': [], 'presence': {}, 'status': {}, 'plan_saved': True,
              'probe_pause': 0.0, 'clock': NOW, 'probe_raise': {},
              'probe_live': 0, 'probe_peak': 0, 'login_live': 0, 'login_peak': 0,
-             'probed': [], 'saved': [], 'marked': [], 'errors': [], 'logins': []}
+             'probed': [], 'saved': [], 'marked': [], 'errors': [], 'logins': [],
+             # Живые вкладки соседа и те, что круг закрыл. Уборка — единственное,
+             # что автомат делает с чужим пулом Chromium, и промах здесь виден
+             # человеку: погашенная вкладка, в которой он работал.
+             'sessions': [], 'closed': [], 'close_raises': None, 'logs': []}
 
     async def girls_kept():
         return state['girls']
@@ -111,15 +131,30 @@ def round_stub(monkeypatch):
         return state['plan_saved']
 
     async def log(girl_id, kind, text):
-        pass
+        state['logs'].append((int(girl_id), kind, text))
 
     async def error_write(girl, why, **kw):
         state['errors'].append((int(girl['id']), why))
 
+    async def sessions_list():
+        # Отбор по имени и сайту — дело самой функции, а не заглушки: заглушка
+        # изображает соседа, а он отдаёт все живые вкладки установки разом.
+        return [dict(session) for session in state['sessions']]
+
+    async def session_close(session_id):
+        if not session_id:
+            return
+        if state['close_raises'] is not None:
+            raise state['close_raises']
+        state['closed'].append(str(session_id))
+        state['sessions'] = [item for item in state['sessions']
+                             if str(item.get('session_id')) != str(session_id)]
+
     for name, func in (('_girls_kept', girls_kept), ('_presence_of', presence_of),
                        ('_db_now', db_now), ('_probe_one', probe_one),
                        ('_probe_save', probe_save), ('_plan_save', plan_save),
-                       ('_log', log), ('_error_write', error_write)):
+                       ('_log', log), ('_error_write', error_write),
+                       ('_sessions_list', sessions_list), ('_session_close', session_close)):
         monkeypatch.setattr(dating_revive, name, func)
 
     return state
@@ -443,6 +478,127 @@ class TestReviveRoundOrder:
             login_run=_login_stub(round_stub, pause=timedelta(minutes=5)))
 
         assert round_stub['logins'] == [1, 2]
+
+
+class TestReviveRoundCleanup:
+    """Уборка вкладок: автомат гасит ровно то, что открыл сам.
+
+    Вкладка Chromium стоит ~143 МБ в пуле, общем с соседом, и смотреть на неё после
+    автоматического входа некому — значит бросать её нельзя. Но и хватать лишнего
+    нельзя тем более: закрытая чужая вкладка видна человеку сразу — это оборванные
+    «Диалоги» или потерянный ручной вход.
+    """
+
+    def _girl_due(self):
+        """Анкета, которой по плану положен вход прямо сейчас (вход протух по сроку)."""
+        return _girls(1, login_age_sec=21 * 3600)
+
+    async def test_failed_login_closes_the_tab_it_opened(self, round_stub):
+        """Сосед не ответил посреди входа — вкладку за собой закрываем.
+
+        Номер её до нас не дошёл: исключение оборвало вход до ответа. Найти вкладку
+        можно только сравнением с тем, что жило до входа.
+        """
+        round_stub['girls'] = self._girl_due()
+
+        counts = await dating_revive_round(
+            login_run=_login_stub(round_stub, opens=(('new', 1),),
+                                  raises=RuntimeError('сосед не ответил')))
+
+        assert round_stub['closed'] == ['new']
+        assert counts['tried'] == 1
+        assert counts['revived'] == 0
+
+    async def test_cancelled_login_closes_the_tab_and_reraises(self, round_stub):
+        """Смена кончилась посреди входа — убираем и пропускаем отмену наружу.
+
+        `CancelledError` не наследник `Exception`, и без своей ветки вкладка пережила
+        бы саму смену. А проглоченная отмена — это смена, которая не заканчивается.
+        """
+        round_stub['girls'] = self._girl_due()
+
+        with pytest.raises(asyncio.CancelledError):
+            await dating_revive_round(
+                login_run=_login_stub(round_stub, opens=(('new', 1),),
+                                      raises=asyncio.CancelledError()))
+
+        assert round_stub['closed'] == ['new']
+
+    async def test_returned_session_is_closed(self, round_stub):
+        """Вход дошёл до конца и отдал живую вкладку — закрываем именно её.
+
+        Так бывает, когда сценарий вернул ошибку: свои пути вход закрывает сам, а
+        этот оставляет вызывающему — ручке вкладка нужна, автомату нет.
+        """
+        round_stub['girls'] = self._girl_due()
+
+        await dating_revive_round(
+            login_run=_login_stub(round_stub, ok=False, opens=(('kept', 1),),
+                                  session_id='kept'))
+
+        assert round_stub['closed'] == ['kept']
+
+    async def test_tab_that_lived_before_the_login_is_not_touched(self, round_stub):
+        """Чужую вкладку не трогаем — даже когда вход упал, не открыв ни одной.
+
+        Исключение бывает и до вкладки: у сайта нет сценария входа, у анкеты нет
+        пароля, сосед не ответил на запрос сайта, база отвалилась при чтении анкеты.
+        Гася «всё под этим логином», автомат убивал бы вкладку, которую человек
+        оставил себе после ручного входа или в которой прямо сейчас открыты
+        «Диалоги». Случай «нет сценария входа» повторяется каждую попытку до самой
+        сдачи — то есть держать вкладку открытой было нельзя вообще.
+        """
+        round_stub['girls'] = self._girl_due()
+        round_stub['sessions'] = [{'session_id': 'human', 'name': 'g1', 'site_id': 1}]
+
+        await dating_revive_round(
+            login_run=_login_stub(round_stub,
+                                  raises=RuntimeError('для сайта нет сценария входа')))
+
+        assert round_stub['closed'] == []
+
+    async def test_only_the_new_tab_is_closed(self, round_stub):
+        """Своё закрываем, чужое оставляем — даже когда они рядом."""
+        round_stub['girls'] = self._girl_due()
+        round_stub['sessions'] = [{'session_id': 'human', 'name': 'g1', 'site_id': 1}]
+
+        await dating_revive_round(
+            login_run=_login_stub(round_stub, opens=(('new', 1),),
+                                  raises=RuntimeError('сосед не ответил')))
+
+        assert round_stub['closed'] == ['new']
+
+    async def test_same_login_on_another_site_is_not_touched(self, round_stub):
+        """Одинаковый логин на двух сайтах — это две анкеты, а не одна.
+
+        Ища вкладки по одному имени, автомат гасил бы вкладку соседней анкеты, и обе
+        такие анкеты вечно закрывали бы вход друг другу.
+        """
+        round_stub['girls'] = self._girl_due()
+
+        await dating_revive_round(
+            login_run=_login_stub(round_stub, opens=(('new', 1), ('twin', 2)),
+                                  raises=RuntimeError('сосед не ответил')))
+
+        assert round_stub['closed'] == ['new']
+
+    async def test_broken_cleanup_does_not_hide_the_login_error(self, round_stub):
+        """Уборка упала — настоящая ошибка входа всё равно доходит до журнала.
+
+        Правило проекта: уборка работу не роняет. Без обёртки исключение из неё
+        подменяло бы собой причину неудачи (строки «Войти не вышло» человек бы не
+        увидел) и обрывало круг для всех остальных анкет.
+        """
+        round_stub['girls'] = self._girl_due()
+        round_stub['close_raises'] = RuntimeError('сосед не ответил на закрытие')
+
+        counts = await dating_revive_round(
+            login_run=_login_stub(round_stub, opens=(('new', 1),),
+                                  raises=RuntimeError('пароль не подошёл')))
+
+        assert counts['tried'] == 1
+        assert any(kind == 'fail' and 'Войти не вышло' in text
+                   for _, kind, text in round_stub['logs'])
 
 
 class TestReviveRoundProbeFailure:

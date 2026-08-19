@@ -24,6 +24,7 @@
 """
 
 import asyncio
+import time
 from datetime import datetime, timedelta
 
 from src.dating.dating_json import dating_json_load
@@ -324,11 +325,17 @@ async def _login_try(girl: dict, login_run, plan: dict, planned: bool = False) -
     общем с соседом. Худший случай не выдуман: сайт лёг, все анкеты под присмотром
     пошли входить в один круг — и десятки брошенных вкладок кладут пул вместе с
     собственной работой соседа.
+
+    Убираем при этом **только за собой**: список живых вкладок анкеты снимается до
+    входа, и гасится потом лишь то, что появилось сверх него, — см. `_sessions_drop`.
     """
     girl_id = int(girl['id'])
     await _log(girl_id, 'info',
                f"{'Обновляю вход заранее' if planned else 'Вхожу заново'} "
                f"(попытка {plan['relogin_tries']})")
+    # Снимок «что было до нас». Только по нему и можно узнать вкладку этого входа,
+    # когда исключение оборвало его до ответа и номер сгорел вместе с вызовом.
+    before = await _sessions_seen(girl)
     try:
         result = await login_run(girl_id)
     except asyncio.CancelledError:
@@ -336,13 +343,15 @@ async def _login_try(girl: dict, login_run, plan: dict, planned: bool = False) -
         # `Exception`, и без отдельной ветки вкладка пережила бы саму смену.
         # Убрав за собой, отмену обязательно пробрасываем дальше: проглоченная
         # отмена — это смена, которая не заканчивается.
-        await _sessions_drop(girl)
+        await _sessions_drop(girl, before)
         raise
     except Exception as e:
         # Сосед не ответил (`RhapsodyError`), сценария нет, база отвалилась —
         # вкладка при этом уже открыта, а её номер сгорел вместе с вызовом.
-        await _sessions_drop(girl)
+        # Причину в журнал пишем до уборки: она — то, ради чего человек туда
+        # смотрит, и заслонять её хлопотами с вкладкой нельзя.
         await _log(girl_id, 'fail', f'Войти не вышло: {str(e)[:300]}')
+        await _sessions_drop(girl, before)
         return False
 
     # Вход отдаёт номер живой вкладки, когда сценарий вернул ошибку: свои пути он
@@ -358,24 +367,88 @@ async def _login_try(girl: dict, login_run, plan: dict, planned: bool = False) -
     return ok
 
 
-async def _sessions_drop(girl: dict) -> None:
-    """Гасит все живые вкладки анкеты — на случай, когда номер той, что открыл вход,
-    до нас не дошёл: исключение оборвало `login_run` до ответа, и известен только
-    логин, а не `session_id`.
+async def _sessions_seen(girl: dict) -> set | None:
+    """Номера живых вкладок анкеты **до** входа — чтобы потом закрыть только новые.
 
-    Закрыть «всё под этим логином» безопаснее, чем гадать: `dating_login_run` и сам
-    держит на анкете одну вкладку и гасит прежние при новом входе, так что лишнего
-    здесь не найдётся, а нужная — найдётся всегда.
-
-    `dating_login_session_close_old` уже переживает недоступного соседа сама
-    (`dating_login_session_all` при отказе отвечает пустым списком, а не
-    исключением, `dating_login_session_close` глотает свою ошибку) — здесь не нужно
-    ничего сверх одного вызова с пустым `keep_session_id`: «закрыть все вкладки
-    этой анкеты».
+    `None` — посмотреть не вышло. Тогда уборка не тронет ничего: не зная, что было
+    до нас, гасить чужое хуже, чем оставить своё.
     """
-    from src.dating.dating_login import dating_login_session_close_old
+    try:
+        return set(_sessions_mine(girl, await _sessions_list()))
+    except Exception as e:
+        await _log(int(girl['id']), 'info',
+                   f'Список вкладок не спросился ({str(e)[:200]}) — за собой '
+                   f'после входа убрать будет нечем')
 
-    await dating_login_session_close_old(str(girl['login']), '')
+        return None
+
+
+async def _sessions_drop(girl: dict, before: set | None) -> None:
+    """Гасит вкладки, которые открыл этот вход, — и только их.
+
+    Номер нужной вкладки до нас не дошёл: исключение оборвало `login_run` до ответа.
+    Найти её можно единственным способом — сравнением с тем, что жило до входа.
+
+    Раньше здесь гасилось «всё под этим логином», и в этом было два зазора. Первый:
+    исключение бывает и **до** того, как вход открыл свою вкладку (у сайта нет
+    сценария входа, у анкеты нет пароля, сосед не ответил на запрос сайта, база
+    отвалилась при чтении анкеты) — и автомат убивал вкладку, которую не открывал:
+    ту, что человек оставил себе после ручного входа, или ту, где прямо сейчас
+    работают «Диалоги». Случай «нет сценария входа» повторяется каждую попытку до
+    самой сдачи, то есть держать вкладку открытой было нельзя вообще. Второй: имя
+    вкладки — это логин, а логины совпадают у анкет с разных сайтов, и две такие
+    анкеты гасили вкладки друг другу.
+
+    Уборка обёрнута целиком: правило проекта — уборка не роняет работу. Без этого
+    её исключение подменяло бы собой настоящую причину неудачи (строки «Войти не
+    вышло» человек бы не увидел) и обрывало круг для остальных анкет.
+    """
+    if before is None:
+        return
+
+    try:
+        for session_id in _sessions_mine(girl, await _sessions_list()):
+            if session_id not in before:
+                await _session_close(session_id)
+    except Exception as e:
+        # В журнал анкеты, а не в лог контейнера: брошенная вкладка — это ~143 МБ
+        # чужого пула, и человек должен видеть, что она осталась.
+        await _log(int(girl['id']), 'info',
+                   f'Вкладку за собой закрыть не вышло: {str(e)[:200]}')
+
+
+def _sessions_mine(girl: dict, sessions: list) -> list[str]:
+    """Номера вкладок, принадлежащих этой анкете, из общего списка соседа.
+
+    Сайт учитывается наравне с именем: имя вкладки — это логин анкеты, а один и тот
+    же логин живёт на разных сайтах. Когда сосед сайт не назвал (старый ответ,
+    вкладка заведена не отсюда), сверяем только имя — это по-прежнему точнее, чем
+    ничего.
+    """
+    login = str(girl.get('login') or '')
+    site = str(girl.get('site_id') or '')
+    mine = []
+    for session in sessions or []:
+        if str(session.get('name') or '') != login:
+            continue
+
+        their = str(session.get('site_id') or '')
+        if their and site and their != site:
+            continue
+
+        session_id = str(session.get('session_id') or '')
+        if session_id:
+            mine.append(session_id)
+
+    return mine
+
+
+async def _sessions_list() -> list:
+    """Живые вкладки соседа. Обёртка ради одного импорта, как у `_log`: недоступного
+    соседа `dating_login_session_all` переживает сама и отвечает пустым списком."""
+    from src.dating.dating_login import dating_login_session_all
+
+    return await dating_login_session_all()
 
 
 async def _session_close(session_id: str) -> None:
@@ -501,7 +574,7 @@ async def _presence_of(site_id: int) -> dict:
 # только текста: если причина сменилась (сосед ожил, но опрос так и не настроен,
 # или наоборот), это уже новая беда и напоминать о ней заново можно сразу, не
 # дожидаясь остатка паузы от прежней.
-_presence_missing_at: dict[tuple[int, str], datetime] = {}
+_presence_missing_at: dict[tuple[int, str], float] = {}
 
 # Не чаще этого напоминаем про один и тот же сайт по одной и той же причине. Круг
 # ходит раз в минуту, а без паузы вкладка «Ошибки» соседа получала бы до полутора
@@ -519,17 +592,18 @@ async def _presence_missing_announce(site_id: int, reason: str, why: str) -> Non
     """Строка в «Ошибках» соседа про сайт, который выпал из круга целиком —
     не каждый круг, а раз в час на каждую причину, пока беда не пройдёт.
 
-    Часы здесь — `datetime.now()` контейнера, а не `_db_now()`: в отличие от
-    лестницы и профилактики, это не сравнение с моментом, записанным в базу, а
-    просто «сколько живёт объявление внутри этого же процесса» — часовой пояс
-    контейнера тут сам себе постоянная величина, ему не с чем разъезжаться.
+    Часы здесь **монотонные**, а не календарные: меряется не «когда это было», а
+    «сколько прошло внутри этого же процесса». Календарные часы для такого не
+    годятся — рывок NTP назад или перевод времени заглушил бы объявления на лишний
+    час, и о выпавшем сайте никто бы не узнал. Тем же `time.monotonic()` меряет
+    свои сроки держатель сокетов.
     """
     from src.rhapsody.rhapsody_api import rhapsody_api_error_write
 
     key = (int(site_id), reason)
-    now = datetime.now()
+    now = time.monotonic()
     last = _presence_missing_at.get(key)
-    if last and (now - last).total_seconds() < DATING_REVIVE_PRESENCE_ANNOUNCE_COOLDOWN_SEC:
+    if last is not None and now - last < DATING_REVIVE_PRESENCE_ANNOUNCE_COOLDOWN_SEC:
         return
 
     _presence_missing_at[key] = now
