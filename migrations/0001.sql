@@ -146,6 +146,14 @@ CREATE TABLE `dating_message` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_dating_message_uid` (`girl_id`, `message_uid`),
     INDEX `idx_dating_message_girl` (`girl_id`, `id`),
+    -- Индекс диалога: по нему карточка и раскладывает собеседниц. Без него оба её
+    -- запроса вырождаются в перебор — группировка по собеседнице идёт через
+    -- временную таблицу, а «последние десять реплик одной» читается обратным
+    -- проходом по первичному ключу (замер на 400 диалогах: 4206 строк прочитано
+    -- ради десяти). Порядок полей именно такой: `girl_id` и `sender_uid` берутся
+    -- равенством, `id` остаётся отсортированным — по нему и свежесть диалога, и
+    -- десяток последних реплик без сортировки.
+    INDEX `idx_dating_message_dialog` (`girl_id`, `sender_uid`, `id`),
     CONSTRAINT `fk_dm_girl` FOREIGN KEY (`girl_id`) REFERENCES `dating_girl` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
