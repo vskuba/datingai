@@ -24,6 +24,18 @@ def _girl(**kw) -> dict:
     return row
 
 
+def _apply(girl: dict, plan: dict) -> dict:
+    """Учётка после круга: ровно то, что записал бы `_plan_save`.
+
+    Нужна там, где проверяется не одно решение, а цепочка кругов: беда с лестницей
+    видна только на последовательности, по одному вызову она выглядит безобидно.
+    """
+    girl.update({field: plan[field]
+                 for field in ('relogin_since', 'relogin_tries', 'relogin_next_at')})
+
+    return girl
+
+
 class TestRevivePlan:
 
     def test_online_and_fresh_needs_nothing(self):
@@ -78,6 +90,7 @@ class TestRevivePlan:
 
         assert plan['action'] == 'wait'
         assert plan['relogin_since'] == NOW
+        assert plan['relogin_tries'] == 0
         assert plan['relogin_next_at'] == NOW + timedelta(minutes=1)
 
     def test_offline_waits_until_due(self):
@@ -182,12 +195,70 @@ class TestRevivePlan:
         assert plan['relogin_next_at'] == NOW + timedelta(minutes=90)
 
     def test_offline_chain_starts_ladder_from_scratch(self):
-        """Тревога начинается заново — и лестница вместе с ней с нуля: повод другой,
-        и первая минута ожидания тут дешевле прогона браузера."""
-        girl = _girl(relogin_tries=4, relogin_next_at=NOW + timedelta(minutes=90))
+        """Откат исчерпан — лестница начинается с нуля: пауза давно вышла, никто её
+        не занял, и наследовать от прошлой, закрытой беды нечего.
+
+        Признак тут — прошедший срок попытки, а не пустая тревога: тревога гаснет от
+        одного удачного опроса, и по ней «повод новый» ловилось бы посреди живой паузы.
+        """
+        girl = _girl(relogin_tries=4, relogin_next_at=NOW - timedelta(minutes=30))
         plan = dating_revive_plan(girl, online=False, now=NOW)
 
         assert plan['action'] == 'wait'
         assert plan['relogin_since'] == NOW
         assert plan['relogin_tries'] == 0
         assert plan['relogin_next_at'] == NOW + timedelta(minutes=1)
+
+    def test_offline_keeps_live_backoff_when_alarm_lights_again(self):
+        """Тревога погасла, откат ещё идёт, сайт снова упал — пауза обязана уцелеть.
+
+        Тревога зажигается заново (анкеты нет в сети, карточке есть о чём мигать), но
+        лестница остаётся на своей ступени: в браузер соседа мы уже сходили, и до
+        назначенного срока туда ходить нельзя независимо от тревоги.
+        """
+        girl = _girl(relogin_tries=3, relogin_next_at=NOW + timedelta(minutes=40))
+        plan = dating_revive_plan(girl, online=False, now=NOW)
+
+        assert plan['action'] == 'wait'
+        assert plan['relogin_since'] == NOW
+        assert plan['relogin_tries'] == 3
+        assert plan['relogin_next_at'] == NOW + timedelta(minutes=40)
+
+    def test_flapping_site_does_not_shorten_the_ladder(self):
+        """Сценарий, ради которого признак и переписан: сайт моргает раз в минуту.
+
+        Один удачный опрос гасит тревогу, но не откат. Пока «повод новый» решался по
+        пустой тревоге, следующая же строка «не online» обнуляла лестницу, и вход
+        через браузер выходил через три минуты вместо предписанных пяти. С большими
+        ступенями это схлопывало до минуты и двухчасовую паузу.
+        """
+        girl = _girl()
+
+        down = dating_revive_plan(girl, online=False, now=NOW)
+        assert down['action'] == 'wait'
+        assert down['relogin_next_at'] == NOW + timedelta(minutes=1)
+
+        first = dating_revive_plan(_apply(girl, down), online=False,
+                                   now=NOW + timedelta(minutes=1))
+        assert first['action'] == 'login'
+        assert first['relogin_tries'] == 1
+        assert first['relogin_next_at'] == NOW + timedelta(minutes=6)
+
+        blink = dating_revive_plan(_apply(girl, first), online=True,
+                                   now=NOW + timedelta(minutes=2))
+        assert blink['action'] == 'clear'
+        assert blink['relogin_since'] is None
+        assert blink['relogin_next_at'] == NOW + timedelta(minutes=6)
+
+        again = dating_revive_plan(_apply(girl, blink), online=False,
+                                   now=NOW + timedelta(minutes=3))
+        assert again['action'] == 'wait'
+        assert again['relogin_since'] == NOW + timedelta(minutes=3)
+        assert again['relogin_tries'] == 1
+        assert again['relogin_next_at'] == NOW + timedelta(minutes=6)
+
+        # Второй вход — не раньше срока, назначенного первым: лестница цела.
+        early = dating_revive_plan(_apply(girl, again), online=False,
+                                   now=NOW + timedelta(minutes=4))
+        assert early['action'] == 'none'
+        assert early['relogin_next_at'] == NOW + timedelta(minutes=6)
