@@ -52,6 +52,9 @@
 | `src/dating/dating_answer.py` | Ответ агента: кого спросить и что отправить |
 | `src/dating/dating_agent.py` | Агент анкеты: имя, биография, заведение у соседа |
 | `src/dating/dating_check.py` | Полная проверка учётки |
+| `src/dating/dating_login.py` | Вход под анкетой: сценарий, состояние, проверка |
+| `src/dating/dating_revive.py` | Автовосстановление входа: лестница попыток |
+| `src/dating/dating_json.py` | Общее чтение JSON-столбцов базы |
 | `src/uvicorn/routers/dating/dating_girl.py` | Все ручки анкет |
 | `src/auth/auth.py` | Вход в панель: сессия или токен |
 | `src/worker/dating/chat_worker.py` | Смена держателя, очередь `dating` |
