@@ -75,7 +75,11 @@ def _login_stub(state: dict, pause=timedelta(0), ok: bool = True, opens: tuple =
         if raises is not None:
             raise raises
 
-        return {'status': 'success' if ok else 'error', 'session_id': session_id, 'error': ''}
+        # `ok`, а не `success`: именно так отвечает прогон сценария у соседа, и
+        # заглушка обязана врать ровно как настоящий вход. Пока здесь стояло
+        # `success`, круг считал провалом каждый удачный вход — а тесты этого не
+        # видели, потому что повторяли ту же ошибку.
+        return {'status': 'ok' if ok else 'error', 'session_id': session_id, 'error': ''}
 
     return login_run
 
@@ -647,6 +651,43 @@ class TestReviveRoundProbeFailure:
         assert (girl_id, plan['action']) == (1, 'wait')
         assert plan['relogin_since'] == NOW
         assert 'TypeError' in round_stub['errors'][0][1]
+
+
+class TestReviveRoundLoginResult:
+    """Как круг читает ответ входа. Поймано на живой анкете прода, не тестами."""
+
+    async def test_neighbour_ok_counts_as_success(self, round_stub):
+        """Прогон сценария отвечает `ok` — это удача, а не провал.
+
+        Проверка «status == success» считала неудачей каждый удачный вход: в
+        журнале сразу после «Вход признан сайтом» появлялась строка «Войти не
+        вышло» с пустой причиной, а счётчик восстановленных стоял на нуле.
+        Неудача — это `error`; тем же правилом живут ручка входа и страница.
+        """
+        # Тревога уже горит, срок попытки настал — круг пойдёт входить.
+        round_stub['girls'] = [_girl(site_id=1, relogin_since=NOW - timedelta(minutes=6),
+                                     relogin_tries=1,
+                                     relogin_next_at=NOW - timedelta(seconds=1))]
+        round_stub['status'] = {1: 'error'}
+
+        counts = await dating_revive_round(login_run=_login_stub(round_stub))
+
+        assert round_stub['logins'] == [1]
+        assert counts['revived'] == 1
+        assert (1, 'ok', 'Вход восстановлен') in round_stub['logs']
+        assert not [text for _, _, text in round_stub['logs'] if 'не вышло' in text]
+
+    async def test_error_still_counts_as_failure(self, round_stub):
+        """Настоящий провал остаётся провалом — иначе правило бесполезно."""
+        round_stub['girls'] = [_girl(site_id=1, relogin_since=NOW - timedelta(minutes=6),
+                                     relogin_tries=1,
+                                     relogin_next_at=NOW - timedelta(seconds=1))]
+        round_stub['status'] = {1: 'error'}
+
+        counts = await dating_revive_round(login_run=_login_stub(round_stub, ok=False))
+
+        assert counts['revived'] == 0
+        assert [text for _, _, text in round_stub['logs'] if 'не вышло' in text]
 
 
 class TestReviveRoundSiteMissing:

@@ -369,7 +369,11 @@ async def _login_try(girl: dict, login_run, plan: dict, planned: bool = False) -
     # исходе — закрываем по результату, пустой номер закрытие просто пропустит.
     await _session_close(str(result.get('session_id') or ''))
 
-    ok = str(result.get('status')) == 'success' and not result.get('error')
+    # Неудача — это `error`, а не «не `success`». Прогон сценария у соседа отвечает
+    # `ok`, и проверка на `success` считала провалом любой удачный вход: журнал
+    # писал «Войти не вышло» пустой причиной сразу после «Вход признан сайтом»
+    # (поймано на живой анкете прода). Тем же правилом живут ручка входа и страница.
+    ok = str(result.get('status')) != 'error' and not result.get('error')
     await _log(girl_id, 'ok' if ok else 'fail',
                'Вход восстановлен' if ok
                else f"Войти не вышло: {str(result.get('error') or '')[:300]}")
