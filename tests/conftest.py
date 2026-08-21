@@ -22,6 +22,11 @@ BASE_URL = os.getenv('BASE_URL', 'http://localhost:8021').rstrip('/')
 ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', 'admin')
 ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'change-me')
 
+# Оператор анкет: вторая роль. Ему доступна страница анкет и её ручки, но не
+# seed, бэкапы и база.
+DATING_USERNAME = os.getenv('DATING_USERNAME', 'dating')
+DATING_PASSWORD = os.getenv('DATING_PASSWORD', 'change-me')
+
 # Сколько ждём ответа. Ручки, которые водят браузер соседа, сюда не входят —
 # их сюита не трогает: они стоят минуту и требуют живого сайта знакомств.
 TIMEOUT = 30.0
@@ -44,4 +49,21 @@ async def auth_client():
             'username': ADMIN_USERNAME, 'password': ADMIN_PASSWORD})
         assert response.status_code == 200, (
             f'не вышло войти под {ADMIN_USERNAME}: {response.status_code} {response.text[:200]}')
+        yield http
+
+
+@pytest.fixture
+async def dating_client():
+    """Клиент под оператором анкет — им проверяется, что админское закрыто.
+
+    Учётка заводится сама при старте панели (`auth_seed_operator`). Не вышло
+    войти — тест падает здесь: «оператор не может открыть бэкапы» одинаково
+    выглядит и когда права работают, и когда учётки просто нет.
+    """
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT,
+                                 follow_redirects=False) as http:
+        response = await http.post('/auth/login', json={
+            'username': DATING_USERNAME, 'password': DATING_PASSWORD})
+        assert response.status_code == 200, (
+            f'не вышло войти под {DATING_USERNAME}: {response.status_code} {response.text[:200]}')
         yield http

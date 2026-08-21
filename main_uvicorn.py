@@ -16,7 +16,8 @@
 
 import os
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware import Middleware
@@ -30,9 +31,12 @@ from logging_.logging_ import logger_info, logging_init
 from mysql_.migration.mysql_migration_up import mysql_migration_up
 from mysql_.mysql_ import mysql_pool_close, mysql_pool_get
 
-from src.auth.auth_seed import auth_seed_first_user
+from src.auth.auth import AuthUser
+from src.auth.auth_seed import auth_seed_first_user, auth_seed_operator
 from src.uvicorn.routers import auth as auth_router
+from src.uvicorn.routers import backup as backup_router
 from src.uvicorn.routers import dashboard
+from src.uvicorn.routers import seed as seed_router
 from src.uvicorn.routers import site as site_router
 from src.uvicorn.routers.dating import dating_girl
 from src.uvicorn.uvicorn_base import uvicorn_base_path
@@ -82,6 +86,33 @@ async def main_uvicorn_auth_middleware(request: Request, call_next):
     return JSONResponse(status_code=401, content={'detail': 'нужен вход'})
 
 
+async def main_uvicorn_forbidden_handler(request: Request, exc: HTTPException):
+    """403 браузеру — страницей, скрипту — прежним `{"detail": …}`.
+
+    Различаем по типу ответа, которого ждут, — тем же правилом, что и
+    `main_uvicorn_auth_middleware`. Причина та же: голый JSON в окне браузера
+    человек читает как поломку панели и идёт выяснять, почему она сломалась,
+    вместо того чтобы попросить доступ.
+
+    Остальные коды отдаются как раньше: обработчик подменяет ответ только там,
+    где ему есть что улучшить.
+    """
+    if exc.status_code == status.HTTP_403_FORBIDDEN and 'text/html' in str(request.headers.get('accept') or ''):
+        # Пользователя собираем из сессии: страница отказа наследует общий
+        # шаблон, а тому нужны имя в шапке и роль, чтобы решить, какие разделы
+        # рисовать. Сюда попадают только вошедшие — не вошедших забирает
+        # middleware раньше, на подступах.
+        user = AuthUser(request.session.get('user_id', 0),
+                        request.session.get('username', ''),
+                        request.session.get('role', ''))
+        return request.app.state.jinja2_template.TemplateResponse(
+            'admin/forbidden.html',
+            {'request': request, 'user': user, 'base': uvicorn_base_path()},
+            status_code=exc.status_code)
+
+    return await http_exception_handler(request, exc)
+
+
 async def main_uvicorn_error_middleware(request: Request, call_next):
     """Необработанная ошибка — 500 с текстом, а не пустой обрыв соединения."""
     try:
@@ -111,6 +142,9 @@ app = FastAPI(
 # читать некому.
 app.add_exception_handler(RequestValidationError, uvicorn_validation_handler)
 
+# Отказ по правам браузеру показываем страницей, а не строкой JSON.
+app.add_exception_handler(HTTPException, main_uvicorn_forbidden_handler)
+
 
 @app.on_event('startup')
 async def main_uvicorn_startup():
@@ -120,6 +154,7 @@ async def main_uvicorn_startup():
     mysql_migration_up()
     await mysql_pool_get()
     await auth_seed_first_user()
+    await auth_seed_operator()
 
     # Смену держателя сокетов поднимаем сами: воркер стоит с пустой очередью, а
     # ставить задание руками после каждого перезапуска — верный способ забыть.
@@ -145,7 +180,17 @@ data_dir = os.path.join(current_dir, config_get('DATA_DIR', 'data'), config_get(
 app.state.jinja2_template = Jinja2Templates(directory=os.path.join(data_dir, 'template'))
 app.mount('/static', StaticFiles(directory=os.path.join(data_dir, 'public')), name='static')
 
+# Адрес phpMyAdmin в шапке. Читается здесь, а не в шаблоне: шаблон не должен
+# знать про переменные окружения, а ссылка нужна на всех страницах сразу.
+#
+# Ссылка ведёт на `localhost` браузера, а не на имя контейнера: открывает её
+# человек со своей машины. До прод-сервисов он ходит SSH-туннелем, до локальных
+# — напрямую, и в обоих случаях адрес свой — отсюда переменная, а не константа.
+app.state.jinja2_template.env.globals['PHPMYADMIN_URL'] = config_get('PHPMYADMIN_URL', '')
+
 app.include_router(auth_router.router)
 app.include_router(dashboard.router)
 app.include_router(site_router.router)
 app.include_router(dating_girl.router)
+app.include_router(seed_router.router)
+app.include_router(backup_router.router)

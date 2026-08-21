@@ -22,8 +22,6 @@
 Постоянный приём — работа держателя (`dating_chat_hold`), а не этого модуля.
 """
 
-import json
-
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 

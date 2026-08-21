@@ -1,15 +1,16 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <title>Dating | AI System</title>
-    <link rel="stylesheet" href="{{ base }}/static/css/common.css">
-    <link rel="stylesheet" href="{{ base }}/static/css/notification.css">
+{% extends "base.html" %}
 
+{% block title %}Dating | AI System{% endblock %}
+
+{% block head %}
     <style>
-        /* Страница отдельная, без базового шаблона: так её и заказывали. Раскладку
-           держит сама — две колонки сверху, журнал во всю ширину снизу. */
-        body { margin: 0; background: #f4f4f9; font-family: system-ui, sans-serif; height: 100vh; overflow: hidden; }
+        /* Раскладку страница держит сама: две колонки сверху, журнал во всю
+           ширину снизу. Из базового шаблона берётся только шапка.
+
+           `.page-content` из `common.css` рассчитан на страницы с полями по
+           краям; здесь поля свои, у сетки, и вторые снаружи съели бы высоту,
+           из-за которой журнал перестаёт помещаться. */
+        .page-content { padding: 0; }
 
         /* Список анкет идёт во всю высоту, а профиль и журнал делят вторую колонку.
            Журнал относится к выбранной анкете, а не ко всей странице, поэтому и
@@ -24,7 +25,11 @@
             grid-template-columns: var(--col) 6px 1fr;
             grid-template-rows: auto minmax(0, 1fr);
             gap: 8px;
-            height: 100vh;
+            /* Не `100vh`: над страницей теперь шапка, и высота во весь экран
+               уводила бы журнал под нижний край. Высоту даёт `.page-content` —
+               остаток экрана под шапкой. */
+            width: 100%;
+            height: 100%;
             padding: 14px 16px;
             box-sizing: border-box;
         }
@@ -43,7 +48,7 @@
         .split-row { cursor: row-resize; }
 
         .dating-head { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-        .dating-head h1 { margin: 0; font-size: 18px; color: #1e293b; }
+        .dating-head h1 { margin: 0; font-size: 14px; color: #1e293b; }
         .dating-head select { max-width: 220px; padding: 6px 9px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
 
         .dating-girls-pane { grid-column: 1; grid-row: 2; }
@@ -117,11 +122,23 @@
         .dating-hint { color: #6b7280; font-size: 12px; }
         .dating-hint.bad { color: #b91c1c; }
 
-        /* Выход прижат к правому краю шапки: кнопка, которую ищут глазами в углу,
-           а не среди рабочих. `margin-left: auto` вместо своей колонки — шапка
-           переносится на узком экране, и колонка увела бы выход на вторую строку. */
-        .dating-user { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-        .dating-user-name { color: #6b7280; font-size: 12px; }
+        /* Крутилка в кнопке долгого действия. Вход идёт минутами, и без неё
+           карточка выглядит так же, как до нажатия: человек жмёт второй раз. */
+        .dating-spin {
+            display: inline-block;
+            width: 10px; height: 10px;
+            margin-right: 5px;
+            border: 2px solid #c7d2fe;
+            border-top-color: #4338ca;
+            border-radius: 50%;
+            vertical-align: -1px;
+            animation: dating-spin 0.7s linear infinite;
+        }
+        @keyframes dating-spin { to { transform: rotate(360deg); } }
+        /* Кнопка занятого действия остаётся читаемой: гасить её до общей
+           бледности незачем — именно на неё сейчас и смотрят. */
+        .dating-btn.busy { opacity: 1; color: #4338ca; border-color: #c7d2fe; }
+        @media (prefers-reduced-motion: reduce) { .dating-spin { animation: none; } }
 
         /* Форма заведения — над списком, скрыта до нажатия «+». */
         .dating-form { display: none; flex-direction: column; gap: 6px; padding: 10px 12px; border-bottom: 1px solid #f1f5f9; }
@@ -272,20 +289,16 @@
 
         .empty { padding: 14px; color: #9ca3af; font-size: 12px; text-align: center; }
     </style>
-</head>
-<body>
+{% endblock %}
+
+{% block content %}
 <div class="dating-page">
 
     <div class="dating-head">
-        <h1>💘 Dating</h1>
+        <h1>🌐 Сайт</h1>
         <select id="siteSelect" title="Сайт, на котором заведены анкеты"></select>
         <button type="button" class="dating-btn primary" id="addBtn">+ девушка</button>
         <span class="dating-hint" id="hint"></span>
-
-        <div class="dating-user">
-            <span class="dating-user-name" title="Кто сейчас в панели">{{ user.username }}</span>
-            <button type="button" class="dating-btn" id="logoutBtn" title="Выйти из панели">Logout</button>
-        </div>
     </div>
 
     <div class="pane dating-girls-pane">
@@ -363,6 +376,15 @@
     // сама каждые 15 секунд, и читай мы номер из пейджера — он бы каждый круг
     // возвращался на первую, прямо под руками у человека.
     let contactsPage = 0;
+
+    // Какие анкеты сейчас заняты долгим действием: id → {btn, label}.
+    //
+    // Состояние живёт здесь, а не в самой кнопке, потому что список
+    // перерисовывается целиком — и своим таймером, и тикером долгого действия
+    // (каждые 2 секунды: статус карточки меняется по ходу входа). Пометь мы
+    // кнопку напрямую, первая же перерисовка вернула бы ей вид «Войти», хотя
+    // вход идёт, — и человек жал бы её второй раз.
+    const girlBusy = new Map();
 
     async function sitesLoad() {
         try {
@@ -512,7 +534,7 @@
             el.addEventListener('click', () => girlSelect(row.id));
             el.querySelector('.check-btn').addEventListener('click', (ev) => {
                 ev.stopPropagation();
-                girlCheck(row, ev.target);
+                girlCheck(row);
             });
             el.querySelector('.del-btn').addEventListener('click', (ev) => {
                 ev.stopPropagation();
@@ -521,7 +543,7 @@
             const loginBtn = el.querySelector('.login-btn');
             if (loginBtn) loginBtn.addEventListener('click', (ev) => {
                 ev.stopPropagation();
-                girlLogin(row, ev.target);
+                girlLogin(row);
             });
             const autoChk = el.querySelector('.auto-chk');
             if (autoChk) {
@@ -531,13 +553,15 @@
             const dlgBtn = el.querySelector('.dlg-btn');
             if (dlgBtn) dlgBtn.addEventListener('click', (ev) => {
                 ev.stopPropagation();
-                girlDialog(row, ev.target);
+                girlDialog(row);
             });
             const offBtn = el.querySelector('.off-btn');
             if (offBtn) offBtn.addEventListener('click', (ev) => {
                 ev.stopPropagation();
-                girlDisconnect(row, ev.target);
+                girlDisconnect(row);
             });
+
+            girlBusyPaint(el, row.id);
             girlsEl.appendChild(el);
         }
 
@@ -659,6 +683,23 @@
         });
     }
 
+    // Отметка времени в журнале: «19/08 11:39:23» — день и месяц перед временем.
+    //
+    // Дата нужна потому, что журнал хранит записи за много дней, а одно голое
+    // время не отличает вчерашнюю попытку входа от сегодняшней — при разборе
+    // «почему анкета не входит» это первое, что нужно знать.
+    //
+    // Год не показываем: строка стоит перед каждой записью, а разбирают журнал
+    // за последние дни. Резать по индексам можно, потому что формат фиксирован
+    // (`YYYY-MM-DDTHH:MM:SS.ffffff` от FastAPI); разъедется он — здесь и будет
+    // видно, а не в тихо неверной дате.
+    function logStamp(value) {
+        const raw = String(value || '');
+        if (raw.length < 19) return raw;
+
+        return `${raw.slice(8, 10)}/${raw.slice(5, 7)} ${raw.slice(11, 19)}`;
+    }
+
     async function logLoad() {
         if (!currentId) return;
         // Та же гонка, что и в profileLoad(), и тот же приём: logLoad() тоже зовёт
@@ -682,17 +723,46 @@
         const logScroll = logEl.scrollTop;
         logEl.innerHTML = rows.length
             ? rows.map(r => `<div class="log-row ${esc(r.level)}">
-                   <span class="log-time">${esc(String(r.created_at || '').slice(11, 19))}</span>
+                   <span class="log-time">${esc(logStamp(r.created_at))}</span>
                    <span class="log-text">${esc(r.text)}</span></div>`).join('')
             : '<div class="empty">записей нет — запустите «Проверку»</div>';
         logEl.scrollTop = logScroll;
     }
 
+    // Отмечает карточку занятой и рисует это в её кнопке. Возвращает функцию,
+    // снимающую отметку, — чтобы у каждого вызова был ровно один способ её снять
+    // и незакрытых пометок не осталось.
+    function girlBusyMark(girlId, btnClass, label) {
+        girlBusy.set(girlId, {btn: btnClass, label});
+        girlsRender();
+
+        return () => {
+            girlBusy.delete(girlId);
+            girlsRender();
+        };
+    }
+
+    // Применяет отметку занятости к уже собранной карточке.
+    //
+    // Кнопки блокируются все: пока идёт вход, «Проверка» на той же анкете
+    // означала бы второй сценарий в том же браузере — сайт держит одну сессию
+    // на учётку и выбрасывает первую.
+    function girlBusyPaint(el, girlId) {
+        const busy = girlBusy.get(girlId);
+        if (!busy) return;
+
+        el.querySelectorAll('button, input').forEach(node => node.disabled = true);
+
+        const button = el.querySelector('.' + busy.btn);
+        if (!button) return;
+        button.classList.add('busy');
+        button.innerHTML = `<span class="dating-spin"></span>${esc(busy.label)}`;
+    }
+
     // Проверка идёт до минуты: вход, чат, чтение, отправка, закрытие. Пока идёт,
     // журнал перечитываем — по нему и видно, на каком шаге она сейчас.
-    async function girlCheck(row, button) {
-        button.disabled = true;
-        button.textContent = 'Проверяю…';
+    async function girlCheck(row) {
+        const free = girlBusyMark(row.id, 'check-btn', 'Проверяю…');
         currentId = row.id;
         const ticker = setInterval(logLoad, 3000);
 
@@ -705,8 +775,7 @@
             showNotification('Проверка не состоялась: ' + e.message, 'error');
         } finally {
             clearInterval(ticker);
-            button.disabled = false;
-            button.textContent = 'Проверка';
+            free();
             await girlsLoad();
             await Promise.all([profileLoad(), logLoad()]);
         }
@@ -715,9 +784,8 @@
     // Долгое действие с живым журналом: вход и чтение диалогов идут минутами, и
     // всё это время человек должен видеть, где оно сейчас, а не пустой экран.
     // Обновляем и список — статус с бейджами меняется по ходу, а не в конце.
-    async function girlLongRun(row, button, label, url, done) {
-        button.disabled = true;
-        button.textContent = label;
+    async function girlLongRun(row, btnClass, label, url, done) {
+        const free = girlBusyMark(row.id, btnClass, label);
         currentId = row.id;
         const ticker = setInterval(() => { logLoad(); girlsLoad(); }, 2000);
 
@@ -729,13 +797,14 @@
             showNotification('Не вышло: ' + e.message, 'error');
         } finally {
             clearInterval(ticker);
+            free();
             await girlsLoad();
             await Promise.all([profileLoad(), logLoad()]);
         }
     }
 
-    async function girlLogin(row, button) {
-        await girlLongRun(row, button, 'Вхожу…', `${BASE}/api/dating/girl/${row.id}/login`,
+    async function girlLogin(row) {
+        await girlLongRun(row, 'login-btn', 'Вхожу…', `${BASE}/api/dating/girl/${row.id}/login`,
             res => ({bad: res.status === 'error',
                      text: res.status === 'error' ? `Вход не прошёл: ${res.error}`
                                                   : `Вход выполнен: ${res.scenario}`}));
@@ -769,8 +838,8 @@
 
     // Чтение диалогов открывает страницу чата и на это время отбирает у учётки
     // живое соединение — поэтому кнопка, а не фон.
-    async function girlDialog(row, button) {
-        await girlLongRun(row, button, 'Читаю…', `${BASE}/api/dating/girl/${row.id}/dialog`,
+    async function girlDialog(row) {
+        await girlLongRun(row, 'dlg-btn', 'Читаю…', `${BASE}/api/dating/girl/${row.id}/dialog`,
             res => ({bad: !!res.error,
                      text: res.error ? `Диалоги не прочитались: ${res.error}`
                                      : `Диалогов прочитано ${res.contacts}, новых сообщений ${res.saved}`}));
@@ -778,12 +847,11 @@
 
     // Отключение спрашивают подтверждением: оно рвёт живой чат, и случайный клик
     // рядом с «Проверкой» стоил бы пропущенных сообщений.
-    async function girlDisconnect(row, button) {
+    async function girlDisconnect(row) {
         if (!confirm(`Отключить «${row.name || row.login}»? Выйдем с сайта, закроем вкладки `
                      + 'и снимем с опроса. Переписка и журнал останутся.')) return;
 
-        button.disabled = true;
-        button.textContent = 'Отключаю…';
+        const free = girlBusyMark(row.id, 'off-btn', 'Отключаю…');
         currentId = row.id;
 
         try {
@@ -794,6 +862,7 @@
         } catch (e) {
             showNotification('Отключить не вышло: ' + e.message, 'error');
         } finally {
+            free();
             await girlsLoad();
             await Promise.all([profileLoad(), logLoad()]);
         }
@@ -892,22 +961,6 @@
         return el.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
-    // Выход: гасим сессию и уходим на форму входа. На форму — в любом случае, даже
-    // если запрос не прошёл: человек нажал «выйти», и оставлять его на странице с
-    // живыми анкетами нельзя. Сессия при этом остаётся, но на неё смотрит сервер, а
-    // не браузер — и первый же запрос со страницы входа её обновит.
-    async function logout() {
-        try {
-            await postData(BASE + '/auth/logout', {});
-        } catch (e) {
-            showNotification('Выход не подтверждён: ' + e.message, 'error');
-        }
-
-        // `replace`, а не `href`: «назад» из формы входа обязано вести туда, откуда
-        // человек пришёл, а не обратно в панель, которую он только что закрыл.
-        location.replace(BASE + '/login');
-    }
-
     document.getElementById('addBtn').addEventListener('click', () => {
         formEl.classList.toggle('open');
         if (formEl.classList.contains('open')) document.getElementById('login').focus();
@@ -915,7 +968,6 @@
     document.getElementById('saveBtn').addEventListener('click', girlSave);
     document.getElementById('cancelBtn').addEventListener('click', () => formEl.classList.remove('open'));
     document.getElementById('logReload').addEventListener('click', logLoad);
-    document.getElementById('logoutBtn').addEventListener('click', logout);
     // Перерисовываем на месте, без запроса: список уже в памяти.
     findEl.addEventListener('input', () => { girlsPage = 0; girlsRender(); });
     siteEl.addEventListener('change', () => {
@@ -973,5 +1025,4 @@
     sitesLoad();
     setInterval(probe, PROBE_MS);
 </script>
-</body>
-</html>
+{% endblock %}

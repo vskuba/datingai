@@ -297,8 +297,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description='Тестовые данные DatingAi для локальной разработки')
     parser.add_argument('--clear', action='store_true',
                         help='снести посеянное и выйти')
-    parser.add_argument('--host', default='', help='хост MySQL (по умолчанию 127.0.0.1)')
-    parser.add_argument('--port', default='', help='порт MySQL (по умолчанию MYSQL_PORT_HOST из .env)')
+    # Значения по умолчанию — из `.env`, то есть те, которыми ходит сама панель:
+    # скрипт и рассчитан на запуск внутри контейнера. С хоста имя `dating_mysql`
+    # не разрешается, а порт другой (`MYSQL_PORT_HOST`) — для этого случая флаги.
+    parser.add_argument('--host', default='', help='хост MySQL (по умолчанию MYSQL_HOST из .env)')
+    parser.add_argument('--port', default='', help='порт MySQL (по умолчанию MYSQL_PORT из .env; '
+                                                   'с хоста нужен MYSQL_PORT_HOST)')
     parser.add_argument('--seed', type=int, default=20260819,
                         help='зерно случайности: один и тот же прогон даёт одни и те же данные')
     args = parser.parse_args()

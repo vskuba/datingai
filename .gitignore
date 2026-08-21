@@ -1,11 +1,15 @@
 .env
 .env.local
+
+# Локальная накладка compose. В репозитории лежит только образец
+# (`docker-compose.override.yml.dist`): под рабочим именем файл уезжал бы на
+# прод вместе с кодом, и прод поднимался бы с пустой локальной базой.
+docker-compose.override.yml
 __pycache__/
 *.pyc
-data/log/
+data/logs/
 .idea/
 .env.prod
-data/app.log
 data/*.log
 data/*.log.*
 backups/

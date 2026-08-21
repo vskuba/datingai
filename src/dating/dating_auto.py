@@ -17,7 +17,6 @@ message after 1 minute». Частить — значит копить отка�
 """
 
 import json
-import time
 
 from logging_.logging_ import logger_info
 
