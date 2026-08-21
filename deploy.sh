@@ -20,7 +20,11 @@ set -euo pipefail
 
 HOST="${DEPLOY_HOST:-rhapsody-prod}"
 REMOTE_DIR="${DEPLOY_DIR:-~/datingai}"
-COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
+# Без `-f`: базовый `docker-compose.yml` и есть прод. Локальные особенности живут
+# в `docker-compose.override.yml`, которого на сервере нет — он в `.gitignore`, а
+# из архива исключён ниже. Попади он туда, compose подхватил бы его сам, и прод
+# поднялся бы с пустой локальной базой.
+COMPOSE="docker compose"
 PANEL_URL="${DEPLOY_PANEL_URL:-https://92.5.17.195.sslip.io/dating/health}"
 
 BUILD=1
@@ -37,15 +41,24 @@ tar czf "$ARCHIVE" \
     --exclude='py_modules/.git' \
     --exclude='__pycache__' \
     --exclude='*.pyc' \
-    --exclude='data/log' \
+    --exclude='data/logs' \
     --exclude='data/*.log*' \
+    --exclude='data/backups' \
+    --exclude='data/seeds' \
     --exclude='.env.prod' \
     --exclude='.env.local' \
+    --exclude='docker-compose.override.yml' \
     .
 echo "      $(du -h "$ARCHIVE" | cut -f1)"
 
 echo "[2/4] Копирую на $HOST:$REMOTE_DIR…"
 ssh "$HOST" "mkdir -p $REMOTE_DIR && tar xzf - -C $REMOTE_DIR" < "$ARCHIVE"
+
+# Архив разворачивается поверх прежнего каталога и лишних файлов не убирает.
+# Локальная накладка на сервере означала бы прод с пустой локальной базой, а
+# `docker-compose.prod.yml` остался с тех пор, когда прод описывался накладкой;
+# теперь он мёртвый и только путает того, кто зайдёт на сервер руками.
+ssh "$HOST" "cd $REMOTE_DIR && rm -f docker-compose.override.yml docker-compose.prod.yml"
 
 if [ "$BUILD" = "1" ]; then
     echo "[3/4] Собираю образ…"

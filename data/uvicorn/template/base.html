@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}DatingAi{% endblock %}</title>
+    <link rel="stylesheet" href="{{ base }}/static/css/common.css">
+    <link rel="stylesheet" href="{{ base }}/static/css/menu_top.css">
+    <link rel="stylesheet" href="{{ base }}/static/css/notification.css">
+    {% block head %}{% endblock %}
+</head>
+<body>
+
+{# Шапка одна на все страницы панели. Пути пишутся через `{{ base }}`: на проде
+   панель живёт под общим доменом отдельным URI (`/dating`), и абсолютный
+   `/admin/seed` увёл бы человека к соседу. #}
+<header class="nav-shell">
+
+    <a class="nav-logo" href="{{ base }}/admin/dating">
+        <span class="nav-logo-mark">💘</span>
+        <span class="nav-logo-name">DatingAi</span>
+    </a>
+
+    <div class="nav-right">
+
+        <!-- Строка 1: разделы -->
+        <div class="topbar">
+
+            <a class="tabnav-group" data-group="dating" href="{{ base }}/admin/dating">💘 Dating</a>
+
+            {# Разделы про устройство установки — только администратору. Скрытая
+               вкладка не защита сама по себе (её страницы и ручки закрыты
+               `auth_admin_required`), но показывать оператору то, на что он
+               получит отказ, значит выдавать панель за сломанную. #}
+            {% if user.is_admin %}
+            <a class="tabnav-group" data-group="setting" href="{{ base }}/admin/seed">⚙️ Настройки</a>
+
+            <!-- Своей страницы у раздела нет: всё, что в нём есть, — чужие
+                 веб-морды. Ссылка никуда не ведёт, нажатие только раскрывает
+                 вторую строку (см. скрипт внизу). -->
+            <a class="tabnav-group" data-group="tool" href="#">🔧 Инструменты</a>
+            {% endif %}
+
+            <div class="topbar-spacer"></div>
+
+            <div class="topbar-user">
+                <span class="user-label">👤 {{ user.username }}</span>
+                <div class="topbar-user-menu">
+                    <a href="#" id="logoutBtn">Выйти</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="tabnav-delimeter"></div>
+
+        <!-- Строка 2: подпункты активного раздела -->
+        <div class="tabnav-items">
+
+            <div class="tabnav-panel" data-group="dating">
+                <span class="tabnav-sep"></span>
+                <a href="{{ base }}/admin/dating">Анкеты</a>
+                <span class="tabnav-sep"></span>
+            </div>
+
+            {% if user.is_admin %}
+            <div class="tabnav-panel" data-group="setting">
+                <span class="tabnav-sep"></span>
+                <a href="{{ base }}/admin/seed">🌱 Seed SQL</a>
+                <a href="{{ base }}/admin/backup">💾 Backup</a>
+                <span class="tabnav-sep"></span>
+            </div>
+
+            <div class="tabnav-panel" data-group="tool">
+                <span class="tabnav-sep"></span>
+                {# Адрес целиком, а не порт: локально phpMyAdmin поднят рядом с
+                   нашим MySQL, на проде база чужая и её морда стоит у соседа. #}
+                <a href="{{ PHPMYADMIN_URL }}" target="_blank" rel="noopener">🗄️ phpMyAdmin</a>
+                <span class="tabnav-sep"></span>
+            </div>
+            {% endif %}
+
+        </div><!-- /tabnav-items -->
+    </div><!-- /nav-right -->
+</header><!-- /nav-shell -->
+
+<div id="event-notification"></div>
+
+<div class="page-content">
+    {% block content %}{% endblock %}
+</div>
+
+<script type="module">
+    import {postData} from '{{ base }}/static/js/api.js';
+    import {showNotification} from '{{ base }}/static/js/notification.js';
+
+    const BASE = '{{ base }}';
+
+    // Выход: гасим сессию и уходим на форму входа. На форму — в любом случае,
+    // даже если запрос не прошёл: человек нажал «выйти», и оставлять его на
+    // странице с живыми анкетами нельзя. Сессия при этом остаётся, но на неё
+    // смотрит сервер, а не браузер — и первый же запрос со страницы входа её
+    // обновит.
+    document.getElementById('logoutBtn').addEventListener('click', async (e) => {
+        e.preventDefault();
+        try {
+            await postData(BASE + '/auth/logout', {});
+        } catch (err) {
+            showNotification('Выход не подтверждён: ' + err.message, 'error');
+        }
+
+        // `replace`, а не `href`: «назад» из формы входа обязано вести туда,
+        // откуда человек пришёл, а не обратно в панель, которую он закрыл.
+        location.replace(BASE + '/login');
+    });
+</script>
+
+{% block scripts %}{% endblock %}
+
+<script>
+    // Какой раздел раскрыт — решает адрес страницы, а не нажатие: человек
+    // приходит по ссылке и закладке, и подсветка обязана сойтись без клика.
+    (function () {
+        const base = '{{ base }}';
+        const path = window.location.pathname;
+
+        const groupMap = {
+            '/': 'dating',
+            '/admin/dating': 'dating',
+            '/admin/seed': 'setting',
+            '/admin/backup': 'setting',
+        };
+
+        function activate(group) {
+            document.querySelectorAll('.tabnav-group').forEach(el => {
+                el.classList.toggle('active', el.dataset.group === group);
+            });
+            document.querySelectorAll('.tabnav-panel').forEach(el => {
+                el.classList.toggle('active', el.dataset.group === group);
+            });
+        }
+
+        // Подсветка подпункта: точное совпадение или вложенный путь. Сравниваем
+        // по href целиком — он уже с префиксом, как и `location.pathname`.
+        document.querySelectorAll('.tabnav-panel a').forEach(link => {
+            const href = link.getAttribute('href');
+            if (!href || href === '#' || /^https?:/.test(href)) return;
+            if (path === href || path.startsWith(href + '/')) link.classList.add('active');
+        });
+
+        // Раздел без своей страницы раскрывается нажатием: уходить с текущей
+        // страницы ради того, чтобы увидеть список чужих веб-морд, незачем.
+        document.querySelectorAll('.tabnav-group[href="#"]').forEach(tab => {
+            tab.addEventListener('click', (e) => {
+                e.preventDefault();
+                activate(tab.dataset.group);
+            });
+        });
+
+        // Самый длинный подошедший путь — чтобы `/admin/seed` не проигрывал
+        // корню, который подходит всему.
+        const group = (function () {
+            let best = null, bestLen = 0;
+            for (const [url, name] of Object.entries(groupMap)) {
+                const full = url === '/' ? (base || '/') : base + url;
+                const matched = path === full || (url !== '/' && path.startsWith(full + '/'));
+                if (matched && full.length > bestLen) { bestLen = full.length; best = name; }
+            }
+            return best;
+        })();
+
+        activate(group || document.querySelector('.tabnav-group').dataset.group);
+    })();
+</script>
+
+</body>
+</html>

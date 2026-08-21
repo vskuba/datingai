@@ -24,6 +24,6 @@ COPY . /app
 # это общая библиотека, живущая своим репозиторием.
 ENV PYTHONPATH="/app:/app/py_modules"
 
-RUN mkdir -p data/log && chmod -R 777 data/log
+RUN mkdir -p data/logs && chmod -R 777 data/logs
 
 CMD ["uvicorn", "main_uvicorn:app", "--host", "0.0.0.0", "--port", "8000"]

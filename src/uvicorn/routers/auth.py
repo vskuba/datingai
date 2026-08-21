@@ -28,9 +28,13 @@ async def auth_login(data: AuthLogin, request: Request):
 
     request.session['user_id'] = user.user_id
     request.session['username'] = user.username
+    # Роль кладётся в куку вместе с именем: `auth_required` читает её оттуда,
+    # чтобы не ходить в базу на каждый запрос. Кука подписана `SessionMiddleware`,
+    # подделать роль с той стороны нельзя.
+    request.session['role'] = user.role
     logger_info(f'[auth] вход: {user}')
 
-    return {'result': {'id': user.user_id, 'username': user.username}}
+    return {'result': {'id': user.user_id, 'username': user.username, 'role': user.role}}
 
 
 @router.post('/logout')
@@ -44,4 +48,4 @@ async def auth_logout(request: Request):
 @router.get('/me')
 async def auth_me(user: AuthUser = Depends(auth_required)):
     """Кто сейчас в сессии — страница показывает это в шапке."""
-    return {'result': {'id': user.user_id, 'username': user.username}}
+    return {'result': {'id': user.user_id, 'username': user.username, 'role': user.role}}

@@ -14,7 +14,6 @@
 итог пишется в журнал как `info`, а не как провал.
 """
 
-import json
 import time
 
 from mysql_.mysql_ import mysql_get_db_async
@@ -124,7 +123,7 @@ async def _test_send(girl_id: int, presence: dict, girl: dict) -> dict:
     if not send:
         await dating_log_write(
             girl_id, 'info',
-            f'Пробная отправка пропущена: у сайта не настроена ручка отправки (presence.send)')
+            'Пробная отправка пропущена: у сайта не настроена ручка отправки (presence.send)')
         return {'ok': False, 'skipped': True}
 
     from src.dating.dating_send import dating_send_message

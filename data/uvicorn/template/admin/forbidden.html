@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Доступ закрыт | DatingAi{% endblock %}
+
+{% block head %}
+    <style>
+        /* Страница отказа: одно сообщение по центру. Своих стилей ей нужно
+           ровно столько, а шапку и палитру она берёт у базового шаблона. */
+        .forbid {
+            margin: auto;
+            max-width: 420px;
+            padding: 28px 24px;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            background: #fff;
+            text-align: center;
+            font-family: system-ui, sans-serif;
+        }
+
+        .forbid-mark { font-size: 34px; line-height: 1; }
+        .forbid h1 { margin: 12px 0 6px; font-size: 17px; color: #1e293b; }
+        .forbid p { margin: 0 0 18px; color: #6b7280; font-size: 13px; line-height: 1.5; }
+
+        .forbid a {
+            display: inline-block;
+            padding: 7px 14px;
+            border-radius: 6px;
+            background: #4f46e5;
+            color: #fff;
+            font-size: 13px;
+            text-decoration: none;
+        }
+
+        .forbid a:hover { background: #4338ca; }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="forbid">
+    <div class="forbid-mark">🔒</div>
+    <h1>Эта страница только для администратора</h1>
+    {# Что именно закрыто, называем прямо: «нет доступа» без объяснения человек
+       читает как поломку и идёт спрашивать, почему панель сломалась. #}
+    <p>Учётка <b>{{ user.username }}</b> работает с анкетами. Seed, бэкапы и база
+       доступны администратору установки — попросите его, если нужно сюда.</p>
+    <a href="{{ base }}/admin/dating">К анкетам</a>
+</div>
+{% endblock %}

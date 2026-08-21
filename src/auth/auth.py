@@ -1,9 +1,16 @@
 """Вход в панель и проверка «свой ли».
 
-Прав здесь ровно два состояния: вошёл или нет. Ролевой матрицы нет намеренно —
-весь проект про одну вещь, анкеты на сайтах знакомств, и делить его на «смотреть»
-и «править» значило бы завести бухгалтерию ради одной страницы. Понадобится
-разделение — оно появится тогда, когда появится второй род работы.
+Ролей две, и это не матрица прав, а один вопрос: пускать ли к устройству
+установки.
+
+| Роль | Что доступно |
+|------|--------------|
+| `dating` | анкеты: список, чат, ответы, журнал — всё, ради чего панель открывают |
+| `admin` | то же плюс seed, бэкапы и веб-морда к базе |
+
+Дробить дальше не надо: работа с анкетой неделима — кто видит переписку, тот на
+неё и отвечает. Разделение появилось ровно тогда, когда появился второй род
+работы: операции, которые правят или выносят базу целиком.
 
 Два способа представиться, как и у соседа:
 
@@ -18,7 +25,7 @@
 import secrets
 
 import bcrypt
-from fastapi import HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
@@ -32,16 +39,31 @@ AUTH_TOKEN_PREFIX = 'bearer '
 # сколько с настоящим, и по времени ответа перебрать имена не выйдет.
 AUTH_DUMMY_HASH = bcrypt.hashpw(b'-', bcrypt.gensalt()).decode()
 
+# Роли. `admin` — единственная, дающая доступ к устройству установки; всё
+# остальное считается работой с анкетами. Сравнение идёт с этой константой, а не
+# со строкой на месте: опечатка в строковом литерале открыла бы доступ молча.
+AUTH_ROLE_ADMIN = 'admin'
+AUTH_ROLE_DATING = 'dating'
+
 
 class AuthUser:
-    """Кто выполняет запрос. Ровно то, что нужно журналу и страницам."""
+    """Кто выполняет запрос. Ровно то, что нужно журналу, страницам и правам."""
 
-    def __init__(self, user_id: int, username: str):
+    def __init__(self, user_id: int, username: str, role: str = AUTH_ROLE_DATING):
         self.user_id = int(user_id)
         self.username = str(username)
+        # Неизвестное значение роли считается наименьшими правами: строка в базе
+        # может оказаться какой угодно, и трактовать «непонятно что» как админа
+        # означало бы открывать доступ по опечатке.
+        self.role = AUTH_ROLE_ADMIN if str(role) == AUTH_ROLE_ADMIN else AUTH_ROLE_DATING
+
+    @property
+    def is_admin(self) -> bool:
+        """Пускать ли к seed, бэкапам и прочему устройству установки."""
+        return self.role == AUTH_ROLE_ADMIN
 
     def __repr__(self) -> str:
-        return f'#{self.user_id} {self.username}'
+        return f'#{self.user_id} {self.username} ({self.role})'
 
 
 async def auth_required(request: Request) -> AuthUser:
@@ -54,7 +76,11 @@ async def auth_required(request: Request) -> AuthUser:
     username = request.session.get('username', '')
 
     if user_id and username:
-        return AuthUser(user_id, username)
+        # Роль читается из куки, а не из базы: `auth_required` висит на каждой
+        # точке, а страница опрашивает их пачками каждые пятнадцать секунд —
+        # запрос к базе на каждый вызов заметен. Плата за это одна: смена роли
+        # доезжает после перелогина, но не позже — кука живёт час.
+        return AuthUser(user_id, username, request.session.get('role', AUTH_ROLE_DATING))
 
     token = auth_token_of(request)
     if token:
@@ -63,6 +89,23 @@ async def auth_required(request: Request) -> AuthUser:
             return user
 
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='нужен вход')
+
+
+async def auth_admin_required(user: AuthUser = Depends(auth_required)) -> AuthUser:
+    """Зависимость точек, которые правят или выносят установку: seed, бэкапы.
+
+    Отдельная зависимость, а не проверка в теле: право видно в объявлении роута,
+    и точку, где её забыли, находит чтение файла, а не разбор происшествия.
+
+    403, а не 404: скрывать существование страницы незачем — она есть, и человек
+    видит её у коллеги. «Нельзя» понятнее, чем «нет такой».
+    """
+    if not user.is_admin:
+        logger_info(f'[auth] отказано {user}: нужна роль {AUTH_ROLE_ADMIN}')
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail='нужна роль администратора')
+
+    return user
 
 
 def auth_token_of(request: Request) -> str:
@@ -88,14 +131,16 @@ async def auth_token_user(token: str) -> AuthUser | None:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'SELECT u.id, u.username FROM user_access_token t '
+                'SELECT u.id, u.username, u.role FROM user_access_token t '
                 '  JOIN user u ON u.id = t.user_id WHERE t.token = %s', (str(token),))
             row = await db.fetchone()
     except Exception as e:
         logger_info(f'[auth] токен не проверился: {e}')
         return None
 
-    return AuthUser(int(row['id']), str(row['username'])) if row else None
+    # У токена роль всегда свежая: он читается из базы на каждый запрос, сессии
+    # у скрипта нет и кэшировать нечего.
+    return AuthUser(int(row['id']), str(row['username']), str(row['role'])) if row else None
 
 
 async def auth_user_check(username: str, password: str) -> AuthUser | None:
@@ -105,7 +150,7 @@ async def auth_user_check(username: str, password: str) -> AuthUser | None:
     «неверный пароль» — разные ответы только для того, кто перебирает логины.
     """
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT id, username, password_hash FROM user WHERE username = %s',
+        await db.execute('SELECT id, username, password_hash, role FROM user WHERE username = %s',
                          (str(username).strip(),))
         row = await db.fetchone()
 
@@ -118,7 +163,7 @@ async def auth_user_check(username: str, password: str) -> AuthUser | None:
     if not row or not ok:
         return None
 
-    return AuthUser(int(row['id']), str(row['username']))
+    return AuthUser(int(row['id']), str(row['username']), str(row['role']))
 
 
 def auth_password_hash(password: str) -> str:

@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+
+{% block title %}Seed SQL | DatingAi{% endblock %}
+
+{% block head %}
+    <link rel="stylesheet" href="{{ base }}/static/css/admin_page.css">
+{% endblock %}
+
+{% block content %}
+<div class="adm-page">
+
+    <div class="adm-head">
+        <h1>🌱 Seed SQL</h1>
+        <span class="adm-hint">выбранные таблицы одним файлом; заливка не затирает существующее</span>
+        <div class="adm-head-act">
+            <button type="button" class="adm-btn primary" id="genBtn">Сгенерировать</button>
+        </div>
+    </div>
+
+    <div class="adm-body">
+
+        <div class="adm-side">
+            <div class="adm-side-head">
+                Таблицы
+                <button type="button" class="adm-btn" id="allBtn" style="margin-left:auto">Все</button>
+                <button type="button" class="adm-btn" id="noneBtn">Снять</button>
+            </div>
+            <div class="adm-side-body" id="tables"></div>
+        </div>
+
+        <div class="adm-main" id="files"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+    import {getData, postData, deleteData} from '{{ base }}/static/js/api.js';
+    import {showNotification} from '{{ base }}/static/js/notification.js';
+
+    const BASE = '{{ base }}';
+
+    // Какие таблицы отмечены — помнит браузер, а не сервер. У соседа этот выбор
+    // лежит в таблице `setting`; заводить её здесь ради одного набора галочек
+    // значило бы платить схемой за настройку одного человека на одной машине.
+    const PICK_KEY = 'dating_seed_tables';
+
+    const tablesEl = document.getElementById('tables');
+    const filesEl = document.getElementById('files');
+    const genBtn = document.getElementById('genBtn');
+
+    function esc(value) {
+        const el = document.createElement('div');
+        el.textContent = value == null ? '' : value;
+        return el.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function sizeText(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / 1048576).toFixed(2) + ' MB';
+    }
+
+    function picked() {
+        return Array.from(tablesEl.querySelectorAll('input:checked')).map(el => el.value);
+    }
+
+    function pickSave() {
+        localStorage.setItem(PICK_KEY, JSON.stringify(picked()));
+    }
+
+    async function tablesLoad() {
+        let groups;
+        try {
+            groups = (await getData(BASE + '/api/seed/table')).result || [];
+        } catch (e) {
+            tablesEl.innerHTML = '<div class="adm-empty">список таблиц не пришёл</div>';
+            showNotification('Список таблиц не пришёл: ' + e.message, 'error');
+            return;
+        }
+
+        // Первый заход — отметки от сервера (`default`): что заводят руками,
+        // отмечено, что копит сама работа панели — нет. Дальше решает человек,
+        // и его выбор помнит браузер.
+        let saved = null;
+        try { saved = JSON.parse(localStorage.getItem(PICK_KEY)); } catch (e) {}
+        const on = Array.isArray(saved) ? new Set(saved) : null;
+
+        tablesEl.innerHTML = groups.map(group => `
+            <div class="adm-group">${esc(group.label)}</div>
+            ${group.tables.map(table => `
+                <div class="adm-check">
+                    <input type="checkbox" id="tbl_${esc(table.name)}" value="${esc(table.name)}"
+                           ${(on ? on.has(table.name) : table.default) ? 'checked' : ''}>
+                    <label for="tbl_${esc(table.name)}">${esc(table.name)}</label>
+                </div>`).join('')}`).join('');
+    }
+
+    async function filesLoad() {
+        let files;
+        try {
+            files = (await getData(BASE + '/api/seed/file')).result || [];
+        } catch (e) {
+            filesEl.innerHTML = '<div class="adm-empty">список файлов не пришёл</div>';
+            return;
+        }
+
+        if (!files.length) {
+            filesEl.innerHTML = '<div class="adm-empty">Файлов нет. Отметьте таблицы и нажмите «Сгенерировать».</div>';
+            return;
+        }
+
+        filesEl.innerHTML = `
+            <table class="adm-table">
+                <thead><tr><th>Файл</th><th>Размер</th><th>Снят (UTC)</th><th></th></tr></thead>
+                <tbody>${files.map(file => `
+                    <tr>
+                        <td class="adm-col-name">${esc(file.name)}</td>
+                        <td class="adm-col-size">${sizeText(file.size)}</td>
+                        <td class="adm-col-date">${esc(file.modified)}</td>
+                        <td class="adm-col-act">
+                            <button type="button" class="adm-btn" data-do="get" data-name="${esc(file.name)}">Скачать</button>
+                            <button type="button" class="adm-btn good" data-do="apply" data-name="${esc(file.name)}">Применить</button>
+                            <button type="button" class="adm-btn danger" data-do="del" data-name="${esc(file.name)}">Удалить</button>
+                        </td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>`;
+    }
+
+    async function generate() {
+        const tables = picked();
+        if (!tables.length) {
+            showNotification('Отметьте хотя бы одну таблицу', 'warning');
+            return;
+        }
+
+        genBtn.disabled = true;
+        genBtn.innerHTML = '<span class="adm-spin"></span>Генерация…';
+        try {
+            const file = (await postData(BASE + '/api/seed/generate', {tables})).result || {};
+            showNotification(`Готов ${file.name} (${sizeText(file.size)})`, 'success');
+            await filesLoad();
+        } catch (e) {
+            showNotification('Не сгенерировался: ' + e.message, 'error');
+        } finally {
+            genBtn.disabled = false;
+            genBtn.textContent = 'Сгенерировать';
+        }
+    }
+
+    async function apply(name) {
+        if (!confirm(`Применить ${name} к текущей базе?\n\nСтроки с занятыми ключами не изменятся (INSERT IGNORE).`)) return;
+        try {
+            const text = (await postData(`${BASE}/api/seed/apply/${encodeURIComponent(name)}`, {})).result;
+            showNotification(text, 'success');
+        } catch (e) {
+            showNotification('Не применился: ' + e.message, 'error');
+        }
+    }
+
+    async function remove(name) {
+        if (!confirm('Удалить файл ' + name + '?')) return;
+        try {
+            await deleteData(`${BASE}/api/seed/${encodeURIComponent(name)}`);
+            await filesLoad();
+        } catch (e) {
+            showNotification('Не удалился: ' + e.message, 'error');
+        }
+    }
+
+    // Один обработчик на таблицу вместо обработчика на кнопку: строки
+    // перерисовываются целиком после каждого действия, и навешивать заново
+    // пришлось бы каждый раз.
+    filesEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-do]');
+        if (!btn) return;
+        const name = btn.dataset.name;
+        if (btn.dataset.do === 'get') location.href = `${BASE}/api/seed/download/${encodeURIComponent(name)}`;
+        if (btn.dataset.do === 'apply') apply(name);
+        if (btn.dataset.do === 'del') remove(name);
+    });
+
+    tablesEl.addEventListener('change', pickSave);
+    genBtn.addEventListener('click', generate);
+
+    document.getElementById('allBtn').addEventListener('click', () => {
+        tablesEl.querySelectorAll('input').forEach(el => el.checked = true);
+        pickSave();
+    });
+    document.getElementById('noneBtn').addEventListener('click', () => {
+        tablesEl.querySelectorAll('input').forEach(el => el.checked = false);
+        pickSave();
+    });
+
+    tablesLoad();
+    filesLoad();
+</script>
+{% endblock %}

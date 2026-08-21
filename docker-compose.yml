@@ -1,9 +1,29 @@
-# Состав DatingAi: четыре сервиса и ни одного лишнего.
+# Состав DatingAi на проде: два сервиса и ни одного лишнего.
 #
-# `uvicorn` — панель и API, `worker_dating` — смена держателя чат-сокетов,
-# `mysql` — своя база анкет, `redis` — очередь для смены. Браузера, Qdrant,
-# OpenSearch и прочего здесь нет: это хозяйство RhapsodyAi, к которому проект
-# ходит по HTTP.
+# `dating_uvicorn` — панель и API, `dating_worker` — смена держателя чат-сокетов.
+# Браузера, Qdrant, OpenSearch и прочего здесь нет: это хозяйство RhapsodyAi, к
+# которому проект ходит по HTTP.
+#
+# **Этот файл описывает прод.** Локальные особенности — свои MySQL, Redis и
+# phpMyAdmin, публикация портов, работа без `.env.prod` — лежат в
+# `docker-compose.override.yml`, который compose подхватывает **сам**, без `-f`.
+# Отсюда правило: на машине разработчика запускается `docker compose up -d`, а
+# на проде того же файла нет, и та же команда поднимает прод.
+#
+# Почему так, а не наоборот. Прод — то, что должно работать по умолчанию: забыть
+# флаг легко, и цена забытого флага здесь «панель поднялась не той стороной».
+# Локальная установка, наоборот, всегда стоит на машине, где накладка лежит
+# рядом и подхватывается сама, — забыть её нельзя.
+#
+# Сервер один на оба проекта, и поднимать там второй MySQL со вторым Redis
+# значило бы платить памятью за то, что уже работает. Поэтому на проде DatingAi
+# берёт движки RhapsodyAi, оставаясь хозяином своих данных:
+#
+#   * MySQL — тот же сервер, но **своя база** `dating` со своим пользователем.
+#     Схема, права и бэкапы остаются раздельными; общий только процесс.
+#   * Redis — тот же, но **своя база по номеру** (`/1`). Ключи и очередь `dating`
+#     не пересекаются с чужими, а один Redis на два проекта нормален: он и
+#     заводится ради того, чтобы его делить.
 #
 # Сеть внешняя (`rhapsody-net`): контейнеры должны видеть `uvicorn` соседа по
 # имени. Без общей сети адресом пришлось бы делать `host.docker.internal`, а он
@@ -19,69 +39,44 @@ services:
       context: .
       dockerfile: docker/uvicorn/dockerfile
     container_name: dating_uvicorn
-    ports:
-      - "${UVICORN_PORT:-8021}:8000"
     volumes:
       - ./:/app
+    # Два слоя: `.env` — общий, `.env.prod` — прод поверх него (чужой MySQL,
+    # `BASE_PATH=/dating`, боевой токен соседа). На машине разработчика второй
+    # слой снимает накладка: `.env.prod` лежит и локально, и подхватись он тут —
+    # разработка пошла бы в прод-базу.
     env_file:
       - .env
-    depends_on:
-      dating_mysql:
-        condition: service_healthy
+      - .env.prod
     networks:
       - dating-net
       - rhapsody-net
     restart: always
+    # Порт наружу не публикуется: снаружи в панель ходят через Caddy соседа
+    # (`92.5.17.195.sslip.io/dating`), а прямой порт был бы вторым, неохраняемым
+    # входом в неё. Публикацию добавляет локальная накладка.
 
   dating_worker:
     build:
       context: .
       dockerfile: docker/uvicorn/dockerfile
     container_name: dating_worker
-    command: rq worker --url redis://dating_redis:6379 dating
+    # Адрес разворачивает **оболочка внутри контейнера**, а не compose. Разница
+    # принципиальна: `${REDIS_URL}` в команде compose берёт значение из `.env`
+    # проекта и ничего не знает про `env_file` — на проде туда попадал локальный
+    # `dating_redis`, которого там нет, и воркер падал на разрешении имени.
+    command: sh -c 'rq worker --url "$$REDIS_URL" dating'
     volumes:
       - ./:/app
     env_file:
       - .env
+      - .env.prod
     depends_on:
-      - dating_redis
       - dating_uvicorn
     networks:
       - dating-net
       - rhapsody-net
     restart: always
-
-  dating_mysql:
-    image: mysql:8.0
-    container_name: dating_mysql
-    command: mysqld --sql-mode="NO_ENGINE_SUBSTITUTION"
-    ports:
-      - "${MYSQL_PORT:-3312}:3306"
-    environment:
-      - MYSQL_DATABASE=dating
-      - MYSQL_USER=developer
-      - MYSQL_PASSWORD=password
-      - MYSQL_ROOT_PASSWORD=password
-    volumes:
-      - dating_mysql_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-p$$MYSQL_ROOT_PASSWORD", "--protocol", "tcp"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-    networks:
-      - dating-net
-    restart: always
-
-  dating_redis:
-    image: redis:7-alpine
-    container_name: dating_redis
-    networks:
-      - dating-net
-    restart: always
-
-volumes:
-  dating_mysql_data:
 
 networks:
   dating-net:

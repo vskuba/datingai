@@ -58,7 +58,16 @@ jobs:
             cd ~/datingai
             # Окружение прода приходит секретом: пароль базы, токен соседа, ключ сессии.
             echo "${{ secrets.ENV_FILE }}" > .env.prod
-            COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
+
+            # Копирование идёт поверх и лишних файлов не убирает. Локальной
+            # накладки в репозитории нет (она в `.gitignore`), но попади она на
+            # сервер иным путём — compose подхватил бы её сам, и прод поднялся бы
+            # с пустой локальной базой. `docker-compose.prod.yml` остался с тех
+            # пор, когда прод описывался накладкой, и теперь только путает.
+            rm -f docker-compose.override.yml docker-compose.prod.yml
+
+            # Без `-f`: базовый `docker-compose.yml` и есть прод.
+            COMPOSE="docker compose"
             $COMPOSE build dating_uvicorn
             $COMPOSE up -d --force-recreate dating_uvicorn dating_worker
             docker image prune -f

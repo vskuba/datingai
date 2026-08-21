@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+
+{% block title %}Backup | DatingAi{% endblock %}
+
+{% block head %}
+    <link rel="stylesheet" href="{{ base }}/static/css/admin_page.css">
+{% endblock %}
+
+{% block content %}
+<div class="adm-page">
+
+    <div class="adm-head">
+        <h1>💾 Резервные копии</h1>
+        <span class="adm-hint">полный дамп базы <code>dating</code>; восстановление перезаписывает её целиком</span>
+        <div class="adm-head-act">
+            <button type="button" class="adm-btn primary" id="createBtn">Снять бэкап</button>
+        </div>
+    </div>
+
+    <div class="adm-body">
+        <div class="adm-main" id="files"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+    import {getData, postData, deleteData} from '{{ base }}/static/js/api.js';
+    import {showNotification} from '{{ base }}/static/js/notification.js';
+
+    const BASE = '{{ base }}';
+
+    const filesEl = document.getElementById('files');
+    const createBtn = document.getElementById('createBtn');
+
+    function esc(value) {
+        const el = document.createElement('div');
+        el.textContent = value == null ? '' : value;
+        return el.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function sizeText(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / 1048576).toFixed(2) + ' MB';
+    }
+
+    async function filesLoad() {
+        let files;
+        try {
+            files = (await getData(BASE + '/api/backup/file')).result || [];
+        } catch (e) {
+            filesEl.innerHTML = '<div class="adm-empty">список не пришёл</div>';
+            showNotification('Список бэкапов не пришёл: ' + e.message, 'error');
+            return;
+        }
+
+        if (!files.length) {
+            filesEl.innerHTML = '<div class="adm-empty">Бэкапов нет. Нажмите «Снять бэкап».</div>';
+            return;
+        }
+
+        // Единственный бэкап удалить нельзя — и кнопки у него нет: отказ уже
+        // после нажатия читается как поломка, а не как правило.
+        const many = files.length > 1;
+
+        filesEl.innerHTML = `
+            <table class="adm-table">
+                <thead><tr><th>Файл</th><th>Размер</th><th>Снят (UTC)</th><th></th></tr></thead>
+                <tbody>${files.map(file => `
+                    <tr>
+                        <td class="adm-col-name">${esc(file.name)}</td>
+                        <td class="adm-col-size">${sizeText(file.size)}</td>
+                        <td class="adm-col-date">${esc(file.modified)}</td>
+                        <td class="adm-col-act">
+                            <button type="button" class="adm-btn" data-do="get" data-name="${esc(file.name)}">Скачать</button>
+                            <button type="button" class="adm-btn good" data-do="restore" data-name="${esc(file.name)}">Восстановить</button>
+                            ${many ? `<button type="button" class="adm-btn danger" data-do="del" data-name="${esc(file.name)}">Удалить</button>` : ''}
+                        </td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>`;
+    }
+
+    async function create() {
+        createBtn.disabled = true;
+        createBtn.innerHTML = '<span class="adm-spin"></span>Снимаем…';
+        try {
+            const file = (await postData(BASE + '/api/backup/create', {})).result || {};
+            showNotification(`Снят ${file.name} (${sizeText(file.size)})`, 'success');
+            await filesLoad();
+        } catch (e) {
+            showNotification('Дамп не снялся: ' + e.message, 'error');
+        } finally {
+            createBtn.disabled = false;
+            createBtn.textContent = 'Снять бэкап';
+        }
+    }
+
+    async function restore(name, btn) {
+        if (!confirm(`Восстановить базу из ${name}?\n\nВСЁ, что есть в базе сейчас, будет перезаписано: анкеты, переписка, журнал.`)) return;
+
+        btn.disabled = true;
+        btn.innerHTML = '<span class="adm-spin"></span>Заливаем…';
+        try {
+            const text = (await postData(`${BASE}/api/backup/restore/${encodeURIComponent(name)}`, {})).result;
+            showNotification(text, 'success');
+        } catch (e) {
+            showNotification('Не восстановился: ' + e.message, 'error');
+        } finally {
+            // Строку не перерисовываем: список файлов заливка не меняет, а
+            // кнопку надо вернуть в рабочее состояние в любом исходе.
+            btn.disabled = false;
+            btn.textContent = 'Восстановить';
+        }
+    }
+
+    async function remove(name) {
+        if (!confirm('Удалить бэкап ' + name + '?')) return;
+        try {
+            await deleteData(`${BASE}/api/backup/${encodeURIComponent(name)}`);
+            await filesLoad();
+        } catch (e) {
+            showNotification('Не удалился: ' + e.message, 'error');
+        }
+    }
+
+    // Один обработчик на таблицу: строки перерисовываются целиком, и навешивать
+    // на каждую кнопку заново пришлось бы после каждого действия.
+    filesEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-do]');
+        if (!btn) return;
+        const name = btn.dataset.name;
+        if (btn.dataset.do === 'get') location.href = `${BASE}/api/backup/download/${encodeURIComponent(name)}`;
+        if (btn.dataset.do === 'restore') restore(name, btn);
+        if (btn.dataset.do === 'del') remove(name);
+    });
+
+    createBtn.addEventListener('click', create);
+
+    filesLoad();
+</script>
+{% endblock %}

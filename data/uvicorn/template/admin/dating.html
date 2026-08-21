@@ -1,15 +1,16 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <title>Dating | AI System</title>
-    <link rel="stylesheet" href="{{ base }}/static/css/common.css">
-    <link rel="stylesheet" href="{{ base }}/static/css/notification.css">
+{% extends "base.html" %}
 
+{% block title %}Dating | AI System{% endblock %}
+
+{% block head %}
     <style>
-        /* Страница отдельная, без базового шаблона: так её и заказывали. Раскладку
-           держит сама — две колонки сверху, журнал во всю ширину снизу. */
-        body { margin: 0; background: #f4f4f9; font-family: system-ui, sans-serif; height: 100vh; overflow: hidden; }
+        /* Раскладку страница держит сама: две колонки сверху, журнал во всю
+           ширину снизу. Из базового шаблона берётся только шапка.
+
+           `.page-content` из `common.css` рассчитан на страницы с полями по
+           краям; здесь поля свои, у сетки, и вторые снаружи съели бы высоту,
+           из-за которой журнал перестаёт помещаться. */
+        .page-content { padding: 0; }
 
         /* Список анкет идёт во всю высоту, а профиль и журнал делят вторую колонку.
            Журнал относится к выбранной анкете, а не ко всей странице, поэтому и
@@ -24,7 +25,11 @@
             grid-template-columns: var(--col) 6px 1fr;
             grid-template-rows: auto minmax(0, 1fr);
             gap: 8px;
-            height: 100vh;
+            /* Не `100vh`: над страницей теперь шапка, и высота во весь экран
+               уводила бы журнал под нижний край. Высоту даёт `.page-content` —
+               остаток экрана под шапкой. */
+            width: 100%;
+            height: 100%;
             padding: 14px 16px;
             box-sizing: border-box;
         }
@@ -43,7 +48,7 @@
         .split-row { cursor: row-resize; }
 
         .dating-head { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-        .dating-head h1 { margin: 0; font-size: 18px; color: #1e293b; }
+        .dating-head h1 { margin: 0; font-size: 14px; color: #1e293b; }
         .dating-head select { max-width: 220px; padding: 6px 9px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
 
         .dating-girls-pane { grid-column: 1; grid-row: 2; }
@@ -116,12 +121,6 @@
 
         .dating-hint { color: #6b7280; font-size: 12px; }
         .dating-hint.bad { color: #b91c1c; }
-
-        /* Выход прижат к правому краю шапки: кнопка, которую ищут глазами в углу,
-           а не среди рабочих. `margin-left: auto` вместо своей колонки — шапка
-           переносится на узком экране, и колонка увела бы выход на вторую строку. */
-        .dating-user { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-        .dating-user-name { color: #6b7280; font-size: 12px; }
 
         /* Форма заведения — над списком, скрыта до нажатия «+». */
         .dating-form { display: none; flex-direction: column; gap: 6px; padding: 10px 12px; border-bottom: 1px solid #f1f5f9; }
@@ -272,20 +271,16 @@
 
         .empty { padding: 14px; color: #9ca3af; font-size: 12px; text-align: center; }
     </style>
-</head>
-<body>
+{% endblock %}
+
+{% block content %}
 <div class="dating-page">
 
     <div class="dating-head">
-        <h1>💘 Dating</h1>
+        <h1>🌐 Сайт</h1>
         <select id="siteSelect" title="Сайт, на котором заведены анкеты"></select>
         <button type="button" class="dating-btn primary" id="addBtn">+ девушка</button>
         <span class="dating-hint" id="hint"></span>
-
-        <div class="dating-user">
-            <span class="dating-user-name" title="Кто сейчас в панели">{{ user.username }}</span>
-            <button type="button" class="dating-btn" id="logoutBtn" title="Выйти из панели">Logout</button>
-        </div>
     </div>
 
     <div class="pane dating-girls-pane">
@@ -892,22 +887,6 @@
         return el.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
-    // Выход: гасим сессию и уходим на форму входа. На форму — в любом случае, даже
-    // если запрос не прошёл: человек нажал «выйти», и оставлять его на странице с
-    // живыми анкетами нельзя. Сессия при этом остаётся, но на неё смотрит сервер, а
-    // не браузер — и первый же запрос со страницы входа её обновит.
-    async function logout() {
-        try {
-            await postData(BASE + '/auth/logout', {});
-        } catch (e) {
-            showNotification('Выход не подтверждён: ' + e.message, 'error');
-        }
-
-        // `replace`, а не `href`: «назад» из формы входа обязано вести туда, откуда
-        // человек пришёл, а не обратно в панель, которую он только что закрыл.
-        location.replace(BASE + '/login');
-    }
-
     document.getElementById('addBtn').addEventListener('click', () => {
         formEl.classList.toggle('open');
         if (formEl.classList.contains('open')) document.getElementById('login').focus();
@@ -915,7 +894,6 @@
     document.getElementById('saveBtn').addEventListener('click', girlSave);
     document.getElementById('cancelBtn').addEventListener('click', () => formEl.classList.remove('open'));
     document.getElementById('logReload').addEventListener('click', logLoad);
-    document.getElementById('logoutBtn').addEventListener('click', logout);
     // Перерисовываем на месте, без запроса: список уже в памяти.
     findEl.addEventListener('input', () => { girlsPage = 0; girlsRender(); });
     siteEl.addEventListener('change', () => {
@@ -973,5 +951,4 @@
     sitesLoad();
     setInterval(probe, PROBE_MS);
 </script>
-</body>
-</html>
+{% endblock %}
