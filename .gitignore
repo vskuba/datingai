@@ -10,6 +10,13 @@ data/*.log
 data/*.log.*
 backups/
 
+.superpowers
+
+# Дампы и выгрузки из панели. В них пароли учёток на сайтах знакомств и вся
+# переписка — место такому файлу рядом с базой, а не в истории git.
+data/backups/
+data/seeds/
+
 .claude-shell
 
 .memsearch
