@@ -36,6 +36,11 @@ trap 'rm -f "$ARCHIVE"' EXIT
 echo "[1/4] Собираю архив…"
 # `.env.prod` исключён намеренно: на сервере он свой — с паролем базы, токеном
 # соседа и ключом сессии. Перезаписать его отсюда значит уронить прод.
+#
+# `.env` исключён по другой причине: он машинный, и на проде не нужен вовсе —
+# базовый compose читает только `.env.prod`. Пока `.env` туда уезжал, на сервер
+# вместе с ним ехали локальные токены разработчика, а прод-значение могло молча
+# прийти из него: так на проде оказался локальный адрес phpMyAdmin.
 tar czf "$ARCHIVE" \
     --exclude='.git' \
     --exclude='py_modules/.git' \
@@ -47,6 +52,7 @@ tar czf "$ARCHIVE" \
     --exclude='data/seeds' \
     --exclude='.env.prod' \
     --exclude='.env.local' \
+    --exclude='.env' \
     --exclude='docker-compose.override.yml' \
     .
 echo "      $(du -h "$ARCHIVE" | cut -f1)"
