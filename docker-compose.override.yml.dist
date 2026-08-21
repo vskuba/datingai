@@ -1,0 +1,105 @@
+# Локальная установка: то, чем машина разработчика отличается от прода.
+#
+# Файл — **образец**, как `.env.dist`. Рабочая копия делается один раз при
+# настройке и в репозиторий не попадает:
+#
+#   cp docker-compose.override.yml.dist docker-compose.override.yml
+#
+# Compose читает `docker-compose.override.yml` **сам**, без `-f`: на машине
+# разработчика `docker compose up -d` поднимает локальный набор, а на проде, где
+# копии нет, та же команда поднимает прод. Базовая конфигурация (прод) — в
+# `docker-compose.yml`.
+#
+# Почему копия, а не сам файл под рабочим именем: под рабочим именем он уезжал бы
+# на прод вместе с кодом, и прод поднимался бы с пустой локальной базой. Здесь же
+# на сервере нет ни образца под этим именем, ни рабочей копии — ошибиться нечем.
+#
+# Разработке нужна установка, которую можно уронить и поднять, не спрашивая
+# соседа, поэтому здесь появляются свои движки:
+#
+#   * `dating_mysql` — своя база анкет вместо MySQL RhapsodyAi;
+#   * `dating_redis` — своя очередь вместо его Redis;
+#   * `dating_phpmyadmin` — веб-морда к своей базе (на проде её роль исполняет
+#     phpMyAdmin соседа: база там на его сервере и видна оттуда).
+#
+# Машинные особенности (занятые порты, свои пароли) правятся не здесь, а в
+# `.env.local`: он читается поверх `.env` и в репозиторий тоже не попадает.
+# Тогда рабочая копия остаётся такой же, как образец, и расходиться им незачем.
+
+services:
+  dating_uvicorn:
+    # Прямой вход в панель: локально Caddy соседа перед ней не стоит.
+    ports:
+      - "${UVICORN_PORT:-8021}:8000"
+    # `!override` вместо добавления: списки `env_file` при склейке файлов
+    # **дописываются**, и без него прод-слой остался бы поверх локального —
+    # разработка пошла бы в боевую базу. `.env.prod` лежит и на этой машине,
+    # так что «файла нет, значит не подхватится» здесь не работает.
+    env_file: !override
+      - .env
+    depends_on:
+      dating_mysql:
+        condition: service_healthy
+
+  dating_worker:
+    # Локально адрес очереди известен заранее и берётся из имени сервиса.
+    command: rq worker --url redis://dating_redis:6379 dating
+    env_file: !override
+      - .env
+    depends_on:
+      - dating_redis
+      - dating_uvicorn
+
+  dating_mysql:
+    image: mysql:8.0
+    container_name: dating_mysql
+    command: mysqld --sql-mode="NO_ENGINE_SUBSTITUTION"
+    ports:
+      - "${MYSQL_PORT:-3312}:3306"
+    environment:
+      - MYSQL_DATABASE=dating
+      - MYSQL_USER=developer
+      - MYSQL_PASSWORD=password
+      - MYSQL_ROOT_PASSWORD=password
+    volumes:
+      - dating_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-p$$MYSQL_ROOT_PASSWORD", "--protocol", "tcp"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - dating-net
+    restart: always
+
+  dating_redis:
+    image: redis:7-alpine
+    container_name: dating_redis
+    networks:
+      - dating-net
+    restart: always
+
+  # Веб-морда к своей базе — из шапки панели («Инструменты → phpMyAdmin»).
+  #
+  # Своя, а не соседская: у RhapsodyAi phpMyAdmin смотрит в его MySQL, а `dating`
+  # локально живёт в отдельном контейнере, и оттуда до неё не дойти.
+  #
+  # Образ официальный (`library/phpmyadmin`): в отличие от `phpmyadmin/phpmyadmin`
+  # у него есть arm64-вариант, и на машине с Apple silicon он не тянет эмуляцию.
+  dating_phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: dating_phpmyadmin
+    ports:
+      - "${PHPMYADMIN_PORT:-9637}:80"
+    environment:
+      PMA_HOST: dating_mysql
+      MYSQL_USERNAME: ${MYSQL_USER:-developer}
+      MYSQL_ROOT_PASSWORD: password
+    depends_on:
+      - dating_mysql
+    networks:
+      - dating-net
+    restart: always
+
+volumes:
+  dating_mysql_data:
