@@ -36,6 +36,13 @@ async def dashboard_seed(request: Request, user: AuthUser = Depends(auth_admin_r
     return _dashboard_page(request, user, 'admin/seed.html')
 
 
+@router.get('/admin/users', response_class=HTMLResponse, include_in_schema=False)
+async def dashboard_users(request: Request, user: AuthUser = Depends(auth_admin_required)):
+    """Пользователи: учётки, роли и токены доступа. Только админу — отсюда
+    раздают права на саму панель."""
+    return _dashboard_page(request, user, 'admin/users.html')
+
+
 @router.get('/admin/backup', response_class=HTMLResponse, include_in_schema=False)
 async def dashboard_backup(request: Request, user: AuthUser = Depends(auth_admin_required)):
     """Бэкапы: полный дамп базы и восстановление. Только админу — восстановление

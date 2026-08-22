@@ -11,9 +11,10 @@
 </head>
 <body>
 
-{# Шапка одна на все страницы панели. Пути пишутся через `{{ base }}`: на проде
-   панель живёт под общим доменом отдельным URI (`/dating`), и абсолютный
-   `/admin/seed` увёл бы человека к соседу. #}
+{# Шапка одна на все страницы панели. Пути пишутся через `{{ base }}`: сейчас он
+   пуст — у панели своё имя, — но пока она делила домен с соседом отдельным URI
+   (`/dating`), абсолютный `/admin/seed` уводил человека к нему. Вернуть её под
+   префикс стоит одной переменной, и разметка к этому готова. #}
 <header class="nav-shell">
 
     <a class="nav-logo" href="{{ base }}/admin/dating">
@@ -67,6 +68,7 @@
                 <span class="tabnav-sep"></span>
                 <a href="{{ base }}/admin/seed">🌱 Seed SQL</a>
                 <a href="{{ base }}/admin/backup">💾 Backup</a>
+                <a href="{{ base }}/admin/users">👥 Пользователи</a>
                 <span class="tabnav-sep"></span>
             </div>
 
@@ -128,6 +130,7 @@
             '/admin/dating': 'dating',
             '/admin/seed': 'setting',
             '/admin/backup': 'setting',
+            '/admin/users': 'setting',
         };
 
         function activate(group) {

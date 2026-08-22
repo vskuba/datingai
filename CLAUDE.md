@@ -59,8 +59,10 @@
 | `src/uvicorn/routers/dashboard.py` | Страницы панели |
 | `src/uvicorn/routers/seed.py` | Seed SQL: выгрузка таблиц и заливка обратно |
 | `src/uvicorn/routers/backup.py` | Бэкапы: дамп базы и восстановление |
+| `src/uvicorn/routers/users.py` | Пользователи: учётки, роли, токены доступа |
 | `data/uvicorn/template/base.html` | Шапка панели: разделы и подпункты |
 | `src/auth/auth.py` | Вход в панель: сессия или токен, две роли |
+| `src/auth/auth_users.py` | Управление людьми: кого и что менять нельзя |
 | `src/worker/dating/chat_worker.py` | Смена держателя, очередь `dating` |
 | `migrations/0001.sql` | Единственный источник схемы БД |
 

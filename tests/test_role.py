@@ -29,6 +29,16 @@ ROLE_ADMIN_ONLY = [
     ('POST', '/api/backup/restore/whatever.sql.gz'),
     ('GET', '/api/backup/download/whatever.sql.gz'),
     ('DELETE', '/api/backup/whatever.sql.gz'),
+    # Раздача прав на саму панель. Заведомо несуществующий номер не случайно: тот
+    # же список прогоняется под администратором, и настоящий id здесь означал бы
+    # проверку прав ценой удалённой учётки.
+    ('GET', '/admin/users'),
+    ('GET', '/api/users'),
+    ('POST', '/api/users'),
+    ('PUT', '/api/users/99999999'),
+    ('DELETE', '/api/users/99999999'),
+    ('POST', '/api/users/99999999/token'),
+    ('DELETE', '/api/users/token/99999999'),
 ]
 
 # То, ради чего оператор и заходит. Открывается — иначе роль бессмысленна.

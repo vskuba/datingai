@@ -1,0 +1,305 @@
+{% extends "base.html" %}
+
+{% block title %}Пользователи | DatingAi{% endblock %}
+
+{% block head %}
+    <link rel="stylesheet" href="{{ base }}/static/css/admin_page.css">
+    <style>
+        /* Раскладка и кнопки — общие с Seed SQL и Backup (`admin_page.css`):
+           один раздел, один вид. Здесь только то, чего там нет. */
+
+        /* Роль видна цветом: в списке из десятка учёток «кто здесь хозяин»
+           считывается взглядом, а не чтением. */
+        .usr-role {
+            font-size: 11px; padding: 2px 9px; border-radius: 10px; font-weight: 600;
+        }
+        .usr-role.admin { background: #fef3c7; color: #92400e; }
+        .usr-role.dating { background: #eef2ff; color: #3730a3; }
+
+        .usr-me { font-size: 11px; color: #6b7280; margin-left: 6px; }
+
+        .usr-select {
+            padding: 5px 8px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 12px;
+        }
+        .usr-select:disabled { opacity: .5; cursor: not-allowed; }
+
+        /* Токен: пометка и хвост. Значения здесь нет и быть не может. */
+        .usr-token {
+            display: inline-flex; align-items: center; gap: 6px; font-size: 11px;
+            background: #f1f5f9; color: #475569; padding: 2px 8px; border-radius: 10px;
+            margin: 0 4px 4px 0;
+        }
+        .usr-token code { font-family: ui-monospace, Menlo, monospace; color: #0f172a; }
+        .usr-token button {
+            border: 0; background: none; cursor: pointer; color: #b91c1c;
+            font-size: 13px; line-height: 1; padding: 0;
+        }
+
+        /* Форма заведения прячется, пока не нажали «Добавить»: в обычный день
+           она не нужна и только занимает место над списком. */
+        .usr-add {
+            display: none; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+            background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+            padding: 12px 14px; margin-bottom: 16px;
+        }
+        .usr-add.on { display: flex; }
+        .usr-add label { font-size: 11px; color: #64748b; display: block; margin-bottom: 3px; }
+        .usr-add input, .usr-add select {
+            padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px;
+        }
+
+        /* Выданный токен: показывается один раз и не гаснет сам — его надо
+           успеть забрать, а не поймать взглядом. */
+        .usr-new {
+            display: none; align-items: center; gap: 10px; flex-wrap: wrap;
+            background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px;
+            padding: 12px 14px; margin-bottom: 16px; font-size: 13px; color: #14532d;
+        }
+        .usr-new.on { display: flex; }
+        .usr-new code {
+            font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+            background: #fff; border: 1px solid #bbf7d0; border-radius: 6px; padding: 6px 10px;
+            user-select: all; word-break: break-all;
+        }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="adm-page">
+
+    <div class="adm-head">
+        <h1>👥 Пользователи</h1>
+        <span class="adm-hint">учётки панели, роли и токены доступа</span>
+        <div class="adm-head-act">
+            <button type="button" class="adm-btn primary" id="addBtn">Добавить</button>
+        </div>
+    </div>
+
+    {# Одна колонка, как у Backup: содержимое лежит в `.adm-main`, потому что
+       сама `.adm-body` — флекс-строка (в Seed ею разведены список таблиц и
+       файлы). Положить блоки прямо в неё значит выстроить их бок о бок. #}
+    <div class="adm-body">
+      <div class="adm-main">
+
+        <div class="usr-new" id="newToken">
+            <span>🔑 Токен выдан. <b>Он показывается один раз</b> — заберите сейчас:</span>
+            <code id="newTokenValue"></code>
+            <button type="button" class="adm-btn" id="newTokenCopy">Скопировать</button>
+            <button type="button" class="adm-btn" id="newTokenHide">Скрыть</button>
+        </div>
+
+        <div class="usr-add" id="addForm">
+            <div>
+                <label for="addName">Имя</label>
+                <input type="text" id="addName" placeholder="operator" autocomplete="off">
+            </div>
+            <div>
+                <label for="addPass">Пароль</label>
+                <input type="text" id="addPass" placeholder="не короче 8 знаков" autocomplete="off">
+            </div>
+            <div>
+                <label for="addRole">Роль</label>
+                <select id="addRole" class="usr-select">
+                    <option value="dating">Оператор анкет</option>
+                    <option value="admin">Администратор</option>
+                </select>
+            </div>
+            <button type="button" class="adm-btn primary" id="addSave">Завести</button>
+            <button type="button" class="adm-btn" id="addCancel">Отмена</button>
+        </div>
+
+        <div id="tableWrap"><div class="adm-empty">Загружаю…</div></div>
+
+      </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+    import {getData, postData, putData, deleteData} from '{{ base }}/static/js/api.js';
+    import {showNotification} from '{{ base }}/static/js/notification.js';
+
+    const BASE = '{{ base }}';
+
+    // Кто смотрит. Себе нельзя менять роль и удалять себя — сервер это отклонит,
+    // но показывать кнопку, которая заведомо ответит отказом, значит выдавать
+    // работающую панель за сломанную.
+    const ME = {{ user.user_id }};
+
+    const ROLES = {admin: 'Администратор', dating: 'Оператор анкет'};
+
+    const esc = (t) => String(t ?? '').replace(/[&<>"']/g,
+        (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+
+    const date = (t) => t ? String(t).replace('T', ' ').slice(0, 16) : '';
+
+    async function load() {
+        try {
+            const result = (await getData(BASE + '/api/users')).result || {};
+            render(result.users || []);
+        } catch (e) {
+            document.getElementById('tableWrap').innerHTML =
+                `<div class="adm-empty">Не вышло получить список: ${esc(e.message)}</div>`;
+        }
+    }
+
+    function tokensCell(user) {
+        const chips = (user.tokens || []).map((t) =>
+            `<span class="usr-token" data-token="${t.id}">`
+            + (t.note ? esc(t.note) + ' ' : '')
+            + `<code>…${esc(t.tail)}</code>`
+            + '<button type="button" title="отозвать токен">×</button></span>').join('');
+
+        return (chips || '<span class="adm-col-date">нет</span>')
+            + ` <button type="button" class="adm-btn" data-do="token">+ токен</button>`;
+    }
+
+    function render(users) {
+        const rows = users.map((user) => {
+            const self = user.id === ME;
+            const options = Object.entries(ROLES).map(([name, title]) =>
+                `<option value="${name}"${name === user.role ? ' selected' : ''}>`
+                + `${esc(title)}</option>`).join('');
+
+            return `<tr data-id="${user.id}" data-name="${esc(user.username)}">
+                <td class="adm-col-name">${esc(user.username)}
+                    ${self ? '<span class="usr-me">это вы</span>' : ''}
+                    <div class="adm-col-date">заведена ${esc(date(user.created_at))}</div></td>
+                <td><span class="usr-role ${esc(user.role)}">${esc(ROLES[user.role] || user.role)}</span></td>
+                <td><select class="usr-select" data-role="${user.id}"${self ? ' disabled title="роль себе не меняют: понизив себя, вы потеряете эту страницу"' : ''}>${options}</select></td>
+                <td>${tokensCell(user)}</td>
+                <td class="adm-col-act">
+                    <button type="button" class="adm-btn" data-do="pass">Пароль</button>
+                    <button type="button" class="adm-btn danger" data-do="del"${self ? ' disabled title="нельзя удалить себя"' : ''}>Удалить</button>
+                </td></tr>`;
+        }).join('');
+
+        document.getElementById('tableWrap').innerHTML =
+            '<table class="adm-table"><thead><tr>'
+            + '<th>Учётка</th><th>Роль</th><th>Сменить роль</th><th>Токены доступа</th><th></th>'
+            + '</tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+
+    // Обработчик один на таблицу, а не по кнопке на строку: список
+    // перерисовывается после каждого действия, и развешивать слушателей заново
+    // означало бы плодить их при каждой перерисовке.
+    document.getElementById('tableWrap').addEventListener('click', async (e) => {
+        const row = e.target.closest('tr[data-id]');
+        if (!row) return;
+        const id = row.dataset.id;
+        const name = row.dataset.name;
+
+        const revoke = e.target.closest('.usr-token button');
+        if (revoke) {
+            const chip = revoke.closest('.usr-token');
+            if (!confirm('Отозвать токен?\n\nВсё, что им ходит, перестанет пускаться сразу.')) return;
+            await run(() => deleteData(`${BASE}/api/users/token/${chip.dataset.token}`),
+                      'Токен отозван');
+            return;
+        }
+
+        const button = e.target.closest('button[data-do]');
+        if (!button || button.disabled) return;
+
+        if (button.dataset.do === 'token') {
+            const note = prompt(`Кому выдаётся токен для «${name}»?\n\n`
+                + 'Пометка нужна, чтобы потом было понятно, что отзывать.');
+            if (note === null) return;
+            await issue(id, note);
+        }
+
+        if (button.dataset.do === 'pass') {
+            const password = prompt(`Новый пароль для «${name}» (не короче 8 знаков):`);
+            if (!password) return;
+            await run(() => putData(`${BASE}/api/users/${id}`, {password}), 'Пароль изменён');
+        }
+
+        if (button.dataset.do === 'del') {
+            if (!confirm(`Удалить учётку «${name}»?\n\n`
+                + 'Её токены перестанут пускать. Анкеты и переписка останутся.')) return;
+            await run(() => deleteData(`${BASE}/api/users/${id}`), 'Учётка удалена');
+        }
+    });
+
+    document.getElementById('tableWrap').addEventListener('change', async (e) => {
+        const select = e.target.closest('select[data-role]');
+        if (!select) return;
+
+        await run(() => putData(`${BASE}/api/users/${select.dataset.role}`, {role: select.value}),
+                  'Роль изменена');
+    });
+
+    /** Действие над списком: выполнить, сказать человеку и перечитать.
+     *
+     * Перечитываем и после отказа тоже: выпадающий список ролей к этому моменту
+     * уже показывает то, чего не произошло, и оставить его так — значит врать. */
+    async function run(action, done) {
+        try {
+            await action();
+            showNotification(done, 'success');
+        } catch (e) {
+            showNotification(e.message || 'Не вышло', 'error');
+        }
+        await load();
+    }
+
+    async function issue(id, note) {
+        try {
+            const token = (await postData(`${BASE}/api/users/${id}/token`, {note})).result;
+            document.getElementById('newTokenValue').textContent = token.token;
+            document.getElementById('newToken').classList.add('on');
+            showNotification('Токен выдан', 'success');
+        } catch (e) {
+            showNotification(e.message || 'Не вышло', 'error');
+        }
+        await load();
+    }
+
+    document.getElementById('newTokenCopy').addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(
+                document.getElementById('newTokenValue').textContent);
+            showNotification('Скопировано', 'success');
+        } catch {
+            // Буфер закрыт политикой браузера — значение и так на экране,
+            // выделяется целиком нажатием.
+            showNotification('Скопируйте вручную: буфер недоступен', 'error');
+        }
+    });
+
+    document.getElementById('newTokenHide').addEventListener('click', () => {
+        document.getElementById('newToken').classList.remove('on');
+        document.getElementById('newTokenValue').textContent = '';
+    });
+
+    document.getElementById('addBtn').addEventListener('click', () => {
+        document.getElementById('addForm').classList.toggle('on');
+        document.getElementById('addName').focus();
+    });
+
+    document.getElementById('addCancel').addEventListener('click', () => {
+        document.getElementById('addForm').classList.remove('on');
+    });
+
+    document.getElementById('addSave').addEventListener('click', async () => {
+        const username = document.getElementById('addName').value.trim();
+        const password = document.getElementById('addPass').value;
+        const role = document.getElementById('addRole').value;
+
+        try {
+            await postData(BASE + '/api/users', {username, password, role});
+            showNotification(`Учётка «${username}» заведена`, 'success');
+            document.getElementById('addName').value = '';
+            document.getElementById('addPass').value = '';
+            document.getElementById('addForm').classList.remove('on');
+        } catch (e) {
+            showNotification(e.message || 'Не вышло', 'error');
+        }
+        await load();
+    });
+
+    load();
+</script>
+{% endblock %}
