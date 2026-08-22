@@ -71,7 +71,12 @@ SELECT 'ПОСЛЕ' AS этап,
        (SELECT COUNT(*) FROM dating_contact WHERE photo LIKE 'http%') AS с_хостом,
        (SELECT COUNT(*) FROM dating_contact WHERE photo = '') AS без_фото;
 
-SELECT 'пример' AS этап, photo
-  FROM dating_contact
- WHERE photo LIKE CONCAT(TRIM(TRAILING '/' FROM @base), '/%')
+-- Отбор идёт по `site_id`, а не по `photo LIKE @base`: пользовательская
+-- переменная приходит в коллации соединения (`utf8mb4_0900_ai_ci`), колонка
+-- живёт в `utf8mb4_unicode_ci`, и сравнение этих двух — `ERROR 1267`. В `CONCAT`
+-- выше переменная безопасна: там она не сравнивается, а склеивается.
+SELECT 'пример' AS этап, c.photo
+  FROM dating_contact c
+  JOIN dating_girl g ON g.id = c.girl_id
+ WHERE g.site_id = @site_id AND c.photo <> ''
  LIMIT 1;
