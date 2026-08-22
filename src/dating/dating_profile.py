@@ -104,21 +104,39 @@ async def _contacts_load(client, girl: dict, presence: dict) -> int:
         for item in items[:DATING_PROFILE_CONTACT_LIMIT]:
             if not isinstance(item, dict):
                 continue
-            uid = str(item.get('id') or item.get('ladyId') or '').strip()
-            if not uid:
+            values = _contact_values(item, int(girl['id']), presence)
+            if values is None:
                 continue
             await db.execute(
                 'INSERT INTO dating_contact (girl_id, uid, name, photo, age, city, is_online) '
                 'VALUES (%s, %s, %s, %s, %s, %s, %s) '
                 'ON DUPLICATE KEY UPDATE name=VALUES(name), photo=VALUES(photo), '
                 '  age=VALUES(age), city=VALUES(city), is_online=VALUES(is_online)',
-                (int(girl['id']), uid[:32], str(item.get('firstName') or '')[:190],
-                 str(item.get('url') or '')[:500], int(item.get('age') or 0),
-                 str(item.get('from') or '')[:190], 1 if item.get('isOnline') else 0))
+                values)
             saved += 1
         await db.connection.commit()
 
     return saved
+
+
+def _contact_values(item: dict, girl_id: int, presence: dict) -> tuple | None:
+    """Строка `dating_contact` из ответа сайта. `None` — записывать нечего.
+
+    Вынесено из запроса отдельно, чтобы правила разбора проверялись без сети и
+    базы: цена ошибки здесь — молча битые данные у всех собеседниц разом.
+    """
+    # Ключ таблицы — пара `girl_id, uid`, и пустой `uid` склеил бы всех
+    # безымянных в одну строку.
+    uid = str(item.get('id') or item.get('ladyId') or '').strip()
+    if not uid:
+        return None
+
+    # Через `_photo`, а не сырьём: сайт отдаёт фотографию то полным адресом на
+    # CDN, то путём от своего корня, и второй вариант страница подставляет в
+    # `<img src>` как есть — браузер достроил бы его до адреса панели.
+    return (girl_id, uid[:32], str(item.get('firstName') or '')[:190],
+            _photo(item, presence)[:500], int(item.get('age') or 0),
+            str(item.get('from') or '')[:190], 1 if item.get('isOnline') else 0)
 
 
 def _photo(user: dict, presence: dict) -> str:
