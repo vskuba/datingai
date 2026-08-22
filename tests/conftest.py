@@ -13,8 +13,8 @@ import os
 import httpx
 import pytest
 
-# Куда стучаться. На проде — `https://92.5.17.195.sslip.io/dating`, и тогда же
-# проверится работа под префиксом.
+# Куда стучаться. На проде — `https://dating.92.5.17.195.sslip.io`: своё имя,
+# корень домена, `BASE_PATH` при этом пуст — как локально.
 BASE_URL = os.getenv('BASE_URL', 'http://localhost:8021').rstrip('/')
 
 # Учётка панели. Значения по умолчанию — из `.env.dist`; на рабочей установке

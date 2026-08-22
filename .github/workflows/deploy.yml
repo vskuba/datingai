@@ -90,7 +90,7 @@ jobs:
         run: |
           for i in $(seq 1 10); do
             code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
-              https://92.5.17.195.sslip.io/dating/health || true)
+              https://dating.92.5.17.195.sslip.io/health || true)
             [ "$code" = "200" ] && echo "панель отвечает" && exit 0
             sleep 6
           done
