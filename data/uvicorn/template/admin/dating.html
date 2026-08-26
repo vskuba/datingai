@@ -164,10 +164,13 @@
 
         /* ---------- Правая колонка: профиль и собеседницы ---------- */
 
-        .profile { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
-        .profile img { width: 64px; height: 64px; border-radius: 10px; object-fit: cover; background: #f1f5f9; }
-        .profile-name { font-size: 15px; font-weight: 700; color: #111827; }
-        .profile-meta { color: #6b7280; font-size: 12px; }
+        /* `card`, а не `profile`: `profile` — карточка учётки в списке слева, и
+           два разных смысла под одним именем уже сталкивались. Здесь именно
+           анкета с сайта — то же, что `card` в коде сервера. */
+        .card { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+        .card img { width: 64px; height: 64px; border-radius: 10px; object-fit: cover; background: #f1f5f9; }
+        .card-name { font-size: 15px; font-weight: 700; color: #111827; }
+        .card-meta { color: #6b7280; font-size: 12px; }
 
         /* Диалогов бывают сотни, поэтому свёрнутый вид — основной, а не запасной.
            В строке ровно то, по чему выбирают, что открыть: кто, когда, о чём и
@@ -575,13 +578,13 @@
             `${profile.login || ''}${data.contacts_total ? ` · собеседников: ${data.contacts_total}` : ''}`;
 
         const p = data.profile || {};
-        const head = `<div class="profile">
+        const head = `<div class="card">
             <img src="${esc(p.photo || '')}" alt="" onerror="this.style.visibility='hidden'">
             <div>
-                <div class="profile-name">${esc(p.name || data.login || '')}</div>
-                <div class="profile-meta">ID ${esc(String(p.id || data.login || ''))}
+                <div class="card-name">${esc(p.name || data.login || '')}</div>
+                <div class="card-meta">ID ${esc(String(p.id || data.login || ''))}
                     ${p.age ? ' · ' + p.age : ''}${p.city ? ' · ' + esc(p.city) : ''}</div>
-                <div class="profile-meta">${esc(p.about || 'описание профиля сайт не отдал')}</div>
+                <div class="card-meta">${esc(p.about || 'описание профиля сайт не отдал')}</div>
             </div></div>`;
 
         const me = p.name || data.login || 'мы';
