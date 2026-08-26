@@ -50,13 +50,26 @@ services:
     # нём. Локальная накладка ставит на это место `.env` через `!override`.
     env_file:
       - .env.prod
+    depends_on:
+      dating_mysql:
+        condition: service_healthy
+      dating_redis:
+        condition: service_started
     networks:
       - dating-net
+      # Общая сеть осталась ровно ради **входа снаружи**: Caddy соседа
+      # проксирует нас по имени контейнера (`reverse_proxy dating_uvicorn:8000`),
+      # а имя резолвится только в ней. Убрать сеть можно одним движением, но
+      # парой: сначала в Caddyfile соседа адрес меняется на порт хоста
+      # (`127.0.0.1:8021`, публикуется ниже), и только потом уходит эта строка.
+      # Наружу мы ходим уже по HTTPS — `RHAPSODY_URL`, — и сети для этого не надо.
       - rhapsody-net
     restart: always
-    # Порт наружу не публикуется: снаружи в панель ходят через Caddy соседа
-    # (`dating.92.5.17.195.sslip.io`), а прямой порт был бы вторым, неохраняемым
-    # входом в неё. Публикацию добавляет локальная накладка.
+    # Порт слушает только петлю: снаружи в панель ходят через Caddy соседа, и
+    # публиковать её всему миру значило бы завести второй, неохраняемый вход.
+    # На петле он нужен, чтобы Caddy мог дойти до нас без общей сети.
+    ports:
+      - "127.0.0.1:${UVICORN_PORT:-8021}:8000"
 
   dating_worker:
     build:
@@ -73,11 +86,75 @@ services:
     env_file:
       - .env.prod
     depends_on:
-      - dating_uvicorn
+      dating_mysql:
+        condition: service_healthy
+      dating_redis:
+        condition: service_started
+      dating_uvicorn:
+        condition: service_started
     networks:
       - dating-net
-      - rhapsody-net
     restart: always
+
+  # ── Свои движки ──────────────────────────────────────────────────────────
+  #
+  # Раньше прод брал MySQL и Redis у соседа: считалось, что поднимать вторые
+  # значит платить памятью за то, что уже работает. Цену этой экономии узнали
+  # 25 августа — сосед пересоздал свой MySQL, база `dating` и её пользователь
+  # исчезли вместе с ним, и панель три дня отвечала «Access denied» на каждый
+  # вход. Своя база стоит ~400 МБ и не зависит от чужих выкладок.
+  #
+  # Переменные приходят из `.env.prod` тем же `env_file`, что у панели: подстановка
+  # `${...}` здесь не годится — её делает compose из `.env` проекта, а `.env` на
+  # сервер не едет вовсе, и значения молча оказались бы пустыми.
+
+  dating_mysql:
+    image: mysql:8.0
+    container_name: dating_mysql
+    command: mysqld --sql-mode="NO_ENGINE_SUBSTITUTION"
+    env_file:
+      - .env.prod
+    volumes:
+      - dating_mysql_data:/var/lib/mysql
+    # Панель без базы не поднимается, поэтому ждём не запуска контейнера, а
+    # готовности сервера принимать запросы.
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-p$$MYSQL_ROOT_PASSWORD", "--protocol", "tcp"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - dating-net
+    restart: always
+
+  dating_redis:
+    image: redis:7-alpine
+    container_name: dating_redis
+    volumes:
+      - dating_redis_data:/data
+    networks:
+      - dating-net
+    restart: always
+
+  # Веб-морда к своей базе — пункт «Инструменты → phpMyAdmin» в шапке панели.
+  # Порт на петле: снаружи он не нужен, а ssh-туннель до него доходит.
+  dating_phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: dating_phpmyadmin
+    ports:
+      - "127.0.0.1:${PHPMYADMIN_PORT:-9637}:80"
+    environment:
+      PMA_HOST: dating_mysql
+    depends_on:
+      dating_mysql:
+        condition: service_healthy
+    networks:
+      - dating-net
+    restart: always
+
+volumes:
+  dating_mysql_data:
+  dating_redis_data:
 
 networks:
   dating-net:
@@ -85,4 +162,7 @@ networks:
     external: true
     # Сеть поднимает RhapsodyAi; имя складывается из имени его каталога и имени
     # сети в его compose. Своей копии этой сети быть не может — она общая.
+    #
+    # Держится она теперь только входом снаружи (см. `dating_uvicorn`). Как
+    # только Caddy соседа станет ходить на порт хоста, строка уйдёт отсюда.
     name: rhapsodyai_os-net
