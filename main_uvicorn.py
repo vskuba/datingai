@@ -39,6 +39,7 @@ from src.uvicorn.routers import dashboard
 from src.uvicorn.routers import seed as seed_router
 from src.uvicorn.routers import site as site_router
 from src.uvicorn.routers import users as users_router
+from src.uvicorn.routers.dating import dating_export
 from src.uvicorn.routers.dating import dating_profile
 from src.uvicorn.uvicorn_base import uvicorn_base_path
 from src.uvicorn.uvicorn_validation import uvicorn_validation_handler
@@ -193,6 +194,7 @@ app.include_router(auth_router.router)
 app.include_router(dashboard.router)
 app.include_router(site_router.router)
 app.include_router(dating_profile.router)
+app.include_router(dating_export.router)
 app.include_router(seed_router.router)
 app.include_router(backup_router.router)
 app.include_router(users_router.router)

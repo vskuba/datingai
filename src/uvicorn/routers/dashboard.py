@@ -30,6 +30,16 @@ async def dashboard_dating(request: Request, user: AuthUser = Depends(auth_requi
     return _dashboard_page(request, user, 'admin/dating.html')
 
 
+@router.get('/admin/dating/export', response_class=HTMLResponse, include_in_schema=False)
+async def dashboard_dating_export(request: Request, user: AuthUser = Depends(auth_required)):
+    """Экспорт анкет: выгрузка списка профилей с сайта.
+
+    Открыт всем вошедшим, а не только админу: это работа с анкетами, ради которой
+    панель и открывают, а не операция над устройством установки.
+    """
+    return _dashboard_page(request, user, 'admin/dating_export.html')
+
+
 @router.get('/admin/seed', response_class=HTMLResponse, include_in_schema=False)
 async def dashboard_seed(request: Request, user: AuthUser = Depends(auth_admin_required)):
     """Seed SQL: выгрузка выбранных таблиц и заливка обратно. Только админу."""

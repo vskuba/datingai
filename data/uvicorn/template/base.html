@@ -60,6 +60,7 @@
             <div class="tabnav-panel" data-group="dating">
                 <span class="tabnav-sep"></span>
                 <a href="{{ base }}/admin/dating">Анкеты</a>
+                <a href="{{ base }}/admin/dating/export">📤 Экспорт анкет</a>
                 <span class="tabnav-sep"></span>
             </div>
 
@@ -128,6 +129,7 @@
         const groupMap = {
             '/': 'dating',
             '/admin/dating': 'dating',
+            '/admin/dating/export': 'dating',
             '/admin/seed': 'setting',
             '/admin/backup': 'setting',
             '/admin/users': 'setting',
@@ -144,11 +146,22 @@
 
         // Подсветка подпункта: точное совпадение или вложенный путь. Сравниваем
         // по href целиком — он уже с префиксом, как и `location.pathname`.
+        //
+        // Побеждает **самый длинный** подошедший href, а не каждый подошедший. На
+        // `/admin/dating/export` подходят оба подпункта раздела — и «Анкеты»
+        // (`/admin/dating` — префикс пути), и «Экспорт анкет», — а подсвеченных
+        // «где я сейчас» не бывает двух. Тот же приём применён ниже к `groupMap`
+        // по той же причине.
+        let best = null, bestLen = 0;
         document.querySelectorAll('.tabnav-panel a').forEach(link => {
             const href = link.getAttribute('href');
             if (!href || href === '#' || /^https?:/.test(href)) return;
-            if (path === href || path.startsWith(href + '/')) link.classList.add('active');
+            if ((path === href || path.startsWith(href + '/')) && href.length > bestLen) {
+                bestLen = href.length;
+                best = link;
+            }
         });
+        if (best) best.classList.add('active');
 
         // Раздел без своей страницы раскрывается нажатием: уходить с текущей
         // страницы ради того, чтобы увидеть список чужих веб-морд, незачем.
