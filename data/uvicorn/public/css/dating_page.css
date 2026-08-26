@@ -89,6 +89,26 @@
 
 .pane-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 10px 12px; }
 
+/* Подвал панели со страницами. Прижат к низу и не прокручивается вместе со
+   списком: иначе до кнопки «дальше» пришлось бы долистывать страницу, ради
+   которой её и нажимают. Кнопки по центру — их читают как один блок, а не как
+   продолжение строк списка.
+
+   Пейджер одной страницы не показывается вовсе: подвал раскрывается классом
+   `open` (см. `pagerRender` в `dating_view.js`). */
+.pane-foot {
+    display: none; align-items: center; justify-content: center; gap: 4px;
+    padding: 6px; border-top: 1px solid #f1f5f9; flex: 0 0 auto;
+}
+.pane-foot.open { display: flex; }
+.page-btn {
+    min-width: 26px; padding: 2px 7px; border: 1px solid #e5e7eb; border-radius: 6px;
+    background: #fff; font-size: 12px; font-family: inherit; color: #374151; cursor: pointer;
+}
+.page-btn:hover:not(:disabled) { border-color: #c7d2fe; color: #4338ca; }
+.page-btn.active { background: #4f46e5; border-color: #4f46e5; color: #fff; }
+.page-btn:disabled { opacity: .4; cursor: default; }
+
 /* Поиск живёт в шапке панели и занимает остаток строки: учёток доходит до сотен,
    и листать их глазами дольше, чем набрать три буквы. */
 .pane-find {

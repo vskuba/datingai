@@ -41,22 +41,6 @@
         .dating-profiles-pane { grid-column: 1; grid-row: 2; }
         .dating-log-pane { min-height: 0; }
 
-        /* Подвал панели со страницами. Прижат к низу и не прокручивается вместе
-           со списком: иначе до кнопки «дальше» пришлось бы долистывать страницу,
-           ради которой её и нажимают. */
-        .pane-foot {
-            display: none; align-items: center; justify-content: center; gap: 4px;
-            padding: 6px; border-top: 1px solid #f1f5f9; flex: 0 0 auto;
-        }
-        .pane-foot.open { display: flex; }
-        .page-btn {
-            min-width: 26px; padding: 2px 7px; border: 1px solid #e5e7eb; border-radius: 6px;
-            background: #fff; font-size: 12px; font-family: inherit; color: #374151; cursor: pointer;
-        }
-        .page-btn:hover:not(:disabled) { border-color: #c7d2fe; color: #4338ca; }
-        .page-btn.active { background: #4f46e5; border-color: #4f46e5; color: #fff; }
-        .page-btn:disabled { opacity: .4; cursor: default; }
-
         /* Чекбокс автоответа стоит в ряду кнопок и должен читаться как их часть,
            а не как обрывок формы. */
         .auto-box {
@@ -242,7 +226,7 @@
     import {showNotification} from '{{ base }}/static/js/notification.js';
     // Значки и бейджи учётки — общие с «Профилями»: обе страницы рисуют строки
     // одной и той же ручки, и две копии разошлись бы в мелочах.
-    import {esc, statusTitle, warnBadge, workPills} from '{{ base }}/static/js/dating_view.js';
+    import {esc, statusTitle, warnBadge, workPills, pagerRender} from '{{ base }}/static/js/dating_view.js';
 
     // Под каким URI живёт панель. Локально пусто (корень домена), на проде —
     // `/dating`: домен один на два проекта, и делится он по пути. Прокси префикс
@@ -332,27 +316,6 @@
     //
     // Страницы рисуются кнопками, а не «умным» диапазоном: анкет и собеседниц
     // сотни, а не тысячи, и десяток кнопок читается лучше многоточий.
-    function pagerRender(el, pages, current, pick) {
-        el.classList.toggle('open', pages > 1);
-        if (pages <= 1) {
-            el.innerHTML = '';
-            return;
-        }
-
-        const button = (label, page, disabled, active) =>
-            `<button type="button" class="page-btn${active ? ' active' : ''}" data-page="${page}"`
-            + `${disabled ? ' disabled' : ''}>${label}</button>`;
-
-        let html = button('‹', current - 1, current === 0, false);
-        for (let i = 0; i < pages; i++) html += button(i + 1, i, false, i === current);
-        html += button('›', current + 1, current === pages - 1, false);
-
-        el.innerHTML = html;
-        el.querySelectorAll('.page-btn').forEach(btn => {
-            btn.addEventListener('click', () => pick(Number(btn.dataset.page)));
-        });
-    }
-
     // Поиск фильтрует уже загруженный список, а не ходит на сервер: список
     // приходит целиком на сайт, и лишний запрос на каждую букву ничего не уточнит,
     // зато отзывчивость потеряет.

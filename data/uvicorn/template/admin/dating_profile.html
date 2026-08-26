@@ -66,7 +66,7 @@
     <div class="dating-head">
         <h1>🌐 Сайт</h1>
         <select id="siteSelect" title="Сайт, на котором заведены анкеты"></select>
-        <button type="button" class="dating-btn" id="reloadBtn">Обновить</button>
+        <button type="button" class="dating-btn" id="importBtn">Импортировать профили</button>
         <span class="dating-hint" id="hint"></span>
     </div>
 
@@ -77,6 +77,7 @@
                    spellcheck="false" autocomplete="off" title="Быстрый поиск по имени или логину">
         </div>
         <div class="pane-body prof-body" id="table"></div>
+        <div class="pane-foot" id="profilesPager"></div>
     </div>
 </div>
 {% endblock %}
@@ -85,7 +86,8 @@
 <script type="module">
     import {getData, postData} from '{{ base }}/static/js/api.js';
     import {showNotification} from '{{ base }}/static/js/notification.js';
-    import {esc, statusDot, warnBadge, workPills, seenText} from '{{ base }}/static/js/dating_view.js';
+    import {esc, statusDot, warnBadge, workPills, seenText, pagerRender}
+        from '{{ base }}/static/js/dating_view.js';
 
     const BASE = '{{ base }}';
 
@@ -99,14 +101,20 @@
     // молча; чаще — незачем, опрос всё равно ходит раз в 15 секунд.
     const RELOAD_MS = 30000;
 
+    // Сколько строк на странице. Прокрутка на сотнях анкет не помогает: место в
+    // ней теряется, а вернуться к строке, которую только что смотрел, нечем.
+    const PAGE_SIZE = 25;
+
     const siteEl = document.getElementById('siteSelect');
-    const reloadBtn = document.getElementById('reloadBtn');
+    const importBtn = document.getElementById('importBtn');
     const tableEl = document.getElementById('table');
     const hintEl = document.getElementById('hint');
     const countEl = document.getElementById('profilesN');
     const findEl = document.getElementById('profileFind');
+    const pagerEl = document.getElementById('profilesPager');
 
     let profiles = [];
+    let page = 0;
     // Кого сейчас держит долгое действие: вход идёт минутами, и перерисовка не
     // должна ни затирать «Вхожу…», ни подсовывать кнопку под руку второй раз.
     const busy = new Set();
@@ -169,32 +177,45 @@
     }
 
     function actCell(row) {
-        // Одна кнопка на два состояния: у учётки со снятым входом «Войти» ничего
-        // не значит, а без входа отключать нечего.
+        // Кнопка одна и всегда одна и та же — в отличие от «Чатов», где их три и
+        // они меняются по состоянию учётки. Здесь смотрят на список целиком, и
+        // столбец, в котором у каждой строки своя кнопка, читается как сыпь.
         if (busy.has(row.id)) {
             return '<button type="button" class="dating-btn busy" disabled>'
-                 + '<span class="dating-spin"></span>жду…</button>';
+                 + '<span class="dating-spin"></span>Проверяю…</button>';
         }
 
-        return row.has_state
-            ? '<button type="button" class="dating-btn off-btn">Отключить</button>'
-            : `<button type="button" class="dating-btn login-btn"${row.has_password ? '' : ' disabled'}`
-              + `${row.has_password ? '' : ' title="у учётки не задан пароль"'}>Войти</button>`;
+        // Без пароля вход не пройдёт: лучше сказать это подсказкой сразу, чем
+        // отказом после минуты ожидания.
+        return `<button type="button" class="dating-btn test-btn"${row.has_password ? '' : ' disabled'}`
+             + ` title="${row.has_password ? 'Войти на сайт и проверить, что вход признан'
+                                           : 'у учётки не задан пароль'}">Тест логин</button>`;
     }
 
     function tablePaint() {
-        const rows = shownRows();
-        countEl.textContent = rows.length === profiles.length
-            ? profiles.length : `${rows.length} из ${profiles.length}`;
+        const found = shownRows();
+        countEl.textContent = found.length === profiles.length
+            ? profiles.length : `${found.length} из ${profiles.length}`;
 
         if (!profiles.length) {
             empty('На этом сайте учёток пока нет. Заводят их на странице «Чаты».');
+            pagerRender(pagerEl, 0, 0, () => {});
             return;
         }
-        if (!rows.length) {
+        if (!found.length) {
             tableEl.innerHTML = '<div class="prof-empty">Ничего не нашлось.</div>';
+            pagerRender(pagerEl, 0, 0, () => {});
             return;
         }
+
+        // Номер страницы правим здесь, а не при вводе в поиск: страниц могло
+        // стать меньше — и седьмая, на которой человек стоял, показала бы пустоту
+        // вместо найденного.
+        const pages = Math.ceil(found.length / PAGE_SIZE);
+        if (page > pages - 1) page = pages - 1;
+        if (page < 0) page = 0;
+
+        const rows = found.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
         const body = rows.map(row => `<tr data-id="${row.id}">`
             + `<td class="prof-state">${statusDot(row)}${warnBadge(row)}</td>`
@@ -224,6 +245,14 @@
             + '</tr></thead><tbody>' + body + '</tbody></table>';
 
         bindActions();
+
+        pagerRender(pagerEl, pages, page, (pick) => {
+            page = pick;
+            tablePaint();
+            // Наверх: страницу листают, чтобы читать её с начала, а прокрутка,
+            // оставшаяся от прежней, показала бы середину новой.
+            tableEl.scrollTop = 0;
+        });
     }
 
     // В колонке пометки важнее ошибка: пометку человек писал сам и помнит, а
@@ -236,19 +265,18 @@
     }
 
     function bindActions() {
-        tableEl.querySelectorAll('tr[data-id]').forEach(tr => {
-            const row = profiles.find(r => r.id === Number(tr.dataset.id));
-            if (!row) return;
-
-            const loginBtn = tr.querySelector('.login-btn');
-            if (loginBtn) loginBtn.addEventListener('click', () => profileLogin(row));
-
-            const offBtn = tr.querySelector('.off-btn');
-            if (offBtn) offBtn.addEventListener('click', () => profileDisconnect(row));
+        tableEl.querySelectorAll('.test-btn').forEach(btn => {
+            const row = profiles.find(r => r.id === Number(btn.closest('tr').dataset.id));
+            if (row) btn.addEventListener('click', () => profileTestLogin(row));
         });
     }
 
-    async function profileLogin(row) {
+    // «Тест логин» — это настоящий вход, а не сухая проверка: сценарий проходит
+    // форму, снимает состояние и спрашивает сайт, признал ли он вход. Иначе
+    // ответить на вопрос «рабочая ли учётка» нечем — сайт единственный, кто это
+    // знает. Побочный итог у него тот же, что у «Войти» на «Чатах»: у учётки
+    // появляется живая сессия.
+    async function profileTestLogin(row) {
         busy.add(row.id);
         tablePaint();
 
@@ -258,27 +286,7 @@
                                                     : `Вход выполнен: ${res.scenario}`,
                              res.status === 'error' ? 'error' : 'success');
         } catch (e) {
-            showNotification('Войти не вышло: ' + e.message, 'error');
-        } finally {
-            busy.delete(row.id);
-            await profilesLoad();
-        }
-    }
-
-    async function profileDisconnect(row) {
-        if (!confirm(`Отключить «${row.name || row.login}»? Выйдем с сайта, закроем вкладки `
-                     + 'и снимем с опроса. Переписка и журнал останутся.')) return;
-
-        busy.add(row.id);
-        tablePaint();
-
-        try {
-            const res = (await postData(`${BASE}/api/dating/profile/${row.id}/disconnect`, {})).result || {};
-            showNotification(res.logout ? 'Отключено, выход на сайте выполнен'
-                                        : `Отключено, но выход на сайте не прошёл: ${res.error}`,
-                             res.logout ? 'success' : 'error');
-        } catch (e) {
-            showNotification('Отключить не вышло: ' + e.message, 'error');
+            showNotification('Проверить вход не вышло: ' + e.message, 'error');
         } finally {
             busy.delete(row.id);
             await profilesLoad();
@@ -287,13 +295,19 @@
 
     siteEl.addEventListener('change', () => {
         localStorage.setItem(SITE_KEY, siteEl.value);
+        // Страницу сбрасываем: седьмая страница чужих учёток ничего не значит.
+        page = 0;
         empty('Гружу…');
         profilesLoad();
     });
-    reloadBtn.addEventListener('click', profilesLoad);
+    importBtn.addEventListener('click', profilesLoad);
     // Поиск режет уже пришедший список, а не ходит на сервер: список приходит
-    // целиком, и запрос на каждую букву ничего не уточнит.
-    findEl.addEventListener('input', tablePaint);
+    // целиком, и запрос на каждую букву ничего не уточнит. Каждая буква
+    // возвращает на первую страницу — найденное показывают с начала.
+    findEl.addEventListener('input', () => {
+        page = 0;
+        tablePaint();
+    });
 
     // Своим кругом список не освежается, пока идёт долгое действие или вкладку
     // не смотрят: перерисовка посреди входа затёрла бы «жду…», а фоновая вкладка

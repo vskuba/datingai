@@ -62,3 +62,32 @@ export function seenText(value) {
 
     return `${text.slice(8, 10)}/${text.slice(5, 7)} ${text.slice(11, 16)}`;
 }
+
+// Кнопки страниц. Одна функция на все списки панели — анкеты, собеседницы,
+// профили: разъехавшись, они дали бы разные пейджеры на соседних страницах.
+//
+// Одной страницы мало, чтобы её показывать: пейджер над списком из восьми строк
+// только занимает место. Поэтому подвал раскрывается классом `open`, а не живёт
+// всегда.
+//
+// `current` — номер с нуля, как индекс среза, которым режут список.
+export function pagerRender(el, pages, current, pick) {
+    el.classList.toggle('open', pages > 1);
+    if (pages <= 1) {
+        el.innerHTML = '';
+        return;
+    }
+
+    const button = (label, page, disabled, active) =>
+        `<button type="button" class="page-btn${active ? ' active' : ''}" data-page="${page}"`
+        + `${disabled ? ' disabled' : ''}>${label}</button>`;
+
+    let html = button('‹', current - 1, current === 0, false);
+    for (let i = 0; i < pages; i++) html += button(i + 1, i, false, i === current);
+    html += button('›', current + 1, current === pages - 1, false);
+
+    el.innerHTML = html;
+    el.querySelectorAll('.page-btn').forEach(btn => {
+        btn.addEventListener('click', () => pick(Number(btn.dataset.page)));
+    });
+}
