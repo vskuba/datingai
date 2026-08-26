@@ -36,7 +36,7 @@
 - **Новая ручка API** → `.claude/docs/api.md`
 - **Обращение к RhapsodyAi** → `.claude/docs/rhapsody_api.md`
 - **Правка страницы** → `.claude/docs/dashboard_frontend.md`
-- **Изменение схемы** → `.claude/docs/database.md` (только `migrations/0001.sql`)
+- **Изменение схемы** → `.claude/docs/migration.md` (новый файл в `migrations/`, применённые не правят)
 - **Работа воркера** → `.claude/docs/worker.md`
 - **Проверка после правок** → `.claude/docs/testing.md`
 
@@ -64,7 +64,7 @@
 | `src/auth/auth.py` | Вход в панель: сессия или токен, две роли |
 | `src/auth/auth_users.py` | Управление людьми: кого и что менять нельзя |
 | `src/worker/dating/chat_worker.py` | Смена держателя, очередь `dating` |
-| `migrations/0001.sql` | Единственный источник схемы БД |
+| `migrations/20260101000000_initial_schema.sql` | Начальная схема БД; заморожена, изменения — новыми файлами рядом |
 
 ## Docs Reference
 
