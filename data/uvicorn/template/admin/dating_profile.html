@@ -1,0 +1,310 @@
+{% extends "base.html" %}
+
+{% block title %}Профили | DatingAi{% endblock %}
+
+{% block head %}
+    <link rel="stylesheet" href="{{ base }}/static/css/dating_page.css">
+    <style>
+        /* Обойма, шапка, панель и значки учётки — общие с «Чатами»
+           (`dating_page.css`). Здесь только раскладка этой страницы: шапка и под
+           ней одна панель во всю оставшуюся высоту. Колонок и разделителей нет —
+           делить нечего. */
+        .dating-page { grid-template-rows: auto minmax(0, 1fr); }
+
+        /* Прокрутка — у тела панели, поля сняты: иначе липкая шапка таблицы
+           уезжала бы от края при прокрутке вниз. */
+        .prof-body { padding: 0; overflow: auto; }
+
+        .prof-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .prof-table th {
+            position: sticky; top: 0; z-index: 1;
+            padding: 7px 12px; text-align: left; white-space: nowrap;
+            background: #f8fafc; border-bottom: 1px solid #e5e7eb;
+            font-weight: 700; color: #64748b;
+            text-transform: uppercase; letter-spacing: .04em;
+        }
+        .prof-table td { padding: 6px 12px; border-bottom: 1px solid #f1f5f9; color: #374151; }
+        .prof-table tr:last-child td { border-bottom: none; }
+        .prof-table tbody tr:hover td { background: #f8fafc; }
+
+        /* Столбец состояния — самый узкий и первый: сначала смотрят, всё ли в
+           порядке, и только потом читают, у кого именно. */
+        .prof-state { width: 1%; white-space: nowrap; }
+        .prof-state > * + * { margin-left: 5px; }
+
+        /* Кто это: лицо, имя, под ним логин. Ширину не задаём — колонка забирает
+           остаток строки, и режется многоточием именно она, а не бейджи и время. */
+        .prof-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+        .prof-who-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+        .prof-name { font-weight: 600; color: #111827; font-size: 13px;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .prof-login { color: #6b7280; font-size: 11px;
+                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        .prof-work { white-space: nowrap; }
+        .prof-work > * + * { margin-left: 5px; }
+
+        .prof-when { color: #6b7280; white-space: nowrap; }
+        .prof-note { color: #6b7280; max-width: 280px;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .prof-note.bad { color: #b91c1c; }
+
+        /* Ответ «нет» пишем прочерком, а не пустотой: пустая ячейка читается как
+           «не успело загрузиться». */
+        .prof-no { color: #cbd5e1; }
+        .prof-yes { color: #15803d; font-weight: 700; }
+
+        .prof-act { width: 1%; white-space: nowrap; text-align: right; }
+
+        .prof-empty { padding: 24px 12px; text-align: center; color: #9ca3af; font-size: 13px; }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="dating-page">
+
+    <div class="dating-head">
+        <h1>🌐 Сайт</h1>
+        <select id="siteSelect" title="Сайт, на котором заведены анкеты"></select>
+        <button type="button" class="dating-btn" id="reloadBtn">Обновить</button>
+        <span class="dating-hint" id="hint"></span>
+    </div>
+
+    <div class="pane">
+        <div class="pane-head">
+            Профили <span id="profilesN"></span>
+            <input type="search" id="profileFind" class="pane-find" placeholder="имя или логин"
+                   spellcheck="false" autocomplete="off" title="Быстрый поиск по имени или логину">
+        </div>
+        <div class="pane-body prof-body" id="table"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+    import {getData, postData} from '{{ base }}/static/js/api.js';
+    import {showNotification} from '{{ base }}/static/js/notification.js';
+    import {esc, statusDot, warnBadge, workPills, seenText} from '{{ base }}/static/js/dating_view.js';
+
+    const BASE = '{{ base }}';
+
+    // Ключ тот же, что на «Чатах», — намеренно. Человек ходит между двумя
+    // страницами раздела, и разный выбор сайта там и тут читается как «я же
+    // выбрал ladadate», а показана оказывается чужая учётка.
+    const SITE_KEY = 'dating_site';
+
+    // Список освежается сам: статус, непрочитанные и время входа меняет не эта
+    // страница, а опрос присутствия на сервере. Реже минуты — и таблица врёт
+    // молча; чаще — незачем, опрос всё равно ходит раз в 15 секунд.
+    const RELOAD_MS = 30000;
+
+    const siteEl = document.getElementById('siteSelect');
+    const reloadBtn = document.getElementById('reloadBtn');
+    const tableEl = document.getElementById('table');
+    const hintEl = document.getElementById('hint');
+    const countEl = document.getElementById('profilesN');
+    const findEl = document.getElementById('profileFind');
+
+    let profiles = [];
+    // Кого сейчас держит долгое действие: вход идёт минутами, и перерисовка не
+    // должна ни затирать «Вхожу…», ни подсовывать кнопку под руку второй раз.
+    const busy = new Set();
+
+    const siteId = () => Number(siteEl.value || 0);
+
+    function empty(text) {
+        tableEl.innerHTML = `<div class="prof-empty">${esc(text)}</div>`;
+        countEl.textContent = '';
+    }
+
+    async function sitesLoad() {
+        let sites;
+        try {
+            sites = (await getData(BASE + '/api/site')).result || [];
+        } catch (e) {
+            siteEl.innerHTML = '<option value="">сайты не пришли</option>';
+            showNotification('Список сайтов не пришёл: ' + e.message, 'error');
+            return;
+        }
+
+        const saved = localStorage.getItem(SITE_KEY);
+        siteEl.innerHTML = sites.length
+            ? sites.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('')
+            : '<option value="">сайтов нет</option>';
+        if (saved && sites.some(r => String(r.id) === saved)) siteEl.value = saved;
+
+        profilesLoad();
+    }
+
+    async function profilesLoad() {
+        if (!siteId()) {
+            empty('Сайтов нет — заведите закладку в RhapsodyAi.');
+            return;
+        }
+
+        // Запрошенный сайт запоминаем: ответ приходит не мгновенно, а человек за
+        // это время может переключить селект. Без сверки поздний ответ старого
+        // сайта затирал бы список нового.
+        const requestSite = siteId();
+        try {
+            profiles = (await getData(`${BASE}/api/dating/profile?site_id=${requestSite}`)).result || [];
+        } catch (e) {
+            if (siteId() !== requestSite) return;
+            empty('Список не пришёл.');
+            showNotification('Список профилей не пришёл: ' + e.message, 'error');
+            return;
+        }
+
+        if (siteId() !== requestSite) return;
+        tablePaint();
+    }
+
+    function shownRows() {
+        const needle = findEl.value.trim().toLowerCase();
+        if (!needle) return profiles;
+
+        return profiles.filter(row => (String(row.name || '') + ' ' + String(row.login || ''))
+            .toLowerCase().includes(needle));
+    }
+
+    function actCell(row) {
+        // Одна кнопка на два состояния: у учётки со снятым входом «Войти» ничего
+        // не значит, а без входа отключать нечего.
+        if (busy.has(row.id)) {
+            return '<button type="button" class="dating-btn busy" disabled>'
+                 + '<span class="dating-spin"></span>жду…</button>';
+        }
+
+        return row.has_state
+            ? '<button type="button" class="dating-btn off-btn">Отключить</button>'
+            : `<button type="button" class="dating-btn login-btn"${row.has_password ? '' : ' disabled'}`
+              + `${row.has_password ? '' : ' title="у учётки не задан пароль"'}>Войти</button>`;
+    }
+
+    function tablePaint() {
+        const rows = shownRows();
+        countEl.textContent = rows.length === profiles.length
+            ? profiles.length : `${rows.length} из ${profiles.length}`;
+
+        if (!profiles.length) {
+            empty('На этом сайте учёток пока нет. Заводят их на странице «Чаты».');
+            return;
+        }
+        if (!rows.length) {
+            tableEl.innerHTML = '<div class="prof-empty">Ничего не нашлось.</div>';
+            return;
+        }
+
+        const body = rows.map(row => `<tr data-id="${row.id}">`
+            + `<td class="prof-state">${statusDot(row)}${warnBadge(row)}</td>`
+            + '<td><span class="prof-who">'
+            + `<img class="profile-face" src="${esc(row.photo || '')}" alt=""`
+            + ' onerror="this.style.visibility=\'hidden\'">'
+            + '<span class="prof-who-text">'
+            // Имя режется многоточием — полное отдаём подсказкой.
+            + `<span class="prof-name" title="${esc(row.name || row.login)}">${esc(row.name || row.login)}</span>`
+            + `<span class="prof-login" title="${esc(row.login)}">${esc(row.login)}</span>`
+            + '</span></span></td>'
+            + `<td class="prof-work">${workPills(row) || '<span class="prof-no">—</span>'}</td>`
+            + `<td>${row.auto_answer ? '<span class="prof-yes" title="отвечает агентом сам">✓</span>'
+                                     : '<span class="prof-no" title="отвечают вручную">—</span>'}</td>`
+            + `<td>${row.keep_online ? '<span class="prof-yes" title="автовход держит анкету в сети">✓</span>'
+                                     : '<span class="prof-no" title="в сети не держим">—</span>'}</td>`
+            + `<td class="prof-when" title="${esc(row.last_seen_at || 'входа ещё не было')}">`
+            + `${esc(seenText(row.last_seen_at) || '—')}</td>`
+            + noteCell(row)
+            + `<td class="prof-act">${actCell(row)}</td>`
+            + '</tr>').join('');
+
+        tableEl.innerHTML =
+            '<table class="prof-table"><thead><tr>'
+            + '<th></th><th>Анкета</th><th>Работа</th><th>Автоответ</th><th>В сети</th>'
+            + '<th>Вход</th><th>Пометка</th><th></th>'
+            + '</tr></thead><tbody>' + body + '</tbody></table>';
+
+        bindActions();
+    }
+
+    // В колонке пометки важнее ошибка: пометку человек писал сам и помнит, а
+    // причина отказа — то, ради чего он в таблицу и смотрит.
+    function noteCell(row) {
+        const bad = row.status === 'error' && row.last_error;
+        const text = bad ? row.last_error : (row.note || '');
+
+        return `<td class="prof-note${bad ? ' bad' : ''}" title="${esc(text)}">${esc(text)}</td>`;
+    }
+
+    function bindActions() {
+        tableEl.querySelectorAll('tr[data-id]').forEach(tr => {
+            const row = profiles.find(r => r.id === Number(tr.dataset.id));
+            if (!row) return;
+
+            const loginBtn = tr.querySelector('.login-btn');
+            if (loginBtn) loginBtn.addEventListener('click', () => profileLogin(row));
+
+            const offBtn = tr.querySelector('.off-btn');
+            if (offBtn) offBtn.addEventListener('click', () => profileDisconnect(row));
+        });
+    }
+
+    async function profileLogin(row) {
+        busy.add(row.id);
+        tablePaint();
+
+        try {
+            const res = (await postData(`${BASE}/api/dating/profile/${row.id}/login`, {})).result || {};
+            showNotification(res.status === 'error' ? `Вход не прошёл: ${res.error}`
+                                                    : `Вход выполнен: ${res.scenario}`,
+                             res.status === 'error' ? 'error' : 'success');
+        } catch (e) {
+            showNotification('Войти не вышло: ' + e.message, 'error');
+        } finally {
+            busy.delete(row.id);
+            await profilesLoad();
+        }
+    }
+
+    async function profileDisconnect(row) {
+        if (!confirm(`Отключить «${row.name || row.login}»? Выйдем с сайта, закроем вкладки `
+                     + 'и снимем с опроса. Переписка и журнал останутся.')) return;
+
+        busy.add(row.id);
+        tablePaint();
+
+        try {
+            const res = (await postData(`${BASE}/api/dating/profile/${row.id}/disconnect`, {})).result || {};
+            showNotification(res.logout ? 'Отключено, выход на сайте выполнен'
+                                        : `Отключено, но выход на сайте не прошёл: ${res.error}`,
+                             res.logout ? 'success' : 'error');
+        } catch (e) {
+            showNotification('Отключить не вышло: ' + e.message, 'error');
+        } finally {
+            busy.delete(row.id);
+            await profilesLoad();
+        }
+    }
+
+    siteEl.addEventListener('change', () => {
+        localStorage.setItem(SITE_KEY, siteEl.value);
+        empty('Гружу…');
+        profilesLoad();
+    });
+    reloadBtn.addEventListener('click', profilesLoad);
+    // Поиск режет уже пришедший список, а не ходит на сервер: список приходит
+    // целиком, и запрос на каждую букву ничего не уточнит.
+    findEl.addEventListener('input', tablePaint);
+
+    // Своим кругом список не освежается, пока идёт долгое действие или вкладку
+    // не смотрят: перерисовка посреди входа затёрла бы «жду…», а фоновая вкладка
+    // ходила бы на сервер впустую.
+    setInterval(() => {
+        if (busy.size || document.hidden) return;
+        profilesLoad();
+    }, RELOAD_MS);
+
+    hintEl.textContent = 'состояние обновляется само';
+    empty('Гружу…');
+    sitesLoad();
+</script>
+{% endblock %}

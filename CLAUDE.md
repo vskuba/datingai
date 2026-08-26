@@ -57,12 +57,14 @@
 | `src/dating/dating_json.py` | Общее чтение JSON-столбцов базы |
 | `src/dating/dating_export.py` | Выгрузка анкет: сшивка `extract` сценария в таблицу |
 | `src/uvicorn/routers/dating/dating_profile.py` | Все ручки анкет |
-| `src/uvicorn/routers/dating/dating_export.py` | Ручка экспорта: сценарий выгрузки у соседа |
+| `src/uvicorn/routers/dating/dating_export.py` | Ручка экспорта: сценарий выгрузки у соседа (страницы сейчас нет) |
 | `src/uvicorn/routers/dashboard.py` | Страницы панели |
 | `src/uvicorn/routers/seed.py` | Seed SQL: выгрузка таблиц и заливка обратно |
 | `src/uvicorn/routers/backup.py` | Бэкапы: дамп базы и восстановление |
 | `src/uvicorn/routers/users.py` | Пользователи: учётки, роли, токены доступа |
 | `data/uvicorn/template/base.html` | Шапка панели: разделы и подпункты |
+| `data/uvicorn/public/css/dating_page.css` | Общее оформление двух страниц раздела Dating |
+| `data/uvicorn/public/js/dating_view.js` | Общая отрисовка учётки: точка, бейджи, время |
 | `src/auth/auth.py` | Вход в панель: сессия или токен, две роли |
 | `src/auth/auth_users.py` | Управление людьми: кого и что менять нельзя |
 | `src/worker/dating/chat_worker.py` | Смена держателя, очередь `dating` |

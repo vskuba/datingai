@@ -30,14 +30,14 @@ async def dashboard_dating(request: Request, user: AuthUser = Depends(auth_requi
     return _dashboard_page(request, user, 'admin/dating.html')
 
 
-@router.get('/admin/dating/export', response_class=HTMLResponse, include_in_schema=False)
-async def dashboard_dating_export(request: Request, user: AuthUser = Depends(auth_required)):
-    """Страница «Профили»: выгрузка списка профилей с сайта.
+@router.get('/admin/dating/profile', response_class=HTMLResponse, include_in_schema=False)
+async def dashboard_dating_profile(request: Request, user: AuthUser = Depends(auth_required)):
+    """Страница «Профили»: учётки сайта таблицей — состояние, работа, вход.
 
-    Открыт всем вошедшим, а не только админу: это работа с анкетами, ради которой
+    Открыта всем вошедшим, а не только админу: это работа с анкетами, ради которой
     панель и открывают, а не операция над устройством установки.
     """
-    return _dashboard_page(request, user, 'admin/dating_export.html')
+    return _dashboard_page(request, user, 'admin/dating_profile.html')
 
 
 @router.get('/admin/seed', response_class=HTMLResponse, include_in_schema=False)

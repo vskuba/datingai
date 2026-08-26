@@ -60,7 +60,7 @@
             <div class="tabnav-panel" data-group="dating">
                 <span class="tabnav-sep"></span>
                 <a href="{{ base }}/admin/dating">Чаты</a>
-                <a href="{{ base }}/admin/dating/export">Профили</a>
+                <a href="{{ base }}/admin/dating/profile">Профили</a>
                 <span class="tabnav-sep"></span>
             </div>
 
@@ -129,7 +129,7 @@
         const groupMap = {
             '/': 'dating',
             '/admin/dating': 'dating',
-            '/admin/dating/export': 'dating',
+            '/admin/dating/profile': 'dating',
             '/admin/seed': 'setting',
             '/admin/backup': 'setting',
             '/admin/users': 'setting',
@@ -148,7 +148,7 @@
         // по href целиком — он уже с префиксом, как и `location.pathname`.
         //
         // Побеждает **самый длинный** подошедший href, а не каждый подошедший. На
-        // `/admin/dating/export` подходят оба подпункта раздела — и «Чаты»
+        // `/admin/dating/profile` подходят оба подпункта раздела — и «Чаты»
         // (`/admin/dating` — префикс пути), и «Профили», — а подсвеченных
         // «где я сейчас» не бывает двух. Тот же приём применён ниже к `groupMap`
         // по той же причине.
