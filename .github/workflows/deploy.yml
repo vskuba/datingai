@@ -69,6 +69,15 @@ jobs:
             # Без `-f`: базовый `docker-compose.yml` и есть прод.
             COMPOSE="docker compose"
             $COMPOSE build dating_uvicorn
+
+            # Движки поднимаем отдельной строкой и **без** `--force-recreate`:
+            # они свои (MySQL, Redis, phpMyAdmin), и пересоздавать базу на каждой
+            # выкладке незачем — том переживёт, но перерыв будет на ровном месте.
+            # Строка нужна для машины, где их ещё нет: на `dating_phpmyadmin`
+            # никто не ссылается через `depends_on`, и сам он не поднялся бы.
+            $COMPOSE up -d dating_mysql dating_redis dating_phpmyadmin
+
+            # А вот код пересоздаём всегда: ради него выкладка и затевалась.
             $COMPOSE up -d --force-recreate dating_uvicorn dating_worker
             docker image prune -f
 

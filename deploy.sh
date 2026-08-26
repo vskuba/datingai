@@ -75,7 +75,11 @@ else
 fi
 
 echo "[4/4] Поднимаю сервисы…"
-# Только два: база и очередь на проде чужие — их поднимать нечего.
+# Движки — без `--force-recreate`: они свои, и пересоздавать базу на каждой
+# выкладке незачем. Строка нужна для машины, где их ещё нет: на
+# `dating_phpmyadmin` никто не ссылается через `depends_on`, сам он не поднимется.
+ssh "$HOST" "cd $REMOTE_DIR && $COMPOSE up -d dating_mysql dating_redis dating_phpmyadmin" | tail -3
+# Код пересоздаём всегда: ради него выкладка и затевалась.
 ssh "$HOST" "cd $REMOTE_DIR && $COMPOSE up -d --force-recreate dating_uvicorn dating_worker" | tail -4
 
 echo
