@@ -78,7 +78,7 @@ class TestRole:
         assert response.status_code != 403, f'{method} {path} отказал админу'
 
     @pytest.mark.parametrize('path', ROLE_OPERATOR_ALLOWED)
-    async def test_operator_works_with_girls(self, dating_client, path):
+    async def test_operator_works_with_profiles(self, dating_client, path):
         """Анкеты и сайты оператору открыты — ради этого роль и заведена."""
         response = await dating_client.get(path)
 
@@ -123,7 +123,7 @@ class TestRole:
         отказа заодно 404 и 422 — тогда клиент API вместо причины получал бы
         разметку.
         """
-        missing = await dating_client.get('/api/dating/girl/999999/log',
+        missing = await dating_client.get('/api/dating/profile/999999/log',
                                           headers={'Accept': 'text/html'})
 
         assert missing.status_code == 404

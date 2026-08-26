@@ -13,81 +13,81 @@ SITE_ID_MISSING = 999999
 
 
 @pytest.fixture
-async def girl(auth_client):
+async def profile(auth_client):
     """Одноразовая учётка. Удаляется после теста, даже если тест упал."""
     login = f'test-{uuid.uuid4().hex[:10]}'
-    response = await auth_client.post('/api/dating/girl', json={
+    response = await auth_client.post('/api/dating/profile', json={
         'site_id': SITE_ID, 'login': login, 'password': 'secret', 'note': 'автотест'})
     assert response.status_code == 201, response.text[:200]
-    girl_id = response.json()['result']
+    profile_id = response.json()['result']
 
-    yield {'id': girl_id, 'login': login}
+    yield {'id': profile_id, 'login': login}
 
-    await auth_client.delete(f'/api/dating/girl/{girl_id}')
+    await auth_client.delete(f'/api/dating/profile/{profile_id}')
 
 
-class TestGirlCrud:
+class TestProfileCrud:
 
-    async def test_create_and_list(self, auth_client, girl):
+    async def test_create_and_list(self, auth_client, profile):
         """Заведённая учётка видна в списке своего сайта."""
-        response = await auth_client.get(f'/api/dating/girl?site_id={SITE_ID}')
+        response = await auth_client.get(f'/api/dating/profile?site_id={SITE_ID}')
 
         assert response.status_code == 200
         logins = [row['login'] for row in response.json()['result']]
-        assert girl['login'] in logins
+        assert profile['login'] in logins
 
-    async def test_password_never_leaves(self, auth_client, girl):
+    async def test_password_never_leaves(self, auth_client, profile):
         """Пароля в ответе нет — только признак, что он задан.
 
         Страница его не показывает, а утечь через журнал, скриншот или чужой глаз
         он не должен.
         """
-        response = await auth_client.get(f'/api/dating/girl?site_id={SITE_ID}')
-        row = next(r for r in response.json()['result'] if r['login'] == girl['login'])
+        response = await auth_client.get(f'/api/dating/profile?site_id={SITE_ID}')
+        row = next(r for r in response.json()['result'] if r['login'] == profile['login'])
 
         assert 'password' not in row
         assert row['has_password'] is True
 
-    async def test_new_girl_is_not_watched(self, auth_client, girl):
+    async def test_new_profile_is_not_watched(self, auth_client, profile):
         """Только что заведённая анкета под присмотр не берётся.
 
         Присмотр ставит успешный вход: лезть в браузер под учёткой, которую ещё ни
         разу не проверял человек, система не должна.
         """
-        response = await auth_client.get(f'/api/dating/girl?site_id={SITE_ID}')
-        row = next(r for r in response.json()['result'] if r['login'] == girl['login'])
+        response = await auth_client.get(f'/api/dating/profile?site_id={SITE_ID}')
+        row = next(r for r in response.json()['result'] if r['login'] == profile['login'])
 
         assert row['keep_online'] is False
         assert row['revive_state'] == 'ok'
         assert row['relogin_next_at'] is None
 
-    async def test_duplicate_login_rejected(self, auth_client, girl):
+    async def test_duplicate_login_rejected(self, auth_client, profile):
         """Тот же логин на том же сайте — 409, а не второй такой же."""
-        response = await auth_client.post('/api/dating/girl', json={
-            'site_id': SITE_ID, 'login': girl['login'], 'password': 'x'})
+        response = await auth_client.post('/api/dating/profile', json={
+            'site_id': SITE_ID, 'login': profile['login'], 'password': 'x'})
 
         assert response.status_code == 409
-        assert girl['login'] in response.json()['detail']
+        assert profile['login'] in response.json()['detail']
 
     async def test_unknown_site_rejected(self, auth_client):
         """Сайта нет — 422. Проверяет его сосед, своей таблицы сайтов здесь нет."""
-        response = await auth_client.post('/api/dating/girl', json={
+        response = await auth_client.post('/api/dating/profile', json={
             'site_id': SITE_ID_MISSING, 'login': f'test-{uuid.uuid4().hex[:8]}',
             'password': 'x'})
 
         assert response.status_code == 422
 
-    async def test_update_keeps_password_when_empty(self, auth_client, girl):
+    async def test_update_keeps_password_when_empty(self, auth_client, profile):
         """Пустой пароль при правке означает «не трогать», а не «стереть».
 
         Форма его не показывает, и пустое поле — это «оставить прежний».
         """
-        response = await auth_client.put(f'/api/dating/girl/{girl["id"]}', json={
-            'site_id': SITE_ID, 'login': girl['login'], 'password': '', 'note': 'правка'})
+        response = await auth_client.put(f'/api/dating/profile/{profile["id"]}', json={
+            'site_id': SITE_ID, 'login': profile['login'], 'password': '', 'note': 'правка'})
         assert response.status_code == 200
 
-        rows = (await auth_client.get(f'/api/dating/girl?site_id={SITE_ID}')).json()['result']
-        row = next(r for r in rows if r['login'] == girl['login'])
+        rows = (await auth_client.get(f'/api/dating/profile?site_id={SITE_ID}')).json()['result']
+        row = next(r for r in rows if r['login'] == profile['login'])
 
         assert row['has_password'] is True, 'пустое поле стёрло пароль'
         assert row['note'] == 'правка'
@@ -95,21 +95,21 @@ class TestGirlCrud:
     async def test_delete(self, auth_client):
         """Удаление уносит учётку целиком; повтор отвечает 404."""
         login = f'test-{uuid.uuid4().hex[:10]}'
-        created = await auth_client.post('/api/dating/girl', json={
+        created = await auth_client.post('/api/dating/profile', json={
             'site_id': SITE_ID, 'login': login, 'password': 'x'})
-        girl_id = created.json()['result']
+        profile_id = created.json()['result']
 
-        assert (await auth_client.delete(f'/api/dating/girl/{girl_id}')).status_code == 200
-        assert (await auth_client.delete(f'/api/dating/girl/{girl_id}')).status_code == 404
+        assert (await auth_client.delete(f'/api/dating/profile/{profile_id}')).status_code == 200
+        assert (await auth_client.delete(f'/api/dating/profile/{profile_id}')).status_code == 404
 
-    async def test_missing_girl_is_404(self, auth_client):
+    async def test_missing_profile_is_404(self, auth_client):
         """Ручки несуществующей учётки отвечают 404, а не пустотой."""
         for path in ('log', 'message', 'profile'):
-            response = await auth_client.get(f'/api/dating/girl/999999/{path}')
+            response = await auth_client.get(f'/api/dating/profile/999999/{path}')
             assert response.status_code == 404, f'{path} ответил {response.status_code}'
 
 
-class TestGirlLogin:
+class TestProfileLogin:
     """Дверь входа. Сам вход живёт в `src/dating/dating_login.py` и здесь не гоняется:
     он водит браузер соседа и живой сайт знакомств, то есть стоит минуты и требует
     рабочей анкеты. Проверяется то, что ломается при переезде кода, — что ручка
@@ -117,7 +117,7 @@ class TestGirlLogin:
 
     async def test_login_closed_without_session(self, client):
         """Без сессии ручка входа не пускает: под чужой анкетой не входят."""
-        response = await client.post('/api/dating/girl/1/login', json={})
+        response = await client.post('/api/dating/profile/1/login', json={})
 
         assert response.status_code == 401
 
@@ -128,14 +128,14 @@ class TestGirlLogin:
         приходит оттуда, из `DatingLoginError`.
         """
         login = f'test-{uuid.uuid4().hex[:10]}'
-        created = await auth_client.post('/api/dating/girl', json={
+        created = await auth_client.post('/api/dating/profile', json={
             'site_id': SITE_ID, 'login': login, 'password': ''})
-        girl_id = created.json()['result']
+        profile_id = created.json()['result']
 
         try:
-            response = await auth_client.post(f'/api/dating/girl/{girl_id}/login', json={})
+            response = await auth_client.post(f'/api/dating/profile/{profile_id}/login', json={})
 
             assert response.status_code == 422, response.text[:200]
             assert 'пароль' in response.json()['detail']
         finally:
-            await auth_client.delete(f'/api/dating/girl/{girl_id}')
+            await auth_client.delete(f'/api/dating/profile/{profile_id}')

@@ -25,8 +25,8 @@ from src.dating.dating_revive import (DATING_REVIVE_PROBE_PARALLEL, dating_reviv
 NOW = datetime(2026, 8, 18, 12, 0, 0)
 
 
-def _girl(**kw) -> dict:
-    """Строка учётки такой, какой её отдаёт `_girls_kept`.
+def _profile(**kw) -> dict:
+    """Строка учётки такой, какой её отдаёт `_profiles_kept`.
 
     Возраст входа приходит числом секунд, а не моментом времени: `logged_in_at`
     пишет `NOW()` базы, и вычитать его из `datetime.now()` контейнера значило бы
@@ -39,9 +39,9 @@ def _girl(**kw) -> dict:
     return row
 
 
-def _girls(count: int, **kw) -> list[dict]:
+def _profiles(count: int, **kw) -> list[dict]:
     """Пачка анкет одного сайта — там, где важно не решение, а порядок работы."""
-    return [_girl(id=n, login=f'g{n}', site_id=1, **kw) for n in range(1, count + 1)]
+    return [_profile(id=n, login=f'g{n}', site_id=1, **kw) for n in range(1, count + 1)]
 
 
 def _login_stub(state: dict, pause=timedelta(0), ok: bool = True, opens: tuple = (),
@@ -58,12 +58,12 @@ def _login_stub(state: dict, pause=timedelta(0), ok: bool = True, opens: tuple =
         session_id: номер вкладки в ответе: вход отдаёт её живой, когда сценарий
             вернул ошибку.
     """
-    async def login_run(girl_id: int) -> dict:
+    async def login_run(profile_id: int) -> dict:
         state['login_live'] += 1
         state['login_peak'] = max(state['login_peak'], state['login_live'])
-        state['logins'].append(int(girl_id))
+        state['logins'].append(int(profile_id))
         for opened, site_id in opens:
-            state['sessions'].append({'session_id': opened, 'name': f'g{girl_id}',
+            state['sessions'].append({'session_id': opened, 'name': f'g{profile_id}',
                                       'site_id': site_id})
         try:
             # Уступаем управление: будь входы параллельны, здесь бы они и наложились.
@@ -93,7 +93,7 @@ def round_stub(monkeypatch):
     запускается без зависимостей проекта). Порядок работы, счётчики и решения при
     этом настоящие — беды, ради которых написаны эти тесты, живут именно в них.
     """
-    state = {'girls': [], 'presence': {}, 'status': {}, 'plan_saved': True,
+    state = {'profiles': [], 'presence': {}, 'status': {}, 'plan_saved': True,
              'probe_pause': 0.0, 'clock': NOW, 'probe_raise': {},
              'probe_live': 0, 'probe_peak': 0, 'login_live': 0, 'login_peak': 0,
              'probed': [], 'saved': [], 'marked': [], 'errors': [], 'logins': [],
@@ -105,48 +105,48 @@ def round_stub(monkeypatch):
              # человеку: погашенная вкладка, в которой он работал.
              'sessions': [], 'closed': [], 'close_raises': None, 'logs': []}
 
-    async def girls_kept():
-        return state['girls']
+    async def profiles_kept():
+        return state['profiles']
 
     async def presence_of(site_id):
         presence = state['presence'].get(int(site_id), {'base': 'https://site'})
 
         return presence, ('' if presence else state['presence_why'])
 
-    async def presence_missing_mark(girl, why):
-        state['missing'].append((int(girl['id']), why))
+    async def presence_missing_mark(profile, why):
+        state['missing'].append((int(profile['id']), why))
 
     async def db_now():
         return state['clock']
 
-    async def probe_one(girl, presence):
+    async def probe_one(profile, presence):
         state['probe_live'] += 1
         state['probe_peak'] = max(state['probe_peak'], state['probe_live'])
         try:
             await asyncio.sleep(state['probe_pause'])
         finally:
             state['probe_live'] -= 1
-        state['probed'].append(int(girl['id']))
-        broken = state['probe_raise'].get(int(girl['id']))
+        state['probed'].append(int(profile['id']))
+        broken = state['probe_raise'].get(int(profile['id']))
         if broken:
             raise broken
 
-        return {'status': state['status'].get(int(girl['id']), 'online'),
+        return {'status': state['status'].get(int(profile['id']), 'online'),
                 'unread': 0, 'error': '', 'ms': 1}
 
-    async def probe_save(girl_id, probe):
-        state['marked'].append((int(girl_id), probe))
+    async def probe_save(profile_id, probe):
+        state['marked'].append((int(profile_id), probe))
 
-    async def plan_save(girl_id, plan):
-        state['saved'].append((int(girl_id), plan))
+    async def plan_save(profile_id, plan):
+        state['saved'].append((int(profile_id), plan))
 
         return state['plan_saved']
 
-    async def log(girl_id, kind, text):
-        state['logs'].append((int(girl_id), kind, text))
+    async def log(profile_id, kind, text):
+        state['logs'].append((int(profile_id), kind, text))
 
-    async def error_write(girl, why, **kw):
-        state['errors'].append((int(girl['id']), why))
+    async def error_write(profile, why, **kw):
+        state['errors'].append((int(profile['id']), why))
 
     async def sessions_list():
         # Отбор по имени и сайту — дело самой функции, а не заглушки: заглушка
@@ -162,7 +162,7 @@ def round_stub(monkeypatch):
         state['sessions'] = [item for item in state['sessions']
                              if str(item.get('session_id')) != str(session_id)]
 
-    for name, func in (('_girls_kept', girls_kept), ('_presence_of', presence_of),
+    for name, func in (('_profiles_kept', profiles_kept), ('_presence_of', presence_of),
                        ('_db_now', db_now), ('_probe_one', probe_one),
                        ('_probe_save', probe_save), ('_plan_save', plan_save),
                        ('_log', log), ('_error_write', error_write),
@@ -173,23 +173,23 @@ def round_stub(monkeypatch):
     return state
 
 
-def _apply(girl: dict, plan: dict) -> dict:
+def _apply(profile: dict, plan: dict) -> dict:
     """Учётка после круга: ровно то, что записал бы `_plan_save`.
 
     Нужна там, где проверяется не одно решение, а цепочка кругов: беда с лестницей
     видна только на последовательности, по одному вызову она выглядит безобидно.
     """
-    girl.update({field: plan[field]
-                 for field in ('relogin_since', 'relogin_tries', 'relogin_next_at')})
+    profile.update({field: plan[field]
+                    for field in ('relogin_since', 'relogin_tries', 'relogin_next_at')})
 
-    return girl
+    return profile
 
 
 class TestRevivePlan:
 
     def test_online_and_fresh_needs_nothing(self):
         """Вход жив и свеж — трогать нечего."""
-        assert dating_revive_plan(_girl(), online=True, now=NOW)['action'] == 'none'
+        assert dating_revive_plan(_profile(), online=True, now=NOW)['action'] == 'none'
 
     def test_online_but_old_is_refreshed(self):
         """Профилактика: входу больше двадцати часов — обновляем заранее.
@@ -198,8 +198,8 @@ class TestRevivePlan:
         бы за ним в браузер соседа каждую минуту. А вот тревогу не зажигаем — анкета
         в сети, человеку тут делать нечего.
         """
-        girl = _girl(login_age_sec=21 * 3600)
-        plan = dating_revive_plan(girl, online=True, now=NOW)
+        profile = _profile(login_age_sec=21 * 3600)
+        plan = dating_revive_plan(profile, online=True, now=NOW)
 
         assert plan['action'] == 'login'
         assert plan['relogin_since'] is None
@@ -214,13 +214,13 @@ class TestRevivePlan:
         сервере со своими настройками — и профилактика «при двадцати часах»
         молча превращалась в «двадцать плюс-минус расхождение поясов».
         """
-        girl = _girl(login_age_sec=3600, logged_in_at=NOW - timedelta(hours=30))
+        profile = _profile(login_age_sec=3600, logged_in_at=NOW - timedelta(hours=30))
 
-        assert dating_revive_plan(girl, online=True, now=NOW)['action'] == 'none'
+        assert dating_revive_plan(profile, online=True, now=NOW)['action'] == 'none'
 
     def test_no_age_means_old(self):
         """Возраст неизвестен (входа не было) — считаем вход протухшим и обновляем."""
-        assert dating_revive_plan(_girl(login_age_sec=None),
+        assert dating_revive_plan(_profile(login_age_sec=None),
                                   online=True, now=NOW)['action'] == 'login'
 
     def test_planned_login_failure_waits_on_ladder(self):
@@ -230,9 +230,9 @@ class TestRevivePlan:
         значит вход через браузер не прошёл, и повторять его надо по лестнице.
         Тревоги при этом по-прежнему нет: карточке мигать не о чем.
         """
-        girl = _girl(login_age_sec=21 * 3600, relogin_tries=1,
-                     relogin_next_at=NOW + timedelta(minutes=4))
-        plan = dating_revive_plan(girl, online=True, now=NOW)
+        profile = _profile(login_age_sec=21 * 3600, relogin_tries=1,
+                           relogin_next_at=NOW + timedelta(minutes=4))
+        plan = dating_revive_plan(profile, online=True, now=NOW)
 
         assert plan['action'] == 'none'
         assert plan['relogin_since'] is None
@@ -241,9 +241,9 @@ class TestRevivePlan:
 
     def test_planned_login_retries_when_due(self):
         """Срок повторного планового входа настал — входим, лестница едет дальше."""
-        girl = _girl(login_age_sec=21 * 3600, relogin_tries=1,
-                     relogin_next_at=NOW - timedelta(seconds=1))
-        plan = dating_revive_plan(girl, online=True, now=NOW)
+        profile = _profile(login_age_sec=21 * 3600, relogin_tries=1,
+                           relogin_next_at=NOW - timedelta(seconds=1))
+        plan = dating_revive_plan(profile, online=True, now=NOW)
 
         assert plan['action'] == 'login'
         assert plan['relogin_since'] is None
@@ -252,7 +252,7 @@ class TestRevivePlan:
 
     def test_offline_starts_chain(self):
         """Первый отказ начинает череду: попытка через минуту, а не сейчас."""
-        plan = dating_revive_plan(_girl(), online=False, now=NOW)
+        plan = dating_revive_plan(_profile(), online=False, now=NOW)
 
         assert plan['action'] == 'wait'
         assert plan['relogin_since'] == NOW
@@ -261,9 +261,9 @@ class TestRevivePlan:
 
     def test_offline_waits_until_due(self):
         """Срок не настал — молчим, попытку не двигаем."""
-        girl = _girl(relogin_since=NOW - timedelta(minutes=1),
-                     relogin_next_at=NOW + timedelta(minutes=4), relogin_tries=1)
-        plan = dating_revive_plan(girl, online=False, now=NOW)
+        profile = _profile(relogin_since=NOW - timedelta(minutes=1),
+                           relogin_next_at=NOW + timedelta(minutes=4), relogin_tries=1)
+        plan = dating_revive_plan(profile, online=False, now=NOW)
 
         assert plan['action'] == 'none'
         assert plan['relogin_since'] == NOW - timedelta(minutes=1)
@@ -272,9 +272,9 @@ class TestRevivePlan:
 
     def test_offline_logs_in_when_due(self):
         """Срок настал — входим, и следующая попытка назначается по лестнице."""
-        girl = _girl(relogin_since=NOW - timedelta(minutes=6),
-                     relogin_next_at=NOW - timedelta(seconds=1), relogin_tries=1)
-        plan = dating_revive_plan(girl, online=False, now=NOW)
+        profile = _profile(relogin_since=NOW - timedelta(minutes=6),
+                           relogin_next_at=NOW - timedelta(seconds=1), relogin_tries=1)
+        plan = dating_revive_plan(profile, online=False, now=NOW)
 
         assert plan['action'] == 'login'
         assert plan['relogin_tries'] == 2
@@ -282,9 +282,9 @@ class TestRevivePlan:
 
     def test_gives_up_after_a_day(self):
         """Сутки прошли — попытки прекращаются, срок следующей стирается."""
-        girl = _girl(relogin_since=NOW - timedelta(hours=25),
-                     relogin_next_at=NOW - timedelta(minutes=1), relogin_tries=9)
-        plan = dating_revive_plan(girl, online=False, now=NOW)
+        profile = _profile(relogin_since=NOW - timedelta(hours=25),
+                           relogin_next_at=NOW - timedelta(minutes=1), relogin_tries=9)
+        plan = dating_revive_plan(profile, online=False, now=NOW)
 
         assert plan['action'] == 'give_up'
         assert plan['relogin_next_at'] is None
@@ -292,9 +292,9 @@ class TestRevivePlan:
     def test_gives_up_only_once(self):
         """Сдача объявляется один раз: череда в базе останется, круг придёт ещё
         тысячу раз, а сосед и журнал должны увидеть только переход."""
-        girl = _girl(relogin_since=NOW - timedelta(hours=30), relogin_next_at=None,
-                     relogin_tries=12)
-        plan = dating_revive_plan(girl, online=False, now=NOW)
+        profile = _profile(relogin_since=NOW - timedelta(hours=30), relogin_next_at=None,
+                           relogin_tries=12)
+        plan = dating_revive_plan(profile, online=False, now=NOW)
 
         assert plan['action'] == 'none'
         assert plan['relogin_since'] == NOW - timedelta(hours=30)
@@ -308,9 +308,9 @@ class TestRevivePlan:
         значило бы: сайт полежал минуту, встал — и круг снова волен ходить в браузер
         соседа каждую минуту, потому что паузу забыли.
         """
-        girl = _girl(relogin_since=NOW - timedelta(hours=2), relogin_tries=4,
-                     relogin_next_at=NOW + timedelta(minutes=90))
-        plan = dating_revive_plan(girl, online=True, now=NOW)
+        profile = _profile(relogin_since=NOW - timedelta(hours=2), relogin_tries=4,
+                           relogin_next_at=NOW + timedelta(minutes=90))
+        plan = dating_revive_plan(profile, online=True, now=NOW)
 
         assert plan['action'] == 'clear'
         assert plan['relogin_since'] is None
@@ -324,10 +324,10 @@ class TestRevivePlan:
         так и остался старым. Прежде возраст входа держал тревогу зажжённой, и через
         сутки такой анкете выставлялось «сдались» при живом опросе.
         """
-        girl = _girl(login_age_sec=23 * 3600,
-                     relogin_since=NOW - timedelta(hours=3), relogin_tries=5,
-                     relogin_next_at=NOW + timedelta(minutes=30))
-        plan = dating_revive_plan(girl, online=True, now=NOW)
+        profile = _profile(login_age_sec=23 * 3600,
+                           relogin_since=NOW - timedelta(hours=3), relogin_tries=5,
+                           relogin_next_at=NOW + timedelta(minutes=30))
+        plan = dating_revive_plan(profile, online=True, now=NOW)
 
         assert plan['action'] == 'clear'
         assert plan['relogin_since'] is None
@@ -339,10 +339,10 @@ class TestRevivePlan:
 
         Сдача — про «нужен вход вручную». Пока анкета в сети, дёргать человека не о чем.
         """
-        girl = _girl(login_age_sec=30 * 3600,
-                     relogin_since=NOW - timedelta(hours=26), relogin_tries=14,
-                     relogin_next_at=NOW + timedelta(hours=1))
-        plan = dating_revive_plan(girl, online=True, now=NOW)
+        profile = _profile(login_age_sec=30 * 3600,
+                           relogin_since=NOW - timedelta(hours=26), relogin_tries=14,
+                           relogin_next_at=NOW + timedelta(hours=1))
+        plan = dating_revive_plan(profile, online=True, now=NOW)
 
         assert plan['action'] == 'clear'
         assert plan['relogin_since'] is None
@@ -350,10 +350,10 @@ class TestRevivePlan:
     def test_online_and_due_clears_alarm_and_logs_in(self):
         """Тревога шла, анкета вернулась, вход протух и пауза вышла — оба сразу:
         тревогу гасим, вход обновляем, лестница едет дальше."""
-        girl = _girl(login_age_sec=23 * 3600,
-                     relogin_since=NOW - timedelta(hours=3), relogin_tries=3,
-                     relogin_next_at=NOW - timedelta(seconds=1))
-        plan = dating_revive_plan(girl, online=True, now=NOW)
+        profile = _profile(login_age_sec=23 * 3600,
+                           relogin_since=NOW - timedelta(hours=3), relogin_tries=3,
+                           relogin_next_at=NOW - timedelta(seconds=1))
+        plan = dating_revive_plan(profile, online=True, now=NOW)
 
         assert plan['action'] == 'login'
         assert plan['relogin_since'] is None
@@ -367,8 +367,8 @@ class TestRevivePlan:
         Признак тут — прошедший срок попытки, а не пустая тревога: тревога гаснет от
         одного удачного опроса, и по ней «повод новый» ловилось бы посреди живой паузы.
         """
-        girl = _girl(relogin_tries=4, relogin_next_at=NOW - timedelta(minutes=30))
-        plan = dating_revive_plan(girl, online=False, now=NOW)
+        profile = _profile(relogin_tries=4, relogin_next_at=NOW - timedelta(minutes=30))
+        plan = dating_revive_plan(profile, online=False, now=NOW)
 
         assert plan['action'] == 'wait'
         assert plan['relogin_since'] == NOW
@@ -382,8 +382,8 @@ class TestRevivePlan:
         лестница остаётся на своей ступени: в браузер соседа мы уже сходили, и до
         назначенного срока туда ходить нельзя независимо от тревоги.
         """
-        girl = _girl(relogin_tries=3, relogin_next_at=NOW + timedelta(minutes=40))
-        plan = dating_revive_plan(girl, online=False, now=NOW)
+        profile = _profile(relogin_tries=3, relogin_next_at=NOW + timedelta(minutes=40))
+        plan = dating_revive_plan(profile, online=False, now=NOW)
 
         assert plan['action'] == 'wait'
         assert plan['relogin_since'] == NOW
@@ -398,25 +398,25 @@ class TestRevivePlan:
         через браузер выходил через три минуты вместо предписанных пяти. С большими
         ступенями это схлопывало до минуты и двухчасовую паузу.
         """
-        girl = _girl()
+        profile = _profile()
 
-        down = dating_revive_plan(girl, online=False, now=NOW)
+        down = dating_revive_plan(profile, online=False, now=NOW)
         assert down['action'] == 'wait'
         assert down['relogin_next_at'] == NOW + timedelta(minutes=1)
 
-        first = dating_revive_plan(_apply(girl, down), online=False,
+        first = dating_revive_plan(_apply(profile, down), online=False,
                                    now=NOW + timedelta(minutes=1))
         assert first['action'] == 'login'
         assert first['relogin_tries'] == 1
         assert first['relogin_next_at'] == NOW + timedelta(minutes=6)
 
-        blink = dating_revive_plan(_apply(girl, first), online=True,
+        blink = dating_revive_plan(_apply(profile, first), online=True,
                                    now=NOW + timedelta(minutes=2))
         assert blink['action'] == 'clear'
         assert blink['relogin_since'] is None
         assert blink['relogin_next_at'] == NOW + timedelta(minutes=6)
 
-        again = dating_revive_plan(_apply(girl, blink), online=False,
+        again = dating_revive_plan(_apply(profile, blink), online=False,
                                    now=NOW + timedelta(minutes=3))
         assert again['action'] == 'wait'
         assert again['relogin_since'] == NOW + timedelta(minutes=3)
@@ -424,7 +424,7 @@ class TestRevivePlan:
         assert again['relogin_next_at'] == NOW + timedelta(minutes=6)
 
         # Второй вход — не раньше срока, назначенного первым: лестница цела.
-        early = dating_revive_plan(_apply(girl, again), online=False,
+        early = dating_revive_plan(_apply(profile, again), online=False,
                                    now=NOW + timedelta(minutes=4))
         assert early['action'] == 'none'
         assert early['relogin_next_at'] == NOW + timedelta(minutes=6)
@@ -441,7 +441,7 @@ class TestReviveRoundOrder:
         семь: круг «раз в минуту» превратился бы в «раз в семь-десять», а задержка
         обнаружения росла бы вместе с числом анкет.
         """
-        round_stub['girls'] = _girls(8)
+        round_stub['profiles'] = _profiles(8)
         round_stub['probe_pause'] = 0.05
 
         counts = await dating_revive_round(login_run=_login_stub(round_stub))
@@ -452,7 +452,7 @@ class TestReviveRoundOrder:
 
     async def test_probes_do_not_flood(self, round_stub):
         """Разом — но не все: у соседа и у сайта есть предел, отсюда ограничитель."""
-        round_stub['girls'] = _girls(DATING_REVIVE_PROBE_PARALLEL + 5)
+        round_stub['profiles'] = _profiles(DATING_REVIVE_PROBE_PARALLEL + 5)
         round_stub['probe_pause'] = 0.02
 
         await dating_revive_round(login_run=_login_stub(round_stub))
@@ -465,7 +465,7 @@ class TestReviveRoundOrder:
         Каждый вход открывает вкладку Chromium (~143 МБ) в пуле, общем с соседом.
         Сайт лёг, все анкеты пошли входить разом — и пул падает вместе с чужой работой.
         """
-        round_stub['girls'] = _girls(4, login_age_sec=21 * 3600)
+        round_stub['profiles'] = _profiles(4, login_age_sec=21 * 3600)
 
         counts = await dating_revive_round(login_run=_login_stub(round_stub))
 
@@ -473,7 +473,7 @@ class TestReviveRoundOrder:
         assert counts['revived'] == 4
         assert round_stub['login_peak'] == 1
 
-    async def test_now_is_taken_for_every_girl(self, round_stub):
+    async def test_now_is_taken_for_every_profile(self, round_stub):
         """Время берётся на каждую анкету, а не одно на весь круг.
 
         Перед решением по второй анкете проходит вход первой — минута-две живого
@@ -481,10 +481,10 @@ class TestReviveRoundOrder:
         читался бы как ненаступивший, и анкета ждала бы ещё круг — и так каждый раз,
         пока в круге есть хоть один вход.
         """
-        round_stub['girls'] = [
-            _girl(id=1, login='g1', site_id=1, login_age_sec=21 * 3600),
-            _girl(id=2, login='g2', site_id=1, relogin_since=NOW - timedelta(minutes=1),
-                  relogin_tries=1, relogin_next_at=NOW + timedelta(minutes=2))]
+        round_stub['profiles'] = [
+            _profile(id=1, login='g1', site_id=1, login_age_sec=21 * 3600),
+            _profile(id=2, login='g2', site_id=1, relogin_since=NOW - timedelta(minutes=1),
+                     relogin_tries=1, relogin_next_at=NOW + timedelta(minutes=2))]
         round_stub['status'] = {2: 'offline'}
 
         await dating_revive_round(
@@ -502,9 +502,9 @@ class TestReviveRoundCleanup:
     «Диалоги» или потерянный ручной вход.
     """
 
-    def _girl_due(self):
+    def _profile_due(self):
         """Анкета, которой по плану положен вход прямо сейчас (вход протух по сроку)."""
-        return _girls(1, login_age_sec=21 * 3600)
+        return _profiles(1, login_age_sec=21 * 3600)
 
     async def test_failed_login_closes_the_tab_it_opened(self, round_stub):
         """Сосед не ответил посреди входа — вкладку за собой закрываем.
@@ -512,7 +512,7 @@ class TestReviveRoundCleanup:
         Номер её до нас не дошёл: исключение оборвало вход до ответа. Найти вкладку
         можно только сравнением с тем, что жило до входа.
         """
-        round_stub['girls'] = self._girl_due()
+        round_stub['profiles'] = self._profile_due()
 
         counts = await dating_revive_round(
             login_run=_login_stub(round_stub, opens=(('new', 1),),
@@ -528,7 +528,7 @@ class TestReviveRoundCleanup:
         `CancelledError` не наследник `Exception`, и без своей ветки вкладка пережила
         бы саму смену. А проглоченная отмена — это смена, которая не заканчивается.
         """
-        round_stub['girls'] = self._girl_due()
+        round_stub['profiles'] = self._profile_due()
 
         with pytest.raises(asyncio.CancelledError):
             await dating_revive_round(
@@ -543,7 +543,7 @@ class TestReviveRoundCleanup:
         Так бывает, когда сценарий вернул ошибку: свои пути вход закрывает сам, а
         этот оставляет вызывающему — ручке вкладка нужна, автомату нет.
         """
-        round_stub['girls'] = self._girl_due()
+        round_stub['profiles'] = self._profile_due()
 
         await dating_revive_round(
             login_run=_login_stub(round_stub, ok=False, opens=(('kept', 1),),
@@ -561,7 +561,7 @@ class TestReviveRoundCleanup:
         «Диалоги». Случай «нет сценария входа» повторяется каждую попытку до самой
         сдачи — то есть держать вкладку открытой было нельзя вообще.
         """
-        round_stub['girls'] = self._girl_due()
+        round_stub['profiles'] = self._profile_due()
         round_stub['sessions'] = [{'session_id': 'human', 'name': 'g1', 'site_id': 1}]
 
         await dating_revive_round(
@@ -572,7 +572,7 @@ class TestReviveRoundCleanup:
 
     async def test_only_the_new_tab_is_closed(self, round_stub):
         """Своё закрываем, чужое оставляем — даже когда они рядом."""
-        round_stub['girls'] = self._girl_due()
+        round_stub['profiles'] = self._profile_due()
         round_stub['sessions'] = [{'session_id': 'human', 'name': 'g1', 'site_id': 1}]
 
         await dating_revive_round(
@@ -587,7 +587,7 @@ class TestReviveRoundCleanup:
         Ища вкладки по одному имени, автомат гасил бы вкладку соседней анкеты, и обе
         такие анкеты вечно закрывали бы вход друг другу.
         """
-        round_stub['girls'] = self._girl_due()
+        round_stub['profiles'] = self._profile_due()
 
         await dating_revive_round(
             login_run=_login_stub(round_stub, opens=(('new', 1), ('twin', 2)),
@@ -602,7 +602,7 @@ class TestReviveRoundCleanup:
         подменяло бы собой причину неудачи (строки «Войти не вышло» человек бы не
         увидел) и обрывало круг для всех остальных анкет.
         """
-        round_stub['girls'] = self._girl_due()
+        round_stub['profiles'] = self._profile_due()
         round_stub['close_raises'] = RuntimeError('сосед не ответил на закрытие')
 
         counts = await dating_revive_round(
@@ -626,7 +626,7 @@ class TestReviveRoundProbeFailure:
         обрывался бы целиком — и не разово: следующий круг споткнулся бы о ту же
         строку, и анкеты после сломанной перестали бы проверяться совсем.
         """
-        round_stub['girls'] = _girls(3)
+        round_stub['profiles'] = _profiles(3)
         round_stub['probe_raise'] = {2: TypeError('cookies списком строк')}
 
         counts = await dating_revive_round(login_run=_login_stub(round_stub))
@@ -634,7 +634,7 @@ class TestReviveRoundProbeFailure:
         assert counts['checked'] == 3
         # Две живые анкеты посчитаны, сломанная — нет, но круг дошёл до конца.
         assert counts['online'] == 2
-        assert [girl_id for girl_id, _ in round_stub['saved']] == [1, 2, 3]
+        assert [profile_id for profile_id, _ in round_stub['saved']] == [1, 2, 3]
 
     async def test_broken_probe_counts_as_offline(self, round_stub):
         """Отказ опроса зажигает тревогу — как и любое другое «не в сети».
@@ -642,13 +642,13 @@ class TestReviveRoundProbeFailure:
         Проглотить его тихо было бы хуже поломки: анкета висела бы в панели
         здоровой, потому что круг её просто не коснулся.
         """
-        round_stub['girls'] = _girls(1)
+        round_stub['profiles'] = _profiles(1)
         round_stub['probe_raise'] = {1: TypeError('cookies списком строк')}
 
         await dating_revive_round(login_run=_login_stub(round_stub))
 
-        girl_id, plan = round_stub['saved'][0]
-        assert (girl_id, plan['action']) == (1, 'wait')
+        profile_id, plan = round_stub['saved'][0]
+        assert (profile_id, plan['action']) == (1, 'wait')
         assert plan['relogin_since'] == NOW
         assert 'TypeError' in round_stub['errors'][0][1]
 
@@ -665,9 +665,9 @@ class TestReviveRoundLoginResult:
         Неудача — это `error`; тем же правилом живут ручка входа и страница.
         """
         # Тревога уже горит, срок попытки настал — круг пойдёт входить.
-        round_stub['girls'] = [_girl(site_id=1, relogin_since=NOW - timedelta(minutes=6),
-                                     relogin_tries=1,
-                                     relogin_next_at=NOW - timedelta(seconds=1))]
+        round_stub['profiles'] = [_profile(site_id=1, relogin_since=NOW - timedelta(minutes=6),
+                                           relogin_tries=1,
+                                           relogin_next_at=NOW - timedelta(seconds=1))]
         round_stub['status'] = {1: 'error'}
 
         counts = await dating_revive_round(login_run=_login_stub(round_stub))
@@ -679,9 +679,9 @@ class TestReviveRoundLoginResult:
 
     async def test_error_still_counts_as_failure(self, round_stub):
         """Настоящий провал остаётся провалом — иначе правило бесполезно."""
-        round_stub['girls'] = [_girl(site_id=1, relogin_since=NOW - timedelta(minutes=6),
-                                     relogin_tries=1,
-                                     relogin_next_at=NOW - timedelta(seconds=1))]
+        round_stub['profiles'] = [_profile(site_id=1, relogin_since=NOW - timedelta(minutes=6),
+                                           relogin_tries=1,
+                                           relogin_next_at=NOW - timedelta(seconds=1))]
         round_stub['status'] = {1: 'error'}
 
         counts = await dating_revive_round(login_run=_login_stub(round_stub, ok=False))
@@ -693,7 +693,7 @@ class TestReviveRoundLoginResult:
 class TestReviveRoundSiteMissing:
     """Сайт без настройки опроса: анкеты не проверить — но и молчать про них нельзя."""
 
-    async def test_girls_of_a_broken_site_are_marked(self, round_stub):
+    async def test_profiles_of_a_broken_site_are_marked(self, round_stub):
         """Каждая анкета выпавшего сайта получает пометку в карточку.
 
         Раньше круг просто пропускал их, а след оставался в логе контейнера,
@@ -701,25 +701,25 @@ class TestReviveRoundSiteMissing:
         хотя её не трогали неделю. Это ровно та беда «никто не замечает», ради
         которой всё и делалось.
         """
-        round_stub['girls'] = _girls(3)
+        round_stub['profiles'] = _profiles(3)
         round_stub['presence'] = {1: {}}
 
         counts = await dating_revive_round(login_run=_login_stub(round_stub))
 
-        assert [girl_id for girl_id, _ in round_stub['missing']] == [1, 2, 3]
+        assert [profile_id for profile_id, _ in round_stub['missing']] == [1, 2, 3]
         assert all('опрос' in why for _, why in round_stub['missing'])
         # Проверить их нечем — значит и опрашивать нечего, и входить незачем.
         assert (counts['online'], counts['tried']) == (0, 0)
         assert round_stub['probed'] == []
 
-    async def test_marked_girls_keep_their_ladder(self, round_stub):
+    async def test_marked_profiles_keep_their_ladder(self, round_stub):
         """Пометка — не тревога: лестницу она не двигает и вход не назначает.
 
         Анкета не объявлена вне сети, её просто нечем проверить. Зажечь тревогу
         значило бы гонять браузер соседа впустую: вход всё равно кончается тем же
         опросом, которого нет.
         """
-        round_stub['girls'] = _girls(2)
+        round_stub['profiles'] = _profiles(2)
         round_stub['presence'] = {1: {}}
 
         await dating_revive_round(login_run=_login_stub(round_stub))
@@ -729,7 +729,7 @@ class TestReviveRoundSiteMissing:
 
     async def test_healthy_site_marks_nobody(self, round_stub):
         """У настроенного сайта пометок нет вовсе — иначе она обесценится."""
-        round_stub['girls'] = _girls(2)
+        round_stub['profiles'] = _profiles(2)
 
         await dating_revive_round(login_run=_login_stub(round_stub))
 
@@ -748,7 +748,7 @@ class TestReviveRoundBackoff:
         единственный путь, где лестницу можно превысить; пропущенная попытка
         дешевле вкладки Chromium раз в минуту.
         """
-        round_stub['girls'] = _girls(2, login_age_sec=21 * 3600)
+        round_stub['profiles'] = _profiles(2, login_age_sec=21 * 3600)
         round_stub['plan_saved'] = False
 
         counts = await dating_revive_round(login_run=_login_stub(round_stub))
@@ -758,7 +758,7 @@ class TestReviveRoundBackoff:
 
     async def test_saved_backoff_lets_the_login_through(self, round_stub):
         """Откат записан — попытка идёт как обычно: пропускаем только потерю записи."""
-        round_stub['girls'] = _girls(2, login_age_sec=21 * 3600)
+        round_stub['profiles'] = _profiles(2, login_age_sec=21 * 3600)
 
         counts = await dating_revive_round(login_run=_login_stub(round_stub))
 

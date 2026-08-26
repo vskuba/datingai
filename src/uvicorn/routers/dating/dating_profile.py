@@ -29,7 +29,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
-from src.mysql_.repository.dating_girl_repository import DatingGirlRepository
+from src.mysql_.repository.dating_profile_repository import DatingProfileRepository
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_agent_find, rhapsody_api_error_write,
                                        rhapsody_api_scenario_run, rhapsody_api_session_open,
                                        rhapsody_api_site_get)
@@ -44,24 +44,24 @@ from src.dating.dating_log import dating_log_write
 from src.dating.dating_login import (DatingLoginError, dating_login_run,
                                      dating_login_session_all, dating_login_session_close,
                                      dating_login_session_close_old, dating_login_ws_capture)
-from src.dating.dating_profile import dating_profile_refresh
+from src.dating.dating_profile_cache import dating_profile_cache_refresh
 from src.dating.dating_revive import dating_revive_state
 from src.dating.dating_send import dating_send_message
 from src.dating.dating_presence import dating_presence_probe, dating_presence_ready
 
-router = APIRouter(prefix='/api/dating/girl', tags=['dating'])
+router = APIRouter(prefix='/api/dating/profile', tags=['dating'])
 
 # Сколько диалогов на странице карточки. Больше пятидесяти за раз никто не
 # просматривает, а страница на них заметно тяжелеет: у каждого ещё и последние
 # десять реплик отдельным запросом. Остальные не теряются — за ними пейджер.
-DATING_GIRL_CONTACTS_PAGE = 50
+DATING_PROFILE_CONTACTS_PAGE = 50
 
 # Сколько учёток опрашиваем разом. Замер: один запрос к сайту идёт ~0.6с, значит
 # двести учёток раз в 15 секунд требуют девяти параллельных — берём с запасом.
-DATING_GIRL_PROBE_PARALLEL = 16
+DATING_PROFILE_PROBE_PARALLEL = 16
 
 
-class DatingGirlSave(BaseModel):
+class DatingProfileSave(BaseModel):
     """Тело заведения и правки учётки."""
 
     site_id: int = Field(..., gt=0, description='Сайт-закладка, к которому относится анкета')
@@ -75,14 +75,14 @@ class DatingGirlSave(BaseModel):
         return value.strip()
 
 
-class DatingGirlLogin(BaseModel):
+class DatingProfileLogin(BaseModel):
     """Вход под учёткой: в какой сессии и каким сценарием."""
 
     session_id: str = Field('', description='Пусто — заведётся своя сессия на адрес сайта')
     scenario_id: int | None = Field(None, description='Пусто — сценарий входа ищется сам')
 
 
-class DatingGirlResponse(BaseModel):
+class DatingProfileResponse(BaseModel):
     """Учётка в списке. Пароля здесь нет и не будет."""
 
     id: int = Field(..., description='Идентификатор учётки', examples=[3])
@@ -111,20 +111,20 @@ class DatingGirlResponse(BaseModel):
                     'has_password': True, 'note': 'основная анкета'}})
 
 
-class DatingGirlListResponse(BaseModel):
-    result: list[DatingGirlResponse] = Field(..., description='Учётки сайта по алфавиту')
+class DatingProfileListResponse(BaseModel):
+    result: list[DatingProfileResponse] = Field(..., description='Учётки сайта по алфавиту')
 
 
 @router.get(
     '',
-    response_model=DatingGirlListResponse,
+    response_model=DatingProfileListResponse,
     summary='Получить список учёток сайта знакомств',
     description='Учётки, заведённые для сайта-закладки (`browser_site`). Пароль в ответ '
                 'не входит — только признак `has_password`. Нужна сессия админки или '
                 'заголовок `X-API-KEY` с правом `DATING_VIEW`.',
     response_description='Успешный ответ со списком учёток',
 )
-async def dating_girl_list(site_id: int = 0,
+async def dating_profile_list(site_id: int = 0,
                            user=Depends(auth_required)):
     """Учётки сайта. Без `site_id` — все, чтобы страница могла показать общий счёт."""
     where, params = '', []
@@ -140,10 +140,10 @@ async def dating_girl_list(site_id: int = 0,
             '       g.password <> %s AS has_password, '
             '       g.storage_state IS NOT NULL AS has_state, '
             '       (SELECT COUNT(DISTINCT m.sender_uid) FROM dating_message m '
-            '         WHERE m.girl_id = g.id) AS contacts, '
+            '         WHERE m.profile_id = g.id) AS contacts, '
             '       (SELECT COUNT(*) FROM dating_message m '
-            "         WHERE m.girl_id = g.id AND m.direction = 'in' AND m.is_read = 0) AS unread_chat "
-            f'  FROM dating_girl g{where.replace(" site_id", " g.site_id")} ORDER BY g.login',
+            "         WHERE m.profile_id = g.id AND m.direction = 'in' AND m.is_read = 0) AS unread_chat "
+            f'  FROM dating_profile g{where.replace(" site_id", " g.site_id")} ORDER BY g.login',
             tuple([''] + params))
         rows = await db.fetchall()
 
@@ -172,27 +172,27 @@ async def dating_girl_list(site_id: int = 0,
 
 
 @router.post('', status_code=201, include_in_schema=False)
-async def dating_girl_create(data: DatingGirlSave,
+async def dating_profile_create(data: DatingProfileSave,
                              user=Depends(auth_required)):
     """Заводит учётку. Тот же логин на том же сайте — 409, а не второй такой же."""
     await _site_check(data.site_id)
 
     try:
-        girl_id = await DatingGirlRepository().add({
+        profile_id = await DatingProfileRepository().add({
             'site_id': data.site_id, 'login': data.login,
             'password': data.password, 'note': data.note})
     except Exception as e:
         raise HTTPException(status_code=409, detail=_save_error(e, data.login))
 
-    return {'result': girl_id}
+    return {'result': profile_id}
 
 
-@router.put('/{girl_id}', include_in_schema=False)
-async def dating_girl_update(girl_id: int, data: DatingGirlSave,
+@router.put('/{profile_id}', include_in_schema=False)
+async def dating_profile_update(profile_id: int, data: DatingProfileSave,
                              user=Depends(auth_required)):
     """Правит учётку. Пустой пароль оставляет прежний: форма его не показывает,
     и пустое поле означает «не трогать», а не «стереть»."""
-    await _girl_row(girl_id)
+    await _profile_row(profile_id)
     await _site_check(data.site_id)
 
     values = {'site_id': data.site_id, 'login': data.login, 'note': data.note}
@@ -200,25 +200,25 @@ async def dating_girl_update(girl_id: int, data: DatingGirlSave,
         values['password'] = data.password
 
     try:
-        await DatingGirlRepository().update(girl_id, values)
+        await DatingProfileRepository().update(profile_id, values)
     except Exception as e:
         raise HTTPException(status_code=409, detail=_save_error(e, data.login))
 
     return {'status': 'success'}
 
 
-@router.delete('/{girl_id}', include_in_schema=False)
-async def dating_girl_delete(girl_id: int,
+@router.delete('/{profile_id}', include_in_schema=False)
+async def dating_profile_delete(profile_id: int,
                              user=Depends(auth_required)):
     """Удаляет учётку. Живые сессии браузера не трогает — они сами по себе."""
-    await _girl_row(girl_id)
-    await DatingGirlRepository().delete(girl_id)
+    await _profile_row(profile_id)
+    await DatingProfileRepository().delete(profile_id)
 
     return {'status': 'success'}
 
 
-@router.post('/{girl_id}/login', include_in_schema=False)
-async def dating_girl_login(girl_id: int, data: DatingGirlLogin,
+@router.post('/{profile_id}/login', include_in_schema=False)
+async def dating_profile_login(profile_id: int, data: DatingProfileLogin,
                             user=Depends(auth_required)):
     """Входит под учёткой в живой сессии браузера.
 
@@ -232,10 +232,10 @@ async def dating_girl_login(girl_id: int, data: DatingGirlLogin,
     # Существование учётки проверяем здесь, хотя модуль входа проверит его сам:
     # «нет объекта» — это 404, а всё, что модуль зовёт «войти нечем», отдаётся
     # ниже как 422. Различать их внутри модуля нечем: HTTP-кодов он не знает.
-    await _girl_row(girl_id)
+    await _profile_row(profile_id)
 
     try:
-        result = await dating_login_run(girl_id, int(data.scenario_id or 0),
+        result = await dating_login_run(profile_id, int(data.scenario_id or 0),
                                         str(data.session_id or ''))
     except DatingLoginError as e:
         # «Войти нечем» — это ошибка запроса, а не сбой: нет пароля, нет сценария,
@@ -247,15 +247,15 @@ async def dating_girl_login(girl_id: int, data: DatingGirlLogin,
     return {'result': result}
 
 
-class DatingGirlSend(BaseModel):
+class DatingProfileSend(BaseModel):
     """Ручная отправка сообщения собеседнику."""
 
     to: str = Field(..., min_length=1, max_length=32, description='Номер собеседника на сайте')
     text: str = Field(..., min_length=1, max_length=2000)
 
 
-@router.post('/{girl_id}/send', include_in_schema=False)
-async def dating_girl_send(girl_id: int, data: DatingGirlSend,
+@router.post('/{profile_id}/send', include_in_schema=False)
+async def dating_profile_send(profile_id: int, data: DatingProfileSend,
                            user=Depends(auth_required)):
     """Шлёт сообщение от имени анкеты — руками, без агента.
 
@@ -263,23 +263,23 @@ async def dating_girl_send(girl_id: int, data: DatingGirlSend,
     сорвавшееся. Путь тот же, что у агента, поэтому проверка здесь проверяет
     настоящую отправку, а не её подобие.
     """
-    girl = await _girl_row(girl_id)
-    site = await _site_check(int(girl['site_id']))
+    profile = await _profile_row(profile_id)
+    site = await _site_check(int(profile['site_id']))
 
-    result = await dating_send_message(girl, dating_json_load(site.get('presence')), data.to, data.text)
+    result = await dating_send_message(profile, dating_json_load(site.get('presence')), data.to, data.text)
 
-    await dating_log_write(girl_id, 'out' if result['ok'] else 'fail',
+    await dating_log_write(profile_id, 'out' if result['ok'] else 'fail',
                            f"#{data.to}: {data.text[:300]}" if result['ok']
                            else f"Не ушло #{data.to}: {result['error']}")
 
     if not result['ok']:
         await rhapsody_api_error_write('dating', f"сообщение не ушло: {result['error']}",
-                                  context={'girl_id': girl_id, 'to': data.to})
+                                  context={'profile_id': profile_id, 'to': data.to})
 
     return {'result': result}
 
 
-class DatingGirlAuto(BaseModel):
+class DatingProfileAuto(BaseModel):
     """Переключатель автоответа у анкеты."""
 
     auto_answer: bool = Field(..., description='Отвечать ли самостоятельно')
@@ -288,8 +288,8 @@ class DatingGirlAuto(BaseModel):
         description='Кому отвечать: номера через запятую. Пусто — всем; не передано — как было')
 
 
-@router.put('/{girl_id}/auto', include_in_schema=False)
-async def dating_girl_auto(girl_id: int, data: DatingGirlAuto, request: Request,
+@router.put('/{profile_id}/auto', include_in_schema=False)
+async def dating_profile_auto(profile_id: int, data: DatingProfileAuto, request: Request,
                            user=Depends(auth_required)):
     """Включает или выключает автоответ анкеты.
 
@@ -297,38 +297,38 @@ async def dating_girl_auto(girl_id: int, data: DatingGirlAuto, request: Request,
     ждать до следующего круга смены (до минуты) незачем, а неотвеченное письмо
     висит уже сейчас.
     """
-    girl = await _girl_row(girl_id)
+    profile = await _profile_row(profile_id)
 
     async with mysql_get_db_async() as db:
         if data.auto_answer_only is None:
-            await db.execute('UPDATE dating_girl SET auto_answer = %s WHERE id = %s',
-                             (1 if data.auto_answer else 0, girl_id))
+            await db.execute('UPDATE dating_profile SET auto_answer = %s WHERE id = %s',
+                             (1 if data.auto_answer else 0, profile_id))
         else:
-            await db.execute('UPDATE dating_girl SET auto_answer = %s, auto_answer_only = %s '
+            await db.execute('UPDATE dating_profile SET auto_answer = %s, auto_answer_only = %s '
                              ' WHERE id = %s',
-                             (1 if data.auto_answer else 0, data.auto_answer_only.strip(), girl_id))
+                             (1 if data.auto_answer else 0, data.auto_answer_only.strip(), profile_id))
         await db.connection.commit()
 
-    girl = await _girl_row(girl_id)
+    profile = await _profile_row(profile_id)
 
-    await dating_log_write(girl_id, 'info',
+    await dating_log_write(profile_id, 'info',
                            'Автоответ включён' if data.auto_answer else 'Автоответ выключен')
 
     answered = {}
     if data.auto_answer:
-        site = await _site_check(int(girl['site_id']))
-        agent = await dating_agent_ensure(girl, dating_json_load(girl.get('profile')))
+        site = await _site_check(int(profile['site_id']))
+        agent = await dating_agent_ensure(profile, dating_json_load(profile.get('profile')))
         agent_id = await _agent_id_by_name(agent['name'])
         if agent_id:
-            answered = await dating_answer_run({**girl, 'auto_answer': 1},
+            answered = await dating_answer_run({**profile, 'auto_answer': 1},
                                                dating_json_load(site.get('presence')),
                                                agent_id)
 
     return {'result': {'auto_answer': data.auto_answer, 'answered': answered}}
 
 
-@router.post('/{girl_id}/answer', include_in_schema=False)
-async def dating_girl_answer(girl_id: int, request: Request,
+@router.post('/{profile_id}/answer', include_in_schema=False)
+async def dating_profile_answer(profile_id: int, request: Request,
                              user=Depends(auth_required)):
     """Отвечает собеседникам, чьё сообщение осталось без ответа.
 
@@ -336,28 +336,28 @@ async def dating_girl_answer(girl_id: int, request: Request,
     уходит в чат. Пустой ответ означает «промолчать» — сообщение помечается
     отвеченным, но в чат ничего не идёт.
     """
-    girl = await _girl_row(girl_id)
-    site = await _site_check(int(girl['site_id']))
+    profile = await _profile_row(profile_id)
+    site = await _site_check(int(profile['site_id']))
     presence = dating_json_load(site.get('presence'))
 
-    agent = await dating_agent_ensure(girl, dating_json_load(girl.get('profile')))
+    agent = await dating_agent_ensure(profile, dating_json_load(profile.get('profile')))
     agent_id = await _agent_id_by_name(agent['name'])
     if not agent_id:
         raise HTTPException(status_code=422,
                             detail=f"у анкеты нет агента «{agent['name']}»: {agent['error']}")
 
-    result = await dating_answer_run(girl, presence, agent_id)
+    result = await dating_answer_run(profile, presence, agent_id)
 
     for error in result['errors']:
         await rhapsody_api_error_write('dating', f'ответ не отправлен — {error}',
-                                  context={'girl_id': girl_id, 'agent_id': agent_id,
+                                  context={'profile_id': profile_id, 'agent_id': agent_id,
                                            'where': 'кнопка «Ответить»'})
 
     return {'result': {**result, 'agent': agent['name']}}
 
 
-@router.post('/{girl_id}/dialog', include_in_schema=False)
-async def dating_girl_dialog(girl_id: int,
+@router.post('/{profile_id}/dialog', include_in_schema=False)
+async def dating_profile_dialog(profile_id: int,
                              user=Depends(auth_required)):
     """Читает диалоги учётки со страницы чата и складывает переписку.
 
@@ -365,32 +365,32 @@ async def dating_girl_dialog(girl_id: int,
     сайт в чат не возвращает. Открывать страницу дорого и она отбирает у учётки
     живое соединение, поэтому это кнопка, а не фон.
     """
-    girl = await _girl_row(girl_id)
-    site = await _site_check(int(girl['site_id']))
+    profile = await _profile_row(profile_id)
+    site = await _site_check(int(profile['site_id']))
     presence = dating_json_load(site.get('presence'))
 
-    await dating_login_session_close_old(girl['login'], '')
-    session_id = await _session_open_for(site, {**girl,
-                                                'storage_state': dating_json_load(girl.get('storage_state'))})
+    await dating_login_session_close_old(profile['login'], '')
+    session_id = await _session_open_for(site, {**profile,
+                                                'storage_state': dating_json_load(profile.get('storage_state'))})
 
-    result = await dating_dialog_sync(girl, presence, session_id, rhapsody_api_scenario_run)
+    result = await dating_dialog_sync(profile, presence, session_id, rhapsody_api_scenario_run)
 
     if result['error']:
         await rhapsody_api_error_write('dating', f"диалоги не прочитались: {result['error']}",
                                   session_id=session_id,
-                                  context={'girl_id': girl_id, 'where': 'чтение диалогов'})
+                                  context={'profile_id': profile_id, 'where': 'чтение диалогов'})
 
     # Страница чата отобрала у учётки сокет — возвращаем его сразу, иначе живой
     # приём молчал бы до ближайшей переподвязки держателя. И гасим вкладку: пока
     # она открыта, входящие достаются ей, а не держателю.
-    await dating_login_ws_capture(await _girl_row(girl_id), session_id)
+    await dating_login_ws_capture(await _profile_row(profile_id), session_id)
     await dating_login_session_close(session_id)
 
     return {'result': result}
 
 
-@router.post('/{girl_id}/disconnect', include_in_schema=False)
-async def dating_girl_disconnect(girl_id: int,
+@router.post('/{profile_id}/disconnect', include_in_schema=False)
+async def dating_profile_disconnect(profile_id: int,
                                  user=Depends(auth_required)):
     """Отключает учётку: выход на сайте, закрытие вкладок, снятие с мониторинга.
 
@@ -398,24 +398,24 @@ async def dating_girl_disconnect(girl_id: int,
     это «Залогиниться». Выход на самом сайте необязателен и не отменяет локальную
     часть: сайт может не ответить, а отключить учётку надо именно тогда.
     """
-    girl = await _girl_row(girl_id)
-    site = await _site_check(int(girl['site_id']))
+    profile = await _profile_row(profile_id)
+    site = await _site_check(int(profile['site_id']))
 
     result = await dating_disconnect_run(
-        {**girl, 'storage_state': dating_json_load(girl.get('storage_state'))},
+        {**profile, 'storage_state': dating_json_load(profile.get('storage_state'))},
         site, dating_json_load(site.get('presence')),
         rhapsody_api_scenario_run, _session_open_for,
         dating_login_session_all, dating_login_session_close)
 
     if result['error']:
         await rhapsody_api_error_write('dating', f"выход на сайте не прошёл: {result['error']}",
-                                  context={'girl_id': girl_id, 'site_id': girl['site_id']})
+                                  context={'profile_id': profile_id, 'site_id': profile['site_id']})
 
     return {'result': result}
 
 
 @router.post('/probe', include_in_schema=False)
-async def dating_girl_probe(site_id: int = 0,
+async def dating_profile_probe(site_id: int = 0,
                             user=Depends(auth_required)):
     """Опрашивает учётки сайта: держит онлайн и снимает счётчики.
 
@@ -424,7 +424,7 @@ async def dating_girl_probe(site_id: int = 0,
     этого страница и зовёт эту ручку раз в 15 секунд, а не гоняет сценарии.
 
     Опрашиваются разом: у двухсот учёток последовательный круг занял бы минуты,
-    а параллельный укладывается в секунды (`DATING_GIRL_PROBE_PARALLEL`).
+    а параллельный укладывается в секунды (`DATING_PROFILE_PROBE_PARALLEL`).
     """
     site = await _site_check(site_id) if site_id else None
     presence = dating_json_load((site or {}).get('presence'))
@@ -433,88 +433,88 @@ async def dating_girl_probe(site_id: int = 0,
                             detail='у сайта не настроен опрос присутствия (browser_site.presence)')
 
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT id, login, status, storage_state FROM dating_girl '
+        await db.execute('SELECT id, login, status, storage_state FROM dating_profile '
                          ' WHERE site_id = %s AND storage_state IS NOT NULL', (int(site_id),))
-        girls = [dict(row) for row in (await db.fetchall() or [])]
+        profiles = [dict(row) for row in (await db.fetchall() or [])]
 
-    if not girls:
+    if not profiles:
         return {'result': {'checked': 0, 'online': 0}}
 
-    limit = asyncio.Semaphore(DATING_GIRL_PROBE_PARALLEL)
+    limit = asyncio.Semaphore(DATING_PROFILE_PROBE_PARALLEL)
 
-    async def probe(girl):
+    async def probe(profile):
         async with limit:
-            return girl, await dating_presence_probe(girl, presence)
+            return profile, await dating_presence_probe(profile, presence)
 
-    done = await asyncio.gather(*(probe(girl) for girl in girls), return_exceptions=False)
+    done = await asyncio.gather(*(probe(profile) for profile in profiles), return_exceptions=False)
 
     async with mysql_get_db_async() as db:
-        for girl, result in done:
+        for profile, result in done:
             # `last_seen_at` двигаем только у подтверждённого входа: у него смысл
             # «когда сайт последний раз признал учётку», а не «когда мы стучались».
             seen = 'NOW()' if result['status'] == 'online' else 'last_seen_at'
             await db.execute(
-                f'UPDATE dating_girl SET status = %s, unread = %s, last_error = %s, '
+                f'UPDATE dating_profile SET status = %s, unread = %s, last_error = %s, '
                 f'       last_seen_at = {seen} WHERE id = %s',
                 (result['status'],
                  result['unread'] if result['unread'] >= 0 else 0,
-                 result['error'], girl['id']))
+                 result['error'], profile['id']))
         await db.connection.commit()
 
     # В журнал ошибок — только смена состояния, а не каждый неудачный круг: опрос
     # идёт раз в 15 секунд, и сотня учёток залила бы вкладку за минуту одним и тем
     # же. Текущее состояние и так видно на карточке.
-    for girl, result in done:
-        if result['status'] != 'online' and str(girl.get('status') or '') == 'online':
-            await rhapsody_api_error_write('dating', f"учётка «{girl['login']}» ушла из сети: "
+    for profile, result in done:
+        if result['status'] != 'online' and str(profile.get('status') or '') == 'online':
+            await rhapsody_api_error_write('dating', f"учётка «{profile['login']}» ушла из сети: "
                                                 f"{result['error'] or result['status']}",
-                                      context={'girl_id': girl['id'], 'site_id': site_id,
+                                      context={'profile_id': profile['id'], 'site_id': site_id,
                                                'where': 'опрос присутствия'})
 
     online = sum(1 for _, r in done if r['status'] == 'online')
 
     return {'result': {'checked': len(done), 'online': online,
-                       'girls': [{'id': g['id'], 'status': r['status'], 'unread': r['unread'],
+                       'profiles': [{'id': g['id'], 'status': r['status'], 'unread': r['unread'],
                                   'error': r['error'], 'ms': r['ms']} for g, r in done]}}
 
 
-@router.get('/{girl_id}/message', include_in_schema=False)
-async def dating_girl_messages(girl_id: int, limit: int = 30,
+@router.get('/{profile_id}/message', include_in_schema=False)
+async def dating_profile_messages(profile_id: int, limit: int = 30,
                                user=Depends(auth_required)):
     """Сообщения чата этой учётки, свежие сверху."""
-    await _girl_row(girl_id)
+    await _profile_row(profile_id)
     limit = max(1, min(int(limit or 30), 200))
 
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, sender_uid, sender_name, text, is_read, created_at '
-            f'FROM dating_message WHERE girl_id = %s ORDER BY id DESC LIMIT {limit}', (girl_id,))
+            f'FROM dating_message WHERE profile_id = %s ORDER BY id DESC LIMIT {limit}', (profile_id,))
         rows = await db.fetchall()
 
     return {'result': rows}
 
 
-@router.post('/{girl_id}/read', include_in_schema=False)
-async def dating_girl_read(girl_id: int,
+@router.post('/{profile_id}/read', include_in_schema=False)
+async def dating_profile_read(profile_id: int,
                            user=Depends(auth_required)):
     """Помечает сообщения учётки прочитанными — человек открыл её карточку.
 
     Право на просмотр, а не на правку: пометка «я это видел» — часть чтения, и
     требовать за неё право создавать значило бы запретить смотреть без него.
     """
-    await _girl_row(girl_id)
+    await _profile_row(profile_id)
 
     async with mysql_get_db_async() as db:
         await db.execute("UPDATE dating_message SET is_read = 1 "
-                         " WHERE girl_id = %s AND direction = 'in' AND is_read = 0", (girl_id,))
+                         " WHERE profile_id = %s AND direction = 'in' AND is_read = 0", (profile_id,))
         read = db.rowcount
         await db.connection.commit()
 
     return {'result': {'read': read}}
 
 
-@router.post('/{girl_id}/listen', include_in_schema=False)
-async def dating_girl_listen(girl_id: int, seconds: int = 30,
+@router.post('/{profile_id}/listen', include_in_schema=False)
+async def dating_profile_listen(profile_id: int, seconds: int = 30,
                              user=Depends(auth_required)):
     """Слушает чат-сокет учётки и складывает входящие сообщения.
 
@@ -525,41 +525,41 @@ async def dating_girl_listen(girl_id: int, seconds: int = 30,
     Ручка слушает ограниченное время и возвращает итог: постоянное подключение —
     работа воркера, а страница дёргает её, когда человек смотрит на карточку.
     """
-    girl = await _girl_row(girl_id)
-    if not str(girl.get('ws_url') or ''):
+    profile = await _profile_row(profile_id)
+    if not str(profile.get('ws_url') or ''):
         try:
-            girl['ws_url'] = await dating_login_ws_capture(girl)
+            profile['ws_url'] = await dating_login_ws_capture(profile)
         except DatingLoginError as e:
             # Модуль входа не знает HTTP-кодов и сигналит исключением; сайт, которого
             # уже нет у соседа, — это ошибка запроса (422), а не сбой сервера (500).
             raise HTTPException(status_code=422, detail=str(e))
-        if not girl['ws_url']:
+        if not profile['ws_url']:
             raise HTTPException(status_code=422,
                                 detail='не удалось снять адрес чат-сокета: сначала «Залогиниться»')
 
-    result = await dating_chat_listen(girl, seconds=max(5, min(int(seconds or 30), 120)))
+    result = await dating_chat_listen(profile, seconds=max(5, min(int(seconds or 30), 120)))
 
     # Протухший адрес — обычное дело: токены в нём живут не вечно. Снимаем заново
     # и пробуем ещё раз, чтобы человеку не приходилось гадать, почему пусто.
     if result.get('error') and not result.get('frames'):
         try:
-            girl['ws_url'] = await dating_login_ws_capture(girl)
+            profile['ws_url'] = await dating_login_ws_capture(profile)
         except DatingLoginError as e:
             # Та же причина, что и выше: сайт мог пропасть между первой и повторной
             # попыткой — и это снова 422, а не 500.
             raise HTTPException(status_code=422, detail=str(e))
-        if girl['ws_url']:
-            result = await dating_chat_listen(girl, seconds=max(5, min(int(seconds or 30), 120)))
+        if profile['ws_url']:
+            result = await dating_chat_listen(profile, seconds=max(5, min(int(seconds or 30), 120)))
 
     if result.get('error'):
         await rhapsody_api_error_write('dating', f"чат-сокет: {result['error']}",
-                                  context={'girl_id': girl_id})
+                                  context={'profile_id': profile_id})
 
     return {'result': result}
 
 
-@router.post('/{girl_id}/check', include_in_schema=False)
-async def dating_girl_check(girl_id: int, request: Request,
+@router.post('/{profile_id}/check', include_in_schema=False)
+async def dating_profile_check(profile_id: int, request: Request,
                             user=Depends(auth_required)):
     """Полная проверка учётки: вход, чат, чтение, пробная отправка, закрытие.
 
@@ -567,24 +567,24 @@ async def dating_girl_check(girl_id: int, request: Request,
     именно встало. Профиль и собеседницы обновляются заодно: раз уж вошли, брать
     их отдельным заходом незачем.
     """
-    girl = await _girl_row(girl_id)
-    site = await _site_check(int(girl['site_id']))
+    profile = await _profile_row(profile_id)
+    site = await _site_check(int(profile['site_id']))
     presence = dating_json_load(site.get('presence'))
     if not dating_presence_ready(presence):
         raise HTTPException(status_code=422, detail='у сайта не настроен опрос присутствия')
 
-    result = await dating_check_run(girl, presence, dating_login_ws_capture)
+    result = await dating_check_run(profile, presence, dating_login_ws_capture)
 
     if not result['ok']:
-        await rhapsody_api_error_write('dating', f"проверка учётки «{girl['login']}» встала: {result['error']}",
-                                  context={'girl_id': girl_id, 'site_id': girl['site_id'],
+        await rhapsody_api_error_write('dating', f"проверка учётки «{profile['login']}» встала: {result['error']}",
+                                  context={'profile_id': profile_id, 'site_id': profile['site_id'],
                                            'steps': result['steps'], 'where': 'кнопка «Проверка»'})
 
     agent = {}
     if result['ok']:
-        girl = await _girl_row(girl_id)
-        refreshed = await dating_profile_refresh(girl, presence)
-        await dating_log_write(girl_id, 'ok' if not refreshed['error'] else 'fail',
+        profile = await _profile_row(profile_id)
+        refreshed = await dating_profile_cache_refresh(profile, presence)
+        await dating_log_write(profile_id, 'ok' if not refreshed['error'] else 'fail',
                                f"Профиль обновлён, собеседниц {refreshed['contacts']}"
                                if not refreshed['error'] else f"Профиль не обновился: {refreshed['error']}")
 
@@ -595,40 +595,40 @@ async def dating_girl_check(girl_id: int, request: Request,
         # Строку перечитываем: анкету только что обновили, а из неё берётся
         # биография, из которой workflow добывает факты. Со старой в руках
         # агент завёлся бы по вчерашнему тексту — или вовсе без него.
-        girl = await _girl_row(girl_id)
-        agent = await dating_agent_ensure(girl, dating_json_load(girl.get('profile')))
+        profile = await _profile_row(profile_id)
+        agent = await dating_agent_ensure(profile, dating_json_load(profile.get('profile')))
         if agent['error']:
             await rhapsody_api_error_write('dating', f"агент анкеты не заведён: {agent['error']}",
-                                      context={'girl_id': girl_id, 'agent': agent['name']})
+                                      context={'profile_id': profile_id, 'agent': agent['name']})
 
     result['agent'] = agent
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_girl SET status = %s, last_error = %s WHERE id = %s',
-                         ('online' if result['ok'] else 'error', result['error'], girl_id))
+        await db.execute('UPDATE dating_profile SET status = %s, last_error = %s WHERE id = %s',
+                         ('online' if result['ok'] else 'error', result['error'], profile_id))
         await db.connection.commit()
 
     return {'result': result}
 
 
-@router.get('/{girl_id}/log', include_in_schema=False)
-async def dating_girl_log(girl_id: int, limit: int = 100,
+@router.get('/{profile_id}/log', include_in_schema=False)
+async def dating_profile_log(profile_id: int, limit: int = 100,
                           user=Depends(auth_required)):
     """Журнал по учётке, свежие сверху."""
-    await _girl_row(girl_id)
+    await _profile_row(profile_id)
     limit = max(1, min(int(limit or 100), 500))
 
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, level, text, created_at FROM dating_log '
-            f' WHERE girl_id = %s ORDER BY id DESC LIMIT {limit}', (girl_id,))
+            f' WHERE profile_id = %s ORDER BY id DESC LIMIT {limit}', (profile_id,))
         rows = await db.fetchall()
 
     return {'result': rows}
 
 
-@router.get('/{girl_id}/profile', include_in_schema=False)
-async def dating_girl_profile(girl_id: int, page: int = 1,
+@router.get('/{profile_id}/card', include_in_schema=False)
+async def dating_profile_card(profile_id: int, page: int = 1,
                              user=Depends(auth_required)):
     """Профиль учётки и страница её собеседниц: сначала те, кому не ответили.
 
@@ -650,7 +650,7 @@ async def dating_girl_profile(girl_id: int, page: int = 1,
     показанную собеседницу отдельно, и «отдать все четыре сотни, а резать в
     браузере» означало бы четыреста запросов на одно открытие карточки.
     """
-    girl = await _girl_row(girl_id)
+    profile = await _profile_row(profile_id)
 
     # Список ведём **от переписки**, а не от таблицы собеседников. Раньше он шёл
     # от `dating_contact`, куда попадают только те, кого отдал сайт своим списком
@@ -662,14 +662,14 @@ async def dating_girl_profile(girl_id: int, page: int = 1,
         # группировка идёт по индексу подряд, а `COUNT(DISTINCT)` держит своё дерево
         # уникальных значений — на 22 тысячах реплик это 9 мс против 39.
         await db.execute('SELECT COUNT(*) AS total FROM '
-                         '  (SELECT 1 FROM dating_message WHERE girl_id = %s '
-                         '    GROUP BY sender_uid) d', (girl_id,))
+                         '  (SELECT 1 FROM dating_message WHERE profile_id = %s '
+                         '    GROUP BY sender_uid) d', (profile_id,))
         total = int(((await db.fetchone()) or {}).get('total') or 0)
 
         # Страница могла уехать за конец: собеседницы никуда не денутся, но номер
         # приходит со страницы, которая рисовалась ещё до пересчёта. Возвращаем
         # исправленный номер, чтобы браузеру было с чем сверить пейджер.
-        pages = max(1, -(-total // DATING_GIRL_CONTACTS_PAGE))
+        pages = max(1, -(-total // DATING_PROFILE_CONTACTS_PAGE))
         page = max(1, min(int(page or 1), pages))
 
         # Порядок целиком на стороне базы: сначала неотвеченные, внутри каждой
@@ -679,7 +679,7 @@ async def dating_girl_profile(girl_id: int, page: int = 1,
         #
         # Направление и пометку последней реплики берём отдельным присоединением по
         # первичному ключу, а не `MAX()`-ами внутри группировки: агрегат по
-        # `girl_id, sender_uid, id` целиком покрывается индексом, и добавь мы туда
+        # `profile_id, sender_uid, id` целиком покрывается индексом, и добавь мы туда
         # хоть одно поле из строки — база пойдёт читать все двадцать две тысячи
         # строк вместо индекса (замер: 49 мс против 12).
         await db.execute(
@@ -688,13 +688,13 @@ async def dating_girl_profile(girl_id: int, page: int = 1,
             '       c.photo, c.age, c.city, c.is_online, '
             "       (last.direction = 'in' AND last.is_answered = 0) AS needs_answer "
             '  FROM (SELECT sender_uid AS uid, COUNT(*) AS messages, MAX(id) AS last_id '
-            '          FROM dating_message WHERE girl_id = %s GROUP BY sender_uid) d '
+            '          FROM dating_message WHERE profile_id = %s GROUP BY sender_uid) d '
             '  JOIN dating_message last ON last.id = d.last_id '
-            '  LEFT JOIN dating_contact c ON c.girl_id = %s AND c.uid = d.uid '
+            '  LEFT JOIN dating_contact c ON c.profile_id = %s AND c.uid = d.uid '
             ' ORDER BY needs_answer DESC, d.last_id DESC '
             ' LIMIT %s OFFSET %s',
-            ('', girl_id, girl_id, DATING_GIRL_CONTACTS_PAGE,
-             (page - 1) * DATING_GIRL_CONTACTS_PAGE))
+            ('', profile_id, profile_id, DATING_PROFILE_CONTACTS_PAGE,
+             (page - 1) * DATING_PROFILE_CONTACTS_PAGE))
         contacts = [dict(row) for row in (await db.fetchall() or [])]
 
         for contact in contacts:
@@ -704,8 +704,8 @@ async def dating_girl_profile(girl_id: int, page: int = 1,
 
             await db.execute(
                 'SELECT text, direction, is_answered, created_at FROM dating_message '
-                ' WHERE girl_id = %s AND sender_uid = %s ORDER BY id DESC LIMIT 10',
-                (girl_id, contact['uid']))
+                ' WHERE profile_id = %s AND sender_uid = %s ORDER BY id DESC LIMIT 10',
+                (profile_id, contact['uid']))
             last = [dict(row) for row in (await db.fetchall() or [])]
             # Разворачиваем: выбирали свежие, а читать надо сверху вниз.
             contact['messages_last'] = list(reversed(last))
@@ -717,12 +717,12 @@ async def dating_girl_profile(girl_id: int, page: int = 1,
             if not contact['name']:
                 await db.execute(
                     'SELECT MAX(sender_name) AS name FROM dating_message '
-                    ' WHERE girl_id = %s AND sender_uid = %s AND sender_name <> %s',
-                    (girl_id, contact['uid'], ''))
+                    ' WHERE profile_id = %s AND sender_uid = %s AND sender_name <> %s',
+                    (profile_id, contact['uid'], ''))
                 contact['name'] = ((await db.fetchone()) or {}).get('name') or ''
 
-    return {'result': {'profile': dating_json_load(girl.get('profile')),
-                       'login': girl['login'], 'contacts': contacts,
+    return {'result': {'profile': dating_json_load(profile.get('profile')),
+                       'login': profile['login'], 'contacts': contacts,
                        'contacts_total': total, 'page': page, 'pages': pages}}
 
 
@@ -738,20 +738,20 @@ async def _agent_id_by_name(name: str) -> int:
     return int((found or {}).get('id') or 0)
 
 
-async def _session_open_for(site: dict, girl: dict) -> str:
+async def _session_open_for(site: dict, profile: dict) -> str:
     """Сессия под уже снятый вход учётки — без прохода по форме.
 
     Нужна отключению: выходить на сайте надо из авторизованной вкладки, а живой
     вкладки к этому моменту может уже не быть.
     """
-    return await rhapsody_api_session_open(url=site['url'], name=str(girl['login'])[:100],
+    return await rhapsody_api_session_open(url=site['url'], name=str(profile['login'])[:100],
                                           site_id=int(site['id']),
-                                          storage_state=girl.get('storage_state') or {})
+                                          storage_state=profile.get('storage_state') or {})
 
 
-async def _girl_row(girl_id: int) -> dict:
+async def _profile_row(profile_id: int) -> dict:
     """Учётка из базы или 404 — правка несуществующей молча ничего не делает."""
-    row = await DatingGirlRepository().find(girl_id)
+    row = await DatingProfileRepository().find(profile_id)
     if not row:
         raise HTTPException(status_code=404, detail='учётка не найдена')
 

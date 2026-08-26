@@ -32,12 +32,12 @@ from src.dating.dating_role import DATING_ROLE_DEFAULT, dating_role_scenario
 DATING_DISCONNECT_TIMEOUT = 120.0
 
 
-async def dating_disconnect_run(girl: dict, site: dict, presence: dict,
+async def dating_disconnect_run(profile: dict, site: dict, presence: dict,
                                 runner, session_open, session_list, session_close) -> dict:
     """Отключает учётку: выход на сайте, закрытие вкладок, снятие с мониторинга.
 
     Args:
-        girl: строка `dating_girl`.
+        profile: строка `dating_profile`.
         site: строка `browser_site` этой учётки.
         presence: настройка сайта; `logout_scenario` — имя сценария выхода.
         runner: чем гонять сценарий (`rhapsody_api_scenario_run`).
@@ -49,53 +49,53 @@ async def dating_disconnect_run(girl: dict, site: dict, presence: dict,
         dict: `ok`, `logout` — вышли ли на сайте, `closed` — сколько вкладок
         погасили, `error` — почему выход не удался (локальную часть не отменяет).
     """
-    girl_id = int(girl['id'])
-    await dating_log_write(girl_id, 'info', 'Отключение запущено')
+    profile_id = int(profile['id'])
+    await dating_log_write(profile_id, 'info', 'Отключение запущено')
 
-    logout, error = await _logout(girl, site, presence, runner, session_open, session_list)
-    closed = await _sessions_close(str(girl['login']), session_list, session_close)
+    logout, error = await _logout(profile, site, presence, runner, session_open, session_list)
+    closed = await _sessions_close(str(profile['login']), session_list, session_close)
 
-    await _state_clear(girl_id)
+    await _state_clear(profile_id)
 
     await dating_log_write(
-        girl_id, 'ok',
+        profile_id, 'ok',
         f"Отключено: {'выход на сайте выполнен' if logout else 'выход на сайте пропущен'}, "
         f'вкладок закрыто {closed}, опрос и чат остановлены')
 
     return {'ok': True, 'logout': logout, 'closed': closed, 'error': error}
 
 
-async def _logout(girl: dict, site: dict, presence: dict, runner, session_open,
+async def _logout(profile: dict, site: dict, presence: dict, runner, session_open,
                   session_list) -> tuple[bool, str]:
     """Выход на самом сайте — в живой вкладке этой учётки либо во временной."""
-    role = str(girl.get('role') or DATING_ROLE_DEFAULT)
+    role = str(profile.get('role') or DATING_ROLE_DEFAULT)
     name = dating_role_scenario(presence, 'logout_scenario', role)
     if not name:
         return False, f'у сайта нет сценария выхода для роли «{role}»'
 
-    scenario = await _scenario_find(int(girl['site_id']), name)
+    scenario = await _scenario_find(int(profile['site_id']), name)
     if not scenario:
         return False, f'сценарий выхода «{name}» у сайта не заведён'
 
-    if not girl.get('storage_state'):
+    if not profile.get('storage_state'):
         return False, 'вход не снят: выходить нечем'
 
     # Строка в журнал до самого выхода: сценарий идёт до минуты, и без неё
     # страница молчит всё это время, а человек думает, что кнопка не сработала.
-    await dating_log_write(int(girl['id']), 'info', f'Выхожу на сайте сценарием «{name}»')
+    await dating_log_write(int(profile['id']), 'info', f'Выхожу на сайте сценарием «{name}»')
 
     # Своя вкладка этой учётки, если она жива: сайт держит одну сессию на анкету, и
     # выход из второй вкладки выбил бы первую, оставив её висеть.
-    session_id = await _session_own(str(girl['login']), session_list)
+    session_id = await _session_own(str(profile['login']), session_list)
     own = not session_id
     if own:
         try:
-            session_id = await session_open(site, girl)
+            session_id = await session_open(site, profile)
         except Exception as e:
             return False, f'сессия для выхода не завелась: {e}'
 
     try:
-        result = await runner(int(scenario['id']), session_id, {'login': str(girl['login'])}, {}, True)
+        result = await runner(int(scenario['id']), session_id, {'login': str(profile['login'])}, {}, True)
     except Exception as e:
         return False, f'сценарий выхода не прошёл: {e}'
 
@@ -154,7 +154,7 @@ async def _scenario_find(site_id: int, name: str) -> dict | None:
     return dict(scenario) if scenario else None
 
 
-async def _state_clear(girl_id: int) -> None:
+async def _state_clear(profile_id: int) -> None:
     """Стирает вход и адрес сокета — этим учётка и снимается с мониторинга.
 
     Переписка, журнал и анкета остаются: отключение это «не веди её», а не
@@ -163,8 +163,8 @@ async def _state_clear(girl_id: int) -> None:
     async with mysql_get_db_async() as db:
         # Снимаем и присмотр автомата: «Отключить» — это «не веди её», а не
         # «выйди и войди снова». Иначе смена вернула бы анкету в сеть через минуту.
-        await db.execute("UPDATE dating_girl SET storage_state = NULL, ws_url = '', "
+        await db.execute("UPDATE dating_profile SET storage_state = NULL, ws_url = '', "
                          "       status = 'offline', unread = 0, last_error = '', "
                          '       keep_online = 0, relogin_since = NULL, relogin_tries = 0, '
-                         '       relogin_next_at = NULL WHERE id = %s', (int(girl_id),))
+                         '       relogin_next_at = NULL WHERE id = %s', (int(profile_id),))
         await db.connection.commit()

@@ -37,12 +37,12 @@ DATING_PROFILE_PAGE_FIRST = ('photo', 'name', 'city', 'age', 'id')
 DATING_PROFILE_PAGE_STUB = 'data:'
 
 
-async def dating_profile_page_read(girl: dict, presence: dict, session_id: str,
+async def dating_profile_page_read(profile: dict, presence: dict, session_id: str,
                                    runner) -> dict:
-    """Читает анкету учётки со страницы кабинета и кладёт её в `dating_girl.profile`.
+    """Читает анкету учётки со страницы кабинета и кладёт её в `dating_profile.profile`.
 
     Args:
-        girl: строка `dating_girl`.
+        profile: строка `dating_profile`.
         presence: настройка сайта; имя сценария берётся из `profile_scenario`.
         session_id: живая сессия браузера — та, в которой только что вошли.
         runner: чем гонять сценарий (`rhapsody_api_scenario_run`), передаётся
@@ -51,32 +51,32 @@ async def dating_profile_page_read(girl: dict, presence: dict, session_id: str,
     Returns:
         dict: `ok` — записали ли, `profile` — что получилось, `error` — причина.
     """
-    role = str(girl.get('role') or DATING_ROLE_DEFAULT)
+    role = str(profile.get('role') or DATING_ROLE_DEFAULT)
     name = dating_role_scenario(presence, 'profile_scenario', role)
     if not name:
         return {'ok': False, 'profile': {},
                 'error': f'у сайта нет сценария анкеты для роли «{role}»'}
 
-    scenario = await _scenario_find(int(girl['site_id']), name)
+    scenario = await _scenario_find(int(profile['site_id']), name)
     if not scenario:
         return {'ok': False, 'profile': {},
                 'error': f'сценарий анкеты «{name}» у сайта не заведён'}
 
     # `login` подставляется в адрес: страница анкеты открывается по номеру учётки,
     # и одним сценарием читаются все анкеты сайта.
-    result = await runner(int(scenario['id']), session_id, {'login': str(girl['login'])}, {}, True)
+    result = await runner(int(scenario['id']), session_id, {'login': str(profile['login'])}, {}, True)
     if result.get('status') == 'error':
         return {'ok': False, 'profile': {},
                 'error': f"сценарий анкеты встал на шаге {result.get('step_no', 0)}: "
                          f"{str(result.get('error') or '')[:200]}"}
 
-    profile = _profile_build(result.get('extract') or {}, girl, presence)
-    if not profile.get('name'):
-        return {'ok': False, 'profile': profile, 'error': 'сценарий анкеты не вернул имя'}
+    card = _profile_build(result.get('extract') or {}, profile, presence)
+    if not card.get('name'):
+        return {'ok': False, 'profile': card, 'error': 'сценарий анкеты не вернул имя'}
 
-    await _profile_save(int(girl['id']), profile)
+    await _profile_save(int(profile['id']), card)
 
-    return {'ok': True, 'profile': profile, 'error': ''}
+    return {'ok': True, 'profile': card, 'error': ''}
 
 
 async def _scenario_find(site_id: int, name: str) -> dict | None:
@@ -93,21 +93,21 @@ async def _scenario_find(site_id: int, name: str) -> dict | None:
     return dict(scenario) if scenario else None
 
 
-def _profile_build(extract: dict, girl: dict, presence: dict) -> dict:
+def _profile_build(extract: dict, profile: dict, presence: dict) -> dict:
     """Собирает анкету из того, что вернули шаги `extract`."""
-    profile = {}
+    card = {}
     for field in DATING_PROFILE_PAGE_FIELDS:
         value = str(extract.get(field) or '').strip()
         if field in DATING_PROFILE_PAGE_FIRST:
             value = _first_real(value)
-        profile[field] = value
+        card[field] = value
 
     # Номер анкеты сайт печатает как «ID: 1430119» — в карточке нужен номер.
-    profile['id'] = ''.join(ch for ch in profile['id'] if ch.isdigit()) or str(girl['login'])
-    profile['age'] = int(''.join(ch for ch in profile['age'] if ch.isdigit()) or 0)
-    profile['photo'] = _photo_full(profile['photo'], presence)
+    card['id'] = ''.join(ch for ch in card['id'] if ch.isdigit()) or str(profile['login'])
+    card['age'] = int(''.join(ch for ch in card['age'] if ch.isdigit()) or 0)
+    card['photo'] = _photo_full(card['photo'], presence)
 
-    return profile
+    return card
 
 
 def _first_real(value: str) -> str:
@@ -133,12 +133,12 @@ def _photo_full(photo: str, presence: dict) -> str:
     return str(presence.get('base', '')).rstrip('/') + '/' + photo.lstrip('/')
 
 
-async def _profile_save(girl_id: int, profile: dict) -> None:
+async def _profile_save(profile_id: int, profile: dict) -> None:
     """Кладёт анкету. Не роняет вход: сессия уже открыта, и терять её незачем."""
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_girl SET profile = %s WHERE id = %s',
-                             (json.dumps(profile, ensure_ascii=False), int(girl_id)))
+            await db.execute('UPDATE dating_profile SET profile = %s WHERE id = %s',
+                             (json.dumps(profile, ensure_ascii=False), int(profile_id)))
             await db.connection.commit()
     except Exception as e:
         logger_info(f'[dating] анкета не записалась: {e}')

@@ -31,7 +31,7 @@ def dating_role_scenario(presence: dict, key: str, role: str) -> str:
     Args:
         presence: настройка сайта (`browser_site.presence`).
         key: какая связка нужна — `logout_scenario`, `profile_scenario`.
-        role: роль учётки (`dating_girl.role`).
+        role: роль учётки (`dating_profile.role`).
 
     Returns:
         str: имя сценария в `browser_scenario` либо пустая строка.

@@ -58,7 +58,7 @@ class TestAuth:
         Редирект на HTML сказал бы «всё хорошо, вот вам страница входа», и клиент
         разобрал бы её как ответ.
         """
-        response = await client.get('/api/dating/girl')
+        response = await client.get('/api/dating/profile')
 
         assert response.status_code == 401
 

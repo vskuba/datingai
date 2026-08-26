@@ -31,77 +31,77 @@ DATING_CHECK_LISTEN_SEC = 25
 DATING_CHECK_TEST_TEXT = 'Hello! How are you today?'
 
 
-async def dating_check_run(girl: dict, presence: dict, ws_capture) -> dict:
+async def dating_check_run(profile: dict, presence: dict, ws_capture) -> dict:
     """Гонит полную проверку учётки, записывая каждый шаг в журнал.
 
     Args:
-        girl: строка `dating_girl`.
+        profile: строка `dating_profile`.
         presence: настройка опроса сайта (`browser_site.presence`).
         ws_capture: как снять адрес чат-сокета — зовётся, если его нет.
 
     Returns:
         dict: `ok` — дошли ли до конца, `steps` — что сделали, `error` — на чём встали.
     """
-    girl_id = int(girl['id'])
+    profile_id = int(profile['id'])
     steps = []
     started = time.monotonic()
 
-    await dating_log_write(girl_id, 'info', 'Проверка запущена')
+    await dating_log_write(profile_id, 'info', 'Проверка запущена')
 
     # 1. Вход: без него остальное бессмысленно.
-    probe = await dating_presence_probe(girl, presence)
+    probe = await dating_presence_probe(profile, presence)
     if probe['status'] != 'online':
-        await dating_log_write(girl_id, 'fail', f"Вход не подтверждён: {probe['error']}")
+        await dating_log_write(profile_id, 'fail', f"Вход не подтверждён: {probe['error']}")
         return _done(steps, False, probe['error'], started)
     steps.append('вход')
-    await dating_log_write(girl_id, 'ok', f"Вход подтверждён сайтом ({probe['ms']} мс)")
+    await dating_log_write(profile_id, 'ok', f"Вход подтверждён сайтом ({probe['ms']} мс)")
 
     if probe['unread'] >= 0:
-        await dating_log_write(girl_id, 'info', f"Непрочитанных писем в почте: {probe['unread']}")
+        await dating_log_write(profile_id, 'info', f"Непрочитанных писем в почте: {probe['unread']}")
 
     # 2. Чат: адрес сокета живёт не вечно, поэтому снимаем, если его нет.
-    ws_url = str(girl.get('ws_url') or '')
+    ws_url = str(profile.get('ws_url') or '')
     if not ws_url:
-        await dating_log_write(girl_id, 'info', 'Снимаю адрес чат-сокета браузером')
-        ws_url = await ws_capture(girl)
-        girl = {**girl, 'ws_url': ws_url}
+        await dating_log_write(profile_id, 'info', 'Снимаю адрес чат-сокета браузером')
+        ws_url = await ws_capture(profile)
+        profile = {**profile, 'ws_url': ws_url}
 
     if not ws_url:
-        await dating_log_write(girl_id, 'fail', 'Чат не открылся: адрес сокета не снялся')
+        await dating_log_write(profile_id, 'fail', 'Чат не открылся: адрес сокета не снялся')
         return _done(steps, False, 'адрес чат-сокета не снят', started)
     steps.append('чат открыт')
-    await dating_log_write(girl_id, 'ok', 'Чат открыт, подключение установлено')
+    await dating_log_write(profile_id, 'ok', 'Чат открыт, подключение установлено')
 
     # 3. Чтение: слушаем сокет и складываем входящие.
-    listen = await dating_chat_listen(girl, seconds=DATING_CHECK_LISTEN_SEC)
+    listen = await dating_chat_listen(profile, seconds=DATING_CHECK_LISTEN_SEC)
     if listen['error'] and not listen['frames']:
-        await dating_log_write(girl_id, 'fail', f"Чтение чата не пошло: {listen['error']}")
+        await dating_log_write(profile_id, 'fail', f"Чтение чата не пошло: {listen['error']}")
         return _done(steps, False, listen['error'], started)
 
     steps.append('чтение')
     await dating_log_write(
-        girl_id, 'ok',
+        profile_id, 'ok',
         f"Чтение чата: кадров {listen['frames']}, новых сообщений {listen['saved']}")
 
     # Сами сообщения в журнал пишет приём (`dating_chat`): их ловит и держатель
     # сокетов, и человек должен видеть их в ленте в обоих случаях.
     if not listen['saved']:
-        await dating_log_write(girl_id, 'info', 'Новых сообщений за время проверки не пришло')
+        await dating_log_write(profile_id, 'info', 'Новых сообщений за время проверки не пришло')
 
     # 4. Пробная отправка. Не прошла — это не провал проверки: сайт может брать
     # за сообщение деньги, и отказ по балансу означает, что механика цела.
-    sent = await _test_send(girl_id, presence, girl)
+    sent = await _test_send(profile_id, presence, profile)
     steps.append('отправка' if sent['ok'] else 'отправка (отказ сайта)')
 
     # 5. Закрытие: сокет закрывается сам выходом из `dating_chat_listen`, а
     # временную сессию браузера гасит сам перехват адреса. Отмечаем явно, чтобы
     # в журнале был виден конец работы, а не обрыв.
-    await dating_log_write(girl_id, 'ok', 'Сессия закрыта, проверка завершена')
+    await dating_log_write(profile_id, 'ok', 'Сессия закрыта, проверка завершена')
 
     return _done(steps, True, '', started)
 
 
-async def _test_send(girl_id: int, presence: dict, girl: dict) -> dict:
+async def _test_send(profile_id: int, presence: dict, profile: dict) -> dict:
     """Пробная отправка сообщения последней написавшей.
 
     Кому писать, берём из журнала сообщений: слать в пустоту нельзя, а живой
@@ -110,31 +110,31 @@ async def _test_send(girl_id: int, presence: dict, girl: dict) -> dict:
     async with mysql_get_db_async() as db:
         # Только входящие: в этой же таблице лежит отправленное нами, и ответ
         # самому себе — не проверка отправки.
-        await db.execute("SELECT sender_uid FROM dating_message WHERE girl_id = %s "
-                         "  AND direction = 'in' ORDER BY id DESC LIMIT 1", (girl_id,))
+        await db.execute("SELECT sender_uid FROM dating_message WHERE profile_id = %s "
+                         "  AND direction = 'in' ORDER BY id DESC LIMIT 1", (profile_id,))
         row = await db.fetchone()
 
     if not row:
-        await dating_log_write(girl_id, 'info', 'Пробная отправка пропущена: некому писать')
+        await dating_log_write(profile_id, 'info', 'Пробная отправка пропущена: некому писать')
         return {'ok': False, 'skipped': True}
 
     to_uid = str(row['sender_uid'])
     send = presence.get('send')
     if not send:
         await dating_log_write(
-            girl_id, 'info',
+            profile_id, 'info',
             'Пробная отправка пропущена: у сайта не настроена ручка отправки (presence.send)')
         return {'ok': False, 'skipped': True}
 
     from src.dating.dating_send import dating_send_message
 
-    result = await dating_send_message(girl, presence, to_uid, DATING_CHECK_TEST_TEXT)
+    result = await dating_send_message(profile, presence, to_uid, DATING_CHECK_TEST_TEXT)
     if result['ok']:
-        await dating_log_write(girl_id, 'out', f'#{to_uid}: {DATING_CHECK_TEST_TEXT}')
-        await dating_log_write(girl_id, 'ok', 'Пробная отправка принята сайтом')
+        await dating_log_write(profile_id, 'out', f'#{to_uid}: {DATING_CHECK_TEST_TEXT}')
+        await dating_log_write(profile_id, 'ok', 'Пробная отправка принята сайтом')
     else:
         # Отказ сайта — не поломка нашей стороны, и в журнале он не красный.
-        await dating_log_write(girl_id, 'info', f"Пробная отправка не прошла: {result['error']}")
+        await dating_log_write(profile_id, 'info', f"Пробная отправка не прошла: {result['error']}")
 
     return result
 

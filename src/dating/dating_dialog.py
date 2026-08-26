@@ -40,34 +40,34 @@ DATING_DIALOG_LIMIT = 10
 DATING_DIALOG_UID = 'page:{uid}:{no}'
 
 
-async def dating_dialog_sync(girl: dict, presence: dict, session_id: str, runner) -> dict:
+async def dating_dialog_sync(profile: dict, presence: dict, session_id: str, runner) -> dict:
     """Читает все диалоги учётки: список собеседников, затем каждую переписку.
 
     Returns:
         dict: `contacts` — сколько диалогов прочитали, `saved` — сколько новых
         сообщений записали, `names` — с кем, `error` — если не вышло начать.
     """
-    girl_id = int(girl['id'])
-    role = str(girl.get('role') or DATING_ROLE_DEFAULT)
+    profile_id = int(profile['id'])
+    role = str(profile.get('role') or DATING_ROLE_DEFAULT)
 
-    names = await _names_read(girl, presence, session_id, runner, role)
+    names = await _names_read(profile, presence, session_id, runner, role)
     if names['error']:
-        await dating_log_write(girl_id, 'fail', f"Список диалогов не прочитался: {names['error']}")
+        await dating_log_write(profile_id, 'fail', f"Список диалогов не прочитался: {names['error']}")
         return {'contacts': 0, 'saved': 0, 'names': [], 'error': names['error']}
 
     if not names['names']:
-        await dating_log_write(girl_id, 'info', 'Диалогов в чате нет')
+        await dating_log_write(profile_id, 'info', 'Диалогов в чате нет')
         return {'contacts': 0, 'saved': 0, 'names': [], 'error': ''}
 
-    await dating_log_write(girl_id, 'info',
+    await dating_log_write(profile_id, 'info',
                            f"Диалогов найдено: {len(names['names'])} — {', '.join(names['names'][:6])}")
 
     saved = 0
     read = 0
     for name in names['names'][:DATING_DIALOG_LIMIT]:
-        result = await dating_dialog_read(girl, presence, session_id, runner, name, role)
+        result = await dating_dialog_read(profile, presence, session_id, runner, name, role)
         if result['error']:
-            await dating_log_write(girl_id, 'fail', f'Диалог с «{name}» не прочитался: {result["error"]}')
+            await dating_log_write(profile_id, 'fail', f'Диалог с «{name}» не прочитался: {result["error"]}')
             continue
         saved += result['saved']
         read += 1
@@ -75,14 +75,14 @@ async def dating_dialog_sync(girl: dict, presence: dict, session_id: str, runner
     return {'contacts': read, 'saved': saved, 'names': names['names'], 'error': ''}
 
 
-async def dating_dialog_read(girl: dict, presence: dict, session_id: str, runner,
+async def dating_dialog_read(profile: dict, presence: dict, session_id: str, runner,
                              companion: str, role: str = '') -> dict:
     """Открывает один диалог и складывает переписку в базу."""
-    girl_id = int(girl['id'])
-    role = role or str(girl.get('role') or DATING_ROLE_DEFAULT)
+    profile_id = int(profile['id'])
+    role = role or str(profile.get('role') or DATING_ROLE_DEFAULT)
 
     name = dating_role_scenario(presence, 'dialog_read_scenario', role)
-    scenario = await _scenario_find(int(girl['site_id']), name) if name else None
+    scenario = await _scenario_find(int(profile['site_id']), name) if name else None
     if not scenario:
         return {'saved': 0, 'error': f'нет сценария чтения диалога для роли «{role}»'}
 
@@ -97,30 +97,30 @@ async def dating_dialog_read(girl: dict, presence: dict, session_id: str, runner
         return {'saved': 0, 'error': 'номер собеседника со страницы не снялся'}
 
     who = (str(extract.get('name') or '').split('\n')[0].strip() or str(companion))
-    await _contact_save(girl_id, uid, who)
+    await _contact_save(profile_id, uid, who)
 
     flow = _flow_build(extract)
     if not flow:
         return {'saved': 0, 'error': 'переписка со страницы не снялась'}
 
-    saved = await _messages_save(girl_id, uid, who, flow)
+    saved = await _messages_save(profile_id, uid, who, flow)
 
     incoming = [text for side, text in flow if side == 'in']
     await dating_log_write(
-        girl_id, 'ok',
+        profile_id, 'ok',
         f'Диалог с {who} (#{uid}): реплик {len(flow)}, из них их {len(incoming)}, новых {saved}')
 
     # Сами реплики — отдельными строками: ради них диалог и открывали.
     for text in incoming[-4:]:
-        await dating_log_message_in(girl_id, uid, who, text)
+        await dating_log_message_in(profile_id, uid, who, text)
 
     return {'saved': saved, 'error': ''}
 
 
-async def _names_read(girl: dict, presence: dict, session_id: str, runner, role: str) -> dict:
+async def _names_read(profile: dict, presence: dict, session_id: str, runner, role: str) -> dict:
     """Имена собеседников из вкладки ACTIVE."""
     name = dating_role_scenario(presence, 'dialog_list_scenario', role)
-    scenario = await _scenario_find(int(girl['site_id']), name) if name else None
+    scenario = await _scenario_find(int(profile['site_id']), name) if name else None
     if not scenario:
         return {'names': [], 'error': f'нет сценария списка диалогов для роли «{role}»'}
 
@@ -146,13 +146,13 @@ def _lines(value) -> list:
     return [line.strip() for line in str(value or '').split('\n') if line.strip()]
 
 
-async def _contact_save(girl_id: int, uid: str, name: str) -> None:
+async def _contact_save(profile_id: int, uid: str, name: str) -> None:
     """Собеседник в списке карточки. Уже есть — обновляем имя, а не плодим строку."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_contact (girl_id, uid, name) VALUES (%s, %s, %s) '
+            'INSERT INTO dating_contact (profile_id, uid, name) VALUES (%s, %s, %s) '
             'ON DUPLICATE KEY UPDATE name = VALUES(name)',
-            (girl_id, str(uid)[:32], str(name)[:190]))
+            (profile_id, str(uid)[:32], str(name)[:190]))
         await db.connection.commit()
 
 
@@ -186,7 +186,7 @@ def _flow_build(extract: dict) -> list:
     return flow
 
 
-async def _messages_save(girl_id: int, uid: str, who: str, flow: list) -> int:
+async def _messages_save(profile_id: int, uid: str, who: str, flow: list) -> int:
     """Кладёт ленту как есть. Повторное чтение ничего не дублирует.
 
     Номер реплики входит в ключ, поэтому порядок в базе повторяет порядок на
@@ -206,10 +206,10 @@ async def _messages_save(girl_id: int, uid: str, who: str, flow: list) -> int:
                 answered = 1 if (side == 'out' or no < last_out) else 0
                 await db.execute(
                     'INSERT INTO dating_message '
-                    '(girl_id, sender_uid, sender_name, text, message_uid, direction, is_answered) '
+                    '(profile_id, sender_uid, sender_name, text, message_uid, direction, is_answered) '
                     'VALUES (%s, %s, %s, %s, %s, %s, %s) '
                     'ON DUPLICATE KEY UPDATE is_answered = VALUES(is_answered)',
-                    (girl_id, str(uid)[:32], str(who)[:190], str(text)[:2000],
+                    (profile_id, str(uid)[:32], str(who)[:190], str(text)[:2000],
                      DATING_DIALOG_UID.format(uid=uid, no=no + 1)[:64],
                      side, answered))
                 # `rowcount` у обновления равен 2, у вставки — 1: считаем только новое.

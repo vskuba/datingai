@@ -89,7 +89,7 @@ curl -s -c /tmp/c.txt -X POST http://localhost:8021/auth/login \
   -d '{"username":"admin","password":"<пароль>"}'
 
 # список анкет
-curl -s -b /tmp/c.txt http://localhost:8021/api/dating/girl
+curl -s -b /tmp/c.txt http://localhost:8021/api/dating/profile
 ```
 
 Смена держателя сокетов ставится сама при старте сервера. Проверить, что она

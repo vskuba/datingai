@@ -1,7 +1,7 @@
 """Адрес чат-сокета учётки: снять браузером и запомнить.
 
 Один модуль на всех, а не копия в роутере и в держателе сокетов: адрес живёт в
-`dating_girl.ws_url`, и две разошедшиеся копии кода дали бы самый неприятный сорт
+`dating_profile.ws_url`, и две разошедшиеся копии кода дали бы самый неприятный сорт
 ошибки — одна половина системы обновляет адрес, другая держится за старый.
 
 Адрес собирает JS страницы чата, в разметке его нет (проверено: `/chat` отдаёт
@@ -24,12 +24,12 @@ DATING_WS_WAIT_SEC = 30
 DATING_WS_TIMEOUT = 120.0
 
 
-async def dating_ws_capture(girl: dict, presence: dict, site_url: str = '',
+async def dating_ws_capture(profile: dict, presence: dict, site_url: str = '',
                             session_id: str = '') -> str:
     """Снимает адрес чат-сокета браузером и запоминает его у учётки.
 
     Args:
-        girl: строка `dating_girl` со `storage_state`.
+        profile: строка `dating_profile` со `storage_state`.
         presence: настройка сайта; `chat_url` — что открывать, `chat_ws_mark` —
             по какой подстроке отличить чатовый сокет от служебных.
         site_url: адрес сайта — на случай, если `chat_url` не задан.
@@ -54,7 +54,7 @@ async def dating_ws_capture(girl: dict, presence: dict, site_url: str = '',
             # А чат там открывается только кнопкой — селектор задаёт сайт, потому
             # что у мужского и женского кабинета она разная.
             click_selector=str(presence.get('chat_button') or ''),
-            storage_state=girl.get('storage_state') or {},
+            storage_state=profile.get('storage_state') or {},
             wait_sec=DATING_WS_WAIT_SEC)
     except Exception as e:
         logger_info(f'[dating] адрес сокета не снялся: {e}')
@@ -66,17 +66,17 @@ async def dating_ws_capture(girl: dict, presence: dict, site_url: str = '',
     url = sockets[0] if sockets else ''
 
     if url:
-        await dating_ws_save(int(girl['id']), url)
+        await dating_ws_save(int(profile['id']), url)
 
     return url
 
 
-async def dating_ws_save(girl_id: int, url: str) -> None:
+async def dating_ws_save(profile_id: int, url: str) -> None:
     """Запоминает адрес сокета. Не бросает: адрес — кэш, а не источник истины."""
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_girl SET ws_url = %s WHERE id = %s',
-                             (str(url), int(girl_id)))
+            await db.execute('UPDATE dating_profile SET ws_url = %s WHERE id = %s',
+                             (str(url), int(profile_id)))
             await db.connection.commit()
     except Exception as e:
         logger_info(f'[dating] адрес сокета не записался: {e}')

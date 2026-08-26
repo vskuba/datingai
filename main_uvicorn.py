@@ -39,7 +39,7 @@ from src.uvicorn.routers import dashboard
 from src.uvicorn.routers import seed as seed_router
 from src.uvicorn.routers import site as site_router
 from src.uvicorn.routers import users as users_router
-from src.uvicorn.routers.dating import dating_girl
+from src.uvicorn.routers.dating import dating_profile
 from src.uvicorn.uvicorn_base import uvicorn_base_path
 from src.uvicorn.uvicorn_validation import uvicorn_validation_handler
 from src.worker.dating.chat_worker import chat_worker_recover
@@ -192,7 +192,7 @@ app.state.jinja2_template.env.globals['PHPMYADMIN_URL'] = config_get('PHPMYADMIN
 app.include_router(auth_router.router)
 app.include_router(dashboard.router)
 app.include_router(site_router.router)
-app.include_router(dating_girl.router)
+app.include_router(dating_profile.router)
 app.include_router(seed_router.router)
 app.include_router(backup_router.router)
 app.include_router(users_router.router)

@@ -55,7 +55,7 @@
 | `src/dating/dating_login.py` | Вход под анкетой: сценарий, состояние, проверка |
 | `src/dating/dating_revive.py` | Автовосстановление входа: лестница попыток |
 | `src/dating/dating_json.py` | Общее чтение JSON-столбцов базы |
-| `src/uvicorn/routers/dating/dating_girl.py` | Все ручки анкет |
+| `src/uvicorn/routers/dating/dating_profile.py` | Все ручки анкет |
 | `src/uvicorn/routers/dashboard.py` | Страницы панели |
 | `src/uvicorn/routers/seed.py` | Seed SQL: выгрузка таблиц и заливка обратно |
 | `src/uvicorn/routers/backup.py` | Бэкапы: дамп базы и восстановление |

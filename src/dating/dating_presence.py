@@ -54,11 +54,11 @@ DATING_PRESENCE_TIMEOUT = 10.0
 DATING_PRESENCE_ERROR_MAX = 500
 
 
-async def dating_presence_probe(girl: dict, presence: dict) -> dict:
+async def dating_presence_probe(profile: dict, presence: dict) -> dict:
     """Один опрос учётки: держим онлайн, снимаем статус и счётчик.
 
     Args:
-        girl: строка `dating_girl` со `storage_state`.
+        profile: строка `dating_profile` со `storage_state`.
         presence: настройка сайта (`browser_site.presence`).
 
     Returns:
@@ -68,7 +68,7 @@ async def dating_presence_probe(girl: dict, presence: dict) -> dict:
             error (str): причина, если status = error.
             ms (int): сколько занял опрос.
     """
-    cookies = _cookies_of(girl.get('storage_state'), presence.get('base', ''))
+    cookies = _cookies_of(profile.get('storage_state'), presence.get('base', ''))
     if not cookies:
         return _result('offline', error='вход не выполнен: нет cookie')
 
@@ -93,7 +93,7 @@ async def dating_presence_probe(girl: dict, presence: dict) -> dict:
     return _result('online', unread=unread, ms=_ms(started))
 
 
-async def dating_presence_beat(girl: dict, presence: dict) -> bool:
+async def dating_presence_beat(profile: dict, presence: dict) -> bool:
     """Только heartbeat — «я на сайте», без статуса и счётчиков.
 
     Нужен держателю сокетов: присутствие в чате сайт считает не по открытому
@@ -108,7 +108,7 @@ async def dating_presence_beat(girl: dict, presence: dict) -> bool:
     if not step:
         return False
 
-    cookies = _cookies_of(girl.get('storage_state'), presence.get('base', ''))
+    cookies = _cookies_of(profile.get('storage_state'), presence.get('base', ''))
     if not cookies:
         return False
 

@@ -35,6 +35,11 @@ DATING_AGENT_NODE = 'Dating'
 # Чем заводить агента — по роли анкеты. Словарь, а не одно имя: `dating_girl_create`
 # лепит именно девушку (её промпт, её факты), и мужской анкете он не годится.
 # Роли без своего workflow агента не получают — и в журнале сказано почему.
+#
+# Имя workflow и имя его подстановки (`girl_bio` ниже) — **чужие**: так они
+# называются в базе RhapsodyAi. Переименование анкет здесь их не касается; менять
+# их можно только вместе с соседом, иначе заведение агента молча перестанет
+# находить workflow.
 DATING_AGENT_WORKFLOW_CREATE = {'lady': 'dating_girl_create'}
 
 # Латиница для кириллических имён: агент — системное имя, и `наталья_1430119`
@@ -51,7 +56,7 @@ DATING_AGENT_TRANSLIT = {
 DATING_AGENT_NAME_MAX = 50
 
 
-async def dating_agent_ensure(girl: dict, profile: dict) -> dict:
+async def dating_agent_ensure(profile: dict, card: dict) -> dict:
     """Заводит агента анкеты в RhapsodyAi, если его там ещё нет.
 
     Порядок ровно такой: имя из анкеты → биография из анкеты → workflow. Анкета
@@ -59,68 +64,68 @@ async def dating_agent_ensure(girl: dict, profile: dict) -> dict:
     его до чтения анкеты бессмысленно.
 
     Args:
-        girl: строка `dating_girl`.
-        profile: прочитанная анкета — из неё берётся имя и биография.
+        profile: строка `dating_profile`.
+        card: прочитанная анкета с сайта — из неё берётся имя и биография.
 
     Returns:
         dict: `name` — имя агента, `id` — его номер у соседа, `created` — завели ли
         сейчас, `error` — почему не вышло. Отсутствие агента не ломает проверку:
         это её последний шаг.
     """
-    girl_id = int(girl['id'])
-    name = dating_agent_name(profile.get('name') or '', str(girl['login']))
+    profile_id = int(profile['id'])
+    name = dating_agent_name(card.get('name') or '', str(profile['login']))
 
     try:
         found = await rhapsody_api_agent_find(name)
     except RhapsodyError as e:
-        await dating_log_write(girl_id, 'fail', f'Агента не спросить: {e}')
+        await dating_log_write(profile_id, 'fail', f'Агента не спросить: {e}')
         return {'name': name, 'id': 0, 'created': False, 'error': str(e)}
 
     if found:
-        await dating_log_write(girl_id, 'ok', f'Агент «{name}» уже есть (#{found.get("id")})')
+        await dating_log_write(profile_id, 'ok', f'Агент «{name}» уже есть (#{found.get("id")})')
         return {'name': name, 'id': int(found.get('id') or 0), 'created': False, 'error': ''}
 
     # Роль решает, чем заводить: `dating_girl_create` делает девушку — её промпт,
     # её факты. Мужской анкете он не подходит, и своего workflow у неё пока нет.
-    role = str(girl.get('role') or DATING_ROLE_DEFAULT)
+    role = str(profile.get('role') or DATING_ROLE_DEFAULT)
     workflow = DATING_AGENT_WORKFLOW_CREATE.get(role, '')
     if not workflow:
         error = f'для роли «{role}» нет workflow создания'
-        await dating_log_write(girl_id, 'fail', f'Агент «{name}» не заведён: {error}')
+        await dating_log_write(profile_id, 'fail', f'Агент «{name}» не заведён: {error}')
         return {'name': name, 'id': 0, 'created': False, 'error': error}
 
-    bio = dating_agent_bio(profile)
+    bio = dating_agent_bio(card)
     if not bio:
         error = 'в анкете нет биографии — сначала прочитайте анкету'
-        await dating_log_write(girl_id, 'fail', f'Агент «{name}» не заведён: {error}')
+        await dating_log_write(profile_id, 'fail', f'Агент «{name}» не заведён: {error}')
         return {'name': name, 'id': 0, 'created': False, 'error': error}
 
-    await dating_log_write(girl_id, 'info',
+    await dating_log_write(profile_id, 'info',
                            f'Завожу агента «{name}» по биографии ({len(bio)} знаков) '
                            f'через «{workflow}»')
 
     try:
         created = await rhapsody_api_agent_create(
             node=DATING_AGENT_NODE, workflow=workflow, name=name,
-            title=str(profile.get('name') or name)[:150], variables={'girl_bio': bio})
+            title=str(card.get('name') or name)[:150], variables={'girl_bio': bio})
     except RhapsodyError as e:
-        await dating_log_write(girl_id, 'fail', f'Агент «{name}» не завёлся: {e}')
+        await dating_log_write(profile_id, 'fail', f'Агент «{name}» не завёлся: {e}')
         return {'name': name, 'id': 0, 'created': False, 'error': str(e)}
 
     agent_id = int(created.get('id') or 0)
-    await dating_log_write(girl_id, 'ok', f'Агент «{name}» заведён (#{agent_id})')
+    await dating_log_write(profile_id, 'ok', f'Агент «{name}» заведён (#{agent_id})')
 
     return {'name': name, 'id': agent_id, 'created': True, 'error': ''}
 
 
-async def dating_agent_id(girl: dict, profile: dict) -> int:
+async def dating_agent_id(profile: dict, card: dict) -> int:
     """Номер агента анкеты у соседа. Нет такого — 0.
 
     Ищем по имени, а не по хранимой ссылке: агент живёт своей жизнью, его могли
     удалить или переименовать в админке RhapsodyAi, и единственный надёжный
     признак — существует ли он сейчас.
     """
-    name = dating_agent_name((profile or {}).get('name') or '', str(girl['login']))
+    name = dating_agent_name((card or {}).get('name') or '', str(profile['login']))
 
     try:
         found = await rhapsody_api_agent_find(name)
@@ -131,7 +136,7 @@ async def dating_agent_id(girl: dict, profile: dict) -> int:
     return int((found or {}).get('id') or 0)
 
 
-def dating_agent_bio(profile: dict) -> str:
+def dating_agent_bio(card: dict) -> str:
     """Биография анкеты — то, из чего workflow добудет факты.
 
     Сайт держит имя, возраст и город отдельными полями, а «о себе» пишет прозой.
@@ -142,12 +147,12 @@ def dating_agent_bio(profile: dict) -> str:
 
     Язык английский: узел Dating объявляет `en`, и на нём же ведётся переписка.
     """
-    name = str(profile.get('name') or '').strip()
-    city = str(profile.get('city') or '').strip()
-    about = str(profile.get('about') or '').strip()
+    name = str(card.get('name') or '').strip()
+    city = str(card.get('city') or '').strip()
+    about = str(card.get('about') or '').strip()
 
     try:
-        age = int(profile.get('age') or 0)
+        age = int(card.get('age') or 0)
     except (TypeError, ValueError):
         age = 0
 

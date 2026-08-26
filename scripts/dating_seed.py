@@ -10,7 +10,7 @@
 
 Своё помечается `note = 'seed:contacts-sort'` — по этой пометке скрипт и сносит
 данные (`--clear`). Чужие строки он не трогает никогда: ни одного `DELETE` без
-этой пометки в файле нет. Удаление идёт по `dating_girl`, а `dating_message`,
+этой пометки в файле нет. Удаление идёт по `dating_profile`, а `dating_message`,
 `dating_contact` и `dating_log` уходят следом внешними ключами (`ON DELETE
 CASCADE`) — руками их подчищать не нужно и нельзя, порядок за нас держит база.
 
@@ -49,7 +49,7 @@ SITE_ID = 19
 
 # Сколько анкет. Больше пяти страниц списка (по 8 на странице) — чтобы пагинация
 # была не «две кнопки», а листалась по-настоящему.
-GIRLS_N = 40
+PROFILES_N = 40
 
 # У одной анкеты — сотни собеседниц: ради неё всё и затевалось. Восемь страниц по
 # 50 штук.
@@ -135,7 +135,7 @@ def seed_clear(connection) -> int:
     """Сносит только посеянное — по пометке. Собеседницы, переписка и журнал
     уходят следом внешними ключами."""
     with connection.cursor() as cursor:
-        cursor.execute('DELETE FROM dating_girl WHERE site_id = %s AND note = %s',
+        cursor.execute('DELETE FROM dating_profile WHERE site_id = %s AND note = %s',
                        (SITE_ID, SEED_NOTE))
         removed = cursor.rowcount
     connection.commit()
@@ -143,22 +143,22 @@ def seed_clear(connection) -> int:
     return removed
 
 
-def girl_add(cursor, login: str, name: str, status: str, with_state: bool) -> int:
+def profile_add(cursor, login: str, name: str, status: str, with_state: bool) -> int:
     """Заводит анкету. Пароль тестовый и наружу всё равно не отдаётся."""
-    profile = {'name': name, 'photo': '', 'id': login,
-               'about': f'Тестовая анкета {name}. Посеяна scripts/dating_seed.py.'}
+    card = {'name': name, 'photo': '', 'id': login,
+            'about': f'Тестовая анкета {name}. Посеяна scripts/dating_seed.py.'}
     cursor.execute(
-        'INSERT INTO dating_girl (site_id, login, password, note, role, auto_answer, '
+        'INSERT INTO dating_profile (site_id, login, password, note, role, auto_answer, '
         '                         storage_state, status, profile) '
         'VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)',
         (SITE_ID, login, 'seed-password', SEED_NOTE, 'lady', 1,
          json.dumps({'cookies': []}) if with_state else None,
-         status, json.dumps(profile, ensure_ascii=False)))
+         status, json.dumps(card, ensure_ascii=False)))
 
     return int(cursor.lastrowid)
 
 
-def dialog_build(rnd: random.Random, girl_id: int, uid: str, name: str,
+def dialog_build(rnd: random.Random, profile_id: int, uid: str, name: str,
                  last_at: datetime, count: int, needs_answer: bool) -> list:
     """Собирает переписку одного диалога.
 
@@ -189,14 +189,14 @@ def dialog_build(rnd: random.Random, girl_id: int, uid: str, name: str,
             answered = 0
 
         text = rnd.choice(TEXT_IN if direction == 'in' else TEXT_OUT)
-        messages.append({'girl_id': girl_id, 'uid': uid, 'name': name if direction == 'in' else '',
+        messages.append({'profile_id': profile_id, 'uid': uid, 'name': name if direction == 'in' else '',
                          'text': text, 'direction': direction,
                          'answered': answered, 'at': moment})
 
     return messages
 
 
-def contacts_seed(rnd: random.Random, cursor, girl_id: int, count: int,
+def contacts_seed(rnd: random.Random, cursor, profile_id: int, count: int,
                   messages_range: tuple, now: datetime) -> list:
     """Заводит собеседниц анкеты и возвращает их переписку одним списком.
 
@@ -210,7 +210,7 @@ def contacts_seed(rnd: random.Random, cursor, girl_id: int, count: int,
 
     messages = []
     for index in range(count):
-        uid = f'seed{girl_id}-{index:04d}'
+        uid = f'seed{profile_id}-{index:04d}'
         name = f'{rnd.choice(NAMES)} {index:03d}'
         last_at = now - timedelta(days=ages[index])
         # Каждая третья ждёт ответа. Признак от давности не зависит вовсе, поэтому
@@ -222,12 +222,12 @@ def contacts_seed(rnd: random.Random, cursor, girl_id: int, count: int,
         # обязана показывать по имени из переписки.
         if index % 7 != 6:
             cursor.execute(
-                'INSERT INTO dating_contact (girl_id, uid, name, photo, age, city, is_online) '
+                'INSERT INTO dating_contact (profile_id, uid, name, photo, age, city, is_online) '
                 'VALUES (%s, %s, %s, %s, %s, %s, %s)',
-                (girl_id, uid, name, '', rnd.randint(21, 45),
+                (profile_id, uid, name, '', rnd.randint(21, 45),
                  rnd.choice(CITIES), 1 if index % 5 == 0 else 0))
 
-        messages += dialog_build(rnd, girl_id, uid, name, last_at,
+        messages += dialog_build(rnd, profile_id, uid, name, last_at,
                                  rnd.randint(*messages_range), needs_answer)
 
     return messages
@@ -244,8 +244,8 @@ def messages_write(connection, cursor, messages: list) -> None:
 
     # Непрочитанным считаем то, на что не ответили: бейдж «новых сообщений» в
     # списке анкет должен совпасть с тем, что видно в карточке, иначе цифры врут.
-    rows = [(m['girl_id'], m['uid'], m['name'], m['text'],
-             f"seed-{m['girl_id']}-{index}", m['direction'], m['answered'],
+    rows = [(m['profile_id'], m['uid'], m['name'], m['text'],
+             f"seed-{m['profile_id']}-{index}", m['direction'], m['answered'],
              0 if m['direction'] == 'in' and not m['answered'] else 1,
              m['at'])
             for index, m in enumerate(messages)]
@@ -253,7 +253,7 @@ def messages_write(connection, cursor, messages: list) -> None:
     # Пачками: одним запросом на двадцать тысяч строк упирается `max_allowed_packet`.
     for start in range(0, len(rows), 1000):
         cursor.executemany(
-            'INSERT INTO dating_message (girl_id, sender_uid, sender_name, text, '
+            'INSERT INTO dating_message (profile_id, sender_uid, sender_name, text, '
             '                            message_uid, direction, is_answered, is_read, created_at) '
             'VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)', rows[start:start + 1000])
         connection.commit()
@@ -267,29 +267,29 @@ def seed_run(connection, rnd: random.Random) -> dict:
     with connection.cursor() as cursor:
         # Первая анкета — та самая, ради которой всё: сотни собеседниц. Логин
         # говорящий, чтобы её было видно в списке без поиска.
-        big_id = girl_add(cursor, 'seed-000-big@example.com', 'Анкета с сотнями диалогов',
-                          'online', True)
+        big_id = profile_add(cursor, 'seed-000-big@example.com', 'Анкета с сотнями диалогов',
+                             'online', True)
         messages = contacts_seed(rnd, cursor, big_id, BIG_CONTACTS_N, BIG_MESSAGES, now)
         connection.commit()
         messages_write(connection, cursor, messages)
         total_messages += len(messages)
 
         # Остальные — фон: их дело показать, что листается и список анкет.
-        for index in range(1, GIRLS_N):
+        for index in range(1, PROFILES_N):
             name = f'{rnd.choice(NAMES)} {index:03d}'
-            girl_id = girl_add(cursor, f'seed-{index:03d}@example.com', name,
-                               rnd.choice(['online', 'offline', 'error']), index % 2 == 0)
-            messages = contacts_seed(rnd, cursor, girl_id, rnd.randint(3, 15), (4, 16), now)
+            profile_id = profile_add(cursor, f'seed-{index:03d}@example.com', name,
+                                     rnd.choice(['online', 'offline', 'error']), index % 2 == 0)
+            messages = contacts_seed(rnd, cursor, profile_id, rnd.randint(3, 15), (4, 16), now)
             connection.commit()
             messages_write(connection, cursor, messages)
             total_messages += len(messages)
 
-        cursor.execute('SELECT COUNT(*) FROM dating_girl WHERE note = %s', (SEED_NOTE,))
-        girls = cursor.fetchone()[0]
+        cursor.execute('SELECT COUNT(*) FROM dating_profile WHERE note = %s', (SEED_NOTE,))
+        profiles = cursor.fetchone()[0]
 
     connection.commit()
 
-    return {'girls': girls, 'big_id': big_id, 'contacts': BIG_CONTACTS_N,
+    return {'profiles': profiles, 'big_id': big_id, 'contacts': BIG_CONTACTS_N,
             'messages': total_messages}
 
 
@@ -321,7 +321,7 @@ def main() -> int:
     finally:
         connection.close()
 
-    print(f"анкет: {stats['girls']}, из них одна с {stats['contacts']} собеседницами "
+    print(f"анкет: {stats['profiles']}, из них одна с {stats['contacts']} собеседницами "
           f"(id {stats['big_id']}), сообщений: {stats['messages']}")
 
     return 0

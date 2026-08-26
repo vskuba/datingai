@@ -20,7 +20,7 @@ DATING_LOG_TEXT_MAX = 2000
 DATING_LOG_MESSAGE_MAX = 300
 
 
-async def dating_log_write(girl_id: int, level: str, text: str) -> None:
+async def dating_log_write(profile_id: int, level: str, text: str) -> None:
     """Строка журнала. Не бросает: сбой журнала не должен ронять работу.
 
     Повтор предыдущей строки не копится: если текст совпал с самой свежей строкой
@@ -29,27 +29,27 @@ async def dating_log_write(girl_id: int, level: str, text: str) -> None:
     в столбец из одной и той же фразы, за которым не видно событий. Сравнивается
     только текст: время — это «когда в последний раз», а не отдельное событие.
     """
-    girl_id = int(girl_id)
+    profile_id = int(profile_id)
     level = str(level or 'info')
     text = str(text or '')[:DATING_LOG_TEXT_MAX]
 
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT id, text FROM dating_log WHERE girl_id = %s '
-                             ' ORDER BY id DESC LIMIT 1', (girl_id,))
+            await db.execute('SELECT id, text FROM dating_log WHERE profile_id = %s '
+                             ' ORDER BY id DESC LIMIT 1', (profile_id,))
             last = await db.fetchone()
 
             if last and str(last['text']) == text:
                 await db.execute('DELETE FROM dating_log WHERE id = %s', (int(last['id']),))
 
-            await db.execute('INSERT INTO dating_log (girl_id, level, text) VALUES (%s, %s, %s)',
-                             (girl_id, level, text))
+            await db.execute('INSERT INTO dating_log (profile_id, level, text) VALUES (%s, %s, %s)',
+                             (profile_id, level, text))
             await db.connection.commit()
     except Exception as e:
         logger_info(f'[dating] журнал: {e}')
 
 
-async def dating_log_message_in(girl_id: int, sender: str, name: str, text: str) -> None:
+async def dating_log_message_in(profile_id: int, sender: str, name: str, text: str) -> None:
     """Входящее сообщение в журнал: от кого и о чём.
 
     Имя, если сайт его прислал, иначе номер — по голому номеру человек собеседницу
@@ -60,4 +60,4 @@ async def dating_log_message_in(girl_id: int, sender: str, name: str, text: str)
     if len(body) > DATING_LOG_MESSAGE_MAX:
         body = body[:DATING_LOG_MESSAGE_MAX].rstrip() + '…'
 
-    await dating_log_write(girl_id, 'in', f'{who}: {body}')
+    await dating_log_write(profile_id, 'in', f'{who}: {body}')

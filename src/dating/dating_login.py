@@ -19,7 +19,7 @@ import json
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.mysql_.repository.dating_girl_repository import DatingGirlRepository
+from src.mysql_.repository.dating_profile_repository import DatingProfileRepository
 from src.rhapsody.rhapsody_api import (rhapsody_api_error_write,
                                        rhapsody_api_scenario_find_by_id, rhapsody_api_scenario_login_find,
                                        rhapsody_api_scenario_run, rhapsody_api_session_close,
@@ -42,11 +42,11 @@ DATING_LOGIN_LOGIN_KEYS = ('login', 'username', 'email', 'user')
 DATING_LOGIN_PASSWORD_KEYS = ('password', 'pass', 'pwd')
 
 
-async def dating_login_run(girl_id: int, scenario_id: int = 0, session_id: str = '') -> dict:
+async def dating_login_run(profile_id: int, scenario_id: int = 0, session_id: str = '') -> dict:
     """Входит под учёткой: сценарий, состояние, проверка опросом, адрес сокета.
 
     Args:
-        girl_id: номер учётки.
+        profile_id: номер учётки.
         scenario_id: сценарий входа; 0 — найти по подстановкам сайта.
         session_id: готовая вкладка; пусто — завести свою и закрыть после.
 
@@ -57,12 +57,12 @@ async def dating_login_run(girl_id: int, scenario_id: int = 0, session_id: str =
     Raises:
         DatingLoginError: входить нечем — нет пароля, сайта или сценария входа.
     """
-    girl = await _girl_row(girl_id)
-    site = await _site_check(int(girl['site_id']))
-    if not str(girl.get('password') or ''):
+    profile = await _profile_row(profile_id)
+    site = await _site_check(int(profile['site_id']))
+    if not str(profile.get('password') or ''):
         raise DatingLoginError('у учётки не задан пароль')
 
-    scenario = await _scenario_login(int(girl['site_id']), scenario_id)
+    scenario = await _scenario_login(int(profile['site_id']), scenario_id)
     if not scenario:
         raise DatingLoginError('для сайта нет сценария входа: заведите его на вкладке '
                                '«Сценарии» с подстановками логина и пароля')
@@ -73,37 +73,37 @@ async def dating_login_run(girl_id: int, scenario_id: int = 0, session_id: str =
     # Журнал ведём по ходу, а не итогом: вход идёт до пары минут, и всё это время
     # страница показывала бы пустоту. Каждая строка — ответ на вопрос «где оно
     # сейчас», ради которого человек и смотрит в журнал.
-    await dating_log_write(girl_id, 'info', 'Вход запущен')
+    await dating_log_write(profile_id, 'info', 'Вход запущен')
 
-    closed = await dating_login_session_close_old(girl['login'], session_id)
+    closed = await dating_login_session_close_old(profile['login'], session_id)
     if closed:
-        await dating_log_write(girl_id, 'info', f'Прежних вкладок закрыто: {closed}')
+        await dating_log_write(profile_id, 'info', f'Прежних вкладок закрыто: {closed}')
 
-    session_id = session_id or await dating_login_session_open(site, girl['login'])
-    secrets = {name: (girl['login'] if name in DATING_LOGIN_LOGIN_KEYS else girl['password'])
+    session_id = session_id or await dating_login_session_open(site, profile['login'])
+    secrets = {name: (profile['login'] if name in DATING_LOGIN_LOGIN_KEYS else profile['password'])
                for name in scenario['keys']}
 
-    await dating_log_write(girl_id, 'info', f"Прохожу форму входа сценарием «{scenario['name']}»")
+    await dating_log_write(profile_id, 'info', f"Прохожу форму входа сценарием «{scenario['name']}»")
 
     result = await rhapsody_api_scenario_run(int(scenario['id']), session_id, {}, secrets, True)
 
-    profile = {}
+    card = {}
     if result.get('status') == 'error':
-        await dating_log_write(girl_id, 'fail',
+        await dating_log_write(profile_id, 'fail',
                                f"Вход не прошёл на шаге {result.get('step_no', 0)}: "
                                f"{str(result.get('error') or '')[:300]}")
     else:
-        await dating_log_write(girl_id, 'ok', 'Форма входа пройдена, жду кабинета')
+        await dating_log_write(profile_id, 'ok', 'Форма входа пройдена, жду кабинета')
         # Анкета читается первой не ради анкеты: её сценарий ждёт появления
         # кабинета, то есть настоящего конца входа. Нажатие кнопки «войти» ещё
         # не сессия — снятое сразу после него состояние приходило без cookie
         # сайта, и опрос честно отвечал «сайт не признал вход».
-        profile = await dating_login_profile_page(await _girl_row(girl_id),
-                                                  dating_json_load(site.get('presence')),
-                                                  session_id)
+        card = await dating_login_profile_page(await _profile_row(profile_id),
+                                               dating_json_load(site.get('presence')),
+                                               session_id)
         # Снимаем вход: дальше присутствие держит HTTP-опрос по этим cookie, и
         # второй раз через браузер логиниться не придётся.
-        await _state_save(girl_id, session_id)
+        await _state_save(profile_id, session_id)
 
         # И тут же спрашиваем сайт, признал ли он вход. Сценарий этого не скажет:
         # его последние шаги — ожидания кабинета, и они помечены необязательными,
@@ -114,39 +114,39 @@ async def dating_login_run(girl_id: int, scenario_id: int = 0, session_id: str =
         #
         # Опрос годится обеим ролям — в отличие от чтения анкеты, сценарий которой
         # заведён только для женской.
-        verify = await dating_presence_probe(await _girl_row(girl_id),
+        verify = await dating_presence_probe(await _profile_row(profile_id),
                                              dating_json_load(site.get('presence')))
         if verify['status'] != 'online':
             # Состояние от неудачного входа стираем: держать cookie, по которым
             # сайт не пускает, значит показывать в карточке вход, которого нет.
-            await dating_login_state_clear(girl_id)
-            await dating_log_write(girl_id, 'fail',
+            await dating_login_state_clear(profile_id)
+            await dating_log_write(profile_id, 'fail',
                                    f"Сайт вход не признал: {verify['error']}")
             await dating_login_session_close(session_id)
             await rhapsody_api_error_write(
-                'dating', f"вход под «{girl['login']}» не признан сайтом: {verify['error']}",
-                context={'girl_id': girl_id, 'site_id': girl['site_id'],
+                'dating', f"вход под «{profile['login']}» не признан сайтом: {verify['error']}",
+                context={'profile_id': profile_id, 'site_id': profile['site_id'],
                          'scenario_id': scenario['id'], 'where': 'проверка входа опросом'})
 
             return {'status': 'error', 'session_id': '',
                     'scenario': scenario['name'], 'error': verify['error'],
                     'profile': {}}
 
-        await dating_log_write(girl_id, 'ok',
+        await dating_log_write(profile_id, 'ok',
                                'Вход признан сайтом, состояние снято — опрос пойдёт без браузера')
 
         # Анкета под присмотром автомата: раз человек её ввёл, она должна быть в
         # сети и дальше. Здесь же гасим череду неудач — вход только что удался.
-        await _keep_online_set(girl_id)
+        await _keep_online_set(profile_id)
 
         # И сразу новый адрес чат-сокета: токены в прежнем привязаны к прежней
         # сессии, и после входа он мёртв. Без этого держатель вечно висел на
         # мёртвом адресе — соединение выглядело живым, а сообщения уходили в
         # «пропущенные». Снимаем в этой же вкладке: вторая выбила бы первую.
-        await dating_log_write(girl_id, 'info', 'Снимаю адрес чат-сокета')
-        ws_url = await dating_login_ws_capture(await _girl_row(girl_id), session_id)
+        await dating_log_write(profile_id, 'info', 'Снимаю адрес чат-сокета')
+        ws_url = await dating_login_ws_capture(await _profile_row(profile_id), session_id)
         await dating_log_write(
-            girl_id, 'ok' if ws_url else 'fail',
+            profile_id, 'ok' if ws_url else 'fail',
             'Адрес чат-сокета снят, чат подхватит держатель в течение минуты' if ws_url
             else 'Адрес чат-сокета снять не вышло — живой чат работать не будет')
 
@@ -159,53 +159,53 @@ async def dating_login_run(girl_id: int, scenario_id: int = 0, session_id: str =
 
     if result.get('status') == 'error':
         await rhapsody_api_error_write(
-            'dating', f"вход под «{girl['login']}» не прошёл: {result.get('error', '')}",
+            'dating', f"вход под «{profile['login']}» не прошёл: {result.get('error', '')}",
             session_id=session_id,
-            context={'girl_id': girl_id, 'site_id': girl['site_id'],
+            context={'profile_id': profile_id, 'site_id': profile['site_id'],
                      'scenario_id': scenario['id'], 'step_no': result.get('step_no', 0)})
 
     return {'status': result.get('status'), 'session_id': session_id,
             'scenario': scenario['name'], 'error': result.get('error', ''),
-            'profile': profile}
+            'profile': card}
 
 
-async def dating_login_profile_page(girl: dict, presence: dict, session_id: str) -> dict:
+async def dating_login_profile_page(profile: dict, presence: dict, session_id: str) -> dict:
     """Читает анкету со страницы кабинета и пишет итог в журнал учётки.
 
     Неудача входа не роняет: анкета — украшение карточки, а вход уже состоялся, и
     отменять его из-за нечитаемой анкеты значило бы отобрать у человека сессию.
     """
-    result = await dating_profile_page_read(girl, presence, session_id, rhapsody_api_scenario_run)
-    await dating_log_write(int(girl['id']), 'ok' if result['ok'] else 'info',
+    result = await dating_profile_page_read(profile, presence, session_id, rhapsody_api_scenario_run)
+    await dating_log_write(int(profile['id']), 'ok' if result['ok'] else 'info',
                            f"Анкета прочитана: {result['profile'].get('name', '')}"
                            if result['ok'] else f"Анкета не прочиталась: {result['error']}")
 
     if not result['ok']:
         await rhapsody_api_error_write('dating', f"анкета не прочиталась: {result['error']}",
                                   session_id=session_id,
-                                  context={'girl_id': girl['id'], 'where': 'чтение анкеты'})
+                                  context={'profile_id': profile['id'], 'where': 'чтение анкеты'})
 
     return result['profile'] if result['ok'] else {}
 
 
-async def dating_login_ws_capture(girl: dict, session_id: str = '') -> str:
+async def dating_login_ws_capture(profile: dict, session_id: str = '') -> str:
     """Снимает адрес чат-сокета учётки — общей механикой, а не своей копией.
 
     Тот же перехват нужен держателю сокетов (`dating_chat_hold`), и две копии кода
     разошлись бы первой же правкой: одна половина системы обновляла бы адрес,
     другая держалась за старый.
     """
-    site = await _site_check(int(girl['site_id']))
-    url = await dating_ws_capture({**girl, 'storage_state': dating_json_load(girl.get('storage_state'))},
+    site = await _site_check(int(profile['site_id']))
+    url = await dating_ws_capture({**profile, 'storage_state': dating_json_load(profile.get('storage_state'))},
                                   dating_json_load(site.get('presence')), site['url'], session_id)
     if not url:
         await rhapsody_api_error_write('dating', 'адрес чат-сокета не снялся',
-                                  context={'girl_id': girl['id']})
+                                  context={'profile_id': profile['id']})
 
     return url
 
 
-async def dating_login_state_clear(girl_id: int) -> None:
+async def dating_login_state_clear(profile_id: int) -> None:
     """Стирает состояние входа: сайт по нему не пускает, и держать его вредно.
 
     Заодно гасит адрес сокета: он снят в той же мёртвой сессии, и держатель чата
@@ -213,9 +213,9 @@ async def dating_login_state_clear(girl_id: int) -> None:
     """
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_girl SET storage_state = NULL, ws_url = %s, '
+            await db.execute('UPDATE dating_profile SET storage_state = NULL, ws_url = %s, '
                              '       status = %s, last_error = %s WHERE id = %s',
-                             ('', 'error', 'сайт не признал вход', girl_id))
+                             ('', 'error', 'сайт не признал вход', profile_id))
             await db.connection.commit()
     except Exception as e:
         logger_info(f'[dating] состояние входа не стёрлось: {e}')
@@ -268,7 +268,7 @@ async def dating_login_session_open(site: dict, name: str) -> str:
                                           site_id=int(site['id']))
 
 
-async def _state_save(girl_id: int, session_id: str) -> None:
+async def _state_save(profile_id: int, session_id: str) -> None:
     """Снимает `storage_state` сессии и кладёт его учётке.
 
     Не роняет вход, если не получилось: сценарий уже отработал, и терять его
@@ -277,22 +277,22 @@ async def _state_save(girl_id: int, session_id: str) -> None:
     try:
         state = await rhapsody_api_session_state(session_id)
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_girl SET storage_state = %s, status = %s, '
+            await db.execute('UPDATE dating_profile SET storage_state = %s, status = %s, '
                              '       last_seen_at = NOW(), last_error = %s WHERE id = %s',
-                             (json.dumps(state, ensure_ascii=False), 'online', '', girl_id))
+                             (json.dumps(state, ensure_ascii=False), 'online', '', profile_id))
             await db.connection.commit()
     except Exception as e:
         await rhapsody_api_error_write('dating', f'состояние входа не снялось: {e}',
-                                  session_id=session_id, context={'girl_id': girl_id})
+                                  session_id=session_id, context={'profile_id': profile_id})
 
 
-async def _keep_online_set(girl_id: int) -> None:
+async def _keep_online_set(profile_id: int) -> None:
     """Успешный вход: анкета под присмотром, череда неудач обнулена."""
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_girl SET keep_online = 1, logged_in_at = NOW(), '
+            await db.execute('UPDATE dating_profile SET keep_online = 1, logged_in_at = NOW(), '
                              '       relogin_since = NULL, relogin_tries = 0, '
-                             '       relogin_next_at = NULL WHERE id = %s', (int(girl_id),))
+                             '       relogin_next_at = NULL WHERE id = %s', (int(profile_id),))
             await db.connection.commit()
     except Exception as e:
         logger_info(f'[dating] пометка keep_online не поставилась: {e}')
@@ -338,9 +338,9 @@ async def _site_check(site_id: int) -> dict:
     return dict(row)
 
 
-async def _girl_row(girl_id: int) -> dict:
+async def _profile_row(profile_id: int) -> dict:
     """Учётка из базы. Нет такой — `DatingLoginError`: входить не под кем."""
-    row = await DatingGirlRepository().find(girl_id)
+    row = await DatingProfileRepository().find(profile_id)
     if not row:
         raise DatingLoginError('учётка не найдена')
 

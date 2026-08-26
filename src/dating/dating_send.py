@@ -100,11 +100,11 @@ DATING_SEND_BEFORE_CONTENT = ('getHistoryByContactIds',)
 DATING_SEND_BEFORE_PAUSE = 0.4
 
 
-async def dating_send_message(girl: dict, presence: dict, to_uid: str, text: str) -> dict:
+async def dating_send_message(profile: dict, presence: dict, to_uid: str, text: str) -> dict:
     """Шлёт сообщение собеседнику и записывает его в переписку.
 
     Args:
-        girl: строка `dating_girl`; для вебсокета нужен непустой `ws_url`.
+        profile: строка `dating_profile`; для вебсокета нужен непустой `ws_url`.
         presence: настройка сайта, раздел `send`.
         to_uid: кому — идентификатор на сайте.
         text: что отправляем.
@@ -126,15 +126,15 @@ async def dating_send_message(girl: dict, presence: dict, to_uid: str, text: str
     transport = str(send.get('transport') or 'http').lower()
 
     if transport == 'ws':
-        result = await _send_ws(girl, send, to_uid, text, message_uid)
+        result = await _send_ws(profile, send, to_uid, text, message_uid)
     else:
-        result = await _send_http(girl, presence, send, to_uid, text, message_uid)
+        result = await _send_http(profile, presence, send, to_uid, text, message_uid)
 
     # Записываем только принятое: строка в переписке означает «это мы сказали», и
     # непринятый сайтом текст показывать в диалоге нельзя.
     if result['ok']:
-        await _message_save(int(girl['id']), to_uid, text, message_uid)
-        await _answered_mark(int(girl['id']), to_uid)
+        await _message_save(int(profile['id']), to_uid, text, message_uid)
+        await _answered_mark(int(profile['id']), to_uid)
 
     return result
 
@@ -162,9 +162,9 @@ def dating_send_uid() -> str:
     return head + tail
 
 
-async def _send_ws(girl: dict, send: dict, to_uid: str, text: str, message_uid: str) -> dict:
+async def _send_ws(profile: dict, send: dict, to_uid: str, text: str, message_uid: str) -> dict:
     """Кадр в чат-сокет — так шлёт сама страница сайта."""
-    url = str(girl.get('ws_url') or '').strip()
+    url = str(profile.get('ws_url') or '').strip()
     if not url:
         return _fail('адрес чат-сокета не снят: сначала «Залогиниться»')
 
@@ -208,13 +208,13 @@ async def _send_ws(girl: dict, send: dict, to_uid: str, text: str, message_uid: 
     return {'ok': True, 'error': '', 'response': answer, 'message_uid': message_uid}
 
 
-async def _send_http(girl: dict, presence: dict, send: dict, to_uid: str, text: str,
+async def _send_http(profile: dict, presence: dict, send: dict, to_uid: str, text: str,
                      message_uid: str) -> dict:
     """Обычный POST — путь сайтов, у которых отправка живёт в HTTP-ручке."""
     if not send.get('path'):
         return _fail('у сайта не задан адрес отправки (presence.send.path)')
 
-    cookies = _cookies(girl, presence)
+    cookies = _cookies(profile, presence)
     if not cookies:
         return _fail('вход не выполнен')
 
@@ -356,8 +356,8 @@ def _render(template: str, to_uid: str, text: str, message_uid: str) -> str:
                     .replace(DATING_SEND_UID, str(message_uid)))
 
 
-def _cookies(girl: dict, presence: dict) -> dict:
-    state = girl.get('storage_state')
+def _cookies(profile: dict, presence: dict) -> dict:
+    state = profile.get('storage_state')
     if isinstance(state, str):
         try:
             state = json.loads(state or '{}')
@@ -369,28 +369,28 @@ def _cookies(girl: dict, presence: dict) -> dict:
             if host in str(c.get('domain') or '')}
 
 
-async def _message_save(girl_id: int, to_uid: str, text: str, message_uid: str) -> None:
+async def _message_save(profile_id: int, to_uid: str, text: str, message_uid: str) -> None:
     """Кладёт отправленное в переписку — иначе в диалоге видна только их половина."""
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
                 'INSERT IGNORE INTO dating_message '
-                '(girl_id, sender_uid, sender_name, text, message_uid, direction, is_answered) '
+                '(profile_id, sender_uid, sender_name, text, message_uid, direction, is_answered) '
                 "VALUES (%s, %s, %s, %s, %s, 'out', 1)",
-                (girl_id, str(to_uid)[:32], '', str(text)[:2000], str(message_uid)[:64]))
+                (profile_id, str(to_uid)[:32], '', str(text)[:2000], str(message_uid)[:64]))
             await db.connection.commit()
     except Exception as e:
         logger_info(f'[dating] отправленное не записалось: {e}')
 
 
-async def _answered_mark(girl_id: int, to_uid: str) -> None:
+async def _answered_mark(profile_id: int, to_uid: str) -> None:
     """Помечает входящие этого собеседника отвеченными: мы только что ответили."""
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
                 'UPDATE dating_message SET is_answered = 1 '
-                " WHERE girl_id = %s AND sender_uid = %s AND direction = 'in' AND is_answered = 0",
-                (girl_id, str(to_uid)[:32]))
+                " WHERE profile_id = %s AND sender_uid = %s AND direction = 'in' AND is_answered = 0",
+                (profile_id, str(to_uid)[:32]))
             await db.connection.commit()
     except Exception as e:
         logger_info(f'[dating] пометка «отвечено» не проставилась: {e}')

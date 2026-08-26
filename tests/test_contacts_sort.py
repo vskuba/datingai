@@ -19,16 +19,16 @@ SITE_ID = 19
 # тесты молча начали бы пропускаться.
 BIG_LOGIN = 'seed-000-big@example.com'
 
-# Сколько собеседниц на странице. Знает и ручка (`DATING_GIRL_CONTACTS_PAGE`), но
+# Сколько собеседниц на странице. Знает и ручка (`DATING_PROFILE_CONTACTS_PAGE`), но
 # сюита ходит по HTTP и в код не заглядывает: число здесь — часть контракта
 # страницы, и его расхождение с ручкой поймает `test_page_holds_fifty`.
 PAGE = 50
 
 
 @pytest.fixture
-async def big_girl(auth_client):
+async def big_profile(auth_client):
     """Посеянная анкета с сотнями собеседниц."""
-    response = await auth_client.get(f'/api/dating/girl?site_id={SITE_ID}')
+    response = await auth_client.get(f'/api/dating/profile?site_id={SITE_ID}')
     assert response.status_code == 200, response.text[:200]
 
     row = next((r for r in response.json()['result'] if r['login'] == BIG_LOGIN), None)
@@ -39,85 +39,85 @@ async def big_girl(auth_client):
     return row
 
 
-async def contacts_page(client, girl_id: int, page: int) -> dict:
+async def contacts_page(client, profile_id: int, page: int) -> dict:
     """Одна страница собеседниц."""
-    response = await client.get(f'/api/dating/girl/{girl_id}/profile?page={page}')
+    response = await client.get(f'/api/dating/profile/{profile_id}/card?page={page}')
     assert response.status_code == 200, response.text[:200]
 
     return response.json()['result']
 
 
-async def contacts_all(client, girl_id: int) -> list:
+async def contacts_all(client, profile_id: int) -> list:
     """Все собеседницы, страница за страницей, в том порядке, в каком их отдают.
 
     Нужен именно сквозной список: свойства порядка («неотвеченные раньше
     отвеченных») проверяются между страницами, а не внутри одной.
     """
-    first = await contacts_page(client, girl_id, 1)
+    first = await contacts_page(client, profile_id, 1)
     rows = list(first['contacts'])
     for page in range(2, int(first['pages']) + 1):
-        rows += (await contacts_page(client, girl_id, page))['contacts']
+        rows += (await contacts_page(client, profile_id, page))['contacts']
 
     return rows
 
 
 class TestContactsPaging:
 
-    async def test_page_holds_fifty(self, auth_client, big_girl):
+    async def test_page_holds_fifty(self, auth_client, big_profile):
         """Первая страница — пятьдесят собеседниц из общего числа, и число сходится
         со счётчиком в списке анкет: врать в двух местах по-разному нельзя."""
-        result = await contacts_page(auth_client, big_girl['id'], 1)
+        result = await contacts_page(auth_client, big_profile['id'], 1)
 
         assert len(result['contacts']) == PAGE
-        assert result['contacts_total'] == big_girl['contacts']
+        assert result['contacts_total'] == big_profile['contacts']
         assert result['pages'] == math.ceil(result['contacts_total'] / PAGE)
         assert result['page'] == 1
 
-    async def test_second_page_holds_others(self, auth_client, big_girl):
+    async def test_second_page_holds_others(self, auth_client, big_profile):
         """На второй странице другие собеседницы, а не те же самые."""
-        first = await contacts_page(auth_client, big_girl['id'], 1)
-        second = await contacts_page(auth_client, big_girl['id'], 2)
+        first = await contacts_page(auth_client, big_profile['id'], 1)
+        second = await contacts_page(auth_client, big_profile['id'], 2)
 
         assert second['page'] == 2
         assert not {c['uid'] for c in first['contacts']} & {c['uid'] for c in second['contacts']}
 
-    async def test_every_contact_shown_once(self, auth_client, big_girl):
+    async def test_every_contact_shown_once(self, auth_client, big_profile):
         """Листание проходит по всем собеседницам и ни одной не показывает дважды.
 
         Ловит промах в смещении: `OFFSET` на страницу больше или меньше теряет по
         собеседнице на каждом переходе, и заметить это по одной странице нельзя.
         """
-        rows = await contacts_all(auth_client, big_girl['id'])
+        rows = await contacts_all(auth_client, big_profile['id'])
         uids = [c['uid'] for c in rows]
 
-        assert len(uids) == big_girl['contacts']
+        assert len(uids) == big_profile['contacts']
         assert len(set(uids)) == len(uids)
 
-    async def test_page_beyond_end_clamped(self, auth_client, big_girl):
+    async def test_page_beyond_end_clamped(self, auth_client, big_profile):
         """Страница за концом списка отдаёт последнюю и говорит, какая она.
 
         Номер приходит со страницы, которая рисовалась до того, как собеседниц
         стало меньше. Пустой ответ на живой анкете выглядел бы как потеря данных.
         """
-        result = await contacts_page(auth_client, big_girl['id'], 999)
+        result = await contacts_page(auth_client, big_profile['id'], 999)
 
         assert result['page'] == result['pages']
         assert len(result['contacts']) == PAGE
 
-    async def test_page_below_one_clamped(self, auth_client, big_girl):
+    async def test_page_below_one_clamped(self, auth_client, big_profile):
         """Нулевая и отрицательная страница — первая, а не отрицательный `OFFSET`."""
         for page in (0, -5):
-            result = await contacts_page(auth_client, big_girl['id'], page)
+            result = await contacts_page(auth_client, big_profile['id'], page)
 
             assert result['page'] == 1
 
-    async def test_messages_read_for_shown_only(self, auth_client, big_girl):
+    async def test_messages_read_for_shown_only(self, auth_client, big_profile):
         """У показанных собеседниц есть переписка, и не больше десяти реплик.
 
         Реплики читаются на показанных — на всех четырёх сотнях это было бы
         четыреста запросов на одно открытие карточки.
         """
-        result = await contacts_page(auth_client, big_girl['id'], 3)
+        result = await contacts_page(auth_client, big_profile['id'], 3)
 
         for contact in result['contacts']:
             messages = contact['messages_last']
@@ -128,13 +128,13 @@ class TestContactsPaging:
 
 class TestContactsSort:
 
-    async def test_unanswered_before_answered(self, auth_client, big_girl):
+    async def test_unanswered_before_answered(self, auth_client, big_profile):
         """Сначала все, кому не ответили, и только потом отвеченные.
 
         Свойство сквозное: неотвеченная собеседница не имеет права оказаться ниже
         отвеченной ни внутри страницы, ни через страницу.
         """
-        rows = await contacts_all(auth_client, big_girl['id'])
+        rows = await contacts_all(auth_client, big_profile['id'])
         waiting = [index for index, c in enumerate(rows) if c['needs_answer']]
 
         assert waiting, 'в посеянных данных нет ни одной неотвеченной — проверять нечего'
@@ -142,9 +142,9 @@ class TestContactsSort:
             'отвеченная собеседница оказалась выше неотвеченной: '
             f'неотвеченных {len(waiting)}, последняя на месте {max(waiting)}')
 
-    async def test_fresh_first_inside_groups(self, auth_client, big_girl):
+    async def test_fresh_first_inside_groups(self, auth_client, big_profile):
         """Внутри группы — по свежести последней реплики, свежие сверху."""
-        rows = await contacts_all(auth_client, big_girl['id'])
+        rows = await contacts_all(auth_client, big_profile['id'])
 
         for waiting in (True, False):
             group = [c['last_id'] for c in rows if c['needs_answer'] is waiting]
@@ -152,7 +152,7 @@ class TestContactsSort:
             assert group == sorted(group, reverse=True), (
                 f'порядок по свежести сбит в группе needs_answer={waiting}')
 
-    async def test_old_unanswered_on_first_page(self, auth_client, big_girl):
+    async def test_old_unanswered_on_first_page(self, auth_client, big_profile):
         """Давнее неотвеченное сообщение — на первой странице, а не за потолком.
 
         Главная беда, ради которой всё затевалось. Пока `needs_answer` считался в
@@ -166,8 +166,8 @@ class TestContactsSort:
         старом порядке такое невозможно — первая страница была ровно пятьдесят
         самых свежих диалогов, и ничего свежее её за ней не оставалось.
         """
-        first = await contacts_page(auth_client, big_girl['id'], 1)
-        rows = await contacts_all(auth_client, big_girl['id'])
+        first = await contacts_page(auth_client, big_profile['id'], 1)
+        rows = await contacts_all(auth_client, big_profile['id'])
 
         shown = {c['uid'] for c in first['contacts']}
         answered_later = [c for c in rows if c['uid'] not in shown and not c['needs_answer']]
@@ -181,7 +181,7 @@ class TestContactsSort:
             'на первой странице нет ни одной неотвеченной собеседницы старше '
             'отвеченных с дальних страниц — потолок выборки снова прячет работу')
 
-    async def test_needs_answer_matches_last_message(self, auth_client, big_girl):
+    async def test_needs_answer_matches_last_message(self, auth_client, big_profile):
         """Признак совпадает с последней репликой диалога — и считает пометку.
 
         Ждёт ответа тот, чья последняя реплика входящая **и** не помечена
@@ -192,7 +192,7 @@ class TestContactsSort:
         """
         rows = []
         for page in (1, 3, 8):
-            rows += (await contacts_page(auth_client, big_girl['id'], page))['contacts']
+            rows += (await contacts_page(auth_client, big_profile['id'], page))['contacts']
 
         silent = 0
         for contact in rows:
@@ -206,9 +206,9 @@ class TestContactsSort:
         assert silent, ('в выборке нет ни одного диалога, закрытого молчанием агента — '
                         'подмену пометки направлением такая проверка не поймает')
 
-    async def test_password_never_leaves(self, auth_client, big_girl):
+    async def test_password_never_leaves(self, auth_client, big_profile):
         """В карточке пароля анкеты нет — ни в профиле, ни рядом с ним."""
-        response = await auth_client.get(f"/api/dating/girl/{big_girl['id']}/profile")
+        response = await auth_client.get(f"/api/dating/profile/{big_profile['id']}/card")
 
         assert response.status_code == 200
         assert 'seed-password' not in response.text

@@ -51,7 +51,7 @@
         .dating-head h1 { margin: 0; font-size: 14px; color: #1e293b; }
         .dating-head select { max-width: 220px; padding: 6px 9px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
 
-        .dating-girls-pane { grid-column: 1; grid-row: 2; }
+        .dating-profiles-pane { grid-column: 1; grid-row: 2; }
         .dating-log-pane { min-height: 0; }
 
         .pane {
@@ -151,43 +151,43 @@
         /* Сетка, а не flex с переносом: у сетки колонки заданы, и карточка с тремя
            бейджами остаётся такой же высоты, как карточка без них. При нехватке
            места сжимается имя (многоточием), а не уезжают кнопки. */
-        .girl {
+        .profile {
             display: grid; grid-template-columns: auto minmax(0, 1fr);
             align-items: center; gap: 4px 8px;
             padding: 8px 10px; margin-bottom: 6px;
             border: 1px solid #e5e7eb; border-radius: 8px; cursor: pointer;
         }
-        .girl:hover { border-color: #c7d2fe; }
-        .girl.active { border-color: #6366f1; background: #eef2ff; }
+        .profile:hover { border-color: #c7d2fe; }
+        .profile.active { border-color: #6366f1; background: #eef2ff; }
 
         /* Аватар и имя идут первыми: карточку узнают по лицу, а номер анкеты
            читают уже вторым взглядом. */
-        .girl-face { width: 34px; height: 34px; border-radius: 8px;
+        .profile-face { width: 34px; height: 34px; border-radius: 8px;
                      object-fit: cover; background: #f1f5f9; }
-        .girl-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .profile-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
         /* Бейджи под именем, а не в общем ряду: их бывает три, и в одну строку с
            кнопками они не влезают — карточка начинала вылезать за колонку. */
-        .girl-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .profile-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
         /* Предупреждение о том, что анкета не входит. Мигает, пока автомат ещё
            пробует: это то, ради чего человек смотрит в панель. После сдачи горит
            ровно — вечно мигающее перестаёт читаться как тревога. */
-        .girl-warn { font-size: 12px; line-height: 1; cursor: help; }
-        .girl-warn.failing { animation: girl-warn-blink 1.2s steps(1, end) infinite; }
-        .girl-warn.given_up { color: #b91c1c; }
+        .profile-warn { font-size: 12px; line-height: 1; cursor: help; }
+        .profile-warn.failing { animation: profile-warn-blink 1.2s steps(1, end) infinite; }
+        .profile-warn.given_up { color: #b91c1c; }
 
-        @keyframes girl-warn-blink {
+        @keyframes profile-warn-blink {
             0%, 49% { opacity: 1; }
             50%, 100% { opacity: .15; }
         }
         /* Кнопки своей строкой: в общем ряду три штуки съедали колонку с именем —
            карточка оставалась без имени, а высота скакала. Строка предсказуемее. */
-        .girl-act { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap;
+        .profile-act { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap;
                     justify-content: flex-end; margin-top: 2px; }
-        .girl-name { font-weight: 600; color: #111827; font-size: 13px;
+        .profile-name { font-weight: 600; color: #111827; font-size: 13px;
                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .girl-login { color: #6b7280; font-size: 11px; }
-        .girl-meta { grid-column: 1 / -1; color: #6b7280; font-size: 11px; }
+        .profile-login { color: #6b7280; font-size: 11px; }
+        .profile-meta { grid-column: 1 / -1; color: #6b7280; font-size: 11px; }
 
         /* Индикатор: зелёный пульсирует только у живой — «онлайн» должен отличаться
            от «замерло на экране». */
@@ -301,10 +301,10 @@
         <span class="dating-hint" id="hint"></span>
     </div>
 
-    <div class="pane dating-girls-pane">
+    <div class="pane dating-profiles-pane">
         <div class="pane-head">
-            Девушки <span id="girlsN"></span>
-            <input type="search" id="girlFind" class="pane-find" placeholder="имя или ID"
+            Девушки <span id="profilesN"></span>
+            <input type="search" id="profileFind" class="pane-find" placeholder="имя или ID"
                    spellcheck="false" autocomplete="off" title="Быстрый поиск по имени или номеру анкеты">
         </div>
         <div class="dating-form" id="form">
@@ -316,8 +316,8 @@
                 <button type="button" class="dating-btn" id="cancelBtn">Отмена</button>
             </div>
         </div>
-        <div class="pane-body" id="girls"></div>
-        <div class="pane-foot" id="girlsPager"></div>
+        <div class="pane-body" id="profiles"></div>
+        <div class="pane-foot" id="profilesPager"></div>
     </div>
 
     <div class="split split-col" id="splitCol" title="Потяните, чтобы изменить ширину"></div>
@@ -360,18 +360,18 @@
     const PAGE_SIZE = 8;
 
     const siteEl = document.getElementById('siteSelect');
-    const girlsEl = document.getElementById('girls');
+    const profilesEl = document.getElementById('profiles');
     const profileEl = document.getElementById('profile');
     const logEl = document.getElementById('log');
     const formEl = document.getElementById('form');
-    const findEl = document.getElementById('girlFind');
-    const pagerEl = document.getElementById('girlsPager');
+    const findEl = document.getElementById('profileFind');
+    const pagerEl = document.getElementById('profilesPager');
     const contactsPagerEl = document.getElementById('contactsPager');
     const pageEl = document.querySelector('.dating-page');
 
-    let sites = [], girls = [], currentId = 0, probeBusy = false;
+    let sites = [], profiles = [], currentId = 0, probeBusy = false;
     let openUid = localStorage.getItem(OPEN_KEY) || '';
-    let girlsPage = 0;
+    let profilesPage = 0;
     // Страница собеседниц живёт здесь, а не в разметке: карточка перерисовывается
     // сама каждые 15 секунд, и читай мы номер из пейджера — он бы каждый круг
     // возвращался на первую, прямо под руками у человека.
@@ -384,7 +384,7 @@
     // (каждые 2 секунды: статус карточки меняется по ходу входа). Пометь мы
     // кнопку напрямую, первая же перерисовка вернула бы ей вид «Войти», хотя
     // вход идёт, — и человек жал бы её второй раз.
-    const girlBusy = new Map();
+    const profileBusy = new Map();
 
     async function sitesLoad() {
         try {
@@ -398,25 +398,25 @@
             ? sites.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('')
             : '<option value="">сайтов нет</option>';
         if (saved && sites.some(r => String(r.id) === saved)) siteEl.value = saved;
-        girlsLoad();
+        profilesLoad();
     }
 
     const siteId = () => Number(siteEl.value || 0);
 
-    async function girlsLoad() {
+    async function profilesLoad() {
         if (!siteId()) {
-            girlsEl.innerHTML = '<div class="empty">заведите сайт на /admin/browser</div>';
+            profilesEl.innerHTML = '<div class="empty">заведите сайт на /admin/browser</div>';
             return;
         }
         // Сайт, под который ушёл запрос, запоминаем отдельно от значения в селекте:
-        // girlsLoad() зовёт и фоновый опрос (probe, каждые 15 секунд), и смена сайта
+        // profilesLoad() зовёт и фоновый опрос (probe, каждые 15 секунд), и смена сайта
         // человеком — а пока первый запрос летит, человек успевает выбрать другой
         // сайт и выстрелить вторым. Если ответ по старому сайту придёт позже ответа
         // по новому, без сверки siteId() с тем, что было на старте, он перепишет
-        // общий список `girls` данными не того сайта, что выбран сейчас.
+        // общий список `profiles` данными не того сайта, что выбран сейчас.
         const requestSite = siteId();
         try {
-            girls = (await getData(BASE + '/api/dating/girl?site_id=' + requestSite)).result || [];
+            profiles = (await getData(BASE + '/api/dating/profile?site_id=' + requestSite)).result || [];
         } catch (e) {
             if (siteId() !== requestSite) return;
             say('список не пришёл: ' + e.message, true);
@@ -424,7 +424,7 @@
         }
         if (siteId() !== requestSite) return;
 
-        girlsRender();
+        profilesRender();
     }
 
     // Пейджер один на два списка: анкеты режутся здесь же, собеседницы приходят
@@ -457,7 +457,7 @@
     // Поиск фильтрует уже загруженный список, а не ходит на сервер: список
     // приходит целиком на сайт, и лишний запрос на каждую букву ничего не уточнит,
     // зато отзывчивость потеряет.
-    function girlsMatch(row) {
+    function profilesMatch(row) {
         const q = (findEl.value || '').trim().toLowerCase();
         if (!q) return true;
 
@@ -466,55 +466,55 @@
             || String(row.note || '').toLowerCase().includes(q);
     }
 
-    function girlsRender() {
-        const found = girls.filter(girlsMatch);
+    function profilesRender() {
+        const found = profiles.filter(profilesMatch);
 
         // В шапке всегда общее число анкет, а при поиске — ещё и сколько нашлось.
         // «Сколько всего» не должно меняться от того, что набрали в поиске.
-        document.getElementById('girlsN').textContent =
-            found.length === girls.length ? (girls.length || '')
-                                          : `${found.length} из ${girls.length}`;
+        document.getElementById('profilesN').textContent =
+            found.length === profiles.length ? (profiles.length || '')
+                                          : `${found.length} из ${profiles.length}`;
 
         // Страница могла уехать за конец списка — после поиска или удаления анкеты.
         const pages = Math.max(1, Math.ceil(found.length / PAGE_SIZE));
-        if (girlsPage >= pages) girlsPage = pages - 1;
+        if (profilesPage >= pages) profilesPage = pages - 1;
 
-        const shown = found.slice(girlsPage * PAGE_SIZE, (girlsPage + 1) * PAGE_SIZE);
-        pagerRender(pagerEl, pages, girlsPage, (page) => {
-            girlsPage = page;
-            girlsRender();
-            girlsEl.scrollTop = 0;
+        const shown = found.slice(profilesPage * PAGE_SIZE, (profilesPage + 1) * PAGE_SIZE);
+        pagerRender(pagerEl, pages, profilesPage, (page) => {
+            profilesPage = page;
+            profilesRender();
+            profilesEl.scrollTop = 0;
         });
 
-        girlsEl.innerHTML = '';
-        if (!girls.length) {
-            girlsEl.innerHTML = '<div class="empty">девушек нет — добавьте первую</div>';
+        profilesEl.innerHTML = '';
+        if (!profiles.length) {
+            profilesEl.innerHTML = '<div class="empty">девушек нет — добавьте первую</div>';
             return;
         }
         if (!found.length) {
-            girlsEl.innerHTML = '<div class="empty">по запросу никого не нашлось</div>';
+            profilesEl.innerHTML = '<div class="empty">по запросу никого не нашлось</div>';
             return;
         }
 
         for (const row of shown) {
             const el = document.createElement('div');
-            el.className = 'girl' + (row.id === currentId ? ' active' : '');
+            el.className = 'profile' + (row.id === currentId ? ' active' : '');
             el.innerHTML =
-                `<img class="girl-face" src="${esc(row.photo || '')}" alt=""`
+                `<img class="profile-face" src="${esc(row.photo || '')}" alt=""`
                 + ' onerror="this.style.visibility=\'hidden\'">'
-                + '<span class="girl-who">'
+                + '<span class="profile-who">'
                 // Имя режется многоточием в узкой колонке — полное отдаём подсказкой.
-                + `<span class="girl-name" title="${esc(row.name || row.login)}">${esc(row.name || row.login)}</span>`
-                + '<span class="girl-badges">'
+                + `<span class="profile-name" title="${esc(row.name || row.login)}">${esc(row.name || row.login)}</span>`
+                + '<span class="profile-badges">'
                 + `<span class="dot ${esc(row.status)}" title="${esc(statusTitle(row))}"></span>`
                 + warnBadge(row)
-                + (row.name ? `<span class="girl-login">${esc(row.login)}</span>` : '')
+                + (row.name ? `<span class="profile-login">${esc(row.login)}</span>` : '')
                 + (row.unread_chat ? `<span class="pill chat" title="новых сообщений в чате">💬 ${row.unread_chat}</span>` : '')
                 + (row.contacts ? `<span class="pill" title="собеседников в чате">Собеседников: ${row.contacts}</span>` : '')
                 + (row.unread > 0 ? `<span class="pill mail" title="непрочитанных писем в почте">✉ ${row.unread}</span>` : '')
                 + '</span>'
                 + '</span>'
-                + '<span class="girl-act">'
+                + '<span class="profile-act">'
                 // Вход и отключение — одна кнопка на два состояния: у учётки со
                 // снятым входом «Войти» не значит ничего, а без входа отключать нечего.
                 + (row.has_state
@@ -529,56 +529,56 @@
                 + '<button type="button" class="dating-btn check-btn">Проверка</button>'
                 + '<button type="button" class="dating-btn danger del-btn">✕</button>'
                 + '</span>'
-                + `<span class="girl-meta">${esc(row.last_error || row.note || '')}</span>`;
+                + `<span class="profile-meta">${esc(row.last_error || row.note || '')}</span>`;
 
-            el.addEventListener('click', () => girlSelect(row.id));
+            el.addEventListener('click', () => profileSelect(row.id));
             el.querySelector('.check-btn').addEventListener('click', (ev) => {
                 ev.stopPropagation();
-                girlCheck(row);
+                profileCheck(row);
             });
             el.querySelector('.del-btn').addEventListener('click', (ev) => {
                 ev.stopPropagation();
-                girlDelete(row);
+                profileDelete(row);
             });
             const loginBtn = el.querySelector('.login-btn');
             if (loginBtn) loginBtn.addEventListener('click', (ev) => {
                 ev.stopPropagation();
-                girlLogin(row);
+                profileLogin(row);
             });
             const autoChk = el.querySelector('.auto-chk');
             if (autoChk) {
                 autoChk.addEventListener('click', (ev) => ev.stopPropagation());
-                autoChk.addEventListener('change', (ev) => girlAuto(row, ev.target));
+                autoChk.addEventListener('change', (ev) => profileAuto(row, ev.target));
             }
             const dlgBtn = el.querySelector('.dlg-btn');
             if (dlgBtn) dlgBtn.addEventListener('click', (ev) => {
                 ev.stopPropagation();
-                girlDialog(row);
+                profileDialog(row);
             });
             const offBtn = el.querySelector('.off-btn');
             if (offBtn) offBtn.addEventListener('click', (ev) => {
                 ev.stopPropagation();
-                girlDisconnect(row);
+                profileDisconnect(row);
             });
 
-            girlBusyPaint(el, row.id);
-            girlsEl.appendChild(el);
+            profileBusyPaint(el, row.id);
+            profilesEl.appendChild(el);
         }
 
-        if (!currentId && girls.length) girlSelect(girls[0].id);
+        if (!currentId && profiles.length) profileSelect(profiles[0].id);
     }
 
     // Выбор девушки меняет обе правые области: профиль и журнал раздельные по
     // учётке — общая лента по сотне анкет ничего не говорит.
-    async function girlSelect(id) {
+    async function profileSelect(id) {
         currentId = id;
         // Другая анкета — другие собеседницы, и седьмая страница прошлой в ней
         // ничего не значит: начинаем с первой.
         contactsPage = 0;
         // Карточку открыли — новые сообщения этой учётки перестают быть новыми.
         // Отметка молчаливая: не вышла, значит бейдж просто повисит лишний круг.
-        try { await postData(`${BASE}/api/dating/girl/${id}/read`, {}); } catch (e) {}
-        girlsLoad();
+        try { await postData(`${BASE}/api/dating/profile/${id}/read`, {}); } catch (e) {}
+        profilesLoad();
         await Promise.all([profileLoad(), logLoad()]);
     }
 
@@ -590,18 +590,18 @@
         if (!currentId) return;
         // Анкету, для которой ушёл запрос, запоминаем отдельно от currentId: функцию
         // зовёт фоновый опрос каждые 15 секунд, и пока ответ летит, человек успевает
-        // выбрать другую анкету — girlSelect() тут же переставит currentId и запустит
+        // выбрать другую анкету — profileSelect() тут же переставит currentId и запустит
         // свой profileLoad(). Если ответ по старой анкете придёт позже ответа по новой,
         // без сверки currentId с requestId он перепишет contactsPage и разметку
         // профиля данными не той анкеты, что выбрана сейчас. Гонка сети, а не логики —
         // при обычном чтении кода и в автотестах по HTTP она не видна.
         const requestId = currentId;
-        const girl = girls.find(g => g.id === currentId) || {};
-        document.getElementById('profileWho').textContent = girl.login || '';
+        const profile = profiles.find(g => g.id === currentId) || {};
+        document.getElementById('profileWho').textContent = profile.login || '';
 
         let data;
         try {
-            data = (await getData(`${BASE}/api/dating/girl/${requestId}/profile`
+            data = (await getData(`${BASE}/api/dating/profile/${requestId}/card`
                                   + `?page=${contactsPage + 1}`)).result || {};
         } catch (e) {
             if (currentId !== requestId) return;
@@ -618,7 +618,7 @@
         // В шапке — сколько собеседниц всего. Без этого показанные пятьдесят
         // выглядят как весь список, и до пейджера человек просто не долистывает.
         document.getElementById('profileWho').textContent =
-            `${girl.login || ''}${data.contacts_total ? ` · собеседников: ${data.contacts_total}` : ''}`;
+            `${profile.login || ''}${data.contacts_total ? ` · собеседников: ${data.contacts_total}` : ''}`;
 
         const p = data.profile || {};
         const head = `<div class="profile">
@@ -707,12 +707,12 @@
         // прийти позже ответа по вновь выбранной — без сверки currentId с requestId
         // он перепишет журнал не той анкеты, что сейчас на экране.
         const requestId = currentId;
-        const girl = girls.find(g => g.id === currentId) || {};
-        document.getElementById('logWho').textContent = girl.login || '';
+        const profile = profiles.find(g => g.id === currentId) || {};
+        document.getElementById('logWho').textContent = profile.login || '';
 
         let rows;
         try {
-            rows = (await getData(`${BASE}/api/dating/girl/${requestId}/log`)).result || [];
+            rows = (await getData(`${BASE}/api/dating/profile/${requestId}/log`)).result || [];
         } catch (e) {
             if (currentId !== requestId) return;
             logEl.innerHTML = `<div class="empty">журнал не пришёл: ${esc(e.message)}</div>`;
@@ -732,13 +732,13 @@
     // Отмечает карточку занятой и рисует это в её кнопке. Возвращает функцию,
     // снимающую отметку, — чтобы у каждого вызова был ровно один способ её снять
     // и незакрытых пометок не осталось.
-    function girlBusyMark(girlId, btnClass, label) {
-        girlBusy.set(girlId, {btn: btnClass, label});
-        girlsRender();
+    function profileBusyMark(profileId, btnClass, label) {
+        profileBusy.set(profileId, {btn: btnClass, label});
+        profilesRender();
 
         return () => {
-            girlBusy.delete(girlId);
-            girlsRender();
+            profileBusy.delete(profileId);
+            profilesRender();
         };
     }
 
@@ -747,8 +747,8 @@
     // Кнопки блокируются все: пока идёт вход, «Проверка» на той же анкете
     // означала бы второй сценарий в том же браузере — сайт держит одну сессию
     // на учётку и выбрасывает первую.
-    function girlBusyPaint(el, girlId) {
-        const busy = girlBusy.get(girlId);
+    function profileBusyPaint(el, profileId) {
+        const busy = profileBusy.get(profileId);
         if (!busy) return;
 
         el.querySelectorAll('button, input').forEach(node => node.disabled = true);
@@ -761,13 +761,13 @@
 
     // Проверка идёт до минуты: вход, чат, чтение, отправка, закрытие. Пока идёт,
     // журнал перечитываем — по нему и видно, на каком шаге она сейчас.
-    async function girlCheck(row) {
-        const free = girlBusyMark(row.id, 'check-btn', 'Проверяю…');
+    async function profileCheck(row) {
+        const free = profileBusyMark(row.id, 'check-btn', 'Проверяю…');
         currentId = row.id;
         const ticker = setInterval(logLoad, 3000);
 
         try {
-            const data = await postData(`${BASE}/api/dating/girl/${row.id}/check`, {});
+            const data = await postData(`${BASE}/api/dating/profile/${row.id}/check`, {});
             const res = data.result || {};
             showNotification(res.ok ? `Проверка пройдена: ${res.steps.join(', ')}`
                                     : `Встала на: ${res.error}`, res.ok ? 'success' : 'error');
@@ -776,7 +776,7 @@
         } finally {
             clearInterval(ticker);
             free();
-            await girlsLoad();
+            await profilesLoad();
             await Promise.all([profileLoad(), logLoad()]);
         }
     }
@@ -784,10 +784,10 @@
     // Долгое действие с живым журналом: вход и чтение диалогов идут минутами, и
     // всё это время человек должен видеть, где оно сейчас, а не пустой экран.
     // Обновляем и список — статус с бейджами меняется по ходу, а не в конце.
-    async function girlLongRun(row, btnClass, label, url, done) {
-        const free = girlBusyMark(row.id, btnClass, label);
+    async function profileLongRun(row, btnClass, label, url, done) {
+        const free = profileBusyMark(row.id, btnClass, label);
         currentId = row.id;
-        const ticker = setInterval(() => { logLoad(); girlsLoad(); }, 2000);
+        const ticker = setInterval(() => { logLoad(); profilesLoad(); }, 2000);
 
         try {
             const res = (await postData(url, {})).result || {};
@@ -798,13 +798,13 @@
         } finally {
             clearInterval(ticker);
             free();
-            await girlsLoad();
+            await profilesLoad();
             await Promise.all([profileLoad(), logLoad()]);
         }
     }
 
-    async function girlLogin(row) {
-        await girlLongRun(row, 'login-btn', 'Вхожу…', `${BASE}/api/dating/girl/${row.id}/login`,
+    async function profileLogin(row) {
+        await profileLongRun(row, 'login-btn', 'Вхожу…', `${BASE}/api/dating/profile/${row.id}/login`,
             res => ({bad: res.status === 'error',
                      text: res.status === 'error' ? `Вход не прошёл: ${res.error}`
                                                   : `Вход выполнен: ${res.scenario}`}));
@@ -813,14 +813,14 @@
     // Автоответ — основной путь: анкета разговаривает сама, пока подключена.
     // Включение сразу разбирает накопившееся, поэтому ждать здесь приходится
     // столько же, сколько у прежней кнопки «Ответить».
-    async function girlAuto(row, box) {
+    async function profileAuto(row, box) {
         const on = box.checked;
         box.disabled = true;
         currentId = row.id;
         const ticker = setInterval(logLoad, 3000);
 
         try {
-            const res = (await putData(`${BASE}/api/dating/girl/${row.id}/auto`, {auto_answer: on})).result || {};
+            const res = (await putData(`${BASE}/api/dating/profile/${row.id}/auto`, {auto_answer: on})).result || {};
             const done = res.answered || {};
             showNotification(
                 on ? (done.sent ? `Автоответ включён, отправлено ${done.sent}` : 'Автоответ включён')
@@ -831,15 +831,15 @@
         } finally {
             clearInterval(ticker);
             box.disabled = false;
-            await girlsLoad();
+            await profilesLoad();
             await Promise.all([profileLoad(), logLoad()]);
         }
     }
 
     // Чтение диалогов открывает страницу чата и на это время отбирает у учётки
     // живое соединение — поэтому кнопка, а не фон.
-    async function girlDialog(row) {
-        await girlLongRun(row, 'dlg-btn', 'Читаю…', `${BASE}/api/dating/girl/${row.id}/dialog`,
+    async function profileDialog(row) {
+        await profileLongRun(row, 'dlg-btn', 'Читаю…', `${BASE}/api/dating/profile/${row.id}/dialog`,
             res => ({bad: !!res.error,
                      text: res.error ? `Диалоги не прочитались: ${res.error}`
                                      : `Диалогов прочитано ${res.contacts}, новых сообщений ${res.saved}`}));
@@ -847,15 +847,15 @@
 
     // Отключение спрашивают подтверждением: оно рвёт живой чат, и случайный клик
     // рядом с «Проверкой» стоил бы пропущенных сообщений.
-    async function girlDisconnect(row) {
+    async function profileDisconnect(row) {
         if (!confirm(`Отключить «${row.name || row.login}»? Выйдем с сайта, закроем вкладки `
                      + 'и снимем с опроса. Переписка и журнал останутся.')) return;
 
-        const free = girlBusyMark(row.id, 'off-btn', 'Отключаю…');
+        const free = profileBusyMark(row.id, 'off-btn', 'Отключаю…');
         currentId = row.id;
 
         try {
-            const res = (await postData(`${BASE}/api/dating/girl/${row.id}/disconnect`, {})).result || {};
+            const res = (await postData(`${BASE}/api/dating/profile/${row.id}/disconnect`, {})).result || {};
             showNotification(res.logout ? 'Отключено, выход на сайте выполнен'
                                         : `Отключено, но выход на сайте не прошёл: ${res.error}`,
                              res.logout ? 'success' : 'error');
@@ -863,19 +863,19 @@
             showNotification('Отключить не вышло: ' + e.message, 'error');
         } finally {
             free();
-            await girlsLoad();
+            await profilesLoad();
             await Promise.all([profileLoad(), logLoad()]);
         }
     }
 
-    async function girlSave() {
+    async function profileSave() {
         const login = document.getElementById('login').value.trim();
         const password = document.getElementById('password').value;
         if (!siteId()) return say('сначала выберите сайт', true);
         if (!login || !password) return say('нужны логин и пароль', true);
 
         try {
-            await postData(BASE + '/api/dating/girl', {site_id: siteId(), login, password,
+            await postData(BASE + '/api/dating/profile', {site_id: siteId(), login, password,
                                                 note: document.getElementById('note').value.trim()});
         } catch (e) {
             return say(e.message, true);
@@ -884,19 +884,19 @@
         for (const id of ['login', 'password', 'note']) document.getElementById(id).value = '';
         say('');
         showNotification('Девушка добавлена', 'success');
-        girlsLoad();
+        profilesLoad();
     }
 
-    async function girlDelete(row) {
+    async function profileDelete(row) {
         if (!confirm(`Удалить учётку «${row.login}» вместе с её журналом?`)) return;
         try {
-            await deleteData(BASE + '/api/dating/girl/' + row.id);
+            await deleteData(BASE + '/api/dating/profile/' + row.id);
         } catch (e) {
             return showNotification('Не удалось: ' + e.message, 'error');
         }
         if (row.id === currentId) currentId = 0;
         showNotification('Учётка удалена', 'success');
-        girlsLoad();
+        profilesLoad();
     }
 
     // Обновляем всё, что меняется само: список анкет, диалоги и журнал. Работу
@@ -907,8 +907,8 @@
         if (probeBusy || !siteId() || document.hidden) return;
         probeBusy = true;
         try {
-            await postData(`${BASE}/api/dating/girl/probe?site_id=${siteId()}`, {});
-            await girlsLoad();
+            await postData(`${BASE}/api/dating/profile/probe?site_id=${siteId()}`, {});
+            await profilesLoad();
             // Диалоги и журнал — вместе со списком: свежий ответ агента виден в
             // переписке, а не только в счётчике.
             await Promise.all([profileLoad(), logLoad()]);
@@ -938,7 +938,7 @@
             : `не удаётся войти: ${row.last_error || 'причина неизвестна'}`
               + (when ? `; следующая попытка в ${when}` : '');
 
-        return `<span class="girl-warn ${esc(row.revive_state)}" title="${esc(title)}">⚠</span>`;
+        return `<span class="profile-warn ${esc(row.revive_state)}" title="${esc(title)}">⚠</span>`;
     }
 
     function say(text, bad = false) {
@@ -965,15 +965,15 @@
         formEl.classList.toggle('open');
         if (formEl.classList.contains('open')) document.getElementById('login').focus();
     });
-    document.getElementById('saveBtn').addEventListener('click', girlSave);
+    document.getElementById('saveBtn').addEventListener('click', profileSave);
     document.getElementById('cancelBtn').addEventListener('click', () => formEl.classList.remove('open'));
     document.getElementById('logReload').addEventListener('click', logLoad);
     // Перерисовываем на месте, без запроса: список уже в памяти.
-    findEl.addEventListener('input', () => { girlsPage = 0; girlsRender(); });
+    findEl.addEventListener('input', () => { profilesPage = 0; profilesRender(); });
     siteEl.addEventListener('change', () => {
         localStorage.setItem(SITE_KEY, siteEl.value);
         currentId = 0;
-        girlsLoad();
+        profilesLoad();
     });
 
     // Разделители. Тянут не рамку, а переменную сетки — так двигается ровно один

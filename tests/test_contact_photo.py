@@ -9,12 +9,12 @@
 битые аватарки у всех собеседниц разом.
 """
 
-from src.dating.dating_profile import _contact_values
+from src.dating.dating_profile_cache import _contact_values
 
 # Настройка сайта из RhapsodyAi: интересен только корень.
 PRESENCE = {'base': 'https://goldenbride.net/'}
 
-GIRL_ID = 7
+PROFILE_ID = 7
 
 # Порядок полей строки `dating_contact` — как в INSERT.
 PHOTO = 3
@@ -29,14 +29,14 @@ class TestContactPhoto:
         без хоста браузер просил эту картинку у панели.
         """
         values = _contact_values({'id': '42', 'url': '/images/designNew/Default-image-07-Man.png'},
-                                 GIRL_ID, PRESENCE)
+                                 PROFILE_ID, PRESENCE)
 
         assert values[PHOTO] == 'https://goldenbride.net/images/designNew/Default-image-07-Man.png'
 
     def test_full_url_is_untouched(self):
         """Адрес на CDN уже полный — трогать его нечем."""
         photo = 'https://ddev6uq7v65vs.cloudfront.net/lady/42/thumbnailMedium.jpg'
-        values = _contact_values({'id': '42', 'url': photo}, GIRL_ID, PRESENCE)
+        values = _contact_values({'id': '42', 'url': photo}, PROFILE_ID, PRESENCE)
 
         assert values[PHOTO] == photo
 
@@ -46,14 +46,14 @@ class TestContactPhoto:
         Иначе `<img src="https://goldenbride.net/">` попросил бы у сайта главную
         страницу вместо картинки.
         """
-        values = _contact_values({'id': '42'}, GIRL_ID, PRESENCE)
+        values = _contact_values({'id': '42'}, PROFILE_ID, PRESENCE)
 
         assert values[PHOTO] == ''
 
     def test_row_without_uid_is_skipped(self):
         """Собеседница без идентификатора не записывается.
 
-        Ключ таблицы — пара `girl_id, uid`, и пустой `uid` склеил бы всех
+        Ключ таблицы — пара `profile_id, uid`, и пустой `uid` склеил бы всех
         безымянных в одну строку.
         """
-        assert _contact_values({'firstName': 'Semen'}, GIRL_ID, PRESENCE) is None
+        assert _contact_values({'firstName': 'Semen'}, PROFILE_ID, PRESENCE) is None

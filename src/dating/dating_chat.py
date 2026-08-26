@@ -6,7 +6,7 @@
 
 **Сокет держит этот модуль, а не браузер.** Адрес сокета собирает JS страницы, и в
 разметке его нет, поэтому снимается он браузером один раз (`browser_ws`) и живёт
-в `dating_girl.ws_url`. Дальше подключение стоит десятки килобайт вместо ~143 МБ
+в `dating_profile.ws_url`. Дальше подключение стоит десятки килобайт вместо ~143 МБ
 на вкладку — двести учёток укладываются в единицы мегабайт.
 
 Каждое сообщение подтверждается обратным кадром `confirmFromClient`: без него
@@ -71,18 +71,18 @@ DATING_CHAT_SUBPROTOCOL = 'chat'
 DATING_CHAT_IDLE_MAX = 90.0
 
 
-async def dating_chat_listen(girl: dict, seconds: float = 0) -> dict:
+async def dating_chat_listen(profile: dict, seconds: float = 0) -> dict:
     """Подключается к чат-сокету учётки и складывает входящие сообщения.
 
     Args:
-        girl: строка `dating_girl` с непустым `ws_url`.
+        profile: строка `dating_profile` с непустым `ws_url`.
         seconds: сколько слушать; 0 — до обрыва соединения.
 
     Returns:
         dict: `saved` — сколько сообщений записано, `frames` — сколько кадров
         пришло всего, `error` — причина обрыва, если он был.
     """
-    url = str(girl.get('ws_url') or '').strip()
+    url = str(profile.get('ws_url') or '').strip()
     if not url:
         return {'saved': 0, 'frames': 0, 'error': 'адрес сокета не снят: нужен вход'}
 
@@ -118,25 +118,25 @@ async def dating_chat_listen(girl: dict, seconds: float = 0) -> dict:
                 # Приветствие сервера — сигнал, что нас слушают. Только теперь
                 # есть смысл спрашивать накопившееся.
                 if _method_of(raw) == DATING_CHAT_METHOD_HELLO:
-                    await _hello_ask(socket, int(girl['id']))
+                    await _hello_ask(socket, int(profile['id']))
                     continue
 
                 # Накопившееся за время без соединения: сервер отдаёт его пачкой
                 # в ответ на запрос истории, а не отдельными сообщениями.
                 if _method_of(raw) == DATING_CHAT_METHOD_PENDING:
-                    saved += await _pending_take(socket, int(girl['id']), raw)
+                    saved += await _pending_take(socket, int(profile['id']), raw)
                     continue
 
-                message = _message_parse(raw, str(girl.get('login') or ''))
+                message = _message_parse(raw, str(profile.get('login') or ''))
                 if not message:
                     continue
 
-                if await _message_save(int(girl['id']), message):
+                if await _message_save(int(profile['id']), message):
                     saved += 1
                     # Строка журнала пишется здесь, а не у вызывающего: сообщение
                     # ловит и проверка, и держатель сокетов, а видеть его в ленте
                     # человек должен в обоих случаях.
-                    await dating_log_message_in(int(girl['id']), message['sender_uid'],
+                    await dating_log_message_in(int(profile['id']), message['sender_uid'],
                                                 message['sender_name'], message['text'])
                 # Подтверждаем доставку: без этого сайт пришлёт то же самое снова.
                 await _confirm(socket, message)
@@ -156,13 +156,13 @@ def _method_of(raw) -> str:
     return str(frame.get('method') or '') if isinstance(frame, dict) else ''
 
 
-async def _hello_ask(socket, girl_id: int) -> None:
+async def _hello_ask(socket, profile_id: int) -> None:
     """Спрашивает накопившееся — теми же кадрами, что шлёт страница чата.
 
     Не роняет слушание: живые сообщения придут и без ответа на эти запросы, а
     оборвать чтение из-за неудачного вопроса значило бы потерять и их.
     """
-    contacts = await _contacts_of(girl_id)
+    contacts = await _contacts_of(profile_id)
 
     for method in DATING_CHAT_HELLO_ASK:
         content = contacts if method in DATING_CHAT_ASK_WITH_IDS else ''
@@ -173,7 +173,7 @@ async def _hello_ask(socket, girl_id: int) -> None:
             return
 
 
-async def _contacts_of(girl_id: int) -> str:
+async def _contacts_of(profile_id: int) -> str:
     """Собеседники учётки строкой «uid,uid,» — в таком виде их ждёт сервер.
 
     Берём и тех, кто уже писал (`dating_message`), и список с сайта
@@ -186,13 +186,13 @@ async def _contacts_of(girl_id: int) -> str:
     try:
         async with mysql_get_db_async() as db:
             await db.execute('SELECT DISTINCT sender_uid AS uid FROM dating_message '
-                             ' WHERE girl_id = %s ORDER BY sender_uid DESC LIMIT %s',
-                             (int(girl_id), DATING_CHAT_ASK_CONTACTS_MAX))
+                             ' WHERE profile_id = %s ORDER BY sender_uid DESC LIMIT %s',
+                             (int(profile_id), DATING_CHAT_ASK_CONTACTS_MAX))
             uids += [str(row['uid']) for row in (await db.fetchall() or [])]
 
-            await db.execute('SELECT uid FROM dating_contact WHERE girl_id = %s '
+            await db.execute('SELECT uid FROM dating_contact WHERE profile_id = %s '
                              ' ORDER BY is_online DESC, id DESC LIMIT %s',
-                             (int(girl_id), DATING_CHAT_ASK_CONTACTS_MAX))
+                             (int(profile_id), DATING_CHAT_ASK_CONTACTS_MAX))
             uids += [str(row['uid']) for row in (await db.fetchall() or [])]
     except Exception as e:
         logger_info(f'[dating] список собеседников не прочитался: {e}')
@@ -209,7 +209,7 @@ async def _contacts_of(girl_id: int) -> str:
     return ''.join(f'{uid},' for uid in ordered[:DATING_CHAT_ASK_CONTACTS_MAX])
 
 
-async def _pending_take(socket, girl_id: int, raw) -> int:
+async def _pending_take(socket, profile_id: int, raw) -> int:
     """Разбирает накопившееся из `notSendMessages` и складывает как обычные сообщения.
 
     Оно приходит другой формой, чем живое: без вложенного JSON, с полями `id` и
@@ -235,15 +235,15 @@ async def _pending_take(socket, girl_id: int, raw) -> int:
         if not message['sender_uid'] or not message['text']:
             continue
 
-        if await _message_save(girl_id, message):
+        if await _message_save(profile_id, message):
             saved += 1
-            await dating_log_message_in(girl_id, message['sender_uid'], '', message['text'])
+            await dating_log_message_in(profile_id, message['sender_uid'], '', message['text'])
         await _confirm(socket, message)
 
     return saved
 
 
-def _message_parse(raw, girl_login: str = '') -> dict | None:
+def _message_parse(raw, profile_login: str = '') -> dict | None:
     """Кадр сокета → сообщение. Чужие кадры и мусор дают None.
 
     Тело приходит строкой с JSON внутри JSON — так его шлёт сам сайт, поэтому
@@ -279,7 +279,7 @@ def _message_parse(raw, girl_login: str = '') -> dict | None:
     # написал, а вовсе не «мы ли»: у женской анкеты входящие от мужчин помечены
     # `isMan: true`, и проверка на него глушила ровно те сообщения, ради которых
     # всё и затевалось.
-    if sender and sender == str(girl_login or ''):
+    if sender and sender == str(profile_login or ''):
         return None
 
     return {'sender_uid': sender[:32],
@@ -288,14 +288,14 @@ def _message_parse(raw, girl_login: str = '') -> dict | None:
             'message_uid': str(body.get('messageIdForConfirm') or '')[:64]}
 
 
-async def _message_save(girl_id: int, message: dict) -> bool:
+async def _message_save(profile_id: int, message: dict) -> bool:
     """Кладёт сообщение. Повтор (тот же `message_uid`) молча пропускается."""
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
                 'INSERT IGNORE INTO dating_message '
-                '(girl_id, sender_uid, sender_name, text, message_uid) VALUES (%s, %s, %s, %s, %s)',
-                (girl_id, message['sender_uid'], message['sender_name'],
+                '(profile_id, sender_uid, sender_name, text, message_uid) VALUES (%s, %s, %s, %s, %s)',
+                (profile_id, message['sender_uid'], message['sender_name'],
                  message['text'], message['message_uid']))
             added = bool(db.rowcount)
             await db.connection.commit()

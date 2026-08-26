@@ -4,7 +4,7 @@
 фотографиями и числом сообщений. Тянуть это с сайта на каждую перерисовку нельзя:
 список собеседниц приходит ответом в сотни килобайт, и он один на всех.
 
-Поэтому профили кэшируются (`dating_girl.profile`, `dating_contact`), а сайт
+Поэтому профили кэшируются (`dating_profile.profile`, `dating_contact`), а сайт
 остаётся хозяином данных: обновление зовётся проверкой и опросом, а не показом.
 
 Что откуда брать — настройка сайта (`presence.profile` и `presence.contacts`),
@@ -22,12 +22,12 @@ from src.dating.dating_presence import DATING_PRESENCE_TIMEOUT, DATING_PRESENCE_
 
 # Сколько собеседниц держим: список сайта отдаёт сотни, а на странице читаются
 # те, с кем есть переписка.
-DATING_PROFILE_CONTACT_LIMIT = 200
+DATING_PROFILE_CACHE_CONTACT_LIMIT = 200
 
 
-async def dating_profile_refresh(girl: dict, presence: dict) -> dict:
+async def dating_profile_cache_refresh(profile: dict, presence: dict) -> dict:
     """Обновляет профиль учётки и её собеседниц из ответов сайта."""
-    cookies = _cookies(girl, presence)
+    cookies = _cookies(profile, presence)
     if not cookies:
         return {'profile': False, 'contacts': 0, 'error': 'вход не выполнен'}
 
@@ -40,15 +40,15 @@ async def dating_profile_refresh(girl: dict, presence: dict) -> dict:
                                               # этого заголовка сайт его не читает.
                                               'Content-Type': 'application/x-www-form-urlencoded',
                                               **(presence.get('headers') or {})}) as client:
-            saved_profile = await _profile_load(client, girl, presence)
-            contacts = await _contacts_load(client, girl, presence)
+            saved_profile = await _profile_load(client, profile, presence)
+            contacts = await _contacts_load(client, profile, presence)
     except Exception as e:
         return {'profile': saved_profile, 'contacts': contacts, 'error': f'{type(e).__name__}: {e}'}
 
     return {'profile': saved_profile, 'contacts': contacts, 'error': ''}
 
 
-async def _profile_load(client, girl: dict, presence: dict) -> bool:
+async def _profile_load(client, profile: dict, presence: dict) -> bool:
     """Анкета самой учётки: имя, фотография, идентификатор."""
     step = presence.get('profile')
     if not step:
@@ -66,7 +66,7 @@ async def _profile_load(client, girl: dict, presence: dict) -> bool:
     if not isinstance(user, dict) or not user:
         return False
 
-    profile = {'id': user.get('id') or girl.get('login'),
+    profile = {'id': user.get('id') or profile.get('login'),
                'name': user.get('firstName') or user.get('name') or '',
                'photo': _photo(user, presence),
                'age': user.get('age') or 0,
@@ -74,14 +74,14 @@ async def _profile_load(client, girl: dict, presence: dict) -> bool:
                'about': user.get('about') or user.get('description') or ''}
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_girl SET profile = %s WHERE id = %s',
-                         (json.dumps(profile, ensure_ascii=False), int(girl['id'])))
+        await db.execute('UPDATE dating_profile SET profile = %s WHERE id = %s',
+                         (json.dumps(profile, ensure_ascii=False), int(profile['id'])))
         await db.connection.commit()
 
     return True
 
 
-async def _contacts_load(client, girl: dict, presence: dict) -> int:
+async def _contacts_load(client, profile: dict, presence: dict) -> int:
     """Собеседницы: имя, фотография, возраст, город, статус онлайн."""
     step = presence.get('contacts')
     if not step:
@@ -101,14 +101,14 @@ async def _contacts_load(client, girl: dict, presence: dict) -> int:
 
     saved = 0
     async with mysql_get_db_async() as db:
-        for item in items[:DATING_PROFILE_CONTACT_LIMIT]:
+        for item in items[:DATING_PROFILE_CACHE_CONTACT_LIMIT]:
             if not isinstance(item, dict):
                 continue
-            values = _contact_values(item, int(girl['id']), presence)
+            values = _contact_values(item, int(profile['id']), presence)
             if values is None:
                 continue
             await db.execute(
-                'INSERT INTO dating_contact (girl_id, uid, name, photo, age, city, is_online) '
+                'INSERT INTO dating_contact (profile_id, uid, name, photo, age, city, is_online) '
                 'VALUES (%s, %s, %s, %s, %s, %s, %s) '
                 'ON DUPLICATE KEY UPDATE name=VALUES(name), photo=VALUES(photo), '
                 '  age=VALUES(age), city=VALUES(city), is_online=VALUES(is_online)',
@@ -119,13 +119,13 @@ async def _contacts_load(client, girl: dict, presence: dict) -> int:
     return saved
 
 
-def _contact_values(item: dict, girl_id: int, presence: dict) -> tuple | None:
+def _contact_values(item: dict, profile_id: int, presence: dict) -> tuple | None:
     """Строка `dating_contact` из ответа сайта. `None` — записывать нечего.
 
     Вынесено из запроса отдельно, чтобы правила разбора проверялись без сети и
     базы: цена ошибки здесь — молча битые данные у всех собеседниц разом.
     """
-    # Ключ таблицы — пара `girl_id, uid`, и пустой `uid` склеил бы всех
+    # Ключ таблицы — пара `profile_id, uid`, и пустой `uid` склеил бы всех
     # безымянных в одну строку.
     uid = str(item.get('id') or item.get('ladyId') or '').strip()
     if not uid:
@@ -134,7 +134,7 @@ def _contact_values(item: dict, girl_id: int, presence: dict) -> tuple | None:
     # Через `_photo`, а не сырьём: сайт отдаёт фотографию то полным адресом на
     # CDN, то путём от своего корня, и второй вариант страница подставляет в
     # `<img src>` как есть — браузер достроил бы его до адреса панели.
-    return (girl_id, uid[:32], str(item.get('firstName') or '')[:190],
+    return (profile_id, uid[:32], str(item.get('firstName') or '')[:190],
             _photo(item, presence)[:500], int(item.get('age') or 0),
             str(item.get('from') or '')[:190], 1 if item.get('isOnline') else 0)
 
@@ -148,8 +148,8 @@ def _photo(user: dict, presence: dict) -> str:
     return str(presence.get('base', '')).rstrip('/') + '/' + photo.lstrip('/')
 
 
-def _cookies(girl: dict, presence: dict) -> dict:
-    state = girl.get('storage_state')
+def _cookies(profile: dict, presence: dict) -> dict:
+    state = profile.get('storage_state')
     if isinstance(state, str):
         try:
             state = json.loads(state or '{}')

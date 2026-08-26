@@ -4,7 +4,7 @@
 работа идёт здесь: смена держателя чатов (`dating_chat_hold`) раз в минуту
 обходит подключённые анкеты и отвечает тем, чьё сообщение осталось без ответа.
 
-**Включено у анкеты по умолчанию** (`dating_girl.auto_answer`): её заводят, чтобы
+**Включено у анкеты по умолчанию** (`dating_profile.auto_answer`): её заводят, чтобы
 она разговаривала, а не чтобы за ней ходили с кнопкой. Выключатель — у каждой
 анкеты свой, потому что и решение своё: одну ведут вручную, другая отвечает сама.
 
@@ -29,36 +29,36 @@ DATING_AUTO_PERIOD_SEC = 60
 
 # Сколько диалогов отвечаем за круг у одной анкеты. Каждый — прогон workflow с
 # LLM; десяток растянул бы круг на полчаса и задержал бы всех остальных.
-DATING_AUTO_PER_GIRL = 2
+DATING_AUTO_PER_PROFILE = 2
 
 
-async def dating_auto_round(girls: list) -> dict:
+async def dating_auto_round(profiles: list) -> dict:
     """Один круг автоответа по подключённым анкетам.
 
     Args:
-        girls: то же, что держит смена — по элементу на анкету с её настройкой сайта.
+        profiles: то же, что держит смена — по элементу на анкету с её настройкой сайта.
 
     Returns:
-        dict: `girls` — сколько анкет обошли, `sent` — сколько ответов ушло,
+        dict: `profiles` — сколько анкет обошли, `sent` — сколько ответов ушло,
         `silent` — сколько раз агент промолчал.
     """
     touched = sent = silent = 0
 
-    for item in girls:
-        girl = item['girl']
-        if not int(girl.get('auto_answer') or 0):
+    for item in profiles:
+        profile = item['profile']
+        if not int(profile.get('auto_answer') or 0):
             continue
-        agent_id = await _agent_id(girl)
+        agent_id = await _agent_id(profile)
         if not agent_id:
             # Агента нет — значит анкету ещё не проверяли. Молчим: заводить его
             # здесь означало бы делать это без ведома человека.
             continue
 
         try:
-            result = await dating_answer_run(girl, item['presence'], agent_id,
-                                             limit=DATING_AUTO_PER_GIRL)
+            result = await dating_answer_run(profile, item['presence'], agent_id,
+                                             limit=DATING_AUTO_PER_PROFILE)
         except Exception as e:
-            logger_info(f"[dating] автоответ #{girl['id']}: {e}")
+            logger_info(f"[dating] автоответ #{profile['id']}: {e}")
             continue
 
         if result['asked']:
@@ -69,16 +69,16 @@ async def dating_auto_round(girls: list) -> dict:
     if touched:
         logger_info(f'[dating] автоответ: анкет {touched}, отправлено {sent}, промолчал {silent}')
 
-    return {'girls': touched, 'sent': sent, 'silent': silent, 'error': ''}
+    return {'profiles': touched, 'sent': sent, 'silent': silent, 'error': ''}
 
 
-async def _agent_id(girl: dict) -> int:
+async def _agent_id(profile: dict) -> int:
     """Агент анкеты у соседа. Ищем по имени: его могли удалить или переименовать."""
-    profile = girl.get('profile')
-    if isinstance(profile, str):
+    card = profile.get('profile')
+    if isinstance(card, str):
         try:
-            profile = json.loads(profile or '{}')
+            card = json.loads(card or '{}')
         except Exception:
-            profile = {}
+            card = {}
 
-    return await dating_agent_id(girl, profile or {})
+    return await dating_agent_id(profile, card or {})

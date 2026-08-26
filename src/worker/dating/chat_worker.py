@@ -133,7 +133,7 @@ async def _job_async() -> str:
     beat = asyncio.create_task(_flight_beat())
     try:
         result = await dating_chat_hold_run(CHAT_WORKER_HOLD_SEC)
-        done = f"смена окончена: учёток {result['girls']}, сообщений {result['saved']}"
+        done = f"смена окончена: учёток {result['profiles']}, сообщений {result['saved']}"
     finally:
         beat.cancel()
         chat_worker_flight_release()

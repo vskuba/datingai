@@ -74,7 +74,7 @@ async def dating_chat_hold_run(seconds: float) -> dict:
             перезапустит очередь, и код обновится вместе с ней.
 
     Returns:
-        dict: `girls` — сколько учёток держали, `saved` — сколько сообщений
+        dict: `profiles` — сколько учёток держали, `saved` — сколько сообщений
         записали, `sec` — сколько отработали.
     """
     deadline = time.monotonic() + float(seconds)
@@ -100,8 +100,8 @@ async def dating_chat_hold_run(seconds: float) -> dict:
 
     try:
         while time.monotonic() < deadline:
-            girls = await _girls_ready()
-            _holders_sync(holders, counters, girls, deadline)
+            profiles = await _profiles_ready()
+            _holders_sync(holders, counters, profiles, deadline)
 
             await asyncio.sleep(min(DATING_CHAT_HOLD_RESCAN_SEC,
                                     max(1.0, deadline - time.monotonic())))
@@ -120,7 +120,7 @@ async def dating_chat_hold_run(seconds: float) -> dict:
     saved = sum(counters.values())
     logger_info(f'[dating] держатель чата закончил: учёток {len(counters)}, сообщений {saved}')
 
-    return {'girls': len(counters), 'saved': saved, 'sec': int(seconds)}
+    return {'profiles': len(counters), 'saved': saved, 'sec': int(seconds)}
 
 
 async def _service_wait(*tasks) -> None:
@@ -146,47 +146,47 @@ async def _service_wait(*tasks) -> None:
                     f'{DATING_CHAT_HOLD_SHUTDOWN_SEC} с — заканчиваю смену')
 
 
-async def dating_chat_hold_girl(girl: dict, presence: dict, site_url: str,
-                                deadline: float, counters: dict) -> None:
+async def dating_chat_hold_profile(profile: dict, presence: dict, site_url: str,
+                                   deadline: float, counters: dict) -> None:
     """Держит сокет одной учётки до срока, переподключаясь после обрывов.
 
     Обрыв не считается ошибкой: сайт рвёт связь сам, и единственная разумная
     реакция — подождать и подключиться снова. Ошибкой становится череда неудач,
     и лечится она свежим адресом сокета.
     """
-    girl_id = int(girl['id'])
+    profile_id = int(profile['id'])
     backoff = DATING_CHAT_HOLD_BACKOFF_MIN
     fails = 0
     captured_at = 0.0
 
     while time.monotonic() < deadline:
         left = deadline - time.monotonic()
-        result = await dating_chat_listen(girl, seconds=left)
-        counters[girl_id] = counters.get(girl_id, 0) + int(result.get('saved') or 0)
+        result = await dating_chat_listen(profile, seconds=left)
+        counters[profile_id] = counters.get(profile_id, 0) + int(result.get('saved') or 0)
 
         if not result.get('error'):
             # Соединение закрылось само и без жалоб — обычный обрыв, начинаем заново.
             fails, backoff = 0, DATING_CHAT_HOLD_BACKOFF_MIN
         else:
             fails += 1
-            logger_info(f"[dating] чат #{girl_id}: обрыв ({fails}) — {result['error'][:120]}")
+            logger_info(f"[dating] чат #{profile_id}: обрыв ({fails}) — {result['error'][:120]}")
 
         if fails >= DATING_CHAT_HOLD_FAIL_LIMIT and \
                 time.monotonic() - captured_at > DATING_CHAT_HOLD_RECAPTURE_SEC:
             captured_at = time.monotonic()
             fails = 0
-            girl = await _girl_row(girl_id) or girl
-            url = await dating_ws_capture(girl, presence, site_url)
+            profile = await _profile_row(profile_id) or profile
+            url = await dating_ws_capture(profile, presence, site_url)
             # Пустой ответ — неудача перехвата, а не «адреса больше нет». Затереть
             # им прежний значило бы обречь учётку на «нужен вход» до конца смены,
             # даже когда старый адрес ещё работал.
             if url:
-                girl = {**girl, 'ws_url': url}
-            logger_info(f"[dating] чат #{girl_id}: адрес сокета "
+                profile = {**profile, 'ws_url': url}
+            logger_info(f"[dating] чат #{profile_id}: адрес сокета "
                         f"{'обновлён' if url else 'снять не вышло'}")
             # Череда неудач — это уже не рабочий обрыв, а поломка: она уходит во
             # вкладку «Ошибки» страницы браузера, где её ищут вместе с остальными.
-            await _error_write(girl_id, girl.get('login', ''),
+            await _error_write(profile_id, profile.get('login', ''),
                                'чат не поднимается: '
                                + ('адрес сокета переснят' if url else 'адрес сокета снять не вышло'),
                                result.get('error', ''))
@@ -195,38 +195,38 @@ async def dating_chat_hold_girl(girl: dict, presence: dict, site_url: str,
         backoff = min(backoff * 2, DATING_CHAT_HOLD_BACKOFF_MAX)
 
 
-def _holders_sync(holders: dict, counters: dict, girls: list, deadline: float) -> None:
+def _holders_sync(holders: dict, counters: dict, profiles: list, deadline: float) -> None:
     """Приводит набор держателей в соответствие списку учёток из базы.
 
     Сверяется не только состав, но и адрес сокета: новый вход выдаёт новый адрес,
     а держатель, не заметив этого, продолжал бы висеть на прежнем. Соединение при
     этом выглядит живым — сайт его не рвёт, просто перестаёт слать по нему что-либо.
     """
-    fresh = {int(item['girl']['id']): item for item in girls}
+    fresh = {int(item['profile']['id']): item for item in profiles}
 
-    for girl_id, held in list(holders.items()):
-        item = fresh.get(girl_id)
+    for profile_id, held in list(holders.items()):
+        item = fresh.get(profile_id)
         gone = item is None
-        moved = not gone and str(item['girl'].get('ws_url') or '') != held['ws_url']
+        moved = not gone and str(item['profile'].get('ws_url') or '') != held['ws_url']
         if gone or moved or held['task'].done():
             held['task'].cancel()
-            holders.pop(girl_id, None)
+            holders.pop(profile_id, None)
             if moved:
-                logger_info(f'[dating] чат #{girl_id}: адрес сокета сменился, переподключаюсь')
+                logger_info(f'[dating] чат #{profile_id}: адрес сокета сменился, переподключаюсь')
 
-    for girl_id, item in fresh.items():
-        if girl_id in holders:
+    for profile_id, item in fresh.items():
+        if profile_id in holders:
             continue
-        holders[girl_id] = {
-            'ws_url': str(item['girl'].get('ws_url') or ''),
+        holders[profile_id] = {
+            'ws_url': str(item['profile'].get('ws_url') or ''),
             'task': asyncio.create_task(
-                dating_chat_hold_girl(item['girl'], item['presence'], item['site_url'],
-                                      deadline, counters)),
+                dating_chat_hold_profile(item['profile'], item['presence'], item['site_url'],
+                                         deadline, counters)),
         }
-        logger_info(f"[dating] чат #{girl_id} ({item['girl']['login']}): взят в работу")
+        logger_info(f"[dating] чат #{profile_id} ({item['profile']['login']}): взят в работу")
 
 
-async def _girls_ready() -> list[dict]:
+async def _profiles_ready() -> list[dict]:
     """Учётки, которые есть смысл держать: со снятым входом и настроенным сайтом.
 
     Учётка без `storage_state` — это анкета, под которой ещё не входили: адрес
@@ -236,7 +236,7 @@ async def _girls_ready() -> list[dict]:
         await db.execute(
             'SELECT id, login, site_id, storage_state, ws_url, auto_answer, '
             '       auto_answer_only, role, profile '
-            '  FROM dating_girl WHERE storage_state IS NOT NULL ORDER BY id')
+            '  FROM dating_profile WHERE storage_state IS NOT NULL ORDER BY id')
         rows = await db.fetchall()
 
     # Настройка сайта живёт в RhapsodyAi, и join-ом её больше не взять. Спрашиваем
@@ -258,12 +258,12 @@ async def _girls_ready() -> list[dict]:
         if not dating_presence_ready(presence):
             continue
 
-        girl = {'id': row['id'], 'login': row['login'], 'site_id': row['site_id'],
-                'storage_state': row['storage_state'], 'ws_url': row['ws_url'],
-                'auto_answer': row['auto_answer'],
-                'auto_answer_only': row['auto_answer_only'], 'role': row['role'],
-                'profile': row['profile']}
-        ready.append({'girl': girl, 'presence': presence, 'site_url': site.get('url', '')})
+        profile = {'id': row['id'], 'login': row['login'], 'site_id': row['site_id'],
+                   'storage_state': row['storage_state'], 'ws_url': row['ws_url'],
+                   'auto_answer': row['auto_answer'],
+                   'auto_answer_only': row['auto_answer_only'], 'role': row['role'],
+                   'profile': row['profile']}
+        ready.append({'profile': profile, 'presence': presence, 'site_url': site.get('url', '')})
 
     return ready
 
@@ -279,13 +279,13 @@ async def _presence_loop(deadline: float) -> None:
 
     async def beat(item):
         async with limit:
-            await dating_presence_beat(item['girl'], item['presence'])
+            await dating_presence_beat(item['profile'], item['presence'])
 
     while time.monotonic() < deadline:
         try:
-            girls = await _girls_ready()
-            if girls:
-                await asyncio.gather(*(beat(item) for item in girls), return_exceptions=True)
+            profiles = await _profiles_ready()
+            if profiles:
+                await asyncio.gather(*(beat(item) for item in profiles), return_exceptions=True)
         except Exception as e:
             logger_info(f'[dating] присутствие: {e}')
 
@@ -304,9 +304,9 @@ async def _answer_loop(deadline: float) -> None:
         await asyncio.sleep(min(DATING_AUTO_PERIOD_SEC,
                                 max(1.0, deadline - time.monotonic())))
         try:
-            girls = await _girls_ready()
-            if girls:
-                await dating_auto_round(girls)
+            profiles = await _profiles_ready()
+            if profiles:
+                await dating_auto_round(profiles)
         except Exception as e:
             logger_info(f'[dating] круг автоответа: {e}')
 
@@ -335,7 +335,7 @@ async def _revive_loop(deadline: float) -> None:
             logger_info(f'[dating] круг восстановления: {e}')
 
 
-async def _error_write(girl_id: int, login: str, what: str, detail: str) -> None:
+async def _error_write(profile_id: int, login: str, what: str, detail: str) -> None:
     """Поломка чата — в общий журнал ошибок браузера.
 
     Импорт внутри функции: журнал живёт в роутерах, а этот модуль зовут и из
@@ -343,13 +343,13 @@ async def _error_write(girl_id: int, login: str, what: str, detail: str) -> None
     """
 
     await rhapsody_api_error_write('dating', f'{what}: {detail}'.strip(': '),
-                              context={'girl_id': girl_id, 'login': login, 'where': 'держатель чата'})
+                              context={'profile_id': profile_id, 'login': login, 'where': 'держатель чата'})
 
 
-async def _girl_row(girl_id: int) -> dict | None:
+async def _profile_row(profile_id: int) -> dict | None:
     async with mysql_get_db_async() as db:
         await db.execute('SELECT id, login, site_id, storage_state, ws_url '
-                         '  FROM dating_girl WHERE id = %s', (int(girl_id),))
+                         '  FROM dating_profile WHERE id = %s', (int(profile_id),))
         row = await db.fetchone()
 
     return dict(row) if row else None
