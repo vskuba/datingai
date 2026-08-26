@@ -11,13 +11,18 @@
            делить нечего. */
         .dating-page { grid-template-rows: auto minmax(0, 1fr); }
 
-        /* Прокрутка — у тела панели, поля сняты: иначе липкая шапка таблицы
-           уезжала бы от края при прокрутке вниз. */
-        .prof-body { padding: 0; overflow: auto; }
+        /* Вертикальной прокрутки нет намеренно: сколько строк влезло — столько на
+           странице, остальные за пейджером. Прокрутка вместе с пейджером это две
+           навигации сразу, и обе неполные.
+
+           Вбок прокрутка остаётся: узкое окно сжимает колонки, и лучше отъехать
+           вбок, чем читать имя по одной букве. Поля сняты, чтобы таблица шла от
+           края до края. */
+        .prof-body { padding: 0; overflow-x: auto; overflow-y: hidden; }
 
         .prof-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        /* Липкой шапке взяться неоткуда: вертикальной прокрутки у тела нет. */
         .prof-table th {
-            position: sticky; top: 0; z-index: 1;
             padding: 7px 12px; text-align: left; white-space: nowrap;
             background: #f8fafc; border-bottom: 1px solid #e5e7eb;
             font-weight: 700; color: #64748b;
@@ -101,9 +106,13 @@
     // молча; чаще — незачем, опрос всё равно ходит раз в 15 секунд.
     const RELOAD_MS = 30000;
 
-    // Сколько строк на странице. Прокрутка на сотнях анкет не помогает: место в
-    // ней теряется, а вернуться к строке, которую только что смотрел, нечем.
-    const PAGE_SIZE = 25;
+    // Сколько строк на странице — считается от высоты панели, а не задано числом.
+    // Смысл пейджера в том, чтобы прокрутки не было вовсе: с ней теряется место, а
+    // вернуться к строке, которую только что смотрел, нечем. Постоянное число не
+    // годится — на ноутбуке оно даёт прокрутку, на большом экране пустоту внизу.
+    //
+    // Это первая прикидка, до того как измерена настоящая высота строки.
+    const PAGE_SIZE_GUESS = 15;
 
     const siteEl = document.getElementById('siteSelect');
     const importBtn = document.getElementById('importBtn');
@@ -115,6 +124,7 @@
 
     let profiles = [];
     let page = 0;
+    let perPage = PAGE_SIZE_GUESS;
     // Кого сейчас держит долгое действие: вход идёт минутами, и перерисовка не
     // должна ни затирать «Вхожу…», ни подсовывать кнопку под руку второй раз.
     const busy = new Set();
@@ -192,7 +202,25 @@
                                            : 'у учётки не задан пароль'}">Тест логин</button>`;
     }
 
-    function tablePaint() {
+    // Сколько строк влезает в панель. Меряем по уже нарисованной таблице: высота
+    // строки зависит от шрифта и аватара, и зашитое число разъехалось бы с
+    // разметкой при первой же правке стилей.
+    function rowsFit() {
+        const probe = tableEl.querySelector('tbody tr');
+        const head = tableEl.querySelector('thead');
+        if (!probe) return perPage;
+
+        const rowH = probe.getBoundingClientRect().height;
+        if (rowH < 1) return perPage;
+
+        const free = tableEl.clientHeight - (head ? head.getBoundingClientRect().height : 0);
+
+        return Math.max(1, Math.floor(free / rowH));
+    }
+
+    // `refit` — можно ли перерисовать ещё раз, подогнав число строк. Второй заход
+    // запрещён: он мерил бы уже подогнанную таблицу и мог бы качаться туда-сюда.
+    function tablePaint(refit = true) {
         const found = shownRows();
         countEl.textContent = found.length === profiles.length
             ? profiles.length : `${found.length} из ${profiles.length}`;
@@ -211,11 +239,11 @@
         // Номер страницы правим здесь, а не при вводе в поиск: страниц могло
         // стать меньше — и седьмая, на которой человек стоял, показала бы пустоту
         // вместо найденного.
-        const pages = Math.ceil(found.length / PAGE_SIZE);
+        const pages = Math.ceil(found.length / perPage);
         if (page > pages - 1) page = pages - 1;
         if (page < 0) page = 0;
 
-        const rows = found.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+        const rows = found.slice(page * perPage, (page + 1) * perPage);
 
         const body = rows.map(row => `<tr data-id="${row.id}">`
             + `<td class="prof-state">${statusDot(row)}${warnBadge(row)}</td>`
@@ -244,14 +272,21 @@
             + '<th>Вход</th><th>Пометка</th><th></th>'
             + '</tr></thead><tbody>' + body + '</tbody></table>';
 
+        // Подгонка: первый заход рисует прикидкой, меряет настоящую строку и, если
+        // не сошлось, перерисовывает уже точным числом. Дальше подгонка нужна
+        // только на изменение размера окна.
+        const fit = rowsFit();
+        if (refit && fit !== perPage) {
+            perPage = fit;
+            tablePaint(false);
+            return;
+        }
+
         bindActions();
 
         pagerRender(pagerEl, pages, page, (pick) => {
             page = pick;
-            tablePaint();
-            // Наверх: страницу листают, чтобы читать её с начала, а прокрутка,
-            // оставшаяся от прежней, показала бы середину новой.
-            tableEl.scrollTop = 0;
+            tablePaint(false);
         });
     }
 
@@ -307,6 +342,15 @@
     findEl.addEventListener('input', () => {
         page = 0;
         tablePaint();
+    });
+
+    // Окно изменили — в панель влезает другое число строк. Пересчёт с задержкой:
+    // тянут рамку окна непрерывно, и перерисовывать таблицу на каждый пиксель
+    // незачем.
+    let resizeTimer = 0;
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => { if (profiles.length) tablePaint(); }, 150);
     });
 
     // Своим кругом список не освежается, пока идёт долгое действие или вкладку
