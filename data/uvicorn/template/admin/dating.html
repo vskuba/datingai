@@ -3,36 +3,23 @@
 {% block title %}Dating | AI System{% endblock %}
 
 {% block head %}
-    <link rel="stylesheet" href="{{ base }}/static/css/dating_head.css">
+    <link rel="stylesheet" href="{{ base }}/static/css/dating_page.css">
     <style>
-        /* Раскладку страница держит сама: две колонки сверху, журнал во всю
-           ширину снизу. Из базового шаблона берётся только шапка.
+        /* Обойма страницы, шапка и белая панель — в `dating_page.css`, общем с
+           «Профилями». Здесь только раскладка этой страницы: две колонки сверху,
+           журнал во всю ширину снизу.
 
-           `.page-content` из `common.css` рассчитан на страницы с полями по
-           краям; здесь поля свои, у сетки, и вторые снаружи съели бы высоту,
-           из-за которой журнал перестаёт помещаться. */
-        .page-content { padding: 0; }
-
-        /* Список анкет идёт во всю высоту, а профиль и журнал делят вторую колонку.
-           Журнал относится к выбранной анкете, а не ко всей странице, поэтому и
-           живёт рядом с её профилем: смотрят их вместе.
+           Список анкет идёт во всю высоту, а профиль и журнал делят вторую
+           колонку. Журнал относится к выбранной анкете, а не ко всей странице,
+           поэтому и живёт рядом с её профилем: смотрят их вместе.
 
            Ширина колонки и высота журнала — в переменных: их тянут разделителями,
            и обе запоминаются, чтобы не выставлять заново на каждой странице. */
         .dating-page {
             --col: 380px;
             --log: 240px;
-            display: grid;
             grid-template-columns: var(--col) 6px 1fr;
             grid-template-rows: auto minmax(0, 1fr);
-            gap: 8px;
-            /* Не `100vh`: над страницей теперь шапка, и высота во весь экран
-               уводила бы журнал под нижний край. Высоту даёт `.page-content` —
-               остаток экрана под шапкой. */
-            width: 100%;
-            height: 100%;
-            padding: 14px 16px;
-            box-sizing: border-box;
         }
 
         .dating-right {
@@ -48,32 +35,11 @@
         .split-col { grid-column: 2; grid-row: 2; cursor: col-resize; }
         .split-row { cursor: row-resize; }
 
-        /* Сама шапка — в `dating_head.css`, общем с «Экспортом анкет». Здесь
-           только её место в сетке страницы: во всю ширину над колонками. */
+        /* Место шапки в сетке: во всю ширину над колонками. Сама она общая. */
         .dating-head { grid-column: 1 / -1; }
 
         .dating-profiles-pane { grid-column: 1; grid-row: 2; }
         .dating-log-pane { min-height: 0; }
-
-        .pane {
-            display: flex;
-            flex-direction: column;
-            min-height: 0;
-            border: 1px solid #e5e7eb;
-            border-radius: 10px;
-            background: #fff;
-            overflow: hidden;
-        }
-
-        .pane-head {
-            display: flex; align-items: center; gap: 8px;
-            padding: 8px 12px;
-            border-bottom: 1px solid #f1f5f9;
-            font-size: 12px; font-weight: 700; color: #64748b;
-            text-transform: uppercase; letter-spacing: .04em;
-        }
-
-        .pane-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 10px 12px; }
 
         /* Поиск живёт в шапке панели и занимает остаток строки: список анкет
            доходит до сотен, и листать его глазами дольше, чем набрать три буквы. */

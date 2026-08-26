@@ -1,0 +1,72 @@
+/* ═══════════════════════════════════════════════════════════
+   Страницы раздела Dating: «Чаты» и «Профили».
+
+   Вынесено из `dating.html`, когда те же куски понадобились «Профилям». Копия
+   разъехалась бы с оригиналом на первой же правке, а это соседние пункты одного
+   меню: человек ходит между ними, и разные на вид страницы читаются как разные
+   разделы системы.
+
+   Здесь только общее — обойма страницы, шапка и белая панель. Раскладка внутри
+   остаётся у самой страницы: у «Чатов» это сетка на три колонки с разделителями,
+   у «Профилей» — одна колонка под таблицу. Поэтому `grid-template-*` в этом
+   файле нет.
+
+   Палитра общая с `admin_page.css`: индиго для действия, серый для рамок.
+   ═══════════════════════════════════════════════════════════ */
+
+/* `.page-content` из `common.css` рассчитан на страницы с полями по краям. У
+   страниц раздела поля свои, у сетки, и вторые снаружи съедали бы высоту — а обе
+   страницы считают высоту от остатка экрана под шапкой панели. */
+.page-content { padding: 0; }
+
+.dating-page {
+    display: grid;
+    gap: 8px;
+    /* Не `100vh`: над страницей шапка панели, и высота во весь экран уводила бы
+       нижний край за экран. Высоту даёт `.page-content` — остаток под шапкой. */
+    width: 100%;
+    height: 100%;
+    padding: 14px 16px;
+    box-sizing: border-box;
+}
+
+/* ── Шапка страницы: заголовок, селект сайта, кнопки, подсказка ── */
+
+.dating-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dating-head h1 { margin: 0; font-size: 14px; color: #1e293b; }
+.dating-head select { max-width: 220px; padding: 6px 9px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
+
+.dating-btn {
+    padding: 5px 10px; border: 1px solid #d1d5db; border-radius: 6px;
+    background: #fff; font-size: 12px; font-family: inherit; color: #374151; cursor: pointer;
+}
+.dating-btn:hover { border-color: #c7d2fe; color: #4338ca; }
+.dating-btn.primary { background: #4f46e5; border-color: #4f46e5; color: #fff; }
+.dating-btn.primary:hover { background: #4338ca; }
+.dating-btn.danger { color: #b91c1c; }
+.dating-btn:disabled { opacity: .5; cursor: default; }
+
+.dating-hint { color: #6b7280; font-size: 12px; }
+.dating-hint.bad { color: #b91c1c; }
+
+/* ── Белая панель: карточка с заголовком и прокручиваемым телом ── */
+
+.pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    background: #fff;
+    overflow: hidden;
+}
+
+.pane-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid #f1f5f9;
+    font-size: 12px; font-weight: 700; color: #64748b;
+    text-transform: uppercase; letter-spacing: .04em;
+}
+
+.pane-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 10px 12px; }
