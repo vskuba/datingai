@@ -59,8 +59,8 @@
 
             <div class="tabnav-panel" data-group="dating">
                 <span class="tabnav-sep"></span>
-                <a href="{{ base }}/admin/dating">Анкеты</a>
-                <a href="{{ base }}/admin/dating/export">📤 Экспорт анкет</a>
+                <a href="{{ base }}/admin/dating">Чаты</a>
+                <a href="{{ base }}/admin/dating/export">Профили</a>
                 <span class="tabnav-sep"></span>
             </div>
 
@@ -148,8 +148,8 @@
         // по href целиком — он уже с префиксом, как и `location.pathname`.
         //
         // Побеждает **самый длинный** подошедший href, а не каждый подошедший. На
-        // `/admin/dating/export` подходят оба подпункта раздела — и «Анкеты»
-        // (`/admin/dating` — префикс пути), и «Экспорт анкет», — а подсвеченных
+        // `/admin/dating/export` подходят оба подпункта раздела — и «Чаты»
+        // (`/admin/dating` — префикс пути), и «Профили», — а подсвеченных
         // «где я сейчас» не бывает двух. Тот же приём применён ниже к `groupMap`
         // по той же причине.
         let best = null, bestLen = 0;

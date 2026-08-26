@@ -1,10 +1,16 @@
 {% extends "base.html" %}
 
-{% block title %}Экспорт анкет | DatingAi{% endblock %}
+{% block title %}Профили | DatingAi{% endblock %}
 
 {% block head %}
     <link rel="stylesheet" href="{{ base }}/static/css/admin_page.css">
+    <link rel="stylesheet" href="{{ base }}/static/css/dating_head.css">
     <style>
+        /* Шапка та же, что на странице анкет (`dating_head.css`) — это соседние
+           пункты одного раздела. Своё здесь только место в карточке: поля и
+           нижняя черта, которые на анкетах даёт сетка страницы. */
+        .dating-head { padding: 10px 14px; border-bottom: 1px solid #f1f5f9; flex-shrink: 0; }
+
         /* Колонки приходят из сценария, и сколько их — заранее неизвестно.
            Поэтому таблица прокручивается вбок сама, а не растягивает страницу:
            горизонтальная прокрутка всего окна ломает шапку. */
@@ -18,13 +24,11 @@
 {% block content %}
 <div class="adm-page">
 
-    <div class="adm-head">
-        <h1>📤 Экспорт анкет</h1>
+    <div class="dating-head">
+        <h1>🌐 Сайт</h1>
         <select id="siteSelect" title="Сайт, с которого выгружаем профили"></select>
-        <span class="adm-hint" id="hint">сценарий гоняется в браузере RhapsodyAi</span>
-        <div class="adm-head-act">
-            <button type="button" class="adm-btn primary" id="loadBtn">Загрузить профили</button>
-        </div>
+        <button type="button" class="dating-btn primary" id="loadBtn">Загрузить профили</button>
+        <span class="dating-hint" id="hint">сценарий гоняется в браузере RhapsodyAi</span>
     </div>
 
     <div class="adm-body">

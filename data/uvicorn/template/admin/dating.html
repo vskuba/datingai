@@ -3,6 +3,7 @@
 {% block title %}Dating | AI System{% endblock %}
 
 {% block head %}
+    <link rel="stylesheet" href="{{ base }}/static/css/dating_head.css">
     <style>
         /* Раскладку страница держит сама: две колонки сверху, журнал во всю
            ширину снизу. Из базового шаблона берётся только шапка.
@@ -47,9 +48,9 @@
         .split-col { grid-column: 2; grid-row: 2; cursor: col-resize; }
         .split-row { cursor: row-resize; }
 
-        .dating-head { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-        .dating-head h1 { margin: 0; font-size: 14px; color: #1e293b; }
-        .dating-head select { max-width: 220px; padding: 6px 9px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
+        /* Сама шапка — в `dating_head.css`, общем с «Экспортом анкет». Здесь
+           только её место в сетке страницы: во всю ширину над колонками. */
+        .dating-head { grid-column: 1 / -1; }
 
         .dating-profiles-pane { grid-column: 1; grid-row: 2; }
         .dating-log-pane { min-height: 0; }
@@ -99,16 +100,6 @@
         .page-btn.active { background: #4f46e5; border-color: #4f46e5; color: #fff; }
         .page-btn:disabled { opacity: .4; cursor: default; }
 
-        .dating-btn {
-            padding: 5px 10px; border: 1px solid #d1d5db; border-radius: 6px;
-            background: #fff; font-size: 12px; font-family: inherit; color: #374151; cursor: pointer;
-        }
-        .dating-btn:hover { border-color: #c7d2fe; color: #4338ca; }
-        .dating-btn.primary { background: #4f46e5; border-color: #4f46e5; color: #fff; }
-        .dating-btn.primary:hover { background: #4338ca; }
-        .dating-btn.danger { color: #b91c1c; }
-        .dating-btn:disabled { opacity: .5; cursor: default; }
-
         /* Чекбокс автоответа стоит в ряду кнопок и должен читаться как их часть,
            а не как обрывок формы. */
         .auto-box {
@@ -118,9 +109,6 @@
         }
         .auto-box:hover { border-color: #c7d2fe; color: #4338ca; }
         .auto-box input { margin: 0; cursor: pointer; }
-
-        .dating-hint { color: #6b7280; font-size: 12px; }
-        .dating-hint.bad { color: #b91c1c; }
 
         /* Крутилка в кнопке долгого действия. Вход идёт минутами, и без неё
            карточка выглядит так же, как до нажатия: человек жмёт второй раз. */

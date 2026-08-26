@@ -32,7 +32,7 @@ async def dashboard_dating(request: Request, user: AuthUser = Depends(auth_requi
 
 @router.get('/admin/dating/export', response_class=HTMLResponse, include_in_schema=False)
 async def dashboard_dating_export(request: Request, user: AuthUser = Depends(auth_required)):
-    """Экспорт анкет: выгрузка списка профилей с сайта.
+    """Страница «Профили»: выгрузка списка профилей с сайта.
 
     Открыт всем вошедшим, а не только админу: это работа с анкетами, ради которой
     панель и открывают, а не операция над устройством установки.
