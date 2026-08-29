@@ -40,6 +40,27 @@ async def dashboard_dating_profile(request: Request, user: AuthUser = Depends(au
     return _dashboard_page(request, user, 'admin/dating_profile.html')
 
 
+@router.get('/admin/dating/log', response_class=HTMLResponse, include_in_schema=False)
+async def dashboard_dating_log(request: Request, user: AuthUser = Depends(auth_required)):
+    """Страница «Журналы»: общая лента работы по учёткам сайта.
+
+    Открыта всем вошедшим, как и остальные страницы раздела: журнал — это ответ
+    на вопрос «почему анкета не отвечает», и держать его за админской дверью
+    значит звать админа на каждый разбор.
+    """
+    return _dashboard_page(request, user, 'admin/dating_log.html')
+
+
+@router.get('/admin/dating/error', response_class=HTMLResponse, include_in_schema=False)
+async def dashboard_dating_error(request: Request, user: AuthUser = Depends(auth_required)):
+    """Страница «Ошибки»: отказы по учёткам сайта одним списком.
+
+    Отдельно от «Журналов», а не фильтром внутри них: за отказами приходят
+    прицельно, и путь до них не должен идти через переключатель.
+    """
+    return _dashboard_page(request, user, 'admin/dating_error.html')
+
+
 @router.get('/admin/seed', response_class=HTMLResponse, include_in_schema=False)
 async def dashboard_seed(request: Request, user: AuthUser = Depends(auth_admin_required)):
     """Seed SQL: выгрузка выбранных таблиц и заливка обратно. Только админу."""

@@ -42,7 +42,16 @@ ROLE_ADMIN_ONLY = [
 ]
 
 # То, ради чего оператор и заходит. Открывается — иначе роль бессмысленна.
-ROLE_OPERATOR_ALLOWED = ['/', '/admin/dating', '/api/site']
+# Страницы раздела Dating перечислены все: они висят в одном меню, и закрытая
+# по недосмотру выглядит для оператора как сломанная панель, а не как запрет.
+ROLE_OPERATOR_ALLOWED = [
+    '/',
+    '/admin/dating',
+    '/admin/dating/profile',
+    '/admin/dating/log',
+    '/admin/dating/error',
+    '/api/site',
+]
 
 
 class TestRole:

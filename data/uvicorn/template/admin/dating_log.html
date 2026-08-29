@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block title %}Журналы | DatingAi{% endblock %}
+
+{% block head %}
+    <link rel="stylesheet" href="{{ base }}/static/css/dating_page.css">
+    <style>
+        /* Обойма, шапка и белая панель — общие с остальным разделом
+           (`dating_page.css`). Здесь только раскладка этой страницы: шапка и под
+           ней одна панель во всю оставшуюся высоту, как на «Профилях». Колонок и
+           разделителей нет — делить нечего. */
+        .dating-page { grid-template-rows: auto minmax(0, 1fr); }
+
+        /* Заглушка на месте будущего содержимого. Отдельным классом, а не пустым
+           телом панели: пустая белая карточка читается как «не загрузилось». */
+        .dating-soon { padding: 24px 12px; text-align: center; color: #9ca3af; font-size: 13px; }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="dating-page">
+
+    <div class="dating-head">
+        <h1>📜 Журналы</h1>
+        <select id="siteSelect" title="Сайт, по которому смотрим журнал"></select>
+        <span class="dating-hint" id="hint"></span>
+    </div>
+
+    <div class="pane">
+        <div class="pane-head">Журнал</div>
+        <div class="pane-body">
+            <div class="dating-soon">
+                Общая лента журнала появится здесь.
+                Пока журнал по отдельной анкете смотрят на «Анкетах».
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+    import {showNotification} from '{{ base }}/static/js/notification.js';
+    import {DATING_SITE_KEY, datingSiteFill} from '{{ base }}/static/js/dating_site.js';
+
+    const BASE = '{{ base }}';
+
+    const siteEl = document.getElementById('siteSelect');
+    const hintEl = document.getElementById('hint');
+
+    // Ленты ещё нет, а селект уже живой и уже запоминает выбор общим ключом
+    // раздела. Иначе человек, пришедший сюда с «Анкет», увидел бы первый сайт по
+    // списку вместо своего, а переключив его — молча переставил бы сайт и на
+    // соседних страницах, когда ключ появится.
+    siteEl.addEventListener('change', () => localStorage.setItem(DATING_SITE_KEY, siteEl.value));
+
+    (async () => {
+        try {
+            await datingSiteFill(siteEl, BASE);
+        } catch (e) {
+            siteEl.innerHTML = '<option value="">сайты не пришли</option>';
+            showNotification('Список сайтов не пришёл: ' + e.message, 'error');
+        }
+    })();
+
+    hintEl.textContent = 'страница в работе';
+</script>
+{% endblock %}

@@ -92,6 +92,29 @@ class TestProfileCrud:
         assert row['has_password'] is True, 'пустое поле стёрло пароль'
         assert row['note'] == 'правка'
 
+    async def test_role_defaults_to_lady_and_saves(self, auth_client, profile):
+        """Роль отдаётся наружу и правится. Форма заведения её не спрашивает —
+        значит по умолчанию женская: анкеты заводят под неё.
+
+        Роль решает, каким сценарием входить (мужской и женский кабинеты — разные
+        приложения на одном домене), поэтому чужое значение обязано отлетать, а не
+        лечь в базу: с ним учётке достался бы чужой сценарий, который честно упал
+        бы по таймауту, потратив минуту.
+        """
+        rows = (await auth_client.get(f'/api/dating/profile?site_id={SITE_ID}')).json()['result']
+        assert next(r for r in rows if r['login'] == profile['login'])['role'] == 'lady'
+
+        saved = await auth_client.put(f'/api/dating/profile/{profile["id"]}', json={
+            'site_id': SITE_ID, 'login': profile['login'], 'role': 'man'})
+        assert saved.status_code == 200
+
+        rows = (await auth_client.get(f'/api/dating/profile?site_id={SITE_ID}')).json()['result']
+        assert next(r for r in rows if r['login'] == profile['login'])['role'] == 'man'
+
+        junk = await auth_client.put(f'/api/dating/profile/{profile["id"]}', json={
+            'site_id': SITE_ID, 'login': profile['login'], 'role': 'admin'})
+        assert junk.status_code == 422
+
     async def test_delete(self, auth_client):
         """Удаление уносит учётку целиком; повтор отвечает 404."""
         login = f'test-{uuid.uuid4().hex[:10]}'
@@ -107,6 +130,50 @@ class TestProfileCrud:
         for path in ('log', 'message', 'profile'):
             response = await auth_client.get(f'/api/dating/profile/999999/{path}')
             assert response.status_code == 404, f'{path} ответил {response.status_code}'
+
+
+class TestProfilePing:
+    """Пинг: жив ли вход, прямо сейчас. В отличие от «Войти» браузера не трогает —
+    идёт по HTTP с сохранёнными cookie, поэтому его и можно гонять в сюите."""
+
+    async def test_ping_closed_without_session(self, client):
+        """Без сессии не пускает: состояние чужой анкеты — не общее сведение."""
+        response = await client.post('/api/dating/profile/1/ping', json={})
+
+        assert response.status_code == 401
+
+    async def test_ping_missing_profile_is_404(self, auth_client):
+        response = await auth_client.post('/api/dating/profile/999999/ping', json={})
+
+        assert response.status_code == 404
+
+    async def test_ping_without_login_answers_offline(self, auth_client, profile):
+        """Учётка без снятого входа — честный `offline` и 200, а не отказ.
+
+        «Сайт не признал вход» это **ответ**, а не сбой ручки: за ним человек и
+        нажимает пинг, и превращать его в 4xx значило бы прятать рабочий исход в
+        обработчик ошибок.
+        """
+        response = await auth_client.post(f'/api/dating/profile/{profile["id"]}/ping', json={})
+
+        assert response.status_code == 200, response.text[:200]
+        result = response.json()['result']
+        assert result['status'] == 'offline'
+        assert result['error'], 'причина обязана быть названа'
+
+    async def test_failed_ping_keeps_last_seen(self, auth_client, profile):
+        """Неудачный пинг **не двигает** `last_seen_at`.
+
+        Смысл поля — «когда сайт последний раз признал учётку», а не «когда мы
+        стучались». Двигай его каждый опрос, и по колонке «Вход» живая анкета
+        перестала бы отличаться от отвалившейся неделю назад.
+        """
+        await auth_client.post(f'/api/dating/profile/{profile["id"]}/ping', json={})
+
+        rows = (await auth_client.get(f'/api/dating/profile?site_id={SITE_ID}')).json()['result']
+        row = next(r for r in rows if r['login'] == profile['login'])
+
+        assert row['last_seen_at'] is None, 'неудачный пинг подвинул время входа'
 
 
 class TestProfileLogin:

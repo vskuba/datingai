@@ -5,11 +5,27 @@
 {% block head %}
     <link rel="stylesheet" href="{{ base }}/static/css/dating_page.css">
     <style>
-        /* Обойма, шапка, панель и значки учётки — общие с «Чатами»
-           (`dating_page.css`). Здесь только раскладка этой страницы: шапка и под
-           ней одна панель во всю оставшуюся высоту. Колонок и разделителей нет —
-           делить нечего. */
-        .dating-page { grid-template-rows: auto minmax(0, 1fr); }
+        /* Обойма, шапка, панель, журнал и значки учётки — общие с «Анкетами»
+           (`dating_page.css`). Здесь только раскладка этой страницы: шапка во всю
+           ширину, под ней таблица и журнал в двух колонках.
+
+           Журналу — 20%: он отвечает на вопрос «что с этой анкетой происходило»,
+           а читают его строками по десятку слов. Отдать ему больше значит отнять
+           у таблицы, ради которой на страницу и приходят. Разделителя нет —
+           тянуть тут нечего. */
+        .dating-page {
+            grid-template-columns: minmax(0, 1fr) 20%;
+            grid-template-rows: auto minmax(0, 1fr);
+        }
+        .dating-head { grid-column: 1 / -1; }
+        .prof-pane { grid-column: 1; grid-row: 2; }
+        .log-pane { grid-column: 2; grid-row: 2; }
+
+        /* Колонка узкая, а логин длинный: без многоточия имя анкеты растолкало бы
+           заголовок панели и уехало за её край. */
+        .log-pane .pane-head { min-width: 0; }
+        #logWho { min-width: 0; color: #94a3b8;
+                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
         /* Вертикальной прокрутки нет намеренно: сколько строк влезло — столько на
            странице, остальные за пейджером. Прокрутка вместе с пейджером это две
@@ -19,6 +35,12 @@
            вбок, чем читать имя по одной букве. Поля сняты, чтобы таблица шла от
            края до края. */
         .prof-body { padding: 0; overflow-x: auto; overflow-y: hidden; }
+
+        /* Исключение из «прокрутки нет» — раскрытая карточка. Она выше любой
+           строки, и подогнать под неё число строк нельзя: подгонка выкинула бы из
+           таблицы почти всё, оставив карточку в одиночестве. Поэтому пока карточка
+           открыта, таблица прокручивается; закрыли — правило возвращается. */
+        .prof-body.open { overflow-y: auto; }
 
         .prof-table { width: 100%; border-collapse: collapse; font-size: 12px; }
         /* Липкой шапке взяться неоткуда: вертикальной прокрутки у тела нет. */
@@ -30,12 +52,23 @@
         }
         .prof-table td { padding: 6px 12px; border-bottom: 1px solid #f1f5f9; color: #374151; }
         .prof-table tr:last-child td { border-bottom: none; }
-        .prof-table tbody tr:hover td { background: #f8fafc; }
+        .prof-table tbody tr.prof-row { cursor: pointer; }
+        .prof-table tbody tr.prof-row:hover td { background: #f8fafc; }
+        .prof-table tbody tr.prof-row.open td { background: #f1f5f9; }
 
         /* Столбец состояния — самый узкий и первый: сначала смотрят, всё ли в
            порядке, и только потом читают, у кого именно. */
         .prof-state { width: 1%; white-space: nowrap; }
         .prof-state > * + * { margin-left: 5px; }
+
+        /* Значок свёрнутости. Строку открывают кликом по ней самой, но без значка
+           не видно, что она вообще открывается. Поворачивается вместо подмены
+           символа — так переход читается как движение, а не как мигание. */
+        .prof-toggle {
+            display: inline-block; color: #94a3b8; font-size: 9px;
+            transition: transform .15s ease;
+        }
+        .prof-row.open .prof-toggle { transform: rotate(90deg); color: #4338ca; }
 
         /* Кто это: лицо, имя, под ним логин. Ширину не задаём — колонка забирает
            остаток строки, и режется многоточием именно она, а не бейджи и время. */
@@ -62,6 +95,42 @@
         .prof-act { width: 1%; white-space: nowrap; text-align: right; }
 
         .prof-empty { padding: 24px 12px; text-align: center; color: #9ca3af; font-size: 13px; }
+
+        /* ---------- Раскрытая карточка ---------- */
+
+        /* Отдельной строкой таблицы во всю ширину, а не панелью сбоку: настройки
+           относятся к той анкете, на которую нажали, и уводить их от неё значит
+           заставлять сверять, что правишь.
+
+           Курсор здесь обычный: по карточке не нажимают, чтобы закрыть, — в ней
+           поля ввода, и случайное закрытие стёрло бы набранное. */
+        .prof-card td { padding: 0; background: #f8fafc; cursor: default; }
+        .prof-card-in {
+            display: flex; flex-wrap: wrap; align-items: flex-start; gap: 22px;
+            padding: 12px 14px 14px 34px;
+        }
+
+        .prof-form { display: flex; flex-direction: column; gap: 7px; }
+        .prof-form h4 {
+            margin: 0; font-size: 10px; font-weight: 700; color: #64748b;
+            text-transform: uppercase; letter-spacing: .04em;
+        }
+        .prof-line { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+
+        .prof-field { display: flex; flex-direction: column; gap: 2px; }
+        .prof-field > span { font-size: 10px; color: #94a3b8; }
+        .prof-field input, .prof-field select {
+            padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 6px;
+            font-family: inherit; font-size: 12px; color: #374151; background: #fff;
+        }
+        .prof-field input:focus, .prof-field select:focus { outline: none; border-color: #c7d2fe; }
+
+        /* Галка читается вместе с подписью, поэтому подпись и есть кнопка. */
+        .prof-check { display: flex; align-items: center; gap: 5px; font-size: 12px;
+                      color: #374151; cursor: pointer; user-select: none; }
+
+        .prof-card-note { font-size: 11px; color: #94a3b8; }
+        .prof-card-note.bad { color: #b91c1c; }
     </style>
 {% endblock %}
 
@@ -75,7 +144,7 @@
         <span class="dating-hint" id="hint"></span>
     </div>
 
-    <div class="pane">
+    <div class="pane prof-pane">
         <div class="pane-head">
             Профили <span id="profilesN"></span>
             <input type="search" id="profileFind" class="pane-find" placeholder="имя или логин"
@@ -84,27 +153,35 @@
         <div class="pane-body prof-body" id="table"></div>
         <div class="pane-foot" id="profilesPager"></div>
     </div>
+
+    <div class="pane log-pane">
+        <div class="pane-head">Журнал <span id="logWho"></span></div>
+        <div class="pane-body" id="log"></div>
+    </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script type="module">
-    import {getData, postData} from '{{ base }}/static/js/api.js';
+    import {getData, postData, putData, deleteData} from '{{ base }}/static/js/api.js';
     import {showNotification} from '{{ base }}/static/js/notification.js';
-    import {esc, statusDot, warnBadge, workPills, seenText, pagerRender}
+    import {esc, statusDot, warnBadge, workPills, seenText, pagerRender, logRender}
         from '{{ base }}/static/js/dating_view.js';
+    // Загрузка селекта общая на весь раздел: ключ выбора у страниц один, и
+    // разъехавшиеся копии писали бы в него разное.
+    import {DATING_SITE_KEY, datingSiteFill} from '{{ base }}/static/js/dating_site.js';
 
     const BASE = '{{ base }}';
-
-    // Ключ тот же, что на «Чатах», — намеренно. Человек ходит между двумя
-    // страницами раздела, и разный выбор сайта там и тут читается как «я же
-    // выбрал ladadate», а показана оказывается чужая учётка.
-    const SITE_KEY = 'dating_site';
 
     // Список освежается сам: статус, непрочитанные и время входа меняет не эта
     // страница, а опрос присутствия на сервере. Реже минуты — и таблица врёт
     // молча; чаще — незачем, опрос всё равно ходит раз в 15 секунд.
     const RELOAD_MS = 30000;
+
+    // Журнал ходит чаще списка: в него пишут пинг, вход и отключение — то, что
+    // человек только что нажал и чей результат ждёт. Строка на одну анкету стоит
+    // одного запроса, и десять секунд здесь дешевле, чем ожидание вслепую.
+    const LOG_MS = 10000;
 
     // Сколько строк на странице — считается от высоты панели, а не задано числом.
     // Смысл пейджера в том, чтобы прокрутки не было вовсе: с ней теряется место, а
@@ -121,15 +198,21 @@
     const countEl = document.getElementById('profilesN');
     const findEl = document.getElementById('profileFind');
     const pagerEl = document.getElementById('profilesPager');
+    const logEl = document.getElementById('log');
+    const logWhoEl = document.getElementById('logWho');
 
     let profiles = [];
     let page = 0;
     let perPage = PAGE_SIZE_GUESS;
+    // Какая анкета раскрыта. Она же выбранная: журнал справа показывает её, и
+    // двух выбранных «где я сейчас» не бывает. Ноль — не раскрыта ни одна.
+    let openId = 0;
     // Кого сейчас держит долгое действие: вход идёт минутами, и перерисовка не
     // должна ни затирать «Вхожу…», ни подсовывать кнопку под руку второй раз.
     const busy = new Set();
 
     const siteId = () => Number(siteEl.value || 0);
+    const openRow = () => profiles.find(row => row.id === openId) || null;
 
     function empty(text) {
         tableEl.innerHTML = `<div class="prof-empty">${esc(text)}</div>`;
@@ -137,20 +220,13 @@
     }
 
     async function sitesLoad() {
-        let sites;
         try {
-            sites = (await getData(BASE + '/api/site')).result || [];
+            await datingSiteFill(siteEl, BASE);
         } catch (e) {
             siteEl.innerHTML = '<option value="">сайты не пришли</option>';
             showNotification('Список сайтов не пришёл: ' + e.message, 'error');
             return;
         }
-
-        const saved = localStorage.getItem(SITE_KEY);
-        siteEl.innerHTML = sites.length
-            ? sites.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('')
-            : '<option value="">сайтов нет</option>';
-        if (saved && sites.some(r => String(r.id) === saved)) siteEl.value = saved;
 
         profilesLoad();
     }
@@ -175,6 +251,12 @@
         }
 
         if (siteId() !== requestSite) return;
+
+        // Раскрытой анкеты могло не стать: её удалили здесь же или она ушла вместе
+        // со сменой сайта. Держать открытой строку, которой в списке нет, нельзя —
+        // журнал справа показывал бы чужое.
+        if (openId && !openRow()) openSet(0);
+
         tablePaint();
     }
 
@@ -187,26 +269,30 @@
     }
 
     function actCell(row) {
-        // Кнопка одна и всегда одна и та же — в отличие от «Чатов», где их три и
+        // Кнопка одна и всегда одна и та же — в отличие от «Анкет», где их три и
         // они меняются по состоянию учётки. Здесь смотрят на список целиком, и
         // столбец, в котором у каждой строки своя кнопка, читается как сыпь.
+        // Остальные действия уехали внутрь карточки: они над одной анкетой, и
+        // место им там, где на неё и смотрят.
         if (busy.has(row.id)) {
             return '<button type="button" class="dating-btn busy" disabled>'
-                 + '<span class="dating-spin"></span>Проверяю…</button>';
+                 + '<span class="dating-spin"></span>Жду…</button>';
         }
 
-        // Без пароля вход не пройдёт: лучше сказать это подсказкой сразу, чем
-        // отказом после минуты ожидания.
-        return `<button type="button" class="dating-btn test-btn"${row.has_password ? '' : ' disabled'}`
-             + ` title="${row.has_password ? 'Войти на сайт и проверить, что вход признан'
-                                           : 'у учётки не задан пароль'}">Тест логин</button>`;
+        // Пинг идёт по сохранённым cookie: нет входа — нечем и стучаться.
+        return `<button type="button" class="dating-btn ping-btn"${row.has_state ? '' : ' disabled'}`
+             + ` title="${row.has_state ? 'Спросить сайт, жив ли вход — по HTTP, без браузера'
+                                        : 'входа ещё не было: нечем стучаться'}">Пинг</button>`;
     }
 
     // Сколько строк влезает в панель. Меряем по уже нарисованной таблице: высота
     // строки зависит от шрифта и аватара, и зашитое число разъехалось бы с
     // разметкой при первой же правке стилей.
+    //
+    // Меряем строку списка (`.prof-row`), а не первую попавшуюся: раскрытая
+    // карточка тоже строка таблицы, и по ней вышло бы, что в панель влезает одна.
     function rowsFit() {
-        const probe = tableEl.querySelector('tbody tr');
+        const probe = tableEl.querySelector('tbody tr.prof-row');
         const head = tableEl.querySelector('thead');
         if (!probe) return perPage;
 
@@ -234,7 +320,7 @@
             ? profiles.length : `${found.length} из ${profiles.length}`;
 
         if (!profiles.length) {
-            empty('На этом сайте учёток пока нет. Заводят их на странице «Чаты».');
+            empty('На этом сайте учёток пока нет. Заводят их на странице «Анкеты».');
             pagerRender(pagerEl, 0, 0, () => {});
             return;
         }
@@ -253,32 +339,40 @@
 
         const rows = found.slice(page * perPage, (page + 1) * perPage);
 
-        const body = rows.map(row => `<tr data-id="${row.id}">`
-            + `<td class="prof-state">${statusDot(row)}${warnBadge(row)}</td>`
-            + '<td><span class="prof-who">'
-            + `<img class="profile-face" src="${esc(row.photo || '')}" alt=""`
-            + ' onerror="this.style.visibility=\'hidden\'">'
-            + '<span class="prof-who-text">'
-            // Имя режется многоточием — полное отдаём подсказкой.
-            + `<span class="prof-name" title="${esc(row.name || row.login)}">${esc(row.name || row.login)}</span>`
-            + `<span class="prof-login" title="${esc(row.login)}">${esc(row.login)}</span>`
-            + '</span></span></td>'
-            + `<td class="prof-work">${workPills(row) || '<span class="prof-no">—</span>'}</td>`
-            + `<td>${row.auto_answer ? '<span class="prof-yes" title="отвечает агентом сам">✓</span>'
-                                     : '<span class="prof-no" title="отвечают вручную">—</span>'}</td>`
-            + `<td>${row.keep_online ? '<span class="prof-yes" title="автовход держит анкету в сети">✓</span>'
-                                     : '<span class="prof-no" title="в сети не держим">—</span>'}</td>`
-            + `<td class="prof-when" title="${esc(row.last_seen_at || 'входа ещё не было')}">`
-            + `${esc(seenText(row.last_seen_at) || '—')}</td>`
-            + noteCell(row)
-            + `<td class="prof-act">${actCell(row)}</td>`
-            + '</tr>').join('');
+        const body = rows.map(row => {
+            const open = row.id === openId;
+
+            return `<tr class="prof-row${open ? ' open' : ''}" data-id="${row.id}">`
+                + `<td class="prof-state"><span class="prof-toggle">▶</span>`
+                + `${statusDot(row)}${warnBadge(row)}</td>`
+                + '<td><span class="prof-who">'
+                + `<img class="profile-face" src="${esc(row.photo || '')}" alt=""`
+                + ' onerror="this.style.visibility=\'hidden\'">'
+                + '<span class="prof-who-text">'
+                // Имя режется многоточием — полное отдаём подсказкой.
+                + `<span class="prof-name" title="${esc(row.name || row.login)}">${esc(row.name || row.login)}</span>`
+                + `<span class="prof-login" title="${esc(row.login)}">${esc(row.login)}</span>`
+                + '</span></span></td>'
+                + `<td class="prof-work">${workPills(row) || '<span class="prof-no">—</span>'}</td>`
+                + `<td>${row.auto_answer ? '<span class="prof-yes" title="отвечает агентом сам">✓</span>'
+                                         : '<span class="prof-no" title="отвечают вручную">—</span>'}</td>`
+                + `<td>${row.keep_online ? '<span class="prof-yes" title="автовход держит анкету в сети">✓</span>'
+                                         : '<span class="prof-no" title="в сети не держим">—</span>'}</td>`
+                + `<td class="prof-when" title="${esc(row.last_seen_at || 'входа ещё не было')}">`
+                + `${esc(seenText(row.last_seen_at) || '—')}</td>`
+                + noteCell(row)
+                + `<td class="prof-act">${actCell(row)}</td>`
+                + '</tr>'
+                + (open ? cardRow(row) : '');
+        }).join('');
 
         tableEl.innerHTML =
             '<table class="prof-table"><thead><tr>'
             + '<th></th><th>Анкета</th><th>Работа</th><th>Автоответ</th><th>В сети</th>'
             + '<th>Вход</th><th>Пометка</th><th></th>'
             + '</tr></thead><tbody>' + body + '</tbody></table>';
+
+        tableEl.classList.toggle('open', Boolean(openId));
 
         // Пейджер рисуем до замера: он занимает высоту, и мерить тело панели без
         // него значит насчитать на строку больше, чем влезет.
@@ -287,11 +381,17 @@
             tablePaint(0);
         });
 
-        const fit = rowsFit();
-        if (tries > 0 && fit !== perPage) {
-            perPage = fit;
-            tablePaint(tries - 1);
-            return;
+        // Пока карточка раскрыта, число строк не пересчитываем: в панели теперь
+        // стоит блок высотой в несколько строк, и подгонка под него выкинула бы
+        // из таблицы почти всё. Замереть на последнем значении, посчитанном по
+        // обычным строкам, — честнее: закроют карточку, и подгонка продолжится.
+        if (!openId) {
+            const fit = rowsFit();
+            if (tries > 0 && fit !== perPage) {
+                perPage = fit;
+                tablePaint(tries - 1);
+                return;
+            }
         }
 
         bindActions();
@@ -306,39 +406,289 @@
         return `<td class="prof-note${bad ? ' bad' : ''}" title="${esc(text)}">${esc(text)}</td>`;
     }
 
-    function bindActions() {
-        tableEl.querySelectorAll('.test-btn').forEach(btn => {
-            const row = profiles.find(r => r.id === Number(btn.closest('tr').dataset.id));
-            if (row) btn.addEventListener('click', () => profileTestLogin(row));
-        });
+    // ── Раскрытая карточка ───────────────────────────────────────────────────
+
+    // Настройки анкеты строкой таблицы во всю ширину. Формы две, потому что и
+    // ручки две: учётка правится целиком (`PUT /{id}`), автоответ — отдельно
+    // (`PUT /{id}/auto`), и он включается сразу, разбирая накопившееся. Слить их
+    // в одну кнопку «Сохранить» значило бы запускать разбор писем при правке
+    // пометки.
+    function cardRow(row) {
+        const state = row.has_state
+            ? `вход снят ${esc(seenText(row.last_seen_at) || 'когда-то')}`
+            : 'входа ещё не было';
+
+        return '<tr class="prof-card"><td colspan="8"><div class="prof-card-in">'
+
+            + '<form class="prof-form" data-form="save">'
+            + '<h4>Учётка</h4>'
+            + '<div class="prof-line">'
+            + field('Логин', `<input name="login" value="${esc(row.login)}" required`
+                           + ' maxlength="190" spellcheck="false" autocomplete="off" size="26">')
+            + field('Пароль', '<input name="password" type="password" placeholder="не менять"'
+                            + ' maxlength="255" autocomplete="new-password" size="14">')
+            + field('Роль', '<select name="role">'
+                          + `<option value="lady"${row.role !== 'man' ? ' selected' : ''}>женская</option>`
+                          + `<option value="man"${row.role === 'man' ? ' selected' : ''}>мужская</option>`
+                          + '</select>')
+            + field('Пометка', `<input name="note" value="${esc(row.note || '')}"`
+                             + ' maxlength="255" size="24">')
+            + '<button type="submit" class="dating-btn primary">Сохранить</button>'
+            + '</div>'
+            // Пустой пароль — «не трогать», а не «стереть»: форма его не
+            // показывает, и по пустому полю не отличить одно от другого.
+            + '<span class="prof-card-note">Пароль пустым — прежний остаётся.'
+            + (row.has_password ? '' : ' Сейчас пароль не задан: войти под анкетой нечем.')
+            + '</span>'
+            + '</form>'
+
+            + '<form class="prof-form" data-form="auto">'
+            + '<h4>Автоответ</h4>'
+            + '<div class="prof-line">'
+            + '<label class="prof-check"><input type="checkbox" name="auto_answer"'
+            + `${row.auto_answer ? ' checked' : ''}>отвечает сама</label>`
+            + field('Кому отвечать', `<input name="auto_answer_only"`
+                                   + ` value="${esc(row.auto_answer_only || '')}"`
+                                   + ' maxlength="500" spellcheck="false" autocomplete="off"'
+                                   + ' placeholder="всем" size="22">')
+            + '<button type="submit" class="dating-btn primary">Сохранить</button>'
+            + '</div>'
+            // Каждый ответ стоит дважды — прогон LLM и платное сообщение на сайте,
+            // — поэтому «всем» у анкеты с сотнями диалогов это рассылка.
+            + '<span class="prof-card-note">Номера собеседниц через запятую;'
+            + ' пусто — отвечать всем.</span>'
+            + '</form>'
+
+            + '<div class="prof-form">'
+            + '<h4>Действия</h4>'
+            + '<div class="prof-line">'
+            + `<button type="button" class="dating-btn login-btn"${row.has_password ? '' : ' disabled'}`
+            + ` title="${row.has_password ? 'Сценарий входа в живом браузере — идёт минутами'
+                                          : 'у учётки не задан пароль'}">Войти</button>`
+            + `<button type="button" class="dating-btn off-btn"${row.has_state ? '' : ' disabled'}`
+            + ' title="Выход на сайте, закрытие вкладок, снятие с автовхода">Отключить</button>'
+            + '<button type="button" class="dating-btn danger del-btn"'
+            + ' title="Удалить учётку вместе с перепиской и журналом">Удалить</button>'
+            + '</div>'
+            + `<span class="prof-card-note${row.status === 'error' ? ' bad' : ''}">`
+            + `${esc(row.last_error || state)}</span>`
+            + '</div>'
+
+            + '</div></td></tr>';
     }
 
-    // «Тест логин» — это настоящий вход, а не сухая проверка: сценарий проходит
-    // форму, снимает состояние и спрашивает сайт, признал ли он вход. Иначе
-    // ответить на вопрос «рабочая ли учётка» нечем — сайт единственный, кто это
-    // знает. Побочный итог у него тот же, что у «Войти» на «Чатах»: у учётки
-    // появляется живая сессия.
-    async function profileTestLogin(row) {
+    function field(label, control) {
+        return `<label class="prof-field"><span>${esc(label)}</span>${control}</label>`;
+    }
+
+    // Раскрывает анкету или закрывает всё. Она же выбранная — журнал справа
+    // показывает её, поэтому смена раскрытой сразу тянет за собой журнал.
+    function openSet(id) {
+        openId = Number(id || 0);
+        logPaint();
+        logLoad();
+    }
+
+    // ── Журнал выбранной анкеты ──────────────────────────────────────────────
+
+    // Подпись и подсказка в пустой панели — отдельно от загрузки: они меняются
+    // мгновенно по нажатию, а строки придут ответом сервера.
+    function logPaint() {
+        const row = openRow();
+        logWhoEl.textContent = row ? (row.name || row.login) : '';
+        if (!row) logRender(logEl, [], 'выберите анкету — покажем её журнал');
+    }
+
+    async function logLoad() {
+        if (!openId) return;
+
+        // Та же гонка, что и у списка, и тот же приём: журнал ходит своим кругом,
+        // и ответ по уже закрытой анкете может прийти позже ответа по вновь
+        // раскрытой — без сверки он перепишет журнал не той анкеты.
+        const requestId = openId;
+        let rows;
+        try {
+            rows = (await getData(`${BASE}/api/dating/profile/${requestId}/log`)).result || [];
+        } catch (e) {
+            if (openId !== requestId) return;
+            logRender(logEl, [], 'журнал не пришёл: ' + e.message);
+            return;
+        }
+        if (openId !== requestId) return;
+
+        logRender(logEl, rows, 'записей нет — нажмите «Пинг»');
+    }
+
+    // ── Действия ─────────────────────────────────────────────────────────────
+
+    function bindActions() {
+        // Нажатие по строке раскрывает её. Кнопки и содержимое карточки из этого
+        // исключены: в карточке поля ввода, и закрытие по клику стёрло бы
+        // набранное, а кнопка в строке и так делает своё дело.
+        tableEl.querySelectorAll('tr.prof-row').forEach(tr => {
+            tr.addEventListener('click', (e) => {
+                if (e.target.closest('button, input, select, label, a')) return;
+                const id = Number(tr.dataset.id);
+                openSet(id === openId ? 0 : id);
+                tablePaint(0);
+            });
+        });
+
+        tableEl.querySelectorAll('.ping-btn').forEach(btn => {
+            const row = rowOf(btn);
+            if (row) btn.addEventListener('click', () => profilePing(row));
+        });
+
+        const card = tableEl.querySelector('tr.prof-card');
+        if (!card) return;
+
+        const row = openRow();
+        if (!row) return;
+
+        card.querySelector('[data-form="save"]').addEventListener('submit', (e) => {
+            e.preventDefault();
+            profileSave(row, e.target);
+        });
+        card.querySelector('[data-form="auto"]').addEventListener('submit', (e) => {
+            e.preventDefault();
+            profileAuto(row, e.target);
+        });
+        card.querySelector('.login-btn').addEventListener('click', () => profileLogin(row));
+        card.querySelector('.off-btn').addEventListener('click', () => profileDisconnect(row));
+        card.querySelector('.del-btn').addEventListener('click', () => profileDelete(row));
+    }
+
+    function rowOf(el) {
+        return profiles.find(r => r.id === Number(el.closest('tr').dataset.id)) || null;
+    }
+
+    // Долгое действие: помечаем анкету занятой, чтобы перерисовка не вернула
+    // кнопке прежний вид и её не нажали второй раз. Журнал тикает всё это время —
+    // ход входа виден строками, а не одной крутилкой.
+    async function longRun(row, run) {
         busy.add(row.id);
-        tablePaint();
+        tablePaint(0);
+        const ticker = setInterval(logLoad, 3000);
 
         try {
-            const res = (await postData(`${BASE}/api/dating/profile/${row.id}/login`, {})).result || {};
-            showNotification(res.status === 'error' ? `Вход не прошёл: ${res.error}`
-                                                    : `Вход выполнен: ${res.scenario}`,
-                             res.status === 'error' ? 'error' : 'success');
-        } catch (e) {
-            showNotification('Проверить вход не вышло: ' + e.message, 'error');
+            return await run();
         } finally {
+            clearInterval(ticker);
             busy.delete(row.id);
             await profilesLoad();
+            await logLoad();
         }
     }
 
+    // «Пинг» — дешёвый опрос по сохранённым cookie, без браузера: секунды вместо
+    // минут. Он отвечает на вопрос «жив ли вход», но не чинит его: не признал
+    // сайт — дальше «Войти».
+    async function profilePing(row) {
+        await longRun(row, async () => {
+            try {
+                const res = (await postData(`${BASE}/api/dating/profile/${row.id}/ping`, {})).result || {};
+                showNotification(res.status === 'online' ? `В сети, ${res.ms} мс`
+                                                         : `Не в сети: ${res.error || res.status}`,
+                                 res.status === 'online' ? 'success' : 'error');
+            } catch (e) {
+                showNotification('Пинг не прошёл: ' + e.message, 'error');
+            }
+        });
+    }
+
+    async function profileSave(row, form) {
+        const data = new FormData(form);
+        try {
+            await putData(`${BASE}/api/dating/profile/${row.id}`, {
+                site_id: row.site_id,
+                login: String(data.get('login') || '').trim(),
+                password: String(data.get('password') || ''),
+                note: String(data.get('note') || '').trim(),
+                role: String(data.get('role') || 'lady'),
+            });
+            showNotification('Учётка сохранена', 'success');
+        } catch (e) {
+            showNotification('Не сохранилось: ' + e.message, 'error');
+            return;
+        }
+
+        await profilesLoad();
+    }
+
+    async function profileAuto(row, form) {
+        const data = new FormData(form);
+        try {
+            await putData(`${BASE}/api/dating/profile/${row.id}/auto`, {
+                auto_answer: data.get('auto_answer') !== null,
+                auto_answer_only: String(data.get('auto_answer_only') || '').trim(),
+            });
+            showNotification('Автоответ сохранён', 'success');
+        } catch (e) {
+            showNotification('Не сохранилось: ' + e.message, 'error');
+            return;
+        }
+
+        await profilesLoad();
+        await logLoad();
+    }
+
+    // Настоящий вход: сценарий проходит форму в живом браузере, снимает состояние
+    // и спрашивает сайт, признал ли он вход. Идёт минутами — сайт единственный,
+    // кто знает ответ, и торопить его нечем.
+    async function profileLogin(row) {
+        await longRun(row, async () => {
+            try {
+                const res = (await postData(`${BASE}/api/dating/profile/${row.id}/login`, {})).result || {};
+                showNotification(res.status === 'error' ? `Вход не прошёл: ${res.error}`
+                                                        : `Вход выполнен: ${res.scenario}`,
+                                 res.status === 'error' ? 'error' : 'success');
+            } catch (e) {
+                showNotification('Войти не вышло: ' + e.message, 'error');
+            }
+        });
+    }
+
+    async function profileDisconnect(row) {
+        if (!confirm(`Отключить «${row.name || row.login}»? Выйдем с сайта, закроем вкладки `
+                   + 'и снимем анкету с автовхода. Переписка и журнал останутся.')) return;
+
+        await longRun(row, async () => {
+            try {
+                const res = (await postData(`${BASE}/api/dating/profile/${row.id}/disconnect`, {})).result || {};
+                showNotification(res.logout ? 'Отключено, выход на сайте выполнен'
+                                            : 'Отключено; выход на сайте не подтверждён',
+                                 res.logout ? 'success' : 'info');
+            } catch (e) {
+                showNotification('Отключить не вышло: ' + e.message, 'error');
+            }
+        });
+    }
+
+    async function profileDelete(row) {
+        if (!confirm(`Удалить «${row.name || row.login}»? Вместе с учёткой уйдут её `
+                   + 'переписка, собеседницы и журнал. Отменить будет нечем.')) return;
+
+        try {
+            await deleteData(`${BASE}/api/dating/profile/${row.id}`);
+            showNotification('Учётка удалена', 'success');
+        } catch (e) {
+            showNotification('Удалить не вышло: ' + e.message, 'error');
+            return;
+        }
+
+        // Закрываем до перезагрузки: строки больше нет, и раскрытой ей быть негде.
+        openSet(0);
+        await profilesLoad();
+    }
+
+    // ── Обвязка страницы ─────────────────────────────────────────────────────
+
     siteEl.addEventListener('change', () => {
-        localStorage.setItem(SITE_KEY, siteEl.value);
+        localStorage.setItem(DATING_SITE_KEY, siteEl.value);
         // Страницу сбрасываем: седьмая страница чужих учёток ничего не значит.
+        // Раскрытую — тоже: её анкета осталась на прежнем сайте.
         page = 0;
+        openSet(0);
         empty('Гружу…');
         profilesLoad();
     });
@@ -360,16 +710,24 @@
         resizeTimer = setTimeout(() => { if (profiles.length) tablePaint(); }, 150);
     });
 
-    // Своим кругом список не освежается, пока идёт долгое действие или вкладку
-    // не смотрят: перерисовка посреди входа затёрла бы «жду…», а фоновая вкладка
-    // ходила бы на сервер впустую.
+    // Своим кругом список не освежается, пока идёт долгое действие, раскрыта
+    // карточка или вкладку не смотрят. Про карточку — главное: в ней поля ввода,
+    // и перерисовка посреди правки стёрла бы набранное вместе с местом курсора.
+    // Свежесть от этого не страдает — состояние раскрытой анкеты видно в журнале,
+    // который ходит своим кругом.
     setInterval(() => {
-        if (busy.size || document.hidden) return;
+        if (busy.size || openId || document.hidden) return;
         profilesLoad();
     }, RELOAD_MS);
 
+    setInterval(() => {
+        if (busy.size || !openId || document.hidden) return;
+        logLoad();
+    }, LOG_MS);
+
     hintEl.textContent = 'состояние обновляется само';
     empty('Гружу…');
+    logPaint();
     sitesLoad();
 </script>
 {% endblock %}

@@ -38,6 +38,7 @@
 - **Правка страницы** → `.claude/docs/dashboard_frontend.md`
 - **Изменение схемы** → `.claude/docs/migration.md` (новый файл в `migrations/`, применённые не правят)
 - **Работа воркера** → `.claude/docs/worker.md`
+- **Новый сайт знакомств** → `.claude/docs/dating.md`, §5.0 (драйвер сайта: настройкой или файлом)
 - **Проверка после правок** → `.claude/docs/testing.md`
 
 ## Key Files
@@ -47,6 +48,9 @@
 | `main_uvicorn.py` | Точка входа: middleware, схема на старте, роутеры |
 | `src/rhapsody/rhapsody_api.py` | **Единственная** дверь к RhapsodyAi |
 | `src/dating/dating_chat.py` | Приём сообщений вебсокетом |
+| `src/dating/site/site_base.py` | Протокол чата по настройке: интерфейс драйвера сайта |
+| `src/dating/site/site_goldenbride.py` | Протокол Goldenbride: имена кадров и ULID |
+| `src/dating/site/site_registry.py` | Выбор драйвера по `presence.driver` |
 | `src/dating/dating_chat_hold.py` | Держатель сокетов: присутствие и автоответ |
 | `src/dating/dating_send.py` | Отправка сообщения кадром сокета |
 | `src/dating/dating_answer.py` | Ответ агента: кого спросить и что отправить |
@@ -64,7 +68,8 @@
 | `src/uvicorn/routers/users.py` | Пользователи: учётки, роли, токены доступа |
 | `data/uvicorn/template/base.html` | Шапка панели: разделы и подпункты |
 | `data/uvicorn/public/css/dating_page.css` | Общее оформление двух страниц раздела Dating |
-| `data/uvicorn/public/js/dating_view.js` | Общая отрисовка учётки: точка, бейджи, время |
+| `data/uvicorn/public/js/dating_view.js` | Общая отрисовка учётки: точка, бейджи, время, журнал |
+| `data/uvicorn/public/js/dating_site.js` | Общий селект сайта: загрузка и ключ выбора на весь раздел |
 | `src/auth/auth.py` | Вход в панель: сессия или токен, две роли |
 | `src/auth/auth_users.py` | Управление людьми: кого и что менять нельзя |
 | `src/worker/dating/chat_worker.py` | Смена держателя, очередь `dating` |

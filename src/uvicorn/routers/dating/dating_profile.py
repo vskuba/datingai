@@ -68,6 +68,11 @@ class DatingProfileSave(BaseModel):
     login: str = Field(..., min_length=1, max_length=190)
     password: str = Field('', max_length=255, description='Пусто при правке — прежний остаётся')
     note: str = Field('', max_length=255)
+    # Роль решает, каким сценарием входить: мужской и женский кабинеты — разные
+    # приложения на одном домене. По умолчанию женская: анкеты заводят под неё, а
+    # форма заведения на «Анкетах» роль не спрашивает и это поле не шлёт.
+    role: str = Field('lady', pattern='^(lady|man)$',
+                      description='Чей кабинет на сайте: lady | man')
 
     @field_validator('login', 'note')
     @classmethod
@@ -88,6 +93,7 @@ class DatingProfileResponse(BaseModel):
     id: int = Field(..., description='Идентификатор учётки', examples=[3])
     site_id: int = Field(..., description='Сайт-закладка', examples=[19])
     login: str = Field(..., description='Логин или почта', examples=['natalia@example.com'])
+    role: str = Field('lady', description='Чей кабинет на сайте: lady | man')
     name: str = Field('', description='Имя из анкеты; пусто — анкету ещё не читали')
     photo: str = Field('', description='Фотография из анкеты, полный адрес')
     has_password: bool = Field(..., description='Пароль задан — под учёткой можно входить')
@@ -134,7 +140,7 @@ async def dating_profile_list(site_id: int = 0,
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT g.id, g.site_id, g.login, g.note, g.status, g.unread, g.last_seen_at, '
+            'SELECT g.id, g.site_id, g.login, g.note, g.role, g.status, g.unread, g.last_seen_at, '
             '       g.last_error, g.profile, g.auto_answer, g.auto_answer_only, '
             '       g.keep_online, g.relogin_since, g.relogin_next_at, NOW() AS db_now, '
             '       g.password <> %s AS has_password, '
@@ -180,7 +186,7 @@ async def dating_profile_create(data: DatingProfileSave,
     try:
         profile_id = await DatingProfileRepository().add({
             'site_id': data.site_id, 'login': data.login,
-            'password': data.password, 'note': data.note})
+            'password': data.password, 'note': data.note, 'role': data.role})
     except Exception as e:
         raise HTTPException(status_code=409, detail=_save_error(e, data.login))
 
@@ -195,7 +201,8 @@ async def dating_profile_update(profile_id: int, data: DatingProfileSave,
     await _profile_row(profile_id)
     await _site_check(data.site_id)
 
-    values = {'site_id': data.site_id, 'login': data.login, 'note': data.note}
+    values = {'site_id': data.site_id, 'login': data.login,
+              'note': data.note, 'role': data.role}
     if data.password:
         values['password'] = data.password
 
@@ -450,15 +457,7 @@ async def dating_profile_probe(site_id: int = 0,
 
     async with mysql_get_db_async() as db:
         for profile, result in done:
-            # `last_seen_at` двигаем только у подтверждённого входа: у него смысл
-            # «когда сайт последний раз признал учётку», а не «когда мы стучались».
-            seen = 'NOW()' if result['status'] == 'online' else 'last_seen_at'
-            await db.execute(
-                f'UPDATE dating_profile SET status = %s, unread = %s, last_error = %s, '
-                f'       last_seen_at = {seen} WHERE id = %s',
-                (result['status'],
-                 result['unread'] if result['unread'] >= 0 else 0,
-                 result['error'], profile['id']))
+            await _probe_write(db, int(profile['id']), result)
         await db.connection.commit()
 
     # В журнал ошибок — только смена состояния, а не каждый неудачный круг: опрос
@@ -476,6 +475,42 @@ async def dating_profile_probe(site_id: int = 0,
     return {'result': {'checked': len(done), 'online': online,
                        'profiles': [{'id': g['id'], 'status': r['status'], 'unread': r['unread'],
                                   'error': r['error'], 'ms': r['ms']} for g, r in done]}}
+
+
+@router.post('/{profile_id}/ping', include_in_schema=False)
+async def dating_profile_ping(profile_id: int,
+                              user=Depends(auth_required)):
+    """Пинг одной учётки: жив ли вход, прямо сейчас.
+
+    Тот же дешёвый опрос, что и у `/probe`, но по одной анкете и по нажатию.
+    Идёт по HTTP с сохранёнными cookie, без браузера, и отвечает за секунды —
+    в отличие от «Войти», где сценарий в живом Chromium занимает минуты.
+
+    Побочного действия у него нет: сессию не заводит, вход не чинит. Ответ
+    «сайт не признал вход» — это ответ, а не отказ ручки, и разбираться с ним
+    человеку кнопкой «Войти».
+    """
+    profile = await _profile_row(profile_id)
+    site = await _site_check(int(profile['site_id']))
+
+    presence = dating_json_load(site.get('presence'))
+    if not dating_presence_ready(presence):
+        raise HTTPException(status_code=422,
+                            detail='у сайта не настроен опрос присутствия (browser_site.presence)')
+
+    result = await dating_presence_probe(profile, presence)
+
+    async with mysql_get_db_async() as db:
+        await _probe_write(db, profile_id, result)
+        await db.connection.commit()
+
+    # В журнал — каждый пинг, в отличие от кругового опроса: там строка на каждую
+    # из сотни учёток раз в 15 секунд залила бы ленту, здесь же это нажатие
+    # человека, и след от него — ровно то, за чем в журнал потом и смотрят.
+    await dating_log_write(profile_id, 'ok' if result['status'] == 'online' else 'fail',
+                           f"Пинг: {result['error'] or result['status']}, {result['ms']} мс")
+
+    return {'result': result}
 
 
 @router.get('/{profile_id}/message', include_in_schema=False)
@@ -526,6 +561,11 @@ async def dating_profile_listen(profile_id: int, seconds: int = 30,
     работа воркера, а страница дёргает её, когда человек смотрит на карточку.
     """
     profile = await _profile_row(profile_id)
+    # Настройка сайта нужна не только адресу: по ней выбирается драйвер протокола
+    # чата — имена методов и форма кадров у каждого сайта свои.
+    site = await _site_check(int(profile['site_id']))
+    presence = dating_json_load(site.get('presence'))
+
     if not str(profile.get('ws_url') or ''):
         try:
             profile['ws_url'] = await dating_login_ws_capture(profile)
@@ -537,7 +577,8 @@ async def dating_profile_listen(profile_id: int, seconds: int = 30,
             raise HTTPException(status_code=422,
                                 detail='не удалось снять адрес чат-сокета: сначала «Залогиниться»')
 
-    result = await dating_chat_listen(profile, seconds=max(5, min(int(seconds or 30), 120)))
+    result = await dating_chat_listen(profile, seconds=max(5, min(int(seconds or 30), 120)),
+                                      presence=presence)
 
     # Протухший адрес — обычное дело: токены в нём живут не вечно. Снимаем заново
     # и пробуем ещё раз, чтобы человеку не приходилось гадать, почему пусто.
@@ -549,7 +590,8 @@ async def dating_profile_listen(profile_id: int, seconds: int = 30,
             # попыткой — и это снова 422, а не 500.
             raise HTTPException(status_code=422, detail=str(e))
         if profile['ws_url']:
-            result = await dating_chat_listen(profile, seconds=max(5, min(int(seconds or 30), 120)))
+            result = await dating_chat_listen(profile, seconds=max(5, min(int(seconds or 30), 120)),
+                                              presence=presence)
 
     if result.get('error'):
         await rhapsody_api_error_write('dating', f"чат-сокет: {result['error']}",
@@ -747,6 +789,29 @@ async def _session_open_for(site: dict, profile: dict) -> str:
     return await rhapsody_api_session_open(url=site['url'], name=str(profile['login'])[:100],
                                           site_id=int(site['id']),
                                           storage_state=profile.get('storage_state') or {})
+
+
+async def _probe_write(db, profile_id: int, result: dict) -> None:
+    """Кладёт итог опроса присутствия в карточку учётки. Без `commit` — его делает
+    вызвавший: круговой опрос пишет сотню строк одной транзакцией.
+
+    Одна на круговой опрос (`/probe`) и на пинг одной анкеты (`/{id}/ping`): у
+    результата есть правило, которое нельзя знать по-разному в двух местах, —
+    **`last_seen_at` двигает только подтверждённый вход.** Смысл поля «когда сайт
+    последний раз признал учётку», а не «когда мы стучались»; сдвинь его неудачный
+    опрос — и по колонке «Вход» уже не отличить живую анкету от той, что отвалилась
+    неделю назад.
+
+    `unread = -1` («не спрашивали») кладём нулём: колонка целочисленная и означает
+    количество, а минус первое письмо ничего не значит.
+    """
+    seen = 'NOW()' if result['status'] == 'online' else 'last_seen_at'
+    await db.execute(
+        f'UPDATE dating_profile SET status = %s, unread = %s, last_error = %s, '
+        f'       last_seen_at = {seen} WHERE id = %s',
+        (result['status'],
+         result['unread'] if result['unread'] >= 0 else 0,
+         result['error'], int(profile_id)))
 
 
 async def _profile_row(profile_id: int) -> dict:

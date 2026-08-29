@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════
-   Страницы раздела Dating: «Чаты» и «Профили».
+   Страницы раздела Dating: «Анкеты» и «Профили».
 
    Вынесено из `dating.html`, когда те же куски понадобились «Профилям». Копия
    разъехалась бы с оригиналом на первой же правке, а это соседние пункты одного
@@ -7,7 +7,7 @@
    разделы системы.
 
    Здесь только общее — обойма страницы, шапка и белая панель. Раскладка внутри
-   остаётся у самой страницы: у «Чатов» это сетка на три колонки с разделителями,
+   остаётся у самой страницы: у «Анкет» это сетка на три колонки с разделителями,
    у «Профилей» — одна колонка под таблицу. Поэтому `grid-template-*` в этом
    файле нет.
 
@@ -117,6 +117,28 @@
     font-size: 12px; font-family: inherit; text-transform: none; letter-spacing: normal;
 }
 .pane-find:focus { outline: none; border-color: #c7d2fe; }
+
+/* ── Журнал учётки ── */
+
+/* Одни и те же строки одной и той же ручки (`GET /api/dating/profile/{id}/log`)
+   на «Анкетах» и «Профилях», поэтому вид у них общий. Цвет здесь — не украшение:
+   уровень отличает ход работы (`info`) от отказа (`fail`) и от реплик чата
+   (`in`/`out`), и в ленте из сотни строк глазом ищут именно красное.
+
+   Разметку собирает `logRender` в `dating_view.js` — пара «класс + тег» правится
+   в одном месте. */
+.log-row { display: flex; gap: 8px; padding: 2px 0; font-size: 12px; border-bottom: 1px solid #f8fafc; }
+.log-time { flex: 0 0 auto; color: #94a3b8; font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+.log-text { flex: 1 1 auto; min-width: 0; word-break: break-word; }
+.log-row.ok .log-text { color: #166534; }
+.log-row.fail .log-text { color: #b91c1c; font-weight: 600; }
+.log-row.in .log-text { color: #4338ca; }
+.log-row.out .log-text { color: #92400e; }
+.log-row.info .log-text { color: #475569; }
+
+/* Своё имя, а не общая `.empty`: та живёт в разметке «Анкет», а `logRender`
+   рисует журнал на двух страницах и зависеть от чужого класса не должен. */
+.log-empty { padding: 14px; color: #9ca3af; font-size: 12px; text-align: center; }
 
 /* ── Как выглядит учётка: лицо, точка, бейджи, тревога ── */
 

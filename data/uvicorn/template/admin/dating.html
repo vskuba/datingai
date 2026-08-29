@@ -156,16 +156,8 @@
         @media (prefers-reduced-motion: reduce) { .need { animation: none; } }
         .contact.wait .contact-bar { background: #fff7f7; }
 
-        /* ---------- Журнал ---------- */
-
-        .log-row { display: flex; gap: 8px; padding: 2px 0; font-size: 12px; border-bottom: 1px solid #f8fafc; }
-        .log-time { flex: 0 0 auto; color: #94a3b8; font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
-        .log-text { flex: 1 1 auto; min-width: 0; word-break: break-word; }
-        .log-row.ok .log-text { color: #166534; }
-        .log-row.fail .log-text { color: #b91c1c; font-weight: 600; }
-        .log-row.in .log-text { color: #4338ca; }
-        .log-row.out .log-text { color: #92400e; }
-        .log-row.info .log-text { color: #475569; }
+        /* Журнал (`.log-*`) переехал в `dating_page.css`: те же строки той же ручки
+           показывают и «Профили». */
 
         .empty { padding: 14px; color: #9ca3af; font-size: 12px; text-align: center; }
     </style>
@@ -226,7 +218,10 @@
     import {showNotification} from '{{ base }}/static/js/notification.js';
     // Значки и бейджи учётки — общие с «Профилями»: обе страницы рисуют строки
     // одной и той же ручки, и две копии разошлись бы в мелочах.
-    import {esc, statusTitle, warnBadge, workPills, pagerRender} from '{{ base }}/static/js/dating_view.js';
+    import {esc, statusTitle, warnBadge, workPills, pagerRender, logRender}
+        from '{{ base }}/static/js/dating_view.js';
+    // Загрузка селекта сайта — тоже общая: ключ выбора один на весь раздел.
+    import {DATING_SITE_KEY, datingSiteFill} from '{{ base }}/static/js/dating_site.js';
 
     // Под каким URI живёт панель. Локально пусто (корень домена), на проде —
     // `/dating`: домен один на два проекта, и делится он по пути. Прокси префикс
@@ -234,7 +229,6 @@
     // именно с префиксом — иначе запрос уйдёт соседу.
     const BASE = '{{ base }}';
 
-    const SITE_KEY = 'dating_site';
     const OPEN_KEY = 'dating_open_dialog';
     const SIZE_KEY = 'dating_layout';
     const PROBE_MS = 15000;
@@ -252,7 +246,7 @@
     const contactsPagerEl = document.getElementById('contactsPager');
     const pageEl = document.querySelector('.dating-page');
 
-    let sites = [], profiles = [], currentId = 0, probeBusy = false;
+    let profiles = [], currentId = 0, probeBusy = false;
     let openUid = localStorage.getItem(OPEN_KEY) || '';
     let profilesPage = 0;
     // Страница собеседниц живёт здесь, а не в разметке: карточка перерисовывается
@@ -271,16 +265,11 @@
 
     async function sitesLoad() {
         try {
-            sites = (await getData(BASE + '/api/site')).result || [];
+            await datingSiteFill(siteEl, BASE);
         } catch (e) {
             say('список сайтов не пришёл: ' + e.message, true);
             return;
         }
-        const saved = localStorage.getItem(SITE_KEY);
-        siteEl.innerHTML = sites.length
-            ? sites.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('')
-            : '<option value="">сайтов нет</option>';
-        if (saved && sites.some(r => String(r.id) === saved)) siteEl.value = saved;
         profilesLoad();
     }
 
@@ -543,23 +532,6 @@
         });
     }
 
-    // Отметка времени в журнале: «19/08 11:39:23» — день и месяц перед временем.
-    //
-    // Дата нужна потому, что журнал хранит записи за много дней, а одно голое
-    // время не отличает вчерашнюю попытку входа от сегодняшней — при разборе
-    // «почему анкета не входит» это первое, что нужно знать.
-    //
-    // Год не показываем: строка стоит перед каждой записью, а разбирают журнал
-    // за последние дни. Резать по индексам можно, потому что формат фиксирован
-    // (`YYYY-MM-DDTHH:MM:SS.ffffff` от FastAPI); разъедется он — здесь и будет
-    // видно, а не в тихо неверной дате.
-    function logStamp(value) {
-        const raw = String(value || '');
-        if (raw.length < 19) return raw;
-
-        return `${raw.slice(8, 10)}/${raw.slice(5, 7)} ${raw.slice(11, 19)}`;
-    }
-
     async function logLoad() {
         if (!currentId) return;
         // Та же гонка, что и в profileLoad(), и тот же приём: logLoad() тоже зовёт
@@ -580,13 +552,7 @@
         }
         if (currentId !== requestId) return;
 
-        const logScroll = logEl.scrollTop;
-        logEl.innerHTML = rows.length
-            ? rows.map(r => `<div class="log-row ${esc(r.level)}">
-                   <span class="log-time">${esc(logStamp(r.created_at))}</span>
-                   <span class="log-text">${esc(r.text)}</span></div>`).join('')
-            : '<div class="empty">записей нет — запустите «Проверку»</div>';
-        logEl.scrollTop = logScroll;
+        logRender(logEl, rows, 'записей нет — запустите «Проверку»');
     }
 
     // Отмечает карточку занятой и рисует это в её кнопке. Возвращает функцию,
@@ -805,7 +771,7 @@
     // Перерисовываем на месте, без запроса: список уже в памяти.
     findEl.addEventListener('input', () => { profilesPage = 0; profilesRender(); });
     siteEl.addEventListener('change', () => {
-        localStorage.setItem(SITE_KEY, siteEl.value);
+        localStorage.setItem(DATING_SITE_KEY, siteEl.value);
         currentId = 0;
         profilesLoad();
     });
