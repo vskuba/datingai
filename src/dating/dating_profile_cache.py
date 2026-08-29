@@ -10,6 +10,10 @@
 Что откуда брать — настройка сайта (`presence.profile` и `presence.contacts`),
 как и остальные ручки: у каждого сайта свои, и зашивать их в Python значило бы
 править код ради нового сайта.
+
+**Как называются поля в ответе — знает драйвер сайта** (`site_profile.py`), а не
+этот модуль. Здесь остаётся наша механика: сходить по адресу, разложить по
+таблицам, не уронить остальное на одной кривой записи.
 """
 
 import json
@@ -19,6 +23,7 @@ import httpx
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_presence import DATING_PRESENCE_TIMEOUT, DATING_PRESENCE_UA
+from src.dating.site.site_registry import dating_site_profile
 
 # Сколько собеседниц держим: список сайта отдаёт сотни, а на странице читаются
 # те, с кем есть переписка.
@@ -66,16 +71,21 @@ async def _profile_load(client, profile: dict, presence: dict) -> bool:
     if not isinstance(user, dict) or not user:
         return False
 
-    profile = {'id': user.get('id') or profile.get('login'),
-               'name': user.get('firstName') or user.get('name') or '',
-               'photo': _photo(user, presence),
-               'age': user.get('age') or 0,
-               'city': user.get('city') or user.get('from') or '',
-               'about': user.get('about') or user.get('description') or ''}
+    # `card`, а не `profile`: **это разные вещи, и путать их нельзя.** `profile` —
+    # учётка в нашей базе, `card` — анкета, прочитанная с сайта; так они зовутся и
+    # на страницах панели (`.profile*` против `.card*`), и в `dating_agent_ensure`.
+    #
+    # Здесь на этом уже обожглись: словарь анкеты присваивался в ту же переменную
+    # `profile`, и `WHERE id` получал идентификатор **с сайта** вместо номера нашей
+    # строки. Кэш уходил в чужую строку или в никуда, а функция возвращала
+    # «сохранено»; когда же сайт не давал `id`, в `int()` попадал логин, и
+    # обновление падало целиком. Живых анкет в кэше не было ни одной — только
+    # посеянные.
+    card = dating_site_profile(presence).card_parse(user, str(profile.get('login') or ''))
 
     async with mysql_get_db_async() as db:
         await db.execute('UPDATE dating_profile SET profile = %s WHERE id = %s',
-                         (json.dumps(profile, ensure_ascii=False), int(profile['id'])))
+                         (json.dumps(card, ensure_ascii=False), int(profile['id'])))
         await db.connection.commit()
 
     return True
@@ -99,12 +109,13 @@ async def _contacts_load(client, profile: dict, presence: dict) -> int:
     if not isinstance(items, list):
         return 0
 
+    site = dating_site_profile(presence)
     saved = 0
     async with mysql_get_db_async() as db:
         for item in items[:DATING_PROFILE_CACHE_CONTACT_LIMIT]:
             if not isinstance(item, dict):
                 continue
-            values = _contact_values(item, int(profile['id']), presence)
+            values = _contact_values(item, int(profile['id']), site)
             if values is None:
                 continue
             await db.execute(
@@ -119,33 +130,19 @@ async def _contacts_load(client, profile: dict, presence: dict) -> int:
     return saved
 
 
-def _contact_values(item: dict, profile_id: int, presence: dict) -> tuple | None:
+def _contact_values(item: dict, profile_id: int, site) -> tuple | None:
     """Строка `dating_contact` из ответа сайта. `None` — записывать нечего.
 
-    Вынесено из запроса отдельно, чтобы правила разбора проверялись без сети и
-    базы: цена ошибки здесь — молча битые данные у всех собеседниц разом.
+    Разбор у драйвера, здесь — раскладка по колонкам в порядке `INSERT`. Порядок
+    и есть смысл этой функции: перепутанные местами имя и город не уронят ничего,
+    они просто окажутся не в тех колонках у всех собеседниц разом.
     """
-    # Ключ таблицы — пара `profile_id, uid`, и пустой `uid` склеил бы всех
-    # безымянных в одну строку.
-    uid = str(item.get('id') or item.get('ladyId') or '').strip()
-    if not uid:
+    row = site.contact_parse(item)
+    if row is None:
         return None
 
-    # Через `_photo`, а не сырьём: сайт отдаёт фотографию то полным адресом на
-    # CDN, то путём от своего корня, и второй вариант страница подставляет в
-    # `<img src>` как есть — браузер достроил бы его до адреса панели.
-    return (profile_id, uid[:32], str(item.get('firstName') or '')[:190],
-            _photo(item, presence)[:500], int(item.get('age') or 0),
-            str(item.get('from') or '')[:190], 1 if item.get('isOnline') else 0)
-
-
-def _photo(user: dict, presence: dict) -> str:
-    """Адрес фотографии: сайт отдаёт то полный, то относительный."""
-    photo = str(user.get('url') or user.get('photo') or '').strip()
-    if photo.startswith('http') or not photo:
-        return photo
-
-    return str(presence.get('base', '')).rstrip('/') + '/' + photo.lstrip('/')
+    return (profile_id, row['uid'], row['name'], row['photo'],
+            row['age'], row['city'], row['online'])
 
 
 def _cookies(profile: dict, presence: dict) -> dict:

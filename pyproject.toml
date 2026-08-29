@@ -1,7 +1,19 @@
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Область цикла для async-фикстур. Задана явно, потому что значение по умолчанию
+# у pytest-asyncio меняется, и он предупреждает об этом на каждом прогоне —
+# предупреждение на всю сюиту прячет настоящие.
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+# Гасим одно чужое предупреждение: pytest-asyncio 0.25 зовёт
+# `asyncio.get_event_loop_policy()`, а Python 3.14 объявил его устаревшим. Полторы
+# тысячи одинаковых строк на прогон прячут настоящие предупреждения, а починить
+# это у себя нечем — код чужой. Фильтр узкий намеренно: остальные `DeprecationWarning`
+# обязаны быть видны.
+filterwarnings = [
+    "ignore:'asyncio.[gs]et_event_loop_policy' is deprecated:DeprecationWarning",
+]
 # `py_modules` — общая библиотека отдельным каталогом, а не установленным пакетом.
 pythonpath = [".", "py_modules"]

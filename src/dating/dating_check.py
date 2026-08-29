@@ -73,7 +73,7 @@ async def dating_check_run(profile: dict, presence: dict, ws_capture) -> dict:
     await dating_log_write(profile_id, 'ok', 'Чат открыт, подключение установлено')
 
     # 3. Чтение: слушаем сокет и складываем входящие.
-    listen = await dating_chat_listen(profile, seconds=DATING_CHECK_LISTEN_SEC)
+    listen = await dating_chat_listen(profile, seconds=DATING_CHECK_LISTEN_SEC, presence=presence)
     if listen['error'] and not listen['frames']:
         await dating_log_write(profile_id, 'fail', f"Чтение чата не пошло: {listen['error']}")
         return _done(steps, False, listen['error'], started)

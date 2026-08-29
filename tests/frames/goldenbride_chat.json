@@ -1,0 +1,46 @@
+{
+  "hello": "{\"toId\":\"\",\"content\":\"\",\"method\":\"connectFromServer\"}",
+  "hello_again": "{\"toId\":\"\",\"content\":\"\",\"method\":\"reconnectFromServer\"}",
+
+  "incoming_live": "{\"toId\":\"\",\"content\":\"\",\"method\":\"receivePrivateMessage\",\"message\":\"{\\\"senderUid\\\":\\\"40317\\\",\\\"senderName\\\":\\\"Nadezhda\\\",\\\"message\\\":\\\"Привет! Как твои дела?\\\",\\\"messageIdForConfirm\\\":\\\"01J8QK3F2M7NPQRSTVWXYZ0123\\\",\\\"isMan\\\":true}\"}",
+
+  "incoming_from_woman": "{\"toId\":\"\",\"content\":\"\",\"method\":\"receivePrivateMessage\",\"message\":\"{\\\"senderUid\\\":\\\"40412\\\",\\\"senderName\\\":\\\"Marina\\\",\\\"message\\\":\\\"Расскажи о себе\\\",\\\"messageIdForConfirm\\\":\\\"01J8QK3F2M7NPQRSTVWXYZ0124\\\",\\\"isMan\\\":false}\"}",
+
+  "incoming_echo": "{\"toId\":\"\",\"content\":\"\",\"method\":\"receivePrivateMessage\",\"message\":\"{\\\"senderUid\\\":\\\"natalia@example.com\\\",\\\"senderName\\\":\\\"Natalia\\\",\\\"message\\\":\\\"это наш собственный текст\\\",\\\"messageIdForConfirm\\\":\\\"01J8QK3F2M7NPQRSTVWXYZ0125\\\",\\\"isMan\\\":false}\"}",
+
+  "incoming_no_name": "{\"toId\":\"\",\"content\":\"\",\"method\":\"receivePrivateMessage\",\"message\":\"{\\\"senderUid\\\":\\\"40317\\\",\\\"message\\\":\\\"без имени отправителя\\\",\\\"messageIdForConfirm\\\":\\\"01J8QK3F2M7NPQRSTVWXYZ0126\\\"}\"}",
+
+  "incoming_no_uid": "{\"toId\":\"\",\"content\":\"\",\"method\":\"receivePrivateMessage\",\"message\":\"{\\\"senderName\\\":\\\"Nadezhda\\\",\\\"message\\\":\\\"кто это написал — неизвестно\\\",\\\"messageIdForConfirm\\\":\\\"01J8QK3F2M7NPQRSTVWXYZ0127\\\"}\"}",
+
+  "incoming_empty_text": "{\"toId\":\"\",\"content\":\"\",\"method\":\"receivePrivateMessage\",\"message\":\"{\\\"senderUid\\\":\\\"40317\\\",\\\"senderName\\\":\\\"Nadezhda\\\",\\\"message\\\":\\\"   \\\",\\\"messageIdForConfirm\\\":\\\"01J8QK3F2M7NPQRSTVWXYZ0128\\\"}\"}",
+
+  "incoming_no_confirm_id": "{\"toId\":\"\",\"content\":\"\",\"method\":\"receivePrivateMessage\",\"message\":\"{\\\"senderUid\\\":\\\"40317\\\",\\\"senderName\\\":\\\"Nadezhda\\\",\\\"message\\\":\\\"кадр без номера подтверждения\\\"}\"}",
+
+  "incoming_body_broken": "{\"toId\":\"\",\"content\":\"\",\"method\":\"receivePrivateMessage\",\"message\":\"{это не json}\"}",
+
+  "incoming_body_object": "{\"toId\":\"\",\"content\":\"\",\"method\":\"receivePrivateMessage\",\"message\":{\"senderUid\":\"40317\",\"senderName\":\"Nadezhda\",\"message\":\"тело объектом, а не строкой\",\"messageIdForConfirm\":\"01J8QK3F2M7NPQRSTVWXYZ0129\"}}",
+
+  "pending": "{\"toId\":\"\",\"content\":\"\",\"method\":\"notSendMessages\",\"message\":\"[{\\\"id\\\":\\\"40317\\\",\\\"text\\\":\\\"писала, пока тебя не было\\\",\\\"messageIdForConfirm\\\":\\\"01J8QK3F2M7NPQRSTVWXYZ0130\\\"},{\\\"id\\\":\\\"40412\\\",\\\"text\\\":\\\"и я тоже писала\\\",\\\"messageIdForConfirm\\\":\\\"01J8QK3F2M7NPQRSTVWXYZ0131\\\"}]\"}",
+
+  "pending_empty": "{\"toId\":\"\",\"content\":\"\",\"method\":\"notSendMessages\",\"message\":\"[]\"}",
+
+  "pending_broken_item": "{\"toId\":\"\",\"content\":\"\",\"method\":\"notSendMessages\",\"message\":\"[{\\\"id\\\":\\\"\\\",\\\"text\\\":\\\"без отправителя\\\"},{\\\"id\\\":\\\"40317\\\",\\\"text\\\":\\\"\\\"},\\\"строка вместо объекта\\\",{\\\"id\\\":\\\"40412\\\",\\\"text\\\":\\\"единственная годная\\\",\\\"messageIdForConfirm\\\":\\\"01J8QK3F2M7NPQRSTVWXYZ0132\\\"}]\"}",
+
+  "ack_server": "{\"toId\":\"40317\",\"content\":\"\",\"method\":\"confirmFromServer\",\"messageIdForConfirm\":\"01J8QK3F2M7NPQRSTVWXYZ0140\"}",
+
+  "ack_echo_client": "{\"toId\":\"40317\",\"content\":\"\",\"method\":\"confirmFromClient\",\"messageIdForConfirm\":\"01J8QK3F2M7NPQRSTVWXYZ0140\"}",
+
+  "refuse_words": "{\"toId\":\"40317\",\"content\":\"\",\"method\":\"limitSecond\",\"message\":\"{\\\"error\\\":\\\"Message not delivered. Unacceptable words: telegram\\\"}\",\"messageIdForConfirm\":\"01J8QK3F2M7NPQRSTVWXYZ0140\"}",
+
+  "refuse_limit": "{\"toId\":\"40317\",\"content\":\"\",\"method\":\"limit\",\"message\":\"{\\\"error\\\":\\\"Message not delivered. Not more than one message per minute\\\"}\",\"messageIdForConfirm\":\"01J8QK3F2M7NPQRSTVWXYZ0140\"}",
+
+  "offline_user": "{\"toId\":\"40317\",\"content\":\"\",\"method\":\"offlineUser\",\"messageIdForConfirm\":\"01J8QK3F2M7NPQRSTVWXYZ0140\"}",
+
+  "foreign_billing": "{\"toId\":\"\",\"content\":\"\",\"method\":\"billings\",\"message\":\"{\\\"credits\\\":42}\"}",
+
+  "foreign_ping": "{\"toId\":\"\",\"content\":\"\",\"method\":\"ping\"}",
+
+  "garbage": "это вообще не json",
+
+  "json_array": "[1, 2, 3]"
+}

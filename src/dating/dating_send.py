@@ -1,33 +1,26 @@
 """Отправка сообщения в чат — тем же путём, каким его шлёт страница сайта.
 
 Отдельным модулем, а не внутри проверки: отправку зовут и из проверки, и из
-будущих цепочек ответов, и правило у неё одно — писать по настройке сайта
+цепочек ответов, и правило у неё одно — писать по настройке сайта
 (`browser_site.presence.send`), а не по зашитому в код адресу.
 
-**Транспорт задаётся настройкой.** У Goldenbride чат живёт вебсокетом: страница
-шлёт кадр `sendPrivateMessage` в то же соединение, откуда читает входящие, — это
-снято с живой страницы, HTTP-ручки отправки у сайта нет. Другие сайты шлют
-обычным POST, поэтому остаются оба пути: `transport: "ws"` и `transport: "http"`.
+**Транспорт задаётся настройкой.** У одних сайтов чат живёт вебсокетом: страница
+шлёт кадр в то же соединение, откуда читает входящие, и HTTP-ручки отправки у
+сайта нет вовсе. Другие шлют обычным POST, поэтому остаются оба пути:
+`transport: "ws"` и `transport: "http"`.
 
 Отказ сайта («нет средств», «нужно приглашение») ошибкой **не считается**:
 механика цела, просто действие платное. Отличить одно от другого умеет только
 вызывающий, поэтому здесь возвращается причина, а решение — на нём.
 
-**Соединение обязано согласовать подпротокол `chat`.** Без него сокет
-устанавливается, входящие приходят — а всё, что шлёт клиент, сервер игнорирует
-молча: ни ответа, ни ошибки. Ровно из-за этого сообщения месяцами уходили в
-никуда, тогда как те же кадры со страницы доходили. Разница нашлась только в
-заголовках рукопожатия браузера (`Sec-WebSocket-Protocol: chat`).
-
-Доставку подтверждает сам сервер кадром `confirmFromServer`. Его отсутствие —
-не мелочь: это и есть «не доставлено». Отказ сайт называет прямо, например
-`limitSecond` с текстом «Message not delivered. Unacceptable words: …» — у него
-свой фильтр содержимого, и такой ответ надо показывать человеку, а не прятать.
+**Как выглядят кадры и что считать доставкой — знает драйвер сайта**
+(`src/dating/site/`). Здесь остаётся порядок разговора: дождаться приветствия,
+открыть диалог, послать, дождаться ответа. Порядок один на все сайты, а имена
+методов и форма кадра — свои у каждого.
 """
 
 import asyncio
 import json
-import secrets
 import time
 
 import httpx
@@ -37,63 +30,16 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_presence import DATING_PRESENCE_TIMEOUT, DATING_PRESENCE_UA
-
-# Метки подстановки в шаблоне кадра или тела: сайты называют поля по-разному, и
-# подстановка избавляет от кода под каждый.
-DATING_SEND_TO = '{{to}}'
-DATING_SEND_TEXT = '{{text}}'
-DATING_SEND_UID = '{{uid}}'
+from src.dating.site.site_base import dating_site_render
+from src.dating.site.site_registry import dating_site_chat
 
 # Сколько ждать ответного кадра после отправки. Сайт отвечает за доли секунды,
 # а молчание — обычное дело: подтверждения шлют не все.
 DATING_SEND_ACK_SEC = 6.0
 
-# Идентификатор сообщения: 26-значный ULID, как у страницы. Первые десять знаков
-# — время в миллисекундах, остальные случайны. Алфавит Crockford base32 (без
-# I, L, O, U, чтобы не путались с цифрами).
-DATING_SEND_UID_LEN = 26
-DATING_SEND_ULID_TIME_LEN = 10
-DATING_SEND_ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
-
-# Подпротокол вебсокета. Браузер согласует `chat` заголовком
-# `Sec-WebSocket-Protocol`, и сервер отвечает тем же. Без него соединение
-# устанавливается и даже принимает входящие, но **всё присланное клиентом
-# игнорируется молча**: ни ответа, ни ошибки. Именно поэтому наши сообщения
-# уходили в никуда, а те же кадры со страницы доходили.
-DATING_SEND_SUBPROTOCOL = 'chat'
-
-# Отказ сайта. Методов у него несколько (`limit`, `limitSecond`, …), а общая часть
-# одна — он прямо пишет «Message not delivered» и объясняет причину: запрещённые
-# слова, не чаще одного сообщения в минуту и так далее. По этой фразе и узнаём,
-# а не по перечню методов, который назавтра пополнится.
-DATING_SEND_REFUSE_MARK = 'not delivered'
-
-# Собеседника нет в чате. Это не поломка и не отказ по правилам: в чате говорят
-# с тем, кто в чате. Сайт отвечает `offlineUser`, и такой ответ надо называть
-# своим именем — иначе «не подтвердил приём» выглядит как сбой у нас.
-DATING_SEND_OFFLINE_MARK = 'offlineUser'
-
-# Подтверждение сервера на принятое сообщение. Его отсутствие — не мелочь: без
-# него сообщение не доставлено.
-DATING_SEND_ACK_MARK = 'confirmFromServer'
-
-# Приветствие сервера, после которого он начинает слушать клиента. Второе имя —
-# для случая, когда соединение по этой учётке уже было.
-DATING_SEND_HELLO_MARKS = ('connectFromServer', 'reconnectFromServer')
-
 # Сколько ждать приветствия. Оно приходит за доли секунды; дольше ждать значит,
 # что соединение не поднялось.
 DATING_SEND_HELLO_SEC = 15.0
-
-# Прелюдия перед сообщением — ровно та, что шлёт страница сайта. Без неё сервер
-# принимает кадр и не доставляет его никому.
-DATING_SEND_BEFORE = ('getHistoryByContactIds', 'getChatInfo', 'startTyping', 'stopTyping')
-
-# Кадры, которым номер собеседника идёт в `toId`.
-DATING_SEND_BEFORE_TO = ('startTyping', 'stopTyping')
-
-# А этим — в `content`, через запятую: так страница открывает диалог.
-DATING_SEND_BEFORE_CONTENT = ('getHistoryByContactIds',)
 
 # Пауза между кадрами прелюдии: страница шлёт их не залпом, и сервер успевает
 # обработать каждый.
@@ -115,18 +61,24 @@ async def dating_send_message(profile: dict, presence: dict, to_uid: str, text: 
         анкеты сайт принимает и показывает в её же переписке, но мужчине оно не
         приходит даже когда тот сидит в чате и получает в это же время письма от
         других. Доставку открывает приглашение с его стороны (`needInvite`).
-        Ещё `error` — причина отказа, `response` — ответ сайта, `message_uid` —
-        под каким номером ушло.
+        Ещё `error` — причина отказа, `offline` — собеседника нет в чате (это
+        состояние, а не поломка), `response` — ответ сайта, `message_uid` — под
+        каким номером ушло.
+
+        **Ключи все пять и всегда**, каким бы путём ни шла отправка и чем бы ни
+        кончилась. Читателю не приходится помнить, какая ветка что кладёт, а
+        `offline` со значением `False` отличается от `offline`, которого нет.
     """
     send = presence.get('send') or {}
     if not send:
         return _fail('у сайта не настроена отправка (presence.send)')
 
-    message_uid = dating_send_uid()
+    site = dating_site_chat(presence)
+    message_uid = site.message_uid()
     transport = str(send.get('transport') or 'http').lower()
 
     if transport == 'ws':
-        result = await _send_ws(profile, send, to_uid, text, message_uid)
+        result = await _send_ws(profile, site, to_uid, text, message_uid)
     else:
         result = await _send_http(profile, presence, send, to_uid, text, message_uid)
 
@@ -139,73 +91,38 @@ async def dating_send_message(profile: dict, presence: dict, to_uid: str, text: 
     return result
 
 
-def dating_send_uid() -> str:
-    """Идентификатор сообщения в том же виде, в каком его делает страница — ULID.
+async def _send_ws(profile: dict, site, to_uid: str, text: str, message_uid: str) -> dict:
+    """Кадр в чат-сокет — так шлёт сама страница сайта.
 
-    Это не косметика. ULID несёт внутри время отправки: первые десять знаков —
-    миллисекунды, дальше случайность. Наш прежний идентификатор был просто
-    шестнадцатеричной строкой, и время в нём читалось как 14554 год.
-
-    Разбор живого обмена: сообщения, отправленные с настоящей страницы, доходят,
-    а точно такие же кадры от нашего клиента — нет. Единственное различие —
-    идентификатор.
+    Порядок разговора здесь, форма кадров — у драйвера сайта (`site`).
     """
-    stamp = int(time.time() * 1000)
-    head = ''
-    for _ in range(DATING_SEND_ULID_TIME_LEN):
-        head = DATING_SEND_ULID_ALPHABET[stamp % 32] + head
-        stamp //= 32
-
-    tail = ''.join(secrets.choice(DATING_SEND_ULID_ALPHABET)
-                   for _ in range(DATING_SEND_UID_LEN - DATING_SEND_ULID_TIME_LEN))
-
-    return head + tail
-
-
-async def _send_ws(profile: dict, send: dict, to_uid: str, text: str, message_uid: str) -> dict:
-    """Кадр в чат-сокет — так шлёт сама страница сайта."""
     url = str(profile.get('ws_url') or '').strip()
     if not url:
         return _fail('адрес чат-сокета не снят: сначала «Залогиниться»')
 
-    frame = _frame_build(send, to_uid, text, message_uid)
-    ack = send.get('ack') or {}
+    frame = site.send_frame(to_uid, text, message_uid)
 
     try:
         async with websockets.connect(url, open_timeout=DATING_PRESENCE_TIMEOUT,
-                                      subprotocols=[str(send.get('subprotocol')
-                                                        or DATING_SEND_SUBPROTOCOL)]) as socket:
+                                      subprotocols=[site.subprotocol()]) as socket:
             # Сначала дожидаемся приветствия сервера. До него он присланное молча
             # игнорирует — без ошибки, без отказа, просто в никуда. Именно так
             # уходили все наши сообщения: сайт принимал кадр, показывал его в
             # переписке отправителя, а адресату не доставлял ничего.
-            if not await _hello_wait(socket):
+            if not await _hello_wait(socket, site):
                 return _fail('чат не поздоровался: сообщение слать некуда')
 
-            await _open_dialog(socket, to_uid, send)
+            await _open_dialog(socket, to_uid, site)
             await socket.send(json.dumps(frame, ensure_ascii=False))
-            answer = await _ack_wait(socket, ack, message_uid)
+            answer = await _ack_wait(socket, site, message_uid)
     except Exception as e:
         return _fail(f'{type(e).__name__}: {e}')
 
-    if DATING_SEND_OFFLINE_MARK in answer:
-        return {'ok': False, 'error': 'собеседник вышел из чата — сообщение не принимается',
-                'offline': True, 'response': answer, 'message_uid': message_uid}
+    # Что означает ответ — решает драйвер: у каждого сайта свои метки отказа,
+    # свой признак «нет в чате» и своё подтверждение доставки.
+    read = site.ack_read(answer, message_uid)
 
-    refuse = str(ack.get('refuse_mark') or DATING_SEND_REFUSE_MARK).strip()
-    if refuse and refuse.lower() in answer.lower():
-        return {'ok': False, 'error': f'сайт отказал: {_refuse_reason(answer)}',
-                'response': answer, 'message_uid': message_uid}
-
-    # Принято сервером — это его собственное подтверждение, а не отсутствие
-    # ошибки. Молчание здесь означало ровно то, что сообщение никуда не пошло:
-    # ни адресату, ни в очередь. Раньше мы считали такое молчание удачей.
-    mark = str(ack.get('ok_mark') or DATING_SEND_ACK_MARK)
-    if mark and mark not in answer:
-        return {'ok': False, 'error': 'сайт не подтвердил приём сообщения',
-                'response': answer, 'message_uid': message_uid}
-
-    return {'ok': True, 'error': '', 'response': answer, 'message_uid': message_uid}
+    return {**read, 'response': answer, 'message_uid': message_uid}
 
 
 async def _send_http(profile: dict, presence: dict, send: dict, to_uid: str, text: str,
@@ -218,7 +135,7 @@ async def _send_http(profile: dict, presence: dict, send: dict, to_uid: str, tex
     if not cookies:
         return _fail('вход не выполнен')
 
-    body = _render(str(send.get('body') or ''), to_uid, text, message_uid)
+    body = dating_site_render(str(send.get('body') or ''), to_uid, text, message_uid)
 
     try:
         async with httpx.AsyncClient(timeout=DATING_PRESENCE_TIMEOUT, cookies=cookies,
@@ -237,61 +154,37 @@ async def _send_http(profile: dict, presence: dict, send: dict, to_uid: str, tex
     mark = str(send.get('ok_mark') or '').strip()
     ok = response.status_code == 200 and (mark in answer if mark else True)
 
-    return {'ok': ok, 'response': answer, 'message_uid': message_uid,
+    # `offline` здесь всегда `False`: «нет в чате» — понятие живого сокета, а по
+    # HTTP такого ответа не бывает. Ключ всё равно на месте — форма ответа у всех
+    # путей отправки одна, и читателю не надо помнить, каким она пришла.
+    return {'ok': ok, 'offline': False, 'response': answer, 'message_uid': message_uid,
             'error': '' if ok else f'сайт ответил {response.status_code}: {answer[:200]}'}
 
 
-def _frame_build(send: dict, to_uid: str, text: str, message_uid: str) -> dict:
-    """Кадр отправки по шаблону из настройки, с подставленными значениями."""
-    template = send.get('frame') or {'toId': DATING_SEND_TO, 'content': DATING_SEND_TEXT,
-                                     'method': 'sendPrivateMessage',
-                                     'messageIdForConfirm': DATING_SEND_UID}
-
-    return {key: _render(str(value), to_uid, text, message_uid)
-            for key, value in template.items()}
-
-
-async def _open_dialog(socket, to_uid: str, send: dict) -> None:
+async def _open_dialog(socket, to_uid: str, site) -> None:
     """Повторяет то, что страница делает перед отправкой.
 
-    Снято с живой страницы: после приветствия она спрашивает историю и сведения о
-    чате, а перед самим сообщением шлёт `startTyping`/`stopTyping`. Наш клиент
-    слал только сообщение — сервер принимал кадр и никому его не отдавал.
+    Снято с живых страниц: сайт может принять кадр сообщения и не доставить его
+    никому, если перед этим не открыть диалог. Какими кадрами это делается и куда
+    в каждом кладётся номер собеседника — знает драйвер сайта.
 
-    Что именно слать, задаётся настройкой (`send.before`): у другого сайта
-    прелюдия будет своя, а править ради этого Python не должно.
+    Пауза между кадрами здесь, а не у драйвера: она про то, как мы себя ведём —
+    страница шлёт их не залпом, и сервер успевает обработать каждый.
     """
-    steps = send.get('before')
-    if steps is None:
-        steps = DATING_SEND_BEFORE
-    if not steps:
-        return
-
-    for method in steps:
-        # У каждого кадра прелюдии своё место для номера собеседника, и это не
-        # придирка к форме: `getHistoryByContactIds` именно полем `content`
-        # открывает диалог. С пустым `content` сервер принимал сообщение и не
-        # доставлял его никому — так пропали все наши прежние отправки.
-        frame = {'toId': '', 'content': '', 'method': str(method)}
-        if method in DATING_SEND_BEFORE_TO:
-            frame['toId'] = str(to_uid)
-        if method in DATING_SEND_BEFORE_CONTENT:
-            frame['content'] = f'{to_uid},'
-
+    for frame in site.prelude_frames(to_uid):
         try:
             await socket.send(json.dumps(frame))
             await asyncio.sleep(DATING_SEND_BEFORE_PAUSE)
         except Exception as e:
-            logger_info(f'[dating] подготовка «{method}» не ушла: {e}')
+            logger_info(f"[dating] подготовка «{frame.get('method')}» не ушла: {e}")
             return
 
 
-async def _hello_wait(socket) -> bool:
+async def _hello_wait(socket, site) -> bool:
     """Ждёт приветствие сервера — до него отправлять бесполезно.
 
-    Сервер здоровается кадром `connectFromServer` (после разрыва —
-    `reconnectFromServer`) и только после этого начинает слушать клиента. Ровно
-    так же ведёт себя страница сайта: сначала приветствие, потом всё остальное.
+    Сервер здоровается и только после этого начинает слушать клиента; ровно так
+    же ведёт себя страница сайта. Чем именно он здоровается, знает драйвер.
     """
     deadline = time.monotonic() + DATING_SEND_HELLO_SEC
 
@@ -301,21 +194,21 @@ async def _hello_wait(socket) -> bool:
         except Exception:
             return False
 
-        if any(mark in str(raw) for mark in DATING_SEND_HELLO_MARKS):
+        if site.is_hello(raw):
             return True
 
     return False
 
 
-async def _ack_wait(socket, ack: dict, message_uid: str) -> str:
+async def _ack_wait(socket, site, message_uid: str) -> str:
     """Ждёт ответный кадр про наше сообщение. Молчание — не ошибка.
 
     Кадры чата идут потоком: входящие сообщения, статусы камер, пинги. Наш —
-    тот, где встретился номер отправленного сообщения либо имя метода из
-    настройки. Всё остальное пропускаем, а не считаем ответом.
+    тот, где встретился номер отправленного сообщения либо имя метода ответа,
+    если сайт его называет. Всё остальное пропускаем, а не считаем ответом.
     """
-    method = str(ack.get('method') or '').strip()
-    mark = str(ack.get('ok_mark') or DATING_SEND_ACK_MARK)
+    method = site.ack_method()
+    mark = site.ack_ok_mark()
     deadline = time.monotonic() + DATING_SEND_ACK_SEC
     seen = []
 
@@ -339,21 +232,6 @@ async def _ack_wait(socket, ack: dict, message_uid: str) -> str:
             break
 
     return ' | '.join(seen)
-
-
-def _refuse_reason(answer: str) -> str:
-    """Причина отказа человеческими словами, а не кадром целиком."""
-    for line in answer.split('\\"'):
-        if 'not delivered' in line.lower() or 'unacceptable' in line.lower():
-            return line.strip()
-
-    return answer[:200]
-
-
-def _render(template: str, to_uid: str, text: str, message_uid: str) -> str:
-    return (template.replace(DATING_SEND_TO, str(to_uid))
-                    .replace(DATING_SEND_TEXT, str(text))
-                    .replace(DATING_SEND_UID, str(message_uid)))
 
 
 def _cookies(profile: dict, presence: dict) -> dict:

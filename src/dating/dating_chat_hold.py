@@ -161,7 +161,7 @@ async def dating_chat_hold_profile(profile: dict, presence: dict, site_url: str,
 
     while time.monotonic() < deadline:
         left = deadline - time.monotonic()
-        result = await dating_chat_listen(profile, seconds=left)
+        result = await dating_chat_listen(profile, seconds=left, presence=presence)
         counters[profile_id] = counters.get(profile_id, 0) + int(result.get('saved') or 0)
 
         if not result.get('error'):
