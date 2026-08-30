@@ -35,7 +35,8 @@ from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_error_write,
 from src.dating.dating_chat import dating_chat_listen
 from src.dating.dating_json import dating_json_load
 from src.dating.dating_presence import dating_presence_beat, dating_presence_ready
-from src.dating.dating_revive import DATING_REVIVE_PERIOD_SEC, dating_revive_round
+from src.dating.dating_revive_round import (DATING_REVIVE_PERIOD_SEC,
+                                            dating_revive_round_run)
 from src.dating.dating_ws import dating_ws_capture
 
 # Как часто сверять список учёток с базой.
@@ -330,7 +331,7 @@ async def _revive_loop(deadline: float) -> None:
         await asyncio.sleep(min(DATING_REVIVE_PERIOD_SEC,
                                 max(1.0, deadline - time.monotonic())))
         try:
-            await dating_revive_round()
+            await dating_revive_round_run()
         except Exception as e:
             logger_info(f'[dating] круг восстановления: {e}')
 

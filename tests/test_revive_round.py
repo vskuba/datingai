@@ -18,15 +18,16 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from src.dating import dating_revive
-from src.dating.dating_revive import (DATING_REVIVE_PROBE_PARALLEL, dating_revive_plan,
-                                      dating_revive_round)
+from src.dating import dating_revive_login, dating_revive_round
+from src.dating.dating_revive import dating_revive_plan
+from src.dating.dating_revive_round import (DATING_REVIVE_PROBE_PARALLEL,
+                                            dating_revive_round_run)
 
 NOW = datetime(2026, 8, 18, 12, 0, 0)
 
 
 def _profile(**kw) -> dict:
-    """Строка учётки такой, какой её отдаёт `_profiles_kept`.
+    """Строка учётки такой, какой её отдаёт `dating_revive_db_profiles_kept`.
 
     Возраст входа приходит числом секунд, а не моментом времени: `logged_in_at`
     пишет `NOW()` базы, и вычитать его из `datetime.now()` контейнера значило бы
@@ -88,10 +89,11 @@ def _login_stub(state: dict, pause=timedelta(0), ok: bool = True, opens: tuple =
 def round_stub(monkeypatch):
     """Круг с подменёнными краями: без базы, без соседа, без живого сайта.
 
-    Подменяется ровно то, чем модуль выходит наружу, — несколько маленьких обёрток
-    (они для того и выделены: тяжёлые импорты живут внутри функций, и сюита
-    запускается без зависимостей проекта). Порядок работы, счётчики и решения при
-    этом настоящие — беды, ради которых написаны эти тесты, живут именно в них.
+    Подменяются соседи круга — тонкие функции из `dating_revive_db`,
+    `dating_revive_site` и `dating_revive_login` (они для того и выделены: тяжёлые
+    импорты живут внутри них, и сюита запускается без зависимостей проекта).
+    Порядок работы, счётчики и решения при этом настоящие — беды, ради которых
+    написаны эти тесты, живут именно в них.
     """
     state = {'profiles': [], 'presence': {}, 'status': {}, 'plan_saved': True,
              'probe_pause': 0.0, 'clock': NOW, 'probe_raise': {},
@@ -162,19 +164,29 @@ def round_stub(monkeypatch):
         state['sessions'] = [item for item in state['sessions']
                              if str(item.get('session_id')) != str(session_id)]
 
-    for name, func in (('_profiles_kept', profiles_kept), ('_presence_of', presence_of),
-                       ('_db_now', db_now), ('_probe_one', probe_one),
-                       ('_probe_save', probe_save), ('_plan_save', plan_save),
-                       ('_log', log), ('_error_write', error_write),
-                       ('_presence_missing_mark', presence_missing_mark),
-                       ('_sessions_list', sessions_list), ('_session_close', session_close)):
-        monkeypatch.setattr(dating_revive, name, func)
+    # Подменяем **там, где имя связано**, а не там, где функция объявлена: круг
+    # зовёт соседей по именам своего модуля, и патч по месту объявления до него бы
+    # не дошёл. Уборка вкладок живёт в модуле входа и подменяется в нём же.
+    for module, name, func in (
+            (dating_revive_round, 'dating_revive_db_profiles_kept', profiles_kept),
+            (dating_revive_round, 'dating_revive_site_presence', presence_of),
+            (dating_revive_round, 'dating_revive_db_now', db_now),
+            (dating_revive_round, '_probe_one', probe_one),
+            (dating_revive_round, 'dating_revive_db_probe_save', probe_save),
+            (dating_revive_round, 'dating_revive_db_plan_save', plan_save),
+            (dating_revive_round, 'dating_revive_db_log', log),
+            (dating_revive_round, 'dating_revive_site_error_write', error_write),
+            (dating_revive_round, 'dating_revive_db_site_missing', presence_missing_mark),
+            (dating_revive_login, 'dating_revive_db_log', log),
+            (dating_revive_login, '_sessions_list', sessions_list),
+            (dating_revive_login, '_session_close', session_close)):
+        monkeypatch.setattr(module, name, func)
 
     return state
 
 
 def _apply(profile: dict, plan: dict) -> dict:
-    """Учётка после круга: ровно то, что записал бы `_plan_save`.
+    """Учётка после круга: ровно то, что записал бы `dating_revive_db_plan_save`.
 
     Нужна там, где проверяется не одно решение, а цепочка кругов: беда с лестницей
     видна только на последовательности, по одному вызову она выглядит безобидно.
@@ -444,7 +456,7 @@ class TestReviveRoundOrder:
         round_stub['profiles'] = _profiles(8)
         round_stub['probe_pause'] = 0.05
 
-        counts = await dating_revive_round(login_run=_login_stub(round_stub))
+        counts = await dating_revive_round_run(login_run=_login_stub(round_stub))
 
         assert counts['checked'] == 8
         assert counts['online'] == 8
@@ -455,7 +467,7 @@ class TestReviveRoundOrder:
         round_stub['profiles'] = _profiles(DATING_REVIVE_PROBE_PARALLEL + 5)
         round_stub['probe_pause'] = 0.02
 
-        await dating_revive_round(login_run=_login_stub(round_stub))
+        await dating_revive_round_run(login_run=_login_stub(round_stub))
 
         assert round_stub['probe_peak'] == DATING_REVIVE_PROBE_PARALLEL
 
@@ -467,7 +479,7 @@ class TestReviveRoundOrder:
         """
         round_stub['profiles'] = _profiles(4, login_age_sec=21 * 3600)
 
-        counts = await dating_revive_round(login_run=_login_stub(round_stub))
+        counts = await dating_revive_round_run(login_run=_login_stub(round_stub))
 
         assert counts['tried'] == 4
         assert counts['revived'] == 4
@@ -487,7 +499,7 @@ class TestReviveRoundOrder:
                      relogin_tries=1, relogin_next_at=NOW + timedelta(minutes=2))]
         round_stub['status'] = {2: 'offline'}
 
-        await dating_revive_round(
+        await dating_revive_round_run(
             login_run=_login_stub(round_stub, pause=timedelta(minutes=5)))
 
         assert round_stub['logins'] == [1, 2]
@@ -514,7 +526,7 @@ class TestReviveRoundCleanup:
         """
         round_stub['profiles'] = self._profile_due()
 
-        counts = await dating_revive_round(
+        counts = await dating_revive_round_run(
             login_run=_login_stub(round_stub, opens=(('new', 1),),
                                   raises=RuntimeError('сосед не ответил')))
 
@@ -531,7 +543,7 @@ class TestReviveRoundCleanup:
         round_stub['profiles'] = self._profile_due()
 
         with pytest.raises(asyncio.CancelledError):
-            await dating_revive_round(
+            await dating_revive_round_run(
                 login_run=_login_stub(round_stub, opens=(('new', 1),),
                                       raises=asyncio.CancelledError()))
 
@@ -545,7 +557,7 @@ class TestReviveRoundCleanup:
         """
         round_stub['profiles'] = self._profile_due()
 
-        await dating_revive_round(
+        await dating_revive_round_run(
             login_run=_login_stub(round_stub, ok=False, opens=(('kept', 1),),
                                   session_id='kept'))
 
@@ -564,7 +576,7 @@ class TestReviveRoundCleanup:
         round_stub['profiles'] = self._profile_due()
         round_stub['sessions'] = [{'session_id': 'human', 'name': 'g1', 'site_id': 1}]
 
-        await dating_revive_round(
+        await dating_revive_round_run(
             login_run=_login_stub(round_stub,
                                   raises=RuntimeError('для сайта нет сценария входа')))
 
@@ -575,7 +587,7 @@ class TestReviveRoundCleanup:
         round_stub['profiles'] = self._profile_due()
         round_stub['sessions'] = [{'session_id': 'human', 'name': 'g1', 'site_id': 1}]
 
-        await dating_revive_round(
+        await dating_revive_round_run(
             login_run=_login_stub(round_stub, opens=(('new', 1),),
                                   raises=RuntimeError('сосед не ответил')))
 
@@ -589,7 +601,7 @@ class TestReviveRoundCleanup:
         """
         round_stub['profiles'] = self._profile_due()
 
-        await dating_revive_round(
+        await dating_revive_round_run(
             login_run=_login_stub(round_stub, opens=(('new', 1), ('twin', 2)),
                                   raises=RuntimeError('сосед не ответил')))
 
@@ -605,7 +617,7 @@ class TestReviveRoundCleanup:
         round_stub['profiles'] = self._profile_due()
         round_stub['close_raises'] = RuntimeError('сосед не ответил на закрытие')
 
-        counts = await dating_revive_round(
+        counts = await dating_revive_round_run(
             login_run=_login_stub(round_stub, opens=(('new', 1),),
                                   raises=RuntimeError('пароль не подошёл')))
 
@@ -629,7 +641,7 @@ class TestReviveRoundProbeFailure:
         round_stub['profiles'] = _profiles(3)
         round_stub['probe_raise'] = {2: TypeError('cookies списком строк')}
 
-        counts = await dating_revive_round(login_run=_login_stub(round_stub))
+        counts = await dating_revive_round_run(login_run=_login_stub(round_stub))
 
         assert counts['checked'] == 3
         # Две живые анкеты посчитаны, сломанная — нет, но круг дошёл до конца.
@@ -645,7 +657,7 @@ class TestReviveRoundProbeFailure:
         round_stub['profiles'] = _profiles(1)
         round_stub['probe_raise'] = {1: TypeError('cookies списком строк')}
 
-        await dating_revive_round(login_run=_login_stub(round_stub))
+        await dating_revive_round_run(login_run=_login_stub(round_stub))
 
         profile_id, plan = round_stub['saved'][0]
         assert (profile_id, plan['action']) == (1, 'wait')
@@ -670,7 +682,7 @@ class TestReviveRoundLoginResult:
                                            relogin_next_at=NOW - timedelta(seconds=1))]
         round_stub['status'] = {1: 'error'}
 
-        counts = await dating_revive_round(login_run=_login_stub(round_stub))
+        counts = await dating_revive_round_run(login_run=_login_stub(round_stub))
 
         assert round_stub['logins'] == [1]
         assert counts['revived'] == 1
@@ -684,7 +696,7 @@ class TestReviveRoundLoginResult:
                                            relogin_next_at=NOW - timedelta(seconds=1))]
         round_stub['status'] = {1: 'error'}
 
-        counts = await dating_revive_round(login_run=_login_stub(round_stub, ok=False))
+        counts = await dating_revive_round_run(login_run=_login_stub(round_stub, ok=False))
 
         assert counts['revived'] == 0
         assert [text for _, _, text in round_stub['logs'] if 'не вышло' in text]
@@ -704,7 +716,7 @@ class TestReviveRoundSiteMissing:
         round_stub['profiles'] = _profiles(3)
         round_stub['presence'] = {1: {}}
 
-        counts = await dating_revive_round(login_run=_login_stub(round_stub))
+        counts = await dating_revive_round_run(login_run=_login_stub(round_stub))
 
         assert [profile_id for profile_id, _ in round_stub['missing']] == [1, 2, 3]
         assert all('опрос' in why for _, why in round_stub['missing'])
@@ -722,7 +734,7 @@ class TestReviveRoundSiteMissing:
         round_stub['profiles'] = _profiles(2)
         round_stub['presence'] = {1: {}}
 
-        await dating_revive_round(login_run=_login_stub(round_stub))
+        await dating_revive_round_run(login_run=_login_stub(round_stub))
 
         assert round_stub['saved'] == []
         assert round_stub['logins'] == []
@@ -731,7 +743,7 @@ class TestReviveRoundSiteMissing:
         """У настроенного сайта пометок нет вовсе — иначе она обесценится."""
         round_stub['profiles'] = _profiles(2)
 
-        await dating_revive_round(login_run=_login_stub(round_stub))
+        await dating_revive_round_run(login_run=_login_stub(round_stub))
 
         assert round_stub['missing'] == []
 
@@ -742,7 +754,7 @@ class TestReviveRoundBackoff:
     async def test_lost_backoff_cancels_the_login(self, round_stub):
         """Запись отката не легла — входить в этом круге нельзя.
 
-        `_plan_save` гасит исключение, как и положено журналам. Но если строка не
+        `dating_revive_db_plan_save` гасит исключение, как и положено журналам. Но если строка не
         записалась, а вход всё равно состоялся, следующий круг увидит прежний, уже
         наступивший срок и войдёт снова через минуту — и так до бесконечности. Это
         единственный путь, где лестницу можно превысить; пропущенная попытка
@@ -751,7 +763,7 @@ class TestReviveRoundBackoff:
         round_stub['profiles'] = _profiles(2, login_age_sec=21 * 3600)
         round_stub['plan_saved'] = False
 
-        counts = await dating_revive_round(login_run=_login_stub(round_stub))
+        counts = await dating_revive_round_run(login_run=_login_stub(round_stub))
 
         assert round_stub['logins'] == []
         assert counts['tried'] == 0
@@ -760,7 +772,7 @@ class TestReviveRoundBackoff:
         """Откат записан — попытка идёт как обычно: пропускаем только потерю записи."""
         round_stub['profiles'] = _profiles(2, login_age_sec=21 * 3600)
 
-        counts = await dating_revive_round(login_run=_login_stub(round_stub))
+        counts = await dating_revive_round_run(login_run=_login_stub(round_stub))
 
         assert round_stub['logins'] == [1, 2]
         assert counts['tried'] == 2

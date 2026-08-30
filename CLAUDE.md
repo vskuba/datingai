@@ -69,7 +69,7 @@
 | `src/dating/dating_agent.py` | Агент анкеты: имя, биография, заведение у соседа |
 | `src/dating/dating_check.py` | Полная проверка учётки |
 | `src/dating/dating_login.py` | Вход под анкетой: сценарий, состояние, проверка |
-| `src/dating/dating_revive.py` | Автовосстановление входа: лестница попыток |
+| `src/dating/dating_revive.py` | Автовосстановление входа: правила лестницы (круг и исполнение — в `dating_revive_*.py` рядом) |
 | `src/dating/dating_json.py` | Общее чтение JSON-столбцов базы |
 | `src/dating/dating_export.py` | Выгрузка анкет: сшивка `extract` сценария в таблицу |
 | `src/uvicorn/routers/dating/dating_profile.py` | Ручки анкет: CRUD своей базы; там же общие `dating_profile_row` и `_site` |

@@ -1,0 +1,106 @@
+"""Настройка опроса у соседа и объявления в его «Ошибки».
+
+Третий адресат автовосстановления (шапка `dating_revive.py`): не своя база и не
+браузер, а **RhapsodyAi** — за настройкой сайта и с рассказом о том, что пошло не
+так.
+
+Про объявления здесь главное — **их душат по времени**. Круг ходит раз в минуту, и
+без паузы вкладка «Ошибки» соседа получала бы до полутора тысяч одинаковых строк в
+сутки. Для анкеты это решается иначе — объявляется переход, а не состояние
+(`dating_revive_round`), — но у выпавшего сайта нет поля, которое погасил бы
+успешный круг, поэтому здесь пауза по часам в памяти процесса.
+"""
+
+import time
+
+from src.dating.dating_json import dating_json_load
+
+# Когда каждому сайту в последний раз писали объявление о пропавшем опросе — ключ
+# `(site_id, reason)`, значение — момент записи. `reason` — часть ключа, а не
+# только текста: если причина сменилась (сосед ожил, но опрос так и не настроен,
+# или наоборот), это уже новая беда и напоминать о ней заново можно сразу, не
+# дожидаясь остатка паузы от прежней.
+_presence_missing_at: dict[tuple[int, str], float] = {}
+
+# Не чаще этого напоминаем про один и тот же сайт по одной и той же причине. Она
+# не переживает рестарт воркера, но смена держателя и так single-flight (см.
+# `dating_chat_hold.py`): в худшем случае рестарт даёт одно лишнее объявление, а
+# не шторм.
+DATING_REVIVE_PRESENCE_ANNOUNCE_COOLDOWN_SEC = 3600
+
+
+async def dating_revive_site_presence(site_id: int) -> tuple[dict, str]:
+    """Настройка опроса сайта и причина, если её нет.
+
+    Возвращает `(presence, why)`: пустой `presence` значит, что все анкеты сайта
+    выпадают из круга, а `why` — человеческая причина для карточки анкеты.
+
+    Раньше на этом всё и кончалось: пусто — значит пропускаем, а след оставался
+    только в логе контейнера, который никто не читает. Анкета при этом выглядела
+    в панели совершенно здоровой («всё хорошо», раз опрос её просто не коснулся) —
+    ровно та беда «никто не замечает», ради которой всю ветку и делали. Поэтому
+    причина и уходит наружу: соседу объявлением про сайт, человеку — строкой в
+    карточке каждой анкеты (`dating_revive_db_site_missing`)."""
+    from logging_.logging_ import logger_info
+    from src.dating.dating_presence import dating_presence_ready
+    from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_site_get
+
+    try:
+        site = await rhapsody_api_site_get(int(site_id))
+    except RhapsodyError as e:
+        logger_info(f'[dating] сайт #{site_id} не спросился: {e}')
+        # Обычно рассасывается за минуту — сосед перезапускается или моргнул сам.
+        # Отдельная причина в объявлении на случай, если это затянется: если
+        # соседа чинят несколько часов, человек должен понимать, что дело не в
+        # настройке сайта.
+        await _missing_announce(site_id, 'unavailable', f'сосед не ответил: {e}')
+
+        return {}, 'RhapsodyAi не отвечает — проверить анкету нечем'
+
+    presence = dating_json_load(site.get('presence'))
+    if dating_presence_ready(presence):
+        return presence, ''
+
+    # А это надолго и само не пройдёт: `presence` заводится руками на вкладке
+    # «Сайты» соседа, и без человека тут ничего не изменится хоть сутки, хоть
+    # неделю.
+    await _missing_announce(
+        site_id, 'not_configured',
+        'у сайта не настроен опрос присутствия (`presence`) — анкеты сайта '
+        'проверяться не будут, пока его не заведут на вкладке «Сайты»')
+
+    return {}, 'у сайта не настроен опрос присутствия — заведите его на вкладке «Сайты»'
+
+
+async def dating_revive_site_error_write(profile: dict, why: str) -> None:
+    """Переход состояния — во вкладку «Ошибки» соседа. Каждая неудача туда не идёт:
+    за сутки набежало бы два десятка одинаковых строк."""
+    from src.rhapsody.rhapsody_api import rhapsody_api_error_write
+
+    await rhapsody_api_error_write('dating', f"анкета «{profile['login']}» не входит: {why}",
+                                   context={'profile_id': profile['id'],
+                                            'site_id': profile['site_id'],
+                                            'where': 'автовосстановление входа'})
+
+async def _missing_announce(site_id: int, reason: str, why: str) -> None:
+    """Строка в «Ошибках» соседа про сайт, который выпал из круга целиком —
+    не каждый круг, а раз в час на каждую причину, пока беда не пройдёт.
+
+    Часы здесь **монотонные**, а не календарные: меряется не «когда это было», а
+    «сколько прошло внутри этого же процесса». Календарные часы для такого не
+    годятся — рывок NTP назад или перевод времени заглушил бы объявления на лишний
+    час, и о выпавшем сайте никто бы не узнал. Тем же `time.monotonic()` меряет
+    свои сроки держатель сокетов.
+    """
+    from src.rhapsody.rhapsody_api import rhapsody_api_error_write
+
+    key = (int(site_id), reason)
+    now = time.monotonic()
+    last = _presence_missing_at.get(key)
+    if last is not None and now - last < DATING_REVIVE_PRESENCE_ANNOUNCE_COOLDOWN_SEC:
+        return
+
+    _presence_missing_at[key] = now
+    await rhapsody_api_error_write(
+        'dating', f'сайт #{site_id} выпал из круга проверки: {why}',
+        context={'site_id': int(site_id), 'where': 'автовосстановление входа'})

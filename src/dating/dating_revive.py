@@ -1,4 +1,4 @@
-"""Восстановление входа анкеты: когда пробовать и когда сдаться.
+"""Правила автовосстановления входа: когда пробовать и когда сдаться.
 
 Вход на сайт живёт около суток. Когда он протухает, анкета уходит из сети молча:
 сообщения перестают приходить, а сайт не сообщает об этом ничем, кроме отказа в
@@ -17,26 +17,25 @@
 именно из этой экономии выросли обе поломки: и сдача при живом опросе, и вход через
 браузер раз в минуту.
 
-База, сосед и сам вход подтягиваются импортами внутри функций, а не в шапке модуля.
-Правила отсюда читают чистые тесты (`tests/test_revive_schedule.py`,
-`tests/test_revive_round.py`), а сюита нарочно запускается без зависимостей проекта:
-шапка с `mysql_` и `logging_` сделала бы арифметику лестницы непроверяемой.
+**Здесь только арифметика — ни базы, ни сети, ни браузера.** Импортов проекта в
+шапке нет ни одного, и это условие, а не совпадение: правила читают чистые тесты
+(`tests/test_revive_schedule.py`), и шапка с `mysql_` сделала бы лестницу
+непроверяемой. Исполнение решений разложено по соседям:
+
+| Файл | Что делает |
+|------|-----------|
+| `dating_revive.py` | правила: лестница, сдача, профилактика — чистые функции |
+| `dating_revive_round.py` | круг: опросить анкеты и применить к ним правила |
+| `dating_revive_login.py` | одна попытка входа и уборка вкладок за собой |
+| `dating_revive_db.py` | чтение и запись состояния в своей базе |
+| `dating_revive_site.py` | настройка опроса у соседа и объявления в его «Ошибки» |
+
+Граница проведена по тому, **куда файл ходит**: правила не ходят никуда, круг
+распоряжается, а три нижних стучатся каждый в своё место
+(`docs-common/code_rules.md`, §4).
 """
 
-import asyncio
-import time
 from datetime import datetime, timedelta
-
-from src.dating.dating_json import dating_json_load
-
-# Как часто смена сверяет вход анкет с сайтом.
-DATING_REVIVE_PERIOD_SEC = 60
-
-# Сколько опросов идёт разом. Столько же и по той же причине берёт ручка опроса
-# (`DATING_PROFILE_PROBE_PARALLEL`): опрос — это единицы килобайт по HTTP, и двести
-# анкет подряд не уложились бы в минуту круга. Входы этим числом не ограничены —
-# они идут строго по одному, вкладка Chromium стоит куда дороже.
-DATING_REVIVE_PROBE_PARALLEL = 16
 
 # Возраст входа, после которого он обновляется профилактически. Сессия сайта живёт
 # около суток, и ловить её протухание в середине разговора незачем.
@@ -87,9 +86,9 @@ def dating_revive_plan(profile: dict, online: bool, now: datetime) -> dict:
     Часы тут одни на всё — часы базы, и это условие, а не деталь:
 
     * возраст входа приходит **числом секунд** (`login_age_sec`), посчитанным самой
-      базой (`TIMESTAMPDIFF` в `_profiles_kept`): `logged_in_at` пишет её `NOW()`, и
-      момент времени наружу вообще не выходит;
-    * `now` круг берёт у базы же (`_db_now`), поэтому записанные из него
+      базой (`TIMESTAMPDIFF` в `dating_revive_db_profiles_kept`): `logged_in_at`
+      пишет её `NOW()`, и момент времени наружу вообще не выходит;
+    * `now` круг берёт у базы же (`dating_revive_db_now`), поэтому записанные из него
       `relogin_since` и `relogin_next_at` меряются той же линейкой — и здесь, и в
       ручке списка анкет, и на карточке рядом с `last_seen_at`.
 
@@ -124,7 +123,7 @@ def dating_revive_plan(profile: dict, online: bool, now: datetime) -> dict:
     since = profile.get('relogin_since')
     tries = int(profile.get('relogin_tries') or 0)
     next_at = profile.get('relogin_next_at')
-    # Возраст входа считает база (`TIMESTAMPDIFF` в `_profiles_kept`), а не питон:
+    # Возраст входа считает база (`TIMESTAMPDIFF` в `dating_revive_db_profiles_kept`), а не питон:
     # `logged_in_at` пишется её `NOW()`, и разница часов уходила бы прямо в число
     # часов профилактики. Пусто — входа не было вовсе, и обновить его точно пора.
     age = profile.get('login_age_sec')
@@ -182,109 +181,6 @@ def dating_revive_plan(profile: dict, online: bool, now: datetime) -> dict:
     return _plan_login(since, tries, now)
 
 
-async def dating_revive_round(login_run=None) -> dict:
-    """Один круг: опросить анкеты под присмотром и починить те, что выпали.
-
-    Опросы идут разом, входы — строго по одному, и это разные вещи по разным причинам.
-
-    Опрос — три-четыре HTTP-запроса с таймаутом в десять секунд; у двухсот анкет
-    последовательный обход занял бы минут семь, и круг «раз в минуту» превратился бы
-    в «раз в семь-десять», а задержка обнаружения росла бы вместе с числом анкет.
-    Тот же приём и по той же причине — в ручке `dating_profile_probe`.
-
-    Вход — наоборот: каждый открывает вкладку Chromium (~143 МБ) в пуле, общем с
-    соседом. Сайт лёг, все анкеты решили входить — и параллельные входы уронили бы
-    пул вместе с собственной работой соседа. Поэтому решения и входы идут в один
-    ряд, после того как опросы кончились.
-
-    Вход передаётся параметром, а не импортируется намертво: так круг проверяется
-    тестами без браузера, а модуль не тянет за собой половину проекта.
-
-    Returns:
-        dict: `checked`, `online`, `tried` (сколько раз входили), `revived`,
-        `given_up`.
-    """
-    if login_run is None:
-        # Импорт только когда вход настоящий: с заглушкой круг обязан работать без
-        # браузера и без зависимостей проекта — на этом стоят его тесты.
-        from src.dating.dating_login import dating_login_run
-
-        login_run = dating_login_run
-
-    profiles = await _profiles_kept()
-    counts = {'checked': len(profiles), 'online': 0, 'tried': 0, 'revived': 0, 'given_up': 0}
-
-    # Настройка опроса спрашивается на сайт, а не на анкету: двести анкет с трёх
-    # сайтов — это три вопроса соседу вместо двухсот, и все опросы круга видят одно
-    # и то же. Сосед не ответил — сайт этот круг пропускается целиком.
-    site_of = {site_id: await _presence_of(site_id)
-               for site_id in sorted({int(profile['site_id']) for profile in profiles})}
-    presence_of = {site_id: presence for site_id, (presence, _) in site_of.items()}
-
-    kept = [profile for profile in profiles if presence_of[int(profile['site_id'])]]
-
-    # Анкеты выпавшего сайта проверить нечем — но и молчать про них нельзя: раньше
-    # такая анкета оставалась в панели с прежним «всё хорошо», хотя её не трогали
-    # уже неделю. Объявление соседу про сам сайт уходит отдельно (`_presence_of`),
-    # здесь помечается каждая анкета: человек смотрит в карточку, а не в чужую
-    # вкладку «Ошибки».
-    for profile in profiles:
-        if not presence_of[int(profile['site_id'])]:
-            await _presence_missing_mark(profile, site_of[int(profile['site_id'])][1])
-
-    # Ограничитель тот же, что у ручки опроса: разом — не значит все двести сразу.
-    limit = asyncio.Semaphore(DATING_REVIVE_PROBE_PARALLEL)
-
-    async def probe(profile: dict) -> dict:
-        async with limit:
-            return await _probe_one(profile, presence_of[int(profile['site_id'])])
-
-    # `return_exceptions=True` — тем же приёмом и по той же причине, что в
-    # `_presence_loop` держателя: упавший опрос одной анкеты не имеет права уносить
-    # с собой круг. Разбор — в `_probe_failed`.
-    probes = await asyncio.gather(*(probe(profile) for profile in kept), return_exceptions=True)
-
-    for profile, outcome in zip(kept, probes):
-        result = _probe_failed(outcome) if isinstance(outcome, BaseException) else outcome
-        online = result['status'] == 'online'
-        counts['online'] += int(online)
-
-        # Время — на каждую анкету, а не одно на круг: перед этой строкой мог
-        # пройти вход соседней анкеты, а он стоит минуту-две. По устаревшему `now`
-        # наступивший за это время срок читался бы как ненаступивший, и анкета
-        # ждала бы ещё круг — и так каждый раз, пока в круге есть хоть один вход.
-        plan = dating_revive_plan(profile, online, await _db_now())
-        saved = await _plan_save(int(profile['id']), plan)
-
-        if plan['action'] == 'wait':
-            await _log(int(profile['id']), 'fail',
-                       f"Вход не признан сайтом: {result['error'] or result['status']}")
-            await _error_write(profile, result['error'] or result['status'])
-        elif plan['action'] == 'give_up':
-            # Считаем и объявляем переход, а не состояние: решение отдаёт `give_up`
-            # только на том круге, который сдался, — иначе сюда бы попадала одна и
-            # та же анкета каждую минуту, пока её не поднимут руками.
-            counts['given_up'] += 1
-            await _log(int(profile['id']), 'fail',
-                       'Сутки не выходит войти — попытки прекращены, нужен вход вручную')
-            await _error_write(profile, 'сутки не выходит войти, автовход остановлен')
-        elif plan['action'] == 'login' and not saved:
-            # Откат не записался — входить нельзя. Следующий круг увидит прежний,
-            # уже наступивший срок и войдёт снова через минуту, и так до
-            # бесконечности: это единственный путь, где лестницу можно превысить.
-            # Пропущенная попытка дешевле вкладки Chromium раз в минуту, а срок
-            # никуда не делся — войдём следующим кругом.
-            await _log(int(profile['id']), 'info',
-                       'Вход отложен: череду попыток не удалось записать, '
-                       'а без неё лестница пауз не работает')
-        elif plan['action'] == 'login':
-            counts['tried'] += 1
-            if await _login_try(profile, login_run, plan, online):
-                counts['revived'] += 1
-
-    return counts
-
-
 def _plan_login(since: datetime | None, tries: int, now: datetime) -> dict:
     """Решение «входим сейчас»: попытка считается сделанной, следующая — по лестнице.
 
@@ -301,412 +197,3 @@ def _plan_login(since: datetime | None, tries: int, now: datetime) -> dict:
             'relogin_next_at': now + timedelta(seconds=dating_revive_delay(step))}
 
 
-def _probe_failed(error: BaseException) -> dict:
-    """Упавший опрос — отказом одной анкеты, а не концом круга.
-
-    `dating_presence_probe` ловит своё внутри, но не всё: cookie из
-    `storage_state` читаются **до** его `try`, и кривое состояние (`cookies`
-    списком строк) бросит наружу. Пока `gather` шёл без `return_exceptions`, такая
-    строка обрывала круг целиком — и не разово: следующий круг спотыкался о неё же,
-    и анкеты после сломанной переставали проверяться совсем.
-
-    Отказ считаем «не в сети», а не «пропускаем»: тихо пропущенная анкета висела бы
-    в панели здоровой — ровно та беда «никто не замечает», ради которой всё
-    затевалось. А так зажжётся тревога, и человек увидит причину в карточке.
-
-    Отмену пропускаем наружу: смена кончилась, и продолжать круг незачем.
-    """
-    if isinstance(error, asyncio.CancelledError):
-        raise error
-
-    return {'status': 'error', 'unread': -1, 'ms': 0,
-            'error': f'опрос не отработал: {type(error).__name__}: {error}'}
-
-
-async def _login_try(profile: dict, login_run, plan: dict, planned: bool = False) -> bool:
-    """Одна попытка входа. Успех сам снимает откат — это делает `dating_login_run`.
-
-    Повод берётся из опроса, а не из полей учётки: откат есть у обоих поводов, а
-    человеку в журнале важно, чинили протухший вход или обновляли живой по сроку.
-
-    **Вкладку за собой убираем здесь, на каждом исходе.** Сам вход её не закрывает:
-    для ручки это осознанно — человек нажал «Войти» ради вкладки, о чём и говорит
-    её docstring. У автомата смотреть на вкладку некому, а стоит она ~143 МБ в пуле,
-    общем с соседом. Худший случай не выдуман: сайт лёг, все анкеты под присмотром
-    пошли входить в один круг — и десятки брошенных вкладок кладут пул вместе с
-    собственной работой соседа.
-
-    Убираем при этом **только за собой**: список живых вкладок анкеты снимается до
-    входа, и гасится потом лишь то, что появилось сверх него, — см. `_sessions_drop`.
-    """
-    profile_id = int(profile['id'])
-    await _log(profile_id, 'info',
-               f"{'Обновляю вход заранее' if planned else 'Вхожу заново'} "
-               f"(попытка {plan['relogin_tries']})")
-    # Снимок «что было до нас». Только по нему и можно узнать вкладку этого входа,
-    # когда исключение оборвало его до ответа и номер сгорел вместе с вызовом.
-    before = await _sessions_seen(profile)
-    try:
-        result = await login_run(profile_id)
-    except asyncio.CancelledError:
-        # Смена кончилась, и задачу отменили. `CancelledError` не наследник
-        # `Exception`, и без отдельной ветки вкладка пережила бы саму смену.
-        # Убрав за собой, отмену обязательно пробрасываем дальше: проглоченная
-        # отмена — это смена, которая не заканчивается.
-        await _sessions_drop(profile, before)
-        raise
-    except Exception as e:
-        # Сосед не ответил (`RhapsodyError`), сценария нет, база отвалилась —
-        # вкладка при этом уже открыта, а её номер сгорел вместе с вызовом.
-        # Причину в журнал пишем до уборки: она — то, ради чего человек туда
-        # смотрит, и заслонять её хлопотами с вкладкой нельзя.
-        await _log(profile_id, 'fail', f'Войти не вышло: {str(e)[:300]}')
-        await _sessions_drop(profile, before)
-        return False
-
-    # Вход отдаёт номер живой вкладки, когда сценарий вернул ошибку: свои пути он
-    # закрывает сам, а этот оставляет ручке. Автомату вкладка не нужна ни на одном
-    # исходе — закрываем по результату, пустой номер закрытие просто пропустит.
-    await _session_close(str(result.get('session_id') or ''))
-
-    # Неудача — это `error`, а не «не `success`». Прогон сценария у соседа отвечает
-    # `ok`, и проверка на `success` считала провалом любой удачный вход: журнал
-    # писал «Войти не вышло» пустой причиной сразу после «Вход признан сайтом»
-    # (поймано на живой анкете прода). Тем же правилом живут ручка входа и страница.
-    ok = str(result.get('status')) != 'error' and not result.get('error')
-    await _log(profile_id, 'ok' if ok else 'fail',
-               'Вход восстановлен' if ok
-               else f"Войти не вышло: {str(result.get('error') or '')[:300]}")
-
-    return ok
-
-
-async def _sessions_seen(profile: dict) -> set | None:
-    """Номера живых вкладок анкеты **до** входа — чтобы потом закрыть только новые.
-
-    `None` — посмотреть не вышло. Тогда уборка не тронет ничего: не зная, что было
-    до нас, гасить чужое хуже, чем оставить своё.
-    """
-    try:
-        return set(_sessions_mine(profile, await _sessions_list()))
-    except Exception as e:
-        await _log(int(profile['id']), 'info',
-                   f'Список вкладок не спросился ({str(e)[:200]}) — за собой '
-                   f'после входа убрать будет нечем')
-
-        return None
-
-
-async def _sessions_drop(profile: dict, before: set | None) -> None:
-    """Гасит вкладки, которые открыл этот вход, — и только их.
-
-    Номер нужной вкладки до нас не дошёл: исключение оборвало `login_run` до ответа.
-    Найти её можно единственным способом — сравнением с тем, что жило до входа.
-
-    Раньше здесь гасилось «всё под этим логином», и в этом было два зазора. Первый:
-    исключение бывает и **до** того, как вход открыл свою вкладку (у сайта нет
-    сценария входа, у анкеты нет пароля, сосед не ответил на запрос сайта, база
-    отвалилась при чтении анкеты) — и автомат убивал вкладку, которую не открывал:
-    ту, что человек оставил себе после ручного входа, или ту, где прямо сейчас
-    работают «Диалоги». Случай «нет сценария входа» повторяется каждую попытку до
-    самой сдачи, то есть держать вкладку открытой было нельзя вообще. Второй: имя
-    вкладки — это логин, а логины совпадают у анкет с разных сайтов, и две такие
-    анкеты гасили вкладки друг другу.
-
-    Уборка обёрнута целиком: правило проекта — уборка не роняет работу. Без этого
-    её исключение подменяло бы собой настоящую причину неудачи (строки «Войти не
-    вышло» человек бы не увидел) и обрывало круг для остальных анкет.
-    """
-    if before is None:
-        return
-
-    try:
-        for session_id in _sessions_mine(profile, await _sessions_list()):
-            if session_id not in before:
-                await _session_close(session_id)
-    except Exception as e:
-        # В журнал анкеты, а не в лог контейнера: брошенная вкладка — это ~143 МБ
-        # чужого пула, и человек должен видеть, что она осталась.
-        await _log(int(profile['id']), 'info',
-                   f'Вкладку за собой закрыть не вышло: {str(e)[:200]}')
-
-
-def _sessions_mine(profile: dict, sessions: list) -> list[str]:
-    """Номера вкладок, принадлежащих этой анкете, из общего списка соседа.
-
-    Сайт учитывается наравне с именем: имя вкладки — это логин анкеты, а один и тот
-    же логин живёт на разных сайтах. Когда сосед сайт не назвал (старый ответ,
-    вкладка заведена не отсюда), сверяем только имя — это по-прежнему точнее, чем
-    ничего.
-    """
-    login = str(profile.get('login') or '')
-    site = str(profile.get('site_id') or '')
-    mine = []
-    for session in sessions or []:
-        if str(session.get('name') or '') != login:
-            continue
-
-        their = str(session.get('site_id') or '')
-        if their and site and their != site:
-            continue
-
-        session_id = str(session.get('session_id') or '')
-        if session_id:
-            mine.append(session_id)
-
-    return mine
-
-
-async def _sessions_list() -> list:
-    """Живые вкладки соседа. Обёртка ради одного импорта, как у `_log`: недоступного
-    соседа `dating_login_session_all` переживает сама и отвечает пустым списком."""
-    from src.dating.dating_login import dating_login_session_all
-
-    return await dating_login_session_all()
-
-
-async def _session_close(session_id: str) -> None:
-    """Гасит одну вкладку по номеру. Обёртка ради одного импорта, как у `_log`:
-    уже закрытую вкладку `dating_login_session_close` переживает сама, а
-    исключений наружу не пускает.
-
-    Пустой номер отсекаем ещё до импорта, а не отдаём проверку самой функции: тот
-    же исход (нечего закрывать), но без тяжёлых зависимостей `dating_login.py` —
-    большинство успешных входов приходят сюда именно с пустым номером (вкладку уже
-    закрыл `dating_login_run`), и тащить их ради нуля незачем.
-    """
-    if not session_id:
-        return
-
-    from src.dating.dating_login import dating_login_session_close
-
-    await dating_login_session_close(session_id)
-
-
-async def _probe_one(profile: dict, presence: dict) -> dict:
-    """Опрос одной анкеты вместе с записью его итога в карточку.
-
-    Отдельной функцией, потому что распараллеливается именно эта пара шагов: выше
-    их зовут разом, под общим ограничителем.
-    """
-    from src.dating.dating_presence import dating_presence_probe
-
-    probe = await dating_presence_probe(profile, presence)
-    await _probe_save(int(profile['id']), probe)
-
-    return probe
-
-
-async def _log(profile_id: int, kind: str, text: str) -> None:
-    """Строка в журнал анкеты. Обёртка ради одного импорта: журнал тянет за собой
-    базу, а модуль держит тяжёлые импорты внутри функций (см. шапку)."""
-    from src.dating.dating_log import dating_log_write
-
-    await dating_log_write(int(profile_id), kind, text)
-
-
-async def _db_now() -> datetime:
-    """Который час — по часам базы, а не контейнера.
-
-    В этих часах живут все времена анкеты: `logged_in_at` и `last_seen_at` пишет
-    сам MySQL своим `NOW()`, а `relogin_since` и `relogin_next_at` пишет питон —
-    но значениями отсюда, так что порода у них одна. Возьми питон свои
-    `datetime.now()`, и сравнение «пора ли входить» поехало бы ровно на
-    расхождение поясов: `TZ` не задан ни в `docker-compose.yml`, ни в локальной
-    накладке, а прод-MySQL стоит на чужом сервере со своими настройками. Заказчик просил лестницу в минутах, а не в минутах ± часовой пояс.
-    """
-    from mysql_.mysql_ import mysql_get_db_async
-
-    async with mysql_get_db_async() as db:
-        await db.execute('SELECT NOW() AS db_now')
-        row = await db.fetchone()
-
-    return (dict(row or {}) or {}).get('db_now') or datetime.now()
-
-
-async def _profiles_kept() -> list[dict]:
-    """Анкеты под присмотром автомата — те, кого хотя бы раз ввели успешно."""
-    from mysql_.mysql_ import mysql_get_db_async
-
-    async with mysql_get_db_async() as db:
-        # Возраст входа считает база, а не питон: `logged_in_at` пишется её же
-        # `NOW()`, и вычитание из `datetime.now()` контейнера сравнивало бы двое
-        # разных часов — `TZ` не задан ни в одном compose, а прод-MySQL стоит на
-        # чужом сервере. Наружу уходит число секунд, момент времени тут не нужен.
-        await db.execute(
-            'SELECT id, login, site_id, storage_state, status, last_error, '
-            '       relogin_since, relogin_tries, relogin_next_at, '
-            '       TIMESTAMPDIFF(SECOND, logged_in_at, NOW()) AS login_age_sec '
-            '  FROM dating_profile WHERE keep_online = 1 ORDER BY id')
-        rows = await db.fetchall()
-
-    return [dict(row) for row in (rows or [])]
-
-
-async def _presence_of(site_id: int) -> tuple[dict, str]:
-    """Настройка опроса сайта и причина, если её нет.
-
-    Возвращает `(presence, why)`: пустой `presence` значит, что все анкеты сайта
-    выпадают из круга, а `why` — человеческая причина для карточки анкеты.
-
-    Раньше на этом всё и кончалось: пусто — значит пропускаем, а след оставался
-    только в логе контейнера, который никто не читает. Анкета при этом выглядела
-    в панели совершенно здоровой («всё хорошо», раз опрос её просто не коснулся) —
-    ровно та беда «никто не замечает», ради которой всю ветку и делали. Поэтому
-    причина и уходит наружу: соседу объявлением про сайт, человеку — строкой в
-    карточке каждой анкеты (`_presence_missing_mark`)."""
-    from logging_.logging_ import logger_info
-    from src.dating.dating_presence import dating_presence_ready
-    from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_site_get
-
-    try:
-        site = await rhapsody_api_site_get(int(site_id))
-    except RhapsodyError as e:
-        logger_info(f'[dating] сайт #{site_id} не спросился: {e}')
-        # Обычно рассасывается за минуту — сосед перезапускается или моргнул сам.
-        # Отдельная причина в объявлении на случай, если это затянется: если
-        # соседа чинят несколько часов, человек должен понимать, что дело не в
-        # настройке сайта.
-        await _presence_missing_announce(site_id, 'unavailable', f'сосед не ответил: {e}')
-
-        return {}, 'RhapsodyAi не отвечает — проверить анкету нечем'
-
-    presence = dating_json_load(site.get('presence'))
-    if dating_presence_ready(presence):
-        return presence, ''
-
-    # А это надолго и само не пройдёт: `presence` заводится руками на вкладке
-    # «Сайты» соседа, и без человека тут ничего не изменится хоть сутки, хоть
-    # неделю.
-    await _presence_missing_announce(
-        site_id, 'not_configured',
-        'у сайта не настроен опрос присутствия (`presence`) — анкеты сайта '
-        'проверяться не будут, пока его не заведут на вкладке «Сайты»')
-
-    return {}, 'у сайта не настроен опрос присутствия — заведите его на вкладке «Сайты»'
-
-
-# Когда каждому сайту в последний раз писали объявление о пропавшем опросе — ключ
-# `(site_id, reason)`, значение — момент записи. `reason` — часть ключа, а не
-# только текста: если причина сменилась (сосед ожил, но опрос так и не настроен,
-# или наоборот), это уже новая беда и напоминать о ней заново можно сразу, не
-# дожидаясь остатка паузы от прежней.
-_presence_missing_at: dict[tuple[int, str], float] = {}
-
-# Не чаще этого напоминаем про один и тот же сайт по одной и той же причине. Круг
-# ходит раз в минуту, а без паузы вкладка «Ошибки» соседа получала бы до полутора
-# тысяч одинаковых строк в сутки — именно так уже обожглись со сдачей анкеты
-# (`give_up` ниже, отсюда и приём «объявляем переход, а не состояние»). Здесь,
-# правда, нет поля учётки, которое можно погасить успешным кругом, — беда не про
-# анкету, а про сайт целиком, — так что вместо перехода в базе берём паузу по
-# часам в памяти процесса. Она не переживает рестарт воркера, но смена держателя
-# и так single-flight (см. `dating_chat_hold.py`): в худшем случае рестарт даёт
-# одно лишнее объявление, а не шторм.
-DATING_REVIVE_PRESENCE_ANNOUNCE_COOLDOWN_SEC = 3600
-
-
-async def _presence_missing_announce(site_id: int, reason: str, why: str) -> None:
-    """Строка в «Ошибках» соседа про сайт, который выпал из круга целиком —
-    не каждый круг, а раз в час на каждую причину, пока беда не пройдёт.
-
-    Часы здесь **монотонные**, а не календарные: меряется не «когда это было», а
-    «сколько прошло внутри этого же процесса». Календарные часы для такого не
-    годятся — рывок NTP назад или перевод времени заглушил бы объявления на лишний
-    час, и о выпавшем сайте никто бы не узнал. Тем же `time.monotonic()` меряет
-    свои сроки держатель сокетов.
-    """
-    from src.rhapsody.rhapsody_api import rhapsody_api_error_write
-
-    key = (int(site_id), reason)
-    now = time.monotonic()
-    last = _presence_missing_at.get(key)
-    if last is not None and now - last < DATING_REVIVE_PRESENCE_ANNOUNCE_COOLDOWN_SEC:
-        return
-
-    _presence_missing_at[key] = now
-    await rhapsody_api_error_write(
-        'dating', f'сайт #{site_id} выпал из круга проверки: {why}',
-        context={'site_id': int(site_id), 'where': 'автовосстановление входа'})
-
-
-async def _presence_missing_mark(profile: dict, why: str) -> None:
-    """Анкета выпавшего сайта: показать это в её карточке, а не только соседу.
-
-    Тревогу (`relogin_since`) **не зажигаем** и лестницу не двигаем: анкета не
-    объявлена вне сети — её просто нечем проверить, и входить под ней бессмысленно
-    (вход всё равно кончается тем же опросом, которого нет). Поэтому только
-    `status` и причина: человек, открывший панель, должен увидеть, что анкету не
-    трогали, а не прежнее «всё хорошо» недельной давности.
-
-    `last_seen_at` не двигаем: у него смысл «когда сайт последний раз признал
-    учётку», и опроса как раз не было.
-
-    Строку в журнал пишем каждый круг намеренно: журнал схлопывает одинаковые
-    подряд (`dating_log_write`), поэтому в ленте останется одна строка со временем
-    последней проверки, а не столбец из полутора тысяч за сутки.
-    """
-    from logging_.logging_ import logger_info
-    from mysql_.mysql_ import mysql_get_db_async
-
-    profile_id = int(profile['id'])
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile SET status = %s, last_error = %s '
-                             ' WHERE id = %s', ('error', str(why)[:500], profile_id))
-            await db.connection.commit()
-    except Exception as e:
-        logger_info(f'[dating] пометка о выпавшем сайте не записалась: {e}')
-
-    await _log(profile_id, 'fail', f'Проверить анкету нечем: {why}')
-
-
-async def _probe_save(profile_id: int, probe: dict) -> None:
-    """Итог опроса в карточку. Раньше это делала только открытая страница."""
-    from logging_.logging_ import logger_info
-    from mysql_.mysql_ import mysql_get_db_async
-
-    seen = 'NOW()' if probe['status'] == 'online' else 'last_seen_at'
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                f'UPDATE dating_profile SET status = %s, unread = %s, last_error = %s, '
-                f'       last_seen_at = {seen} WHERE id = %s',
-                (probe['status'], probe['unread'] if probe['unread'] >= 0 else 0,
-                 probe['error'], int(profile_id)))
-            await db.connection.commit()
-    except Exception as e:
-        logger_info(f'[dating] итог опроса не записался: {e}')
-
-
-async def _plan_save(profile_id: int, plan: dict) -> bool:
-    """Новые тревога и откат. Успешный вход перепишет их сам — и это правильно.
-
-    Исключение гасится (журналы работу не роняют), но итог возвращается: круг
-    обязан знать, легла запись или нет. Незаписанный откат — это разрешение войти
-    снова через минуту, и вход после потери записи круг отменяет.
-    """
-    from logging_.logging_ import logger_info
-    from mysql_.mysql_ import mysql_get_db_async
-
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile SET relogin_since = %s, relogin_tries = %s, '
-                             '       relogin_next_at = %s WHERE id = %s',
-                             (plan['relogin_since'], int(plan['relogin_tries']),
-                              plan['relogin_next_at'], int(profile_id)))
-            await db.connection.commit()
-    except Exception as e:
-        logger_info(f'[dating] череда попыток не записалась: {e}')
-        return False
-
-    return True
-
-
-async def _error_write(profile: dict, why: str) -> None:
-    """Переход состояния — во вкладку «Ошибки» соседа. Каждая неудача туда не идёт:
-    за сутки набежало бы два десятка одинаковых строк."""
-    from src.rhapsody.rhapsody_api import rhapsody_api_error_write
-
-    await rhapsody_api_error_write('dating', f"анкета «{profile['login']}» не входит: {why}",
-                                   context={'profile_id': profile['id'], 'site_id': profile['site_id'],
-                                            'where': 'автовосстановление входа'})

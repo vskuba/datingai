@@ -490,8 +490,10 @@ after 1 minute» от ограничения частоты. Узнаём по �
 в «Missed chat» безвозвратно, и узнавал об этом человек — когда открывал панель.
 
 Теперь смена держателя раз в минуту опрашивает анкеты с пометкой `keep_online` и
-сама чинит то, что выпало (`src/dating/dating_revive.py`: круг — `dating_revive_round`,
-решение по одной анкете — `dating_revive_plan`).
+сама чинит то, что выпало. Правила лежат в `src/dating/dating_revive.py`
+(`dating_revive_plan` — решение по одной анкете), круг — в
+`dating_revive_round.py` (`dating_revive_round_run`); исполнение разложено по
+`dating_revive_login.py`, `_db.py` и `_site.py` — см. шапку `dating_revive.py`.
 
 Три поля `dating_profile` делят между собой две разные заботы, и путать их нельзя:
 
