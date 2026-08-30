@@ -123,29 +123,6 @@ async def dating_chat_hold_run(seconds: float) -> dict:
     return {'profiles': len(counters), 'saved': saved, 'sec': int(seconds)}
 
 
-async def _service_wait(*tasks) -> None:
-    """Дожидается отменённых служебных задач — так же, как выше дожидаются держатели.
-
-    Отменить мало: у круга восстановления после отмены есть работа. Он ловит
-    `CancelledError` посреди входа и закрывает за собой вкладку Chromium (~143 МБ),
-    а это HTTP-запрос к соседу. Уйди смена отсюда сразу, `asyncio.run` воркера
-    своим `_cancel_all_tasks` отменил бы ту же задачу **второй раз** — ровно посреди
-    уборки, — и вкладка пережила бы смену, которая её открыла. Пул общий с соседом,
-    и такие вкладки копятся от смены к смене.
-
-    Потолок обязателен: уборка стучится к соседу, а он может и не ответить. Ждать
-    его бесконечно значило бы не закончить смену, а за ней стоит следующая.
-    """
-    try:
-        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True),
-                               DATING_CHAT_HOLD_SHUTDOWN_SEC)
-    except (asyncio.TimeoutError, TimeoutError):
-        # Не дождались — уходим всё равно: смена обязана кончиться. Оставшееся
-        # доотменит `asyncio.run`, и хвост в логе честнее запертой очереди.
-        logger_info(f'[dating] служебные задачи не убрались за '
-                    f'{DATING_CHAT_HOLD_SHUTDOWN_SEC} с — заканчиваю смену')
-
-
 async def dating_chat_hold_profile(profile: dict, presence: dict, site_url: str,
                                    deadline: float, counters: dict) -> None:
     """Держит сокет одной учётки до срока, переподключаясь после обрывов.
@@ -193,6 +170,29 @@ async def dating_chat_hold_profile(profile: dict, presence: dict, site_url: str,
 
         await asyncio.sleep(min(backoff, max(0.0, deadline - time.monotonic())))
         backoff = min(backoff * 2, DATING_CHAT_HOLD_BACKOFF_MAX)
+
+
+async def _service_wait(*tasks) -> None:
+    """Дожидается отменённых служебных задач — так же, как выше дожидаются держатели.
+
+    Отменить мало: у круга восстановления после отмены есть работа. Он ловит
+    `CancelledError` посреди входа и закрывает за собой вкладку Chromium (~143 МБ),
+    а это HTTP-запрос к соседу. Уйди смена отсюда сразу, `asyncio.run` воркера
+    своим `_cancel_all_tasks` отменил бы ту же задачу **второй раз** — ровно посреди
+    уборки, — и вкладка пережила бы смену, которая её открыла. Пул общий с соседом,
+    и такие вкладки копятся от смены к смене.
+
+    Потолок обязателен: уборка стучится к соседу, а он может и не ответить. Ждать
+    его бесконечно значило бы не закончить смену, а за ней стоит следующая.
+    """
+    try:
+        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True),
+                               DATING_CHAT_HOLD_SHUTDOWN_SEC)
+    except (asyncio.TimeoutError, TimeoutError):
+        # Не дождались — уходим всё равно: смена обязана кончиться. Оставшееся
+        # доотменит `asyncio.run`, и хвост в логе честнее запертой очереди.
+        logger_info(f'[dating] служебные задачи не убрались за '
+                    f'{DATING_CHAT_HOLD_SHUTDOWN_SEC} с — заканчиваю смену')
 
 
 def _holders_sync(holders: dict, counters: dict, profiles: list, deadline: float) -> None:

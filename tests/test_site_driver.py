@@ -15,7 +15,7 @@ import pytest
 
 from src.dating.site.site_base import DatingSiteChat
 from src.dating.site.site_goldenbride import DatingSiteChatGoldenbride
-from src.dating.site.site_registry import (DATING_SITE_DRIVER_DEFAULT, dating_site_chat)
+from src.dating.site.site_registry import (DATING_SITE_DRIVER_DEFAULT, site_registry_chat)
 
 # Выдуманный сайт: те же понятия, другие имена и другая форма. Тело кадра лежит
 # прямо в нём, а не строкой с JSON внутри, — так делает большинство.
@@ -46,9 +46,9 @@ class TestRegistry:
     """Кто с кем разговаривает."""
 
     def test_named_driver_wins(self):
-        assert isinstance(dating_site_chat({'driver': 'goldenbride'}),
+        assert isinstance(site_registry_chat({'driver': 'goldenbride'}),
                           DatingSiteChatGoldenbride)
-        assert type(dating_site_chat({'driver': 'base'})) is DatingSiteChat
+        assert type(site_registry_chat({'driver': 'base'})) is DatingSiteChat
 
     def test_unknown_name_falls_back(self):
         """Опечатка в закладке — не отказ.
@@ -56,7 +56,7 @@ class TestRegistry:
         Разбираться с ней посреди живого чата поздно: сообщения идут сейчас, и
         молчащий сокет хуже, чем сокет, говорящий умолчанием.
         """
-        driver = dating_site_chat({'driver': 'нет-такого'})
+        driver = site_registry_chat({'driver': 'нет-такого'})
 
         assert driver.name == DATING_SITE_DRIVER_DEFAULT
 
@@ -72,8 +72,8 @@ class TestRegistry:
         `driver` во всех закладках — и не раньше.
         """
         assert DATING_SITE_DRIVER_DEFAULT == 'goldenbride'
-        assert isinstance(dating_site_chat({}), DatingSiteChatGoldenbride)
-        assert isinstance(dating_site_chat(None), DatingSiteChatGoldenbride)
+        assert isinstance(site_registry_chat({}), DatingSiteChatGoldenbride)
+        assert isinstance(site_registry_chat(None), DatingSiteChatGoldenbride)
 
 
 class TestSiteByConfigOnly:
@@ -81,7 +81,7 @@ class TestSiteByConfigOnly:
 
     @pytest.fixture
     def site(self):
-        return dating_site_chat(OTHER_SITE)
+        return site_registry_chat(OTHER_SITE)
 
     def test_subprotocol_from_config(self, site):
         assert site.subprotocol() == 'messaging'
@@ -160,4 +160,4 @@ class TestSiteByConfigOnly:
         нет, и знает об этом только драйвер. Базовый даёт обычную случайную
         строку — сайту, которому нужен ULID, полагается свой файл.
         """
-        assert len(site.message_uid()) != len(dating_site_chat({}).message_uid())
+        assert len(site.message_uid()) != len(site_registry_chat({}).message_uid())

@@ -15,7 +15,7 @@
 (`tests/frames/goldenbride_chat.json`), а не рассуждением.
 """
 
-from src.dating.site.site_base import DatingSiteChat, dating_site_ulid
+from src.dating.site.site_base import DatingSiteChat, site_base_ulid
 from src.dating.site.site_profile import DatingSiteProfile
 
 
@@ -123,7 +123,7 @@ class DatingSiteChatGoldenbride(DatingSiteChat):
         а точно такие же кадры от нашего клиента — нет. Единственным различием
         был идентификатор.
         """
-        return dating_site_ulid()
+        return site_base_ulid()
 
 
 class DatingSiteProfileGoldenbride(DatingSiteProfile):

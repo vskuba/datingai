@@ -182,22 +182,6 @@ def dating_revive_plan(profile: dict, online: bool, now: datetime) -> dict:
     return _plan_login(since, tries, now)
 
 
-def _plan_login(since: datetime | None, tries: int, now: datetime) -> dict:
-    """Решение «входим сейчас»: попытка считается сделанной, следующая — по лестнице.
-
-    Одно место для двух поводов (протухание и профилактика по сроку): откат у них
-    общий, и разойтись эти две лестницы не должны.
-
-    Тревога приходит сюда готовой и здесь не выдумывается — в этом вся суть развода:
-    плановому входу тревога не нужна (анкета в сети, звать человека не о чем), а
-    аварийному её уже зажёг отказ опроса.
-    """
-    step = tries + 1
-
-    return {'action': 'login', 'relogin_since': since, 'relogin_tries': step,
-            'relogin_next_at': now + timedelta(seconds=dating_revive_delay(step))}
-
-
 async def dating_revive_round(login_run=None) -> dict:
     """Один круг: опросить анкеты под присмотром и починить те, что выпали.
 
@@ -299,6 +283,22 @@ async def dating_revive_round(login_run=None) -> dict:
                 counts['revived'] += 1
 
     return counts
+
+
+def _plan_login(since: datetime | None, tries: int, now: datetime) -> dict:
+    """Решение «входим сейчас»: попытка считается сделанной, следующая — по лестнице.
+
+    Одно место для двух поводов (протухание и профилактика по сроку): откат у них
+    общий, и разойтись эти две лестницы не должны.
+
+    Тревога приходит сюда готовой и здесь не выдумывается — в этом вся суть развода:
+    плановому входу тревога не нужна (анкета в сети, звать человека не о чем), а
+    аварийному её уже зажёг отказ опроса.
+    """
+    step = tries + 1
+
+    return {'action': 'login', 'relogin_since': since, 'relogin_tries': step,
+            'relogin_next_at': now + timedelta(seconds=dating_revive_delay(step))}
 
 
 def _probe_failed(error: BaseException) -> dict:

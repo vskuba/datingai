@@ -29,7 +29,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_log import dating_log_message_in
-from src.dating.site.site_registry import dating_site_chat
+from src.dating.site.site_registry import site_registry_chat
 
 # Сколько собеседников перечисляем в запросе истории. Сервер принимает список, но
 # у анкеты с сотней диалогов строка вырастет до килобайта — берём свежие.
@@ -65,7 +65,7 @@ async def dating_chat_listen(profile: dict, seconds: float = 0,
     if not url:
         return {'saved': 0, 'frames': 0, 'error': 'адрес сокета не снят: нужен вход'}
 
-    site = dating_site_chat(presence)
+    site = site_registry_chat(presence)
     saved = frames = 0
     deadline = asyncio.get_event_loop().time() + seconds if seconds else None
 

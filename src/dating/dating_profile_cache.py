@@ -23,7 +23,7 @@ import httpx
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_presence import DATING_PRESENCE_TIMEOUT, DATING_PRESENCE_UA
-from src.dating.site.site_registry import dating_site_profile
+from src.dating.site.site_registry import site_registry_profile
 
 # Сколько собеседниц держим: список сайта отдаёт сотни, а на странице читаются
 # те, с кем есть переписка.
@@ -81,7 +81,7 @@ async def _profile_load(client, profile: dict, presence: dict) -> bool:
     # «сохранено»; когда же сайт не давал `id`, в `int()` попадал логин, и
     # обновление падало целиком. Живых анкет в кэше не было ни одной — только
     # посеянные.
-    card = dating_site_profile(presence).card_parse(user, str(profile.get('login') or ''))
+    card = site_registry_profile(presence).card_parse(user, str(profile.get('login') or ''))
 
     async with mysql_get_db_async() as db:
         await db.execute('UPDATE dating_profile SET profile = %s WHERE id = %s',
@@ -109,7 +109,7 @@ async def _contacts_load(client, profile: dict, presence: dict) -> int:
     if not isinstance(items, list):
         return 0
 
-    site = dating_site_profile(presence)
+    site = site_registry_profile(presence)
     saved = 0
     async with mysql_get_db_async() as db:
         for item in items[:DATING_PROFILE_CACHE_CONTACT_LIMIT]:

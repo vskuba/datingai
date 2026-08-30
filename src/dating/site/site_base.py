@@ -258,7 +258,7 @@ class DatingSiteChat:
         """Кадр самого сообщения по шаблону из настройки."""
         template = self.send.get('frame') or self._default_send_frame()
 
-        return {key: dating_site_render(str(value), to_uid, text, message_uid)
+        return {key: site_base_render(str(value), to_uid, text, message_uid)
                 for key, value in template.items()}
 
     def ack_read(self, answer: str, message_uid: str) -> dict:
@@ -382,7 +382,7 @@ class DatingSiteChat:
             return None
 
 
-def dating_site_render(template: str, to_uid: str, text: str, message_uid: str) -> str:
+def site_base_render(template: str, to_uid: str, text: str, message_uid: str) -> str:
     """Подставляет значения в шаблон кадра или тела запроса.
 
     Функцией модуля, а не методом драйвера: подстановки одни и те же и в кадре
@@ -395,7 +395,7 @@ def dating_site_render(template: str, to_uid: str, text: str, message_uid: str) 
                     .replace(DATING_SITE_MARK_UID, str(message_uid)))
 
 
-def dating_site_ulid(length: int = 26, time_length: int = 10) -> str:
+def site_base_ulid(length: int = 26, time_length: int = 10) -> str:
     """ULID: первые знаки — время в миллисекундах, остальные случайны.
 
     Живёт здесь, а не в драйвере одного сайта: формат общий и пригодится

@@ -43,7 +43,7 @@ DATING_SITE_PROFILE_DRIVERS = {
 DATING_SITE_DRIVER_DEFAULT = DatingSiteChatGoldenbride.name
 
 
-def dating_site_chat(presence: dict | None = None) -> DatingSiteChat:
+def site_registry_chat(presence: dict | None = None) -> DatingSiteChat:
     """Драйвер чата для этого сайта: кадры сокета, отправка, подтверждения.
 
     Args:
@@ -56,7 +56,7 @@ def dating_site_chat(presence: dict | None = None) -> DatingSiteChat:
     return _driver_of(DATING_SITE_DRIVERS, presence)
 
 
-def dating_site_profile(presence: dict | None = None) -> DatingSiteProfile:
+def site_registry_profile(presence: dict | None = None) -> DatingSiteProfile:
     """Драйвер анкеты для этого сайта: имена полей анкеты и собеседниц.
 
     Отдельно от чата, потому что это разные разговоры: чат различается формой

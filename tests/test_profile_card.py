@@ -16,7 +16,7 @@ import json
 import pytest
 
 from src.dating.dating_profile_cache import _contact_values, _profile_load
-from src.dating.site.site_registry import dating_site_profile
+from src.dating.site.site_registry import site_registry_profile
 
 # Настройка сайта из RhapsodyAi: интересен корень и где искать анкету.
 PRESENCE = {'base': 'https://goldenbride.net/', 'profile': {'path': '/api/me', 'field': 'user'}}
@@ -26,7 +26,7 @@ PROFILE = {'id': 266, 'login': 'natalia@example.com'}
 
 # Драйвер анкеты. Через реестр, а не прямым импортом класса: заодно проверяется,
 # что умолчание ведёт к Goldenbride, пока в закладках не проставлен `driver`.
-SITE = dating_site_profile(PRESENCE)
+SITE = site_registry_profile(PRESENCE)
 
 # Порядок полей строки `dating_contact` — как в INSERT.
 UID, NAME, PHOTO, AGE, CITY, ONLINE = 1, 2, 3, 4, 5, 6

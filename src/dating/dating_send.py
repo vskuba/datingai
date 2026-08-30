@@ -30,8 +30,8 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_presence import DATING_PRESENCE_TIMEOUT, DATING_PRESENCE_UA
-from src.dating.site.site_base import dating_site_render
-from src.dating.site.site_registry import dating_site_chat
+from src.dating.site.site_base import site_base_render
+from src.dating.site.site_registry import site_registry_chat
 
 # Сколько ждать ответного кадра после отправки. Сайт отвечает за доли секунды,
 # а молчание — обычное дело: подтверждения шлют не все.
@@ -73,7 +73,7 @@ async def dating_send_message(profile: dict, presence: dict, to_uid: str, text: 
     if not send:
         return _fail('у сайта не настроена отправка (presence.send)')
 
-    site = dating_site_chat(presence)
+    site = site_registry_chat(presence)
     message_uid = site.message_uid()
     transport = str(send.get('transport') or 'http').lower()
 
@@ -135,7 +135,7 @@ async def _send_http(profile: dict, presence: dict, send: dict, to_uid: str, tex
     if not cookies:
         return _fail('вход не выполнен')
 
-    body = dating_site_render(str(send.get('body') or ''), to_uid, text, message_uid)
+    body = site_base_render(str(send.get('body') or ''), to_uid, text, message_uid)
 
     try:
         async with httpx.AsyncClient(timeout=DATING_PRESENCE_TIMEOUT, cookies=cookies,

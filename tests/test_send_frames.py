@@ -27,13 +27,13 @@ import pytest
 
 from src.dating import dating_send
 from src.dating.dating_send import _ack_wait, _hello_wait, _open_dialog, _send_ws
-from src.dating.site.site_base import dating_site_render
-from src.dating.site.site_registry import dating_site_chat
+from src.dating.site.site_base import site_base_render
+from src.dating.site.site_registry import site_registry_chat
 
 # Драйвер сайта — предмет проверки для всего, что касается формы кадров. Через
 # реестр, а не прямым импортом класса: заодно проверяется, что умолчание реестра
 # ведёт к Goldenbride (пока в закладках нет ключа `driver`, на этом держится прод).
-SITE = dating_site_chat({})
+SITE = site_registry_chat({})
 
 FRAMES = json.loads((Path(__file__).parent / 'frames' / 'goldenbride_chat.json')
                     .read_text(encoding='utf-8'))
@@ -93,12 +93,12 @@ class TestRender:
     """Подстановки в шаблоне кадра: сайты называют поля по-разному."""
 
     def test_all_three_marks(self):
-        rendered = dating_site_render('{{to}}|{{text}}|{{uid}}', TO_UID, 'привет', MESSAGE_UID)
+        rendered = site_base_render('{{to}}|{{text}}|{{uid}}', TO_UID, 'привет', MESSAGE_UID)
 
         assert rendered == f'{TO_UID}|привет|{MESSAGE_UID}'
 
     def test_unknown_marks_are_left_alone(self):
-        assert dating_site_render('{{who}}', TO_UID, 'x', MESSAGE_UID) == '{{who}}'
+        assert site_base_render('{{who}}', TO_UID, 'x', MESSAGE_UID) == '{{who}}'
 
 
 class TestSendFrame:
@@ -113,7 +113,7 @@ class TestSendFrame:
 
     def test_site_template_wins(self):
         """Свой шаблон сайта подставляется целиком — Python ради него не правят."""
-        frame = dating_site_chat({'send': {'frame': {'to': '{{to}}', 'body': '{{text}}', 'op': 'send'}}}
+        frame = site_registry_chat({'send': {'frame': {'to': '{{to}}', 'body': '{{text}}', 'op': 'send'}}}
                                  ).send_frame(TO_UID, 'привет', MESSAGE_UID)
 
         assert frame == {'to': TO_UID, 'body': 'привет', 'op': 'send'}
@@ -144,7 +144,7 @@ class TestPrelude:
 
     async def test_site_may_replace_prelude(self, no_pause):
         socket = _FakeSocket()
-        await _open_dialog(socket, TO_UID, dating_site_chat({'send': {'before': ['ping']}}))
+        await _open_dialog(socket, TO_UID, site_registry_chat({'send': {'before': ['ping']}}))
 
         assert [json.loads(raw)['method'] for raw in socket.sent] == ['ping']
 
@@ -155,7 +155,7 @@ class TestPrelude:
         нечем задать иначе.
         """
         socket = _FakeSocket()
-        await _open_dialog(socket, TO_UID, dating_site_chat({'send': {'before': []}}))
+        await _open_dialog(socket, TO_UID, site_registry_chat({'send': {'before': []}}))
 
         assert socket.sent == []
 
