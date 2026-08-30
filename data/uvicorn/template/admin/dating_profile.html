@@ -7,24 +7,40 @@
     <style>
         /* Обойма, шапка, панель, журнал и значки учётки — общие с «Анкетами»
            (`dating_page.css`). Здесь только раскладка этой страницы: шапка во всю
-           ширину, под ней таблица и журнал в двух колонках.
+           ширину, под ней три колонки — список, настройки выбранной анкеты, её
+           журнал.
 
-           Журналу — 20%: он отвечает на вопрос «что с этой анкетой происходило»,
-           а читают его строками по десятку слов. Отдать ему больше значит отнять
-           у таблицы, ради которой на страницу и приходят. Разделителя нет —
-           тянуть тут нечего. */
+           Порядок колонок повторяет порядок работы: нашёл анкету в списке →
+           правишь её посередине → смотришь, что вышло, в журнале справа. Настройки
+           стоят между списком и журналом не для симметрии: правка и её последствия
+           должны быть рядом, иначе после каждого нажатия глаз ходит через весь
+           экран.
+
+           Ширины: список тянется, настройки 340px (столько нужно строке
+           расписания — метка, два времени и удаление), журнал 20%. Отдать
+           настройкам больше значит отнять у списка, ради которого на страницу и
+           приходят. Разделителей нет — тянуть тут нечего. */
         .dating-page {
-            grid-template-columns: minmax(0, 1fr) 20%;
+            grid-template-columns: minmax(0, 1fr) 340px 20%;
             grid-template-rows: auto minmax(0, 1fr);
         }
         .dating-head { grid-column: 1 / -1; }
         .prof-pane { grid-column: 1; grid-row: 2; }
-        .log-pane { grid-column: 2; grid-row: 2; }
+        .edit-pane { grid-column: 2; grid-row: 2; }
+        .log-pane { grid-column: 3; grid-row: 2; }
+
+        /* Настройки прокручиваются: блоков четыре, и на невысоком экране они не
+           влезают. Список рядом при этом остаётся без прокрутки — у него своё
+           правило (пейджер вместо неё), и смешивать их нельзя. */
+        .edit-body { display: flex; flex-direction: column; gap: 16px; padding: 12px; }
+        .edit-pane .pane-body { overflow-y: auto; }
+        .edit-empty { padding: 20px 12px; color: #9ca3af; font-size: 12px; text-align: center; }
 
         /* Колонка узкая, а логин длинный: без многоточия имя анкеты растолкало бы
            заголовок панели и уехало за её край. */
         .log-pane .pane-head { min-width: 0; }
-        #logWho { min-width: 0; color: #94a3b8;
+        .log-pane .pane-head, .edit-pane .pane-head { min-width: 0; }
+        #logWho, #editWho { min-width: 0; color: #94a3b8;
                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
         /* Вертикальной прокрутки нет намеренно: сколько строк влезло — столько на
@@ -35,12 +51,6 @@
            вбок, чем читать имя по одной букве. Поля сняты, чтобы таблица шла от
            края до края. */
         .prof-body { padding: 0; overflow-x: auto; overflow-y: hidden; }
-
-        /* Исключение из «прокрутки нет» — раскрытая карточка. Она выше любой
-           строки, и подогнать под неё число строк нельзя: подгонка выкинула бы из
-           таблицы почти всё, оставив карточку в одиночестве. Поэтому пока карточка
-           открыта, таблица прокручивается; закрыли — правило возвращается. */
-        .prof-body.open { overflow-y: auto; }
 
         .prof-table { width: 100%; border-collapse: collapse; font-size: 12px; }
         /* Липкой шапке взяться неоткуда: вертикальной прокрутки у тела нет. */
@@ -54,21 +64,20 @@
         .prof-table tr:last-child td { border-bottom: none; }
         .prof-table tbody tr.prof-row { cursor: pointer; }
         .prof-table tbody tr.prof-row:hover td { background: #f8fafc; }
-        .prof-table tbody tr.prof-row.open td { background: #f1f5f9; }
+
 
         /* Столбец состояния — самый узкий и первый: сначала смотрят, всё ли в
            порядке, и только потом читают, у кого именно. */
         .prof-state { width: 1%; white-space: nowrap; }
         .prof-state > * + * { margin-left: 5px; }
 
-        /* Значок свёрнутости. Строку открывают кликом по ней самой, но без значка
-           не видно, что она вообще открывается. Поворачивается вместо подмены
-           символа — так переход читается как движение, а не как мигание. */
-        .prof-toggle {
-            display: inline-block; color: #94a3b8; font-size: 9px;
-            transition: transform .15s ease;
+        /* Выбранная строка. Полоса слева, а не только фон: фон у строки под
+           курсором почти такой же, и без полосы выбранное теряется ровно в тот
+           момент, когда мышь идёт к настройкам. */
+        .prof-table tbody tr.prof-row.open td { background: #eef2ff; }
+        .prof-table tbody tr.prof-row.open td:first-child {
+            box-shadow: inset 3px 0 0 #4f46e5;
         }
-        .prof-row.open .prof-toggle { transform: rotate(90deg); color: #4338ca; }
 
         /* Кто это: лицо, имя, под ним логин. Ширину не задаём — колонка забирает
            остаток строки, и режется многоточием именно она, а не бейджи и время. */
@@ -97,18 +106,6 @@
         .prof-empty { padding: 24px 12px; text-align: center; color: #9ca3af; font-size: 13px; }
 
         /* ---------- Раскрытая карточка ---------- */
-
-        /* Отдельной строкой таблицы во всю ширину, а не панелью сбоку: настройки
-           относятся к той анкете, на которую нажали, и уводить их от неё значит
-           заставлять сверять, что правишь.
-
-           Курсор здесь обычный: по карточке не нажимают, чтобы закрыть, — в ней
-           поля ввода, и случайное закрытие стёрло бы набранное. */
-        .prof-card td { padding: 0; background: #f8fafc; cursor: default; }
-        .prof-card-in {
-            display: flex; flex-wrap: wrap; align-items: flex-start; gap: 22px;
-            padding: 12px 14px 14px 34px;
-        }
 
         .prof-form { display: flex; flex-direction: column; gap: 7px; }
         .prof-form h4 {
@@ -146,9 +143,8 @@
 
         /* ---------- Расписание входов и выходов ---------- */
 
-        /* Блок шире прочих: в строке четыре элемента подряд — метка, два времени
-           и удаление, — и в общей ширине карточки они бы переносились по одному. */
-        .sched { min-width: 300px; }
+        /* Ширину задаёт колонка настроек — своей у блока нет. Она подобрана как
+           раз под строку расписания: метка, два времени и удаление в один ряд. */
 
         .sched-list { display: flex; flex-direction: column; gap: 4px; }
 
@@ -237,6 +233,11 @@
         <div class="pane-foot" id="profilesPager"></div>
     </div>
 
+    <div class="pane edit-pane">
+        <div class="pane-head">Настройки <span id="editWho"></span></div>
+        <div class="pane-body" id="edit"></div>
+    </div>
+
     <div class="pane log-pane">
         <div class="pane-head">Журнал <span id="logWho"></span></div>
         <div class="pane-body" id="log"></div>
@@ -284,6 +285,8 @@
     const pagerEl = document.getElementById('profilesPager');
     const logEl = document.getElementById('log');
     const logWhoEl = document.getElementById('logWho');
+    const editEl = document.getElementById('edit');
+    const editWhoEl = document.getElementById('editWho');
 
     let profiles = [];
     let page = 0;
@@ -395,8 +398,8 @@
     // строки зависит от шрифта и аватара, и зашитое число разъехалось бы с
     // разметкой при первой же правке стилей.
     //
-    // Меряем строку списка (`.prof-row`), а не первую попавшуюся: раскрытая
-    // карточка тоже строка таблицы, и по ней вышло бы, что в панель влезает одна.
+    // Меряем строку списка (`.prof-row`): в таблице других строк и не бывает —
+    // настройки выбранной анкеты стоят в соседней колонке, а не внутри списка.
     function rowsFit() {
         const probe = tableEl.querySelector('tbody tr.prof-row');
         const head = tableEl.querySelector('thead');
@@ -449,8 +452,7 @@
             const open = row.id === openId;
 
             return `<tr class="prof-row${open ? ' open' : ''}" data-id="${row.id}">`
-                + `<td class="prof-state"><span class="prof-toggle">▶</span>`
-                + `${statusDot(row)}${warnBadge(row)}</td>`
+                + `<td class="prof-state">${statusDot(row)}${warnBadge(row)}</td>`
                 + '<td><span class="prof-who">'
                 + `<img class="profile-face" src="${esc(row.photo || '')}" alt="" referrerpolicy="no-referrer"`
                 + ' onerror="this.style.visibility=\'hidden\'">'
@@ -468,8 +470,7 @@
                 + `${esc(seenText(row.last_seen_at) || '—')}</td>`
                 + noteCell(row)
                 + `<td class="prof-act">${actCell(row)}</td>`
-                + '</tr>'
-                + (open ? cardRow(row) : '');
+                + '</tr>';
         }).join('');
 
         tableEl.innerHTML =
@@ -477,8 +478,6 @@
             + '<th></th><th>Анкета</th><th>Работа</th><th>Автоответ</th><th>В сети</th>'
             + '<th>Вход</th><th>Пометка</th><th></th>'
             + '</tr></thead><tbody>' + body + '</tbody></table>';
-
-        tableEl.classList.toggle('open', Boolean(openId));
 
         // Пейджер рисуем до замера: он занимает высоту, и мерить тело панели без
         // него значит насчитать на строку больше, чем влезет.
@@ -502,17 +501,14 @@
               + 'анкет — всё на одной странице';
         pagerEl.prepend(counted);
 
-        // Пока карточка раскрыта, число строк не пересчитываем: в панели теперь
-        // стоит блок высотой в несколько строк, и подгонка под него выкинула бы
-        // из таблицы почти всё. Замереть на последнем значении, посчитанном по
-        // обычным строкам, — честнее: закроют карточку, и подгонка продолжится.
-        if (!openId) {
-            const fit = rowsFit();
-            if (tries > 0 && fit !== perPage) {
-                perPage = fit;
-                tablePaint(tries - 1);
-                return;
-            }
+        // Число строк подгоняем всегда. Раньше подгонка отключалась у раскрытой
+        // анкеты — карточка стояла прямо в таблице и была выше любой строки;
+        // теперь настройки живут в своей колонке, и мешать замеру нечему.
+        const fit = rowsFit();
+        if (tries > 0 && fit !== perPage) {
+            perPage = fit;
+            tablePaint(tries - 1);
+            return;
         }
 
         bindActions();
@@ -529,17 +525,17 @@
 
     // ── Раскрытая карточка ───────────────────────────────────────────────────
 
-    // Настройки анкеты строкой таблицы во всю ширину. Формы две, потому что и
-    // ручки две: учётка правится целиком (`PUT /{id}`), автоответ — отдельно
+    // Настройки выбранной анкеты — содержимое средней колонки. Формы две, потому
+    // что и ручки две: учётка правится целиком (`PUT /{id}`), автоответ — отдельно
     // (`PUT /{id}/auto`), и он включается сразу, разбирая накопившееся. Слить их
     // в одну кнопку «Сохранить» значило бы запускать разбор писем при правке
     // пометки.
-    function cardRow(row) {
+    function editForms(row) {
         const state = row.has_state
             ? `вход снят ${esc(seenText(row.last_seen_at) || 'когда-то')}`
             : 'входа ещё не было';
 
-        return '<tr class="prof-card"><td colspan="8"><div class="prof-card-in">'
+        return '<div class="edit-body">'
 
             + '<form class="prof-form" data-form="save">'
             + '<h4>Учётка</h4>'
@@ -597,7 +593,39 @@
             + `${esc(row.last_error || state)}</span>`
             + '</div>'
 
-            + '</div></td></tr>';
+            + '</div>';
+    }
+
+    // Рисует колонку настроек. Отдельно от списка и **не по его таймеру**: список
+    // освежается сам, а форма под руками перерисовываться не должна — набранное в
+    // полях исчезло бы вместе с местом курсора.
+    function editPaint() {
+        const row = openRow();
+        editWhoEl.textContent = row ? (row.name || row.login) : '';
+
+        if (!row) {
+            editEl.innerHTML = '<div class="edit-empty">Выберите анкету в списке — '
+                             + 'здесь будут её настройки.</div>';
+            return;
+        }
+
+        editEl.innerHTML = editForms(row);
+        editBind(row);
+    }
+
+    function editBind(row) {
+        editEl.querySelector('[data-form="save"]').addEventListener('submit', (e) => {
+            e.preventDefault();
+            profileSave(row, e.target);
+        });
+        editEl.querySelector('[data-form="auto"]').addEventListener('submit', (e) => {
+            e.preventDefault();
+            profileAuto(row, e.target);
+        });
+        scheduleBind(editEl, row);
+        editEl.querySelector('.login-btn').addEventListener('click', () => profileLogin(row));
+        editEl.querySelector('.off-btn').addEventListener('click', () => profileDisconnect(row));
+        editEl.querySelector('.del-btn').addEventListener('click', () => profileDelete(row));
     }
 
     function field(label, control) {
@@ -675,7 +703,9 @@
         const rows = [...(scheduleDraft.get(profileId) || [])];
         change(rows);
         scheduleDraft.set(profileId, rows);
-        tablePaint(0);
+        // Перерисовываем **только настройки**: расписание в списке не показано, а
+        // лишняя перерисовка таблицы под руками ничего не даёт и стоит мигания.
+        editPaint();
     }
 
     function scheduleBind(card, row) {
@@ -759,6 +789,7 @@
     // показывает её, поэтому смена раскрытой сразу тянет за собой журнал.
     function openSet(id) {
         openId = Number(id || 0);
+        editPaint();
         logPaint();
         logLoad();
     }
@@ -867,12 +898,12 @@
     // ── Действия ─────────────────────────────────────────────────────────────
 
     function bindActions() {
-        // Нажатие по строке раскрывает её. Кнопки и содержимое карточки из этого
-        // исключены: в карточке поля ввода, и закрытие по клику стёрло бы
-        // набранное, а кнопка в строке и так делает своё дело.
+        // Нажатие по строке **выбирает** анкету: подсвечивает её и наполняет две
+        // соседние колонки — настройки и журнал. Повторное нажатие снимает выбор.
+        // Кнопка в строке из этого исключена: она и так делает своё дело.
         tableEl.querySelectorAll('tr.prof-row').forEach(tr => {
             tr.addEventListener('click', (e) => {
-                if (e.target.closest('button, input, select, label, a')) return;
+                if (e.target.closest('button')) return;
                 const id = Number(tr.dataset.id);
                 openSet(id === openId ? 0 : id);
                 tablePaint(0);
@@ -883,25 +914,6 @@
             const row = rowOf(btn);
             if (row) btn.addEventListener('click', () => profilePing(row));
         });
-
-        const card = tableEl.querySelector('tr.prof-card');
-        if (!card) return;
-
-        const row = openRow();
-        if (!row) return;
-
-        card.querySelector('[data-form="save"]').addEventListener('submit', (e) => {
-            e.preventDefault();
-            profileSave(row, e.target);
-        });
-        card.querySelector('[data-form="auto"]').addEventListener('submit', (e) => {
-            e.preventDefault();
-            profileAuto(row, e.target);
-        });
-        scheduleBind(card, row);
-        card.querySelector('.login-btn').addEventListener('click', () => profileLogin(row));
-        card.querySelector('.off-btn').addEventListener('click', () => profileDisconnect(row));
-        card.querySelector('.del-btn').addEventListener('click', () => profileDelete(row));
     }
 
     function rowOf(el) {
@@ -1059,13 +1071,15 @@
         resizeTimer = setTimeout(() => { if (profiles.length) tablePaint(); }, 150);
     });
 
-    // Своим кругом список не освежается, пока идёт долгое действие, раскрыта
-    // карточка или вкладку не смотрят. Про карточку — главное: в ней поля ввода,
-    // и перерисовка посреди правки стёрла бы набранное вместе с местом курсора.
-    // Свежесть от этого не страдает — состояние раскрытой анкеты видно в журнале,
-    // который ходит своим кругом.
+    // Список освежается своим кругом **и при выбранной анкете тоже**. Раньше круг
+    // при ней замирал: формы стояли прямо в таблице, и перерисовка стирала бы
+    // набранное вместе с местом курсора. Теперь формы в своей колонке, таблица их
+    // не касается — и список может показывать правду всё время.
+    //
+    // Долгое действие круг по-прежнему пережидает: перерисовка посреди входа
+    // вернула бы кнопке прежний вид, и её нажали бы второй раз.
     setInterval(() => {
-        if (busy.size || openId || document.hidden) return;
+        if (busy.size || document.hidden) return;
         profilesLoad();
     }, RELOAD_MS);
 
@@ -1076,6 +1090,7 @@
 
     hintEl.textContent = 'состояние обновляется само';
     empty('Гружу…');
+    editPaint();
     logPaint();
     sitesLoad();
 </script>
