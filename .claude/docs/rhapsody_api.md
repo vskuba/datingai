@@ -37,6 +37,7 @@
 | `rhapsody_api_site_list` | `GET /api/browser/site?tag=dating` | селект сайтов на странице |
 | `rhapsody_api_scenario_login_find` | `GET /api/browser/scenario` + детали | вход на сайт |
 | `rhapsody_api_scenario_find` | `GET /api/browser/scenario` | анкета, диалоги, выход — по имени из `presence` |
+| `rhapsody_api_scenario_find_by_id` | `GET /api/browser/scenario/{id}` | подстановки известного сценария перед прогоном |
 | `rhapsody_api_scenario_run` | `POST /api/browser/scenario/{id}/run` | сам прогон в браузере |
 | `rhapsody_api_session_open/close/list/state` | `/api/browser/session…` | жизнь вкладки |
 | `rhapsody_api_ws_capture` | `POST /api/browser/ws/capture` | снять адрес чат-сокета |
@@ -45,7 +46,7 @@
 | `rhapsody_api_chat_ask` | `POST /chat/ask` | получить ответ в чате |
 | `rhapsody_api_error_write` | `POST /api/browser/error` | строка во вкладку «Ошибки» соседа |
 
-## 4. Три места, где контракт неочевиден
+## 4. Четыре места, где контракт неочевиден
 
 **Сценарий входа ищется по подстановкам, а не по имени.** Имя у каждого сайта
 своё («вход (общий)», «login»), а вход всегда узнаётся по паре «логин + пароль» в
