@@ -73,6 +73,7 @@ class DatingProfileResponse(BaseModel):
     login: str = Field(..., description='Логин или почта', examples=['natalia@example.com'])
     role: str = Field('lady', description='Чей кабинет на сайте: lady | man')
     name: str = Field('', description='Имя из анкеты; пусто — анкету ещё не читали')
+    site_uid: str = Field('', description='Номер анкеты на сайте; по нему её ищут в панели сайта')
     photo: str = Field('', description='Фотография из анкеты, полный адрес')
     has_password: bool = Field(..., description='Пароль задан — под учёткой можно входить')
     has_state: bool = Field(False, description='Вход снят: опрос идёт без браузера')
@@ -151,6 +152,10 @@ async def dating_profile_list(site_id: int = 0,
         profile = dating_json_load(row.pop('profile', None))
         row['name'] = str(profile.get('name') or '')
         row['photo'] = str(profile.get('photo') or '')
+        # Номер анкеты на сайте — в список: по нему ищут в поиске страницы, и по
+        # нему же приходят просьбы «посмотри анкету 643694». Кладёт его импорт
+        # (`dating_import`), у заведённых руками он пуст.
+        row['site_uid'] = str(profile.get('site_uid') or '')
 
     return {'result': rows}
 

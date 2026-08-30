@@ -138,6 +138,80 @@
         .import-state { font-size: 11px; font-weight: 600; white-space: nowrap; }
         .import-state.on { color: #166534; }
         .import-state.off { color: #94a3b8; }
+
+        /* Счёт строк в подвале таблицы: слева, кнопки страниц по центру. Он же
+           держит подвал непустым там, где страница одна. */
+        .prof-pane .pane-foot { justify-content: flex-start; }
+        .prof-count { font-size: 11px; color: #94a3b8; margin-right: auto; }
+
+        /* ---------- Расписание входов и выходов ---------- */
+
+        /* Блок шире прочих: в строке четыре элемента подряд — метка, два времени
+           и удаление, — и в общей ширине карточки они бы переносились по одному. */
+        .sched { min-width: 300px; }
+
+        .sched-list { display: flex; flex-direction: column; gap: 4px; }
+
+        /* Строка расписания. Слева цветная планка — по ней тип читается раньше,
+           чем слово: вход и выход чередуются, и глаз ищет ритм, а не текст. */
+        .sched-row {
+            display: flex; align-items: center; gap: 7px;
+            padding: 4px 7px 4px 5px; border-radius: 6px;
+            background: #f8fafc; border-left: 3px solid transparent;
+        }
+        .sched-row.in  { border-left-color: #16a34a; }
+        .sched-row.out { border-left-color: #d97706; }
+
+        .sched-kind { font-size: 11px; font-weight: 700; width: 44px; flex: 0 0 auto; }
+        .sched-row.in  .sched-kind { color: #166534; }
+        .sched-row.out .sched-kind { color: #92400e; }
+
+        .sched-row input[type=time] {
+            padding: 3px 5px; border: 1px solid #d1d5db; border-radius: 5px;
+            font-family: inherit; font-size: 12px; color: #374151; background: #fff;
+        }
+        .sched-row input[type=time]:focus { outline: none; border-color: #c7d2fe; }
+        /* Незаполненное второе поле — обычное дело («точно в это время»), и
+           красить его как ошибку нельзя. */
+        .sched-row input[type=time]:invalid { border-color: #d1d5db; }
+
+        .sched-dash { color: #cbd5e1; font-size: 11px; }
+
+        .sched-drop {
+            margin-left: auto; border: none; background: none; cursor: pointer;
+            color: #cbd5e1; font-size: 15px; line-height: 1; padding: 0 2px;
+        }
+        .sched-drop:hover { color: #b91c1c; }
+
+        .sched-add { display: flex; gap: 6px; margin-top: 7px; }
+        .sched-add .dating-btn { font-size: 11px; padding: 3px 9px; }
+
+        /* Лента суток — то единственное, ради чего этот блок выглядит не как
+           список полей. Расписание отвечает на вопрос «когда анкета в сети», и
+           ответ на него — полоса, а не строки: по ней сразу видно и дыры между
+           сменами, и главную беду — вход, за которым не идёт выход. */
+        .sched-day {
+            position: relative; height: 16px; margin-top: 9px;
+            border-radius: 4px; background: #f1f5f9; overflow: hidden;
+        }
+        .sched-span { position: absolute; top: 0; bottom: 0; background: #a5b4fc; }
+        /* Незакрытая смена: полоса уходит вправо штриховкой и не кончается —
+           ровно то, что произойдёт с анкетой, если выход не поставить. */
+        .sched-span.open {
+            background: repeating-linear-gradient(115deg, #fecaca 0 5px, #fee2e2 5px 10px);
+        }
+        /* Размытость интервала: у времени «между 10 и 11» края не резкие, и полоса
+           это показывает — иначе интервал ничем не отличался бы от точного часа. */
+        .sched-span.fuzzy-start { border-left: 2px dotted #6366f1; }
+        .sched-span.fuzzy-end { border-right: 2px dotted #6366f1; }
+
+        .sched-hours {
+            display: flex; justify-content: space-between;
+            font-size: 9px; color: #cbd5e1; margin-top: 2px;
+        }
+
+        .sched-empty { font-size: 11px; color: #94a3b8; padding: 6px 0; }
+        .sched-warn { color: #b91c1c; }
     </style>
 {% endblock %}
 
@@ -155,8 +229,9 @@
     <div class="pane prof-pane">
         <div class="pane-head">
             Профили <span id="profilesN"></span>
-            <input type="search" id="profileFind" class="pane-find" placeholder="имя или логин"
-                   spellcheck="false" autocomplete="off" title="Быстрый поиск по имени или логину">
+            <input type="search" id="profileFind" class="pane-find" placeholder="имя или почта"
+                   spellcheck="false" autocomplete="off"
+                   title="Ищет и по имени, и по почте — одним полем, любой кусок строки">
         </div>
         <div class="pane-body prof-body" id="table"></div>
         <div class="pane-foot" id="profilesPager"></div>
@@ -225,6 +300,18 @@
     let importLog = [];
     let importBusy = false;
 
+    // Расписание раскрытой анкеты, пока его набирают. Живёт здесь, а не в
+    // разметке: карточка перерисовывается при каждой правке списка, и набранное
+    // обязано это пережить. Ключ — id анкеты, значение — массив записей
+    // `{kind: 'in'|'out', from: '10:00', to: '11:00'}`; `to` пустое значит
+    // «точно в это время», непустое — «в любой момент между».
+    //
+    // ⚠ Сервера у расписания пока нет: ручка и таблица появятся отдельным шагом.
+    // Здесь только вид и правила ввода, поэтому набранное живёт до перезагрузки
+    // страницы — и об этом прямо сказано под блоком, чтобы никто не решил, будто
+    // расписание уже работает.
+    const scheduleDraft = new Map();
+
     const siteId = () => Number(siteEl.value || 0);
     const openRow = () => profiles.find(row => row.id === openId) || null;
 
@@ -279,7 +366,11 @@
         const needle = findEl.value.trim().toLowerCase();
         if (!needle) return profiles;
 
-        return profiles.filter(row => (String(row.name || '') + ' ' + String(row.login || ''))
+        // Одним полем по трём приметам: имя, почта (она же логин) и номер анкеты
+        // на сайте. Человек не обязан помнить, что из этого где лежит, — он ищет
+        // «ту самую Diana» или «ту, что с bigmir», и оба пути должны работать.
+        return profiles.filter(row => [row.name, row.login, row.site_uid]
+            .map(part => String(part || '')).join(' ')
             .toLowerCase().includes(needle));
     }
 
@@ -396,6 +487,21 @@
             tablePaint(0);
         });
 
+        // Подвал **виден всегда**, даже когда страница одна. Общий `pagerRender`
+        // при одной странице прячет его целиком — на «Анкетах» это верно, там под
+        // списком идёт ещё и форма. Здесь под таблицей пусто, и пропавший подвал
+        // читается как «пагинации нет вообще»: человек не понимает, показали ему
+        // всё или только начало. Поэтому слева от кнопок — счёт строк, и он
+        // отвечает на этот вопрос прямо.
+        pagerEl.classList.add('open');
+        const counted = document.createElement('span');
+        counted.className = 'prof-count';
+        counted.textContent = pages > 1
+            ? `${found.length} анкет · страница ${page + 1} из ${pages}`
+            : `${found.length} ${found.length === profiles.length ? '' : `из ${profiles.length} `}`
+              + 'анкет — всё на одной странице';
+        pagerEl.prepend(counted);
+
         // Пока карточка раскрыта, число строк не пересчитываем: в панели теперь
         // стоит блок высотой в несколько строк, и подгонка под него выкинула бы
         // из таблицы почти всё. Замереть на последнем значении, посчитанном по
@@ -474,6 +580,8 @@
             + ' пусто — отвечать всем.</span>'
             + '</form>'
 
+            + scheduleBlock(row)
+
             + '<div class="prof-form">'
             + '<h4>Действия</h4>'
             + '<div class="prof-line">'
@@ -494,6 +602,157 @@
 
     function field(label, control) {
         return `<label class="prof-field"><span>${esc(label)}</span>${control}</label>`;
+    }
+
+    // ── Расписание: вход и выход по времени суток ────────────────────────────
+
+    // Записи анкеты, отсортированные по времени. Сортируем **при каждой отрисовке**,
+    // а не при добавлении: время правят прямо в строке, и запись, заведённая
+    // последней, может оказаться первой по времени. Порядок в списке — это и есть
+    // порядок событий суток, иначе читать его невозможно.
+    function scheduleRows(profileId) {
+        const rows = scheduleDraft.get(profileId) || [];
+
+        return [...rows].sort((a, b) => (a.from || '').localeCompare(b.from || ''));
+    }
+
+    // Расписание считается годным, когда в нём есть хотя бы один вход и хотя бы
+    // один выход, и у всех записей проставлено время.
+    //
+    // **Выход обязателен, и это главное правило блока.** Анкета, которая вошла и
+    // не вышла, остаётся в сети до тех пор, пока кто-нибудь не заметит: сайт её не
+    // выкинет, а мы будем держать сокет и платить за присутствие. Поэтому сохранить
+    // расписание без выхода нельзя вовсе — не предупреждением, а погашенной кнопкой.
+    function scheduleCheck(rows) {
+        if (!rows.length) return 'Расписания нет — анкета входит и выходит вручную';
+        if (rows.some(row => !row.from)) return 'У каждой записи должно быть время';
+        if (!rows.some(row => row.kind === 'in')) return 'Нужен хотя бы один вход';
+        if (!rows.some(row => row.kind === 'out')) return 'Нужен выход: без него анкета останется в сети';
+
+        const broken = rows.find(row => row.to && row.to <= row.from);
+        if (broken) return `Интервал ${broken.from}–${broken.to}: конец раньше начала`;
+
+        return '';
+    }
+
+    // Лента суток: полосы «анкета в сети» от входа до следующего выхода.
+    //
+    // Рисуем её потому, что расписание отвечает на вопрос «когда анкета работает»,
+    // а список строк на него не отвечает — по нему это надо складывать в уме.
+    // Заодно видна главная беда: вход, за которым не идёт выход, уходит вправо
+    // штриховкой и не кончается.
+    function scheduleDay(rows) {
+        const minutes = (time) => {
+            const [h, m] = String(time || '0:0').split(':').map(Number);
+            return (h * 60 + m) / 14.4;  // сутки → проценты ширины
+        };
+
+        let html = '', open = null;
+        for (const row of rows) {
+            if (row.kind === 'in' && !open) { open = row; continue; }
+            if (row.kind === 'out' && open) {
+                const from = minutes(open.from), to = minutes(row.to || row.from);
+                html += `<span class="sched-span${open.to ? ' fuzzy-start' : ''}`
+                      + `${row.to ? ' fuzzy-end' : ''}" style="left:${from}%;`
+                      + `width:${Math.max(to - from, 0.6)}%"></span>`;
+                open = null;
+            }
+        }
+        if (open) {
+            const from = minutes(open.from);
+            html += `<span class="sched-span open" style="left:${from}%;width:${100 - from}%"></span>`;
+        }
+
+        return `<div class="sched-day">${html}</div>`
+             + '<div class="sched-hours"><span>00</span><span>06</span><span>12</span>'
+             + '<span>18</span><span>24</span></div>';
+    }
+
+    // Правит черновик и перерисовывает карточку. Перерисовываем целиком, а не
+    // одну строку: от правки времени меняется порядок списка и вся лента суток,
+    // и подновлять их по кусочкам значило бы держать два способа рисовать одно.
+    function scheduleEdit(profileId, change) {
+        const rows = [...(scheduleDraft.get(profileId) || [])];
+        change(rows);
+        scheduleDraft.set(profileId, rows);
+        tablePaint(0);
+    }
+
+    function scheduleBind(card, row) {
+        const form = card.querySelector('[data-form="schedule"]');
+        if (!form) return;
+
+        form.querySelector('.sched-add-in').addEventListener('click', () =>
+            scheduleEdit(row.id, rows => rows.push({kind: 'in', from: '10:00', to: ''})));
+        form.querySelector('.sched-add-out').addEventListener('click', () =>
+            scheduleEdit(row.id, rows => rows.push({kind: 'out', from: '18:00', to: ''})));
+
+        // Строки читаем в том же порядке, в каком их нарисовали (по времени), —
+        // иначе `data-index` указывал бы не на ту запись.
+        const shown = scheduleRows(row.id);
+        form.querySelectorAll('.sched-row').forEach((line, index) => {
+            const item = shown[index];
+
+            line.querySelector('.sched-drop').addEventListener('click', () =>
+                scheduleEdit(row.id, rows => rows.splice(rows.indexOf(item), 1)));
+
+            // `change`, а не `input`: поле времени шлёт `input` на каждую цифру, и
+            // перерисовка посреди набора отобрала бы фокус на втором знаке часа.
+            line.querySelectorAll('input[type=time]').forEach(input => {
+                input.addEventListener('change', () => scheduleEdit(row.id, rows => {
+                    const found = rows[rows.indexOf(item)];
+                    if (found) found[input.dataset.field] = input.value;
+                }));
+            });
+        });
+
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            // Сервера у расписания пока нет — говорим об этом прямо, а не делаем
+            // вид, что сохранили. Тихое «Сохранено» тут было бы обманом: человек
+            // ушёл бы с уверенностью, что анкета теперь входит сама.
+            showNotification('Расписание пока не сохраняется — ручка появится позже',
+                             'info');
+        });
+    }
+
+    function scheduleBlock(row) {
+        const rows = scheduleRows(row.id);
+        const why = scheduleCheck(rows);
+
+        const list = rows.length
+            ? rows.map((item, index) =>
+                `<div class="sched-row ${item.kind}" data-index="${index}">`
+                + `<span class="sched-kind">${item.kind === 'in' ? 'Вход' : 'Выход'}</span>`
+                + `<input type="time" data-field="from" value="${esc(item.from || '')}">`
+                + '<span class="sched-dash">—</span>'
+                // Второе время необязательно: пусто — «точно в это время»,
+                // заполнено — «в любой момент между». Подсказка в поле говорит это
+                // прямо, иначе пустое поле читается как незаполненное.
+                + `<input type="time" data-field="to" value="${esc(item.to || '')}"`
+                + ' title="не раньше первого времени; пусто — точно в срок">'
+                + '<button type="button" class="sched-drop" title="Убрать">×</button>'
+                + '</div>').join('')
+            : '<div class="sched-empty">Пока пусто. Добавьте вход и выход — '
+              + 'анкета будет входить и выходить сама.</div>';
+
+        return '<form class="prof-form sched" data-form="schedule">'
+            + '<h4>Расписание</h4>'
+            + `<div class="sched-list">${list}</div>`
+            + '<div class="sched-add">'
+            + '<button type="button" class="dating-btn sched-add-in">+ Вход</button>'
+            + '<button type="button" class="dating-btn sched-add-out">+ Выход</button>'
+            + '</div>'
+            + (rows.length ? scheduleDay(rows) : '')
+            + '<div class="prof-line" style="margin-top:8px">'
+            + `<button type="submit" class="dating-btn primary"${why ? ' disabled' : ''}>`
+            + 'Сохранить</button>'
+            + `<span class="prof-card-note${why && rows.length ? ' sched-warn' : ''}">`
+            + `${esc(why || 'Ежедневно, по времени сервера')}</span>`
+            + '</div>'
+            + '<span class="prof-card-note">Второе время — «в любой момент между»;'
+            + ' пусто — точно в срок. Сохранение появится позже.</span>'
+            + '</form>';
     }
 
     // Раскрывает анкету или закрывает всё. Она же выбранная — журнал справа
@@ -639,6 +898,7 @@
             e.preventDefault();
             profileAuto(row, e.target);
         });
+        scheduleBind(card, row);
         card.querySelector('.login-btn').addEventListener('click', () => profileLogin(row));
         card.querySelector('.off-btn').addEventListener('click', () => profileDisconnect(row));
         card.querySelector('.del-btn').addEventListener('click', () => profileDelete(row));
