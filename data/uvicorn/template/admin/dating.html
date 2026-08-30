@@ -351,7 +351,7 @@
             const el = document.createElement('div');
             el.className = 'profile' + (row.id === currentId ? ' active' : '');
             el.innerHTML =
-                `<img class="profile-face" src="${esc(row.photo || '')}" alt=""`
+                `<img class="profile-face" src="${esc(row.photo || '')}" alt="" referrerpolicy="no-referrer"`
                 + ' onerror="this.style.visibility=\'hidden\'">'
                 + '<span class="profile-who">'
                 // Имя режется многоточием в узкой колонке — полное отдаём подсказкой.
@@ -471,7 +471,7 @@
 
         const p = data.profile || {};
         const head = `<div class="card">
-            <img src="${esc(p.photo || '')}" alt="" onerror="this.style.visibility='hidden'">
+            <img src="${esc(p.photo || '')}" alt="" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'">
             <div>
                 <div class="card-name">${esc(p.name || data.login || '')}</div>
                 <div class="card-meta">ID ${esc(String(p.id || data.login || ''))}
@@ -491,7 +491,7 @@
                 <div class="contact-bar">
                     <span class="contact-toggle" title="Свернуть или развернуть переписку">▶</span>
                     <span class="contact-face">${esc((c.name || '?').slice(0, 1).toUpperCase())}
-                        ${c.photo ? `<img src="${esc(c.photo)}" alt="" onerror="this.remove()">` : ''}</span>
+                        ${c.photo ? `<img src="${esc(c.photo)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}</span>
                     <span class="contact-name">${esc(c.name || 'без имени')}</span>
                     <span class="contact-id" title="номер анкеты на сайте">ID ${esc(c.uid)}</span>
                     <span class="contact-last">${esc(last.direction === 'out' ? 'вы: ' : '')}${esc(last.text || 'сообщений нет')}</span>

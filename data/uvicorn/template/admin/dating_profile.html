@@ -361,7 +361,7 @@
                 + `<td class="prof-state"><span class="prof-toggle">▶</span>`
                 + `${statusDot(row)}${warnBadge(row)}</td>`
                 + '<td><span class="prof-who">'
-                + `<img class="profile-face" src="${esc(row.photo || '')}" alt=""`
+                + `<img class="profile-face" src="${esc(row.photo || '')}" alt="" referrerpolicy="no-referrer"`
                 + ' onerror="this.style.visibility=\'hidden\'">'
                 + '<span class="prof-who-text">'
                 // Имя режется многоточием — полное отдаём подсказкой.
