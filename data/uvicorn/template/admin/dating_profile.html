@@ -131,6 +131,13 @@
 
         .prof-card-note { font-size: 11px; color: #94a3b8; }
         .prof-card-note.bad { color: #b91c1c; }
+
+        /* Состояние импорта рядом с кнопкой. Словом, а не только цветом кнопки:
+           погашенная кнопка говорит «нельзя», но не говорит почему, а причина у
+           неё бывает разная — сайт без сценария или недоступный сосед. */
+        .import-state { font-size: 11px; font-weight: 600; white-space: nowrap; }
+        .import-state.on { color: #166534; }
+        .import-state.off { color: #94a3b8; }
     </style>
 {% endblock %}
 
@@ -140,7 +147,8 @@
     <div class="dating-head">
         <h1>🌐 Сайт</h1>
         <select id="siteSelect" title="Сайт, на котором заведены анкеты"></select>
-        <button type="button" class="dating-btn" id="importBtn">Импортировать профили</button>
+        <button type="button" class="dating-btn" id="importBtn" disabled>Импортировать профили</button>
+        <span class="import-state" id="importState"></span>
         <span class="dating-hint" id="hint"></span>
     </div>
 
@@ -193,6 +201,7 @@
 
     const siteEl = document.getElementById('siteSelect');
     const importBtn = document.getElementById('importBtn');
+    const importStateEl = document.getElementById('importState');
     const tableEl = document.getElementById('table');
     const hintEl = document.getElementById('hint');
     const countEl = document.getElementById('profilesN');
@@ -210,6 +219,11 @@
     // Кого сейчас держит долгое действие: вход идёт минутами, и перерисовка не
     // должна ни затирать «Вхожу…», ни подсовывать кнопку под руку второй раз.
     const busy = new Set();
+    // Ход последнего импорта — строками, как их вернул сервер. Держим здесь, а не
+    // в разметке: панель журнала перерисовывается своим кругом, и ход импорта
+    // должен её пережить.
+    let importLog = [];
+    let importBusy = false;
 
     const siteId = () => Number(siteEl.value || 0);
     const openRow = () => profiles.find(row => row.id === openId) || null;
@@ -228,6 +242,7 @@
             return;
         }
 
+        importReadyLoad();
         profilesLoad();
     }
 
@@ -495,8 +510,79 @@
     // мгновенно по нажатию, а строки придут ответом сервера.
     function logPaint() {
         const row = openRow();
-        logWhoEl.textContent = row ? (row.name || row.login) : '';
-        if (!row) logRender(logEl, [], 'выберите анкету — покажем её журнал');
+        logWhoEl.textContent = row ? (row.name || row.login) : (importLog.length ? 'импорт' : '');
+        if (row) return;
+
+        // Пока анкета не раскрыта, панель показывает ход последнего импорта: это
+        // единственная работа страницы, у которой нет своей анкеты, а показать её
+        // человеку надо — он только что нажал кнопку и ждёт, чем кончилось.
+        logRender(logEl, importLog, 'выберите анкету — покажем её журнал');
+    }
+
+    // ── Импорт анкет с сайта ─────────────────────────────────────────────────
+
+    // Кнопка активна только там, где импорт настроен. Признак спрашиваем у
+    // сервера, а не выводим из списка сайтов: настройка живёт у соседа
+    // (сценарий сайта), и страница про неё знать не может.
+    async function importReadyLoad() {
+        importBtn.disabled = true;
+        importStateEl.className = 'import-state off';
+        importStateEl.textContent = '';
+        if (!siteId()) return;
+
+        let state;
+        try {
+            state = (await getData(`${BASE}/api/dating/import/ready?site_id=${siteId()}`)).result || {};
+        } catch (e) {
+            importStateEl.textContent = 'Неактивный';
+            importStateEl.title = 'состояние импорта не спросилось: ' + e.message;
+            return;
+        }
+
+        importBtn.disabled = !state.ready || importBusy;
+        importStateEl.className = 'import-state ' + (state.ready ? 'on' : 'off');
+        importStateEl.textContent = state.ready ? 'Активный' : 'Неактивный';
+        importStateEl.title = state.ready
+            ? `импорт настроен: сценарий «${state.scenario}» у сайта в RhapsodyAi`
+            : (state.why || '');
+    }
+
+    // Импорт идёт минутами: список читается одним прогоном, а карточка каждой
+    // анкеты — своим. Поэтому кнопка занята всё это время, а ход показывается в
+    // панели журнала — там же, где человек и так читает, что происходит.
+    async function profileImport() {
+        if (importBusy || !siteId()) return;
+
+        importBusy = true;
+        importBtn.disabled = true;
+        importBtn.innerHTML = '<span class="dating-spin"></span>Импортирую…';
+        importLog = [{level: 'info', created_at: '', text: 'Импорт пошёл: вход в панель сайта…'}];
+        openSet(0);
+
+        try {
+            const res = (await postData(
+                `${BASE}/api/dating/import/profile?site_id=${siteId()}`, {})).result || {};
+
+            importLog = (res.log || []).map(text => ({level: 'info', created_at: '', text}));
+
+            if (res.status === 'error') {
+                importLog = [{level: 'fail', created_at: '', text: res.error}];
+                showNotification('Импорт не прошёл: ' + res.error, 'error');
+            } else {
+                showNotification(`Импорт: заведено ${res.created}, обновлено ${res.updated}, `
+                               + `без изменений ${res.same}`,
+                                 res.created || res.updated ? 'success' : 'info');
+            }
+        } catch (e) {
+            importLog = [{level: 'fail', created_at: '', text: 'Импорт не прошёл: ' + e.message}];
+            showNotification('Импорт не прошёл: ' + e.message, 'error');
+        } finally {
+            importBusy = false;
+            importBtn.innerHTML = 'Импортировать профили';
+            await importReadyLoad();
+            await profilesLoad();
+            logPaint();
+        }
     }
 
     async function logLoad() {
@@ -689,10 +775,13 @@
         // Раскрытую — тоже: её анкета осталась на прежнем сайте.
         page = 0;
         openSet(0);
+        // Ход прошлого импорта относится к прежнему сайту — уносим вместе с ним.
+        importLog = [];
         empty('Гружу…');
+        importReadyLoad();
         profilesLoad();
     });
-    importBtn.addEventListener('click', profilesLoad);
+    importBtn.addEventListener('click', profileImport);
     // Поиск режет уже пришедший список, а не ходит на сервер: список приходит
     // целиком, и запрос на каждую букву ничего не уточнит. Каждая буква
     // возвращает на первую страницу — найденное показывают с начала.

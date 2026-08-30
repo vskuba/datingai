@@ -50,6 +50,7 @@
 - **Изменение схемы** → `.claude/docs/migration.md` (новый файл в `migrations/`, применённые не правят)
 - **Работа воркера** → `.claude/docs/worker.md`
 - **Новый сайт знакомств** → `.claude/docs/dating.md`, §5.0 (драйвер сайта: настройкой или файлом)
+- **Импорт анкет с сайта** → `.claude/docs/dating.md`, §6.5 (сценарии у соседа, кнопка на «Профилях»)
 - **Проверка после правок** → `.claude/docs/testing.md`
 
 ## Key Files
@@ -72,10 +73,12 @@
 | `src/dating/dating_revive.py` | Автовосстановление входа: правила лестницы (круг и исполнение — в `dating_revive_*.py` рядом) |
 | `src/dating/dating_json.py` | Общее чтение JSON-столбцов базы |
 | `src/dating/dating_export.py` | Выгрузка анкет: сшивка `extract` сценария в таблицу |
+| `src/dating/dating_import.py` | Импорт анкет: разбор ответа сценария, дубликаты, что обновлять |
 | `src/uvicorn/routers/dating/dating_profile.py` | Ручки анкет: CRUD своей базы; там же общие `dating_profile_row` и `_site` |
 | `src/uvicorn/routers/dating/dating_profile_action.py` | Ручки анкет: всё, что ходит к сайту и к соседу |
 | `src/uvicorn/routers/dating/dating_profile_view.py` | Ручки анкет: чтение для страниц панели |
 | `src/uvicorn/routers/dating/dating_export.py` | Ручка экспорта: сценарий выгрузки у соседа (страницы сейчас нет) |
+| `src/uvicorn/routers/dating/dating_import.py` | Ручки импорта: готовность и сам импорт с сайта |
 | `src/uvicorn/routers/dashboard.py` | Страницы панели |
 | `src/uvicorn/routers/seed.py` | Seed SQL: выгрузка таблиц и заливка обратно |
 | `src/uvicorn/routers/backup.py` | Бэкапы: дамп базы и восстановление |
