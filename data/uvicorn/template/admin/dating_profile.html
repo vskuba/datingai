@@ -151,10 +151,11 @@
         /* Строка расписания. Слева цветная планка — по ней тип читается раньше,
            чем слово: вход и выход чередуются, и глаз ищет ритм, а не текст. */
         .sched-row {
-            display: flex; align-items: center; gap: 7px;
-            padding: 4px 7px 4px 5px; border-radius: 6px;
+            display: flex; flex-direction: column; gap: 2px;
+            padding: 5px 8px 6px 6px; border-radius: 6px;
             background: #f8fafc; border-left: 3px solid transparent;
         }
+        .sched-head { display: flex; align-items: center; gap: 7px; }
         .sched-row.in  { border-left-color: #16a34a; }
         .sched-row.out { border-left-color: #d97706; }
 
@@ -162,21 +163,60 @@
         .sched-row.in  .sched-kind { color: #166534; }
         .sched-row.out .sched-kind { color: #92400e; }
 
-        /* Своё поле времени вместо `input[type=time]`: нативное показывает часы в
-           формате языка браузера, то есть «01:00 PM» на английском Chrome, и
-           `lang` страницы этого не меняет. Здесь всегда 24 часа.
-
-           Ширина под «чч:мм» и моноширинный шрифт: столбик времён читается
-           сверху вниз, и цифры должны стоять друг под другом. */
+        /* Время — подписью, а не полем ввода: задают его ползунком ниже. Шрифт
+           моноширинный, столбик времён читают сверху вниз, и цифры должны стоять
+           друг под другом. */
         .sched-time {
-            width: 58px; padding: 3px 6px; border: 1px solid #d1d5db; border-radius: 5px;
-            font-family: ui-monospace, Menlo, monospace; font-size: 12px;
-            color: #374151; background: #fff; text-align: center;
+            margin-left: auto; font-family: ui-monospace, Menlo, monospace;
+            font-size: 12px; color: #374151; white-space: nowrap;
         }
-        .sched-time:focus { outline: none; border-color: #c7d2fe; }
-        .sched-time::placeholder { font-family: inherit; color: #cbd5e1; }
+        .sched-time .exact { color: #94a3b8; font-family: inherit; }
 
-        .sched-dash { color: #cbd5e1; font-size: 11px; }
+        /* ---------- Двойной ползунок суток ---------- */
+
+        /* Вся ширина — сутки, две ручки сужают её до интервала. Собран из двух
+           нативных `input[type=range]`, наложенных друг на друга: у двойного
+           ползунка нет своего элемента, а свой на указателях отнял бы клавиатуру
+           и фокус — по стрелкам такой не подвинешь.
+
+           Поверх ползунков не должно быть ничего, что ловит указатель, поэтому
+           дорожка и заливка нарисованы под ними и `pointer-events` не берут. */
+        .sched-range { position: relative; height: 18px; margin-top: 2px; }
+
+        .sched-track, .sched-fill {
+            position: absolute; top: 7px; height: 4px; border-radius: 2px;
+            pointer-events: none;
+        }
+        .sched-track { left: 0; right: 0; background: #e2e8f0; }
+        .sched-fill { background: #818cf8; }
+        /* Точное время — обе ручки в одной точке, заливки нет вовсе. Чтобы место
+           не выглядело пустым, оставляем засечку. */
+        .sched-fill.exact { background: #4f46e5; min-width: 3px; }
+
+        .sched-range input[type=range] {
+            position: absolute; left: 0; width: 100%; height: 18px; margin: 0;
+            -webkit-appearance: none; appearance: none;
+            background: none; pointer-events: none;
+        }
+        /* Ловит указатель только сама ручка: иначе верхний ползунок накрыл бы
+           нижний целиком, и вторую ручку было бы не взять. */
+        .sched-range input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; pointer-events: auto; cursor: grab;
+            width: 13px; height: 13px; border-radius: 50%;
+            background: #fff; border: 2px solid #4f46e5;
+        }
+        .sched-range input[type=range]::-moz-range-thumb {
+            pointer-events: auto; cursor: grab;
+            width: 13px; height: 13px; border-radius: 50%;
+            background: #fff; border: 2px solid #4f46e5;
+        }
+        .sched-range input[type=range]:focus-visible::-webkit-slider-thumb {
+            box-shadow: 0 0 0 3px #c7d2fe;
+        }
+        .sched-row.out .sched-range input[type=range]::-webkit-slider-thumb { border-color: #d97706; }
+        .sched-row.out .sched-range input[type=range]::-moz-range-thumb { border-color: #d97706; }
+        .sched-row.out .sched-fill { background: #fbbf24; }
+        .sched-row.out .sched-fill.exact { background: #d97706; }
 
         .sched-drop {
             margin-left: auto; border: none; background: none; cursor: pointer;
@@ -731,13 +771,50 @@
             line.querySelector('.sched-drop').addEventListener('click', () =>
                 scheduleEdit(row.id, rows => rows.splice(rows.indexOf(item), 1)));
 
-            // `change`, а не `input`: поле шлёт `input` на каждую цифру, и
-            // перерисовка посреди набора отобрала бы фокус на втором знаке часа.
-            // `change` приходит по уходу из поля — там и разбираем набранное.
-            line.querySelectorAll('.sched-time').forEach(input => {
-                input.addEventListener('change', () => scheduleEdit(row.id, rows => {
+            // Ползунок шлёт `input` на каждое движение ручки. Перерисовывать по
+            // нему всю колонку нельзя: новый узел не получит захвата указателя, и
+            // ручка выскользнет из-под пальца на первом же шаге. Поэтому пока
+            // тянут — правим черновик и подкрашиваем эту же строку на месте, а
+            // перерисовку откладываем до `change`, то есть до отпускания.
+            const sliders = [...line.querySelectorAll('input[type=range]')];
+            const fill = line.querySelector('.sched-fill');
+            const label = line.querySelector('.sched-time');
+
+            const readEdges = () => {
+                const values = sliders.map(s => Number(s.value)).sort((a, b) => a - b);
+                return {from: timeText(values[0]), to: timeText(values[1])};
+            };
+
+            sliders.forEach(slider => {
+                slider.addEventListener('input', () => {
+                    // Ручки не меняются местами: меньшая всегда начало, большая —
+                    // конец. Иначе, перетащив левую за правую, человек получил бы
+                    // интервал наизнанку и отрицательную ширину заливки.
+                    const edges = readEdges();
+                    const found = (scheduleDraft.get(row.id) || [])[
+                        (scheduleDraft.get(row.id) || []).indexOf(item)];
+                    if (found) { found.from = edges.from; found.to = edges.to; }
+
+                    const left = (timeMinutes(edges.from) / DAY_MINUTES) * 100;
+                    const width = ((timeMinutes(edges.to) - timeMinutes(edges.from))
+                                   / DAY_MINUTES) * 100;
+                    fill.style.left = `${left}%`;
+                    fill.style.width = `${width}%`;
+                    fill.classList.toggle('exact', !width);
+                    label.innerHTML = timeLabel(edges.from === edges.to
+                                                ? {from: edges.from, to: ''} : edges);
+                });
+
+                // Отпустили — теперь можно и пересортировать список, и перерисовать
+                // ленту суток: захватывать больше нечего.
+                slider.addEventListener('change', () => scheduleEdit(row.id, rows => {
                     const found = rows[rows.indexOf(item)];
-                    if (found) found[input.dataset.field] = timeParse(input.value);
+                    if (!found) return;
+                    const edges = readEdges();
+                    found.from = edges.from;
+                    // Ручки сошлись — это «точно в этот час», и второе время
+                    // хранить незачем: пустое `to` и значит «точно».
+                    found.to = edges.from === edges.to ? '' : edges.to;
                 }));
             });
         });
@@ -752,53 +829,56 @@
         });
     }
 
-    // Поле времени — своё, а не `input[type=time]`. Нативное показывает время в
-    // формате **языка браузера**: на английском Chrome это «01:00 PM» с
-    // выпадающим AM/PM, и язык страницы (`lang="ru"`) на это не влияет. Расписание
-    // читают сменами по всем суткам, и половина времён с пометкой «после полудня» —
-    // лишний шаг мысли на каждой строке.
-    //
-    // Взамен — обычное текстовое поле, где четыре цифры превращаются в «12:00»
-    // сами. Печатать так даже быстрее, чем через пикер: «1200» и готово.
-    function timeInput(field, value, placeholder, title) {
-        return `<input type="text" class="sched-time" data-field="${field}"`
-             + ` value="${esc(value || '')}" placeholder="${esc(placeholder)}"`
-             + ' inputmode="numeric" maxlength="5" spellcheck="false" autocomplete="off"'
-             + (title ? ` title="${esc(title)}"` : '') + '>';
-    }
+    // Сутки в минутах — мера всей шкалы: ползунок ходит от 0 до 1440.
+    const DAY_MINUTES = 24 * 60;
 
-    // Набранное — в «ЧЧ:ММ» или пусто. Пусто у второго поля законно («точно в
-    // срок»), а у первого его поймает `scheduleCheck` и не даст сохранить.
-    //
-    // Понимаем и «1200», и «12:00», и «9:5»: человек печатает цифрами, а
-    // двоеточие ставит не всегда. Всё, что не разбирается в осмысленное время,
-    // становится пустотой — молча оставить «25:99» значило бы сохранить расписание,
-    // которое никогда не сработает.
-    function timeParse(text) {
-        const raw = String(text || '').trim();
-        if (!raw) return '';
+    // Шаг ползунка. Четверть часа, а не минута: на ширине колонки минутный шаг
+    // даёт меньше пикселя на деление, и попасть в «10:00» мышью нельзя. Круглые
+    // времена, которыми расписание и задают, кратны пятнадцати все до одного.
+    const STEP_MINUTES = 15;
 
-        let hours, minutes;
-        if (raw.includes(':')) {
-            // Двоеточие человек поставил сам — оно и делит часы с минутами.
-            // Разбирать такое по цифрам нельзя: «9:5» дало бы «95» и отлетело как
-            // несуществующий час, хотя набрано было 09:05.
-            [hours, minutes] = raw.split(':', 2);
-        } else {
-            const digits = raw.replace(/\D/g, '').slice(0, 4);
-            if (!digits) return '';
-            // Без двоеточия минуты — две последние цифры: «1200» → 12:00,
-            // «930» → 9:30. Одна-две цифры — это часы: «9» → 09:00.
-            hours = digits.length <= 2 ? digits : digits.slice(0, digits.length - 2);
-            minutes = digits.length <= 2 ? '0' : digits.slice(-2);
+    const timeText = (minutes) => {
+        const m = Math.max(0, Math.min(Number(minutes) || 0, DAY_MINUTES));
+        return `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:`
+             + `${String(m % 60).padStart(2, '0')}`;
+    };
+
+    const timeMinutes = (text) => {
+        const [h, m] = String(text || '0:0').split(':').map(Number);
+        return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+    };
+
+    // Подпись к записи: «10:00 — 11:00» у интервала, «12:00 точно» у мгновения.
+    // Время показываем **всегда**, а не только при перетаскивании: по одному
+    // положению ручки час не прочитать, а расписание сверяют с чужими сменами.
+    function timeLabel(item) {
+        if (!item.to || item.to === item.from) {
+            return `${esc(item.from)} <span class="exact">точно</span>`;
         }
 
-        const h = Number(hours), m = Number(minutes || 0);
-        if (!/^\d+$/.test(String(hours).trim())) return '';
-        if (minutes !== '' && !/^\d+$/.test(String(minutes).trim())) return '';
-        if (!Number.isFinite(h) || !Number.isFinite(m) || h > 23 || m > 59) return '';
+        return `${esc(item.from)} — ${esc(item.to)}`;
+    }
 
-        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    // Двойной ползунок: вся ширина — сутки, две ручки сужают их до интервала.
+    // Ручки равны — это «точно в этот час», и отдельного переключателя «точно или
+    // интервалом» не нужно вовсе: то и другое задаётся одним движением.
+    function rangeInput(item) {
+        const from = timeMinutes(item.from);
+        const to = item.to ? timeMinutes(item.to) : from;
+        const left = (Math.min(from, to) / DAY_MINUTES) * 100;
+        const width = (Math.abs(to - from) / DAY_MINUTES) * 100;
+
+        const slider = (edge, value) =>
+            `<input type="range" min="0" max="${DAY_MINUTES}" step="${STEP_MINUTES}"`
+            + ` value="${value}" data-edge="${edge}"`
+            + ` aria-label="${edge === 'from' ? 'начало' : 'конец'} интервала">`;
+
+        return '<div class="sched-range">'
+             + '<div class="sched-track"></div>'
+             + `<div class="sched-fill${width ? '' : ' exact'}"`
+             + ` style="left:${left}%;width:${width}%"></div>`
+             + slider('from', from) + slider('to', to)
+             + '</div>';
     }
 
     function scheduleBlock(row) {
@@ -808,15 +888,12 @@
         const list = rows.length
             ? rows.map((item, index) =>
                 `<div class="sched-row ${item.kind}" data-index="${index}">`
+                + '<div class="sched-head">'
                 + `<span class="sched-kind">${item.kind === 'in' ? 'Вход' : 'Выход'}</span>`
-                + timeInput('from', item.from, 'чч:мм')
-                + '<span class="sched-dash">—</span>'
-                // Второе время необязательно: пусто — «точно в это время»,
-                // заполнено — «в любой момент между». Подсказка в поле говорит это
-                // прямо, иначе пустое поле читается как незаполненное.
-                + timeInput('to', item.to, 'точно',
-                            'не раньше первого времени; пусто — точно в срок')
+                + `<span class="sched-time">${timeLabel(item)}</span>`
                 + '<button type="button" class="sched-drop" title="Убрать">×</button>'
+                + '</div>'
+                + rangeInput(item)
                 + '</div>').join('')
             : '<div class="sched-empty">Пока пусто. Добавьте вход и выход — '
               + 'анкета будет входить и выходить сама.</div>';
