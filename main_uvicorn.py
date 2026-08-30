@@ -40,7 +40,12 @@ from src.uvicorn.routers import seed as seed_router
 from src.uvicorn.routers import site as site_router
 from src.uvicorn.routers import users as users_router
 from src.uvicorn.routers.dating import dating_export
+# Ручки анкеты разложены на три файла по тому, куда они ходят: CRUD своей базы,
+# действия наружу, чтение для страниц. Роутер у всех трёх один и тот же
+# (`/api/dating/profile`) — снаружи это одна группа ручек, см. шапку `dating_profile.py`.
 from src.uvicorn.routers.dating import dating_profile
+from src.uvicorn.routers.dating import dating_profile_action
+from src.uvicorn.routers.dating import dating_profile_view
 from src.uvicorn.uvicorn_base import uvicorn_base_path
 from src.uvicorn.uvicorn_validation import uvicorn_validation_handler
 from src.worker.dating.chat_worker import chat_worker_recover
@@ -194,6 +199,8 @@ app.include_router(auth_router.router)
 app.include_router(dashboard.router)
 app.include_router(site_router.router)
 app.include_router(dating_profile.router)
+app.include_router(dating_profile_action.router)
+app.include_router(dating_profile_view.router)
 app.include_router(dating_export.router)
 app.include_router(seed_router.router)
 app.include_router(backup_router.router)

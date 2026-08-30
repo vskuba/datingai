@@ -72,7 +72,9 @@
 | `src/dating/dating_revive.py` | Автовосстановление входа: лестница попыток |
 | `src/dating/dating_json.py` | Общее чтение JSON-столбцов базы |
 | `src/dating/dating_export.py` | Выгрузка анкет: сшивка `extract` сценария в таблицу |
-| `src/uvicorn/routers/dating/dating_profile.py` | Все ручки анкет |
+| `src/uvicorn/routers/dating/dating_profile.py` | Ручки анкет: CRUD своей базы; там же общие `dating_profile_row` и `_site` |
+| `src/uvicorn/routers/dating/dating_profile_action.py` | Ручки анкет: всё, что ходит к сайту и к соседу |
+| `src/uvicorn/routers/dating/dating_profile_view.py` | Ручки анкет: чтение для страниц панели |
 | `src/uvicorn/routers/dating/dating_export.py` | Ручка экспорта: сценарий выгрузки у соседа (страницы сейчас нет) |
 | `src/uvicorn/routers/dashboard.py` | Страницы панели |
 | `src/uvicorn/routers/seed.py` | Seed SQL: выгрузка таблиц и заливка обратно |
