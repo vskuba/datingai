@@ -162,14 +162,19 @@
         .sched-row.in  .sched-kind { color: #166534; }
         .sched-row.out .sched-kind { color: #92400e; }
 
-        .sched-row input[type=time] {
-            padding: 3px 5px; border: 1px solid #d1d5db; border-radius: 5px;
-            font-family: inherit; font-size: 12px; color: #374151; background: #fff;
+        /* Своё поле времени вместо `input[type=time]`: нативное показывает часы в
+           формате языка браузера, то есть «01:00 PM» на английском Chrome, и
+           `lang` страницы этого не меняет. Здесь всегда 24 часа.
+
+           Ширина под «чч:мм» и моноширинный шрифт: столбик времён читается
+           сверху вниз, и цифры должны стоять друг под другом. */
+        .sched-time {
+            width: 58px; padding: 3px 6px; border: 1px solid #d1d5db; border-radius: 5px;
+            font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+            color: #374151; background: #fff; text-align: center;
         }
-        .sched-row input[type=time]:focus { outline: none; border-color: #c7d2fe; }
-        /* Незаполненное второе поле — обычное дело («точно в это время»), и
-           красить его как ошибку нельзя. */
-        .sched-row input[type=time]:invalid { border-color: #d1d5db; }
+        .sched-time:focus { outline: none; border-color: #c7d2fe; }
+        .sched-time::placeholder { font-family: inherit; color: #cbd5e1; }
 
         .sched-dash { color: #cbd5e1; font-size: 11px; }
 
@@ -726,12 +731,13 @@
             line.querySelector('.sched-drop').addEventListener('click', () =>
                 scheduleEdit(row.id, rows => rows.splice(rows.indexOf(item), 1)));
 
-            // `change`, а не `input`: поле времени шлёт `input` на каждую цифру, и
+            // `change`, а не `input`: поле шлёт `input` на каждую цифру, и
             // перерисовка посреди набора отобрала бы фокус на втором знаке часа.
-            line.querySelectorAll('input[type=time]').forEach(input => {
+            // `change` приходит по уходу из поля — там и разбираем набранное.
+            line.querySelectorAll('.sched-time').forEach(input => {
                 input.addEventListener('change', () => scheduleEdit(row.id, rows => {
                     const found = rows[rows.indexOf(item)];
-                    if (found) found[input.dataset.field] = input.value;
+                    if (found) found[input.dataset.field] = timeParse(input.value);
                 }));
             });
         });
@@ -746,6 +752,55 @@
         });
     }
 
+    // Поле времени — своё, а не `input[type=time]`. Нативное показывает время в
+    // формате **языка браузера**: на английском Chrome это «01:00 PM» с
+    // выпадающим AM/PM, и язык страницы (`lang="ru"`) на это не влияет. Расписание
+    // читают сменами по всем суткам, и половина времён с пометкой «после полудня» —
+    // лишний шаг мысли на каждой строке.
+    //
+    // Взамен — обычное текстовое поле, где четыре цифры превращаются в «12:00»
+    // сами. Печатать так даже быстрее, чем через пикер: «1200» и готово.
+    function timeInput(field, value, placeholder, title) {
+        return `<input type="text" class="sched-time" data-field="${field}"`
+             + ` value="${esc(value || '')}" placeholder="${esc(placeholder)}"`
+             + ' inputmode="numeric" maxlength="5" spellcheck="false" autocomplete="off"'
+             + (title ? ` title="${esc(title)}"` : '') + '>';
+    }
+
+    // Набранное — в «ЧЧ:ММ» или пусто. Пусто у второго поля законно («точно в
+    // срок»), а у первого его поймает `scheduleCheck` и не даст сохранить.
+    //
+    // Понимаем и «1200», и «12:00», и «9:5»: человек печатает цифрами, а
+    // двоеточие ставит не всегда. Всё, что не разбирается в осмысленное время,
+    // становится пустотой — молча оставить «25:99» значило бы сохранить расписание,
+    // которое никогда не сработает.
+    function timeParse(text) {
+        const raw = String(text || '').trim();
+        if (!raw) return '';
+
+        let hours, minutes;
+        if (raw.includes(':')) {
+            // Двоеточие человек поставил сам — оно и делит часы с минутами.
+            // Разбирать такое по цифрам нельзя: «9:5» дало бы «95» и отлетело как
+            // несуществующий час, хотя набрано было 09:05.
+            [hours, minutes] = raw.split(':', 2);
+        } else {
+            const digits = raw.replace(/\D/g, '').slice(0, 4);
+            if (!digits) return '';
+            // Без двоеточия минуты — две последние цифры: «1200» → 12:00,
+            // «930» → 9:30. Одна-две цифры — это часы: «9» → 09:00.
+            hours = digits.length <= 2 ? digits : digits.slice(0, digits.length - 2);
+            minutes = digits.length <= 2 ? '0' : digits.slice(-2);
+        }
+
+        const h = Number(hours), m = Number(minutes || 0);
+        if (!/^\d+$/.test(String(hours).trim())) return '';
+        if (minutes !== '' && !/^\d+$/.test(String(minutes).trim())) return '';
+        if (!Number.isFinite(h) || !Number.isFinite(m) || h > 23 || m > 59) return '';
+
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    }
+
     function scheduleBlock(row) {
         const rows = scheduleRows(row.id);
         const why = scheduleCheck(rows);
@@ -754,13 +809,13 @@
             ? rows.map((item, index) =>
                 `<div class="sched-row ${item.kind}" data-index="${index}">`
                 + `<span class="sched-kind">${item.kind === 'in' ? 'Вход' : 'Выход'}</span>`
-                + `<input type="time" data-field="from" value="${esc(item.from || '')}">`
+                + timeInput('from', item.from, 'чч:мм')
                 + '<span class="sched-dash">—</span>'
                 // Второе время необязательно: пусто — «точно в это время»,
                 // заполнено — «в любой момент между». Подсказка в поле говорит это
                 // прямо, иначе пустое поле читается как незаполненное.
-                + `<input type="time" data-field="to" value="${esc(item.to || '')}"`
-                + ' title="не раньше первого времени; пусто — точно в срок">'
+                + timeInput('to', item.to, 'точно',
+                            'не раньше первого времени; пусто — точно в срок')
                 + '<button type="button" class="sched-drop" title="Убрать">×</button>'
                 + '</div>').join('')
             : '<div class="sched-empty">Пока пусто. Добавьте вход и выход — '
