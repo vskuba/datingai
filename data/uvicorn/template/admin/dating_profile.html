@@ -165,7 +165,13 @@
         /* Значок «с ним есть переписка» в колонках собеседников. Иконкой, а не
            словом: в колонке 150 пикселей слово заняло бы строку целиком, а
            отличить «говорили» от «не говорили» надо одним взглядом по столбцу. */
-        .person-talk { flex: 0 0 auto; font-size: 10px; line-height: 1; opacity: .85; }
+        /* Прижат к правому краю: место у левого занято точкой «в сети», и без
+           `auto` значок липнул бы к имени переменной длины — столбца из них не
+           получилось бы. */
+        .person-talk {
+            flex: 0 0 auto; margin-left: auto;
+            font-size: 10px; line-height: 1; opacity: .85;
+        }
         .chat-msgs {
             height: var(--talk); min-height: 0; display: flex; flex-direction: column;
         }
@@ -249,10 +255,14 @@
         .person-meta { font-size: 10px; color: #94a3b8; }
 
         /* Точка «в сети» у человека — та же, что у анкеты в списке, и по той же
-           причине: одно состояние должно выглядеть одинаково на всей странице. */
+           причине: одно состояние должно выглядеть одинаково на всей странице.
+
+           Стоит она первой в строке, до лица: так точки выстраиваются в ровный
+           столбец у левого края и читаются сверху вниз одним движением глаза.
+           Справа их край плясал бы вслед за длиной имени. */
         .person-dot {
             flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%;
-            background: #cbd5e1; margin-left: auto;
+            background: #cbd5e1;
         }
         .person-dot.online { background: #22c55e; }
 
@@ -1250,6 +1260,10 @@
             + ` data-uid="${esc(p.uid)}"`
             + ` title="${esc(p.name)}${p.age ? ', ' + p.age : ''}`
             + `${p.online ? ' · в сети' : ''}">`
+            // Точка — перед лицом: столбец точек у левого края читается сверху
+            // вниз одним движением глаза. Стояла она справа, у переменного края
+            // строки, и «кто в сети» приходилось выискивать по всей колонке.
+            + `<span class="person-dot${p.online ? ' online' : ''}"></span>`
             + `<span class="person-face">${esc((p.name || '?').slice(0, 1).toUpperCase())}`
             + (p.photo ? `<img src="${esc(p.photo)}" alt="" referrerpolicy="no-referrer"`
                          + ' onerror="this.remove()">' : '')
@@ -1260,7 +1274,6 @@
             + `${p.age && p.uid ? ' · ' : ''}${esc(p.uid)}</span>`
             + '</span>'
             + (dialogHas(p) ? '<span class="person-talk" title="с ним есть переписка">💬</span>' : '')
-            + `<span class="person-dot${p.online ? ' online' : ''}"></span>`
             + '</div>').join('');
     }
 
