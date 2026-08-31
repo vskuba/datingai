@@ -24,6 +24,14 @@
                что была до появления разделителей. */
             --col: 38%;
             --log: 200px;
+            /* Ширина колонок собеседников. По 150 пикселей — под столбик «лицо,
+               имя, возраст»; тянутся разделителями, как и всё остальное на этой
+               странице. */
+            --fav: 150px;
+            --online: 150px;
+            /* Высота переписки в первой колонке. Треть — столько, чтобы читались
+               последние реплики; список диалогов над ней важнее, из него выбирают. */
+            --talk: 180px;
             grid-template-columns: var(--col) 6px minmax(0, 1fr);
             grid-template-rows: auto minmax(0, 1fr);
         }
@@ -31,14 +39,27 @@
         .prof-pane { grid-column: 1; grid-row: 2; }
         .work-pane { grid-column: 3; grid-row: 2; }
 
-        /* Разделители: узкая полоса, заметная только под курсором — рамка между
-           панелями не должна спорить с содержимым за внимание. Те же классы и то
-           же поведение, что на «Анкетах»: человек ходит между страницами, и
-           разделитель, который там тянется, а здесь нет, читается как поломка. */
-        .split { border-radius: 3px; background: transparent; }
-        .split:hover, .split.drag { background: #c7d2fe; }
+        /* Разделители. Видны **всегда**, а не только под курсором: невидимую
+           полосу не тянут — про неё не знают. На «Анкетах» она прозрачная, и это
+           работало, пока разделитель был один и стоял между явно разными панелями;
+           здесь их четыре, и половина — внутри одной панели, где границы и так
+           нет.
+    
+           Заметность соразмерна: тонкая линия в покое, цвет под курсором и при
+           перетаскивании. Спорить с содержимым за внимание ей всё-таки не нужно. */
+        .split { border-radius: 3px; background: #eef2f7; transition: background .12s ease; }
+        .split:hover, .split.drag { background: #a5b4fc; }
         .split-col { grid-column: 2; grid-row: 2; cursor: col-resize; }
-        .split-row { cursor: row-resize; height: 6px; flex: 0 0 auto; }
+        .split-row { cursor: row-resize; height: 6px; flex: 0 0 auto; margin: 3px 0; }
+
+        /* Точки-захват: три штриха посередине полосы. Без них тонкая линия
+           читается как рамка, а не как то, что можно взять и потянуть. */
+        .split-row::after, .split-people::after {
+            content: ''; display: block; border-radius: 2px; background: #cbd5e1;
+        }
+        .split-row::after { width: 26px; height: 2px; margin: 2px auto; }
+        .split-people::after { width: 2px; height: 26px; margin: auto; }
+        .split-people { display: flex; }
 
         /* ---------- Вкладки правой колонки ---------- */
 
@@ -99,7 +120,7 @@
         .chat-wrap {
             display: flex; flex-direction: column; height: 100%; min-height: 0;
         }
-        .chat-main { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+        .chat-main { flex: 1 1 auto; min-height: 0; display: flex; }
         .chat-log { height: var(--log); min-height: 0; display: flex; flex-direction: column; }
         .chat-log-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
         .chat-log-head {
@@ -112,6 +133,126 @@
            у двух частей по отдельности. Иначе тянуть разделитель было бы нечего —
            обе части ехали бы одной лентой. */
         .work-pane .pane-body.chat { overflow: hidden; padding-bottom: 0; }
+
+        /* ---------- Колонки собеседников с сайта ---------- */
+
+        /* Переписка и две колонки в ряд: избранные и кто в сети. По 150 пикселей
+           каждая — ширина под столбик «фото, имя, возраст», не больше. Списки
+           читают глазами сверху вниз, а работают всё равно в переписке слева. */
+        .chat-cols { display: flex; gap: 8px; min-height: 0; flex: 1 1 auto; }
+
+        /* Первая колонка — два ряда: список диалогов и переписка с выбранным.
+           Раньше переписка раскрывалась внутри строки списка, и собеседник,
+           выбранный в колонке «Все онлайн», показать её не мог вовсе. Теперь
+           разговор один на все три колонки, а где его выбрали — неважно. */
+        .chat-talk { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+        /* Шапка ряда диалогов: подпись, счёт и кнопка загрузки. Кнопка здесь, а
+           не в шапке панели: она про этот ряд, и на других вкладках ей делать
+           нечего. */
+        .chat-dialogs-head {
+            display: flex; align-items: center; gap: 6px; flex: 0 0 auto;
+            font-size: 10px; font-weight: 700; color: #94a3b8;
+            text-transform: uppercase; letter-spacing: .04em; padding-bottom: 4px;
+        }
+        .chat-dialogs-count { color: #4338ca; }
+        .chat-dialogs-btn {
+            margin-left: auto; font-size: 11px; padding: 2px 8px;
+            text-transform: none; letter-spacing: normal; font-weight: 400;
+        }
+
+        .chat-dialogs { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+        /* Значок «с ним есть переписка» в колонках собеседников. Иконкой, а не
+           словом: в колонке 150 пикселей слово заняло бы строку целиком, а
+           отличить «говорили» от «не говорили» надо одним взглядом по столбцу. */
+        .person-talk { flex: 0 0 auto; font-size: 10px; line-height: 1; opacity: .85; }
+        .chat-msgs {
+            height: var(--talk); min-height: 0; display: flex; flex-direction: column;
+        }
+
+        .talk-head {
+            display: flex; align-items: center; gap: 6px; flex: 0 0 auto;
+            font-size: 11px; font-weight: 700; color: #334155; padding-bottom: 4px;
+        }
+        .talk-id { color: #cbd5e1; font-weight: 400; font-size: 10px; }
+        .talk-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+        .talk-empty {
+            flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
+            color: #cbd5e1; font-size: 11px; text-align: center; padding: 8px;
+        }
+
+        /* Ширина у каждой колонки своя переменная: избранных бывает трое, а в
+           сети двадцать, и подгонять их приходится по отдельности. Границы слева
+           нет — её роль взял разделитель, который стоит на том же месте. */
+        .people-col { min-width: 0; display: flex; flex-direction: column; }
+        .people-col[data-kind=favorite] { flex: 0 0 var(--fav); }
+        .people-col[data-kind=online] { flex: 0 0 var(--online); }
+
+        /* Разделитель колонок собеседников: тот же вид и то же поведение, что у
+           остальных на странице, только уже — между узкими колонками широкая
+           полоса съела бы половину содержимого. */
+        .split-people { flex: 0 0 5px; cursor: col-resize; }
+        .people-head {
+            display: flex; align-items: center; gap: 4px; flex: 0 0 auto;
+            font-size: 10px; font-weight: 700; color: #94a3b8;
+            text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px;
+        }
+        /* Кнопка обновления — иконкой: в колонке 150 пикселей слово «обновить»
+           отняло бы место у заголовка. Заходят за ней редко: список освежается
+           сам, пока человек смотрит на анкету. */
+        .people-reload {
+            margin-left: auto; border: none; background: none; cursor: pointer;
+            color: #cbd5e1; font-size: 12px; line-height: 1; padding: 0 2px;
+        }
+        .people-reload:hover { color: #4338ca; }
+        .people-reload:disabled { opacity: .4; cursor: default; }
+
+        /* Счёт в заголовке: сколько человек в списке. Без него «Favorite» не
+           говорит, семнадцать их или ни одного, пока не вглядишься в столбик. */
+        .people-count { color: #4338ca; font-weight: 700; }
+
+        .people-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+        /* Строка человека: лицо, под ним имя с возрастом. Не в одну строку —
+           в 150 пикселях имя и возраст рядом с фото читались бы по одной букве. */
+        .person {
+            display: flex; align-items: center; gap: 6px;
+            padding: 3px 2px; border-bottom: 1px solid #f8fafc;
+        }
+        .person-face {
+            position: relative; flex: 0 0 auto; width: 26px; height: 26px;
+            border-radius: 6px; background: #e2e8f0; overflow: hidden;
+            display: flex; align-items: center; justify-content: center;
+            color: #64748b; font-size: 11px; font-weight: 700;
+        }
+        /* Место под лицо занято всегда: фотографию сайт отдаёт лениво, и у части
+           карточек её нет вовсе. Под картинкой лежит буква имени — она и видна. */
+        .person-face img { position: absolute; inset: 0; width: 100%; height: 100%;
+                           border-radius: 6px; object-fit: cover; }
+
+        .person-text { min-width: 0; display: flex; flex-direction: column; }
+        .person-name { font-size: 11px; color: #334155;
+                       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .person-meta { font-size: 10px; color: #94a3b8; }
+
+        /* Точка «в сети» у человека — та же, что у анкеты в списке, и по той же
+           причине: одно состояние должно выглядеть одинаково на всей странице. */
+        .person-dot {
+            flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%;
+            background: #cbd5e1; margin-left: auto;
+        }
+        .person-dot.online { background: #22c55e; }
+
+        /* Выбранный собеседник. Тот же вид, что у выбранной строки диалога: выбор
+           один на все три колонки, и выглядеть он должен одинаково, где бы его ни
+           сделали. */
+        .person { cursor: pointer; }
+        .person:hover { background: #f8fafc; }
+        .person.open { background: #eef2ff; }
+        .person.open .person-name { color: #3730a3; font-weight: 600; }
+
+        .people-empty { padding: 8px 2px; font-size: 10px; color: #cbd5e1; text-align: center; }
+        .people-empty.bad { color: #b91c1c; }
 
         /* Вертикальной прокрутки нет намеренно: сколько строк влезло — столько на
            странице, остальные за пейджером. Прокрутка вместе с пейджером это две
@@ -472,6 +613,9 @@
     // Какой диалог раскрыт. Выбор переживает перерисовку и живёт между заходами:
     // диалогов сотни, и возвращаться к нужному заново — работа на каждый круг.
     let openUid = localStorage.getItem('dating_open_dialog') || '';
+    // Последний ответ `/card` выбранной анкеты. Держим, чтобы смена выбранного
+    // собеседника перерисовывала переписку без второго запроса: данные те же.
+    let chatData = null;
 
     // Расписание выбранной анкеты, пока его набирают. Живёт здесь, а не в
     // разметке: колонка настроек перерисовывается при каждой правке, и набранное
@@ -864,6 +1008,7 @@
         // стало меньше и страница уехала за конец. Ручка нумерует с единицы,
         // пейджер — с нуля.
         contactsPage = Math.max(0, Number(data.page || 1) - 1);
+        chatData = data;
         const row = openRow() || {};
         workWhoEl.textContent = `${row.name || row.login || ''}`
             + (data.contacts_total ? ` · собеседников: ${data.contacts_total}` : '');
@@ -872,23 +1017,66 @@
         // человек в это время читает переписку.
         // Прокрутку возвращаем той части, что её и держит: переписке. Вкладка
         // перерисовывается своим кругом, а человек в это время читает.
-        const main = workEl.querySelector('.chat-main');
-        const scroll = main ? main.scrollTop : 0;
+        const dialogs = workEl.querySelector('.chat-dialogs');
+        const scroll = dialogs ? dialogs.scrollTop : 0;
 
         workEl.classList.add('chat');
         workEl.innerHTML = '<div class="chat-wrap">'
-            + `<div class="chat-main">${chatCard(data)}${chatContacts(data)}</div>`
+            + '<div class="chat-main">'
+            + `<div class="chat-cols">`
+            // Первая колонка — два ряда: список диалогов и переписка с выбранным.
+            // Карточки анкеты (`.card`) здесь больше нет: имя и фото анкеты и так
+            // стоят в шапке панели и в списке слева, а место в колонке нужно
+            // разговору.
+            + '<div class="chat-talk">'
+            + '<div class="chat-dialogs-head">'
+            + '<span>Диалоги на сайте</span>'
+            + `<span class="chat-dialogs-count">${dialogsCount()}</span>`
+            + '<button type="button" class="dating-btn chat-dialogs-btn"'
+            + ' title="Войти на сайт под анкетой и снять список тех, с кем есть переписка">'
+            + 'Загрузить диалоги</button>'
+            + '</div>'
+            + `<div class="chat-dialogs">${chatContacts(data)}</div>`
+            + '<div class="split split-row" id="splitTalk"'
+            + ' title="Потяните, чтобы изменить высоту"></div>'
+            + `<div class="chat-msgs">${chatTalk(data)}</div>`
+            + '</div>'
+            + '<div class="split split-people" data-var="--fav"'
+            + ' title="Потяните, чтобы изменить ширину"></div>'
+            + peopleCol('favorite', 'Favorite')
+            + '<div class="split split-people" data-var="--online"'
+            + ' title="Потяните, чтобы изменить ширину"></div>'
+            + peopleCol('online', 'Все онлайн')
+            + '</div>'
+            + '</div>'
             + '<div class="split split-row" id="splitRow" title="Потяните, чтобы изменить высоту"></div>'
             + '<div class="chat-log"><div class="chat-log-head">Журнал</div>'
             + '<div class="chat-log-body" id="log"></div></div>'
             + '</div>';
-        workEl.querySelector('.chat-main').scrollTop = scroll;
+        workEl.querySelector('.chat-dialogs').scrollTop = scroll;
 
         // Разделитель живёт внутри перерисовываемой разметки, поэтому вешаем
         // обработчик каждый раз заново — узел новый.
         splitDrag(workEl.querySelector('#splitRow'), '--log', 80,
                   Math.round(innerHeight * 0.6),
                   (e) => workEl.getBoundingClientRect().bottom - e.clientY);
+
+        splitDrag(workEl.querySelector('#splitTalk'), '--talk', 90,
+                  Math.round(innerHeight * 0.5),
+                  (e) => workEl.querySelector('.chat-talk').getBoundingClientRect().bottom
+                         - e.clientY);
+
+        // Колонки собеседников растут **влево**, к переписке: правый край каждой
+        // стоит на месте, а тянут за левый. Поэтому ширина считается от правого
+        // края самой колонки, а не от края панели.
+        //
+        // Обработчики вешаем заново на каждую отрисовку — разметка вкладки
+        // пересобирается, и узлы каждый раз новые.
+        workEl.querySelectorAll('.split-people').forEach(split => {
+            const col = split.nextElementSibling;
+            splitDrag(split, split.dataset.var, 90, 400,
+                      (e) => col.getBoundingClientRect().right - e.clientX);
+        });
 
         logLoad();
 
@@ -901,39 +1089,20 @@
         });
 
         chatBind();
-    }
-
-    function chatCard(data) {
-        const p = data.profile || {};
-
-        return '<div class="card">'
-            + `<img src="${esc(p.photo || '')}" alt="" referrerpolicy="no-referrer"`
-            + ' onerror="this.style.visibility=\'hidden\'">'
-            + '<div>'
-            + `<div class="card-name">${esc(p.name || data.login || '')}</div>`
-            + `<div class="card-meta">ID ${esc(String(p.id || data.login || ''))}`
-            + `${p.age ? ' · ' + p.age : ''}${p.city ? ' · ' + esc(p.city) : ''}</div>`
-            + `<div class="card-meta">${esc(p.about || 'описание профиля сайт не отдал')}</div>`
-            + '</div></div>';
+        peopleBind();
     }
 
     function chatContacts(data) {
-        const p = data.profile || {};
-        const me = p.name || data.login || 'мы';
-
         const rows = (data.contacts || []).map(c => {
-            const talk = (c.messages_last || []).map(m =>
-                `<div class="msg ${m.direction === 'out' ? 'out' : 'in'}">`
-                + '<span class="msg-body">'
-                + `<span class="msg-who">${esc(m.direction === 'out' ? me : (c.name || 'он'))}</span>`
-                + `${esc(m.text)}</span></div>`).join('');
             const last = (c.messages_last || []).slice(-1)[0] || {};
             const open = openUid === String(c.uid);
 
+            // Строка больше не раскрывается: переписка живёт ниже, в своём ряду, и
+            // одна и та же — какую бы колонку ни выбрали. Раскрытие внутри строки
+            // означало бы два места для одного разговора.
             return `<div class="contact${c.needs_answer ? ' wait' : ''}${open ? ' open' : ''}"`
                 + ` data-uid="${esc(c.uid)}">`
                 + '<div class="contact-bar">'
-                + '<span class="contact-toggle" title="Свернуть или развернуть переписку">▶</span>'
                 + `<span class="contact-face">${esc((c.name || '?').slice(0, 1).toUpperCase())}`
                 + (c.photo ? `<img src="${esc(c.photo)}" alt="" referrerpolicy="no-referrer"`
                              + ' onerror="this.remove()">' : '')
@@ -946,27 +1115,268 @@
                 + (c.needs_answer
                     ? '<span class="need" title="последнее слово за собеседником">нужен ответ</span>'
                     : `<span class="contact-id" title="реплик в переписке">✉ ${c.messages}</span>`)
-                + '</div>'
-                + `<div class="contact-talk">${talk || '<div class="msg"><span class="msg-body">'
-                                                     + 'сообщений пока нет</span></div>'}</div>`
-                + '</div>';
+                + '</div></div>';
         }).join('');
 
         return rows || '<div class="work-soon">собеседников пока нет — '
                      + 'запустите «Диалоги» на «Анкетах»</div>';
     }
 
-    function chatBind() {
-        // Открыт один диалог за раз: их бывают сотни, и «раскрыть всё» здесь не
-        // помощь, а простыня. Выбор переживает перерисовку — она идёт своим кругом.
-        workEl.querySelectorAll('.contact-bar').forEach(bar => {
-            bar.addEventListener('click', () => {
-                const box = bar.parentElement;
-                openUid = box.classList.contains('open') ? '' : box.dataset.uid;
-                localStorage.setItem('dating_open_dialog', openUid);
-                workEl.querySelectorAll('.contact').forEach(el =>
-                    el.classList.toggle('open', el.dataset.uid === openUid));
+    // Переписка с выбранным собеседником — нижний ряд первой колонки.
+    //
+    // **Собеседника выбирают в любой из трёх колонок**, и переписка одна на все:
+    // человек находит кого-то в «Все онлайн», нажимает — и сразу видит, говорили
+    // ли с ним раньше. Раньше переписка раскрывалась внутри строки диалога, и
+    // выбранный из колонки собеседник показать её не мог вовсе.
+    function chatTalk(data) {
+        if (!openUid) {
+            return '<div class="talk-empty">Выберите собеседника — '
+                 + 'здесь будет переписка с ним.</div>';
+        }
+
+        const found = (data.contacts || []).find(c => String(c.uid) === String(openUid));
+        const who = peopleName(openUid) || (found && found.name) || openUid;
+
+        // Собеседник есть в списках сайта, но переписки с ним нет: это законный
+        // ответ, а не пустота. Говорим прямо — иначе пустой ряд читается как
+        // «не загрузилось».
+        if (!found) {
+            return `<div class="talk-head">${esc(who)}</div>`
+                 + '<div class="talk-empty">Диалог ещё не осуществлялся.</div>';
+        }
+
+        const p = data.profile || {};
+        const me = p.name || data.login || 'мы';
+        const msgs = (found.messages_last || []).map(m =>
+            `<div class="msg ${m.direction === 'out' ? 'out' : 'in'}">`
+            + '<span class="msg-body">'
+            + `<span class="msg-who">${esc(m.direction === 'out' ? me : (found.name || 'он'))}</span>`
+            + `${esc(m.text)}</span></div>`).join('');
+
+        return `<div class="talk-head">${esc(found.name || who)}`
+             + `<span class="talk-id">ID ${esc(found.uid)}</span></div>`
+             + `<div class="talk-body">${msgs || '<div class="talk-empty">'
+                                               + 'Диалог ещё не осуществлялся.</div>'}</div>`;
+    }
+
+    // Имя выбранного из колонок собеседника: в переписке его может не быть, а
+    // подписать ряд надо. Ищем в снятых списках — они уже в памяти.
+    function peopleName(uid) {
+        for (const kind of ['favorite', 'online']) {
+            const state = peopleCache.get(`${openId}|${kind}`);
+            const found = (state && state.people || []).find(p => String(p.uid) === String(uid));
+            if (found) return found.name;
+        }
+
+        return '';
+    }
+
+    // ── Колонки собеседников с сайта ──────────────────────────────────────────
+    //
+    // Списки снимает RhapsodyAi, входя под анкетой в её кабинет: это десятки
+    // секунд живого браузера. Поэтому у ручки кэш с выдержкой и жёсткий пол, а
+    // страница может спрашивать сколько угодно — подробности в `dating_people.py`.
+
+    // Снятые списки: ключ `id анкеты|вид`. Держим здесь, чтобы перерисовка чата
+    // (она идёт своим кругом) не оставляла колонки пустыми на время запроса —
+    // мигание пустотой каждые десять секунд читалось бы как «список пропал».
+    const peopleCache = new Map();
+
+    function peopleCol(kind, title) {
+        const state = peopleCache.get(`${openId}|${kind}`);
+
+        return `<div class="people-col" data-kind="${kind}">`
+            + '<div class="people-head">'
+            + `<span>${esc(title)}</span>`
+            + `<span class="people-count">${state ? state.people.length : ''}</span>`
+            + '<button type="button" class="people-reload" title="Снять список заново">⟳</button>'
+            + '</div>'
+            + `<div class="people-body">${peopleRows(state)}</div>`
+            + '</div>';
+    }
+
+    function peopleRows(state) {
+        if (!state) return '<div class="people-empty">гружу…</div>';
+        if (state.error && !state.people.length) {
+            return `<div class="people-empty bad" title="${esc(state.error)}">не снялось</div>`;
+        }
+        if (!state.people.length) return '<div class="people-empty">пусто</div>';
+
+        return state.people.map(p =>
+            `<div class="person${String(openUid) === String(p.uid) ? ' open' : ''}"`
+            + ` data-uid="${esc(p.uid)}"`
+            + ` title="${esc(p.name)}${p.age ? ', ' + p.age : ''}`
+            + `${p.online ? ' · в сети' : ''}">`
+            + `<span class="person-face">${esc((p.name || '?').slice(0, 1).toUpperCase())}`
+            + (p.photo ? `<img src="${esc(p.photo)}" alt="" referrerpolicy="no-referrer"`
+                         + ' onerror="this.remove()">' : '')
+            + '</span>'
+            + '<span class="person-text">'
+            + `<span class="person-name">${esc(p.name || 'без имени')}</span>`
+            + `<span class="person-meta">${p.age ? p.age : ''}`
+            + `${p.age && p.uid ? ' · ' : ''}${esc(p.uid)}</span>`
+            + '</span>'
+            + (dialogHas(p) ? '<span class="person-talk" title="с ним есть переписка">💬</span>' : '')
+            + `<span class="person-dot${p.online ? ' online' : ''}"></span>`
+            + '</div>').join('');
+    }
+
+    // Грузит один список. `fresh` ставит только кнопка: сам по себе круг
+    // перерисовки его не ставит, иначе кэш на сервере терял бы смысл.
+    async function peopleLoad(kind, fresh = false) {
+        if (!openId) return;
+
+        const requestId = openId;
+        let state;
+        try {
+            state = (await getData(`${BASE}/api/dating/people/${requestId}/${kind}`
+                                   + (fresh ? '?fresh=1' : ''))).result || {};
+        } catch (e) {
+            state = {people: [], error: e.message};
+        }
+
+        // Та же гонка, что у списка и журнала: ответ по уже снятой анкете может
+        // прийти позже ответа по вновь выбранной.
+        if (openId !== requestId) return;
+
+        peopleCache.set(`${requestId}|${kind}`, state);
+        peoplePaint(kind);
+    }
+
+    // Перерисовываем только свою колонку: пересобирать вкладку целиком значило бы
+    // сбросить прокрутку списка диалогов и снять выбор.
+    function peoplePaint(kind) {
+        const col = workEl.querySelector(`.people-col[data-kind="${kind}"]`);
+        if (!col) return;
+
+        const state = peopleCache.get(`${openId}|${kind}`);
+        col.querySelector('.people-body').innerHTML = peopleRows(state);
+        col.querySelector('.people-count').textContent = state ? state.people.length : '';
+        peopleBindRows(col);
+    }
+
+    // Строки колонки выбирают собеседника — тем же способом, что список диалогов.
+    function peopleBindRows(col) {
+        col.querySelectorAll('.person').forEach(person => {
+            person.addEventListener('click', () => chatSelect(person.dataset.uid));
+        });
+    }
+
+    function peopleBind() {
+        workEl.querySelectorAll('.people-col').forEach(col => {
+            const kind = col.dataset.kind;
+            const btn = col.querySelector('.people-reload');
+
+            btn.addEventListener('click', async () => {
+                btn.disabled = true;
+                col.querySelector('.people-body').innerHTML =
+                    '<div class="people-empty">снимаю…</div>';
+                try {
+                    await peopleLoad(kind, true);
+                } finally {
+                    btn.disabled = false;
+                }
             });
+
+            peopleBindRows(col);
+
+            // Список грузим, только если его ещё нет: перерисовка чата идёт каждые
+            // десять секунд, и запрос на каждый круг был бы лишним даже с кэшем.
+            if (!peopleCache.has(`${openId}|${kind}`)) peopleLoad(kind);
+        });
+    }
+
+    // Есть ли с этим человеком переписка на сайте.
+    //
+    // ⚠ **Сводим по фотографии и по имени, а не по номеру.** Номера у одного и
+    // того же человека разные: в кабинете он `812886` из ссылки на анкету, а в
+    // чате номера нет вовсе — разговор открывает скрипт, и ссылка приходит голой.
+    // Общее у записей — файл фотографии (суффикс размера снимается при разборе) и
+    // имя. По ним и сходятся.
+    function dialogHas(person) {
+        const state = peopleCache.get(`${openId}|dialog`);
+        if (!state) return false;
+
+        return (state.people || []).some(d =>
+            (person.photo_uid && d.photo_uid === person.photo_uid)
+            || (person.name && d.name.toLowerCase() === person.name.toLowerCase()));
+    }
+
+    function dialogsCount() {
+        const state = peopleCache.get(`${openId}|dialog`);
+
+        return state ? `${state.people.length}` : '';
+    }
+
+    // ── Выбор собеседника: один на все три колонки ────────────────────────────
+
+    // Выбрали в «Все онлайн» — снялся выбор в списке диалогов, и наоборот. Двух
+    // выбранных «с кем я сейчас говорю» не бывает, а переписка ниже одна.
+    //
+    // Повторное нажатие снимает выбор. Выбор живёт между заходами
+    // (`localStorage`): диалогов сотни, и возвращаться к нужному заново — работа
+    // на каждый круг.
+    function chatSelect(uid) {
+        openUid = String(openUid) === String(uid) ? '' : String(uid);
+        localStorage.setItem('dating_open_dialog', openUid);
+
+        // Подсветку правим на месте, переписку перерисовываем: пересобирать
+        // вкладку целиком значило бы сбросить прокрутку и снять фокус.
+        workEl.querySelectorAll('.contact, .person').forEach(el =>
+            el.classList.toggle('open', el.dataset.uid === openUid));
+
+        talkPaint();
+    }
+
+    // Перерисовывает нижний ряд первой колонки. Данные берём из последнего ответа
+    // `/card` — он уже в памяти, и второй запрос ради смены выбранного не нужен.
+    function talkPaint() {
+        const box = workEl.querySelector('.chat-msgs');
+        if (box && chatData) box.innerHTML = chatTalk(chatData);
+    }
+
+    function chatBind() {
+        workEl.querySelectorAll('.contact-bar').forEach(bar => {
+            bar.addEventListener('click', () => chatSelect(bar.parentElement.dataset.uid));
+        });
+
+        const btn = workEl.querySelector('.chat-dialogs-btn');
+        if (!btn) return;
+
+        // Прогон входит на сайт под анкетой и идёт **десятки секунд** — кнопка
+        // занята всё это время. Список потом лежит в кэше ручки, и повторное
+        // нажатие в ближайшие минуты вернётся сразу.
+        //
+        // ⚠ **`busy` здесь обязателен.** Вкладка чата перерисовывается своим
+        // кругом раз в `LOG_MS`, а перерисовка пересобирает разметку целиком — и
+        // кнопку вместе с ней. Без `busy` посреди прогона она возвращалась бы к
+        // обычному виду, и её нажимали бы снова: второй вход на сайт под той же
+        // анкетой за минуту, ровно то, от чего бережёт кэш ручки. Круг это
+        // ожидание пережидает — так же, как ждёт долгие действия в списке.
+        btn.addEventListener('click', async () => {
+            busy.add(`dialog:${openId}`);
+            btn.disabled = true;
+            btn.innerHTML = '<span class="dating-spin"></span>Захожу на сайт…';
+            try {
+                await peopleLoad('dialog', true);
+                const state = peopleCache.get(`${openId}|dialog`);
+                if (state && state.error) {
+                    showNotification('Диалоги не снялись: ' + state.error, 'error');
+                } else if (state) {
+                    showNotification(`Диалогов на сайте: ${state.people.length}`, 'success');
+                }
+            } finally {
+                busy.delete(`dialog:${openId}`);
+                btn.disabled = false;
+                btn.innerHTML = 'Загрузить диалоги';
+            }
+
+            // Перерисовываем вкладку целиком, а не счётчик и колонки по
+            // отдельности: значки «есть переписка» стоят в обеих колонках
+            // собеседников и в списке диалогов, и собирать их руками по трём
+            // местам — три случая забыть одно из них. Данные уже в памяти,
+            // лишнего запроса к сайту перерисовка не делает.
+            await chatLoad();
         });
     }
 
@@ -1632,18 +2042,26 @@
     // Размеры человек ставит под себя один раз — держим их между заходами.
     // Ключ свой, не общий с «Анкетами»: раскладки у страниц разные, и одна ширина
     // на две означала бы, что подгонка одной портит вторую.
+    // Все размеры страницы в одном месте: список, журнал и две колонки
+    // собеседников. Перечислены именами переменных, а не по одной строке на каждую,
+    // — пятый разделитель не должен требовать правки в двух функциях.
+    const LAYOUT_VARS = ['--col', '--log', '--fav', '--online', '--talk'];
+
     function layoutSave() {
-        localStorage.setItem(LAYOUT_KEY, JSON.stringify({
-            col: pageEl.style.getPropertyValue('--col'),
-            log: pageEl.style.getPropertyValue('--log'),
-        }));
+        const saved = {};
+        LAYOUT_VARS.forEach(name => {
+            const value = pageEl.style.getPropertyValue(name);
+            if (value) saved[name] = value;
+        });
+        localStorage.setItem(LAYOUT_KEY, JSON.stringify(saved));
     }
 
     function layoutRestore() {
         let saved;
         try { saved = JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}'); } catch (e) { return; }
-        if (saved.col) pageEl.style.setProperty('--col', saved.col);
-        if (saved.log) pageEl.style.setProperty('--log', saved.log);
+        LAYOUT_VARS.forEach(name => {
+            if (saved[name]) pageEl.style.setProperty(name, saved[name]);
+        });
     }
 
     layoutRestore();
