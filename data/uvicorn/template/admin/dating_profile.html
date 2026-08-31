@@ -18,12 +18,27 @@
            содержимому. Разделителей нет — в отличие от «Анкет», где колонки
            тянут: тянуть тут нечего, ширины подобраны. */
         .dating-page {
-            grid-template-columns: minmax(0, 1fr) 62%;
+            /* Ширину списка и высоту журнала человек ставит под себя один раз —
+               переменными, а не числами: их двигают разделители, и они же
+               запоминаются (`localStorage`). Начальные значения — та же раскладка,
+               что была до появления разделителей. */
+            --col: 38%;
+            --log: 200px;
+            grid-template-columns: var(--col) 6px minmax(0, 1fr);
             grid-template-rows: auto minmax(0, 1fr);
         }
         .dating-head { grid-column: 1 / -1; }
         .prof-pane { grid-column: 1; grid-row: 2; }
-        .work-pane { grid-column: 2; grid-row: 2; }
+        .work-pane { grid-column: 3; grid-row: 2; }
+
+        /* Разделители: узкая полоса, заметная только под курсором — рамка между
+           панелями не должна спорить с содержимым за внимание. Те же классы и то
+           же поведение, что на «Анкетах»: человек ходит между страницами, и
+           разделитель, который там тянется, а здесь нет, читается как поломка. */
+        .split { border-radius: 3px; background: transparent; }
+        .split:hover, .split.drag { background: #c7d2fe; }
+        .split-col { grid-column: 2; grid-row: 2; cursor: col-resize; }
+        .split-row { cursor: row-resize; height: 6px; flex: 0 0 auto; }
 
         /* ---------- Вкладки правой колонки ---------- */
 
@@ -75,14 +90,28 @@
         }
 
         /* Журнал под чатом, а не отдельной колонкой: он про то же, что и
-           переписка, — что происходило с анкетой. Своей высоты ему хватает
-           трети, дальше начинается список диалогов, ради которого вкладку и
-           открывают. */
-        .chat-log { margin-top: 12px; border-top: 1px solid #f1f5f9; padding-top: 8px; }
+           переписка, — что происходило с анкетой.
+
+           Высоту тянут разделителем: сколько её нужно, зависит от работы. Разбирая
+           неудачный вход, читают десяток строк журнала и переписка не нужна вовсе;
+           отвечая собеседницам — наоборот. Поэтому вкладка «Чат» — своя маленькая
+           сетка на две части, а не один прокручиваемый столбец. */
+        .chat-wrap {
+            display: flex; flex-direction: column; height: 100%; min-height: 0;
+        }
+        .chat-main { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+        .chat-log { height: var(--log); min-height: 0; display: flex; flex-direction: column; }
+        .chat-log-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
         .chat-log-head {
             font-size: 11px; font-weight: 700; color: #94a3b8;
-            text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px;
+            text-transform: uppercase; letter-spacing: .04em;
+            margin-bottom: 4px; flex: 0 0 auto;
         }
+
+        /* Тело панели во вкладке «Чат» не прокручивается само: прокрутка внутри,
+           у двух частей по отдельности. Иначе тянуть разделитель было бы нечего —
+           обе части ехали бы одной лентой. */
+        .work-pane .pane-body.chat { overflow: hidden; padding-bottom: 0; }
 
         /* Вертикальной прокрутки нет намеренно: сколько строк влезло — столько на
            странице, остальные за пейджером. Прокрутка вместе с пейджером это две
@@ -129,14 +158,11 @@
         .prof-login { color: #6b7280; font-size: 11px;
                       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-        .prof-work { white-space: nowrap; }
-        .prof-work > * + * { margin-left: 5px; }
-
-        .prof-when { color: #6b7280; white-space: nowrap; }
-        .prof-note { color: #6b7280; max-width: 280px;
-                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .prof-note.bad { color: #b91c1c; }
-
+        /* Колонка «В сети»: в ней одна точка, и ширины ей нужно ровно под неё.
+           По центру — столбик точек читают сверху вниз, и разнобой по краю мешал
+           бы искать красные. */
+        .prof-online { width: 1%; text-align: center; }
+        .prof-online .dot { display: inline-block; }
         /* Ответ «нет» пишем прочерком, а не пустотой: пустая ячейка читается как
            «не успело загрузиться». */
         .prof-no { color: #cbd5e1; }
@@ -318,6 +344,8 @@
         <div class="pane-foot" id="profilesPager"></div>
     </div>
 
+    <div class="split split-col" id="splitCol" title="Потяните, чтобы изменить ширину"></div>
+
     <div class="pane work-pane">
         <div class="pane-head">
             <div class="work-tabs" id="workTabs">
@@ -338,7 +366,7 @@
 <script type="module">
     import {getData, postData, putData, deleteData} from '{{ base }}/static/js/api.js';
     import {showNotification} from '{{ base }}/static/js/notification.js';
-    import {esc, statusDot, warnBadge, workPills, seenText, pagerRender, logRender}
+    import {esc, onlineDot, warnBadge, seenText, pagerRender, logRender}
         from '{{ base }}/static/js/dating_view.js';
     // Загрузка селекта общая на весь раздел: ключ выбора у страниц один, и
     // разъехавшиеся копии писали бы в него разное.
@@ -364,6 +392,11 @@
     // Это первая прикидка, до того как измерена настоящая высота строки.
     const PAGE_SIZE_GUESS = 15;
 
+    // Где лежат ширина списка и высота журнала. Ключ свой, не общий с «Анкетами»:
+    // раскладки у страниц разные, и одно значение на две означало бы, что подгонка
+    // одной портит вторую.
+    const LAYOUT_KEY = 'dating_profile_layout';
+
     const siteEl = document.getElementById('siteSelect');
     const importBtn = document.getElementById('importBtn');
     const importStateEl = document.getElementById('importState');
@@ -375,6 +408,7 @@
     const workEl = document.getElementById('work');
     const workWhoEl = document.getElementById('workWho');
     const workTabsEl = document.getElementById('workTabs');
+    const pageEl = document.querySelector('.dating-page');
     const contactsPagerEl = document.getElementById('contactsPager');
 
     let profiles = [];
@@ -551,7 +585,10 @@
             const open = row.id === openId;
 
             return `<tr class="prof-row${open ? ' open' : ''}" data-id="${row.id}">`
-                + `<td class="prof-state">${statusDot(row)}${warnBadge(row)}</td>`
+                // Точка отсюда уехала в колонку «В сети» — две одинаковые точки
+                // в одной строке заставляли бы сверять, о чём каждая. Осталась
+                // тревога автовхода: она про другое — «не может войти».
+                + `<td class="prof-state">${warnBadge(row) || '<span class="prof-no">·</span>'}</td>`
                 + '<td><span class="prof-who">'
                 + `<img class="profile-face" src="${esc(row.photo || '')}" alt="" referrerpolicy="no-referrer"`
                 + ' onerror="this.style.visibility=\'hidden\'">'
@@ -560,22 +597,16 @@
                 + `<span class="prof-name" title="${esc(row.name || row.login)}">${esc(row.name || row.login)}</span>`
                 + `<span class="prof-login" title="${esc(row.login)}">${esc(row.login)}</span>`
                 + '</span></span></td>'
-                + `<td class="prof-work">${workPills(row) || '<span class="prof-no">—</span>'}</td>`
                 + `<td>${row.auto_answer ? '<span class="prof-yes" title="отвечает агентом сам">✓</span>'
                                          : '<span class="prof-no" title="отвечают вручную">—</span>'}</td>`
-                + `<td>${row.keep_online ? '<span class="prof-yes" title="автовход держит анкету в сети">✓</span>'
-                                         : '<span class="prof-no" title="в сети не держим">—</span>'}</td>`
-                + `<td class="prof-when" title="${esc(row.last_seen_at || 'входа ещё не было')}">`
-                + `${esc(seenText(row.last_seen_at) || '—')}</td>`
-                + noteCell(row)
+                + `<td class="prof-online">${onlineDot(row)}</td>`
                 + `<td class="prof-act">${actCell(row)}</td>`
                 + '</tr>';
         }).join('');
 
         tableEl.innerHTML =
             '<table class="prof-table"><thead><tr>'
-            + '<th></th><th>Анкета</th><th>Работа</th><th>Автоответ</th><th>В сети</th>'
-            + '<th>Вход</th><th>Пометка</th><th></th>'
+            + '<th></th><th>Анкета</th><th>Автоответ</th><th>В сети</th><th></th>'
             + '</tr></thead><tbody>' + body + '</tbody></table>';
 
         // Пейджер рисуем до замера: он занимает высоту, и мерить тело панели без
@@ -615,12 +646,6 @@
 
     // В колонке пометки важнее ошибка: пометку человек писал сам и помнит, а
     // причина отказа — то, ради чего он в таблицу и смотрит.
-    function noteCell(row) {
-        const bad = row.status === 'error' && row.last_error;
-        const text = bad ? row.last_error : (row.note || '');
-
-        return `<td class="prof-note${bad ? ' bad' : ''}" title="${esc(text)}">${esc(text)}</td>`;
-    }
 
     // ── Раскрытая карточка ───────────────────────────────────────────────────
 
@@ -713,6 +738,7 @@
             // Пустая правая колонка — единственное место, где виден ход импорта:
             // у него нет своей анкеты, а показать его надо, человек только что
             // нажал кнопку и ждёт, чем кончилось.
+            workEl.classList.remove('chat');
             workEl.innerHTML = importLog.length
                 ? '<div class="chat-log-head">Импорт</div><div id="log"></div>'
                 : '<div class="edit-empty">Выберите анкету в списке — '
@@ -723,6 +749,7 @@
         }
 
         if (workTab === 'setup') {
+            workEl.classList.remove('chat');
             workEl.innerHTML = editForms(row);
             pagerRender(contactsPagerEl, 0, 0, () => {});
             editBind(row);
@@ -734,6 +761,7 @@
         // «Письма» и «Ивенты» — каркас: ручек под них нет, и рисовать нечего.
         // Говорим это прямо, а не пустой панелью: пустое место читается как
         // «не загрузилось».
+        workEl.classList.remove('chat');
         workEl.innerHTML = '<div class="work-soon">'
             + (workTab === 'mail' ? 'Почта анкеты появится здесь.'
                                   : 'События анкеты появятся здесь.')
@@ -790,11 +818,25 @@
 
         // Прокрутку возвращаем на место: вкладка перерисовывается своим кругом, а
         // человек в это время читает переписку.
-        const scroll = workEl.scrollTop;
-        workEl.innerHTML = chatCard(data) + chatContacts(data)
-                         + '<div class="chat-log"><div class="chat-log-head">Журнал</div>'
-                         + '<div id="log"></div></div>';
-        workEl.scrollTop = scroll;
+        // Прокрутку возвращаем той части, что её и держит: переписке. Вкладка
+        // перерисовывается своим кругом, а человек в это время читает.
+        const main = workEl.querySelector('.chat-main');
+        const scroll = main ? main.scrollTop : 0;
+
+        workEl.classList.add('chat');
+        workEl.innerHTML = '<div class="chat-wrap">'
+            + `<div class="chat-main">${chatCard(data)}${chatContacts(data)}</div>`
+            + '<div class="split split-row" id="splitRow" title="Потяните, чтобы изменить высоту"></div>'
+            + '<div class="chat-log"><div class="chat-log-head">Журнал</div>'
+            + '<div class="chat-log-body" id="log"></div></div>'
+            + '</div>';
+        workEl.querySelector('.chat-main').scrollTop = scroll;
+
+        // Разделитель живёт внутри перерисовываемой разметки, поэтому вешаем
+        // обработчик каждый раз заново — узел новый.
+        splitDrag(workEl.querySelector('#splitRow'), '--log', 80,
+                  Math.round(innerHeight * 0.6),
+                  (e) => workEl.getBoundingClientRect().bottom - e.clientY);
 
         logLoad();
 
@@ -1469,6 +1511,56 @@
         workTab = tab.dataset.tab;
         workPaint();
     });
+
+    // ── Разделители: ширина списка и высота журнала ───────────────────────────
+
+    // Тянет полосу и пишет результат в переменную сетки. Тот же приём и тот же код,
+    // что на «Анкетах»: захват указателя, чтобы курсор не терялся на быстром
+    // движении, и сохранение по отпусканию, а не на каждый пиксель.
+    function splitDrag(el, varName, min, max, fromEvent) {
+        if (!el) return;
+
+        el.addEventListener('pointerdown', (ev) => {
+            ev.preventDefault();
+            el.setPointerCapture(ev.pointerId);
+            el.classList.add('drag');
+
+            const move = (e) => {
+                const value = Math.min(max, Math.max(min, fromEvent(e)));
+                pageEl.style.setProperty(varName, value + 'px');
+            };
+            const stop = () => {
+                el.classList.remove('drag');
+                el.removeEventListener('pointermove', move);
+                el.removeEventListener('pointerup', stop);
+                layoutSave();
+            };
+            el.addEventListener('pointermove', move);
+            el.addEventListener('pointerup', stop);
+        });
+    }
+
+    // Размеры человек ставит под себя один раз — держим их между заходами.
+    // Ключ свой, не общий с «Анкетами»: раскладки у страниц разные, и одна ширина
+    // на две означала бы, что подгонка одной портит вторую.
+    function layoutSave() {
+        localStorage.setItem(LAYOUT_KEY, JSON.stringify({
+            col: pageEl.style.getPropertyValue('--col'),
+            log: pageEl.style.getPropertyValue('--log'),
+        }));
+    }
+
+    function layoutRestore() {
+        let saved;
+        try { saved = JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}'); } catch (e) { return; }
+        if (saved.col) pageEl.style.setProperty('--col', saved.col);
+        if (saved.log) pageEl.style.setProperty('--log', saved.log);
+    }
+
+    layoutRestore();
+    splitDrag(document.getElementById('splitCol'), '--col', 260,
+              Math.round(innerWidth * 0.7),
+              (e) => e.clientX - pageEl.getBoundingClientRect().left);
 
     hintEl.textContent = 'состояние обновляется само';
     empty('Гружу…');

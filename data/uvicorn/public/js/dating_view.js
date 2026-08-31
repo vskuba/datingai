@@ -21,6 +21,20 @@ export function statusTitle(row) {
     return row.has_state ? 'вход протух — залогиньтесь заново' : 'входа ещё не было';
 }
 
+// Точка «в сети или нет» — **два** состояния, а не три: зелёная пульсирует,
+// красная нет. Отдельно от `statusDot`, где состояний три (серое «не входили»,
+// зелёное, красное «опрос не прошёл»).
+//
+// Разница по смыслу вопроса. `statusDot` отвечает «что с учёткой» — и «входа ещё
+// не было» там честно серое, потому что это не поломка. Здесь вопрос другой:
+// «работает ли анкета прямо сейчас». Ответа на него ровно два, и серый в колонке
+// с двумя состояниями читался бы как третье, которого нет.
+export function onlineDot(row) {
+    const on = row.status === 'online';
+
+    return `<span class="dot ${on ? 'online' : 'off'}" title="${esc(statusTitle(row))}"></span>`;
+}
+
 export function statusDot(row) {
     return `<span class="dot ${esc(row.status)}" title="${esc(statusTitle(row))}"></span>`;
 }
