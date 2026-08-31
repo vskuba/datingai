@@ -636,6 +636,24 @@
 
         return '<div class="edit-body">'
 
+            // Действия — первыми: на вкладку заходят чаще нажать «Войти», чем
+            // править логин. Формы ниже — то, что заполняют один раз и почти не
+            // трогают; кнопка, за которой пришли, не должна быть под ними.
+            + '<div class="prof-form">'
+            + '<h4>Действия</h4>'
+            + '<div class="prof-line">'
+            + `<button type="button" class="dating-btn login-btn"${row.has_password ? '' : ' disabled'}`
+            + ` title="${row.has_password ? 'Сценарий входа в живом браузере — идёт минутами'
+                                          : 'у учётки не задан пароль'}">Войти</button>`
+            + `<button type="button" class="dating-btn off-btn"${row.has_state ? '' : ' disabled'}`
+            + ' title="Выход на сайте, закрытие вкладок, снятие с автовхода">Отключить</button>'
+            + '<button type="button" class="dating-btn danger del-btn"'
+            + ' title="Удалить учётку вместе с перепиской и журналом">Удалить</button>'
+            + '</div>'
+            + `<span class="prof-card-note${row.status === 'error' ? ' bad' : ''}">`
+            + `${esc(row.last_error || state)}</span>`
+            + '</div>'
+
             + '<form class="prof-form" data-form="save">'
             + '<h4>Учётка</h4>'
             + '<div class="prof-line">'
@@ -676,21 +694,6 @@
             + '</form>'
 
             + scheduleBlock(row)
-
-            + '<div class="prof-form">'
-            + '<h4>Действия</h4>'
-            + '<div class="prof-line">'
-            + `<button type="button" class="dating-btn login-btn"${row.has_password ? '' : ' disabled'}`
-            + ` title="${row.has_password ? 'Сценарий входа в живом браузере — идёт минутами'
-                                          : 'у учётки не задан пароль'}">Войти</button>`
-            + `<button type="button" class="dating-btn off-btn"${row.has_state ? '' : ' disabled'}`
-            + ' title="Выход на сайте, закрытие вкладок, снятие с автовхода">Отключить</button>'
-            + '<button type="button" class="dating-btn danger del-btn"'
-            + ' title="Удалить учётку вместе с перепиской и журналом">Удалить</button>'
-            + '</div>'
-            + `<span class="prof-card-note${row.status === 'error' ? ' bad' : ''}">`
-            + `${esc(row.last_error || state)}</span>`
-            + '</div>'
 
             + '</div>';
     }
