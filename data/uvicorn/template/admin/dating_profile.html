@@ -136,10 +136,15 @@
         .prof-table tbody tr.prof-row:hover td { background: #f8fafc; }
 
 
-        /* Столбец состояния — самый узкий и первый: сначала смотрят, всё ли в
-           порядке, и только потом читают, у кого именно. */
-        .prof-state { width: 1%; white-space: nowrap; }
-        .prof-state > * + * { margin-left: 5px; }
+        /* Первая колонка — сразу содержательная: пустой под подсветку больше нет.
+           Отступ слева обязателен: полоса выбранной строки идёт по краю ячейки, и
+           без него фотография прижималась бы к ней вплотную.
+
+           Селектор с `.prof-table`, а не просто `.prof-first`: базовое правило
+           ячейки (`.prof-table td`) весит больше одного класса, и короткий
+           селектор проиграл бы ему — пришлось бы ставить `!important`, то есть
+           расписаться в том, что специфичность посчитана неверно. */
+        .prof-table .prof-first { padding-left: 14px; }
 
         /* Выбранная строка. Полоса слева, а не только фон: фон у строки под
            курсором почти такой же, и без полосы выбранное теряется ровно в тот
@@ -148,6 +153,12 @@
         .prof-table tbody tr.prof-row.open td:first-child {
             box-shadow: inset 3px 0 0 #4f46e5;
         }
+
+        /* Имя и тревога в одной строке: значок относится к анкете, и место ему
+           рядом с её именем, а не в своей колонке. `min-width: 0` — чтобы
+           многоточие резало имя, а не выдавливало значок за край. */
+        .prof-name-row { display: flex; align-items: center; gap: 5px; min-width: 0; }
+        .prof-name-row .prof-name { min-width: 0; }
 
         /* Кто это: лицо, имя, под ним логин. Ширину не задаём — колонка забирает
            остаток строки, и режется многоточием именно она, а не бейджи и время. */
@@ -585,16 +596,22 @@
             const open = row.id === openId;
 
             return `<tr class="prof-row${open ? ' open' : ''}" data-id="${row.id}">`
-                // Точка отсюда уехала в колонку «В сети» — две одинаковые точки
-                // в одной строке заставляли бы сверять, о чём каждая. Осталась
-                // тревога автовхода: она про другое — «не может войти».
-                + `<td class="prof-state">${warnBadge(row) || '<span class="prof-no">·</span>'}</td>`
-                + '<td><span class="prof-who">'
+                // Пустой колонки под подсветку больше нет: полоса выбранной
+                // строки рисуется на первой же содержательной, а отступ слева
+                // держит её на расстоянии от фотографии.
+                //
+                // Тревога автовхода (⚠) переехала сюда же, к имени: она про
+                // конкретную анкету, и отдельная колонка под один значок стоила
+                // дороже, чем сообщала.
+                + '<td class="prof-first"><span class="prof-who">'
                 + `<img class="profile-face" src="${esc(row.photo || '')}" alt="" referrerpolicy="no-referrer"`
                 + ' onerror="this.style.visibility=\'hidden\'">'
                 + '<span class="prof-who-text">'
                 // Имя режется многоточием — полное отдаём подсказкой.
+                + '<span class="prof-name-row">'
                 + `<span class="prof-name" title="${esc(row.name || row.login)}">${esc(row.name || row.login)}</span>`
+                + warnBadge(row)
+                + '</span>'
                 + `<span class="prof-login" title="${esc(row.login)}">${esc(row.login)}</span>`
                 + '</span></span></td>'
                 + `<td>${row.auto_answer ? '<span class="prof-yes" title="отвечает агентом сам">✓</span>'
@@ -606,7 +623,7 @@
 
         tableEl.innerHTML =
             '<table class="prof-table"><thead><tr>'
-            + '<th></th><th>Анкета</th><th>Автоответ</th><th>В сети</th><th></th>'
+            + '<th class="prof-first">Анкета</th><th>Автоответ</th><th>В сети</th><th></th>'
             + '</tr></thead><tbody>' + body + '</tbody></table>';
 
         // Пейджер рисуем до замера: он занимает высоту, и мерить тело панели без
