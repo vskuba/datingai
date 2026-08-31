@@ -5,43 +5,84 @@
 {% block head %}
     <link rel="stylesheet" href="{{ base }}/static/css/dating_page.css">
     <style>
-        /* Обойма, шапка, панель, журнал и значки учётки — общие с «Анкетами»
+        /* Обойма, шапка, панель, журнал, чат и значки учётки — общие с «Анкетами»
            (`dating_page.css`). Здесь только раскладка этой страницы: шапка во всю
-           ширину, под ней три колонки — список, настройки выбранной анкеты, её
-           журнал.
+           ширину, под ней две колонки — список анкет и работа с выбранной.
 
-           Порядок колонок повторяет порядок работы: нашёл анкету в списке →
-           правишь её посередине → смотришь, что вышло, в журнале справа. Настройки
-           стоят между списком и журналом не для симметрии: правка и её последствия
-           должны быть рядом, иначе после каждого нажатия глаз ходит через весь
-           экран.
+           Правая колонка одна на четыре занятия (чат, письма, ивенты, настройки),
+           и делит их вкладками, а не колонками: колонок под них не хватило бы ни
+           на одном экране, а нужны они по одной за раз — человек либо читает
+           переписку, либо правит настройки.
 
-           Ширины: список тянется, настройки 340px (столько нужно строке
-           расписания — метка, два времени и удаление), журнал 20%. Отдать
-           настройкам больше значит отнять у списка, ради которого на страницу и
-           приходят. Разделителей нет — тянуть тут нечего. */
+           Ширина правой — 62%: в ней живёт переписка, и она же самая длинная по
+           содержимому. Разделителей нет — в отличие от «Анкет», где колонки
+           тянут: тянуть тут нечего, ширины подобраны. */
         .dating-page {
-            grid-template-columns: minmax(0, 1fr) 340px 20%;
+            grid-template-columns: minmax(0, 1fr) 62%;
             grid-template-rows: auto minmax(0, 1fr);
         }
         .dating-head { grid-column: 1 / -1; }
         .prof-pane { grid-column: 1; grid-row: 2; }
-        .edit-pane { grid-column: 2; grid-row: 2; }
-        .log-pane { grid-column: 3; grid-row: 2; }
+        .work-pane { grid-column: 2; grid-row: 2; }
 
-        /* Настройки прокручиваются: блоков четыре, и на невысоком экране они не
-           влезают. Список рядом при этом остаётся без прокрутки — у него своё
-           правило (пейджер вместо неё), и смешивать их нельзя. */
-        .edit-body { display: flex; flex-direction: column; gap: 16px; padding: 12px; }
-        .edit-pane .pane-body { overflow-y: auto; }
+        /* ---------- Вкладки правой колонки ---------- */
+
+        /* Вкладки живут в шапке панели, а не отдельной строкой над ней: шапка и
+           так пустует, а лишняя строка съела бы высоту у переписки. */
+        .work-tabs { display: flex; gap: 2px; margin-right: auto; }
+        .work-tab {
+            padding: 3px 10px; border: none; border-radius: 6px; background: none;
+            font-family: inherit; font-size: 12px; font-weight: 700; color: #94a3b8;
+            text-transform: uppercase; letter-spacing: .04em; cursor: pointer;
+        }
+        .work-tab:hover { color: #4338ca; }
+        .work-tab.on { background: #eef2ff; color: #4338ca; }
+
+        /* Кого сейчас правим — в той же строке, справа: вкладки меняются, анкета
+           нет, и подпись не должна прыгать вместе с ними. */
+        #workWho { min-width: 0; color: #94a3b8; font-weight: 400;
+                   text-transform: none; letter-spacing: normal;
+                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        /* Вкладка без содержимого. Отдельным классом, а не пустой панелью: пустая
+           белая карточка читается как «не загрузилось». */
+        .work-soon { padding: 24px 12px; text-align: center; color: #9ca3af; font-size: 13px; }
+
+        /* Содержимое вкладки прокручивается: у настроек четыре блока, у чата
+           сотни диалогов, и на невысоком экране не влезает ни то, ни другое.
+           Список слева при этом остаётся без прокрутки — у него своё правило
+           (пейджер вместо неё), и смешивать их нельзя. */
+        .work-pane .pane-body { overflow-y: auto; }
         .edit-empty { padding: 20px 12px; color: #9ca3af; font-size: 12px; text-align: center; }
 
-        /* Колонка узкая, а логин длинный: без многоточия имя анкеты растолкало бы
-           заголовок панели и уехало за её край. */
-        .log-pane .pane-head { min-width: 0; }
-        .log-pane .pane-head, .edit-pane .pane-head { min-width: 0; }
-        #logWho, #editWho { min-width: 0; color: #94a3b8;
-                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        /* Блоки настроек идут один под другим, и без границы «Учётка» и
+           «Автоответ» читаются как одна длинная форма: у обеих поля ввода и
+           кнопка «Сохранить», а сохраняют они разное. Разделяем линией и
+           воздухом — заголовок блока при этом остаётся его единственной меткой. */
+        .edit-body { display: flex; flex-direction: column; }
+        .edit-body > * + * {
+            margin-top: 16px; padding-top: 16px; border-top: 1px solid #eef2f7;
+        }
+
+        /* Заголовок с засечкой слева: он и так набран капителью, но в столбце из
+           четырёх блоков глазу нужна точка, за которую цепляться при прокрутке. */
+        .edit-body h4 {
+            display: flex; align-items: center; gap: 6px;
+        }
+        .edit-body h4::before {
+            content: ''; width: 3px; height: 11px; border-radius: 2px;
+            background: #c7d2fe; flex: 0 0 auto;
+        }
+
+        /* Журнал под чатом, а не отдельной колонкой: он про то же, что и
+           переписка, — что происходило с анкетой. Своей высоты ему хватает
+           трети, дальше начинается список диалогов, ради которого вкладку и
+           открывают. */
+        .chat-log { margin-top: 12px; border-top: 1px solid #f1f5f9; padding-top: 8px; }
+        .chat-log-head {
+            font-size: 11px; font-weight: 700; color: #94a3b8;
+            text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px;
+        }
 
         /* Вертикальной прокрутки нет намеренно: сколько строк влезло — столько на
            странице, остальные за пейджером. Прокрутка вместе с пейджером это две
@@ -277,14 +318,18 @@
         <div class="pane-foot" id="profilesPager"></div>
     </div>
 
-    <div class="pane edit-pane">
-        <div class="pane-head">Настройки <span id="editWho"></span></div>
-        <div class="pane-body" id="edit"></div>
-    </div>
-
-    <div class="pane log-pane">
-        <div class="pane-head">Журнал <span id="logWho"></span></div>
-        <div class="pane-body" id="log"></div>
+    <div class="pane work-pane">
+        <div class="pane-head">
+            <div class="work-tabs" id="workTabs">
+                <button type="button" class="work-tab on" data-tab="chat">Чат</button>
+                <button type="button" class="work-tab" data-tab="mail">Письма</button>
+                <button type="button" class="work-tab" data-tab="event">Ивенты</button>
+                <button type="button" class="work-tab" data-tab="setup">Настройки</button>
+            </div>
+            <span id="workWho"></span>
+        </div>
+        <div class="pane-body" id="work"></div>
+        <div class="pane-foot" id="contactsPager"></div>
     </div>
 </div>
 {% endblock %}
@@ -327,10 +372,10 @@
     const countEl = document.getElementById('profilesN');
     const findEl = document.getElementById('profileFind');
     const pagerEl = document.getElementById('profilesPager');
-    const logEl = document.getElementById('log');
-    const logWhoEl = document.getElementById('logWho');
-    const editEl = document.getElementById('edit');
-    const editWhoEl = document.getElementById('editWho');
+    const workEl = document.getElementById('work');
+    const workWhoEl = document.getElementById('workWho');
+    const workTabsEl = document.getElementById('workTabs');
+    const contactsPagerEl = document.getElementById('contactsPager');
 
     let profiles = [];
     let page = 0;
@@ -346,6 +391,17 @@
     // должен её пережить.
     let importLog = [];
     let importBusy = false;
+    // Какая вкладка открыта. Переживает смену анкеты: человек читает переписку и
+    // переключается между анкетами, а не между вкладками — сбрасывать её на «Чат»
+    // при каждом выборе значило бы отнимать у него то, что он только что открыл.
+    let workTab = 'chat';
+    // Страница собеседниц: серверная, и живёт здесь, а не в разметке — вкладка
+    // перерисовывается своим кругом, и читай мы номер из активной кнопки, он
+    // возвращался бы на первую страницу прямо под руками.
+    let contactsPage = 0;
+    // Какой диалог раскрыт. Выбор переживает перерисовку и живёт между заходами:
+    // диалогов сотни, и возвращаться к нужному заново — работа на каждый круг.
+    let openUid = localStorage.getItem('dating_open_dialog') || '';
 
     // Расписание выбранной анкеты, пока его набирают. Живёт здесь, а не в
     // разметке: колонка настроек перерисовывается при каждой правке, и набранное
@@ -639,36 +695,182 @@
             + '</div>';
     }
 
-    // Рисует колонку настроек. Отдельно от списка и **не по его таймеру**: список
-    // освежается сам, а форма под руками перерисовываться не должна — набранное в
-    // полях исчезло бы вместе с местом курсора.
-    function editPaint() {
+    // ── Правая колонка: вкладки работы с анкетой ─────────────────────────────
+
+    // Рисует открытую вкладку. Отдельно от списка и **не по его таймеру**: в
+    // настройках поля ввода, и перерисовка под руками стёрла бы набранное вместе
+    // с местом курсора. Чат обновляется своим кругом — у него полей нет.
+    function workPaint() {
         const row = openRow();
-        editWhoEl.textContent = row ? (row.name || row.login) : '';
+        workWhoEl.textContent = row ? (row.name || row.login) : '';
+        workTabsEl.querySelectorAll('.work-tab').forEach(btn =>
+            btn.classList.toggle('on', btn.dataset.tab === workTab));
 
         if (!row) {
-            editEl.innerHTML = '<div class="edit-empty">Выберите анкету в списке — '
-                             + 'здесь будут её настройки.</div>';
+            // Пустая правая колонка — единственное место, где виден ход импорта:
+            // у него нет своей анкеты, а показать его надо, человек только что
+            // нажал кнопку и ждёт, чем кончилось.
+            workEl.innerHTML = importLog.length
+                ? '<div class="chat-log-head">Импорт</div><div id="log"></div>'
+                : '<div class="edit-empty">Выберите анкету в списке — '
+                  + 'здесь будет работа с ней.</div>';
+            if (importLog.length) logRender(document.getElementById('log'), importLog, '');
+            pagerRender(contactsPagerEl, 0, 0, () => {});
             return;
         }
 
-        editEl.innerHTML = editForms(row);
-        editBind(row);
+        if (workTab === 'setup') {
+            workEl.innerHTML = editForms(row);
+            pagerRender(contactsPagerEl, 0, 0, () => {});
+            editBind(row);
+            return;
+        }
+
+        if (workTab === 'chat') { chatLoad(); return; }
+
+        // «Письма» и «Ивенты» — каркас: ручек под них нет, и рисовать нечего.
+        // Говорим это прямо, а не пустой панелью: пустое место читается как
+        // «не загрузилось».
+        workEl.innerHTML = '<div class="work-soon">'
+            + (workTab === 'mail' ? 'Почта анкеты появится здесь.'
+                                  : 'События анкеты появятся здесь.')
+            + '</div>';
+        pagerRender(contactsPagerEl, 0, 0, () => {});
     }
 
     function editBind(row) {
-        editEl.querySelector('[data-form="save"]').addEventListener('submit', (e) => {
+        workEl.querySelector('[data-form="save"]').addEventListener('submit', (e) => {
             e.preventDefault();
             profileSave(row, e.target);
         });
-        editEl.querySelector('[data-form="auto"]').addEventListener('submit', (e) => {
+        workEl.querySelector('[data-form="auto"]').addEventListener('submit', (e) => {
             e.preventDefault();
             profileAuto(row, e.target);
         });
-        scheduleBind(editEl, row);
-        editEl.querySelector('.login-btn').addEventListener('click', () => profileLogin(row));
-        editEl.querySelector('.off-btn').addEventListener('click', () => profileDisconnect(row));
-        editEl.querySelector('.del-btn').addEventListener('click', () => profileDelete(row));
+        scheduleBind(workEl, row);
+        workEl.querySelector('.login-btn').addEventListener('click', () => profileLogin(row));
+        workEl.querySelector('.off-btn').addEventListener('click', () => profileDisconnect(row));
+        workEl.querySelector('.del-btn').addEventListener('click', () => profileDelete(row));
+    }
+
+    // ── Вкладка «Чат»: анкета с сайта, собеседницы, переписка ────────────────
+    //
+    // Перенесено со страницы «Анкеты» — та же ручка `/card`, та же разметка, те
+    // же стили (`dating_page.css`). Здесь чат стоит рядом со списком профилей, а
+    // там — рядом со списком девушек: разные списки, одна и та же переписка.
+
+    async function chatLoad() {
+        if (!openId || workTab !== 'chat') return;
+
+        // Гонка сети, а не логики: вкладка ходит своим кругом, и ответ по уже
+        // снятой анкете может прийти позже ответа по вновь выбранной. Тот же
+        // приём, что у списка с `site_id`.
+        const requestId = openId;
+        let data;
+        try {
+            data = (await getData(`${BASE}/api/dating/profile/${requestId}/card`
+                                  + `?page=${contactsPage + 1}`)).result || {};
+        } catch (e) {
+            if (openId !== requestId || workTab !== 'chat') return;
+            workEl.innerHTML = `<div class="work-soon">переписка не пришла: ${esc(e.message)}</div>`;
+            return;
+        }
+        if (openId !== requestId || workTab !== 'chat') return;
+
+        // Номер страницы берём из ответа: сервер поправит его, если собеседниц
+        // стало меньше и страница уехала за конец. Ручка нумерует с единицы,
+        // пейджер — с нуля.
+        contactsPage = Math.max(0, Number(data.page || 1) - 1);
+        const row = openRow() || {};
+        workWhoEl.textContent = `${row.name || row.login || ''}`
+            + (data.contacts_total ? ` · собеседников: ${data.contacts_total}` : '');
+
+        // Прокрутку возвращаем на место: вкладка перерисовывается своим кругом, а
+        // человек в это время читает переписку.
+        const scroll = workEl.scrollTop;
+        workEl.innerHTML = chatCard(data) + chatContacts(data)
+                         + '<div class="chat-log"><div class="chat-log-head">Журнал</div>'
+                         + '<div id="log"></div></div>';
+        workEl.scrollTop = scroll;
+
+        logLoad();
+
+        // Листаем запросом: страница собеседниц серверная. После перехода
+        // прокрутка в начало — на новой странице сохранять место незачем.
+        pagerRender(contactsPagerEl, Number(data.pages || 1), contactsPage, async (page) => {
+            contactsPage = page;
+            await chatLoad();
+            workEl.scrollTop = 0;
+        });
+
+        chatBind();
+    }
+
+    function chatCard(data) {
+        const p = data.profile || {};
+
+        return '<div class="card">'
+            + `<img src="${esc(p.photo || '')}" alt="" referrerpolicy="no-referrer"`
+            + ' onerror="this.style.visibility=\'hidden\'">'
+            + '<div>'
+            + `<div class="card-name">${esc(p.name || data.login || '')}</div>`
+            + `<div class="card-meta">ID ${esc(String(p.id || data.login || ''))}`
+            + `${p.age ? ' · ' + p.age : ''}${p.city ? ' · ' + esc(p.city) : ''}</div>`
+            + `<div class="card-meta">${esc(p.about || 'описание профиля сайт не отдал')}</div>`
+            + '</div></div>';
+    }
+
+    function chatContacts(data) {
+        const p = data.profile || {};
+        const me = p.name || data.login || 'мы';
+
+        const rows = (data.contacts || []).map(c => {
+            const talk = (c.messages_last || []).map(m =>
+                `<div class="msg ${m.direction === 'out' ? 'out' : 'in'}">`
+                + '<span class="msg-body">'
+                + `<span class="msg-who">${esc(m.direction === 'out' ? me : (c.name || 'он'))}</span>`
+                + `${esc(m.text)}</span></div>`).join('');
+            const last = (c.messages_last || []).slice(-1)[0] || {};
+            const open = openUid === String(c.uid);
+
+            return `<div class="contact${c.needs_answer ? ' wait' : ''}${open ? ' open' : ''}"`
+                + ` data-uid="${esc(c.uid)}">`
+                + '<div class="contact-bar">'
+                + '<span class="contact-toggle" title="Свернуть или развернуть переписку">▶</span>'
+                + `<span class="contact-face">${esc((c.name || '?').slice(0, 1).toUpperCase())}`
+                + (c.photo ? `<img src="${esc(c.photo)}" alt="" referrerpolicy="no-referrer"`
+                             + ' onerror="this.remove()">' : '')
+                + '</span>'
+                + `<span class="contact-name">${esc(c.name || 'без имени')}</span>`
+                + `<span class="contact-id" title="номер анкеты на сайте">ID ${esc(c.uid)}</span>`
+                + `<span class="contact-last">${esc(last.direction === 'out' ? 'вы: ' : '')}`
+                + `${esc(last.text || 'сообщений нет')}</span>`
+                + `<span class="contact-time">${esc(String(last.created_at || '').slice(11, 16))}</span>`
+                + (c.needs_answer
+                    ? '<span class="need" title="последнее слово за собеседником">нужен ответ</span>'
+                    : `<span class="contact-id" title="реплик в переписке">✉ ${c.messages}</span>`)
+                + '</div>'
+                + `<div class="contact-talk">${talk || '<div class="msg"><span class="msg-body">'
+                                                     + 'сообщений пока нет</span></div>'}</div>`
+                + '</div>';
+        }).join('');
+
+        return rows || '<div class="work-soon">собеседников пока нет — '
+                     + 'запустите «Диалоги» на «Анкетах»</div>';
+    }
+
+    function chatBind() {
+        // Открыт один диалог за раз: их бывают сотни, и «раскрыть всё» здесь не
+        // помощь, а простыня. Выбор переживает перерисовку — она идёт своим кругом.
+        workEl.querySelectorAll('.contact-bar').forEach(bar => {
+            bar.addEventListener('click', () => {
+                const box = bar.parentElement;
+                openUid = box.classList.contains('open') ? '' : box.dataset.uid;
+                localStorage.setItem('dating_open_dialog', openUid);
+                workEl.querySelectorAll('.contact').forEach(el =>
+                    el.classList.toggle('open', el.dataset.uid === openUid));
+            });
+        });
     }
 
     function field(label, control) {
@@ -809,7 +1011,7 @@
         const rows = [...(scheduleDraft.get(profileId) || [])];
         change(rows);
         scheduleDraft.set(profileId, rows);
-        editPaint();
+        workPaint();
     }
 
     function scheduleBind(card, row) {
@@ -959,28 +1161,14 @@
         return null;
     }
 
-    // Раскрывает анкету или закрывает всё. Она же выбранная — журнал справа
-    // показывает её, поэтому смена раскрытой сразу тянет за собой журнал.
+    // Выбирает анкету. Вкладку при этом **не сбрасываем**: человек читает
+    // переписку и переключается между анкетами, а не между вкладками.
     function openSet(id) {
         openId = Number(id || 0);
-        editPaint();
-        logPaint();
-        logLoad();
-    }
-
-    // ── Журнал выбранной анкеты ──────────────────────────────────────────────
-
-    // Подпись и подсказка в пустой панели — отдельно от загрузки: они меняются
-    // мгновенно по нажатию, а строки придут ответом сервера.
-    function logPaint() {
-        const row = openRow();
-        logWhoEl.textContent = row ? (row.name || row.login) : (importLog.length ? 'импорт' : '');
-        if (row) return;
-
-        // Пока анкета не раскрыта, панель показывает ход последнего импорта: это
-        // единственная работа страницы, у которой нет своей анкеты, а показать её
-        // человеку надо — он только что нажал кнопку и ждёт, чем кончилось.
-        logRender(logEl, importLog, 'выберите анкету — покажем её журнал');
+        // Страница собеседниц и раскрытый диалог — про прежнюю анкету: седьмая
+        // страница чужих собеседниц и чужой открытый диалог ничего не значат.
+        contactsPage = 0;
+        workPaint();
     }
 
     // ── Импорт анкет с сайта ─────────────────────────────────────────────────
@@ -1045,28 +1233,32 @@
             importBtn.innerHTML = 'Импортировать профили';
             await importReadyLoad();
             await profilesLoad();
-            logPaint();
+            workPaint();
         }
     }
 
+    // Журнал живёт внутри вкладки «Чат», поэтому узла может не быть вовсе —
+    // на «Настройках» и «Письмах» его нет. Молча выходим: это не сбой, а другая
+    // открытая вкладка.
     async function logLoad() {
-        if (!openId) return;
+        const box = () => document.getElementById('log');
+        if (!openId || !box()) return;
 
         // Та же гонка, что и у списка, и тот же приём: журнал ходит своим кругом,
-        // и ответ по уже закрытой анкете может прийти позже ответа по вновь
-        // раскрытой — без сверки он перепишет журнал не той анкеты.
+        // и ответ по уже снятой анкете может прийти позже ответа по вновь
+        // выбранной — без сверки он перепишет журнал не той анкеты.
         const requestId = openId;
         let rows;
         try {
             rows = (await getData(`${BASE}/api/dating/profile/${requestId}/log`)).result || [];
         } catch (e) {
-            if (openId !== requestId) return;
-            logRender(logEl, [], 'журнал не пришёл: ' + e.message);
+            if (openId !== requestId || !box()) return;
+            logRender(box(), [], 'журнал не пришёл: ' + e.message);
             return;
         }
-        if (openId !== requestId) return;
+        if (openId !== requestId || !box()) return;
 
-        logRender(logEl, rows, 'записей нет — нажмите «Пинг»');
+        logRender(box(), rows, 'записей нет — нажмите «Пинг»');
     }
 
     // ── Действия ─────────────────────────────────────────────────────────────
@@ -1257,15 +1449,27 @@
         profilesLoad();
     }, RELOAD_MS);
 
+    // Вкладка «Чат» освежается своим кругом: переписка приходит от воркера в фоне,
+    // и без круга она молча устаревала бы. Прочие вкладки не трогаем — в
+    // «Настройках» поля ввода, а «Письма» с «Ивентами» пока пусты.
     setInterval(() => {
         if (busy.size || !openId || document.hidden) return;
-        logLoad();
+        if (workTab === 'chat') chatLoad(); else logLoad();
     }, LOG_MS);
+
+    // Переключение вкладок. Нажатие по кнопке, а не по всей шапке: рядом с
+    // вкладками стоит имя анкеты, и клик по нему не должен ничего переключать.
+    workTabsEl.addEventListener('click', (e) => {
+        const tab = e.target.closest('.work-tab');
+        if (!tab || tab.dataset.tab === workTab) return;
+
+        workTab = tab.dataset.tab;
+        workPaint();
+    });
 
     hintEl.textContent = 'состояние обновляется само';
     empty('Гружу…');
-    editPaint();
-    logPaint();
+    workPaint();
     sitesLoad();
 </script>
 {% endblock %}

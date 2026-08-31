@@ -85,78 +85,12 @@
         .profile-login { color: #6b7280; font-size: 11px; }
         .profile-meta { grid-column: 1 / -1; color: #6b7280; font-size: 11px; }
 
-        /* ---------- Правая колонка: профиль и собеседницы ---------- */
+        /* Профиль с сайта и собеседницы (`.card*`, `.contact*`, `.msg*`, `.need`)
+           переехали в `dating_page.css`: тот же чат показывает вкладка «Чат» на
+           «Профилях», и две копии разошлись бы в мелочах — а мелочи здесь и есть
+           смысл (мигающая метка «нужен ответ», свои реплики справа).
 
-        /* `card`, а не `profile`: `profile` — карточка учётки в списке слева, и
-           два разных смысла под одним именем уже сталкивались. Здесь именно
-           анкета с сайта — то же, что `card` в коде сервера. */
-        .card { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
-        .card img { width: 64px; height: 64px; border-radius: 10px; object-fit: cover; background: #f1f5f9; }
-        .card-name { font-size: 15px; font-weight: 700; color: #111827; }
-        .card-meta { color: #6b7280; font-size: 12px; }
-
-        /* Диалогов бывают сотни, поэтому свёрнутый вид — основной, а не запасной.
-           В строке ровно то, по чему выбирают, что открыть: кто, когда, о чём и
-           ждут ли ответа. Всё остальное — внутри. */
-        .contact { border-top: 1px solid #f1f5f9; max-width: 45%}
-        .contact-bar {
-            display: grid;
-            grid-template-columns: 14px 28px minmax(70px, auto) auto minmax(0, 1fr) auto auto;
-            /* Столбцы фиксированы: у собеседников без фото строка иначе съезжала. */
-            align-items: center; gap: 8px; padding: 6px 4px; cursor: pointer;
-        }
-        .contact-bar:hover { background: #f8fafc; }
-        /* Место под аватар занято всегда: у многих собеседников фотографии нет, и
-           скрытая картинка оставляла дыру, из-за которой строки не выстраивались
-           в столбец. Под картинкой лежит буква имени — она и видна, если фото нет. */
-        .contact-face {
-            position: relative; width: 28px; height: 28px; border-radius: 6px;
-            background: #e2e8f0; overflow: hidden;
-            display: flex; align-items: center; justify-content: center;
-            color: #64748b; font-size: 12px; font-weight: 700;
-        }
-        .contact-face img { position: absolute; inset: 0; width: 100%; height: 100%;
-                            border-radius: 6px; object-fit: cover; }
-
-        /* Значок свёрнутости: строку и так открывают кликом, но без него не видно,
-           что она вообще открывается. Поворачивается вместо подмены символа —
-           так переход читается как движение, а не как мигание. */
-        .contact-toggle {
-            color: #94a3b8; font-size: 10px; line-height: 1; text-align: center;
-            transition: transform .15s ease;
-        }
-        .contact.open .contact-toggle { transform: rotate(90deg); color: #4338ca; }
-
-        .contact-name { font-weight: 600; color: #111827; font-size: 12px;
-                        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .contact-last { color: #64748b; font-size: 12px;
-                        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .contact-time { color: #94a3b8; font-size: 11px; font-family: ui-monospace, Menlo, monospace; }
-        .contact-id { color: #94a3b8; font-size: 11px; }
-
-        /* Развёрнутая переписка. Скрыта, пока строку не открыли: сто открытых
-           диалогов — это не список, а простыня. */
-        .contact-talk { display: none; padding: 4px 0 8px 36px; }
-        .contact.open .contact-talk { display: block; }
-        .contact.open .contact-bar { background: #f8fafc; }
-
-        /* Диалог как диалог: сверху старое, снизу свежее, свои реплики справа. */
-        .msg { margin-top: 2px; font-size: 12px; display: flex; }
-        .msg.out { justify-content: flex-end; }
-        .msg-body { max-width: 76%; padding: 3px 8px; border-radius: 9px; line-height: 1.35;
-                    background: #f1f5f9; color: #334155; }
-        .msg.out .msg-body { background: #eef2ff; color: #3730a3; }
-        .msg-who { font-size: 10px; color: #94a3b8; margin-right: 5px; }
-
-        /* Последнее слово за собеседником — значит ему не ответили. Метка мигает:
-           это единственная строка в панели, означающая несделанную работу. */
-        .need { padding: 1px 6px; border-radius: 9px; background: #fee2e2; color: #b91c1c;
-                font-size: 10px; font-weight: 700; white-space: nowrap;
-                animation: alarm 1.4s ease-in-out infinite; }
-        @media (prefers-reduced-motion: reduce) { .need { animation: none; } }
-        .contact.wait .contact-bar { background: #fff7f7; }
-
-        /* Журнал (`.log-*`) переехал в `dating_page.css`: те же строки той же ручки
+           Журнал (`.log-*`) переехал в `dating_page.css`: те же строки той же ручки
            показывают и «Профили». */
 
         .empty { padding: 14px; color: #9ca3af; font-size: 12px; text-align: center; }
