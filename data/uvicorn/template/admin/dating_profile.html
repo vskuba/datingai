@@ -211,6 +211,19 @@
            говорит, семнадцать их или ни одного, пока не вглядишься в столбик. */
         .people-count { color: #4338ca; font-weight: 700; }
 
+        /* Когда список снят. Отдельной строкой под заголовком, а не рядом со
+           счётом: в 150 пикселях «FAVORITE 18 ⟳ 12:15» не помещается, и время
+           выдавило бы кнопку обновления за край.
+
+           Мелко и бледно намеренно — это сноска к списку, а не его часть; но
+           поднимается до красного, когда список устарел: тогда это уже не сноска,
+           а предупреждение. */
+        .people-when {
+            flex: 0 0 auto; font-size: 9px; color: #cbd5e1; margin-bottom: 3px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .people-when .bad { color: #dc2626; }
+
         .people-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
         /* Строка человека: лицо, под ним имя с возрастом. Не в одну строку —
@@ -1188,11 +1201,41 @@
         return `<div class="people-col" data-kind="${kind}">`
             + '<div class="people-head">'
             + `<span>${esc(title)}</span>`
-            + `<span class="people-count">${state ? state.people.length : ''}</span>`
+            // Счёт показываем, только когда список **снят**. У колонки, которая
+            // не снялась, `people` тоже пуст — но это «неизвестно», а не «ноль»,
+            // и написать там 0 значило бы сообщить, что на сайте никого нет.
+            + `<span class="people-count">${peopleCount(state)}</span>`
             + '<button type="button" class="people-reload" title="Снять список заново">⟳</button>'
             + '</div>'
+            + `<div class="people-when">${peopleWhen(state)}</div>`
             + `<div class="people-body">${peopleRows(state)}</div>`
             + '</div>';
+    }
+
+    function peopleCount(state) {
+        return state && state.taken_at ? `${state.people.length}` : '';
+    }
+
+    // Когда список снят с сайта — строкой под заголовком колонки.
+    //
+    // ⚠ **Без неё показанное нельзя истолковать.** Список живёт в кэше и отдаётся
+    // из него по пять минут, а при отказе соседа — сколько угодно долго: браузер у
+    // него общий, и свободной вкладки может не находиться часами. Человек в это
+    // время смотрит на имена и не знает, они ли сейчас на сайте.
+    //
+    // Отказ приписываем сюда же, к самому старому: «12:15 · не обновилось» — это
+    // одно сообщение, а не два. Полная причина — в подсказке.
+    // Снимка нет вовсе — здесь пусто: про это говорит само тело колонки («не
+    // снялось» с причиной в подсказке), и вторая такая же надпись строкой выше
+    // сообщала бы то же самое дважды.
+    function peopleWhen(state) {
+        if (!state || !state.taken_at) return '';
+
+        const time = String(state.taken_at).slice(11, 16);
+
+        return state.error
+            ? `<span class="bad" title="${esc(state.error)}">${esc(time)} · не обновилось</span>`
+            : `<span title="снято ${esc(state.taken_at)}">${esc(time)}</span>`;
     }
 
     function peopleRows(state) {
@@ -1251,7 +1294,8 @@
 
         const state = peopleCache.get(`${openId}|${kind}`);
         col.querySelector('.people-body').innerHTML = peopleRows(state);
-        col.querySelector('.people-count').textContent = state ? state.people.length : '';
+        col.querySelector('.people-count').textContent = peopleCount(state);
+        col.querySelector('.people-when').innerHTML = peopleWhen(state);
         peopleBindRows(col);
     }
 
@@ -1303,9 +1347,7 @@
     }
 
     function dialogsCount() {
-        const state = peopleCache.get(`${openId}|dialog`);
-
-        return state ? `${state.people.length}` : '';
+        return peopleCount(peopleCache.get(`${openId}|dialog`));
     }
 
     // ── Выбор собеседника: один на все три колонки ────────────────────────────

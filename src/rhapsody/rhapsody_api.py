@@ -14,6 +14,7 @@
 быть написано «RhapsodyAi недоступен», а не трасса httpx.
 """
 
+import time
 from urllib.parse import quote
 
 import httpx
@@ -43,6 +44,36 @@ RHAPSODY_API_CHAT_TIMEOUT = 240
 # им нельзя — метка в чужой базе и метка в запросе обязаны совпадать буквально.
 RHAPSODY_API_SITE_TAG = 'dating'
 
+# Сколько помним, какой сценарий нашёлся по имени.
+#
+# Поиск сценария — это **выгрузка всего списка сценариев соседа** с последующим
+# отбором по имени: у него их сотни, а нам нужен один номер. Список меняется
+# редко (сценарий заводят руками), а спрашивается перед каждым прогоном — то есть
+# перед каждым обновлением колонки собеседников.
+#
+# Десять минут — про то, как часто у соседа заводят сценарии, а не про нагрузку.
+# Заведённый только что сценарий появится здесь через это время; ждать дольше
+# значило бы держать кнопку мёртвой после того, как её настроили.
+RHAPSODY_API_SCENARIO_TTL_SEC = 600
+
+# Что означают коды отказа соседа — словами, а не числом. Текст уезжает в журнал
+# анкеты, и «409» там не говорит ничего никому: за ним стоит занятый пул вкладок,
+# и лечится он не перезапуском панели, а свободной вкладкой у соседа.
+RHAPSODY_API_CODE_MEANING = {
+    401: 'токен не принят',
+    404: 'у соседа этого нет',
+    409: 'браузер соседа занят',
+    422: 'сосед не принял запрос',
+    500: 'сосед сломался внутри',
+    502: 'сосед не отвечает',
+    503: 'сосед не отвечает',
+}
+
+# Найденные сценарии: `(site_id, имя)` → `(момент, запись)`. Момент — монотонные
+# часы: меряется «сколько прошло внутри процесса», и рывок NTP назад не должен
+# объявлять запись свежей на лишние часы.
+_scenario_cache: dict[tuple[int, str], tuple[float, dict]] = {}
+
 
 class RhapsodyError(RuntimeError):
     """RhapsodyAi не ответил или ответил отказом. Текст пригоден для журнала анкеты."""
@@ -69,13 +100,43 @@ async def rhapsody_api_site_get(site_id: int) -> dict:
 
 
 async def rhapsody_api_scenario_find(site_id: int, name: str) -> dict:
-    """Сценарий сайта по имени. Нет такого — пустой словарь, решает вызывающий."""
+    """Сценарий сайта по имени. Нет такого — пустой словарь, решает вызывающий.
+
+    Найденное запоминается на `RHAPSODY_API_SCENARIO_TTL_SEC`: под капотом это
+    выгрузка **всего** списка сценариев соседа ради одного номера, а спрашивают её
+    перед каждым прогоном. Заодно снимается лишний повод для отказа: пока номер
+    помним, занятый или упавший сосед не мешает хотя бы узнать, что сценарий есть.
+
+    ⚠ **Промахи не кэшируются.** «Такого сценария нет» — обычно значит, что его
+    сейчас заводят у соседа; запомни мы пустоту на десять минут, кнопка осталась
+    бы мёртвой после того, как её настроили.
+    """
+    key = (int(site_id), str(name))
+    hit = _scenario_cache.get(key)
+    if hit and time.monotonic() - hit[0] < RHAPSODY_API_SCENARIO_TTL_SEC:
+        return hit[1]
+
     scenarios = await _request('GET', '/api/browser/scenario')
     for row in scenarios.get('result') or []:
         if int(row.get('site_id') or 0) == int(site_id) and str(row.get('name') or '') == str(name):
+            _scenario_cache[key] = (time.monotonic(), row)
             return row
 
     return {}
+
+
+def rhapsody_api_scenario_forget(site_id: int = 0, name: str = '') -> None:
+    """Забыть найденный сценарий — после отказа, похожего на «его больше нет».
+
+    Без этого удалённый или переименованный у соседа сценарий держал бы нас на
+    старом номере до конца выдержки, а каждый прогон отвечал бы 404. Пустые
+    аргументы очищают память целиком.
+    """
+    if not name:
+        _scenario_cache.clear()
+        return
+
+    _scenario_cache.pop((int(site_id), str(name)), None)
 
 
 async def rhapsody_api_site_list(tag: str = RHAPSODY_API_SITE_TAG) -> list:
@@ -319,9 +380,35 @@ async def _request(method: str, path: str, payload: dict = None,
         raise RhapsodyError(f'RhapsodyAi недоступен: {e}')
 
     if response.status_code >= 400:
-        raise RhapsodyError(f'{path} → {response.status_code}: {response.text[:200]}')
+        raise RhapsodyError(_error_text(path, response))
 
     try:
         return response.json() if response.content else {}
     except ValueError:
         raise RhapsodyError(f'{path} → ответ не JSON: {response.text[:150]}')
+
+
+def _error_text(path: str, response) -> str:
+    """Отказ соседа — фразой для журнала анкеты, а не кодом и телом ответа.
+
+    Строка попадает человеку на страницу, и «`/api/browser/scenario/259/run` →
+    409: {"detail":"предел сессий исчерпан: 25"}» не говорит ему ничего: причина
+    утоплена в служебной обвязке, а числу 409 взяться в голове неоткуда.
+
+    Собираем из трёх частей — что это значит, что сказал сосед, куда стучались.
+    Код оставляем в хвосте: по нему ищут в его логах.
+    """
+    code = int(response.status_code)
+
+    detail = ''
+    try:
+        body = response.json()
+        detail = str(body.get('detail') or '') if isinstance(body, dict) else ''
+    except ValueError:
+        detail = ''
+    detail = detail or response.text[:200]
+
+    meaning = RHAPSODY_API_CODE_MEANING.get(code, 'сосед ответил отказом')
+
+    return f'{meaning}: {detail} ({path} → {code})' if detail \
+        else f'{meaning} ({path} → {code})'

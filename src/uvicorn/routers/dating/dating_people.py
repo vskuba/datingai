@@ -23,20 +23,38 @@
 уж точно не должна показывать человеку «слишком часто» вместо списка, который у
 нас уже есть.
 
+## ⚠ Отказ соседа не выбрасывает снимок
+
+То же правило и на другом краю: **не вышло снять заново — отдаём прежнее**, а не
+502. Поводов не получить список три (занят браузер соседа, оборвалась связь, встал
+сценарий), и все они про «сейчас не вышло», а не про «того, что мы знали, больше
+нет». Пятиминутной давности список полезнее пустого места с красной надписью.
+
+Самый частый повод — **409 от соседа**: пул Chromium у него на 25 вкладок и общий
+с его собственными задачами, и свободной может не оказаться. Панель на это влиять
+не может и падать от этого не должна.
+
+Причина при этом не проглатывается: она едет в ответе (`error`), в журнале анкеты
+и в логе процесса. Молчаливо показывать старое — худший вид вранья: человек
+смотрит на список и не знает, что тот с прошлого часа.
+
 Кэш живёт **в памяти процесса** и не переживает перезапуск. Своей таблицы у этих
 списков нет намеренно: они про «кто на сайте прямо сейчас», и вчерашний снимок не
 нужен никому. Цена — после перезапуска первый заход снова гонит сценарий.
 """
 
 import time
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from logging_.logging_ import logger_info
 
 from src.auth.auth import auth_required
+from src.dating.dating_log import dating_log_write
 from src.dating.dating_people import dating_people_rows
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
+                                       rhapsody_api_scenario_forget,
                                        rhapsody_api_scenario_run)
 from src.uvicorn.routers.dating.dating_profile import dating_profile_row, dating_profile_site
 
@@ -79,11 +97,22 @@ DATING_PEOPLE_KINDS = {
                'variables': {}},
 }
 
-# Снятые списки: ключ `(profile_id, вид)`, значение `(момент, записи)`. Момент —
-# монотонные часы, а не календарные: меряется «сколько прошло внутри процесса», и
-# рывок NTP назад не должен объявлять кэш свежим на лишние часы. Тем же меряет
-# сроки держатель сокетов.
-_people_cache: dict[tuple[int, str], tuple[float, list]] = {}
+# Как список зовётся в журнале анкеты. Отдельно от ключа: в ленте рядом со строками
+# «Вход подтверждён» и «Автоответ включён» слово `favorite` выглядит чужим.
+#
+# Название — подлежащее целой фразы («Избранные с сайта: 18»), поэтому и звучать
+# должно как подлежащее: «Диалоги», а не «Список диалогов».
+DATING_PEOPLE_TITLES = {'favorite': 'Избранные', 'online': 'Кто в сети',
+                        'dialog': 'Диалоги'}
+
+# Снятые списки: ключ `(profile_id, вид)`, значение — запись `_Snapshot`.
+#
+# Время храним дважды, и это не дубль. `at` — монотонные часы: ими меряется
+# возраст («сколько прошло внутри процесса»), и рывок NTP назад не должен
+# объявлять кэш свежим на лишние часы; тем же меряет сроки держатель сокетов.
+# `when` — календарное время для показа человеку: монотонные часы показать нельзя,
+# они считаются от запуска машины.
+_people_cache: dict[tuple[int, str], dict] = {}
 
 
 @router.get('/{profile_id}/{kind}', include_in_schema=False)
@@ -100,16 +129,17 @@ async def dating_people_list(profile_id: int, kind: str, fresh: bool = False,
 
     Returns:
         dict: `people` — записи, `cached` — отдан ли снимок из кэша, `age_sec` —
-        сколько ему секунд, `error` — если сценарий не отработал.
+        сколько ему секунд (`-1`, если снимка нет вовсе), `taken_at` — когда снят,
+        `error` — если снять заново не вышло.
 
     Raises:
-        HTTPException: 404 — нет учётки; 422 — у сайта нет нужного сценария;
-            502 — RhapsodyAi не ответил.
+        HTTPException: 404 — нет учётки; 422 — неизвестный вид списка.
 
-    ⚠ **Отказ сценария приходит с кодом 200** и текстом в `error`. Правило то же,
-    что у импорта: код ответа говорит про запрос, а не про то, что вышло на живом
-    сайте. Сайт сменил вёрстку или не пустил анкету — это ответ, а не поломка
-    панели, и страница должна показать причину, а не «что-то пошло не так».
+    ⚠ **Неудача приходит с кодом 200** и текстом в `error`. Правило то же, что у
+    импорта: код ответа говорит про запрос, а не про то, что вышло на живом сайте.
+    Сайт сменил вёрстку, не пустил анкету, у соседа не нашлось свободной вкладки —
+    это ответы, а не поломка панели, и страница должна показать причину рядом с
+    прежним списком, а не заменить его словами «шлюз не отвечает».
     """
     if kind not in DATING_PEOPLE_KINDS:
         raise HTTPException(status_code=422, detail=f'неизвестный список «{kind}»')
@@ -122,23 +152,63 @@ async def dating_people_list(profile_id: int, kind: str, fresh: bool = False,
     # самого сайта, а не про то, чего хочет страница.
     cached = _people_cache.get((profile_id, kind))
     if cached:
-        age = time.monotonic() - cached[0]
+        age = time.monotonic() - cached['at']
         limit = DATING_PEOPLE_FLOOR_SEC if fresh else DATING_PEOPLE_FRESH_SEC
         if age < limit:
-            return {'result': {'people': cached[1], 'cached': True,
-                               'age_sec': int(age), 'error': ''}}
+            return _answer(cached, cached=True, error='')
 
-    spec = DATING_PEOPLE_KINDS[kind]
     try:
-        scenario = await rhapsody_api_scenario_find(int(site['id']), spec['scenario'])
+        people = await _snapshot(profile, site, kind)
+    except _PeopleFailure as e:
+        # ⚠ **Отказ не выбрасывает прежний снимок.** Занятый браузер соседа (409),
+        # оборванная связь, упавший сценарий — всё это про «сейчас снять не
+        # вышло», а не про «того, что мы знали, больше нет». Список, снятый пять
+        # минут назад, человеку полезнее пустого места с красной надписью.
+        #
+        # Поэтому здесь 200 с прежними записями и причиной рядом, а не 502.
+        await dating_log_write(profile_id, 'fail',
+                               f'{DATING_PEOPLE_TITLES.get(kind, kind)} с сайта не снялись: {e}')
+        logger_info(f'[dating] список «{kind}» #{profile_id} не снялся: {e}')
+
+        return _answer(cached, cached=bool(cached), error=str(e))
+
+    snapshot = {'at': time.monotonic(),
+                'when': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'people': people}
+    _people_cache[(profile_id, kind)] = snapshot
+
+    await dating_log_write(profile_id, 'ok',
+                           f'{DATING_PEOPLE_TITLES.get(kind, kind)} с сайта: '
+                           f'{len(people)} собеседников')
+
+    return _answer(snapshot, cached=False, error='')
+
+
+# ── Приватное ────────────────────────────────────────────────────────────────
+
+class _PeopleFailure(RuntimeError):
+    """Снять список не вышло. Текст пригоден для журнала анкеты и для страницы."""
+
+
+async def _snapshot(profile: dict, site: dict, kind: str) -> list:
+    """Гонит сценарий у соседа и разбирает ответ. Любая неудача — `_PeopleFailure`.
+
+    Три разных повода не получить список сведены в одно исключение намеренно:
+    страница поступает с ними одинаково — показывает прежний снимок и причину, — а
+    разбирать, чем «сосед занят» отличается от «сценарий встал на шаге 7», по
+    тексту причины проще, чем по трём веткам кода.
+    """
+    spec = DATING_PEOPLE_KINDS[kind]
+    site_id = int(site['id'])
+
+    try:
+        scenario = await rhapsody_api_scenario_find(site_id, spec['scenario'])
     except RhapsodyError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise _PeopleFailure(str(e))
 
     if not scenario:
-        raise HTTPException(
-            status_code=422,
-            detail=f"у сайта нет сценария «{spec['scenario']}»: "
-                   f'заведите его в RhapsodyAi на вкладке «Сценарии»')
+        raise _PeopleFailure(f"у сайта нет сценария «{spec['scenario']}» — "
+                             f'заведите его в RhapsodyAi на вкладке «Сценарии»')
 
     # Логин анкеты передаём мы, пароль — переменная сайта у соседа (`girl_password`):
     # у агентства он общий на все анкеты, а импортированные анкеты своего пароля и
@@ -152,19 +222,31 @@ async def dating_people_list(profile_id: int, kind: str, fresh: bool = False,
             {**spec['variables'], 'profile_login': str(profile['login'])}, {},
             keep_session=False)
     except RhapsodyError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        # «Нет такого сценария» у соседа — повод забыть его номер: сценарий
+        # переименовали или удалили, а мы держим номер до конца выдержки и стучимся
+        # по нему каждый раз. Прочие отказы номера не порочат.
+        if ' → 404' in str(e):
+            rhapsody_api_scenario_forget(site_id, spec['scenario'])
+        raise _PeopleFailure(str(e))
 
     if str(run.get('status')) == 'error':
-        # Прежний снимок при отказе не выбрасываем: список, снятый минуту назад,
-        # человеку полезнее пустоты. Но говорим, что он старый.
-        stale = cached[1] if cached else []
-        logger_info(f"[dating] список «{kind}» #{profile_id} не снялся: {run.get('error')}")
+        raise _PeopleFailure(f"сценарий встал на шаге {run.get('step_no')}: {run.get('error')}")
 
-        return {'result': {'people': stale, 'cached': bool(stale), 'age_sec': -1,
-                           'error': f"сценарий встал на шаге {run.get('step_no')}: "
-                                    f"{run.get('error')}"}}
+    return dating_people_rows(run.get('extract') or {}, spec['field'])
 
-    people = dating_people_rows(run.get('extract') or {}, spec['field'])
-    _people_cache[(profile_id, kind)] = (time.monotonic(), people)
 
-    return {'result': {'people': people, 'cached': False, 'age_sec': 0, 'error': ''}}
+def _answer(snapshot: dict | None, cached: bool, error: str) -> dict:
+    """Ответ ручки из снимка. Нет снимка — пустой список и возраст `-1`.
+
+    `-1` вместо нуля: ноль значит «снят только что», и показать его там, где
+    снимка нет вовсе, значило бы соврать свежестью.
+    """
+    if not snapshot:
+        return {'result': {'people': [], 'cached': False, 'age_sec': -1,
+                           'taken_at': '', 'error': error}}
+
+    return {'result': {'people': snapshot['people'],
+                       'cached': cached,
+                       'age_sec': int(time.monotonic() - snapshot['at']),
+                       'taken_at': snapshot['when'],
+                       'error': error}}
