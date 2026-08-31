@@ -179,6 +179,13 @@
         .prof-no { color: #cbd5e1; }
         .prof-yes { color: #15803d; font-weight: 700; }
 
+        /* Колонка «ai-ответ»: ширина по содержимому, подпись не переносится.
+           Курсор-указатель на всей метке — нажимают и по слову, а не только по
+           квадратику. */
+        .prof-ai { width: 1%; white-space: nowrap; }
+        .prof-ai .prof-check { font-size: 11px; color: #64748b; }
+        .prof-ai input { cursor: pointer; }
+
         .prof-act { width: 1%; white-space: nowrap; text-align: right; }
 
         .prof-empty { padding: 24px 12px; text-align: center; color: #9ca3af; font-size: 13px; }
@@ -614,8 +621,18 @@
                 + '</span>'
                 + `<span class="prof-login" title="${esc(row.login)}">${esc(row.login)}</span>`
                 + '</span></span></td>'
-                + `<td>${row.auto_answer ? '<span class="prof-yes" title="отвечает агентом сам">✓</span>'
-                                         : '<span class="prof-no" title="отвечают вручную">—</span>'}</td>`
+                // Чекбокс, а не значок: автоответ переключают часто, и ходить
+                // за этим в настройки — три нажатия вместо одного. Работает
+                // прямо в списке, той же ручкой `PUT /{id}/auto`.
+                //
+                // Подпись у каждой строки своя, хотя в столбце они повторяются:
+                // без неё голый чекбокс в безымянной колонке не говорит, что
+                // включает. Заголовка у колонки нет намеренно — он повторял бы
+                // подпись, стоящую в каждой строке.
+                + '<td class="prof-ai">'
+                + `<label class="prof-check" title="Отвечает агентом на новые сообщения">`
+                + `<input type="checkbox" class="ai-box"${row.auto_answer ? ' checked' : ''}>`
+                + 'ai-ответ</label></td>'
                 + `<td class="prof-online">${onlineDot(row)}</td>`
                 + `<td class="prof-act">${actCell(row)}</td>`
                 + '</tr>';
@@ -623,7 +640,7 @@
 
         tableEl.innerHTML =
             '<table class="prof-table"><thead><tr>'
-            + '<th class="prof-first">Анкета</th><th>Автоответ</th><th>В сети</th><th></th>'
+            + '<th class="prof-first">Анкета</th><th></th><th>В сети</th><th></th>'
             + '</tr></thead><tbody>' + body + '</tbody></table>';
 
         // Пейджер рисуем до замера: он занимает высоту, и мерить тело панели без
@@ -1326,12 +1343,13 @@
     // ── Действия ─────────────────────────────────────────────────────────────
 
     function bindActions() {
-        // Нажатие по строке **выбирает** анкету: подсвечивает её и наполняет две
-        // соседние колонки — настройки и журнал. Повторное нажатие снимает выбор.
-        // Кнопка в строке из этого исключена: она и так делает своё дело.
+        // Нажатие по строке **выбирает** анкету: подсвечивает её и наполняет
+        // правую колонку. Повторное нажатие снимает выбор. Кнопка и чекбокс из
+        // этого исключены: они и так делают своё дело, а выбор анкеты заодно
+        // сбросил бы то, что человек читал справа.
         tableEl.querySelectorAll('tr.prof-row').forEach(tr => {
             tr.addEventListener('click', (e) => {
-                if (e.target.closest('button')) return;
+                if (e.target.closest('button, label, input')) return;
                 const id = Number(tr.dataset.id);
                 openSet(id === openId ? 0 : id);
                 tablePaint(0);
@@ -1342,6 +1360,42 @@
             const row = rowOf(btn);
             if (row) btn.addEventListener('click', () => profilePing(row));
         });
+
+        tableEl.querySelectorAll('.ai-box').forEach(box => {
+            const row = rowOf(box);
+            if (row) box.addEventListener('change', () => profileAiToggle(row, box));
+        });
+    }
+
+    // Переключает автоответ прямо из списка. Отдельно от формы в настройках
+    // (`profileAuto`): та шлёт и «кому отвечать», а здесь этого поля нет — и
+    // отправлять его пустым значило бы стирать список молча.
+    //
+    // ⚠ **Ручка ждёт `auto_answer_only` необязательным** (`null` — «как было»),
+    // и мы им и пользуемся: включение автоответа не должно попутно раздать ответы
+    // всем собеседницам анкеты, у которой список был сужен.
+    async function profileAiToggle(row, box) {
+        const on = box.checked;
+        box.disabled = true;
+        try {
+            await putData(`${BASE}/api/dating/profile/${row.id}/auto`, {auto_answer: on});
+            // Правим строку в памяти, а не перерисовываем список: перерисовка под
+            // руками сбивает прицел, а следующий круг всё равно принесёт правду.
+            row.auto_answer = on;
+            showNotification(on ? 'ai-ответ включён' : 'ai-ответ выключен',
+                             on ? 'success' : 'info');
+        } catch (e) {
+            // Вернуть галочку на место обязательно: иначе список показывал бы
+            // состояние, которого на сервере нет.
+            box.checked = !on;
+            showNotification('Не переключилось: ' + e.message, 'error');
+        } finally {
+            box.disabled = false;
+        }
+
+        // Включение сразу разбирает накопившееся — это видно в журнале выбранной
+        // анкеты, и обновить его стоит.
+        if (row.id === openId) logLoad();
     }
 
     function rowOf(el) {
