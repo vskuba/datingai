@@ -47,6 +47,7 @@
 - **Новая ручка API** → `.claude/docs/api.md`
 - **Обращение к RhapsodyAi** → `.claude/docs/rhapsody_api.md`
 - **Правка страницы** → `.claude/docs/dashboard_frontend.md`
+- **Своя разметка под сайт** → `data/uvicorn/template/admin/profile/site/` (⚠ наследованием от `_base.html`, а не копией)
 - **Изменение схемы** → `.claude/docs/migration.md` (новый файл в `migrations/`, применённые не правят)
 - **Работа воркера** → `.claude/docs/worker.md`
 - **Новый сайт знакомств** → `.claude/docs/dating.md`, §5.0 (драйвер сайта: настройкой или файлом)
@@ -91,6 +92,8 @@
 | `src/uvicorn/routers/dating/dating_people.py` | Ручка собеседников: три списка с сайта, выдержка и жёсткий пол |
 | `src/uvicorn/routers/dating/dating_log.py` | Ручка общей ленты: журнал анкет и прогоны сценариев одним списком |
 | `src/uvicorn/routers/dating/dating_site.py` | Наши настройки сайта: номер у соседа → значения (⚠ не копия списка сайтов) |
+| `src/uvicorn/routers/dating/dating_work.py` | Шаблон работы с анкетой: выбор файла по сайту, сверка имени со списком Jinja |
+| `data/uvicorn/template/admin/profile/site/_base.html` | Общий вид работы с анкетой; сайты расходятся переопределением блока |
 | `src/uvicorn/routers/dashboard.py` | Страницы панели |
 | `src/uvicorn/routers/seed.py` | Seed SQL: выгрузка таблиц и заливка обратно |
 | `src/uvicorn/routers/backup.py` | Бэкапы: дамп базы и восстановление |

@@ -1,0 +1,122 @@
+{# Работа с анкетой: содержимое `#work` на странице «Профили».
+   ────────────────────────────────────────────────────────────────────────────
+   Это **шаблон сайта**, а не страницы. Каркас (список анкет, полоса вкладок и
+   журнал под ними) живёт в `admin/dating_profile.html` и одинаков для всех
+   сайтов; здесь — только то, что у сайтов может расходиться.
+
+   ⚠ ЖУРНАЛА ЗДЕСЬ НЕТ намеренно. Он про анкету, а не про сайт: одна и та же
+   лента строк нужна на любом сайте, и держать её копию в каждом шаблоне значило
+   бы править их все, меняя журнал. Он в каркасе, под `#work`.
+
+   ## Что здесь layout, а что данные
+
+   Шаблон задаёт **из каких блоков состоит работа и в каком они порядке**. Строки
+   и карточки внутрь блоков вставляет JavaScript: они приходят из ручек по одной
+   анкете, а перерисовываются десятки раз за минуту — гонять ради каждой
+   перерисовки страницу через сервер незачем.
+
+   Поэтому у контейнеров стоят `data-slot`: по ним JS их и находит. Имя слота —
+   контракт между шаблоном и `dating_profile.html`; **убрав слот, надо убрать и
+   то, что в него писало**, иначе блок молча останется пустым.
+
+   ## Как сайту разойтись с остальными
+
+   Наследованием, а не копией: `{% raw %}{% extends 'admin/profile/site/_base.html' %}{% endraw %}`
+   и переопределённый блок. У Goldenbride, например, нет ленты «Все онлайн» —
+   достаточно оставить `{% raw %}{% block work_online %}{% endblock %}{% endraw %}` пустым.
+   Скопируй мы файл целиком, правка общего места означала бы правку каждого сайта.
+#}
+
+{# ── Вкладка «Чат» ──────────────────────────────────────────────────────── #}
+<div class="work-panel" data-tab="chat">
+    <div class="chat-wrap">
+
+        {% block work_online %}
+        {# Лента «Все онлайн» — первым рядом, поперёк вкладки.
+
+           Она **про сайт, а не про выбранную анкету**: список мужчин в сети один
+           и тот же, под какой учёткой на него ни смотри. Переключение анкеты её
+           не трогает. #}
+        <div class="online-row">
+            <div class="people-head">
+                <span>Все онлайн</span>
+                <span class="people-count" data-slot="online-count"></span>
+                <span class="people-when" data-slot="online-when"></span>
+                <button type="button" class="people-reload" data-kind="online"
+                        title="Снять список заново">⟳</button>
+            </div>
+            <div class="online-strip" data-slot="online-strip"></div>
+        </div>
+
+        <div class="split split-row" id="splitOnline"
+             title="Потяните, чтобы изменить высоту"></div>
+        {% endblock %}
+
+        <div class="chat-main">
+            <div class="chat-cols">
+
+                {% block work_talk %}
+                {# Первая колонка — два ряда: список диалогов и переписка с
+                   выбранным. Карточки анкеты здесь нет: имя и фото стоят в шапке
+                   панели и в списке слева, а место в колонке нужно разговору. #}
+                <div class="chat-talk">
+                    <div class="chat-dialogs-head">
+                        <span>Диалоги на сайте</span>
+                        <span class="chat-dialogs-count" data-slot="dialogs-count"></span>
+                        <button type="button" class="dating-btn chat-dialogs-btn"
+                                title="Войти на сайт под анкетой и снять список тех, с кем есть переписка">
+                            Загрузить диалоги</button>
+                    </div>
+                    <div class="chat-dialogs" data-slot="dialogs"></div>
+
+                    <div class="split split-row" id="splitTalk"
+                         title="Потяните, чтобы изменить высоту"></div>
+
+                    <div class="chat-msgs" data-slot="talk"></div>
+                </div>
+                {% endblock %}
+
+                {% block work_favorites %}
+                {# Колонка избранных. Растёт **влево**: правый край стоит на
+                   месте, тянут за левый — так решает `splitDrag` в каркасе. #}
+                <div class="split split-people" data-var="--fav"
+                     title="Потяните, чтобы изменить ширину"></div>
+
+                <div class="people-col" data-kind="favorite">
+                    <div class="people-head">
+                        <span>My favorites</span>
+                        <span class="people-count" data-slot="favorite-count"></span>
+                        <button type="button" class="people-reload"
+                                title="Снять список заново">⟳</button>
+                    </div>
+                    <div class="people-when" data-slot="favorite-when"></div>
+                    <div class="people-body" data-slot="favorite"></div>
+                </div>
+                {% endblock %}
+
+            </div>
+        </div>
+    </div>
+</div>
+
+{# ── Вкладка «Настройки» ────────────────────────────────────────────────── #}
+{% block work_setup %}
+{# Формы заполняет JS: их значения приходят из ручки по одной анкете, и
+   отрисовать их на сервере значило бы перезагружать страницу на каждый выбор
+   анкеты. Сайту, которому нужны свои поля, достаточно переопределить этот блок. #}
+<div class="work-panel" data-tab="setup" data-slot="setup"></div>
+{% endblock %}
+
+{# ── Вкладки, которых ещё нет ───────────────────────────────────────────── #}
+{% block work_soon %}
+{# Говорим прямо, а не пустой панелью: пустое место читается как «не
+   загрузилось». Появятся ручки — блок переопределит тот сайт, у которого
+   появились, а не все сразу. #}
+<div class="work-panel" data-tab="mail">
+    <div class="work-soon">Почта анкеты появится здесь.</div>
+</div>
+
+<div class="work-panel" data-tab="event">
+    <div class="work-soon">События анкеты появятся здесь.</div>
+</div>
+{% endblock %}

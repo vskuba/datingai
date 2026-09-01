@@ -45,6 +45,7 @@ from src.uvicorn.routers.dating import dating_import
 from src.uvicorn.routers.dating import dating_log as dating_log_router
 from src.uvicorn.routers.dating import dating_people
 from src.uvicorn.routers.dating import dating_site as dating_site_router
+from src.uvicorn.routers.dating import dating_work as dating_work_router
 # Ручки анкеты разложены на три файла по тому, куда они ходят: CRUD своей базы,
 # действия наружу, чтение для страниц. Роутер у всех трёх один и тот же
 # (`/api/dating/profile`) — снаружи это одна группа ручек, см. шапку `dating_profile.py`.
@@ -211,6 +212,7 @@ app.include_router(dating_export.router)
 app.include_router(dating_import.router)
 app.include_router(dating_log_router.router)
 app.include_router(dating_site_router.router)
+app.include_router(dating_work_router.router)
 app.include_router(dating_people.router)
 app.include_router(seed_router.router)
 app.include_router(backup_router.router)

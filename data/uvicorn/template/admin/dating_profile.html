@@ -113,18 +113,29 @@
             background: #c7d2fe; flex: 0 0 auto;
         }
 
-        /* Журнал под чатом, а не отдельной колонкой: он про то же, что и
-           переписка, — что происходило с анкетой.
+        /* Журнал — часть **каркаса**, под работой с анкетой: он про анкету, а не
+           про сайт, и одинаков на любом (`admin/profile/site/_base.html`).
 
            Высоту тянут разделителем: сколько её нужно, зависит от работы. Разбирая
            неудачный вход, читают десяток строк журнала и переписка не нужна вовсе;
-           отвечая собеседницам — наоборот. Поэтому вкладка «Чат» — своя маленькая
-           сетка на две части, а не один прокручиваемый столбец. */
+           отвечая собеседницам — наоборот.
+
+           Отсюда устройство панели: тело работы забирает остаток, журнал стоит
+           фиксированной высотой снизу. Прокрутка при этом у каждого своя — иначе
+           тянуть разделитель было бы нечего, обе части ехали бы одной лентой. */
+        .work-pane #work, .work-pane .work-empty { flex: 1 1 auto; min-height: 0; }
+        .work-pane #work.off, .work-pane .work-empty.off { display: none; }
         .chat-wrap {
             display: flex; flex-direction: column; height: 100%; min-height: 0;
         }
         .chat-main { flex: 1 1 auto; min-height: 0; display: flex; }
-        .chat-log { height: var(--log); min-height: 0; display: flex; flex-direction: column; }
+        .chat-log {
+            flex: 0 0 auto; height: var(--log); min-height: 0;
+            display: flex; flex-direction: column; padding: 0 12px 8px;
+        }
+        /* Журнала нет, пока не выбрана анкета: пустая лента под пустой работой
+           читается как «не загрузилось». */
+        .chat-log.off, .work-pane .split-row.off { display: none; }
         .chat-log-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
         .chat-log-head {
             font-size: 11px; font-weight: 700; color: #94a3b8;
@@ -133,9 +144,15 @@
         }
 
         /* Тело панели во вкладке «Чат» не прокручивается само: прокрутка внутри,
-           у двух частей по отдельности. Иначе тянуть разделитель было бы нечего —
-           обе части ехали бы одной лентой. */
+           у частей по отдельности. */
         .work-pane .pane-body.chat { overflow: hidden; padding-bottom: 0; }
+
+        /* Вкладки шаблона сайта: показана одна, остальные сняты. Прячем классом, а
+           не удалением из разметки, — шаблон приходит с сервера один раз на сайт, и
+           пересобирать его на каждое переключение вкладки незачем. */
+        .work-panel { display: none; height: 100%; min-height: 0; }
+        .work-panel.on { display: block; }
+        .work-pane .pane-body.chat .work-panel.on { display: flex; flex-direction: column; }
 
         /* ---------- Колонки собеседников с сайта ---------- */
 
@@ -601,6 +618,13 @@
 
     <div class="split split-col" id="splitCol" title="Потяните, чтобы изменить ширину"></div>
 
+    {# Правая панель — **каркас**: полоса вкладок, место под работу с анкетой и
+       журнал под ней. Что внутри `#work`, решает шаблон сайта
+       (`admin/profile/site/…`, ручка `/admin/dating/profile/work`).
+
+       ⚠ Журнал стоит здесь, а не в шаблоне сайта, намеренно: он про анкету, а не
+       про сайт. Одна и та же лента строк нужна на любом сайте, и держи мы её
+       копию в каждом шаблоне — правка журнала означала бы правку всех. #}
     <div class="pane work-pane">
         <div class="pane-head">
             <div class="work-tabs" id="workTabs">
@@ -612,6 +636,19 @@
             <span id="workWho"></span>
         </div>
         <div class="pane-body" id="work"></div>
+
+        {# Пустое состояние — отдельным узлом, а не текстом внутрь `#work`: там
+           лежит шаблон сайта, и затирая его на «анкета не выбрана», мы просили бы
+           его у сервера заново на каждый щелчок по списку. #}
+        <div class="pane-body work-empty" id="workEmpty">
+            <div class="edit-empty">Выберите анкету в списке — здесь будет работа с ней.</div>
+        </div>
+
+        <div class="split split-row" id="splitRow" title="Потяните, чтобы изменить высоту"></div>
+        <div class="chat-log" id="logPane">
+            <div class="chat-log-head" id="logHead">Журнал</div>
+            <div class="chat-log-body" id="log"></div>
+        </div>
         <div class="pane-foot" id="contactsPager"></div>
     </div>
 </div>
@@ -663,6 +700,13 @@
     const findEl = document.getElementById('profileFind');
     const pagerEl = document.getElementById('profilesPager');
     const workEl = document.getElementById('work');
+    // Узлы каркаса: пустое состояние, журнал и разделитель над ним. Они не
+    // принадлежат шаблону сайта и живут, пока живёт страница.
+    const workEmptyEl = document.getElementById('workEmpty');
+    const logPaneEl = document.getElementById('logPane');
+    const logHeadEl = document.getElementById('logHead');
+    const logEl = document.getElementById('log');
+    const splitRowEl = document.getElementById('splitRow');
     const workWhoEl = document.getElementById('workWho');
     const workTabsEl = document.getElementById('workTabs');
     const pageEl = document.querySelector('.dating-page');
@@ -999,51 +1043,6 @@
             + '</div>';
     }
 
-    // ── Правая колонка: вкладки работы с анкетой ─────────────────────────────
-
-    // Рисует открытую вкладку. Отдельно от списка и **не по его таймеру**: в
-    // настройках поля ввода, и перерисовка под руками стёрла бы набранное вместе
-    // с местом курсора. Чат обновляется своим кругом — у него полей нет.
-    function workPaint() {
-        const row = openRow();
-        workWhoEl.textContent = row ? (row.name || row.login) : '';
-        workTabsEl.querySelectorAll('.work-tab').forEach(btn =>
-            btn.classList.toggle('on', btn.dataset.tab === workTab));
-
-        if (!row) {
-            // Пустая правая колонка — единственное место, где виден ход импорта:
-            // у него нет своей анкеты, а показать его надо, человек только что
-            // нажал кнопку и ждёт, чем кончилось.
-            workEl.classList.remove('chat');
-            workEl.innerHTML = importLog.length
-                ? '<div class="chat-log-head">Импорт</div><div id="log"></div>'
-                : '<div class="edit-empty">Выберите анкету в списке — '
-                  + 'здесь будет работа с ней.</div>';
-            if (importLog.length) logRender(document.getElementById('log'), importLog, '');
-            pagerRender(contactsPagerEl, 0, 0, () => {});
-            return;
-        }
-
-        if (workTab === 'setup') {
-            workEl.classList.remove('chat');
-            workEl.innerHTML = editForms(row);
-            pagerRender(contactsPagerEl, 0, 0, () => {});
-            editBind(row);
-            return;
-        }
-
-        if (workTab === 'chat') { chatLoad(); return; }
-
-        // «Письма» и «Ивенты» — каркас: ручек под них нет, и рисовать нечего.
-        // Говорим это прямо, а не пустой панелью: пустое место читается как
-        // «не загрузилось».
-        workEl.classList.remove('chat');
-        workEl.innerHTML = '<div class="work-soon">'
-            + (workTab === 'mail' ? 'Почта анкеты появится здесь.'
-                                  : 'События анкеты появятся здесь.')
-            + '</div>';
-        pagerRender(contactsPagerEl, 0, 0, () => {});
-    }
 
     function editBind(row) {
         workEl.querySelector('[data-form="save"]').addEventListener('submit', (e) => {
@@ -1060,18 +1059,222 @@
         workEl.querySelector('.del-btn').addEventListener('click', () => profileDelete(row));
     }
 
-    // ── Вкладка «Чат»: анкета с сайта, собеседницы, переписка ────────────────
+    // ── Правая колонка: каркас и шаблон сайта ────────────────────────────────
     //
-    // Перенесено со страницы «Анкеты» — та же ручка `/card`, та же разметка, те
-    // же стили (`dating_page.css`). Здесь чат стоит рядом со списком профилей, а
-    // там — рядом со списком девушек: разные списки, одна и та же переписка.
+    // ⚠ **Разметку работы с анкетой (`#work`) даёт сервер, а не эта страница.**
+    // У сайтов она расходится — где-то есть лента «кто в сети», где-то нет, — и
+    // держать все различия в одном JS значило бы обрастать ветками `if (сайт ===
+    // …)`. Шаблон приходит фрагментом с `/admin/dating/profile/work?site_id=…`
+    // (`dating_work.py`), а страница наполняет его контейнеры по `data-slot`.
+    //
+    // Журнал в шаблон **не входит**: он про анкету, а не про сайт, и стоит в
+    // каркасе под `#work`.
 
+    // Для какого сайта шаблон уже лежит в `#work`. Ноль — не загружен: сайт
+    // сменили или страница только открылась.
+    let workSite = 0;
+
+    // Слот шаблона: контейнер, который наполняет страница. Ищем по `data-slot`, а
+    // не по классу: класс — про вид, и шаблон сайта вправе его сменить, не ломая
+    // наполнение.
+    function slot(name) {
+        return workEl.querySelector(`[data-slot="${name}"]`);
+    }
+
+    // Просит у сервера разметку сайта, если её ещё нет.
+    //
+    // Возвращает `false`, когда просить нечего или не вышло: вызывающий тогда не
+    // трогает вкладки — наполнять пустой `#work` бессмысленно.
+    async function workTemplate() {
+        const site = Number(siteEl.value) || 0;
+        if (!site) return false;
+        if (workSite === site && workEl.firstElementChild) return true;
+
+        let html;
+        try {
+            const answer = await fetch(`${BASE}/admin/dating/profile/work?site_id=${site}`,
+                                       {credentials: 'include'});
+            if (!answer.ok) throw new Error(`сервер ответил ${answer.status}`);
+            html = await answer.text();
+        } catch (e) {
+            workEl.innerHTML = '<div class="work-soon">Разметка сайта не пришла: '
+                + `${esc(e.message)}</div>`;
+            workSite = 0;
+            return false;
+        }
+
+        // Сайт могли переключить, пока шаблон ехал: та же гонка, что у списков.
+        if ((Number(siteEl.value) || 0) !== site) return false;
+
+        workEl.innerHTML = html;
+        workSite = site;
+
+        // ⚠ **Обработчики шаблона вешаются здесь, один раз на его загрузку.**
+        //
+        // Узлы шаблона живут, пока не сменится сайт, — в отличие от строк внутри
+        // них, которые перерисовываются каждый круг. Вешай мы на них заново при
+        // каждой перерисовке, слушатели копились бы: кнопка «⟳» после минуты на
+        // странице слала бы шесть запросов на одно нажатие. Так и было, пока
+        // разметку пересобирал JS и узлы каждый раз были новыми.
+        workBind();
+
+        return true;
+    }
+
+    // Разделители и кнопки шаблона. Чего именно нет — решает сайт, поэтому каждый
+    // узел проверяется на существование: у Goldenbride, например, нет ни ленты
+    // «онлайн», ни колонки избранных, а значит и их кнопок с разделителями.
+    function workBind() {
+        const talk = workEl.querySelector('#splitTalk');
+        if (talk) {
+            splitDrag(talk, '--talk', 90, Math.round(innerHeight * 0.5),
+                      (e) => workEl.querySelector('.chat-talk').getBoundingClientRect().bottom
+                             - e.clientY);
+        }
+
+        // Ряд «Все онлайн» растёт **вниз**: его верх стоит на месте, тянут за низ.
+        const online = workEl.querySelector('#splitOnline');
+        if (online) {
+            splitDrag(online, '--online-h', 70, Math.round(innerHeight * 0.45),
+                      (e) => e.clientY - workEl.querySelector('.online-row')
+                                                .getBoundingClientRect().top);
+        }
+
+        // Колонки собеседников растут **влево**, к переписке: правый край каждой
+        // стоит на месте, а тянут за левый.
+        workEl.querySelectorAll('.split-people').forEach(split => {
+            const col = split.nextElementSibling;
+            splitDrag(split, split.dataset.var, 90, 400,
+                      (e) => col.getBoundingClientRect().right - e.clientX);
+        });
+
+        // «⟳» у ленты «Все онлайн»: список по сайту, и обходит он выдержку, но не
+        // жёсткий пол ручки.
+        const onlineBtn = workEl.querySelector('.online-row .people-reload');
+        if (onlineBtn) {
+            onlineBtn.addEventListener('click', async () => {
+                onlineBtn.disabled = true;
+                fillSlot('online-strip', '<div class="people-empty">снимаю…</div>', true);
+                try {
+                    await peopleOnlineLoad(true);
+                } finally {
+                    onlineBtn.disabled = false;
+                }
+            });
+        }
+
+        // «⟳» у колонок собеседников — по одной на вид списка.
+        workEl.querySelectorAll('.people-col').forEach(col => {
+            const kind = col.dataset.kind;
+            const btn = col.querySelector('.people-reload');
+            if (!btn) return;
+
+            btn.addEventListener('click', async () => {
+                btn.disabled = true;
+                fillSlot(kind, '<div class="people-empty">снимаю…</div>', true);
+                try {
+                    await peopleLoad(kind, true);
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+        });
+
+        chatDialogsBind();
+    }
+
+    // Показывает вкладку шаблона. Нет такой панели — сайт её не завёл, и вместо
+    // пустоты говорим об этом словами.
+    function workPanel(tab) {
+        let found = false;
+        workEl.querySelectorAll('.work-panel').forEach(panel => {
+            const on = panel.dataset.tab === tab;
+            panel.classList.toggle('on', on);
+            if (on) found = true;
+        });
+
+        return found;
+    }
+
+    // Рисует открытую вкладку. Отдельно от списка и **не по его таймеру**: в
+    // настройках поля ввода, и перерисовка под руками стёрла бы набранное вместе
+    // с местом курсора. Чат обновляется своим кругом — у него полей нет.
+    async function workPaint() {
+        const row = openRow();
+        workWhoEl.textContent = row ? (row.name || row.login) : '';
+        workTabsEl.querySelectorAll('.work-tab').forEach(btn =>
+            btn.classList.toggle('on', btn.dataset.tab === workTab));
+
+        // Журнал прячем вместе с работой: пустая лента под пустой панелью
+        // читается как «не загрузилось». Показываем и там, где идёт импорт — у
+        // него своей анкеты нет, а ход работы видеть надо.
+        logPaneShow(!!row || importLog.length > 0);
+
+        workEl.classList.toggle('off', !row);
+        workEmptyEl.classList.toggle('off', !!row);
+
+        if (!row) {
+            // Ход импорта — единственное, что показывает панель без анкеты: у него
+            // нет своей учётки, а человек только что нажал кнопку и ждёт.
+            logHeadEl.textContent = 'Импорт';
+            if (importLog.length) logRender(logEl, importLog, '');
+            pagerRender(contactsPagerEl, 0, 0, () => {});
+            return;
+        }
+
+        logHeadEl.textContent = 'Журнал';
+
+        if (!await workTemplate()) {
+            pagerRender(contactsPagerEl, 0, 0, () => {});
+            return;
+        }
+
+        // Гонка: пока ехал шаблон, могли выбрать другую анкету или вкладку.
+        if (openRow() !== row) return;
+
+        workEl.classList.toggle('chat', workTab === 'chat');
+
+        if (!workPanel(workTab)) {
+            pagerRender(contactsPagerEl, 0, 0, () => {});
+            logLoad();
+            return;
+        }
+
+        if (workTab === 'setup') {
+            const box = slot('setup');
+            if (box) {
+                box.innerHTML = editForms(row);
+                editBind(row);
+            }
+            pagerRender(contactsPagerEl, 0, 0, () => {});
+            logLoad();
+            return;
+        }
+
+        if (workTab === 'chat') {
+            await chatLoad();
+            return;
+        }
+
+        // «Письма» и «Ивенты» — панели шаблона без данных: он сам говорит, что
+        // их ещё нет.
+        pagerRender(contactsPagerEl, 0, 0, () => {});
+        logLoad();
+    }
+
+    function logPaneShow(on) {
+        logPaneEl.classList.toggle('off', !on);
+        splitRowEl.classList.toggle('off', !on);
+    }
+
+    // Наполняет вкладку «Чат» данными. Разметку не собирает — она уже стоит из
+    // шаблона сайта; здесь только содержимое контейнеров.
     async function chatLoad() {
         if (!openId || workTab !== 'chat') return;
+        if (!await workTemplate()) return;
 
         // Гонка сети, а не логики: вкладка ходит своим кругом, и ответ по уже
-        // снятой анкете может прийти позже ответа по вновь выбранной. Тот же
-        // приём, что у списка с `site_id`.
+        // снятой анкете может прийти позже ответа по вновь выбранной.
         const requestId = openId;
         let data;
         try {
@@ -1079,7 +1282,8 @@
                                   + `?page=${contactsPage + 1}`)).result || {};
         } catch (e) {
             if (openId !== requestId || workTab !== 'chat') return;
-            workEl.innerHTML = `<div class="work-soon">переписка не пришла: ${esc(e.message)}</div>`;
+            const box = slot('dialogs');
+            if (box) box.innerHTML = `<div class="work-soon">переписка не пришла: ${esc(e.message)}</div>`;
             return;
         }
         if (openId !== requestId || workTab !== 'chat') return;
@@ -1093,81 +1297,18 @@
         workWhoEl.textContent = `${row.name || row.login || ''}`
             + (data.contacts_total ? ` · собеседников: ${data.contacts_total}` : '');
 
-        // Прокрутку возвращаем на место: вкладка перерисовывается своим кругом, а
+        // Прокрутку сохраняем сами: вкладка перерисовывается своим кругом, а
         // человек в это время читает переписку.
-        // Прокрутку возвращаем той части, что её и держит: переписке. Вкладка
-        // перерисовывается своим кругом, а человек в это время читает.
-        const dialogs = workEl.querySelector('.chat-dialogs');
+        const dialogs = slot('dialogs');
         const scroll = dialogs ? dialogs.scrollTop : 0;
 
-        workEl.classList.add('chat');
-        workEl.innerHTML = '<div class="chat-wrap">'
-            // Первый ряд — «Все онлайн», лентой поперёк вкладки. Он **про сайт, а
-            // не про выбранную анкету**: список мужчин в сети один и тот же, под
-            // какой учёткой на него ни смотри, и переключение анкеты его не
-            // трогает (`peopleOnlineLoad`).
-            + peopleOnlineRow()
-            + '<div class="split split-row" id="splitOnline"'
-            + ' title="Потяните, чтобы изменить высоту"></div>'
-            + '<div class="chat-main">'
-            + `<div class="chat-cols">`
-            // Первая колонка — два ряда: список диалогов и переписка с выбранным.
-            // Карточки анкеты (`.card`) здесь больше нет: имя и фото анкеты и так
-            // стоят в шапке панели и в списке слева, а место в колонке нужно
-            // разговору.
-            + '<div class="chat-talk">'
-            + '<div class="chat-dialogs-head">'
-            + '<span>Диалоги на сайте</span>'
-            + `<span class="chat-dialogs-count">${dialogsCount()}</span>`
-            + '<button type="button" class="dating-btn chat-dialogs-btn"'
-            + ' title="Войти на сайт под анкетой и снять список тех, с кем есть переписка">'
-            + 'Загрузить диалоги</button>'
-            + '</div>'
-            + `<div class="chat-dialogs">${chatContacts(data)}</div>`
-            + '<div class="split split-row" id="splitTalk"'
-            + ' title="Потяните, чтобы изменить высоту"></div>'
-            + `<div class="chat-msgs">${chatTalk(data)}</div>`
-            + '</div>'
-            + '<div class="split split-people" data-var="--fav"'
-            + ' title="Потяните, чтобы изменить ширину"></div>'
-            + peopleCol('favorite', 'My favorites')
-            + '</div>'
-            + '</div>'
-            + '<div class="split split-row" id="splitRow" title="Потяните, чтобы изменить высоту"></div>'
-            + '<div class="chat-log"><div class="chat-log-head">Журнал</div>'
-            + '<div class="chat-log-body" id="log"></div></div>'
-            + '</div>';
-        workEl.querySelector('.chat-dialogs').scrollTop = scroll;
+        if (dialogs) dialogs.innerHTML = chatContacts(data);
+        if (dialogs) dialogs.scrollTop = scroll;
 
-        // Разделитель живёт внутри перерисовываемой разметки, поэтому вешаем
-        // обработчик каждый раз заново — узел новый.
-        splitDrag(workEl.querySelector('#splitRow'), '--log', 80,
-                  Math.round(innerHeight * 0.6),
-                  (e) => workEl.getBoundingClientRect().bottom - e.clientY);
+        const count = slot('dialogs-count');
+        if (count) count.textContent = dialogsCount();
 
-        splitDrag(workEl.querySelector('#splitTalk'), '--talk', 90,
-                  Math.round(innerHeight * 0.5),
-                  (e) => workEl.querySelector('.chat-talk').getBoundingClientRect().bottom
-                         - e.clientY);
-
-        // Ряд «Все онлайн» растёт **вниз**: его верх стоит на месте, тянут за низ.
-        // Поэтому высота считается от верхнего края самого ряда.
-        splitDrag(workEl.querySelector('#splitOnline'), '--online-h', 70,
-                  Math.round(innerHeight * 0.45),
-                  (e) => e.clientY - workEl.querySelector('.online-row')
-                                            .getBoundingClientRect().top);
-
-        // Колонки собеседников растут **влево**, к переписке: правый край каждой
-        // стоит на месте, а тянут за левый. Поэтому ширина считается от правого
-        // края самой колонки, а не от края панели.
-        //
-        // Обработчики вешаем заново на каждую отрисовку — разметка вкладки
-        // пересобирается, и узлы каждый раз новые.
-        workEl.querySelectorAll('.split-people').forEach(split => {
-            const col = split.nextElementSibling;
-            splitDrag(split, split.dataset.var, 90, 400,
-                      (e) => col.getBoundingClientRect().right - e.clientX);
-        });
+        talkPaint();
 
         logLoad();
 
@@ -1176,11 +1317,12 @@
         pagerRender(contactsPagerEl, Number(data.pages || 1), contactsPage, async (page) => {
             contactsPage = page;
             await chatLoad();
-            workEl.scrollTop = 0;
+            const box = slot('dialogs');
+            if (box) box.scrollTop = 0;
         });
 
         chatBind();
-        peopleBind();
+        peopleShow();
     }
 
     function chatContacts(data) {
@@ -1273,30 +1415,6 @@
     // мигание пустотой каждые десять секунд читалось бы как «список пропал».
     const peopleCache = new Map();
 
-    // Ряд «Все онлайн»: карточки поперёк вкладки, прокрутка вбок.
-    //
-    // ⚠ **Живёт он по сайту, а не по анкете.** Список мужчин в сети один и тот же
-    // под любой учёткой, и держать его отдельно для каждой анкеты значило бы
-    // снимать одно и то же по разу на анкету — десять входов на сайт вместо
-    // одного. Отсюда и ключ кэша страницы: `site|online`, без номера анкеты.
-    //
-    // Строкой поперёк, а не колонкой: в колонке шириной 150 пикселей помещалось
-    // полтора десятка имён столбиком, а «кто сейчас на сайте» просматривают
-    // взглядом слева направо, как ленту.
-    function peopleOnlineRow() {
-        const state = peopleCache.get(ONLINE_KEY);
-
-        return '<div class="online-row">'
-            + '<div class="people-head">'
-            + '<span>Чат онлайн</span>'
-            + `<span class="people-count">${peopleCount(state)}</span>`
-            + `<span class="people-when">${peopleWhen(state)}</span>`
-            + '<button type="button" class="people-reload" data-kind="online"'
-            + ' title="Снять список заново">⟳</button>'
-            + '</div>'
-            + `<div class="online-strip">${peopleCards(state)}</div>`
-            + '</div>';
-    }
 
     // Карточка ленты: лицо крупнее, чем в колонке, под ним имя и возраст. В ряду
     // место есть по вертикали, а имён поперёк помещается тем больше, чем уже
@@ -1322,23 +1440,6 @@
             + `<span class="person-card-name">${esc(p.name || 'без имени')}</span>`
             + `<span class="person-card-age">${p.age ? p.age : ''}</span>`
             + '</div>').join('');
-    }
-
-    function peopleCol(kind, title) {
-        const state = peopleCache.get(`${openId}|${kind}`);
-
-        return `<div class="people-col" data-kind="${kind}">`
-            + '<div class="people-head">'
-            + `<span>${esc(title)}</span>`
-            // Счёт показываем, только когда список **снят**. У колонки, которая
-            // не снялась, `people` тоже пуст — но это «неизвестно», а не «ноль»,
-            // и написать там 0 значило бы сообщить, что на сайте никого нет.
-            + `<span class="people-count">${peopleCount(state)}</span>`
-            + '<button type="button" class="people-reload" title="Снять список заново">⟳</button>'
-            + '</div>'
-            + `<div class="people-when">${peopleWhen(state)}</div>`
-            + `<div class="people-body">${peopleRows(state)}</div>`
-            + '</div>';
     }
 
     function peopleCount(state) {
@@ -1475,14 +1576,16 @@
     // Перерисовываем только ряд: пересобирать вкладку значило бы сбросить
     // прокрутку ленты и выбор собеседника.
     function peopleOnlinePaint() {
-        const row = workEl.querySelector('.online-row');
-        if (!row) return;
+        // Слота нет — сайт ленту не завёл (у Goldenbride её нет вовсе). Это не
+        // сбой: наполнять нечего, и молча выходим.
+        const strip = slot('online-strip');
+        if (!strip) return;
 
         const state = peopleCache.get(ONLINE_KEY);
-        row.querySelector('.online-strip').innerHTML = peopleCards(state);
-        row.querySelector('.people-count').textContent = peopleCount(state);
-        row.querySelector('.people-when').innerHTML = peopleWhen(state);
-        peopleBindRows(row);
+        strip.innerHTML = peopleCards(state);
+        fillSlot('online-count', peopleCount(state));
+        fillSlot('online-when', peopleWhen(state), true);
+        peopleBindRows(strip.closest('.online-row') || strip);
     }
 
     async function peopleLoad(kind, fresh = false) {
@@ -1553,14 +1656,25 @@
     // Перерисовываем только свою колонку: пересобирать вкладку целиком значило бы
     // сбросить прокрутку списка диалогов и снять выбор.
     function peoplePaint(kind) {
-        const col = workEl.querySelector(`.people-col[data-kind="${kind}"]`);
-        if (!col) return;
+        const body = slot(kind);
+        if (!body) return;
 
         const state = peopleCache.get(`${openId}|${kind}`);
-        col.querySelector('.people-body').innerHTML = peopleRows(state);
-        col.querySelector('.people-count').textContent = peopleCount(state);
-        col.querySelector('.people-when').innerHTML = peopleWhen(state);
-        peopleBindRows(col);
+        body.innerHTML = peopleRows(state);
+        fillSlot(`${kind}-count`, peopleCount(state));
+        fillSlot(`${kind}-when`, peopleWhen(state), true);
+        peopleBindRows(body.closest('.people-col') || body);
+    }
+
+    // Пишет в слот, если он в шаблоне есть. Отдельной функцией, потому что «слота
+    // может не быть» — обычное дело: сайт вправе не заводить у себя ни счётчика,
+    // ни отметки о времени съёмки.
+    function fillSlot(name, value, html = false) {
+        const box = slot(name);
+        if (!box) return;
+
+        if (html) box.innerHTML = value;
+        else box.textContent = value;
     }
 
     // Строки колонки выбирают собеседника — тем же способом, что список диалогов.
@@ -1570,25 +1684,21 @@
         });
     }
 
-    function peopleBind() {
-        const row = workEl.querySelector('.online-row');
-        if (row) {
-            const btn = row.querySelector('.people-reload');
-            btn.addEventListener('click', async () => {
-                btn.disabled = true;
-                row.querySelector('.online-strip').innerHTML =
-                    '<div class="people-empty">снимаю…</div>';
-                try {
-                    await peopleOnlineLoad(true);
-                } finally {
-                    btn.disabled = false;
-                }
-            });
+    // Показывает списки собеседников и добирает то, чего ещё нет.
+    //
+    // ⚠ **Перерисовка обязательна на каждый заход, а не только при загрузке.**
+    // Шаблон живёт, пока не сменится сайт, и содержимое слота остаётся в нём с
+    // прежней анкеты. Не перерисуй мы его — выбрав вторую анкету, человек видел бы
+    // избранных первой, поданных как её. Так и было: разметку раньше пересобирал
+    // JS, и слот очищался сам собой.
+    //
+    // Нет своего снимка — слот показывает «гружу…», а не чужой список: пусть
+    // человек лучше подождёт, чем прочтёт неправду.
+    function peopleShow() {
+        if (workEl.querySelector('.online-row')) {
+            peopleOnlinePaint();
 
-            peopleBindRows(row);
-
-            // ⚠ Грузим, только если ряда ещё нет в памяти. Смена анкеты
-            // перерисовывает вкладку, но список остаётся прежним — он про сайт, и
+            // ⚠ Ряд «Все онлайн» грузим, только если его ещё нет: он про сайт, и
             // снимать его заново на каждый щелчок по анкете значило бы ходить на
             // сайт десять раз ради одинакового ответа.
             if (!peopleCache.has(ONLINE_KEY)) peopleOnlineLoad();
@@ -1596,20 +1706,7 @@
 
         workEl.querySelectorAll('.people-col').forEach(col => {
             const kind = col.dataset.kind;
-            const btn = col.querySelector('.people-reload');
-
-            btn.addEventListener('click', async () => {
-                btn.disabled = true;
-                col.querySelector('.people-body').innerHTML =
-                    '<div class="people-empty">снимаю…</div>';
-                try {
-                    await peopleLoad(kind, true);
-                } finally {
-                    btn.disabled = false;
-                }
-            });
-
-            peopleBindRows(col);
+            peoplePaint(kind);
 
             // Список грузим, только если его ещё нет: перерисовка чата идёт каждые
             // десять секунд, и запрос на каждый круг был бы лишним даже с кэшем.
@@ -1660,15 +1757,21 @@
     // Перерисовывает нижний ряд первой колонки. Данные берём из последнего ответа
     // `/card` — он уже в памяти, и второй запрос ради смены выбранного не нужен.
     function talkPaint() {
-        const box = workEl.querySelector('.chat-msgs');
+        const box = slot('talk');
         if (box && chatData) box.innerHTML = chatTalk(chatData);
     }
 
+    // Строки диалогов: перерисовываются каждый круг, поэтому и обработчик вешается
+    // каждый раз — узлы новые.
     function chatBind() {
         workEl.querySelectorAll('.contact-bar').forEach(bar => {
             bar.addEventListener('click', () => chatSelect(bar.parentElement.dataset.uid));
         });
+    }
 
+    // Кнопка «Загрузить диалоги» живёт в шаблоне, поэтому вешается один раз — из
+    // `workBind()`.
+    function chatDialogsBind() {
         const btn = workEl.querySelector('.chat-dialogs-btn');
         if (!btn) return;
 
@@ -1677,11 +1780,10 @@
         // нажатие в ближайшие минуты вернётся сразу.
         //
         // ⚠ **`busy` здесь обязателен.** Вкладка чата перерисовывается своим
-        // кругом раз в `LOG_MS`, а перерисовка пересобирает разметку целиком — и
-        // кнопку вместе с ней. Без `busy` посреди прогона она возвращалась бы к
-        // обычному виду, и её нажимали бы снова: второй вход на сайт под той же
-        // анкетой за минуту, ровно то, от чего бережёт кэш ручки. Круг это
-        // ожидание пережидает — так же, как ждёт долгие действия в списке.
+        // кругом раз в `LOG_MS`, и без `busy` круг посреди прогона вернул бы
+        // кнопке обычный вид — её нажали бы снова, то есть вошли на сайт под той
+        // же анкетой второй раз за минуту. Ровно то, от чего бережёт кэш ручки.
+        // Круг это ожидание пережидает, как ждёт долгие действия в списке.
         btn.addEventListener('click', async () => {
             busy.add(`dialog:${openId}`);
             btn.disabled = true;
@@ -2073,12 +2175,12 @@
         }
     }
 
-    // Журнал живёт внутри вкладки «Чат», поэтому узла может не быть вовсе —
-    // на «Настройках» и «Письмах» его нет. Молча выходим: это не сбой, а другая
-    // открытая вкладка.
+    // Журнал — часть **каркаса**: его узел живёт, пока живёт страница, и на
+    // любой вкладке показывает одно и то же. Прежде он лежал внутри разметки
+    // вкладки «Чат» и на «Настройках» его не было вовсе; теперь искать его каждый
+    // раз незачем.
     async function logLoad() {
-        const box = () => document.getElementById('log');
-        if (!openId || !box()) return;
+        if (!openId) return;
 
         // Та же гонка, что и у списка, и тот же приём: журнал ходит своим кругом,
         // и ответ по уже снятой анкете может прийти позже ответа по вновь
@@ -2088,13 +2190,13 @@
         try {
             rows = (await getData(`${BASE}/api/dating/profile/${requestId}/log`)).result || [];
         } catch (e) {
-            if (openId !== requestId || !box()) return;
-            logRender(box(), [], 'журнал не пришёл: ' + e.message);
+            if (openId !== requestId) return;
+            logRender(logEl, [], 'журнал не пришёл: ' + e.message);
             return;
         }
-        if (openId !== requestId || !box()) return;
+        if (openId !== requestId) return;
 
-        logRender(box(), rows, 'записей нет — нажмите «Пинг»');
+        logRender(logEl, rows, 'записей нет — нажмите «Пинг»');
     }
 
     // ── Действия ─────────────────────────────────────────────────────────────
@@ -2394,9 +2496,18 @@
     }
 
     layoutRestore();
+
+    // Разделители каркаса вешаются один раз: их узлы живут, пока живёт страница.
+    // Те, что внутри шаблона сайта, — в `workSplits()`, на каждую его загрузку.
     splitDrag(document.getElementById('splitCol'), '--col', 260,
               Math.round(innerWidth * 0.7),
               (e) => e.clientX - pageEl.getBoundingClientRect().left);
+
+    // Журнал растёт **вверх**: его низ стоит на месте, тянут за верх, — поэтому
+    // высота считается от нижнего края панели.
+    splitDrag(splitRowEl, '--log', 80, Math.round(innerHeight * 0.6),
+              (e) => document.querySelector('.work-pane').getBoundingClientRect().bottom
+                     - e.clientY);
 
     hintEl.textContent = 'состояние обновляется само';
     empty('Гружу…');
