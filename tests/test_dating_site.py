@@ -1,7 +1,15 @@
 """Настройки сайта: наши значения по номеру у соседа.
 
-Сюита ходит по HTTP. Сайты берутся настоящие — список ведёт RhapsodyAi, и
-подменять его значило бы проверять не ту склейку, ради которой ручка и написана.
+Хранение и правка идут по HTTP, в живую панель с живой базой: проверять хранение
+с поддельной базой значило бы проверять подделку.
+
+⚠ **Номер сайта берётся выдуманный, а не из списка соседа.** Ручкам правки он всё
+равно: своей таблицы сайтов здесь нет, а `site_id` — просто ключ, указывающий в
+чужую базу (внешнего ключа поэтому и нет). Спроси мы номер у соседа, сюита зависела
+бы от того, поднят ли он, ради значения, которое ни на что здесь не влияет.
+
+Склейка «список соседа + наши значения» — единственное, что упирается в него, и
+проверяется в процессе с поддельным (`rhapsody_fake.py`).
 
 ⚠ **Ключи здесь свои, с приставкой `тест_`.** Настройки общие на сайт, и тест,
 взявший осмысленное имя, однажды затрёт живое значение. Всё заведённое убирается в
@@ -11,116 +19,148 @@
 
 import pytest
 
+from src.uvicorn.routers.dating import dating_site
+from src.uvicorn.routers.dating.dating_site import dating_site_list
+
 KEY = 'тест_ключ'
 OTHER = 'тест_второй'
 
-
-@pytest.fixture
-async def site_id(auth_client):
-    """Номер живого сайта. Нет ни одного — тесту нечего настраивать."""
-    sites = (await auth_client.get('/api/dating/site')).json()['result']['sites']
-    if not sites:
-        pytest.skip('у соседа нет сайтов с меткой dating')
-
-    return sites[0]['id']
+# Номера, под которыми сюита пишет свои настройки. Выдуманные: сайт с таким
+# номером у соседа не заведён, и живые значения задеть невозможно в принципе.
+SITE = 999_777
+SITE_OTHER = 999_778
 
 
 @pytest.fixture
-async def kept(auth_client, site_id):
-    """Возвращает настройки сайта такими, какими они были до теста.
+async def kept(auth_client):
+    """Возвращает настройки обоих тестовых номеров такими, какими они были.
 
-    Ручка переписывает набор целиком, и тест, оставивший свой, стёр бы живые
-    значения — а они меняют работу всех анкет на сайте.
+    Ручка переписывает набор целиком, и тест, оставивший свой, стёр бы прежние
+    значения. Номера выдуманные, но правило одно на всю сюиту: что завела, то и
+    убрала.
     """
-    before = (await auth_client.get(f'/api/dating/site/{site_id}')).json()['result']['settings']
+    before = {site: await _settings(auth_client, site) for site in (SITE, SITE_OTHER)}
 
     yield
 
-    await auth_client.put(f'/api/dating/site/{site_id}', json={'settings': before})
+    for site, settings in before.items():
+        await auth_client.put(f'/api/dating/site/{site}', json={'settings': settings})
 
 
 class TestSiteSettings:
     """Завести, переписать, убрать."""
 
-    async def test_list_joins_neighbour_and_us(self, auth_client):
-        """⚠ Список ведёт сосед, значения — мы.
+    async def test_saved_value_comes_back(self, auth_client, kept):
+        await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': {KEY: '30'}})
 
-        Своей таблицы сайтов здесь нет: имя и адрес приходят от него при каждом
-        показе. Сайт без сохранённых настроек виден с пустым набором — иначе его
-        нельзя было бы настроить в первый раз.
-        """
-        sites = (await auth_client.get('/api/dating/site')).json()['result']['sites']
+        assert (await _settings(auth_client, SITE)).get(KEY) == '30'
 
-        assert sites, 'список сайтов пуст — сосед недоступен?'
-        for site in sites:
-            assert {'id', 'name', 'url', 'settings'} <= set(site)
-            assert isinstance(site['settings'], dict)
-
-    async def test_saved_value_comes_back(self, auth_client, site_id, kept):
-        await auth_client.put(f'/api/dating/site/{site_id}',
-                              json={'settings': {KEY: '30'}})
-
-        assert await _value(auth_client, site_id, KEY) == '30'
-
-    async def test_save_rewrites_the_whole_set(self, auth_client, site_id, kept):
+    async def test_save_rewrites_the_whole_set(self, auth_client, kept):
         """⚠ Набор переписывается целиком, а не по ключу.
 
         Страница держит его перед глазами и шлёт то, что на ней. Правка по одному
         ключу означала бы, что удаление — отдельная ручка, а порядок двух правок
         подряд начинает значить.
         """
-        await auth_client.put(f'/api/dating/site/{site_id}',
+        await auth_client.put(f'/api/dating/site/{SITE}',
                               json={'settings': {KEY: '1', OTHER: '2'}})
-        await auth_client.put(f'/api/dating/site/{site_id}', json={'settings': {KEY: '1'}})
+        await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': {KEY: '1'}})
 
-        settings = await _settings(auth_client, site_id)
+        assert await _settings(auth_client, SITE) == {KEY: '1'}, 'второй ключ пережил перезапись'
 
-        assert settings == {KEY: '1'}, 'второй ключ пережил перезапись'
-
-    async def test_empty_value_is_not_stored(self, auth_client, site_id, kept):
+    async def test_empty_value_is_not_stored(self, auth_client, kept):
         """Пустое значение не хранится: «настройки нет» и «настройка пустая» —
         разные вещи, и путать их значит получать необъяснимое поведение там, где
         умолчание кода было осмысленным."""
-        await auth_client.put(f'/api/dating/site/{site_id}',
+        await auth_client.put(f'/api/dating/site/{SITE}',
                               json={'settings': {KEY: '30', OTHER: ''}})
-
-        settings = await _settings(auth_client, site_id)
+        settings = await _settings(auth_client, SITE)
 
         assert KEY in settings and OTHER not in settings
 
-    async def test_settings_are_kept_apart_by_site(self, auth_client, kept, site_id):
+    async def test_settings_are_kept_apart_by_site(self, auth_client, kept):
         """Настройки одного сайта не видны у другого: ключ — его номер."""
-        sites = (await auth_client.get('/api/dating/site')).json()['result']['sites']
-        if len(sites) < 2:
-            pytest.skip('нужен второй сайт')
+        await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': {KEY: 'мой'}})
 
-        other = next(s['id'] for s in sites if s['id'] != site_id)
-        await auth_client.put(f'/api/dating/site/{site_id}', json={'settings': {KEY: 'мой'}})
-
-        assert KEY not in await _settings(auth_client, other)
+        assert KEY not in await _settings(auth_client, SITE_OTHER)
 
     async def test_unknown_site_has_empty_settings(self, auth_client):
         """Сайт, который ещё не настраивали, — законное состояние, а не 404:
         строка появляется при первом сохранении."""
-        answer = await auth_client.get('/api/dating/site/999777')
+        answer = await auth_client.get('/api/dating/site/999999')
 
         assert answer.status_code == 200
         assert answer.json()['result']['settings'] == {}
 
 
+class TestSiteList:
+    """⚠ Список ведёт сосед, значения — мы. Единственное место, где он нужен."""
+
+    async def test_list_joins_neighbour_and_us(self, rhapsody, monkeypatch):
+        """Своей таблицы сайтов здесь нет: имя и адрес приходят от него при каждом
+        показе. Сайт без сохранённых настроек виден с пустым набором — иначе его
+        нельзя было бы настроить в первый раз.
+        """
+        monkeypatch.setattr(dating_site, '_settings_all',
+                            _saved({343: {'favorites_keep': '86400'}}))
+
+        sites = (await dating_site_list(user=None))['result']['sites']
+
+        assert [site['id'] for site in sites] == [343, 19], 'порядок и состав ведёт сосед'
+        assert sites[0]['name'] == 'Ladadate' and sites[0]['url']
+        assert sites[0]['settings'] == {'favorites_keep': '86400'}, 'наши значения потерялись'
+        assert sites[1]['settings'] == {}, 'сайт без настроек пропал из списка'
+
+    async def test_our_settings_do_not_add_sites(self, rhapsody, monkeypatch):
+        """Настройки остались, а сайт у соседа удалили — показывать нечего.
+
+        Список ведёт он: строка без имени и адреса в селекте бесполезна, а её
+        появление означало бы, что своя таблица сайтов у нас всё-таки завелась.
+        """
+        monkeypatch.setattr(dating_site, '_settings_all', _saved({777: {KEY: '1'}}))
+
+        sites = (await dating_site_list(user=None))['result']['sites']
+
+        assert 777 not in [site['id'] for site in sites]
+
+    async def test_known_settings_come_with_their_values(self, rhapsody, monkeypatch):
+        """Реестр известных настроек уезжает на страницу: набор значений — условие
+        кода, и страница рисует по нему селект, а не выдумывает свой."""
+        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+
+        known = (await dating_site_list(user=None))['result']['known']
+        keep = next(row for row in known if row['key'] == 'favorites_keep')
+
+        assert [option['value'] for option in keep['options']] == ['604800', '259200', '86400']
+        assert keep['default'] == '604800'
+        assert all(option['title'] for option in keep['options']), 'человеку нужны подписи'
+
+    async def test_neighbour_refusal_becomes_502(self, rhapsody, monkeypatch):
+        """Пустой список и лежащий сосед выглядят одинаково, а означают разное."""
+        from fastapi import HTTPException
+
+        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+        rhapsody.offline()
+
+        with pytest.raises(HTTPException) as refusal:
+            await dating_site_list(user=None)
+
+        assert refusal.value.status_code == 502
+
+
 class TestSiteRefuses:
     """Чего ручка не принимает."""
 
-    async def test_empty_key_is_422(self, auth_client, site_id, kept):
-        answer = await auth_client.put(f'/api/dating/site/{site_id}',
+    async def test_empty_key_is_422(self, auth_client, kept):
+        answer = await auth_client.put(f'/api/dating/site/{SITE}',
                                        json={'settings': {'   ': '1'}})
 
         assert answer.status_code == 422
 
-    async def test_too_long_key_is_422(self, auth_client, site_id, kept):
+    async def test_too_long_key_is_422(self, auth_client, kept):
         """Длиннее предела — отказ с внятным текстом. Предел тот же, что у настроек
         панели: человек читает их одними глазами."""
-        answer = await auth_client.put(f'/api/dating/site/{site_id}',
+        answer = await auth_client.put(f'/api/dating/site/{SITE}',
                                        json={'settings': {'к' * 51: '1'}})
 
         assert answer.status_code == 422
@@ -132,12 +172,12 @@ class TestSiteRights:
     async def test_operator_can_read(self, dating_client):
         """Оператору полезно видеть, с чем он работает: прятать это значило бы
         звать админа на каждый вопрос."""
-        assert (await dating_client.get('/api/dating/site')).status_code == 200
+        assert (await dating_client.get(f'/api/dating/site/{SITE}')).status_code == 200
 
-    async def test_operator_cannot_write(self, dating_client, site_id):
+    async def test_operator_cannot_write(self, dating_client):
         """Настройка сайта меняет работу всех анкет на нём, а не того, кто её
         открыл."""
-        answer = await dating_client.put(f'/api/dating/site/{site_id}',
+        answer = await dating_client.put(f'/api/dating/site/{SITE}',
                                          json={'settings': {KEY: '1'}})
 
         assert answer.status_code == 403
@@ -151,9 +191,13 @@ class TestSiteRights:
         assert (await client.get('/api/dating/site')).status_code == 401
 
 
+def _saved(rows: dict):
+    """Подменённое чтение сохранённых настроек: номер сайта → набор."""
+    async def _all():
+        return dict(rows)
+
+    return _all
+
+
 async def _settings(auth_client, site_id: int) -> dict:
     return (await auth_client.get(f'/api/dating/site/{site_id}')).json()['result']['settings']
-
-
-async def _value(auth_client, site_id: int, key: str):
-    return (await _settings(auth_client, site_id)).get(key)
