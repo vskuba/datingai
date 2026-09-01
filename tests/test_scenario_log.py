@@ -6,6 +6,10 @@
 
 Проверяется ровно то, ради чего модуль и заведён: **след остаётся от каждого
 прогона**, включая тот, который не начался.
+
+⚠ Прогон даёт **две** записи: `sent` перед отправкой и исход после. Поэтому тесты
+смотрят на последнюю (`written[-1]`) — она про итог, — а парность проверяется
+отдельно.
 """
 
 import pytest
@@ -53,10 +57,40 @@ class TestRunIsRecorded:
 
         await dating_scenario_run(SCENARIO, SITE, PROFILE)
 
-        assert len(written) == 1
-        assert written[0]['status'] == 'ok'
-        assert written[0]['site_id'] == SITE
-        assert written[0]['profile_id'] == PROFILE
+        assert [row['status'] for row in written] == ['sent', 'ok']
+        assert written[-1]['site_id'] == SITE
+        assert written[-1]['profile_id'] == PROFILE
+
+    async def test_sent_is_written_before_the_run(self, written, monkeypatch):
+        """⚠ Отметка «запрос ушёл» пишется **до** прогона.
+
+        Прогон идёт десятки секунд, а с очередью и минуты. Без этой строки человек,
+        открывший «Журналы» в это время, видел бы тишину и не отличил бы «ничего не
+        запускалось» от «запущено и ещё работает».
+        """
+        sent = []
+
+        async def _slow(scenario_id, session_id, variables, secrets, keep_session=True):
+            # К этому моменту отметка обязана уже лежать в журнале.
+            sent.append([row['status'] for row in written])
+
+            return {'status': 'ok'}
+
+        monkeypatch.setattr(dating_scenario, 'rhapsody_api_scenario_run', _slow)
+
+        await dating_scenario_run(SCENARIO, SITE, PROFILE)
+
+        assert sent == [['sent']], 'отметка об отправке не попала в журнал до прогона'
+
+    async def test_sent_has_no_duration(self, written, monkeypatch):
+        """У отметки об отправке длительности нет и быть не может: она пишется
+        тогда, когда мерить ещё нечего."""
+        monkeypatch.setattr(dating_scenario, 'rhapsody_api_scenario_run', _run())
+
+        await dating_scenario_run(SCENARIO, SITE, PROFILE)
+
+        assert written[0]['ms'] == 0
+        assert written[0]['step_no'] == 0
 
     async def test_failed_scenario_keeps_the_step(self, written, monkeypatch):
         """Номер шага отвечает на «где именно встало», не открывая сценарий у
@@ -66,9 +100,9 @@ class TestRunIsRecorded:
 
         await dating_scenario_run(SCENARIO, SITE, PROFILE)
 
-        assert written[0]['status'] == 'error'
-        assert written[0]['step_no'] == 7
-        assert 'нет кнопки' in written[0]['error']
+        assert written[-1]['status'] == 'error'
+        assert written[-1]['step_no'] == 7
+        assert 'нет кнопки' in written[-1]['error']
 
     async def test_unreachable_neighbour_is_written_too(self, written, monkeypatch):
         """⚠ Прогон, который не начался, — тоже прогон.
@@ -83,10 +117,9 @@ class TestRunIsRecorded:
         with pytest.raises(RhapsodyError):
             await dating_scenario_run(SCENARIO, SITE, PROFILE)
 
-        assert len(written) == 1
-        assert written[0]['status'] == 'error'
-        assert written[0]['step_no'] == 0, 'сценарий не начинался — шага у него нет'
-        assert 'браузер соседа занят' in written[0]['error']
+        assert [row['status'] for row in written] == ['sent', 'error']
+        assert written[-1]['step_no'] == 0, 'сценарий не начинался — шага у него нет'
+        assert 'браузер соседа занят' in written[-1]['error']
 
     async def test_refusal_is_passed_on(self, written, monkeypatch):
         """Записали и пробросили: что делать с отказом — 502 или прежний снимок из
@@ -118,8 +151,8 @@ class TestRunDetails:
 
         await dating_scenario_run(SCENARIO, SITE, PROFILE)
 
-        assert written[0]['name'] == SCENARIO['name']
-        assert written[0]['scenario_id'] == SCENARIO['id']
+        assert written[-1]['name'] == SCENARIO['name']
+        assert written[-1]['scenario_id'] == SCENARIO['id']
 
     async def test_run_without_profile(self, written, monkeypatch):
         """Импорт и выгрузка идут по сайту целиком — анкеты у них нет.
@@ -131,8 +164,8 @@ class TestRunDetails:
 
         await dating_scenario_run({'id': 5, 'name': 'импорт анкет'}, SITE)
 
-        assert written[0]['profile_id'] == 0
-        assert written[0]['site_id'] == SITE
+        assert written[-1]['profile_id'] == 0
+        assert written[-1]['site_id'] == SITE
 
     async def test_duration_is_measured(self, written, monkeypatch):
         """Длительность — вторая половина смысла: «вход стал идти вдвое дольше»
@@ -141,7 +174,7 @@ class TestRunDetails:
 
         await dating_scenario_run(SCENARIO, SITE, PROFILE)
 
-        assert written[0]['ms'] >= 0
+        assert written[-1]['ms'] >= 0
 
     async def test_long_name_is_cut(self, written, monkeypatch):
         """Длиннее колонки — режем здесь: иначе длинное имя роняло бы вставку, и
@@ -150,4 +183,4 @@ class TestRunDetails:
 
         await dating_scenario_run({'id': 1, 'name': 'и' * 500}, SITE)
 
-        assert len(written[0]['name']) == dating_scenario.DATING_SCENARIO_NAME_MAX
+        assert len(written[-1]['name']) == dating_scenario.DATING_SCENARIO_NAME_MAX

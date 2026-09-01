@@ -117,6 +117,11 @@ async def dating_log_list(site_id: int = 0, kind: str = 'all', level: str = '',
 _NAME = ("COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(p.profile, '$.name')), 'null'),"
          " p.login, '')")
 
+# Как уровень ленты ложится на исход прогона. Таблицей, а не цепочкой `if`: список
+# уровней растёт со стороны журнала анкеты, и забытая ветка молча отдаёт всё
+# подряд вместо пустоты.
+_LEVEL_TO_STATUS = {'ok': 'ok', 'fail': 'error', 'info': 'sent'}
+
 
 def _query(site_id: int, kind: str, level: str, q: str) -> tuple[str, list]:
     """Собирает запрос ленты и его параметры.
@@ -153,15 +158,18 @@ def _query(site_id: int, kind: str, level: str, q: str) -> tuple[str, list]:
     if kind in ('all', 'scenario'):
         where = ['r.site_id = %s']
         args = [site_id]
-        # У прогона нет колонки `level`: он либо дошёл, либо встал. Сводим к тем же
-        # уровням, что у журнала анкеты, — иначе фильтр «только отказы» работал бы
-        # на одной половине ленты и молчал на другой.
-        if level in ('ok', 'fail'):
+        # У прогона нет колонки `level`: есть исход. Сводим к тем же уровням, что
+        # у журнала анкеты, — иначе фильтр «только отказы» работал бы на одной
+        # половине ленты и молчал на другой.
+        #
+        # `sent` («запрос ушёл, ответа ещё нет») ложится в `info`: это ход работы,
+        # а не её итог.
+        if level in _LEVEL_TO_STATUS:
             where.append('r.status = %s')
-            args.append('ok' if level == 'ok' else 'error')
+            args.append(_LEVEL_TO_STATUS[level])
         elif level:
-            # Уровни `info`, `in`, `out` бывают только у журнала анкеты — прогонов
-            # с ними не бывает, и половина ленты должна остаться пустой.
+            # Уровни `in` и `out` — сообщения чата, они бывают только у журнала
+            # анкеты. Половина ленты должна остаться пустой.
             where.append('1 = 0')
         if q:
             where.append('(r.scenario_name LIKE %s OR r.error LIKE %s'
@@ -170,7 +178,8 @@ def _query(site_id: int, kind: str, level: str, q: str) -> tuple[str, list]:
 
         parts.append(
             "SELECT r.id, 'scenario' AS source,"
-            "       CASE r.status WHEN 'ok' THEN 'ok' ELSE 'fail' END AS level,"
+            "       CASE r.status WHEN 'ok' THEN 'ok'"
+            "                     WHEN 'sent' THEN 'info' ELSE 'fail' END AS level,"
             "       COALESCE(r.error, '') AS text, r.created_at,"
             f'       r.profile_id, {_NAME} AS profile_name,'
             '       r.scenario_name, r.step_no, r.ms'

@@ -87,16 +87,27 @@ class TestQueryFilters:
         assert 'r.status = %s' in sql
         assert params == [SITE, 'fail', SITE, 'error']
 
-    def test_level_without_runs_empties_that_half(self):
-        """⚠ Уровней `info`, `in`, `out` у прогонов не бывает.
+    def test_info_finds_sent_runs(self):
+        """`info` — это ход работы, и отметка «запрос ушёл» тоже он.
 
-        Половина ленты обязана остаться пустой, а не отдать все прогоны подряд:
-        иначе «покажи ход работы» приносило бы и то, чего человек не просил.
+        Прогон в состоянии `sent` ещё не имеет итога; ложить его в `ok` значило бы
+        сказать, что он отработал, а в `fail` — что упал. Ни то ни другое.
         """
         sql, params = _query(SITE, 'all', 'info', '')
 
+        assert 'r.status = %s' in sql
+        assert params == [SITE, 'info', SITE, 'sent']
+
+    def test_chat_levels_empty_the_run_half(self):
+        """⚠ Уровни `in` и `out` — сообщения чата, у прогонов их не бывает.
+
+        Половина ленты обязана остаться пустой, а не отдать все прогоны подряд:
+        иначе «покажи входящие» приносило бы и то, чего человек не просил.
+        """
+        sql, params = _query(SITE, 'all', 'in', '')
+
         assert '1 = 0' in sql
-        assert params == [SITE, 'info', SITE]
+        assert params == [SITE, 'in', SITE]
 
     def test_search_covers_text_and_profile(self):
         """Ищут и по тексту строки, и по анкете: помнят обычно одно из двух."""
