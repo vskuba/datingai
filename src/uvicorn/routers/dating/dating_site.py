@@ -57,6 +57,10 @@ DATING_SITE_KEY_MAX = 50
 #
 # `seconds` в значениях, а не «7д»: их читает код, и таблица разбора «7д → 604800»
 # была бы вторым местом, где это знание живёт. Смысл несут подписи в наборе.
+#
+# `options` может не быть — тогда значение свободное (адрес, пароль), и страница
+# рисует поле ввода. `secret: True` — значение наружу не отдаётся вовсе, см.
+# `DATING_SITE_SECRET_MASK`.
 DATING_SITE_KNOWN = {
     'favorites_keep': {
         'title': 'Кеш My Favorites',
@@ -64,7 +68,33 @@ DATING_SITE_KNOWN = {
         'default': '604800',
         'options': [('604800', '7 дней'), ('259200', '3 дня'), ('86400', '24 часа')],
     },
+    'people_source': {
+        'title': 'Откуда берём списки собеседников',
+        'note': 'API сайта отвечает за десятые доли секунды; сценарий водит браузер '
+                'соседа и стоит 35–40 секунд',
+        'default': 'scenario',
+        'options': [('scenario', 'Сценарий у соседа'), ('api', 'API сайта')],
+    },
+    'api_base': {
+        'title': 'Адрес API сайта',
+        'note': 'корень API этого сайта, без косой черты в конце',
+        'default': '',
+    },
+    'api_password': {
+        'title': 'Пароль анкет для API',
+        'note': 'общий пароль агентства; свой пароль анкеты, если он задан, сильнее',
+        'default': '',
+        'secret': True,
+    },
 }
+
+# Чем секрет выглядит наружу. ⚠ **Настоящее значение из ручки не уходит никогда** —
+# ни оператору, ни администратору: страница его не показывает, а значит и получать
+# ей нечего. Прочесть пароль можно там же, где он и лежит, — в базе.
+#
+# Точки, а не пустая строка: пустое значение на странице читалось бы как «пароль не
+# задан», и человек вписал бы его второй раз, гадая, почему не работало.
+DATING_SITE_SECRET_MASK = '••••••••'
 
 
 class DatingSiteSave(BaseModel):
@@ -99,7 +129,7 @@ async def dating_site_list(user: AuthUser = Depends(auth_required)):
     return {'result': {'sites': [{'id': int(site.get('id') or 0),
                                   'name': str(site.get('name') or ''),
                                   'url': str(site.get('url') or ''),
-                                  'settings': saved.get(int(site.get('id') or 0), {})}
+                                  'settings': _masked(saved.get(int(site.get('id') or 0), {}))}
                                  for site in sites],
                        'known': _known()}}
 
@@ -112,7 +142,7 @@ async def dating_site_get(site_id: int, user: AuthUser = Depends(auth_required))
     появляется при первом сохранении.
     """
     return {'result': {'site_id': site_id,
-                       'settings': (await _settings_all()).get(site_id, {})}}
+                       'settings': _masked((await _settings_all()).get(site_id, {}))}}
 
 
 @router.put('/{site_id}', include_in_schema=False)
@@ -127,6 +157,8 @@ async def dating_site_save(site_id: int, payload: DatingSiteSave,
     Raises:
         HTTPException: 422 — пустой или слишком длинный ключ.
     """
+    before = (await _settings_all()).get(int(site_id), {})
+
     clean = {}
     for key, value in (payload.settings or {}).items():
         key = str(key).strip()
@@ -137,6 +169,16 @@ async def dating_site_save(site_id: int, payload: DatingSiteSave,
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f'ключ длиннее {DATING_SITE_KEY_MAX} знаков: «{key[:60]}…»')
+
+        # ⚠ **Маска вместо секрета означает «не трогать».** Страница настоящего
+        # значения не знает и прислать его не может; прими мы точки как значение —
+        # первое же сохранение любой соседней настройки затёрло бы пароль строкой
+        # «••••••••», и вход перестал бы работать без единого сообщения.
+        if str(value) == DATING_SITE_SECRET_MASK:
+            was = before.get(key, '')
+            if was:
+                clean[key] = was
+            continue
 
         # Пустое значение выбрасывается, а не хранится: «настройки нет» и
         # «настройка пустая» — разные вещи, и путать их значит получать
@@ -152,7 +194,7 @@ async def dating_site_save(site_id: int, payload: DatingSiteSave,
             (int(site_id), json.dumps(clean, ensure_ascii=False)))
         await db.connection.commit()
 
-    return {'result': {'site_id': site_id, 'settings': clean}}
+    return {'result': {'site_id': site_id, 'settings': _masked(clean)}}
 
 
 async def dating_site_setting(site_id: int, key: str, default: str = '') -> str:
@@ -205,9 +247,24 @@ def _known() -> list[dict]:
              'title': spec['title'],
              'note': spec.get('note', ''),
              'default': spec['default'],
+             'secret': bool(spec.get('secret')),
              'options': [{'value': value, 'title': title}
-                         for value, title in spec['options']]}
+                         for value, title in spec.get('options') or ()]}
             for key, spec in DATING_SITE_KNOWN.items()]
+
+
+def _masked(settings: dict) -> dict:
+    """Набор настроек, годный к отправке наружу: секреты заменены точками.
+
+    ⚠ **Секрет не отдаётся никому, включая администратора.** Правку это не мешает:
+    страница шлёт маску обратно, и сохранение понимает её как «оставить прежний»
+    (`dating_site_save`). А вот утечь через журнал запросов, скриншот или чужой
+    глаз за плечом значению больше нечем.
+    """
+    secret = {key for key, spec in DATING_SITE_KNOWN.items() if spec.get('secret')}
+
+    return {key: (DATING_SITE_SECRET_MASK if key in secret and value else value)
+            for key, value in settings.items()}
 
 
 async def _settings_all() -> dict[int, dict]:

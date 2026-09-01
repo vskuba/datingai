@@ -1,14 +1,22 @@
 """Собеседники анкеты с сайта: избранные и кто в сети.
 
-Браузер водит RhapsodyAi — он входит под анкетой в её кабинет и снимает карточки
-со страницы. Отсюда идут только вызовы сценариев; разбор ответа — в
-`src/dating/dating_people.py`.
+Источников два, и выбирает между ними **настройка сайта** `people_source`:
+
+* **API сайта** (`api`) — HTTP прямо к сайту, без браузера и без соседа. Разбор и
+  вход — в `src/dating/dating_people_api.py`;
+* **сценарий у соседа** (`scenario`, умолчание) — RhapsodyAi входит под анкетой в
+  её кабинет и снимает карточки со страницы. Разбор ответа — в
+  `src/dating/dating_people.py`.
+
+Всё остальное здесь общее для обоих: кэш, фоновое обновление, журнал. Страница об
+источнике не знает и знать не должна — перевод сайта с одного на другой это правка
+настройки, а не переписывание колонки.
 
 ## ⚠ Сайт нельзя дёргать часто
 
-Каждый список — это **вход в живой кабинет и прогон сценария**: секунды работы
-браузера и запрос к сайту от имени анкеты. Частые заходы сайт считает подозрением
-и отвечает блокировкой, а блокировка стоит анкеты, а не запроса.
+Каждый список — это **запрос к живому сайту от имени анкеты**, а у сценария ещё и
+секунды работы браузера. Частые заходы сайт считает подозрением и отвечает
+блокировкой, а блокировка стоит анкеты, а не запроса.
 
 Поэтому здесь **кэш с выдержкой** (`DATING_PEOPLE_FRESH_SEC`, пять минут), а не
 троттлинг отказом. Разница принципиальная: страница спрашивает список сколько
@@ -23,12 +31,17 @@
 уж точно не должна показывать человеку «слишком часто» вместо списка, который у
 нас уже есть.
 
-## ⚠ Отказ соседа не выбрасывает снимок
+Пороги общие для обоих источников, хотя API отвечает за десятые доли секунды. Это
+не небрежность: пороги про **предел сайта**, а не про нашу скорость, и сайту
+безразлично, чем именно мы к нему постучались.
+
+## ⚠ Отказ не выбрасывает снимок
 
 То же правило и на другом краю: **не вышло снять заново — отдаём прежнее**, а не
-502. Поводов не получить список три (занят браузер соседа, оборвалась связь, встал
-сценарий), и все они про «сейчас не вышло», а не про «того, что мы знали, больше
-нет». Пятиминутной давности список полезнее пустого места с красной надписью.
+502. Поводов не получить список хватает — занят браузер соседа, встал сценарий,
+сайт попросил подождать, оборвалась связь, — и все они про «сейчас не вышло», а не
+про «того, что мы знали, больше нет». Пятиминутной давности список полезнее пустого
+места с красной надписью.
 
 Самый частый повод — **409 от соседа**: пул Chromium у него на 25 вкладок и общий
 с его собственными задачами, и свободной может не оказаться. Панель на это влиять
@@ -72,11 +85,13 @@ from redis_.redis_ import redis_conn_get
 from src.auth.auth import auth_required
 from src.dating.dating_log import dating_log_write
 from src.dating.dating_people import dating_people_rows
+from src.dating.dating_people_api import (DatingPeopleApiError, dating_people_api_kinds,
+                                          dating_people_api_rows)
 from src.dating.dating_scenario import dating_scenario_run
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
                                        rhapsody_api_scenario_forget)
 from src.uvicorn.routers.dating.dating_profile import dating_profile_row, dating_profile_site
-from src.uvicorn.routers.dating.dating_site import dating_site_seconds
+from src.uvicorn.routers.dating.dating_site import dating_site_seconds, dating_site_setting
 
 router = APIRouter(prefix='/api/dating/people', tags=['dating'])
 
@@ -141,6 +156,15 @@ DATING_PEOPLE_KEEP_SEC = 7 * 24 * 3600
 # меняет человек, и на разных сайтах по-разному часто. Лента «кто в сети» и список
 # диалогов живут умолчанием: понадобится — заводится строкой здесь.
 DATING_PEOPLE_KEEP_SETTING = {'favorite': 'favorites_keep'}
+
+# Настройки сайта, которыми выбирается источник списков. Ключи — в
+# `DATING_SITE_KNOWN` (`dating_site.py`), там же их подписи и набор значений.
+DATING_PEOPLE_SOURCE_SETTING = 'people_source'
+DATING_PEOPLE_API_BASE_SETTING = 'api_base'
+DATING_PEOPLE_API_PASSWORD_SETTING = 'api_password'
+
+# Значение `people_source`, при котором список берётся у самого сайта.
+DATING_PEOPLE_SOURCE_API = 'api'
 
 # Ключ снимка в Redis. С именем проекта в начале: Redis общий с очередью `dating`
 # и с однопоточным замком воркера, и ключи разных хозяйств не должны сталкиваться.
@@ -404,6 +428,41 @@ async def _refresh_run(profile: dict, kind: str, key: str, log_id: int) -> None:
         await dating_log_write(log_id, 'ok', f'{title} с сайта: {len(people)} собеседников')
 
 
+async def _api_ready(site_id: int) -> bool:
+    """Настроен ли у сайта его собственный API.
+
+    Двух условий мало по одному: выбранный источник без адреса — это опечатка в
+    настройке, а адрес при выбранном сценарии — заготовка на будущее. Ни то ни
+    другое не повод молча ходить не туда, поэтому нужны оба.
+    """
+    if not site_id:
+        return False
+
+    source = str(await dating_site_setting(site_id, DATING_PEOPLE_SOURCE_SETTING)).strip()
+
+    return source == DATING_PEOPLE_SOURCE_API and bool(
+        str(await dating_site_setting(site_id, DATING_PEOPLE_API_BASE_SETTING)).strip())
+
+
+async def _api_rows(profile: dict, kind: str, site_id: int) -> list:
+    """Список через API сайта. Пароль — свой у анкеты, иначе общий у сайта.
+
+    ⚠ **Свой пароль сильнее общего.** Общий заводят агентству оптом, а своя пара
+    логин-пароль у анкеты появляется, когда её завели руками; окажись общий
+    сильнее, такая анкета молча ходила бы под чужим паролем и получала 400.
+    """
+    password = str(profile.get('password') or '').strip() or str(
+        await dating_site_setting(site_id, DATING_PEOPLE_API_PASSWORD_SETTING)).strip()
+    base = str(await dating_site_setting(site_id, DATING_PEOPLE_API_BASE_SETTING)).strip()
+
+    try:
+        return await dating_people_api_rows(profile, kind, base, password)
+    except DatingPeopleApiError as e:
+        # В общую неудачу: кэш и страница поступают с ней так же, как с отказом
+        # соседа, — показывают прежний снимок и причину.
+        raise _PeopleFailure(str(e))
+
+
 async def _keep_sec(kind: str, site_id: int) -> int:
     """Сколько держим и показываем снимок этого вида.
 
@@ -505,13 +564,25 @@ def _cache_put(key: str, snapshot: dict, keep: int = DATING_PEOPLE_KEEP_SEC) -> 
 
 
 async def _snapshot(profile: dict, kind: str) -> list:
-    """Гонит сценарий у соседа и разбирает ответ. Любая неудача — `_PeopleFailure`.
+    """Снимает список: **через API сайта, если он настроен, иначе сценарием**.
 
-    Три разных повода не получить список сведены в одно исключение намеренно:
-    страница поступает с ними одинаково — показывает прежний снимок и причину, — а
-    разбирать, чем «сосед занят» отличается от «сценарий встал на шаге 7», по
-    тексту причины проще, чем по трём веткам кода.
+    Любая неудача — `_PeopleFailure`. Разные поводы не получить список сведены в
+    одно исключение намеренно: страница поступает с ними одинаково — показывает
+    прежний снимок и причину, — а разбирать, чем «сосед занят» отличается от
+    «сайт просит подождать», по тексту причины проще, чем по веткам кода.
+
+    ⚠ **Источник — настройка сайта, а не выбор кода.** `people_source: api` у сайта
+    с настроенным адресом означает, что список берётся прямо у сайта: 70–170 мс
+    вместо 35–40 секунд браузера, и полный список вместо первой страницы (замер:
+    201 человек в сети против 20 у сценария). Сайт без API работает как работал.
+
+    Вида, которого API не отдаёт (`dialog`), это не касается: он уходит к сценарию,
+    как и раньше.
     """
+    site_id = int(profile.get('site_id') or 0)
+    if kind in dating_people_api_kinds() and await _api_ready(site_id):
+        return await _api_rows(profile, kind, site_id)
+
     spec = DATING_PEOPLE_KINDS[kind]
 
     # Сайт спрашиваем здесь, а не в ручке: он живёт у соседа, и его недоступность

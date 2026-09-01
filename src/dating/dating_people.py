@@ -112,7 +112,7 @@ def dating_people_rows(extract: dict, field: str) -> list[dict]:
                       # Ключ по фотографии — отдельным полем, помимо `uid`. По нему
                       # страница сводит человека из кабинета с ним же из чата:
                       # номера у них разные (в чате его нет вовсе), а файл один.
-                      'photo_uid': _photo_uid(photo),
+                      'photo_uid': dating_people_photo_uid(photo),
                       'online': DATING_PEOPLE_ONLINE_MARK in str(row.get('статус_класс') or ''),
                       'is_new': bool(str(row.get('новый') or '').strip()),
                       'link': link})
@@ -152,8 +152,13 @@ def _uid(link: str, photo: str, name: str) -> str:
     return f'name:{name.lower()}' if name else ''
 
 
-def _photo_uid(photo: str) -> str:
-    """Ключ по имени файла фотографии — им сводятся списки из кабинета и из чата."""
+def dating_people_photo_uid(photo: str) -> str:
+    """Ключ по имени файла фотографии — им сводятся списки из кабинета и из чата.
+
+    Наружу, а не приватно: тем же ключом пользуется список, снятый через API сайта
+    (`dating_people_api.py`). Разойдись эти два способа считать ключ — значок «есть
+    переписка» пропал бы у половины карточек, и никто бы не понял почему.
+    """
     match = DATING_PEOPLE_PHOTO_UID_RE.search(str(photo or ''))
 
     return match.group(1) if match else ''

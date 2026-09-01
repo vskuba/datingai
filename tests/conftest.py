@@ -56,6 +56,10 @@ from mysql_.mysql_ import mysql_pool_close  # noqa: E402
 # без импорта: то же удобство, что у `auth_client`.
 from tests.rhapsody_fake import rhapsody  # noqa: E402,F401 — фикстура
 
+# Поддельное API сайта знакомств. По той же причине и на тех же правах: наружу
+# сюита не ходит ни в соседний проект, ни на сам сайт.
+from tests.site_api_fake import site_api  # noqa: E402,F401 — фикстура
+
 # Куда стучаться. На проде — `https://dating.92.5.17.195.sslip.io`: своё имя,
 # корень домена, `BASE_PATH` при этом пуст — как локально.
 BASE_URL = os.getenv('BASE_URL', 'http://localhost:8021').rstrip('/')

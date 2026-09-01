@@ -22,6 +22,8 @@ import pytest
 from src.uvicorn.routers.dating import dating_site
 from src.uvicorn.routers.dating.dating_site import dating_site_list
 
+from src.uvicorn.routers.dating.dating_site import DATING_SITE_SECRET_MASK as MASK
+
 KEY = 'тест_ключ'
 OTHER = 'тест_второй'
 
@@ -148,6 +150,75 @@ class TestSiteList:
         assert refusal.value.status_code == 502
 
 
+class TestSecretSettings:
+    """⚠ Пароль наружу не отдаётся никому, включая администратора."""
+
+    async def test_secret_value_never_leaves(self, auth_client, kept):
+        """Из ручки уходят точки, а не пароль.
+
+        Страница его не показывает, а значит и получать ей нечего; утечь через
+        журнал запросов, скриншот или чужой глаз за плечом ему больше нечем.
+        """
+        await auth_client.put(f'/api/dating/site/{SITE}',
+                              json={'settings': {'api_password': 'тайна'}})
+
+        assert (await _settings(auth_client, SITE))['api_password'] == MASK
+
+    async def test_secret_is_hidden_in_the_list_too(self, auth_client, kept):
+        """Список сайтов — вторая дорога к тем же значениям, и там та же маска."""
+        await auth_client.put(f'/api/dating/site/{SITE}',
+                              json={'settings': {'api_password': 'тайна'}})
+
+        answer = await auth_client.put(f'/api/dating/site/{SITE}',
+                                       json={'settings': {'api_password': MASK}})
+
+        assert answer.json()['result']['settings']['api_password'] == MASK
+
+    async def test_mask_means_keep(self, auth_client, kept):
+        """⚠ Маска вместо секрета означает «не трогать».
+
+        Страница настоящего значения не знает и прислать его не может; прими мы
+        точки как значение — первое же сохранение соседней настройки затёрло бы
+        пароль строкой «••••••••», и вход перестал бы работать без единого
+        сообщения.
+        """
+        await auth_client.put(f'/api/dating/site/{SITE}',
+                              json={'settings': {'api_password': 'тайна'}})
+        await auth_client.put(f'/api/dating/site/{SITE}',
+                              json={'settings': {'api_password': MASK, 'api_base': 'https://x'}})
+
+        assert await _secret_in_base(SITE) == 'тайна', 'пароль затёрт маской'
+
+    async def test_secret_can_be_replaced(self, auth_client, kept):
+        """Замена работает: прислали новое значение — оно и легло."""
+        await auth_client.put(f'/api/dating/site/{SITE}',
+                              json={'settings': {'api_password': 'первый'}})
+        await auth_client.put(f'/api/dating/site/{SITE}',
+                              json={'settings': {'api_password': 'второй'}})
+
+        assert await _secret_in_base(SITE) == 'второй'
+
+    async def test_secret_can_be_removed(self, auth_client, kept):
+        """Пустое значение убирает пароль — то же правило, что у прочих настроек."""
+        await auth_client.put(f'/api/dating/site/{SITE}',
+                              json={'settings': {'api_password': 'тайна'}})
+        await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': {'api_password': ''}})
+
+        assert 'api_password' not in await _settings(auth_client, SITE)
+
+    async def test_registry_tells_the_page_it_is_secret(self, rhapsody, monkeypatch):
+        """Страница рисует пароль полем-звёздочками по признаку из реестра, а не по
+        догадке об имени ключа."""
+        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+
+        known = {row['key']: row for row in
+                 (await dating_site_list(user=None))['result']['known']}
+
+        assert known['api_password']['secret'] is True
+        assert known['api_base']['secret'] is False
+        assert known['api_base']['options'] == [], 'адрес — свободное поле, а не набор'
+
+
 class TestSiteRefuses:
     """Чего ручка не принимает."""
 
@@ -189,6 +260,18 @@ class TestSiteRights:
 
     async def test_closed_without_login(self, client):
         assert (await client.get('/api/dating/site')).status_code == 401
+
+
+async def _secret_in_base(site_id: int) -> str:
+    """Что на самом деле лежит в базе.
+
+    ⚠ Единственное место в сюите, где секрет читается напрямую: через ручку он не
+    виден — в этом и смысл проверки. Иначе «маска означает не трогать» проверялось
+    бы маской же, то есть ничем.
+    """
+    from src.uvicorn.routers.dating.dating_site import dating_site_setting
+
+    return await dating_site_setting(site_id, 'api_password')
 
 
 def _saved(rows: dict):

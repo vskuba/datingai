@@ -13,6 +13,7 @@
 | Что | Где живёт | Как получаем |
 |-----|-----------|--------------|
 | сценарии сайтов, пул Chromium | RhapsodyAi | `POST /api/browser/scenario/{id}/run` |
+| списки собеседников, если у сайта есть API | **сам сайт** | `POST /auth/login`, `GET /users/{state}` |
 | закладки сайтов и `presence` | RhapsodyAi | `GET /api/browser/site/{id}` |
 | агенты, workflow, факты | RhapsodyAi | `POST /agent/create`, `GET /agent/name/{name}` |
 | ответы в чате (LLM) | RhapsodyAi | `POST /chat/ask` |
@@ -53,10 +54,11 @@
 - **Новый сайт знакомств** → `.claude/docs/dating.md`, §5.0 (драйвер сайта: настройкой или файлом)
 - **Импорт анкет с сайта** → `.claude/docs/dating.md`, §6.5 (сценарии у соседа, кнопка на «Профилях»)
 - **Новый прогон сценария** → `src/dating/dating_scenario.py` (⚠ только через него: иначе прогон не попадёт в журнал)
-- **Новая настройка сайта** → `.claude/docs/api.md`, §3.5 (ключ в `dating_site.settings`, страница «Сайты»)
+- **Новая настройка сайта** → `.claude/docs/api.md`, §3.5 (ключ в `dating_site.settings`, страница «Сайты»; секрет — пометкой в реестре)
+- **Списки собеседников с сайта** → `.claude/docs/api.md`, §3.3 (⚠ источник — настройка `people_source`: API сайта или сценарий у соседа)
 - **Новая настройка панели** → `.claude/docs/api.md`, §6.2 (строка в `setting`, страница «Настройки → Значения»)
 - **Показ даты или времени** → `data/uvicorn/public/js/dating_time.js` (⚠ с сервера всё приходит **в UTC**; сдвигает страница по настройке `timezone`)
-- **Проверка после правок** → `.claude/docs/testing.md`
+- **Проверка после правок** → `.claude/docs/testing.md` (⚠ тесты наружу не ходят: ни к соседу, ни на сайт — заглушки в `tests/rhapsody_fake.py` и `tests/site_api_fake.py`)
 
 ## Key Files
 
@@ -83,6 +85,7 @@
 | `src/dating/dating_export.py` | Выгрузка анкет: сшивка `extract` сценария в таблицу |
 | `src/dating/dating_import.py` | Импорт анкет: разбор ответа сценария, дубликаты, что обновлять |
 | `src/dating/dating_people.py` | Собеседники с сайта: разбор карточек, ключ человека по ссылке, фото и имени |
+| `src/dating/dating_people_api.py` | Списки собеседников через **API сайта**: вход, токен на 12 часов, разбор (без браузера и без соседа) |
 | `src/dating/dating_scenario.py` | **Единственная** точка прогона сценария: гонит и пишет в журнал прогонов |
 | `src/uvicorn/routers/dating/dating_profile.py` | Ручки анкет: CRUD своей базы; там же общие `dating_profile_row` и `_site` |
 | `src/uvicorn/routers/dating/dating_profile_action.py` | Ручки анкет: всё, что ходит к сайту и к соседу |

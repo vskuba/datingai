@@ -1602,33 +1602,22 @@
 
     // Ждём конца фонового прогона — тем же способом, что и колонки.
     function peopleOnlineAwait(site) {
-        if (peopleAwaiting.has(ONLINE_KEY)) return;
-        peopleAwaiting.add(ONLINE_KEY);
-
-        let left = PEOPLE_AWAIT_TRIES;
-        const timer = setInterval(async () => {
-            if ((Number(siteEl.value) || 0) !== site || left-- <= 0) {
-                clearInterval(timer);
-                peopleAwaiting.delete(ONLINE_KEY);
-                return;
-            }
+        peopleWatch(ONLINE_KEY, async () => {
+            if ((Number(siteEl.value) || 0) !== site) return false;
 
             let state;
             try {
                 state = (await getData(`${BASE}/api/dating/people/site/${site}/online`)).result || {};
             } catch (e) {
-                return;
+                return true;
             }
-            if ((Number(siteEl.value) || 0) !== site) return;
+            if ((Number(siteEl.value) || 0) !== site) return false;
 
             peopleCache.set(ONLINE_KEY, state);
             peopleOnlinePaint();
 
-            if (!state.refreshing) {
-                clearInterval(timer);
-                peopleAwaiting.delete(ONLINE_KEY);
-            }
-        }, PEOPLE_AWAIT_MS);
+            return !!state.refreshing;
+        });
     }
 
     // Перерисовываем только ряд: пересобирать вкладку значило бы сбросить
@@ -1683,44 +1672,70 @@
         if (state.refreshing) peopleAwait(kind, requestId);
     }
 
-    // Ждём конца фонового прогона. Опрашиваем редко и недолго: прогон идёт
-    // десятки секунд, а с очередью — и минуты, но ждать его вечно незачем.
-    // Не дождались — список останется помеченным как кэш, и это правда.
-    const PEOPLE_AWAIT_MS = 15000;
-    const PEOPLE_AWAIT_TRIES = 12;
+    // Ждём конца фонового снятия списка: спрашиваем ручку, пока та отвечает
+    // `refreshing`.
+    //
+    // ⚠ **Пауза растёт, а не стоит на месте.** Список снимает либо API сайта
+    // (ответ за доли секунды), либо сценарий в браузере соседа (35–40 секунд, с
+    // очередью и минуты). Одна пауза на оба случая всегда плоха: пятнадцать секунд
+    // заставляют быстрый источник ждать впустую — новый список уже лежит, а
+    // страница про это не знает, — а секунда молотила бы запросами всю минуту
+    // медленного.
+    //
+    // Поэтому первый вопрос почти сразу, дальше вдвое реже до потолка. Не
+    // дождались за общий срок — список останется помеченным как кэш, и это правда.
+    const PEOPLE_AWAIT_FIRST_MS = 800;
+    const PEOPLE_AWAIT_MAX_MS = 15000;
+    const PEOPLE_AWAIT_TOTAL_MS = 180000;
     const peopleAwaiting = new Set();
 
-    function peopleAwait(kind, requestId) {
-        const key = `${requestId}|${kind}`;
+    // `ask` возвращает «спрашивать ли дальше»: `false` — прогон кончился или ждать
+    // больше некому (ушли с анкеты, сменили сайт).
+    function peopleWatch(key, ask) {
         if (peopleAwaiting.has(key)) return;
         peopleAwaiting.add(key);
 
-        let left = PEOPLE_AWAIT_TRIES;
-        const timer = setInterval(async () => {
-            // Ушли с анкеты или кончились попытки — перестаём ждать.
-            if (openId !== requestId || left-- <= 0) {
-                clearInterval(timer);
+        let wait = PEOPLE_AWAIT_FIRST_MS;
+        let spent = 0;
+
+        const tick = async () => {
+            if (!peopleAwaiting.has(key)) return;
+
+            const again = await ask();
+            spent += wait;
+            if (!again || spent >= PEOPLE_AWAIT_TOTAL_MS) {
                 peopleAwaiting.delete(key);
                 return;
             }
+
+            wait = Math.min(wait * 2, PEOPLE_AWAIT_MAX_MS);
+            setTimeout(tick, wait);
+        };
+
+        setTimeout(tick, wait);
+    }
+
+    function peopleAwait(kind, requestId) {
+        const key = `${requestId}|${kind}`;
+
+        peopleWatch(key, async () => {
+            // Ушли с анкеты — ждать больше некому.
+            if (openId !== requestId) return false;
 
             let state;
             try {
                 state = (await getData(`${BASE}/api/dating/people/${requestId}/${kind}`)).result || {};
             } catch (e) {
-                return;
+                // Сеть моргнула — это не конец прогона; спросим ещё раз.
+                return true;
             }
-            if (openId !== requestId) return;
+            if (openId !== requestId) return false;
 
             peopleCache.set(key, state);
             peoplePaint(kind);
 
-            // Прогон кончился: пришёл свежий список или обновление сорвалось.
-            if (!state.refreshing) {
-                clearInterval(timer);
-                peopleAwaiting.delete(key);
-            }
-        }, PEOPLE_AWAIT_MS);
+            return !!state.refreshing;
+        });
     }
 
     // Перерисовываем только свою колонку: пересобирать вкладку целиком значило бы

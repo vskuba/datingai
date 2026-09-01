@@ -215,23 +215,47 @@
         const chosen = value === undefined ? spec.default : value;
         const saved = value !== undefined;
 
-        return `<tr data-key="${esc(spec.key)}" data-known="1">`
+        return `<tr data-key="${esc(spec.key)}" data-known="1"`
+            + `${spec.options.length ? '' : ' data-free="1"'}>`
             + '<td>'
             + `<span class="set-title">${esc(spec.title)}</span>`
             + `<span class="set-key-small">${esc(spec.key)}</span>`
             + (spec.note ? `<span class="set-note">${esc(spec.note)}</span>` : '')
             + '</td>'
             + '<td>'
-            + `<select class="set-value set-select"${CAN_EDIT ? '' : ' disabled'}>`
+            + (spec.options.length ? knownSelect(spec, chosen) : knownInput(spec, chosen))
+            + (saved || !spec.options.length
+                ? '' : '<span class="set-note">умолчание — пока не сохраняли</span>')
+            + '</td>'
+            + (CAN_EDIT ? '<td class="set-col-act"></td>' : '')
+            + '</tr>';
+    }
+
+    function knownSelect(spec, chosen) {
+        return `<select class="set-value set-select"${CAN_EDIT ? '' : ' disabled'}>`
             + spec.options.map(opt =>
                 `<option value="${esc(opt.value)}"`
                 + `${String(opt.value) === String(chosen) ? ' selected' : ''}>`
                 + `${esc(opt.title)}</option>`).join('')
-            + '</select>'
-            + (saved ? '' : '<span class="set-note">умолчание — пока не сохраняли</span>')
-            + '</td>'
-            + (CAN_EDIT ? '<td class="set-col-act"></td>' : '')
-            + '</tr>';
+            + '</select>';
+    }
+
+    // Известная настройка без набора значений — обычное поле: адрес, пароль.
+    //
+    // ⚠ **Секрет приходит точками и точками же уходит обратно.** Настоящего
+    // значения страница не знает (`dating_site.py`), а сохранение понимает точки
+    // как «оставить прежний». Поэтому поле не пустое: пустое читалось бы как
+    // «пароль не задан», и его вписали бы второй раз, гадая, почему не работало.
+    // ⚠ Пустое поле говорит словами, что настройки у **этого** сайта нет.
+    //
+    // Строки известных настроек стоят у каждого сайта — это реестр, один на все.
+    // Пустое поле без подписи читалось бы как «здесь то же, что у соседнего», и
+    // так и прочли: страницу Goldenbride приняли за копию страницы Ladadate.
+    function knownInput(spec, chosen) {
+        return `<input type="${spec.secret ? 'password' : 'text'}" class="set-value"`
+            + ` autocomplete="off"${CAN_EDIT ? '' : ' disabled'}`
+            + ` placeholder="${esc(spec.default || 'не задано у этого сайта')}"`
+            + ` value="${esc(chosen)}">`;
     }
 
     function row(site, key) {
@@ -258,7 +282,9 @@
             select.addEventListener('change', () => save({[key]: select.value}));
         });
 
-        bodyEl.querySelectorAll('tr[data-key]:not([data-known])').forEach(tr => {
+        // Поля ввода — и у незнакомых ключей, и у известных без набора значений:
+        // правятся они одинаково, и второй набор обработчиков разошёлся бы с первым.
+        bodyEl.querySelectorAll('tr[data-key]:not([data-known]), tr[data-free]').forEach(tr => {
             const key = tr.dataset.key;
             const input = tr.querySelector('.set-value');
             input.dataset.saved = input.value;
@@ -277,7 +303,10 @@
             });
             input.addEventListener('change', () => save({[key]: input.value}, input));
 
-            tr.querySelector('.set-drop').addEventListener('click', () => drop(key));
+            // Кнопки «убрать» у известной настройки нет: её не заводили руками, и
+            // убирать нечего — пустое значение и так означает «нет настройки».
+            const dropBtn = tr.querySelector('.set-drop');
+            if (dropBtn) dropBtn.addEventListener('click', () => drop(key));
         });
 
         const form = document.getElementById('addForm');

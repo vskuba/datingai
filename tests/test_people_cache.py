@@ -24,6 +24,7 @@ from src.uvicorn.routers.dating import dating_people
 from src.uvicorn.routers.dating.dating_people import (DATING_PEOPLE_FLOOR_SEC,
                                                       DATING_PEOPLE_FRESH_SEC,
                                                       _PeopleFailure, dating_people_list)
+from tests.site_api_fake import SITE_API_FAKE_BASE, SITE_API_FAKE_PASSWORD
 
 PROFILE = {'id': 849, 'site_id': 343, 'login': 'diana@example.com'}
 SITE = {'id': 343, 'name': 'Ladadate'}
@@ -138,6 +139,14 @@ def _state_clear() -> None:
     dating_people._refresh_at.clear()
     dating_people._refresh_error.clear()
     dating_people._CACHE_FALLBACK.clear()
+
+
+def _settings(values: dict):
+    """Подменённое чтение настроек сайта: ключ → значение, как их правят на странице."""
+    async def _setting(site_id, key, default=''):
+        return values.get(key, default)
+
+    return _setting
 
 
 def _site_profile(found: bool = True):
@@ -418,6 +427,77 @@ class TestSiteScope:
         await _refreshed(SITE_KEY)
 
         assert door.log == []
+
+
+class TestSource:
+    """⚠ Откуда берётся список — настройка сайта, а не выбор кода."""
+
+    async def test_api_site_does_not_touch_the_neighbour(self, door, monkeypatch, site_api):
+        """Сайт с настроенным API снимает список сам: ни сценария, ни вкладки в пуле.
+
+        Ради этого всё и делалось. Проверяем не «быстрее» (быстроту тестом не
+        поймать), а то, за что платили: к соседу не ходим вовсе.
+        """
+        monkeypatch.setattr(dating_people, 'dating_site_setting', _settings(
+            {'people_source': 'api', 'api_base': SITE_API_FAKE_BASE,
+             'api_password': SITE_API_FAKE_PASSWORD}))
+
+        async def _нельзя(*args, **kwargs):
+            raise AssertionError('сценарий у соседа всё-таки прогнали')
+
+        monkeypatch.setattr(dating_people, 'dating_scenario_run', _нельзя)
+        monkeypatch.setattr(dating_people, 'dating_profile_site', _нельзя)
+
+        answer = await _fill()
+
+        assert [row['uid'] for row in answer['people']] == ['788856']
+
+    async def test_own_password_wins_over_the_site_one(self, door, monkeypatch, site_api):
+        """⚠ Свой пароль анкеты сильнее общего.
+
+        Общий заводят агентству оптом; окажись он сильнее, анкета со своей парой
+        логин-пароль молча ходила бы под чужим и получала 400.
+        """
+        monkeypatch.setattr(dating_people, 'dating_site_setting', _settings(
+            {'people_source': 'api', 'api_base': SITE_API_FAKE_BASE,
+             'api_password': 'общий-неверный'}))
+
+        async def _profile(profile_id):
+            return {**PROFILE, 'password': SITE_API_FAKE_PASSWORD}
+
+        monkeypatch.setattr(dating_people, 'dating_profile_row', _profile)
+
+        assert (await _fill())['people'], 'вошли под общим паролем вместо своего'
+
+    async def test_site_without_api_still_runs_the_scenario(self, door, monkeypatch):
+        """Сайт без API работает как работал: новая настройка ничего не ломает."""
+        monkeypatch.setattr(dating_people, 'dating_site_setting', _settings({}))
+        monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
+
+        assert (await _fill())['people'] == PEOPLE
+
+    async def test_chosen_api_without_address_is_not_api(self, door, monkeypatch):
+        """Источник выбран, а адреса нет — это опечатка в настройке, а не повод
+        молча ходить не туда. Работаем сценарием."""
+        monkeypatch.setattr(dating_people, 'dating_site_setting', _settings(
+            {'people_source': 'api'}))
+        monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
+
+        assert (await _fill())['people'] == PEOPLE
+
+    async def test_api_refusal_keeps_the_cache(self, door, monkeypatch, site_api):
+        """Отказ сайта ведёт себя как отказ соседа: прежний список остаётся,
+        причина едет рядом. Кэш об источнике не знает, и это правильно."""
+        monkeypatch.setattr(dating_people, 'dating_site_setting', _settings(
+            {'people_source': 'api', 'api_base': SITE_API_FAKE_BASE,
+             'api_password': SITE_API_FAKE_PASSWORD}))
+        await _fill()
+
+        site_api.refuse(403, {'Error': 'Too many requests'}, on='/users/')
+        answer = (await _retry(door))['result']
+
+        assert [row['uid'] for row in answer['people']] == ['788856'], 'снимок выброшен'
+        assert 'сайт просит подождать' in answer['error']
 
 
 class TestFreshness:
