@@ -22,12 +22,13 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.mysql_.repository.dating_profile_repository import DatingProfileRepository
 from src.rhapsody.rhapsody_api import (rhapsody_api_error_write,
                                        rhapsody_api_scenario_find_by_id, rhapsody_api_scenario_login_find,
-                                       rhapsody_api_scenario_run, rhapsody_api_session_close,
+                                       rhapsody_api_session_close,
                                        rhapsody_api_session_list, rhapsody_api_session_open,
                                        rhapsody_api_session_state, rhapsody_api_site_get)
 from src.dating.dating_json import dating_json_load
 from src.dating.dating_log import dating_log_write
 from src.dating.dating_presence import dating_presence_probe
+from src.dating.dating_scenario import dating_scenario_run
 from src.dating.dating_profile_page import dating_profile_page_read
 from src.dating.dating_ws import dating_ws_capture
 
@@ -85,7 +86,8 @@ async def dating_login_run(profile_id: int, scenario_id: int = 0, session_id: st
 
     await dating_log_write(profile_id, 'info', f"Прохожу форму входа сценарием «{scenario['name']}»")
 
-    result = await rhapsody_api_scenario_run(int(scenario['id']), session_id, {}, secrets, True)
+    result = await dating_scenario_run(scenario, int(site['id']), profile_id,
+                                       session_id, {}, secrets, keep_session=True)
 
     card = {}
     if result.get('status') == 'error':
@@ -175,7 +177,15 @@ async def dating_login_profile_page(profile: dict, presence: dict, session_id: s
     Неудача входа не роняет: анкета — украшение карточки, а вход уже состоялся, и
     отменять его из-за нечитаемой анкеты значило бы отобрать у человека сессию.
     """
-    result = await dating_profile_page_read(profile, presence, session_id, rhapsody_api_scenario_run)
+    # Прогон идёт общей дверью: она пишет его в журнал прогонов и в журнал анкеты.
+    # Замыканием, потому что `dating_profile_page_read` про сайт и анкету знает
+    # только то, что лежит в переданной строке, а журналу нужны их номера.
+    async def _run(scenario, session, variables):
+        return await dating_scenario_run(scenario, int(profile['site_id']),
+                                         int(profile['id']), session, variables, {},
+                                         keep_session=True)
+
+    result = await dating_profile_page_read(profile, presence, session_id, _run)
     await dating_log_write(int(profile['id']), 'ok' if result['ok'] else 'info',
                            f"Анкета прочитана: {result['profile'].get('name', '')}"
                            if result['ok'] else f"Анкета не прочиталась: {result['error']}")

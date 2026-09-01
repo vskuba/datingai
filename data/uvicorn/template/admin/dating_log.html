@@ -11,9 +11,60 @@
            разделителей нет — делить нечего. */
         .dating-page { grid-template-rows: auto minmax(0, 1fr); }
 
-        /* Заглушка на месте будущего содержимого. Отдельным классом, а не пустым
-           телом панели: пустая белая карточка читается как «не загрузилось». */
-        .dating-soon { padding: 24px 12px; text-align: center; color: #9ca3af; font-size: 13px; }
+        /* Отбор в шапке панели, а не в шапке страницы: там уже стоит селект сайта,
+           общий на весь раздел, и третий ряд управления оттеснил бы саму ленту. */
+        .log-tools {
+            display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+            font-weight: 400; text-transform: none; letter-spacing: normal;
+        }
+        /* ⚠ Ширина обязательна: `common.css` даёт всем `select` `width: 100%`, и
+           без неё три поля отбора встают столбцом во всю панель. */
+        .log-tools select, .log-tools input {
+            padding: 4px 8px; border: 1px solid #cbd5e1; border-radius: 6px;
+            font-size: 12px; width: auto; flex: 0 0 auto;
+        }
+        .log-tools select { min-width: 150px; }
+        .log-tools input { width: 220px; }
+        .log-count { margin-left: auto; font-size: 11px; color: #94a3b8; font-weight: 400; }
+
+        /* Строка ленты: время, кто, что. Три колонки, а не две как в журнале
+           анкеты: здесь анкеты разные, и без имени строка не говорит, к кому
+           относится. */
+        .feed-row {
+            display: flex; gap: 8px; padding: 3px 0; font-size: 12px;
+            border-bottom: 1px solid #f8fafc; align-items: baseline;
+        }
+        .feed-time {
+            flex: 0 0 auto; color: #94a3b8; font-size: 11px;
+            font-family: ui-monospace, Menlo, monospace;
+        }
+        /* Имя анкеты фиксированной ширины: столбец имён читается сверху вниз, а
+           плавающая ширина заставляла бы искать начало текста в каждой строке. */
+        .feed-who {
+            flex: 0 0 110px; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; color: #475569; font-size: 11px;
+        }
+        .feed-who.none { color: #cbd5e1; }
+        .feed-text { flex: 1 1 auto; min-width: 0; word-break: break-word; }
+
+        .feed-row.ok .feed-text { color: #166534; }
+        .feed-row.fail .feed-text { color: #b91c1c; font-weight: 600; }
+        .feed-row.in .feed-text { color: #4338ca; }
+        .feed-row.out .feed-text { color: #92400e; }
+        .feed-row.info .feed-text { color: #475569; }
+
+        /* Прогон сценария виден по значку: в общей ленте он стоит рядом со
+           строками работы по анкете, и отличать их по тексту пришлось бы чтением. */
+        .feed-kind { flex: 0 0 auto; font-size: 10px; opacity: .7; }
+        .feed-ms {
+            flex: 0 0 auto; font-size: 10px; color: #94a3b8;
+            font-family: ui-monospace, Menlo, monospace;
+        }
+        /* Долгий прогон заметен без сравнения с соседями: сорок секунд — обычное
+           дело, а вот две минуты значат, что сайт отвечает медленнее обычного. */
+        .feed-ms.slow { color: #b45309; }
+
+        .feed-empty { padding: 18px; color: #9ca3af; font-size: 12px; text-align: center; }
     </style>
 {% endblock %}
 
@@ -27,32 +78,159 @@
     </div>
 
     <div class="pane">
-        <div class="pane-head">Журнал</div>
-        <div class="pane-body">
-            <div class="dating-soon">
-                Общая лента журнала появится здесь.
-                Пока журнал по отдельной анкете смотрят на «Анкетах».
+        <div class="pane-head">
+            <div class="log-tools">
+                <select id="kind" title="Что показывать">
+                    <option value="all">Всё</option>
+                    <option value="scenario">Сценарии</option>
+                    <option value="profile">Работа по анкетам</option>
+                </select>
+                <select id="level" title="Уровень">
+                    <option value="">Любой уровень</option>
+                    <option value="fail">Только отказы</option>
+                    <option value="ok">Удачные</option>
+                    <option value="info">Ход работы</option>
+                    <option value="in">Входящие</option>
+                    <option value="out">Исходящие</option>
+                </select>
+                <input type="search" id="find" placeholder="поиск по тексту и анкете">
+                <span class="log-count" id="count"></span>
             </div>
         </div>
+        <div class="pane-body" id="feed">
+            <div class="feed-empty">Загружаю…</div>
+        </div>
+        <div class="pane-foot" id="pager"></div>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script type="module">
+    import {getData} from '{{ base }}/static/js/api.js';
     import {showNotification} from '{{ base }}/static/js/notification.js';
+    import {esc, pagerRender} from '{{ base }}/static/js/dating_view.js';
     import {DATING_SITE_KEY, datingSiteFill} from '{{ base }}/static/js/dating_site.js';
+    // Метки приходят с сервера в UTC — сдвигает страница (`dashboard_frontend.md`, §3.8).
+    import {timeShift} from '{{ base }}/static/js/dating_time.js';
 
     const BASE = '{{ base }}';
 
     const siteEl = document.getElementById('siteSelect');
     const hintEl = document.getElementById('hint');
+    const kindEl = document.getElementById('kind');
+    const levelEl = document.getElementById('level');
+    const findEl = document.getElementById('find');
+    const feedEl = document.getElementById('feed');
+    const pagerEl = document.getElementById('pager');
+    const countEl = document.getElementById('count');
 
-    // Ленты ещё нет, а селект уже живой и уже запоминает выбор общим ключом
-    // раздела. Иначе человек, пришедший сюда с «Анкет», увидел бы первый сайт по
-    // списку вместо своего, а переключив его — молча переставил бы сайт и на
-    // соседних страницах, когда ключ появится.
-    siteEl.addEventListener('change', () => localStorage.setItem(DATING_SITE_KEY, siteEl.value));
+    // Круг обновления. Реже, чем журнал анкеты (10 с): туда смотрят, пока ждут
+    // результата нажатой кнопки, а сюда приходят разбираться — там важна каждая
+    // секунда, здесь важно не дёргать страницу под руками у читающего.
+    const RELOAD_MS = 20000;
+
+    // Дольше этого прогон подсвечивается: сорок секунд — обычное дело, минута с
+    // лишним значит, что сайт отвечает медленнее обычного.
+    const SLOW_MS = 60000;
+
+    let page = 1;
+
+    // Поиск ждёт, пока человек допечатает: лента ходит в базу, и запрос на каждую
+    // букву — это запрос на каждую букву.
+    let findTimer = 0;
+
+    function siteId() {
+        return Number(siteEl.value) || 0;
+    }
+
+    async function load() {
+        if (!siteId()) {
+            feedEl.innerHTML = '<div class="feed-empty">Выберите сайт</div>';
+            pagerRender(pagerEl, 0, 0, () => {});
+            countEl.textContent = '';
+            return;
+        }
+
+        const query = new URLSearchParams({
+            site_id: siteId(), kind: kindEl.value, level: levelEl.value,
+            q: findEl.value.trim(), page,
+        });
+
+        let data;
+        try {
+            data = (await getData(`${BASE}/api/dating/log?${query}`)).result;
+        } catch (e) {
+            feedEl.innerHTML = `<div class="feed-empty">Лента не пришла: ${esc(e.message)}</div>`;
+            return;
+        }
+
+        // Номер страницы берём из ответа: сервер поправит его, если лента
+        // укоротилась и страница уехала за конец. То же делает карточка собеседниц.
+        page = Number(data.page || 1);
+        countEl.textContent = data.total ? `строк: ${data.total}` : '';
+
+        feedEl.innerHTML = data.rows.length
+            ? data.rows.map(row).join('')
+            : '<div class="feed-empty">По этому отбору записей нет</div>';
+
+        // Пейджер нумерует с нуля, ручка — с единицы.
+        pagerRender(pagerEl, Number(data.pages || 1), page - 1, (pick) => {
+            page = pick + 1;
+            load();
+            feedEl.scrollTop = 0;
+        });
+    }
+
+    function row(r) {
+        const scenario = r.source === 'scenario';
+
+        // У удачного прогона текста нет вовсе — писать его нечем и незачем:
+        // сообщением служит само имя сценария.
+        //
+        // ⚠ Шаг 0 у отказа не значит «встал на первом»: он значит, что сценарий
+        // **не начинался** — сосед не ответил, вкладка не открывалась. Написать
+        // «встал на шаге 0» было бы враньём про место отказа.
+        const text = scenario
+            ? `«${esc(r.scenario_name)}»${r.level !== 'fail' ? ' отработал'
+                : r.step_no ? ` — встал на шаге ${r.step_no}: ${esc(r.text)}`
+                : ` — не запустился: ${esc(r.text)}`}`
+            : esc(r.text);
+
+        return `<div class="feed-row ${esc(r.level)}">`
+            + `<span class="feed-time">${esc(timeShift(r.created_at).slice(5, 19))}</span>`
+            + `<span class="feed-kind" title="${scenario ? 'прогон сценария' : 'работа по анкете'}">`
+            + `${scenario ? '⚙' : '·'}</span>`
+            // Прогон без анкеты — импорт или выгрузка: они идут по сайту целиком.
+            // Пишем это словом, а не пустотой: пустая клетка читается как «имя
+            // потерялось».
+            + `<span class="feed-who${r.profile_name ? '' : ' none'}"`
+            + ` title="${esc(r.profile_name || 'по сайту целиком')}">`
+            + `${esc(r.profile_name || 'весь сайт')}</span>`
+            + `<span class="feed-text">${text}</span>`
+            + (scenario && r.ms
+                ? `<span class="feed-ms${r.ms > SLOW_MS ? ' slow' : ''}">${(r.ms / 1000).toFixed(1)} с</span>`
+                : '')
+            + '</div>';
+    }
+
+    // Смена сайта, отбора или поиска возвращает на первую страницу: седьмая
+    // страница прежней ленты к новому отбору отношения не имеет.
+    function reset() {
+        page = 1;
+        load();
+    }
+
+    siteEl.addEventListener('change', () => {
+        localStorage.setItem(DATING_SITE_KEY, siteEl.value);
+        reset();
+    });
+    kindEl.addEventListener('change', reset);
+    levelEl.addEventListener('change', reset);
+    findEl.addEventListener('input', () => {
+        clearTimeout(findTimer);
+        findTimer = setTimeout(reset, 400);
+    });
 
     (async () => {
         try {
@@ -61,8 +239,16 @@
             siteEl.innerHTML = '<option value="">сайты не пришли</option>';
             showNotification('Список сайтов не пришёл: ' + e.message, 'error');
         }
+        hintEl.textContent = 'работа по анкетам и прогоны сценариев одной лентой';
+        await load();
     })();
 
-    hintEl.textContent = 'страница в работе';
+    // Круг не трогает страницу, пока её читают: скрытая вкладка не обновляется, а
+    // на второй и дальше странице лента не дёргается — туда ушли смотреть
+    // конкретное место, и подмена содержимого под руками сбила бы чтение.
+    setInterval(() => {
+        if (document.hidden || page !== 1) return;
+        load();
+    }, RELOAD_MS);
 </script>
 {% endblock %}

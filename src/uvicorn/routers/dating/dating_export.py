@@ -20,8 +20,8 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from src.auth.auth import auth_required
 from src.dating.dating_export import dating_export_rows
-from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
-                                       rhapsody_api_scenario_run)
+from src.dating.dating_scenario import dating_scenario_run
+from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_find
 
 router = APIRouter(prefix='/api/dating/export', tags=['dating'])
 
@@ -70,9 +70,10 @@ async def dating_export_profile(site_id: int = 0, user=Depends(auth_required)):
     #
     # Подстановок и секретов нет: сценарий ходит по открытому каталогу. Войди он
     # под анкетой — понадобился бы `dating_login`, и это была бы другая работа.
+    # Общей дверью, как и остальные прогоны: она пишет его в журнал прогонов.
+    # Анкеты у выгрузки нет — она смотрит каталог сайта целиком.
     try:
-        result = await rhapsody_api_scenario_run(int(scenario['id']), '', {}, {},
-                                                 keep_session=False)
+        result = await dating_scenario_run(scenario, int(site_id), keep_session=False)
     except RhapsodyError as e:
         raise HTTPException(status_code=502, detail=str(e))
 

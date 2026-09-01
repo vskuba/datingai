@@ -71,9 +71,9 @@ from redis_.redis_ import redis_conn_get
 from src.auth.auth import auth_required
 from src.dating.dating_log import dating_log_write
 from src.dating.dating_people import dating_people_rows
+from src.dating.dating_scenario import dating_scenario_run
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
-                                       rhapsody_api_scenario_forget,
-                                       rhapsody_api_scenario_run)
+                                       rhapsody_api_scenario_forget)
 from src.uvicorn.routers.dating.dating_profile import dating_profile_row, dating_profile_site
 
 router = APIRouter(prefix='/api/dating/people', tags=['dating'])
@@ -385,9 +385,11 @@ async def _snapshot(profile: dict, kind: str) -> list:
     #
     # `keep_session=False`: вкладка нужна на один прогон, и держать её незачем —
     # она стоит ~143 МБ в пуле, общем с соседом.
+    # Общей дверью (`dating_scenario_run`): она пишет прогон в журнал прогонов и в
+    # журнал самой анкеты — список снимается под ней, и след должен быть у неё.
     try:
-        run = await rhapsody_api_scenario_run(
-            int(scenario['id']), '',
+        run = await dating_scenario_run(
+            scenario, site_id, int(profile['id']), '',
             {**spec['variables'], 'profile_login': str(profile['login'])}, {},
             keep_session=False)
     except RhapsodyError as e:

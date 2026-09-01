@@ -40,7 +40,8 @@ async def dating_disconnect_run(profile: dict, site: dict, presence: dict,
         profile: строка `dating_profile`.
         site: строка `browser_site` этой учётки.
         presence: настройка сайта; `logout_scenario` — имя сценария выхода.
-        runner: чем гонять сценарий (`rhapsody_api_scenario_run`).
+        runner: чем гонять сценарий. Принимает **запись сценария**, а не номер:
+            журнал прогонов пишет имя рядом с номером (`dating_scenario.py`).
         session_open: как завести сессию браузера под этот вход.
         session_list: как получить живые сессии контейнера.
         session_close: как погасить сессию.
@@ -95,7 +96,7 @@ async def _logout(profile: dict, site: dict, presence: dict, runner, session_ope
             return False, f'сессия для выхода не завелась: {e}'
 
     try:
-        result = await runner(int(scenario['id']), session_id, {'login': str(profile['login'])}, {}, True)
+        result = await runner(scenario, session_id, {'login': str(profile['login'])})
     except Exception as e:
         return False, f'сценарий выхода не прошёл: {e}'
 

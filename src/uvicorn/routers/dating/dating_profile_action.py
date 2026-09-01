@@ -32,10 +32,11 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_agent_find,
-                                       rhapsody_api_error_write, rhapsody_api_scenario_run,
+                                       rhapsody_api_error_write,
                                        rhapsody_api_session_open)
 from src.dating.dating_agent import dating_agent_ensure
 from src.dating.dating_answer import dating_answer_run
+from src.dating.dating_scenario import dating_scenario_run
 from src.dating.dating_chat import dating_chat_listen
 from src.dating.dating_check import dating_check_run
 from src.dating.dating_dialog import dating_dialog_sync
@@ -220,7 +221,8 @@ async def dating_profile_action_dialog(profile_id: int,
     session_id = await _session_open_for(site, {**profile,
                                                 'storage_state': dating_json_load(profile.get('storage_state'))})
 
-    result = await dating_dialog_sync(profile, presence, session_id, rhapsody_api_scenario_run)
+    result = await dating_dialog_sync(profile, presence, session_id,
+                                      _scenario_runner(profile))
 
     if result['error']:
         await rhapsody_api_error_write('dating', f"диалоги не прочитались: {result['error']}",
@@ -251,7 +253,7 @@ async def dating_profile_action_disconnect(profile_id: int,
     result = await dating_disconnect_run(
         {**profile, 'storage_state': dating_json_load(profile.get('storage_state'))},
         site, dating_json_load(site.get('presence')),
-        rhapsody_api_scenario_run, _session_open_for,
+        _scenario_runner(profile), _session_open_for,
         dating_login_session_all, dating_login_session_close)
 
     if result['error']:
@@ -468,6 +470,25 @@ async def _agent_id_by_name(name: str) -> int:
         return 0
 
     return int((found or {}).get('id') or 0)
+
+
+def _scenario_runner(profile: dict):
+    """Чем гонять сценарии этой анкеты: общая дверь с уже подставленными номерами.
+
+    Модули предметной части (`dating_dialog`, `dating_disconnect`) знают про анкету,
+    но не про журналы и роутеры — чем гонять, им передают снаружи. Замыкание
+    подставляет сайт и анкету, чтобы прогон попал и в журнал прогонов, и в журнал
+    самой анкеты (`dating_scenario.py`).
+
+    `keep_session=True`: оба зовущих работают в уже открытой вкладке и закрывают
+    её сами.
+    """
+    async def _run(scenario, session_id, variables):
+        return await dating_scenario_run(scenario, int(profile['site_id']),
+                                         int(profile['id']), session_id, variables, {},
+                                         keep_session=True)
+
+    return _run
 
 
 async def _session_open_for(site: dict, profile: dict) -> str:

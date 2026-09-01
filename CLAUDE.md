@@ -51,6 +51,7 @@
 - **Работа воркера** → `.claude/docs/worker.md`
 - **Новый сайт знакомств** → `.claude/docs/dating.md`, §5.0 (драйвер сайта: настройкой или файлом)
 - **Импорт анкет с сайта** → `.claude/docs/dating.md`, §6.5 (сценарии у соседа, кнопка на «Профилях»)
+- **Новый прогон сценария** → `src/dating/dating_scenario.py` (⚠ только через него: иначе прогон не попадёт в журнал)
 - **Новая настройка панели** → `.claude/docs/api.md`, §6.2 (строка в `setting`, страница «Настройки → Значения»)
 - **Показ даты или времени** → `data/uvicorn/public/js/dating_time.js` (⚠ с сервера всё приходит **в UTC**; сдвигает страница по настройке `timezone`)
 - **Проверка после правок** → `.claude/docs/testing.md`
@@ -80,12 +81,14 @@
 | `src/dating/dating_export.py` | Выгрузка анкет: сшивка `extract` сценария в таблицу |
 | `src/dating/dating_import.py` | Импорт анкет: разбор ответа сценария, дубликаты, что обновлять |
 | `src/dating/dating_people.py` | Собеседники с сайта: разбор карточек, ключ человека по ссылке, фото и имени |
+| `src/dating/dating_scenario.py` | **Единственная** точка прогона сценария: гонит и пишет в журнал прогонов |
 | `src/uvicorn/routers/dating/dating_profile.py` | Ручки анкет: CRUD своей базы; там же общие `dating_profile_row` и `_site` |
 | `src/uvicorn/routers/dating/dating_profile_action.py` | Ручки анкет: всё, что ходит к сайту и к соседу |
 | `src/uvicorn/routers/dating/dating_profile_view.py` | Ручки анкет: чтение для страниц панели |
 | `src/uvicorn/routers/dating/dating_export.py` | Ручка экспорта: сценарий выгрузки у соседа (страницы сейчас нет) |
 | `src/uvicorn/routers/dating/dating_import.py` | Ручки импорта: готовность и сам импорт с сайта |
 | `src/uvicorn/routers/dating/dating_people.py` | Ручка собеседников: три списка с сайта, выдержка и жёсткий пол |
+| `src/uvicorn/routers/dating/dating_log.py` | Ручка общей ленты: журнал анкет и прогоны сценариев одним списком |
 | `src/uvicorn/routers/dashboard.py` | Страницы панели |
 | `src/uvicorn/routers/seed.py` | Seed SQL: выгрузка таблиц и заливка обратно |
 | `src/uvicorn/routers/backup.py` | Бэкапы: дамп базы и восстановление |

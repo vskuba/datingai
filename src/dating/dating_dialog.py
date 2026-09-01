@@ -86,7 +86,7 @@ async def dating_dialog_read(profile: dict, presence: dict, session_id: str, run
     if not scenario:
         return {'saved': 0, 'error': f'нет сценария чтения диалога для роли «{role}»'}
 
-    result = await runner(int(scenario['id']), session_id, {'companion': str(companion)}, {}, True)
+    result = await runner(scenario, session_id, {'companion': str(companion)})
     if result.get('status') == 'error':
         return {'saved': 0,
                 'error': f"шаг {result.get('step_no', 0)}: {str(result.get('error') or '')[:200]}"}
@@ -124,7 +124,7 @@ async def _names_read(profile: dict, presence: dict, session_id: str, runner, ro
     if not scenario:
         return {'names': [], 'error': f'нет сценария списка диалогов для роли «{role}»'}
 
-    result = await runner(int(scenario['id']), session_id, {}, {}, True)
+    result = await runner(scenario, session_id, {})
     if result.get('status') == 'error':
         return {'names': [],
                 'error': f"шаг {result.get('step_no', 0)}: {str(result.get('error') or '')[:200]}"}

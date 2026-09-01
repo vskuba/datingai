@@ -37,8 +37,9 @@ from src.dating.dating_import import (dating_import_card, dating_import_match,
                                       dating_import_plan, dating_import_rows)
 from src.dating.dating_json import dating_json_load
 from src.dating.dating_log import dating_log_write
+from src.dating.dating_scenario import dating_scenario_run
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
-                                       rhapsody_api_scenario_run, rhapsody_api_session_close,
+                                       rhapsody_api_session_close,
                                        rhapsody_api_site_get)
 
 router = APIRouter(prefix='/api/dating/import', tags=['dating'])
@@ -117,8 +118,11 @@ async def dating_import_profile(site_id: int = 0, cards: bool = True,
     # `keep_session=True` — вкладка остаётся жить: в ней уже выполнен вход, и
     # карточки читаются в ней же. Закрываем сами, в `finally`: брошенная вкладка
     # стоит ~143 МБ в пуле, общем с соседом.
+    # Прогоны идут общей дверью (`dating_scenario_run`): она пишет их в журнал
+    # прогонов. Анкеты у импорта нет — он идёт по сайту целиком, и приписывать
+    # прогон одной из привезённых анкет было бы враньём.
     try:
-        run = await rhapsody_api_scenario_run(int(scenario['id']), '', {}, {}, keep_session=True)
+        run = await dating_scenario_run(scenario, int(site_id), keep_session=True)
     except RhapsodyError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
@@ -140,7 +144,7 @@ async def dating_import_profile(site_id: int = 0, cards: bool = True,
 
         read = 0
         if cards and card_scenario:
-            read = await _cards_read(rows, int(card_scenario['id']), session_id, trail)
+            read = await _cards_read(rows, card_scenario, int(site_id), session_id, trail)
     finally:
         await _session_drop(session_id)
 
@@ -170,7 +174,8 @@ async def _scenarios_find(site_id: int) -> tuple[dict, dict, dict]:
     return site or {}, scenario, card or {}
 
 
-async def _cards_read(rows: list, scenario_id: int, session_id: str, trail: list) -> int:
+async def _cards_read(rows: list, scenario: dict, site_id: int, session_id: str,
+                      trail: list) -> int:
     """Дочитывает карточки анкет в той же вкладке и дополняет ими записи списка.
 
     Упавшая карточка не роняет импорт: у анкеты остаётся то, что дал список, и
@@ -181,8 +186,9 @@ async def _cards_read(rows: list, scenario_id: int, session_id: str, trail: list
     read = 0
     for row in rows[:DATING_IMPORT_CARD_LIMIT]:
         try:
-            run = await rhapsody_api_scenario_run(
-                scenario_id, session_id, {'profile_id': row['site_uid']}, {}, keep_session=True)
+            run = await dating_scenario_run(
+                scenario, site_id, session_id=session_id,
+                variables={'profile_id': row['site_uid']}, keep_session=True)
         except RhapsodyError as e:
             trail.append(f"Карточка #{row['site_uid']} не прочиталась: {e}")
             continue

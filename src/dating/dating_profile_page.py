@@ -45,8 +45,10 @@ async def dating_profile_page_read(profile: dict, presence: dict, session_id: st
         profile: строка `dating_profile`.
         presence: настройка сайта; имя сценария берётся из `profile_scenario`.
         session_id: живая сессия браузера — та, в которой только что вошли.
-        runner: чем гонять сценарий (`rhapsody_api_scenario_run`), передаётся
-            снаружи: модуль знает про анкету, но не про роутеры.
+        runner: чем гонять сценарий, передаётся снаружи: модуль знает про анкету,
+            но не про роутеры. Принимает **запись сценария**, а не номер: журнал
+            прогонов пишет имя рядом с номером (номер у соседа могут
+            переименовать), и добывать его второй раз было бы незачем.
 
     Returns:
         dict: `ok` — записали ли, `profile` — что получилось, `error` — причина.
@@ -64,7 +66,7 @@ async def dating_profile_page_read(profile: dict, presence: dict, session_id: st
 
     # `login` подставляется в адрес: страница анкеты открывается по номеру учётки,
     # и одним сценарием читаются все анкеты сайта.
-    result = await runner(int(scenario['id']), session_id, {'login': str(profile['login'])}, {}, True)
+    result = await runner(scenario, session_id, {'login': str(profile['login'])})
     if result.get('status') == 'error':
         return {'ok': False, 'profile': {},
                 'error': f"сценарий анкеты встал на шаге {result.get('step_no', 0)}: "

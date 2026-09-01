@@ -1,0 +1,121 @@
+"""Прогон сценария у соседа — с записью в журнал.
+
+Единственная точка, через которую проект гоняет сценарии. Обёртка над
+`rhapsody_api_scenario_run`: тот отвечает за разговор с соседом, этот — за след,
+который прогон оставляет.
+
+## Зачем нужен след
+
+Прогон — **самое дорогое, что делает панель**: вкладка Chromium, вход на сайт под
+анкетой, десятки секунд ожидания; идут они очередью, по одному
+(`rhapsody_api.md`, §4). Когда что-то идёт не так, первый вопрос — «а что вообще
+запускалось и чем кончилось».
+
+До этого модуля след оставался разрозненный: вход и импорт писали строку в журнал
+анкеты своими словами, выгрузка и списки собеседников не писали ничего, а
+длительность и номер упавшего шага не записывались нигде. Собрать «какие сценарии
+падают чаще» было неоткуда.
+
+## Куда пишется — и куда не пишется
+
+Только в `dating_scenario_run`: сайт, анкета (если есть), сценарий, исход, шаг,
+длительность. Это лента страницы «Журналы».
+
+⚠ **В журнал анкеты этот модуль не пишет намеренно.** Туда вызывающие пишут своими
+словами то, что осмысленно с их стороны: «Избранные с сайта: 18 собеседников»,
+«Вход не прошёл на шаге 7». Добавь мы рядом «Сценарий „избранные собеседники:
+список“ отработал за 38 с» — на каждый прогон в ленте появлялись бы две строки об
+одном и том же. Так и было в первой версии: одно нажатие давало три записи.
+
+Разделение получается по смыслу: журнал анкеты отвечает на вопрос **«что
+получили»**, журнал прогонов — **«сколько это стоило и чем кончилось»**. На общей
+ленте видно и то и другое, и они разводятся отбором.
+
+## ⚠ Запись не роняет работу
+
+Журнал пишется молча: упавшая запись — потерянная строка, а не потерянный прогон,
+ради которого потрачены сорок секунд живого браузера. То же правило, что у
+`dating_log_write` (`dating_log.py`).
+
+Отказ соседа (`RhapsodyError`) записывается и **пробрасывается дальше**: решать,
+что с ним делать — 502 или прежний снимок из кэша, — дело вызывающего, а не
+журнала.
+"""
+
+import time
+
+from logging_.logging_ import logger_info
+from mysql_.mysql_ import mysql_get_db_async
+
+from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_run
+
+# Длина имени сценария — та же, что в схеме (`VARCHAR(200)`). Режем здесь, чтобы
+# длинное имя не роняло вставку.
+DATING_SCENARIO_NAME_MAX = 200
+
+
+async def dating_scenario_run(scenario: dict, site_id: int, profile_id: int = 0,
+                              session_id: str = '', variables: dict = None,
+                              secrets: dict = None, keep_session: bool = True) -> dict:
+    """Гонит сценарий и записывает прогон в журнал.
+
+    Args:
+        scenario: запись сценария от соседа (нужны `id` и `name`).
+        site_id: сайт, по которому идёт работа, — по нему лента страницы «Журналы».
+        profile_id: анкета, если прогон о ней. Ноль — работа по сайту целиком
+            (импорт, выгрузка): анкеты у неё либо ещё нет, либо их много.
+        session_id: готовая вкладка; пусто — сосед заведёт временную.
+        variables: подстановки; уходят соседу и попадают в его журнал.
+        secrets: то же, но в журнал соседа не попадает — там пароли.
+        keep_session: оставить вкладку живой после прогона.
+
+    Returns:
+        dict: ответ соседа как есть — `status`, `step_no`, `error`, `extract`.
+
+    Raises:
+        RhapsodyError: сосед не ответил или ответил отказом. Записывается и
+            пробрасывается: что с ним делать, решает вызывающий.
+    """
+    name = str(scenario.get('name') or '')[:DATING_SCENARIO_NAME_MAX]
+    scenario_id = int(scenario.get('id') or 0)
+    started = time.monotonic()
+
+    try:
+        run = await rhapsody_api_scenario_run(scenario_id, session_id, variables or {},
+                                              secrets or {}, keep_session=keep_session)
+    except RhapsodyError as e:
+        # Сосед не ответил — прогона не было вовсе. Записываем это как отказ на
+        # шаге 0: сценарий не начинался, и приписывать ему шаг было бы враньём.
+        await _write(site_id, profile_id, scenario_id, name, 'error', 0, str(e),
+                     _ms(started))
+        raise
+
+    status = 'error' if str(run.get('status')) == 'error' else 'ok'
+    await _write(site_id, profile_id, scenario_id, name, status,
+                 int(run.get('step_no') or 0), str(run.get('error') or ''), _ms(started))
+
+    return run
+
+
+# ── Приватное ────────────────────────────────────────────────────────────────
+
+def _ms(started: float) -> int:
+    """Сколько прошло с начала прогона. Монотонные часы: меряется длительность, а
+    не «который час», и рывок NTP не должен давать отрицательных секунд."""
+    return max(0, int((time.monotonic() - started) * 1000))
+
+
+async def _write(site_id: int, profile_id: int, scenario_id: int, name: str,
+                 status: str, step_no: int, error: str, ms: int) -> None:
+    """Строка в журнал прогонов."""
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO dating_scenario_run '
+                ' (site_id, profile_id, scenario_id, scenario_name, status, step_no, error, ms)'
+                ' VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+                (int(site_id), int(profile_id) or None, scenario_id, name,
+                 status, step_no, error or None, ms))
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] прогон «{name}» не записался: {e}')
