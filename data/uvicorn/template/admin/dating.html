@@ -154,6 +154,8 @@
     // одной и той же ручки, и две копии разошлись бы в мелочах.
     import {esc, statusTitle, warnBadge, workPills, pagerRender, logRender}
         from '{{ base }}/static/js/dating_view.js';
+    // Сдвиг времени в пояс настройки: с сервера метки приходят в UTC.
+    import {timeShift} from '{{ base }}/static/js/dating_time.js';
     // Загрузка селекта сайта — тоже общая: ключ выбора один на весь раздел.
     import {DATING_SITE_KEY, datingSiteFill} from '{{ base }}/static/js/dating_site.js';
 
@@ -429,7 +431,7 @@
                     <span class="contact-name">${esc(c.name || 'без имени')}</span>
                     <span class="contact-id" title="номер анкеты на сайте">ID ${esc(c.uid)}</span>
                     <span class="contact-last">${esc(last.direction === 'out' ? 'вы: ' : '')}${esc(last.text || 'сообщений нет')}</span>
-                    <span class="contact-time">${esc(String(last.created_at || '').slice(11, 16))}</span>
+                    <span class="contact-time">${esc(timeShift(last.created_at).slice(11, 16))}</span>
                     ${c.needs_answer ? '<span class="need" title="последнее слово за собеседником">нужен ответ</span>'
                                      : `<span class="contact-id" title="реплик в переписке">✉ ${c.messages}</span>`}
                 </div>

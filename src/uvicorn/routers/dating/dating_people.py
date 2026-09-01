@@ -61,10 +61,10 @@ Redis, а не своя таблица: это кэш со сроком годн
 import asyncio
 import json
 import time
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from datetime_.datetime_ import datetime_utc_now
 from logging_.logging_ import logger_info
 from redis_.redis_ import redis_conn_get
 
@@ -226,7 +226,7 @@ async def dating_people_list(profile_id: int, kind: str, fresh: bool = False,
         return _answer(cached, cached=bool(cached), error=str(e))
 
     snapshot = {'at': time.time(),
-                'when': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'when': datetime_utc_now().strftime('%Y-%m-%d %H:%M:%S'),
                 'people': people}
     _cache_put(profile_id, kind, snapshot)
 
@@ -303,7 +303,7 @@ async def _refresh_run(profile: dict, site: dict, kind: str) -> None:
         return
 
     _cache_put(profile_id, kind, {'at': time.time(),
-                                  'when': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                  'when': datetime_utc_now().strftime('%Y-%m-%d %H:%M:%S'),
                                   'people': people})
     _refresh_error.pop(key, None)
     await dating_log_write(profile_id, 'ok', f'{title} с сайта: {len(people)} собеседников')

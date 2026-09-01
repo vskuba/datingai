@@ -25,11 +25,13 @@
   попробовать.
 """
 
+from datetime_.datetime_ import datetime_offset_hours
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
-from setting_.setting_ import setting_delete, setting_set
+from setting_.setting_ import setting_delete, setting_get, setting_set
 
 from src.auth.auth import AuthUser, auth_admin_required
 
@@ -39,12 +41,44 @@ router = APIRouter(prefix='/api/setting', tags=['setting'])
 # 422 с внятным текстом, а не 500 от обрезки на стороне MySQL.
 SETTING_KEY_MAX = 50
 
+# Ключ часового пояса. Имя то же, что у соседа: настройка одна по смыслу, и две
+# панели на одном домене не должны звать её по-разному.
+SETTING_TIMEZONE_KEY = 'timezone'
+
+# Умолчание — UTC, то есть «как контейнер и живёт». Не «+3» и не пояс машины:
+# сервер стоит в UTC, времена в базе лежат в UTC, и молча сдвигать показанное
+# значит врать про то, чего человек не просил. Пояс ставят руками на странице
+# «Настройки → Значения», и до этого панель показывает ровно то, что в базе.
+SETTING_TIMEZONE_DEFAULT = '+0'
+
 
 class SettingSave(BaseModel):
     """Что сохраняем. Пустое значение — удалить строку, а не записать пустоту."""
 
     key: str = Field(..., min_length=1, max_length=SETTING_KEY_MAX)
     value: str = ''
+
+
+async def setting_timezone_hours() -> int:
+    """Часовой пояс панели в часах от UTC. Не задан или мусор — ноль.
+
+    Зовётся на каждую отрисовку страницы, поэтому не бросает: сбой чтения
+    настройки не повод не показать панель. Ноль при этом означает «показываем
+    как есть, в UTC» — то же, что было до появления настройки, и человек увидит
+    не то время, но и не пустую страницу.
+
+    Живёт здесь, а не в `dashboard.py`: страница про пояс ничего не знает, она
+    только передаёт число в разметку. Знание о том, каким ключом он зовётся и
+    чему равен по умолчанию, принадлежит настройкам.
+    """
+    try:
+        raw = await setting_get(SETTING_TIMEZONE_KEY, SETTING_TIMEZONE_DEFAULT)
+    except Exception as e:
+        logger_info(f'[setting] часовой пояс не прочитался: {e}')
+
+        return 0
+
+    return datetime_offset_hours(raw)
 
 
 @router.get('')

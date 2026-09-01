@@ -37,6 +37,8 @@
 <script type="module">
     import {getData, postData, deleteData} from '{{ base }}/static/js/api.js';
     import {showNotification} from '{{ base }}/static/js/notification.js';
+    // Сдвиг времени в пояс настройки: с сервера метки приходят в UTC.
+    import {timeShift} from '{{ base }}/static/js/dating_time.js';
 
     const BASE = '{{ base }}';
 
@@ -117,7 +119,7 @@
                     <tr>
                         <td class="adm-col-name">${esc(file.name)}</td>
                         <td class="adm-col-size">${sizeText(file.size)}</td>
-                        <td class="adm-col-date">${esc(file.modified)}</td>
+                        <td class="adm-col-date">${esc(timeShift(file.modified))}</td>
                         <td class="adm-col-act">
                             <button type="button" class="adm-btn" data-do="get" data-name="${esc(file.name)}">Скачать</button>
                             <button type="button" class="adm-btn good" data-do="apply" data-name="${esc(file.name)}">Применить</button>

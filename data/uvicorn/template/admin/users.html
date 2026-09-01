@@ -120,6 +120,8 @@
 <script type="module">
     import {getData, postData, putData, deleteData} from '{{ base }}/static/js/api.js';
     import {showNotification} from '{{ base }}/static/js/notification.js';
+    // Сдвиг времени в пояс настройки: с сервера метки приходят в UTC.
+    import {timeShift} from '{{ base }}/static/js/dating_time.js';
 
     const BASE = '{{ base }}';
 
@@ -133,7 +135,7 @@
     const esc = (t) => String(t ?? '').replace(/[&<>"']/g,
         (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 
-    const date = (t) => t ? String(t).replace('T', ' ').slice(0, 16) : '';
+    const date = (t) => t ? timeShift(t).slice(0, 16) : '';
 
     async function load() {
         try {

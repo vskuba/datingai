@@ -7,6 +7,15 @@
     <link rel="stylesheet" href="{{ base }}/static/css/common.css">
     <link rel="stylesheet" href="{{ base }}/static/css/menu_top.css">
     <link rel="stylesheet" href="{{ base }}/static/css/notification.css">
+
+    {# Часовой пояс панели — числом часов от UTC, из настройки `timezone`.
+       В разметке, а не запросом: времена с сервера приходят в UTC, и сдвигает их
+       страница. Спроси она смещение отдельным запросом — первые кадры успели бы
+       нарисоваться со старым, и человек видел бы, как время прыгает у него на
+       глазах. К тому же ручка настроек закрыта админом, а правильное время нужно
+       и оператору. Подробности — `dating_time.js`. #}
+    <script>window.DATING_TZ = {{ tz_offset | default(0) }};</script>
+
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -69,7 +78,6 @@
             {% if user.is_admin %}
             <div class="tabnav-panel" data-group="setting">
                 <span class="tabnav-sep"></span>
-                <a href="{{ base }}/admin/setting">🛠️ Значения</a>
                 <a href="{{ base }}/admin/seed">🌱 Seed SQL</a>
                 <a href="{{ base }}/admin/backup">💾 Backup</a>
                 <a href="{{ base }}/admin/users">👥 Пользователи</a>

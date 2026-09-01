@@ -9,6 +9,8 @@
 // `profile-warn`) живут в `dating_page.css`, общем для обеих страниц, и менять
 // их надо в одном месте.
 
+import {timeShift} from './dating_time.js';
+
 export function esc(value) {
     const el = document.createElement('div');
     el.textContent = value == null ? '' : value;
@@ -44,7 +46,7 @@ export function statusDot(row) {
 export function warnBadge(row) {
     if (!row.revive_state || row.revive_state === 'ok') return '';
 
-    const when = row.relogin_next_at ? String(row.relogin_next_at).slice(11, 16) : '';
+    const when = row.relogin_next_at ? timeShift(row.relogin_next_at).slice(11, 16) : '';
     const title = row.revive_state === 'given_up'
         ? `не удаётся войти: ${row.last_error || 'причина неизвестна'} — попытки прекращены, нужен вход вручную`
         : `не удаётся войти: ${row.last_error || 'причина неизвестна'}`
@@ -64,14 +66,17 @@ export function workPills(row) {
 // Время — абсолютное, `26/08 13:59`, и это не лень.
 //
 // «Вчера» и «2 часа назад» пришлось бы считать по часам браузера, а времена
-// анкеты живут по часам базы. `TZ` не задан ни в одном compose, прод-MySQL стоит
-// на чужом сервере, и часы расходятся молча — «вчера» показывалось бы у записи,
+// анкеты живут по одному общему поясу — тому, что стоит в настройке `timezone`.
+// Оператор может сидеть в другом; «вчера» тогда показывалось бы у записи,
 // сделанной час назад. День и месяц перед временем нужны по той же причине, по
 // какой они стоят в журнале: записи лежат за много дней, и голое время не
 // отличает вчерашнюю попытку входа от сегодняшней. Год опущен — смотрят
 // последние дни, а строка повторяется у каждой записи.
+//
+// Сдвиг из UTC делает `timeShift` (`dating_time.js`): с сервера метка приходит в
+// UTC, а человек сверяет её с часами на стене.
 export function seenText(value) {
-    const text = String(value || '').replace('T', ' ');
+    const text = timeShift(value);
     if (text.length < 16) return '';
 
     return `${text.slice(8, 10)}/${text.slice(5, 7)} ${text.slice(11, 16)}`;
@@ -92,7 +97,7 @@ export function seenText(value) {
 // подряд идущие шаги укладываются в одну минуту, и без секунд не видно, что за
 // чем шло; в колонке «Вход» секунда события месячной давности не значит ничего.
 export function logStamp(value) {
-    const raw = String(value || '');
+    const raw = timeShift(value);
     if (raw.length < 19) return raw;
 
     return `${raw.slice(8, 10)}/${raw.slice(5, 7)} ${raw.slice(11, 19)}`;

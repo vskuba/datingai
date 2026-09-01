@@ -571,6 +571,8 @@
     import {showNotification} from '{{ base }}/static/js/notification.js';
     import {esc, onlineDot, warnBadge, seenText, pagerRender, logRender}
         from '{{ base }}/static/js/dating_view.js';
+    // Сдвиг времени в пояс настройки: с сервера метки приходят в UTC.
+    import {timeShift, timeToday} from '{{ base }}/static/js/dating_time.js';
     // Загрузка селекта общая на весь раздел: ключ выбора у страниц один, и
     // разъехавшиеся копии писали бы в него разное.
     import {DATING_SITE_KEY, datingSiteFill} from '{{ base }}/static/js/dating_site.js';
@@ -1137,7 +1139,7 @@
                 + `<span class="contact-id" title="номер анкеты на сайте">ID ${esc(c.uid)}</span>`
                 + `<span class="contact-last">${esc(last.direction === 'out' ? 'вы: ' : '')}`
                 + `${esc(last.text || 'сообщений нет')}</span>`
-                + `<span class="contact-time">${esc(String(last.created_at || '').slice(11, 16))}</span>`
+                + `<span class="contact-time">${esc(timeShift(last.created_at).slice(11, 16))}</span>`
                 + (c.needs_answer
                     ? '<span class="need" title="последнее слово за собеседником">нужен ответ</span>'
                     : `<span class="contact-id" title="реплик в переписке">✉ ${c.messages}</span>`)
@@ -1246,8 +1248,12 @@
 
         // Сегодняшний снимок — часами, вчерашний и старше — датой: «12:15» у
         // списка недельной давности читается как «только что».
-        const stamp = String(state.taken_at);
-        const today = new Date().toISOString().slice(0, 10) === stamp.slice(0, 10);
+        //
+        // «Сегодня» считается по часам панели, а не браузера: оператор может
+        // сидеть в другом поясе, и его полночь не должна объявлять вчерашним то,
+        // что для панели сегодняшнее.
+        const stamp = timeShift(state.taken_at);
+        const today = timeToday() === stamp.slice(0, 10);
         const when = today ? stamp.slice(11, 16) : `${stamp.slice(8, 10)}.${stamp.slice(5, 7)}`;
 
         if (state.error) {
