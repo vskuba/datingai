@@ -10,6 +10,7 @@ import asyncio
 import json
 
 import pytest
+from fastapi import HTTPException
 
 from src.uvicorn.routers.dating import dating_people
 from src.uvicorn.routers.dating.dating_people import (DATING_PEOPLE_FLOOR_SEC,
@@ -113,7 +114,7 @@ def _state_clear() -> None:
 
 def _snapshot(returns=None, fails=''):
     """Подменённый прогон: отдаёт записи или падает с заданной причиной."""
-    async def _run(profile, site, kind):
+    async def _run(profile, kind):
         if fails:
             raise _PeopleFailure(fails)
 
@@ -180,6 +181,28 @@ class TestFailureKeepsCache:
 
         assert answer['error'] == ''
 
+    async def test_unreachable_neighbour_returns_cached_list(self, door, monkeypatch):
+        """⚠ Недоступный сосед тоже не гасит колонку.
+
+        Сайт живёт у соседа, и `dating_profile_site` при его недоступности
+        отвечает 502. Стой этот вызов в ручке до чтения кэша — лежащий сосед
+        уносил бы готовый снимок вместе с собой, хотя показать его ничто не
+        мешает. Так и было; поймано сверкой кода с документацией.
+        """
+        monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
+        await dating_people_list(849, 'favorite', fresh=False, user=None)
+
+        async def _no_site(site_id):
+            raise HTTPException(status_code=502, detail='RhapsodyAi недоступен')
+
+        monkeypatch.setattr(dating_people, 'dating_profile_site', _no_site)
+        _age(door, 849, 'favorite', DATING_PEOPLE_FRESH_SEC + 1)
+
+        answer = (await dating_people_list(849, 'favorite', fresh=False, user=None))['result']
+
+        assert answer['people'] == PEOPLE, 'снимок унесён вместе с недоступным соседом'
+        assert answer['cached'] is True
+
     async def test_failure_without_cache_is_still_200(self, door, monkeypatch):
         """Нечего показать — всё равно ответ, а не 502.
 
@@ -223,7 +246,7 @@ class TestStaleAnswersAtOnce:
         await dating_people_list(849, 'favorite', fresh=False, user=None)
 
         # Прогон, который никогда не кончится: дождись его ручка — тест бы завис.
-        async def _never(profile, site, kind):
+        async def _never(profile, kind):
             await asyncio.sleep(3600)
 
         monkeypatch.setattr(dating_people, '_snapshot', _never)
@@ -246,7 +269,7 @@ class TestStaleAnswersAtOnce:
 
         runs = []
 
-        async def _slow(profile, site, kind):
+        async def _slow(profile, kind):
             runs.append(kind)
             await asyncio.sleep(3600)
 
@@ -271,7 +294,7 @@ class TestStaleAnswersAtOnce:
 
         runs = []
 
-        async def _fails(profile, site, kind):
+        async def _fails(profile, kind):
             runs.append(kind)
             raise _PeopleFailure('браузер соседа занят')
 
@@ -334,7 +357,7 @@ class TestCacheKeeps:
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
         await dating_people_list(849, 'favorite', fresh=False, user=None)
 
-        async def _never(profile, site, kind):
+        async def _never(profile, kind):
             await asyncio.sleep(3600)
 
         monkeypatch.setattr(dating_people, '_snapshot', _never)

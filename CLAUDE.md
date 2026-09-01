@@ -51,6 +51,8 @@
 - **Работа воркера** → `.claude/docs/worker.md`
 - **Новый сайт знакомств** → `.claude/docs/dating.md`, §5.0 (драйвер сайта: настройкой или файлом)
 - **Импорт анкет с сайта** → `.claude/docs/dating.md`, §6.5 (сценарии у соседа, кнопка на «Профилях»)
+- **Новая настройка панели** → `.claude/docs/api.md`, §6.2 (строка в `setting`, страница «Настройки → Значения»)
+- **Показ даты или времени** → `data/uvicorn/public/js/dating_time.js` (⚠ с сервера всё приходит **в UTC**; сдвигает страница по настройке `timezone`)
 - **Проверка после правок** → `.claude/docs/testing.md`
 
 ## Key Files
@@ -71,6 +73,9 @@
 | `src/dating/dating_check.py` | Полная проверка учётки |
 | `src/dating/dating_login.py` | Вход под анкетой: сценарий, состояние, проверка |
 | `src/dating/dating_revive.py` | Автовосстановление входа: правила лестницы (круг и исполнение — в `dating_revive_*.py` рядом) |
+| `src/dating/dating_dialog.py` | Переписка со страницы чата: то, что пришло без держателя |
+| `src/dating/dating_disconnect.py` | Отключение учётки: выход с сайта, снятие с ведения |
+| `src/dating/dating_profile_page.py` | Анкета девушки со страницы кабинета (у женской учётки JSON нет) |
 | `src/dating/dating_json.py` | Общее чтение JSON-столбцов базы |
 | `src/dating/dating_export.py` | Выгрузка анкет: сшивка `extract` сценария в таблицу |
 | `src/dating/dating_import.py` | Импорт анкет: разбор ответа сценария, дубликаты, что обновлять |
@@ -90,9 +95,11 @@
 | `data/uvicorn/public/css/dating_page.css` | Общее оформление страниц раздела Dating (их четыре) |
 | `data/uvicorn/public/js/dating_view.js` | Общая отрисовка учётки: точка, бейджи, время, журнал |
 | `data/uvicorn/public/js/dating_site.js` | Общий селект сайта: загрузка и ключ выбора на весь раздел |
+| `data/uvicorn/public/js/dating_time.js` | Сдвиг времени в часовой пояс настройки: с сервера метки приходят в UTC |
 | `src/auth/auth.py` | Вход в панель: сессия или токен, две роли |
 | `src/auth/auth_users.py` | Управление людьми: кого и что менять нельзя |
 | `src/worker/dating/chat_worker.py` | Смена держателя, очередь `dating` |
+| `data/uvicorn/template/admin/setting.html` | Страница «Настройки → Значения»: ключ и значение, правка на месте |
 | `migrations/20260101000000_initial_schema.sql` | Начальная схема БД; заморожена, изменения — новыми файлами рядом |
 
 ## Docs Reference

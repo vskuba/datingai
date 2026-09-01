@@ -16,6 +16,14 @@ from tests.conftest import ADMIN_USERNAME, DATING_USERNAME
 # Точки, до которых оператора пускать нельзя. Метод указан рядом: `GET` на
 # изменяющей ручке отдал бы 405 и «прошёл» бы проверку, ничего не проверив.
 ROLE_ADMIN_ONLY = [
+    # Настройки панели: строка в `setting` меняет поведение для всех, а не для
+    # того, кто её открыл. Ключ заведомо несуществующий — тот же список гоняется
+    # под администратором, и настоящий здесь означал бы проверку прав ценой
+    # снесённой настройки.
+    ('GET', '/admin/setting'),
+    ('GET', '/api/setting'),
+    ('POST', '/api/setting'),
+    ('DELETE', '/api/setting/такого-ключа-нет'),
     ('GET', '/admin/seed'),
     ('GET', '/admin/backup'),
     ('GET', '/api/seed/table'),
@@ -108,6 +116,23 @@ class TestRole:
         assert 'data-group="dating"' in operator_page, 'у оператора пропала и его вкладка'
         assert 'data-group="setting"' not in operator_page
         assert 'data-group="tool"' not in operator_page
+
+    async def test_every_admin_page_is_reachable_from_the_navbar(self, auth_client):
+        """На каждую админскую страницу из шапки ведёт ссылка.
+
+        ⚠ Проверка не про красоту меню, а про **досягаемость**: страница, на
+        которую не ведёт ничего, существует, отвечает 200 и открывается только по
+        прямому адресу. Ни один тест прав этого не заметит — они ходят по путям
+        сами, минуя навигацию.
+
+        Откуда именно ведёт ссылка, тест не решает: на «Значения» — сама вкладка
+        раздела «Настройки» (подпункт был бы её дублем), на остальные — подпункты
+        второй строки.
+        """
+        page = (await auth_client.get('/admin/dating')).text
+
+        for path in ('/admin/setting', '/admin/seed', '/admin/backup', '/admin/users'):
+            assert f'href="{path}"' in page, f'{path} нет в шапке — страница недостижима'
 
     async def test_refusal_speaks_html_to_browser(self, dating_client):
         """Браузеру отказ приходит страницей, скрипту — прежним `{"detail": …}`.

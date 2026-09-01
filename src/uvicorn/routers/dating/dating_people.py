@@ -184,8 +184,13 @@ async def dating_people_list(profile_id: int, kind: str, fresh: bool = False,
         raise HTTPException(status_code=422, detail=f'неизвестный список «{kind}»')
 
     profile = await dating_profile_row(profile_id)
-    site = await dating_profile_site(int(profile['site_id']))
 
+    # ⚠ **Сайт спрашиваем не здесь, а внутри прогона.** Он живёт у соседа, и
+    # `dating_profile_site` при его недоступности отвечает 502 — то есть недоступный
+    # сосед гасил колонку целиком, хотя снимок лежал в кэше и был готов к показу.
+    # Ровно то, от чего кэш и заведён; поймано сверкой этого файла с документацией.
+    #
+    # Кэшу сайт не нужен вовсе: он нужен прогону, чтобы найти сценарий.
     cached = _cache_get(profile_id, kind)
     if cached:
         age = time.time() - cached['at']
@@ -207,11 +212,11 @@ async def dating_people_list(profile_id: int, kind: str, fresh: bool = False,
         # чем кончилась прошлая попытка, если она сорвалась.
         return _answer(cached, cached=True,
                        error=_refresh_error.get((profile_id, kind), ''),
-                       refreshing=_refresh_start(profile, site, kind))
+                       refreshing=_refresh_start(profile, kind))
 
     # Снимка нет вовсе — вот тут ждём: показать нечего, и «гружу…» честно.
     try:
-        people = await _snapshot(profile, site, kind)
+        people = await _snapshot(profile, kind)
     except _PeopleFailure as e:
         # ⚠ **Отказ не выбрасывает прежний снимок.** Занятый браузер соседа (409),
         # оборванная связь, упавший сценарий — всё это про «сейчас снять не
@@ -243,7 +248,7 @@ class _PeopleFailure(RuntimeError):
     """Снять список не вышло. Текст пригоден для журнала анкеты и для страницы."""
 
 
-def _refresh_start(profile: dict, site: dict, kind: str) -> bool:
+def _refresh_start(profile: dict, kind: str) -> bool:
     """Заводит фоновое обновление снимка, если его пора и можно заводить.
 
     Returns:
@@ -270,12 +275,12 @@ def _refresh_start(profile: dict, site: dict, kind: str) -> bool:
         return False
 
     _refresh_at[key] = time.time()
-    _refreshing[key] = asyncio.ensure_future(_refresh_run(profile, site, kind))
+    _refreshing[key] = asyncio.ensure_future(_refresh_run(profile, kind))
 
     return True
 
 
-async def _refresh_run(profile: dict, site: dict, kind: str) -> None:
+async def _refresh_run(profile: dict, kind: str) -> None:
     """Снимает список в фоне и переписывает кэш. Не бросает: ждать его некому.
 
     Ошибку пишем в журнал анкеты — там её и ищут. В ответ ручки она не попадёт:
@@ -287,7 +292,7 @@ async def _refresh_run(profile: dict, site: dict, kind: str) -> None:
     title = DATING_PEOPLE_TITLES.get(kind, kind)
 
     try:
-        people = await _snapshot(profile, site, kind)
+        people = await _snapshot(profile, kind)
     except _PeopleFailure as e:
         _refresh_error[key] = str(e)
         await dating_log_write(profile_id, 'fail', f'{title} с сайта не снялись: {e}')
@@ -344,7 +349,7 @@ def _cache_put(profile_id: int, kind: str, snapshot: dict) -> None:
         logger_info(f'[dating] кэш собеседников не записался: {e}')
 
 
-async def _snapshot(profile: dict, site: dict, kind: str) -> list:
+async def _snapshot(profile: dict, kind: str) -> list:
     """Гонит сценарий у соседа и разбирает ответ. Любая неудача — `_PeopleFailure`.
 
     Три разных повода не получить список сведены в одно исключение намеренно:
@@ -353,6 +358,16 @@ async def _snapshot(profile: dict, site: dict, kind: str) -> list:
     тексту причины проще, чем по трём веткам кода.
     """
     spec = DATING_PEOPLE_KINDS[kind]
+
+    # Сайт спрашиваем здесь, а не в ручке: он живёт у соседа, и его недоступность
+    # — такая же неудача прогона, как занятый браузер, а не повод погасить колонку
+    # с готовым снимком. `dating_profile_site` отвечает `HTTPException` (502 или
+    # 422) — переводим её в общую неудачу, чтобы кэш отработал по своим правилам.
+    try:
+        site = await dating_profile_site(int(profile['site_id']))
+    except HTTPException as e:
+        raise _PeopleFailure(str(e.detail))
+
     site_id = int(site['id'])
 
     try:

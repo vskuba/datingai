@@ -2,13 +2,21 @@
 
 ## 1. Правило
 
-Все обращения к соседу идут через `src/rhapsody/rhapsody_api.py` — и никак иначе.
-Прямых `httpx.post` по коду быть не должно.
+Все обращения **к соседу** идут через `src/rhapsody/rhapsody_api.py` — и никак
+иначе. Прямого `httpx` к RhapsodyAi по коду быть не должно.
 
 Причина не в аккуратности: адрес, токен, таймауты и разбор ошибок должны жить в
 одном месте. Разбросанные вызовы означают, что половина кода ходит с одним
 таймаутом, половина с другим, а при смене адреса чинить приходится в десяти
 файлах.
+
+Таймауты разные по природе вызова, а не по вкусу: справочники — 30 с, прогон
+сценария — 300 с (водит живой браузер), ответ агента — 600 с (ждёт LLM).
+
+⚠ **`httpx` в коде проекта всё же есть, и это не нарушение.** `dating_presence.py`,
+`dating_send.py` и `dating_profile_cache.py` ходят **напрямую к сайту знакомств** —
+дешёвыми HTTP-запросами с cookie анкеты, минуя браузер. Правило про соседа их не
+касается: это другая сторона, и своей двери у неё нет намеренно (`dating.md`).
 
 ## 2. Кем представляемся
 
@@ -26,7 +34,7 @@
 | `agent:create` | заводить агента анкеты |
 | `agent:view` | находить его потом по имени |
 
-Токен не задан — функции бросают `RhapsodyError('не задан RHAPSODY_TOKEN')`, а не
+Токен не задан — функции бросают `RhapsodyError('не задан RHAPSODY_TOKEN — обращаться нечем')`, а не
 падают в середине работы с непонятным следом.
 
 ## 3. Что спрашиваем
@@ -36,17 +44,19 @@
 | `rhapsody_api_site_get` | `GET /api/browser/site/{id}` | каждый раз, когда нужна настройка `presence` |
 | `rhapsody_api_site_list` | `GET /api/browser/site?tag=dating` | селект сайтов на странице |
 | `rhapsody_api_scenario_login_find` | `GET /api/browser/scenario` + детали | вход на сайт |
-| `rhapsody_api_scenario_find` | `GET /api/browser/scenario` | анкета, диалоги, выход — по имени из `presence` |
+| `rhapsody_api_scenario_find` | `GET /api/browser/scenario` | анкета, диалоги, выход, списки собеседников — по имени; найденное помнится 10 минут |
+| `rhapsody_api_scenario_forget` | — | забыть номер сценария после `→ 404`: его переименовали или удалили |
 | `rhapsody_api_scenario_find_by_id` | `GET /api/browser/scenario/{id}` | подстановки известного сценария перед прогоном |
 | `rhapsody_api_scenario_run` | `POST /api/browser/scenario/{id}/run` | сам прогон в браузере |
 | `rhapsody_api_session_open/close/list/state` | `/api/browser/session…` | жизнь вкладки |
+| `rhapsody_api_session_goto` | `POST /api/browser/session/{id}/goto` | увести вкладку на адрес. ⚠ **В коде проекта не зовётся** — оставлена под ручную отладку |
 | `rhapsody_api_ws_capture` | `POST /api/browser/ws/capture` | снять адрес чат-сокета |
 | `rhapsody_api_agent_create` | `POST /agent/create` | завести агента анкеты |
 | `rhapsody_api_agent_find` | `GET /agent/name/{name}` | найти его номер |
 | `rhapsody_api_chat_ask` | `POST /chat/ask` | получить ответ в чате |
 | `rhapsody_api_error_write` | `POST /api/browser/error` | строка во вкладку «Ошибки» соседа |
 
-## 4. Четыре места, где контракт неочевиден
+## 4. Места, где контракт неочевиден
 
 **Сценарий входа ищется по подстановкам, а не по имени.** Имя у каждого сайта
 своё («вход (общий)», «login»), а вход всегда узнаётся по паре «логин + пароль» в
