@@ -4,6 +4,14 @@
 которого кэш и заведён: **отказ не выбрасывает снимок**. Дождаться настоящего
 отказа в нужную секунду нельзя — пул вкладок у соседа общий, и занят он бывает
 не по расписанию, — поэтому прогон подменяется здесь.
+
+## ⚠ Ручка не ждёт прогона никогда
+
+Из этого растёт форма почти каждого теста здесь. Ответ уходит сразу — со снимком,
+если он есть, и пустым, если его нет, — а прогон идёт **в фоне** и кладёт снимок
+позже. Поэтому «снять список» в тесте — это три шага: спросить, дождаться фоновой
+задачи, спросить снова (`_fill`). Ровно то же делает страница: рисует кэш, шлёт
+запрос, возвращается за результатом.
 """
 
 import asyncio
@@ -22,9 +30,15 @@ SITE = {'id': 343, 'name': 'Ladadate'}
 PEOPLE = [{'uid': '812886', 'name': 'Vincent', 'age': 49, 'photo': '', 'photo_uid': '',
            'online': False, 'is_new': False, 'link': ''}]
 
+# Ключи снимков — те же, что считает сама ручка. Через `_key`, а не строкой:
+# ключ служит и именем снимка в Redis, и именем сторожа фонового обновления, и
+# второе его написание разошлось бы с первым.
+KEY = dating_people._key('favorite', profile_id=PROFILE['id'])
+SITE_KEY = dating_people._key('online', site_id=SITE['id'])
+
 
 class _FakeRedis:
-    """Redis настолько, насколько его использует кэш: `get` и `set` со сроком.
+    """Redis настолько, насколько его использует кэш: `get`, `set` со сроком, `delete`.
 
     Поддельный, а не живой: тесты не должны требовать поднятого Redis, а срок
     годности здесь всё равно проверяется временем внутри снимка, не самим Redis.
@@ -41,13 +55,20 @@ class _FakeRedis:
         self.store[key] = value
         self.ttl[key] = ex
 
+    def delete(self, key):
+        self.store.pop(key, None)
+        self.ttl.pop(key, None)
+
 
 class _Door:
-    """Что подменено вокруг ручки: журнал и Redis — чтобы тест мог в них заглянуть."""
+    """Что подменено вокруг ручки: журнал, Redis и срок хранения."""
 
     def __init__(self, redis):
         self.redis = redis
         self.log: list[tuple[str, str]] = []
+        # Сколько держим снимок. Настройка сайта в живой панели; здесь — поле,
+        # которое тест может подкрутить.
+        self.keep = dating_people.DATING_PEOPLE_KEEP_SEC
 
 
 @pytest.fixture
@@ -72,10 +93,16 @@ async def door(monkeypatch):
     async def _log(profile_id, level, text):
         fake.log.append((level, text))
 
+    # Срок хранения задаёт настройка сайта, а та лежит в MySQL. Подменяем: юнит-тест
+    # не должен требовать поднятой базы, а проверяем мы здесь не чтение настройки.
+    async def _keep(site_id, key):
+        return fake.keep
+
     monkeypatch.setattr(dating_people, 'dating_profile_row', _profile)
     monkeypatch.setattr(dating_people, 'dating_profile_site', _site)
     monkeypatch.setattr(dating_people, 'dating_log_write', _log)
     monkeypatch.setattr(dating_people, 'redis_conn_get', lambda: fake.redis)
+    monkeypatch.setattr(dating_people, 'dating_site_seconds', _keep)
 
     _state_clear()
 
@@ -101,15 +128,16 @@ async def _state_stop() -> None:
 
 
 def _state_clear() -> None:
-    """Сбрасывает память процесса между тестами: сторожа обновления и его ошибку.
+    """Сбрасывает память процесса между тестами: сторожа обновления, его ошибку и
+    подпорку кэша.
 
     Она переживает запросы намеренно (в этом и смысл), а значит переживёт и тест —
-    и следующий получил бы чужой отказ или закрытого сторожа.
-
+    и следующий получил бы чужой отказ, закрытого сторожа или снимок из подпорки.
     """
     dating_people._refreshing.clear()
     dating_people._refresh_at.clear()
     dating_people._refresh_error.clear()
+    dating_people._CACHE_FALLBACK.clear()
 
 
 def _site_profile(found: bool = True):
@@ -143,14 +171,11 @@ class TestFailureKeepsCache:
         состояние чужого пула.
         """
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
-        await dating_people_list(849, 'favorite', fresh=False, user=None)
+        await _fill()
 
         monkeypatch.setattr(dating_people, '_snapshot',
                             _snapshot(fails='браузер соседа занят: предел сессий исчерпан: 25'))
-        _age(door, 849, 'favorite', DATING_PEOPLE_FRESH_SEC + 1)
-        await _refreshed(849, 'favorite')
-
-        answer = (await dating_people_list(849, 'favorite', fresh=False, user=None))['result']
+        answer = (await _retry(door))['result']
 
         assert answer['people'] == PEOPLE, 'снимок выброшен при отказе'
         assert answer['cached'] is True
@@ -163,17 +188,10 @@ class TestFailureKeepsCache:
         бесконечно, ни словом не обмолвившись, что новый не снимается.
         """
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
-        await dating_people_list(849, 'favorite', fresh=False, user=None)
+        await _fill()
 
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(fails='браузер соседа занят'))
-        _age(door, 849, 'favorite', DATING_PEOPLE_FRESH_SEC + 1)
-
-        # Первый запрос заводит обновление и уходит со старым снимком; жалоба
-        # появится в следующем — том, который человек увидит через круг опроса.
-        await dating_people_list(849, 'favorite', fresh=False, user=None)
-        await _refreshed(849, 'favorite')
-
-        answer = (await dating_people_list(849, 'favorite', fresh=False, user=None))['result']
+        answer = (await _retry(door))['result']
 
         assert 'браузер соседа занят' in answer['error']
         assert answer['taken_at'], 'без времени снимка непонятно, насколько он старый'
@@ -183,9 +201,13 @@ class TestFailureKeepsCache:
         человека ошибкой, которой больше нет."""
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(fails='браузер соседа занят'))
         await dating_people_list(849, 'favorite', fresh=False, user=None)
+        await _refreshed(KEY)
 
+        # Выдержку между попытками сбрасываем: тест проверяет не её, а то, что
+        # удачное обновление стирает прежнюю жалобу.
+        dating_people._refresh_at.clear()
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
-        answer = (await dating_people_list(849, 'favorite', fresh=False, user=None))['result']
+        answer = await _fill()
 
         assert answer['error'] == ''
 
@@ -198,13 +220,13 @@ class TestFailureKeepsCache:
         мешает. Так и было; поймано сверкой кода с документацией.
         """
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
-        await dating_people_list(849, 'favorite', fresh=False, user=None)
+        await _fill()
 
         async def _no_site(site_id):
             raise HTTPException(status_code=502, detail='RhapsodyAi недоступен')
 
         monkeypatch.setattr(dating_people, 'dating_profile_site', _no_site)
-        _age(door, 849, 'favorite', DATING_PEOPLE_FRESH_SEC + 1)
+        _stale(door, KEY)
 
         answer = (await dating_people_list(849, 'favorite', fresh=False, user=None))['result']
 
@@ -218,18 +240,27 @@ class TestFailureKeepsCache:
         Страница должна показать причину, а не «шлюз не отвечает».
         """
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(fails='сосед не отвечает'))
-        answer = (await dating_people_list(849, 'online', fresh=False, user=None))['result']
 
-        assert answer['people'] == []
-        assert answer['age_sec'] == -1, 'возраст 0 у несуществующего снимка соврал бы свежестью'
-        assert answer['taken_at'] == ''
-        assert 'сосед не отвечает' in answer['error']
+        # Первый ответ — пустой и без причины: прогон только начался. Причина
+        # появляется в следующем, когда фон уже упал.
+        first = (await dating_people_list(849, 'online', fresh=False, user=None))['result']
+
+        assert first['people'] == []
+        assert first['refreshing'] is True
+        assert first['age_sec'] == -1, 'возраст 0 у несуществующего снимка соврал бы свежестью'
+        assert first['taken_at'] == ''
+
+        await _refreshed(dating_people._key('online', profile_id=849))
+        second = (await dating_people_list(849, 'online', fresh=False, user=None))['result']
+
+        assert 'сосед не отвечает' in second['error']
 
     async def test_failure_goes_to_the_log(self, door, monkeypatch):
         """Отказ пишется в журнал анкеты: там его и ищут, разбирая, почему список
         не обновляется."""
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(fails='браузер соседа занят'))
         await dating_people_list(849, 'favorite', fresh=False, user=None)
+        await _refreshed(KEY)
 
         assert door.log and door.log[-1][0] == 'fail'
         assert 'Избранные' in door.log[-1][1] and 'браузер соседа занят' in door.log[-1][1]
@@ -238,7 +269,7 @@ class TestFailureKeepsCache:
         """Удачный прогон — тоже строка: по ней видно, когда список снимали и
         сколько тогда было народу."""
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
-        await dating_people_list(849, 'favorite', fresh=False, user=None)
+        await _fill()
 
         assert door.log[-1][0] == 'ok'
         assert '1 собеседников' in door.log[-1][1]
@@ -251,14 +282,14 @@ class TestStaleAnswersAtOnce:
         """Ждать прогон, имея на руках список, — значит держать человека сорок
         секунд на слове «гружу…» вместо ответа, который у нас уже есть."""
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
-        await dating_people_list(849, 'favorite', fresh=False, user=None)
+        await _fill()
 
         # Прогон, который никогда не кончится: дождись его ручка — тест бы завис.
         async def _never(profile, kind):
             await asyncio.sleep(3600)
 
         monkeypatch.setattr(dating_people, '_snapshot', _never)
-        _age(door, 849, 'favorite', DATING_PEOPLE_FRESH_SEC + 1)
+        _stale(door, KEY)
 
         answer = await asyncio.wait_for(
             dating_people_list(849, 'favorite', fresh=False, user=None), timeout=2)
@@ -273,7 +304,7 @@ class TestStaleAnswersAtOnce:
         плодил бы ещё один вход на сайт под той же анкетой.
         """
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
-        await dating_people_list(849, 'favorite', fresh=False, user=None)
+        await _fill()
 
         runs = []
 
@@ -282,11 +313,11 @@ class TestStaleAnswersAtOnce:
             await asyncio.sleep(3600)
 
         monkeypatch.setattr(dating_people, '_snapshot', _slow)
-        _age(door, 849, 'favorite', DATING_PEOPLE_FRESH_SEC + 1)
+        _stale(door, KEY)
 
         for _ in range(5):
             await dating_people_list(849, 'favorite', fresh=False, user=None)
-        await asyncio.sleep(0)
+            await asyncio.sleep(0)
 
         assert len(runs) == 1, f'заведено прогонов: {len(runs)}'
 
@@ -298,7 +329,7 @@ class TestStaleAnswersAtOnce:
         ровно то, от чего бережёт кэш.
         """
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
-        await dating_people_list(849, 'favorite', fresh=False, user=None)
+        await _fill()
 
         runs = []
 
@@ -307,12 +338,12 @@ class TestStaleAnswersAtOnce:
             raise _PeopleFailure('браузер соседа занят')
 
         monkeypatch.setattr(dating_people, '_snapshot', _fails)
-        _age(door, 849, 'favorite', DATING_PEOPLE_FRESH_SEC + 1)
+        _stale(door, KEY)
 
         for _ in range(5):
             await dating_people_list(849, 'favorite', fresh=False, user=None)
             await asyncio.sleep(0)
-        await _refreshed(849, 'favorite')
+        await _refreshed(KEY)
 
         assert len(runs) == 1, f'сорвавшийся прогон повторился {len(runs)} раз'
 
@@ -331,9 +362,10 @@ class TestSiteScope:
         monkeypatch.setattr(dating_people, '_site_profile', _site_profile())
 
         await dating_people.dating_people_site_list(343, 'online', fresh=False, user=None)
+        await _refreshed(SITE_KEY)
 
-        assert 'dating:people:site:343:online' in door.redis.store
-        assert 'dating:people:849:online' not in door.redis.store
+        assert SITE_KEY in door.redis.store
+        assert dating_people._key('online', profile_id=849) not in door.redis.store
 
     async def test_second_profile_does_not_run_it_again(self, door, monkeypatch):
         """Щелчок по другой анкете не гонит сценарий заново.
@@ -353,6 +385,7 @@ class TestSiteScope:
 
         for _ in range(3):
             await dating_people.dating_people_site_list(343, 'online', fresh=False, user=None)
+            await asyncio.sleep(0)
 
         assert len(runs) == 1, f'сценарий прогнался {len(runs)} раз вместо одного'
 
@@ -382,6 +415,7 @@ class TestSiteScope:
         monkeypatch.setattr(dating_people, '_site_profile', _site_profile())
 
         await dating_people.dating_people_site_list(343, 'online', fresh=False, user=None)
+        await _refreshed(SITE_KEY)
 
         assert door.log == []
 
@@ -392,8 +426,11 @@ class TestFreshness:
     async def test_fresh_snapshot_does_not_touch_the_site(self, door, monkeypatch):
         """Свежий снимок отдаётся не спрашивая сайт — ради этого кэш и существует."""
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
-        await dating_people_list(849, 'favorite', fresh=False, user=None)
+        await _fill()
 
+        # Выдержку между попытками снимаем: держать сайт должна свежесть снимка, а
+        # не сторож повторных попыток. Иначе тест прошёл бы и без кэша вовсе.
+        dating_people._refresh_at.clear()
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(fails='сюда ходить не должны'))
         answer = (await dating_people_list(849, 'favorite', fresh=False, user=None))['result']
 
@@ -408,14 +445,50 @@ class TestFreshness:
         блокировкой, а блокировка стоит анкеты, а не запроса.
         """
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
-        await dating_people_list(849, 'favorite', fresh=False, user=None)
+        await _fill()
 
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(fails='сюда ходить не должны'))
-        _age(door, 849, 'favorite', DATING_PEOPLE_FLOOR_SEC - 2)
+        _stale(door, KEY, DATING_PEOPLE_FLOOR_SEC - 2)
         answer = (await dating_people_list(849, 'favorite', fresh=True, user=None))['result']
 
         assert answer['cached'] is True and answer['error'] == ''
         assert answer['refreshing'] is False, 'кнопка пробила жёсткий пол'
+
+    async def test_button_works_right_after_a_run(self, door, monkeypatch):
+        """⚠ Кнопка «обновить» не ждёт выдержки между попытками.
+
+        Иначе она молча ничего не делала: минуту назад прошёл удачный прогон,
+        человек видит список полуторной минуты и нажимает «⟳» — а обновление не
+        заводится, потому что выдержка (пять минут) ещё не кончилась. Ни вращения,
+        ни новых имён; кнопка выглядит сломанной.
+
+        Выдержку кнопка обходит по своему смыслу, пол — нет: он про предел сайта.
+        """
+        monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
+        await _fill()
+
+        runs = []
+
+        async def _count(profile, kind):
+            runs.append(kind)
+
+            return list(PEOPLE)
+
+        monkeypatch.setattr(dating_people, '_snapshot', _count)
+        # Минута с прошлой попытки: выдержка (пять минут) не кончилась, пол
+        # (пятнадцать секунд) — давно. Отодвигаем и снимок, и время попытки: с
+        # точки зрения ручки это одно событие — прогон, который минуту назад лёг
+        # в кэш.
+        _age(door, KEY, 60)
+        dating_people._refresh_at[KEY] -= 60
+        answer = (await dating_people_list(849, 'favorite', fresh=True, user=None))['result']
+
+        assert answer['refreshing'] is True, 'кнопка ничего не завела'
+        assert answer['people'] == PEOPLE, 'кнопка убрала список, пока снимает новый'
+
+        await _refreshed(KEY)
+
+        assert len(runs) == 1
 
 
 class TestCacheKeeps:
@@ -425,20 +498,20 @@ class TestCacheKeeps:
         """Срок годности — неделя. Не «сколько он годен», а «сколько его есть чем
         заменить»: пока сценарий не принёс новый, старый — всё, что мы знаем."""
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
-        await dating_people_list(849, 'favorite', fresh=False, user=None)
+        await _fill()
 
-        assert door.redis.ttl['dating:people:849:favorite'] == 7 * 24 * 3600
+        assert door.redis.ttl[KEY] == 7 * 24 * 3600
 
     async def test_week_old_snapshot_is_still_shown(self, door, monkeypatch):
         """Недельный снимок показывается, а не заменяется словом «гружу…»."""
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
-        await dating_people_list(849, 'favorite', fresh=False, user=None)
+        await _fill()
 
         async def _never(profile, kind):
             await asyncio.sleep(3600)
 
         monkeypatch.setattr(dating_people, '_snapshot', _never)
-        _age(door, 849, 'favorite', 6 * 24 * 3600)
+        _stale(door, KEY, 6 * 24 * 3600)
 
         answer = (await dating_people_list(849, 'favorite', fresh=False, user=None))['result']
 
@@ -446,12 +519,32 @@ class TestCacheKeeps:
         assert answer['cached'] is True
         assert answer['age_sec'] > 5 * 24 * 3600
 
-    async def test_broken_redis_does_not_break_the_handler(self, door, monkeypatch):
-        """⚠ Сбой Redis не роняет ручку.
+    async def test_snapshot_past_the_setting_is_dropped(self, door, monkeypatch):
+        """⚠ Срок из настройки сайта проверяется **при показе**, а не только сроком
+        Redis.
 
-        Кэш — ускорение, а не источник правды: не прочитался — сходим к соседу,
-        как в первый раз. Ронять из-за этого страницу значило бы менять
-        «медленно» на «никак».
+        Снимок мог лечь с прежним, длинным сроком, а настройку после этого
+        укоротили: Redis о правке не знает и додержит его до своего конца. Показать
+        в таком случае старое значило бы не выполнить то, о чём попросили.
+        """
+        monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
+        await _fill()
+
+        door.keep = 24 * 3600
+        _stale(door, KEY, 2 * 24 * 3600)
+
+        answer = (await dating_people_list(849, 'favorite', fresh=False, user=None))['result']
+
+        assert answer['people'] == [], 'снимок старше настройки всё ещё показывается'
+        assert KEY not in door.redis.store, 'просроченный снимок оставлен в Redis'
+
+    async def test_broken_redis_does_not_break_the_handler(self, door, monkeypatch):
+        """⚠ Сбой Redis не роняет ручку и не съедает снятый список.
+
+        Ронять страницу значило бы менять «медленно» на «никак». А поскольку
+        результат фонового прогона доезжает до страницы **только через кэш**,
+        «никак» получилось бы и без падения: сорок секунд работы браузера ушли бы
+        в пустоту. Поэтому на время недоступности Redis есть подпорка в памяти.
         """
         class _Broken:
             def get(self, key):
@@ -460,32 +553,76 @@ class TestCacheKeeps:
             def set(self, key, value, ex=None):
                 raise RuntimeError('redis лёг')
 
+            def delete(self, key):
+                raise RuntimeError('redis лёг')
+
         monkeypatch.setattr(dating_people, 'redis_conn_get', lambda: _Broken())
         monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
 
-        answer = (await dating_people_list(849, 'favorite', fresh=False, user=None))['result']
+        answer = await _fill()
 
         assert answer['people'] == PEOPLE
 
 
-async def _refreshed(profile_id: int, kind: str) -> None:
+async def _fill(profile_id: int = PROFILE['id'], kind: str = 'favorite') -> dict:
+    """Первый заход целиком: спросить, дождаться фона, спросить снова.
+
+    ⚠ **Ручка не ждёт прогона никогда** (`api.md`, §3.3): первый ответ приходит
+    пустым, со `refreshing`, а снимок кладёт фоновая задача. Поэтому «получить
+    список» — это два запроса и ожидание между ними, и тест повторяет ровно то, что
+    делает страница.
+    """
+    key = dating_people._key(kind, profile_id=profile_id)
+
+    await dating_people_list(profile_id, kind, fresh=False, user=None)
+    await _refreshed(key)
+
+    return (await dating_people_list(profile_id, kind, fresh=False, user=None))['result']
+
+
+async def _retry(door, profile_id: int = PROFILE['id'], kind: str = 'favorite') -> dict:
+    """Второй заход по устаревшему снимку: состарить, спросить, дождаться фона,
+    спросить снова.
+
+    Отдельно от `_fill`, потому что снимок здесь уже есть: первый ответ уходит с
+    ним, а увидеть итог обновления (новый список или жалобу) можно только в
+    следующем — том, за которым страница вернётся по кругу опроса.
+    """
+    key = dating_people._key(kind, profile_id=profile_id)
+
+    _stale(door, key)
+    await dating_people_list(profile_id, kind, fresh=False, user=None)
+    await _refreshed(key)
+
+    return await dating_people_list(profile_id, kind, fresh=False, user=None)
+
+
+async def _refreshed(key: str) -> None:
     """Дожидается фонового обновления, если оно заведено.
 
     Ключ сторожа — та же строка, что и ключ снимка в Redis: списки бывают по анкете
     и по сайту, и два вида ключей разошлись бы (`_key` в `dating_people.py`).
     """
-    task = dating_people._refreshing.get(_redis_key(profile_id, kind))
+    task = dating_people._refreshing.get(key)
     if task:
         await task
 
 
-def _redis_key(profile_id: int, kind: str) -> str:
-    return f'dating:people:{profile_id}:{kind}'
+def _stale(door, key: str, seconds: float = DATING_PEOPLE_FRESH_SEC + 1) -> None:
+    """Состаривает снимок и снимает выдержку между попытками.
+
+    Оба разом, потому что оба нужны, чтобы следующий запрос дошёл до прогона:
+    свежий снимок отдаётся без сайта, а сторож повторных попыток держит пять минут
+    после **любой** предыдущей попытки — включая ту, которой снимок и положили.
+    Разбирались бы тесты с этим по отдельности — половина проверяла бы не то
+    правило, которое назвала.
+    """
+    _age(door, key, seconds)
+    dating_people._refresh_at.clear()
 
 
-def _age(door, profile_id: int, kind: str, seconds: float) -> None:
+def _age(door, key: str, seconds: float) -> None:
     """Состаривает снимок в кэше — иначе тест ждал бы настоящие пять минут."""
-    key = _redis_key(profile_id, kind)
     snapshot = json.loads(door.redis.store[key])
     snapshot['at'] -= seconds
     door.redis.store[key] = json.dumps(snapshot, ensure_ascii=False)

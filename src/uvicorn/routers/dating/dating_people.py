@@ -76,6 +76,7 @@ from src.dating.dating_scenario import dating_scenario_run
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
                                        rhapsody_api_scenario_forget)
 from src.uvicorn.routers.dating.dating_profile import dating_profile_row, dating_profile_site
+from src.uvicorn.routers.dating.dating_site import dating_site_seconds
 
 router = APIRouter(prefix='/api/dating/people', tags=['dating'])
 
@@ -124,18 +125,38 @@ DATING_PEOPLE_KINDS = {
 DATING_PEOPLE_TITLES = {'favorite': 'Избранные', 'online': 'Кто в сети',
                         'dialog': 'Диалоги'}
 
-# Сколько снимок хранится и показывается. Неделя — не «сколько он годен», а
-# «сколько его есть чем заменить»: пока сценарий не принёс новый список, старый
-# остаётся единственным, что мы знаем о собеседниках анкеты.
+# Сколько снимок хранится и показывается по умолчанию. Неделя — не «сколько он
+# годен», а «сколько его есть чем заменить»: пока сценарий не принёс новый список,
+# старый остаётся единственным, что мы знаем о собеседниках анкеты.
 #
-# Выбросив его по сроку, мы поменяли бы список на слово «гружу…», под которым
-# сорок секунд ожидания и, может быть, отказ занятого браузера. Помеченный
-# недельный список честнее пустоты.
+# Выбросив его по сроку, мы поменяли бы список на слово «гружу…», под которым сорок
+# секунд ожидания и, может быть, отказ занятого браузера. Помеченный недельный
+# список честнее пустоты.
 DATING_PEOPLE_KEEP_SEC = 7 * 24 * 3600
+
+# Виды списков, у которых срок хранения задаёт **настройка сайта**, а не эта
+# константа. Ключ настройки — в `DATING_SITE_KNOWN` (`dating_site.py`).
+#
+# Пока такой один: избранные. У них срок и просили настраивать — состав избранных
+# меняет человек, и на разных сайтах по-разному часто. Лента «кто в сети» и список
+# диалогов живут умолчанием: понадобится — заводится строкой здесь.
+DATING_PEOPLE_KEEP_SETTING = {'favorite': 'favorites_keep'}
 
 # Ключ снимка в Redis. С именем проекта в начале: Redis общий с очередью `dating`
 # и с однопоточным замком воркера, и ключи разных хозяйств не должны сталкиваться.
 DATING_PEOPLE_KEY = 'dating:people:{profile_id}:{kind}'
+
+# ⚠ Подпорка на время недоступности Redis: ключ → тот же JSON, что лёг бы в него.
+#
+# Не замена и не возврат к прежнему кэшу в памяти. Прогон идёт **в фоне**, и его
+# результат доезжает до страницы только через кэш: не запишись он — список не
+# появился бы вовсе, а не «появился бы медленнее». То есть сбой Redis ломал бы не
+# ускорение, а саму работу.
+#
+# Пока Redis жив, сюда не пишется и отсюда не читается: строк здесь единицы (по
+# одной на видимый список), и переживать перезапуск им незачем — это и есть та
+# разница, из-за которой кэш переехал в Redis.
+_CACHE_FALLBACK: dict[str, str] = {}
 
 # Ключ снимка по сайту. Отдельный, а не тот же с чужим номером: списки по анкете и
 # по сайту живут рядом, и общий вид ключа однажды свёл бы их в один.
@@ -260,66 +281,56 @@ async def _list(kind: str, fresh: bool, profile: dict, key: str, log_id: int,
             при этом остаётся в журнале прогонов (`dating_scenario.py`).
         cached: уже прочитанный снимок, если вызывающий его читал.
     """
+    keep = await _keep_sec(kind, int(profile.get('site_id') or 0))
+
     cached = cached if cached is not None else _cache_get(key)
-    if cached:
-        age = time.time() - cached['at']
 
-        # Свежий снимок отдаём не спрашивая сайт — ради этого кэш и существует.
-        # Кнопка «обновить» (`fresh`) выдержку обходит, но пол — нет: он про предел
-        # самого сайта, а не про то, чего хочет страница.
-        if age < (DATING_PEOPLE_FLOOR_SEC if fresh else DATING_PEOPLE_FRESH_SEC):
-            return _answer(cached, cached=True, error='')
+    # ⚠ **Срок проверяем при показе, а не только сроком Redis.** Снимок мог лечь с
+    # прежним, длинным сроком, а настройку после этого укоротили: Redis о правке не
+    # знает и додержит его до своего конца. Показать в таком случае старое значило
+    # бы не выполнить то, о чём попросили настройкой.
+    #
+    # Ключ заодно убираем: место в Redis держать незачем, а следующий заход и так
+    # начнёт со чистого листа.
+    if cached and time.time() - cached['at'] >= keep:
+        _cache_drop(key)
+        cached = None
 
-        # ⚠ **Устаревший снимок отдаём сразу, а сценарий гоним в фоне.**
-        #
-        # Дожидаться прогона здесь значило бы держать страницу сорок секунд (а с
-        # очередью — и дольше) на слове «гружу…», имея на руках готовый список.
-        # Человеку нужен ответ на «кто там на сайте», и вчерашний ответ он
-        # прочтёт сейчас, а сегодняшний — через минуту, сам.
-        #
-        # `refreshing` говорит странице, что стоит вернуться за свежим, а `error` —
-        # чем кончилась прошлая попытка, если она сорвалась.
-        return _answer(cached, cached=True,
-                       error=_refresh_error.get(key, ''),
-                       refreshing=_refresh_start(profile, kind, key, log_id))
+    # Свежий снимок отдаём не спрашивая сайт — ради этого кэш и существует. Кнопка
+    # «обновить» (`fresh`) выдержку обходит, но пол — нет: он про предел самого
+    # сайта, а не про то, чего хочет страница.
+    if cached and time.time() - cached['at'] < (DATING_PEOPLE_FLOOR_SEC if fresh
+                                                else DATING_PEOPLE_FRESH_SEC):
+        return _answer(cached, cached=True, error='')
 
-    # Снимка нет вовсе — вот тут ждём: показать нечего, и «гружу…» честно.
-    try:
-        people = await _snapshot(profile, kind)
-    except _PeopleFailure as e:
-        # ⚠ **Отказ не выбрасывает прежний снимок.** Занятый браузер соседа (409),
-        # оборванная связь, упавший сценарий — всё это про «сейчас снять не
-        # вышло», а не про «того, что мы знали, больше нет». Список, снятый пять
-        # минут назад, человеку полезнее пустого места с красной надписью.
-        #
-        # Поэтому здесь 200 с прежними записями и причиной рядом, а не 502.
-        if log_id:
-            await dating_log_write(
-                log_id, 'fail',
-                f'{DATING_PEOPLE_TITLES.get(kind, kind)} с сайта не снялись: {e}')
-        logger_info(f'[dating] список «{key}» не снялся: {e}')
-
-        return _answer(cached, cached=bool(cached), error=str(e))
-
-    snapshot = {'at': time.time(),
-                'when': datetime_utc_now().strftime('%Y-%m-%d %H:%M:%S'),
-                'people': people}
-    _cache_put(key, snapshot)
-
-    if log_id:
-        await dating_log_write(log_id, 'ok',
-                               f'{DATING_PEOPLE_TITLES.get(kind, kind)} с сайта: '
-                               f'{len(people)} собеседников')
-
-    return _answer(snapshot, cached=False, error='')
+    # ⚠ **Ручка не ждёт прогона. Никогда.**
+    #
+    # Прогон — это вход на сайт под анкетой, сорок секунд живого браузера, а с
+    # очередью и минуты. Ждать его в запросе значит держать страницу пустой всё это
+    # время: белое окно вместо списка, который либо уже есть, либо появится сам.
+    #
+    # Поэтому: есть снимок — отдаём его, нет — отдаём пустой, и в обоих случаях
+    # заводим обновление в фоне. Страница по `refreshing` знает, что стоит вернуться
+    # за результатом, и показывает «снимаю…» вместо «пусто».
+    #
+    # `error` — чем кончилась прошлая попытка: молча показывать старое хуже всего,
+    # человек смотрит на список и не знает, что новый не снимается.
+    return _answer(cached, cached=bool(cached),
+                   error=_refresh_error.get(key, ''),
+                   refreshing=_refresh_start(profile, kind, key, log_id, fresh))
 
 
 class _PeopleFailure(RuntimeError):
     """Снять список не вышло. Текст пригоден для журнала анкеты и для страницы."""
 
 
-def _refresh_start(profile: dict, kind: str, key: str, log_id: int) -> bool:
+def _refresh_start(profile: dict, kind: str, key: str, log_id: int,
+                   fresh: bool = False) -> bool:
     """Заводит фоновое обновление снимка, если его пора и можно заводить.
+
+    Args:
+        fresh: пришли по кнопке «обновить». Тогда выдержка между попытками
+            сокращается до жёсткого пола — см. ниже.
 
     Returns:
         bool: идёт ли обновление прямо сейчас — своё или начатое раньше.
@@ -334,12 +345,22 @@ def _refresh_start(profile: dict, kind: str, key: str, log_id: int) -> bool:
     завёл бы новую попытку. Раз в пятнадцать секунд, бесконечно — то есть ровно
     то, от чего бережёт кэш. Поэтому попытка считается попыткой независимо от
     того, чем кончилась, и следующая — не раньше конца выдержки.
+
+    ⚠ **Кнопке «обновить» второй сторож укорачивается до жёсткого пола.** Иначе
+    она молча ничего не делала: минуту назад прошёл удачный прогон, человек видит
+    список полуторной минуты и нажимает «⟳» — а обновление не заводится, потому
+    что выдержка ещё не кончилась. Кнопка обходит выдержку по своему смыслу
+    (`fresh` в ручке); пол не обходит никто, потому что пол — про предел сайта.
     """
     task = _refreshing.get(key)
     if task and not task.done():
         return True
 
-    if time.time() - _refresh_at.get(key, 0.0) < DATING_PEOPLE_FRESH_SEC:
+    # ⚠ Выдержка не мешает **первому** заходу: пока снимка не было, обновление
+    # никто не заводил, и ждать пять минут ради первого показа незачем. Порог тут
+    # про повторные попытки, а не про начало работы.
+    if time.time() - _refresh_at.get(key, 0.0) < (DATING_PEOPLE_FLOOR_SEC if fresh
+                                                  else DATING_PEOPLE_FRESH_SEC):
         return False
 
     _refresh_at[key] = time.time()
@@ -376,10 +397,25 @@ async def _refresh_run(profile: dict, kind: str, key: str, log_id: int) -> None:
 
     _cache_put(key, {'at': time.time(),
                      'when': datetime_utc_now().strftime('%Y-%m-%d %H:%M:%S'),
-                     'people': people})
+                     'people': people},
+               await _keep_sec(kind, int(profile.get('site_id') or 0)))
     _refresh_error.pop(key, None)
     if log_id:
         await dating_log_write(log_id, 'ok', f'{title} с сайта: {len(people)} собеседников')
+
+
+async def _keep_sec(kind: str, site_id: int) -> int:
+    """Сколько держим и показываем снимок этого вида.
+
+    У избранных срок задаёт настройка сайта: состав избранных меняет человек, и на
+    разных сайтах по-разному часто. Остальные виды живут умолчанием — понадобится,
+    заводится строкой в `DATING_PEOPLE_KEEP_SETTING`.
+    """
+    setting = DATING_PEOPLE_KEEP_SETTING.get(kind)
+    if not setting or not site_id:
+        return DATING_PEOPLE_KEEP_SEC
+
+    return await dating_site_seconds(site_id, setting) or DATING_PEOPLE_KEEP_SEC
 
 
 def _key(kind: str, profile_id: int = 0, site_id: int = 0) -> str:
@@ -416,13 +452,17 @@ def _cache_get(key: str) -> dict | None:
     ⚠ **Сбой Redis не должен ронять ручку.** Кэш — ускорение, а не источник
     правды: не прочитался — сходим к соседу, как в первый раз. Ронять из-за этого
     страницу значило бы менять «медленно» на «никак».
+
+    Не прочитался — смотрим в подпорку (`_CACHE_FALLBACK`): результат фонового
+    прогона едет к странице только через кэш, и без неё «никак» получилось бы всё
+    равно, просто тихо.
     """
     try:
         raw = redis_conn_get().get(key)
     except Exception as e:
         logger_info(f'[dating] кэш собеседников не прочитался: {e}')
 
-        return None
+        raw = _CACHE_FALLBACK.get(key)
 
     if not raw:
         return None
@@ -435,13 +475,33 @@ def _cache_get(key: str) -> dict | None:
     return snapshot if isinstance(snapshot, dict) and 'people' in snapshot else None
 
 
-def _cache_put(key: str, snapshot: dict) -> None:
-    """Кладёт снимок в Redis на неделю. Не бросает — по той же причине, что и чтение."""
+def _cache_drop(key: str) -> None:
+    """Убирает снимок, переживший свой срок. Не бросает — как чтение и запись."""
+    _CACHE_FALLBACK.pop(key, None)
     try:
-        redis_conn_get().set(key, json.dumps(snapshot, ensure_ascii=False),
-                             ex=DATING_PEOPLE_KEEP_SEC)
+        redis_conn_get().delete(key)
+    except Exception as e:
+        logger_info(f'[dating] кэш собеседников не убрался: {e}')
+
+
+def _cache_put(key: str, snapshot: dict, keep: int = DATING_PEOPLE_KEEP_SEC) -> None:
+    """Кладёт снимок в Redis на заданный срок. Не бросает — как и чтение.
+
+    Срок ставится и здесь, и проверяется при показе, и это не дубль: Redis чистит
+    место, а проверка при показе выполняет настройку, которую могли укоротить уже
+    после записи.
+
+    Не записался — кладём в подпорку: срок там сторожит проверка при показе, а
+    иначе снятый список пропал бы вместе с сорока секундами работы браузера.
+    """
+    raw = json.dumps(snapshot, ensure_ascii=False)
+    try:
+        redis_conn_get().set(key, raw, ex=max(60, int(keep)))
+        _CACHE_FALLBACK.pop(key, None)
     except Exception as e:
         logger_info(f'[dating] кэш собеседников не записался: {e}')
+
+        _CACHE_FALLBACK[key] = raw
 
 
 async def _snapshot(profile: dict, kind: str) -> list:

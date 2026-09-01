@@ -285,6 +285,25 @@
         .people-reload:hover { color: #4338ca; }
         .people-reload:disabled { opacity: .4; cursor: default; }
 
+        /* ⚠ Пока список снимается, иконка крутится и пульсирует.
+           Список при этом остаётся на месте: кэш показывается сразу, а прогон
+           идёт десятки секунд. Без признака работы нажатие выглядит так, будто
+           не сработало — список-то не меняется. Пульсация к вращению добавлена
+           затем, чтобы движение читалось краем глаза: колонка узкая, иконка в
+           ней 12 пикселей, и одно вращение на таком размере почти незаметно. */
+        .people-reload.spin {
+            color: #4338ca; cursor: default;
+            animation: people-reload-spin .9s linear infinite,
+                       people-reload-pulse 1.4s ease-in-out infinite;
+        }
+        @keyframes people-reload-spin { to { transform: rotate(360deg); } }
+        @keyframes people-reload-pulse { 50% { opacity: .35; } }
+        /* Тем, кто просил обойтись без движения, остаётся цвет: признак работы
+           нужен и им, а крутить у них на экране мы права не имеем. */
+        @media (prefers-reduced-motion: reduce) {
+            .people-reload.spin { animation: none; opacity: .55; }
+        }
+
         /* Счёт в заголовке: сколько человек в списке. Без него «Favorite» не
            говорит, семнадцать их или ни одного, пока не вглядишься в столбик. */
         .people-count { color: #4338ca; font-weight: 700; }
@@ -1150,34 +1169,22 @@
 
         // «⟳» у ленты «Все онлайн»: список по сайту, и обходит он выдержку, но не
         // жёсткий пол ручки.
+        //
+        // ⚠ **Список при нажатии не стирается.** Прежде на его место вставало
+        // «снимаю…» — то есть кнопка «обновить» первым делом убирала то, что
+        // человек читал, и на сорок секунд оставляла его ни с чем. Теперь о работе
+        // говорит сама иконка (`peopleSpin`), а список стоит, пока не придёт новый.
+        //
+        // Кнопка не запирается: повторное нажатие отсекает `peopleBusy` внутри
+        // загрузки, а запертая иконка не может крутиться.
         const onlineBtn = workEl.querySelector('.online-row .people-reload');
-        if (onlineBtn) {
-            onlineBtn.addEventListener('click', async () => {
-                onlineBtn.disabled = true;
-                fillSlot('online-strip', '<div class="people-empty">снимаю…</div>', true);
-                try {
-                    await peopleOnlineLoad(true);
-                } finally {
-                    onlineBtn.disabled = false;
-                }
-            });
-        }
+        if (onlineBtn) onlineBtn.addEventListener('click', () => peopleOnlineLoad(true));
 
         // «⟳» у колонок собеседников — по одной на вид списка.
         workEl.querySelectorAll('.people-col').forEach(col => {
             const kind = col.dataset.kind;
             const btn = col.querySelector('.people-reload');
-            if (!btn) return;
-
-            btn.addEventListener('click', async () => {
-                btn.disabled = true;
-                fillSlot(kind, '<div class="people-empty">снимаю…</div>', true);
-                try {
-                    await peopleLoad(kind, true);
-                } finally {
-                    btn.disabled = false;
-                }
-            });
+            if (btn) btn.addEventListener('click', () => peopleLoad(kind, true));
         });
 
         chatDialogsBind();
@@ -1252,7 +1259,9 @@
         }
 
         if (workTab === 'chat') {
-            await chatLoad();
+            // `true`: сюда приходят по действию человека — он выбрал анкету,
+            // вкладку или сайт. Круг перерисовки зовёт `chatLoad` напрямую.
+            await chatLoad(true);
             return;
         }
 
@@ -1269,7 +1278,11 @@
 
     // Наполняет вкладку «Чат» данными. Разметку не собирает — она уже стоит из
     // шаблона сайта; здесь только содержимое контейнеров.
-    async function chatLoad() {
+    // Args:
+    //   refresh: пришли по действию человека — выбрал анкету, вкладку или сайт.
+    //     Тогда блоки с кэшем шлют запрос на обновление, нарисовав кэш (`peopleShow`).
+    //     Круг перерисовки этого не ставит: он идёт каждые десять секунд.
+    async function chatLoad(refresh = false) {
         if (!openId || workTab !== 'chat') return;
         if (!await workTemplate()) return;
 
@@ -1322,7 +1335,7 @@
         });
 
         chatBind();
-        peopleShow();
+        peopleShow(refresh);
     }
 
     function chatContacts(data) {
@@ -1415,16 +1428,57 @@
     // мигание пустотой каждые десять секунд читалось бы как «список пропал».
     const peopleCache = new Map();
 
+    // Списки, по которым запрос прямо сейчас в пути. Ключ — тот же, что у снимка
+    // в памяти страницы.
+    //
+    // Нужен для двух вещей разом: показать вращение иконки и **отсечь повторный
+    // запрос**. Второе не мелочь — щелчок по «⟳» и круг перерисовки могут прийтись
+    // на одну секунду, и без сторожа страница спросила бы список дважды.
+    const peopleBusy = new Set();
+
+    // ⚠ Признак работы на иконке «⟳»: крутится и пульсирует, пока список снимается.
+    //
+    // Крутится и пока в пути наш запрос, и пока сервер сообщает `refreshing`, —
+    // для человека это одно ожидание, а не два: он нажал и ждёт список. Ручка
+    // отвечает мгновенно (кэшем), а прогон живёт в фоне десятки секунд, и без
+    // признака нажатие выглядит бесследным.
+    function peopleSpin(box, key, state) {
+        const btn = box && box.querySelector('.people-reload');
+        if (!btn) return;
+
+        btn.classList.toggle('spin', peopleBusy.has(key) || !!(state && state.refreshing));
+    }
+
 
     // Карточка ленты: лицо крупнее, чем в колонке, под ним имя и возраст. В ряду
     // место есть по вертикали, а имён поперёк помещается тем больше, чем уже
     // карточка, — поэтому подпись под лицом, а не рядом.
-    function peopleCards(state) {
+    // Что показать вместо списка, когда показывать нечего. Пусто — значит список
+    // есть, и рисовать надо его.
+    //
+    // ⚠ **Идущая съёмка и настоящая пустота — разные вещи.** Пока сценарий на
+    // сайте, список пуст, но «пусто» здесь читалось бы как «на сайте никого»: то
+    // есть сообщало бы неправду ровно в момент, когда ответа ещё нет. Ручка
+    // никогда не ждёт прогона (`api.md`, §3.3), поэтому такой ответ — обычное дело
+    // на первом заходе.
+    function peopleIdle(state, empty = 'пусто') {
         if (!state) return '<div class="people-empty">гружу…</div>';
-        if (state.error && !state.people.length) {
+
+        if (state.people.length) return '';
+
+        if (state.refreshing) {
+            return '<div class="people-empty"><span class="dating-spin"></span>снимаю…</div>';
+        }
+        if (state.error) {
             return `<div class="people-empty bad" title="${esc(state.error)}">не снялось</div>`;
         }
-        if (!state.people.length) return '<div class="people-empty">никого нет в сети</div>';
+
+        return `<div class="people-empty">${empty}</div>`;
+    }
+
+    function peopleCards(state) {
+        const idle = peopleIdle(state, 'никого нет в сети');
+        if (idle) return idle;
 
         return state.people.map(p =>
             `<div class="person-card${String(openUid) === String(p.uid) ? ' open' : ''}"`
@@ -1485,11 +1539,8 @@
     }
 
     function peopleRows(state) {
-        if (!state) return '<div class="people-empty">гружу…</div>';
-        if (state.error && !state.people.length) {
-            return `<div class="people-empty bad" title="${esc(state.error)}">не снялось</div>`;
-        }
-        if (!state.people.length) return '<div class="people-empty">пусто</div>';
+        const idle = peopleIdle(state);
+        if (idle) return idle;
 
         return state.people.map(p =>
             `<div class="person${String(openUid) === String(p.uid) ? ' open' : ''}"`
@@ -1522,7 +1573,12 @@
     // Грузит ряд «Все онлайн» — по сайту, а не по анкете.
     async function peopleOnlineLoad(fresh = false) {
         const site = Number(siteEl.value) || 0;
-        if (!site) return;
+        if (!site || peopleBusy.has(ONLINE_KEY)) return;
+
+        // Вращение показываем **до** запроса, а не по его ответу: ответ придёт
+        // через мгновение (он из кэша), но щелчок должен отозваться сразу.
+        peopleBusy.add(ONLINE_KEY);
+        peopleOnlinePaint();
 
         let state;
         try {
@@ -1530,6 +1586,8 @@
                                    + (fresh ? '?fresh=1' : ''))).result || {};
         } catch (e) {
             state = {people: [], error: e.message};
+        } finally {
+            peopleBusy.delete(ONLINE_KEY);
         }
 
         // Гонка та же, что у списков по анкете: ответ по прежнему сайту может
@@ -1581,30 +1639,42 @@
         const strip = slot('online-strip');
         if (!strip) return;
 
+        const row = strip.closest('.online-row') || strip;
         const state = peopleCache.get(ONLINE_KEY);
         strip.innerHTML = peopleCards(state);
         fillSlot('online-count', peopleCount(state));
         fillSlot('online-when', peopleWhen(state), true);
-        peopleBindRows(strip.closest('.online-row') || strip);
+        peopleSpin(row, ONLINE_KEY, state);
+        peopleBindRows(row);
     }
 
     async function peopleLoad(kind, fresh = false) {
         if (!openId) return;
 
         const requestId = openId;
+        const key = `${requestId}|${kind}`;
+        if (peopleBusy.has(key)) return;
+
+        // Вращение показываем **до** запроса: кэш уже нарисован, ответ придёт
+        // мгновенно, но щелчок должен отозваться сразу.
+        peopleBusy.add(key);
+        peoplePaint(kind);
+
         let state;
         try {
             state = (await getData(`${BASE}/api/dating/people/${requestId}/${kind}`
                                    + (fresh ? '?fresh=1' : ''))).result || {};
         } catch (e) {
             state = {people: [], error: e.message};
+        } finally {
+            peopleBusy.delete(key);
         }
 
         // Та же гонка, что у списка и журнала: ответ по уже снятой анкете может
         // прийти позже ответа по вновь выбранной.
         if (openId !== requestId) return;
 
-        peopleCache.set(`${requestId}|${kind}`, state);
+        peopleCache.set(key, state);
         peoplePaint(kind);
 
         // Сервер отдал кэш и пошёл снимать новый — вернёмся за ним. Сам он
@@ -1659,11 +1729,13 @@
         const body = slot(kind);
         if (!body) return;
 
+        const col = body.closest('.people-col') || body;
         const state = peopleCache.get(`${openId}|${kind}`);
         body.innerHTML = peopleRows(state);
         fillSlot(`${kind}-count`, peopleCount(state));
         fillSlot(`${kind}-when`, peopleWhen(state), true);
-        peopleBindRows(body.closest('.people-col') || body);
+        peopleSpin(col, `${openId}|${kind}`, state);
+        peopleBindRows(col);
     }
 
     // Пишет в слот, если он в шаблоне есть. Отдельной функцией, потому что «слота
@@ -1694,23 +1766,35 @@
     //
     // Нет своего снимка — слот показывает «гружу…», а не чужой список: пусть
     // человек лучше подождёт, чем прочтёт неправду.
-    function peopleShow() {
+    //
+    // ⚠ **Порядок: сначала кэш, потом запрос. Для всех блоков, у которых есть кэш.**
+    //
+    // Сначала рисуем то, что уже знаем, и только потом спрашиваем сервер. Обратный
+    // порядок — «спросить и нарисовать по ответу» — оставлял бы блок пустым на всё
+    // время ожидания, хотя показать было что. Ждать при этом нечего: ручка отвечает
+    // мгновенно и сама заводит прогон в фоне (`api.md`, §3.3).
+    //
+    // Args:
+    //   refresh: пришли по действию человека (выбрал анкету, сменил вкладку или
+    //     сайт) — тогда запрос шлём всегда, даже если снимок в памяти есть: человек
+    //     только что открыл блок и вправе ждать, что тот освежится. Круг
+    //     перерисовки ставит `false` — он идёт каждые десять секунд, и запрос на
+    //     каждый круг был бы лишним даже с кэшем.
+    function peopleShow(refresh = false) {
         if (workEl.querySelector('.online-row')) {
             peopleOnlinePaint();
 
-            // ⚠ Ряд «Все онлайн» грузим, только если его ещё нет: он про сайт, и
-            // снимать его заново на каждый щелчок по анкете значило бы ходить на
-            // сайт десять раз ради одинакового ответа.
-            if (!peopleCache.has(ONLINE_KEY)) peopleOnlineLoad();
+            // Ряд «Все онлайн» — про сайт, а не про анкету, но правило то же:
+            // нарисовали кэш, спросили обновление. Сколько бы анкет ни щёлкнули,
+            // на сайт это сходит не чаще выдержки — за этим следит ручка.
+            if (refresh || !peopleCache.has(ONLINE_KEY)) peopleOnlineLoad();
         }
 
         workEl.querySelectorAll('.people-col').forEach(col => {
             const kind = col.dataset.kind;
             peoplePaint(kind);
 
-            // Список грузим, только если его ещё нет: перерисовка чата идёт каждые
-            // десять секунд, и запрос на каждый круг был бы лишним даже с кэшем.
-            if (!peopleCache.has(`${openId}|${kind}`)) peopleLoad(kind);
+            if (refresh || !peopleCache.has(`${openId}|${kind}`)) peopleLoad(kind);
         });
     }
 

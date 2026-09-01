@@ -44,6 +44,28 @@ router = APIRouter(prefix='/api/dating/site', tags=['dating'])
 # читает их одними глазами, и разные пределы в двух местах пришлось бы помнить.
 DATING_SITE_KEY_MAX = 50
 
+# Известные настройки: те, у которых есть смысл и заданный набор значений.
+#
+# ⚠ **Реестр живёт здесь, а не на странице.** Значение читает код, и набор
+# допустимых значений — его условие, а не украшение формы. Знай его только
+# страница, вписанное мимо набора (руками, скриптом, чужой правкой) прошло бы молча
+# и обнаружилось поведением, которого никто не просил.
+#
+# Незнакомые ключи при этом не запрещены: сайт настраивают по ходу дела, и
+# требовать записи в реестре на каждый новый — значит останавливать работу ради
+# правки кода. Такие страница показывает полем ввода.
+#
+# `seconds` в значениях, а не «7д»: их читает код, и таблица разбора «7д → 604800»
+# была бы вторым местом, где это знание живёт. Смысл несут подписи в наборе.
+DATING_SITE_KNOWN = {
+    'favorites_keep': {
+        'title': 'Кеш My Favorites',
+        'note': 'сколько держим снятый список избранных у каждой анкеты',
+        'default': '604800',
+        'options': [('604800', '7 дней'), ('259200', '3 дня'), ('86400', '24 часа')],
+    },
+}
+
 
 class DatingSiteSave(BaseModel):
     """Настройки сайта целиком: страница шлёт весь набор, а не по одной."""
@@ -56,7 +78,9 @@ async def dating_site_list(user: AuthUser = Depends(auth_required)):
     """Сайты соседа вместе с нашими настройками.
 
     Returns:
-        dict: `sites` — записи `id`, `name`, `url`, `settings`.
+        dict: `sites` — записи `id`, `name`, `url`, `settings`; `known` — реестр
+        известных настроек, по которому страница рисует их набором значений, а не
+        полем ввода.
 
     Raises:
         HTTPException: 502 — сосед не ответил.
@@ -76,7 +100,8 @@ async def dating_site_list(user: AuthUser = Depends(auth_required)):
                                   'name': str(site.get('name') or ''),
                                   'url': str(site.get('url') or ''),
                                   'settings': saved.get(int(site.get('id') or 0), {})}
-                                 for site in sites]}}
+                                 for site in sites],
+                       'known': _known()}}
 
 
 @router.get('/{site_id}', include_in_schema=False)
@@ -136,11 +161,54 @@ async def dating_site_setting(site_id: int, key: str, default: str = '') -> str:
     Отдельной функцией, а не запросом на месте: настройки читают из разных мест, и
     разбор JSON, размазанный по коду, разойдётся в мелочах — например, в том, что
     делать с отсутствующей строкой.
+
+    Умолчание берётся из реестра, если своё не передали: код, который спрашивает
+    известную настройку, не должен повторять её умолчание — два места разошлись бы.
     """
-    return (await _settings_all()).get(int(site_id), {}).get(str(key), default)
+    key = str(key)
+    if not default:
+        default = str(DATING_SITE_KNOWN.get(key, {}).get('default') or '')
+
+    return (await _settings_all()).get(int(site_id), {}).get(key, default)
+
+
+async def dating_site_seconds(site_id: int, key: str) -> int:
+    """Настройка-срок в секундах. Мусор и пустота — умолчание из реестра.
+
+    ⚠ **Значение вне набора не принимается.** Набор — условие кода, а не украшение
+    формы: впиши кто-нибудь в базу «месяц», и снимок жил бы месяц, хотя ни одна
+    страница такого не предлагала. Берём умолчание и говорим об этом в лог.
+    """
+    known = DATING_SITE_KNOWN.get(str(key), {})
+    fallback = int(known.get('default') or 0)
+    allowed = {value for value, _ in known.get('options') or ()}
+
+    raw = str(await dating_site_setting(site_id, key)).strip()
+    if allowed and raw not in allowed:
+        if raw:
+            logger_info(f'[dating] «{key}» у сайта #{site_id} вне набора: {raw!r}')
+
+        return fallback
+
+    return int(raw) if raw.isdigit() else fallback
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+def _known() -> list[dict]:
+    """Реестр в виде, пригодном для страницы: список, а не словарь.
+
+    Списком, потому что порядок значит: настройки показываются в нём, а у словаря
+    порядок — случайность его сборки.
+    """
+    return [{'key': key,
+             'title': spec['title'],
+             'note': spec.get('note', ''),
+             'default': spec['default'],
+             'options': [{'value': value, 'title': title}
+                         for value, title in spec['options']]}
+            for key, spec in DATING_SITE_KNOWN.items()]
+
 
 async def _settings_all() -> dict[int, dict]:
     """Все сохранённые настройки: номер сайта → набор.

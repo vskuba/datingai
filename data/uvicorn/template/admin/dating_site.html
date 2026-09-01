@@ -70,6 +70,19 @@
         .set-table td { padding: 6px 14px; border-bottom: 1px solid #f1f5f9; }
         .set-table tr:last-child td { border-bottom: none; }
         .set-col-key { width: 34%; }
+
+        /* Известная настройка: человеческое имя сверху, ключ под ним мелким. Ключ
+           нужен — по нему её читает код и о ней говорят в документации, — но
+           первым читают название. */
+        .set-title { display: block; font-size: 12px; color: #111827; font-weight: 600; }
+        .set-key-small {
+            display: block; font-family: ui-monospace, Menlo, Consolas, monospace;
+            font-size: 10px; color: #94a3b8;
+        }
+        .set-note { display: block; font-size: 10px; color: #94a3b8; margin-top: 2px; }
+        /* Ширину задаём: `common.css` даёт всем `select` `width: 100%`, и набор
+           значений растянулся бы на всю колонку. */
+        .set-select { width: auto; min-width: 160px; padding: 5px 8px; }
         .set-col-act { width: 44px; text-align: center; }
 
         .site-body { padding: 0; }
@@ -117,6 +130,11 @@
     // Сайты соседа вместе с нашими настройками: список ведёт он, значения — мы.
     let sites = [];
 
+    // Реестр известных настроек — тех, у которых есть заданный набор значений.
+    // Приходит с сервера, а не вписан здесь: набор — условие кода, читающего
+    // настройку, и вторая его копия на странице разошлась бы с первой.
+    let known = [];
+
     function siteId() {
         return Number(siteEl.value) || 0;
     }
@@ -127,7 +145,9 @@
 
     async function load() {
         try {
-            sites = (await getData(`${BASE}/api/dating/site`)).result.sites || [];
+            const answer = (await getData(`${BASE}/api/dating/site`)).result;
+            sites = answer.sites || [];
+            known = answer.known || [];
         } catch (e) {
             bodyEl.innerHTML = `<div class="site-empty">Сайты не пришли: ${esc(e.message)}</div>`;
             return;
@@ -143,7 +163,11 @@
             return;
         }
 
-        const keys = Object.keys(site.settings || {}).sort();
+        // Известные настройки показываем **всегда**, даже незаведённые: иначе
+        // выставить их в первый раз можно было бы только зная ключ наизусть.
+        const knownKeys = known.map(spec => spec.key);
+        const custom = Object.keys(site.settings || {})
+            .filter(key => !knownKeys.includes(key)).sort();
 
         bodyEl.innerHTML = '<div class="site-card">'
             + `<span class="site-card-name">${esc(site.name)}</span>`
@@ -153,16 +177,16 @@
             + '<span class="site-card-note">имя и адрес — из RhapsodyAi</span>'
             + '</div>'
             + (CAN_EDIT ? addForm() : '')
-            + (keys.length
-                ? '<table class="set-table"><thead><tr>'
-                  + '<th class="set-col-key">Ключ</th><th>Значение</th>'
-                  + (CAN_EDIT ? '<th class="set-col-act"></th>' : '')
-                  + '</tr></thead><tbody>'
-                  + keys.map(key => row(site, key)).join('')
-                  + '</tbody></table>'
-                : `<div class="site-empty">${CAN_EDIT
-                    ? 'Настроек у этого сайта нет — заведите первую'
-                    : 'Настроек у этого сайта нет'}</div>`);
+            + '<table class="set-table"><thead><tr>'
+            + '<th class="set-col-key">Настройка</th><th>Значение</th>'
+            + (CAN_EDIT ? '<th class="set-col-act"></th>' : '')
+            + '</tr></thead><tbody>'
+            + known.map(spec => knownRow(site, spec)).join('')
+            + custom.map(key => row(site, key)).join('')
+            + '</tbody></table>'
+            + (custom.length || !CAN_EDIT ? ''
+                : '<div class="site-empty">Своих настроек у этого сайта нет — '
+                  + 'заведите, если нужны</div>');
 
         bind();
     }
@@ -178,6 +202,36 @@
             + '<button type="button" class="dating-btn primary" id="addSave">Завести</button>'
             + '<button type="button" class="dating-btn" id="addCancel">Отмена</button>'
             + '</div>';
+    }
+
+    // Известная настройка: набором значений, а не полем ввода. Значение вне набора
+    // код всё равно не примет (`dating_site_seconds`), и предлагать его набором —
+    // единственный способ не расходиться с ним.
+    //
+    // ⚠ Незаведённая настройка показывает **умолчание кода**, а не пустоту: она
+    // действует, и показать «не задано» значило бы соврать про поведение.
+    function knownRow(site, spec) {
+        const value = (site.settings || {})[spec.key];
+        const chosen = value === undefined ? spec.default : value;
+        const saved = value !== undefined;
+
+        return `<tr data-key="${esc(spec.key)}" data-known="1">`
+            + '<td>'
+            + `<span class="set-title">${esc(spec.title)}</span>`
+            + `<span class="set-key-small">${esc(spec.key)}</span>`
+            + (spec.note ? `<span class="set-note">${esc(spec.note)}</span>` : '')
+            + '</td>'
+            + '<td>'
+            + `<select class="set-value set-select"${CAN_EDIT ? '' : ' disabled'}>`
+            + spec.options.map(opt =>
+                `<option value="${esc(opt.value)}"`
+                + `${String(opt.value) === String(chosen) ? ' selected' : ''}>`
+                + `${esc(opt.title)}</option>`).join('')
+            + '</select>'
+            + (saved ? '' : '<span class="set-note">умолчание — пока не сохраняли</span>')
+            + '</td>'
+            + (CAN_EDIT ? '<td class="set-col-act"></td>' : '')
+            + '</tr>';
     }
 
     function row(site, key) {
@@ -196,7 +250,15 @@
     function bind() {
         if (!CAN_EDIT) return;
 
-        bodyEl.querySelectorAll('tr[data-key]').forEach(tr => {
+        // Набор значений сохраняется сразу по выбору: отдельная кнопка «применить»
+        // у селекта из трёх вариантов — лишний шаг, а несохранённый выбор в нём не
+        // отличить от сохранённого.
+        bodyEl.querySelectorAll('tr[data-known] .set-select').forEach(select => {
+            const key = select.closest('tr').dataset.key;
+            select.addEventListener('change', () => save({[key]: select.value}));
+        });
+
+        bodyEl.querySelectorAll('tr[data-key]:not([data-known])').forEach(tr => {
             const key = tr.dataset.key;
             const input = tr.querySelector('.set-value');
             input.dataset.saved = input.value;
