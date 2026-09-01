@@ -16,7 +16,7 @@
 значило бы расширить её контракт.
 """
 
-from src.uvicorn.routers.dating.dating_log import _query
+from src.uvicorn.routers.dating.dating_log import _query, _run_text
 
 SITE = 343
 
@@ -31,20 +31,20 @@ class TestQueryShape:
         пятьдесят свежих строк, надо знать, сколько взять из каждой таблицы, а
         этого заранее не знает никто.
         """
-        sql, params = _query(SITE, 'all', '', '')
+        sql, params = _query(SITE, 0, 'all', '', '')
 
         assert 'UNION ALL' in sql
         assert 'dating_log' in sql and 'dating_scenario_run' in sql
         assert params == [SITE, SITE]
 
     def test_profile_only(self):
-        sql, params = _query(SITE, 'profile', '', '')
+        sql, params = _query(SITE, 0, 'profile', '', '')
 
         assert 'dating_scenario_run' not in sql
         assert params == [SITE]
 
     def test_scenario_only(self):
-        sql, params = _query(SITE, 'scenario', '', '')
+        sql, params = _query(SITE, 0, 'scenario', '', '')
 
         assert 'dating_log' not in sql
         assert params == [SITE]
@@ -55,7 +55,7 @@ class TestQueryShape:
         У строки журнала анкеты нет ни сценария, ни длительности — недостающее
         подставляется пустым. Это не потеря, а разная природа записей.
         """
-        sql, _ = _query(SITE, 'all', '', '')
+        sql, _ = _query(SITE, 0, 'all', '', '')
         halves = sql.split(' UNION ALL ')
 
         assert len(halves) == 2
@@ -66,7 +66,7 @@ class TestQueryShape:
     def test_site_is_matched_differently_in_each_half(self):
         """И это не оплошность: у прогона сайт записан прямо в строке, а строка
         журнала анкеты знает только анкету — сайт достаётся через неё."""
-        sql, _ = _query(SITE, 'all', '', '')
+        sql, _ = _query(SITE, 0, 'all', '', '')
 
         assert 'p.site_id = %s' in sql, 'журнал анкеты отбирается через саму анкету'
         assert 'r.site_id = %s' in sql, 'у прогона сайт лежит в строке'
@@ -81,7 +81,7 @@ class TestQueryFilters:
         Сводится к тем же уровням, что у журнала анкеты: иначе фильтр «только
         отказы» работал бы на одной половине ленты и молчал на другой.
         """
-        sql, params = _query(SITE, 'all', 'fail', '')
+        sql, params = _query(SITE, 0, 'all', 'fail', '')
 
         assert 'l.level = %s' in sql
         assert 'r.status = %s' in sql
@@ -93,7 +93,7 @@ class TestQueryFilters:
         Прогон в состоянии `sent` ещё не имеет итога; ложить его в `ok` значило бы
         сказать, что он отработал, а в `fail` — что упал. Ни то ни другое.
         """
-        sql, params = _query(SITE, 'all', 'info', '')
+        sql, params = _query(SITE, 0, 'all', 'info', '')
 
         assert 'r.status = %s' in sql
         assert params == [SITE, 'info', SITE, 'sent']
@@ -104,14 +104,14 @@ class TestQueryFilters:
         Половина ленты обязана остаться пустой, а не отдать все прогоны подряд:
         иначе «покажи входящие» приносило бы и то, чего человек не просил.
         """
-        sql, params = _query(SITE, 'all', 'in', '')
+        sql, params = _query(SITE, 0, 'all', 'in', '')
 
         assert '1 = 0' in sql
         assert params == [SITE, 'in', SITE]
 
     def test_search_covers_text_and_profile(self):
         """Ищут и по тексту строки, и по анкете: помнят обычно одно из двух."""
-        sql, params = _query(SITE, 'profile', '', 'Diana')
+        sql, params = _query(SITE, 0, 'profile', '', 'Diana')
 
         assert 'l.text LIKE %s' in sql
         assert params.count('%Diana%') == 3
@@ -119,7 +119,7 @@ class TestQueryFilters:
     def test_search_covers_scenario_and_error(self):
         """У прогонов ищется имя сценария и причина отказа: с симптома начинают
         чаще, чем с имени."""
-        sql, params = _query(SITE, 'scenario', '', 'занят')
+        sql, params = _query(SITE, 0, 'scenario', '', 'занят')
 
         assert 'r.scenario_name LIKE %s' in sql
         assert 'r.error LIKE %s' in sql
@@ -132,9 +132,68 @@ class TestQueryFilters:
         `profile`. Две разошедшиеся копии выражения дали бы «ищу по одному,
         показываю другое».
         """
-        sql, _ = _query(SITE, 'profile', '', 'кто-то')
+        sql, _ = _query(SITE, 0, 'profile', '', 'кто-то')
 
         assert sql.count("JSON_EXTRACT(p.profile, '$.name')") == 2
+
+
+class TestProfileScope:
+    """Тот же сборщик собирает и журнал одной анкеты."""
+
+    def test_profile_filter_reaches_both_halves(self):
+        """⚠ Прогон — одна строка в базе, показанная в двух местах.
+
+        Журнал анкеты на «Профилях» и общая лента «Журналов» складывают одни и те
+        же две таблицы; разница только в отборе. Дублировать прогон в `dating_log`
+        значило бы держать две записи об одном событии, которые разойдутся при
+        первой же правке текста.
+        """
+        sql, params = _query(0, 849, 'all', '', '')
+
+        assert 'l.profile_id = %s' in sql, 'журнал анкеты не отбирается по ней самой'
+        assert 'r.profile_id = %s' in sql, 'прогоны не отбираются по анкете'
+        assert params == [849, 849]
+
+    def test_no_scope_does_not_break_the_query(self):
+        """Без отбора половина отдала бы всё подряд, а пустой `WHERE` — это
+        синтаксическая ошибка. Оба вызывающих отбор задают, но полагаться на это в
+        сборке запроса нельзя: третий об этом правиле не узнает."""
+        sql, params = _query(0, 0, 'all', '', '')
+
+        assert 'WHERE 1 = 1' in sql
+        assert params == []
+
+
+class TestRunWording:
+    """Текст строки прогона собирает сервер, а не страница."""
+
+    def test_sent(self):
+        """Первая из пары: запрос ушёл, ответа ещё нет."""
+        assert _run_text({'level': 'info', 'scenario_name': 'вход'}) \
+            == 'Отправлен запрос на сценарий «вход»'
+
+    def test_answer_carries_duration(self):
+        """Вторая из пары — с длительностью: «вход стал идти вдвое дольше» видно
+        только рядом лежащими замерами."""
+        text = _run_text({'level': 'ok', 'scenario_name': 'вход', 'ms': 38300})
+
+        assert text == 'Получен ответ на сценарий «вход» — 38.3 с'
+
+    def test_failure_names_the_step(self):
+        text = _run_text({'level': 'fail', 'scenario_name': 'вход', 'step_no': 7,
+                          'text': 'нет кнопки'})
+
+        assert text == 'Сценарий «вход» встал на шаге 7: нет кнопки'
+
+    def test_step_zero_means_it_never_started(self):
+        """⚠ Шаг 0 — не «встал на первом», а «не начинался»: сосед не ответил,
+        вкладка не открывалась. «Встал на шаге 0» было бы враньём про место
+        отказа."""
+        text = _run_text({'level': 'fail', 'scenario_name': 'вход', 'step_no': 0,
+                          'text': 'браузер соседа занят'})
+
+        assert 'не запустился' in text
+        assert 'шаге 0' not in text
 
 
 class TestFeedHandler:

@@ -1,8 +1,13 @@
 """Общая лента журнала: всё, что происходило по сайту, одним списком.
 
-Журнал по одной анкете отдаёт `dating_profile_view.py` — он про «что было с этой
-учёткой». Здесь другой вопрос: **что вообще происходило на сайте**, без выбора
-анкеты заранее. С него начинают разбор, когда неизвестно, где искать.
+Здесь же собирается и **журнал одной анкеты** — тот, что показывает правая колонка
+на «Профилях» (`dating_profile_view.py` зовёт `dating_log_feed` с номером анкеты).
+Отличается он только отбором: по анкете вместо сайта.
+
+⚠ **Прогон сценария — одна строка в базе, показанная в двух местах.** Не копия:
+дублировать её в `dating_log` значило бы держать две записи об одном событии,
+которые разойдутся при первой же правке текста. Поэтому обе ленты складывают одни
+и те же две таблицы, и разница между ними — в условии отбора.
 
 ## Два источника, одна лента
 
@@ -20,11 +25,18 @@
 пуст) — они идут по сайту целиком, и в журнал ни одной учётки не попадают. Это и
 есть главный повод завести общую ленту: до неё их след не был виден нигде.
 
-## Почему сайт обязателен
+## Почему отбор обязателен
 
 Анкеты у разных сайтов живут своей жизнью, и общий список без отбора перемешал бы
 работу по одному сайту с работой по другому. Селект сайта на странице всё равно
 есть — он общий на весь раздел.
+
+## Текст строки собирается здесь, а не на странице
+
+У прогона в базе лежат части — имя сценария, исход, шаг, длительность, — а не
+готовая фраза. Собрать её мог бы и браузер, но лент две, и две копии правил
+разошлись бы: журнал анкеты говорил бы одно, общая лента другое об одном и том же
+событии.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -83,10 +95,34 @@ async def dating_log_list(site_id: int = 0, kind: str = 'all', level: str = '',
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail=f'неизвестная лента «{kind}»')
 
+    return {'result': await dating_log_feed(site_id=int(site_id), kind=kind,
+                                            level=str(level or ''),
+                                            q=str(q or '').strip(),
+                                            page=page, per_page=per_page)}
+
+
+async def dating_log_feed(site_id: int = 0, profile_id: int = 0, kind: str = 'all',
+                          level: str = '', q: str = '', page: int = 1,
+                          per_page: int = DATING_LOG_PAGE) -> dict:
+    """Лента журнала: работа по анкетам и прогоны сценариев одним списком.
+
+    Args:
+        site_id: отбор по сайту — общая лента страницы «Журналы».
+        profile_id: отбор по анкете — журнал в правой колонке «Профилей». Задают
+            одно из двух; оба сразу сузят ленту до пересечения.
+        kind, level, q: вид ленты, уровень, поиск.
+        page, per_page: страница и её размер.
+
+    Returns:
+        dict: `rows` с готовым текстом, `total`, `page` (исправленный), `pages`.
+
+    Общая **для обеих лент**: прогон лежит в базе одной строкой, и показывать его
+    двумя разными способами значило бы разойтись в словах об одном событии.
+    """
     per_page = max(1, min(int(per_page or DATING_LOG_PAGE), DATING_LOG_PAGE_MAX))
     page = max(1, int(page or 1))
 
-    sql, params = _query(int(site_id), kind, str(level or ''), str(q or '').strip())
+    sql, params = _query(int(site_id), int(profile_id), kind, level, q)
 
     async with mysql_get_db_async() as db:
         await db.execute(f'SELECT COUNT(*) AS n FROM ({sql}) AS лента', params)
@@ -98,12 +134,15 @@ async def dating_log_list(site_id: int = 0, kind: str = 'all', level: str = '',
         pages = max(1, -(-total // per_page))
         page = min(page, pages)
 
+        # ⚠ Порядок по времени, а не по `id`: номера идут из **двух** таблиц, и
+        # соседние по времени записи могут иметь несравнимые номера. Сортировка по
+        # `id` перемешала бы ленту так, что этого никто бы не заметил.
         await db.execute(f'{sql} ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s',
                          (*params, per_page, (page - 1) * per_page))
         rows = await db.fetchall()
 
-    return {'result': {'rows': [dict(row) for row in rows],
-                       'total': total, 'page': page, 'pages': pages}}
+    return {'rows': [_row(dict(row)) for row in rows],
+            'total': total, 'page': page, 'pages': pages}
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
@@ -123,7 +162,45 @@ _NAME = ("COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(p.profile, '$.name')), 'null
 _LEVEL_TO_STATUS = {'ok': 'ok', 'fail': 'error', 'info': 'sent'}
 
 
-def _query(site_id: int, kind: str, level: str, q: str) -> tuple[str, list]:
+def _row(row: dict) -> dict:
+    """Дополняет строку готовым текстом. У журнала анкеты он уже есть."""
+    if row.get('source') != 'scenario':
+        return row
+
+    row['text'] = _run_text(row)
+
+    return row
+
+
+def _run_text(row: dict) -> str:
+    """Что написано в строке прогона.
+
+    Прогон даёт **две** записи, и читаются они как пара: «отправлен запрос» и
+    следом «получен ответ» с длительностью.
+
+    ⚠ Строка «отправлен» без пары — не потерянная запись, а **зависший прогон**:
+    ответ не пришёл, и мерить пока нечего. Ради этого случая отметка об отправке и
+    заводилась.
+
+    ⚠ Шаг 0 у отказа не значит «встал на первом»: он значит, что сценарий **не
+    начинался** — сосед не ответил, вкладка не открывалась. Написать «встал на
+    шаге 0» было бы враньём про место отказа.
+    """
+    name = f"«{row.get('scenario_name') or ''}»"
+    level = row.get('level')
+
+    if level == 'info':
+        return f'Отправлен запрос на сценарий {name}'
+
+    if level == 'fail':
+        where = f"встал на шаге {row['step_no']}" if row.get('step_no') else 'не запустился'
+
+        return f"Сценарий {name} {where}: {row.get('text') or 'причина неизвестна'}"
+
+    return f"Получен ответ на сценарий {name} — {int(row.get('ms') or 0) / 1000:.1f} с"
+
+
+def _query(site_id: int, profile_id: int, kind: str, level: str, q: str) -> tuple[str, list]:
     """Собирает запрос ленты и его параметры.
 
     Обе половины дают **одинаковый набор колонок** — иначе `UNION` их не сложит.
@@ -132,13 +209,22 @@ def _query(site_id: int, kind: str, level: str, q: str) -> tuple[str, list]:
 
     Отбор по сайту у половин разный, и это не оплошность: у прогона сайт записан
     прямо в строке, а строка журнала анкеты знает только анкету — сайт достаётся
-    через неё.
+    через неё. Отбор по анкете, наоборот, одинаков: номер анкеты есть у обеих.
     """
     parts, params = [], []
 
+    # `1 = 1` как основа: без отбора половина отдала бы всё подряд, а пустой
+    # `WHERE` — синтаксическая ошибка. Оба вызывающих отбор задают (ручка требует
+    # сайт, журнал анкеты передаёт её номер), но полагаться на это в сборке
+    # запроса нельзя: третий вызывающий об этом правиле не узнает.
     if kind in ('all', 'profile'):
-        where = ['p.site_id = %s']
-        args = [site_id]
+        where, args = ['1 = 1'], []
+        if site_id:
+            where.append('p.site_id = %s')
+            args.append(site_id)
+        if profile_id:
+            where.append('l.profile_id = %s')
+            args.append(profile_id)
         if level:
             where.append('l.level = %s')
             args.append(level)
@@ -156,8 +242,13 @@ def _query(site_id: int, kind: str, level: str, q: str) -> tuple[str, list]:
         params += args
 
     if kind in ('all', 'scenario'):
-        where = ['r.site_id = %s']
-        args = [site_id]
+        where, args = ['1 = 1'], []
+        if site_id:
+            where.append('r.site_id = %s')
+            args.append(site_id)
+        if profile_id:
+            where.append('r.profile_id = %s')
+            args.append(profile_id)
         # У прогона нет колонки `level`: есть исход. Сводим к тем же уровням, что
         # у журнала анкеты, — иначе фильтр «только отказы» работал бы на одной
         # половине ленты и молчал на другой.

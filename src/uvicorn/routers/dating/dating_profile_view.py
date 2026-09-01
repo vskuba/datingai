@@ -20,6 +20,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
 from src.dating.dating_json import dating_json_load
+from src.uvicorn.routers.dating.dating_log import dating_log_feed
 from src.uvicorn.routers.dating.dating_profile import dating_profile_row
 
 router = APIRouter(prefix='/api/dating/profile', tags=['dating'])
@@ -68,17 +69,24 @@ async def dating_profile_view_read(profile_id: int,
 @router.get('/{profile_id}/log', include_in_schema=False)
 async def dating_profile_view_log(profile_id: int, limit: int = 100,
                           user=Depends(auth_required)):
-    """Журнал по учётке, свежие сверху."""
+    """Журнал по учётке, свежие сверху.
+
+    Собирается тем же сборщиком, что и общая лента «Журналов»
+    (`dating_log_feed`), только отбор здесь по анкете, а не по сайту. Отсюда
+    главное: **прогоны сценариев видны и тут**.
+
+    ⚠ Прогон — одна строка в базе, показанная в двух местах, а не копия.
+    Дублировать её в `dating_log` значило бы держать две записи об одном событии,
+    которые разойдутся при первой же правке текста.
+    """
     await dating_profile_row(profile_id)
-    limit = max(1, min(int(limit or 100), 500))
 
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'SELECT id, level, text, created_at FROM dating_log '
-            f' WHERE profile_id = %s ORDER BY id DESC LIMIT {limit}', (profile_id,))
-        rows = await db.fetchall()
+    feed = await dating_log_feed(profile_id=profile_id,
+                                 per_page=max(1, min(int(limit or 100), 500)))
 
-    return {'result': rows}
+    # Плоским списком, а не с пейджером: правая колонка показывает последние
+    # строки без листания, и менять её контракт ради общего сборщика незачем.
+    return {'result': feed['rows']}
 
 
 @router.get('/{profile_id}/card', include_in_schema=False)
