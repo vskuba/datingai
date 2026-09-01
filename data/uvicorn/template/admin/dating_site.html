@@ -1,0 +1,304 @@
+{% extends "base.html" %}
+
+{% block title %}Сайты | DatingAi{% endblock %}
+
+{% block head %}
+    <link rel="stylesheet" href="{{ base }}/static/css/dating_page.css">
+    <style>
+        /* Обойма, шапка и белая панель — общие с разделом (`dating_page.css`).
+           Здесь только раскладка: шапка и под ней одна панель во всю высоту, как
+           на «Журналах». Колонок нет — делить нечего. */
+        .dating-page { grid-template-rows: auto minmax(0, 1fr); }
+
+        /* Что за сайт настраиваем: имя и адрес приходят от соседа и правке здесь
+           не подлежат — своей копии сайтов у нас нет. Показываем их прямо над
+           настройками, чтобы не гадать, к чему они относятся. */
+        .site-card {
+            display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+            padding: 10px 14px; border-bottom: 1px solid #f1f5f9;
+        }
+        .site-card-name { font-weight: 600; color: #111827; font-size: 13px; }
+        .site-card-url { color: #6b7280; font-size: 11px; }
+        .site-card-note { margin-left: auto; color: #94a3b8; font-size: 11px; }
+
+        /* Ключ — моноширинным: это имя из кода, и в нём различают `_` от `-` и
+           единицу от строчной «l». То же решение, что на «Настройки → Значения». */
+        .set-key {
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+            font-size: 12px; color: #0f172a; word-break: break-all;
+        }
+        .set-value {
+            width: 100%; padding: 5px 9px; font-size: 12px;
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+            border: 1px solid #e5e7eb; border-radius: 6px; background: #fff;
+        }
+        .set-value:focus { outline: none; border-color: #6366f1; }
+        .set-value:disabled { opacity: .6; }
+        /* Несохранённая правка видна: без этого набранное и сохранённое выглядят
+           одинаково, и человек уходит со страницы в уверенности, что сохранил. */
+        .set-value.dirty { border-color: #f59e0b; background: #fffbeb; }
+
+        .set-drop {
+            border: 0; background: none; cursor: pointer; color: #cbd5e1;
+            font-size: 15px; line-height: 1; padding: 0 4px;
+        }
+        .set-drop:hover { color: #dc2626; }
+
+        /* Форма заведения прячется, пока не нажали «Добавить»: в обычный день
+           настройку не заводят, а место над списком она занимает. */
+        .set-add {
+            display: none; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+            background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+            padding: 12px 14px; margin: 12px;
+        }
+        .set-add.on { display: flex; }
+        .set-add label { font-size: 11px; color: #64748b; display: block; margin-bottom: 3px; }
+        .set-add input {
+            padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px;
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+        }
+        .set-add .set-add-key { width: 220px; }
+        .set-add .set-add-value { width: 320px; }
+
+        .set-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .set-table th {
+            padding: 7px 14px; text-align: left; white-space: nowrap;
+            background: #f8fafc; border-bottom: 1px solid #e5e7eb;
+            font-weight: 700; color: #64748b;
+            text-transform: uppercase; letter-spacing: .04em;
+        }
+        .set-table td { padding: 6px 14px; border-bottom: 1px solid #f1f5f9; }
+        .set-table tr:last-child td { border-bottom: none; }
+        .set-col-key { width: 34%; }
+        .set-col-act { width: 44px; text-align: center; }
+
+        .site-body { padding: 0; }
+        .site-empty { padding: 20px 14px; color: #9ca3af; font-size: 12px; text-align: center; }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="dating-page">
+
+    <div class="dating-head">
+        <h1>🌐 Сайты</h1>
+        <select id="siteSelect" title="Сайт, который настраиваем"></select>
+        <span class="dating-hint" id="hint"></span>
+        {% if user.is_admin %}
+        <button type="button" class="dating-btn" id="addBtn" style="margin-left:auto">Добавить</button>
+        {% endif %}
+    </div>
+
+    <div class="pane">
+        <div class="pane-head">Настройки сайта</div>
+        <div class="pane-body site-body" id="body">
+            <div class="site-empty">Загружаю…</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+    import {getData, putData} from '{{ base }}/static/js/api.js';
+    import {showNotification} from '{{ base }}/static/js/notification.js';
+    import {esc} from '{{ base }}/static/js/dating_view.js';
+    import {DATING_SITE_KEY, datingSiteFill} from '{{ base }}/static/js/dating_site.js';
+
+    const BASE = '{{ base }}';
+    // Правку прячем от того, кто её не сохранит: ручка всё равно ответит 403, но
+    // форма, которая всегда отказывает, читается как поломка панели.
+    const CAN_EDIT = {{ 'true' if user.is_admin else 'false' }};
+
+    const siteEl = document.getElementById('siteSelect');
+    const hintEl = document.getElementById('hint');
+    const bodyEl = document.getElementById('body');
+
+    // Сайты соседа вместе с нашими настройками: список ведёт он, значения — мы.
+    let sites = [];
+
+    function siteId() {
+        return Number(siteEl.value) || 0;
+    }
+
+    function current() {
+        return sites.find(s => s.id === siteId()) || null;
+    }
+
+    async function load() {
+        try {
+            sites = (await getData(`${BASE}/api/dating/site`)).result.sites || [];
+        } catch (e) {
+            bodyEl.innerHTML = `<div class="site-empty">Сайты не пришли: ${esc(e.message)}</div>`;
+            return;
+        }
+
+        paint();
+    }
+
+    function paint() {
+        const site = current();
+        if (!site) {
+            bodyEl.innerHTML = '<div class="site-empty">Выберите сайт</div>';
+            return;
+        }
+
+        const keys = Object.keys(site.settings || {}).sort();
+
+        bodyEl.innerHTML = '<div class="site-card">'
+            + `<span class="site-card-name">${esc(site.name)}</span>`
+            + `<span class="site-card-url">${esc(site.url)}</span>`
+            // Говорим прямо, откуда имя и адрес: иначе непонятно, почему их нельзя
+            // поправить здесь же.
+            + '<span class="site-card-note">имя и адрес — из RhapsodyAi</span>'
+            + '</div>'
+            + (CAN_EDIT ? addForm() : '')
+            + (keys.length
+                ? '<table class="set-table"><thead><tr>'
+                  + '<th class="set-col-key">Ключ</th><th>Значение</th>'
+                  + (CAN_EDIT ? '<th class="set-col-act"></th>' : '')
+                  + '</tr></thead><tbody>'
+                  + keys.map(key => row(site, key)).join('')
+                  + '</tbody></table>'
+                : `<div class="site-empty">${CAN_EDIT
+                    ? 'Настроек у этого сайта нет — заведите первую'
+                    : 'Настроек у этого сайта нет'}</div>`);
+
+        bind();
+    }
+
+    function addForm() {
+        return '<div class="set-add" id="addForm">'
+            + '<div><label for="addKey">Ключ</label>'
+            + '<input type="text" id="addKey" class="set-add-key" placeholder="answer_delay_sec"'
+            + ' autocomplete="off" maxlength="50"></div>'
+            + '<div><label for="addValue">Значение</label>'
+            + '<input type="text" id="addValue" class="set-add-value" placeholder="30"'
+            + ' autocomplete="off"></div>'
+            + '<button type="button" class="dating-btn primary" id="addSave">Завести</button>'
+            + '<button type="button" class="dating-btn" id="addCancel">Отмена</button>'
+            + '</div>';
+    }
+
+    function row(site, key) {
+        return `<tr data-key="${esc(key)}">`
+            + `<td class="set-key">${esc(key)}</td>`
+            + '<td>'
+            + `<input type="text" class="set-value" autocomplete="off"${CAN_EDIT ? '' : ' disabled'}`
+            + ` value="${esc(site.settings[key])}"></td>`
+            + (CAN_EDIT
+                ? '<td class="set-col-act">'
+                  + '<button type="button" class="set-drop" title="Убрать настройку">✕</button></td>'
+                : '')
+            + '</tr>';
+    }
+
+    function bind() {
+        if (!CAN_EDIT) return;
+
+        bodyEl.querySelectorAll('tr[data-key]').forEach(tr => {
+            const key = tr.dataset.key;
+            const input = tr.querySelector('.set-value');
+            input.dataset.saved = input.value;
+
+            input.addEventListener('input', () => {
+                input.classList.toggle('dirty', input.value !== input.dataset.saved);
+            });
+            // Enter и уход из поля — одно действие; Escape возвращает прежнее.
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') input.blur();
+                if (e.key === 'Escape') {
+                    input.value = input.dataset.saved;
+                    input.classList.remove('dirty');
+                    input.blur();
+                }
+            });
+            input.addEventListener('change', () => save({[key]: input.value}, input));
+
+            tr.querySelector('.set-drop').addEventListener('click', () => drop(key));
+        });
+
+        const form = document.getElementById('addForm');
+        document.getElementById('addSave').addEventListener('click', async () => {
+            const key = document.getElementById('addKey').value.trim();
+            const value = document.getElementById('addValue').value;
+            if (!key) return showNotification('Ключ не может быть пустым', 'error');
+            // Пустое значение на сервере означает «не хранить», и завести им
+            // настройку нельзя: строка не появилась бы, а человек решил бы, что
+            // появилась. То же правило, что на «Настройки → Значения».
+            if (!value) return showNotification('Значение не может быть пустым', 'error');
+
+            if (await save({[key]: value})) form.classList.remove('on');
+        });
+        document.getElementById('addCancel').addEventListener('click', () => {
+            form.classList.remove('on');
+        });
+    }
+
+    // ⚠ Ручка переписывает набор **целиком**, поэтому шлём весь, подменив в нём
+    // изменённое. Отправь мы одну пару — остальные настройки сайта пропали бы.
+    async function save(patch, input) {
+        const site = current();
+        if (!site) return false;
+
+        const settings = {...site.settings, ...patch};
+        // Пустое значение сервер выбрасывает; убираем его и у себя, чтобы
+        // показанное совпадало с сохранённым без второго запроса.
+        for (const [key, value] of Object.entries(settings)) {
+            if (value === '') delete settings[key];
+        }
+
+        if (input) input.disabled = true;
+        try {
+            site.settings = (await putData(`${BASE}/api/dating/site/${site.id}`,
+                                           {settings})).result.settings || {};
+        } catch (e) {
+            if (input) {
+                input.value = input.dataset.saved;
+                input.classList.remove('dirty');
+            }
+            showNotification('Не сохранилось: ' + e.message, 'error');
+            return false;
+        } finally {
+            if (input) input.disabled = false;
+        }
+
+        showNotification('Настройки сайта сохранены', 'success');
+        paint();
+
+        return true;
+    }
+
+    async function drop(key) {
+        if (!confirm(`Убрать настройку «${key}»? Начнёт действовать умолчание кода.`)) return;
+
+        await save({[key]: ''});
+    }
+
+    if (CAN_EDIT) {
+        document.getElementById('addBtn').addEventListener('click', () => {
+            const form = document.getElementById('addForm');
+            if (!form) return;
+            form.classList.add('on');
+            document.getElementById('addKey').focus();
+        });
+    }
+
+    siteEl.addEventListener('change', () => {
+        localStorage.setItem(DATING_SITE_KEY, siteEl.value);
+        paint();
+    });
+
+    (async () => {
+        try {
+            await datingSiteFill(siteEl, BASE);
+        } catch (e) {
+            siteEl.innerHTML = '<option value="">сайты не пришли</option>';
+            showNotification('Список сайтов не пришёл: ' + e.message, 'error');
+        }
+        hintEl.textContent = CAN_EDIT ? 'настройки сайта на нашей стороне'
+                                      : 'настройки сайта — правит администратор';
+        await load();
+    })();
+</script>
+{% endblock %}

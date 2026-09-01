@@ -62,6 +62,17 @@ async def dashboard_dating_error(request: Request, user: AuthUser = Depends(auth
     return await _dashboard_page(request, user, 'admin/dating_error.html')
 
 
+@router.get('/admin/dating/site', response_class=HTMLResponse, include_in_schema=False)
+async def dashboard_dating_site(request: Request, user: AuthUser = Depends(auth_required)):
+    """Страница «Сайты»: настройки сайта на нашей стороне.
+
+    Открыта всем вошедшим, как остальные страницы раздела: оператору полезно
+    видеть, с чем он работает. Правка при этом закрыта админом — на уровне ручки
+    (`api.md`, §3.5), а страница прячет форму от того, кому её не сохранить.
+    """
+    return await _dashboard_page(request, user, 'admin/dating_site.html')
+
+
 @router.get('/admin/setting', response_class=HTMLResponse, include_in_schema=False)
 async def dashboard_setting(request: Request, user: AuthUser = Depends(auth_admin_required)):
     """Значения настроек: ключ и значение, правятся на месте. Только админу —
