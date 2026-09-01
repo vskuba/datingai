@@ -385,14 +385,8 @@
         .prof-name-row { display: flex; align-items: center; gap: 5px; min-width: 0; }
         .prof-name-row .prof-name { min-width: 0; }
 
-        /* Кто это: лицо, имя, под ним логин. Ширину не задаём — колонка забирает
-           остаток строки, и режется многоточием именно она, а не бейджи и время. */
-        .prof-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
-        .prof-who-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-        .prof-name { font-weight: 600; color: #111827; font-size: 13px;
-                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .prof-login { color: #6b7280; font-size: 11px;
-                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        /* `.prof-who`, `.prof-name`, `.prof-login` переехали в `dating_page.css`:
+           ту же учётку теми же классами показывает карточка на «Анкетах». */
 
         /* Колонка «В сети»: в ней одна точка, и ширины ей нужно ровно под неё.
            По центру — столбик точек читают сверху вниз, и разнобой по краю мешал
@@ -1294,7 +1288,7 @@
 
         return '<div class="online-row">'
             + '<div class="people-head">'
-            + '<span>Все онлайн</span>'
+            + '<span>Чат онлайн</span>'
             + `<span class="people-count">${peopleCount(state)}</span>`
             + `<span class="people-when">${peopleWhen(state)}</span>`
             + '<button type="button" class="people-reload" data-kind="online"'

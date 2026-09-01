@@ -152,6 +152,20 @@
    открывается. */
 .profile-face { width: 34px; height: 34px; border-radius: 8px; object-fit: cover; background: #f1f5f9; }
 
+/* ── Кто это: лицо, имя, под ним почта ──────────────────────────────────────
+   Общее для обеих страниц раздела: строка списка на «Профилях» и карточка на
+   «Анкетах» показывают одну и ту же учётку, и выглядеть она должна одинаково —
+   человек ходит между страницами и узнаёт анкету в лицо.
+
+   Ширину не задаём: блок забирает остаток строки, и режется многоточием именно
+   он, а не то, что стоит справа. */
+.prof-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.prof-who-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.prof-name { font-weight: 600; color: #111827; font-size: 13px;
+             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prof-login { color: #6b7280; font-size: 11px;
+              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* Индикатор: зелёный пульсирует только у живой — «онлайн» должен отличаться от
    «замерло на экране». */
 .dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: #cbd5e1; }

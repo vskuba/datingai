@@ -6,26 +6,25 @@
     <link rel="stylesheet" href="{{ base }}/static/css/dating_page.css">
     <style>
         /* Обойма страницы, шапка и белая панель — в `dating_page.css`, общем с
-           «Профилями». Здесь только раскладка этой страницы: две колонки сверху,
-           журнал во всю ширину снизу.
+           «Профилями». Здесь только раскладка этой страницы: две колонки, список
+           анкет слева и профиль с собеседниками справа.
 
-           Список анкет идёт во всю высоту, а профиль и журнал делят вторую
-           колонку. Журнал относится к выбранной анкете, а не ко всей странице,
-           поэтому и живёт рядом с её профилем: смотрят их вместе.
+           Журнала на странице больше нет: он есть у выбранной анкеты на
+           «Профилях» и целой лентой на «Журналах» — третья копия тех же строк
+           только отнимала бы место у переписки.
 
-           Ширина колонки и высота журнала — в переменных: их тянут разделителями,
-           и обе запоминаются, чтобы не выставлять заново на каждой странице. */
+           Ширина колонки — в переменной: её тянут разделителем, и она
+           запоминается, чтобы не выставлять заново на каждой странице. */
         .dating-page {
             --col: 380px;
-            --log: 240px;
             grid-template-columns: var(--col) 6px 1fr;
             grid-template-rows: auto minmax(0, 1fr);
         }
 
         .dating-right {
             grid-column: 3; grid-row: 2;
-            display: grid; grid-template-rows: minmax(0, 1fr) 6px var(--log);
-            gap: 8px; min-height: 0;
+            display: grid; grid-template-rows: minmax(0, 1fr);
+            min-height: 0;
         }
 
         /* Разделители: узкая полоса, которая заметна только под курсором — рамка
@@ -33,13 +32,11 @@
         .split { border-radius: 3px; background: transparent; }
         .split:hover, .split.drag { background: #c7d2fe; }
         .split-col { grid-column: 2; grid-row: 2; cursor: col-resize; }
-        .split-row { cursor: row-resize; }
 
         /* Место шапки в сетке: во всю ширину над колонками. Сама она общая. */
         .dating-head { grid-column: 1 / -1; }
 
         .dating-profiles-pane { grid-column: 1; grid-row: 2; }
-        .dating-log-pane { min-height: 0; }
 
         /* Чекбокс автоответа стоит в ряду кнопок и должен читаться как их часть,
            а не как обрывок формы. */
@@ -59,31 +56,21 @@
 
         /* ---------- Левая колонка: девушки ---------- */
 
-        /* Сетка, а не flex с переносом: у сетки колонки заданы, и карточка с тремя
-           бейджами остаётся такой же высоты, как карточка без них. При нехватке
-           места сжимается имя (многоточием), а не уезжают кнопки. */
+        /* Карточка показывает **только** лицо, имя и почту — по тому же виду, что
+           строка списка на «Профилях» (`.prof-who` и соседи в `dating_page.css`).
+           Человек ходит между двумя страницами одного меню и должен узнавать
+           анкету в лицо, а не разбирать две разные вёрстки.
+
+           Всё, что было в карточке помимо этого — точка состояния, бейджи работы,
+           пометка и кнопки, — убрано намеренно: список отвечает на вопрос «кого
+           выбрать», а работа с выбранной идёт справа и на «Профилях». */
         .profile {
-            display: grid; grid-template-columns: auto minmax(0, 1fr);
-            align-items: center; gap: 4px 8px;
+            display: flex; align-items: center;
             padding: 8px 10px; margin-bottom: 6px;
             border: 1px solid #e5e7eb; border-radius: 8px; cursor: pointer;
         }
         .profile:hover { border-color: #c7d2fe; }
         .profile.active { border-color: #6366f1; background: #eef2ff; }
-
-        .profile-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-        /* Бейджи под именем, а не в общем ряду: их бывает три, и в одну строку с
-           кнопками они не влезают — карточка начинала вылезать за колонку. */
-        .profile-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-
-        /* Кнопки своей строкой: в общем ряду три штуки съедали колонку с именем —
-           карточка оставалась без имени, а высота скакала. Строка предсказуемее. */
-        .profile-act { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap;
-                    justify-content: flex-end; margin-top: 2px; }
-        .profile-name { font-weight: 600; color: #111827; font-size: 13px;
-                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .profile-login { color: #6b7280; font-size: 11px; }
-        .profile-meta { grid-column: 1 / -1; color: #6b7280; font-size: 11px; }
 
         /* Профиль с сайта и собеседницы (`.card*`, `.contact*`, `.msg*`, `.need`)
            переехали в `dating_page.css`: тот же чат показывает вкладка «Чат» на
@@ -135,15 +122,6 @@
             <div class="pane-foot" id="contactsPager"></div>
         </div>
 
-        <div class="split split-row" id="splitRow" title="Потяните, чтобы изменить высоту"></div>
-
-        <div class="pane dating-log-pane">
-            <div class="pane-head">
-                Журнал <span id="logWho"></span>
-                <button type="button" class="dating-btn" id="logReload" style="margin-left:auto">Обновить</button>
-            </div>
-            <div class="pane-body" id="log"></div>
-        </div>
     </div>
 </div>
 
@@ -152,8 +130,11 @@
     import {showNotification} from '{{ base }}/static/js/notification.js';
     // Значки и бейджи учётки — общие с «Профилями»: обе страницы рисуют строки
     // одной и той же ручки, и две копии разошлись бы в мелочах.
-    import {esc, statusTitle, warnBadge, workPills, pagerRender, logRender}
-        from '{{ base }}/static/js/dating_view.js';
+    // Из общих помощников странице остались только эти. Карточка списка теперь
+    // показывает лицо, имя и почту — точке состояния, бейджам работы и значку
+    // тревоги места в ней нет; журнала на странице нет вовсе, и `logRender` с
+    // `logStamp` ей больше не нужны. Всё это осталось на «Профилях».
+    import {esc, pagerRender} from '{{ base }}/static/js/dating_view.js';
     // Сдвиг времени в пояс настройки: с сервера метки приходят в UTC.
     import {timeShift} from '{{ base }}/static/js/dating_time.js';
     // Загрузка селекта сайта — тоже общая: ключ выбора один на весь раздел.
@@ -175,7 +156,6 @@
     const siteEl = document.getElementById('siteSelect');
     const profilesEl = document.getElementById('profiles');
     const profileEl = document.getElementById('profile');
-    const logEl = document.getElementById('log');
     const formEl = document.getElementById('form');
     const findEl = document.getElementById('profileFind');
     const pagerEl = document.getElementById('profilesPager');
@@ -197,7 +177,6 @@
     // (каждые 2 секунды: статус карточки меняется по ходу входа). Пометь мы
     // кнопку напрямую, первая же перерисовка вернула бы ей вид «Войти», хотя
     // вход идёт, — и человек жал бы её второй раз.
-    const profileBusy = new Map();
 
     async function sitesLoad() {
         try {
@@ -286,67 +265,19 @@
         for (const row of shown) {
             const el = document.createElement('div');
             el.className = 'profile' + (row.id === currentId ? ' active' : '');
-            el.innerHTML =
-                `<img class="profile-face" src="${esc(row.photo || '')}" alt="" referrerpolicy="no-referrer"`
+            // Лицо, имя, почта — и больше ничего. Теми же классами, что строка на
+            // «Профилях»: одна учётка должна выглядеть одинаково на обеих
+            // страницах.
+            el.innerHTML = '<span class="prof-who">'
+                + `<img class="profile-face" src="${esc(row.photo || '')}" alt="" referrerpolicy="no-referrer"`
                 + ' onerror="this.style.visibility=\'hidden\'">'
-                + '<span class="profile-who">'
+                + '<span class="prof-who-text">'
                 // Имя режется многоточием в узкой колонке — полное отдаём подсказкой.
-                + `<span class="profile-name" title="${esc(row.name || row.login)}">${esc(row.name || row.login)}</span>`
-                + '<span class="profile-badges">'
-                + `<span class="dot ${esc(row.status)}" title="${esc(statusTitle(row))}"></span>`
-                + warnBadge(row)
-                + (row.name ? `<span class="profile-login">${esc(row.login)}</span>` : '')
-                + workPills(row)
-                + '</span>'
-                + '</span>'
-                + '<span class="profile-act">'
-                // Вход и отключение — одна кнопка на два состояния: у учётки со
-                // снятым входом «Войти» не значит ничего, а без входа отключать нечего.
-                + (row.has_state
-                    ? '<button type="button" class="dating-btn off-btn">Отключить</button>'
-                    : '<button type="button" class="dating-btn login-btn">Войти</button>')
-                + (row.has_state ? '<button type="button" class="dating-btn dlg-btn">Диалоги</button>' : '')
-                + (row.has_state
-                    ? '<label class="auto-box" title="Отвечать на новые сообщения самостоятельно">'
-                      + `<input type="checkbox" class="auto-chk"${row.auto_answer ? ' checked' : ''}>`
-                      + 'автоответ</label>'
-                    : '')
-                + '<button type="button" class="dating-btn check-btn">Проверка</button>'
-                + '<button type="button" class="dating-btn danger del-btn">✕</button>'
-                + '</span>'
-                + `<span class="profile-meta">${esc(row.last_error || row.note || '')}</span>`;
+                + `<span class="prof-name" title="${esc(row.name || row.login)}">${esc(row.name || row.login)}</span>`
+                + `<span class="prof-login" title="${esc(row.login)}">${esc(row.login)}</span>`
+                + '</span></span>';
 
             el.addEventListener('click', () => profileSelect(row.id));
-            el.querySelector('.check-btn').addEventListener('click', (ev) => {
-                ev.stopPropagation();
-                profileCheck(row);
-            });
-            el.querySelector('.del-btn').addEventListener('click', (ev) => {
-                ev.stopPropagation();
-                profileDelete(row);
-            });
-            const loginBtn = el.querySelector('.login-btn');
-            if (loginBtn) loginBtn.addEventListener('click', (ev) => {
-                ev.stopPropagation();
-                profileLogin(row);
-            });
-            const autoChk = el.querySelector('.auto-chk');
-            if (autoChk) {
-                autoChk.addEventListener('click', (ev) => ev.stopPropagation());
-                autoChk.addEventListener('change', (ev) => profileAuto(row, ev.target));
-            }
-            const dlgBtn = el.querySelector('.dlg-btn');
-            if (dlgBtn) dlgBtn.addEventListener('click', (ev) => {
-                ev.stopPropagation();
-                profileDialog(row);
-            });
-            const offBtn = el.querySelector('.off-btn');
-            if (offBtn) offBtn.addEventListener('click', (ev) => {
-                ev.stopPropagation();
-                profileDisconnect(row);
-            });
-
-            profileBusyPaint(el, row.id);
             profilesEl.appendChild(el);
         }
 
@@ -364,7 +295,7 @@
         // Отметка молчаливая: не вышла, значит бейдж просто повисит лишний круг.
         try { await postData(`${BASE}/api/dating/profile/${id}/read`, {}); } catch (e) {}
         profilesLoad();
-        await Promise.all([profileLoad(), logLoad()]);
+        await profileLoad();
     }
 
     // Собеседницы приходят страницей с сервера, а не целиком: их бывают сотни, а
@@ -468,168 +399,6 @@
         });
     }
 
-    async function logLoad() {
-        if (!currentId) return;
-        // Та же гонка, что и в profileLoad(), и тот же приём: logLoad() тоже зовёт
-        // фоновый опрос каждые 15 секунд, и ответ по уже покинутой анкете может
-        // прийти позже ответа по вновь выбранной — без сверки currentId с requestId
-        // он перепишет журнал не той анкеты, что сейчас на экране.
-        const requestId = currentId;
-        const profile = profiles.find(g => g.id === currentId) || {};
-        document.getElementById('logWho').textContent = profile.login || '';
-
-        let rows;
-        try {
-            rows = (await getData(`${BASE}/api/dating/profile/${requestId}/log`)).result || [];
-        } catch (e) {
-            if (currentId !== requestId) return;
-            logEl.innerHTML = `<div class="empty">журнал не пришёл: ${esc(e.message)}</div>`;
-            return;
-        }
-        if (currentId !== requestId) return;
-
-        logRender(logEl, rows, 'записей нет — запустите «Проверку»');
-    }
-
-    // Отмечает карточку занятой и рисует это в её кнопке. Возвращает функцию,
-    // снимающую отметку, — чтобы у каждого вызова был ровно один способ её снять
-    // и незакрытых пометок не осталось.
-    function profileBusyMark(profileId, btnClass, label) {
-        profileBusy.set(profileId, {btn: btnClass, label});
-        profilesRender();
-
-        return () => {
-            profileBusy.delete(profileId);
-            profilesRender();
-        };
-    }
-
-    // Применяет отметку занятости к уже собранной карточке.
-    //
-    // Кнопки блокируются все: пока идёт вход, «Проверка» на той же анкете
-    // означала бы второй сценарий в том же браузере — сайт держит одну сессию
-    // на учётку и выбрасывает первую.
-    function profileBusyPaint(el, profileId) {
-        const busy = profileBusy.get(profileId);
-        if (!busy) return;
-
-        el.querySelectorAll('button, input').forEach(node => node.disabled = true);
-
-        const button = el.querySelector('.' + busy.btn);
-        if (!button) return;
-        button.classList.add('busy');
-        button.innerHTML = `<span class="dating-spin"></span>${esc(busy.label)}`;
-    }
-
-    // Проверка идёт до минуты: вход, чат, чтение, отправка, закрытие. Пока идёт,
-    // журнал перечитываем — по нему и видно, на каком шаге она сейчас.
-    async function profileCheck(row) {
-        const free = profileBusyMark(row.id, 'check-btn', 'Проверяю…');
-        currentId = row.id;
-        const ticker = setInterval(logLoad, 3000);
-
-        try {
-            const data = await postData(`${BASE}/api/dating/profile/${row.id}/check`, {});
-            const res = data.result || {};
-            showNotification(res.ok ? `Проверка пройдена: ${res.steps.join(', ')}`
-                                    : `Встала на: ${res.error}`, res.ok ? 'success' : 'error');
-        } catch (e) {
-            showNotification('Проверка не состоялась: ' + e.message, 'error');
-        } finally {
-            clearInterval(ticker);
-            free();
-            await profilesLoad();
-            await Promise.all([profileLoad(), logLoad()]);
-        }
-    }
-
-    // Долгое действие с живым журналом: вход и чтение диалогов идут минутами, и
-    // всё это время человек должен видеть, где оно сейчас, а не пустой экран.
-    // Обновляем и список — статус с бейджами меняется по ходу, а не в конце.
-    async function profileLongRun(row, btnClass, label, url, done) {
-        const free = profileBusyMark(row.id, btnClass, label);
-        currentId = row.id;
-        const ticker = setInterval(() => { logLoad(); profilesLoad(); }, 2000);
-
-        try {
-            const res = (await postData(url, {})).result || {};
-            const said = done(res);
-            showNotification(said.text, said.bad ? 'error' : 'success');
-        } catch (e) {
-            showNotification('Не вышло: ' + e.message, 'error');
-        } finally {
-            clearInterval(ticker);
-            free();
-            await profilesLoad();
-            await Promise.all([profileLoad(), logLoad()]);
-        }
-    }
-
-    async function profileLogin(row) {
-        await profileLongRun(row, 'login-btn', 'Вхожу…', `${BASE}/api/dating/profile/${row.id}/login`,
-            res => ({bad: res.status === 'error',
-                     text: res.status === 'error' ? `Вход не прошёл: ${res.error}`
-                                                  : `Вход выполнен: ${res.scenario}`}));
-    }
-
-    // Автоответ — основной путь: анкета разговаривает сама, пока подключена.
-    // Включение сразу разбирает накопившееся, поэтому ждать здесь приходится
-    // столько же, сколько у прежней кнопки «Ответить».
-    async function profileAuto(row, box) {
-        const on = box.checked;
-        box.disabled = true;
-        currentId = row.id;
-        const ticker = setInterval(logLoad, 3000);
-
-        try {
-            const res = (await putData(`${BASE}/api/dating/profile/${row.id}/auto`, {auto_answer: on})).result || {};
-            const done = res.answered || {};
-            showNotification(
-                on ? (done.sent ? `Автоответ включён, отправлено ${done.sent}` : 'Автоответ включён')
-                   : 'Автоответ выключен', 'success');
-        } catch (e) {
-            box.checked = !on;
-            showNotification('Не вышло: ' + e.message, 'error');
-        } finally {
-            clearInterval(ticker);
-            box.disabled = false;
-            await profilesLoad();
-            await Promise.all([profileLoad(), logLoad()]);
-        }
-    }
-
-    // Чтение диалогов открывает страницу чата и на это время отбирает у учётки
-    // живое соединение — поэтому кнопка, а не фон.
-    async function profileDialog(row) {
-        await profileLongRun(row, 'dlg-btn', 'Читаю…', `${BASE}/api/dating/profile/${row.id}/dialog`,
-            res => ({bad: !!res.error,
-                     text: res.error ? `Диалоги не прочитались: ${res.error}`
-                                     : `Диалогов прочитано ${res.contacts}, новых сообщений ${res.saved}`}));
-    }
-
-    // Отключение спрашивают подтверждением: оно рвёт живой чат, и случайный клик
-    // рядом с «Проверкой» стоил бы пропущенных сообщений.
-    async function profileDisconnect(row) {
-        if (!confirm(`Отключить «${row.name || row.login}»? Выйдем с сайта, закроем вкладки `
-                     + 'и снимем с опроса. Переписка и журнал останутся.')) return;
-
-        const free = profileBusyMark(row.id, 'off-btn', 'Отключаю…');
-        currentId = row.id;
-
-        try {
-            const res = (await postData(`${BASE}/api/dating/profile/${row.id}/disconnect`, {})).result || {};
-            showNotification(res.logout ? 'Отключено, выход на сайте выполнен'
-                                        : `Отключено, но выход на сайте не прошёл: ${res.error}`,
-                             res.logout ? 'success' : 'error');
-        } catch (e) {
-            showNotification('Отключить не вышло: ' + e.message, 'error');
-        } finally {
-            free();
-            await profilesLoad();
-            await Promise.all([profileLoad(), logLoad()]);
-        }
-    }
-
     async function profileSave() {
         const login = document.getElementById('login').value.trim();
         const password = document.getElementById('password').value;
@@ -649,18 +418,6 @@
         profilesLoad();
     }
 
-    async function profileDelete(row) {
-        if (!confirm(`Удалить учётку «${row.login}» вместе с её журналом?`)) return;
-        try {
-            await deleteData(BASE + '/api/dating/profile/' + row.id);
-        } catch (e) {
-            return showNotification('Не удалось: ' + e.message, 'error');
-        }
-        if (row.id === currentId) currentId = 0;
-        showNotification('Учётка удалена', 'success');
-        profilesLoad();
-    }
-
     // Обновляем всё, что меняется само: список анкет, диалоги и журнал. Работу
     // ведут воркеры в фоне — сообщения приходят и ответы уходят без участия
     // страницы, и требовать перезагрузки, чтобы это увидеть, значит показывать
@@ -673,7 +430,7 @@
             await profilesLoad();
             // Диалоги и журнал — вместе со списком: свежий ответ агента виден в
             // переписке, а не только в счётчике.
-            await Promise.all([profileLoad(), logLoad()]);
+            await profileLoad();
         } catch (e) {
             // Сайт без настроенного опроса — обычное дело: молчим, чтобы не мигать
             // одной и той же ошибкой каждые 15 секунд.
@@ -703,7 +460,6 @@
     });
     document.getElementById('saveBtn').addEventListener('click', profileSave);
     document.getElementById('cancelBtn').addEventListener('click', () => formEl.classList.remove('open'));
-    document.getElementById('logReload').addEventListener('click', logLoad);
     // Перерисовываем на месте, без запроса: список уже в памяти.
     findEl.addEventListener('input', () => { profilesPage = 0; profilesRender(); });
     siteEl.addEventListener('change', () => {
@@ -739,7 +495,6 @@
         const style = pageEl.style;
         localStorage.setItem(SIZE_KEY, JSON.stringify({
             col: style.getPropertyValue('--col'),
-            log: style.getPropertyValue('--log'),
         }));
     }
 
@@ -747,15 +502,11 @@
         let saved;
         try { saved = JSON.parse(localStorage.getItem(SIZE_KEY) || '{}'); } catch (e) { return; }
         if (saved.col) pageEl.style.setProperty('--col', saved.col);
-        if (saved.log) pageEl.style.setProperty('--log', saved.log);
     }
 
-    // Границы разумного: колонка уже 240 px нечитаема, шире 40% экрана бессмысленна;
-    // журнал ниже 100 px не показывает ни строки.
+    // Границы разумного: колонка уже 240 px нечитаема, шире 40% экрана бессмысленна.
     splitDrag(document.getElementById('splitCol'), '--col', 240, Math.round(innerWidth * 0.6),
               (e) => e.clientX - pageEl.getBoundingClientRect().left);
-    splitDrag(document.getElementById('splitRow'), '--log', 100, Math.round(innerHeight * 0.7),
-              (e) => pageEl.getBoundingClientRect().bottom - e.clientY);
 
     layoutRestore();
     sitesLoad();
