@@ -42,6 +42,7 @@ from src.uvicorn.routers import site as site_router
 from src.uvicorn.routers import users as users_router
 from src.uvicorn.routers.dating import dating_export
 from src.uvicorn.routers.dating import dating_import
+from src.uvicorn.routers.dating import dating_error as dating_error_router
 from src.uvicorn.routers.dating import dating_log as dating_log_router
 from src.uvicorn.routers.dating import dating_people
 from src.uvicorn.routers.dating import dating_site as dating_site_router
@@ -212,6 +213,7 @@ app.include_router(dating_export.router)
 app.include_router(dating_import.router)
 app.include_router(dating_log_router.router)
 app.include_router(dating_site_router.router)
+app.include_router(dating_error_router.router)
 app.include_router(dating_work_router.router)
 app.include_router(dating_people.router)
 app.include_router(seed_router.router)

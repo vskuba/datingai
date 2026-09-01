@@ -10,9 +10,32 @@
            панель — в `dating_page.css`. */
         .dating-page { grid-template-rows: auto minmax(0, 1fr); }
 
-        /* Заглушка на месте будущей таблицы отказов: пустая белая карточка
-           читается как «не загрузилось». */
+        /* Пусто — это хорошая новость, и сказать её надо словами: пустая белая
+           карточка читается как «не загрузилось». */
         .dating-soon { padding: 24px 12px; text-align: center; color: #9ca3af; font-size: 13px; }
+
+        .err-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .err-table th {
+            position: sticky; top: 0; background: #f8fafc; z-index: 1;
+            text-align: left; padding: 8px 12px; font-size: 10px; font-weight: 700;
+            color: #94a3b8; text-transform: uppercase; letter-spacing: .04em;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        .err-table td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+
+        /* Что сломалось — жирным и своим цветом: по этой колонке ведут глазом
+           сверху вниз, а причина рядом читается только у нужной строки. */
+        .err-what { font-weight: 700; color: #b91c1c; white-space: nowrap; }
+        .err-site { color: #64748b; font-size: 12px; }
+        .err-msg { color: #334155; word-break: break-word; }
+        .err-when { color: #64748b; white-space: nowrap; font-size: 12px; }
+
+        /* Счётчик повторов. ⚠ Не украшение: одна строка означает «сломано», а
+           «повторилось 214 раз с 12:15» — «сломано и не чинится». */
+        .err-hits {
+            display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px;
+            background: #fee2e2; color: #b91c1c; font-size: 11px; font-weight: 700;
+        }
     </style>
 {% endblock %}
 
@@ -22,16 +45,15 @@
     <div class="dating-head">
         <h1>⚠️ Ошибки</h1>
         <select id="siteSelect" title="Сайт, по которому смотрим ошибки"></select>
+        <button type="button" class="dating-btn" id="reloadBtn"
+                title="Спросить заново">⟳</button>
         <span class="dating-hint" id="hint"></span>
     </div>
 
     <div class="pane">
-        <div class="pane-head">Ошибки</div>
-        <div class="pane-body">
-            <div class="dating-soon">
-                Отказы по всем анкетам сайта появятся здесь.
-                Пока причину отказа показывает колонка «Пометка» на «Профилях».
-            </div>
+        <div class="pane-head">Что сломано сейчас</div>
+        <div class="pane-body" id="body">
+            <div class="dating-soon">Гружу…</div>
         </div>
     </div>
 </div>
@@ -39,17 +61,70 @@
 
 {% block scripts %}
 <script type="module">
+    import {getData} from '{{ base }}/static/js/api.js';
     import {showNotification} from '{{ base }}/static/js/notification.js';
+    import {esc, logStamp} from '{{ base }}/static/js/dating_view.js';
     import {DATING_SITE_KEY, datingSiteFill} from '{{ base }}/static/js/dating_site.js';
 
     const BASE = '{{ base }}';
 
     const siteEl = document.getElementById('siteSelect');
     const hintEl = document.getElementById('hint');
+    const bodyEl = document.getElementById('body');
 
-    // Таблицы ещё нет, а селект уже живой и уже запоминает выбор общим ключом
-    // раздела: см. ту же оговорку в `dating_log.html`.
-    siteEl.addEventListener('change', () => localStorage.setItem(DATING_SITE_KEY, siteEl.value));
+    // Круг обновления. Страницу держат открытой, глядя на неё во время починки, и
+    // без круга исчезнувший отказ пришлось бы проверять перезагрузкой.
+    const RELOAD_MS = 10000;
+
+    // ⚠ **Страница отвечает на вопрос «что сломано сейчас», а не «что ломалось».**
+    // Отказ живёт одной строкой на источник со счётчиком повторов, и удачная
+    // работа её стирает (`src/dating/dating_error.py`). Поэтому пусто здесь —
+    // хорошая новость, и сказать её надо словами.
+    async function load() {
+        let rows;
+        try {
+            rows = (await getData(`${BASE}/api/dating/error`
+                                  + `?site_id=${Number(siteEl.value) || 0}`)).result.errors || [];
+        } catch (e) {
+            bodyEl.innerHTML = `<div class="dating-soon">Ошибки не пришли: ${esc(e.message)}</div>`;
+            return;
+        }
+
+        if (!rows.length) {
+            bodyEl.innerHTML = '<div class="dating-soon">Сейчас всё работает. '
+                + 'Здесь появляется то, что сломано прямо сейчас: '
+                + 'не обновился список сайтов, не ответил сосед.</div>';
+            return;
+        }
+
+        bodyEl.innerHTML = '<table class="err-table"><thead><tr>'
+            + '<th>Что</th><th>Причина</th><th>Впервые</th><th>Последний раз</th>'
+            + '</tr></thead><tbody>'
+            + rows.map(row).join('')
+            + '</tbody></table>';
+    }
+
+    function row(err) {
+        return '<tr>'
+            + `<td><span class="err-what">${esc(err.title)}</span>`
+            + (err.hits > 1 ? `<span class="err-hits">${err.hits}</span>` : '')
+            + (err.site_id ? `<div class="err-site">сайт #${Number(err.site_id)}</div>`
+                           // Отказ без сайта касается любого из них, и сказать это
+                           // надо: иначе он читается как относящийся к выбранному.
+                           : '<div class="err-site">не про конкретный сайт</div>')
+            + '</td>'
+            + `<td class="err-msg">${esc(err.message)}</td>`
+            + `<td class="err-when">${esc(logStamp(err.first_at))}</td>`
+            + `<td class="err-when">${esc(logStamp(err.last_at))}</td>`
+            + '</tr>';
+    }
+
+    siteEl.addEventListener('change', () => {
+        localStorage.setItem(DATING_SITE_KEY, siteEl.value);
+        load();
+    });
+
+    document.getElementById('reloadBtn').addEventListener('click', load);
 
     (async () => {
         try {
@@ -58,8 +133,9 @@
             siteEl.innerHTML = '<option value="">сайты не пришли</option>';
             showNotification('Список сайтов не пришёл: ' + e.message, 'error');
         }
+        hintEl.textContent = 'обновляется само';
+        await load();
+        setInterval(() => { if (!document.hidden) load(); }, RELOAD_MS);
     })();
-
-    hintEl.textContent = 'страница в работе';
 </script>
 {% endblock %}

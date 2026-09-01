@@ -1,18 +1,32 @@
-"""Настройки сайта на нашей стороне: ключ → значение по номеру у соседа.
+"""Сайты: снимок списка соседа и наши настройки к нему.
 
-Сам сайт живёт в RhapsodyAi — там его имя, адрес, метки и `presence`. Здесь только
-то, что относится к **нашей** работе с ним и у соседа хранить негде.
+Сам сайт живёт в RhapsodyAi — там его адрес, метки, `presence` и сценарии. Здесь
+две вещи: **снимок его списка**, чтобы панель работала, когда сосед недоступен, и
+настройки, которые про **нашу** работу с сайтом и у соседа хранить негде.
 
-## ⚠ Это не копия списка сайтов
+## ⚠ Снимок — не свой список сайтов
 
-Правило проекта в силе: своей таблицы сайтов здесь нет (`CLAUDE.md`). Имени и
-адреса в `dating_site` нет — они приходят от соседа при каждом показе. Хранится
-только номер как ключ и наши значения; вторая копия имени разошлась бы с первой в
-тот день, когда сайт переименуют.
+Правило проекта («своей копии чужих данных здесь не заводится») ослаблено ровно на
+одну вещь, и вот почему. Селект сайта стоит в шапке **каждой** страницы раздела, и
+список для него брали у соседа при каждом открытии. Лежит сосед — селект пуст, и
+панель целиком выглядит сломанной: без выбранного сайта ни анкет, ни профилей, ни
+журналов. Причём наши-то данные на месте.
 
-Отсюда форма ответа: ручка складывает **список соседа** и **наши настройки**, а не
-отдаёт одно вместо другого. Сайт без сохранённых настроек в списке всё равно есть —
-с пустым набором.
+Размен принят осознанно:
+
+* было: копии нет, разойтись не с чем, но лежащий сосед гасит всю панель;
+* стало: копия есть и может разойтись с оригиналом — ценой пустого селекта.
+
+Расхождение лечится само: каждый показ списка заводит фоновую сверку, и
+переименованный сайт получает новое имя в ту же секунду, когда сосед отвечает.
+Живёт оно ровно столько, сколько сосед недоступен.
+
+⚠ **Список по-прежнему ведёт сосед.** Строки здесь — снимок его ответа: сайт,
+которого у него нет, помечается `is_gone` при первой удачной сверке и из селекта
+исчезает. Ручки «завести сайт» здесь нет и не будет — заводят их у него.
+
+Отсюда форма ответа: ручка складывает **снимок списка** и **наши настройки**. Сайт
+без сохранённых настроек в списке всё равно есть — с пустым набором.
 
 ## Почему JSON, а не колонка на настройку
 
@@ -27,15 +41,20 @@
 чем он работает, и прятать это значило бы звать админа на каждый вопрос.
 """
 
+import asyncio
 import json
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from datetime_.datetime_ import datetime_utc_now
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import AuthUser, auth_admin_required, auth_required
+from src.dating.dating_error import (DATING_ERROR_SITES_SYNC, dating_error_clear,
+                                     dating_error_write)
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_site_list
 
 router = APIRouter(prefix='/api/dating/site', tags=['dating'])
@@ -88,6 +107,18 @@ DATING_SITE_KNOWN = {
     },
 }
 
+# Как часто сверяем снимок с соседом. Полминуты: список сайтов меняют руками и
+# редко, а страниц в разделе пять, и открывают их подряд — сверка на каждое
+# открытие была бы запросом к соседу на каждый щелчок по меню.
+DATING_SITE_SYNC_EVERY_SEC = 30
+
+# Идущая сверка и её память. Списком из одного значения, а не переменной: так их
+# видно из вложенных функций без `global` в каждой.
+_sync_task = None
+_sync_at = [0.0]
+_sync_done = [0.0]
+_sync_error = ['']
+
 # Чем секрет выглядит наружу. ⚠ **Настоящее значение из ручки не уходит никогда** —
 # ни оператору, ни администратору: страница его не показывает, а значит и получать
 # ей нечего. Прочесть пароль можно там же, где он и лежит, — в базе.
@@ -105,33 +136,27 @@ class DatingSiteSave(BaseModel):
 
 @router.get('', include_in_schema=False)
 async def dating_site_list(user: AuthUser = Depends(auth_required)):
-    """Сайты соседа вместе с нашими настройками.
+    """Сайты вместе с нашими настройками — из снимка, а не от соседа.
 
     Returns:
         dict: `sites` — записи `id`, `name`, `url`, `settings`; `known` — реестр
         известных настроек, по которому страница рисует их набором значений, а не
-        полем ввода.
+        полем ввода; `sync` — когда снимок сверяли и идёт ли сверка сейчас.
 
-    Raises:
-        HTTPException: 502 — сосед не ответил.
-
-    Список ведёт **сосед**: сайт, которого у него нет, показывать незачем, даже
-    если наши настройки для него в базе остались. Обратное тоже верно — сайт без
-    настроек виден с пустым набором, иначе его нельзя было бы настроить в первый раз.
+    ⚠ **502 отсюда не приходит.** Отвечаем снимком и заводим сверку в фоне: лежащий
+    сосед не повод показывать пустую страницу настроек. Отказ сверки виден на
+    «Ошибках» (`dating_error.py`), а не вместо списка.
     """
-    try:
-        sites = await rhapsody_api_site_list()
-    except RhapsodyError as e:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
-
     saved = await _settings_all()
+    rows = await dating_site_rows()
 
-    return {'result': {'sites': [{'id': int(site.get('id') or 0),
-                                  'name': str(site.get('name') or ''),
-                                  'url': str(site.get('url') or ''),
-                                  'settings': _masked(saved.get(int(site.get('id') or 0), {}))}
-                                 for site in sites],
-                       'known': _known()}}
+    return {'result': {'sites': [{'id': row['id'],
+                                  'name': row['name'],
+                                  'url': row['url'],
+                                  'settings': _masked(saved.get(row['id'], {}))}
+                                 for row in rows],
+                       'known': _known(),
+                       'sync': _sync_answer(dating_site_sync_start())}}
 
 
 @router.get('/{site_id}', include_in_schema=False)
@@ -235,7 +260,139 @@ async def dating_site_seconds(site_id: int, key: str) -> int:
     return int(raw) if raw.isdigit() else fallback
 
 
+async def dating_site_rows() -> list[dict]:
+    """Снимок списка сайтов: то, что показываем, пока сверка не принесла нового.
+
+    Порядок — по имени: селект читают глазами, а порядок вставки в базу для
+    человека случаен. Ушедшие у соседа (`is_gone`) не показываем: закладку убрали,
+    и предлагать её к выбору значит обещать работу, которой не будет.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT site_id, name, url, tags, synced_at FROM dating_site'
+            ' WHERE is_gone = 0 AND name <> %s ORDER BY name, site_id', ('',))
+        rows = await db.fetchall()
+
+    return [{'id': int(row['site_id']),
+             'name': row['name'],
+             'url': row['url'],
+             'tags': row['tags'],
+             'synced_at': row['synced_at']} for row in rows]
+
+
+def dating_site_sync_start() -> bool:
+    """Заводит фоновую сверку снимка с соседом, если её пора и можно заводить.
+
+    Returns:
+        bool: идёт ли сверка прямо сейчас — своя или начатая раньше.
+
+    ⚠ **Два сторожа, и оба обязательны** — те же, что у списков собеседников
+    (`dating_people.py`). Первый: сверка уже идёт, и каждая страница раздела не
+    должна заводить свою. Второй: выдержка между попытками — иначе лежащий сосед
+    получал бы запрос на каждое открытие любой страницы, а их у раздела пять.
+
+    Ждать сверку **никто не ждёт**: ответ уходит со снимком, а новое имя сайта
+    появится в следующем ответе. Список сайтов — не то, ради чего человека держат
+    на пустой странице.
+    """
+    global _sync_task
+
+    if _sync_task and not _sync_task.done():
+        return True
+
+    if time.time() - _sync_at[0] < DATING_SITE_SYNC_EVERY_SEC:
+        return False
+
+    _sync_at[0] = time.time()
+    _sync_task = asyncio.ensure_future(_sync_run())
+
+    return True
+
+
+async def dating_site_sync_now() -> dict:
+    """Сверка прямо сейчас, с ожиданием. Для кнопки «обновить» и для тестов."""
+    return await _sync_run()
+
+
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+async def _sync_run() -> dict:
+    """Спрашивает список у соседа и переписывает снимок. Не бросает.
+
+    Returns:
+        dict: `synced` — сколько сайтов в снимке, `error` — причина, если не вышло.
+
+    ⚠ **Неудачная сверка снимок не трогает.** Сосед недоступен — это «сейчас не
+    узнали», а не «сайтов больше нет»; стерев снимок, мы получили бы ровно тот
+    пустой селект, от которого уходим.
+    """
+    try:
+        sites = await rhapsody_api_site_list()
+    except RhapsodyError as e:
+        _sync_error[0] = str(e)
+        await dating_error_write(DATING_ERROR_SITES_SYNC, str(e))
+        logger_info(f'[dating] список сайтов не сверился: {e}')
+
+        return {'synced': 0, 'error': str(e)}
+    except Exception as e:
+        # Сюда падает то, чего мы не предусмотрели. Ждать эту задачу некому, и без
+        # перехвата исключение утонуло бы в логе `asyncio` без следа на странице.
+        _sync_error[0] = f'сверка сорвалась: {e}'
+        await dating_error_write(DATING_ERROR_SITES_SYNC, _sync_error[0])
+        logger_info(f'[dating] сверка списка сайтов упала: {e}')
+
+        return {'synced': 0, 'error': _sync_error[0]}
+
+    await _snapshot_write(sites)
+
+    _sync_error[0] = ''
+    _sync_done[0] = time.time()
+    await dating_error_clear(DATING_ERROR_SITES_SYNC)
+
+    return {'synced': len(sites), 'error': ''}
+
+
+async def _snapshot_write(sites: list) -> None:
+    """Кладёт ответ соседа в снимок: заводит новые, обновляет прежние, метит ушедшие.
+
+    ⚠ **Ушедшие метятся, а не удаляются.** Вместе со строкой ушли бы и наши
+    настройки этого сайта, а закладку могли убрать по ошибке или на время — и
+    восстановить её у соседа куда проще, чем вспомнить, что было настроено здесь.
+    """
+    now = datetime_utc_now().strftime('%Y-%m-%d %H:%M:%S')
+    seen = []
+
+    async with mysql_get_db_async() as db:
+        for site in sites:
+            site_id = int(site.get('id') or 0)
+            if not site_id:
+                continue
+            seen.append(site_id)
+
+            await db.execute(
+                'INSERT INTO dating_site (site_id, name, url, tags, is_gone, synced_at)'
+                ' VALUES (%s, %s, %s, %s, 0, %s)'
+                ' ON DUPLICATE KEY UPDATE name = VALUES(name), url = VALUES(url),'
+                ' tags = VALUES(tags), is_gone = 0, synced_at = VALUES(synced_at)',
+                (site_id, str(site.get('name') or '')[:190],
+                 str(site.get('url') or '')[:255], str(site.get('tags') or '')[:190], now))
+
+        # Всё, чего в ответе не было, у соседа больше нет. Считаем это правдой
+        # только потому, что ответ **удался**: неудачная сверка сюда не доходит.
+        if seen:
+            marks = ', '.join(['%s'] * len(seen))
+            await db.execute(
+                f'UPDATE dating_site SET is_gone = 1 WHERE site_id NOT IN ({marks})', seen)
+
+        await db.connection.commit()
+
+
+def _sync_answer(refreshing: bool) -> dict:
+    """Что странице знать про сверку: когда сверяли, идёт ли сейчас, чем кончилась."""
+    return {'refreshing': bool(refreshing),
+            'error': _sync_error[0],
+            'at': int(_sync_done[0]) or 0}
+
 
 def _known() -> list[dict]:
     """Реестр в виде, пригодном для страницы: список, а не словарь.

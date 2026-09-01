@@ -98,28 +98,31 @@ class TestSiteSettings:
 class TestSiteList:
     """⚠ Список ведёт сосед, значения — мы. Единственное место, где он нужен."""
 
-    async def test_list_joins_neighbour_and_us(self, rhapsody, monkeypatch):
-        """Своей таблицы сайтов здесь нет: имя и адрес приходят от него при каждом
-        показе. Сайт без сохранённых настроек виден с пустым набором — иначе его
-        нельзя было бы настроить в первый раз.
+    async def test_list_joins_snapshot_and_us(self, rhapsody, monkeypatch):
+        """Список ведёт сосед — через снимок его ответа (`test_site_snapshot.py`);
+        значения ведём мы. Сайт без сохранённых настроек виден с пустым набором —
+        иначе его нельзя было бы настроить в первый раз.
         """
         monkeypatch.setattr(dating_site, '_settings_all',
                             _saved({343: {'favorites_keep': '86400'}}))
+        await dating_site.dating_site_sync_now()
 
-        sites = (await dating_site_list(user=None))['result']['sites']
+        sites = {site['id']: site for site in
+                 (await dating_site_list(user=None))['result']['sites']}
 
-        assert [site['id'] for site in sites] == [343, 19], 'порядок и состав ведёт сосед'
-        assert sites[0]['name'] == 'Ladadate' and sites[0]['url']
-        assert sites[0]['settings'] == {'favorites_keep': '86400'}, 'наши значения потерялись'
-        assert sites[1]['settings'] == {}, 'сайт без настроек пропал из списка'
+        assert 343 in sites and 19 in sites
+        assert sites[343]['name'] == 'Ladadate' and sites[343]['url']
+        assert sites[343]['settings'] == {'favorites_keep': '86400'}, 'наши значения потерялись'
+        assert sites[19]['settings'] == {}, 'сайт без настроек пропал из списка'
 
     async def test_our_settings_do_not_add_sites(self, rhapsody, monkeypatch):
-        """Настройки остались, а сайт у соседа удалили — показывать нечего.
+        """Настройки остались, а сайта у соседа нет — показывать нечего.
 
         Список ведёт он: строка без имени и адреса в селекте бесполезна, а её
-        появление означало бы, что своя таблица сайтов у нас всё-таки завелась.
+        появление означало бы, что свой список сайтов у нас всё-таки завёлся.
         """
         monkeypatch.setattr(dating_site, '_settings_all', _saved({777: {KEY: '1'}}))
+        await dating_site.dating_site_sync_now()
 
         sites = (await dating_site_list(user=None))['result']['sites']
 
@@ -137,17 +140,19 @@ class TestSiteList:
         assert keep['default'] == '604800'
         assert all(option['title'] for option in keep['options']), 'человеку нужны подписи'
 
-    async def test_neighbour_refusal_becomes_502(self, rhapsody, monkeypatch):
-        """Пустой список и лежащий сосед выглядят одинаково, а означают разное."""
-        from fastapi import HTTPException
+    async def test_unreachable_neighbour_does_not_empty_the_page(self, rhapsody, monkeypatch):
+        """⚠ 502 отсюда больше не приходит.
 
+        Раньше приходил: список брали у соседа при каждом показе. Теперь отвечаем
+        снимком и сверяем в фоне — лежащий сосед не повод показывать пустую
+        страницу настроек. Отказ сверки виден на «Ошибках» (`test_site_snapshot.py`).
+        """
         monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
         rhapsody.offline()
 
-        with pytest.raises(HTTPException) as refusal:
-            await dating_site_list(user=None)
+        sites = (await dating_site_list(user=None))['result']['sites']
 
-        assert refusal.value.status_code == 502
+        assert sites, 'страница настроек опустела вместе с соседом'
 
 
 class TestSecretSettings:

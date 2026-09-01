@@ -126,28 +126,32 @@ class TestRefusalBecomesWords:
 
 
 class TestSiteHandler:
-    """Ручка `/api/site`: тонкая обёртка, у которой одна своя мысль — 502."""
+    """Ручка `/api/site`: отдаёт снимок, а сверяет с соседом в фоне.
 
-    async def test_handler_returns_the_list(self, rhapsody):
+    ⚠ **502 отсюда не приходит вовсе.** Раньше приходил: список брали у соседа при
+    каждом открытии, и его недоступность гасила селект, а с ним всю панель — без
+    выбранного сайта нет ни анкет, ни профилей, ни журналов. Снимок и его сверка —
+    в `test_site_snapshot.py`; здесь только то, что видно из этой ручки.
+    """
+
+    async def test_handler_returns_the_snapshot(self, rhapsody):
+        from src.uvicorn.routers.dating.dating_site import dating_site_sync_now
+
+        await dating_site_sync_now()
         answer = await site_list(user=None)
 
-        assert [site['id'] for site in answer['result']] == [343, 19]
+        assert {343, 19} <= {site['id'] for site in answer['result']}
+        assert 'refreshing' in answer['sync'], 'странице нечем узнать, идёт ли сверка'
 
-    async def test_neighbour_refusal_becomes_502(self, rhapsody):
-        """⚠ Пустой селект и сломанная связь выглядят одинаково, а означают разное.
+    async def test_unreachable_neighbour_keeps_the_select(self, rhapsody):
+        from src.uvicorn.routers.dating.dating_site import dating_site_sync_now
 
-        Поэтому отказ соседа — 502 с его текстом: в панели должно быть написано
-        «RhapsodyAi недоступен», а не пустой список.
-        """
-        from fastapi import HTTPException
-
+        await dating_site_sync_now()
         rhapsody.offline()
 
-        with pytest.raises(HTTPException) as refusal:
-            await site_list(user=None)
+        answer = await site_list(user=None)
 
-        assert refusal.value.status_code == 502
-        assert 'RhapsodyAi недоступен' in str(refusal.value.detail)
+        assert answer['result'], 'селект опустел вместе с соседом'
 
 
 class TestSiteRoute:
