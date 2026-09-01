@@ -54,12 +54,23 @@ import pytest
 
 from src.rhapsody import rhapsody_api
 
+# Настройка опроса присутствия — та же по устройству, что у живого сайта: адрес и
+# ручка heartbeat (`dating.md`, §2). Нужна, чтобы пинг доходил до своей работы, а не
+# отваливался на «у сайта не настроен опрос присутствия».
+#
+# ⚠ До живого сайта опрос при этом **не доходит**: без cookie он отвечает «вход не
+# выполнен» раньше всякой сети. Учётки сюиты входа не проходят — значит и запроса
+# наружу нет.
+RHAPSODY_FAKE_PRESENCE = {'base': 'https://ladadate.com', 'heartbeat': '/heartbeat'}
+
 # Что у поддельного соседа лежит по умолчанию. Два сайта, потому что «настройки
 # одного сайта не видны у другого» — проверка, которую надо чем-то проверять, а
 # третий ничего не добавил бы.
 RHAPSODY_FAKE_SITES = [
-    {'id': 343, 'name': 'Ladadate', 'url': 'https://ladadate.com', 'tags': 'dating'},
-    {'id': 19, 'name': 'Goldenbride', 'url': 'https://goldenbride.net', 'tags': 'dating'},
+    {'id': 343, 'name': 'Ladadate', 'url': 'https://ladadate.com', 'tags': 'dating',
+     'presence': RHAPSODY_FAKE_PRESENCE},
+    {'id': 19, 'name': 'Goldenbride', 'url': 'https://goldenbride.net', 'tags': 'dating',
+     'presence': RHAPSODY_FAKE_PRESENCE},
 ]
 
 # Сценарии: у первого сайта есть импорт и избранные, у второго нет ничего. Не для
