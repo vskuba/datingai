@@ -14,6 +14,7 @@
 быть написано «RhapsodyAi недоступен», а не трасса httpx.
 """
 
+import asyncio
 import time
 from urllib.parse import quote
 
@@ -73,6 +74,10 @@ RHAPSODY_API_CODE_MEANING = {
 # часы: меряется «сколько прошло внутри процесса», и рывок NTP назад не должен
 # объявлять запись свежей на лишние часы.
 _scenario_cache: dict[tuple[int, str], tuple[float, dict]] = {}
+
+# Очередь прогонов: сосед водит браузер вкладками из общего пула, и мы просим по
+# одному прогону за раз. Почему — в `rhapsody_api_scenario_run`.
+_run_lock = asyncio.Lock()
 
 
 class RhapsodyError(RuntimeError):
@@ -211,17 +216,34 @@ def rhapsody_api_scenario_keys(steps: list) -> set:
 
 async def rhapsody_api_scenario_run(scenario_id: int, session_id: str, variables: dict,
                                     secrets: dict, keep_session: bool = True) -> dict:
-    """Гонит сценарий в браузере RhapsodyAi.
+    """Гонит сценарий в браузере RhapsodyAi. **По одному за раз.**
 
     `secrets` уходят отдельным полем, а не в `variables`: RhapsodyAi прячет их в
     своём журнале прогонов, и пароль анкеты туда не попадает.
+
+    ⚠ **Прогоны выстраиваются в очередь, а не идут параллельно.** Каждый — это
+    вкладка Chromium в пуле соседа: она входит на сайт под анкетой, ждёт отрисовки
+    и гаснет. Запусти мы четыре разом — сайт получит четыре одновременных входа
+    под одной учёткой (для него это подозрение), а пул отдаст четыре вкладки под
+    работу, из которой пригодится одна.
+
+    Наблюдалось живьём: один щелчок по анкете открывал **четыре** страницы сайта,
+    и только одна доходила до конца — остальные гасились следом.
+
+    Цена — ожидание в очереди: два списка подряд это не сорок секунд, а восемьдесят.
+    Это честная цена, а не потеря: параллельно они всё равно мешали друг другу.
+
+    Замок **внутрипроцессный**. Воркер `rq` живёт отдельным процессом, и его входы
+    сюда не выстраиваются: чтобы свести и их, нужен замок в Redis. Пока не сведены —
+    беды нет, воркер ходит редко и по своим анкетам.
     """
-    return (await _request('POST', f'/api/browser/scenario/{int(scenario_id)}/run',
-                           {'session_id': str(session_id or ''),
-                            'variables': variables or {},
-                            'secrets': secrets or {},
-                            'keep_session': bool(keep_session)},
-                           timeout=RHAPSODY_API_TIMEOUT_SCENARIO)).get('result') or {}
+    async with _run_lock:
+        return (await _request('POST', f'/api/browser/scenario/{int(scenario_id)}/run',
+                               {'session_id': str(session_id or ''),
+                                'variables': variables or {},
+                                'secrets': secrets or {},
+                                'keep_session': bool(keep_session)},
+                               timeout=RHAPSODY_API_TIMEOUT_SCENARIO)).get('result') or {}
 
 
 async def rhapsody_api_session_open(url: str = '', name: str = '', storage_state: dict = None,

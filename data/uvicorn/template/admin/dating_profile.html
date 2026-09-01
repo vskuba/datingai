@@ -229,6 +229,9 @@
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .people-when .bad { color: #dc2626; }
+        /* Кэш — заметнее обычного времени, но не тревожнее: список настоящий,
+           просто снят раньше. Янтарный между серым «свежо» и красным «не вышло». */
+        .people-when .old { color: #b45309; }
 
         .people-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
@@ -1241,11 +1244,23 @@
     function peopleWhen(state) {
         if (!state || !state.taken_at) return '';
 
-        const time = String(state.taken_at).slice(11, 16);
+        // Сегодняшний снимок — часами, вчерашний и старше — датой: «12:15» у
+        // списка недельной давности читается как «только что».
+        const stamp = String(state.taken_at);
+        const today = new Date().toISOString().slice(0, 10) === stamp.slice(0, 10);
+        const when = today ? stamp.slice(11, 16) : `${stamp.slice(8, 10)}.${stamp.slice(5, 7)}`;
 
-        return state.error
-            ? `<span class="bad" title="${esc(state.error)}">${esc(time)} · не обновилось</span>`
-            : `<span title="снято ${esc(state.taken_at)}">${esc(time)}</span>`;
+        if (state.error) {
+            return `<span class="bad" title="${esc(state.error)}">`
+                + `кеш ${esc(when)} · не обновилось</span>`;
+        }
+
+        // ⚠ Слово «кеш» — не украшение. Список хранится неделю и показывается всё
+        // это время, пока сценарий не принесёт новый; без пометки человек не
+        // отличит снятое минуту назад от снятого в прошлый вторник.
+        return state.cached
+            ? `<span class="old" title="из кеша, снято ${esc(stamp)}">кеш ${esc(when)}</span>`
+            : `<span title="снято ${esc(stamp)}">${esc(when)}</span>`;
     }
 
     function peopleRows(state) {
@@ -1297,6 +1312,51 @@
 
         peopleCache.set(`${requestId}|${kind}`, state);
         peoplePaint(kind);
+
+        // Сервер отдал кэш и пошёл снимать новый — вернёмся за ним. Сам он
+        // постучаться не может: обычного круга у колонок нет, они грузятся один
+        // раз при открытии вкладки.
+        if (state.refreshing) peopleAwait(kind, requestId);
+    }
+
+    // Ждём конца фонового прогона. Опрашиваем редко и недолго: прогон идёт
+    // десятки секунд, а с очередью — и минуты, но ждать его вечно незачем.
+    // Не дождались — список останется помеченным как кэш, и это правда.
+    const PEOPLE_AWAIT_MS = 15000;
+    const PEOPLE_AWAIT_TRIES = 12;
+    const peopleAwaiting = new Set();
+
+    function peopleAwait(kind, requestId) {
+        const key = `${requestId}|${kind}`;
+        if (peopleAwaiting.has(key)) return;
+        peopleAwaiting.add(key);
+
+        let left = PEOPLE_AWAIT_TRIES;
+        const timer = setInterval(async () => {
+            // Ушли с анкеты или кончились попытки — перестаём ждать.
+            if (openId !== requestId || left-- <= 0) {
+                clearInterval(timer);
+                peopleAwaiting.delete(key);
+                return;
+            }
+
+            let state;
+            try {
+                state = (await getData(`${BASE}/api/dating/people/${requestId}/${kind}`)).result || {};
+            } catch (e) {
+                return;
+            }
+            if (openId !== requestId) return;
+
+            peopleCache.set(key, state);
+            peoplePaint(kind);
+
+            // Прогон кончился: пришёл свежий список или обновление сорвалось.
+            if (!state.refreshing) {
+                clearInterval(timer);
+                peopleAwaiting.delete(key);
+            }
+        }, PEOPLE_AWAIT_MS);
     }
 
     // Перерисовываем только свою колонку: пересобирать вкладку целиком значило бы
