@@ -202,6 +202,11 @@
         }
         .talk-id { color: #cbd5e1; font-weight: 400; font-size: 10px; }
         .talk-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+        /* Время реплики — приглушённым и мелким, у правого края пузыря: его
+           читают, только когда усомнились в свежести, а мешать тексту оно не
+           должно. */
+        .msg-when { margin-left: 8px; color: #94a3b8; font-size: 10px; white-space: nowrap; }
         .talk-empty {
             flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
             color: #cbd5e1; font-size: 11px; text-align: center; padding: 8px;
@@ -677,7 +682,7 @@
 <script type="module">
     import {getData, postData, putData, deleteData} from '{{ base }}/static/js/api.js';
     import {showNotification} from '{{ base }}/static/js/notification.js';
-    import {esc, onlineDot, warnBadge, seenText, pagerRender, logRender}
+    import {esc, onlineDot, warnBadge, seenText, timeShort, pagerRender, logRender}
         from '{{ base }}/static/js/dating_view.js';
     // Сдвиг времени в пояс настройки: с сервера метки приходят в UTC.
     import {timeShift, timeToday} from '{{ base }}/static/js/dating_time.js';
@@ -1357,7 +1362,8 @@
                 + `<span class="contact-id" title="номер анкеты на сайте">ID ${esc(c.uid)}</span>`
                 + `<span class="contact-last">${esc(last.direction === 'out' ? 'вы: ' : '')}`
                 + `${esc(last.text || 'сообщений нет')}</span>`
-                + `<span class="contact-time">${esc(timeShift(last.created_at).slice(11, 16))}</span>`
+                + `<span class="contact-time" title="${esc(timeShift(last.created_at))}">`
+                + `${esc(timeShort(last.created_at))}</span>`
                 + (c.needs_answer
                     ? '<span class="need" title="последнее слово за собеседником">нужен ответ</span>'
                     : `<span class="contact-id" title="реплик в переписке">✉ ${c.messages}</span>`)
@@ -1393,11 +1399,22 @@
 
         const p = data.profile || {};
         const me = p.name || data.login || 'мы';
+        // ⚠ **Время у каждой реплики обязательно.** Переписка приходит из двух
+        // источников — живого сокета и журнала панели агентства, — и во втором
+        // это может быть сообщение недельной давности. Без метки лента читается
+        // как сегодняшний разговор, и человек отвечает на позавчерашнее письмо,
+        // считая его свежим.
+        //
+        // Коротко (`timeShort`): сегодняшнее — часами, старше — датой. Полная
+        // метка в подсказке: место в ленте тесное, а точная секунда нужна редко.
         const msgs = (found.messages_last || []).map(m =>
             `<div class="msg ${m.direction === 'out' ? 'out' : 'in'}">`
             + '<span class="msg-body">'
             + `<span class="msg-who">${esc(m.direction === 'out' ? me : (found.name || 'он'))}</span>`
-            + `${esc(m.text)}</span></div>`).join('');
+            + `${esc(m.text)}`
+            + `<span class="msg-when" title="${esc(timeShift(m.created_at))}">`
+            + `${esc(timeShort(m.created_at))}</span>`
+            + '</span></div>').join('');
 
         return `<div class="talk-head">${esc(found.name || who)}`
              + `<span class="talk-id">ID ${esc(found.uid)}</span></div>`
@@ -1906,6 +1923,53 @@
             // в колонке избранных, и в списке диалогов — собирать их руками по
             // трём местам значит три случая забыть одно из них. Данные уже в
             // памяти, лишнего запроса к сайту перерисовка не делает.
+            await chatLoad();
+        });
+
+        chatPanelBind();
+    }
+
+    // «Забрать сообщения» — журнал переписки из панели агентства.
+    //
+    // ⚠ **Кнопка про сайт, а не про выбранную анкету.** Панель отдаёт сообщения
+    // всех анкет одной страницей за диапазон дат, и спрашивать её по анкете
+    // значило бы двадцать прогонов вместо одного. Поэтому и `busy` заводится по
+    // сайту: два нажатия с разных анкет — это два прогона одного и того же.
+    //
+    // Привезённое показывается **само**: сообщения ложатся в ту же таблицу, куда
+    // пишет сокет, и карточка чата не знает, откуда они (`dating_chat_panel.py`).
+    function chatPanelBind() {
+        const btn = workEl.querySelector('.chat-panel-btn');
+        if (!btn) return;
+
+        btn.addEventListener('click', async () => {
+            const key = `chat-panel:${siteId()}`;
+            busy.add(key);
+            btn.disabled = true;
+            btn.innerHTML = '<span class="dating-spin"></span>Забираю…';
+            try {
+                const r = (await postData(
+                    `${BASE}/api/dating/chat/import?site_id=${siteId()}`, {})).result || {};
+
+                if (r.status === 'error') {
+                    showNotification('Сообщения не забрались: ' + r.error, 'error');
+                } else if (r.added) {
+                    showNotification(`Новых сообщений: ${r.added}`
+                        + (r.contacts ? `, собеседников заведено: ${r.contacts}` : ''), 'success');
+                } else {
+                    // Ноль новых — обычный исход повторного нажатия, а не сбой:
+                    // сказать об этом надо, иначе кнопка выглядит несработавшей.
+                    showNotification(`Новых нет; в панели за ${r.from}—${r.to}: ${r.total}`,
+                                     'success');
+                }
+            } catch (e) {
+                showNotification('Сообщения не забрались: ' + e.message, 'error');
+            } finally {
+                busy.delete(key);
+                btn.disabled = false;
+                btn.innerHTML = 'Забрать сообщения';
+            }
+
             await chatLoad();
         });
     }

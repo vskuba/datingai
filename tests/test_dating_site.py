@@ -155,6 +155,47 @@ class TestSiteList:
         assert sites, 'страница настроек опустела вместе с соседом'
 
 
+class TestKnownDurations:
+    """Настройки-сроки: набор значений — условие кода, а не украшение формы."""
+
+    @pytest.mark.parametrize('key, default, values', [
+        ('favorites_keep', '604800', ['604800', '259200', '86400']),
+        ('chat_check_every', '300', ['300', '1800', '3600']),
+    ])
+    async def test_seconds_setting_offers_its_values(self, rhapsody, monkeypatch,
+                                                     key, default, values):
+        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+
+        known = {row['key']: row for row in
+                 (await dating_site_list(user=None))['result']['known']}
+
+        assert [option['value'] for option in known[key]['options']] == values
+        assert known[key]['default'] == default
+        assert all(option['title'] for option in known[key]['options']), 'человеку нужны подписи'
+
+    async def test_value_outside_the_set_is_refused(self, auth_client, kept):
+        """⚠ Вписанное мимо набора код не принимает — берёт умолчание.
+
+        Набор предлагает страница, но условие это **кода**: впиши кто-нибудь в базу
+        «месяц», и проверка шла бы месяц, хотя ни одна страница такого не
+        предлагала. Поймать это иначе нечем — молча работало бы не то.
+        """
+        from src.uvicorn.routers.dating.dating_site import dating_site_seconds
+
+        await auth_client.put(f'/api/dating/site/{SITE}',
+                              json={'settings': {'chat_check_every': '99999'}})
+
+        assert await dating_site_seconds(SITE, 'chat_check_every') == 300
+
+    async def test_chosen_value_is_used(self, auth_client, kept):
+        await auth_client.put(f'/api/dating/site/{SITE}',
+                              json={'settings': {'chat_check_every': '3600'}})
+
+        from src.uvicorn.routers.dating.dating_site import dating_site_seconds
+
+        assert await dating_site_seconds(SITE, 'chat_check_every') == 3600
+
+
 class TestSecretSettings:
     """⚠ Пароль наружу не отдаётся никому, включая администратора."""
 

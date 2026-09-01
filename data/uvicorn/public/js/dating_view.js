@@ -9,7 +9,7 @@
 // `profile-warn`) живут в `dating_page.css`, общем для обеих страниц, и менять
 // их надо в одном месте.
 
-import {timeShift} from './dating_time.js';
+import {timeShift, timeToday} from './dating_time.js';
 
 export function esc(value) {
     const el = document.createElement('div');
@@ -96,6 +96,25 @@ export function seenText(value) {
 // Секунды здесь есть, а в `seenText` их нет, и это не расхождение: в журнале
 // подряд идущие шаги укладываются в одну минуту, и без секунд не видно, что за
 // чем шло; в колонке «Вход» секунда события месячной давности не значит ничего.
+// Короткая метка для тесных мест: сегодняшнее — часами, старше — датой.
+//
+// ⚠ **Одними часами показывать нельзя.** «16:25» у сообщения недельной давности
+// читается как сегодняшнее, и человек отвечает на письмо, которое считает свежим.
+// Место при этом тесное — строка диалога и шапка колонки, — поэтому дата вместо
+// часов, а не вместе с ними.
+//
+// «Сегодня» считается по часам панели, а не браузера: оператор может сидеть в
+// другом поясе, и его полночь не должна объявлять вчерашним то, что для панели
+// сегодняшнее.
+export function timeShort(value) {
+    const stamp = timeShift(value);
+    if (stamp.length < 16) return '';
+
+    return timeToday() === stamp.slice(0, 10)
+        ? stamp.slice(11, 16)
+        : `${stamp.slice(8, 10)}/${stamp.slice(5, 7)}`;
+}
+
 export function logStamp(value) {
     const raw = timeShift(value);
     if (raw.length < 19) return raw;

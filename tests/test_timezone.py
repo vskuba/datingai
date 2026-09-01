@@ -125,11 +125,18 @@ class TestTimezoneStatic:
         assert 'timeShift' in response.text
 
     async def test_view_module_uses_the_shift(self, client):
-        """Общие помощники (`seenText`, `logStamp`) сдвигают время, а не резают
-        сырую строку: иначе журнал показывал бы UTC, а колонки рядом — местное."""
-        response = await client.get('/static/js/dating_view.js')
+        """Общие помощники (`seenText`, `logStamp`, `timeShort`) сдвигают время, а
+        не режут сырую строку: иначе журнал показывал бы UTC, а колонки рядом —
+        местное.
 
-        assert "import {timeShift} from './dating_time.js';" in response.text
+        Проверяем, что модуль **берёт сдвиг**, а не точную строку импорта: список
+        ввозимых имён растёт (так появился `timeShort`), и тест на буквальную
+        строку падал бы от каждого пополнения, ничего при этом не поймав.
+        """
+        text = (await client.get('/static/js/dating_view.js')).text
+
+        assert "from './dating_time.js'" in text, 'модуль перестал брать сдвиг'
+        assert 'timeShift' in text
 
 
 class TestOffsetHours:
