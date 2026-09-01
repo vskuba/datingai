@@ -61,6 +61,13 @@ async def dashboard_dating_error(request: Request, user: AuthUser = Depends(auth
     return _dashboard_page(request, user, 'admin/dating_error.html')
 
 
+@router.get('/admin/setting', response_class=HTMLResponse, include_in_schema=False)
+async def dashboard_setting(request: Request, user: AuthUser = Depends(auth_admin_required)):
+    """Значения настроек: ключ и значение, правятся на месте. Только админу —
+    настройка меняет поведение панели для всех, а не для того, кто её открыл."""
+    return _dashboard_page(request, user, 'admin/setting.html')
+
+
 @router.get('/admin/seed', response_class=HTMLResponse, include_in_schema=False)
 async def dashboard_seed(request: Request, user: AuthUser = Depends(auth_admin_required)):
     """Seed SQL: выгрузка выбранных таблиц и заливка обратно. Только админу."""

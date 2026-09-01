@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+
+{% block title %}Значения | DatingAi{% endblock %}
+
+{% block head %}
+    <link rel="stylesheet" href="{{ base }}/static/css/admin_page.css">
+    <style>
+        /* Раскладка, таблица и кнопки — общие с Seed SQL, Backup и Пользователями
+           (`admin_page.css`): один раздел, один вид. Здесь только своё. */
+
+        /* Ключ — моноширинным: это имя из кода, и в нём различают `_` от `-` и
+           единицу от строчной «l». Пропорциональный шрифт их сближает. */
+        .set-key {
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+            font-size: 12px; color: #0f172a; word-break: break-all;
+        }
+
+        /* Значение правится на месте, без кнопки «изменить»: настройка — это одно
+           поле, и отдельная форма ради него была бы лишним шагом на каждую правку. */
+        .set-value {
+            width: 100%; padding: 5px 9px; font-size: 12px;
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+            border: 1px solid #e5e7eb; border-radius: 6px; background: #fff;
+        }
+        .set-value:focus { outline: none; border-color: #6366f1; background: #fff; }
+        /* Пока сохраняется — поле занято: второе нажатие Enter не должно послать
+           второй запрос с тем же значением. */
+        .set-value:disabled { opacity: .6; }
+        /* Несохранённая правка видна: человек ушёл со страницы, не нажав Enter, —
+           и должен понимать, что значение в базе прежнее. */
+        .set-value.dirty { border-color: #f59e0b; background: #fffbeb; }
+
+        .set-drop {
+            border: 0; background: none; cursor: pointer; color: #cbd5e1;
+            font-size: 15px; line-height: 1; padding: 0 4px;
+        }
+        .set-drop:hover { color: #dc2626; }
+
+        .set-search {
+            padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 6px;
+            font-size: 13px; width: 220px;
+        }
+
+        /* Форма заведения прячется, пока не нажали «Добавить»: в обычный день
+           настройку не заводят, а место над списком она занимает. */
+        .set-add {
+            display: none; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+            background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+            padding: 12px 14px; margin-bottom: 16px;
+        }
+        .set-add.on { display: flex; }
+        .set-add label { font-size: 11px; color: #64748b; display: block; margin-bottom: 3px; }
+        .set-add input {
+            padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px;
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+        }
+        .set-add .set-add-key { width: 220px; }
+        .set-add .set-add-value { width: 320px; }
+
+        .set-col-key { width: 34%; }
+        .set-col-act { width: 44px; text-align: center; }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="adm-page">
+
+    <div class="adm-head">
+        <h1>🛠️ Значения</h1>
+        <span class="adm-hint">настройки панели: правятся здесь, а не в <code>.env</code></span>
+        <div class="adm-head-act">
+            <input type="text" class="set-search" id="search" placeholder="поиск по ключу">
+            <button type="button" class="adm-btn primary" id="addBtn">Добавить</button>
+        </div>
+    </div>
+
+    {# Одна колонка, как у Backup и Пользователей: содержимое лежит в `.adm-main`,
+       потому что сама `.adm-body` — флекс-строка. #}
+    <div class="adm-body">
+      <div class="adm-main">
+
+        <div class="set-add" id="addForm">
+            <div>
+                <label for="addKey">Ключ</label>
+                <input type="text" id="addKey" class="set-add-key" placeholder="chat_answer_delay"
+                       autocomplete="off" maxlength="50">
+            </div>
+            <div>
+                <label for="addValue">Значение</label>
+                <input type="text" id="addValue" class="set-add-value" placeholder="30" autocomplete="off">
+            </div>
+            <button type="button" class="adm-btn primary" id="addSave">Завести</button>
+            <button type="button" class="adm-btn" id="addCancel">Отмена</button>
+        </div>
+
+        <div id="tableWrap"><div class="adm-empty">Загружаю…</div></div>
+
+      </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+    import {getData, postData, deleteData} from '{{ base }}/static/js/api.js';
+    import {showNotification} from '{{ base }}/static/js/notification.js';
+
+    const BASE = '{{ base }}';
+
+    const wrapEl = document.getElementById('tableWrap');
+    const searchEl = document.getElementById('search');
+    const formEl = document.getElementById('addForm');
+    const keyEl = document.getElementById('addKey');
+    const valueEl = document.getElementById('addValue');
+
+    let rows = [];
+
+    async function load() {
+        try {
+            rows = (await getData(`${BASE}/api/setting`)).result.settings || [];
+        } catch (e) {
+            wrapEl.innerHTML = `<div class="adm-empty">Настройки не пришли: ${esc(e.message)}</div>`;
+            return;
+        }
+
+        paint();
+    }
+
+    // Отбор идёт по уже загруженному списку, а не запросом: настроек десятки, и
+    // ходить за ними на сервер на каждую букву незачем.
+    function paint() {
+        const needle = searchEl.value.trim().toLowerCase();
+        const shown = needle
+            ? rows.filter(row => row.key.toLowerCase().includes(needle))
+            : rows;
+
+        if (!shown.length) {
+            wrapEl.innerHTML = `<div class="adm-empty">${
+                rows.length ? 'По этому запросу ничего нет'
+                            : 'Настроек пока нет — заведите первую'}</div>`;
+            return;
+        }
+
+        wrapEl.innerHTML = '<table class="adm-table"><thead><tr>'
+            + '<th class="set-col-key">Ключ</th><th>Значение</th>'
+            + '<th class="set-col-act"></th>'
+            + '</tr></thead><tbody>'
+            + shown.map(row =>
+                `<tr data-key="${esc(row.key)}">`
+                + `<td class="set-key">${esc(row.key)}</td>`
+                + '<td><input type="text" class="set-value" autocomplete="off"'
+                + ` value="${esc(row.value)}"></td>`
+                + '<td class="set-col-act">'
+                + '<button type="button" class="set-drop" title="Убрать настройку">✕</button>'
+                + '</td></tr>').join('')
+            + '</tbody></table>';
+
+        bind();
+    }
+
+    function bind() {
+        wrapEl.querySelectorAll('tr[data-key]').forEach(tr => {
+            const key = tr.dataset.key;
+            const input = tr.querySelector('.set-value');
+            const saved = input.value;
+
+            // Правка видна жёлтым, пока её не сохранили: без этого набранное и
+            // сохранённое выглядят одинаково, и человек уходит со страницы в
+            // уверенности, что значение поменялось.
+            input.addEventListener('input', () => {
+                input.classList.toggle('dirty', input.value !== input.dataset.saved);
+            });
+            input.dataset.saved = saved;
+
+            // Enter и уход из поля — одно и то же действие. Отдельной кнопки
+            // «сохранить» нет: строка из одного поля, и кнопка на каждую строку
+            // заняла бы колонку ради того, что делает Enter.
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') input.blur();
+                if (e.key === 'Escape') {
+                    input.value = input.dataset.saved;
+                    input.classList.remove('dirty');
+                    input.blur();
+                }
+            });
+            input.addEventListener('change', () => save(key, input));
+
+            tr.querySelector('.set-drop').addEventListener('click', () => drop(key));
+        });
+    }
+
+    async function save(key, input) {
+        const value = input.value;
+        if (value === input.dataset.saved) return;
+
+        input.disabled = true;
+        try {
+            await postData(`${BASE}/api/setting`, {key, value});
+        } catch (e) {
+            input.value = input.dataset.saved;
+            showNotification('Не сохранилось: ' + e.message, 'error');
+            return;
+        } finally {
+            input.disabled = false;
+            input.classList.remove('dirty');
+        }
+
+        input.dataset.saved = value;
+        showNotification(value === '' ? `«${key}» убрана — очищенное значение удаляет настройку`
+                                      : `«${key}» сохранена`, 'success');
+
+        // Пустое значение удаляет строку на сервере — перечитываем список, иначе
+        // страница показывала бы настройку, которой уже нет.
+        if (value === '') await load();
+        else rowSet(key, value);
+    }
+
+    // Правим список в памяти, не перечитывая его с сервера: перерисовка под
+    // руками сбила бы фокус у того, кто правит вторую настройку следом.
+    function rowSet(key, value) {
+        const row = rows.find(r => r.key === key);
+        if (row) row.value = value;
+    }
+
+    async function drop(key) {
+        if (!confirm(`Убрать настройку «${key}»? Начнёт действовать умолчание кода.`)) return;
+
+        try {
+            await deleteData(`${BASE}/api/setting/${encodeURIComponent(key)}`);
+        } catch (e) {
+            showNotification('Не убралась: ' + e.message, 'error');
+            return;
+        }
+
+        showNotification(`«${key}» убрана`, 'success');
+        await load();
+    }
+
+    document.getElementById('addBtn').addEventListener('click', () => {
+        formEl.classList.add('on');
+        keyEl.focus();
+    });
+
+    document.getElementById('addCancel').addEventListener('click', () => {
+        formEl.classList.remove('on');
+        keyEl.value = valueEl.value = '';
+    });
+
+    document.getElementById('addSave').addEventListener('click', async () => {
+        const key = keyEl.value.trim();
+        if (!key) {
+            showNotification('Ключ не может быть пустым', 'error');
+            return;
+        }
+        // Пустое значение на сервере означает «удалить», и завести им настройку
+        // нельзя: строка не появилась бы, а человек решил бы, что появилась.
+        if (!valueEl.value) {
+            showNotification('Значение не может быть пустым: пустое удаляет настройку', 'error');
+            return;
+        }
+
+        try {
+            await postData(`${BASE}/api/setting`, {key, value: valueEl.value});
+        } catch (e) {
+            showNotification('Не завелась: ' + e.message, 'error');
+            return;
+        }
+
+        formEl.classList.remove('on');
+        keyEl.value = valueEl.value = '';
+        showNotification(`«${key}» заведена`, 'success');
+        await load();
+    });
+
+    searchEl.addEventListener('input', paint);
+
+    function esc(value) {
+        const el = document.createElement('div');
+        el.textContent = value ?? '';
+        return el.innerHTML;
+    }
+
+    load();
+</script>
+{% endblock %}

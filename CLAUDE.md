@@ -85,6 +85,7 @@
 | `src/uvicorn/routers/seed.py` | Seed SQL: выгрузка таблиц и заливка обратно |
 | `src/uvicorn/routers/backup.py` | Бэкапы: дамп базы и восстановление |
 | `src/uvicorn/routers/users.py` | Пользователи: учётки, роли, токены доступа |
+| `src/uvicorn/routers/setting.py` | Настройки панели: ключ → значение, только админу |
 | `data/uvicorn/template/base.html` | Шапка панели: разделы и подпункты |
 | `data/uvicorn/public/css/dating_page.css` | Общее оформление страниц раздела Dating (их четыре) |
 | `data/uvicorn/public/js/dating_view.js` | Общая отрисовка учётки: точка, бейджи, время, журнал |

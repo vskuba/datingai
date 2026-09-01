@@ -24,9 +24,11 @@
 | `dating_message` | переписка: входящие и исходящие |
 | `dating_log` | журнал работы по учётке — что делали и чем кончилось |
 | `dating_contact` | собеседницы: кэш профилей с сайта |
+| `setting` | настройки панели: ключ → значение (страница «Настройки → Значения») |
 
 Порядок создания и удаления — от зависимых к главным: `dating_contact`,
-`dating_log`, `dating_message`, `dating_profile`, `user_access_token`, `user`.
+`dating_log`, `dating_message`, `dating_profile`, `setting`, `user_access_token`,
+`user`.
 Всё, что связано с анкетой, уходит вместе с ней (`ON DELETE CASCADE`): карточку
 удаляют, чтобы её не было, а не чтобы её переписка осталась сиротой.
 
