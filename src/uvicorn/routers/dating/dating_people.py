@@ -66,6 +66,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from datetime_.datetime_ import datetime_utc_now
 from logging_.logging_ import logger_info
+from mysql_.mysql_ import mysql_get_db_async
 from redis_.redis_ import redis_conn_get
 
 from src.auth.auth import auth_required
@@ -136,6 +137,10 @@ DATING_PEOPLE_KEEP_SEC = 7 * 24 * 3600
 # и с однопоточным замком воркера, и ключи разных хозяйств не должны сталкиваться.
 DATING_PEOPLE_KEY = 'dating:people:{profile_id}:{kind}'
 
+# Ключ снимка по сайту. Отдельный, а не тот же с чужим номером: списки по анкете и
+# по сайту живут рядом, и общий вид ключа однажды свёл бы их в один.
+DATING_PEOPLE_SITE_KEY = 'dating:people:site:{site_id}:{kind}'
+
 # Идущие фоновые обновления: `(profile_id, вид)` → задача. Сторож от того, чтобы
 # круг перерисовки завёл десять прогонов подряд; подробности — в `_refresh_start`.
 _refreshing: dict[tuple[int, str], object] = {}
@@ -149,6 +154,50 @@ _refresh_at: dict[tuple[int, str], float] = {}
 # показывала бы «кеш от 29.08» бесконечно, ни словом не обмолвившись, что новый
 # список не снимается уже которую попытку.
 _refresh_error: dict[tuple[int, str], str] = {}
+
+
+@router.get('/site/{site_id}/{kind}', include_in_schema=False)
+async def dating_people_site_list(site_id: int, kind: str, fresh: bool = False,
+                                  user=Depends(auth_required)):
+    """Список собеседников **по сайту**, а не по анкете.
+
+    Args:
+        site_id: сайт-закладка у соседа.
+        kind, fresh: то же, что у списка по анкете.
+
+    Returns:
+        dict: та же форма, что у `dating_people_list`.
+
+    Raises:
+        HTTPException: 422 — неизвестный вид списка или у сайта нет ни одной
+            анкеты, под которой можно войти.
+
+    ⚠ **«Кто в сети» — свойство сайта, а не анкеты.** Список мужчин, зашедших на
+    сайт, один и тот же, под какой учёткой на него ни смотри. Держать его отдельно
+    для каждой анкеты значило бы снимать один и тот же список по разу на анкету —
+    десять входов на сайт вместо одного, ради одинакового ответа.
+
+    Анкета всё равно нужна: сценарий заходит в кабинет, а кабинет нужен чей-то.
+    Берём любую (`_site_profile`) — какая именно, на результат не влияет.
+    """
+    if kind not in DATING_PEOPLE_KINDS:
+        raise HTTPException(status_code=422, detail=f'неизвестный список «{kind}»')
+
+    key = _key(kind, site_id=site_id)
+    cached = _cache_get(key)
+
+    # Анкету ищем только когда собираемся ходить на сайт: свежий снимок отдаётся
+    # и без неё, а лишний запрос в базу на каждую перерисовку страницы не нужен.
+    if cached and time.time() - cached['at'] < (DATING_PEOPLE_FLOOR_SEC if fresh
+                                                else DATING_PEOPLE_FRESH_SEC):
+        return _answer(cached, cached=True, error='')
+
+    profile = await _site_profile(site_id)
+    if not profile:
+        raise HTTPException(status_code=422,
+                            detail='у сайта нет ни одной анкеты — под кем заходить?')
+
+    return await _list(kind, fresh, profile, key, log_id=0, cached=cached)
 
 
 @router.get('/{profile_id}/{kind}', include_in_schema=False)
@@ -183,15 +232,35 @@ async def dating_people_list(profile_id: int, kind: str, fresh: bool = False,
     if kind not in DATING_PEOPLE_KINDS:
         raise HTTPException(status_code=422, detail=f'неизвестный список «{kind}»')
 
-    profile = await dating_profile_row(profile_id)
-
     # ⚠ **Сайт спрашиваем не здесь, а внутри прогона.** Он живёт у соседа, и
     # `dating_profile_site` при его недоступности отвечает 502 — то есть недоступный
     # сосед гасил колонку целиком, хотя снимок лежал в кэше и был готов к показу.
     # Ровно то, от чего кэш и заведён; поймано сверкой этого файла с документацией.
     #
     # Кэшу сайт не нужен вовсе: он нужен прогону, чтобы найти сценарий.
-    cached = _cache_get(profile_id, kind)
+    profile = await dating_profile_row(profile_id)
+
+    return await _list(kind, fresh, profile, _key(kind, profile_id=profile_id),
+                       log_id=profile_id)
+
+
+# ── Приватное ────────────────────────────────────────────────────────────────
+
+async def _list(kind: str, fresh: bool, profile: dict, key: str, log_id: int,
+                cached: dict | None = None) -> dict:
+    """Общее тело обоих списков: кэш, фоновое обновление, запись в журнал.
+
+    Args:
+        kind: вид списка.
+        fresh: обходить выдержку (но не жёсткий пол).
+        profile: под какой анкетой заходить на сайт.
+        key: ключ снимка в Redis — по анкете или по сайту.
+        log_id: чей журнал ведём. Ноль — списка по сайту: он не про одну анкету, и
+            писать его в журнал случайно выбранной было бы враньём. След прогона
+            при этом остаётся в журнале прогонов (`dating_scenario.py`).
+        cached: уже прочитанный снимок, если вызывающий его читал.
+    """
+    cached = cached if cached is not None else _cache_get(key)
     if cached:
         age = time.time() - cached['at']
 
@@ -211,8 +280,8 @@ async def dating_people_list(profile_id: int, kind: str, fresh: bool = False,
         # `refreshing` говорит странице, что стоит вернуться за свежим, а `error` —
         # чем кончилась прошлая попытка, если она сорвалась.
         return _answer(cached, cached=True,
-                       error=_refresh_error.get((profile_id, kind), ''),
-                       refreshing=_refresh_start(profile, kind))
+                       error=_refresh_error.get(key, ''),
+                       refreshing=_refresh_start(profile, kind, key, log_id))
 
     # Снимка нет вовсе — вот тут ждём: показать нечего, и «гружу…» честно.
     try:
@@ -224,31 +293,32 @@ async def dating_people_list(profile_id: int, kind: str, fresh: bool = False,
         # минут назад, человеку полезнее пустого места с красной надписью.
         #
         # Поэтому здесь 200 с прежними записями и причиной рядом, а не 502.
-        await dating_log_write(profile_id, 'fail',
-                               f'{DATING_PEOPLE_TITLES.get(kind, kind)} с сайта не снялись: {e}')
-        logger_info(f'[dating] список «{kind}» #{profile_id} не снялся: {e}')
+        if log_id:
+            await dating_log_write(
+                log_id, 'fail',
+                f'{DATING_PEOPLE_TITLES.get(kind, kind)} с сайта не снялись: {e}')
+        logger_info(f'[dating] список «{key}» не снялся: {e}')
 
         return _answer(cached, cached=bool(cached), error=str(e))
 
     snapshot = {'at': time.time(),
                 'when': datetime_utc_now().strftime('%Y-%m-%d %H:%M:%S'),
                 'people': people}
-    _cache_put(profile_id, kind, snapshot)
+    _cache_put(key, snapshot)
 
-    await dating_log_write(profile_id, 'ok',
-                           f'{DATING_PEOPLE_TITLES.get(kind, kind)} с сайта: '
-                           f'{len(people)} собеседников')
+    if log_id:
+        await dating_log_write(log_id, 'ok',
+                               f'{DATING_PEOPLE_TITLES.get(kind, kind)} с сайта: '
+                               f'{len(people)} собеседников')
 
     return _answer(snapshot, cached=False, error='')
 
-
-# ── Приватное ────────────────────────────────────────────────────────────────
 
 class _PeopleFailure(RuntimeError):
     """Снять список не вышло. Текст пригоден для журнала анкеты и для страницы."""
 
 
-def _refresh_start(profile: dict, kind: str) -> bool:
+def _refresh_start(profile: dict, kind: str, key: str, log_id: int) -> bool:
     """Заводит фоновое обновление снимка, если его пора и можно заводить.
 
     Returns:
@@ -265,8 +335,6 @@ def _refresh_start(profile: dict, kind: str) -> bool:
     то, от чего бережёт кэш. Поэтому попытка считается попыткой независимо от
     того, чем кончилась, и следующая — не раньше конца выдержки.
     """
-    key = (int(profile['id']), kind)
-
     task = _refreshing.get(key)
     if task and not task.done():
         return True
@@ -275,46 +343,74 @@ def _refresh_start(profile: dict, kind: str) -> bool:
         return False
 
     _refresh_at[key] = time.time()
-    _refreshing[key] = asyncio.ensure_future(_refresh_run(profile, kind))
+    _refreshing[key] = asyncio.ensure_future(_refresh_run(profile, kind, key, log_id))
 
     return True
 
 
-async def _refresh_run(profile: dict, kind: str) -> None:
+async def _refresh_run(profile: dict, kind: str, key: str, log_id: int) -> None:
     """Снимает список в фоне и переписывает кэш. Не бросает: ждать его некому.
 
     Ошибку пишем в журнал анкеты — там её и ищут. В ответ ручки она не попадёт:
     тот запрос давно ушёл со старым снимком, а следующий увидит либо новый
     снимок, либо прежний, если прогон не удался.
     """
-    profile_id = int(profile['id'])
-    key = (profile_id, kind)
     title = DATING_PEOPLE_TITLES.get(kind, kind)
 
     try:
         people = await _snapshot(profile, kind)
     except _PeopleFailure as e:
         _refresh_error[key] = str(e)
-        await dating_log_write(profile_id, 'fail', f'{title} с сайта не снялись: {e}')
-        logger_info(f'[dating] фоновый список «{kind}» #{profile_id} не снялся: {e}')
+        if log_id:
+            await dating_log_write(log_id, 'fail', f'{title} с сайта не снялись: {e}')
+        logger_info(f'[dating] фоновый список «{key}» не снялся: {e}')
 
         return
     except Exception as e:
         # Сюда падает то, чего мы не предусмотрели. Ждать эту задачу некому, и без
         # перехвата исключение утонуло бы в логе `asyncio` без следа на странице.
         _refresh_error[key] = f'обновление сорвалось: {e}'
-        logger_info(f'[dating] фоновый список «{kind}» #{profile_id} упал: {e}')
+        logger_info(f'[dating] фоновый список «{key}» упал: {e}')
 
         return
 
-    _cache_put(profile_id, kind, {'at': time.time(),
-                                  'when': datetime_utc_now().strftime('%Y-%m-%d %H:%M:%S'),
-                                  'people': people})
+    _cache_put(key, {'at': time.time(),
+                     'when': datetime_utc_now().strftime('%Y-%m-%d %H:%M:%S'),
+                     'people': people})
     _refresh_error.pop(key, None)
-    await dating_log_write(profile_id, 'ok', f'{title} с сайта: {len(people)} собеседников')
+    if log_id:
+        await dating_log_write(log_id, 'ok', f'{title} с сайта: {len(people)} собеседников')
 
 
-def _cache_get(profile_id: int, kind: str) -> dict | None:
+def _key(kind: str, profile_id: int = 0, site_id: int = 0) -> str:
+    """Ключ снимка: по анкете или по сайту.
+
+    Он же служит ключом сторожей фонового обновления — одна строка на один список,
+    и разъехаться им негде.
+    """
+    return (DATING_PEOPLE_KEY.format(profile_id=profile_id, kind=kind) if profile_id
+            else DATING_PEOPLE_SITE_KEY.format(site_id=site_id, kind=kind))
+
+
+async def _site_profile(site_id: int) -> dict:
+    """Любая анкета сайта — под ней сценарий зайдёт в кабинет.
+
+    Какая именно, на результат не влияет: «кто в сети» одинаков под любой учёткой.
+    Но порядок задан явно (сначала те, у кого снят вход, дальше по номеру), чтобы
+    список не снимался то одной анкетой, то другой: в журнале прогонов это
+    выглядело бы как случайная чехарда.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT id, site_id, login FROM dating_profile '
+            ' WHERE site_id = %s AND login <> %s'
+            ' ORDER BY storage_state IS NULL, id LIMIT 1', (int(site_id), ''))
+        row = await db.fetchone()
+
+    return dict(row) if row else {}
+
+
+def _cache_get(key: str) -> dict | None:
     """Снимок из Redis или None.
 
     ⚠ **Сбой Redis не должен ронять ручку.** Кэш — ускорение, а не источник
@@ -322,7 +418,7 @@ def _cache_get(profile_id: int, kind: str) -> dict | None:
     страницу значило бы менять «медленно» на «никак».
     """
     try:
-        raw = redis_conn_get().get(DATING_PEOPLE_KEY.format(profile_id=profile_id, kind=kind))
+        raw = redis_conn_get().get(key)
     except Exception as e:
         logger_info(f'[dating] кэш собеседников не прочитался: {e}')
 
@@ -339,11 +435,10 @@ def _cache_get(profile_id: int, kind: str) -> dict | None:
     return snapshot if isinstance(snapshot, dict) and 'people' in snapshot else None
 
 
-def _cache_put(profile_id: int, kind: str, snapshot: dict) -> None:
+def _cache_put(key: str, snapshot: dict) -> None:
     """Кладёт снимок в Redis на неделю. Не бросает — по той же причине, что и чтение."""
     try:
-        redis_conn_get().set(DATING_PEOPLE_KEY.format(profile_id=profile_id, kind=kind),
-                             json.dumps(snapshot, ensure_ascii=False),
+        redis_conn_get().set(key, json.dumps(snapshot, ensure_ascii=False),
                              ex=DATING_PEOPLE_KEEP_SEC)
     except Exception as e:
         logger_info(f'[dating] кэш собеседников не записался: {e}')

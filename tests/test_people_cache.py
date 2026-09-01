@@ -112,6 +112,14 @@ def _state_clear() -> None:
     dating_people._refresh_error.clear()
 
 
+def _site_profile(found: bool = True):
+    """Подменённый выбор анкеты сайта."""
+    async def _pick(site_id):
+        return dict(PROFILE) if found else {}
+
+    return _pick
+
+
 def _snapshot(returns=None, fails=''):
     """Подменённый прогон: отдаёт записи или падает с заданной причиной."""
     async def _run(profile, kind):
@@ -309,6 +317,75 @@ class TestStaleAnswersAtOnce:
         assert len(runs) == 1, f'сорвавшийся прогон повторился {len(runs)} раз'
 
 
+class TestSiteScope:
+    """⚠ «Кто в сети» — свойство сайта, а не анкеты."""
+
+    async def test_site_list_has_its_own_key(self, door, monkeypatch):
+        """Снимок по сайту лежит отдельно от снимков по анкетам.
+
+        Список мужчин в сети один и тот же под любой учёткой, и держать его для
+        каждой анкеты значило бы снимать одно и то же по разу на анкету — десять
+        входов на сайт вместо одного, ради одинакового ответа.
+        """
+        monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
+        monkeypatch.setattr(dating_people, '_site_profile', _site_profile())
+
+        await dating_people.dating_people_site_list(343, 'online', fresh=False, user=None)
+
+        assert 'dating:people:site:343:online' in door.redis.store
+        assert 'dating:people:849:online' not in door.redis.store
+
+    async def test_second_profile_does_not_run_it_again(self, door, monkeypatch):
+        """Щелчок по другой анкете не гонит сценарий заново.
+
+        Ради этого список и переехал на сайт: страница спрашивает его при каждой
+        отрисовке вкладки, а вкладка перерисовывается на каждый выбор анкеты.
+        """
+        runs = []
+
+        async def _count(profile, kind):
+            runs.append(kind)
+
+            return list(PEOPLE)
+
+        monkeypatch.setattr(dating_people, '_snapshot', _count)
+        monkeypatch.setattr(dating_people, '_site_profile', _site_profile())
+
+        for _ in range(3):
+            await dating_people.dating_people_site_list(343, 'online', fresh=False, user=None)
+
+        assert len(runs) == 1, f'сценарий прогнался {len(runs)} раз вместо одного'
+
+    async def test_site_without_profiles_is_422(self, door, monkeypatch):
+        """Анкета всё равно нужна: сценарий заходит в кабинет, а кабинет чей-то.
+
+        Нет ни одной — говорим прямо, а не отдаём пустой список: пустота читалась
+        бы как «на сайте никого нет».
+        """
+        monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
+        monkeypatch.setattr(dating_people, '_site_profile', _site_profile(found=False))
+
+        with pytest.raises(HTTPException) as refusal:
+            await dating_people.dating_people_site_list(343, 'online', fresh=False, user=None)
+
+        assert refusal.value.status_code == 422
+
+    async def test_site_list_stays_out_of_a_profile_journal(self, door, monkeypatch):
+        """⚠ В журнал анкеты список по сайту не пишется.
+
+        Анкету для входа выбирают за человека, и приписать ей строку «Кто в сети:
+        20 собеседников» значило бы сказать, что это её работа. След прогона при
+        этом остаётся в журнале прогонов — там он честно за той учёткой, под
+        которой заходили.
+        """
+        monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
+        monkeypatch.setattr(dating_people, '_site_profile', _site_profile())
+
+        await dating_people.dating_people_site_list(343, 'online', fresh=False, user=None)
+
+        assert door.log == []
+
+
 class TestFreshness:
     """Два порога: выдержка и жёсткий пол."""
 
@@ -392,15 +469,23 @@ class TestCacheKeeps:
 
 
 async def _refreshed(profile_id: int, kind: str) -> None:
-    """Дожидается фонового обновления, если оно заведено."""
-    task = dating_people._refreshing.get((profile_id, kind))
+    """Дожидается фонового обновления, если оно заведено.
+
+    Ключ сторожа — та же строка, что и ключ снимка в Redis: списки бывают по анкете
+    и по сайту, и два вида ключей разошлись бы (`_key` в `dating_people.py`).
+    """
+    task = dating_people._refreshing.get(_redis_key(profile_id, kind))
     if task:
         await task
 
 
+def _redis_key(profile_id: int, kind: str) -> str:
+    return f'dating:people:{profile_id}:{kind}'
+
+
 def _age(door, profile_id: int, kind: str, seconds: float) -> None:
     """Состаривает снимок в кэше — иначе тест ждал бы настоящие пять минут."""
-    key = f'dating:people:{profile_id}:{kind}'
+    key = _redis_key(profile_id, kind)
     snapshot = json.loads(door.redis.store[key])
     snapshot['at'] -= seconds
     door.redis.store[key] = json.dumps(snapshot, ensure_ascii=False)

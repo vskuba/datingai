@@ -24,11 +24,14 @@
                что была до появления разделителей. */
             --col: 38%;
             --log: 200px;
-            /* Ширина колонок собеседников. По 150 пикселей — под столбик «лицо,
-               имя, возраст»; тянутся разделителями, как и всё остальное на этой
-               странице. */
+            /* Ширина колонки избранных. 150 пикселей — под столбик «лицо, имя,
+               возраст»; тянется разделителем, как и всё остальное на странице. */
             --fav: 150px;
-            --online: 150px;
+            /* Высота ряда «Все онлайн» — ленты карточек поперёк вкладки. Считана
+               по содержимому: заголовок, лицо 44, имя и возраст по 13, отступы и
+               полоса прокрутки. Меньше — и подписи схлопнутся (см. `.person-card`).
+               Тянется разделителем под рядом. */
+            --online-h: 126px;
             /* Высота переписки в первой колонке. Треть — столько, чтобы читались
                последние реплики; список диалогов над ней важнее, из него выбирают. */
             --talk: 180px;
@@ -192,7 +195,59 @@
            нет — её роль взял разделитель, который стоит на том же месте. */
         .people-col { min-width: 0; display: flex; flex-direction: column; }
         .people-col[data-kind=favorite] { flex: 0 0 var(--fav); }
-        .people-col[data-kind=online] { flex: 0 0 var(--online); }
+
+        /* ── Ряд «Все онлайн»: лента карточек поперёк вкладки ────────────────
+           Первым рядом и во всю ширину, потому что список **про сайт, а не про
+           выбранную анкету**: он не меняется, когда щёлкают по анкетам слева, и
+           место ему над тем, что от анкеты зависит. */
+        .online-row {
+            height: var(--online-h); min-height: 0; flex: 0 0 auto;
+            display: flex; flex-direction: column;
+        }
+        /* Прокрутка вбок, а не перенос на вторую строку: ряд фиксированной
+           высоты, и перенос спрятал бы половину списка под нижним краем. */
+        .online-strip {
+            flex: 1 1 auto; min-height: 0;
+            display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden;
+            padding-bottom: 4px;
+        }
+        .online-strip .people-empty { flex: 0 0 auto; }
+
+        /* Карточка ленты: лицо крупнее колоночного, подпись под ним. Поперёк
+           места меньше, чем по вертикали, — поэтому имя не рядом с лицом, а под. */
+        .person-card {
+            flex: 0 0 auto; width: 64px; cursor: pointer;
+            display: flex; flex-direction: column; align-items: center; gap: 2px;
+            padding: 4px 2px; border-radius: 8px; border: 1px solid transparent;
+        }
+        .person-card:hover { background: #f8fafc; }
+        .person-card.open { background: #eef2ff; border-color: #c7d2fe; }
+        .person-card .person-face { width: 44px; height: 44px; font-size: 15px; }
+        /* Точка и значок переписки — поверх лица: рядом с ним места нет, а знать
+           «в сети» и «есть переписка» надо не разворачивая карточку. */
+        .person-card .person-dot {
+            position: absolute; right: 1px; bottom: 1px;
+            box-shadow: 0 0 0 2px #fff;
+        }
+        .person-card .person-talk { position: absolute; left: 0; top: 0; font-size: 11px; }
+        /* ⚠ `flex: 0 0 auto` у подписей обязателен. Карточка — колонка флекса, и
+           при нехватке высоты флекс сжимает то, что сжимается: подписи схлопывались
+           в ноль, оставляя лицо и пустоту под ним. Поймано на живой странице —
+           имя было в разметке, но высотой в ноль пикселей. */
+        .person-card-name, .person-card-age { flex: 0 0 auto; line-height: 13px; }
+        .person-card-name {
+            max-width: 100%; font-size: 10px; color: #334155; text-align: center;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .person-card-age { font-size: 10px; color: #94a3b8; }
+
+        /* Полоса прокрутки ленты — тонкая: обычная съедает пятую часть высоты
+           ряда, а прокрутка здесь и так очевидна по обрезанной карточке у края. */
+        .online-strip::-webkit-scrollbar { height: 6px; }
+        .online-strip::-webkit-scrollbar-thumb {
+            background: #cbd5e1; border-radius: 3px;
+        }
+        .online-strip::-webkit-scrollbar-track { background: transparent; }
 
         /* Разделитель колонок собеседников: тот же вид и то же поведение, что у
            остальных на странице, только уже — между узкими колонками широкая
@@ -228,6 +283,9 @@
             flex: 0 0 auto; font-size: 9px; color: #cbd5e1; margin-bottom: 3px;
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
+        /* В ряду время стоит в одну строку со счётом: своей строки под него нет —
+           её съела бы высота ленты. */
+        .online-row .people-when { margin: 0; }
         .people-when .bad { color: #dc2626; }
         /* Кэш — заметнее обычного времени, но не тревожнее: список настоящий,
            просто снят раньше. Янтарный между серым «свежо» и красным «не вышло». */
@@ -1050,6 +1108,13 @@
 
         workEl.classList.add('chat');
         workEl.innerHTML = '<div class="chat-wrap">'
+            // Первый ряд — «Все онлайн», лентой поперёк вкладки. Он **про сайт, а
+            // не про выбранную анкету**: список мужчин в сети один и тот же, под
+            // какой учёткой на него ни смотри, и переключение анкеты его не
+            // трогает (`peopleOnlineLoad`).
+            + peopleOnlineRow()
+            + '<div class="split split-row" id="splitOnline"'
+            + ' title="Потяните, чтобы изменить высоту"></div>'
             + '<div class="chat-main">'
             + `<div class="chat-cols">`
             // Первая колонка — два ряда: список диалогов и переписка с выбранным.
@@ -1072,9 +1137,6 @@
             + '<div class="split split-people" data-var="--fav"'
             + ' title="Потяните, чтобы изменить ширину"></div>'
             + peopleCol('favorite', 'My favorites')
-            + '<div class="split split-people" data-var="--online"'
-            + ' title="Потяните, чтобы изменить ширину"></div>'
-            + peopleCol('online', 'Все онлайн')
             + '</div>'
             + '</div>'
             + '<div class="split split-row" id="splitRow" title="Потяните, чтобы изменить высоту"></div>'
@@ -1093,6 +1155,13 @@
                   Math.round(innerHeight * 0.5),
                   (e) => workEl.querySelector('.chat-talk').getBoundingClientRect().bottom
                          - e.clientY);
+
+        // Ряд «Все онлайн» растёт **вниз**: его верх стоит на месте, тянут за низ.
+        // Поэтому высота считается от верхнего края самого ряда.
+        splitDrag(workEl.querySelector('#splitOnline'), '--online-h', 70,
+                  Math.round(innerHeight * 0.45),
+                  (e) => e.clientY - workEl.querySelector('.online-row')
+                                            .getBoundingClientRect().top);
 
         // Колонки собеседников растут **влево**, к переписке: правый край каждой
         // стоит на месте, а тянут за левый. Поэтому ширина считается от правого
@@ -1210,6 +1279,57 @@
     // мигание пустотой каждые десять секунд читалось бы как «список пропал».
     const peopleCache = new Map();
 
+    // Ряд «Все онлайн»: карточки поперёк вкладки, прокрутка вбок.
+    //
+    // ⚠ **Живёт он по сайту, а не по анкете.** Список мужчин в сети один и тот же
+    // под любой учёткой, и держать его отдельно для каждой анкеты значило бы
+    // снимать одно и то же по разу на анкету — десять входов на сайт вместо
+    // одного. Отсюда и ключ кэша страницы: `site|online`, без номера анкеты.
+    //
+    // Строкой поперёк, а не колонкой: в колонке шириной 150 пикселей помещалось
+    // полтора десятка имён столбиком, а «кто сейчас на сайте» просматривают
+    // взглядом слева направо, как ленту.
+    function peopleOnlineRow() {
+        const state = peopleCache.get(ONLINE_KEY);
+
+        return '<div class="online-row">'
+            + '<div class="people-head">'
+            + '<span>Все онлайн</span>'
+            + `<span class="people-count">${peopleCount(state)}</span>`
+            + `<span class="people-when">${peopleWhen(state)}</span>`
+            + '<button type="button" class="people-reload" data-kind="online"'
+            + ' title="Снять список заново">⟳</button>'
+            + '</div>'
+            + `<div class="online-strip">${peopleCards(state)}</div>`
+            + '</div>';
+    }
+
+    // Карточка ленты: лицо крупнее, чем в колонке, под ним имя и возраст. В ряду
+    // место есть по вертикали, а имён поперёк помещается тем больше, чем уже
+    // карточка, — поэтому подпись под лицом, а не рядом.
+    function peopleCards(state) {
+        if (!state) return '<div class="people-empty">гружу…</div>';
+        if (state.error && !state.people.length) {
+            return `<div class="people-empty bad" title="${esc(state.error)}">не снялось</div>`;
+        }
+        if (!state.people.length) return '<div class="people-empty">никого нет в сети</div>';
+
+        return state.people.map(p =>
+            `<div class="person-card${String(openUid) === String(p.uid) ? ' open' : ''}"`
+            + ` data-uid="${esc(p.uid)}"`
+            + ` title="${esc(p.name)}${p.age ? ', ' + p.age : ''}`
+            + `${p.online ? ' · в сети' : ''}">`
+            + `<span class="person-face">${esc((p.name || '?').slice(0, 1).toUpperCase())}`
+            + (p.photo ? `<img src="${esc(p.photo)}" alt="" referrerpolicy="no-referrer"`
+                         + ' onerror="this.remove()">' : '')
+            + `<span class="person-dot${p.online ? ' online' : ''}"></span>`
+            + (dialogHas(p) ? '<span class="person-talk" title="с ним есть переписка">💬</span>' : '')
+            + '</span>'
+            + `<span class="person-card-name">${esc(p.name || 'без имени')}</span>`
+            + `<span class="person-card-age">${p.age ? p.age : ''}</span>`
+            + '</div>').join('');
+    }
+
     function peopleCol(kind, title) {
         const state = peopleCache.get(`${openId}|${kind}`);
 
@@ -1300,6 +1420,77 @@
 
     // Грузит один список. `fresh` ставит только кнопка: сам по себе круг
     // перерисовки его не ставит, иначе кэш на сервере терял бы смысл.
+    // Ключ ряда «Все онлайн» в памяти страницы. Без номера анкеты — список общий
+    // на сайт, и переключение анкеты его не сбрасывает.
+    const ONLINE_KEY = 'site|online';
+
+    // Грузит ряд «Все онлайн» — по сайту, а не по анкете.
+    async function peopleOnlineLoad(fresh = false) {
+        const site = Number(siteEl.value) || 0;
+        if (!site) return;
+
+        let state;
+        try {
+            state = (await getData(`${BASE}/api/dating/people/site/${site}/online`
+                                   + (fresh ? '?fresh=1' : ''))).result || {};
+        } catch (e) {
+            state = {people: [], error: e.message};
+        }
+
+        // Гонка та же, что у списков по анкете: ответ по прежнему сайту может
+        // прийти позже ответа по вновь выбранному.
+        if ((Number(siteEl.value) || 0) !== site) return;
+
+        peopleCache.set(ONLINE_KEY, state);
+        peopleOnlinePaint();
+
+        if (state.refreshing) peopleOnlineAwait(site);
+    }
+
+    // Ждём конца фонового прогона — тем же способом, что и колонки.
+    function peopleOnlineAwait(site) {
+        if (peopleAwaiting.has(ONLINE_KEY)) return;
+        peopleAwaiting.add(ONLINE_KEY);
+
+        let left = PEOPLE_AWAIT_TRIES;
+        const timer = setInterval(async () => {
+            if ((Number(siteEl.value) || 0) !== site || left-- <= 0) {
+                clearInterval(timer);
+                peopleAwaiting.delete(ONLINE_KEY);
+                return;
+            }
+
+            let state;
+            try {
+                state = (await getData(`${BASE}/api/dating/people/site/${site}/online`)).result || {};
+            } catch (e) {
+                return;
+            }
+            if ((Number(siteEl.value) || 0) !== site) return;
+
+            peopleCache.set(ONLINE_KEY, state);
+            peopleOnlinePaint();
+
+            if (!state.refreshing) {
+                clearInterval(timer);
+                peopleAwaiting.delete(ONLINE_KEY);
+            }
+        }, PEOPLE_AWAIT_MS);
+    }
+
+    // Перерисовываем только ряд: пересобирать вкладку значило бы сбросить
+    // прокрутку ленты и выбор собеседника.
+    function peopleOnlinePaint() {
+        const row = workEl.querySelector('.online-row');
+        if (!row) return;
+
+        const state = peopleCache.get(ONLINE_KEY);
+        row.querySelector('.online-strip').innerHTML = peopleCards(state);
+        row.querySelector('.people-count').textContent = peopleCount(state);
+        row.querySelector('.people-when').innerHTML = peopleWhen(state);
+        peopleBindRows(row);
+    }
+
     async function peopleLoad(kind, fresh = false) {
         if (!openId) return;
 
@@ -1379,13 +1570,36 @@
     }
 
     // Строки колонки выбирают собеседника — тем же способом, что список диалогов.
-    function peopleBindRows(col) {
-        col.querySelectorAll('.person').forEach(person => {
+    function peopleBindRows(box) {
+        box.querySelectorAll('.person, .person-card').forEach(person => {
             person.addEventListener('click', () => chatSelect(person.dataset.uid));
         });
     }
 
     function peopleBind() {
+        const row = workEl.querySelector('.online-row');
+        if (row) {
+            const btn = row.querySelector('.people-reload');
+            btn.addEventListener('click', async () => {
+                btn.disabled = true;
+                row.querySelector('.online-strip').innerHTML =
+                    '<div class="people-empty">снимаю…</div>';
+                try {
+                    await peopleOnlineLoad(true);
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+
+            peopleBindRows(row);
+
+            // ⚠ Грузим, только если ряда ещё нет в памяти. Смена анкеты
+            // перерисовывает вкладку, но список остаётся прежним — он про сайт, и
+            // снимать его заново на каждый щелчок по анкете значило бы ходить на
+            // сайт десять раз ради одинакового ответа.
+            if (!peopleCache.has(ONLINE_KEY)) peopleOnlineLoad();
+        }
+
         workEl.querySelectorAll('.people-col').forEach(col => {
             const kind = col.dataset.kind;
             const btn = col.querySelector('.people-reload');
@@ -1443,7 +1657,7 @@
 
         // Подсветку правим на месте, переписку перерисовываем: пересобирать
         // вкладку целиком значило бы сбросить прокрутку и снять фокус.
-        workEl.querySelectorAll('.contact, .person').forEach(el =>
+        workEl.querySelectorAll('.contact, .person, .person-card').forEach(el =>
             el.classList.toggle('open', el.dataset.uid === openUid));
 
         talkPaint();
@@ -1492,11 +1706,11 @@
                 btn.innerHTML = 'Загрузить диалоги';
             }
 
-            // Перерисовываем вкладку целиком, а не счётчик и колонки по
-            // отдельности: значки «есть переписка» стоят в обеих колонках
-            // собеседников и в списке диалогов, и собирать их руками по трём
-            // местам — три случая забыть одно из них. Данные уже в памяти,
-            // лишнего запроса к сайту перерисовка не делает.
+            // Перерисовываем вкладку целиком, а не счётчик и списки по
+            // отдельности: значки «есть переписка» стоят и в ряду «Все онлайн», и
+            // в колонке избранных, и в списке диалогов — собирать их руками по
+            // трём местам значит три случая забыть одно из них. Данные уже в
+            // памяти, лишнего запроса к сайту перерисовка не делает.
             await chatLoad();
         });
     }
@@ -2166,7 +2380,7 @@
     // Все размеры страницы в одном месте: список, журнал и две колонки
     // собеседников. Перечислены именами переменных, а не по одной строке на каждую,
     // — пятый разделитель не должен требовать правки в двух функциях.
-    const LAYOUT_VARS = ['--col', '--log', '--fav', '--online', '--talk'];
+    const LAYOUT_VARS = ['--col', '--log', '--fav', '--online-h', '--talk'];
 
     function layoutSave() {
         const saved = {};
