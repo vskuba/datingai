@@ -172,11 +172,6 @@
             text-transform: uppercase; letter-spacing: .04em; padding-bottom: 4px;
         }
         .chat-dialogs-count { color: #4338ca; }
-        .chat-dialogs-btn {
-            margin-left: auto; font-size: 11px; padding: 2px 8px;
-            text-transform: none; letter-spacing: normal; font-weight: 400;
-        }
-
         .chat-dialogs { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
         /* ── Строка диалога: собеседник тем же видом, что в «My favorites» ────
@@ -757,6 +752,13 @@
         <button type="button" class="dating-btn" id="chatPanelBtn"
                 title="Забрать сообщения всех анкет сайта из панели агентства за неделю"
                 disabled>Забрать сообщения</button>
+        {# «Загрузить диалоги» — про **выбранную анкету**, в отличие от двух
+           соседних. Стоит здесь всё равно: все три входят на сайт браузером
+           соседа, и держать их в разных местах значило искать нужную по странице.
+
+           ⚠ Заперта, пока анкета не выбрана: снимать список диалогов не у кого. #}
+        <button type="button" class="dating-btn chat-dialogs-btn" id="dialogsBtn"
+                disabled>Загрузить диалоги</button>
         <span class="dating-hint" id="hint"></span>
     </div>
 
@@ -850,6 +852,7 @@
 
     const siteEl = document.getElementById('siteSelect');
     const chatPanelBtn = document.getElementById('chatPanelBtn');
+    const dialogsBtn = document.getElementById('dialogsBtn');
     const importBtn = document.getElementById('importBtn');
     const tableEl = document.getElementById('table');
     const hintEl = document.getElementById('hint');
@@ -1326,7 +1329,6 @@
             if (btn) btn.addEventListener('click', () => peopleLoad(kind, true));
         });
 
-        chatDialogsBind();
     }
 
     // Показывает вкладку шаблона. Нет такой панели — сайт её не завёл, и вместо
@@ -2364,10 +2366,10 @@
             + '</div>';
     }
 
-    // Кнопка «Загрузить диалоги» живёт в шаблоне, поэтому вешается один раз — из
-    // `workBind()`.
+    // Кнопка «Загрузить диалоги» переехала в шапку страницы, поэтому вешается
+    // один раз при загрузке, а не из `workBind()`: шапка не перерисовывается.
     function chatDialogsBind() {
-        const btn = workEl.querySelector('.chat-dialogs-btn');
+        const btn = dialogsBtn;
         if (!btn) return;
 
         // Прогон входит на сайт под анкетой и идёт **десятки секунд** — кнопка
@@ -2393,8 +2395,10 @@
                 }
             } finally {
                 busy.delete(`dialog:${openId}`);
-                btn.disabled = false;
                 btn.innerHTML = 'Загрузить диалоги';
+                // Цвет и запертость возвращает общая функция: она знает и про
+                // выбранную анкету, и про то, нужна ли кнопка этому сайту.
+                dialogsStateSet();
             }
 
             // Перерисовываем вкладку целиком, а не счётчик и списки по
@@ -2698,6 +2702,9 @@
     // переписку и переключается между анкетами, а не между вкладками.
     function openSet(id) {
         openId = Number(id || 0);
+        // Кнопка «Загрузить диалоги» стоит в шапке и про выбранную анкету: без
+        // анкеты она заперта, с анкетой — открыта.
+        dialogsStateSet();
         // Страница собеседниц и раскрытый диалог — про прежнюю анкету: седьмая
         // страница чужих собеседниц и чужой открытый диалог ничего не значат.
         contactsPage = 0;
@@ -2731,10 +2738,51 @@
             return;
         }
 
+        chatPanelReady = !!state.ready;
         chatPanelBtn.disabled = !state.ready || chatPanelBusy;
+        chatPanelBtn.classList.toggle('ready', !!state.ready);
+        chatPanelBtn.classList.toggle('blocked', !state.ready);
         chatPanelBtn.title = state.ready
             ? 'Забрать сообщения всех анкет сайта из панели агентства за неделю'
             : (state.why || 'импорт переписки для этого сайта не настроен');
+
+        // Цвет «Загрузить диалоги» зависит от того же признака — см. ниже.
+        dialogsStateSet();
+    }
+
+    // Настроен ли импорт переписки у сайта. Знать это надо двум кнопкам сразу,
+    // поэтому ответ держим переменной, а не спрашиваем дважды.
+    let chatPanelReady = false;
+
+    // ── Цвет «Загрузить диалоги» ─────────────────────────────────────────────
+    //
+    // ⚠ **Зелёная там, где она нужна; красная там, где нет.** Кнопка снимает
+    // список тех, с кем у анкеты есть переписка. Но если у сайта настроен импорт
+    // из панели агентства, тот приносит **и людей, и сами сообщения** — список
+    // диалогов строится от переписки, и снимать его отдельно незачем.
+    //
+    // Отсюда правило, а не константа: красная, когда есть панель (Ladadate);
+    // зелёная, когда панели нет, а список диалогов сайт отдаёт (Goldenbride). Так
+    // оно само сработает и для сайта, который заведут завтра.
+    //
+    // Красная при этом **не заперта**: снять список всё равно можно — например,
+    // проверяя, что видит сама анкета. Заперта она только без выбранной анкеты:
+    // тогда снимать не у кого.
+    function dialogsStateSet() {
+        if (!dialogsBtn) return;
+
+        const busyNow = busy.has(`dialog:${openId}`);
+        const нужна = !chatPanelReady;
+
+        dialogsBtn.disabled = !openId || busyNow;
+        dialogsBtn.classList.toggle('ready', нужна);
+        dialogsBtn.classList.toggle('blocked', !нужна);
+        dialogsBtn.title = !openId
+            ? 'Сначала выберите анкету: список диалогов снимается под ней'
+            : (нужна
+                ? 'Войти на сайт под анкетой и снять список тех, с кем есть переписка'
+                : 'Для этого сайта не нужна: сообщения и собеседников приносит '
+                  + '«Забрать сообщения» из панели агентства');
     }
 
     // ⚠ **Занятость помним переменной, а не только `disabled` кнопки.** Список
@@ -3075,6 +3123,9 @@
     });
     importBtn.addEventListener('click', profileImport);
     chatPanelBtn.addEventListener('click', chatPanelImport);
+    // Кнопка шапки — обработчик один на страницу: шапка не перерисовывается, в
+    // отличие от вкладки, где она стояла раньше.
+    chatDialogsBind();
     // Поиск режет уже пришедший список, а не ходит на сервер: список приходит
     // целиком, и запрос на каждую букву ничего не уточнит. Каждая буква
     // возвращает на первую страницу — найденное показывают с начала.
