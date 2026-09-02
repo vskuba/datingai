@@ -45,6 +45,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_chat_ask
 from src.dating.dating_log import dating_log_write
+from src.dating.dating_online import dating_online_check
 from src.dating.dating_send import dating_send_message
 
 # Тип собеседника для движка. У анкет он один — человек в чате.
@@ -113,6 +114,22 @@ async def dating_answer_run(profile: dict, presence: dict, agent_id: int,
     for row in waiting:
         uid = str(row['sender_uid'])
         who = str(row['sender_name'] or '') or f'#{uid}'
+
+        # ⚠ **Собеседника нет в сети — не спрашиваем агента вовсе.**
+        #
+        # Проверка стоит **до** `_agent_ask`, и это главное: ответ LLM стоит денег,
+        # а отправить его будет некому — сайт либо отклонит сообщение, либо примет
+        # в пустоту. Прежде порядок был обратный: спрашивали, получали ответ и
+        # только потом узнавали от сайта, что собеседник вышел.
+        #
+        # Пометки попытки тоже нет: он вернётся, и тогда ответ уйдёт. Сообщение
+        # остаётся неотвеченным, а не теряется.
+        away = dating_online_check(int(profile.get('site_id') or 0), uid)
+        if not away['online']:
+            offline += 1
+            await dating_log_write(profile_id, 'info',
+                                   f'{who}: нет в сети, отвечу когда вернётся')
+            continue
 
         # Тишина — это не реплика: агенту про неё говорим прямо, иначе он ответит
         # на давнее сообщение, как будто оно только что пришло.

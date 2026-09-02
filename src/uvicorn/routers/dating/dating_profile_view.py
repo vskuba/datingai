@@ -20,6 +20,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
 from src.dating.dating_json import dating_json_load
+from src.dating.dating_online import dating_online_check
 from src.uvicorn.routers.dating.dating_log import dating_log_feed
 from src.uvicorn.routers.dating.dating_profile import dating_profile_row
 
@@ -64,6 +65,32 @@ async def dating_profile_view_messages(profile_id: int, uid: str = '', limit: in
         rows = await db.fetchall()
 
     return {'result': rows}
+
+
+@router.get('/{profile_id}/can-send/{uid}', include_in_schema=False)
+async def dating_profile_view_can_send(profile_id: int, uid: str,
+                                       user=Depends(auth_required)):
+    """Можно ли сейчас написать этому собеседнику.
+
+    Returns:
+        dict: `can` — можно ли; `why` — почему нельзя, словами для страницы;
+        `known` — знаем ли мы это наверняка; `age_sec` — возраст снимка «кто в
+        сети».
+
+    ⚠ **Спрашивает страница перед показом формы, но решает не она.** Тот же запрет
+    стоит в самой отправке (`dating_send.py`): страницу можно открыть в двух
+    вкладках, оставить на час, дёрнуть ручку из консоли — и запрет, живущий только
+    в разметке, ни от чего не защищает. Здесь он ради того, чтобы человек **видел**
+    причину, а не жал кнопку в пустоту.
+    """
+    profile = await dating_profile_row(profile_id)
+    state = dating_online_check(int(profile.get('site_id') or 0), uid)
+
+    return {'result': {'can': bool(state['online']),
+                       'known': bool(state['known']),
+                       'age_sec': int(state['age_sec']),
+                       'why': '' if state['online']
+                              else 'собеседника сейчас нет в сети'}}
 
 
 @router.post('/{profile_id}/read', include_in_schema=False)

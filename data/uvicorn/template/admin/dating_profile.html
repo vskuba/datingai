@@ -223,6 +223,33 @@
         .talk-load { padding: 24px 12px; text-align: center; color: #94a3b8; font-size: 12px; }
         .talk-load.bad { color: #b91c1c; }
 
+        /* ── Форма отправки в окне переписки ─────────────────────────────────
+           Под лентой и вне её прокрутки: лента прокручивается, форма стоит. */
+        .talk-form {
+            flex: 0 0 auto; border-top: 1px solid #e2e8f0; padding: 10px 14px;
+            background: #f8fafc;
+        }
+        .talk-send { display: flex; align-items: flex-end; gap: 8px; }
+        .talk-text {
+            flex: 1 1 auto; min-width: 0; resize: vertical; max-height: 140px;
+            padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px;
+            font-size: 13px; font-family: inherit; line-height: 1.35;
+        }
+        .talk-text:focus { outline: 2px solid #c7d2fe; outline-offset: -1px; }
+        /* Запертое поле — приглушённым: видно, что писать сейчас нельзя, но форма
+           остаётся на месте. Убери её вовсе — человек решил бы, что отправка не
+           предусмотрена вообще. */
+        .talk-text:disabled { background: #f1f5f9; color: #94a3b8; cursor: not-allowed; }
+        .talk-btn { flex: 0 0 auto; }
+
+        /* Почему нельзя писать — словами. ⚠ Запертое поле без объяснения читается
+           как поломка: человек жмёт и не понимает, отчего ничего не происходит. */
+        .talk-warn {
+            margin-bottom: 8px; padding: 6px 8px; border-radius: 6px;
+            background: #fff7ed; color: #9a3412; font-size: 12px; line-height: 1.35;
+        }
+        .talk-warn.off { display: none; }
+
         /* Значок «нужен ответ». Мигает по той же причине, что мигала плашка: это
            единственная отметка в панели, означающая несделанную работу. Цвет и
            частота — от неё же (`.need` в `dating_page.css`), чтобы одно состояние
@@ -2045,6 +2072,11 @@
             body: '<div class="talk-load">Гружу переписку…</div>',
         });
 
+        // Форму отправки рисуем сразу запертой и отпираем по ответу сервера.
+        // Обратный порядок — открыть и запереть, если нельзя — давал бы секунду,
+        // в которую человек успевает нажать «Отправить» тому, кого нет в сети.
+        chatFormAdd(box, uid);
+
         let rows;
         try {
             rows = (await getData(`${BASE}/api/dating/profile/${openId}/message`
@@ -2063,6 +2095,142 @@
 
         body.innerHTML = chatDialogBody(rows, {who, me});
         // Прокрутка вниз: разговор читают с конца — там то, на что отвечают.
+        body.scrollTop = body.scrollHeight;
+    }
+
+    // ── Отправка из окна ─────────────────────────────────────────────────────
+    //
+    // ⚠ **Писать можно только тому, кто в сети.** Сообщение тому, кого на сайте
+    // нет, либо отклоняется, либо уходит в пустоту; у сценария оно вдобавок стоит
+    // десятков секунд живого браузера. Поэтому форма заперта, пока сервер не
+    // скажет, что можно, — и причина написана словами: запертое поле без
+    // объяснения читается как поломка.
+    //
+    // Запрет на странице — **удобство, а не защита**: тот же отказ стоит в самой
+    // отправке (`dating_send.py`). Страницу открывают в двух вкладках и оставляют
+    // на час; запрет, живущий в разметке, ни от чего не защищает.
+    function chatFormAdd(box, uid) {
+        const form = document.createElement('div');
+        form.className = 'talk-form';
+        form.innerHTML = '<div class="talk-warn off"></div>'
+            + '<div class="talk-send">'
+            + '<textarea class="talk-text" rows="2" disabled'
+            + ' placeholder="Проверяю, в сети ли собеседник…"></textarea>'
+            + '<button type="button" class="dating-btn primary talk-btn" disabled>'
+            + 'Отправить</button>'
+            + '</div>';
+        box.querySelector('.modal').appendChild(form);
+
+        chatFormReady(box, uid);
+
+        form.querySelector('.talk-btn').addEventListener('click',
+                                                         () => chatFormSend(box, uid));
+        // Enter отправляет, Shift+Enter — перенос строки: так устроены все чаты, и
+        // здесь ожидание человека важнее единообразия с прочими формами панели.
+        form.querySelector('.talk-text').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                chatFormSend(box, uid);
+            }
+        });
+    }
+
+    async function chatFormReady(box, uid) {
+        const form = box.querySelector('.talk-form');
+        if (!form) return;
+
+        const text = form.querySelector('.talk-text');
+        const btn = form.querySelector('.talk-btn');
+        const warn = form.querySelector('.talk-warn');
+
+        let state;
+        try {
+            state = (await getData(`${BASE}/api/dating/profile/${openId}`
+                                   + `/can-send/${encodeURIComponent(uid)}`)).result || {};
+        } catch (e) {
+            warn.textContent = 'Не спросить, в сети ли собеседник: ' + e.message;
+            warn.classList.remove('off');
+            return;
+        }
+
+        // Окно могли закрыть, пока шёл запрос.
+        if (!document.contains(form)) return;
+
+        if (!state.can) {
+            warn.textContent = 'Собеседника сейчас нет в сети — написать ему нельзя.'
+                + ' Сообщение уйдёт, когда он вернётся в чат.';
+            warn.classList.remove('off');
+            text.placeholder = 'Собеседник не в сети';
+            return;
+        }
+
+        warn.classList.add('off');
+        text.disabled = false;
+        btn.disabled = false;
+        text.placeholder = 'Напишите сообщение…';
+        text.focus();
+    }
+
+    async function chatFormSend(box, uid) {
+        const form = box.querySelector('.talk-form');
+        const text = form.querySelector('.talk-text');
+        const btn = form.querySelector('.talk-btn');
+        const warn = form.querySelector('.talk-warn');
+        const message = text.value.trim();
+        if (!message || btn.disabled) return;
+
+        // ⚠ Поле не чистим до ответа: отправка идёт десятками секунд (сценарий
+        // водит браузер), и стерев текст сразу, мы потеряли бы его при отказе —
+        // человеку пришлось бы набирать заново.
+        btn.disabled = true;
+        text.disabled = true;
+        btn.innerHTML = '<span class="dating-spin"></span>Отправляю…';
+        try {
+            const r = (await postData(`${BASE}/api/dating/profile/${openId}/send`,
+                                      {to: uid, text: message})).result || {};
+
+            if (r.ok) {
+                text.value = '';
+                // Перечитываем переписку, а не дописываем реплику руками: отправка
+                // уже записана в базу, и второй способ показать её разошёлся бы с
+                // первым в мелочах — времени, имени, порядке.
+                await chatDialogReload(box, uid);
+                await chatLoad();
+            } else if (r.offline) {
+                warn.textContent = 'Собеседник вышел из чата — сообщение не ушло.';
+                warn.classList.remove('off');
+            } else {
+                showNotification('Не отправилось: ' + (r.error || 'сайт отказал'), 'error');
+            }
+        } catch (e) {
+            showNotification('Не отправилось: ' + e.message, 'error');
+        } finally {
+            btn.innerHTML = 'Отправить';
+            // Право писать могло пропасть, пока шла отправка: спрашиваем заново.
+            await chatFormReady(box, uid);
+        }
+    }
+
+    // Перечитывает ленту окна, не трогая форму под ней.
+    async function chatDialogReload(box, uid) {
+        const body = box.querySelector('.modal-body');
+        if (!body) return;
+
+        const found = (chatData.contacts || []).find(c => String(c.uid) === String(uid)) || {};
+        const row = openRow() || {};
+        const me = (chatData.profile || {}).name || chatData.login || row.login || 'анкета';
+
+        let rows;
+        try {
+            rows = (await getData(`${BASE}/api/dating/profile/${openId}/message`
+                                  + `?uid=${encodeURIComponent(uid)}`
+                                  + `&limit=${CHAT_DIALOG_LIMIT}`)).result || [];
+        } catch (e) {
+            return;
+        }
+        if (!document.contains(body)) return;
+
+        body.innerHTML = chatDialogBody(rows, {who: found.name || uid, me});
         body.scrollTop = body.scrollHeight;
     }
 

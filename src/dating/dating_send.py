@@ -36,6 +36,7 @@ import websockets
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.dating_online import dating_online_check
 from src.dating.dating_scenario import dating_scenario_run
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
                                        rhapsody_api_site_variable)
@@ -124,6 +125,20 @@ async def dating_send_message(profile: dict, presence: dict, to_uid: str, text: 
     if not transport:
         return _fail('у сайта не настроена отправка: ни `presence.send` у соседа, '
                      'ни «Чем отправляем сообщения» на странице «Сайты»')
+
+    # ⚠ **Собеседника нет в сети — не шлём вовсе.**
+    #
+    # У сценария это особенно дорого: прогон стоит десятков секунд живого браузера
+    # и вкладки в общем пуле соседа — платить их за сообщение, которое уйдёт в
+    # пустоту, незачем. У прочих путей дешевле, но исход тот же.
+    #
+    # `offline: True` — **состояние, а не ошибка**: собеседник вернётся, и тогда
+    # сообщение уйдёт. Вызывающий поступает с этим по-своему: автоответ оставляет
+    # сообщение неотвеченным, страница гасит поле ввода.
+    away = dating_online_check(site_id, to_uid)
+    if not away['online']:
+        return {'ok': False, 'error': 'собеседника нет в сети', 'offline': True,
+                'response': '', 'message_uid': ''}
 
     site = site_registry_chat(presence)
     message_uid = site.message_uid()
