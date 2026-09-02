@@ -42,6 +42,8 @@ from src.dating.dating_check import dating_check_run
 from src.dating.dating_dialog import dating_dialog_sync
 from src.dating.dating_disconnect import dating_disconnect_run
 from src.dating.dating_json import dating_json_load
+from src.dating.dating_schedule import (dating_schedule_check, dating_schedule_dump,
+                                        dating_schedule_load)
 from src.dating.dating_log import dating_log_write
 from src.dating.dating_login import (DatingLoginError, dating_login_run,
                                      dating_login_session_all, dating_login_session_close,
@@ -79,6 +81,47 @@ class DatingProfileAuto(BaseModel):
     auto_answer_only: str | None = Field(
         None, max_length=500,
         description='Кому отвечать: номера через запятую. Пусто — всем; не передано — как было')
+
+
+class DatingProfileSchedule(BaseModel):
+    """Расписание анкеты: смены суток целиком."""
+
+    schedule: list[dict] = Field(default_factory=list,
+                                 description='Смены: [{"from": "07:00", "to": "11:00"}]')
+
+
+@router.put('/{profile_id}/schedule', include_in_schema=False)
+async def dating_profile_action_schedule(profile_id: int, data: DatingProfileSchedule,
+                                         user=Depends(auth_required)):
+    """Сохраняет расписание анкеты — целиком, а не по смене.
+
+    Страница держит расписание перед глазами и шлёт то, что на ней. Правка по одной
+    смене означала бы, что удаление — отдельная ручка, а порядок двух правок подряд
+    начинает значить.
+
+    ⚠ **Негодное расписание отклоняется, а не правится молча.** Смены внахлёст —
+    это вход поверх входа: анкета получит вторую сессию, не закрыв первую. Сказать
+    об этом человеку полезнее, чем тихо сдвинуть его время.
+    """
+    await dating_profile_row(profile_id)
+
+    why = dating_schedule_check(data.schedule)
+    if why:
+        raise HTTPException(status_code=422, detail=why)
+
+    rows = dating_schedule_load(data.schedule)
+
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE dating_profile SET schedule = %s WHERE id = %s',
+                         (dating_schedule_dump(rows), profile_id))
+        await db.connection.commit()
+
+    await dating_log_write(
+        profile_id, 'info',
+        'Расписание: ' + (', '.join(f"{r['from']}–{r['to']}" for r in rows)
+                          if rows else 'снято, анкету ведут руками'))
+
+    return {'result': {'schedule': rows}}
 
 
 class DatingProfileEnabled(BaseModel):

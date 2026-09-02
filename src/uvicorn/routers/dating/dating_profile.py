@@ -41,6 +41,7 @@ from src.auth.auth import auth_required
 from src.mysql_.repository.dating_profile_repository import DatingProfileRepository
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_site_get
 from src.dating.dating_json import dating_json_load
+from src.dating.dating_schedule import DATING_SCHEDULE_DEFAULT, dating_schedule_dump
 from src.dating.dating_revive import dating_revive_state
 
 router = APIRouter(prefix='/api/dating/profile', tags=['dating'])
@@ -174,7 +175,14 @@ async def dating_profile_create(data: DatingProfileSave,
     try:
         profile_id = await DatingProfileRepository().add({
             'site_id': data.site_id, 'login': data.login,
-            'password': data.password, 'note': data.note, 'role': data.role})
+            'password': data.password, 'note': data.note, 'role': data.role,
+            # ⚠ Расписание сразу: анкету заводят, чтобы она работала. Пустое
+            # означало бы, что каждую надо настраивать руками, прежде чем она
+            # войдёт хоть раз, — а умолчание в базе для JSON-колонки не поставить.
+            #
+            # Поймано тестом: миграция проставила расписание существующим анкетам,
+            # а заведение новой про него не знало.
+            'schedule': dating_schedule_dump(DATING_SCHEDULE_DEFAULT)})
     except Exception as e:
         raise HTTPException(status_code=409, detail=_save_error(e, data.login))
 
