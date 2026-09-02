@@ -28,8 +28,12 @@ import time
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
+from redis_.redis_ import redis_conn_get
 
 from src.dating.dating_auto import DATING_AUTO_PERIOD_SEC, dating_auto_round
+from src.dating.dating_chat_panel import (DATING_CHAT_PANEL_ROUND_DAYS,
+                                          dating_chat_panel_import)
+from src.uvicorn.routers.dating.dating_site import dating_site_seconds
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_error_write,
                                        rhapsody_api_site_get)
 from src.dating.dating_chat import dating_chat_listen
@@ -41,6 +45,20 @@ from src.dating.dating_ws import dating_ws_capture
 
 # Как часто сверять список учёток с базой.
 DATING_CHAT_HOLD_RESCAN_SEC = 60
+
+# Как часто круг импорта переписки просыпается и смотрит, кому пора.
+#
+# ⚠ Это **тик круга**, а не частота импорта: та своя у каждого сайта (настройка
+# `chat_check_every`, от пяти минут). Тик мельче самой частой настройки, иначе
+# «каждые пять минут» превратилось бы в «каждые пять минут плюс тик».
+DATING_CHAT_IMPORT_TICK_SEC = 60
+
+# Настройка сайта с частотой импорта. Ключ — в `DATING_SITE_KNOWN`.
+DATING_CHAT_IMPORT_SETTING = 'chat_check_every'
+
+# Отметка «у этого сайта только что забирали». Живёт в Redis ровно столько, сколько
+# сказано настройкой, — по её истечению круг и понимает, что пора снова.
+DATING_CHAT_IMPORT_KEY = 'dating:chat:import:site:{site_id}'
 
 # Пауза после обрыва: от секунд до минуты. Растёт, пока не выйдет соединение —
 # сайт, который рвёт связь, не станет добрее от того, что мы стучимся чаще.
@@ -99,6 +117,11 @@ async def dating_chat_hold_run(seconds: float) -> dict:
     # держатель шлёт голый heartbeat, а тот на мёртвых cookie молча отвечает False.
     revive = asyncio.create_task(_revive_loop(deadline))
 
+    # Входящие из панели агентства. ⚠ **Единственный источник сообщений там, где у
+    # сайта нет сокета** (Ladadate): без этого круга они приходили только по кнопке
+    # «Забрать сообщения», то есть пока человек смотрит на экран.
+    chat = asyncio.create_task(_chat_import_loop(deadline))
+
     try:
         while time.monotonic() < deadline:
             profiles = await _profiles_ready()
@@ -110,13 +133,14 @@ async def dating_chat_hold_run(seconds: float) -> dict:
         beat.cancel()
         answer.cancel()
         revive.cancel()
+        chat.cancel()
         for held in holders.values():
             held['task'].cancel()
         # Ждём отмены: без этого соединения закрываются уже после выхода, и в
         # логе появляется хвост из «Task was destroyed but it is pending».
         await asyncio.gather(*(held['task'] for held in holders.values()),
                              return_exceptions=True)
-        await _service_wait(beat, answer, revive)
+        await _service_wait(beat, answer, revive, chat)
 
     saved = sum(counters.values())
     logger_info(f'[dating] держатель чата закончил: учёток {len(counters)}, сообщений {saved}')
@@ -314,6 +338,110 @@ async def _answer_loop(deadline: float) -> None:
                 await dating_auto_round(profiles)
         except Exception as e:
             logger_info(f'[dating] круг автоответа: {e}')
+
+
+async def _chat_import_loop(deadline: float) -> None:
+    """Забирает входящие из панели агентства — по каждому сайту в свой срок.
+
+    ⚠ **Частота своя у каждого сайта** (настройка `chat_check_every`): прогон стоит
+    сорока секунд живого браузера и вкладки в общем пуле соседа, и одному сайту
+    хватает часа, а другому нужны пять минут.
+
+    ⚠ **Когда ходили — помним в Redis, а не в памяти процесса.** Смена держателя
+    перезапускается (свой срок, перезапуск воркера, деплой), и память процесса
+    сбрасывалась бы вместе с ней: после каждого перезапуска импорт шёл бы заново,
+    независимо от настройки. На живой установке это десятки лишних прогонов в день.
+
+    Сайты обходятся **по одному, последовательно**: каждый прогон открывает вкладку
+    Chromium у соседа, и пять сайтов разом уронили бы его пул. Тот же порядок, что
+    у круга восстановления входов, и по той же причине.
+    """
+    while time.monotonic() < deadline:
+        await asyncio.sleep(min(DATING_CHAT_IMPORT_TICK_SEC,
+                                max(1.0, deadline - time.monotonic())))
+        try:
+            await _chat_import_round()
+        except Exception as e:
+            logger_info(f'[dating] круг импорта переписки: {e}')
+
+
+async def _chat_import_round() -> None:
+    """Один обход сайтов: у кого срок вышел — забираем."""
+    for site_id in await _chat_sites():
+        every = await dating_site_seconds(site_id, DATING_CHAT_IMPORT_SETTING)
+        if not every:
+            continue
+
+        if not _chat_due(site_id, int(every)):
+            continue
+
+        # Отметку ставим **до** прогона, а не после: он длится минуту, и следующий
+        # тик круга завёл бы второй, пока идёт первый. Тот же приём, что у сторожа
+        # фоновых обновлений списков (`dating_people.py`).
+        _chat_mark(site_id, int(every))
+
+        result = await dating_chat_panel_import(site_id, DATING_CHAT_PANEL_ROUND_DAYS)
+
+        if result['status'] == 'error':
+            logger_info(f"[dating] переписка сайта #{site_id} не забралась: "
+                        f"{result['error']}")
+
+            continue
+
+        # В лог — только когда что-то привезли: круг идёт каждые пять минут по
+        # каждому сайту, и «привезено 0» забило бы лог до бесполезности.
+        if result['added']:
+            logger_info(f"[dating] переписка сайта #{site_id}: "
+                        f"новых {result['added']}, собеседников {result['contacts']}")
+
+
+async def _chat_sites() -> list[int]:
+    """Сайты, у которых есть наши анкеты. По ним и ходим — у прочих забирать нечего.
+
+    ⚠ Отбор по анкетам, а не по списку сайтов: снимок `dating_site` держит и те, что
+    завели «на будущее», и ушедшие (`is_gone`). Гонять браузер по ним значило бы
+    платить сорока секундами за пустой ответ.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT DISTINCT site_id FROM dating_profile '
+                             ' WHERE site_id > 0 ORDER BY site_id')
+            rows = await db.fetchall()
+    except Exception as e:
+        logger_info(f'[dating] сайты для импорта переписки не спросились: {e}')
+
+        return []
+
+    return [int(row['site_id']) for row in rows or []]
+
+
+def _chat_due(site_id: int, every: int) -> bool:
+    """Пора ли забирать у этого сайта. Сбой Redis — идём: пропустить хуже.
+
+    Пропущенный круг означает, что сообщение полежит до следующего; лишний прогон
+    стоит сорока секунд. Оба исхода терпимы, но первый человек замечает («она не
+    отвечает»), а второй — нет.
+    """
+    try:
+        return not redis_conn_get().get(DATING_CHAT_IMPORT_KEY.format(site_id=site_id))
+    except Exception as e:
+        logger_info(f'[dating] отметка импорта не прочиталась: {e}')
+
+        return True
+
+
+def _chat_mark(site_id: int, every: int) -> None:
+    """Отмечает, что у сайта только что забирали.
+
+    Отметкой с истечением, а не временем в значении: срок и есть настройка, и Redis
+    сам погасит ключ, когда придёт пора. Считать разницу дат было бы тем же самым,
+    только руками — и с риском разойтись, когда настройку поменяют.
+    """
+    try:
+        redis_conn_get().setex(DATING_CHAT_IMPORT_KEY.format(site_id=site_id),
+                               max(1, int(every)), '1')
+    except Exception as e:
+        logger_info(f'[dating] отметка импорта не записалась: {e}')
 
 
 async def _revive_loop(deadline: float) -> None:

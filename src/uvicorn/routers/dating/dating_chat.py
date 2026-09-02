@@ -9,27 +9,15 @@
 списком диалогов и той же лентой реплик, что и пойманное сокетом.
 """
 
-from datetime import timedelta
-
 from fastapi import APIRouter, Depends, HTTPException
 
-from datetime_.datetime_ import datetime_utc_now
-
 from src.auth.auth import auth_required
-from src.dating.dating_chat_panel import (DATING_CHAT_PANEL_DATE_FMT,
-                                          DATING_CHAT_PANEL_DAYS,
+from src.dating.dating_chat_panel import (DATING_CHAT_PANEL_DAYS,
                                           DATING_CHAT_PANEL_SCENARIO,
-                                          dating_chat_panel_profiles,
-                                          dating_chat_panel_rows, dating_chat_panel_save)
-from src.dating.dating_scenario import dating_scenario_run
+                                          dating_chat_panel_import)
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_find
 
 router = APIRouter(prefix='/api/dating/chat', tags=['dating'])
-
-# Предел диапазона. Панель отдаёт период целиком одной страницей, без
-# постраничности: попроси у неё год — получишь либо таймаут браузера, либо
-# страницу, которую нечем прокрутить.
-DATING_CHAT_DAYS_MAX = 60
 
 
 @router.get('/ready', include_in_schema=False)
@@ -65,7 +53,8 @@ async def dating_chat_import(site_id: int = 0, days: int = DATING_CHAT_PANEL_DAY
 
     Args:
         site_id: сайт-закладка, с которого забираем.
-        days: за сколько дней спросить панель. Предел — `DATING_CHAT_DAYS_MAX`.
+        days: за сколько дней спросить панель. Предел —
+            `DATING_CHAT_PANEL_DAYS_MAX`, и проверяет его сама работа.
 
     Returns:
         dict: `total` — сколько строк дала панель, `ours` — сколько из них про наши
@@ -80,65 +69,29 @@ async def dating_chat_import(site_id: int = 0, days: int = DATING_CHAT_PANEL_DAY
     Правило то же, что у импорта анкет: сайт мог сменить вёрстку или не пустить в
     панель, и код ответа говорит про наш запрос, а не про то, что вышло у него.
     """
-    site_id = int(site_id or 0)
-    if not site_id:
-        raise HTTPException(status_code=422, detail='не выбран сайт')
-
-    # Без `or`: `days=0` это не «не задали», а бессмысленная просьба, и молча
-    # подставлять ей неделю значит делать не то, о чём попросили.
-    days = int(days)
-    if days < 1 or days > DATING_CHAT_DAYS_MAX:
-        raise HTTPException(status_code=422,
-                            detail=f'диапазон от 1 до {DATING_CHAT_DAYS_MAX} дней')
-
-    # Анкеты спрашиваем **до** прогона: без них разбирать нечего, и гонять браузер
-    # сорок секунд ради ответа, который некуда положить, незачем.
-    profiles = await dating_chat_panel_profiles(site_id)
-    if not profiles:
-        raise HTTPException(
-            status_code=422,
-            detail='у сайта нет анкет с номером на сайте — сперва импортируйте анкеты')
-
-    try:
-        scenario = await rhapsody_api_scenario_find(site_id, DATING_CHAT_PANEL_SCENARIO)
-    except RhapsodyError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-
-    if not scenario:
-        raise HTTPException(status_code=422,
-                            detail=f'у сайта нет сценария «{DATING_CHAT_PANEL_SCENARIO}»')
-
-    today = datetime_utc_now()
-    since = today - timedelta(days=days)
-    date_from = since.strftime(DATING_CHAT_PANEL_DATE_FMT)
-    date_to = today.strftime(DATING_CHAT_PANEL_DATE_FMT)
-
-    # Общей дверью (`dating_scenario_run`): она пишет прогон в журнал прогонов.
-    # Анкеты у импорта нет — он идёт по сайту целиком, и приписывать прогон одной
-    # из привезённых анкет было бы враньём.
+    # Работа — в `dating_chat_panel_import`: её же зовёт круг воркера, который
+    # забирает сообщения сам по настройке сайта. ⚠ Одной функцией на два вызова:
+    # разойдись они — и автоматический импорт однажды стал бы разбирать ответ
+    # иначе, чем ручной, а заметить это было бы нечем.
     #
-    # `account_id = 0` — «все анкеты»: панель так и подписывает первый пункт
-    # селекта. Спрашивать по одной значило бы двадцать прогонов вместо одного.
-    try:
-        run = await dating_scenario_run(
-            scenario, site_id, 0, '',
-            {'account_id': '0', 'date_from': date_from, 'date_to': date_to}, {},
-            keep_session=False)
-    except RhapsodyError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    # Здесь остаётся то, что про HTTP: причины отказа превращаются в коды. Функция
+    # их только называет — кругу воркера падать нельзя, он обходит все сайты.
+    result = await dating_chat_panel_import(site_id, days)
 
-    if str(run.get('status')) == 'error':
-        return {'result': {'status': 'error', 'total': 0, 'ours': 0, 'added': 0,
-                           'same': 0, 'contacts': 0,
-                           'from': date_from, 'to': date_to,
-                           'error': f"сценарий встал на шаге {run.get('step_no')}: "
-                                    f"{run.get('error')}"}}
+    if result['status'] == 'error':
+        error = result['error']
 
-    extract = run.get('extract') or {}
-    rows = dating_chat_panel_rows(extract, profiles)
-    saved = await dating_chat_panel_save(rows)
+        # ⚠ **Сорвавшийся прогон — это ответ, а не код ошибки.** Механика цела,
+        # сосед на месте, просто панель сайта не отдала таблицу: страница показывает
+        # причину в панели импорта, где человек её и читает. Отдай мы 502 — он увидел
+        # бы «шлюз не отвечает» вместо «сценарий встал на шаге 7: нет таблицы».
+        if 'сценарий встал' in error:
+            return {'result': result}
 
-    return {'result': {'status': 'ok',
-                       'total': len(extract.get('сообщения') or []),
-                       'ours': len(rows),
-                       'from': date_from, 'to': date_to, 'error': '', **saved}}
+        # 502 — «не мы»: соседа нет или он отказал. 422 — «спросили не то»: нет
+        # сайта, нет анкет, нет сценария. Различать обязательно: по 502 звонят
+        # соседу, по 422 правят настройку.
+        raise HTTPException(status_code=502 if 'RhapsodyAi' in error else 422,
+                            detail=error)
+
+    return {'result': result}

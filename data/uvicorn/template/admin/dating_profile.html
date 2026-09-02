@@ -594,9 +594,22 @@
         /* Состояние импорта рядом с кнопкой. Словом, а не только цветом кнопки:
            погашенная кнопка говорит «нельзя», но не говорит почему, а причина у
            неё бывает разная — сайт без сценария или недоступный сосед. */
-        .import-state { font-size: 11px; font-weight: 600; white-space: nowrap; }
-        .import-state.on { color: #166534; }
-        .import-state.off { color: #94a3b8; }
+        /* Состояние импорта — цветом самой кнопки: зелёная работает, красная нет.
+           ⚠ Не яркая заливка, а мягкий фон с цветной рамкой: кнопка стоит в шапке
+           рядом с тремя другими, и сплошной зелёный тянул бы взгляд на себя
+           сильнее, чем это нужно. */
+        .dating-btn.ready {
+            background: #f0fdf4; border-color: #86efac; color: #166534;
+        }
+        .dating-btn.ready:hover:not(:disabled) { background: #dcfce7; border-color: #4ade80; }
+
+        /* ⚠ Красная кнопка всегда заперта, поэтому цвет держим и в `:disabled` —
+           браузер иначе гасит его до общего серого, и «не подключено» становится
+           неотличимо от «идёт работа». */
+        .dating-btn.blocked,
+        .dating-btn.blocked:disabled {
+            background: #fef2f2; border-color: #fecaca; color: #b91c1c; opacity: 1;
+        }
 
         /* Счёт строк в подвале таблицы: слева, кнопки страниц по центру. Он же
            держит подвал непустым там, где страница одна. */
@@ -724,7 +737,6 @@
         <h1>🌐 Сайт</h1>
         <select id="siteSelect" title="Сайт, на котором заведены анкеты"></select>
         <button type="button" class="dating-btn" id="importBtn" disabled>Импортировать профили</button>
-        <span class="import-state" id="importState"></span>
         {# ⚠ Обе кнопки шапки — **про сайт целиком**, а не про выбранную анкету, и
            стоят они поэтому рядом с селектом сайта.
 
@@ -832,7 +844,6 @@
     const siteEl = document.getElementById('siteSelect');
     const chatPanelBtn = document.getElementById('chatPanelBtn');
     const importBtn = document.getElementById('importBtn');
-    const importStateEl = document.getElementById('importState');
     const tableEl = document.getElementById('table');
     const hintEl = document.getElementById('hint');
     const countEl = document.getElementById('profilesN');
@@ -2749,26 +2760,37 @@
     // сервера, а не выводим из списка сайтов: настройка живёт у соседа
     // (сценарий сайта), и страница про неё знать не может.
     async function importReadyLoad() {
-        importBtn.disabled = true;
-        importStateEl.className = 'import-state off';
-        importStateEl.textContent = '';
+        // ⚠ **Состояние показывает сама кнопка цветом**, а подписи «Активный» рядом
+        // больше нет. Она повторяла то, что и так видно по запертой кнопке, и
+        // занимала место в шапке, где кнопок уже четыре.
+        //
+        // Цвет читается быстрее слова: зелёный — импорт настроен, красный — нет.
+        // Причина остаётся подсказкой: цвет говорит «можно или нет», а «почему
+        // нет» нужно не всякий раз.
+        importState(false, 'спрашиваю, настроен ли импорт…');
         if (!siteId()) return;
 
         let state;
         try {
             state = (await getData(`${BASE}/api/dating/import/ready?site_id=${siteId()}`)).result || {};
         } catch (e) {
-            importStateEl.textContent = 'Неактивный';
-            importStateEl.title = 'состояние импорта не спросилось: ' + e.message;
+            importState(false, 'состояние импорта не спросилось: ' + e.message);
             return;
         }
 
-        importBtn.disabled = !state.ready || importBusy;
-        importStateEl.className = 'import-state ' + (state.ready ? 'on' : 'off');
-        importStateEl.textContent = state.ready ? 'Активный' : 'Неактивный';
-        importStateEl.title = state.ready
+        importState(!!state.ready, state.ready
             ? `импорт настроен: сценарий «${state.scenario}» у сайта в RhapsodyAi`
-            : (state.why || '');
+            : (state.why || 'импорт у этого сайта не настроен'));
+    }
+
+    // Красит кнопку и запирает её. Одной функцией, потому что цвет и запертость —
+    // одно и то же сведение: красная кнопка обязана быть запертой, иначе она
+    // обещает работу, которой не будет.
+    function importState(ready, why) {
+        importBtn.classList.toggle('ready', ready);
+        importBtn.classList.toggle('blocked', !ready);
+        importBtn.disabled = !ready || importBusy;
+        importBtn.title = why || '';
     }
 
     // Импорт идёт минутами: список читается одним прогоном, а карточка каждой

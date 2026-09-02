@@ -13,8 +13,10 @@ from fastapi import HTTPException
 
 from src.dating.dating_chat_panel import (DATING_CHAT_PANEL_PREFIX,
                                           dating_chat_panel_rows)
+from src.dating import dating_chat_panel
 from src.uvicorn.routers.dating import dating_chat
-from src.uvicorn.routers.dating.dating_chat import (DATING_CHAT_DAYS_MAX, dating_chat_import,
+from src.dating.dating_chat_panel import DATING_CHAT_PANEL_DAYS_MAX as DATING_CHAT_DAYS_MAX
+from src.uvicorn.routers.dating.dating_chat import (dating_chat_import,
                                                     dating_chat_ready)
 
 # Наши анкеты: номер на сайте → номер у нас.
@@ -204,7 +206,7 @@ class TestHandler:
         вкладка в общем пуле соседа — платить их за ответ, который некуда
         положить, незачем.
         """
-        monkeypatch.setattr(dating_chat, 'dating_chat_panel_profiles', _profiles({}))
+        monkeypatch.setattr(dating_chat_panel, 'dating_chat_panel_profiles', _profiles({}))
 
         with pytest.raises(HTTPException) as refusal:
             await dating_chat_import(343, user=None)
@@ -219,8 +221,8 @@ class TestHandler:
         пустить в панель, и код ответа говорит про наш запрос, а не про то, что
         вышло у него.
         """
-        monkeypatch.setattr(dating_chat, 'dating_chat_panel_profiles', _profiles(PROFILES))
-        monkeypatch.setattr(dating_chat, 'dating_scenario_run',
+        monkeypatch.setattr(dating_chat_panel, 'dating_chat_panel_profiles', _profiles(PROFILES))
+        monkeypatch.setattr(dating_chat_panel, 'dating_scenario_run',
                             _run({'status': 'error', 'step_no': 7, 'error': 'нет таблицы'}))
 
         answer = (await dating_chat_import(343, user=None))['result']
@@ -231,9 +233,9 @@ class TestHandler:
     async def test_range_reaches_the_scenario(self, rhapsody, monkeypatch):
         """Диапазон уезжает подстановками в том формате, который принимает панель."""
         seen = {}
-        monkeypatch.setattr(dating_chat, 'dating_chat_panel_profiles', _profiles(PROFILES))
-        monkeypatch.setattr(dating_chat, 'dating_scenario_run', _run({'status': 'ok'}, seen))
-        monkeypatch.setattr(dating_chat, 'dating_chat_panel_save',
+        monkeypatch.setattr(dating_chat_panel, 'dating_chat_panel_profiles', _profiles(PROFILES))
+        monkeypatch.setattr(dating_chat_panel, 'dating_scenario_run', _run({'status': 'ok'}, seen))
+        monkeypatch.setattr(dating_chat_panel, 'dating_chat_panel_save',
                             _saved({'added': 0, 'same': 0, 'contacts': 0}))
 
         await dating_chat_import(343, days=7, user=None)

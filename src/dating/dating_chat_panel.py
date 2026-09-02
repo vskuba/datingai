@@ -39,11 +39,15 @@
 """
 
 import re
+from datetime import timedelta
 
+from datetime_.datetime_ import datetime_utc_now
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_json import dating_json_load
+from src.dating.dating_scenario import dating_scenario_run
+from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_find
 
 # Имя сценария у соседа. По имени, а не по номеру: номера у разных установок свои,
 # а имя — то же правило, что у прочих сценариев (`dating_people.py`).
@@ -63,6 +67,18 @@ DATING_CHAT_PANEL_DAYS = 7
 # Формат даты в форме панели — `дд.мм.гггг`. Проверено на живой странице: этот же
 # формат она принимает строкой запроса и им же заполняет поля.
 DATING_CHAT_PANEL_DATE_FMT = '%d.%m.%Y'
+
+# Предел диапазона в днях. Шире незачем: панель отдаёт таблицу целиком, и месяц
+# переписки — это минуты прогона и десятки тысяч строк разбора.
+DATING_CHAT_PANEL_DAYS_MAX = 60
+
+# За сколько дней забирает **круг воркера**. Сутки, а не предел: круг идёт часто
+# (по настройке сайта — от пяти минут), и брать неделю каждый раз значило бы
+# привозить одно и то же по сотне раз. Историю забирают кнопкой, руками.
+#
+# ⚠ Сутки, а не «с прошлого раза»: панель отдаёт по датам, а не по времени, и
+# сообщение, пришедшее в 00:05, при узком окне потерялось бы навсегда.
+DATING_CHAT_PANEL_ROUND_DAYS = 1
 
 # Пределы столбцов `dating_message`. Режем при разборе, а не при записи: обрезанное
 # молча — то же враньё, только позже.
@@ -141,6 +157,85 @@ def dating_chat_panel_rows(extract: dict, profiles: dict) -> list[dict]:
         })
 
     return found
+
+
+async def dating_chat_panel_import(site_id: int, days: int) -> dict:
+    """Забирает переписку сайта из панели и кладёт в базу.
+
+    Общая на два вызова: ручку панели («Забрать сообщения») и круг воркера, который
+    делает это сам по настройке сайта. ⚠ **Одной функцией, а не двумя**: разойдись
+    они — и автоматический импорт однажды стал бы разбирать ответ иначе, чем
+    ручной, а заметить это было бы нечем.
+
+    Returns:
+        dict: `status` (`ok` | `error`), `total` — сколько строк отдала панель,
+        `ours` — сколько из них про наши анкеты, `added`/`same`/`contacts` —
+        сколько записалось, `from`/`to` — за какой диапазон, `error` — причина
+        отказа.
+
+        ⚠ **Отказ здесь — значение, а не исключение.** Кругу воркера нельзя падать
+        из-за того, что у сайта не заведён сценарий: он обходит все сайты подряд, и
+        первый ненастроенный лишил бы импорта остальные. Ручка превращает эти
+        причины в свои коды сама.
+    """
+    site_id = int(site_id or 0)
+    days = int(days)
+
+    empty = {'status': 'error', 'total': 0, 'ours': 0, 'added': 0, 'same': 0,
+             'contacts': 0, 'from': '', 'to': ''}
+
+    if not site_id:
+        return {**empty, 'error': 'не выбран сайт'}
+
+    if days < 1 or days > DATING_CHAT_PANEL_DAYS_MAX:
+        return {**empty, 'error': f'диапазон от 1 до {DATING_CHAT_PANEL_DAYS_MAX} дней'}
+
+    # Анкеты спрашиваем **до** прогона: без них разбирать нечего, и гонять браузер
+    # сорок секунд ради ответа, который некуда положить, незачем.
+    profiles = await dating_chat_panel_profiles(site_id)
+    if not profiles:
+        return {**empty,
+                'error': 'у сайта нет анкет с номером на сайте — сперва импортируйте анкеты'}
+
+    try:
+        scenario = await rhapsody_api_scenario_find(site_id, DATING_CHAT_PANEL_SCENARIO)
+    except RhapsodyError as e:
+        return {**empty, 'error': str(e)}
+
+    if not scenario:
+        return {**empty, 'error': f'у сайта нет сценария «{DATING_CHAT_PANEL_SCENARIO}»'}
+
+    today = datetime_utc_now()
+    date_from = (today - timedelta(days=days)).strftime(DATING_CHAT_PANEL_DATE_FMT)
+    date_to = today.strftime(DATING_CHAT_PANEL_DATE_FMT)
+
+    # Общей дверью (`dating_scenario_run`): она пишет прогон в журнал прогонов.
+    # Анкеты у импорта нет — он идёт по сайту целиком, и приписывать прогон одной
+    # из привезённых анкет было бы враньём.
+    #
+    # `account_id = 0` — «все анкеты»: панель так и подписывает первый пункт
+    # селекта. Спрашивать по одной значило бы двадцать прогонов вместо одного.
+    try:
+        run = await dating_scenario_run(
+            scenario, site_id, 0, '',
+            {'account_id': '0', 'date_from': date_from, 'date_to': date_to}, {},
+            keep_session=False)
+    except RhapsodyError as e:
+        return {**empty, 'from': date_from, 'to': date_to, 'error': str(e)}
+
+    if str(run.get('status')) == 'error':
+        return {**empty, 'from': date_from, 'to': date_to,
+                'error': f"сценарий встал на шаге {run.get('step_no')}: "
+                         f"{run.get('error')}"}
+
+    extract = run.get('extract') or {}
+    rows = dating_chat_panel_rows(extract, profiles)
+    saved = await dating_chat_panel_save(rows)
+
+    return {'status': 'ok',
+            'total': len(extract.get('сообщения') or []),
+            'ours': len(rows),
+            'from': date_from, 'to': date_to, 'error': '', **saved}
 
 
 async def dating_chat_panel_profiles(site_id: int) -> dict:
