@@ -1422,12 +1422,35 @@
              + (when ? `\n${when}` : '');
     }
 
+    // Точки «в сети» у строк диалогов — вслед за свежей лентой онлайна.
+    //
+    // Точечно, а не пересборкой списка: диалоги перерисовываются своим кругом раз
+    // в десять секунд, и ждать его значило бы показывать серую точку тому, кто уже
+    // в сети. Пересобирать же список ради двух классов — терять прокрутку и выбор
+    // у человека, который в это время читает переписку.
+    function chatDotsPaint() {
+        const box = slot('dialogs');
+        if (!box) return;
+
+        box.querySelectorAll('.contact[data-uid]').forEach(row => {
+            const dot = row.querySelector('.person-dot');
+            if (!dot) return;
+
+            const online = peopleOnlineHas(row.dataset.uid);
+            dot.classList.toggle('online', online);
+            dot.title = online ? 'в сети' : 'не в сети';
+        });
+    }
+
     function chatContacts(data) {
         const rows = (data.contacts || []).map(c => {
             const last = (c.messages_last || []).slice(-1)[0] || {};
             const open = openUid === String(c.uid);
             // Своей фотографии у собеседника обычно нет — подбираем из списков.
             const photo = c.photo || peoplePhoto(c.uid);
+            // «В сети» — по ленте онлайна: своё поле собеседника устаревает, а у
+            // привезённых из панели его нет вовсе.
+            const online = peopleOnlineHas(c.uid) || !!c.is_online;
 
             // Строка больше не раскрывается: переписка живёт ниже, в своём ряду, и
             // одна и та же — какую бы колонку ни выбрали. Раскрытие внутри строки
@@ -1455,8 +1478,8 @@
                 // целиком, и попадать курсором в узкий столбец пришлось бы дважды.
                 + `<div class="contact-bar" title="${esc(chatLastHint(last))}">`
                 + '<span class="contact-who">'
-                + `<span class="person-dot${c.is_online ? ' online' : ''}"`
-                + ` title="${c.is_online ? 'в сети' : 'не в сети'}"></span>`
+                + `<span class="person-dot${online ? ' online' : ''}"`
+                + ` title="${online ? 'в сети' : 'не в сети'}"></span>`
                 + `<span class="person-face">${esc((c.name || '?').slice(0, 1).toUpperCase())}`
                 + (photo ? `<img src="${esc(photo)}" alt="" referrerpolicy="no-referrer"`
                            + ' onerror="this.remove()">' : '')
@@ -1554,6 +1577,23 @@
         }
 
         return '';
+    }
+
+    // В сети ли собеседник — по ленте «Все онлайн», а не по своему полю.
+    //
+    // ⚠ **`dating_contact.is_online` для этого не годится.** Он остаётся с того
+    // мгновения, когда собеседника в последний раз снимали, а у привезённых из
+    // панели агентства его нет вовсе — там этого признака не показывают. Лента
+    // «Все онлайн» же снимается по сайту и обновляется своим кругом: она и есть
+    // ответ на вопрос «кто в сети прямо сейчас».
+    //
+    // Сама принадлежность списку и означает «в сети» — он для этого и снят;
+    // отдельного признака у записи ждать не надо.
+    function peopleOnlineHas(uid) {
+        const state = peopleCache.get(ONLINE_KEY);
+        if (!state) return false;
+
+        return (state.people || []).some(p => String(p.uid) === String(uid));
     }
 
     // Имя выбранного из колонок собеседника: в переписке его может не быть, а
@@ -1786,6 +1826,7 @@
         fillSlot('online-when', peopleWhen(state), true);
         peopleSpin(row, ONLINE_KEY, state);
         peopleBindRows(row);
+        chatDotsPaint();
     }
 
     async function peopleLoad(kind, fresh = false) {
