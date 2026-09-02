@@ -46,6 +46,19 @@ async def dating_auto_round(profiles: list) -> dict:
 
     for item in profiles:
         profile = item['profile']
+
+        # ⚠ **Два выключателя, и они про разное.** `enabled` — «ведём ли анкету
+        # вовсе»; `auto_answer` — «отвечает ли за неё агент». Анкету ведут и руками:
+        # включена, автоответ снят. Свести их в один флаг значило бы отнять этот
+        # случай.
+        #
+        # Оба проверяются здесь, до `_agent_id`: поход к соседу за агентом стоит
+        # запроса, а ответ LLM — денег, и платить их за анкету, которая всё равно
+        # промолчит, незачем. Отправка откажет и сама (`dating_send`), но к тому
+        # времени уже потрачено.
+        if not int(profile.get('enabled', 1) or 0):
+            continue
+
         if not int(profile.get('auto_answer') or 0):
             continue
         agent_id = await _agent_id(profile)

@@ -161,6 +161,7 @@ class TestKnownDurations:
     @pytest.mark.parametrize('key, default, values', [
         ('favorites_keep', '604800', ['604800', '259200', '86400']),
         ('chat_check_every', '300', ['300', '1800', '3600']),
+        ('online_check_every', '120', ['120', '300', '600']),
     ])
     async def test_seconds_setting_offers_its_values(self, rhapsody, monkeypatch,
                                                      key, default, values):

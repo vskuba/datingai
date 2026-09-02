@@ -157,6 +157,18 @@ DATING_PEOPLE_KEEP_SEC = 7 * 24 * 3600
 # диалогов живут умолчанием: понадобится — заводится строкой здесь.
 DATING_PEOPLE_KEEP_SETTING = {'favorite': 'favorites_keep'}
 
+# Виды списков, у которых **выдержку** задаёт настройка сайта.
+#
+# ⚠ Не путать с `DATING_PEOPLE_KEEP_SETTING`: тот про то, сколько снимок **живёт**
+# (и показывается, пусть с пометкой «не обновлялся»), а этот — про то, как часто
+# его **снимать заново**. Сроки разные по природе: лента живёт неделю, а освежать
+# её просят каждые две минуты.
+#
+# Лента «кто в сети» — единственная, где это просили: состав меняется на глазах, а
+# в ней решается, кому можно писать (`dating_online.py`). Избранные и диалоги
+# меняются медленно и живут умолчанием.
+DATING_PEOPLE_FRESH_SETTING = {'online': 'online_check_every'}
+
 # Настройки сайта, которыми выбирается источник списков. Ключи — в
 # `DATING_SITE_KNOWN` (`dating_site.py`), там же их подписи и набор значений.
 DATING_PEOPLE_SOURCE_SETTING = 'people_source'
@@ -234,7 +246,7 @@ async def dating_people_site_list(site_id: int, kind: str, fresh: bool = False,
     # Анкету ищем только когда собираемся ходить на сайт: свежий снимок отдаётся
     # и без неё, а лишний запрос в базу на каждую перерисовку страницы не нужен.
     if cached and time.time() - cached['at'] < (DATING_PEOPLE_FLOOR_SEC if fresh
-                                                else DATING_PEOPLE_FRESH_SEC):
+                                                else await _fresh_sec(kind, site_id)):
         return _answer(cached, cached=True, error='')
 
     profile = await _site_profile(site_id)
@@ -305,7 +317,12 @@ async def _list(kind: str, fresh: bool, profile: dict, key: str, log_id: int,
             при этом остаётся в журнале прогонов (`dating_scenario.py`).
         cached: уже прочитанный снимок, если вызывающий его читал.
     """
-    keep = await _keep_sec(kind, int(profile.get('site_id') or 0))
+    site_id = int(profile.get('site_id') or 0)
+    keep = await _keep_sec(kind, site_id)
+    # Выдержку читаем один раз на вызов и передаём дальше: она уходит и в проверку
+    # снимка, и в сторож фоновых попыток, а два чтения настройки на один запрос —
+    # два обращения в базу за одним и тем же числом.
+    fresh_sec = await _fresh_sec(kind, site_id)
 
     cached = cached if cached is not None else _cache_get(key)
 
@@ -324,7 +341,7 @@ async def _list(kind: str, fresh: bool, profile: dict, key: str, log_id: int,
     # «обновить» (`fresh`) выдержку обходит, но пол — нет: он про предел самого
     # сайта, а не про то, чего хочет страница.
     if cached and time.time() - cached['at'] < (DATING_PEOPLE_FLOOR_SEC if fresh
-                                                else DATING_PEOPLE_FRESH_SEC):
+                                                else fresh_sec):
         return _answer(cached, cached=True, error='')
 
     # ⚠ **Ручка не ждёт прогона. Никогда.**
@@ -341,7 +358,8 @@ async def _list(kind: str, fresh: bool, profile: dict, key: str, log_id: int,
     # человек смотрит на список и не знает, что новый не снимается.
     return _answer(cached, cached=bool(cached),
                    error=_refresh_error.get(key, ''),
-                   refreshing=_refresh_start(profile, kind, key, log_id, fresh))
+                   refreshing=_refresh_start(profile, kind, key, log_id, fresh,
+                                             fresh_sec))
 
 
 class _PeopleFailure(RuntimeError):
@@ -349,12 +367,17 @@ class _PeopleFailure(RuntimeError):
 
 
 def _refresh_start(profile: dict, kind: str, key: str, log_id: int,
-                   fresh: bool = False) -> bool:
+                   fresh: bool = False,
+                   fresh_sec: int = DATING_PEOPLE_FRESH_SEC) -> bool:
     """Заводит фоновое обновление снимка, если его пора и можно заводить.
 
     Args:
         fresh: пришли по кнопке «обновить». Тогда выдержка между попытками
             сокращается до жёсткого пола — см. ниже.
+        fresh_sec: выдержка этого вида списка. ⚠ **Приходит параметром, а не
+            читается здесь**: у ленты онлайна её задаёт настройка сайта, а чтение
+            настройки асинхронное — функция же обязана остаться синхронной, её
+            результат уходит прямо в ответ ручки.
 
     Returns:
         bool: идёт ли обновление прямо сейчас — своё или начатое раньше.
@@ -384,7 +407,7 @@ def _refresh_start(profile: dict, kind: str, key: str, log_id: int,
     # никто не заводил, и ждать пять минут ради первого показа незачем. Порог тут
     # про повторные попытки, а не про начало работы.
     if time.time() - _refresh_at.get(key, 0.0) < (DATING_PEOPLE_FLOOR_SEC if fresh
-                                                  else DATING_PEOPLE_FRESH_SEC):
+                                                  else fresh_sec):
         return False
 
     _refresh_at[key] = time.time()
@@ -461,6 +484,26 @@ async def _api_rows(profile: dict, kind: str, site_id: int) -> list:
         # В общую неудачу: кэш и страница поступают с ней так же, как с отказом
         # соседа, — показывают прежний снимок и причину.
         raise _PeopleFailure(str(e))
+
+
+async def _fresh_sec(kind: str, site_id: int) -> int:
+    """Через сколько снимок этого вида стоит снять заново.
+
+    У ленты «кто в сети» срок задаёт настройка сайта: в ней решается, кому можно
+    писать, и на разных сайтах состав меняется по-разному быстро. Остальные виды
+    живут умолчанием — понадобится, заводится строкой в
+    `DATING_PEOPLE_FRESH_SETTING`.
+
+    ⚠ **Пол этим не обходится.** `DATING_PEOPLE_FLOOR_SEC` (15 секунд) остаётся
+    поверх любой настройки: он про предел самого сайта, а не про то, чего хочет
+    страница. Поставь кто-нибудь «каждые две минуты» и жми «обновить» — к сайту всё
+    равно уйдёт не чаще раза в четверть минуты.
+    """
+    setting = DATING_PEOPLE_FRESH_SETTING.get(kind)
+    if not setting or not site_id:
+        return DATING_PEOPLE_FRESH_SEC
+
+    return await dating_site_seconds(site_id, setting) or DATING_PEOPLE_FRESH_SEC
 
 
 async def _keep_sec(kind: str, site_id: int) -> int:

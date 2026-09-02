@@ -229,6 +229,15 @@
             flex: 0 0 auto; border-top: 1px solid #e2e8f0; padding: 10px 14px;
             background: #f8fafc;
         }
+        /* Галочка автоответа над полем ввода: её читают, решая «отвечать самой
+           или мне», и место ей рядом с тем, чем отвечают руками. */
+        .talk-auto {
+            display: inline-flex; align-items: center; gap: 5px; margin-bottom: 8px;
+            font-size: 12px; color: #64748b; cursor: pointer;
+        }
+        .talk-auto input { cursor: pointer; accent-color: #16a34a; }
+        .talk-auto:has(input:checked) { color: #166534; font-weight: 600; }
+
         .talk-send { display: flex; align-items: flex-end; gap: 8px; }
         .talk-text {
             flex: 1 1 auto; min-width: 0; resize: vertical; max-height: 140px;
@@ -524,6 +533,14 @@
         /* Колонка «ai-ответ»: ширина по содержимому, подпись не переносится.
            Курсор-указатель на всей метке — нажимают и по слову, а не только по
            квадратику. */
+        /* Значок выключенной анкеты — рядом с именем, где стоит и тревога
+           автовхода: оба про состояние этой самой анкеты. */
+        .prof-off {
+            flex: 0 0 auto; padding: 1px 5px; border-radius: 4px;
+            background: #fef3c7; color: #b45309; font-size: 10px; font-weight: 700;
+            text-transform: uppercase; letter-spacing: .03em;
+        }
+
         .prof-ai { width: 1%; white-space: nowrap; }
         .prof-ai .prof-check { font-size: 11px; color: #94a3b8; }
         .prof-ai input { cursor: pointer; }
@@ -1026,6 +1043,13 @@
                 // Имя режется многоточием — полное отдаём подсказкой.
                 + '<span class="prof-name-row">'
                 + `<span class="prof-name" title="${esc(row.name || row.login)}">${esc(row.name || row.login)}</span>`
+                // ⚠ Выключенную анкету видно в списке, а не только в её карточке
+                // на «Анкетах»: иначе, глядя на сотню строк, человек не понимает,
+                // почему часть из них молчит, — и лезет искать поломку.
+                + (row.enabled === false
+                    ? '<span class="prof-off" title="Анкета выключена: воркер её не ведёт">'
+                      + 'выкл</span>'
+                    : '')
                 + warnBadge(row)
                 + '</span>'
                 + `<span class="prof-login" title="${esc(row.login)}">${esc(row.login)}</span>`
@@ -2112,7 +2136,18 @@
     function chatFormAdd(box, uid) {
         const form = document.createElement('div');
         form.className = 'talk-form';
-        form.innerHTML = '<div class="talk-warn off"></div>'
+        // ⚠ Тот же `auto_answer`, что галочка «ai-ответ» на строке анкеты, — **одно
+        // поле в базе, два места показа**. Второй здесь потому, что решение
+        // «отвечать самой или мне» принимают, глядя на разговор: увидел, что агент
+        // отвечает не то, — снял галочку не уходя из окна.
+        //
+        // Состояние поэтому читается из данных каждый раз, а не запоминается: за
+        // время, пока окно открыто, флаг могли переключить на «Профилях».
+        form.innerHTML = '<label class="talk-auto" '
+            + 'title="Агент отвечает на новые сообщения этой анкеты">'
+            + `<input type="checkbox" class="talk-auto-box"${chatData.auto_answer === false ? '' : ' checked'}>`
+            + 'ai-ответ</label>'
+            + '<div class="talk-warn off"></div>'
             + '<div class="talk-send">'
             + '<textarea class="talk-text" rows="2" disabled'
             + ' placeholder="Проверяю, в сети ли собеседник…"></textarea>'
@@ -2125,6 +2160,8 @@
 
         form.querySelector('.talk-btn').addEventListener('click',
                                                          () => chatFormSend(box, uid));
+        form.querySelector('.talk-auto-box')
+            .addEventListener('change', (e) => chatAutoSet(e.target));
         // Enter отправляет, Shift+Enter — перенос строки: так устроены все чаты, и
         // здесь ожидание человека важнее единообразия с прочими формами панели.
         form.querySelector('.talk-text').addEventListener('keydown', (e) => {
@@ -2133,6 +2170,30 @@
                 chatFormSend(box, uid);
             }
         });
+    }
+
+    // Переключает автоответ анкеты из окна переписки.
+    //
+    // ⚠ Ручка та же, что у галочки в строке (`/auto`), и **включение так же
+    // разбирает накопившееся**: человек сказал «отвечай» — значит ждать круга
+    // воркера (до минуты) незачем. Поэтому же запираем галочку на время запроса:
+    // разбор идёт секундами, и второе нажатие уехало бы поверх первого.
+    async function chatAutoSet(input) {
+        const on = input.checked;
+        input.disabled = true;
+        try {
+            await putData(`${BASE}/api/dating/profile/${openId}/auto`, {auto_answer: on});
+            chatData.auto_answer = on;
+            showNotification(on ? 'Автоответ включён' : 'Автоответ выключен', 'success');
+            // Галочка в строке анкеты — та же настройка: перечитываем список,
+            // иначе два вида одного флага расходятся до следующего круга.
+            await profilesLoad();
+        } catch (e) {
+            input.checked = !on;
+            showNotification('Не переключилось: ' + e.message, 'error');
+        } finally {
+            input.disabled = false;
+        }
     }
 
     async function chatFormReady(box, uid) {

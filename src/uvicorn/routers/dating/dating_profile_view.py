@@ -256,8 +256,13 @@ async def dating_profile_view_card(profile_id: int, page: int = 1,
                     (profile_id, contact['uid'], ''))
                 contact['name'] = ((await db.fetchone()) or {}).get('name') or ''
 
+    # `enabled` и `auto_answer` едут в карточку, потому что оба рисуются на ней
+    # чекбоксами — на «Анкетах» справа и в окне переписки. Без них страница знала бы
+    # состояние только из списка, а карточку открывают и по прямой ссылке.
     return {'result': {'profile': dating_json_load(profile.get('profile')),
                        'login': profile['login'], 'contacts': contacts,
+                       'enabled': bool(profile.get('enabled', 1)),
+                       'auto_answer': bool(profile.get('auto_answer')),
                        'contacts_total': total, 'page': page, 'pages': pages}}
 
 

@@ -81,6 +81,42 @@ class DatingProfileAuto(BaseModel):
         description='Кому отвечать: номера через запятую. Пусто — всем; не передано — как было')
 
 
+class DatingProfileEnabled(BaseModel):
+    """Выключатель анкеты целиком."""
+
+    enabled: bool = Field(..., description='Ведём ли анкету: выключенную воркер не трогает')
+
+
+@router.put('/{profile_id}/enabled', include_in_schema=False)
+async def dating_profile_action_enabled(profile_id: int, data: DatingProfileEnabled,
+                                        user=Depends(auth_required)):
+    """Включает или выключает анкету целиком.
+
+    ⚠ **Не то же, что автоответ, и отдельной ручкой поэтому.** `auto_answer` — «кто
+    отвечает, агент или человек»; здесь — «ведём ли анкету вовсе». Выключенная не
+    пишет никому и ничем: ни автоответ, ни круг воркера, ни кнопка в окне переписки.
+
+    Входящие при этом принимаются: держатель сокета выключенную анкету не бросает,
+    переписка копится, и включив её обратно, человек видит, что писали без него.
+
+    Ничего не разбирает по включении — в отличие от автоответа. Включение анкеты
+    само по себе не поручение отвечать: за это отвечает свой флаг, и если он снят,
+    анкету ведут руками.
+    """
+    await dating_profile_row(profile_id)
+
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE dating_profile SET enabled = %s WHERE id = %s',
+                         (1 if data.enabled else 0, profile_id))
+        await db.connection.commit()
+
+    await dating_log_write(profile_id, 'info',
+                           'Анкета включена' if data.enabled
+                           else 'Анкета выключена: воркер её не трогает')
+
+    return {'result': {'enabled': data.enabled}}
+
+
 @router.post('/{profile_id}/login', include_in_schema=False)
 async def dating_profile_action_login(profile_id: int, data: DatingProfileLogin,
                             user=Depends(auth_required)):

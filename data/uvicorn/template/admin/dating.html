@@ -87,6 +87,51 @@
            полосы выбранное теряется ровно тогда, когда мышь идёт вправо. */
         .profile.active { background: #eef2ff; box-shadow: inset 3px 0 0 #4f46e5; }
 
+        /* ── Настройки анкеты в правой колонке ───────────────────────────────
+           Пришли на место списка собеседниц: тот живёт на «Профилях», в окне
+           переписки, и держать его в двух местах значило расходиться в мелочах. */
+        .prof-set { padding: 4px 0; }
+        .prof-set-head {
+            padding: 8px 12px; font-size: 10px; font-weight: 700; color: #94a3b8;
+            text-transform: uppercase; letter-spacing: .04em;
+        }
+        .prof-set-row {
+            display: flex; align-items: flex-start; gap: 9px; padding: 10px 12px;
+            border-top: 1px solid #f1f5f9; cursor: pointer;
+        }
+        .prof-set-row:hover { background: #f8fafc; }
+        .prof-set-row input { margin-top: 2px; cursor: pointer; accent-color: #16a34a; }
+        .prof-set-row b { display: block; font-size: 13px; color: #1f2937; font-weight: 600; }
+        /* Пояснение под подписью, а не подсказкой: выключатель редкий и
+           последствия у него широкие — их читают один раз и запоминают, а
+           наводить мышь ради этого никто не станет. */
+        .prof-set-row i {
+            display: block; margin-top: 2px; font-style: normal; font-size: 11px;
+            color: #94a3b8; line-height: 1.4;
+        }
+        /* Выключенная — приглушённой: состояние видно, не читая подписи. */
+        .prof-set-row.off b { color: #b45309; }
+        .prof-set-row.off input { accent-color: #b45309; }
+
+        /* Полоса удаления. Отбита сверху и отступом: необратимое действие не
+           должно попадаться под руку рядом с галочками, которые щёлкают походя. */
+        .prof-set-danger {
+            margin-top: 14px; padding: 12px; border-top: 1px solid #f1f5f9;
+        }
+        .prof-set-danger i {
+            display: block; margin-top: 6px; font-style: normal; font-size: 11px;
+            color: #94a3b8; line-height: 1.4;
+        }
+        .dating-btn.danger { border-color: #fecaca; color: #b91c1c; }
+        .dating-btn.danger:hover:not(:disabled) { background: #fef2f2; border-color: #f87171; }
+
+        /* Значок выключенной анкеты в списке слева. */
+        .prof-off {
+            margin-left: auto; flex: 0 0 auto; padding: 1px 5px; border-radius: 4px;
+            background: #fef3c7; color: #b45309; font-size: 10px; font-weight: 700;
+            text-transform: uppercase; letter-spacing: .03em;
+        }
+
         /* Профиль с сайта и собеседницы (`.card*`, `.contact*`, `.msg*`, `.need`)
            переехали в `dating_page.css`: тот же чат показывает вкладка «Чат» на
            «Профилях», и две копии разошлись бы в мелочах — а мелочи здесь и есть
@@ -134,7 +179,6 @@
         <div class="pane">
             <div class="pane-head">Анкета<span id="profileWho"></span></div>
             <div class="pane-body" id="profile"></div>
-            <div class="pane-foot" id="contactsPager"></div>
         </div>
 
     </div>
@@ -150,8 +194,6 @@
     // тревоги места в ней нет; журнала на странице нет вовсе, и `logRender` с
     // `logStamp` ей больше не нужны. Всё это осталось на «Профилях».
     import {esc, pagerRender} from '{{ static_url('js/dating_view.js') }}';
-    // Сдвиг времени в пояс настройки: с сервера метки приходят в UTC.
-    import {timeShift} from '{{ static_url('js/dating_time.js') }}';
     // Загрузка селекта сайта — тоже общая: ключ выбора один на весь раздел.
     import {DATING_SITE_KEY, datingSiteFill} from '{{ static_url('js/dating_site.js') }}';
 
@@ -161,7 +203,6 @@
     // именно с префиксом — иначе запрос уйдёт соседу.
     const BASE = '{{ base }}';
 
-    const OPEN_KEY = 'dating_open_dialog';
     const SIZE_KEY = 'dating_layout';
     const PROBE_MS = 15000;
     // Сколько анкет на странице. Столько влезает в колонку без прокрутки на
@@ -174,16 +215,10 @@
     const formEl = document.getElementById('form');
     const findEl = document.getElementById('profileFind');
     const pagerEl = document.getElementById('profilesPager');
-    const contactsPagerEl = document.getElementById('contactsPager');
     const pageEl = document.querySelector('.dating-page');
 
     let profiles = [], currentId = 0, probeBusy = false;
-    let openUid = localStorage.getItem(OPEN_KEY) || '';
     let profilesPage = 0;
-    // Страница собеседниц живёт здесь, а не в разметке: карточка перерисовывается
-    // сама каждые 15 секунд, и читай мы номер из пейджера — он бы каждый круг
-    // возвращался на первую, прямо под руками у человека.
-    let contactsPage = 0;
 
     // Какие анкеты сейчас заняты долгим действием: id → {btn, label}.
     //
@@ -290,7 +325,14 @@
                 // Имя режется многоточием в узкой колонке — полное отдаём подсказкой.
                 + `<span class="prof-name" title="${esc(row.name || row.login)}">${esc(row.name || row.login)}</span>`
                 + `<span class="prof-login" title="${esc(row.login)}">${esc(row.login)}</span>`
-                + '</span></span>';
+                + '</span></span>'
+                // ⚠ Выключенную анкету видно **в списке**, а не только в её
+                // карточке: иначе, глядя на сотню строк, человек не понимает,
+                // почему часть из них молчит, — и лезет искать поломку.
+                + (row.enabled === false
+                    ? '<span class="prof-off" title="Анкета выключена: воркер её не ведёт">'
+                      + 'выкл</span>'
+                    : '');
 
             el.addEventListener('click', () => profileSelect(row.id));
             profilesEl.appendChild(el);
@@ -303,9 +345,6 @@
     // учётке — общая лента по сотне анкет ничего не говорит.
     async function profileSelect(id) {
         currentId = id;
-        // Другая анкета — другие собеседницы, и седьмая страница прошлой в ней
-        // ничего не значит: начинаем с первой.
-        contactsPage = 0;
         // Карточку открыли — новые сообщения этой учётки перестают быть новыми.
         // Отметка молчаливая: не вышла, значит бейдж просто повисит лишний круг.
         try { await postData(`${BASE}/api/dating/profile/${id}/read`, {}); } catch (e) {}
@@ -323,7 +362,7 @@
         // зовёт фоновый опрос каждые 15 секунд, и пока ответ летит, человек успевает
         // выбрать другую анкету — profileSelect() тут же переставит currentId и запустит
         // свой profileLoad(). Если ответ по старой анкете придёт позже ответа по новой,
-        // без сверки currentId с requestId он перепишет contactsPage и разметку
+        // без сверки currentId с requestId он перепишет разметку
         // профиля данными не той анкеты, что выбрана сейчас. Гонка сети, а не логики —
         // при обычном чтении кода и в автотестах по HTTP она не видна.
         const requestId = currentId;
@@ -332,8 +371,8 @@
 
         let data;
         try {
-            data = (await getData(`${BASE}/api/dating/profile/${requestId}/card`
-                                  + `?page=${contactsPage + 1}`)).result || {};
+            data = (await getData(`${BASE}/api/dating/profile/${requestId}/card`))
+                        .result || {};
         } catch (e) {
             if (currentId !== requestId) return;
             profileEl.innerHTML = `<div class="empty">профиль не пришёл: ${esc(e.message)}</div>`;
@@ -341,13 +380,8 @@
         }
         if (currentId !== requestId) return;
 
-        // Номер страницы берём из ответа: сервер поправит его, если собеседниц
-        // стало меньше и страница уехала за конец списка. Ручка нумерует с единицы,
-        // пейджер — с нуля.
-        contactsPage = Math.max(0, Number(data.page || 1) - 1);
-
-        // В шапке — сколько собеседниц всего. Без этого показанные пятьдесят
-        // выглядят как весь список, и до пейджера человек просто не долистывает.
+        // В шапке — сколько собеседников всего. Список их живёт на «Профилях», но
+        // само число здесь к месту: по нему видно, работает ли анкета вообще.
         document.getElementById('profileWho').textContent =
             `${profile.login || ''}${data.contacts_total ? ` · собеседников: ${data.contacts_total}` : ''}`;
 
@@ -361,57 +395,100 @@
                 <div class="card-meta">${esc(p.about || 'описание профиля сайт не отдал')}</div>
             </div></div>`;
 
-        const me = p.name || data.login || 'мы';
-        const contacts = (data.contacts || []).map(c => {
-            const msgs = (c.messages_last || []).map(m => `
-                <div class="msg ${m.direction === 'out' ? 'out' : 'in'}">
-                    <span class="msg-body"><span class="msg-who">${esc(m.direction === 'out' ? me : (c.name || 'он'))}</span>${esc(m.text)}</span>
-                </div>`).join('');
-            const last = (c.messages_last || [])[(c.messages_last || []).length - 1] || {};
-            const open = openUid === String(c.uid);
-            return `<div class="contact${c.needs_answer ? ' wait' : ''}${open ? ' open' : ''}" data-uid="${esc(c.uid)}">
-                <div class="contact-bar">
-                    <span class="contact-toggle" title="Свернуть или развернуть переписку">▶</span>
-                    <span class="contact-face">${esc((c.name || '?').slice(0, 1).toUpperCase())}
-                        ${c.photo ? `<img src="${esc(c.photo)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}</span>
-                    <span class="contact-name">${esc(c.name || 'без имени')}</span>
-                    <span class="contact-id" title="номер анкеты на сайте">ID ${esc(c.uid)}</span>
-                    <span class="contact-last">${esc(last.direction === 'out' ? 'вы: ' : '')}${esc(last.text || 'сообщений нет')}</span>
-                    <span class="contact-time">${esc(timeShift(last.created_at).slice(11, 16))}</span>
-                    ${c.needs_answer ? '<span class="need" title="последнее слово за собеседником">нужен ответ</span>'
-                                     : `<span class="contact-id" title="реплик в переписке">✉ ${c.messages}</span>`}
-                </div>
-                <div class="contact-talk">${msgs || '<div class="msg"><span class="msg-body">сообщений пока нет</span></div>'}</div>
-            </div>`;
-        }).join('');
-
-        // Панель перерисовывается каждые 15 секунд сама, и человек в это время
-        // может читать переписку — прокрутку возвращаем на место, иначе чтение
-        // сбрасывается в начало каждый круг.
+        // ⚠ **Собеседниц здесь больше нет.** Диалоги живут на «Профилях», в окне
+        // переписки: тот же список в двух местах расходился в мелочах (порядок,
+        // счётчики, значок «нужен ответ»), и человек не знал, какому верить. Здесь
+        // осталось то, чего нет там, — **настройки самой анкеты**.
         const scroll = profileEl.scrollTop;
-        profileEl.innerHTML = head + (contacts || '<div class="empty">собеседников пока нет — запустите «Диалоги»</div>');
+        profileEl.innerHTML = head + settingsBlock(data);
         profileEl.scrollTop = scroll;
 
-        // Листаем запросом: страница собеседниц серверная. Прокрутку после
-        // перехода ставим в начало — на новой странице сохранять место незачем.
-        pagerRender(contactsPagerEl, Number(data.pages || 1), contactsPage, async (page) => {
-            contactsPage = page;
-            await profileLoad();
-            profileEl.scrollTop = 0;
+        settingsBind();
+    }
+
+    // ── Настройки анкеты ─────────────────────────────────────────────────────
+    //
+    // Первый выключатель — сама анкета. ⚠ Не то же, что «ai-ответ» на «Профилях»:
+    // тот про то, **кто** отвечает (агент или человек), а этот — **ведём ли** мы
+    // анкету вовсе. Выключенную воркер не трогает ничем: ни автоответ, ни отправка.
+    // Входящие при этом принимаются, и это сказано прямо — иначе выключатель
+    // читается как «отключить от сайта».
+    function settingsBlock(data) {
+        const on = data.enabled !== false;
+
+        return '<div class="prof-set">'
+            + '<div class="prof-set-head">Настройки анкеты</div>'
+            + `<label class="prof-set-row${on ? '' : ' off'}">`
+            + `<input type="checkbox" id="enabledBox"${on ? ' checked' : ''}>`
+            + '<span><b>Анкета включена</b>'
+            + '<i>Выключенную анкету воркер не ведёт: не отвечает и ничего не '
+            + 'отправляет. Входящие сообщения при этом принимаются.</i>'
+            + '</span></label>'
+            // Удаление — внизу и отдельной полосой: это единственное здесь
+            // необратимое действие, и стоять рядом с галочками ему нельзя.
+            + '<div class="prof-set-danger">'
+            + '<button type="button" class="dating-btn danger" id="deleteBtn">'
+            + 'Удалить анкету</button>'
+            + '<i>Уходит и переписка: она привязана к анкете. Учётка на сайте '
+            + 'остаётся — удаляется только то, что о ней знает панель.</i>'
+            + '</div>'
+            + '</div>';
+    }
+
+    function settingsBind() {
+        const box = document.getElementById('enabledBox');
+        if (!box) return;
+
+        box.addEventListener('change', async () => {
+            const on = box.checked;
+            // ⚠ Запираем на время запроса: круг перерисовки идёт каждые 15 секунд,
+            // и второе нажатие успело бы уехать раньше, чем вернулся ответ на
+            // первое — состояние в базе разошлось бы с галочкой.
+            box.disabled = true;
+            try {
+                await putData(`${BASE}/api/dating/profile/${currentId}/enabled`,
+                              {enabled: on});
+                box.closest('.prof-set-row').classList.toggle('off', !on);
+                say(on ? 'анкета включена' : 'анкета выключена');
+                // Список слева рисует значок выключенной — обновляем и его.
+                await profilesLoad();
+            } catch (e) {
+                box.checked = !on;
+                say('не переключилось: ' + e.message, true);
+            } finally {
+                box.disabled = false;
+            }
         });
 
-        // Открыт один диалог за раз: их бывают сотни, и «раскрыть всё» здесь не
-        // помощь, а простыня. Выбор переживает перерисовку — она идёт каждые 15 с.
-        profileEl.querySelectorAll('.contact-bar').forEach(bar => {
-            bar.addEventListener('click', () => {
-                const box = bar.parentElement;
-                openUid = box.classList.contains('open') ? '' : box.dataset.uid;
-                localStorage.setItem(OPEN_KEY, openUid);
-                profileEl.querySelectorAll('.contact').forEach(el => {
-                    el.classList.toggle('open', el.dataset.uid === openUid);
-                });
-            });
-        });
+        document.getElementById('deleteBtn')
+                .addEventListener('click', () => profileDelete());
+    }
+
+    async function profileDelete() {
+        const profile = profiles.find(g => g.id === currentId) || {};
+        // ⚠ Спрашиваем, и в вопросе — **логин**, а не «эту анкету»: карточка
+        // перерисовывается каждые 15 секунд, и человек, отвлёкшийся на секунду,
+        // должен видеть, что именно удаляет.
+        if (!confirm(`Удалить анкету «${profile.login || currentId}»?\n\n`
+                     + 'Вместе с ней уйдёт вся переписка. Отменить нельзя.')) return;
+
+        const btn = document.getElementById('deleteBtn');
+        btn.disabled = true;
+        btn.textContent = 'Удаляю…';
+        try {
+            await deleteData(`${BASE}/api/dating/profile/${currentId}`);
+            say(`анкета «${profile.login || currentId}» удалена`);
+            // Выбор сбрасываем: карточка удалённой анкеты показывала бы данные,
+            // которых уже нет, а следующий круг опроса получил бы 404.
+            currentId = 0;
+            profileEl.innerHTML = '<div class="empty">выберите анкету слева</div>';
+            document.getElementById('profileWho').textContent = '';
+            await profilesLoad();
+        } catch (e) {
+            btn.disabled = false;
+            btn.textContent = 'Удалить анкету';
+            say('не удалилось: ' + e.message, true);
+        }
     }
 
     async function profileSave() {

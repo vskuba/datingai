@@ -79,6 +79,7 @@ class DatingProfileResponse(BaseModel):
     has_state: bool = Field(False, description='Вход снят: опрос идёт без браузера')
     contacts: int = Field(0, description='Сколько собеседниц писало в чат')
     unread_chat: int = Field(0, description='Непрочитанных сообщений чата — новые с прошлого просмотра')
+    enabled: bool = Field(True, description='Ведём ли анкету: выключенную воркер не трогает вовсе')
     auto_answer: bool = Field(True, description='Анкета отвечает сама, пока подключена')
     auto_answer_only: str = Field('', description='Кому отвечать: номера через запятую; пусто — всем')
     status: str = Field('offline', description='online | offline | error — для индикатора')
@@ -120,7 +121,7 @@ async def dating_profile_list(site_id: int = 0,
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT g.id, g.site_id, g.login, g.note, g.role, g.status, g.unread, g.last_seen_at, '
-            '       g.last_error, g.profile, g.auto_answer, g.auto_answer_only, '
+            '       g.last_error, g.profile, g.auto_answer, g.auto_answer_only, g.enabled, '
             '       g.keep_online, g.relogin_since, g.relogin_next_at, NOW() AS db_now, '
             '       g.password <> %s AS has_password, '
             '       g.storage_state IS NOT NULL AS has_state, '
@@ -136,6 +137,10 @@ async def dating_profile_list(site_id: int = 0,
         row['has_password'] = bool(row.get('has_password'))
         row['has_state'] = bool(row.get('has_state'))
         row['auto_answer'] = bool(row.get('auto_answer'))
+        # Умолчание `True`, а не `False`: колонка появилась при 64 работающих
+        # анкетах, и строка без неё (старый снимок, свой SELECT) должна читаться
+        # как «ведём», иначе панель разом покажет всех выключенными.
+        row['enabled'] = bool(row.get('enabled', 1))
         row['keep_online'] = bool(row.get('keep_online'))
         # Состояние считает сервер: страница иначе повторяла бы арифметику суток,
         # и «мигает или горит ровно» решалось бы в двух местах по-разному.

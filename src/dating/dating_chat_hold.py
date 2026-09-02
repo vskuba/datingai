@@ -236,7 +236,7 @@ async def _profiles_ready() -> list[dict]:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, login, site_id, storage_state, ws_url, auto_answer, '
-            '       auto_answer_only, role, profile '
+            '       auto_answer_only, enabled, role, profile '
             '  FROM dating_profile WHERE storage_state IS NOT NULL ORDER BY id')
         rows = await db.fetchall()
 
@@ -259,10 +259,14 @@ async def _profiles_ready() -> list[dict]:
         if not dating_presence_ready(presence):
             continue
 
+        # ⚠ Выключенные анкеты **остаются в списке**, и это не недосмотр: держать
+        # их сокет надо — входящие принимаются и у выключенной (`dating.md`, §5.10).
+        # Отсеивает их круг автоответа, а не этот отбор.
         profile = {'id': row['id'], 'login': row['login'], 'site_id': row['site_id'],
                    'storage_state': row['storage_state'], 'ws_url': row['ws_url'],
                    'auto_answer': row['auto_answer'],
-                   'auto_answer_only': row['auto_answer_only'], 'role': row['role'],
+                   'auto_answer_only': row['auto_answer_only'],
+                   'enabled': row['enabled'], 'role': row['role'],
                    'profile': row['profile']}
         ready.append({'profile': profile, 'presence': presence, 'site_url': site.get('url', '')})
 
