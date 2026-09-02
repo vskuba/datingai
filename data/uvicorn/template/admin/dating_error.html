@@ -3,7 +3,7 @@
 {% block title %}Ошибки | DatingAi{% endblock %}
 
 {% block head %}
-    <link rel="stylesheet" href="{{ base }}/static/css/dating_page.css">
+    <link rel="stylesheet" href="{{ static_url('css/dating_page.css') }}">
     <style>
         /* Раскладка та же, что у «Журналов», и по той же причине: шапка и под ней
            одна панель во всю оставшуюся высоту. Общее — обойма, шапка и белая
@@ -61,10 +61,10 @@
 
 {% block scripts %}
 <script type="module">
-    import {getData} from '{{ base }}/static/js/api.js';
-    import {showNotification} from '{{ base }}/static/js/notification.js';
-    import {esc, logStamp} from '{{ base }}/static/js/dating_view.js';
-    import {DATING_SITE_KEY, datingSiteFill} from '{{ base }}/static/js/dating_site.js';
+    import {getData} from '{{ static_url('js/api.js') }}';
+    import {showNotification} from '{{ static_url('js/notification.js') }}';
+    import {esc, logStamp} from '{{ static_url('js/dating_view.js') }}';
+    import {DATING_SITE_KEY, datingSiteFill} from '{{ static_url('js/dating_site.js') }}';
 
     const BASE = '{{ base }}';
 

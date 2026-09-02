@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>Вход | DatingAi</title>
-    <link rel="stylesheet" href="{{ base }}/static/css/notification.css">
+    <link rel="stylesheet" href="{{ static_url('css/notification.css') }}">
     <style>
         /* Страница из одной формы: базового шаблона у неё нет намеренно — он
            тянул бы за собой шапку с навигацией, которой до входа не место. */
@@ -103,7 +103,7 @@
 </form>
 
 <script type="module">
-    import {postData} from '{{ base }}/static/js/api.js';
+    import {postData} from '{{ static_url('js/api.js') }}';
 
     // См. пояснение в `admin/dating.html`: путь панели задаёт сервер.
     const BASE = '{{ base }}';

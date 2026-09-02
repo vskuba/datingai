@@ -3,7 +3,7 @@
 {% block title %}Сайты | DatingAi{% endblock %}
 
 {% block head %}
-    <link rel="stylesheet" href="{{ base }}/static/css/dating_page.css">
+    <link rel="stylesheet" href="{{ static_url('css/dating_page.css') }}">
     <style>
         /* Обойма, шапка и белая панель — общие с разделом (`dating_page.css`).
            Здесь только раскладка: шапка и под ней одна панель во всю высоту, как
@@ -126,10 +126,10 @@
 
 {% block scripts %}
 <script type="module">
-    import {getData, putData} from '{{ base }}/static/js/api.js';
-    import {showNotification} from '{{ base }}/static/js/notification.js';
-    import {esc} from '{{ base }}/static/js/dating_view.js';
-    import {DATING_SITE_KEY, datingSiteFill} from '{{ base }}/static/js/dating_site.js';
+    import {getData, putData} from '{{ static_url('js/api.js') }}';
+    import {showNotification} from '{{ static_url('js/notification.js') }}';
+    import {esc} from '{{ static_url('js/dating_view.js') }}';
+    import {DATING_SITE_KEY, datingSiteFill} from '{{ static_url('js/dating_site.js') }}';
 
     const BASE = '{{ base }}';
     // Правку прячем от того, кто её не сохранит: ручка всё равно ответит 403, но

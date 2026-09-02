@@ -3,7 +3,7 @@
 {% block title %}Seed SQL | DatingAi{% endblock %}
 
 {% block head %}
-    <link rel="stylesheet" href="{{ base }}/static/css/admin_page.css">
+    <link rel="stylesheet" href="{{ static_url('css/admin_page.css') }}">
 {% endblock %}
 
 {% block content %}
@@ -35,10 +35,10 @@
 
 {% block scripts %}
 <script type="module">
-    import {getData, postData, deleteData} from '{{ base }}/static/js/api.js';
-    import {showNotification} from '{{ base }}/static/js/notification.js';
+    import {getData, postData, deleteData} from '{{ static_url('js/api.js') }}';
+    import {showNotification} from '{{ static_url('js/notification.js') }}';
     // Сдвиг времени в пояс настройки: с сервера метки приходят в UTC.
-    import {timeShift} from '{{ base }}/static/js/dating_time.js';
+    import {timeShift} from '{{ static_url('js/dating_time.js') }}';
 
     const BASE = '{{ base }}';
 

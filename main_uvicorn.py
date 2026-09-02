@@ -193,7 +193,36 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 data_dir = os.path.join(current_dir, config_get('DATA_DIR', 'data'), config_get('UVICORN_DIR', 'uvicorn'))
 
 app.state.jinja2_template = Jinja2Templates(directory=os.path.join(data_dir, 'template'))
-app.mount('/static', StaticFiles(directory=os.path.join(data_dir, 'public')), name='static')
+class StaticNoCache(StaticFiles):
+    """Статика с обязательной перепроверкой у сервера.
+
+    ⚠ **Без этого браузер держит старый файл неопределённо долго.** Starlette
+    отдаёт `ETag` и `Last-Modified`, но не `Cache-Control` — а без него браузер
+    решает сам и обычно кэширует эвристически, по возрасту файла. Для панели это
+    ломается на первой же правке: страница грузит новый HTML со старым модулем и
+    падает с «не экспортирует timeFull», хотя на сервере экспорт есть.
+
+    Больнее всего с ES-модулями: их браузер держит и в памяти вкладки, так что
+    обычное обновление страницы не помогает — нужно очищать кэш вручную.
+
+    `no-cache` — не «не кэшировать», а «перепроверить перед использованием». Файл
+    остаётся в кэше, но браузер спрашивает `ETag` и почти всегда получает 304 без
+    тела: расход — один короткий запрос, зато панель никогда не показывает
+    вчерашний код.
+
+    Цена приемлема, потому что панель внутренняя: десятки файлов, единицы
+    пользователей. Публичному сайту так делать не следует — там статику версионируют
+    в имени файла, и тогда её можно кэшировать навсегда.
+    """
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers['Cache-Control'] = 'no-cache'
+
+        return response
+
+
+app.mount('/static', StaticNoCache(directory=os.path.join(data_dir, 'public')), name='static')
 
 # Адрес phpMyAdmin в шапке. Читается здесь, а не в шаблоне: шаблон не должен
 # знать про переменные окружения, а ссылка нужна на всех страницах сразу.
@@ -202,6 +231,40 @@ app.mount('/static', StaticFiles(directory=os.path.join(data_dir, 'public')), na
 # человек со своей машины. До прод-сервисов он ходит SSH-туннелем, до локальных
 # — напрямую, и в обоих случаях адрес свой — отсюда переменная, а не константа.
 app.state.jinja2_template.env.globals['PHPMYADMIN_URL'] = config_get('PHPMYADMIN_URL', '')
+
+
+def static_url(path: str) -> str:
+    """Адрес файла статики с меткой его правки: `/static/js/x.js?v=1756800000`.
+
+    ⚠ **Без метки браузер показывает вчерашний код.** `Cache-Control: no-cache`
+    (см. `StaticNoCache`) заставляет перепроверять файл, но **только при новом
+    запросе**. ES-модуль, уже загруженный во вкладку, не перезапрашивается вовсе:
+    страница берёт его из памяти, и обычное обновление не помогает — нужно
+    очищать кэш вручную.
+
+    Так и было: страница грузила новый HTML со старым модулем и падала с «не
+    экспортирует timeFull», хотя экспорт на сервере был.
+
+    Метка — время правки файла. Правка меняет адрес, а другой адрес для браузера
+    другой модуль: старый он не подставит при всём желании. Гадать при этом не
+    приходится — метка меняется ровно тогда, когда меняется файл.
+
+    Читается на каждый показ, а не запоминается: правят статику руками, и
+    перезапуск ради подхвата новой версии — лишний повод. Файл на диске, чтение
+    дешевле объяснения, почему правка не видна.
+    """
+    full = os.path.join(data_dir, 'public', str(path).lstrip('/'))
+    try:
+        mark = int(os.path.getmtime(full))
+    except OSError:
+        # Файла нет — отдаём адрес как есть: пусть браузер получит честный 404, а
+        # не молчаливую подмену. Ошибка в имени должна быть видна.
+        return f'/static/{str(path).lstrip("/")}'
+
+    return f'/static/{str(path).lstrip("/")}?v={mark}'
+
+
+app.state.jinja2_template.env.globals['static_url'] = static_url
 
 app.include_router(auth_router.router)
 app.include_router(dashboard.router)

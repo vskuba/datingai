@@ -3,7 +3,7 @@
 {% block title %}Значения | DatingAi{% endblock %}
 
 {% block head %}
-    <link rel="stylesheet" href="{{ base }}/static/css/admin_page.css">
+    <link rel="stylesheet" href="{{ static_url('css/admin_page.css') }}">
     <style>
         /* Раскладка, таблица и кнопки — общие с Seed SQL, Backup и Пользователями
            (`admin_page.css`): один раздел, один вид. Здесь только своё. */
@@ -103,8 +103,8 @@
 
 {% block scripts %}
 <script type="module">
-    import {getData, postData, deleteData} from '{{ base }}/static/js/api.js';
-    import {showNotification} from '{{ base }}/static/js/notification.js';
+    import {getData, postData, deleteData} from '{{ static_url('js/api.js') }}';
+    import {showNotification} from '{{ static_url('js/notification.js') }}';
 
     const BASE = '{{ base }}';
 

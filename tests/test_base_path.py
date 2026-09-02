@@ -12,6 +12,51 @@ import re
 BASE_PATH = os.getenv('BASE_PATH', '')
 
 
+class TestStaticFreshness:
+    """⚠ Браузер не должен показывать вчерашний код.
+
+    Ловилось дважды и одинаково: страница грузила новый HTML со старым модулем и
+    падала с «не экспортирует timeFull», хотя экспорт на сервере был.
+    """
+
+    async def test_static_asks_to_revalidate(self, client):
+        """`Cache-Control: no-cache` — «перепроверь перед использованием».
+
+        Без него Starlette отдаёт только `ETag`, а браузер решает сам и обычно
+        кэширует эвристически, по возрасту файла.
+        """
+        answer = await client.get('/static/js/dating_view.js')
+
+        assert answer.status_code == 200
+        assert 'no-cache' in answer.headers.get('cache-control', '')
+
+    async def test_static_links_carry_a_version(self, auth_client):
+        """⚠ Одного `no-cache` мало: он работает **при новом запросе**.
+
+        ES-модуль, уже загруженный во вкладку, не перезапрашивается вовсе — и
+        обычное обновление страницы не помогает. Поэтому в адресе стоит метка
+        правки файла: правка меняет адрес, а другой адрес для браузера другой
+        модуль.
+        """
+        html = (await auth_client.get('/admin/dating/profile')).text
+        links = re.findall(r'/static/[\w./-]+', html)
+
+        assert links, 'на странице нет ссылок на статику'
+        for link in links:
+            assert '?v=' in html[html.index(link):html.index(link) + len(link) + 12], \
+                f'{link} без метки версии'
+
+    async def test_version_changes_with_the_file(self, auth_client):
+        """Метка — время правки, а не случайное число: одинаковые ответы должны
+        давать одинаковые адреса, иначе кэш не работал бы вовсе."""
+        first = re.findall(r'/static/js/dating_view\.js\?v=(\d+)',
+                           (await auth_client.get('/admin/dating/profile')).text)
+        second = re.findall(r'/static/js/dating_view\.js\?v=(\d+)',
+                            (await auth_client.get('/admin/dating/profile')).text)
+
+        assert first and first == second, 'метка версии скачет между показами'
+
+
 class TestBasePath:
 
     async def test_login_page_paths_match_base(self, client):

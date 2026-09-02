@@ -3,7 +3,7 @@
 {% block title %}Профили | DatingAi{% endblock %}
 
 {% block head %}
-    <link rel="stylesheet" href="{{ base }}/static/css/dating_page.css">
+    <link rel="stylesheet" href="{{ static_url('css/dating_page.css') }}">
     <style>
         /* Обойма, шапка, панель, журнал, чат и значки учётки — общие с «Анкетами»
            (`dating_page.css`). Здесь только раскладка этой страницы: шапка во всю
@@ -748,17 +748,17 @@
 
 {% block scripts %}
 <script type="module">
-    import {getData, postData, putData, deleteData} from '{{ base }}/static/js/api.js';
-    import {showNotification} from '{{ base }}/static/js/notification.js';
+    import {getData, postData, putData, deleteData} from '{{ static_url('js/api.js') }}';
+    import {showNotification} from '{{ static_url('js/notification.js') }}';
     // Модальное окно — общее для всех страниц панели (`modal.js`).
-    import {modalOpen} from '{{ base }}/static/js/modal.js';
+    import {modalOpen} from '{{ static_url('js/modal.js') }}';
     import {esc, onlineDot, warnBadge, seenText, timeShort, timeFull, pagerRender, logRender}
-        from '{{ base }}/static/js/dating_view.js';
+        from '{{ static_url('js/dating_view.js') }}';
     // Сдвиг времени в пояс настройки: с сервера метки приходят в UTC.
-    import {timeShift, timeToday} from '{{ base }}/static/js/dating_time.js';
+    import {timeShift, timeToday} from '{{ static_url('js/dating_time.js') }}';
     // Загрузка селекта общая на весь раздел: ключ выбора у страниц один, и
     // разъехавшиеся копии писали бы в него разное.
-    import {DATING_SITE_KEY, datingSiteFill} from '{{ base }}/static/js/dating_site.js';
+    import {DATING_SITE_KEY, datingSiteFill} from '{{ static_url('js/dating_site.js') }}';
 
     const BASE = '{{ base }}';
 

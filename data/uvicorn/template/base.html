@@ -4,12 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}DatingAi{% endblock %}</title>
-    <link rel="stylesheet" href="{{ base }}/static/css/common.css">
-    <link rel="stylesheet" href="{{ base }}/static/css/menu_top.css">
-    <link rel="stylesheet" href="{{ base }}/static/css/notification.css">
+    <link rel="stylesheet" href="{{ static_url('css/common.css') }}">
+    <link rel="stylesheet" href="{{ static_url('css/menu_top.css') }}">
+    <link rel="stylesheet" href="{{ static_url('css/notification.css') }}">
     {# Модальное окно — общее для всех страниц: вид один на весь сайт, а окно,
        которое на соседней странице выглядит иначе, читается как чужое. #}
-    <link rel="stylesheet" href="{{ base }}/static/css/modal.css">
+    <link rel="stylesheet" href="{{ static_url('css/modal.css') }}">
 
     {# Часовой пояс панели — числом часов от UTC, из настройки `timezone`.
        В разметке, а не запросом: времена с сервера приходят в UTC, и сдвигает их
@@ -113,8 +113,8 @@
 </div>
 
 <script type="module">
-    import {postData} from '{{ base }}/static/js/api.js';
-    import {showNotification} from '{{ base }}/static/js/notification.js';
+    import {postData} from '{{ static_url('js/api.js') }}';
+    import {showNotification} from '{{ static_url('js/notification.js') }}';
 
     const BASE = '{{ base }}';
 
