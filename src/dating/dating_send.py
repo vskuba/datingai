@@ -6,8 +6,15 @@
 
 **Транспорт задаётся настройкой.** У одних сайтов чат живёт вебсокетом: страница
 шлёт кадр в то же соединение, откуда читает входящие, и HTTP-ручки отправки у
-сайта нет вовсе. Другие шлют обычным POST, поэтому остаются оба пути:
-`transport: "ws"` и `transport: "http"`.
+сайта нет вовсе. Другие шлют обычным POST. Третьи не дают ни того ни другого — там
+отправляет **сценарий у соседа**, живым браузером, как это сделал бы человек.
+Отсюда три пути: `transport: "ws"`, `"http"` и `"scenario"`.
+
+⚠ **Сценарий — самый дорогой из трёх и выбирается не от хорошей жизни.** Он стоит
+десятков секунд и занимает вкладку в общем пуле соседа, тогда как кадр в сокет
+уходит за миллисекунды. Но у Ladadate отправка живёт внутри страницы
+(`onclick="SendMessage()"`), своей ручки нет, а сокет чата поднимается скриптом —
+и повторить это HTTP-запросом не выходит. Браузер там единственный способ.
 
 Отказ сайта («нет средств», «нужно приглашение») ошибкой **не считается**:
 механика цела, просто действие платное. Отличить одно от другого умеет только
@@ -29,6 +36,11 @@ import websockets
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.dating_scenario import dating_scenario_run
+from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
+                                       rhapsody_api_site_variable)
+from src.uvicorn.routers.dating.dating_site import dating_site_setting
+
 from src.dating.dating_presence import DATING_PRESENCE_TIMEOUT, DATING_PRESENCE_UA
 from src.dating.site.site_base import site_base_render
 from src.dating.site.site_registry import site_registry_chat
@@ -44,6 +56,28 @@ DATING_SEND_HELLO_SEC = 15.0
 # Пауза между кадрами прелюдии: страница шлёт их не залпом, и сервер успевает
 # обработать каждый.
 DATING_SEND_BEFORE_PAUSE = 0.4
+
+
+# Имя сценария отправки у соседа. По имени, а не по номеру: номера у разных
+# установок свои, а имя — то же правило, что у прочих сценариев.
+DATING_SEND_SCENARIO = 'чат: отправить сообщение'
+
+# Переменные сайта у соседа, из которых собирается прогон.
+#
+# ⚠ Они **у него**, а не у нас, и это осознанно: это свойства самого сайта (как
+# выглядит его чат, где страница входа), а не нашей работы с ним. Своя копия
+# разошлась бы с оригиналом в день, когда сайт переверстает адреса.
+DATING_SEND_CHAT_URL_VAR = 'chat_companion_url_pattern'
+DATING_SEND_LOGIN_URL_VAR = 'login_url'
+
+# Метка номера собеседника в шаблоне адреса: `https://site/chat#{ID}`.
+DATING_SEND_UID_MARK = '{ID}'
+
+# Настройка сайта с общим паролем анкет — та же, что у списков собеседников.
+DATING_SEND_PASSWORD_SETTING = 'api_password'
+
+# Наша настройка сайта, которой выбирают транспорт. Ключ — в `DATING_SITE_KNOWN`.
+DATING_SEND_TRANSPORT_SETTING = 'send_transport'
 
 
 async def dating_send_message(profile: dict, presence: dict, to_uid: str, text: str) -> dict:
@@ -69,15 +103,34 @@ async def dating_send_message(profile: dict, presence: dict, to_uid: str, text: 
         кончилась. Читателю не приходится помнить, какая ветка что кладёт, а
         `offline` со значением `False` отличается от `offline`, которого нет.
     """
+    # ⚠ **Транспорт спрашиваем у себя, а `presence` — у соседа, и порядок такой.**
+    #
+    # `presence.send` описывает сайт: какие у него ручки, какие кадры. Но правит
+    # его только сосед (ручки для этого у него нет вовсе — правят прямо в базе), а
+    # «чем отправлять» — решение **нашей** стороны: у одного и того же сайта путь
+    # может смениться, когда он переверстает чат.
+    #
+    # Поэтому наша настройка (`send_transport`) старше: сказали «сценарием» —
+    # шлём сценарием, даже если `presence.send` пуст. Умолчание — `presence`,
+    # то есть всё, что настроено у соседа, работает как работало.
+    site_id = int(profile.get('site_id') or 0)
+    chosen = str(await dating_site_setting(site_id, DATING_SEND_TRANSPORT_SETTING)).strip() \
+        if site_id else ''
+
     send = presence.get('send') or {}
-    if not send:
-        return _fail('у сайта не настроена отправка (presence.send)')
+    transport = chosen if chosen and chosen != 'presence' \
+        else str(send.get('transport') or '').lower()
+
+    if not transport:
+        return _fail('у сайта не настроена отправка: ни `presence.send` у соседа, '
+                     'ни «Чем отправляем сообщения» на странице «Сайты»')
 
     site = site_registry_chat(presence)
     message_uid = site.message_uid()
-    transport = str(send.get('transport') or 'http').lower()
 
-    if transport == 'ws':
+    if transport == 'scenario':
+        result = await _send_scenario(profile, to_uid, text, message_uid)
+    elif transport == 'ws':
         result = await _send_ws(profile, site, to_uid, text, message_uid)
     else:
         result = await _send_http(profile, presence, send, to_uid, text, message_uid)
@@ -85,10 +138,80 @@ async def dating_send_message(profile: dict, presence: dict, to_uid: str, text: 
     # Записываем только принятое: строка в переписке означает «это мы сказали», и
     # непринятый сайтом текст показывать в диалоге нельзя.
     if result['ok']:
-        await _message_save(int(profile['id']), to_uid, text, message_uid)
+        await _message_save(int(profile['id']), to_uid, text, message_uid,
+                            'scenario' if transport == 'scenario' else 'socket')
         await _answered_mark(int(profile['id']), to_uid)
 
     return result
+
+
+async def _send_scenario(profile: dict, to_uid: str, text: str, message_uid: str) -> dict:
+    """Отправка сценарием у соседа: живой браузер входит под анкетой и пишет в чат.
+
+    Дороже прочих путей — десятки секунд и вкладка в общем пуле, — но там, где
+    отправка живёт внутри страницы, другого способа нет.
+
+    ⚠ **Адрес чата собирается здесь, а не в сценарии.** Шаблон лежит переменной
+    сайта у соседа (`chat_companion_url_pattern`, например
+    `https://ladadate.com/chat#{ID}`), и подставить в него номер сценарий не может:
+    подстановки у соседа только двойными скобками, одинарные `{ID}` он не трогает.
+
+    Пароль уходит **секретом**: в журнал прогонов он не попадёт, там останется
+    `{{girl_password}}`. Логин анкеты — обычной подстановкой: он и так виден в
+    панели.
+    """
+    site_id = int(profile.get('site_id') or 0)
+    if not site_id:
+        return _fail('у анкеты нет сайта')
+
+    pattern = await rhapsody_api_site_variable(site_id, DATING_SEND_CHAT_URL_VAR)
+    if not pattern or DATING_SEND_UID_MARK not in pattern:
+        return _fail(f'у сайта нет переменной «{DATING_SEND_CHAT_URL_VAR}» '
+                     f'с меткой {DATING_SEND_UID_MARK}')
+
+    login_url = await rhapsody_api_site_variable(site_id, DATING_SEND_LOGIN_URL_VAR)
+    if not login_url:
+        return _fail(f'у сайта нет переменной «{DATING_SEND_LOGIN_URL_VAR}»')
+
+    # Пароль анкеты: свой, если задан, иначе общий агентский из настройки сайта.
+    # Тот же порядок и по той же причине, что у списков собеседников
+    # (`dating_people.py`): общий заводят оптом, и окажись он сильнее, анкета со
+    # своей парой молча ходила бы под чужим паролем.
+    password = str(profile.get('password') or '').strip() or \
+        str(await dating_site_setting(site_id, DATING_SEND_PASSWORD_SETTING)).strip()
+    if not password:
+        return _fail('нечем войти на сайт: нет пароля анкеты и общего пароля сайта')
+
+    try:
+        scenario = await rhapsody_api_scenario_find(site_id, DATING_SEND_SCENARIO)
+    except RhapsodyError as e:
+        return _fail(str(e))
+
+    if not scenario:
+        return _fail(f'у сайта нет сценария «{DATING_SEND_SCENARIO}» — '
+                     f'заведите его в RhapsodyAi на вкладке «Сценарии»')
+
+    try:
+        run = await dating_scenario_run(
+            scenario, site_id, int(profile['id']), '',
+            {'login_url': login_url,
+             'profile_login': str(profile.get('login') or ''),
+             'chat_url': pattern.replace(DATING_SEND_UID_MARK, str(to_uid)),
+             'message': text},
+            {'girl_password': password},
+            keep_session=False)
+    except RhapsodyError as e:
+        return _fail(str(e))
+
+    if str(run.get('status')) == 'error':
+        # ⚠ Сценарий падает и тогда, когда сообщение **не появилось в ленте** —
+        # сайт принимает нажатие, но реплики нет. Считаем это неудачей: показать
+        # в панели то, чего у собеседника нет, хуже, чем сказать «не ушло».
+        return _fail(f"сценарий встал на шаге {run.get('step_no')}: {run.get('error')}")
+
+    return {'ok': True, 'error': '', 'offline': False,
+            'response': str((run.get('extract') or {}).get('отправлено') or ''),
+            'message_uid': message_uid}
 
 
 async def _send_ws(profile: dict, site, to_uid: str, text: str, message_uid: str) -> dict:
@@ -247,15 +370,22 @@ def _cookies(profile: dict, presence: dict) -> dict:
             if host in str(c.get('domain') or '')}
 
 
-async def _message_save(profile_id: int, to_uid: str, text: str, message_uid: str) -> None:
-    """Кладёт отправленное в переписку — иначе в диалоге видна только их половина."""
+async def _message_save(profile_id: int, to_uid: str, text: str, message_uid: str,
+                        source: str = 'socket') -> None:
+    """Кладёт отправленное в переписку — иначе в диалоге видна только их половина.
+
+    `source` — каким путём ушло. ⚠ Не украшение: у Ladadate сокета нет вовсе, и
+    запись со `socket` заставила бы искать поломку там, где её нет.
+    """
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
                 'INSERT IGNORE INTO dating_message '
-                '(profile_id, sender_uid, sender_name, text, message_uid, direction, is_answered) '
-                "VALUES (%s, %s, %s, %s, %s, 'out', 1)",
-                (profile_id, str(to_uid)[:32], '', str(text)[:2000], str(message_uid)[:64]))
+                '(profile_id, sender_uid, sender_name, text, message_uid, direction,'
+                ' is_answered, source) '
+                "VALUES (%s, %s, %s, %s, %s, 'out', 1, %s)",
+                (profile_id, str(to_uid)[:32], '', str(text)[:2000], str(message_uid)[:64],
+                 str(source)))
             await db.connection.commit()
     except Exception as e:
         logger_info(f'[dating] отправленное не записалось: {e}')
