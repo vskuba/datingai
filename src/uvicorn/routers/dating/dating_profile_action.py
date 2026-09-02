@@ -161,15 +161,69 @@ async def dating_profile_action_send(profile_id: int, data: DatingProfileSend,
 
     result = await dating_send_message(profile, dating_json_load(site.get('presence')), data.to, data.text)
 
-    await dating_log_write(profile_id, 'out' if result['ok'] else 'fail',
-                           f"#{data.to}: {data.text[:300]}" if result['ok']
-                           else f"Не ушло #{data.to}: {result['error']}")
+    # ⚠ **В журнале — кто, кому и что.** Прежде стояло «#181685: текст», и по нему
+    # нельзя было ответить ни на один вопрос разбора: от какой анкеты ушло (в
+    # журнале раздела строки всех анкет вперемешку), кому (номер без имени ничего
+    # не говорит), а при отказе — и что именно не ушло.
+    #
+    # Имя собеседника берём из переписки: сайт присылает его с каждым сообщением,
+    # и своей таблицы имён для этого заводить не надо. Нет имени — остаётся номер,
+    # он есть всегда.
+    who = await _contact_name(profile_id, data.to)
+    me = _profile_name(profile) or profile['login']
+
+    await dating_log_write(
+        profile_id, 'out' if result['ok'] else 'fail',
+        f"{me} → {who}: «{data.text[:300]}»" if result['ok']
+        else f"Не ушло: {me} → {who} «{data.text[:120]}» — {result['error']}")
 
     if not result['ok']:
         await rhapsody_api_error_write('dating', f"сообщение не ушло: {result['error']}",
                                   context={'profile_id': profile_id, 'to': data.to})
 
     return {'result': result}
+
+
+async def _contact_name(profile_id: int, uid: str) -> str:
+    """Имя собеседника для журнала: «Semen Gorbunkov 181685».
+
+    Имя приходит с каждым сообщением от сайта и лежит в переписке — своей таблицы
+    имён для этого заводить не надо. Берём последнее непустое: люди меняют имя в
+    анкете, и свежее ближе к правде.
+
+    Номер остаётся всегда, даже когда имени нет: по нему собеседника ищут и в
+    панели сайта, и в его чате.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute("SELECT sender_name FROM dating_message "
+                             " WHERE profile_id = %s AND sender_uid = %s "
+                             "   AND sender_name <> '' "
+                             " ORDER BY created_at DESC, id DESC LIMIT 1",
+                             (int(profile_id), str(uid)[:32]))
+            row = await db.fetchone()
+    except Exception as e:
+        logger_info(f'[dating] имя собеседника не прочиталось: {e}')
+
+        return str(uid)
+
+    name = str((row or {}).get('sender_name') or '').strip()
+
+    return f'{name} {uid}' if name else str(uid)
+
+
+def _profile_name(profile: dict) -> str:
+    """Имя анкеты с сайта — то, под которым её видит собеседник.
+
+    Оно в JSON-столбце `profile`, а не отдельной колонкой: анкета целиком приходит
+    от сайта, и вытаскивать из неё поля в свои колонки значило бы держать вторую
+    копию (`dating.md`, §6).
+    """
+    card = dating_json_load(profile.get('profile'))
+    name = str(card.get('name') or '').strip()
+    uid = str(card.get('site_uid') or card.get('id') or '').strip()
+
+    return f'{name} {uid}'.strip() if name else uid
 
 
 @router.put('/{profile_id}/auto', include_in_schema=False)

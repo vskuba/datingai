@@ -16,7 +16,12 @@ import pytest
 from src.dating import dating_online
 from src.dating.dating_online import DATING_ONLINE_FRESH_SEC, dating_online_check
 
-SITE, UID = 343, '181685'
+SITE = 343
+
+# Номера выдуманные: тесту всё равно, а живую анкету трогать нельзя даже в тех
+# ветках, где отправка отказывает, — ветку легко переписать так, что она пройдёт.
+PROFILE_ID = 999_849
+UID = '999181685'
 
 
 class _FakeRedis:
@@ -134,7 +139,7 @@ class TestGuardStandsInBothPaths:
         monkeypatch.setattr(dating_send, 'dating_scenario_run', _run)
 
         result = await dating_send.dating_send_message(
-            {'id': 849, 'site_id': SITE, 'login': 'x'},
+            {'id': PROFILE_ID, 'site_id': SITE, 'login': 'x'},
             {'send': {'transport': 'scenario'}}, UID, 'привет')
 
         assert result['ok'] is False
@@ -178,7 +183,7 @@ class TestGuardStandsInBothPaths:
         monkeypatch.setattr(dating_answer, '_tried_mark', _log)
 
         result = await dating_answer.dating_answer_run(
-            {'id': 849, 'site_id': SITE, 'role': 'lady'}, {}, agent_id=1, limit=5)
+            {'id': PROFILE_ID, 'site_id': SITE, 'role': 'lady'}, {}, agent_id=1, limit=5)
 
         assert not спрошено, 'агента спросили ради ответа, который некому отправить'
         assert not отправлено
@@ -221,7 +226,7 @@ class TestGuardStandsInBothPaths:
         monkeypatch.setattr(dating_answer, '_answered_mark', _log, raising=False)
 
         result = await dating_answer.dating_answer_run(
-            {'id': 849, 'site_id': SITE, 'role': 'lady'}, {}, agent_id=1, limit=5)
+            {'id': PROFILE_ID, 'site_id': SITE, 'role': 'lady'}, {}, agent_id=1, limit=5)
 
         assert спрошено == ['вопрос']
         assert отправлено == ['ответ']

@@ -51,7 +51,7 @@ _mysql_reachable()
 import httpx  # noqa: E402 — после правки адреса базы
 import pytest  # noqa: E402
 
-from mysql_.mysql_ import mysql_pool_close  # noqa: E402
+from mysql_.mysql_ import mysql_get_db_async, mysql_pool_close  # noqa: E402
 
 # Поддельный сосед. Фикстура объявлена здесь, чтобы её было видно из любого теста
 # без импорта: то же удобство, что у `auth_client`.
@@ -78,6 +78,143 @@ DATING_PASSWORD = os.getenv('DATING_PASSWORD', 'change-me')
 # Сколько ждём ответа. Ручки, которые водят браузер соседа, сюда не входят —
 # их сюита не трогает: они стоят минуту и требуют живого сайта знакомств.
 TIMEOUT = 30.0
+
+
+# ── Сторож сети ──────────────────────────────────────────────────────────────
+#
+# ⚠ **Сюита не имеет права ходить наружу. Ни к соседу, ни на сайт знакомств, ни
+# куда-либо ещё.**
+#
+# Тест, которому нужен живой RhapsodyAi, проверяет не нас: он краснеет от чужого
+# перезапуска, от занятого пула вкладок, от переименованного сайта — и молчит про
+# то, ради чего написан. Тест, ходящий на сайт знакомств, вдобавок **делает** там
+# что-то: занимает вкладку, входит под анкетой, шлёт сообщение живому человеку.
+#
+# Запретить это обещанием нельзя: заглушку забывают, а забытая заглушка не видна —
+# тест зеленеет, просто медленнее. Поэтому сторож стоит на сокете и падает на
+# попытке уйти на чужой адрес, называя тест и адрес.
+#
+# Разрешено ровно три вещи, и все три — своя установка:
+#   * панель по HTTP (`BASE_URL`) — часть сюиты ходит в неё, это документировано;
+#   * своя MySQL и свой Redis — база настоящая намеренно, подделка проверяла бы
+#     подделку.
+# Всё прочее — ошибка, даже если адрес выглядит безобидно.
+_NET_ALLOWED_PORTS = {3306, 3313, 6379}
+
+
+def _net_allowed(address) -> bool:
+    """Свой ли это адрес. Всё, что не своё, — запрещено."""
+    if not isinstance(address, tuple) or len(address) < 2:
+        # Юникс-сокеты и прочее не сетевое: наружу по ним не уйти.
+        return True
+
+    host, port = str(address[0]), int(address[1] or 0)
+
+    if port in _NET_ALLOWED_PORTS:
+        return True
+
+    # Панель: порт из `BASE_URL`, хост только локальный.
+    if host in {'127.0.0.1', 'localhost', '::1'} and port == _BASE_PORT:
+        return True
+
+    return False
+
+
+_BASE_PORT = int((BASE_URL.rsplit(':', 1) + ['80'])[1].split('/')[0])
+
+
+@pytest.fixture(autouse=True)
+def no_outside_calls(monkeypatch, request):
+    """Падает, если тест пытается открыть соединение за пределы своей установки.
+
+    Сторож в `conftest`, а не в отдельном тесте, по той же причине, что и запрет
+    записи в живую переписку: нарушение здесь **невидимо**. Забытая заглушка не
+    красит тест — он проходит, только идёт к чужому проекту и делает там работу.
+    """
+    real_connect = socket.socket.connect
+    real_connect_ex = socket.socket.connect_ex
+
+    def _check(address):
+        if not _net_allowed(address):
+            raise AssertionError(
+                f'тест «{request.node.name}» полез наружу: {address}. '
+                'Внешние вызовы обязаны идти через заглушку — `rhapsody_fake.py` '
+                'для соседа, `site_api_fake.py` для API сайта; свой транспорт '
+                'подменяется по образцу этих двух.')
+
+    def _connect(self, address):
+        _check(address)
+
+        return real_connect(self, address)
+
+    def _connect_ex(self, address):
+        _check(address)
+
+        return real_connect_ex(self, address)
+
+    monkeypatch.setattr(socket.socket, 'connect', _connect)
+    monkeypatch.setattr(socket.socket, 'connect_ex', _connect_ex)
+
+
+# Анкеты, чью переписку сюита не имеет права трогать. ⚠ **Все, что были в базе до
+# прогона.**
+#
+# Сторож ниже сверяет с этим списком, и вот зачем он завёлся: тест «строка без
+# колонки читается как ведём» подменял прогон сценария, но не запись отправленного
+# — и каждый прогон сюиты добавлял в переписку живой анкеты ещё одно «привет». К
+# десятому прогону человек увидел десять приветов в диалоге и принял это за поломку
+# автоответа. Смотрели в код автоответа, а виноваты были тесты.
+#
+# Заполняется один раз, при первом обращении: список анкет за прогон не меняется —
+# кроме тех, что тесты заводят сами, а им писать и можно.
+_PROFILES_LIVE: set[int] = set()
+
+
+@pytest.fixture(autouse=True)
+async def no_live_writes():
+    """⚠ **Сюита не пишет в переписку живых анкет.**
+
+    Проверяет после каждого теста: не появилось ли в `dating_message` строк с
+    номером анкеты, которая была в базе до прогона. Своим анкетам (заведённым
+    тестом) писать можно — их номера выше всех прежних.
+
+    Сторож в `conftest`, а не в отдельном тесте, потому что нарушение здесь
+    **невидимо**: тест зеленеет, база тихо обрастает мусором, и замечает это
+    человек, глядя на живой диалог. Один раз так и вышло.
+
+    Работает счётом строк, а не разбором: `SELECT` по индексу на 25 тысячах реплик
+    — доли миллисекунды, и платить их за каждый тест дешевле, чем ещё раз объяснять
+    десять приветов в живой переписке.
+    """
+    before = await _live_messages()
+
+    yield
+
+    after = await _live_messages()
+    if after > before:
+        # Не `assert`: падать должен тест, который написал, и с внятной причиной.
+        # Номера в тексте — чтобы искать не пришлось.
+        raise AssertionError(
+            f'тест написал в переписку живой анкеты: строк было {before}, стало {after}. '
+            'Подмените `_message_save` (см. фикстуру `saved` в test_profile_enabled.py) '
+            'и берите выдуманный номер анкеты, а не живой.')
+
+
+async def _live_messages() -> int:
+    """Сколько сообщений у анкет, которые были в базе до прогона."""
+    async with mysql_get_db_async() as db:
+        if not _PROFILES_LIVE:
+            await db.execute('SELECT id FROM dating_profile')
+            _PROFILES_LIVE.update(int(row['id']) for row in await db.fetchall() or [])
+
+        if not _PROFILES_LIVE:
+            return 0
+
+        await db.execute('SELECT COUNT(*) AS n FROM dating_message '
+                         f"WHERE profile_id IN ({','.join(['%s'] * len(_PROFILES_LIVE))})",
+                         tuple(_PROFILES_LIVE))
+
+        return int(((await db.fetchone()) or {}).get('n') or 0)
 
 
 @pytest.fixture(autouse=True)

@@ -143,6 +143,24 @@ async def dating_send_message(profile: dict, presence: dict, to_uid: str, text: 
         return _fail('у сайта не настроена отправка: ни `presence.send` у соседа, '
                      'ни «Чем отправляем сообщения» на странице «Сайты»')
 
+    # ⚠ **Тот же текст тому же собеседнику подряд не отправляется.**
+    #
+    # Смотрим последнюю реплику диалога: если она наша и с этим же текстом, значит
+    # мы это уже сказали, и собеседник ещё не ответил. Повтор ему ничего не
+    # добавит, а в диалоге выглядит поломкой — так и вышло: человек увидел десять
+    # «привет» подряд и решил, что автоответ сломался.
+    #
+    # Сравнение по **последней** реплике, а не по всей переписке: «привет» через
+    # неделю разговора — законное сообщение, а «привет» сразу после «привет» —
+    # нет. Историю целиком проверять и не надо, и нельзя: люди повторяются.
+    #
+    # Стоит после запрета выключенной анкеты (тот дешевле — не ходит в базу) и
+    # **до** проверки онлайна: незачем спрашивать снимок ради сообщения, которое
+    # мы всё равно не отправим.
+    if await _said_already(int(profile['id']), to_uid, text):
+        return {'ok': False, 'error': 'это сообщение уже отправлено последним',
+                'offline': False, 'response': '', 'message_uid': ''}
+
     # ⚠ **Собеседника нет в сети — не шлём вовсе.**
     #
     # У сценария это особенно дорого: прогон стоит десятков секунд живого браузера
@@ -400,6 +418,39 @@ def _cookies(profile: dict, presence: dict) -> dict:
 
     return {str(c['name']): str(c['value']) for c in (state or {}).get('cookies', [])
             if host in str(c.get('domain') or '')}
+
+
+async def _said_already(profile_id: int, to_uid: str, text: str) -> bool:
+    """Последняя реплика диалога — наша и с этим же текстом?
+
+    Returns:
+        bool: `True` — отправлять не надо. Сбой базы даёт `False`: молча не
+        отправить хуже, чем отправить второй раз, — потерянный ответ человек не
+        увидит вовсе, а дубль хотя бы заметен.
+
+    ⚠ **Порядок по времени, а не по `id`.** Импорт переписки из панели агентства
+    кладёт историю за неделю сегодня, то есть с наибольшими `id`: по `id`
+    «последней» оказалась бы недельной давности реплика (`dating.md`, §5.8). Тот же
+    разбор, что у списка диалогов.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT text, direction FROM dating_message '
+                             ' WHERE profile_id = %s AND sender_uid = %s '
+                             ' ORDER BY created_at DESC, id DESC LIMIT 1',
+                             (profile_id, str(to_uid)[:32]))
+            last = await db.fetchone()
+    except Exception as e:
+        logger_info(f'[dating] последняя реплика не прочиталась: {e}')
+
+        return False
+
+    if not last or str(last.get('direction')) != 'out':
+        return False
+
+    # Сравниваем по сути, а не побуквенно: агент может вернуть тот же текст с
+    # другим пробелом или регистром, и для собеседника это одно и то же сообщение.
+    return str(last.get('text') or '').strip().casefold() == str(text or '').strip().casefold()
 
 
 async def _message_save(profile_id: int, to_uid: str, text: str, message_uid: str,

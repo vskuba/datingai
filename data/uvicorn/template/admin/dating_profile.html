@@ -2090,9 +2090,17 @@
         const who = found.name || peopleName(uid) || uid;
         const me = (chatData.profile || {}).name || chatData.login || row.login || 'анкета';
 
+        // Заголовок называет **обе** стороны и номер у каждой: «Semen Gorbunkov
+        // 181685 — Diana 643694». Прежде номер стоял один, у собеседника, а имя
+        // анкеты шло припиской — и было непонятно, чей это номер.
+        //
+        // Номер анкеты — её `site_uid`, номер на сайте; наш внутренний `id` здесь
+        // ни к чему: по нему анкету не найти ни в панели сайта, ни в его чате.
+        const myId = (chatData.profile || {}).site_uid
+                  || (chatData.profile || {}).id || '';
+
         const box = modalOpen({
-            title: `Переписка: ${who}`,
-            note: `${me} · ID ${uid}`,
+            title: `Переписка: ${who} ${uid} — ${me}${myId ? ' ' + myId : ''}`,
             body: '<div class="talk-load">Гружу переписку…</div>',
         });
 

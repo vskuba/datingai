@@ -15,6 +15,7 @@
 """
 
 import asyncio
+import json
 import time
 from urllib.parse import quote
 
@@ -78,6 +79,19 @@ _scenario_cache: dict[tuple[int, str], tuple[float, dict]] = {}
 # Очередь прогонов: сосед водит браузер вкладками из общего пула, и мы просим по
 # одному прогону за раз. Почему — в `rhapsody_api_scenario_run`.
 _run_lock = asyncio.Lock()
+
+
+# Сколько знаков тела запроса и ответа кладём в лог. 300 хватает, чтобы увидеть
+# суть — какой сценарий, какие подстановки, чем кончился прогон, — и не хватает,
+# чтобы килобайтный список сайтов забил лог на каждом показе страницы.
+RHAPSODY_API_LOG_MAX = 300
+
+# Ключи тела запроса, чьё содержимое в лог не попадает.
+#
+# ⚠ `secrets` — пароли анкет: их кладёт `dating_scenario`, и в логе им места нет.
+# Сам сосед их тоже не пишет (в его журнале прогонов остаётся `{{girl_password}}`),
+# и терять эту защиту на нашей стороне нельзя.
+RHAPSODY_API_LOG_HIDE = {'secrets'}
 
 
 class RhapsodyError(RuntimeError):
@@ -432,12 +446,32 @@ async def _request(method: str, path: str, payload: dict = None,
 
     headers = {'Authorization': f'Bearer {RHAPSODY_API_TOKEN}'}
 
+    # ⚠ **Каждое обращение к соседу видно в логе — и запрос, и ответ.**
+    #
+    # Без этого разбор упирается в пустоту: отправка не удалась, человек смотрит
+    # журнал анкеты и видит только «не ушло», а куда ходили, что послали и что
+    # сосед ответил — не видно нигде. Так и вышло: сообщение не отправилось, и
+    # сказать почему было нечем.
+    #
+    # Пишем **здесь**, в единственной двери, а не у вызывающих: их десяток, и
+    # первый забытый снова оставил бы слепое место.
+    logger_info(f'[rhapsody] → {method} {path}{_payload_short(payload)}')
+    started = time.monotonic()
+
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.request(method, RHAPSODY_API_URL + path,
                                             json=payload, headers=headers)
     except httpx.HTTPError as e:
+        # Обрыв связи — тоже ответ, и в логе он нужен: по нему видно, что дело не в
+        # соседе, а в сети или в том, что его вовсе нет.
+        logger_info(f'[rhapsody] ← {method} {path}: связь оборвалась за '
+                    f'{_ms(started)} мс: {e}')
+
         raise RhapsodyError(f'RhapsodyAi недоступен: {e}')
+
+    logger_info(f'[rhapsody] ← {response.status_code} {path} за {_ms(started)} мс'
+                f'{_body_short(response)}')
 
     if response.status_code >= 400:
         raise RhapsodyError(_error_text(path, response))
@@ -446,6 +480,48 @@ async def _request(method: str, path: str, payload: dict = None,
         return response.json() if response.content else {}
     except ValueError:
         raise RhapsodyError(f'{path} → ответ не JSON: {response.text[:150]}')
+
+
+def _ms(started: float) -> int:
+    """Сколько шёл запрос. Прогон сценария длится десятки секунд, и по времени
+    видно, ждали мы браузер или получили отказ сразу."""
+    return int((time.monotonic() - started) * 1000)
+
+
+def _payload_short(payload) -> str:
+    """Тело запроса для лога — коротко и **без секретов**.
+
+    ⚠ Секреты вырезаются по имени ключа, а не по значению: сравнивать значения
+    неоткуда — пароль приходит сюда уже подставленным. Ключ `secrets` кладёт
+    `dating_scenario`, и его содержимое в лог попадать не должно ни при каких
+    условиях.
+    """
+    if not isinstance(payload, dict) or not payload:
+        return ''
+
+    safe = {}
+    for key, value in payload.items():
+        if key in RHAPSODY_API_LOG_HIDE:
+            safe[key] = f'<скрыто: {len(value)}>' if hasattr(value, '__len__') else '<скрыто>'
+        else:
+            safe[key] = value
+
+    text = json.dumps(safe, ensure_ascii=False)
+
+    return f' {text[:RHAPSODY_API_LOG_MAX]}' + ('…' if len(text) > RHAPSODY_API_LOG_MAX else '')
+
+
+def _body_short(response) -> str:
+    """Ответ соседа для лога, обрезанный по длине.
+
+    Целиком нельзя: список сайтов со всеми настройками — это килобайты на каждый
+    показ страницы, а в логе нужен признак «что пришло», а не сами данные.
+    """
+    body = (response.text or '').strip().replace('\n', ' ')
+    if not body:
+        return ''
+
+    return f': {body[:RHAPSODY_API_LOG_MAX]}' + ('…' if len(body) > RHAPSODY_API_LOG_MAX else '')
 
 
 def _error_text(path: str, response) -> str:

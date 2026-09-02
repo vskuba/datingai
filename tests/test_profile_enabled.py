@@ -29,7 +29,20 @@ from src.uvicorn.routers.dating.dating_profile_action import (DatingProfileAuto,
                                                               dating_profile_action_enabled)
 
 SITE = 343
-UID = '181685'
+
+# ⚠ **Номера выдуманные, и это не придирка.**
+#
+# Сюита писала в живую базу живой анкеты: тест «строка без колонки читается как
+# ведём» подменял прогон сценария, но не запись отправленного — и каждый прогон
+# сюиты добавлял в переписку настоящей анкеты ещё одно «привет». К десятому
+# прогону человек увидел десять приветов в диалоге и принял это за поломку
+# автоответа.
+#
+# Отсюда два правила, и оба нужны: номер анкеты — заведомо не существующий, а
+# запись в переписку подменяется (`saved` ниже). Первого мало — строка легла бы с
+# чужим номером и просто мусорила; второго мало — подмену легко забыть.
+PROFILE_ID = 999_849
+UID = '999181685'
 
 
 class _FakeRedis:
@@ -40,6 +53,34 @@ class _FakeRedis:
 
     def get(self, key):
         return self.value
+
+
+@pytest.fixture
+def saved(monkeypatch):
+    """Перехватывает запись отправленного в переписку.
+
+    ⚠ **Обязательна для любого теста, где отправка проходит успешно.** Без неё
+    `dating_send_message` пишет в живую таблицу `dating_message` — и переписка
+    настоящей анкеты обрастает тестовыми репликами. Так и вышло: десять прогонов
+    сюиты — десять «привет» в живом диалоге.
+
+    Заодно это делает проверку точнее: видно, **что** записалось, а не только что
+    отправка вернула `ok`.
+    """
+    from src.dating import dating_send
+
+    rows = []
+
+    async def _save(profile_id, to_uid, text, message_uid, source='socket'):
+        rows.append((int(profile_id), str(to_uid), str(text)))
+
+    async def _mark(profile_id, to_uid):
+        return None
+
+    monkeypatch.setattr(dating_send, '_message_save', _save)
+    monkeypatch.setattr(dating_send, '_answered_mark', _mark)
+
+    return rows
 
 
 @pytest.fixture
@@ -76,7 +117,7 @@ class TestSendRefusesWhenDisabled:
         monkeypatch.setattr(dating_send, 'dating_scenario_run', _run)
 
         result = await dating_send.dating_send_message(
-            {'id': 849, 'site_id': SITE, 'login': 'x', 'enabled': 0},
+            {'id': PROFILE_ID, 'site_id': SITE, 'login': 'x', 'enabled': 0},
             {'send': {'transport': 'scenario'}}, UID, 'привет')
 
         assert result['ok'] is False
@@ -94,12 +135,12 @@ class TestSendRefusesWhenDisabled:
         from src.dating import dating_send
 
         result = await dating_send.dating_send_message(
-            {'id': 849, 'site_id': SITE, 'enabled': 0},
+            {'id': PROFILE_ID, 'site_id': SITE, 'enabled': 0},
             {'send': {'transport': 'scenario'}}, UID, 'привет')
 
         assert result['offline'] is False
 
-    async def test_missing_column_means_enabled(self, monkeypatch, online):
+    async def test_missing_column_means_enabled(self, monkeypatch, online, saved):
         """Строка без `enabled` читается как «ведём».
 
         Колонка появилась при 64 работающих анкетах. Умолчание `False` остановило
@@ -131,11 +172,176 @@ class TestSendRefusesWhenDisabled:
 
         # Ключа `enabled` в словаре нет вовсе — как в строке до миграции.
         result = await dating_send.dating_send_message(
-            {'id': 849, 'site_id': SITE, 'login': 'x'},
+            {'id': PROFILE_ID, 'site_id': SITE, 'login': 'x'},
             {'send': {'transport': 'scenario'}}, UID, 'привет')
 
         assert result['ok'] is True, 'анкета без колонки сочтена выключенной'
         assert гоняли, 'сценарий не погнали'
+        assert saved == [(PROFILE_ID, UID, 'привет')], 'отправленное не записалось'
+
+
+class TestNoDoubleSend:
+    """⚠ Тот же текст тому же собеседнику подряд не отправляется.
+
+    Смысл в последней реплике диалога: если она наша и с этим же текстом, значит мы
+    это уже сказали, а собеседник ещё не ответил. Повтор ему ничего не добавит, а в
+    диалоге выглядит поломкой — так и вышло: человек увидел десять «привет» подряд
+    и решил, что сломался автоответ.
+
+    База здесь подменена: проверяется решение, а не чтение строки.
+    """
+
+    @pytest.fixture
+    def dialogue(self, monkeypatch):
+        """Последняя реплика диалога. Тест ставит её через `put`."""
+        from src.dating import dating_send
+
+        state = {'last': None}
+
+        class _Cursor:
+            async def execute(self, *args, **kwargs):
+                return None
+
+            async def fetchone(self):
+                return state['last']
+
+            @property
+            def connection(self):
+                return self
+
+            async def commit(self):
+                return None
+
+        class _Db:
+            async def __aenter__(self):
+                return _Cursor()
+
+            async def __aexit__(self, *args):
+                return False
+
+        monkeypatch.setattr(dating_send, 'mysql_get_db_async', lambda: _Db())
+        state['put'] = lambda text, direction='out': state.__setitem__(
+            'last', {'text': text, 'direction': direction})
+
+        return state
+
+    async def _send(self, text='привет'):
+        from src.dating import dating_send
+
+        return await dating_send.dating_send_message(
+            {'id': PROFILE_ID, 'site_id': SITE, 'login': 'x', 'enabled': 1},
+            {'send': {'transport': 'scenario'}}, UID, text)
+
+    async def test_same_text_twice_is_refused(self, dialogue, online, monkeypatch):
+        from src.dating import dating_send
+
+        гоняли = []
+        monkeypatch.setattr(dating_send, 'dating_scenario_run',
+                            lambda *a, **k: гоняли.append(a))
+        dialogue['put']('привет')
+
+        result = await self._send('привет')
+
+        assert result['ok'] is False
+        assert 'уже отправлено' in result['error']
+        assert not гоняли, 'сценарий погнали ради повтора'
+
+    @pytest.mark.parametrize('last, sending, дубль', [
+        ('привет', 'привет', True),
+        ('Привет', '  привет ', True),          # регистр и пробелы не спасают
+        ('привет', 'привет!', False),           # другой текст — другое сообщение
+        ('привет', 'как дела?', False),
+    ])
+    async def test_comparison_is_by_meaning(self, dialogue, last, sending, дубль):
+        """Сравнение по сути, а не побуквенно: агент возвращает тот же текст с
+        другим пробелом или регистром, а для собеседника это одно сообщение.
+
+        ⚠ Проверяем **саму функцию**, а не путь отправки целиком. Первый вариант
+        теста шёл через `dating_send_message` и зеленел даже с побуквенным
+        сравнением: отказ приходил дальше по пути, по другой причине, а тест этого
+        не различал. Поймано проверкой на излом.
+        """
+        from src.dating.dating_send import _said_already
+
+        dialogue['put'](last)
+
+        assert await _said_already(PROFILE_ID, UID, sending) is дубль
+
+    async def test_other_text_goes_through(self, dialogue, online, saved, monkeypatch):
+        """Обратная сторона: другой текст отправляется.
+
+        Без этой проверки запрет мог бы оказаться безусловным, и отправка молча
+        перестала бы работать вовсе.
+        """
+        _scenario_ok(monkeypatch)
+        dialogue['put']('привет')
+
+        result = await self._send('как дела?')
+
+        assert result['ok'] is True, 'новое сообщение не ушло'
+
+    async def test_their_message_does_not_block_us(self, dialogue, online, saved,
+                                                   monkeypatch):
+        """⚠ Последняя реплика **их** — отправляем, даже если текст тот же.
+
+        «привет» в ответ на «привет» — законный разговор. Запрет только на наш
+        повтор поверх собственного слова.
+        """
+        _scenario_ok(monkeypatch)
+        dialogue['put']('привет', direction='in')
+
+        result = await self._send('привет')
+
+        assert result['ok'] is True, 'их сообщение приняли за наше'
+
+    async def test_empty_dialogue_goes_through(self, dialogue, online, saved, monkeypatch):
+        """Первое сообщение в переписке: сравнивать не с чем."""
+        _scenario_ok(monkeypatch)
+
+        assert (await self._send('привет'))['ok'] is True
+
+    async def test_broken_database_does_not_block(self, online, saved, monkeypatch):
+        """⚠ Сбой базы даёт «отправляем», а не «молчим».
+
+        Молча не отправить хуже, чем отправить второй раз: потерянный ответ человек
+        не увидит вовсе, а дубль хотя бы заметен.
+        """
+        from src.dating import dating_send
+
+        def _broken():
+            raise RuntimeError('база недоступна')
+
+        monkeypatch.setattr(dating_send, 'mysql_get_db_async', _broken)
+        _scenario_ok(monkeypatch)
+
+        assert (await self._send('привет'))['ok'] is True
+
+
+def _scenario_ok(monkeypatch):
+    """Подменяет всё, что нужно удачному прогону сценария: сосед, настройки, прогон.
+
+    ⚠ Наружу при этом не ходит ничего — ни к RhapsodyAi, ни на сайт. Сторож сети в
+    `conftest` это и проверяет.
+    """
+    from src.dating import dating_send
+
+    async def _run(*args, **kwargs):
+        return {'status': 'ok', 'extract': {}}
+
+    async def _var(site_id, name):
+        return {'chat_companion_url_pattern': 'https://site/chat#{ID}',
+                'login_url': 'https://site'}.get(name, '')
+
+    async def _find(site_id, name):
+        return {'id': 1, 'name': name}
+
+    async def _setting(site_id, key):
+        return 'пароль' if key == 'api_password' else ''
+
+    monkeypatch.setattr(dating_send, 'dating_scenario_run', _run)
+    monkeypatch.setattr(dating_send, 'rhapsody_api_site_variable', _var)
+    monkeypatch.setattr(dating_send, 'rhapsody_api_scenario_find', _find)
+    monkeypatch.setattr(dating_send, 'dating_site_setting', _setting)
 
 
 class TestAutoRoundSkipsDisabled:

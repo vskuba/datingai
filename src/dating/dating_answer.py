@@ -40,6 +40,8 @@
 """
 
 
+import json
+
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
@@ -95,6 +97,9 @@ async def dating_answer_run(profile: dict, presence: dict, agent_id: int,
         собеседников вышли из чата, `errors` — что не вышло.
     """
     profile_id = int(profile['id'])
+    # Имя анкеты для журнала: строки всех анкет там вперемешку, и «→ Semen» без
+    # отправителя не говорит, кто ответил.
+    me = _me_name(profile)
     language = str(presence.get('answer_language') or DATING_ANSWER_LANGUAGE)
     only = _only_parse(profile.get('auto_answer_only'))
     lead = str(profile.get('role') or '') == DATING_ANSWER_ROLE_LEAD
@@ -113,7 +118,11 @@ async def dating_answer_run(profile: dict, presence: dict, agent_id: int,
 
     for row in waiting:
         uid = str(row['sender_uid'])
-        who = str(row['sender_name'] or '') or f'#{uid}'
+        # Имя **с номером**: имена собеседников повторяются десятками («три Natalia
+        # в списке — обычное дело»), и по одному имени в журнале не понять, с кем
+        # разговор.
+        name = str(row['sender_name'] or '').strip()
+        who = f'{name} {uid}' if name else f'#{uid}'
 
         # ⚠ **Собеседника нет в сети — не спрашиваем агента вовсе.**
         #
@@ -157,7 +166,7 @@ async def dating_answer_run(profile: dict, presence: dict, agent_id: int,
         result = await dating_send_message(profile, presence, uid, answer)
         if result['ok']:
             sent += 1
-            await dating_log_write(profile_id, 'out', f'{who}: {answer[:300]}')
+            await dating_log_write(profile_id, 'out', f'{me} → {who}: «{answer[:300]}»')
         elif result.get('offline'):
             # Собеседник вышел из чата. Ошибкой это не считаем и пометку не
             # ставим: он вернётся, и тогда ответ уйдёт — сообщение остаётся
@@ -166,7 +175,11 @@ async def dating_answer_run(profile: dict, presence: dict, agent_id: int,
             await dating_log_write(profile_id, 'info', f'{who}: нет в чате, отвечу когда вернётся')
         else:
             errors.append(f"{who}: {result['error']}")
-            await dating_log_write(profile_id, 'fail', f"Ответ {who} не ушёл: {result['error']}")
+            # ⚠ Текст и при отказе: без него не видно, что именно не ушло, и
+            # нельзя решить — повторять или сообщение всё-таки дошло.
+            await dating_log_write(
+                profile_id, 'fail',
+                f"Не ушло: {me} → {who} «{answer[:120]}» — {result['error']}")
 
     await dating_log_write(
         profile_id, 'ok',
@@ -194,6 +207,30 @@ async def _agent_ask(agent_id: int, question: str, language: str) -> tuple[str, 
 
     return answer, ''
 
+
+
+def _me_name(profile: dict) -> str:
+    """Имя анкеты с сайта — то, под которым её видит собеседник.
+
+    Из JSON-столбца `profile`: анкета приходит от сайта целиком, и вытаскивать
+    поля в свои колонки значило бы держать вторую копию. Нет имени — остаётся
+    логин, он есть всегда.
+    """
+    card = profile.get('profile')
+    if isinstance(card, str):
+        try:
+            card = json.loads(card or '{}')
+        except ValueError:
+            card = {}
+
+    card = card or {}
+    name = str(card.get('name') or '').strip()
+    uid = str(card.get('site_uid') or card.get('id') or '').strip()
+
+    if name:
+        return f'{name} {uid}'.strip()
+
+    return uid or str(profile.get('login') or '')
 
 
 def _only_parse(value) -> list:
