@@ -163,6 +163,44 @@ async def rhapsody_api_site_list(tag: str = RHAPSODY_API_SITE_TAG) -> list:
     return list(data.get('result') or [])
 
 
+async def rhapsody_api_site_variable(site_id: int, name: str) -> str:
+    """Переменная сайта у соседа: `panel_url`, `chat_companion_url_pattern` и такие же.
+
+    Нужна там, где значение описывает **сам сайт**, а не нашу работу с ним: как у
+    него выглядит адрес чата, где лежит панель агентства. Держать это у себя значило
+    бы завести вторую копию того, что и так живёт в закладке сайта.
+
+    ⚠ **Секреты отсюда не приходят.** В списке они замаскированы, а `reveal` у
+    соседа закрыт правом человека (`BROWSER_SECRET_VIEW`) — служебному токену он не
+    отдаст ничего. Это правильно: пароли анкет мы храним у себя, а чужие секреты
+    читать нам незачем.
+
+    Returns:
+        str: значение или пустая строка — если переменной нет или сосед не ответил.
+        Пустота, а не исключение: вызывающий и так обязан проверить, есть ли чем
+        работать, а лишняя ветка отказа на каждый вызов ничего не добавляет.
+    """
+    try:
+        data = await _request('GET', f'/api/browser/variable?site_id={int(site_id)}')
+    except RhapsodyError as e:
+        logger_info(f'[rhapsody] переменные сайта #{site_id} не пришли: {e}')
+
+        return ''
+
+    for row in data.get('items') or []:
+        if str(row.get('name') or '') == str(name):
+            # Секрет приходит маской — отдавать её как значение нельзя: подставится
+            # в адрес или в поле формы и молча сломает работу.
+            if row.get('is_secret'):
+                logger_info(f'[rhapsody] переменная «{name}» секретна — значение не отдаётся')
+
+                return ''
+
+            return str(row.get('value') or '')
+
+    return ''
+
+
 async def rhapsody_api_scenario_find_by_id(scenario_id: int) -> dict:
     """Сценарий по номеру — когда человек выбрал его сам."""
     data = await _request('GET', f'/api/browser/scenario/{int(scenario_id)}')

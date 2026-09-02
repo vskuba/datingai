@@ -32,9 +32,6 @@
                полоса прокрутки. Меньше — и подписи схлопнутся (см. `.person-card`).
                Тянется разделителем под рядом. */
             --online-h: 126px;
-            /* Высота переписки в первой колонке. Треть — столько, чтобы читались
-               последние реплики; список диалогов над ней важнее, из него выбирают. */
-            --talk: 180px;
             grid-template-columns: var(--col) 6px minmax(0, 1fr);
             grid-template-rows: auto minmax(0, 1fr);
         }
@@ -216,8 +213,9 @@
 
         /* ── Окно переписки ──────────────────────────────────────────────────
            Само окно общее (`modal.css`), здесь только его содержимое: реплики
-           рисуются теми же `.msg`, что и ряд переписки под списком, — разговор
-           должен выглядеть одинаково, где бы его ни открыли. */
+           рисуются общими `.msg` из `dating_page.css` — теми же, что на «Анкетах»,
+           где переписка раскрывается в строке. Разговор должен выглядеть
+           одинаково, где бы его ни открыли. */
         .talk-full { display: flex; flex-direction: column; }
         /* В окне места больше, чем в узком ряду: пузырь может быть шире, и длинные
            реплики перестают ползти лесенкой по одному слову. */
@@ -265,26 +263,10 @@
             flex: 0 0 auto; margin-left: auto;
             font-size: 10px; line-height: 1; opacity: .85;
         }
-        .chat-msgs {
-            height: var(--talk); min-height: 0; display: flex; flex-direction: column;
-        }
-
-        .talk-head {
-            display: flex; align-items: center; gap: 6px; flex: 0 0 auto;
-            font-size: 11px; font-weight: 700; color: #334155; padding-bottom: 4px;
-        }
-        .talk-id { color: #cbd5e1; font-weight: 400; font-size: 10px; }
-        .talk-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-
         /* Время реплики — приглушённым и мелким, у правого края пузыря: его
            читают, только когда усомнились в свежести, а мешать тексту оно не
            должно. */
         .msg-when { margin-left: 8px; color: #94a3b8; font-size: 10px; white-space: nowrap; }
-        .talk-empty {
-            flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
-            color: #cbd5e1; font-size: 11px; text-align: center; padding: 8px;
-        }
-
         /* Ширина у каждой колонки своя переменная: избранных бывает трое, а в
            сети двадцать, и подгонять их приходится по отдельности. Границы слева
            нет — её роль взял разделитель, который стоит на том же месте. */
@@ -770,7 +752,7 @@
     import {showNotification} from '{{ base }}/static/js/notification.js';
     // Модальное окно — общее для всех страниц панели (`modal.js`).
     import {modalOpen} from '{{ base }}/static/js/modal.js';
-    import {esc, onlineDot, warnBadge, seenText, timeShort, pagerRender, logRender}
+    import {esc, onlineDot, warnBadge, seenText, timeShort, timeFull, pagerRender, logRender}
         from '{{ base }}/static/js/dating_view.js';
     // Сдвиг времени в пояс настройки: с сервера метки приходят в UTC.
     import {timeShift, timeToday} from '{{ base }}/static/js/dating_time.js';
@@ -1239,13 +1221,6 @@
     // узел проверяется на существование: у Goldenbride, например, нет ни ленты
     // «онлайн», ни колонки избранных, а значит и их кнопок с разделителями.
     function workBind() {
-        const talk = workEl.querySelector('#splitTalk');
-        if (talk) {
-            splitDrag(talk, '--talk', 90, Math.round(innerHeight * 0.5),
-                      (e) => workEl.querySelector('.chat-talk').getBoundingClientRect().bottom
-                             - e.clientY);
-        }
-
         // Ряд «Все онлайн» растёт **вниз**: его верх стоит на месте, тянут за низ.
         const online = workEl.querySelector('#splitOnline');
         if (online) {
@@ -1416,7 +1391,6 @@
         const count = slot('dialogs-count');
         if (count) count.textContent = dialogsCount();
 
-        talkPaint();
 
         logLoad();
 
@@ -1544,48 +1518,6 @@
     // человек находит кого-то в «Все онлайн», нажимает — и сразу видит, говорили
     // ли с ним раньше. Раньше переписка раскрывалась внутри строки диалога, и
     // выбранный из колонки собеседник показать её не мог вовсе.
-    function chatTalk(data) {
-        if (!openUid) {
-            return '<div class="talk-empty">Выберите собеседника — '
-                 + 'здесь будет переписка с ним.</div>';
-        }
-
-        const found = (data.contacts || []).find(c => String(c.uid) === String(openUid));
-        const who = peopleName(openUid) || (found && found.name) || openUid;
-
-        // Собеседник есть в списках сайта, но переписки с ним нет: это законный
-        // ответ, а не пустота. Говорим прямо — иначе пустой ряд читается как
-        // «не загрузилось».
-        if (!found) {
-            return `<div class="talk-head">${esc(who)}</div>`
-                 + '<div class="talk-empty">Диалог ещё не осуществлялся.</div>';
-        }
-
-        const p = data.profile || {};
-        const me = p.name || data.login || 'мы';
-        // ⚠ **Время у каждой реплики обязательно.** Переписка приходит из двух
-        // источников — живого сокета и журнала панели агентства, — и во втором
-        // это может быть сообщение недельной давности. Без метки лента читается
-        // как сегодняшний разговор, и человек отвечает на позавчерашнее письмо,
-        // считая его свежим.
-        //
-        // Коротко (`timeShort`): сегодняшнее — часами, старше — датой. Полная
-        // метка в подсказке: место в ленте тесное, а точная секунда нужна редко.
-        const msgs = (found.messages_last || []).map(m =>
-            `<div class="msg ${m.direction === 'out' ? 'out' : 'in'}">`
-            + '<span class="msg-body">'
-            + `<span class="msg-who">${esc(m.direction === 'out' ? me : (found.name || 'он'))}</span>`
-            + `${esc(m.text)}`
-            + `<span class="msg-when" title="${esc(timeShift(m.created_at))}">`
-            + `${esc(timeShort(m.created_at))}</span>`
-            + '</span></div>').join('');
-
-        return `<div class="talk-head">${esc(found.name || who)}`
-             + `<span class="talk-id">ID ${esc(found.uid)}</span></div>`
-             + `<div class="talk-body">${msgs || '<div class="talk-empty">'
-                                               + 'Диалог ещё не осуществлялся.</div>'}</div>`;
-    }
-
     // Фотография собеседника из уже снятых списков.
     //
     // ⚠ **У собеседника в базе фотографии обычно нет.** Диалоги и переписка из
@@ -2071,16 +2003,10 @@
         workEl.querySelectorAll('.contact, .person, .person-card').forEach(el =>
             el.classList.toggle('open', el.dataset.uid === openUid));
 
-        talkPaint();
     }
 
     // Перерисовывает нижний ряд первой колонки. Данные берём из последнего ответа
     // `/card` — он уже в памяти, и второй запрос ради смены выбранного не нужен.
-    function talkPaint() {
-        const box = slot('talk');
-        if (box && chatData) box.innerHTML = chatTalk(chatData);
-    }
-
     // Строки диалогов: перерисовываются каждый круг, поэтому и обработчик вешается
     // каждый раз — узлы новые.
     function chatBind() {
@@ -2157,8 +2083,12 @@
                     + '<span class="msg-body">'
                     + `<span class="msg-who">${esc(out ? me : (m.sender_name || who))}</span>`
                     + `${esc(m.text)}`
+                    // ⚠ В окне метка **полная** (`10:35 26/12/2026`), а не короткая,
+                    // как в строке диалога. Там место тесное и хватает «сегодня или
+                    // нет»; здесь читают разговор целиком, и рядом лежат реплики из
+                    // сокета и привезённые из панели — сегодняшние и прошлогодние.
                     + `<span class="msg-when" title="${esc(timeShift(m.created_at))}">`
-                    + `${esc(timeShort(m.created_at))}</span>`
+                    + `${esc(timeFull(m.created_at))}</span>`
                     + '</span></div>';
             }).join('')
             + '</div>';
@@ -2945,7 +2875,7 @@
     // Все размеры страницы в одном месте: список, журнал и две колонки
     // собеседников. Перечислены именами переменных, а не по одной строке на каждую,
     // — пятый разделитель не должен требовать правки в двух функциях.
-    const LAYOUT_VARS = ['--col', '--log', '--fav', '--online-h', '--talk'];
+    const LAYOUT_VARS = ['--col', '--log', '--fav', '--online-h'];
 
     function layoutSave() {
         const saved = {};
