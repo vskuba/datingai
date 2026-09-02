@@ -182,6 +182,32 @@
 
         .chat-dialogs { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
+        /* ── Строка диалога: собеседник тем же видом, что в «My favorites» ────
+           Правила **только для этой страницы** (`.chat-dialogs`), а не общие:
+           на «Анкетах» та же строка живёт со значком раскрытия и своей сеткой из
+           семи столбцов, и правка общего файла перекосила бы её.
+
+           ⚠ Здесь столбцов четыре — по числу того, что в строке есть: кто, о чём,
+           когда и ждут ли ответа. Общая сетка держит семь, первый под значок
+           раскрытия; раскрытия на «Профилях» нет (переписка живёт ниже, своим
+           рядом), значок убран, а столбец под него оставался — и всё ехало на
+           столбец влево: аватар 28 пикселей жался в 14, имя получало 28 и
+           обрезалось до одной буквы. */
+        .chat-dialogs .contact-bar {
+            grid-template-columns: minmax(130px, auto) minmax(0, 1fr) auto auto;
+        }
+
+        /* Обойма собеседника. Внутри — те же `person-*`, что в колонках справа:
+           один и тот же человек стоит в трёх местах вкладки, и три разных вида
+           одного человека читаются как три разные сущности. */
+        .chat-dialogs .contact-who {
+            display: flex; align-items: center; gap: 6px; min-width: 0;
+        }
+        /* Лицо крупнее колоночного: в колонке 150 пикселей ширины и место дорого,
+           здесь его хватает, а по фотографии собеседника и узнают. */
+        .chat-dialogs .person-face { width: 28px; height: 28px; font-size: 12px; }
+        .chat-dialogs .person-name { font-size: 12px; font-weight: 600; color: #111827; }
+
         /* Значок «с ним есть переписка» в колонках собеседников. Иконкой, а не
            словом: в колонке 150 пикселей слово заняло бы строку целиком, а
            отличить «говорили» от «не говорили» надо одним взглядом по столбцу. */
@@ -1362,19 +1388,37 @@
         const rows = (data.contacts || []).map(c => {
             const last = (c.messages_last || []).slice(-1)[0] || {};
             const open = openUid === String(c.uid);
+            // Своей фотографии у собеседника обычно нет — подбираем из списков.
+            const photo = c.photo || peoplePhoto(c.uid);
 
             // Строка больше не раскрывается: переписка живёт ниже, в своём ряду, и
             // одна и та же — какую бы колонку ни выбрали. Раскрытие внутри строки
             // означало бы два места для одного разговора.
+            // ⚠ **Собеседник рисуется тем же видом, что в колонках «My favorites»
+            // и «Все онлайн»** — теми же классами `person-*`, а не своими.
+            //
+            // Один и тот же человек стоит в трёх местах вкладки, и три разных вида
+            // одного человека читаются как три разные сущности. Заодно это чинило
+            // перекос: у строки диалога были свои размеры лица и имени, и фото в
+            // ней выглядело меньше, чем в колонке рядом.
+            //
+            // Классы общие намеренно: правка вида собеседника теперь одна на все
+            // три места, а не три одинаковых правки, из которых забудут одну.
             return `<div class="contact${c.needs_answer ? ' wait' : ''}${open ? ' open' : ''}"`
                 + ` data-uid="${esc(c.uid)}">`
                 + '<div class="contact-bar">'
-                + `<span class="contact-face">${esc((c.name || '?').slice(0, 1).toUpperCase())}`
-                + (c.photo ? `<img src="${esc(c.photo)}" alt="" referrerpolicy="no-referrer"`
-                             + ' onerror="this.remove()">' : '')
+                + '<span class="contact-who">'
+                + `<span class="person-dot${c.is_online ? ' online' : ''}"`
+                + ` title="${c.is_online ? 'в сети' : 'не в сети'}"></span>`
+                + `<span class="person-face">${esc((c.name || '?').slice(0, 1).toUpperCase())}`
+                + (photo ? `<img src="${esc(photo)}" alt="" referrerpolicy="no-referrer"`
+                           + ' onerror="this.remove()">' : '')
                 + '</span>'
-                + `<span class="contact-name">${esc(c.name || 'без имени')}</span>`
-                + `<span class="contact-id" title="номер анкеты на сайте">ID ${esc(c.uid)}</span>`
+                + '<span class="person-text">'
+                + `<span class="person-name">${esc(c.name || 'без имени')}</span>`
+                + `<span class="person-meta" title="номер анкеты на сайте">`
+                + `${c.age ? esc(c.age) + ' · ' : ''}${esc(c.uid)}</span>`
+                + '</span></span>'
                 + `<span class="contact-last">${esc(last.direction === 'out' ? 'вы: ' : '')}`
                 + `${esc(last.text || 'сообщений нет')}</span>`
                 + `<span class="contact-time" title="${esc(timeShift(last.created_at))}">`
@@ -1435,6 +1479,25 @@
              + `<span class="talk-id">ID ${esc(found.uid)}</span></div>`
              + `<div class="talk-body">${msgs || '<div class="talk-empty">'
                                                + 'Диалог ещё не осуществлялся.</div>'}</div>`;
+    }
+
+    // Фотография собеседника из уже снятых списков.
+    //
+    // ⚠ **У собеседника в базе фотографии обычно нет.** Диалоги и переписка из
+    // панели дают имя и номер, а фото — нет: панель его не показывает. Списки
+    // «My favorites» и «Все онлайн» показывают, и человек там тот же самый.
+    //
+    // Берём оттуда, а не сохраняем к себе: снимки и так лежат в памяти страницы,
+    // а вторая копия фотографии у собеседника разошлась бы с первой в день, когда
+    // человек её сменит.
+    function peoplePhoto(uid) {
+        for (const key of [`${openId}|favorite`, ONLINE_KEY, `${openId}|dialog`]) {
+            const state = peopleCache.get(key);
+            const found = (state && state.people || []).find(p => String(p.uid) === String(uid));
+            if (found && found.photo) return found.photo;
+        }
+
+        return '';
     }
 
     // Имя выбранного из колонок собеседника: в переписке его может не быть, а
