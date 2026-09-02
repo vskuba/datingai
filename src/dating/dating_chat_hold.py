@@ -33,7 +33,10 @@ from redis_.redis_ import redis_conn_get
 from src.dating.dating_auto import DATING_AUTO_PERIOD_SEC, dating_auto_round
 from src.dating.dating_chat_panel import (DATING_CHAT_PANEL_ROUND_DAYS,
                                           dating_chat_panel_import)
-from src.uvicorn.routers.dating.dating_site import dating_site_seconds
+from src.dating.dating_ready import (DATING_READY_PASSWORD_SETTING, dating_ready_check,
+                                     dating_ready_transport, dating_ready_write)
+from src.uvicorn.routers.dating.dating_site import (dating_site_seconds,
+                                                    dating_site_settings)
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_error_write,
                                        rhapsody_api_site_get)
 from src.dating.dating_chat import dating_chat_listen
@@ -252,22 +255,38 @@ def _holders_sync(holders: dict, counters: dict, profiles: list, deadline: float
 
 
 async def _profiles_ready() -> list[dict]:
-    """Учётки, которые есть смысл держать: со снятым входом и настроенным сайтом.
+    """Учётки, с которыми есть смысл работать, и настройка их сайта.
 
-    Учётка без `storage_state` — это анкета, под которой ещё не входили: адрес
-    сокета для неё снять не из чего, и держать нечего.
+    ⚠ **Отбор больше не по «снят вход».** Прежде стояло `storage_state IS NOT NULL`
+    — верно для сокетного сайта (без входа нет адреса сокета), но у Ladadate сокета
+    нет вовсе: там пишут сценарием, который входит сам, каждый раз заново. Из 24
+    анкет Ladadate воркер видел **ноль**, и понять это по панели было нельзя.
+
+    Теперь берём всех, кого ведут (`enabled`), а годность считаем по транспорту
+    сайта (`dating_ready.py`) и **тут же пишем** в `can_work`: круг всё равно
+    обходит эти анкеты, и отдельный обход ради пересчёта был бы вторым проходом по
+    той же таблице.
+
+    Условие `enabled` — в SQL, а годность — в Python, и это не небрежность:
+    `enabled` ставит человек, он в базе всегда свежий; годность зависит от настройки
+    сайта, а та живёт у соседа и читается по сайту, а не по анкете.
     """
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, login, site_id, storage_state, ws_url, auto_answer, '
-            '       auto_answer_only, enabled, role, profile '
-            '  FROM dating_profile WHERE storage_state IS NOT NULL ORDER BY id')
+            '       auto_answer_only, enabled, can_work, work_reason, role, profile, '
+            '       password <> %s AS has_password '
+            '  FROM dating_profile WHERE enabled = 1 ORDER BY id', ('',))
         rows = await db.fetchall()
 
     # Настройка сайта живёт в RhapsodyAi, и join-ом её больше не взять. Спрашиваем
     # по разу на сайт, а не на анкету: сайтов единицы, анкет сотни, и сотня
     # одинаковых запросов на каждый круг — это минута на пустом месте.
     sites: dict[int, dict] = {}
+    # Настройки сайта и общий пароль — по разу на сайт, не на анкету: сайтов
+    # единицы, анкет сотни.
+    settings: dict[int, dict] = {}
+    site_passwords: dict[int, str] = {}
     ready = []
     for row in rows or []:
         site_id = int(row['site_id'])
@@ -278,9 +297,28 @@ async def _profiles_ready() -> list[dict]:
                 logger_info(f'[dating] сайт #{site_id} не спросился: {e}')
                 sites[site_id] = {}
 
+            settings[site_id] = await dating_site_settings(site_id)
+            site_passwords[site_id] = str(
+                (settings[site_id] or {}).get(DATING_READY_PASSWORD_SETTING) or '')
+
         site = sites[site_id]
         presence = dating_json_load(site.get('presence'))
-        if not dating_presence_ready(presence):
+
+        # Готовность считаем и записываем всегда — даже для той анкеты, которую
+        # дальше не возьмём. ⚠ Иначе причина «нет пароля» не появилась бы в панели
+        # никогда: анкета молча выпадала бы из отбора, как это и было с Ladadate.
+        state = dating_ready_check(
+            {**row, 'password': '1' if row.get('has_password') else ''},
+            dating_ready_transport(presence, settings.get(site_id) or {}),
+            site_passwords.get(site_id, ''))
+        await dating_ready_write(int(row['id']), state)
+
+        if not state['can']:
+            continue
+
+        # Опрос присутствия — условие только для сокетного пути: у сценарного сайта
+        # его может не быть вовсе, а работать с анкетой это не мешает.
+        if not dating_presence_ready(presence) and row.get('storage_state'):
             continue
 
         # ⚠ Выключенные анкеты **остаются в списке**, и это не недосмотр: держать

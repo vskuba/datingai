@@ -329,6 +329,18 @@ async def dating_site_setting(site_id: int, key: str, default: str = '') -> str:
     return (await _settings_all()).get(int(site_id), {}).get(key, default)
 
 
+async def dating_site_settings(site_id: int) -> dict:
+    """Все настройки сайта разом — коду, которому нужно несколько сразу.
+
+    Отдельно от `dating_site_setting`: тот читает по ключу и подставляет умолчание
+    из реестра. Здесь набор как есть — вызывающий сам решает, чего в нём не хватает.
+
+    ⚠ **Секреты приходят настоящими**, а не маской: это чтение для кода, а не для
+    страницы. Отправка входит на сайт этим паролем, и маска сорвала бы вход.
+    """
+    return dict((await _settings_all()).get(int(site_id), {}))
+
+
 async def dating_site_seconds(site_id: int, key: str) -> int:
     """Настройка-срок в секундах. Мусор и пустота — умолчание из реестра.
 
