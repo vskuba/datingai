@@ -8,7 +8,11 @@
 сценарий, а сюита наружу не ходит (`testing.md`, §1.2).
 """
 
+import uuid
+
 import pytest
+
+from mysql_.mysql_ import mysql_get_db_async
 from fastapi import HTTPException
 
 from src.dating.dating_chat_panel import (DATING_CHAT_PANEL_PREFIX,
@@ -246,28 +250,108 @@ class TestHandler:
             assert len(value) == 10 and value[2] == '.' and value[5] == '.', value
 
 
-class TestImportDoesNotAnswer:
-    """⚠ Привезённое не должно уехать в автоответ — самая дорогая ошибка здесь."""
+class TestImportedAnswerThreshold:
+    """⚠ Привезённое отвечается **только свежее** — самая дорогая ошибка здесь.
 
-    def test_answer_query_excludes_panel(self):
-        """Отбор автоответа исключает `source = 'panel'`.
+    Прежде `source = 'panel'` исключался целиком, и это было верно, пока импорт шёл
+    кнопкой. Теперь у сайта без сокета панель — единственный источник входящих
+    (`dating.md`, §5.9.1), и запрет означал бы «не отвечать вовсе». Вместо запрета
+    порог по возрасту.
 
-        Импорт приносит переписку за неделю разом, и для отбора она неотличима от
-        свежей почты: агент ответил бы на все недельные сообщения пачкой — деньги
-        на LLM и настоящие письма настоящим людям, которых уже не отозвать.
+    ⚠ **Проверяем отбор на живой базе, а не наличие строки в исходнике.** Прежний
+    тест искал `"m.source <> 'panel'" in code` — и не заметил, как правило
+    сменилось: строка осталась, смысл стал другим. Такой тест хуже, чем никакого:
+    он создаёт уверенность, не давая проверки.
+    """
 
-        Пометки «уже пробовали» тут мало: она держит `DATING_ANSWER_RETRY_SEC`, то
-        есть пять минут, и потом попытка повторяется. Проверяем сам отбор, а не
-        поведение целиком: воспроизвести его на живой базе значило бы завести
-        анкету с включённым автоответом и ждать, пока агент напишет человеку.
+    @pytest.fixture
+    async def dialogue(self, rhapsody):
+        """Одноразовая анкета со своей перепиской.
+
+        ⚠ Своя, а не живая: сторож в `conftest` не даст писать в переписку
+        существующих — и правильно, так уже намусорили десятью «привет».
+
+        Фикстура `rhapsody` обязательна: заведение анкеты сверяет сайт у соседа, и
+        без заглушки тест пошёл бы к нему по-настоящему.
         """
-        import inspect
+        from src.uvicorn.routers.dating.dating_profile import (DatingProfileSave,
+                                                               dating_profile_create,
+                                                               dating_profile_delete)
 
-        from src.dating import dating_answer
+        answer = await dating_profile_create(
+            # Сайт из списка поддельного соседа: заведение сверяет его у
+            # соседа, и выдуманного номера тот не знает.
+            DatingProfileSave(site_id=343, login=f'panel-{uuid.uuid4().hex[:8]}',
+                              password='x'), user=None)
+        profile_id = int(answer['result'])
 
-        code = inspect.getsource(dating_answer)
+        yield profile_id
 
-        assert "m.source <> 'panel'" in code, 'импорт снова заводит автоответ'
+        try:
+            await dating_profile_delete(profile_id, user=None)
+        except Exception:
+            pass
+
+    async def _put(self, profile_id: int, source: str, age_hours: int) -> None:
+        """Кладёт входящее заданного возраста и источника."""
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO dating_message'
+                ' (profile_id, sender_uid, sender_name, text, message_uid,'
+                '  direction, is_read, source, created_at)'
+                " VALUES (%s, '77', 'Он', 'вопрос', %s, 'in', 1, %s,"
+                '         NOW() - INTERVAL %s HOUR)',
+                (profile_id, f'probe-{uuid.uuid4().hex[:12]}', source, int(age_hours)))
+            await db.connection.commit()
+
+    async def test_fresh_panel_message_is_answered(self, dialogue):
+        """Свежее привезённое отвечается: иначе у сайта без сокета не отвечалось бы
+        ничего."""
+        from src.dating.dating_answer import _waiting_find
+
+        await self._put(dialogue, 'panel', age_hours=2)
+
+        assert len(await _waiting_find(dialogue, 5, [], False)) == 1
+
+    async def test_old_panel_message_is_not_answered(self, dialogue):
+        """⚠ Старое привезённое — нет. Импорт за 60 дней остаётся доступным кнопкой,
+        и без порога первый же такой прогон дал бы агенту десятки поводов написать
+        по старым письмам, живым людям."""
+        from src.dating.dating_answer import _waiting_find
+
+        await self._put(dialogue, 'panel', age_hours=48)
+
+        assert await _waiting_find(dialogue, 5, [], False) == []
+
+    async def test_import_does_not_hide_a_fresh_message(self, dialogue):
+        """⚠ Привезённая старая реплика не заслоняет свежую.
+
+        Отбор берёт **последнюю** реплику диалога. Пока порядок считался по
+        `MAX(id)`, импорт ломал его: он кладёт недельную историю сегодня, то есть с
+        наибольшими `id`, и «последней» становилась привезённая старая реплика — а
+        свежее неотвеченное сообщение оставалось без ответа.
+
+        Порядок вставки здесь и воспроизводит эту ловушку: сперва свежее, потом
+        старое, как оно и происходит при импорте после сокета.
+        """
+        from src.dating.dating_answer import _waiting_find
+
+        await self._put(dialogue, 'socket', age_hours=2)
+        await self._put(dialogue, 'panel', age_hours=50)
+
+        rows = await _waiting_find(dialogue, 5, [], False)
+
+        assert len(rows) == 1, 'свежее сообщение заслонено привезённым старым'
+
+    async def test_socket_message_has_no_threshold(self, dialogue):
+        """Порог только для привезённого: поймавшееся сокетом старое сообщение
+        осталось без ответа не потому, что оно старое, а потому что мы не ответили —
+        и ответить всё ещё надо."""
+        from src.dating.dating_answer import _waiting_find
+
+        await self._put(dialogue, 'socket', age_hours=48)
+
+        assert len(await _waiting_find(dialogue, 5, [], False)) == 1
 
     async def test_imported_rows_are_marked_read(self):
         """`is_read = 1` у привезённых: импорт это догон журнала, а не доставка.
