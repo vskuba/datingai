@@ -15,7 +15,9 @@ from fastapi import HTTPException
 
 from src.dating.dating_schedule import (DATING_SCHEDULE_DEFAULT, DATING_SCHEDULE_MAX,
                                         dating_schedule_check, dating_schedule_dump,
-                                        dating_schedule_load, dating_schedule_now)
+                                        dating_schedule_load, dating_schedule_now,
+                                        dating_schedule_profile_now,
+                                        dating_schedule_why_idle)
 from src.uvicorn.routers.dating.dating_profile import (DatingProfileSave,
                                                        dating_profile_create,
                                                        dating_profile_delete,
@@ -141,6 +143,50 @@ class TestNow:
         бы круглосуточное присутствие у всех, кто расписание не заводил.
         """
         assert dating_schedule_now([], 12 * 60) is False
+
+
+class TestOnlyForEnabled:
+    """⚠ Расписание действует только у включённой анкеты.
+
+    Выключенную не ведут вовсе: она не отвечает и ничего не отправляет. Входить по
+    расписанию ей тем более незачем — вход это действие наружу, самое заметное из
+    всех.
+    """
+
+    def test_disabled_is_never_online(self):
+        """Смены на месте, но анкета выключена — значит не входит."""
+        profile = {'enabled': 0, 'schedule': DATING_SCHEDULE_DEFAULT}
+
+        assert dating_schedule_profile_now(profile, 9 * 60) is False
+
+    def test_enabled_follows_the_schedule(self):
+        """Обратная сторона: включённая живёт по сменам.
+
+        Без этой проверки запрет мог бы оказаться безусловным, и расписание не
+        работало бы ни у кого.
+        """
+        profile = {'enabled': 1, 'schedule': DATING_SCHEDULE_DEFAULT}
+
+        assert dating_schedule_profile_now(profile, 9 * 60) is True
+        assert dating_schedule_profile_now(profile, 13 * 60) is False
+
+    def test_missing_flag_means_enabled(self):
+        """Строка без `enabled` читается как «ведём» — то же умолчание, что везде:
+        колонка появилась при работающих анкетах."""
+        assert dating_schedule_profile_now(
+            {'schedule': DATING_SCHEDULE_DEFAULT}, 9 * 60) is True
+
+    @pytest.mark.parametrize('profile, кусок', [
+        ({'enabled': 0, 'schedule': DATING_SCHEDULE_DEFAULT}, 'выключена'),
+        ({'enabled': 1, 'schedule': []}, 'руками'),
+        ({'enabled': 1, 'schedule': DATING_SCHEDULE_DEFAULT}, ''),
+    ])
+    def test_reason_explains_itself(self, profile, кусок):
+        """Почему не действует — словами: блок расписания у выключенной выглядит
+        рабочим, и человек ждёт, что анкета войдёт в семь утра."""
+        why = dating_schedule_why_idle(profile)
+
+        assert (кусок in why) if кусок else (why == '')
 
 
 class TestStorage:

@@ -21,7 +21,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.auth.auth import auth_required
 from src.dating.dating_json import dating_json_load
 from src.dating.dating_online import dating_online_check
-from src.dating.dating_schedule import dating_schedule_load
+from src.dating.dating_schedule import dating_schedule_load, dating_schedule_why_idle
 from src.uvicorn.routers.dating.dating_log import dating_log_feed
 from src.uvicorn.routers.dating.dating_profile import dating_profile_row
 
@@ -275,6 +275,10 @@ async def dating_profile_view_card(profile_id: int, page: int = 1,
                        # Расписание — в настройках анкеты на «Анкетах», рядом с
                        # выключателем: оба про то, как её ведут.
                        'schedule': dating_schedule_load(profile.get('schedule')),
+                       # Почему расписание не действует — словами. Считает сервер:
+                       # правило одно («только у включённой»), и повторять его на
+                       # странице значило бы два места, которые разойдутся.
+                       'schedule_idle': dating_schedule_why_idle(profile),
                        'auto_answer': bool(profile.get('auto_answer')),
                        'contacts_total': total, 'page': page, 'pages': pages}}
 

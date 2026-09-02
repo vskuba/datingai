@@ -89,8 +89,33 @@
 
         /* ---------- Расписание входов и выходов ---------- */
 
-        /* Ширину задаёт колонка настроек — своей у блока нет. Она подобрана как
-           раз под строку расписания: метка, два времени и удаление в один ряд. */
+        /* ⚠ **Своя ширина, а не «по колонке».** Блок приехал с «Профилей», где
+           стоял в узкой колонке настроек и ширины не имел вовсе. В правой панели
+           «Анкет» она втрое больше — ползунки растянулись во весь экран, время
+           уехало от подписи, а лишние пиксели дали горизонтальную прокрутку.
+
+           520 пикселей — по содержимому: «Смена 1», два времени и крестик в один
+           ряд, ползунок под ними. Шире смысла нет, у́же ломается ряд. */
+        .sched {
+            max-width: 520px; padding: 4px 12px 12px;
+            border-top: 1px solid #f1f5f9; margin-top: 14px;
+        }
+
+        /* Заголовок — как «Настройки анкеты» рядом: блоки одного уровня и
+           выглядеть должны одинаково. `h4` тут смотрелся вдвое крупнее соседа. */
+        .sched-title {
+            padding: 8px 0 6px; font-size: 10px; font-weight: 700; color: #94a3b8;
+            text-transform: uppercase; letter-spacing: .04em;
+        }
+
+        /* Пояснения и предупреждения под формой. */
+        .sched-note {
+            font-size: 11px; color: #94a3b8; line-height: 1.4;
+        }
+        .sched-foot {
+            display: flex; align-items: center; gap: 9px; margin-top: 10px;
+        }
+        .sched-foot .sched-note { flex: 1 1 auto; min-width: 0; }
 
         .sched-list { display: flex; flex-direction: column; gap: 4px; }
 
@@ -143,8 +168,14 @@
         .sched-fill { background: #818cf8; }
 
 
+        /* ⚠ `left: 0; right: 0` вместо `width: 100%`: у `input[type=range]` своя
+           внутренняя ширина, и `100%` считался не от контейнера — ползунок вылезал
+           за строку на 14 пикселей, а с ним и ручка уезжала за дорожку. Заметно
+           стало в широкой панели «Анкет»; в узкой колонке «Профилей» те же 14
+           пикселей терялись на глаз. */
         .sched-range input[type=range] {
-            position: absolute; left: 0; width: 100%; height: 18px; margin: 0;
+            position: absolute; left: 0; right: 0; width: auto; box-sizing: border-box;
+            height: 18px; margin: 0;
             -webkit-appearance: none; appearance: none;
             background: none; pointer-events: none;
         }
@@ -196,7 +227,19 @@
             font-size: 9px; color: #cbd5e1; margin-top: 2px;
         }
 
+        /* Расписание не действует. ⚠ Приглушаем, но **не запираем**: править смены
+           у выключенной анкеты законно — её включат, и они понадобятся. Запертая
+           форма означала бы «нельзя», а нельзя тут только одно — ждать, что она
+           войдёт. */
+        .sched.idle .sched-list, .sched.idle .sched-day { opacity: .55; }
+        .sched-idle {
+            margin: 2px 0 7px; padding: 5px 8px; border-radius: 6px;
+            background: #fff7ed; color: #9a3412; font-size: 11px; line-height: 1.35;
+        }
+
         .sched-empty { font-size: 11px; color: #94a3b8; padding: 6px 0; }
+        /* Полоса суток под сменами: та же ширина, что у списка. */
+        .sched-day { max-width: 100%; }
         .sched-warn { color: #b91c1c; }
 
         /* ── Настройки анкеты в правой колонке ───────────────────────────────
@@ -758,6 +801,9 @@
     }
 
     function scheduleBlock(row) {
+        // Пусто у выключенной — не то же, что «расписания нет»: смены на месте,
+        // просто сейчас они ни на что не влияют.
+        const idle = (cardData && cardData.schedule_idle) || '';
         const rows = scheduleRows(row.id);
         const why = scheduleCheck(rows);
         const overlap = scheduleOverlap(rows);
@@ -781,10 +827,18 @@
         // Гаснет, когда сутки заняты целиком и новую смену ставить некуда.
         const room = scheduleRoom(rows);
 
-        return '<form class="prof-form sched" data-form="schedule">'
-            + '<h4>Расписание</h4>'
-            + '<span class="prof-card-note">Когда анкете быть в сети. Пусто — '
-            + 'ведём руками.</span>'
+        return `<form class="sched${idle ? ' idle' : ''}" data-form="schedule">`
+            + '<div class="sched-title">Расписание</div>'
+            // ⚠ У выключенной анкеты расписание **не действует**, и сказать это
+            // надо прямо: блок выглядит рабочим, человек правит смены и ждёт, что
+            // анкета войдёт в семь утра, — а она не войдёт.
+            //
+            // Причину считает сервер (`schedule_idle`): правило одно, и повторять
+            // его здесь значило бы два места, которые однажды разойдутся.
+            + (idle
+                ? `<div class="sched-idle">${esc(idle)}</div>`
+                : '<div class="sched-note">Когда анкете быть в сети. '
+                  + 'Пусто — ведём руками.</div>')
             + `<div class="sched-list">${list}</div>`
             + '<div class="sched-add">'
             + `<button type="button" class="dating-btn sched-add-btn"${room ? '' : ' disabled'}`
@@ -793,14 +847,13 @@
             + '+ Смена</button>'
             + '</div>'
             + (rows.length ? scheduleDay(rows) : '')
-            + '<div class="prof-line" style="margin-top:8px">'
+            + '<div class="sched-foot">'
             + `<button type="submit" class="dating-btn primary sched-save"`
             + `${why && rows.length ? ' disabled' : ''}>Сохранить</button>`
-            + `<span class="prof-card-note${why && rows.length ? ' sched-warn' : ''}">`
-            + `${esc(why || 'Ежедневно, по времени панели')}</span>`
+            + `<span class="sched-note${why && rows.length ? ' sched-warn' : ''}">`
+            + `${esc(why || 'Ежедневно, по времени панели · левая ручка — вход, '
+                          + 'правая — выход, шаг четверть часа')}</span>`
             + '</div>'
-            + '<span class="prof-card-note">Левая ручка — вход, правая — выход.'
-            + ' Шаг четверть часа.</span>'
             + '</form>';
     }
 
@@ -877,6 +930,10 @@
                 say(on ? 'анкета включена' : 'анкета выключена');
                 // Список слева рисует значок выключенной — обновляем и его.
                 await profilesLoad();
+                // ⚠ И карточку: рядом стоит расписание, а оно у выключенной не
+                // действует. Без перечитывания оно осталось бы в прежнем виде —
+                // человек выключил анкету, а расписание говорит, что работает.
+                await profileLoad();
             } catch (e) {
                 box.checked = !on;
                 say('не переключилось: ' + e.message, true);

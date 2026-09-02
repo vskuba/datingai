@@ -141,6 +141,43 @@ def dating_schedule_now(rows: list, minutes: int) -> bool:
     return False
 
 
+def dating_schedule_profile_now(profile: dict, minutes: int) -> bool:
+    """Должна ли **эта анкета** быть в сети в эту минуту.
+
+    ⚠ **Расписание действует только у включённой анкеты.** Выключенную не ведут
+    вовсе (`dating.md`, §5.10): она не отвечает и ничего не отправляет, и входить по
+    расписанию ей тем более незачем — вход это действие наружу, самое заметное из
+    всех.
+
+    Отдельной функцией, а не параметром у `dating_schedule_now`: параметр легко не
+    передать, и забывший вызывающий получил бы вход у выключенной анкеты молча.
+    Здесь забыть нечего — на входе вся строка целиком.
+
+    Args:
+        profile: строка `dating_profile`; нужны `enabled` и `schedule`.
+        minutes: минуты от начала местных суток (0–1439).
+    """
+    if not int(profile.get('enabled', 1) or 0):
+        return False
+
+    return dating_schedule_now(profile.get('schedule'), minutes)
+
+
+def dating_schedule_why_idle(profile: dict) -> str:
+    """Почему расписание сейчас не действует. Пустая строка — действует.
+
+    Для страницы: блок расписания у выключенной анкеты выглядит рабочим, и без
+    объяснения человек ждёт, что анкета войдёт в семь утра, — а она не войдёт.
+    """
+    if not int(profile.get('enabled', 1) or 0):
+        return 'анкета выключена — расписание не действует'
+
+    if not dating_schedule_load(profile.get('schedule')):
+        return 'расписания нет — анкету ведут руками'
+
+    return ''
+
+
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 def _hhmm(value) -> str:
