@@ -7,6 +7,9 @@
     <link rel="stylesheet" href="{{ base }}/static/css/common.css">
     <link rel="stylesheet" href="{{ base }}/static/css/menu_top.css">
     <link rel="stylesheet" href="{{ base }}/static/css/notification.css">
+    {# Модальное окно — общее для всех страниц: вид один на весь сайт, а окно,
+       которое на соседней странице выглядит иначе, читается как чужое. #}
+    <link rel="stylesheet" href="{{ base }}/static/css/modal.css">
 
     {# Часовой пояс панели — числом часов от UTC, из настройки `timezone`.
        В разметке, а не запросом: времена с сервера приходят в UTC, и сдвигает их

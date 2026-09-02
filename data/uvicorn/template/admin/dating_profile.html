@@ -214,6 +214,16 @@
            на восемь пикселей за черту, которую рисует `.contact`. */
         .chat-dialogs .contact-bar { grid-template-columns: auto auto; }
 
+        /* ── Окно переписки ──────────────────────────────────────────────────
+           Само окно общее (`modal.css`), здесь только его содержимое: реплики
+           рисуются теми же `.msg`, что и ряд переписки под списком, — разговор
+           должен выглядеть одинаково, где бы его ни открыли. */
+        .talk-full { display: flex; flex-direction: column; }
+        /* В окне места больше, чем в узком ряду: пузырь может быть шире, и длинные
+           реплики перестают ползти лесенкой по одному слову. */
+        .talk-full .msg-body { max-width: 68%; }
+        .talk-load { padding: 24px 12px; text-align: center; color: #94a3b8; font-size: 12px; }
+        .talk-load.bad { color: #b91c1c; }
 
         /* Значок «нужен ответ». Мигает по той же причине, что мигала плашка: это
            единственная отметка в панели, означающая несделанную работу. Цвет и
@@ -758,6 +768,8 @@
 <script type="module">
     import {getData, postData, putData, deleteData} from '{{ base }}/static/js/api.js';
     import {showNotification} from '{{ base }}/static/js/notification.js';
+    // Модальное окно — общее для всех страниц панели (`modal.js`).
+    import {modalOpen} from '{{ base }}/static/js/modal.js';
     import {esc, onlineDot, warnBadge, seenText, timeShort, pagerRender, logRender}
         from '{{ base }}/static/js/dating_view.js';
     // Сдвиг времени в пояс настройки: с сервера метки приходят в UTC.
@@ -2047,8 +2059,11 @@
     // Повторное нажатие снимает выбор. Выбор живёт между заходами
     // (`localStorage`): диалогов сотни, и возвращаться к нужному заново — работа
     // на каждый круг.
-    function chatSelect(uid) {
-        openUid = String(openUid) === String(uid) ? '' : String(uid);
+    // `keep` — не снимать выбор с того, кто уже выбран. Нужен там, где выбор
+    // побочен: щелчок по строке диалога открывает окно переписки, и снимать при
+    // этом подсветку значило бы наказывать за повторное открытие.
+    function chatSelect(uid, {keep = false} = {}) {
+        openUid = (!keep && String(openUid) === String(uid)) ? '' : String(uid);
         localStorage.setItem('dating_open_dialog', openUid);
 
         // Подсветку правим на месте, переписку перерисовываем: пересобирать
@@ -2070,8 +2085,83 @@
     // каждый раз — узлы новые.
     function chatBind() {
         workEl.querySelectorAll('.contact-bar').forEach(bar => {
-            bar.addEventListener('click', () => chatSelect(bar.parentElement.dataset.uid));
+            bar.addEventListener('click', () => {
+                const uid = bar.parentElement.dataset.uid;
+                // Выбор ставим тоже: он один на все три колонки, и открыв
+                // переписку из списка диалогов, человек вправе увидеть того же
+                // собеседника отмеченным в «My favorites» и в ленте онлайна.
+                chatSelect(uid, {keep: true});
+                chatDialogOpen(uid);
+            });
         });
+    }
+
+    // ── Окно переписки ───────────────────────────────────────────────────────
+    //
+    // ⚠ **Окно, а не ряд под списком.** В ряду помещается десяток последних
+    // реплик и он делит высоту с диалогами и колонками; разговор же читают
+    // подряд и целиком, и ради этого стоит занять экран.
+    //
+    // Реплики берём **отдельным запросом по собеседнику**, а не из карточки: там
+    // лежат последние десять — их хватает, чтобы понять, о чём диалог, но не
+    // чтобы его прочитать.
+    const CHAT_DIALOG_LIMIT = 200;
+
+    async function chatDialogOpen(uid) {
+        const row = openRow() || {};
+        const found = (chatData.contacts || []).find(c => String(c.uid) === String(uid)) || {};
+        const who = found.name || peopleName(uid) || uid;
+        const me = (chatData.profile || {}).name || chatData.login || row.login || 'анкета';
+
+        const box = modalOpen({
+            title: `Переписка: ${who}`,
+            note: `${me} · ID ${uid}`,
+            body: '<div class="talk-load">Гружу переписку…</div>',
+        });
+
+        let rows;
+        try {
+            rows = (await getData(`${BASE}/api/dating/profile/${openId}/message`
+                                  + `?uid=${encodeURIComponent(uid)}`
+                                  + `&limit=${CHAT_DIALOG_LIMIT}`)).result || [];
+        } catch (e) {
+            box.querySelector('.modal-body').innerHTML =
+                `<div class="talk-load bad">Переписка не пришла: ${esc(e.message)}</div>`;
+            return;
+        }
+
+        // Окно могли закрыть, пока шёл запрос: писать в снятый со страницы узел
+        // бессмысленно, но и падать из-за этого незачем.
+        const body = box.querySelector('.modal-body');
+        if (!body || !document.contains(body)) return;
+
+        body.innerHTML = chatDialogBody(rows, {who, me});
+        // Прокрутка вниз: разговор читают с конца — там то, на что отвечают.
+        body.scrollTop = body.scrollHeight;
+    }
+
+    // Лента реплик окна: кто, когда и что написал.
+    //
+    // Ручка отдаёт свежие сверху (так её просят и другие места), а разговор
+    // читается сверху вниз — поэтому здесь порядок переворачивается.
+    function chatDialogBody(rows, {who, me}) {
+        if (!rows.length) {
+            return '<div class="talk-load">Переписки пока нет.</div>';
+        }
+
+        return '<div class="talk-full">'
+            + [...rows].reverse().map(m => {
+                const out = m.direction === 'out';
+
+                return `<div class="msg ${out ? 'out' : 'in'}">`
+                    + '<span class="msg-body">'
+                    + `<span class="msg-who">${esc(out ? me : (m.sender_name || who))}</span>`
+                    + `${esc(m.text)}`
+                    + `<span class="msg-when" title="${esc(timeShift(m.created_at))}">`
+                    + `${esc(timeShort(m.created_at))}</span>`
+                    + '</span></div>';
+            }).join('')
+            + '</div>';
     }
 
     // Кнопка «Загрузить диалоги» живёт в шаблоне, поэтому вешается один раз — из
