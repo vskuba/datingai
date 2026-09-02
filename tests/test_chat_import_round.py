@@ -149,6 +149,86 @@ class TestSchedule:
         assert {days for _, days in round_['imported']} == {1}
 
 
+class TestHoldersNeedASocket:
+    """⚠ Держим сокет только там, где он есть.
+
+    «Готова к работе» и «есть что держать» — разные вещи, и с появлением сценарного
+    транспорта они разошлись: анкета Ladadate готова работать (сценарий войдёт сам),
+    но сокета у её сайта нет вовсе.
+
+    Поймано по логу: отбор стал отдавать все готовые анкеты, держатель полез
+    подключаться к каждой и выдал **264 жалобы «адрес сокета не снят» за десять
+    минут**. Работе не мешало, но такой лог нельзя читать — а читают его именно
+    тогда, когда что-то сломалось.
+    """
+
+    def _items(self):
+        return [{'profile': {'id': 1, 'login': 'a@test', 'ws_url': 'wss://site/ws?token=a'},
+                 'presence': {}, 'site_url': 'https://site'},
+                {'profile': {'id': 2, 'login': 'b@test', 'ws_url': ''},
+                 'presence': {}, 'site_url': 'https://site'},
+                {'profile': {'id': 3, 'login': 'c@test', 'ws_url': '   '},
+                 'presence': {}, 'site_url': 'https://site'}]
+
+    async def test_only_profiles_with_a_socket_are_held(self, monkeypatch):
+        monkeypatch.setattr(hold, 'dating_chat_hold_profile',
+                            lambda *a, **k: _never())
+
+        holders, counters = {}, {}
+        hold._holders_sync(holders, counters, self._items(), deadline=9e9)
+
+        try:
+            assert sorted(holders) == [1], 'полезли держать сокет там, где его нет'
+        finally:
+            for held in holders.values():
+                held['task'].cancel()
+
+    async def test_appearing_socket_starts_a_holder(self, monkeypatch):
+        """Вход сняли — адрес появился, и держатель заводится следующим кругом.
+
+        Обратная сторона: без неё правило могло бы отсечь всех, и чат перестал бы
+        работать вовсе.
+        """
+        monkeypatch.setattr(hold, 'dating_chat_hold_profile',
+                            lambda *a, **k: _never())
+
+        holders, counters = {}, {}
+        items = self._items()
+        hold._holders_sync(holders, counters, items, deadline=9e9)
+
+        items[1]['profile']['ws_url'] = 'wss://site/ws?token=b'
+        hold._holders_sync(holders, counters, items, deadline=9e9)
+
+        try:
+            assert sorted(holders) == [1, 2]
+        finally:
+            for held in holders.values():
+                held['task'].cancel()
+
+    async def test_lost_socket_stops_the_holder(self, monkeypatch):
+        """Адрес пропал (выход, протухший вход) — держателя гасим: висеть на
+        мёртвом адресе хуже, чем не висеть вовсе."""
+        monkeypatch.setattr(hold, 'dating_chat_hold_profile',
+                            lambda *a, **k: _never())
+
+        holders, counters = {}, {}
+        items = self._items()
+        hold._holders_sync(holders, counters, items, deadline=9e9)
+        assert sorted(holders) == [1]
+
+        items[0]['profile']['ws_url'] = ''
+        hold._holders_sync(holders, counters, items, deadline=9e9)
+
+        assert holders == {}
+
+
+def _never():
+    """Задача, которая никогда не кончается: держатель здесь не проверяется."""
+    import asyncio
+
+    return asyncio.sleep(3600)
+
+
 class TestFailuresDoNotStopTheRound:
     """⚠ Круг обходит все сайты, и первый сломанный не должен лишать остальных."""
 
