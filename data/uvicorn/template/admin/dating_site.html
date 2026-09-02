@@ -69,6 +69,16 @@
         }
         .set-table td { padding: 6px 14px; border-bottom: 1px solid #f1f5f9; }
         .set-table tr:last-child td { border-bottom: none; }
+
+        /* Заголовок группы настроек. Мельче шапки таблицы и без верхней рамки у
+           первого: иначе две полосы подряд читаются как две таблицы. */
+        .set-group td {
+            padding: 14px 14px 5px; border-bottom: 1px solid #e5e7eb;
+            font-size: 10px; font-weight: 700; color: #94a3b8;
+            text-transform: uppercase; letter-spacing: .04em;
+            background-color: #f0f0f0;
+        }
+        .set-group:first-child td { padding-top: 9px; }
         .set-col-key { width: 34%; }
 
         /* Известная настройка: человеческое имя сверху, ключ под ним мелким. Ключ
@@ -146,7 +156,7 @@
     // Реестр известных настроек — тех, у которых есть заданный набор значений.
     // Приходит с сервера, а не вписан здесь: набор — условие кода, читающего
     // настройку, и вторая его копия на странице разошлась бы с первой.
-    let known = [];
+    let known = [], groups = [];
 
     function siteId() {
         return Number(siteEl.value) || 0;
@@ -161,6 +171,7 @@
             const answer = (await getData(`${BASE}/api/dating/site`)).result;
             sites = answer.sites || [];
             known = answer.known || [];
+            groups = answer.groups || [];
         } catch (e) {
             bodyEl.innerHTML = `<div class="site-empty">Сайты не пришли: ${esc(e.message)}</div>`;
             return;
@@ -194,7 +205,7 @@
             + '<th class="set-col-key">Настройка</th><th>Значение</th>'
             + (CAN_EDIT ? '<th class="set-col-act"></th>' : '')
             + '</tr></thead><tbody>'
-            + known.map(spec => knownRow(site, spec)).join('')
+            + groupRows(site)
             + custom.map(key => row(site, key)).join('')
             + '</tbody></table>'
             + (custom.length || !CAN_EDIT ? ''
@@ -223,6 +234,40 @@
     //
     // ⚠ Незаведённая настройка показывает **умолчание кода**, а не пустоту: она
     // действует, и показать «не задано» значило бы соврать про поведение.
+    // Известные настройки — группами. ⚠ **Порядок и подписи групп приходят с
+    // сервера** (`groups`): страница не должна знать, какие группы бывают, иначе
+    // новая группа в реестре требовала бы правки в двух местах.
+    //
+    // Заголовок рисуется только у непустой группы: пустая шапка читается как
+    // «настройки не загрузились».
+    function groupRows(site) {
+        // Группы, которых нет в списке с сервера (старый ответ, опечатка в
+        // реестре), не теряем — показываем в конце без заголовка. Потерять
+        // настройку хуже, чем показать её не в том месте.
+        const shown = new Set();
+
+        let html = groups.map(group => {
+            const rows = known.filter(spec => spec.group === group.key);
+            rows.forEach(spec => shown.add(spec.key));
+            if (!rows.length) return '';
+
+            return groupHead(group.title)
+                + rows.map(spec => knownRow(site, spec)).join('');
+        }).join('');
+
+        const rest = known.filter(spec => !shown.has(spec.key));
+        if (rest.length) html += rest.map(spec => knownRow(site, spec)).join('');
+
+        return html;
+    }
+
+    function groupHead(title) {
+        // Строкой таблицы, а не отдельной обоймой: колонки должны остаться
+        // выровненными по всей таблице, а вложенные таблицы разъезжаются.
+        return `<tr class="set-group"><td colspan="${CAN_EDIT ? 3 : 2}">`
+            + `${esc(title)}</td></tr>`;
+    }
+
     function knownRow(site, spec) {
         const value = (site.settings || {})[spec.key];
         const chosen = value === undefined ? spec.default : value;

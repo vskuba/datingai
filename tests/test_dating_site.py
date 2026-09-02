@@ -155,6 +155,51 @@ class TestSiteList:
         assert sites, 'страница настроек опустела вместе с соседом'
 
 
+class TestKnownGroups:
+    """⚠ Каждая настройка попадает в существующую группу.
+
+    Страница рисует заголовки по списку групп с сервера, а настройки — по полю
+    `group`. Опечатка в реестре не потеряет настройку (страница покажет её в конце
+    без заголовка), но и заметить такую опечатку глазами трудно: строка просто
+    уезжает вниз. Проверяем здесь, потому что дешевле.
+    """
+
+    async def test_every_setting_lands_in_a_known_group(self, rhapsody, monkeypatch):
+        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+        answer = (await dating_site_list(user=None))['result']
+
+        groups = {group['key'] for group in answer['groups']}
+
+        assert groups, 'страница не получила ни одной группы'
+        for spec in answer['known']:
+            assert spec['group'] in groups, \
+                f"настройка «{spec['key']}» в неизвестной группе «{spec['group']}»"
+
+    async def test_groups_keep_their_order(self, rhapsody, monkeypatch):
+        """Порядок групп — с сервера, и он значит: от частого к редкому. Сроки и
+        транспорт правят на ходу, доступ к API вписывают раз при заведении."""
+        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+        answer = (await dating_site_list(user=None))['result']
+
+        assert [group['key'] for group in answer['groups']] == \
+            [key for key, _ in dating_site.DATING_SITE_GROUPS]
+        assert all(group['title'] for group in answer['groups']), 'группе нужна подпись'
+
+    @pytest.mark.parametrize('key, group', [
+        ('api_base', 'api'),
+        ('api_password', 'api'),
+        ('online_check_every', 'rate'),
+    ])
+    async def test_setting_is_in_its_group(self, rhapsody, monkeypatch, key, group):
+        """Разбивка, которую просили: доступ к API отдельно, частота онлайна
+        отдельно."""
+        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+        known = {row['key']: row
+                 for row in (await dating_site_list(user=None))['result']['known']}
+
+        assert known[key]['group'] == group
+
+
 class TestKnownDurations:
     """Настройки-сроки: набор значений — условие кода, а не украшение формы."""
 

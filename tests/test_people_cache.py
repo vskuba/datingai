@@ -62,14 +62,29 @@ class _FakeRedis:
 
 
 class _Door:
-    """Что подменено вокруг ручки: журнал, Redis и срок хранения."""
+    """Что подменено вокруг ручки: журнал, Redis и настройки-сроки."""
 
     def __init__(self, redis):
         self.redis = redis
         self.log: list[tuple[str, str]] = []
-        # Сколько держим снимок. Настройка сайта в живой панели; здесь — поле,
-        # которое тест может подкрутить.
-        self.keep = dating_people.DATING_PEOPLE_KEEP_SEC
+        # Настройки-сроки сайта. ⚠ **По ключу, а не одним значением на все**: их
+        # три, и они разной природы — сколько снимок живёт, когда его освежить и
+        # чаще чего к сайту не ходить вовсе. Отдай мы неделю на все три, пол стал
+        # бы неделей, и проверки «кнопка не пробивает пол» зеленели бы впустую.
+        self.seconds = {
+            'favorites_keep': dating_people.DATING_PEOPLE_KEEP_SEC,
+            'online_check_every': dating_people.DATING_PEOPLE_FRESH_SEC,
+            'cache_floor': dating_people.DATING_PEOPLE_FLOOR_SEC,
+        }
+
+    @property
+    def keep(self) -> int:
+        """Срок хранения избранных — им пользуются почти все тесты."""
+        return int(self.seconds['favorites_keep'])
+
+    @keep.setter
+    def keep(self, value: int) -> None:
+        self.seconds['favorites_keep'] = int(value)
 
 
 @pytest.fixture
@@ -94,16 +109,19 @@ async def door(monkeypatch):
     async def _log(profile_id, level, text):
         fake.log.append((level, text))
 
-    # Срок хранения задаёт настройка сайта, а та лежит в MySQL. Подменяем: юнит-тест
-    # не должен требовать поднятой базы, а проверяем мы здесь не чтение настройки.
-    async def _keep(site_id, key):
-        return fake.keep
+    # Сроки задают настройки сайта, а те лежат в MySQL. Подменяем: юнит-тест не
+    # должен требовать поднятой базы, а проверяем мы здесь не чтение настройки.
+    #
+    # Неизвестный ключ отдаёт ноль — так же, как живая функция отдаёт ноль на
+    # незаданную настройку, и вызывающий подставляет своё умолчание.
+    async def _seconds(site_id, key):
+        return int(fake.seconds.get(key, 0))
 
     monkeypatch.setattr(dating_people, 'dating_profile_row', _profile)
     monkeypatch.setattr(dating_people, 'dating_profile_site', _site)
     monkeypatch.setattr(dating_people, 'dating_log_write', _log)
     monkeypatch.setattr(dating_people, 'redis_conn_get', lambda: fake.redis)
-    monkeypatch.setattr(dating_people, 'dating_site_seconds', _keep)
+    monkeypatch.setattr(dating_people, 'dating_site_seconds', _seconds)
 
     _state_clear()
 
@@ -533,6 +551,80 @@ class TestFreshness:
 
         assert answer['cached'] is True and answer['error'] == ''
         assert answer['refreshing'] is False, 'кнопка пробила жёсткий пол'
+
+    async def test_floor_follows_the_site_setting(self, door, monkeypatch):
+        """⚠ Пол задаёт **настройка сайта**, а не константа кода.
+
+        Предел у сайтов разный: один терпит заход раз в четверть минуты, другой
+        считает подозрением и заход в минуту. Проверяем обе стороны одним снимком
+        одного возраста — меняется только настройка, и от неё зависит исход.
+        """
+        monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
+        await _fill()
+
+        monkeypatch.setattr(dating_people, '_snapshot', _snapshot(fails='сюда ходить не должны'))
+        door.seconds['cache_floor'] = 60
+        _stale(door, KEY, 30)
+
+        answer = (await dating_people_list(849, 'favorite', fresh=True, user=None))['result']
+
+        assert answer['refreshing'] is False, 'снимок 30 с при поле 60 с пробил пол'
+
+    async def test_lower_floor_lets_the_button_through(self, door, monkeypatch):
+        """Обратная сторона: пол опустили — кнопка работает.
+
+        Без этой проверки пол мог бы оказаться бесконечным, и кнопка «обновить»
+        молча перестала бы работать вовсе.
+        """
+        monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
+        await _fill()
+
+        door.seconds['cache_floor'] = 15
+        _stale(door, KEY, 30)
+
+        answer = (await dating_people_list(849, 'favorite', fresh=True, user=None))['result']
+
+        assert answer['refreshing'] is True, 'снимок 30 с при поле 15 с не обновился'
+
+    async def test_online_freshness_follows_the_site_setting(self, door, monkeypatch):
+        """⚠ Выдержка ленты «Все онлайн» — тоже настройка, и своя.
+
+        В этой ленте решается, кому можно писать (`dating_online.py`), а состав
+        сети меняется на глазах: её просят освежать чаще прочих списков. Пол при
+        этом общий — он про предел сайта, а не про вид списка.
+        """
+        monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
+        # Лента онлайна лежит по ключу **сайта**, а не анкеты (`_fill` кладёт по
+        # анкете), поэтому первый заход делаем ручкой сайта.
+        monkeypatch.setattr(dating_people, '_site_profile', _site_profile())
+        await dating_people.dating_people_site_list(
+            SITE['id'], 'online', fresh=False, user=None)
+        await _refreshed(SITE_KEY)
+
+        monkeypatch.setattr(dating_people, '_snapshot', _snapshot(fails='сюда ходить не должны'))
+        # Снимку три минуты: при выдержке 10 минут он свежий, при 2 — уже нет.
+        door.seconds['online_check_every'] = 600
+        _stale(door, SITE_KEY, 180)
+
+        answer = (await dating_people.dating_people_site_list(
+            SITE['id'], 'online', fresh=False, user=None))['result']
+
+        assert answer['refreshing'] is False, 'снимок 3 мин при выдержке 10 мин обновился'
+
+        # ⚠ Состаривать **второй раз нельзя**: `_stale` отнимает секунды от уже
+        # состаренного снимка, и 180 + 180 перевалило бы за умолчание в 300 —
+        # обновление завелось бы и без настройки, а тест зеленел бы впустую.
+        # Проверено: так он и зеленел, пока не убрал повторный вызов.
+        #
+        # Сторож повторных попыток при этом снять надо: попытку записал первый
+        # заход, а проверяем мы выдержку снимка.
+        dating_people._refresh_at.clear()
+        door.seconds['online_check_every'] = 120
+
+        answer = (await dating_people.dating_people_site_list(
+            SITE['id'], 'online', fresh=False, user=None))['result']
+
+        assert answer['refreshing'] is True, 'снимок 3 мин при выдержке 2 мин не обновился'
 
     async def test_button_works_right_after_a_run(self, door, monkeypatch):
         """⚠ Кнопка «обновить» не ждёт выдержки между попытками.
