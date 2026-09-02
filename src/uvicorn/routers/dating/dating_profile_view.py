@@ -32,16 +32,35 @@ DATING_PROFILE_VIEW_CONTACTS_PAGE = 50
 
 
 @router.get('/{profile_id}/message', include_in_schema=False)
-async def dating_profile_view_messages(profile_id: int, limit: int = 30,
+async def dating_profile_view_messages(profile_id: int, uid: str = '', limit: int = 30,
                                user=Depends(auth_required)):
-    """Сообщения чата этой учётки, свежие сверху."""
+    """Сообщения чата этой учётки, свежие сверху.
+
+    Args:
+        uid: собеседник. Пусто — вся переписка учётки; с ним — один диалог, которым
+            и открывается окно переписки на странице.
+        limit: сколько реплик отдать, не больше 200.
+
+    `direction` в ответе есть намеренно: без него нельзя сказать, кто написал, а
+    окно переписки — это в первую очередь ответ на вопрос «кто кому».
+
+    Порядок — по времени, а не по `id`: импорт переписки из панели агентства кладёт
+    историю за неделю разом, и порядок вставки перестал быть порядком событий
+    (подробности — у карточки ниже).
+    """
     await dating_profile_row(profile_id)
     limit = max(1, min(int(limit or 30), 200))
 
+    where, params = '', [profile_id]
+    if str(uid or '').strip():
+        where = ' AND sender_uid = %s'
+        params.append(str(uid).strip())
+
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT id, sender_uid, sender_name, text, is_read, created_at '
-            f'FROM dating_message WHERE profile_id = %s ORDER BY id DESC LIMIT {limit}', (profile_id,))
+            'SELECT id, sender_uid, sender_name, text, direction, is_read, created_at '
+            f'FROM dating_message WHERE profile_id = %s{where} '
+            f'ORDER BY created_at DESC, id DESC LIMIT {limit}', tuple(params))
         rows = await db.fetchall()
 
     return {'result': rows}
@@ -135,27 +154,52 @@ async def dating_profile_view_card(profile_id: int, page: int = 1,
         page = max(1, min(int(page or 1), pages))
 
         # Порядок целиком на стороне базы: сначала неотвеченные, внутри каждой
-        # группы — по свежести последней реплики. Свежесть считаем по `MAX(id)`, а
-        # не по времени: `id` автоинкрементный, и порядок вставки не спутается
-        # часовыми поясами сайта.
+        # группы — по свежести последней реплики.
         #
-        # Направление и пометку последней реплики берём отдельным присоединением по
-        # первичному ключу, а не `MAX()`-ами внутри группировки: агрегат по
-        # `profile_id, sender_uid, id` целиком покрывается индексом, и добавь мы туда
-        # хоть одно поле из строки — база пойдёт читать все двадцать две тысячи
-        # строк вместо индекса (замер: 49 мс против 12).
+        # ⚠ **Свежесть считается по времени, а не по `MAX(id)`.** Раньше по `id`:
+        # автоинкремент совпадал с порядком событий, пока писал один сокет. Импорт
+        # переписки из панели агентства приносит **историю за неделю** и кладёт её
+        # сегодня, то есть после всего, что сокет успел поймать: в диалоге с обоими
+        # источниками наибольший `id` оказывался у недельной давности реплики.
+        # Диалоги сортировались наоборот, а красный значок «нужен ответ» загорался
+        # по старому сообщению.
+        #
+        # Сортировать пачку при вставке недостаточно: внутри пачки порядок
+        # поправить можно, но сама пачка ложится позже свежих сообщений сокета.
+        #
+        # Цена измерена (21 762 реплики, 400 диалогов): `MAX(id)` — 9 мс и неверно;
+        # `ROW_NUMBER()` по времени — 121 мс; `MAX(created_at)` с индексом
+        # `idx_dating_message_time` — **29 мс** и верно. Оконная функция не
+        # выигрывает и от индекса: MySQL всё равно сортирует (118 мс).
+        #
+        # Вложенный `MAX(m.id)` в присоединении разнимает реплики, пришедшиеся на
+        # одну секунду: у панели время с точностью до секунды, и без него
+        # «последняя» из двух выбиралась бы случайно — строка мигала бы между ними
+        # при каждой перерисовке.
+        #
+        # Направление и пометку последней реплики берём отдельным присоединением, а
+        # не `MAX()`-ами внутри группировки: агрегат по индексу диалога им и
+        # покрывается, а добавь мы туда хоть одно поле из строки — база пойдёт
+        # читать все двадцать две тысячи строк вместо индекса (замер: 49 мс
+        # против 12).
         await db.execute(
-            'SELECT d.uid, d.messages, d.last_id, '
+            'SELECT d.uid, d.messages, last.id AS last_id, '
             '       COALESCE(c.name, %s) AS name, '
             '       c.photo, c.age, c.city, c.is_online, '
             "       (last.direction = 'in' AND last.is_answered = 0) AS needs_answer "
-            '  FROM (SELECT sender_uid AS uid, COUNT(*) AS messages, MAX(id) AS last_id '
+            '  FROM (SELECT sender_uid AS uid, COUNT(*) AS messages, '
+            '               MAX(created_at) AS last_at '
             '          FROM dating_message WHERE profile_id = %s GROUP BY sender_uid) d '
-            '  JOIN dating_message last ON last.id = d.last_id '
+            '  JOIN dating_message last '
+            '    ON last.profile_id = %s AND last.sender_uid = d.uid '
+            '   AND last.id = (SELECT MAX(m.id) FROM dating_message m '
+            '                   WHERE m.profile_id = %s AND m.sender_uid = d.uid '
+            '                     AND m.created_at = d.last_at) '
             '  LEFT JOIN dating_contact c ON c.profile_id = %s AND c.uid = d.uid '
-            ' ORDER BY needs_answer DESC, d.last_id DESC '
+            ' ORDER BY needs_answer DESC, d.last_at DESC, last.id DESC '
             ' LIMIT %s OFFSET %s',
-            ('', profile_id, profile_id, DATING_PROFILE_VIEW_CONTACTS_PAGE,
+            ('', profile_id, profile_id, profile_id, profile_id,
+             DATING_PROFILE_VIEW_CONTACTS_PAGE,
              (page - 1) * DATING_PROFILE_VIEW_CONTACTS_PAGE))
         contacts = [dict(row) for row in (await db.fetchall() or [])]
 
@@ -165,8 +209,10 @@ async def dating_profile_view_card(profile_id: int, page: int = 1,
             contact['needs_answer'] = bool(contact['needs_answer'])
 
             await db.execute(
+                # По времени, а не по `id`: см. оговорку выше.
                 'SELECT text, direction, is_answered, created_at FROM dating_message '
-                ' WHERE profile_id = %s AND sender_uid = %s ORDER BY id DESC LIMIT 10',
+                ' WHERE profile_id = %s AND sender_uid = %s '
+                ' ORDER BY created_at DESC, id DESC LIMIT 10',
                 (profile_id, contact['uid']))
             last = [dict(row) for row in (await db.fetchall() or [])]
             # Разворачиваем: выбирали свежие, а читать надо сверху вниз.

@@ -186,6 +186,12 @@ async def dating_chat_panel_save(rows: list) -> dict:
     """
     added, contacts = 0, 0
 
+    # Кладём по времени, от старых к свежим. Порядок показа от этого не зависит —
+    # карточка чата сортирует по `created_at` (`dating_profile_view.py`), — но
+    # реплики, пришедшиеся на одну секунду, различаются только по `id`, и пусть он
+    # идёт туда же, куда время: у панели время с точностью до секунды.
+    rows = sorted(rows, key=lambda row: row['sent_at'] or '')
+
     async with mysql_get_db_async() as db:
         for row in rows:
             if row['sender_uid']:
