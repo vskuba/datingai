@@ -59,7 +59,10 @@ async def dating_profile_view_messages(profile_id: int, uid: str = '', limit: in
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT id, sender_uid, sender_name, text, direction, is_read, created_at '
+            # `answer_silent_at` — чтобы окно сказало «агент решил не отвечать»:
+            # иначе тишина после чужой реплики читается как поломка.
+            'SELECT id, sender_uid, sender_name, text, direction, is_read, '
+            '       answer_silent_at, created_at '
             f'FROM dating_message WHERE profile_id = %s{where} '
             f'ORDER BY created_at DESC, id DESC LIMIT {limit}', tuple(params))
         rows = await db.fetchall()
@@ -213,7 +216,12 @@ async def dating_profile_view_card(profile_id: int, page: int = 1,
             'SELECT d.uid, d.messages, last.id AS last_id, '
             '       COALESCE(c.name, %s) AS name, '
             '       c.photo, c.age, c.city, c.is_online, '
-            "       (last.direction = 'in' AND last.is_answered = 0) AS needs_answer "
+            # ⚠ Молчание агента закрывает повод так же, как отправленный ответ.
+            # Пустой ответ LLM — это решение «сейчас отвечать не надо», и значок,
+            # мигающий после него, требует работы, которой не будет: круг про это
+            # сообщение больше не спросит (`dating.md`, §5.9.3).
+            "       (last.direction = 'in' AND last.is_answered = 0 "
+            "        AND last.answer_silent_at IS NULL) AS needs_answer "
             '  FROM (SELECT sender_uid AS uid, COUNT(*) AS messages, '
             '               MAX(created_at) AS last_at '
             '          FROM dating_message WHERE profile_id = %s GROUP BY sender_uid) d '
@@ -237,7 +245,8 @@ async def dating_profile_view_card(profile_id: int, page: int = 1,
 
             await db.execute(
                 # По времени, а не по `id`: см. оговорку выше.
-                'SELECT text, direction, is_answered, created_at FROM dating_message '
+                'SELECT text, direction, is_answered, answer_silent_at, created_at '
+                '  FROM dating_message '
                 ' WHERE profile_id = %s AND sender_uid = %s '
                 ' ORDER BY created_at DESC, id DESC LIMIT 10',
                 (profile_id, contact['uid']))

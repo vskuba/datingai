@@ -169,10 +169,20 @@ async def dating_answer_run(profile: dict, presence: dict, agent_id: int,
             continue
 
         if not answer:
-            # Молчание — решение агента. Отмечаем попытку, но не «ответ»: иначе
-            # диалог выглядел бы закрытым без единого нашего слова.
+            # ⚠ **Молчание — решение, и его надо запомнить.**
+            #
+            # Прежде ставилась только отметка попытки, а `is_answered` оставался
+            # нулём: значок «нужен ответ» мигал вечно, а круг спрашивал агента
+            # снова каждые пять минут — тот снова молчал, и молчание стоило денег
+            # на LLM в цикле.
+            #
+            # `is_answered` для этого не годится: он означает «мы отправили ответ»,
+            # и диалог выглядел бы закрытым без единого нашего слова. Поэтому своя
+            # метка — она же и время, для показа в окне переписки.
             silent += 1
-            await dating_log_write(profile_id, 'info', f'{who}: агент промолчал, вернусь позже')
+            await _silent_mark(profile_id, uid)
+            await dating_log_write(profile_id, 'info',
+                                   f'{me} → {who}: агент решил не отвечать')
             continue
 
         result = await dating_send_message(profile, presence, uid, answer)
@@ -288,7 +298,13 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool) -> 
     # Порог считается по `created_at` — времени **сайта**, а не времени импорта:
     # привезённое вчера сообщение вчерашним и остаётся, сколько бы раз его ни
     # импортировали заново.
-    fresh = ("m.direction = 'in' AND m.is_answered = 0 "
+    # ⚠ `answer_silent_at IS NULL` — «про это сообщение решения молчать не было».
+    # Без него круг переспрашивал агента про то же сообщение до конца времён.
+    #
+    # Метка стоит на конкретных строках, а не на собеседнике: напишет он снова — у
+    # новой строки она пуста, и агента спросят опять. Молчание относится к
+    # сказанному, а не к человеку навсегда.
+    fresh = ("m.direction = 'in' AND m.is_answered = 0 AND m.answer_silent_at IS NULL "
              " AND (m.source <> 'panel' "
              "      OR m.created_at > NOW() - INTERVAL %s SECOND) "
              " AND (m.answer_tried_at IS NULL "
@@ -339,6 +355,28 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool) -> 
         rows = await db.fetchall()
 
     return [dict(row) for row in (rows or [])]
+
+
+async def _silent_mark(profile_id: int, uid: str) -> None:
+    """Отмечает, что про эти сообщения агент решил не отвечать.
+
+    Ставится на все неотвеченные входящие этого собеседника — на то, что агент и
+    видел, когда решал. Он читает разговор целиком, а не одну реплику, и решение
+    относится ко всему, что накопилось.
+
+    Не бросает: неудачная отметка вернёт круг к тому же сообщению через пять минут
+    — неприятно, но терпимо, а сорванный круг лишил бы ответов всех остальных.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'UPDATE dating_message SET answer_silent_at = NOW() '
+                " WHERE profile_id = %s AND sender_uid = %s AND direction = 'in' "
+                '   AND is_answered = 0 AND answer_silent_at IS NULL',
+                (int(profile_id), str(uid)))
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] молчание #{profile_id} не отметилось: {e}')
 
 
 async def _tried_mark(profile_id: int, uid: str) -> None:
