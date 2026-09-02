@@ -265,6 +265,54 @@ class TestSecretSettings:
         assert known['api_base']['options'] == [], 'адрес — свободное поле, а не набор'
 
 
+class TestSecretReveal:
+    """⚠ Посмотреть пароль можно — отдельной ручкой и только админу."""
+
+    async def test_admin_sees_the_real_value(self, auth_client, kept):
+        """Ради этого ручка и заведена: иначе пароль не проверить, не переписав его."""
+        await auth_client.put(f'/api/dating/site/{SITE}',
+                              json={'settings': {'api_password': 'тайна'}})
+
+        answer = await auth_client.get(f'/api/dating/site/{SITE}/reveal/api_password')
+
+        assert answer.status_code == 200
+        assert answer.json()['result']['value'] == 'тайна'
+
+    async def test_list_still_shows_the_mask(self, auth_client, kept):
+        """⚠ Отдельная ручка — не формальность.
+
+        Список перерисовывается на каждой смене сайта и оседает в журналах
+        запросов; пароль в них попадать не должен. Здесь же обращение к нему видно
+        как отдельное событие с именем ключа.
+        """
+        await auth_client.put(f'/api/dating/site/{SITE}',
+                              json={'settings': {'api_password': 'тайна'}})
+
+        assert (await _settings(auth_client, SITE))['api_password'] == MASK
+
+    async def test_operator_cannot_reveal(self, dating_client, auth_client, kept):
+        """Оператору пароль не показывается: правка настроек и так админская, а
+        пароль тем более."""
+        await auth_client.put(f'/api/dating/site/{SITE}',
+                              json={'settings': {'api_password': 'тайна'}})
+
+        answer = await dating_client.get(f'/api/dating/site/{SITE}/reveal/api_password')
+
+        assert answer.status_code == 403
+
+    async def test_closed_without_login(self, client):
+        answer = await client.get(f'/api/dating/site/{SITE}/reveal/api_password')
+
+        assert answer.status_code in (401, 307)
+
+    async def test_missing_setting_is_404(self, auth_client, kept):
+        """Нет настройки — 404, а не пустое значение: пустое читалось бы как
+        «пароль пустой», и его вписали бы второй раз."""
+        answer = await auth_client.get(f'/api/dating/site/{SITE}/reveal/нет_такой')
+
+        assert answer.status_code == 404
+
+
 class TestSiteRefuses:
     """Чего ручка не принимает."""
 
