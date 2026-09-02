@@ -74,6 +74,7 @@
 - **Новая настройка панели** → `.claude/docs/api.md`, §6.2 (строка в `setting`, страница «Настройки → Значения»)
 - **Показ даты или времени** → `data/uvicorn/public/js/dating_time.js` (⚠ с сервера всё приходит **в UTC**; сдвигает страница по настройке `timezone`)
 - **Отказ, который не про анкету** → `src/dating/dating_error.py` (⚠ строка одна на источник; удача её стирает)
+- **Работа с прод-базой или ssh на прод** → `.claude/docs/deploy.md`, §4.5 (⚠ бэкап до записи; защитные правки — отдельным запросом; `--default-character-set=utf8mb4`)
 - **Проверка после правок** → `.claude/docs/testing.md` (⚠ тесты наружу не ходят: ни к соседу, ни на сайт — заглушки в `tests/rhapsody_fake.py` и `tests/site_api_fake.py`)
 
 ## Key Files
