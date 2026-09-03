@@ -275,6 +275,7 @@ async def dating_profile_view_card(profile_id: int, page: int = 1,
                        # Расписание — в настройках анкеты на «Анкетах», рядом с
                        # выключателем: оба про то, как её ведут.
                        'schedule': dating_schedule_load(profile.get('schedule')),
+                       'schedule_on': bool(profile.get('schedule_on')),
                        # Откуда пароль — блоку «Пароль» на странице. ⚠ Сам пароль
                        # не отдаём никогда: только признак, что он задан.
                        'password_source': str(profile.get('password_source') or 'site'),

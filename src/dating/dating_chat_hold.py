@@ -28,13 +28,17 @@ import time
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
+from datetime_.datetime_ import datetime_offset_hours
 from redis_.redis_ import redis_conn_get
+from setting_.setting_ import setting_get
 
 from src.dating.dating_auto import DATING_AUTO_PERIOD_SEC, dating_auto_round
 from src.dating.dating_chat_panel import (DATING_CHAT_PANEL_ROUND_DAYS,
                                           dating_chat_panel_import)
 from src.dating.dating_ready import (DATING_READY_PASSWORD_SETTING, dating_ready_check,
                                      dating_ready_transport, dating_ready_write)
+from src.dating.dating_schedule_round import (DATING_SCHEDULE_ROUND_TICK_SEC,
+                                              dating_schedule_round_run)
 from src.dating.dating_socket import dating_socket_write
 from src.uvicorn.routers.dating.dating_site import (dating_site_seconds,
                                                     dating_site_settings)
@@ -121,6 +125,10 @@ async def dating_chat_hold_run(seconds: float) -> dict:
     # держатель шлёт голый heartbeat, а тот на мёртвых cookie молча отвечает False.
     revive = asyncio.create_task(_revive_loop(deadline))
 
+    # Расписание: вход и выход по сменам. ⚠ Своей задачей, а не внутри круга
+    # автоответа: вход идёт минутами живого браузера, и ответы не должны его ждать.
+    sched = asyncio.create_task(_schedule_loop(deadline))
+
     # Входящие из панели агентства. ⚠ **Единственный источник сообщений там, где у
     # сайта нет сокета** (Ladadate): без этого круга они приходили только по кнопке
     # «Забрать сообщения», то есть пока человек смотрит на экран.
@@ -141,13 +149,14 @@ async def dating_chat_hold_run(seconds: float) -> dict:
         answer.cancel()
         revive.cancel()
         chat.cancel()
+        sched.cancel()
         for held in holders.values():
             held['task'].cancel()
         # Ждём отмены: без этого соединения закрываются уже после выхода, и в
         # логе появляется хвост из «Task was destroyed but it is pending».
         await asyncio.gather(*(held['task'] for held in holders.values()),
                              return_exceptions=True)
-        await _service_wait(beat, answer, revive, chat)
+        await _service_wait(beat, answer, revive, chat, sched)
 
     saved = sum(counters.values())
     logger_info(f'[dating] держатель чата закончил: учёток {len(counters)}, сообщений {saved}')
@@ -395,6 +404,26 @@ async def _answer_loop(deadline: float) -> None:
                 await dating_auto_round(profiles)
         except Exception as e:
             logger_info(f'[dating] круг автоответа: {e}')
+
+
+async def _schedule_loop(deadline: float) -> None:
+    """Водит анкеты по расписанию, пока идёт смена.
+
+    Тик — минута: смены заданы с точностью до четверти часа, чаще смотреть нечего,
+    а реже значило бы входить с опозданием до пяти минут.
+
+    ⚠ Смещение читаем **каждый круг**, а не один раз: настройку `timezone` правят
+    на ходу, и запомненное значение означало бы расписание по старому поясу до
+    конца смены — шесть часов.
+    """
+    while time.monotonic() < deadline:
+        await asyncio.sleep(min(DATING_SCHEDULE_ROUND_TICK_SEC,
+                                max(1.0, deadline - time.monotonic())))
+        try:
+            offset = datetime_offset_hours(await setting_get('timezone', '+0'))
+            await dating_schedule_round_run(offset)
+        except Exception as e:
+            logger_info(f'[dating] круг расписания: {e}')
 
 
 async def _chat_import_loop(deadline: float) -> None:

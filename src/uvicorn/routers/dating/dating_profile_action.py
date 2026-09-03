@@ -44,6 +44,7 @@ from src.dating.dating_disconnect import dating_disconnect_run
 from src.dating.dating_json import dating_json_load
 from src.dating.dating_schedule import (dating_schedule_check, dating_schedule_dump,
                                         dating_schedule_load)
+from src.dating.dating_schedule_round import dating_schedule_round_drop
 from src.dating.dating_log import dating_log_write
 from src.dating.dating_login import (DatingLoginError, dating_login_run,
                                      dating_login_session_all, dating_login_session_close,
@@ -172,6 +173,53 @@ async def dating_profile_action_schedule(profile_id: int, data: DatingProfileSch
                           if rows else 'снято, анкету ведут руками'))
 
     return {'result': {'schedule': rows}}
+
+
+class DatingProfileScheduleOn(BaseModel):
+    """Исполнять ли расписание: воркер входит и выходит по сменам."""
+
+    schedule_on: bool = Field(..., description='Включить исполнение расписания')
+
+
+@router.put('/{profile_id}/schedule-on', include_in_schema=False)
+async def dating_profile_action_schedule_on(profile_id: int, data: DatingProfileScheduleOn,
+                                            user=Depends(auth_required)):
+    """Включает или выключает исполнение расписания.
+
+    ⚠ **Отдельно от самого расписания** (`PUT /{id}/schedule`): смены правят
+    ползунком, и промежуточные состояния законны — человек двигает ручку, смены на
+    секунду налезают, потом расходятся. Исполняй мы «по факту наличия смен», воркер
+    входил бы и выходил на каждое движение.
+
+    ⚠ **Выключение рвёт сокет немедленно**, не дожидаясь конца смены: человек снял
+    галочку, чтобы анкета перестала работать сейчас. Рвёт круг воркера в течение
+    минуты — здесь только флаг, потому что соединение живёт в его памяти, а не в
+    базе.
+    """
+    await dating_profile_row(profile_id)
+
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE dating_profile SET schedule_on = %s WHERE id = %s',
+                         (1 if data.schedule_on else 0, profile_id))
+        await db.connection.commit()
+
+    # ⚠ **Сокет рвём здесь, а не в круге воркера.** Ручка знает, что переход
+    # случился; круг знает только текущее состояние — и, отпуская всё без галочки,
+    # он выкидывал бы анкеты, залогиненные **вручную**. Проверено на живой базе:
+    # так и вышло, семь ручных входов сброшено.
+    #
+    # Заодно это быстрее: мгновенно вместо «в течение минуты».
+    dropped = False
+    if not data.schedule_on:
+        dropped = await dating_schedule_round_drop(profile_id)
+
+    await dating_log_write(
+        profile_id, 'info',
+        'Расписание включено: воркер поведёт по сменам' if data.schedule_on
+        else ('Расписание выключено, сокет снят' if dropped
+              else 'Расписание выключено'))
+
+    return {'result': {'schedule_on': data.schedule_on, 'dropped': dropped}}
 
 
 class DatingProfileEnabled(BaseModel):

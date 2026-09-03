@@ -103,6 +103,18 @@
 
         /* Заголовок — как «Настройки анкеты» рядом: блоки одного уровня и
            выглядеть должны одинаково. `h4` тут смотрелся вдвое крупнее соседа. */
+        /* Заголовок и чекбокс в одну строку: чекбокс про этот блок, и место ему
+           в его шапке, а не в подписи под сменами. */
+        .sched-head-row {
+            display: flex; align-items: baseline; gap: 10px;
+        }
+        .sched-on {
+            margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
+            font-size: 11px; color: #94a3b8; cursor: pointer; user-select: none;
+        }
+        .sched-on input { cursor: pointer; accent-color: #16a34a; }
+        .sched-on:has(input:checked) { color: #166534; font-weight: 600; }
+
         .sched-title {
             padding: 8px 0 6px; font-size: 10px; font-weight: 700; color: #94a3b8;
             text-transform: uppercase; letter-spacing: .04em;
@@ -838,6 +850,31 @@
 
         const door = form.querySelector('.sched-door');
         if (door) door.addEventListener('click', () => doorToggle(row));
+
+        const box = form.querySelector('.sched-on-box');
+        if (box) box.addEventListener('change', () => scheduleOnSet(row.id, box));
+    }
+
+    // Включает и выключает исполнение расписания.
+    //
+    // ⚠ Выключение **рвёт сокет немедленно** — это делает круг воркера в течение
+    // минуты. Говорим об этом сразу: человек снял галочку и вправе знать, что
+    // анкета уже выходит, а не «когда-нибудь».
+    async function scheduleOnSet(profileId, box) {
+        const on = box.checked;
+        box.disabled = true;
+        try {
+            await putData(`${BASE}/api/dating/profile/${profileId}/schedule-on`,
+                          {schedule_on: on});
+            say(on ? 'расписание активировано — воркер поведёт по сменам'
+                   : 'расписание выключено — сокет снимется в течение минуты');
+            await profileLoad();
+        } catch (e) {
+            box.checked = !on;
+            say('не переключилось: ' + e.message, true);
+        } finally {
+            box.disabled = false;
+        }
     }
 
     // ── Автосохранение расписания ────────────────────────────────────────────
@@ -886,6 +923,7 @@
         // Пусто у выключенной — не то же, что «расписания нет»: смены на месте,
         // просто сейчас они ни на что не влияют.
         const idle = (cardData && cardData.schedule_idle) || '';
+        const on = !!(cardData && cardData.schedule_on);
         const rows = scheduleRows(row.id);
         const why = scheduleCheck(rows);
         const overlap = scheduleOverlap(rows);
@@ -910,7 +948,17 @@
         const room = scheduleRoom(rows);
 
         return `<form class="sched${idle ? ' idle' : ''}" data-form="schedule">`
-            + '<div class="sched-title">Расписание</div>'
+            + '<div class="sched-head-row">'
+            + '<span class="sched-title">Расписание</span>'
+            // ⚠ Чекбокс здесь, а не в подписи: он про то, **исполнять ли** смены,
+            // и стоять должен там, где на них смотрят. Отдельно от самого
+            // расписания потому, что смены правят ползунком — исполняй мы «по
+            // факту наличия», воркер входил бы на каждое движение ручки.
+            + '<label class="sched-on" title="Воркер будет входить и выходить по '
+            + 'сменам. Выключение снимает сокет сразу, не дожидаясь конца смены">'
+            + `<input type="checkbox" class="sched-on-box"${on ? ' checked' : ''}>`
+            + 'активировать</label>'
+            + '</div>'
             // ⚠ У выключенной анкеты расписание **не действует**, и сказать это
             // надо прямо: блок выглядит рабочим, человек правит смены и ждёт, что
             // анкета войдёт в семь утра, — а она не войдёт.
