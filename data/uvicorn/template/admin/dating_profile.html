@@ -565,7 +565,6 @@
             .prof-ai .prof-check { color: #64748b; }
         }
 
-        .prof-act { width: 1%; white-space: nowrap; text-align: right; }
 
         .prof-empty { padding: 24px 12px; text-align: center; color: #9ca3af; font-size: 13px; }
 
@@ -853,23 +852,6 @@
             .toLowerCase().includes(needle));
     }
 
-    function actCell(row) {
-        // Кнопка одна и всегда одна и та же — в отличие от «Анкет», где их три и
-        // они меняются по состоянию учётки. Здесь смотрят на список целиком, и
-        // столбец, в котором у каждой строки своя кнопка, читается как сыпь.
-        // Остальные действия уехали внутрь карточки: они над одной анкетой, и
-        // место им там, где на неё и смотрят.
-        if (busy.has(row.id)) {
-            return '<button type="button" class="dating-btn busy" disabled>'
-                 + '<span class="dating-spin"></span>Жду…</button>';
-        }
-
-        // Пинг идёт по сохранённым cookie: нет входа — нечем и стучаться.
-        return `<button type="button" class="dating-btn ping-btn"${row.has_state ? '' : ' disabled'}`
-             + ` title="${row.has_state ? 'Спросить сайт, жив ли вход — по HTTP, без браузера'
-                                        : 'входа ещё не было: нечем стучаться'}">Пинг</button>`;
-    }
-
     // Сколько строк влезает в панель. Меряем по уже нарисованной таблице: высота
     // строки зависит от шрифта и аватара, и зашитое число разъехалось бы с
     // разметкой при первой же правке стилей.
@@ -966,13 +948,12 @@
                 + `<input type="checkbox" class="ai-box"${row.auto_answer ? ' checked' : ''}>`
                 + 'ai-ответ</label></td>'
                 + `<td class="prof-online">${onlineDot(row)}</td>`
-                + `<td class="prof-act">${actCell(row)}</td>`
                 + '</tr>';
         }).join('');
 
         tableEl.innerHTML =
             '<table class="prof-table"><thead><tr>'
-            + '<th class="prof-first">Анкета</th><th></th><th>В сети</th><th></th>'
+            + '<th class="prof-first">Анкета</th><th></th><th>В сети</th>'
             + '</tr></thead><tbody>' + body + '</tbody></table>';
 
         // Пейджер рисуем до замера: он занимает высоту, и мерить тело панели без
@@ -2528,7 +2509,7 @@
         }
         if (openId !== requestId) return;
 
-        logRender(logEl, rows, 'записей нет — нажмите «Пинг»');
+        logRender(logEl, rows, 'записей пока нет');
     }
 
     // ── Действия ─────────────────────────────────────────────────────────────
@@ -2547,10 +2528,6 @@
             });
         });
 
-        tableEl.querySelectorAll('.ping-btn').forEach(btn => {
-            const row = rowOf(btn);
-            if (row) btn.addEventListener('click', () => profilePing(row));
-        });
 
         tableEl.querySelectorAll('.ai-box').forEach(box => {
             const row = rowOf(box);
@@ -2609,22 +2586,6 @@
             await profilesLoad();
             await logLoad();
         }
-    }
-
-    // «Пинг» — дешёвый опрос по сохранённым cookie, без браузера: секунды вместо
-    // минут. Он отвечает на вопрос «жив ли вход», но не чинит его: не признал
-    // сайт — дальше «Войти».
-    async function profilePing(row) {
-        await longRun(row, async () => {
-            try {
-                const res = (await postData(`${BASE}/api/dating/profile/${row.id}/ping`, {})).result || {};
-                showNotification(res.status === 'online' ? `В сети, ${res.ms} мс`
-                                                         : `Не в сети: ${res.error || res.status}`,
-                                 res.status === 'online' ? 'success' : 'error');
-            } catch (e) {
-                showNotification('Пинг не прошёл: ' + e.message, 'error');
-            }
-        });
     }
 
     async function profileSave(row, form) {
