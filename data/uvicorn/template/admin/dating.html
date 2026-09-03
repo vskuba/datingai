@@ -242,6 +242,49 @@
         .sched-day { max-width: 100%; }
         .sched-warn { color: #b91c1c; }
 
+        /* Блоки настроек идут один под другим, и без границы «Учётка» и
+           «Автоответ» читаются как одна длинная форма: у обеих поля ввода и
+           кнопка «Сохранить», а сохраняют они разное. Разделяем линией и
+           воздухом — заголовок блока при этом остаётся его единственной меткой. */
+        .edit-body { display: flex; flex-direction: column; }
+        .edit-body > * + * {
+            margin-top: 16px; padding-top: 16px; border-top: 1px solid #eef2f7;
+        }
+
+        /* Заголовок с засечкой слева: он и так набран капителью, но в столбце из
+           четырёх блоков глазу нужна точка, за которую цепляться при прокрутке. */
+        .edit-body h4 {
+            display: flex; align-items: center; gap: 6px;
+        }
+        .edit-body h4::before {
+            content: ''; width: 3px; height: 11px; border-radius: 2px;
+            background: #c7d2fe; flex: 0 0 auto;
+        }
+
+        /* ---------- Раскрытая карточка ---------- */
+
+        .prof-form { display: flex; flex-direction: column; gap: 7px; }
+        .prof-form h4 {
+            margin: 0; font-size: 10px; font-weight: 700; color: #64748b;
+            text-transform: uppercase; letter-spacing: .04em;
+        }
+        .prof-line { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+
+        .prof-field { display: flex; flex-direction: column; gap: 2px; }
+        .prof-field > span { font-size: 10px; color: #94a3b8; }
+        .prof-field input, .prof-field select {
+            padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 6px;
+            font-family: inherit; font-size: 12px; color: #374151; background: #fff;
+        }
+        .prof-field input:focus, .prof-field select:focus { outline: none; border-color: #c7d2fe; }
+
+        /* Галка читается вместе с подписью, поэтому подпись и есть кнопка. */
+        .prof-check { display: flex; align-items: center; gap: 5px; font-size: 12px;
+                      color: #374151; cursor: pointer; user-select: none; }
+
+        .prof-card-note { font-size: 11px; color: #94a3b8; }
+        .prof-card-note.bad { color: #b91c1c; }
+
         /* ── Настройки анкеты в правой колонке ───────────────────────────────
            Пришли на место списка собеседниц: тот живёт на «Профилях», в окне
            переписки, и держать его в двух местах значило расходиться в мелочах. */
@@ -880,6 +923,183 @@
         return null;
     }
 
+    // Настройки выбранной анкеты — содержимое средней колонки. Формы две, потому
+    // что и ручки две: учётка правится целиком (`PUT /{id}`), автоответ — отдельно
+    // (`PUT /{id}/auto`), и он включается сразу, разбирая накопившееся. Слить их
+    // в одну кнопку «Сохранить» значило бы запускать разбор писем при правке
+    // пометки.
+    function field(label, control) {
+        return `<label class="prof-field"><span>${esc(label)}</span>${control}</label>`;
+    }
+
+    // Долгое действие: вход, отключение — минуты живого браузера.
+    //
+    // ⚠ Запираем **все** кнопки блока, а не одну нажатую: пока идёт вход, «Удалить»
+    // и «Отключить» тоже нажимать нельзя — они про ту же учётку, и второе действие
+    // поверх первого оставит сессию у соседа незакрытой.
+    //
+    // Журнала здесь нет (он на «Профилях»), поэтому ход действия не подтягиваем:
+    // итог придёт уведомлением, а подробности человек смотрит там же, где журнал.
+    async function longRun(row, run) {
+        const btns = [...profileEl.querySelectorAll('.prof-form button')];
+        btns.forEach(b => { b.disabled = true; });
+
+        try {
+            return await run();
+        } finally {
+            await profilesLoad();
+            await profileLoad();
+        }
+    }
+
+    function editForms(row) {
+        const state = row.has_state ? 'вход снят' : 'входа ещё не было';
+
+        return '<div class="edit-body">'
+
+            // Действия — первыми: на вкладку заходят чаще нажать «Войти», чем
+            // править логин. Формы ниже — то, что заполняют один раз и почти не
+            // трогают; кнопка, за которой пришли, не должна быть под ними.
+            + '<div class="prof-form">'
+            + '<h4>Действия</h4>'
+            + '<div class="prof-line">'
+            + `<button type="button" class="dating-btn login-btn"${row.has_password ? '' : ' disabled'}`
+            + ` title="${row.has_password ? 'Сценарий входа в живом браузере — идёт минутами'
+                                          : 'у учётки не задан пароль'}">Войти</button>`
+            + `<button type="button" class="dating-btn off-btn"${row.has_state ? '' : ' disabled'}`
+            + ' title="Выход на сайте, закрытие вкладок, снятие с автовхода">Отключить</button>'
+            + '<button type="button" class="dating-btn danger del-btn"'
+            + ' title="Удалить учётку вместе с перепиской и журналом">Удалить</button>'
+            + '</div>'
+            + `<span class="prof-card-note${row.status === 'error' ? ' bad' : ''}">`
+            + `${esc(row.last_error || state)}</span>`
+            + '</div>'
+
+            + '<form class="prof-form" data-form="save">'
+            + '<h4>Учётка</h4>'
+            + '<div class="prof-line">'
+            + field('Логин', `<input name="login" value="${esc(row.login)}" required`
+                           + ' maxlength="190" spellcheck="false" autocomplete="off" size="26">')
+            + field('Пароль', '<input name="password" type="password" placeholder="не менять"'
+                            + ' maxlength="255" autocomplete="new-password" size="14">')
+            + field('Роль', '<select name="role">'
+                          + `<option value="lady"${row.role !== 'man' ? ' selected' : ''}>женская</option>`
+                          + `<option value="man"${row.role === 'man' ? ' selected' : ''}>мужская</option>`
+                          + '</select>')
+            + field('Пометка', `<input name="note" value="${esc(row.note || '')}"`
+                             + ' maxlength="255" size="24">')
+            + '<button type="submit" class="dating-btn primary">Сохранить</button>'
+            + '</div>'
+            // Пустой пароль — «не трогать», а не «стереть»: форма его не
+            // показывает, и по пустому полю не отличить одно от другого.
+            + '<span class="prof-card-note">Пароль пустым — прежний остаётся.'
+            + (row.has_password ? '' : ' Сейчас пароль не задан: войти под анкетой нечем.')
+            + '</span>'
+            + '</form>'
+
+            + '<form class="prof-form" data-form="auto">'
+            + '<h4>Автоответ</h4>'
+            + '<div class="prof-line">'
+            + '<label class="prof-check"><input type="checkbox" name="auto_answer"'
+            + `${row.auto_answer ? ' checked' : ''}>отвечает сама</label>`
+            + field('Кому отвечать', `<input name="auto_answer_only"`
+                                   + ` value="${esc(row.auto_answer_only || '')}"`
+                                   + ' maxlength="500" spellcheck="false" autocomplete="off"'
+                                   + ' placeholder="всем" size="22">')
+            + '<button type="submit" class="dating-btn primary">Сохранить</button>'
+            + '</div>'
+            // Каждый ответ стоит дважды — прогон LLM и платное сообщение на сайте,
+            // — поэтому «всем» у анкеты с сотнями диалогов это рассылка.
+            + '<span class="prof-card-note">Номера собеседниц через запятую;'
+            + ' пусто — отвечать всем.</span>'
+            + '</form>'
+
+
+            + '</div>';
+    }
+
+    function editBind(row) {
+        profileEl.querySelector('[data-form="save"]').addEventListener('submit', (e) => {
+            e.preventDefault();
+            accountSave(row, e.target);
+        });
+        profileEl.querySelector('[data-form="auto"]').addEventListener('submit', (e) => {
+            e.preventDefault();
+            profileAuto(row, e.target);
+        });
+        profileEl.querySelector('.login-btn').addEventListener('click', () => profileLogin(row));
+        profileEl.querySelector('.off-btn').addEventListener('click', () => profileDisconnect(row));
+        profileEl.querySelector('.del-btn')
+                 .addEventListener('click', () => profileDelete());
+    }
+
+    async function accountSave(row, form) {
+        const data = new FormData(form);
+        try {
+            await putData(`${BASE}/api/dating/profile/${row.id}`, {
+                site_id: row.site_id,
+                login: String(data.get('login') || '').trim(),
+                password: String(data.get('password') || ''),
+                note: String(data.get('note') || '').trim(),
+                role: String(data.get('role') || 'lady'),
+            });
+            showNotification('Учётка сохранена', 'success');
+        } catch (e) {
+            showNotification('Не сохранилось: ' + e.message, 'error');
+            return;
+        }
+
+        await profilesLoad();
+    }
+
+    async function profileAuto(row, form) {
+        const data = new FormData(form);
+        try {
+            await putData(`${BASE}/api/dating/profile/${row.id}/auto`, {
+                auto_answer: data.get('auto_answer') !== null,
+                auto_answer_only: String(data.get('auto_answer_only') || '').trim(),
+            });
+            showNotification('Автоответ сохранён', 'success');
+        } catch (e) {
+            showNotification('Не сохранилось: ' + e.message, 'error');
+            return;
+        }
+
+        await profilesLoad();
+    }
+
+    // Настоящий вход: сценарий проходит форму в живом браузере, снимает состояние
+    // и спрашивает сайт, признал ли он вход. Идёт минутами — сайт единственный,
+    // кто знает ответ, и торопить его нечем.
+    async function profileLogin(row) {
+        await longRun(row, async () => {
+            try {
+                const res = (await postData(`${BASE}/api/dating/profile/${row.id}/login`, {})).result || {};
+                showNotification(res.status === 'error' ? `Вход не прошёл: ${res.error}`
+                                                        : `Вход выполнен: ${res.scenario}`,
+                                 res.status === 'error' ? 'error' : 'success');
+            } catch (e) {
+                showNotification('Войти не вышло: ' + e.message, 'error');
+            }
+        });
+    }
+
+    async function profileDisconnect(row) {
+        if (!confirm(`Отключить «${row.name || row.login}»? Выйдем с сайта, закроем вкладки `
+                   + 'и снимем анкету с автовхода. Переписка и журнал останутся.')) return;
+
+        await longRun(row, async () => {
+            try {
+                const res = (await postData(`${BASE}/api/dating/profile/${row.id}/disconnect`, {})).result || {};
+                showNotification(res.logout ? 'Отключено, выход на сайте выполнен'
+                                            : 'Отключено; выход на сайте не подтверждён',
+                                 res.logout ? 'success' : 'info');
+            } catch (e) {
+                showNotification('Отключить не вышло: ' + e.message, 'error');
+            }
+        });
+    }
+
     // ── Настройки анкеты ─────────────────────────────────────────────────────
     //
     // Первый выключатель — сама анкета. ⚠ Не то же, что «ai-ответ» на «Профилях»:
@@ -889,6 +1109,9 @@
     // читается как «отключить от сайта».
     function settingsBlock(data) {
         const on = data.enabled !== false;
+        // Строка списка: в ней логин, пароль, роль и пометка — то, что правят
+        // формы ниже. В `data` их нет: карточка отдаёт анкету с сайта, а не учётку.
+        const row = profiles.find(g => g.id === currentId) || {};
 
         return '<div class="prof-set">'
             + '<div class="prof-set-head">Настройки анкеты</div>'
@@ -902,6 +1125,11 @@
             // «Настройки» рядом с чтением переписки, хотя говорит о том же, о чём
             // выключатель, — как эту анкету ведут.
             + scheduleBlock({id: currentId})
+            // ⚠ Действия, учётка и автоответ переехали сюда с «Профилей», из
+            // вкладки «Настройки». Настраивать анкету в двух местах значило
+            // расходиться в мелочах: там правили логин, здесь выключали — и оба
+            // раза это «настройки анкеты».
+            + editForms(row)
             // Удаление — внизу и отдельной полосой: это единственное здесь
             // необратимое действие, и стоять рядом с галочками ему нельзя.
             + '<div class="prof-set-danger">'
@@ -948,6 +1176,9 @@
         // Обработчики расписания: блок перерисовывается вместе с настройками,
         // поэтому вешаются каждый раз — узлы новые.
         scheduleBind(profileEl, {id: currentId});
+
+        const row = profiles.find(g => g.id === currentId);
+        if (row) editBind(row);
     }
 
     async function profileDelete() {

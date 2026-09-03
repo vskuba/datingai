@@ -17,6 +17,8 @@
 
 import os
 
+import pathlib
+
 import pytest
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
@@ -71,20 +73,46 @@ class TestWorkTemplate:
         html = await work(LADA)
 
         assert 'data-slot="dialogs"' in html, 'нет слота под диалоги'
-        assert 'data-slot="setup"' in html, 'нет слота под настройки'
         assert 'chat-log' not in html, 'журнал попал в шаблон сайта'
         assert 'id="log"' not in html
 
+        # ⚠ Слота `setup` здесь больше нет: правка учётки, действия и автоответ
+        # переехали на «Анкеты», в настройки анкеты — туда, где выключатель,
+        # расписание и удаление. Настраивать анкету в двух местах значило
+        # расходиться в мелочах.
+        assert 'data-slot="setup"' not in html, 'вкладка настроек вернулась в шаблон'
+
     async def test_every_tab_has_a_panel(self, work):
-        """Панели всех четырёх вкладок приходят разом.
+        """Панели всех вкладок приходят разом.
 
         Переключение вкладки тогда — показать одну и снять остальные, без запроса к
         серверу: шаблон один на сайт, и просить его заново на каждый щелчок незачем.
+
+        ⚠ Список сверяется с полосой вкладок в `dating_profile.html`: кнопка без
+        панели — пустое место вместо содержимого, панель без кнопки — мёртвая
+        разметка, к которой не добраться.
         """
         html = await work(LADA)
 
-        for tab in ('chat', 'setup', 'mail', 'event'):
+        for tab in ('chat', 'mail', 'mail_in', 'event'):
             assert f'data-tab="{tab}"' in html, f'нет панели вкладки «{tab}»'
+
+    async def test_tabs_and_panels_match(self, work):
+        """⚠ Кнопок вкладок ровно столько же, сколько панелей, и это одни и те же.
+
+        Проверка появилась после переезда «Настроек»: панель убрали из шаблона
+        сайта, а кнопку с полосы — из страницы, и разъехаться им было легко.
+        """
+        import re
+
+        html = await work(LADA)
+        страница = pathlib.Path(
+            'data/uvicorn/template/admin/dating_profile.html').read_text(encoding='utf-8')
+
+        кнопки = set(re.findall(r'class="work-tab[^"]*" data-tab="(\w+)"', страница))
+        панели = set(re.findall(r'class="work-panel" data-tab="(\w+)"', html))
+
+        assert кнопки == панели, f'кнопки {кнопки}, панели {панели}'
 
     async def test_sites_get_different_markup(self, work):
         """⚠ Ради этого шаблоны и разделены.
