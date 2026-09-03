@@ -21,6 +21,31 @@
         .sock-sum b { font-size: 15px; color: #1f2937; }
         .sock-sum .warn { color: #b45309; }
 
+        /* ── Чипсы фильтра ───────────────────────────────────────────────────
+           Кнопками, а не селектом: групп две, и обе видны сразу вместе со
+           счётчиками — по ним и решают, куда смотреть. Селект прятал бы половину
+           ответа под нажатие. */
+        .sock-chips {
+            display: flex; gap: 6px; padding: 10px 14px 2px; flex-wrap: wrap;
+        }
+        .sock-chip {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 3px 10px; border-radius: 999px; cursor: pointer;
+            border: 1px solid #e5e7eb; background: #fff; color: #64748b;
+            font-family: inherit; font-size: 11px; font-weight: 600;
+        }
+        .sock-chip:hover { border-color: #cbd5e1; }
+        /* Включённый — заливкой, а не только рамкой: рамка на белом читается как
+           «наведён», и человек не понимает, что уже нажал. */
+        .sock-chip.on {
+            background: #eef2ff; border-color: #c7d2fe; color: #4338ca;
+        }
+        .sock-chip-n {
+            padding: 0 5px; border-radius: 8px; background: #f1f5f9;
+            font-size: 10px; color: #64748b;
+        }
+        .sock-chip.on .sock-chip-n { background: #e0e7ff; color: #4338ca; }
+
         /* Карточки — сеткой по ширине: их бывает и три, и двести, а колонка из
            двухсот строк читается хуже, чем плитка. */
         .sock-grid {
@@ -126,8 +151,73 @@
             return;
         }
 
-        bodyEl.innerHTML = summary(data)
-            + '<div class="sock-grid">' + sockets.map(card).join('') + '</div>';
+        // ⚠ Держим последний ответ: чипсы переключают показ, не спрашивая сервер
+        // заново. Список у сайта один и тот же, а фильтр — про то, что из него
+        // показать.
+        last = data;
+        paint();
+    }
+
+    function paint() {
+        if (!last) return;
+
+        const sockets = last.sockets || [];
+        const активные = sockets.filter(s => s.alive);
+        const прочие = sockets.filter(s => !s.alive);
+
+        const показать = [
+            ...(shown.has('live') ? активные : []),
+            ...(shown.has('idle') ? прочие : []),
+        ];
+
+        bodyEl.innerHTML = summary(last)
+            + chips(активные.length, прочие.length)
+            + (показать.length
+                ? '<div class="sock-grid">' + показать.map(card).join('') + '</div>'
+                : empty(активные.length, прочие.length));
+
+        bodyEl.querySelectorAll('.sock-chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                const kind = chip.dataset.kind;
+                // ⚠ Последний чипс не снимаем: пустая страница без единой
+                // включённой группы читается как «не загрузилось», а не как
+                // «вы всё выключили».
+                if (shown.has(kind) && shown.size === 1) return;
+
+                shown.has(kind) ? shown.delete(kind) : shown.add(kind);
+                paint();
+            });
+        });
+    }
+
+    // ⚠ **По умолчанию — только активные.** Неактивных обычно большинство (у сайта
+    // без чат-сокета — вообще все), и открывать страницу простынёй серых карточек
+    // значит прятать в ней те несколько, ради которых её и открыли.
+    const shown = new Set(['live']);
+    let last = null;
+
+    function chips(живых, прочих) {
+        const chip = (kind, title, n) =>
+            `<button type="button" class="sock-chip${shown.has(kind) ? ' on' : ''}"`
+            + ` data-kind="${kind}">${title}<span class="sock-chip-n">${n}</span></button>`;
+
+        return '<div class="sock-chips">'
+            + chip('live', 'Активные', живых)
+            + chip('idle', 'Неактивные', прочих)
+            + '</div>';
+    }
+
+    // ⚠ Пусто по фильтру и пусто вообще — разные вещи, и говорить надо разное.
+    // «Активных нет» без подсказки, где остальные, отправляет человека искать
+    // поломку там, где её нет.
+    function empty(живых, прочих) {
+        if (!живых && прочих && shown.has('live') && !shown.has('idle')) {
+            return '<div class="sock-empty">Активных сокетов нет. '
+                 + `Неактивных — ${прочих}: включите чипс «Неактивные», чтобы увидеть `
+                 + 'их и причину.</div>';
+        }
+
+        return '<div class="sock-empty">По выбранным чипсам ничего нет.</div>';
     }
 
     function summary(data) {

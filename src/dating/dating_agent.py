@@ -24,10 +24,12 @@ RhapsodyAi, где живут агенты всех проектов.
 
 from logging_.logging_ import logger_info
 
+import re
+
 from src.dating.dating_log import dating_log_write
 from src.dating.dating_role import DATING_ROLE_DEFAULT
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_agent_create,
-                                       rhapsody_api_agent_find)
+                                       rhapsody_api_agent_find, rhapsody_api_site_get)
 
 # Узел RhapsodyAi, под которым живут агенты анкет.
 DATING_AGENT_NODE = 'Dating'
@@ -54,6 +56,12 @@ DATING_AGENT_TRANSLIT = {
 
 # Имя агента — `char(50)` в базе RhapsodyAi. Режем сами, иначе заведение падает.
 DATING_AGENT_NAME_MAX = 50
+
+# Метка сайта в поле `agent.site` у соседа: строчная латиница и цифры, `^[a-z0-9]+$`,
+# длина до 50 (`AgentCreateRequest`). Не подойдёт формат — заведение отвечает `422`,
+# поэтому чистим имя сами, а не надеемся, что справочник хранит его пригодным.
+DATING_AGENT_SITE_MAX = 50
+DATING_AGENT_SITE_RE = re.compile(r'[^a-z0-9]+')
 
 
 async def dating_agent_ensure(profile: dict, card: dict) -> dict:
@@ -100,14 +108,24 @@ async def dating_agent_ensure(profile: dict, card: dict) -> dict:
         await dating_log_write(profile_id, 'fail', f'Агент «{name}» не заведён: {error}')
         return {'name': name, 'id': 0, 'created': False, 'error': error}
 
+    # Сайт спрашиваем до похода за агентом: у соседа поле обязательное, и без него
+    # заведение отвечает `422`. Лучше сказать это своей строкой в журнале анкеты, чем
+    # получить чужую ошибку валидации, по которой не видно, чего именно не хватило.
+    site = await dating_agent_site(int(profile.get('site_id') or 0))
+    if not site:
+        error = 'у сайта анкеты нет пригодного имени — агенту нечего записать в site'
+        await dating_log_write(profile_id, 'fail', f'Агент «{name}» не заведён: {error}')
+        return {'name': name, 'id': 0, 'created': False, 'error': error}
+
     await dating_log_write(profile_id, 'info',
                            f'Завожу агента «{name}» по биографии ({len(bio)} знаков) '
-                           f'через «{workflow}»')
+                           f'через «{workflow}», сайт «{site}»')
 
     try:
         created = await rhapsody_api_agent_create(
             node=DATING_AGENT_NODE, workflow=workflow, name=name,
-            title=str(card.get('name') or name)[:150], variables={'girl_bio': bio})
+            title=str(card.get('name') or name)[:150], variables={'girl_bio': bio},
+            site=site)
     except RhapsodyError as e:
         await dating_log_write(profile_id, 'fail', f'Агент «{name}» не завёлся: {e}')
         return {'name': name, 'id': 0, 'created': False, 'error': str(e)}
@@ -172,6 +190,27 @@ def dating_agent_bio(card: dict) -> str:
         return ''
 
     return ' '.join(parts)
+
+
+async def dating_agent_site(site_id: int) -> str:
+    """Метка сайта анкеты для агента у соседа: `Goldenbride` → `goldenbride`.
+
+    Берём имя из справочника сайтов RhapsodyAi (`browser_site`), а не держим свой
+    список: сайты заводит человек на той стороне, и вторая копия имён разошлась бы
+    с первой на первом же новом сайте. Номер сайта у анкеты уже есть
+    (`dating_profile.site_id`) и ссылается ровно на этот справочник.
+
+    Приводим к формату поля (`^[a-z0-9]+$`): в справочнике имя человеческое —
+    `Goldenbride`, `Ladadate`, — а заведение агента такое имя отвергает с `422`.
+
+    Сайт не нашёлся или имя после чистки пусто — пустая строка, и решает вызывающий.
+    Подставлять что-нибудь вместо него нельзя: агент приписался бы к чужому сайту,
+    а разбирать потом, откуда он взялся, было бы уже не по чему.
+    """
+    site = await rhapsody_api_site_get(int(site_id or 0))
+    slug = DATING_AGENT_SITE_RE.sub('', str(site.get('name') or '').lower())
+
+    return slug[:DATING_AGENT_SITE_MAX]
 
 
 def dating_agent_name(profile_name: str, login: str) -> str:

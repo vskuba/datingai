@@ -378,16 +378,23 @@ async def rhapsody_api_error_write(source: str, message: str, session_id: str = 
 
 
 async def rhapsody_api_agent_create(node: str, workflow: str, name: str, title: str,
-                                    variables: dict) -> dict:
+                                    variables: dict, site: str) -> dict:
     """Заводит агента анкеты в RhapsodyAi — прогоном его же workflow.
 
     Здесь только вызов: промпт, факты из биографии и связка с `dating_talk` — дело
     той стороны. Повторять её работу своей вставкой значило бы завести вторую
     дорогу, которая разойдётся с первой на первой же правке.
+
+    `site` — метка сайта-владельца (`goldenbride`, `ladadate`): у соседа она
+    обязательна и проверяется форматом `^[a-z0-9]+$`, иначе `422`. Собирает её
+    `dating_agent_site` из имени сайта-закладки; довод обязательный и без умолчания
+    намеренно — агент без сайта у соседа не заводится, и подставить сюда что-нибудь
+    «по умолчанию» значило бы приписать анкету чужому сайту.
     """
     data = await _request('POST', '/agent/create',
                           {'node': str(node), 'workflow': str(workflow), 'name': str(name),
-                           'title': str(title), 'variables': variables or {}},
+                           'title': str(title), 'variables': variables or {},
+                           'site': str(site)},
                           timeout=RHAPSODY_API_TIMEOUT_AGENT)
 
     return data.get('result') or {}

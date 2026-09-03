@@ -112,6 +112,16 @@ class RhapsodyFake:
         # только этим и проверяются.
         self.calls: list[tuple[str, str]] = []
 
+        # Тела POST-запросов: `{путь: последнее тело}`. Пути мало там, где важно
+        # **что** отправлено: у соседа `site` в заведении агента обязателен и
+        # проверяется форматом, и «сходили на /agent/create» о правильности
+        # запроса не говорит ничего.
+        self.bodies: dict[str, dict] = {}
+
+        # Что отвечать на заведение агента. Номер свой, чтобы вызывающий мог его
+        # сверить: заведение возвращает его наверх и пишет в журнал анкеты.
+        self.agent = {'id': 501, 'name': '', 'title': '', 'node_id': 2, 'workflow_id': 7}
+
         self._refuse: tuple[int, str, str] | None = None
         self._offline = ''
 
@@ -162,6 +172,20 @@ class RhapsodyFake:
     # ── Приватное ────────────────────────────────────────────────────────────
 
     def _route(self, request: httpx.Request, path: str) -> httpx.Response:
+        if path == '/agent/create':
+            body = json.loads(request.content or b'{}')
+            self.bodies[path] = body
+
+            return self._ok({**self.agent,
+                             'name': body.get('name') or '',
+                             'title': body.get('title') or '',
+                             'site': body.get('site') or ''})
+
+        if path.startswith('/agent/name/'):
+            # Агента с таким именем нет — заведение идёт дальше. Есть — тест кладёт
+            # его сам в `self.agent` и меняет эту ветку через `refuse`/свои данные.
+            return self._json(404, {'detail': 'нет такого агента'})
+
         if path == '/api/browser/site':
             tag = request.url.params.get('tag') or ''
 
