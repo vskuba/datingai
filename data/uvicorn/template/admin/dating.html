@@ -117,6 +117,14 @@
         }
         .sched-foot .sched-note { flex: 1 1 auto; min-width: 0; }
 
+        /* «Сохранено» — на месте подсказки, а не отдельным сообщением. ⚠ Всплывающее
+           уведомление на каждое движение ползунка было бы очередью из десяти
+           одинаковых; здесь оно тихое и на своём месте. */
+        .sched-note.saved { color: #166534; }
+
+        /* Кнопка входа-выхода в подвале расписания. */
+        .sched-door { flex: 0 0 auto; }
+
         .sched-list { display: flex; flex-direction: column; gap: 4px; }
 
         /* Строка расписания. Слева цветная планка — по ней тип читается раньше,
@@ -727,11 +735,16 @@
     //
     // Только настройки, не список: расписание в таблице не показано, а лишняя
     // перерисовка под руками стоит мигания.
+    // Единственная точка правки расписания — сюда и подключено автосохранение.
+    // ⚠ Одна точка, а не вызов из каждого обработчика: правок четыре (добавить,
+    // убрать, двинуть левую ручку, двинуть правую), и забытый вызов означал бы
+    // «эта правка не сохраняется», причём молча.
     function scheduleEdit(profileId, change) {
         const rows = [...(scheduleDraft.get(profileId) || [])];
         change(rows);
         scheduleDraft.set(profileId, rows);
-        workPaint();
+        profileLoad();
+        scheduleSaveSoon(profileId);
     }
 
     function scheduleBind(card, row) {
@@ -803,32 +816,53 @@
             });
         });
 
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
+        // Форму не отправляют — Enter в ней не должен перезагружать страницу.
+        form.addEventListener('submit', (e) => e.preventDefault());
 
-            const btn = form.querySelector('.sched-save');
-            const rows = scheduleRows(row.id);
-            // ⚠ Негодное не отправляем: сервер откажет той же проверкой, но
-            // человек увидит причину только после круга запроса, а она у него
-            // перед глазами.
-            const why = scheduleCheck(rows);
-            if (why && rows.length) return say(why, true);
+        const door = form.querySelector('.sched-door');
+        if (door) door.addEventListener('click', () => doorToggle(row));
+    }
 
-            btn.disabled = true;
-            try {
-                await putData(`${BASE}/api/dating/profile/${row.id}/schedule`,
-                              {schedule: rows});
-                // Черновик снимаем: сохранённое теперь приходит с сервера, и
-                // держать вторую копию значит однажды показать её вместо правды.
-                scheduleDraft.delete(row.id);
-                say('расписание сохранено');
-                await profileLoad();
-            } catch (err) {
-                say('не сохранилось: ' + err.message, true);
-            } finally {
-                btn.disabled = false;
+    // ── Автосохранение расписания ────────────────────────────────────────────
+    //
+    // ⚠ **Сохраняем не сразу, а через паузу.** Ползунок двигают подряд, и запрос
+    // на каждое движение был бы сотней запросов за один перетаскивание. Ждём, пока
+    // человек остановится, и шлём один раз.
+    //
+    // Пауза короткая: полсекунды. Дольше — и человек успевает уйти со страницы,
+    // считая, что сохранено; короче — и «остановился» срабатывает посреди
+    // движения.
+    const SCHEDULE_SAVE_MS = 500;
+    let scheduleTimer = 0;
+
+    function scheduleSaveSoon(profileId) {
+        clearTimeout(scheduleTimer);
+        scheduleTimer = setTimeout(() => scheduleSave(profileId), SCHEDULE_SAVE_MS);
+    }
+
+    async function scheduleSave(profileId) {
+        const rows = scheduleRows(profileId);
+
+        // ⚠ Негодное не отправляем **и не жалуемся**: при автосохранении человек
+        // ещё правит, и ругаться на промежуточное состояние («смены налезают»)
+        // значило бы кричать на каждое движение ползунка. Причина и так написана
+        // под формой, а сохранится расписание, когда станет годным.
+        if (scheduleCheck(rows) && rows.length) return;
+
+        const note = document.querySelector('.sched-note');
+        try {
+            await putData(`${BASE}/api/dating/profile/${profileId}/schedule`,
+                          {schedule: rows});
+            // Черновик снимаем: сохранённое теперь приходит с сервера, и держать
+            // вторую копию значит однажды показать её вместо правды.
+            scheduleDraft.delete(profileId);
+            if (note) {
+                note.textContent = 'сохранено';
+                note.classList.add('saved');
             }
-        });
+        } catch (err) {
+            say('расписание не сохранилось: ' + err.message, true);
+        }
     }
 
     function scheduleBlock(row) {
@@ -878,14 +912,45 @@
             + '+ Смена</button>'
             + '</div>'
             + (rows.length ? scheduleDay(rows) : '')
+            // ⚠ Кнопки «Сохранить» здесь нет: правки уходят сами, как только
+            // отпущен ползунок. Расписание правят ползунком, и кнопка после
+            // каждого движения означала бы «подвигал и забыл сохранить» —
+            // молчащую анкету без единого признака, что что-то не так.
+            //
+            // На её месте — вход и выход: это то, ради чего на расписание и
+            // смотрят («сейчас должна быть в сети — а она?»), и держать их в
+            // другом блоке значило разводить вопрос и ответ по разным местам.
             + '<div class="sched-foot">'
-            + `<button type="submit" class="dating-btn primary sched-save"`
-            + `${why && rows.length ? ' disabled' : ''}>Сохранить</button>`
+            + doorButton(row)
             + `<span class="sched-note${why && rows.length ? ' sched-warn' : ''}">`
-            + `${esc(why || 'Ежедневно, по времени панели · левая ручка — вход, '
-                          + 'правая — выход, шаг четверть часа')}</span>`
+            + `${esc(why || 'Сохраняется само · левая ручка — вход, правая — выход, '
+                          + 'шаг четверть часа')}</span>`
             + '</div>'
             + '</form>';
+    }
+
+    // Кнопка входа-выхода. ⚠ Подпись по состоянию: в сети — «Выйти», иначе
+    // «Войти». Две кнопки рядом означали бы, что одна из них всегда бесполезна, а
+    // человек всё равно читает обе, прежде чем нажать.
+    function doorButton(row) {
+        const online = row.status === 'online';
+        const busyNow = doorBusy.has(row.id);
+
+        if (busyNow) {
+            return '<button type="button" class="dating-btn sched-door" disabled>'
+                 + '<span class="dating-spin"></span>Жду…</button>';
+        }
+
+        // Войти нечем без пароля; выйти нечем без снятого входа.
+        const можно = online ? row.has_state : row.has_password;
+
+        return `<button type="button" class="dating-btn ${online ? '' : 'primary '}sched-door"`
+             + `${можно ? '' : ' disabled'}`
+             + ` title="${online ? 'Выйти на сайте и снять сокет'
+                                 : (row.has_password
+                                     ? 'Войти сценарием и повесить сокет — минуты живого браузера'
+                                     : 'у учётки не задан пароль')}">`
+             + `${online ? 'Выйти' : 'Войти'}</button>`;
     }
 
     // Куда встанет новая смена: первый промежуток, свободный от уже заведённых.
@@ -931,43 +996,43 @@
         }
     }
 
-    function editForms(row) {
-        const state = row.has_state ? 'вход снят' : 'входа ещё не было';
-
-        return '<div class="edit-body">'
-
-            // Действия — первыми: на вкладку заходят чаще нажать «Войти», чем
-            // править логин. Формы ниже — то, что заполняют один раз и почти не
-            // трогают; кнопка, за которой пришли, не должна быть под ними.
-            + '<div class="prof-form">'
-            + '<h4>Действия</h4>'
-            + '<div class="prof-line">'
-            + `<button type="button" class="dating-btn login-btn"${row.has_password ? '' : ' disabled'}`
-            + ` title="${row.has_password ? 'Сценарий входа в живом браузере — идёт минутами'
-                                          : 'у учётки не задан пароль'}">Войти</button>`
-            + `<button type="button" class="dating-btn off-btn"${row.has_state ? '' : ' disabled'}`
-            + ' title="Выход на сайте, закрытие вкладок, снятие с автовхода">Отключить</button>'
-            // ⚠ Кнопки «Удалить» здесь нет: удаление живёт внизу блока, отдельной
-            // полосой («Удалить анкету»). Две кнопки одного действия в одной
-            // колонке — это не выбор, а ловушка: верхняя стоит вплотную к
-            // «Отключить», и промах мыши стоил бы всей переписки.
-            + '</div>'
-            + `<span class="prof-card-note${row.status === 'error' ? ' bad' : ''}">`
-            + `${esc(row.last_error || state)}</span>`
-            + '</div>'
-
-
-            + '</div>';
-    }
-
-    function editBind(row) {
-        profileEl.querySelector('.login-btn').addEventListener('click', () => profileLogin(row));
-        profileEl.querySelector('.off-btn').addEventListener('click', () => profileDisconnect(row));
-    }
-
     // Настоящий вход: сценарий проходит форму в живом браузере, снимает состояние
     // и спрашивает сайт, признал ли он вход. Идёт минутами — сайт единственный,
     // кто знает ответ, и торопить его нечем.
+    // Занятость кнопки входа-выхода. ⚠ Переменной, а не только `disabled`:
+    // карточка перерисовывается своим кругом, и перерисовка вернула бы кнопке
+    // обычный вид — её нажали бы второй раз, то есть погнали второй вход под той
+    // же анкетой.
+    const doorBusy = new Set();
+
+    // Вход или выход — по состоянию анкеты.
+    //
+    // ⚠ **Сокет здесь не отдельное действие.** Вход сценарием заканчивается тем,
+    // что браузер подсматривает адрес чат-сокета и кладёт его в анкету; держатель
+    // подхватывает адрес в течение минуты и поднимает соединение сам. Выход
+    // гасит адрес — держатель следующим кругом отпускает сокет.
+    //
+    // Поэтому «повесить сокет» и «удалить сокет» — не команды, а следствия входа и
+    // выхода. Дёргать сокет отдельно значило бы получить соединение по мёртвой
+    // сессии или живую сессию без соединения.
+    async function doorToggle(row) {
+        if (doorBusy.has(row.id)) return;
+
+        doorBusy.add(row.id);
+        await profileLoad();
+        try {
+            if (row.status === 'online') {
+                await profileDisconnect(row);
+            } else {
+                await profileLogin(row);
+            }
+        } finally {
+            doorBusy.delete(row.id);
+            await profilesLoad();
+            await profileLoad();
+        }
+    }
+
     async function profileLogin(row) {
         await longRun(row, async () => {
             try {
@@ -1021,12 +1086,7 @@
             // ⚠ Расписание переехало сюда с «Профилей»: там оно стояло во вкладке
             // «Настройки» рядом с чтением переписки, хотя говорит о том же, о чём
             // выключатель, — как эту анкету ведут.
-            + scheduleBlock({id: currentId})
-            // ⚠ Действия, учётка и автоответ переехали сюда с «Профилей», из
-            // вкладки «Настройки». Настраивать анкету в двух местах значило
-            // расходиться в мелочах: там правили логин, здесь выключали — и оба
-            // раза это «настройки анкеты».
-            + editForms(row)
+            + scheduleBlock(row)
             // Удаление — внизу и отдельной полосой: это единственное здесь
             // необратимое действие, и стоять рядом с галочками ему нельзя.
             + '<div class="prof-set-danger">'
@@ -1040,6 +1100,9 @@
     }
 
     function settingsBind() {
+        // Та же строка, что рисовала блок: кнопка входа-выхода читает из неё
+        // состояние анкеты.
+        const row = profiles.find(g => g.id === currentId) || {id: currentId};
         const box = document.getElementById('enabledBox');
         if (!box) return;
 
@@ -1073,10 +1136,7 @@
 
         // Обработчики расписания: блок перерисовывается вместе с настройками,
         // поэтому вешаются каждый раз — узлы новые.
-        scheduleBind(profileEl, {id: currentId});
-
-        const row = profiles.find(g => g.id === currentId);
-        if (row) editBind(row);
+        scheduleBind(profileEl, row);
     }
 
     async function profileDelete() {
