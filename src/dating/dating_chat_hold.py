@@ -35,6 +35,7 @@ from src.dating.dating_chat_panel import (DATING_CHAT_PANEL_ROUND_DAYS,
                                           dating_chat_panel_import)
 from src.dating.dating_ready import (DATING_READY_PASSWORD_SETTING, dating_ready_check,
                                      dating_ready_transport, dating_ready_write)
+from src.dating.dating_socket import dating_socket_write
 from src.uvicorn.routers.dating.dating_site import (dating_site_seconds,
                                                     dating_site_settings)
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_error_write,
@@ -129,6 +130,9 @@ async def dating_chat_hold_run(seconds: float) -> dict:
         while time.monotonic() < deadline:
             profiles = await _profiles_ready()
             _holders_sync(holders, counters, profiles, deadline)
+            # Снимок для страницы «Сокеты»: держатели живут в памяти этого
+            # процесса, а панель — отдельный, и другого канала между ними нет.
+            dating_socket_write(holders, counters, deadline - time.monotonic())
 
             await asyncio.sleep(min(DATING_CHAT_HOLD_RESCAN_SEC,
                                     max(1.0, deadline - time.monotonic())))
@@ -259,6 +263,9 @@ def _holders_sync(holders: dict, counters: dict, profiles: list, deadline: float
             continue
         holders[profile_id] = {
             'ws_url': str(item['profile'].get('ws_url') or ''),
+            # Логин кладём сюда же: снимок читает страница, а лезть за именем в
+            # базу по каждой строке значило бы сотню запросов на один показ.
+            'login': str(item['profile'].get('login') or ''),
             'task': asyncio.create_task(
                 dating_chat_hold_profile(item['profile'], item['presence'], item['site_url'],
                                          deadline, counters)),

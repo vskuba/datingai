@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+
+{% block title %}Сокеты | DatingAi{% endblock %}
+
+{% block head %}
+    <link rel="stylesheet" href="{{ static_url('css/dating_page.css') }}">
+    <style>
+        /* Раскладка как у «Ошибок»: шапка и под ней одна панель во всю высоту.
+           Общее — обойма, шапка, белая панель — в `dating_page.css`. */
+        .dating-page { grid-template-rows: auto minmax(0, 1fr); }
+
+        .sock-empty { padding: 24px 12px; text-align: center; color: #9ca3af; font-size: 13px; }
+
+        /* Сводка над карточками: сколько держится из скольких возможных. Она и
+           отвечает на вопрос быстрее самих карточек — их читают, когда цифра не
+           та, какую ждали. */
+        .sock-sum {
+            display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+            padding: 10px 14px; border-bottom: 1px solid #f1f5f9; font-size: 12px;
+        }
+        .sock-sum b { font-size: 15px; color: #1f2937; }
+        .sock-sum .warn { color: #b45309; }
+
+        /* Карточки — сеткой по ширине: их бывает и три, и двести, а колонка из
+           двухсот строк читается хуже, чем плитка. */
+        .sock-grid {
+            display: grid; gap: 8px; padding: 12px 14px;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        }
+
+        .sock-card {
+            padding: 8px 10px; border-radius: 8px; border: 1px solid #e5e7eb;
+            background: #fff; display: flex; flex-direction: column; gap: 3px;
+            border-left: 3px solid #cbd5e1;
+        }
+        /* ⚠ Цвет слева — состояние, и оно тут не двоичное: держится, есть чем
+           держаться но не держится, держаться нечем. Три случая, три цвета —
+           иначе «нет адреса» и «рвётся связь» слились бы в один красный. */
+        .sock-card.live { border-left-color: #16a34a; background: #f0fdf4; }
+        .sock-card.idle { border-left-color: #f59e0b; background: #fffbeb; }
+        .sock-card.none { border-left-color: #e5e7eb; }
+
+        .sock-who { display: flex; align-items: baseline; gap: 6px; }
+        .sock-id { font-size: 11px; color: #94a3b8; font-family: ui-monospace, Menlo, monospace; }
+        .sock-login {
+            font-size: 12px; font-weight: 600; color: #1f2937;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+
+        /* Адрес моноширинным и с переносом: его сверяют посимвольно, когда
+           разбираются, тот ли это сокет после переподключения. */
+        .sock-url {
+            font-family: ui-monospace, Menlo, monospace; font-size: 10px;
+            color: #94a3b8; word-break: break-all; line-height: 1.3;
+        }
+
+        .sock-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+        .sock-state { font-weight: 600; }
+        .sock-card.live .sock-state { color: #166534; }
+        .sock-card.idle .sock-state { color: #b45309; }
+        .sock-card.none .sock-state { color: #94a3b8; }
+        .sock-msgs { margin-left: auto; color: #64748b; }
+        .sock-why { font-size: 11px; color: #b91c1c; word-break: break-word; }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="dating-page">
+
+    <div class="dating-head">
+        <h1>🔌 Сокеты</h1>
+        <select id="siteSelect" title="Сайт, по которому смотрим сокеты"></select>
+        <button type="button" class="dating-btn" id="reloadBtn" title="Спросить заново">⟳</button>
+        <span class="dating-hint" id="hint"></span>
+    </div>
+
+    <div class="pane">
+        <div class="pane-head">Соединения с чатом сайта</div>
+        <div class="pane-body" id="body">
+            <div class="sock-empty">Гружу…</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+    import {getData} from '{{ static_url('js/api.js') }}';
+    import {showNotification} from '{{ static_url('js/notification.js') }}';
+    import {esc} from '{{ static_url('js/dating_view.js') }}';
+    import {DATING_SITE_KEY, datingSiteFill} from '{{ static_url('js/dating_site.js') }}';
+
+    const BASE = '{{ base }}';
+
+    const siteEl = document.getElementById('siteSelect');
+    const hintEl = document.getElementById('hint');
+    const bodyEl = document.getElementById('body');
+
+    // Круг обновления. Снимок пишет воркер раз в минуту, и чаще спрашивать нечего;
+    // 15 секунд — чтобы страница, открытая во время разбора, не отставала на минуту.
+    const RELOAD_MS = 15000;
+
+    async function load() {
+        let data;
+        try {
+            data = (await getData(`${BASE}/api/dating/socket`
+                                  + `?site_id=${Number(siteEl.value) || 0}`)).result || {};
+        } catch (e) {
+            bodyEl.innerHTML = `<div class="sock-empty">Не пришло: ${esc(e.message)}</div>`;
+            return;
+        }
+
+        const sockets = data.sockets || [];
+
+        // ⚠ «Воркер молчит» и «сокетов нет» — разные ответы, и путать их дорого:
+        // в первом случае разбираться надо со сменой, во втором с анкетами.
+        if (!data.alive) {
+            bodyEl.innerHTML = '<div class="sock-empty">Воркер не отчитывался: снимка нет. '
+                + 'Смена держателя не идёт или только что поднялась — '
+                + 'подождите минуту.</div>';
+            return;
+        }
+
+        if (!sockets.length) {
+            bodyEl.innerHTML = '<div class="sock-empty">У этого сайта нет анкет.</div>';
+            return;
+        }
+
+        bodyEl.innerHTML = summary(data)
+            + '<div class="sock-grid">' + sockets.map(card).join('') + '</div>';
+    }
+
+    function summary(data) {
+        const всего = (data.sockets || []).length;
+        // «Держится из готовых», а не «из всех»: анкета без адреса сокета — не
+        // недостача, у сайта без чат-сокета его нет ни у одной.
+        const мало = data.ready && data.held < data.ready;
+
+        return '<div class="sock-sum">'
+            + `<span>Держится <b>${data.held}</b> из <b>${data.ready}</b> готовых`
+            + ` · анкет ${всего}</span>`
+            + (мало ? '<span class="warn">часть готовых не подключена</span>' : '')
+            + `<span style="margin-left:auto">снимку ${Math.max(0, data.age_sec)} с`
+            + (data.shift_left ? ` · смене осталось ${Math.round(data.shift_left / 60)} мин` : '')
+            + '</span>'
+            + '</div>';
+    }
+
+    function card(s) {
+        // Три состояния, а не два: держится / есть адрес, но не держится / адреса
+        // нет вовсе. Последнее — норма у сайта без чат-сокета, и красным его
+        // красить нельзя.
+        const вид = s.alive ? 'live' : (s.has_url ? 'idle' : 'none');
+        const состояние = s.alive ? 'соединение живо'
+                        : (s.has_url ? 'адрес есть, не подключено'
+                                     : (s.has_state ? 'адрес сокета не снят'
+                                                    : 'входа не было'));
+
+        return `<div class="sock-card ${вид}">`
+            + '<div class="sock-who">'
+            + `<span class="sock-id">#${s.profile_id}</span>`
+            + `<span class="sock-login" title="${esc(s.login)}">${esc(s.login)}</span>`
+            + '</div>'
+            + (s.ws_url ? `<div class="sock-url" title="адрес обрезан: в нём токен сессии">`
+                          + `${esc(s.ws_url)}</div>` : '')
+            + '<div class="sock-row">'
+            + `<span class="sock-state">${esc(состояние)}</span>`
+            + (s.held ? `<span class="sock-msgs">${s.messages} сообщ. за смену</span>` : '')
+            + '</div>'
+            + (s.last_error ? `<div class="sock-why">${esc(s.last_error.slice(0, 120))}</div>` : '')
+            + '</div>';
+    }
+
+    siteEl.addEventListener('change', () => {
+        localStorage.setItem(DATING_SITE_KEY, siteEl.value);
+        load();
+    });
+
+    document.getElementById('reloadBtn').addEventListener('click', load);
+
+    (async () => {
+        try {
+            await datingSiteFill(siteEl, BASE);
+        } catch (e) {
+            siteEl.innerHTML = '<option value="">сайты не пришли</option>';
+            showNotification('Список сайтов не пришёл: ' + e.message, 'error');
+        }
+        hintEl.textContent = 'обновляется само';
+        await load();
+        setInterval(() => { if (!document.hidden) load(); }, RELOAD_MS);
+    })();
+</script>
+{% endblock %}

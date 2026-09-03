@@ -73,6 +73,17 @@ async def dashboard_dating_site(request: Request, user: AuthUser = Depends(auth_
     return await _dashboard_page(request, user, 'admin/dating_site.html')
 
 
+@router.get('/admin/dating/socket', response_class=HTMLResponse, include_in_schema=False)
+async def dashboard_dating_socket(request: Request, user: AuthUser = Depends(auth_required)):
+    """Страница «Сокеты»: кто держит соединение с чатом сайта прямо сейчас.
+
+    Отвечает на вопрос «почему анкета молчит», который по базе не разобрать: адреса
+    сокета нет вовсе, адрес есть но соединение рвётся, соединение живо но сообщений
+    нет — состояния разные, а в анкете всё выглядит одинаково.
+    """
+    return await _dashboard_page(request, user, 'admin/dating_socket.html')
+
+
 @router.get('/admin/setting', response_class=HTMLResponse, include_in_schema=False)
 async def dashboard_setting(request: Request, user: AuthUser = Depends(auth_admin_required)):
     """Значения настроек: ключ и значение, правятся на месте. Только админу —
