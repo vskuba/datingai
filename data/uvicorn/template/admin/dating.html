@@ -270,18 +270,6 @@
         }
         .prof-line { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
 
-        .prof-field { display: flex; flex-direction: column; gap: 2px; }
-        .prof-field > span { font-size: 10px; color: #94a3b8; }
-        .prof-field input, .prof-field select {
-            padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 6px;
-            font-family: inherit; font-size: 12px; color: #374151; background: #fff;
-        }
-        .prof-field input:focus, .prof-field select:focus { outline: none; border-color: #c7d2fe; }
-
-        /* Галка читается вместе с подписью, поэтому подпись и есть кнопка. */
-        .prof-check { display: flex; align-items: center; gap: 5px; font-size: 12px;
-                      color: #374151; cursor: pointer; user-select: none; }
-
         .prof-card-note { font-size: 11px; color: #94a3b8; }
         .prof-card-note.bad { color: #b91c1c; }
 
@@ -923,15 +911,6 @@
         return null;
     }
 
-    // Настройки выбранной анкеты — содержимое средней колонки. Формы две, потому
-    // что и ручки две: учётка правится целиком (`PUT /{id}`), автоответ — отдельно
-    // (`PUT /{id}/auto`), и он включается сразу, разбирая накопившееся. Слить их
-    // в одну кнопку «Сохранить» значило бы запускать разбор писем при правке
-    // пометки.
-    function field(label, control) {
-        return `<label class="prof-field"><span>${esc(label)}</span>${control}</label>`;
-    }
-
     // Долгое действие: вход, отключение — минуты живого браузера.
     //
     // ⚠ Запираем **все** кнопки блока, а не одну нажатую: пока идёт вход, «Удалить»
@@ -977,95 +956,13 @@
             + `${esc(row.last_error || state)}</span>`
             + '</div>'
 
-            + '<form class="prof-form" data-form="save">'
-            + '<h4>Учётка</h4>'
-            + '<div class="prof-line">'
-            + field('Логин', `<input name="login" value="${esc(row.login)}" required`
-                           + ' maxlength="190" spellcheck="false" autocomplete="off" size="26">')
-            + field('Пароль', '<input name="password" type="password" placeholder="не менять"'
-                            + ' maxlength="255" autocomplete="new-password" size="14">')
-            + field('Роль', '<select name="role">'
-                          + `<option value="lady"${row.role !== 'man' ? ' selected' : ''}>женская</option>`
-                          + `<option value="man"${row.role === 'man' ? ' selected' : ''}>мужская</option>`
-                          + '</select>')
-            + field('Пометка', `<input name="note" value="${esc(row.note || '')}"`
-                             + ' maxlength="255" size="24">')
-            + '<button type="submit" class="dating-btn primary">Сохранить</button>'
-            + '</div>'
-            // Пустой пароль — «не трогать», а не «стереть»: форма его не
-            // показывает, и по пустому полю не отличить одно от другого.
-            + '<span class="prof-card-note">Пароль пустым — прежний остаётся.'
-            + (row.has_password ? '' : ' Сейчас пароль не задан: войти под анкетой нечем.')
-            + '</span>'
-            + '</form>'
-
-            + '<form class="prof-form" data-form="auto">'
-            + '<h4>Автоответ</h4>'
-            + '<div class="prof-line">'
-            + '<label class="prof-check"><input type="checkbox" name="auto_answer"'
-            + `${row.auto_answer ? ' checked' : ''}>отвечает сама</label>`
-            + field('Кому отвечать', `<input name="auto_answer_only"`
-                                   + ` value="${esc(row.auto_answer_only || '')}"`
-                                   + ' maxlength="500" spellcheck="false" autocomplete="off"'
-                                   + ' placeholder="всем" size="22">')
-            + '<button type="submit" class="dating-btn primary">Сохранить</button>'
-            + '</div>'
-            // Каждый ответ стоит дважды — прогон LLM и платное сообщение на сайте,
-            // — поэтому «всем» у анкеты с сотнями диалогов это рассылка.
-            + '<span class="prof-card-note">Номера собеседниц через запятую;'
-            + ' пусто — отвечать всем.</span>'
-            + '</form>'
-
 
             + '</div>';
     }
 
     function editBind(row) {
-        profileEl.querySelector('[data-form="save"]').addEventListener('submit', (e) => {
-            e.preventDefault();
-            accountSave(row, e.target);
-        });
-        profileEl.querySelector('[data-form="auto"]').addEventListener('submit', (e) => {
-            e.preventDefault();
-            profileAuto(row, e.target);
-        });
         profileEl.querySelector('.login-btn').addEventListener('click', () => profileLogin(row));
         profileEl.querySelector('.off-btn').addEventListener('click', () => profileDisconnect(row));
-    }
-
-    async function accountSave(row, form) {
-        const data = new FormData(form);
-        try {
-            await putData(`${BASE}/api/dating/profile/${row.id}`, {
-                site_id: row.site_id,
-                login: String(data.get('login') || '').trim(),
-                password: String(data.get('password') || ''),
-                note: String(data.get('note') || '').trim(),
-                role: String(data.get('role') || 'lady'),
-            });
-            showNotification('Учётка сохранена', 'success');
-        } catch (e) {
-            showNotification('Не сохранилось: ' + e.message, 'error');
-            return;
-        }
-
-        await profilesLoad();
-    }
-
-    async function profileAuto(row, form) {
-        const data = new FormData(form);
-        try {
-            await putData(`${BASE}/api/dating/profile/${row.id}/auto`, {
-                auto_answer: data.get('auto_answer') !== null,
-                auto_answer_only: String(data.get('auto_answer_only') || '').trim(),
-            });
-            showNotification('Автоответ сохранён', 'success');
-        } catch (e) {
-            showNotification('Не сохранилось: ' + e.message, 'error');
-            return;
-        }
-
-        await profilesLoad();
     }
 
     // Настоящий вход: сценарий проходит форму в живом браузере, снимает состояние
