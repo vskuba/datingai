@@ -16,10 +16,16 @@ from src.dating.dating_ready import (dating_ready_check, dating_ready_transport,
 
 # Учётка в разных состояниях. `password` — непустая строка: сама пара не важна,
 # важно, есть ли чем войти.
+#
+# ⚠ `password_source` обязателен: откуда пароль, анкета решает явно
+# (`dating.md`, §5.12), и строка без него читается как «берём общий агентский» —
+# а его в этих проверках нет.
 LOGGED = {'enabled': 1, 'storage_state': '{"cookies": []}', 'ws_url': 'wss://site/ws',
-          'password': 'секрет'}
-NO_LOGIN = {'enabled': 1, 'storage_state': None, 'ws_url': '', 'password': 'секрет'}
-NO_PASSWORD = {'enabled': 1, 'storage_state': None, 'ws_url': '', 'password': ''}
+          'password': 'секрет', 'password_source': 'own'}
+NO_LOGIN = {'enabled': 1, 'storage_state': None, 'ws_url': '',
+            'password': 'секрет', 'password_source': 'own'}
+NO_PASSWORD = {'enabled': 1, 'storage_state': None, 'ws_url': '',
+               'password': '', 'password_source': 'own'}
 
 
 class TestScenarioTransport:
@@ -33,11 +39,27 @@ class TestScenarioTransport:
         assert state['can'] is True and state['why'] == ''
 
     def test_site_password_works_too(self):
-        """Общий агентский пароль сайта годится: анкеты заводят оптом, своя пара
-        есть не у каждой."""
-        state = dating_ready_check(NO_PASSWORD, 'scenario', site_password='общий')
+        """Общий агентский пароль сайта годится — когда анкета его и выбрала.
+
+        ⚠ Выбор явный: `password_source = 'site'`. Прежде общий подставлялся сам,
+        если своего нет, и по анкете было не видно, под каким паролем она работает.
+        """
+        state = dating_ready_check({**NO_PASSWORD, 'password_source': 'site'},
+                                   'scenario', site_password='общий')
 
         assert state['can'] is True
+
+    def test_own_choice_does_not_fall_back_to_site(self):
+        """⚠ Выбран свой, а поле пусто — общий **не подставляется**.
+
+        Подстановка вернула бы ту же неявность, от которой уходим, только теперь
+        вопреки явно сделанному выбору: человек сказал «свой», а анкета пошла бы
+        под чужим.
+        """
+        state = dating_ready_check(NO_PASSWORD, 'scenario', site_password='общий')
+
+        assert state['can'] is False
+        assert 'свой' in state['why']
 
     def test_no_password_at_all_is_refused(self):
         """Нечем войти — и причина сказана словами: без неё панель говорит «не

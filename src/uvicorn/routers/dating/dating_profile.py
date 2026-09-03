@@ -81,6 +81,7 @@ class DatingProfileResponse(BaseModel):
     contacts: int = Field(0, description='Сколько собеседниц писало в чат')
     unread_chat: int = Field(0, description='Непрочитанных сообщений чата — новые с прошлого просмотра')
     enabled: bool = Field(True, description='Ведём ли анкету: выключенную воркер не трогает вовсе')
+    password_source: str = Field('site', description='Откуда пароль: `site` — общий, `own` — свой')
     auto_answer: bool = Field(True, description='Анкета отвечает сама, пока подключена')
     auto_answer_only: str = Field('', description='Кому отвечать: номера через запятую; пусто — всем')
     status: str = Field('offline', description='online | offline | error — для индикатора')
@@ -123,6 +124,7 @@ async def dating_profile_list(site_id: int = 0,
         await db.execute(
             'SELECT g.id, g.site_id, g.login, g.note, g.role, g.status, g.unread, g.last_seen_at, '
             '       g.last_error, g.profile, g.auto_answer, g.auto_answer_only, g.enabled, '
+            '       g.password_source, '
             '       g.keep_online, g.relogin_since, g.relogin_next_at, NOW() AS db_now, '
             '       g.password <> %s AS has_password, '
             '       g.storage_state IS NOT NULL AS has_state, '

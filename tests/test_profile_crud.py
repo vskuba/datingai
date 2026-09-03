@@ -12,6 +12,8 @@
 
 import uuid
 
+from mysql_.mysql_ import mysql_get_db_async
+
 import pytest
 from fastapi import HTTPException
 
@@ -209,14 +211,27 @@ class TestProfileLogin:
     осталась на месте и доходит до модуля входа."""
 
     async def test_login_without_password_is_422(self, rhapsody):
-        """Учётка без пароля — 422 внятной фразой, а не сбоем.
+        """Учётка, которой нечем войти, — 422 внятной фразой, а не сбоем.
 
         Заодно это проверка, что ручка действительно зовёт модуль входа: фраза
         приходит оттуда, из `DatingLoginError`.
+
+        ⚠ **Выбираем свой пароль и оставляем его пустым.** Прежде хватало пустого
+        поля, но теперь источник задаётся явно (`dating.md`, §5.12): анкета с
+        `site` берёт общий агентский пароль сайта и до этой проверки не доходит —
+        она проходит дальше, к сценарию входа.
+
+        Это и есть смена поведения, которую тест поймал: раньше вход брал только
+        свой пароль анкеты, в отличие от отправки и списков.
         """
         from src.uvicorn.routers.dating.dating_profile_action import DatingProfileLogin
 
         profile_id = await _create(f'test-{uuid.uuid4().hex[:10]}', password='')
+        async with mysql_get_db_async() as db:
+            await db.execute("UPDATE dating_profile SET password_source = 'own'"
+                             ' WHERE id = %s', (profile_id,))
+            await db.connection.commit()
+
         try:
             with pytest.raises(HTTPException) as refusal:
                 await dating_profile_action_login(profile_id, DatingProfileLogin(),

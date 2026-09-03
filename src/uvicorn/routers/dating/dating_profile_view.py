@@ -275,6 +275,10 @@ async def dating_profile_view_card(profile_id: int, page: int = 1,
                        # Расписание — в настройках анкеты на «Анкетах», рядом с
                        # выключателем: оба про то, как её ведут.
                        'schedule': dating_schedule_load(profile.get('schedule')),
+                       # Откуда пароль — блоку «Пароль» на странице. ⚠ Сам пароль
+                       # не отдаём никогда: только признак, что он задан.
+                       'password_source': str(profile.get('password_source') or 'site'),
+                       'has_password': bool(str(profile.get('password') or '')),
                        # Почему расписание не действует — словами. Считает сервер:
                        # правило одно («только у включённой»), и повторять его на
                        # странице значило бы два места, которые разойдутся.

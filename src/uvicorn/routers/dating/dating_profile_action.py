@@ -83,6 +83,56 @@ class DatingProfileAuto(BaseModel):
         description='Кому отвечать: номера через запятую. Пусто — всем; не передано — как было')
 
 
+class DatingProfilePassword(BaseModel):
+    """Откуда у анкеты пароль и, если свой, какой."""
+
+    password_source: str = Field(..., description='`site` — общий агентский, `own` — свой')
+    password: str = Field('', max_length=255,
+                          description='Свой пароль; пусто — оставить прежний')
+
+
+@router.put('/{profile_id}/password', include_in_schema=False)
+async def dating_profile_action_password(profile_id: int, data: DatingProfilePassword,
+                                         user=Depends(auth_required)):
+    """Меняет источник пароля и сам пароль анкеты.
+
+    ⚠ **Пустой пароль означает «оставить прежний», а не «стереть».** Форма его не
+    показывает (в поле маска), и по пустому полю не отличить «не трогал» от
+    «хочу стереть». Отсюда правило: стирается пароль только сменой источника на
+    общий — там он и так перестаёт использоваться.
+
+    ⚠ **Своё поле при переходе на общий не чистим.** Человек переключается туда и
+    обратно, проверяя, каким паролем анкета войдёт; стёртое поле означало бы, что
+    обратный переход требует вписать пароль заново — а он его может и не помнить.
+    """
+    profile = await dating_profile_row(profile_id)
+
+    source = str(data.password_source or '').strip()
+    if source not in ('site', 'own'):
+        raise HTTPException(status_code=422, detail='источник пароля: `site` или `own`')
+
+    password = str(data.password or '')
+
+    async with mysql_get_db_async() as db:
+        if password:
+            await db.execute('UPDATE dating_profile SET password_source = %s, password = %s '
+                             ' WHERE id = %s', (source, password, profile_id))
+        else:
+            await db.execute('UPDATE dating_profile SET password_source = %s WHERE id = %s',
+                             (source, profile_id))
+        await db.connection.commit()
+
+    await dating_log_write(
+        profile_id, 'info',
+        ('Пароль: свой' if source == 'own' else 'Пароль: общий агентский из настроек сайта')
+        + (', значение изменено' if password else ''))
+
+    row = await dating_profile_row(profile_id)
+
+    return {'result': {'password_source': source,
+                       'has_password': bool(str(row.get('password') or ''))}}
+
+
 class DatingProfileSchedule(BaseModel):
     """Расписание анкеты: смены суток целиком."""
 

@@ -281,6 +281,23 @@
         .prof-card-note { font-size: 11px; color: #94a3b8; }
         .prof-card-note.bad { color: #b91c1c; }
 
+        /* ── Пароль анкеты ───────────────────────────────────────────────────
+           Ширина как у расписания: блоки стоят друг под другом, и разная ширина
+           читалась бы как разные уровни вложенности. */
+        .pass { max-width: 520px; padding: 4px 12px 12px; }
+        .pass-title {
+            padding: 8px 0 6px; font-size: 10px; font-weight: 700; color: #94a3b8;
+            text-transform: uppercase; letter-spacing: .04em;
+        }
+        .pass-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .pass-src, .pass-value {
+            padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 6px;
+            font-family: inherit; font-size: 12px; color: #374151; background: #fff;
+        }
+        .pass-value { flex: 1 1 160px; min-width: 0; }
+        .pass-src:focus, .pass-value:focus { outline: none; border-color: #c7d2fe; }
+        .pass-note { margin-top: 6px; font-size: 11px; color: #94a3b8; line-height: 1.4; }
+
         /* ── Настройки анкеты в правой колонке ───────────────────────────────
            Пришли на место списка собеседниц: тот живёт на «Профилях», в окне
            переписки, и держать его в двух местах значило расходиться в мелочах. */
@@ -1062,6 +1079,80 @@
         });
     }
 
+    // ── Пароль анкеты ────────────────────────────────────────────────────────
+    //
+    // ⚠ **Источник задаётся явно, а не выводится из «есть ли своё поле».** Прежде
+    // правило было «свой, если задан, иначе общий», и у него нет состояния: по
+    // анкете не видно, под каким паролем она работает. Человек стирал своё поле,
+    // чтобы «вернуться к общему», и получал анкету, молча ходящую под чужим
+    // паролем, если общий кто-то поменял.
+    function passwordBlock(data) {
+        const свой = (data.password_source || 'site') === 'own';
+
+        return '<form class="pass" data-form="password">'
+            + '<div class="pass-title">Пароль</div>'
+            + '<div class="pass-line">'
+            + '<select class="pass-src">'
+            + `<option value="site"${свой ? '' : ' selected'}>Общий агентский сайта</option>`
+            + `<option value="own"${свой ? ' selected' : ''}>Свой у этой анкеты</option>`
+            + '</select>'
+            // Поле только у своего пароля: при общем оно ни на что не влияет, а
+            // видимое поле, которое ничего не делает, читается как поломка.
+            + (свой
+                ? '<input type="password" class="pass-value" autocomplete="new-password"'
+                  + ` maxlength="255" placeholder="${data.has_password ? 'не менять' : 'впишите пароль'}">`
+                  + '<button type="submit" class="dating-btn primary pass-save">Сохранить</button>'
+                : '')
+            + '</div>'
+            + `<div class="pass-note">${esc(passwordNote(свой, data.has_password))}</div>`
+            + '</form>';
+    }
+
+    function passwordNote(свой, есть) {
+        if (!свой) {
+            return 'Берётся из настроек сайта («Пароль анкет для API»). Один на все '
+                 + 'анкеты сайта — меняется там же.';
+        }
+
+        return есть
+            ? 'Свой пароль задан. Пустое поле — прежний остаётся.'
+            : '⚠ Свой пароль выбран, но не задан: войти нечем.';
+    }
+
+    function passwordBind() {
+        const form = profileEl.querySelector('[data-form="password"]');
+        if (!form) return;
+
+        // Смена источника сохраняется сразу: это выбор, а не набор текста, и
+        // кнопка после него была бы лишним шагом. Пароль — по кнопке: его
+        // печатают, и сохранять на каждую букву незачем.
+        form.querySelector('.pass-src').addEventListener('change', (e) =>
+            passwordSave(e.target.value, ''));
+
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const value = form.querySelector('.pass-value');
+            if (!value || !value.value) return say('впишите пароль', true);
+
+            passwordSave('own', value.value);
+        });
+    }
+
+    async function passwordSave(source, password) {
+        try {
+            await putData(`${BASE}/api/dating/profile/${currentId}/password`,
+                          {password_source: source, password});
+            say(password ? 'пароль изменён'
+                         : (source === 'own' ? 'берём свой пароль анкеты'
+                                             : 'берём общий пароль сайта'));
+            await profileLoad();
+            // Список слева показывает «войти нечем» — источник на это влияет.
+            await profilesLoad();
+        } catch (e) {
+            say('не сохранилось: ' + e.message, true);
+        }
+    }
+
     // ── Настройки анкеты ─────────────────────────────────────────────────────
     //
     // Первый выключатель — сама анкета. ⚠ Не то же, что «ai-ответ» на «Профилях»:
@@ -1086,6 +1177,7 @@
             // ⚠ Расписание переехало сюда с «Профилей»: там оно стояло во вкладке
             // «Настройки» рядом с чтением переписки, хотя говорит о том же, о чём
             // выключатель, — как эту анкету ведут.
+            + passwordBlock(data)
             + scheduleBlock(row)
             // Удаление — внизу и отдельной полосой: это единственное здесь
             // необратимое действие, и стоять рядом с галочками ему нельзя.
@@ -1136,6 +1228,7 @@
 
         // Обработчики расписания: блок перерисовывается вместе с настройками,
         // поэтому вешаются каждый раз — узлы новые.
+        passwordBind();
         scheduleBind(profileEl, row);
     }
 

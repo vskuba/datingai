@@ -28,6 +28,8 @@ from src.rhapsody.rhapsody_api import (rhapsody_api_error_write,
 from src.dating.dating_json import dating_json_load
 from src.dating.dating_log import dating_log_write
 from src.dating.dating_presence import dating_presence_probe
+from src.dating.dating_ready import dating_password_pick
+from src.uvicorn.routers.dating.dating_site import dating_site_setting
 from src.dating.dating_scenario import dating_scenario_run
 from src.dating.dating_profile_page import dating_profile_page_read
 from src.dating.dating_ws import dating_ws_capture
@@ -41,6 +43,9 @@ class DatingLoginError(RuntimeError):
 # по-разному, поэтому список, а не одно имя.
 DATING_LOGIN_LOGIN_KEYS = ('login', 'username', 'email', 'user')
 DATING_LOGIN_PASSWORD_KEYS = ('password', 'pass', 'pwd')
+
+# Настройка сайта с общим агентским паролем — та же, что у отправки и у списков.
+DATING_LOGIN_PASSWORD_SETTING = 'api_password'
 
 
 async def dating_login_run(profile_id: int, scenario_id: int = 0, session_id: str = '') -> dict:
@@ -60,8 +65,19 @@ async def dating_login_run(profile_id: int, scenario_id: int = 0, session_id: st
     """
     profile = await _profile_row(profile_id)
     site = await _site_check(int(profile['site_id']))
-    if not str(profile.get('password') or ''):
-        raise DatingLoginError('у учётки не задан пароль')
+
+    # ⚠ **Вход брал только свой пароль анкеты** — в отличие от отправки и списков,
+    # которые падали на общий агентский. Расхождение было тихим: анкета работала
+    # общим паролем везде, кроме входа, где отвечала «пароль не задан».
+    #
+    # Теперь правило одно на всех: откуда пароль, решает сама анкета
+    # (`password_source`), а выбор делает `dating_password_pick`.
+    password = dating_password_pick(
+        profile, str(await dating_site_setting(int(profile['site_id']),
+                                               DATING_LOGIN_PASSWORD_SETTING)))
+    if not password:
+        raise DatingLoginError('нечем войти: пароль не задан — проверьте блок «Пароль» '
+                               'у анкеты')
 
     scenario = await _scenario_login(int(profile['site_id']), scenario_id)
     if not scenario:
@@ -81,7 +97,7 @@ async def dating_login_run(profile_id: int, scenario_id: int = 0, session_id: st
         await dating_log_write(profile_id, 'info', f'Прежних вкладок закрыто: {closed}')
 
     session_id = session_id or await dating_login_session_open(site, profile['login'])
-    secrets = {name: (profile['login'] if name in DATING_LOGIN_LOGIN_KEYS else profile['password'])
+    secrets = {name: (profile['login'] if name in DATING_LOGIN_LOGIN_KEYS else password)
                for name in scenario['keys']}
 
     await dating_log_write(profile_id, 'info', f"Прохожу форму входа сценарием «{scenario['name']}»")

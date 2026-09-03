@@ -37,6 +37,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_online import dating_online_check
+from src.dating.dating_ready import dating_password_pick
 from src.dating.dating_scenario import dating_scenario_run
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
                                        rhapsody_api_site_variable)
@@ -223,14 +224,14 @@ async def _send_scenario(profile: dict, to_uid: str, text: str, message_uid: str
     if not login_url:
         return _fail(f'у сайта нет переменной «{DATING_SEND_LOGIN_URL_VAR}»')
 
-    # Пароль анкеты: свой, если задан, иначе общий агентский из настройки сайта.
-    # Тот же порядок и по той же причине, что у списков собеседников
-    # (`dating_people.py`): общий заводят оптом, и окажись он сильнее, анкета со
-    # своей парой молча ходила бы под чужим паролем.
-    password = str(profile.get('password') or '').strip() or \
-        str(await dating_site_setting(site_id, DATING_SEND_PASSWORD_SETTING)).strip()
+    # Откуда пароль — решает сама анкета (`password_source`). ⚠ Правило одно на
+    # всех путях: `dating_password_pick`. Две копии выбора разошлись бы в день,
+    # когда правило поменяют, и половина системы ходила бы под другим паролем.
+    password = dating_password_pick(
+        profile, str(await dating_site_setting(site_id, DATING_SEND_PASSWORD_SETTING)))
     if not password:
-        return _fail('нечем войти на сайт: нет пароля анкеты и общего пароля сайта')
+        return _fail('нечем войти на сайт: пароль не задан — проверьте блок «Пароль» '
+                     'у анкеты')
 
     try:
         scenario = await rhapsody_api_scenario_find(site_id, DATING_SEND_SCENARIO)

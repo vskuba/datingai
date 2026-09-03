@@ -59,6 +59,29 @@ DATING_READY_PASSWORD_SETTING = 'api_password'
 DATING_READY_NEEDS_LOGIN = {'ws', 'http'}
 
 
+def dating_password_pick(profile: dict, site_password: str = '') -> str:
+    """Пароль анкеты по её настройке: свой или общий агентский.
+
+    ⚠ **Источник задаёт анкета явно** (`password_source`), а не правило «свой, если
+    задан». Прежнее правило было удобным, но у него нет состояния: по анкете не
+    видно, под каким паролем она работает. Человек стирал своё поле, чтобы
+    «вернуться к общему», и получал анкету, молча ходящую под чужим паролем, если
+    общий кто-то поменял.
+
+    ⚠ **Запасного пути нет.** Выбран `own`, а поле пусто — возвращаем пустоту, а не
+    подставляем общий: подстановка вернула бы ту же неявность, от которой и уходим,
+    только теперь вопреки явно сделанному выбору.
+
+    Returns:
+        str: пароль либо пустая строка — «войти нечем», и вызывающий скажет об этом
+        человеку словами.
+    """
+    if str(profile.get('password_source') or 'site') == 'own':
+        return str(profile.get('password') or '').strip()
+
+    return str(site_password or '').strip()
+
+
 def dating_ready_check(profile: dict, transport: str, site_password: str = '') -> dict:
     """Может ли панель сейчас работать с анкетой.
 
@@ -91,14 +114,16 @@ def dating_ready_check(profile: dict, transport: str, site_password: str = '') -
 
     # Сценарий: вход он сделает сам, но пароль нужен.
     #
-    # Свой пароль анкеты сильнее общего — тот же порядок, что у отправки и у
-    # списков собеседников: общий заводят оптом, и окажись он сильнее, анкета со
-    # своей парой молча ходила бы под чужим паролем.
-    if str(profile.get('password') or '').strip() or str(site_password or '').strip():
+    # Откуда пароль — решает сама анкета (`password_source`), и правило одно на
+    # всех: `dating_password_pick`.
+    if dating_password_pick(profile, site_password):
         return {'can': True, 'why': ''}
 
+    свой = str(profile.get('password_source') or 'site') == 'own'
+
     return {'can': False,
-            'why': 'нет пароля: сценарию нечем войти на сайт'}
+            'why': ('выбран свой пароль, но он не задан' if свой
+                    else 'нет общего пароля сайта: впишите его в настройках сайта')}
 
 
 async def dating_ready_write(profile_id: int, state: dict) -> None:
