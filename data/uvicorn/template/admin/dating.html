@@ -968,8 +968,10 @@
                                           : 'у учётки не задан пароль'}">Войти</button>`
             + `<button type="button" class="dating-btn off-btn"${row.has_state ? '' : ' disabled'}`
             + ' title="Выход на сайте, закрытие вкладок, снятие с автовхода">Отключить</button>'
-            + '<button type="button" class="dating-btn danger del-btn"'
-            + ' title="Удалить учётку вместе с перепиской и журналом">Удалить</button>'
+            // ⚠ Кнопки «Удалить» здесь нет: удаление живёт внизу блока, отдельной
+            // полосой («Удалить анкету»). Две кнопки одного действия в одной
+            // колонке — это не выбор, а ловушка: верхняя стоит вплотную к
+            // «Отключить», и промах мыши стоил бы всей переписки.
             + '</div>'
             + `<span class="prof-card-note${row.status === 'error' ? ' bad' : ''}">`
             + `${esc(row.last_error || state)}</span>`
@@ -1029,8 +1031,6 @@
         });
         profileEl.querySelector('.login-btn').addEventListener('click', () => profileLogin(row));
         profileEl.querySelector('.off-btn').addEventListener('click', () => profileDisconnect(row));
-        profileEl.querySelector('.del-btn')
-                 .addEventListener('click', () => profileDelete());
     }
 
     async function accountSave(row, form) {
@@ -1135,8 +1135,9 @@
             + '<div class="prof-set-danger">'
             + '<button type="button" class="dating-btn danger" id="deleteBtn">'
             + 'Удалить анкету</button>'
-            + '<i>Уходит и переписка: она привязана к анкете. Учётка на сайте '
-            + 'остаётся — удаляется только то, что о ней знает панель.</i>'
+            + '<i>Уходит вся переписка, собеседники и журнал: они привязаны к '
+            + 'анкете. Учётка на сайте остаётся — удаляется только то, что о ней '
+            + 'знает панель.</i>'
             + '</div>'
             + '</div>';
     }
