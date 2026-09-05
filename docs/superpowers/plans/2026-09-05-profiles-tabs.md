@@ -594,15 +594,20 @@ ADMIN_PASSWORD=$(grep '^ADMIN_PASSWORD=' .env | cut -d= -f2-) \
 
 на:
 
+⚠ **Имя переменной — `tab`, а не `rows`.** Ниже в той же функции уже объявлен
+`const rows = found.slice(...)` (строка 941): второй `const rows` в одной области
+даёт `SyntaxError`, и вся страница перестаёт работать. Сюита этого не поймает —
+она ходит по HTTP и проверяет текст разметки, а не исполняет скрипт.
+
 ```javascript
     function tablePaint(tries = 3) {
-        const rows = tabRows();
+        const tab = tabRows();
         const found = shownRows();
         // ⚠ Считаем **внутри вкладки**: знаменатель — её список, а не весь сайт.
         // Иначе на рассылке при семи анкетах с флагом и 64 на сайте счётчик
         // сказал бы «7 из 64» — то есть выдал бы отбор за поиск.
-        countEl.textContent = found.length === rows.length
-            ? rows.length : `${found.length} из ${rows.length}`;
+        countEl.textContent = found.length === tab.length
+            ? tab.length : `${found.length} из ${tab.length}`;
 
         // ⚠ Три разных «пусто», и путать их нельзя: причины разные, и общая
         // строка отправила бы человека не туда. Порядок — от самой общей причины
@@ -613,7 +618,7 @@ ADMIN_PASSWORD=$(grep '^ADMIN_PASSWORD=' .env | cut -d= -f2-) \
             pagerRender(pagerEl, 0, 0, () => {});
             return;
         }
-        if (!rows.length) {
+        if (!tab.length) {
             // Отбор вкладки не пропустил никого. Сейчас так бывает только у
             // рассылки — у остальных вкладок отбор пропускает всех, и сюда они
             // не доходят.
