@@ -84,7 +84,7 @@ class DatingProfileResponse(BaseModel):
     password_source: str = Field('site', description='Откуда пароль: `site` — общий, `own` — свой')
     auto_answer: bool = Field(True, description='Анкета отвечает сама, пока подключена')
     auto_answer_only: str = Field('', description='Кому отвечать: номера через запятую; пусто — всем')
-    mailing_on: bool = Field(False, description='Шлём ли от анкеты рассылку писем')
+    mailing_on: bool = Field(False, description='Слать ли от анкеты рассылку писем')
     status: str = Field('offline', description='online | offline | error — для индикатора')
     unread: int = Field(0, description='Непрочитанных на момент последнего опроса; -1 — не спрашивали')
     last_seen_at: datetime | None = Field(None, description='Когда сайт последний раз подтвердил вход')
