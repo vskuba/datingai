@@ -46,3 +46,25 @@ class TestTabsAboveColumns:
 
         for tab in ('chat', 'mail', 'mail_in', 'event'):
             assert f'data-tab="{tab}"' in page, f'вкладка {tab} пропала'
+
+
+class TestTabStateIsWired:
+    """Состояние вкладок привязано, а не только нарисовано.
+
+    ⚠ Урок предыдущей работы: разметка без привязки — вкладка нарисованная и
+    мёртвая. Щёлкнуть по ней сюита не может (браузера нет), поэтому сторожим
+    наличие самого механизма: карты отборов и словаря выбранных анкет.
+    """
+
+    async def test_tab_filter_exists(self, auth_client):
+        """Отбор вкладки: без него список слева один на все четыре занятия."""
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'TAB_ROWS' in page, 'карты отборов нет — списки вкладок одинаковы'
+        assert 'mailing_on' in page, 'отбор рассылки не смотрит на флаг'
+
+    async def test_open_by_tab_exists(self, auth_client):
+        """Своя выбранная анкета у каждой вкладки."""
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'openByTab' in page, 'выбранная анкета общая на все вкладки'
