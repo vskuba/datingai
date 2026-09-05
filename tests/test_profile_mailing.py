@@ -119,6 +119,26 @@ class TestMailingEndpoint:
 
         assert found['mailing_on'] is True
 
+    async def test_mailing_reaches_the_list_over_http(self, rhapsody, profile, auth_client):
+        """Тот же список, но по-настоящему по HTTP — где поле и терялось.
+
+        Соседний тест зовёт `dating_profile_list` в процессе и сериализацию
+        FastAPI обходит стороной: что вернула функция, то и получил тест. Здесь
+        ответ идёт через реальный HTTP-стек панели, и `response_model`, не
+        объявивший поле, отбрасывает его молча — без исключения, без падения,
+        просто ключа не будет в JSON. Нужны оба теста: один ловит потерю в
+        хранении, другой — потерю в сериализации.
+        """
+        await _set(profile, True)
+
+        answer = await auth_client.get(f'/api/dating/profile?site_id={SITE}')
+        assert answer.status_code == 200
+
+        rows = answer.json()['result']
+        found = next(row for row in rows if int(row['id']) == profile)
+
+        assert found['mailing_on'] is True
+
     async def test_unknown_profile_is_404(self):
         """404, а не молчаливое ничего: правка несуществующей анкеты — ошибка
         вызывающего, и знать о ней он должен."""

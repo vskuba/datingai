@@ -57,8 +57,17 @@
 ⚠ **Это отмена решения предыдущей задачи** (`2026-09-05-profile-switches-design.md`): там флаг намеренно не клали в список — «блок читает карточку, а списку он не нужен». Тогда верно, теперь нет. В комментарии к коду это писать не надо: колонка просто едет в списке, как `enabled` и `auto_answer`.
 
 **Files:**
-- Modify: `src/uvicorn/routers/dating/dating_profile.py:126` (строка `SELECT`) и `:142` (приведение к `bool`)
-- Test: `tests/test_profile_mailing.py` (новый тест в существующий класс `TestMailingEndpoint`)
+- Modify: `src/uvicorn/routers/dating/dating_profile.py:126` (строка `SELECT`), `:142` (приведение к `bool`) и модель `DatingProfileResponse` (строки 69-99)
+- Test: `tests/test_profile_mailing.py` (два новых теста в существующий класс `TestMailingEndpoint`)
+
+⚠ **Мест правки три, а не два, и третье легко пропустить.** Ручка объявлена с
+`response_model=DatingProfileListResponse` (строка 108), и FastAPI **молча
+выбрасывает** из ответа всё, чего нет в модели `DatingProfileResponse`. Колонка в
+`SELECT` без поля в модели даёт зелёный тест и пустой ответ: соседние `enabled` и
+`auto_answer` работают только потому, что в модели объявлены.
+
+⚠ Отсюда и два теста вместо одного: тест, зовущий `dating_profile_list` в процессе,
+сериализацию FastAPI минует и такой пропуск не ловит. Нужен ещё один — по HTTP.
 
 **Interfaces:**
 - Consumes: ручка `dating_profile_action_mailing` и модель `DatingProfileMailing` (уже есть); фикстура `profile` и функция `_set(profile_id, mailing_on)` из того же файла.
