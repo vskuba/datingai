@@ -74,17 +74,40 @@
            Каждая включает в себя обе: слева список анкет по своему отбору, справа
            работа с выбранной. Пока полоса жила в шапке панели, список слева был
            один на все четыре занятия — а он у них разный. */
+        /* Полоса — **сегментный переключатель**, а не строка ссылок: своя рамка,
+           белый фон и радиус, как у панелей под ней. Вкладки правят раскладку
+           целиком (обе колонки разом), и весом они должны быть под стать — прежняя
+           полоса без рамки и фона читалась подписью к странице, а не тем, что
+           можно нажать.
+
+           ⚠ `justify-self: start` — полоса по содержимому, а не во всю ширину.
+           Строка сетки у неё сквозная (`1 / -1`), и без этого справа тянулось бы
+           пустое белое поле в половину экрана. */
         .page-tabs {
-            display: flex; gap: 2px; align-items: center;
-            padding: 0 0 8px; margin: 0;
+            display: flex; gap: 4px; align-items: center;
+            justify-self: start;
+            padding: 4px; margin: 0;
+            border: 1px solid #e5e7eb; border-radius: 10px; background: #fff;
         }
         .page-tab {
-            padding: 3px 10px; border: none; border-radius: 6px; background: none;
-            font-family: inherit; font-size: 12px; font-weight: 700; color: #94a3b8;
-            text-transform: uppercase; letter-spacing: .04em; cursor: pointer;
+            /* Рамка прозрачная, а не отсутствует: появляясь под курсором, она не
+               должна двигать соседей на пиксель. */
+            padding: 6px 14px; border: 1px solid transparent; border-radius: 7px;
+            background: none; font-family: inherit; font-size: 12px; font-weight: 700;
+            color: #64748b; text-transform: uppercase; letter-spacing: .04em;
+            cursor: pointer; transition: background .12s ease, color .12s ease;
         }
-        .page-tab:hover { color: #4338ca; }
-        .page-tab.on { background: #eef2ff; color: #4338ca; }
+        /* Наведение только на невыбранную: подсвечивать ту, что и так залита,
+           значит обещать переход, которого не будет. */
+        .page-tab:hover:not(.on) { background: #f8fafc; border-color: #e5e7eb; color: #4338ca; }
+        /* Выбранная — заливкой акцента, как `.dating-btn.primary` и `.page-btn.active`
+           на этих же страницах. ⚠ Не бледной подложкой `#eef2ff`, как было: рядом
+           ею же помечены пилюли и бейджи, и вкладка терялась среди них. */
+        .page-tab.on {
+            background: #4f46e5; border-color: #4f46e5; color: #fff;
+            box-shadow: 0 1px 2px rgba(79, 70, 229, .28);
+        }
+        .page-tab:focus-visible { outline: 2px solid #4338ca; outline-offset: 2px; }
 
         /* Кого сейчас правим — в шапке правой панели, где стоит работа с анкетой.
            ⚠ Осталось там, хотя вкладки ушли: подпись про **анкету**, а не про
