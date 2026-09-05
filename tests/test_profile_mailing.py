@@ -24,6 +24,7 @@ from fastapi import HTTPException
 from src.uvicorn.routers.dating.dating_profile import (DatingProfileSave,
                                                        dating_profile_create,
                                                        dating_profile_delete,
+                                                       dating_profile_list,
                                                        dating_profile_row)
 from src.uvicorn.routers.dating.dating_profile_action import (
     DatingProfileAuto, DatingProfileEnabled, DatingProfileMailing,
@@ -104,6 +105,19 @@ class TestMailingEndpoint:
         card = (await dating_profile_view_card(profile, user=None))['result']
 
         assert card['mailing_on'] is True
+
+    async def test_mailing_reaches_the_list(self, rhapsody, profile):
+        """Список анкет отдаёт флаг — по нему идёт отбор вкладки «Письма рассылка».
+
+        ⚠ Без него отбор делать нечем, и вкладка была бы пуста всегда — при любом
+        числе анкет с включённой рассылкой. Зеркало `test_flag_reaches_the_list`
+        из `test_profile_enabled.py`: тот же урок, тот же способ проверки.
+        """
+        await _set(profile, True)
+        rows = (await dating_profile_list(site_id=SITE, user=None))['result']
+        found = next(row for row in rows if int(row['id']) == profile)
+
+        assert found['mailing_on'] is True
 
     async def test_unknown_profile_is_404(self):
         """404, а не молчаливое ничего: правка несуществующей анкеты — ошибка

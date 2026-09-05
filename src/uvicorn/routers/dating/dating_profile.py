@@ -124,6 +124,7 @@ async def dating_profile_list(site_id: int = 0,
         await db.execute(
             'SELECT g.id, g.site_id, g.login, g.note, g.role, g.status, g.unread, g.last_seen_at, '
             '       g.last_error, g.profile, g.auto_answer, g.auto_answer_only, g.enabled, '
+            '       g.mailing_on, '
             '       g.password_source, '
             '       g.keep_online, g.relogin_since, g.relogin_next_at, NOW() AS db_now, '
             '       g.password <> %s AS has_password, '
@@ -140,6 +141,10 @@ async def dating_profile_list(site_id: int = 0,
         row['has_password'] = bool(row.get('has_password'))
         row['has_state'] = bool(row.get('has_state'))
         row['auto_answer'] = bool(row.get('auto_answer'))
+        # Рассылка писем: по этому флагу «Профили» отбирают анкеты вкладки
+        # «Письма рассылка». Без приведения строка отдавала бы 0 и 1, а страница
+        # сравнивает с `true`.
+        row['mailing_on'] = bool(row.get('mailing_on'))
         # Умолчание `True`, а не `False`: колонка появилась при 64 работающих
         # анкетах, и строка без неё (старый снимок, свой SELECT) должна читаться
         # как «ведём», иначе панель разом покажет всех выключенными.
