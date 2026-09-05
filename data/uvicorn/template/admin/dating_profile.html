@@ -2198,19 +2198,34 @@
         // же анкетой второй раз за минуту. Ровно то, от чего бережёт кэш ручки.
         // Круг это ожидание пережидает, как ждёт долгие действия в списке.
         btn.addEventListener('click', async () => {
-            busy.add(`dialog:${openId}`);
+            // ⚠ **Номер анкеты запоминаем один раз.** Прогон идёт десятки секунд,
+            // и за это время человек успевает выбрать другую анкету или
+            // переключить вкладку — `openId` к возврату уже чужой. Читай мы его в
+            // `finally`, снялся бы **чужой** ключ, а свой остался бы в `busy`
+            // навсегда; а оба круга обновления начинаются с `if (busy.size)
+            // return`, и список с чатом замолчали бы до перезагрузки страницы.
+            // Молча: кнопка выглядит обычной, ошибок нет, данные просто стоят.
+            //
+            // Тот же приём, что в `peopleLoad` (`requestId`), и по той же причине.
+            const runId = openId;
+            busy.add(`dialog:${runId}`);
             btn.disabled = true;
             btn.innerHTML = '<span class="dating-spin"></span>Захожу на сайт…';
             try {
                 await peopleLoad('dialog', true);
-                const state = peopleCache.get(`${openId}|dialog`);
+                // ⚠ Отчитываемся числом, только если анкета та же. `peopleLoad`
+                // ответ по сменившейся анкете **выбрасывает**, не кладя в кэш, —
+                // и здесь мы прочли бы либо чужой снимок, либо прошлый свой, а
+                // подали бы его как итог только что законченного прогона.
+                const state = openId === runId
+                    ? peopleCache.get(`${runId}|dialog`) : null;
                 if (state && state.error) {
                     showNotification('Диалоги не снялись: ' + state.error, 'error');
                 } else if (state) {
                     showNotification(`Диалогов на сайте: ${state.people.length}`, 'success');
                 }
             } finally {
-                busy.delete(`dialog:${openId}`);
+                busy.delete(`dialog:${runId}`);
                 btn.innerHTML = 'Загрузить диалоги';
                 // Цвет и запертость возвращает общая функция: она знает и про
                 // выбранную анкету, и про то, нужна ли кнопка этому сайту.
