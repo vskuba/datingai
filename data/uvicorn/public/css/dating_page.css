@@ -101,6 +101,11 @@
     padding: 6px; border-top: 1px solid #f1f5f9; flex: 0 0 auto;
 }
 .pane-foot.open { display: flex; }
+/* Счёт строк слева, кнопки страниц справа. ⚠ `margin-right: auto` съедает всё
+   свободное место, и `justify-content: center` подвала до кнопок не доходит —
+   переопределять его на `flex-start` не нужно. Без счёта кнопки остаются по
+   центру, как были. */
+.pane-count { font-size: 11px; color: #94a3b8; margin-right: auto; }
 .page-btn {
     min-width: 26px; padding: 2px 7px; border: 1px solid #e5e7eb; border-radius: 6px;
     background: #fff; font-size: 12px; font-family: inherit; color: #374151; cursor: pointer;

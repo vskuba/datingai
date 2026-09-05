@@ -560,6 +560,11 @@
         if (profilesPage >= pages) profilesPage = pages - 1;
 
         const shown = found.slice(profilesPage * perPage, (profilesPage + 1) * perPage);
+        // Счёт строк слева от кнопок — тот же подвал, что на «Профилях». Номер
+        // страницы дописывает сам `pagerRender`, здесь только имя предмета.
+        const counted = `${found.length}`
+            + (found.length === profiles.length ? '' : ` из ${profiles.length}`) + ' анкет';
+
         // ⚠ Пейджер рисуем **до** замера: он занимает высоту, и мерить тело
         // панели без него значит насчитать на строку больше, чем влезет.
         //
@@ -569,7 +574,7 @@
             profilesPage = page;
             profilesRender(0);
             profilesEl.scrollTop = 0;
-        });
+        }, counted);
 
         profilesEl.innerHTML = '';
         if (!profiles.length) {

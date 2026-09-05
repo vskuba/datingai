@@ -122,10 +122,12 @@ class TestTabReviewFindings:
         assert found_match, 'tablePaint не берёт найденное через shownRows()'
         found_var = found_match.group(1)
 
-        footer_match = re.search(r'counted\.textContent\s*=(.*?);', body, re.S)
+        # ⚠ Строку счёта собирает `tablePaint` и отдаёт её `pagerRender` пятым
+        # доводом; номер страницы и «всё на одной странице» пейджер дописывает
+        # сам. Здесь нас занимает только знаменатель — он остаётся за списком.
+        footer_match = re.search(r'const counted\s*=(.*?);', body, re.S)
         assert footer_match, (
-            'подвал пейджера («N анкет — всё на одной странице») не нашёлся '
-            'в tablePaint'
+            'счёт строк для подвала пейджера не нашёлся в tablePaint'
         )
         footer_expr = footer_match.group(1)
 
