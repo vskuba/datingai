@@ -285,6 +285,11 @@ async def dating_profile_view_card(profile_id: int, page: int = 1,
                        # странице значило бы два места, которые разойдутся.
                        'schedule_idle': dating_schedule_why_idle(profile),
                        'auto_answer': bool(profile.get('auto_answer')),
+                       # Рассылка писем — третья галочка блока «Настройки анкеты».
+                       # ⚠ Исполнителя у флага пока нет: карточка отдаёт его,
+                       # чтобы галочка после перезагрузки страницы показывала то,
+                       # что человек поставил, а не снятую.
+                       'mailing_on': bool(profile.get('mailing_on')),
                        'contacts_total': total, 'page': page, 'pages': pages}}
 
 

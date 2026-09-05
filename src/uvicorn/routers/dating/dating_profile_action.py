@@ -258,6 +258,43 @@ async def dating_profile_action_enabled(profile_id: int, data: DatingProfileEnab
     return {'result': {'enabled': data.enabled}}
 
 
+class DatingProfileMailing(BaseModel):
+    """Рассылка писем: флаг задела, исполнителя пока нет."""
+
+    mailing_on: bool = Field(..., description='Слать ли от анкеты рассылку писем')
+
+
+@router.put('/{profile_id}/mailing', include_in_schema=False)
+async def dating_profile_action_mailing(profile_id: int, data: DatingProfileMailing,
+                                        user=Depends(auth_required)):
+    """Включает или выключает рассылку писем.
+
+    ⚠ **Исполнителя у флага нет, и это не забытый баг.** Круга рассылки в проекте
+    не существует: ручка хранит решение человека, чтобы оно не пропадало до того
+    дня, когда рассылку напишут. Колонку никто не читает — ни воркер, ни отправка.
+
+    ⚠ **Третий выключатель анкеты, и он про своё.** `enabled` — «ведём ли анкету
+    вовсе», `auto_answer` — «отвечает ли за неё агент в чате», здесь — «шлём ли от
+    неё рассылку писем». Состояния «отвечаем в чате, но не рассылаем» и «ведём
+    руками, а рассылка идёт» законны, и каждое достижимо только своим флагом.
+
+    Побочных действий нет — в отличие от `/auto`, где включение сразу разбирает
+    накопившееся. Разбирать здесь нечего.
+    """
+    await dating_profile_row(profile_id)
+
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE dating_profile SET mailing_on = %s WHERE id = %s',
+                         (1 if data.mailing_on else 0, profile_id))
+        await db.connection.commit()
+
+    await dating_log_write(profile_id, 'info',
+                           'Рассылка писем включена' if data.mailing_on
+                           else 'Рассылка писем выключена')
+
+    return {'result': {'mailing_on': data.mailing_on}}
+
+
 @router.post('/{profile_id}/login', include_in_schema=False)
 async def dating_profile_action_login(profile_id: int, data: DatingProfileLogin,
                             user=Depends(auth_required)):
