@@ -428,9 +428,15 @@
 
     const SIZE_KEY = 'dating_layout';
     const PROBE_MS = 15000;
-    // Сколько анкет на странице. Столько влезает в колонку без прокрутки на
-    // обычном экране — прокрутка вместе со страницами это две навигации сразу.
-    const PAGE_SIZE = 8;
+    // Сколько анкет на странице — **прикидка на первую отрисовку**, дальше число
+    // считается замером (`rowsFit`). Прокрутка вместе со страницами это две
+    // навигации сразу, поэтому строки режем по высоте колонки.
+    //
+    // ⚠ Раньше здесь стояло зашитое `8`, и на любом экране выше маленького треть
+    // колонки оставалась пустой при пяти страницах пейджера: строк не хватало,
+    // чтобы её заполнить, а лишние прятались за кнопками. Число под «обычный
+    // экран» такого экрана не знает.
+    const PAGE_SIZE_GUESS = 8;
 
     const siteEl = document.getElementById('siteSelect');
     const profilesEl = document.getElementById('profiles');
@@ -446,6 +452,10 @@
     // Черновик расписания по анкете: правки до сохранения. Ключ — id анкеты.
     const scheduleDraft = new Map();
     let profilesPage = 0;
+    // Сколько строк влезло в колонку по последнему замеру. Живёт между
+    // отрисовками: без этого каждая начиналась бы с прикидки и подгоняла число
+    // заново, дёргая список на глазах.
+    let perPage = PAGE_SIZE_GUESS;
 
     // Какие анкеты сейчас заняты долгим действием: id → {btn, label}.
     //
@@ -509,7 +519,34 @@
             || String(row.note || '').toLowerCase().includes(q);
     }
 
-    function profilesRender() {
+    // Сколько строк влезает в колонку. Меряем по уже нарисованной строке: её
+    // высота зависит от шрифта и размера лица, и зашитое число разъехалось бы с
+    // разметкой при первой же правке стилей.
+    //
+    // Шапку вычитать не надо — в отличие от «Профилей», где список таблицей:
+    // здесь строки лежат прямо в теле панели, а заголовок колонки живёт в её
+    // шапке, за пределами замеряемого узла.
+    function rowsFit() {
+        const probe = profilesEl.querySelector('.profile');
+        if (!probe) return perPage;
+
+        const rowH = probe.getBoundingClientRect().height;
+        if (rowH < 1) return perPage;
+
+        return Math.max(1, Math.floor(profilesEl.clientHeight / rowH));
+    }
+
+    // `tries` — сколько ещё раз можно перерисовать, подгоняя число строк.
+    //
+    // ⚠ Заходов нужно больше одного. Первый рисует прикидкой, когда подвала с
+    // пейджером ещё нет, и меряет тело панели во всю высоту. Появился пейджер —
+    // тело сжалось на его высоту, и последняя строка уехала под него. Второй
+    // заход меряет уже с пейджером и снимает лишнюю; третий подтверждает, что
+    // сошлось.
+    //
+    // Счётчик, а не «можно/нельзя»: без потолка подгонка могла бы качаться
+    // туда-сюда, если строка и пейджер совпадут по высоте неудачно.
+    function profilesRender(tries = 3) {
         const found = profiles.filter(profilesMatch);
 
         // В шапке всегда общее число анкет, а при поиске — ещё и сколько нашлось.
@@ -519,13 +556,18 @@
                                           : `${found.length} из ${profiles.length}`;
 
         // Страница могла уехать за конец списка — после поиска или удаления анкеты.
-        const pages = Math.max(1, Math.ceil(found.length / PAGE_SIZE));
+        const pages = Math.max(1, Math.ceil(found.length / perPage));
         if (profilesPage >= pages) profilesPage = pages - 1;
 
-        const shown = found.slice(profilesPage * PAGE_SIZE, (profilesPage + 1) * PAGE_SIZE);
+        const shown = found.slice(profilesPage * perPage, (profilesPage + 1) * perPage);
+        // ⚠ Пейджер рисуем **до** замера: он занимает высоту, и мерить тело
+        // панели без него значит насчитать на строку больше, чем влезет.
+        //
+        // Смена страницы перерисовывает без подгонки (`0`): число строк уже
+        // сошлось, а лишний заход дёрнул бы список под руками.
         pagerRender(pagerEl, pages, profilesPage, (page) => {
             profilesPage = page;
-            profilesRender();
+            profilesRender(0);
             profilesEl.scrollTop = 0;
         });
 
@@ -563,6 +605,15 @@
 
             el.addEventListener('click', () => profileSelect(row.id));
             profilesEl.appendChild(el);
+        }
+
+        // Строки нарисованы — теперь есть что мерить. Разошлось с прикидкой —
+        // перерисовываем новым числом; сошлось — выходим.
+        const fit = rowsFit();
+        if (tries > 0 && fit !== perPage) {
+            perPage = fit;
+            profilesRender(tries - 1);
+            return;
         }
 
         if (!currentId && profiles.length) profileSelect(profiles[0].id);
