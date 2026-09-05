@@ -168,7 +168,7 @@ class DatingProfileMailing(BaseModel):
 | `test_toggle_is_stored` | Щёлкнули туда-обратно — читается из базы |
 | `test_mailing_is_independent` | Рассылка не задевает `enabled` и `auto_answer`, и наоборот: состояние «ведём руками, рассылка стоит» достижимо |
 | `test_mailing_reaches_the_card` | Флаг доезжает до `dating_profile_view_card` — иначе после перезагрузки страницы галочка соврала бы |
-| `test_page_carries_the_boxes` | `/admin/dating` под `auth_client` отдаёт разметку с `id="autoBox"` и `id="mailingBox"`: блок собирается скриптом, но скрипт лежит в шаблоне. Сторожит от того, что галочки молча выпадут при следующей правке |
+| `test_both_boxes_are_in_the_page` | `/admin/dating` под `auth_client` отдаёт разметку с вызовами `setRow('autoBox'`, `setRow('mailingBox'`, `setBind('autoBox'` и `setBind('mailingBox'`: блок собирается скриптом, но скрипт лежит в шаблоне. Сторожит и разметку, и привязку — молча выпавшую строку и нарисованную, но мёртвую галочку |
 | `test_unknown_profile_is_404` | Правка несуществующей анкеты — ошибка вызывающего, и знать о ней он должен |
 | `test_closed_without_login` | По HTTP под `client` (без входа): 401 |
 
