@@ -11,6 +11,8 @@
 привязанная вкладка — тот случай, который тише сломанного теста.
 """
 
+import re
+
 PAGE = '/admin/dating/profile'
 
 
@@ -88,12 +90,52 @@ class TestTabReviewFindings:
 
         Знаменатель у обоих счётчиков один — список вкладки (`tabRows()`,
         внутри `tablePaint` это `inTab`), а не `profiles`.
+
+        ⚠ Сторожим не одну текстовую форму (`found.length === profiles.length`),
+        а сам инвариант: имена переменных для списка вкладки и найденного
+        достаём из кода (`const X = tabRows()`, `const Y = shownRows()`), а
+        затем требуем, чтобы в строке подвала пейджера каждое `.length`
+        считалось от одной из них двоих. Тот же регресс, переписанный с
+        обратным порядком операндов или через переменную-алиас на `profiles`,
+        тест тоже ловит — а не только буквальную подстроку из прошлого отчёта.
         """
         page = (await auth_client.get(PAGE)).text
 
-        assert 'found.length === profiles.length' not in page, (
-            'счётчик над пейджером снова меряет найденное относительно '
-            'profiles.length (весь сайт), а не списка активной вкладки — '
+        fn_start = page.find('function tablePaint')
+        assert fn_start != -1, 'tablePaint не нашлась на странице'
+        # Окно с запасом: тело функции рисует ещё и разметку строк списка
+        # (шаблонная строка на добрых пять тысяч символов) между объявлением
+        # `inTab`/`found` и подвалом пейджера, до которого мы здесь добираемся.
+        body = page[fn_start:fn_start + 8000]
+
+        tab_match = re.search(r'const (\w+)\s*=\s*tabRows\(\);', body)
+        assert tab_match, 'tablePaint не берёт список вкладки через tabRows()'
+        in_tab_var = tab_match.group(1)
+
+        found_match = re.search(r'const (\w+)\s*=\s*shownRows\(\);', body)
+        assert found_match, 'tablePaint не берёт найденное через shownRows()'
+        found_var = found_match.group(1)
+
+        footer_match = re.search(r'counted\.textContent\s*=(.*?);', body, re.S)
+        assert footer_match, (
+            'подвал пейджера («N анкет — всё на одной странице») не нашёлся '
+            'в tablePaint'
+        )
+        footer_expr = footer_match.group(1)
+
+        lengths = re.findall(r'(\w+)\.length', footer_expr)
+        assert lengths, 'в подвале пейджера не нашлось ни одного счётчика .length'
+
+        strangers = sorted(set(lengths) - {in_tab_var, found_var})
+        assert not strangers, (
+            f'подвал пейджера считает .length от {strangers}, а не от списка '
+            f'вкладки ({in_tab_var}) или найденного ({found_var}) — '
+            'знаменатель мог снова утечь на весь сайт (profiles.length), '
+            'просто под другим именем переменной'
+        )
+        assert lengths.count(in_tab_var) >= 2, (
+            f'подвал пейджера должен и сравнивать с длиной списка вкладки '
+            f'({in_tab_var}), и подставлять её же в знаменатель — иначе '
             'вернулась находка 1 из ревью задачи 3'
         )
 
@@ -107,6 +149,11 @@ class TestTabReviewFindings:
         `dialogsStateSet()` проверяет только истинность `openId`, а не
         наличие анкеты в списке, и включит «Загрузить диалоги» — нажатие
         погонит сценарий входа под анкетой другого сайта.
+
+        ⚠ Сторожим не слово `openByTab` (оно есть и в пояснительном комментарии
+        над правкой — исчезни рабочая строка, комментарий его всё равно
+        оставит), а структуру самого выражения обнуления: цикл по ключам
+        `openByTab`, каждому из которых присваивается 0.
         """
         page = (await auth_client.get(PAGE)).text
         start = page.find("siteEl.addEventListener('change'")
@@ -114,8 +161,15 @@ class TestTabReviewFindings:
         assert start != -1 and end != -1, 'обработчик смены сайта не найден на странице'
         handler = page[start:end]
 
-        assert 'openByTab' in handler, (
-            'обработчик смены сайта не трогает openByTab напрямую — значит, '
+        reset_re = re.compile(
+            r'Object\.keys\(openByTab\)\.forEach\(\s*\w+\s*=>\s*\{\s*'
+            r'openByTab\[\w+\]\s*=\s*0\s*;?\s*\}\s*\)'
+        )
+        assert reset_re.search(handler), (
+            'обработчик смены сайта не обнуляет каждый ключ openByTab циклом '
+            '(Object.keys(openByTab).forEach(...) с присваиванием 0) — значит, '
             'чистит выбор через один openSet(0), то есть только у активной '
-            'вкладки; у остальных трёх останутся номера анкет прежнего сайта'
+            'вкладки; у остальных трёх останутся номера анкет прежнего сайта. '
+            'Упоминание слова "openByTab" в соседнем комментарии тест не '
+            'засчитывает — нужен именно рабочий код.'
         )
