@@ -109,7 +109,7 @@ class TestWorkTemplate:
         страница = pathlib.Path(
             'data/uvicorn/template/admin/dating_profile.html').read_text(encoding='utf-8')
 
-        кнопки = set(re.findall(r'class="work-tab[^"]*" data-tab="(\w+)"', страница))
+        кнопки = set(re.findall(r'class="page-tab[^"]*" data-tab="(\w+)"', страница))
         панели = set(re.findall(r'class="work-panel" data-tab="(\w+)"', html))
 
         assert кнопки == панели, f'кнопки {кнопки}, панели {панели}'

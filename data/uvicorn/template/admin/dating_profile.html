@@ -33,11 +33,15 @@
                Тянется разделителем под рядом. */
             --online-h: 126px;
             grid-template-columns: var(--col) 6px minmax(0, 1fr);
-            grid-template-rows: auto minmax(0, 1fr);
+            /* Три строки: шапка сайта, полоса вкладок, колонки. ⚠ Вкладки — своя
+               строка во всю ширину, а не часть правой панели: каждая включает в
+               себя обе колонки, и стоять внутри одной из них она не может. */
+            grid-template-rows: auto auto minmax(0, 1fr);
         }
-        .dating-head { grid-column: 1 / -1; }
-        .prof-pane { grid-column: 1; grid-row: 2; }
-        .work-pane { grid-column: 3; grid-row: 2; }
+        .dating-head { grid-column: 1 / -1; grid-row: 1; }
+        .page-tabs { grid-column: 1 / -1; grid-row: 2; }
+        .prof-pane { grid-column: 1; grid-row: 3; }
+        .work-pane { grid-column: 3; grid-row: 3; }
 
         /* Разделители. Видны **всегда**, а не только под курсором: невидимую
            полосу не тянут — про неё не знают. На «Анкетах» она прозрачная, и это
@@ -49,7 +53,7 @@
            перетаскивании. Спорить с содержимым за внимание ей всё-таки не нужно. */
         .split { border-radius: 3px; background: #eef2f7; transition: background .12s ease; }
         .split:hover, .split.drag { background: #a5b4fc; }
-        .split-col { grid-column: 2; grid-row: 2; cursor: col-resize; }
+        .split-col { grid-column: 2; grid-row: 3; cursor: col-resize; }
         .split-row { cursor: row-resize; height: 6px; flex: 0 0 auto; margin: 3px 0; }
 
         /* Точки-захват: три штриха посередине полосы. Без них тонкая линия
@@ -61,21 +65,27 @@
         .split-people::after { width: 2px; height: 26px; margin: auto; }
         .split-people { display: flex; }
 
-        /* ---------- Вкладки правой колонки ---------- */
+        /* ---------- Полоса вкладок страницы ---------- */
 
-        /* Вкладки живут в шапке панели, а не отдельной строкой над ней: шапка и
-           так пустует, а лишняя строка съела бы высоту у переписки. */
-        .work-tabs { display: flex; gap: 2px; margin-right: auto; }
-        .work-tab {
+        /* ⚠ Вкладки стоят **над обеими колонками**, а не в шапке правой панели.
+           Каждая включает в себя обе: слева список анкет по своему отбору, справа
+           работа с выбранной. Пока полоса жила в шапке панели, список слева был
+           один на все четыре занятия — а он у них разный. */
+        .page-tabs {
+            display: flex; gap: 2px; align-items: center;
+            padding: 0 0 8px; margin: 0;
+        }
+        .page-tab {
             padding: 3px 10px; border: none; border-radius: 6px; background: none;
             font-family: inherit; font-size: 12px; font-weight: 700; color: #94a3b8;
             text-transform: uppercase; letter-spacing: .04em; cursor: pointer;
         }
-        .work-tab:hover { color: #4338ca; }
-        .work-tab.on { background: #eef2ff; color: #4338ca; }
+        .page-tab:hover { color: #4338ca; }
+        .page-tab.on { background: #eef2ff; color: #4338ca; }
 
-        /* Кого сейчас правим — в той же строке, справа: вкладки меняются, анкета
-           нет, и подпись не должна прыгать вместе с ними. */
+        /* Кого сейчас правим — в шапке правой панели, где стоит работа с анкетой.
+           ⚠ Осталось там, хотя вкладки ушли: подпись про **анкету**, а не про
+           вкладку, и место ей рядом с тем, что она подписывает. */
         #workWho { min-width: 0; color: #94a3b8; font-weight: 400;
                    text-transform: none; letter-spacing: normal;
                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -612,6 +622,20 @@
         <span class="dating-hint" id="hint"></span>
     </div>
 
+    {# Полоса вкладок — во всю ширину, над обеими колонками. Каждая вкладка
+       включает в себя обе: слева список анкет по своему отбору, справа работа с
+       выбранной. #}
+    <div class="page-tabs" id="pageTabs">
+        <button type="button" class="page-tab on" data-tab="chat">Чат</button>
+        {# ⚠ Две вкладки писем, а не одна: рассылка и входящие — разные вещи.
+           Рассылка это то, что анкета шлёт сама (одно письмо многим), входящие —
+           то, что пишут ей. Одной вкладкой они слипались бы в «почту вообще», где
+           непонятно, чьё письмо. #}
+        <button type="button" class="page-tab" data-tab="mail">Письма рассылка</button>
+        <button type="button" class="page-tab" data-tab="mail_in">Письма входящие</button>
+        <button type="button" class="page-tab" data-tab="event">Ивенты</button>
+    </div>
+
     <div class="pane prof-pane">
         <div class="pane-head">
             Профили <span id="profilesN"></span>
@@ -625,25 +649,15 @@
 
     <div class="split split-col" id="splitCol" title="Потяните, чтобы изменить ширину"></div>
 
-    {# Правая панель — **каркас**: полоса вкладок, место под работу с анкетой и
-       журнал под ней. Что внутри `#work`, решает шаблон сайта
-       (`admin/profile/site/…`, ручка `/admin/dating/profile/work`).
+    {# Правая панель — **каркас**: место под работу с анкетой и журнал под ней.
+       Что внутри `#work`, решает шаблон сайта (`admin/profile/site/…`, ручка
+       `/admin/dating/profile/work`).
 
        ⚠ Журнал стоит здесь, а не в шаблоне сайта, намеренно: он про анкету, а не
        про сайт. Одна и та же лента строк нужна на любом сайте, и держи мы её
        копию в каждом шаблоне — правка журнала означала бы правку всех. #}
     <div class="pane work-pane">
         <div class="pane-head">
-            <div class="work-tabs" id="workTabs">
-                <button type="button" class="work-tab on" data-tab="chat">Чат</button>
-                {# ⚠ Две вкладки писем, а не одна: рассылка и входящие — разные
-                   вещи. Рассылка это то, что анкета шлёт сама (одно письмо
-                   многим), входящие — то, что пишут ей. Одной вкладкой они
-                   слипались бы в «почту вообще», где непонятно, чьё письмо. #}
-                <button type="button" class="work-tab" data-tab="mail">Письма рассылка</button>
-                <button type="button" class="work-tab" data-tab="mail_in">Письма входящие</button>
-                <button type="button" class="work-tab" data-tab="event">Ивенты</button>
-            </div>
             <span id="workWho"></span>
         </div>
         <div class="pane-body" id="work"></div>
@@ -722,7 +736,7 @@
     const logEl = document.getElementById('log');
     const splitRowEl = document.getElementById('splitRow');
     const workWhoEl = document.getElementById('workWho');
-    const workTabsEl = document.getElementById('workTabs');
+    const pageTabsEl = document.getElementById('pageTabs');
     const pageEl = document.querySelector('.dating-page');
     const contactsPagerEl = document.getElementById('contactsPager');
 
@@ -1088,7 +1102,7 @@
     async function workPaint() {
         const row = openRow();
         workWhoEl.textContent = row ? (row.name || row.login) : '';
-        workTabsEl.querySelectorAll('.work-tab').forEach(btn =>
+        pageTabsEl.querySelectorAll('.page-tab').forEach(btn =>
             btn.classList.toggle('on', btn.dataset.tab === workTab));
 
         // Журнал прячем вместе с работой: пустая лента под пустой панелью
@@ -2523,10 +2537,10 @@
         if (workTab === 'chat') chatLoad(); else logLoad();
     }, LOG_MS);
 
-    // Переключение вкладок. Нажатие по кнопке, а не по всей шапке: рядом с
-    // вкладками стоит имя анкеты, и клик по нему не должен ничего переключать.
-    workTabsEl.addEventListener('click', (e) => {
-        const tab = e.target.closest('.work-tab');
+    // Переключение вкладок. Нажатие по кнопке, а не по всей полосе: полоса тянется
+    // во всю ширину страницы, и промах мимо кнопки не должен ничего переключать.
+    pageTabsEl.addEventListener('click', (e) => {
+        const tab = e.target.closest('.page-tab');
         if (!tab || tab.dataset.tab === workTab) return;
 
         workTab = tab.dataset.tab;
