@@ -121,6 +121,26 @@ class TestMailingEndpoint:
         assert answer.status_code == 401
 
 
+class TestPageCarriesTheBoxes:
+    """Страница отдаёт разметку обеих новых галочек.
+
+    Блок собирается скриптом уже в браузере, но сам скрипт лежит в шаблоне —
+    значит идентификаторы видны прямо в ответе. Сторожит от того, что галочки
+    молча выпадут при следующей правке блока: молчаливая пропажа настройки хуже
+    сломанной, её никто не заметит.
+    """
+
+    async def test_both_boxes_are_in_the_page(self, auth_client):
+        page = (await auth_client.get('/admin/dating')).text
+
+        # ⚠ Ищем **вызов**, а не голое имя: `id="autoBox"` в ответе не встретится
+        # вовсе (разметку собирает скрипт, в шаблоне лежит `id="${id}"`), а голое
+        # `autoBox` совпало бы и внутри комментария — тест пережил бы удаление
+        # самой строки.
+        assert "setRow('autoBox'" in page, 'галочка «Чат автоответ» пропала со страницы'
+        assert "setRow('mailingBox'" in page, 'галочка «Письма рассылка» пропала со страницы'
+
+
 async def _set(profile_id: int, mailing_on: bool) -> None:
     await dating_profile_action_mailing(
         profile_id, DatingProfileMailing(mailing_on=mailing_on), user=None)
