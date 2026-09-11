@@ -161,7 +161,7 @@ async def dating_answer_run(profile: dict, presence: dict, agent_id: int,
         # успел бы начаться заново, спросив агента о том же во второй раз.
         await _tried_mark(profile_id, uid)
 
-        answer, error = await _agent_ask(agent_id, question, language)
+        answer, error = await _agent_ask(agent_id, question, language, profile)
         asked += 1
         if error:
             errors.append(f'{who}: {error}')
@@ -211,19 +211,36 @@ async def dating_answer_run(profile: dict, presence: dict, agent_id: int,
     return {'asked': asked, 'sent': sent, 'silent': silent, 'offline': offline, 'errors': errors}
 
 
-async def _agent_ask(agent_id: int, question: str, language: str) -> tuple[str, str]:
+async def _agent_ask(agent_id: int, question: str, language: str,
+                     profile: dict) -> tuple[str, str]:
     """Спрашивает агента в RhapsodyAi. Возвращает (ответ, ошибка).
 
     Пустой ответ ошибкой не считается — он значим сам по себе и разбирается выше:
     агент может намеренно промолчать.
 
+    ⚠ **Кто говорит — задаётся переменными вызова, а не агентом.** Отвечает один
+    универсальный агент на все анкеты (`dating_agent.py`), и без `girl_name` он
+    назовётся значением по умолчанию, а без `girl_id` сложит факты всех девушек в
+    один документ. Наши переменные в сборке у соседа идут последними и перекрывают
+    его собственные.
+
     Ходим служебным токеном, а не заголовками того, кто нажал кнопку: в RhapsodyAi
     пользователей этого проекта нет, и представляться там надо своей учёткой.
     """
+    from src.dating.dating_agent import dating_agent_vars
+
+    card = profile.get('profile')
+    if isinstance(card, str):
+        try:
+            card = json.loads(card or '{}')
+        except ValueError:
+            card = {}
+
     try:
-        answer = await rhapsody_api_chat_ask(agent_id, question,
-                                             companion_id=DATING_ANSWER_COMPANION_ID,
-                                             variables={'user_language': language})
+        answer = await rhapsody_api_chat_ask(
+            agent_id, question, companion_id=DATING_ANSWER_COMPANION_ID,
+            variables={'user_language': language,
+                       **dating_agent_vars(profile, card or {})})
     except RhapsodyError as e:
         return '', str(e)
 

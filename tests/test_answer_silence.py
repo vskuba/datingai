@@ -66,7 +66,7 @@ def silent_agent(monkeypatch):
     """Агент, который молчит. Возвращает, сколько раз его спросили."""
     asked = []
 
-    async def _ask(agent_id, question, language):
+    async def _ask(agent_id, question, language, profile=None):
         asked.append(question)
 
         return ('', '')          # пустой ответ — решение молчать
@@ -211,7 +211,7 @@ class TestAnswerStillWorks:
     async def test_non_empty_answer_is_sent(self, talk, monkeypatch):
         sent = []
 
-        async def _ask(agent_id, question, language):
+        async def _ask(agent_id, question, language, profile=None):
             return ('и тебе привет', '')
 
         async def _send(profile, presence, uid, text):
