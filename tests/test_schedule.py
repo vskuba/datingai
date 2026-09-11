@@ -314,3 +314,80 @@ class TestStorage:
     async def test_dump_is_readable_back(self, profile):
         """То, что легло в столбец, читается обратно тем же."""
         assert dating_schedule_load(dating_schedule_dump(ТРИ)) == ТРИ
+
+
+class TestSwitchingOffStopsTheWatch:
+    """⚠ Снятая галочка расписания снимает и присмотр автомата.
+
+    Поймано живьём: галочку сняли в 16:33, сессия стёрлась («Расписание выключено,
+    сокет снят»), а через минуту круг восстановления вошёл заново — «Вхожу заново
+    (попытка 1)», «Вход восстановлен», — и анкета снова оказалась в сети. Он берёт
+    всех с `keep_online = 1`, а анкету **без расписания** считает дежурящей
+    круглосуточно (`dating_revive_db._on_duty`).
+
+    То есть две наши же части дрались: одна гасила, другая поднимала. Смысл
+    галочки — «перестань водить её сама», и присмотр, переживший снятие, отменял
+    это решение молча.
+    """
+
+    @pytest.fixture
+    async def kept(self, rhapsody):
+        """Анкета под присмотром автомата — как после удачного ручного входа."""
+        from mysql_.mysql_ import mysql_get_db_async
+
+        answer = await dating_profile_create(
+            DatingProfileSave(site_id=SITE, login=f'keep-{uuid.uuid4().hex[:8]}',
+                              password='x'), user=None)
+        profile_id = int(answer['result'])
+
+        async with mysql_get_db_async() as db:
+            await db.execute("UPDATE dating_profile SET keep_online = 1,"
+                             "       schedule_on = 1, status = 'online'"
+                             ' WHERE id = %s', (profile_id,))
+            await db.connection.commit()
+
+        yield profile_id
+
+        try:
+            await dating_profile_delete(profile_id, user=None)
+        except Exception:
+            pass
+
+    async def test_switching_off_clears_the_watch(self, kept):
+        from mysql_.mysql_ import mysql_get_db_async
+        from src.uvicorn.routers.dating.dating_profile_action import (
+            DatingProfileScheduleOn, dating_profile_action_schedule_on)
+
+        await dating_profile_action_schedule_on(
+            kept, DatingProfileScheduleOn(schedule_on=False), user=None)
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT keep_online FROM dating_profile WHERE id = %s',
+                             (kept,))
+            row = await db.fetchone()
+
+        assert not row['keep_online'], (
+            'присмотр пережил снятие расписания — круг восстановления вернёт '
+            'анкету в сеть через минуту'
+        )
+
+    async def test_switching_on_does_not_touch_the_watch(self, kept):
+        """⚠ Включение галочки присмотра **не трогает**, и это не симметрия ради неё.
+
+        Поднять `keep_online` здесь значило бы объявить вход существующим там, где
+        его нет: ставит этот флаг только удачный вход (`dating_login.py`). Круг
+        расписания сам войдёт, когда начнётся смена.
+        """
+        from mysql_.mysql_ import mysql_get_db_async
+        from src.uvicorn.routers.dating.dating_profile_action import (
+            DatingProfileScheduleOn, dating_profile_action_schedule_on)
+
+        await dating_profile_action_schedule_on(
+            kept, DatingProfileScheduleOn(schedule_on=True), user=None)
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT keep_online FROM dating_profile WHERE id = %s',
+                             (kept,))
+            row = await db.fetchone()
+
+        assert row['keep_online'], 'включение расписания сняло присмотр'

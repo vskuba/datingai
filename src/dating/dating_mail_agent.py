@@ -147,6 +147,17 @@ DATING_INVITE_MAX = 600
 # `presence.answer_language`.
 DATING_INVITE_LANGUAGE = 'en'
 
+# ⚠ **Язык передаём на каждом вызове, и молчание здесь дорого стоит.** Не передашь —
+# сосед берёт **первый язык узла** (`chat_ask_ai`: `user_language or
+# node_languages[0]`), а он свой у каждой установки: локально у узла Dating стоит
+# `en`, на проде — `ru,en`. Из-за этого один и тот же код писал письма
+# по-английски у разработчика и **по-русски** на живом сайте, где кириллицу
+# фильтр отклоняет: «Message not delivered. Unacceptable words».
+#
+# Поймано живьём: девушка ответила по-русски в «Фавориты → Диалоги». Промпты при
+# этом совпадали до байта — расходилась настройка чужого узла.
+DATING_MAIL_AGENT_LANGUAGE = DATING_INVITE_LANGUAGE
+
 # Предел вопроса. Он встраивается внутрь абзаца письма, и три предложения там —
 # уже не вопрос, а второй абзац. Режем, а не отбрасываем: обрезанный вопрос
 # полезнее письма, которое не ушло.
@@ -218,6 +229,7 @@ async def dating_mail_agent_fill(profile: dict, site_id: int,
         return {}
 
     agent_id = await _agent_id(int(site_id))
+    язык = await dating_mail_agent_language(int(site_id))
 
     answer = await rhapsody_api_chat_ask(
         agent_id=agent_id,
@@ -237,7 +249,10 @@ async def dating_mail_agent_fill(profile: dict, site_id: int,
                    # Голые имена — для проверки заполненности у соседа
                    # (`dict_fields_check`). Отдельно от `mail_vars`: тот список
                    # читает модель, и подписи в нём к месту.
-                   'mail_var_names': ','.join(row['name'] for row in wanted)})
+                   'mail_var_names': ','.join(row['name'] for row in wanted),
+                   # ⚠ Язык — на каждом вызове: без него сосед возьмёт первый
+                   # язык узла, а он свой у каждой установки (см. константу).
+                   'user_language': язык})
 
     return _values(answer, {row['name'] for row in wanted})
 
@@ -278,6 +293,7 @@ async def dating_mail_write(site_id: int, variables: list[dict],
     """
     agent_id = await _agent_id(int(site_id), DATING_MAIL_WRITE_NAME,
                               DATING_MAIL_WRITE_WORKFLOW)
+    язык = await dating_mail_agent_language(int(site_id))
 
     known = variables or []
 
@@ -312,7 +328,10 @@ async def dating_mail_write(site_id: int, variables: list[dict],
                    # `text_marks_inline` у соседа.
                    'mail_var_live': ','.join(row['name'] for row in known
                                              if row.get('source') == 'live'),
-                   'mail_hint': str(hint or '').strip() or 'обычное первое письмо'})
+                   'mail_hint': str(hint or '').strip() or 'обычное первое письмо',
+                   # ⚠ Язык — на каждом вызове: без него сосед возьмёт первый
+                   # язык узла, а он свой у каждой установки (см. константу).
+                   'user_language': язык})
 
     return _letter_named(answer)
 
@@ -340,13 +359,17 @@ async def dating_mail_question(profile: dict, site_id: int,
     """
     agent_id = await _agent_id(int(site_id), DATING_MAIL_QUESTION_NAME,
                                DATING_MAIL_QUESTION_WORKFLOW)
+    язык = await dating_mail_agent_language(int(site_id))
 
     answer = await rhapsody_api_chat_ask(
         agent_id=agent_id,
         question='Придумай вопрос получателю.',
         companion_id=DATING_MAIL_AGENT_COMPANION_ID,
         variables={'girl_card': _card(profile),
-                   'companion_card': _companion_card(companion)})
+                   'companion_card': _companion_card(companion),
+                   # ⚠ Язык — на каждом вызове: без него сосед возьмёт первый
+                   # язык узла, а он свой у каждой установки (см. константу).
+                   'user_language': язык})
 
     return _question(answer)
 
@@ -497,6 +520,7 @@ async def dating_mail_reply(profile: dict, site_id: int, history: list[dict],
 
     agent_id = await _agent_id(int(site_id), DATING_MAIL_REPLY_NAME,
                                DATING_MAIL_REPLY_WORKFLOW)
+    язык = await dating_mail_agent_language(int(site_id))
 
     answer = await rhapsody_api_chat_ask(
         agent_id=agent_id,
@@ -507,7 +531,10 @@ async def dating_mail_reply(profile: dict, site_id: int, history: list[dict],
         # первой — агент вопроса и агент ответа видели бы одного человека по-разному.
         variables={'mail_history': _history_text(history),
                    'girl_card': _card(profile),
-                   'companion_card': _companion_card(companion or {})})
+                   'companion_card': _companion_card(companion or {}),
+                   # ⚠ Язык — на каждом вызове: без него сосед возьмёт первый
+                   # язык узла, а он свой у каждой установки (см. константу).
+                   'user_language': язык})
 
     return _letter(answer)[:DATING_MAIL_REPLY_MAX]
 
@@ -865,3 +892,33 @@ def _json_chunk(answer: str) -> str:
     start, end = text.find('{'), text.rfind('}')
 
     return text[start:end + 1] if 0 <= start < end else ''
+
+
+async def dating_mail_agent_language(site_id: int) -> str:
+    """Язык, на котором пишет агент этого сайта. Не задан — `en`.
+
+    ⚠ **Берётся из `presence.answer_language` у соседа** — той же настройки, что у
+    автоответа и инвайтов: язык это свойство сайта, а не занятия, и второе место
+    для него разошлось бы с первым.
+
+    ⚠ **Спрашивать обязательно, даже когда ответ очевиден.** Не передай мы язык в
+    вызов, сосед подставит первый язык узла — а он свой у каждой установки
+    (`DATING_MAIL_AGENT_LANGUAGE`). Именно так письма на проде оказались русскими
+    при одинаковых с локальной установкой промптах.
+
+    Сосед недоступен — умолчание: письмо на английском хуже идеального, а письмо,
+    не написанное вовсе, хуже любого.
+    """
+    from src.dating.dating_json import dating_json_load
+    from src.rhapsody.rhapsody_api import rhapsody_api_site_get
+
+    try:
+        site = await rhapsody_api_site_get(int(site_id))
+    except Exception as e:
+        logger_info(f'[dating] язык сайта #{site_id} не спросился: {e}')
+
+        return DATING_MAIL_AGENT_LANGUAGE
+
+    presence = dating_json_load((site or {}).get('presence')) or {}
+
+    return str(presence.get('answer_language') or DATING_MAIL_AGENT_LANGUAGE)

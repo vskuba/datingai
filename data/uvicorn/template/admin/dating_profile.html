@@ -5804,6 +5804,12 @@
         const wrap = slot('fav-talk-thread');
         if (!wrap) return;
 
+        // ⚠ Разговор фаворита читают здесь же, и письма в нём те же самые
+        // (`dating_mail_in`). Пока их никто не помечал, значок «2 непрочитано»
+        // висел у разговора, открытого целиком, и погасить его было нечем: на
+        // «Входящих» этих писем нет — они показываются только тут.
+        await mailInSeenThread(one);
+
         wrap.innerHTML = '<span class="reply-thread-wait">гружу переписку…</span>';
 
         let rows;
@@ -7322,7 +7328,41 @@
 
         note.textContent = 'сохранено';
         note.classList.remove('bad');
+        // ⚠ Перерисовываем **оба** места, где ответ показан: правка идёт и из
+        // «Входящих», и из «Фаворитов → Диалоги», а список один на двоих.
+        replyShown();
+    }
+
+    // Перерисовывает всё, где виден пул ответов, после его правки.
+    //
+    // ⚠ **Мест два, и забыть второе легко.** Ответ лежит в одном списке
+    // (`mailReply`), но показан на «Письмах → Входящие» и в форме под разговором
+    // на «Фаворитах → Диалоги». Пока перерисовывались только «Входящие», удаление
+    // из пула на «Фаворитах» ничего не меняло на экране: письмо уходило из базы, а
+    // форма оставалась с текстом — до перезагрузки страницы. Ровно это и заметили.
+    //
+    // ⚠ **Окно закрываем, только если правка шла из него.** Прежде здесь стояло
+    // `if (box) modalClose()`, а `box` — узел формы **фаворитов**, не модалки:
+    // закрывалось окно, которого нет, и перерисовка не делалась вовсе.
+    function replyShown(box) {
         mailInReplyPaint();
+        mailInReplyEditRefresh();
+        favTalkEditRefresh();
+
+        if (box && box.closest('.modal')) modalClose();
+    }
+
+    // Перерисовывает правку под открытым письмом на «Входящих».
+    //
+    // ⚠ Отдельно от `mailInReplyPaint`: тот рисует выключатели и список, а форма
+    // под разговором своя, и её он не касается. Пока её никто не перерисовывал,
+    // «убрать из пула» ничего не меняло на экране и здесь — ровно та же болезнь,
+    // что на «Фаворитах → Диалоги», и лечится она в том же месте.
+    function mailInReplyEditRefresh() {
+        if (!mailInOpenId || !slot('in-reply-edit')) return;
+
+        const row = mailIn.find(one => Number(one.id) === Number(mailInOpenId));
+        if (row) mailInReplyEdit(row);
     }
 
     // Убирает ответ из пула.
@@ -7348,8 +7388,7 @@
         }
 
         mailReply.splice(index, 1);
-        mailInReplyPaint();
-        if (box) modalClose();
+        replyShown(box);
         showNotification('Ответ убран из пула', 'info');
     }
 
@@ -7739,7 +7778,9 @@
         if (wrap) {
             mailInOpenId = Number(row.id) || 0;
             await mailInTalkShow(row);
-            if (!row.seen) await mailInSeen(row, true);
+            // ⚠ Помечаем **весь разговор**, а не одно письмо: в колонке видна вся
+            // переписка сразу, и человек прочёл её целиком (`mailInSeenThread`).
+            await mailInSeenThread(row);
 
             return;
         }
@@ -7861,6 +7902,38 @@
             .addEventListener('click', () => replySend(index));
         box.querySelector('#replyDropBtn')
             .addEventListener('click', () => replyDrop(index, box));
+    }
+
+    // Помечает прочитанным весь разговор — все письма этого собеседника у этой
+    // анкеты.
+    //
+    // ⚠ **Одной ручкой, а не письмо за письмом.** Писем в разговоре бывает
+    // десяток, и десять запросов на открытие вкладки — это десять круговых
+    // задержек там, где человек ждёт текста.
+    //
+    // ⚠ Значок в списке анкет гасим **сразу**, не дожидаясь общего круга: он
+    // спрашивается раз в полминуты, а гаснуть должен по действию человека.
+    async function mailInSeenThread(one) {
+        const profileId = Number(one.profile_id || 0);
+        const uid = String(one.uid || '');
+        if (!profileId || !uid) return;
+
+        try {
+            await putData(`${BASE}/api/dating/mail-in/seen-thread`,
+                          {profile_id: profileId, uid});
+        } catch (e) {
+            // Молча: отметка — удобство, а не работа. Уведомление о ней посреди
+            // чтения переписки мешало бы больше, чем непогасший значок.
+            return;
+        }
+
+        mailIn.forEach(row => {
+            if (Number(row.profile_id) === profileId && String(row.uid) === uid) {
+                row.seen = true;
+            }
+        });
+        mailInPaint();
+        mailInUnreadLoad();
     }
 
     async function mailInSeen(row, seen) {

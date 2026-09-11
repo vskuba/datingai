@@ -558,3 +558,48 @@ class TestListsAreSortedByStatusThenName:
             'вернулась локаль в сравнении имён — кириллица уедет в начало'
         assert 'peopleSorted(state.people)' in page, \
             'сортировка есть, но списки рисуются мимо неё'
+
+
+class TestReplyChangesRepaintBothPlaces:
+    """⚠ Пул ответов показан в **двух** местах, и перерисовать надо оба.
+
+    Ответ лежит в одном списке (`mailReply`), но виден и на «Письмах → Входящие»,
+    и в форме под разговором на «Фаворитах → Диалоги». Пока перерисовывались
+    только «Входящие», нажатие «Убрать из пула» на «Фаворитах» ничего не меняло на
+    экране: ответ уходил из базы, а форма оставалась с текстом — до перезагрузки
+    страницы. Ровно это и заметили.
+
+    ⚠ Сторожим по исходнику отданной страницы: браузера у сюиты нет, а щелчок по
+    кнопке воспроизводится только в нём.
+    """
+
+    async def test_drop_and_save_go_through_the_common_repaint(self, auth_client):
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'function replyShown' in page, \
+            'общей перерисовки пула ответов нет — места разойдутся'
+        assert 'replyShown(box);' in page, 'удаление из пула рисует не через неё'
+        assert page.count('replyShown(') >= 3, \
+            'общую перерисовку зовут не отовсюду, где ответ меняется'
+
+    async def test_repaint_touches_both_editors(self, auth_client):
+        """Обе формы — и входящих, и фаворитов — в одной перерисовке."""
+        page = (await auth_client.get(PAGE)).text
+
+        начало = page.find('function replyShown')
+        тело = page[начало:начало + 400]
+
+        assert 'mailInReplyEditRefresh()' in тело, \
+            'форма под письмом на «Входящих» не перерисовывается'
+        assert 'favTalkEditRefresh()' in тело, \
+            'форма под разговором на «Фаворитах» не перерисовывается'
+
+    async def test_modal_closes_only_when_it_is_a_modal(self, auth_client):
+        """⚠ Прежде здесь стояло `if (box) modalClose()`, а `box` — узел формы
+        **фаворитов**, не модалки: закрывалось окно, которого нет, и перерисовка
+        не делалась вовсе. Теперь окно закрывается, только если правка шла из него.
+        """
+        page = (await auth_client.get(PAGE)).text
+
+        assert "box.closest('.modal')" in page, \
+            'окно закрывается вслепую — немодальная правка снова потеряет перерисовку'

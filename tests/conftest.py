@@ -265,15 +265,56 @@ async def client():
         yield http
 
 
-@pytest.fixture
-async def auth_client():
-    """Клиент с сессией. Не сошлось — тест падает здесь, а не в середине проверки."""
+# Сессии, уже открытые в этом прогоне: `{логин: куки}`.
+#
+# ⚠ **Вход — самое дорогое, что делает сюита.** Замерено: `/auth/login` идёт 309 мс
+# против 10 мс у обычного запроса, потому что пароль проверяется намеренно медленным
+# хешем. Это правильно для прода и разорительно здесь: полторы тысячи тестов брали
+# сессию каждый заново, и одни только входы съедали почти всё время прогона —
+# ~470 секунд из 426 фактических (часть тестов входит не под всеми ролями).
+#
+# Сессию переиспользуем: она подписанная кука, живёт час, а прогон идёт минуты.
+_СЕССИИ: dict[str, httpx.Cookies] = {}
+
+
+async def _вошли(username: str, password: str) -> httpx.Cookies:
+    """Куки роли: берём готовые, а нет — входим один раз на весь прогон.
+
+    ⚠ **Проверяем, что кука ещё жива**, дешёвым запросом (10 мс): она живёт час, и
+    длинный прогон мог её пережить. Протухла — входим заново; без этой проверки
+    сюита падала бы 401-ми на последних файлах, и причину искали бы в правках.
+    """
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT,
                                  follow_redirects=False) as http:
-        response = await http.post('/auth/login', json={
-            'username': ADMIN_USERNAME, 'password': ADMIN_PASSWORD})
+        куки = _СЕССИИ.get(username)
+        if куки is not None:
+            http.cookies = куки
+            if (await http.get('/api/dating/site')).status_code == 200:
+                return куки
+
+        response = await http.post('/auth/login', json={'username': username,
+                                                        'password': password})
         assert response.status_code == 200, (
-            f'не вышло войти под {ADMIN_USERNAME}: {response.status_code} {response.text[:200]}')
+            f'не вышло войти под {username}: '
+            f'{response.status_code} {response.text[:200]}')
+
+        _СЕССИИ[username] = http.cookies
+
+        return http.cookies
+
+
+@pytest.fixture
+async def auth_client():
+    """Клиент с сессией. Не сошлось — тест падает здесь, а не в середине проверки.
+
+    ⚠ **Клиент свой у каждого теста, а сессия общая на прогон.** Свой клиент нужен:
+    у него свой пул соединений, и один на все тесты держал бы его открытым между
+    ними. А вот входить заново незачем — см. `_СЕССИИ`.
+    """
+    куки = await _вошли(ADMIN_USERNAME, ADMIN_PASSWORD)
+
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT,
+                                 follow_redirects=False, cookies=куки) as http:
         yield http
 
 
@@ -285,10 +326,8 @@ async def dating_client():
     войти — тест падает здесь: «оператор не может открыть бэкапы» одинаково
     выглядит и когда права работают, и когда учётки просто нет.
     """
+    куки = await _вошли(DATING_USERNAME, DATING_PASSWORD)
+
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT,
-                                 follow_redirects=False) as http:
-        response = await http.post('/auth/login', json={
-            'username': DATING_USERNAME, 'password': DATING_PASSWORD})
-        assert response.status_code == 200, (
-            f'не вышло войти под {DATING_USERNAME}: {response.status_code} {response.text[:200]}')
+                                 follow_redirects=False, cookies=куки) as http:
         yield http

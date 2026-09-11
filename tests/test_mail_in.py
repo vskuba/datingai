@@ -258,6 +258,54 @@ class TestSeen:
                                  (profile['id'],))
                 await db.connection.commit()
 
+    async def test_whole_thread_is_marked_at_once(self, site_api, profile):
+        """⚠ Разговор читают целиком, а не по письму.
+
+        Обе вкладки — «Письма → Входящие» и «Фавориты → Диалоги» — показывают всю
+        переписку сразу, и человек, открывший её, увидел каждое письмо. Пока
+        отметка ставилась одному письму (тому, по которому щёлкнули), значок в
+        списке анкет показывал «2 непрочитано» у разговора, прочитанного целиком, и
+        погасить его было нечем. Поймано на проде.
+        """
+        from src.uvicorn.routers.dating.dating_mail_in import (
+            DatingMailInSeenThread, dating_mail_in_seen_thread)
+
+        await _fetch(profile)
+        rows = await _rows(profile['id'])
+
+        # ⚠ Помечаем **по разговору**: письма в подделке от разных собеседников,
+        # и «два письма» ещё не значит «один разговор». Обходим все и сверяем сумму
+        # — так проверяется само правило, а не число писем у заглушки.
+        всего = (await dating_mail_in_unread(SITE))[profile['id']]['all']
+        помечено = 0
+        for uid in {str(row['uid']) for row in rows}:
+            got = await dating_mail_in_seen_thread(
+                DatingMailInSeenThread(profile_id=profile['id'], uid=uid), user=None)
+            помечено += got['result']['seen']
+
+        assert помечено == всего
+        assert profile['id'] not in await dating_mail_in_unread(SITE), \
+            'значок остался гореть после прочтения всех разговоров'
+
+    async def test_marking_a_thread_leaves_other_people_alone(self, site_api, profile):
+        """⚠ Метка — по паре «анкета + собеседник», а не по анкете.
+
+        Прочитать разговор с одним не значит прочитать переписку со всеми
+        остальными: у анкеты их бывают десятки.
+        """
+        from src.uvicorn.routers.dating.dating_mail_in import (
+            DatingMailInSeenThread, dating_mail_in_seen_thread)
+
+        await _fetch(profile)
+
+        got = await dating_mail_in_seen_thread(
+            DatingMailInSeenThread(profile_id=profile['id'], uid='нет-такого'),
+            user=None)
+
+        assert got['result']['seen'] == 0
+        assert (await dating_mail_in_unread(SITE))[profile['id']]['all'] == 2, \
+            'метка чужого разговора погасила письма этой анкеты'
+
     async def test_seen_can_be_taken_back(self, auth_client, site_api, profile):
         """Снять отметку тоже можно: письмо открыли мимоходом, а вернуться надо."""
         await _fetch(profile)

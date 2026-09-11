@@ -367,7 +367,17 @@ class TestMailIsChecked:
 
 
 class TestMailRights:
-    """Правка админская: письмо уходит от всех анкет сайта многим людям."""
+    """⚠ Шаблон правит любой вошедший, реестр переменных — только админ.
+
+    Прежде админской была вся правка: письмо уходит от всех анкет сайта многим
+    людям, и ошибка в шаблоне — массовая рассылка ерунды от нашего имени. Довод не
+    выдержал живого употребления: текст письма правят **первым**, когда рассылка
+    идёт плохо, и это работа того, кто ведёт анкеты. Оператор открывал «Письма →
+    Шаблоны» и не видел даже кнопки «завести».
+
+    Риск закрыт не правами, а проверкой: шаблон с неизвестной переменной не
+    сохранится, письмо с незаполненной — не уйдёт.
+    """
 
     async def test_operator_can_read(self, dating_client):
         answer = await dating_client.get(f'/api/dating/mail?site_id={SITE}')
@@ -381,14 +391,34 @@ class TestMailRights:
 
         assert answer.status_code == 200
 
-    async def test_operator_cannot_create(self, dating_client):
-        answer = await dating_client.post('/api/dating/mail', json={
-            'site_id': SITE, 'name': 'x', 'body': 'y'})
+    async def test_operator_can_create_and_delete(self, dating_client):
+        """Завести и убрать шаблон — работа оператора."""
+        made = await dating_client.post('/api/dating/mail', json={
+            'site_id': SITE, 'name': 'оператор завёл', 'body': 'Hello there!'})
+
+        assert made.status_code == 200, made.text[:200]
+
+        mail_id = made.json()['result']['id']
+        try:
+            правка = await dating_client.put(f'/api/dating/mail/{mail_id}', json={
+                'site_id': SITE, 'name': 'оператор поправил', 'body': 'Hi again!'})
+
+            assert правка.status_code == 200
+        finally:
+            assert (await dating_client.delete(
+                f'/api/dating/mail/{mail_id}')).status_code == 200
+
+    async def test_operator_cannot_touch_the_registry(self, dating_client):
+        """⚠ Переменная остаётся за админом, и это не половинчатость.
+
+        Шаблон — текст письма, его правят каждый день. Реестр переменных описывает,
+        **из чего** письмо собирается: новое имя надо согласовать с промптом агента
+        и со значениями у анкет, и заводится оно раз в полгода.
+        """
+        answer = await dating_client.post('/api/dating/mail/var', json={
+            'site_id': SITE, 'name': 'tst_var', 'title': 'Проба', 'source': 'profile'})
 
         assert answer.status_code == 403
-
-    async def test_operator_cannot_delete(self, dating_client):
-        assert (await dating_client.delete('/api/dating/mail/1')).status_code == 403
 
     async def test_closed_without_login(self, client):
         answer = await client.get(f'/api/dating/mail?site_id={SITE}')

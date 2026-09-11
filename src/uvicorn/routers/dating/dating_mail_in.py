@@ -454,6 +454,40 @@ async def dating_mail_in_seen(mail_in_id: int, payload: DatingMailInSeen,
     return {'result': await _row(mail_in_id)}
 
 
+class DatingMailInSeenThread(BaseModel):
+    """Чей разговор прочитан: пара «анкета — собеседник»."""
+
+    profile_id: int = Field(..., description='Анкета, у которой открыли разговор')
+    uid: str = Field(..., description='Номер собеседника на сайте')
+
+
+@router.put('/seen-thread', include_in_schema=False)
+async def dating_mail_in_seen_thread(payload: DatingMailInSeenThread,
+                                     user: AuthUser = Depends(auth_required)):
+    """Помечает прочитанными **все** письма этого собеседника у этой анкеты.
+
+    Returns:
+        dict: `seen` — скольким письмам поставили отметку.
+
+    ⚠ **Разговор читают целиком, а не по письму.** Обе вкладки — «Письма →
+    Входящие» и «Фавориты → Диалоги» — показывают всю переписку сразу, и человек,
+    открывший её, увидел каждое письмо. Пока отметка ставилась одному — тому, по
+    которому щёлкнули, — значок в списке анкет показывал «2 непрочитано» у
+    разговора, прочитанного целиком, и погасить его было нечем.
+
+    ⚠ **Снятие отметки осталось поштучным** (`PUT /{id}/seen`): «вернуться к этому
+    письму» — про одно письмо, а не про разговор.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE dating_mail_in SET seen = 1'
+                         ' WHERE profile_id = %s AND uid = %s AND seen = 0',
+                         (int(payload.profile_id), str(payload.uid)))
+        сколько = int(db.rowcount or 0)
+        await db.connection.commit()
+
+    return {'result': {'seen': сколько}}
+
+
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 async def _in_row(mail_in_id: int) -> dict:

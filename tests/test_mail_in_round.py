@@ -121,6 +121,19 @@ async def site(auth_client):
     await auth_client.put(f'/api/dating/site/{SITE}',
                           json={'settings': {**was, 'api_base': 'https://нет.тест'}})
 
+    # ⚠ Сверяем, что адрес **встал**, и падаем здесь, если нет. Круг без него
+    # молча пропускает сайт (`if not base: continue`), и тест падал бы на ассерте
+    # «анкета не попала в круг» — то есть жаловался бы на круг, а причина была в
+    # настройке. Поймано разовым падением в полном прогоне: за полторы тысячи
+    # тестов настройки этого сайта правят многие, и один невезучий порядок
+    # оставлял его без адреса.
+    стало = (await auth_client.get(
+        f'/api/dating/site/{SITE}')).json()['result']['settings']
+    assert стало.get('api_base') == 'https://нет.тест', (
+        'адрес API тестовому сайту не записался — круг пропустит его, и '
+        f'проверки ниже будут про другое: {стало}'
+    )
+
     yield SITE
 
     await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})

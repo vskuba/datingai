@@ -10,15 +10,23 @@
 в разделе. У сайтов разная аудитория и разные правила модерации, и текст,
 написанный под один, на другом может не пройти вовсе.
 
-## Права: читают все, правит админ
+## Права: и читают, и правят все вошедшие
 
-Письмо уходит **от всех анкет сайта многим людям**, и ошибка в шаблоне — это
-массовая рассылка ерунды от нашего имени. Это ближе к настройке установки, чем к
-работе с анкетой, и правка поэтому админская — как у расписания рассылки
-(`dating_site.py`), с которым шаблоны и работают в паре.
+⚠ **Прежде правка была админской**, и довод звучал так: письмо уходит от всех
+анкет сайта многим людям, ошибка в шаблоне — массовая рассылка ерунды от нашего
+имени, а значит это ближе к настройке установки, чем к работе с анкетой.
 
-Чтение открыто всем вошедшим: оператор ведёт переписку и вправе видеть, что
-уходит от его анкет.
+Довод не выдержал живого употребления. Текст письма — **первое**, что правят,
+когда рассылка идёт плохо: не так здоровается, слишком длинно, не о том спрашивает.
+Это ровно работа того, кто ведёт анкеты, и запирать её значило звать админа на
+каждую переформулировку. Оператор открывал «Письма → Шаблоны» и не видел даже
+кнопки «завести».
+
+Риск при этом остался прежним — и закрыт он не правами, а проверкой: шаблон с
+неизвестной переменной не сохранится (`dating_mail_check`), а письмо с
+незаполненной — не уйдёт (`dating_mail_missing`). Тот же разбор границы, что у
+выключателей сайта: устройство установки — админу, работа — оператору
+(`auth.md`, §7).
 
 ## ⚠ Журнал отправок ручек здесь пока нет
 
@@ -33,7 +41,7 @@ from pydantic import BaseModel, Field
 
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.auth.auth import AuthUser, auth_admin_required, auth_required
+from src.auth.auth import AuthUser, auth_required
 from src.dating.dating_mail import (DATING_MAIL_BODY_MAX, DATING_MAIL_NAME_MAX,
                                     dating_mail_check,
                                     dating_mail_vars_found)
@@ -101,7 +109,7 @@ class DatingMailDraft(BaseModel):
 
 @router.post('/draft', include_in_schema=False)
 async def dating_mail_draft(payload: DatingMailDraft,
-                            user: AuthUser = Depends(auth_admin_required)):
+                            user: AuthUser = Depends(auth_required)):
     """Просит агента написать черновик шаблона.
 
     Returns:
@@ -146,7 +154,7 @@ async def dating_mail_draft(payload: DatingMailDraft,
 
 @router.post('', include_in_schema=False)
 async def dating_mail_create(payload: DatingMailSave,
-                             user: AuthUser = Depends(auth_admin_required)):
+                             user: AuthUser = Depends(auth_required)):
     """Заводит шаблон.
 
     Returns:
@@ -173,7 +181,7 @@ async def dating_mail_create(payload: DatingMailSave,
 
 @router.put('/{mail_id}', include_in_schema=False)
 async def dating_mail_update(mail_id: int, payload: DatingMailSave,
-                             user: AuthUser = Depends(auth_admin_required)):
+                             user: AuthUser = Depends(auth_required)):
     """Правит шаблон целиком.
 
     Raises:
@@ -199,7 +207,7 @@ async def dating_mail_update(mail_id: int, payload: DatingMailSave,
 
 @router.delete('/{mail_id}', include_in_schema=False)
 async def dating_mail_delete(mail_id: int,
-                             user: AuthUser = Depends(auth_admin_required)):
+                             user: AuthUser = Depends(auth_required)):
     """Удаляет шаблон.
 
     Raises:

@@ -195,6 +195,17 @@ async def dating_profile_action_schedule_on(profile_id: int, data: DatingProfile
     галочку, чтобы анкета перестала работать сейчас. Рвёт круг воркера в течение
     минуты — здесь только флаг, потому что соединение живёт в его памяти, а не в
     базе.
+
+    ⚠ **Выключение снимает и присмотр автомата** (`keep_online`), и без этого две
+    наши же части дрались. Поймано живьём: галочку сняли в 16:33, сессия стёрлась
+    («Расписание выключено, сокет снят»), а через минуту круг восстановления вошёл
+    заново — «Вхожу заново (попытка 1)», «Вход восстановлен» — и анкета снова
+    оказалась в сети. Он берёт всех с `keep_online = 1`, а анкету без расписания
+    считает дежурящей круглосуточно (`dating_revive_db._on_duty`).
+
+    Смысл галочки — «перестань водить её сама». Присмотр, переживший снятие,
+    отменял это решение молча. Понадобится ручное ведение — человек нажмёт
+    «Войти», и удачный вход поднимет `keep_online` обратно (`dating_login.py`).
     """
     await dating_profile_row(profile_id)
 
@@ -212,6 +223,7 @@ async def dating_profile_action_schedule_on(profile_id: int, data: DatingProfile
     dropped = False
     if not data.schedule_on:
         dropped = await dating_schedule_round_drop(profile_id)
+        await _keep_online_clear(profile_id)
 
     await dating_log_write(
         profile_id, 'info',
@@ -220,6 +232,22 @@ async def dating_profile_action_schedule_on(profile_id: int, data: DatingProfile
               else 'Расписание выключено'))
 
     return {'result': {'schedule_on': data.schedule_on, 'dropped': dropped}}
+
+
+async def _keep_online_clear(profile_id: int) -> None:
+    """Снимает присмотр автомата: круг восстановления больше не вернёт анкету в сеть.
+
+    ⚠ **Не бросает.** Флаг расписания уже записан, и падать здесь — значит отвечать
+    человеку отказом на действие, которое состоялось. Не снялось — круг вернёт
+    анкету, и это видно в журнале; отказ же спрятал бы и саму смену флага.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE dating_profile SET keep_online = 0 WHERE id = %s',
+                             (int(profile_id),))
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] присмотр анкеты #{profile_id} не снялся: {e}')
 
 
 class DatingProfileEnabled(BaseModel):
