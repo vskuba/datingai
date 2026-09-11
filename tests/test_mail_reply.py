@@ -528,12 +528,21 @@ class TestGenerationSwitchIsSiteWide:
             await auth_client.put(f'/api/dating/site/{SITE}/reply-make-on',
                                   json={'reply_make_on': False})
 
-    async def test_operator_may_not_switch(self, dating_client):
-        """Настройка сайта — право админа, как и отправка ответов рядом."""
-        answer = await dating_client.put(f'/api/dating/site/{SITE}/reply-make-on',
-                                         json={'reply_make_on': True})
+    async def test_operator_may_switch(self, dating_client):
+        """⚠ **Выключатель занятия — право оператора**, а не только админа.
 
-        assert answer.status_code == 403
+        Граница проходит по «устройство против работы»: адреса, пароли и частоты
+        остались за админом (страница «Настройки сайтов»), а «готовим ли ответы» —
+        это распорядок работы того, кто ведёт анкеты.
+        """
+        try:
+            answer = await dating_client.put(f'/api/dating/site/{SITE}/reply-make-on',
+                                             json={'reply_make_on': True})
+
+            assert answer.status_code == 200
+        finally:
+            await dating_client.put(f'/api/dating/site/{SITE}/reply-make-on',
+                                    json={'reply_make_on': False})
 
     async def test_closed_without_login(self, client):
         answer = await client.put(f'/api/dating/site/{SITE}/reply-make-on',

@@ -76,7 +76,11 @@ class TestTabStateIsWired:
         page = (await auth_client.get(PAGE)).text
 
         assert 'TAB_ROWS' in page, 'карты отборов нет — списки вкладок одинаковы'
-        assert 'mailing_on' in page, 'отбор рассылки не смотрит на флаг'
+        # ⚠ Про `mailing_on` тут больше не спрашиваем: отбор рассылки его не
+        # читает вовсе — в неё идут все включённые анкеты, которые сейчас в сети
+        # (`dating_mailing._girls`). Проверка на флаг сторожила бы отменённое
+        # правило и падала бы при каждом верном изменении.
+        assert 'TAB_ROWS' in page
 
     async def test_open_by_tab_exists(self, auth_client):
         """Своя выбранная анкета у каждой вкладки."""

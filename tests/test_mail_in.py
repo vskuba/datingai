@@ -215,14 +215,48 @@ class TestSeen:
     async def test_unread_is_counted_by_profile(self, auth_client, site_api, profile):
         await _fetch(profile)
 
-        assert (await dating_mail_in_unread(SITE)).get(profile['id']) == 2
+        assert (await dating_mail_in_unread(SITE)).get(profile['id'])['all'] == 2
 
         rows = (await auth_client.get(
             f"/api/dating/mail-in?profile_id={profile['id']}")).json()['result']
         await auth_client.put(f"/api/dating/mail-in/{rows[0]['id']}/seen",
                               json={'seen': True})
 
-        assert (await dating_mail_in_unread(SITE)).get(profile['id']) == 1
+        assert (await dating_mail_in_unread(SITE)).get(profile['id'])['all'] == 1
+
+    async def test_unread_says_how_many_are_from_favorites(self, site_api, profile):
+        """⚠ Счётчик обязан знать, **где** лежат эти письма.
+
+        Письмо от избранного видно только на «Фавориты → Диалоги», от прочих —
+        только на «Письма → Входящие» (§3.7.4). Значок в списке анкет вёл всегда во
+        «Входящие», и для письма от избранного это был переход в пустоту: человек
+        щёлкал по конверту с числом и попадал на «писем пока нет».
+        """
+        from mysql_.mysql_ import mysql_get_db_async
+        from src.dating.dating_favorite import DATING_FAVORITE_STATES
+
+        await _fetch(profile)
+        rows = await _rows(profile['id'])
+        uid = str(rows[0]['uid'])
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO dating_favorite (site_id, profile_id, uid, state)'
+                ' VALUES (%s, %s, %s, %s)'
+                ' ON DUPLICATE KEY UPDATE state = VALUES(state)',
+                (SITE, profile['id'], uid, DATING_FAVORITE_STATES[0]))
+            await db.connection.commit()
+
+        try:
+            счёт = (await dating_mail_in_unread(SITE)).get(profile['id'])
+
+            assert счёт['all'] == 2, счёт
+            assert счёт['fav'] == 1, 'письмо избранного не отличили от прочих'
+        finally:
+            async with mysql_get_db_async() as db:
+                await db.execute('DELETE FROM dating_favorite WHERE profile_id = %s',
+                                 (profile['id'],))
+                await db.connection.commit()
 
     async def test_seen_can_be_taken_back(self, auth_client, site_api, profile):
         """Снять отметку тоже можно: письмо открыли мимоходом, а вернуться надо."""

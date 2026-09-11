@@ -36,9 +36,20 @@
 
 ## Права
 
-Правка — только администратору: настройка сайта меняет работу всех анкет на нём, а
-не того, кто её открыл. Чтение открыто всем вошедшим: оператору полезно видеть, с
-чем он работает, и прятать это значило бы звать админа на каждый вопрос.
+Граница проходит не по «сайт против анкеты», а по **устройству против работы**.
+
+| Что | Кому | Почему |
+|-----|------|--------|
+| настройки сайта (`PUT /{id}`), показ секрета, вход в панель | админу | адреса, пароли, частоты — устройство установки |
+| выключатели занятий и расписания смен | **всем вошедшим** | это и есть работа оператора анкет |
+
+⚠ **Прежде правка была целиком админской**, и довод звучал так: настройка сайта
+меняет работу всех анкет, а не той, что открыл нажавший. Довод верен про адреса и
+частоты — и неверен про выключатели: «включить рассылку», «поставить смены»,
+«снять генерацию ответов» — это ровно то, ради чего оператора и заводят. Он
+открывал «Профили», видел запертые галочки и звал админа щёлкнуть за него.
+
+Чтение открыто всем и было: оператору полезно видеть, с чем он работает.
 """
 
 import asyncio
@@ -827,15 +838,16 @@ async def dating_site_mailing_schedule_get(site_id: int,
 @router.put('/{site_id}/mailing-schedule', include_in_schema=False)
 async def dating_site_mailing_schedule_save(
         site_id: int, payload: DatingSiteMailingSchedule,
-        user: AuthUser = Depends(auth_admin_required)):
+        user: AuthUser = Depends(auth_required)):
     """Переписывает смены рассылки.
 
     Raises:
         HTTPException: 422 — расписание негодное; причина словами, как её вернул
             `dating_schedule_check`.
 
-    ⚠ **Только администратору**, как и остальная правка сайта: рассылка уходит от
-    всех анкет сайта разом, а не от той, которую открыл нажавший.
+    ⚠ **Всем вошедшим, а не только админу.** Смены рассылки — распорядок работы, а
+    не устройство установки: их ставит тот, кто ведёт анкеты. Что рассылка уходит
+    от всех анкет сайта разом, а не от открытой, говорит подпись над лентой.
     """
     why = dating_schedule_check(payload.schedule)
     if why:
@@ -857,7 +869,7 @@ async def dating_site_mailing_schedule_save(
 @router.put('/{site_id}/mailing-schedule-on', include_in_schema=False)
 async def dating_site_mailing_schedule_on(
         site_id: int, payload: DatingSiteMailingScheduleOn,
-        user: AuthUser = Depends(auth_admin_required)):
+        user: AuthUser = Depends(auth_required)):
     """Включает и выключает исполнение расписания рассылки.
 
     ⚠ **Отдельно от самих смен**, и по той же причине, что у анкеты: смены правят
@@ -878,7 +890,7 @@ async def dating_site_mailing_schedule_on(
 
 @router.put('/{site_id}/mailing-send-on', include_in_schema=False)
 async def dating_site_mailing_send_on(site_id: int, payload: DatingSiteMailingSendOn,
-                                      user: AuthUser = Depends(auth_admin_required)):
+                                      user: AuthUser = Depends(auth_required)):
     """Включает и выключает отправку писем из пула.
 
     ⚠ **Отдельно от расписания**, хотя оба про рассылку: расписание отвечает
@@ -922,14 +934,14 @@ async def dating_site_invite_schedule_get(site_id: int,
 @router.put('/{site_id}/invite-schedule', include_in_schema=False)
 async def dating_site_invite_schedule_save(
         site_id: int, payload: DatingSiteInviteSchedule,
-        user: AuthUser = Depends(auth_admin_required)):
+        user: AuthUser = Depends(auth_required)):
     """Переписывает смены инвайтов.
 
     Raises:
         HTTPException: 422 — расписание негодное; причина словами.
 
-    ⚠ **Только администратору**, как и остальная правка сайта: инвайты уходят от
-    всех включённых анкет сайта, а не от той, которую открыл нажавший.
+    ⚠ **Всем вошедшим, а не только админу**: смены инвайтов — тот же распорядок
+    работы, что и смены рассылки.
     """
     why = dating_schedule_check(payload.schedule)
     if why:
@@ -951,7 +963,7 @@ async def dating_site_invite_schedule_save(
 @router.put('/{site_id}/invite-schedule-on', include_in_schema=False)
 async def dating_site_invite_schedule_on(
         site_id: int, payload: DatingSiteInviteScheduleOn,
-        user: AuthUser = Depends(auth_admin_required)):
+        user: AuthUser = Depends(auth_required)):
     """Включает и выключает генерацию инвайтов по расписанию.
 
     ⚠ **Отдельно от самих смен**, и по той же причине, что у рассылки: смены правят
@@ -971,7 +983,7 @@ async def dating_site_invite_schedule_on(
 
 @router.put('/{site_id}/invite-send-on', include_in_schema=False)
 async def dating_site_invite_send_on(site_id: int, payload: DatingSiteInviteSendOn,
-                                     user: AuthUser = Depends(auth_admin_required)):
+                                     user: AuthUser = Depends(auth_required)):
     """Разрешает и запрещает отправку инвайтов.
 
     ⚠ **Кругового отправителя у инвайтов нет** — отправляет человек кнопкой на
@@ -1010,7 +1022,7 @@ async def dating_site_chat_answer_get(site_id: int,
 
 @router.put('/{site_id}/chat-answer-on', include_in_schema=False)
 async def dating_site_chat_answer_on(site_id: int, payload: DatingSiteChatAnswerOn,
-                                     user: AuthUser = Depends(auth_admin_required)):
+                                     user: AuthUser = Depends(auth_required)):
     """Включает и выключает автоответ в чате для всех анкет сайта.
 
     ⚠ **Про сайт, а не про анкету**, и это третий такой переезд подряд: так же
@@ -1112,7 +1124,7 @@ async def dating_site_favorite_mail_get(site_id: int,
 @router.put('/{site_id}/favorite-mail-make-on', include_in_schema=False)
 async def dating_site_favorite_mail_make_on(
         site_id: int, payload: DatingSiteFavoriteMailMakeOn,
-        user: AuthUser = Depends(auth_admin_required)):
+        user: AuthUser = Depends(auth_required)):
     """Включает и выключает набор пула писем избранным.
 
     ⚠ **Расписания у этого набора нет**, в отличие от рассылки: пул ничего не
@@ -1136,7 +1148,7 @@ async def dating_site_favorite_mail_make_on(
 @router.put('/{site_id}/favorite-mail-send-on', include_in_schema=False)
 async def dating_site_favorite_mail_send_on(
         site_id: int, payload: DatingSiteFavoriteMailSendOn,
-        user: AuthUser = Depends(auth_admin_required)):
+        user: AuthUser = Depends(auth_required)):
     """Разрешает и запрещает отправку писем избранным.
 
     ⚠ **Этот флаг исполняет круг отправки**, в отличие от инвайтского: письма
@@ -1176,7 +1188,7 @@ async def dating_site_template_schedule_get(site_id: int,
 @router.put('/{site_id}/template-schedule', include_in_schema=False)
 async def dating_site_template_schedule_save(
         site_id: int, payload: DatingSiteTemplateSchedule,
-        user: AuthUser = Depends(auth_admin_required)):
+        user: AuthUser = Depends(auth_required)):
     """Переписывает смены написания шаблонов.
 
     ⚠ Разбор и проверка смен — **общие** с расписанием анкеты и рассылки
@@ -1198,7 +1210,7 @@ async def dating_site_template_schedule_save(
 @router.put('/{site_id}/template-schedule-on', include_in_schema=False)
 async def dating_site_template_schedule_on(
         site_id: int, payload: DatingSiteTemplateScheduleOn,
-        user: AuthUser = Depends(auth_admin_required)):
+        user: AuthUser = Depends(auth_required)):
     """Включает и выключает написание шаблонов по расписанию.
 
     ⚠ Отдельно от самих смен — та же причина, что у рассылки: смены правят
@@ -1262,7 +1274,7 @@ async def dating_site_mail_in_get(site_id: int,
 
 @router.put('/{site_id}/mail-check-on', include_in_schema=False)
 async def dating_site_mail_check_on(site_id: int, payload: DatingSiteMailCheckOn,
-                                    user: AuthUser = Depends(auth_admin_required)):
+                                    user: AuthUser = Depends(auth_required)):
     """Включает и выключает забор входящих писем.
 
     ⚠ **Включено по умолчанию**, в отличие от трёх соседних выключателей почты.
@@ -1289,7 +1301,7 @@ async def dating_site_mail_check_on(site_id: int, payload: DatingSiteMailCheckOn
 
 @router.put('/{site_id}/reply-make-on', include_in_schema=False)
 async def dating_site_reply_make_on(site_id: int, payload: DatingSiteReplyMakeOn,
-                                    user: AuthUser = Depends(auth_admin_required)):
+                                    user: AuthUser = Depends(auth_required)):
     """Включает и выключает **подготовку** ответов на входящие письма.
 
     ⚠ **Не отправку.** Пул можно копить и править молча — уходят ответы только со
@@ -1315,7 +1327,7 @@ async def dating_site_reply_make_on(site_id: int, payload: DatingSiteReplyMakeOn
 
 @router.put('/{site_id}/reply-send-on', include_in_schema=False)
 async def dating_site_reply_send_on(site_id: int, payload: DatingSiteReplySendOn,
-                                    user: AuthUser = Depends(auth_admin_required)):
+                                    user: AuthUser = Depends(auth_required)):
     """Включает и выключает ответы на входящие письма.
 
     ⚠ **Выключено по умолчанию**, и включает человек. Ответ уходит живому человеку

@@ -169,22 +169,38 @@ async def dating_mail_in_fetch(profile: dict, base: str, password: str) -> dict:
 
 
 async def dating_mail_in_unread(site_id: int) -> dict:
-    """Сколько непросмотренных писем у каждой анкеты сайта.
+    """Сколько непросмотренных писем у каждой анкеты сайта и **где они лежат**.
 
     Returns:
-        dict: `{profile_id: сколько}`. Анкет без новых писем в нём нет вовсе —
-        страница рисует значок только тем, у кого он есть.
+        dict: `{profile_id: {'all': сколько, 'fav': сколько из них от избранных}}`.
+        Анкет без новых писем в нём нет вовсе — страница рисует значок только тем,
+        у кого он есть.
+
+    ⚠ **`fav` нужен не для счёта, а для перехода.** Письмо от избранного
+    показывается только на «Фавориты → Диалоги», от прочих — только на «Письма →
+    Входящие» (`api.md`, §3.7.4). Значок в списке анкет вёл всегда во «Входящие», и
+    для письма от избранного это был переход в пустоту: человек щёлкал по конверту
+    с числом и попадал на «писем пока нет».
 
     Отдельной функцией и одним запросом: значок стоит в списке анкет, и спрашивать
     по анкете значило бы двадцать запросов на каждую отрисовку списка.
     """
+    from src.dating.dating_favorite import DATING_FAVORITE_STATES, DATING_FAVORITE_STATES_SQL
+
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT profile_id, COUNT(*) AS n FROM dating_mail_in'
-            ' WHERE site_id = %s AND seen = 0 GROUP BY profile_id', (int(site_id),))
+            'SELECT m.profile_id, COUNT(*) AS n,'
+            '       SUM(EXISTS (SELECT 1 FROM dating_favorite f'
+            '                    WHERE f.profile_id = m.profile_id AND f.uid = m.uid'
+            f'                     AND f.state IN ({DATING_FAVORITE_STATES_SQL}))) AS fav'
+            '  FROM dating_mail_in m'
+            ' WHERE m.site_id = %s AND m.seen = 0 GROUP BY m.profile_id',
+            (*DATING_FAVORITE_STATES, int(site_id)))
         rows = await db.fetchall()
 
-    return {int(row['profile_id']): int(row['n']) for row in rows or []}
+    return {int(row['profile_id']): {'all': int(row['n']),
+                                     'fav': int(row['fav'] or 0)}
+            for row in rows or []}
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

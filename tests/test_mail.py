@@ -416,13 +416,20 @@ class TestMailPage:
         assert answer.status_code == 302
         assert answer.headers['location'].endswith('/admin/dating/profile')
 
-    async def test_operator_may_look_but_not_edit(self, dating_client):
-        """Оператору страница открыта: полезно знать, какой текст уходит от его
-        анкет. Править при этом может только админ — письмо уходит от всех анкет
-        сайта многим людям."""
+    async def test_operator_may_switch_the_work(self, dating_client):
+        """⚠ **Оператор щёлкает выключатели занятий, и это исправление.**
+
+        Прежде страница гасила их всем, кроме админа: считалось, что раз
+        выключатель про **весь сайт**, а не про открытую анкету, то и правка его —
+        дело админа. Довод верен про адреса и частоты (они остались за админом,
+        страница «Настройки сайтов»), но неверен про работу: «включить рассылку»,
+        «поставить смены», «снять генерацию ответов» — ровно то, ради чего
+        оператора анкет и заводят. Он открывал «Профили», видел запертые галочки и
+        звал админа щёлкнуть за него.
+        """
         page = (await dating_client.get('/admin/dating/profile')).text
 
-        assert 'const CAN_EDIT_SITE = false' in page
+        assert 'const CAN_EDIT_SITE = true' in page
 
     async def test_admin_may_edit(self, auth_client):
         page = (await auth_client.get('/admin/dating/profile')).text

@@ -222,18 +222,30 @@ class TestMailingScheduleRights:
 
         assert answer.status_code == 200
 
-    async def test_operator_cannot_write(self, dating_client):
+    async def test_operator_may_write(self, dating_client):
+        """⚠ **Смены ставит оператор**, а не только админ.
+
+        Расписание — распорядок работы, а не устройство установки: адреса, пароли и
+        частоты остались за админом (страница «Настройки сайтов»). Прежде правка
+        была целиком админской, и оператор, ведущий анкеты, звал админа передвинуть
+        часы.
+        """
         answer = await dating_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
                                          json={'schedule': []})
 
-        assert answer.status_code == 403
+        assert answer.status_code == 200
 
-    async def test_operator_cannot_switch(self, dating_client):
-        answer = await dating_client.put(
-            f'/api/dating/site/{SITE}/mailing-schedule-on',
-            json={'mailing_schedule_on': True})
+    async def test_operator_may_switch(self, dating_client):
+        try:
+            answer = await dating_client.put(
+                f'/api/dating/site/{SITE}/mailing-schedule-on',
+                json={'mailing_schedule_on': True})
 
-        assert answer.status_code == 403
+            assert answer.status_code == 200
+        finally:
+            await dating_client.put(
+                f'/api/dating/site/{SITE}/mailing-schedule-on',
+                json={'mailing_schedule_on': False})
 
     async def test_closed_without_login(self, client):
         answer = await client.get(f'/api/dating/site/{SITE}/mailing-schedule')
