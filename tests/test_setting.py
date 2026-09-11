@@ -11,6 +11,7 @@
 
 import pytest
 
+pytestmark = pytest.mark.core
 KEY = 'тест_ключ'
 OTHER = 'тест_второй'
 

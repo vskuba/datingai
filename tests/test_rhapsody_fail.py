@@ -17,6 +17,8 @@ from src.rhapsody import rhapsody_api
 from src.rhapsody.rhapsody_api import (_error_text, rhapsody_api_scenario_find,
                                        rhapsody_api_scenario_forget)
 
+pytestmark = pytest.mark.core
+
 
 class _Response:
     """Ответ соседа настолько, насколько его читает `_error_text`."""

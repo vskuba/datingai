@@ -22,6 +22,8 @@ from fastapi import HTTPException
 from src.uvicorn.routers.dating.dating_import import (dating_import_profile,
                                                       dating_import_ready)
 
+pytestmark = pytest.mark.profile
+
 # Сайт, который есть у поддельного соседа, и сценарий импорта у него заведён.
 SITE_WITH_IMPORT = 343
 

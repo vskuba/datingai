@@ -11,9 +11,12 @@
 
 Сосед здесь поддельный (`rhapsody_fake`): сюита не ходит в чужой проект.
 """
+
+import pytest
+
 from src.dating.dating_agent import dating_agent_site
 
-
+pytestmark = pytest.mark.profile
 class TestSiteSlug:
     """Имя из справочника превращается в метку, пригодную для поля `site`."""
 

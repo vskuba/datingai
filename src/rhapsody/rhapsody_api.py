@@ -435,6 +435,59 @@ async def rhapsody_api_chat_ask(agent_id: int, question: str, companion_id: int 
     return str(data.get('result') or '')
 
 
+# Сколько дней просить у журнала LLM. ⚠ Больше семи бессмысленно: сосед держит
+# `llm_request` неделю и сам ограничивает запрос до семи дней. Число здесь затем,
+# чтобы страница не обещала «за месяц» того, чего нет.
+RHAPSODY_API_LLM_DAYS = 7
+
+
+async def rhapsody_api_llm_usage(node: str, days: int = RHAPSODY_API_LLM_DAYS) -> dict:
+    """Сколько запросов к LLM ушло и сколько токенов потрачено.
+
+    Args:
+        node: узел у соседа **по имени** (`DATING_AGENT_NODE`, «Dating»).
+        days: за сколько дней. ⚠ Сосед клампит до семи — дольше журнал не живёт.
+
+    Returns:
+        dict: `days`, `requests`, `errors`, `tokens_input`, `tokens_output` и
+        `rows` — разбивка по учётке и модели, как её отдал сосед.
+
+    ⚠ **Считает это только сосед**, и своей копии у нас быть не должно: токены
+    знает тот, кто зовёт модель, а вторая копия расходится с первой в первый же
+    день. Отсюда и право `llm:view` у нашей служебной учётки — **только чтение**.
+
+    ⚠ **Узел называем именем, а не номером.** Так мы адресуем его везде, где
+    обращаемся к соседу (`POST /agent/create` берёт `node`), и номер взять негде:
+    читать список узлов служебной учётке не положено, а зашить `2` в код значило бы
+    сломать его при первом переносе базы. Имя разрешает сосед, у которого список
+    узлов и так под рукой.
+
+    ⚠ **Путь без `/api`**, в отличие от браузерных ручек: у соседа роутер LLM
+    подключён в корень. Не описка — так у него и есть.
+
+    ⚠ **Отказ не роняет страницу.** Статистика — не то, ради чего открывают
+    панель: лежит сосед, и числа приходят нулями с причиной в `error`. Иначе
+    вкладка «Статистика» гасла бы целиком из-за одной недоступной строки.
+    """
+    try:
+        data = await _request(
+            'GET', f'/llm/usage/stats?node={quote(str(node))}'
+                   f'&days={max(1, min(int(days), RHAPSODY_API_LLM_DAYS))}')
+    except RhapsodyError as e:
+        return {'days': 0, 'requests': 0, 'errors': 0, 'tokens_input': 0,
+                'tokens_output': 0, 'rows': [], 'error': str(e)}
+
+    got = data.get('result') or {}
+    rows = [dict(row) for row in (got.get('rows') or [])]
+
+    return {'days': int(got.get('days') or 0),
+            'requests': sum(int(row.get('requests') or 0) for row in rows),
+            'errors': sum(int(row.get('errors') or 0) for row in rows),
+            'tokens_input': sum(int(row.get('tokens_input') or 0) for row in rows),
+            'tokens_output': sum(int(row.get('tokens_output') or 0) for row in rows),
+            'rows': rows, 'error': ''}
+
+
 # Имена подстановок, по которым узнаётся сценарий входа. Сайты называют поля
 # по-разному, поэтому списки, а не одно имя.
 RHAPSODY_API_LOGIN_KEYS = ('login', 'username', 'email', 'user')

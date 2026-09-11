@@ -19,7 +19,7 @@ from src.rhapsody.rhapsody_api import (RHAPSODY_API_SITE_TAG, RhapsodyError,
                                        rhapsody_api_site_get, rhapsody_api_site_list)
 from src.uvicorn.routers.site import site_list
 
-
+pytestmark = pytest.mark.core
 class TestSiteList:
     """Список сайтов: своей таблицы сайтов здесь нет."""
 

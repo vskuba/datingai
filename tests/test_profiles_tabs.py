@@ -19,6 +19,7 @@ import tempfile
 
 import pytest
 
+pytestmark = pytest.mark.page
 PAGE = '/admin/dating/profile'
 
 
@@ -52,8 +53,14 @@ class TestTabsAboveColumns:
         никто не заметит: страница откроется на «Чате» и будет выглядеть целой."""
         page = (await auth_client.get(PAGE)).text
 
-        for tab in ('chat', 'mail', 'mail_in', 'event'):
+        for tab in ('chat', 'fav', 'mail', 'stats'):
             assert f'data-tab="{tab}"' in page, f'вкладка {tab} пропала'
+
+        # ⚠ Состав менялся: «Письма входящие» была пятой вкладкой и ушла внутрь
+        # «Писем» подвкладками (почта у анкеты одна), а «Фавориты» выделились из
+        # «Чата», где были третьей колонкой и делили ширину с диалогами.
+        assert 'data-tab="mail_in"' not in page, \
+            'вкладка входящих осталась — она переехала в подвкладки «Писем»'
 
 
 class TestTabStateIsWired:
@@ -238,47 +245,312 @@ class TestPageScriptIsValidJs:
             os.remove(path)
 
 
-class TestDialogsButtonKeepsItsKey:
-    """⚠ Долгое действие снимает с себя **тот же** ключ `busy`, что поставило.
+class TestDialogsButtonIsGone:
+    """⚠ «Загрузить диалоги» в шапке больше нет — и не должно вернуться.
 
-    Кнопка «Загрузить диалоги» входит на сайт под анкетой и держится десятки
-    секунд. На это время она кладёт в `busy` ключ `dialog:<номер>`: без него круг
-    перерисовки вернул бы кнопке обычный вид посреди прогона, и на сайт вошли бы
-    второй раз.
+    Кнопка входила на сайт браузером соседа и снимала список тех, с кем у анкеты
+    есть переписка: сорок секунд на нажатие. Нужна она была, пока диалоги брались
+    оттуда; теперь список строится из своей базы (`/chat/dialogs`), а сообщения
+    приносит круг воркера сам.
 
-    Беда в том, что за эти десятки секунд человек успевает выбрать другую анкету
-    или переключить вкладку — и `openId` к возврату уже чужой. Собирай `finally`
-    ключ заново из `openId`, он снял бы **чужой**, а свой оставил в `busy`
-    навсегда. Оба круга обновления начинаются с `if (busy.size) return`, поэтому
-    список анкет и чат замолчали бы до перезагрузки страницы — молча, без ошибок
-    и без внешних признаков.
+    ⚠ **Тест сторожит не кнопку, а её обвязку.** Вместе с ней ушли три вещи, и
+    каждая была мертва без нажатия: признак «настроен ли импорт» (он решал, красить
+    ли кнопку), значок «с ним есть переписка» в лентах и счёт диалогов из её
+    снимка. Вернись любая — она снова стояла бы пустой рядом с полным списком.
 
-    ⚠ **Тест текстовый и слабее, чем хотелось бы:** щёлкнуть кнопку и сменить
-    анкету посреди прогона сюита не может — браузера у неё нет. Он сторожит
-    возврат ровно этой записи (`${openId}` внутри работы с `busy`), а не
-    поведение вообще.
+    Заодно здесь остался след старой беды: кнопка держала ключ `busy` на время
+    прогона, и собранный заново из `openId` он снимал **чужой** ключ — свой
+    оставался навсегда, а оба круга обновления начинаются с `if (busy.size)
+    return`, и страница молча замолкала до перезагрузки. Кнопки нет, а приём
+    «номер запоминаем один раз» остался в `peopleLoad`.
     """
 
-    async def test_busy_key_is_captured_once(self, auth_client):
+    async def test_the_button_is_absent(self, auth_client):
+        """⚠ Ищем **кнопку**, а не слова. Имя её осталось в комментариях — там
+        объяснено, почему её нет и что ушло вместе с ней, и это знание нужнее
+        буквальной чистоты: вернуть кнопку проще, чем заново дознаться, зачем её
+        убрали."""
         page = (await auth_client.get(PAGE)).text
 
-        start = page.find('function chatDialogsBind()')
-        assert start != -1, 'обработчик кнопки «Загрузить диалоги» не найден'
-        end = page.find('function field(', start)
-        assert end != -1, 'не нашёлся конец обработчика — разметка изменилась'
-        handler = page[start:end]
+        assert 'id="dialogsBtn"' not in page, 'кнопка вернулась в шапку'
+        assert '>Загрузить диалоги' not in page, 'кнопка вернулась в шапку'
+        assert 'function chatDialogsBind' not in page, 'обработчик кнопки вернулся'
 
-        assert 'busy.add(`dialog:${openId}`)' not in handler, (
-            'ключ `busy` снова собирается из `openId` прямо в обработчике: '
-            'сменится анкета за время прогона — ключ останется в `busy` навсегда'
+    async def test_its_dead_wiring_is_gone_too(self, auth_client):
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'chatPanelReady' not in page, (
+            'признак «настроен ли импорт» снова спрашивается — он решал только '
+            'цвет удалённой кнопки'
         )
-        assert 'busy.delete(`dialog:${openId}`)' not in handler, (
-            'снятие ключа читает `openId` заново — снимется чужой ключ, свой '
-            'останется, и круги обновления замолчат до перезагрузки'
+        assert 'dialogHas' not in page, (
+            'значок «есть переписка» вернулся: без кнопки снимок диалогов никто '
+            'не наполняет, и значок не появится никогда'
         )
 
-        # Обратная сторона: ключ всё-таки ставится и снимается, и обеими
-        # половинами — по одной и той же запомненной переменной. Без этой
-        # проверки тест прошёл бы и на обработчике, потерявшем `busy` целиком.
-        assert 'busy.add(`dialog:${runId}`)' in handler, 'ключ `busy` не ставится'
-        assert 'busy.delete(`dialog:${runId}`)' in handler, 'ключ `busy` не снимается'
+    async def test_the_dialog_count_comes_from_the_handle(self, auth_client):
+        """⚠ Счёт диалогов — из ответа `/chat/dialogs`, а не из снимка сайта.
+
+        Прежде он брался у списка, который снимала кнопка; без нажатия снимка не
+        было, и счётчик стоял пустым **рядом с полным списком**. Считали одно,
+        показывали рядом с другим.
+        """
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'dialogsCount()' not in page, 'счёт снова берётся из снимка сайта'
+        # ⚠ Ищем `data.contacts_total` **в подписи счётчика**, а не целую строку
+        # присваивания: подпись с тех пор стала текстом («всего диалогов: N»), и
+        # проверка на точное `count.textContent = data.contacts_total` падала на
+        # оформлении, хотя источник числа не менялся. Условие теста — источник.
+        assert 'всего диалогов: ${data.contacts_total' in page, \
+            'счёт диалогов не из ответа ручки'
+
+
+class TestTabsSurviveReload:
+    """⚠ Открытая вкладка переживает перезагрузку — и вкладка, и подвкладка писем.
+
+    Страницу обновляют посреди работы: посмотреть, добрал ли круг пул, ушло ли
+    письмо, вернуться из чужой вкладки браузера. Возвращаясь каждый раз на «Чат»,
+    панель заставляла бы щёлкать по одному и тому же.
+
+    Проверяется по разметке, а не браузером: правило здесь — «значение читается из
+    хранилища и пишется туда при переключении», а это видно в исходнике. Живьём
+    проверено отдельно, всеми четырьмя вкладками.
+    """
+
+    async def test_tab_is_read_from_storage(self, auth_client):
+        page = (await auth_client.get(PAGE)).text
+
+        assert "localStorage.getItem(WORK_TAB_KEY)" in page, \
+            'вкладка не читается из хранилища — перезагрузка сбросит её на «Чат»'
+        assert "localStorage.setItem(WORK_TAB_KEY, workTab)" in page, \
+            'переключение вкладки не запоминается'
+
+    async def test_mail_subtab_is_read_from_storage(self, auth_client):
+        """Подвкладка «Рассылка / Доставка» — своим ключом: вкладки называются
+        по-разному и переключают разное."""
+        page = (await auth_client.get(PAGE)).text
+
+        assert "localStorage.getItem(MAIL_TAB_KEY)" in page
+        assert "localStorage.setItem(MAIL_TAB_KEY, mailTab)" in page
+        assert "'dating.profile.tab'" in page and "'dating.profile.mailtab'" in page, \
+            'ключи слились в один — переключение одной вкладки двигало бы другую'
+
+    async def test_unknown_tab_falls_back(self, auth_client):
+        """⚠ Значение из хранилища сверяется со списком известных.
+
+        Ключ переживает и переименование вкладки, и её удаление, а `workTab`,
+        указывающий в никуда, — это пустая страница без единой нажатой кнопки.
+        """
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'WORK_TABS.includes(' in page, 'вкладка из хранилища не сверяется'
+        assert 'MAIL_TABS.includes(' in page, 'подвкладка из хранилища не сверяется'
+
+    async def test_work_is_painted_after_sites_arrive(self, auth_client):
+        """⚠ Работу перерисовываем **после того, как узнали сайт**.
+
+        Разметка работы выбирается по сайту (`workTemplate`), а первый
+        `workPaint()` идёт до запроса списка сайтов: без сайта он ничего не рисует
+        и сам больше не возвращается — круг перерисовки трогает только список, а
+        `openSet` зовут при выборе анкеты, которого при загрузке ещё не было.
+
+        Пока вкладка при загрузке всегда была «Чат», это не было видно: без
+        выбранной анкеты она и так показывает подсказку. С запомненной вкладкой
+        стало видно сразу — «Письма рассылка» живут без анкеты, и человек
+        возвращался на пустое место вместо пула.
+        """
+        page = (await auth_client.get(PAGE)).text
+
+        start = page.find('async function sitesLoad()')
+        assert start != -1, 'загрузка сайтов не нашлась — разметка изменилась'
+        end = page.find('async function profilesLoad()', start)
+        assert end != -1
+        body = page[start:end]
+
+        assert 'workPaint()' in body, (
+            'после загрузки сайтов работа не перерисовывается: запомненная вкладка '
+            '«Письма рассылка» откроется пустой')
+
+
+class TestPoolLinksToCompanion:
+    """⚠ Имя адресата в карточке письма — ссылка на его карточку у нас.
+
+    Письмо читают, чтобы решить, отправлять ли его, и первый вопрос — «кому это».
+    Ответ лежит в карточке собеседника: описание, из которого агент писал, город,
+    возраст, свежесть съёма.
+    """
+
+    async def test_name_is_a_link_to_our_page(self, auth_client):
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'function companionLink(' in page, 'ссылки на карточку адресата нет'
+
+        # ⚠ Адрес собирается из двух кусков (`${BASE}/admin/dating` и хвост с
+        # доводами), и проверять его одной строкой нельзя: перенос строки в
+        # шаблоне ломал бы тест, ничего не ломая в панели. Смотрим обе половины
+        # внутри самой функции.
+        start = page.find('function companionLink(')
+        body = page[start:start + 900]
+
+        assert '/admin/dating' in body, 'ссылка ведёт не на страницу «Анкеты»'
+        assert '?companion=' in body, 'ссылка не называет собеседника'
+
+    async def test_link_carries_uid_and_site(self, auth_client):
+        """⚠ Довод — `uid`, номер человека на сайте, а не наш `id` карточки: письмо
+        знает первое, и оно не меняется. Сайт — отдельно: `uid` уникален внутри
+        сайта, а ключ выбранного сайта общий на весь раздел."""
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'companion=${encodeURIComponent(uid)}&site=${siteId()}' in page, \
+            'ссылка потеряла номер человека или сайт'
+
+    async def test_click_on_the_name_does_not_open_the_letter(self, auth_client):
+        """Карточка щёлкается целиком, и окно письма, всплывшее за спиной под новой
+        вкладкой, человек нашёл бы, только вернувшись обратно."""
+        page = (await auth_client.get(PAGE)).text
+
+        start = page.find(".mail-card-to')")
+        assert start != -1, 'обработчик ссылки не найден'
+
+        assert 'stopPropagation' in page[start:start + 400], \
+            'щелчок по имени всплывает до карточки и открывает окно письма'
+
+
+class TestReplyPoolWatchesSending:
+    """⚠ Пул ответов сам показывает ход отправки и сам пустеет.
+
+    Круг отправки уносит письма из пула без участия страницы. Пока обновления не
+    было, человек видел ушедшие карточки до тех пор, пока не переключит вкладку, —
+    и решал, что отправка не работает.
+    """
+
+    async def test_pool_has_a_refresh_loop(self, auth_client):
+        """Круг обновления заведён и заводится **по надобности**."""
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'function replyWatch(' in page, 'круга обновления пула нет'
+        assert 'DATING_REPLY_WATCH_MS' in page, 'частота обновления не названа'
+
+    async def test_sending_needs_three_conditions(self, auth_client):
+        """⚠ «Идёт отправка» — это выключатель, смена **и непустой пул**.
+
+        Без последнего крутилка висела бы над пустым пулом весь рабочий день:
+        «идёт отправка», а отправлять нечего.
+        """
+        page = (await auth_client.get(PAGE)).text
+        начало = page.index('function replySending(')
+        тело = page[начало:начало + 400]
+
+        assert 'reply_send_on' in тело, 'выключатель не спрашивается'
+        assert 'mailScheduleLive()' in тело, 'смена не спрашивается'
+        assert "status === 'draft'" in тело, 'непустой пул не спрашивается'
+
+    async def test_spinner_says_what_is_happening(self, auth_client):
+        """⚠ Повод остался один — отправка, и слово одно.
+
+        Прежде их было два: «пишу» над набором и «отправляю» над кругом. Набор
+        ушёл на сторону сервера (`dating_reply_round.py`), и страница больше не
+        знает, пишется ли ответ прямо сейчас. Соврать «пишу…» хуже, чем
+        промолчать: человек ждал бы карточку, которой никто не обещал.
+        """
+        page = (await auth_client.get(PAGE)).text
+
+        assert "'отправляю…'" in page
+        assert "'пишу…'" not in page
+
+
+class TestGirlNameIsALink:
+    """Имя и лицо выбранной анкеты в шапке ведут на её карточку.
+
+    ⚠ С «Профилей» постоянно уходят туда: там пароль, расписание и выключатели.
+
+    ⚠ **Лицо — тоже ссылка**: по аватарке щёлкают первой, она крупнее и заметнее
+    слова, и мёртвая картинка рядом с живой ссылкой читается как поломка.
+    """
+
+    async def test_name_links_to_the_card(self, auth_client):
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'work-who-link' in page, 'имя не ссылка'
+        assert '/admin/dating?girl=' in page, 'ссылка ведёт не на карточку анкеты'
+
+    async def test_the_face_links_to_the_card_too(self, auth_client):
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'id="workFaceLink"' in page, 'лицо не обёрнуто ссылкой'
+        # Обёртка, а не сама картинка: пустая ссылка без содержимого всё равно
+        # занимала бы место и ловила щелчки, ведя в никуда.
+        начало = page.index('id="workFaceLink"')
+        assert 'target="_blank"' in page[начало:начало + 200], \
+            'лицо открывается не новой вкладкой'
+
+    async def test_the_counter_lives_outside_the_name(self, auth_client):
+        """⚠ Счётчик собеседников — **своим узлом**, а не внутрь имени.
+
+        Пока его дописывал `chatLoad`, он затирал имя целиком — и вместе с ним
+        ссылку: на «Чате» имя переставало быть ссылкой через секунду после
+        появления, и щёлкать было некуда.
+        """
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'id="workCount"' in page, 'нет узла под счётчик'
+        assert "workWhoEl.textContent = " not in page, \
+            'имя снова перезаписывают текстом — ссылка на анкету пропадёт'
+
+    async def test_link_opens_in_a_new_tab(self, auth_client):
+        """⚠ Новой вкладкой: человек читает письма, и уводить его со списка на
+        полпути значит терять место, до которого он долистал.
+
+        ⚠ Ищем **у самой ссылки имени** (`work-who-link`), а не рядом с адресом:
+        адрес теперь собирается отдельной переменной (`куда`) — её делят имя и
+        лицо, — и соседство с ней ничего не значит.
+        """
+        page = (await auth_client.get(PAGE)).text
+        начало = page.index('class="work-who-link"')
+
+        assert 'target="_blank"' in page[начало - 100:начало + 200]
+
+
+class TestListsAreSortedByStatusThenName:
+    """⚠ Списки: **сперва в сети, потом по алфавиту** — и анкеты, и собеседники.
+
+    Список анкет читают, чтобы найти работу, а работа есть у тех, кто на сайте:
+    круги рассылки, инвайтов и переписки с избранными берут только их. При
+    сортировке по логину живая анкета оказывалась двадцатой строкой среди спящих,
+    и найти её можно было только поиском.
+
+    ⚠ **Алфавит — по имени, а не по логину.** Логин это почта
+    (`natalypetranetskaya67@bigmir.net`), и упорядоченный по ней список для
+    человека случаен: в строке он видит имя.
+    """
+
+    async def test_profile_query_sorts_by_status_and_name(self, auth_client):
+        """Порядок задаёт **запрос**, а не страница: список приходит страницами,
+        и сортировка на клиенте переставляла бы людей внутри страницы, оставляя
+        их на чужих местах между ними."""
+        import inspect
+
+        from src.uvicorn.routers.dating import dating_profile
+
+        код = inspect.getsource(dating_profile)
+
+        assert "ORDER BY g.status = 'online' DESC" in код, \
+            'анкеты в сети больше не поднимаются наверх'
+        assert "JSON_EXTRACT(g.profile, '$.name')" in код, \
+            'алфавит снова по логину, а не по имени'
+
+    async def test_people_widgets_sort_without_a_locale(self, auth_client):
+        """⚠ Ленты сортирует страница — снимок приходит в порядке сайта.
+
+        Локаль при этом **не задаётся**: с `'ru'` кириллица встаёт перед
+        латиницей, и на сайте с английскими именами один «Нурлан» оказывался
+        первой карточкой ленты. Поймано снимком страницы.
+        """
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'function peopleSorted' in page, 'ленты больше не сортируются'
+        assert "localeCompare(String(b.name || '').trim(), undefined," in page, \
+            'вернулась локаль в сравнении имён — кириллица уедет в начало'
+        assert 'peopleSorted(state.people)' in page, \
+            'сортировка есть, но списки рисуются мимо неё'

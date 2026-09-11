@@ -16,6 +16,7 @@ from src.dating.dating_people_api import (DatingPeopleApiError, dating_people_ap
                                           dating_people_api_rows)
 from tests.site_api_fake import SITE_API_FAKE_BASE, SITE_API_FAKE_PASSWORD
 
+pytestmark = pytest.mark.profile
 PROFILE = {'id': 849, 'site_id': 343, 'login': 'diana@example.com'}
 
 
@@ -191,7 +192,7 @@ class TestRefusals:
             def get(self, key):
                 raise RuntimeError('redis лёг')
 
-            def set(self, key, value, ex=None):
+            def set(self, key, value, ex=None, nx=False):
                 raise RuntimeError('redis лёг')
 
             def delete(self, key):
@@ -205,3 +206,166 @@ class TestRefusals:
 async def _rows(kind: str) -> list:
     return await dating_people_api_rows(PROFILE, kind, SITE_API_FAKE_BASE,
                                         SITE_API_FAKE_PASSWORD)
+
+
+class TestOneLoginAtATime:
+    """⚠ Настоящая ошибка: два одновременных входа сайт бракует как подозрение.
+
+    Токен делился через Redis, но **сам вход** — нет: два вызова, не нашедшие
+    токена в один момент, оба шли на `/auth/login`, и сайт отвечал второму
+    `400 Login or password invalid`. Тем же кодом, что и на настоящую опечатку в
+    пароле, — отличить нельзя, и пять дней это читалось в журнале как «пароль
+    неверный» у анкеты, которая тем же паролем работала везде.
+
+    Попадалась гонка только на самой занятой анкете и только на фоновом списке
+    избранных: он обновляется отдельной задачей, то есть параллельно всему
+    прочему. Тринадцать отказов за пять дней.
+    """
+
+    async def test_parallel_calls_log_in_once(self, site_api):
+        """Два списка разом — один вход. ⚠ Суть исправления.
+
+        Раньше здесь было два входа, и второй сайт отвергал.
+        """
+        import asyncio
+
+        await asyncio.gather(_rows('online'), _rows('favorite'))
+
+        logins = [call for call in site_api.calls if call[1].endswith('/auth/login')]
+
+        assert len(logins) == 1, f'одновременных входов: {len(logins)}'
+
+    async def test_the_waiting_one_still_gets_its_list(self, site_api):
+        """⚠ Ждавший получает список, а не отказ.
+
+        Замок не должен превращаться в свой род поломки: тот, кто уступил вход,
+        обязан дождаться чужого токена и отработать им.
+        """
+        import asyncio
+
+        first, second = await asyncio.gather(_rows('online'), _rows('favorite'))
+
+        assert [row['uid'] for row in first] == ['812886', '169410']
+        assert second, 'ждавший вызов вернулся пустым'
+
+    async def test_lock_is_released_for_the_next_login(self, site_api):
+        """Замок снимается после входа, а не висит свой срок.
+
+        ⚠ Иначе первый же протухший токен запирал бы анкету на полминуты: следующий
+        вход ждал бы конца чужого замка, которого давно нет.
+        """
+        await _rows('online')
+        site_api.expire_token()
+
+        assert len(await _rows('online')) == 2
+        assert 'dating:site_api:lock:849' not in site_api.redis.store, \
+            'замок остался висеть после входа'
+
+    async def test_broken_redis_does_not_lock_the_profile(self, site_api):
+        """⚠ Redis лёг — входим без замка, а не встаём.
+
+        Без Redis нет и общего токена: каждый вызов и так логинится сам. Запереть
+        анкету наглухо из-за недоступного Redis значило бы разменять редкую гонку
+        на полный простой.
+        """
+        class _Broken:
+            def get(self, key):
+                raise RuntimeError('redis лёг')
+
+            def set(self, key, value, ex=None, nx=False):
+                raise RuntimeError('redis лёг')
+
+            def delete(self, key):
+                raise RuntimeError('redis лёг')
+
+        site_api.redis = _Broken()
+
+        assert len(await _rows('online')) == 2
+
+    async def test_failed_login_frees_the_lock(self, site_api):
+        """⚠ Неудачный вход замок тоже отпускает.
+
+        Иначе одна опечатка в пароле запирала бы анкету на полминуты **после**
+        того, как пароль исправили: ждать было бы уже нечего, а замок висел бы.
+        """
+        site_api.password = 'другой'
+
+        with pytest.raises(DatingPeopleApiError):
+            await _rows('online')
+
+        assert 'dating:site_api:lock:849' not in site_api.redis.store, \
+            'замок остался висеть после неудачного входа'
+
+
+class TestWhichPassword:
+    """⚠ Настоящая ошибка: колонка избранных ходила не тем паролем.
+
+    Ручка списков выбирала пароль по правилу «свой, если задан», а не по настройке
+    анкеты `password_source`. На живой установке это сломало одну анкету из
+    тринадцати — 849 (Diana, ID 643694 на сайте):
+
+        Избранные с сайта не снялись: сайт не принял вход: неверный логин или
+        пароль: Login or password invalid (…) (/auth/login → 400)
+
+    В её поле пароля лежала строка от прежних времён, а `password_source` стоял
+    `site` — человек решил ходить общим паролем агентства. Правило «свой сильнее»
+    этого решения не видело: у него нет состояния, и оставленная строка молча
+    перебивала выбор. У остальных двенадцати поле было пусто, они падали в общий
+    пароль и работали — оттого и выглядело, будто дело в самой анкете.
+
+    Остальные двери сайта (письма, звёздочки, карточка мужчины) спрашивали
+    `dating_password_pick` с самого начала; расходилась только эта.
+    """
+
+    async def test_site_source_ignores_the_leftover_own_password(self):
+        """`password_source: site` — идём общим, даже если в поле что-то лежит."""
+        assert await _asked({'id': 849, 'site_id': 343, 'login': 'd@e.com',
+                             'password': 'старьё', 'password_source': 'site'}) \
+               == 'общий-сайта'
+
+    async def test_own_source_takes_the_profile_password(self):
+        """`password_source: own` — идём своим, общий не подглядываем."""
+        assert await _asked({'id': 849, 'site_id': 343, 'login': 'd@e.com',
+                             'password': 'личный', 'password_source': 'own'}) \
+               == 'личный'
+
+    async def test_own_source_without_a_password_does_not_fall_back(self):
+        """⚠ Запасного пути нет: выбран `own`, а поле пусто — идём с пустым.
+
+        Подстановка общего вернула бы ту же неявность, от которой и уходим, только
+        теперь вопреки явно сделанному выбору. Пустой пароль даст отказ сайта
+        словами — и это честнее молчаливого входа под чужим.
+        """
+        assert await _asked({'id': 849, 'site_id': 343, 'login': 'd@e.com',
+                             'password': '', 'password_source': 'own'}) == ''
+
+
+async def _asked(profile: dict) -> str:
+    """Каким паролем ручка списков пошла бы на сайт.
+
+    Зовём `_api_rows` с подменённым транспортом: проверяется **выбор пароля**, а не
+    разбор ответа — тем и заняты остальные тесты файла.
+    """
+    from src.uvicorn.routers.dating import dating_people as router
+
+    got = {}
+
+    async def _setting(site_id, key, default=''):
+        return {'api_password': 'общий-сайта', 'api_base': 'http://site'}.get(key, '')
+
+    async def _rows_spy(profile, kind, base, password):
+        got['password'] = password
+
+        return []
+
+    real_setting = router.dating_site_setting
+    real_rows = router.dating_people_api_rows
+    router.dating_site_setting = _setting
+    router.dating_people_api_rows = _rows_spy
+    try:
+        await router._api_rows(profile, 'favorite', 343)
+    finally:
+        router.dating_site_setting = real_setting
+        router.dating_people_api_rows = real_rows
+
+    return got.get('password')

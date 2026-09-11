@@ -92,6 +92,7 @@ from src.dating.dating_log import dating_log_write
 from src.dating.dating_people import dating_people_rows
 from src.dating.dating_people_api import (DatingPeopleApiError, dating_people_api_kinds,
                                           dating_people_api_rows)
+from src.dating.dating_ready import dating_password_pick
 from src.dating.dating_scenario import dating_scenario_run
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
                                        rhapsody_api_scenario_forget)
@@ -374,6 +375,48 @@ async def _list(kind: str, fresh: bool, profile: dict, key: str, log_id: int,
                                              fresh_sec, floor))
 
 
+async def dating_people_snap_due(site_id: int) -> bool:
+    """Постарел ли снимок ленты «Все онлайн» у этого сайта.
+
+    Returns:
+        bool: `True` — пора обновлять. Снимка нет вовсе — тоже `True`: первый съём
+        надо когда-то сделать.
+
+    Для круга ленты (`dating_online_round.py`). ⚠ Своей выдержки у него нет — та
+    же настройка сайта, что у страницы: два числа для одного вопроса разошлись бы, и
+    объяснить, почему лента обновляется то так, то этак, стало бы нечем.
+    """
+    cached = _cache_get(_key('online', site_id=int(site_id)))
+    if not cached:
+        return True
+
+    return time.time() - cached['at'] >= await _fresh_sec('online', int(site_id))
+
+
+async def dating_people_snap_start(site_id: int) -> bool:
+    """Заводит фоновый съём ленты этого сайта. `False` — не завёлся.
+
+    Не заводится по трём причинам, и все они законные: съём уже идёт, выдержка
+    между попытками не кончилась, у сайта нет анкет — заходить не под кем.
+
+    ⚠ **Не ждёт результата**, как и страница: съём это ~40 секунд живого браузера.
+    Круг заводит его и идёт дальше; снимок появится в кэше сам.
+
+    ⚠ **`log_id=0`** — прогон не пишется в журнал случайно выбранной анкеты: список
+    про сайт, а не про неё. След остаётся в журнале прогонов
+    (`dating_scenario.py`).
+    """
+    site_id = int(site_id)
+    profile = await _site_profile(site_id)
+    if not profile:
+        return False
+
+    return _refresh_start(profile, 'online', _key('online', site_id=site_id),
+                          log_id=0, fresh=False,
+                          fresh_sec=await _fresh_sec('online', site_id),
+                          floor_sec=await _floor_sec(site_id))
+
+
 class _PeopleFailure(RuntimeError):
     """Снять список не вышло. Текст пригоден для журнала анкеты и для страницы."""
 
@@ -482,14 +525,26 @@ async def _api_ready(site_id: int) -> bool:
 
 
 async def _api_rows(profile: dict, kind: str, site_id: int) -> list:
-    """Список через API сайта. Пароль — свой у анкеты, иначе общий у сайта.
+    """Список через API сайта. Пароль — по настройке анкеты `password_source`.
 
-    ⚠ **Свой пароль сильнее общего.** Общий заводят агентству оптом, а своя пара
-    логин-пароль у анкеты появляется, когда её завели руками; окажись общий
-    сильнее, такая анкета молча ходила бы под чужим паролем и получала 400.
+    ⚠ **Источник пароля выбирает анкета явно**, а не правило «свой, если задан»
+    (`dating_password_pick`). Здесь это правило и стояло, и на живой установке оно
+    сломало ровно одну анкету из тринадцати:
+
+        Избранные с сайта не снялись: сайт не принял вход: неверный логин или
+        пароль: Login or password invalid (…) (/auth/login → 400)
+
+    У анкеты 849 в поле пароля лежала строка от прежних времён, а `password_source`
+    стоял `site` — то есть человек решил ходить общим паролем агентства. Правило
+    «свой сильнее» этого решения не видело: у него нет состояния, и оставленная в
+    поле строка молча перебивала выбор. У остальных двенадцати поле было пусто, они
+    падали в общий пароль и работали — оттого и выглядело, будто дело в самой Диане.
+
+    Остальные двери сайта (письма, звёздочки, карточка мужчины) спрашивали
+    `dating_password_pick` с самого начала; расходилась только эта.
     """
-    password = str(profile.get('password') or '').strip() or str(
-        await dating_site_setting(site_id, DATING_PEOPLE_API_PASSWORD_SETTING)).strip()
+    password = dating_password_pick(profile, str(
+        await dating_site_setting(site_id, DATING_PEOPLE_API_PASSWORD_SETTING)).strip())
     base = str(await dating_site_setting(site_id, DATING_PEOPLE_API_BASE_SETTING)).strip()
 
     try:

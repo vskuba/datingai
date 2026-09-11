@@ -18,6 +18,7 @@ from src.dating import dating_scenario
 from src.dating.dating_scenario import dating_scenario_run
 from src.rhapsody.rhapsody_api import RhapsodyError
 
+pytestmark = pytest.mark.page
 SCENARIO = {'id': 278, 'name': 'избранные собеседники: список'}
 SITE = 343
 PROFILE = 849

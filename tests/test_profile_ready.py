@@ -14,6 +14,8 @@ import pytest
 from src.dating.dating_ready import (dating_ready_check, dating_ready_transport,
                                      dating_ready_write)
 
+pytestmark = pytest.mark.profile
+
 # Учётка в разных состояниях. `password` — непустая строка: сама пара не важна,
 # важно, есть ли чем войти.
 #

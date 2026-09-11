@@ -33,6 +33,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_log import dating_log_write
+from src.dating.dating_pool import dating_pool_drop
 from src.dating.dating_schedule import dating_schedule_now
 
 # Как часто круг просыпается. Минута: смены заданы с точностью до четверти часа, и
@@ -64,11 +65,17 @@ async def dating_schedule_round_run(offset_hours: int = 0) -> dict:
         profile_id = int(row['id'])
         в_сети = str(row['status'] or '') == 'online'
         есть_сокет = bool(str(row['ws_url'] or '').strip())
+        # ⚠ **Живая сессия — тоже «есть что отпускать».** Присутствие держится на
+        # `storage_state`, а не на статусе и не на сокете: пока он лежит, анкета
+        # остаётся вошедшей на сайте. Прежде конец смены смотрел только на статус
+        # и сокет — и у анкеты, чей статус сбился в `error`, выход не срабатывал
+        # вовсе: сессия оставалась жить, а точка в панели не гасла.
+        есть_сессия = bool(row.get('storage_state'))
 
         # ⚠ **Выключенную анкету круг отпускает**, даже если расписание включено:
         # «не ведём» значит не ведём совсем (`dating.md`, §5.11).
         if not bool(row['enabled']):
-            if есть_сокет or в_сети:
+            if есть_сокет or в_сети or есть_сессия:
                 if await _leave(profile_id, 'анкета выключена'):
                     dropped += 1
 
@@ -82,7 +89,7 @@ async def dating_schedule_round_run(offset_hours: int = 0) -> dict:
 
             continue
 
-        if not пора and (в_сети or есть_сокет):
+        if not пора and (в_сети or есть_сокет or есть_сессия):
             if await _leave(profile_id, 'смена кончилась'):
                 left += 1
 
@@ -143,7 +150,8 @@ async def _rows() -> list[dict]:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'SELECT id, login, schedule, schedule_on, enabled, status, ws_url '
+                'SELECT id, login, schedule, schedule_on, enabled, status, ws_url,'
+                '       storage_state IS NOT NULL AS storage_state'
                 '  FROM dating_profile WHERE schedule_on = 1 ORDER BY id')
             rows = await db.fetchall()
     except Exception as e:
@@ -230,5 +238,11 @@ async def _state_clear(profile_id: int) -> bool:
         logger_info(f'[dating] выход по расписанию #{profile_id} не записался: {e}')
 
         return False
+
+    # ⚠ Черновики уходят вместе с анкетой. Потолок пула — **на сайт**, и письма,
+    # которые не могут уйти (отправка ждёт анкету в сети), занимали бы его до её
+    # следующей смены: сайт молчал бы целиком, хотя в сети есть кому писать
+    # (`dating_pool.py`).
+    await dating_pool_drop(profile_id, 'смена кончилась')
 
     return True

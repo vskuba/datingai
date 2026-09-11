@@ -26,6 +26,7 @@ from src.uvicorn.routers.dating.dating_people import (DATING_PEOPLE_FLOOR_SEC,
                                                       _PeopleFailure, dating_people_list)
 from tests.site_api_fake import SITE_API_FAKE_BASE, SITE_API_FAKE_PASSWORD
 
+pytestmark = pytest.mark.profile
 PROFILE = {'id': 849, 'site_id': 343, 'login': 'diana@example.com'}
 SITE = {'id': 343, 'name': 'Ladadate'}
 PEOPLE = [{'uid': '812886', 'name': 'Vincent', 'age': 49, 'photo': '', 'photo_uid': '',
@@ -470,22 +471,50 @@ class TestSource:
 
         assert [row['uid'] for row in answer['people']] == ['788856']
 
-    async def test_own_password_wins_over_the_site_one(self, door, monkeypatch, site_api):
-        """⚠ Свой пароль анкеты сильнее общего.
+    async def test_own_source_takes_the_profile_password(self, door, monkeypatch,
+                                                         site_api):
+        """`password_source: own` — идём своим паролем, общий не подглядываем.
 
-        Общий заводят агентству оптом; окажись он сильнее, анкета со своей парой
-        логин-пароль молча ходила бы под чужим и получала 400.
+        Общий заводят агентству оптом; окажись он сильнее явного выбора, анкета со
+        своей парой логин-пароль молча ходила бы под чужим и получала 400.
         """
         monkeypatch.setattr(dating_people, 'dating_site_setting', _settings(
             {'people_source': 'api', 'api_base': SITE_API_FAKE_BASE,
              'api_password': 'общий-неверный'}))
 
         async def _profile(profile_id):
-            return {**PROFILE, 'password': SITE_API_FAKE_PASSWORD}
+            return {**PROFILE, 'password': SITE_API_FAKE_PASSWORD,
+                    'password_source': 'own'}
 
         monkeypatch.setattr(dating_people, 'dating_profile_row', _profile)
 
         assert (await _fill())['people'], 'вошли под общим паролем вместо своего'
+
+    async def test_site_source_ignores_the_leftover_own_password(self, door, monkeypatch,
+                                                                 site_api):
+        """⚠ Настоящая ошибка: `password_source: site`, а шли своим паролем.
+
+        Здесь стояло правило «свой сильнее общего» — удобное, но **без
+        состояния**: по анкете не видно, под каким паролем она работает. На живой
+        установке это сломало одну анкету из тринадцати (849, ID 643694 на сайте):
+        в поле пароля лежала строка от прежних времён, а `password_source` человек
+        поставил `site`. Колонка отвечала «сайт не принял вход: неверный логин или
+        пароль (/auth/login → 400)», и выглядело это как беда самой анкеты — у
+        остальных двенадцати поле было пусто, и они работали.
+
+        Правило теперь одно на все двери сайта — `dating_password_pick`.
+        """
+        monkeypatch.setattr(dating_people, 'dating_site_setting', _settings(
+            {'people_source': 'api', 'api_base': SITE_API_FAKE_BASE,
+             'api_password': SITE_API_FAKE_PASSWORD}))
+
+        async def _profile(profile_id):
+            return {**PROFILE, 'password': 'своё-старьё', 'password_source': 'site'}
+
+        monkeypatch.setattr(dating_people, 'dating_profile_row', _profile)
+
+        assert (await _fill())['people'], \
+            'вошли оставленным своим паролем вопреки настройке «общий»'
 
     async def test_site_without_api_still_runs_the_scenario(self, door, monkeypatch):
         """Сайт без API работает как работал: новая настройка ничего не ломает."""

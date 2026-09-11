@@ -32,6 +32,7 @@ from src.uvicorn.routers.dating.dating_profile_action import (
     dating_profile_action_mailing)
 from src.uvicorn.routers.dating.dating_profile_view import dating_profile_view_card
 
+pytestmark = pytest.mark.mail
 SITE = 343
 
 
@@ -156,7 +157,7 @@ class TestMailingEndpoint:
 
 
 class TestPageCarriesTheBoxes:
-    """Страница отдаёт разметку обеих новых галочек и их привязку к обработчику.
+    """Страница отдаёт разметку галочки «Письма рассылка» и её привязку.
 
     Блок собирается скриптом уже в браузере, но сам скрипт лежит в шаблоне —
     значит идентификаторы видны прямо в ответе. Сторожим и разметку (`setRow`), и
@@ -164,19 +165,38 @@ class TestPageCarriesTheBoxes:
     щелчок ничего не шлёт, а на следующей перерисовке через 15 секунд состояние
     вернётся как было. Нарисованная мёртвая галочка хуже пропавшей: пропажу видно
     сразу, а мёртвую галочку — только щелчком.
+
+    ⚠ **«Чат автоответ» отсюда ушёл.** Решение переехало на сайт
+    (`dating_site.chat_answer_on`) и живёт на «Профилях», в полосе подвкладок
+    «Чата» — рядом с диалогами, то есть там, где на чат и смотрят. Прежде, чтобы
+    его поднять, человек уходил на «Анкеты», искал учётку и щёлкал, не видя ни
+    одного разговора; а разложенное по сорока анкетам, оно требовало сорока
+    включений, и забытая анкета молча не отвечала.
     """
 
-    async def test_both_boxes_are_in_the_page(self, auth_client):
+    async def test_the_mailing_box_is_in_the_page(self, auth_client):
         page = (await auth_client.get('/admin/dating')).text
 
-        # ⚠ Ищем **вызов**, а не голое имя: `id="autoBox"` в ответе не встретится
-        # вовсе (разметку собирает скрипт, в шаблоне лежит `id="${id}"`), а голое
-        # `autoBox` совпало бы и внутри комментария — тест пережил бы удаление
-        # самой строки.
-        assert "setRow('autoBox'" in page, 'галочка «Чат автоответ» пропала со страницы'
-        assert "setRow('mailingBox'" in page, 'галочка «Письма рассылка» пропала со страницы'
-        assert "setBind('autoBox'" in page, 'галочка «Чат автоответ» ни к чему не привязана'
-        assert "setBind('mailingBox'" in page, 'галочка «Письма рассылка» ни к чему не привязана'
+        # ⚠ Ищем **вызов**, а не голое имя: `id="mailingBox"` в ответе не
+        # встретится вовсе (разметку собирает скрипт, в шаблоне лежит
+        # `id="${id}"`), а голое имя совпало бы и внутри комментария — тест
+        # пережил бы удаление самой строки.
+        assert "setRow('mailingBox'" in page, 'галочка «Письма рассылка» пропала'
+        assert "setBind('mailingBox'" in page, 'галочка «Письма рассылка» не привязана'
+
+    async def test_the_chat_answer_box_moved_to_the_site(self, auth_client):
+        """⚠ Сторож переезда: галочки на «Анкетах» нет, а выключатель сайта есть.
+
+        Вернись она — решений стало бы два, и человек, поднявший одно, спрашивал
+        бы, почему анкета молчит.
+        """
+        card = (await auth_client.get('/admin/dating')).text
+        profiles = (await auth_client.get('/admin/dating/profile')).text
+
+        assert "setRow('autoBox'" not in card, 'галочка «Чат автоответ» вернулась'
+        assert "setBind('autoBox'" not in card, 'обработчик галочки вернулся'
+        assert 'chat-answer-on' in profiles, \
+            'выключателя автоответа нет на «Профилях» — решение потерялось'
 
 
 async def _set(profile_id: int, mailing_on: bool) -> None:

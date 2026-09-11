@@ -49,7 +49,24 @@ async def dating_revive_db_now() -> datetime:
 
 
 async def dating_revive_db_profiles_kept() -> list[dict]:
-    """Анкеты под присмотром автомата — те, кого хотя бы раз ввели успешно."""
+    """Анкеты под присмотром автомата — те, кого хотя бы раз ввели успешно.
+
+    ⚠ **Расписание старше присмотра**, и без этого правила два круга дерутся.
+    Поймано живым прогоном: анкету ввели руками (`keep_online` ставится после
+    удачного входа), потом ей завели расписание. Смена кончилась — круг
+    расписания вышел и стёр сессию; через минуту восстановление вошло обратно,
+    ещё через минуту расписание снова вышло. Каждый заход — вкладка Chromium у
+    соседа, и так по кругу всю ночь.
+
+    Поэтому анкету с включённым расписанием восстанавливаем **только внутри её
+    смены**. Вне смены она обязана быть не в сети — это и есть смысл расписания,
+    а «присмотр» здесь означал бы «расписание не действует».
+
+    ⚠ Отбор по сменам идёт в питоне, а не запросом: смены лежат JSON-полем, и
+    вопрос «попадает ли минута в интервал» SQL не задать. Правило одно на всех —
+    `dating_schedule_now`, тот же, по которому решает круг расписания и по
+    которому зеленеет полоса на странице.
+    """
     from mysql_.mysql_ import mysql_get_db_async
 
     async with mysql_get_db_async() as db:
@@ -60,11 +77,12 @@ async def dating_revive_db_profiles_kept() -> list[dict]:
         await db.execute(
             'SELECT id, login, site_id, storage_state, status, last_error, '
             '       relogin_since, relogin_tries, relogin_next_at, '
+            '       schedule, schedule_on, '
             '       TIMESTAMPDIFF(SECOND, logged_in_at, NOW()) AS login_age_sec '
             '  FROM dating_profile WHERE keep_online = 1 ORDER BY id')
         rows = await db.fetchall()
 
-    return [dict(row) for row in (rows or [])]
+    return [dict(row) for row in (rows or []) if await _on_duty(row)]
 
 
 async def dating_revive_db_probe_save(profile_id: int, probe: dict) -> None:
@@ -140,3 +158,23 @@ async def dating_revive_db_site_missing(profile: dict, why: str) -> None:
     await dating_revive_db_log(profile_id, 'fail', f'Проверить анкету нечем: {why}')
 
 
+# ── Приватное ────────────────────────────────────────────────────────────────
+
+async def _on_duty(row) -> bool:
+    """Положено ли анкете быть в сети прямо сейчас. Без расписания — всегда да."""
+    if not int(row.get('schedule_on') or 0):
+        return True
+
+    import time
+
+    from datetime_.datetime_ import datetime_offset_hours
+    from setting_.setting_ import setting_get
+
+    from src.dating.dating_json import dating_json_load
+    from src.dating.dating_schedule import dating_schedule_now
+
+    offset = datetime_offset_hours(await setting_get('timezone', '+0'))
+    local = time.gmtime(time.time() + offset * 3600)
+
+    return dating_schedule_now(dating_json_load(row.get('schedule')),
+                               local.tm_hour * 60 + local.tm_min)

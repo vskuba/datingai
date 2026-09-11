@@ -12,6 +12,7 @@ import pytest
 
 from src.dating import dating_chat_hold as hold
 
+pytestmark = pytest.mark.chat
 SITE, OTHER = 343, 19
 
 

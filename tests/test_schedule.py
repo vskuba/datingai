@@ -13,7 +13,11 @@ import uuid
 import pytest
 from fastapi import HTTPException
 
-from src.dating.dating_schedule import (DATING_SCHEDULE_DEFAULT, DATING_SCHEDULE_MAX,
+# ⚠ `_hhmm` и `_minutes` приватные, и берём их намеренно: разбор времени — то
+# самое место, где живёт `24:00`, и проверять его через ручку значило бы проверять
+# заодно права, базу и HTTP.
+from src.dating.dating_schedule import (_hhmm, _minutes,
+                                        DATING_SCHEDULE_DEFAULT, DATING_SCHEDULE_MAX,
                                         dating_schedule_check, dating_schedule_dump,
                                         dating_schedule_load, dating_schedule_now,
                                         dating_schedule_profile_now,
@@ -26,6 +30,7 @@ from src.uvicorn.routers.dating.dating_profile_action import (DatingProfileSched
                                                               dating_profile_action_schedule)
 from src.uvicorn.routers.dating.dating_profile_view import dating_profile_view_card
 
+pytestmark = pytest.mark.profile
 SITE = 343
 ТРИ = [{'from': '07:00', 'to': '11:00'},
        {'from': '14:00', 'to': '18:00'},
@@ -119,6 +124,39 @@ class TestCheck:
         assert '18:00' in why and '09:00' in why
 
 
+class TestMidnight:
+    """⚠ Конец суток — это `24:00`, и только он.
+
+    Ползунок ходит до 1440 минут, и его правый край обязан во что-то
+    превращаться. Свёрнутый по модулю суток, он давал `00:00` — начало тех же
+    суток: смена «19:00 → 00:00» становилась отрицательной длины, уезжала в начало
+    ленты и пропадала с экрана. Человек это и увидел: «ползунок доходит до конца,
+    исчезает и появляется в начале».
+    """
+
+    def test_midnight_is_accepted_as_the_end(self):
+        assert dating_schedule_check([{'from': '19:00', 'to': '24:00'}]) == ''
+
+    def test_midnight_is_the_last_minute_of_the_day(self):
+        assert _minutes(_hhmm('24:00')) == 24 * 60
+
+    def test_midnight_as_a_start_is_refused(self):
+        """Началом `24:00` быть не может: позже полуночи в сутках ничего нет.
+
+        Отдельного правила для этого не нужно — смена отклоняется на общих
+        основаниях, потому что конец обязан быть позже начала.
+        """
+        why = dating_schedule_check([{'from': '24:00', 'to': '24:00'}])
+
+        assert 'позже начала' in why
+
+    @pytest.mark.parametrize('время', ['24:15', '24:01', '25:00', '30:00'])
+    def test_beyond_midnight_is_refused(self, время):
+        """⚠ Послабление ровно одно. `24:15` — это уже не «конец суток», а мусор,
+        и принять его значило бы завести смену, которой некуда деться."""
+        assert _hhmm(время) == ''
+
+
 class TestNow:
     """Должна ли анкета быть в сети в эту минуту."""
 
@@ -135,6 +173,18 @@ class TestNow:
     ])
     def test_default_schedule(self, час, в_сети):
         assert dating_schedule_now(DATING_SCHEDULE_DEFAULT, час * 60) is в_сети
+
+    def test_midnight_end_covers_the_last_minute(self):
+        """⚠ Смена «до 24:00» действует до последней минуты суток.
+
+        Полночь — законный конец смены, и выразить его иначе нечем: `00:00`
+        означает начало тех же суток, и смена схлопнулась бы в ноль длины.
+        """
+        сутки_напролёт = [{'from': '19:00', 'to': '24:00'}]
+
+        assert dating_schedule_now(сутки_напролёт, 19 * 60) is True
+        assert dating_schedule_now(сутки_напролёт, 23 * 60 + 59) is True
+        assert dating_schedule_now(сутки_напролёт, 18 * 60 + 59) is False
 
     def test_empty_means_not_online(self):
         """⚠ Пустое расписание — `False`, а не «всегда в сети».

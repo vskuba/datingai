@@ -180,6 +180,12 @@ export function pagerRender(el, pages, current, pick, count = '') {
         return;
     }
 
+    // ⚠ Одна страница — счёт **по центру**, а не слева. Кнопок рядом нет, и
+    // прижатая к краю строка выглядит забытой; классом, а не стилем в разметке:
+    // раскладку подвала держит `dating_page.css`, и делить её на два места
+    // значило бы искать причину сдвига в двух местах сразу.
+    el.classList.toggle('lone', pages <= 1);
+
     if (pages <= 1) {
         el.innerHTML = '';
         el.append(pagerCount(`${count} — всё на одной странице`));
@@ -190,18 +196,93 @@ export function pagerRender(el, pages, current, pick, count = '') {
         `<button type="button" class="page-btn${active ? ' active' : ''}" data-page="${page}"`
         + `${disabled ? ' disabled' : ''}>${label}</button>`;
 
+    // ⚠ Кнопки — **в своей обёртке**, а не прямыми детьми подвала: подвал разложен
+    // сеткой в три колонки, и только так счёт слева не сдвигает кнопки с середины.
+    // Прежде счёт съедал свободное место `margin-right: auto`, и центр уезжал тем
+    // сильнее, чем длиннее строка счёта.
     let html = button('‹', current - 1, current === 0, false);
-    for (let i = 0; i < pages; i++) html += button(i + 1, i, false, i === current);
+    for (const page of pagerPages(pages, current)) {
+        html += page === PAGER_GAP
+            // Разрыв — не кнопка: нажимать в нём нечего, и `<button disabled>`
+            // обещал бы обратное. Заодно он не ловит Tab.
+            ? '<span class="page-gap">…</span>'
+            : button(page + 1, page, false, page === current);
+    }
     html += button('›', current + 1, current === pages - 1, false);
 
-    el.innerHTML = html;
-    el.querySelectorAll('.page-btn').forEach(btn => {
+    const pagesEl = document.createElement('span');
+    pagesEl.className = 'pane-pages';
+    pagesEl.innerHTML = html;
+
+    el.innerHTML = '';
+    // Счёт — первым, до кнопок: порядок в разметке совпадает с порядком на экране,
+    // и читалка идёт по нему так же, как глаз.
+    if (count) el.append(pagerCount(`${count} · страница ${current + 1} из ${pages}`));
+    el.append(pagesEl);
+
+    pagesEl.querySelectorAll('.page-btn').forEach(btn => {
         btn.addEventListener('click', () => pick(Number(btn.dataset.page)));
     });
+}
 
-    // Счёт — первым, до кнопок: он отодвигает их вправо своим `margin-right`,
-    // и порядок в разметке совпадает с порядком на экране.
-    if (count) el.prepend(pagerCount(`${count} · страница ${current + 1} из ${pages}`));
+// Метка разрыва в ряду страниц. Не число и не строка «…»: сравнивать с числом
+// проще, а вид разрыва решает тот, кто рисует.
+export const PAGER_GAP = -1;
+
+// Сколько страниц показываем по каждую сторону от текущей.
+//
+// Одна: ряд выходит «1 … 4 5 6 … 20» — семь мест, и он не растёт с числом
+// страниц. Две дали бы девять и на узкой колонке уже переносились бы.
+export const PAGER_AROUND = 1;
+
+// Самый длинный ряд, какой вообще может получиться: два края, окно вокруг текущей
+// и два разрыва между ними.
+//
+// ⚠ Из него же следует, **когда разрывы не нужны вовсе**: пока страниц не больше,
+// чем мест в ряду, они все в него помещаются, и «…» ничего не сокращает — только
+// прячет. Так и вышло на пяти страницах: ряд «1 2 … 5» той же ширины, что «1 2 3 4
+// 5», но две страницы из него исчезли.
+export const PAGER_MAX_ROW = 2 * PAGER_AROUND + 5;
+
+// Какие страницы показать: первая, последняя, соседи текущей, между ними разрывы.
+//
+// ⚠ Заведено потому, что **страниц бывает много**. Ряд из всех подряд у сорока
+// страниц не помещается в колонку и переносится на вторую строку, отодвигая список;
+// а нужны из них ровно три — где мы, начало и конец.
+//
+// ⚠ **Разрыв в одну страницу закрываем самой страницей.** «…» вместо «3» ничего не
+// сокращает (ширина та же), а прячет то, до чего один щелчок.
+//
+// Вынесена наружу ради проверки (`tests/test_pager.js`): правило словами не
+// проверить, а через браузер — значило бы поднимать Chromium ради арифметики.
+export function pagerPages(pages, current, around = PAGER_AROUND) {
+    const total = Math.max(0, Number(pages) || 0);
+    if (total <= 1) return total ? [0] : [];
+
+    // Все помещаются — показываем все: разрыв здесь не сокращает ряд, а только
+    // прячет страницы (см. `PAGER_MAX_ROW`).
+    if (total <= 2 * around + 5) return [...Array(total).keys()];
+
+    const now = Math.min(Math.max(Number(current) || 0, 0), total - 1);
+
+    // Что показываем непременно: края и окно вокруг текущей.
+    const want = new Set([0, total - 1]);
+    for (let i = now - around; i <= now + around; i++) {
+        if (i >= 0 && i < total) want.add(i);
+    }
+
+    const list = [...want].sort((a, b) => a - b);
+    const out = [];
+
+    list.forEach((page, index) => {
+        const prev = list[index - 1];
+        if (index && page - prev > 1) {
+            out.push(page - prev === 2 ? prev + 1 : PAGER_GAP);
+        }
+        out.push(page);
+    });
+
+    return out;
 }
 
 // Счёт строк в подвале. Узлом с `textContent`, а не разметкой: строку собирает

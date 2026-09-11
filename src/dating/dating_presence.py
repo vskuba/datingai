@@ -1,254 +1,151 @@
-"""Присутствие учётки на сайте знакомств: держим онлайн и читаем счётчики.
+"""Присутствие учётки: тонкая обёртка над общим движком heartbeat.
 
-**Без браузера.** Замер на живом сайте: вкладка Chromium со страницей стоит ~143 МБ,
-и сотня учёток в таком виде — это 14 ГБ, то есть невозможно. Тот же сайт отвечает
-обычному HTTP-клиенту с сохранёнными cookie за доли секунды, а двести таких
-клиентов занимают 2,3 МБ. Опрос раз в 15 секунд для двухсот учёток — 13 запросов
-в секунду и 0,7 КБ/с трафика.
+Здесь больше нет своего HTTP: запрос, приметы живого входа и разбор ответа живут в
+`py_modules/http_/http_heartbeat.py`, а настройка сайта — в `dating_heartbeat.py`.
+Этот файл остался ради **вызывающих**: страница анкеты, круг восстановления и вход
+зовут его функции по прежним именам, и менять их разом значило бы править пять
+мест ради переезда.
 
-Браузер остаётся для действий, которым нужен настоящий DOM: вход (раз в сутки,
-дальше живёт `storage_state`), открытие диалога, ответ в чат. Их делают сценарии
-и цепочки — этот модуль их не заменяет и в них не лезет.
+## ⚠ Почему движок один, а не два
 
-**Что дёргать — настройка сайта, а не код.** У каждого сайта свои ручки, и
-вписывать их сюда значило бы править Python ради нового сайта. Формат `presence`
-в `browser_site`:
+Своя реализация здесь была, и она разошлась с новой в тот же день, когда та
+появилась. Ladadate настроили присутствие нашей настройкой (`dating_site.settings`),
+круг честно держал анкету в сети — а кнопка «проверить» на карточке смотрела в
+`browser_site.presence` соседа, не находила его и ставила учётке `status = error`.
+Зелёная точка гасла у анкеты, которая в этот момент была онлайн.
 
-    {
-      "base": "https://goldenbride.net",
-      "headers": {"Referer": "https://goldenbride.net/chat"},
-      "heartbeat": {"path": "/goldenbride/services/chat/v5", "body": "mode=setAuthUserOnline"},
-      "status":    [{"path": "/goldenbride/services/chat/v26", "body": "mode=update_v2",
-                     "auth_field": "auth"},
-                    {"path": "/ladymodule/services/rpc", "body": "7|0|10|…",
-                     "ok_mark": "//OK", "headers": {"Content-Type": "text/x-gwt-rpc; charset=UTF-8"}}],
-      "unread":    {"path": "/goldenbride/services/userApiV2?requestType=LetterStats",
-                    "method": "GET", "field": "unreadMail"}
-    }
+Отсюда правило: **настройку разрешает `dating_heartbeat_config`, и только он.**
+Своя у сайта старше, соседская читается запасной — одно место, один порядок.
 
-`auth_field` — поле ответа, по которому видно, жив ли вход: сайт отвечает `200` и
-гостю тоже, и без этой проверки протухшая учётка выглядела бы онлайн. Где ответ
-не JSON — `ok_mark`, метка в тексте.
+## Что осталось от прежнего файла
 
-`status` может быть списком: на одном сайте мужская анкета отвечает JSON-ручкой,
-а женская живёт в другом модуле с другим форматом. Подошла любая проверка — вход
-жив; перебор идёт до первой удачной.
+Имена функций и их смысл:
+
+  `dating_presence_probe` — полный опрос: отметиться, проверить вход, снять счётчик;
+  `dating_presence_beat`  — только удар, без проверок: он в разы дешевле;
+  `dating_presence_ready` — настроено ли присутствие у сайта.
+
+⚠ `presence` вторым параметром сохранён **ради совместимости вызывающих**, но
+берётся только как запасной источник: если у сайта есть своя настройка, аргумент
+не смотрят вовсе. Убирать его из сигнатуры сейчас — значит трогать пять файлов
+ради формы.
 """
 
-import time
-
-import httpx
-
-from logging_.logging_ import logger_info
+from http_.http_heartbeat import (http_heartbeat_check, http_heartbeat_client,
+                                  http_heartbeat_cookies, http_heartbeat_ready,
+                                  http_heartbeat_send)
 
 from src.dating.dating_json import dating_json_load
 
-# Браузерный `User-Agent`: сайт отдаёт API тому, кто похож на его же страницу.
-DATING_PRESENCE_UA = ('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
-                      '(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36')
-
-# Ответ приходит за 0.4-2 секунды; больше десяти ждать нечего — опрос повторится.
-DATING_PRESENCE_TIMEOUT = 10.0
-
-# Ошибка сайта в карточку идёт строкой, а не стеком: человек читает её глазами.
-DATING_PRESENCE_ERROR_MAX = 500
+# Оставлено ради вызывающих, которые импортируют константу. Значения живут в
+# движке: два набора разошлись бы молча.
+from http_.http_heartbeat import HTTP_HEARTBEAT_ERROR_MAX as DATING_PRESENCE_ERROR_MAX
+from http_.http_heartbeat import HTTP_HEARTBEAT_TIMEOUT as DATING_PRESENCE_TIMEOUT
+from http_.http_heartbeat import HTTP_HEARTBEAT_UA as DATING_PRESENCE_UA
 
 
-async def dating_presence_probe(profile: dict, presence: dict) -> dict:
+async def dating_presence_probe(profile: dict, presence: dict = None) -> dict:
     """Один опрос учётки: держим онлайн, снимаем статус и счётчик.
 
     Args:
-        profile: строка `dating_profile` со `storage_state`.
-        presence: настройка сайта (`browser_site.presence`).
+        profile: строка `dating_profile` со `storage_state` и `site_id`.
+        presence: описание сайта у соседа — **запасное**. Своя настройка сайта
+            старше, и при её наличии этот аргумент не смотрят.
 
     Returns:
-        dict: Что записать в карточку:
-            status (str): online | offline | error.
-            unread (int): непрочитанных на момент опроса; -1 — не спрашивали.
-            error (str): причина, если status = error.
-            ms (int): сколько занял опрос.
+        dict: `status` (`online` | `offline` | `error`), `unread` (`-1` — не
+        спрашивали), `error`, `ms`.
     """
-    cookies = _cookies_of(profile.get('storage_state'), presence.get('base', ''))
-    if not cookies:
-        return _result('offline', error='вход не выполнен: нет cookie')
+    config = await _config(profile, presence)
+    if not http_heartbeat_ready(config):
+        return {'status': 'error', 'unread': -1, 'ms': 0,
+                'error': 'у сайта не настроено присутствие: заполните «Присутствие: '
+                         'настройка» на странице «Сайты»'}
 
-    started = time.monotonic()
+    client = http_heartbeat_client()
     try:
-        async with httpx.AsyncClient(timeout=DATING_PRESENCE_TIMEOUT, cookies=cookies,
-                                     follow_redirects=True,
-                                     headers=_headers(presence)) as client:
-            # Heartbeat первым: он и есть «я на сайте». Ответ у него обычно пустой,
-            # поэтому смотрим только на то, что запрос состоялся.
-            await _call(client, presence.get('base', ''), presence.get('heartbeat'))
-
-            alive, data = await _status_check(client, presence)
-            if not alive:
-                return _result('offline', error='сайт не признал вход: нужен повторный логин',
-                               ms=_ms(started))
-
-            unread = await _unread_get(client, presence)
-    except Exception as e:
-        return _result('error', error=f'{type(e).__name__}: {e}', ms=_ms(started))
-
-    return _result('online', unread=unread, ms=_ms(started))
+        return await http_heartbeat_check(client, _cookies(profile, config), config)
+    finally:
+        await client.aclose()
 
 
-async def dating_presence_beat(profile: dict, presence: dict) -> bool:
-    """Только heartbeat — «я на сайте», без статуса и счётчиков.
+async def dating_presence_beat(profile: dict, presence: dict = None) -> bool:
+    """Только удар — «я на сайте», без проверок и счётчиков.
 
-    Нужен держателю сокетов: присутствие в чате сайт считает не по открытому
-    соединению, а по этому запросу. Пока его никто не слал, сокет учётки молчал и
-    умирал через полторы минуты, а сообщения уходили в «пропущенные».
-
-    Отдельно от `dating_presence_probe`, потому что цена разная: здесь один запрос
-    на учётку, там три. Двести учёток раз в 15 секунд — это 13 запросов в секунду
-    против сорока.
+    ⚠ Для многих учёток разом это **не тот путь**: клиент здесь свой на каждый
+    вызов, и тысяча вызовов означала бы тысячу пулов соединений. Круг присутствия
+    (`dating_heartbeat_round.py`) бьёт всех одним клиентом — так и надо.
     """
-    step = presence.get('heartbeat')
-    if not step:
+    config = await _config(profile, presence)
+    if not http_heartbeat_ready(config):
         return False
 
-    cookies = _cookies_of(profile.get('storage_state'), presence.get('base', ''))
-    if not cookies:
-        return False
-
+    client = http_heartbeat_client()
     try:
-        async with httpx.AsyncClient(timeout=DATING_PRESENCE_TIMEOUT, cookies=cookies,
-                                     follow_redirects=True, headers=_headers(presence)) as client:
-            await _call(client, presence.get('base', ''), step)
-    except Exception as e:
-        logger_info(f'[dating] heartbeat не прошёл: {e}')
-        return False
-
-    return True
+        return await http_heartbeat_send(client, _cookies(profile, config), config)
+    finally:
+        await client.aclose()
 
 
-def dating_presence_ready(presence) -> bool:
-    """Настроен ли у сайта опрос: без него карточка честно молчит, а не врёт нулём."""
-    data = dating_json_load(presence)
+async def dating_presence_ready(presence=None, site_id: int = 0) -> bool:
+    """Настроено ли присутствие: без него карточка честно молчит, а не врёт нулём.
 
-    return bool(data.get('base') and (data.get('heartbeat') or data.get('status')))
+    ⚠ **Стала асинхронной**, и это осознанный слом: своя настройка сайта лежит в
+    базе, а прежняя проверка судила по одному лишь аргументу — то есть по
+    соседскому описанию. Сайт со своей настройкой она объявляла ненастроенным, и
+    кнопка «проверить» отказывала там, где присутствие работало.
 
-
-async def _status_check(client: httpx.AsyncClient, presence: dict) -> tuple[bool, dict]:
-    """Жив ли вход. Нет настройки статуса — верим heartbeat и считаем, что жив.
-
-    Проверок может быть несколько: у одного сайта мужская анкета отвечает JSON, а
-    женская — другим модулем и другим форматом, и одна ручка на всех не годится.
-    Подошла любая — вход жив; отказ у остальных при этом ничего не значит.
+    Args:
+        presence: описание соседа — запасное.
+        site_id: сайт, чью настройку спросить. Ноль — судим только по аргументу.
     """
-    steps = presence.get('status')
-    if not steps:
-        return True, {}
+    if site_id:
+        from src.dating.dating_heartbeat import dating_heartbeat_config
 
-    last = {}
-    for step in steps if isinstance(steps, list) else [steps]:
-        response = await _call(client, presence.get('base', ''), step)
-        data = _json_body(response)
-        last = data or last
-        if _status_ok(step, response, data):
-            return True, data
+        if http_heartbeat_ready(await dating_heartbeat_config(int(site_id))):
+            return True
 
-    return False, last
+    return http_heartbeat_ready(_from_neighbour(presence))
 
 
-async def _unread_get(client: httpx.AsyncClient, presence: dict) -> int:
-    """Счётчик непрочитанных. Не настроен — -1: «не спрашивали» и «ноль» разные вещи."""
-    step = presence.get('unread')
-    if not step:
-        return -1
+# ── Приватное ────────────────────────────────────────────────────────────────
 
-    response = await _call(client, presence.get('base', ''), step)
-    data = _json_body(response)
-    value = data.get(str(step.get('field') or 'unread'))
+async def _config(profile: dict, presence) -> dict:
+    """Настройка присутствия для этой учётки: своя у сайта, иначе соседская.
 
-    return int(value) if str(value).isdigit() else -1
-
-
-def _status_ok(step: dict, response, data: dict) -> bool:
-    """Признал ли сайт вход в этом ответе.
-
-    Три способа, потому что три вида ответов: поле в JSON, метка в тексте (у
-    GWT-модулей ответ вообще не JSON) и «раз ответил — значит жив», когда сайт
-    гостю просто не отвечает.
+    ⚠ **Без `site_id` в строке настройку не найти**, и молчать об этом нельзя.
+    Живой случай: круговой опрос брал анкеты запросом без `site_id`, резолвер
+    честно проваливался на соседское описание — пустое у Ladadate, — и опрос
+    ставил `error` анкете, которая в ту же минуту исправно держалась в сети.
+    Ошибку в запросе вызывающего видно по логу, а не по загадочному статусу.
     """
-    if response is None:
-        return False
+    from logging_.logging_ import logger_info
+    from src.dating.dating_heartbeat import dating_heartbeat_config
 
-    mark = str(step.get('ok_mark') or '').strip()
-    if mark:
-        return mark in (response.text or '')
+    site_id = int(profile.get('site_id') or 0)
+    if not site_id:
+        logger_info(f"[dating] присутствие #{profile.get('id')}: в строке нет "
+                    '`site_id` — настройка сайта не спрошена')
+    else:
+        config = await dating_heartbeat_config(site_id)
+        if http_heartbeat_ready(config):
+            return config
 
-    field = str(step.get('auth_field') or '').strip()
-    if field:
-        return bool(data.get(field))
-
-    return response.status_code == 200
-
-
-async def _call(client: httpx.AsyncClient, base: str, step) -> httpx.Response | None:
-    """Один запрос по настройке шага. Нет шага — нечего и звать."""
-    if not step:
-        return None
-
-    url = str(base).rstrip('/') + str(step.get('path') or '')
-    method = str(step.get('method') or ('POST' if step.get('body') else 'GET')).upper()
-    # Свои заголовки шага: GWT-модуль отвечает только на свой тип содержимого и
-    # свою пермутацию, и общие заголовки сайта тут не подходят.
-    extra = step.get('headers') if isinstance(step.get('headers'), dict) else None
-    headers = {str(k): str(v) for k, v in (extra or {}).items()} or None
-
-    if method == 'GET':
-        return await client.get(url, headers=headers)
-
-    return await client.post(url, content=str(step.get('body') or ''), headers=headers)
+    return _from_neighbour(presence)
 
 
-def _headers(presence: dict) -> dict:
-    """Заголовки запроса: свой `User-Agent` плюс то, что задал сайт."""
-    headers = {'User-Agent': DATING_PRESENCE_UA,
-               'Content-Type': 'application/x-www-form-urlencoded'}
-    extra = presence.get('headers')
-    if isinstance(extra, dict):
-        headers.update({str(k): str(v) for k, v in extra.items()})
-
-    return headers
+def _cookies(profile: dict, config: dict) -> dict:
+    """Cookie сайта из снятого состояния входа."""
+    return http_heartbeat_cookies(dating_json_load(profile.get('storage_state')),
+                                  str(config.get('base') or ''))
 
 
-def _cookies_of(storage_state, base: str) -> dict:
-    """Cookie сайта из снятого состояния входа.
+def _from_neighbour(presence) -> dict:
+    """Старое описание соседа → формат движка. Один перевод на проект.
 
-    Берём только его домен: в состоянии лежат и чужие (аналитика, платёжки), а
-    слать их на сайт незачем — и лишний повод для отказа.
+    ⚠ Зовёт `dating_heartbeat._from_neighbour`, а не повторяет его: два перевода
+    разошлись бы в первый же день, когда у движка появится новый ключ.
     """
-    state = dating_json_load(storage_state)
-    host = str(base).split('//')[-1].split('/')[0].replace('www.', '')
+    from src.dating.dating_heartbeat import _from_neighbour as translate
 
-    return {str(c.get('name')): str(c.get('value'))
-            for c in (state.get('cookies') or [])
-            if host in str(c.get('domain') or '')}
-
-
-def _json_body(response) -> dict:
-    """Тело ответа словарём. Не JSON — пустой словарь, а не исключение."""
-    if response is None:
-        return {}
-
-    try:
-        data = response.json()
-    except Exception:
-        return {}
-
-    return data if isinstance(data, dict) else {}
-
-
-def _result(status: str, unread: int = -1, error: str = '', ms: int = 0) -> dict:
-    if error:
-        logger_info(f'[dating] опрос: {status} — {error[:120]}')
-
-    return {'status': status, 'unread': unread,
-            'error': error[:DATING_PRESENCE_ERROR_MAX], 'ms': ms}
-
-
-def _ms(started: float) -> int:
-    return int((time.monotonic() - started) * 1000)
+    return translate(dating_json_load(presence))

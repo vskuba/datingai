@@ -13,6 +13,7 @@ import pytest
 
 from tests.conftest import ADMIN_USERNAME, DATING_USERNAME
 
+pytestmark = pytest.mark.core
 # Точки, до которых оператора пускать нельзя. Метод указан рядом: `GET` на
 # изменяющей ручке отдал бы 405 и «прошёл» бы проверку, ничего не проверив.
 ROLE_ADMIN_ONLY = [

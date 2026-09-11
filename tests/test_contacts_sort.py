@@ -12,6 +12,7 @@ import math
 
 import pytest
 
+pytestmark = pytest.mark.chat
 # Сайт посеянных анкет — тот же, что у остальной сюиты.
 SITE_ID = 19
 

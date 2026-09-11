@@ -25,6 +25,8 @@ from src.uvicorn.routers.dating.dating_profile import (DatingProfileSave,
 from src.uvicorn.routers.dating.dating_profile_action import (dating_profile_action_login,
                                                               dating_profile_action_ping)
 
+pytestmark = pytest.mark.profile
+
 # Сайт, к которому привязываются тестовые учётки: он есть у поддельного соседа.
 SITE_ID = 343
 
@@ -188,20 +190,41 @@ class TestProfilePing:
         assert (await _row(profile['login']))['last_seen_at'] is None, \
             'неудачный пинг подвинул время входа'
 
-    async def test_site_without_presence_is_422(self, rhapsody, profile):
-        """Сайт без настроенного опроса — 422 с тем, что чинить.
+    async def test_site_without_presence_is_422(self, rhapsody, profile, monkeypatch):
+        """Сайт без настроенного присутствия — 422 с тем, что чинить.
 
-        Настройка живёт у соседа (`browser_site.presence`), и пинговать без неё
-        нечем: молчаливый `offline` соврал бы, что анкета не в сети.
+        Пинговать нечем: молчаливый `offline` соврал бы, что анкета не в сети.
+
+        ⚠ **Гасим оба источника настройки, и это не перестраховка.** Их два, и
+        порядок между ними важен: своя у сайта (`dating_site.settings.heartbeat`)
+        старше, соседская (`browser_site.presence`) — запасная. Пока тест чистил
+        только соседскую, он падал в тот день, когда сайту завели свою: ручка
+        честно отвечала «настроено», а тест ждал отказа.
+
+        Своя настройка при этом **живая** — её правит человек на «Сайтах», — и
+        трогать её из сюиты нельзя. Поэтому подменяем разрешение настройки, а не
+        данные.
         """
+        from src.dating import dating_presence
+
         for site in rhapsody.sites:
             site['presence'] = {}
+
+        async def без_настройки(site_id):
+            return {}
+
+        monkeypatch.setattr(dating_presence, 'dating_heartbeat_config',
+                            без_настройки, raising=False)
+        monkeypatch.setattr('src.dating.dating_heartbeat.dating_heartbeat_config',
+                            без_настройки)
 
         with pytest.raises(HTTPException) as refusal:
             await dating_profile_action_ping(profile['id'], user=None)
 
         assert refusal.value.status_code == 422
-        assert 'presence' in str(refusal.value.detail)
+        # Отказ называет **место, где чинить**, а не имя поля в чужой базе:
+        # человек читает его на странице и идёт туда, куда сказано.
+        assert 'Сайты' in str(refusal.value.detail)
 
 
 class TestProfileLogin:
@@ -285,3 +308,65 @@ async def _rows(site_id: int = SITE_ID) -> list[dict]:
 
 async def _row(login: str) -> dict:
     return next(row for row in await _rows() if row['login'] == login)
+
+
+class TestSuiteKeepsOffLiveSites:
+    """⚠ Сторож соседства: сюита не заводит анкеты на рабочих сайтах.
+
+    Заведение анкеты сверяет номер сайта у соседа, и выдуманный он отвергает —
+    поэтому тесты годами селили свои анкеты на живом 343 (Ladadate), рядом с
+    рабочими. Пока у сайта не было кругов, это ничего не стоило.
+
+    Стоить начало, когда у него включились круги избранных и инвайтов: они берут
+    **все включённые анкеты сайта**, то есть и тестовую — с фальшивым паролем.
+    Ценой были бы вызовы LLM, занятая вкладка Chromium и строки отказов в журнале
+    под анкетой, которой через секунду не станет. Проявилось это не отказом, а
+    зыбкостью: два полных прогона из четырёх дали сбои в **разных** файлах, а по
+    отдельности те же файлы зелёные.
+
+    Разводит их стенд — закладка `999343` без метки `dating`: заведение её примет,
+    в селект сайтов она не попадёт, а главное — её нет в `dating_site`, по строкам
+    которой круги и обходят сайты.
+
+    ⚠ **Проверяем исходный текст, а не поведение.** Поведение тут и не проверить:
+    вред появляется у воркера, в другом процессе и через минуты. А номер в коде
+    теста виден сразу — и именно он возвращается по недосмотру, когда следующий
+    тест пишут по образцу соседнего.
+    """
+
+    # Сайты, на которых живут настоящие анкеты агентства.
+    LIVE_SITES = ('343', '19')
+
+    def test_no_profile_is_created_on_a_live_site(self):
+        import pathlib
+        import re
+
+        # Заведение анкеты — либо ручка `/api/dating/profile`, либо
+        # `DatingProfileSave`. ⚠ Смотрим **окно строк**, а не одну: в тестах вызов
+        # почти всегда перенесён, и `site_id` стоит строкой ниже. Первая версия
+        # сторожа искала в одной строке и пропускала ровно тот случай, ради
+        # которого писалась, — проверено возвратом `343` вручную.
+        начало = re.compile(r"/api/dating/profile'|DatingProfileSave\(")
+        номер = re.compile(r"'site_id':\s*(\d[\d_]*)|site_id=(\d[\d_]*)")
+        виноватые = []
+
+        for файл in sorted(pathlib.Path('tests').glob('test_*.py')):
+            # Заглушка соседа и сверка самого номера сайта — не заведение анкеты.
+            if файл.name in ('test_agent_site.py', 'test_dating_site.py'):
+                continue
+
+            строки = файл.read_text(encoding='utf-8').splitlines()
+            for индекс, строка in enumerate(строки):
+                if not начало.search(строка):
+                    continue
+
+                # Окно в три строки: дальше этого `site_id` вызова уже не бывает,
+                # а шире — начнём хватать соседние вызовы.
+                окно = ' '.join(строки[индекс:индекс + 3])
+                for первый, второй in номер.findall(окно):
+                    if (первый or второй).replace('_', '') in self.LIVE_SITES:
+                        виноватые.append(f'{файл.name}:{индекс + 1}: {строка.strip()[:70]}')
+
+        assert not виноватые, (
+            'анкета сюиты заводится на рабочем сайте — её возьмут круги воркера. '
+            'Стенд: 999_343.\n' + '\n'.join(виноватые))

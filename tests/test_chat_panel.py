@@ -23,6 +23,8 @@ from src.dating.dating_chat_panel import DATING_CHAT_PANEL_DAYS_MAX as DATING_CH
 from src.uvicorn.routers.dating.dating_chat import (dating_chat_import,
                                                     dating_chat_ready)
 
+pytestmark = pytest.mark.chat
+
 # Наши анкеты: номер на сайте → номер у нас.
 PROFILES = {'643694': 849, '486221': 853}
 
@@ -225,6 +227,7 @@ class TestHandler:
         пустить в панель, и код ответа говорит про наш запрос, а не про то, что
         вышло у него.
         """
+        _by_scenario(monkeypatch)
         monkeypatch.setattr(dating_chat_panel, 'dating_chat_panel_profiles', _profiles(PROFILES))
         monkeypatch.setattr(dating_chat_panel, 'dating_scenario_run',
                             _run({'status': 'error', 'step_no': 7, 'error': 'нет таблицы'}))
@@ -237,6 +240,7 @@ class TestHandler:
     async def test_range_reaches_the_scenario(self, rhapsody, monkeypatch):
         """Диапазон уезжает подстановками в том формате, который принимает панель."""
         seen = {}
+        _by_scenario(monkeypatch)
         monkeypatch.setattr(dating_chat_panel, 'dating_chat_panel_profiles', _profiles(PROFILES))
         monkeypatch.setattr(dating_chat_panel, 'dating_scenario_run', _run({'status': 'ok'}, seen))
         monkeypatch.setattr(dating_chat_panel, 'dating_chat_panel_save',
@@ -279,9 +283,11 @@ class TestImportedAnswerThreshold:
                                                                dating_profile_delete)
 
         answer = await dating_profile_create(
-            # Сайт из списка поддельного соседа: заведение сверяет его у
-            # соседа, и выдуманного номера тот не знает.
-            DatingProfileSave(site_id=343, login=f'panel-{uuid.uuid4().hex[:8]}',
+            # Сайт из списка поддельного соседа: заведение сверяет его у соседа, и
+            # выдуманного номера тот не знает. ⚠ Берём **стенд**, а не рабочий
+            # сайт: анкета сюиты не должна попадать в круги воркера
+            # (`test_mail_in.py`, `STAND_SITE`).
+            DatingProfileSave(site_id=999_343, login=f'panel-{uuid.uuid4().hex[:8]}',
                               password='x'), user=None)
         profile_id = int(answer['result'])
 
@@ -366,6 +372,20 @@ class TestImportedAnswerThreshold:
         code = inspect.getsource(dating_chat_panel.dating_chat_panel_save)
 
         assert "1, 'panel'" in code
+
+
+def _by_scenario(monkeypatch) -> None:
+    """Заставляет импорт идти сценарием, а не ручкой панели.
+
+    ⚠ Чем забирать, решает настройка `admin_url` живого сайта (`dating.md`,
+    §5.9.1), и у Ladadate она заполнена — тесты сценария молча ушли бы на ручку и
+    попытались постучаться наружу. Путь здесь **условие теста**, а не обстановка:
+    сценарный путь остаётся у сайтов без панели, и проверять его надо явно.
+    """
+    async def _no_panel(site_id):
+        return False
+
+    monkeypatch.setattr(dating_chat_panel, '_panel_ready', _no_panel)
 
 
 def _profiles(rows: dict):

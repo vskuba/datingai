@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Сайты | DatingAi{% endblock %}
+{% block title %}Настройки сайтов | DatingAi{% endblock %}
 
 {% block head %}
     <link rel="stylesheet" href="{{ static_url('css/dating_page.css') }}">
@@ -31,6 +31,7 @@
             width: 100%; padding: 5px 9px; font-size: 12px;
             font-family: ui-monospace, Menlo, Consolas, monospace;
             border: 1px solid #e5e7eb; border-radius: 6px; background: #fff;
+            min-width: 400px;
         }
         .set-value:focus { outline: none; border-color: #6366f1; }
         .set-value:disabled { opacity: .6; }
@@ -68,17 +69,31 @@
            `break-inside: avoid` обязателен: без него браузер рвёт блок между
            колонками — заголовок группы остаётся внизу левой, а её настройки
            уезжают в правую. */
-        .set-cols { columns: 2; column-gap: 20px; padding: 4px 0 10px; }
+        /* ⚠ **Полоса вкладок переносится сама** (`flex-wrap`), и это не
+           предусмотрительность впрок: групп уже семь, и на узком экране они не
+           помещаются в строку. Горизонтальная прокрутка у заголовков — худший из
+           способов их показать: половина вкладок оказывается за краем, и понять,
+           что там что-то есть, неоткуда.
 
-        .set-box {
-            break-inside: avoid; margin-bottom: 14px;
-            /* `inline-block` — против того же разрыва: в некоторых движках
-               `break-inside` на блоке в потоке колонок не действует. */
-            display: inline-block; width: 100%; vertical-align: top;
+           `justify-self: stretch` — против `start` у общей `.page-tabs`: та
+           рассчитана на три-четыре вкладки и обнимает их, а здесь коробка должна
+           занимать ширину, чтобы переносу было куда переносить. */
+        .set-tabs {
+            flex-wrap: wrap;
+            justify-self: stretch;
+            margin: 4px 0 12px;
         }
 
+        .set-panes { padding: 4px 0 10px; }
+
+        .set-box { margin-bottom: 14px; }
+
+        /* Закрытая вкладка. ⚠ Прячем, а не удаляем: перерисовка теряла бы
+           раскрытый пароль и позицию курсора в поле, которое правят. */
+        .set-box.off { display: none; }
+
         .set-box-head {
-            padding: 8px 14px 5px; font-size: 10px; font-weight: 700; color: #94a3b8;
+            padding: 8px 14px 5px; font-size: 10px; font-weight: 700; color: #397ad6;
             text-transform: uppercase; letter-spacing: .04em;
             border-bottom: 1px solid #e5e7eb;
         }
@@ -86,12 +101,16 @@
         /* ⚠ Одна колонка на узком экране: две по 300 пикселей — это не две
            колонки, а два обрубка, где имя настройки не помещается в строку. */
         @media (max-width: 1100px) {
-            .set-cols { columns: 1; }
+            .set-panes { columns: 1; }
         }
 
         .set-table { width: 100%; border-collapse: collapse; font-size: 12px; }
         .set-table td { padding: 6px 14px; border-bottom: 1px solid #f1f5f9; }
         .set-table tr:last-child td { border-bottom: none; }
+
+        .set-table td:first-child {
+            width: 50%;
+        }
 
         /* Заголовок группы настроек. Мельче шапки таблицы и без верхней рамки у
            первого: иначе две полосы подряд читаются как две таблицы. */
@@ -140,7 +159,7 @@
 <div class="dating-page">
 
     <div class="dating-head">
-        <h1>🌐 Сайты</h1>
+        <h1>🌐 Настройки сайтов</h1>
         <select id="siteSelect" title="Сайт, который настраиваем"></select>
         <span class="dating-hint" id="hint"></span>
         {% if user.is_admin %}
@@ -180,6 +199,12 @@
     // Приходит с сервера, а не вписан здесь: набор — условие кода, читающего
     // настройку, и вторая его копия на странице разошлась бы с первой.
     let known = [], groups = [];
+
+    // Открытая вкладка настроек. ⚠ Запоминается на весь раздел, а не на сайт:
+    // человек ходит между сайтами, сверяя **одну и ту же** настройку, и сброс на
+    // первую вкладку при каждом переключении заставлял бы искать её заново.
+    const SET_TAB_KEY = 'dating.site.settab';
+    let setTab = localStorage.getItem(SET_TAB_KEY) || '';
 
     function siteId() {
         return Number(siteEl.value) || 0;
@@ -224,17 +249,94 @@
             + '<span class="site-card-note">имя и адрес — из RhapsodyAi</span>'
             + '</div>'
             + (CAN_EDIT ? addForm() : '')
-            // ⚠ **Группы — отдельные таблицы в колонках, а не строки одной.**
-            // Настроек восемь, места на странице вдвое больше нужного, и одной
-            // колонкой они уезжали под сгиб: чтобы добраться до последней,
-            // страницу приходилось листать. Одна таблица так не делится — колонки
-            // раскладывают блоки, а строки внутри блока остаются строками.
-            + '<div class="set-cols">'
+            // ⚠ **Группы — вкладки, а не колонки.** Прежде все блоки лежали на
+            // странице разом, в две колонки: пока групп было три, это читалось,
+            // а с семью страница превратилась в простыню, по которой ищут глазами.
+            // Вкладка отвечает на вопрос «где это настраивается» одним щелчком.
+            //
+            // Полоса переносится на вторую строку сама (`flex-wrap`): групп будет
+            // больше, и горизонтальная прокрутка у заголовков — худший из
+            // способов их показать.
+            + tabsRow(site, custom)
+            + '<div class="set-panes">'
             + groupBoxes(site)
             + customBox(site, custom)
             + '</div>';
 
         bind();
+    }
+
+    // Полоса вкладок: по вкладке на непустую группу плюс «Свои настройки».
+    //
+    // ⚠ **Пустые группы не показываем.** Вкладка, за которой ничего нет, —
+    // обещание, которое некому исполнить; а список групп общий на все сайты, и у
+    // конкретного часть из них может быть незаполненной.
+    //
+    // ⚠ Счётчик в подписи не рисуем: настроек в группе три-восемь, и число рядом
+    // с названием отвечает на вопрос, которого никто не задаёт.
+    function tabsRow(site, custom) {
+        const rows = tabRows(site, custom);
+        if (!rows.length) return '';
+
+        // Открытая вкладка переживает перерисовку, но не переживает исчезновения
+        // своей группы: сменили сайт — и группы может не стать.
+        if (!rows.some(one => one.key === setTab)) setTab = rows[0].key;
+
+        return '<div class="page-tabs set-tabs">'
+            + rows.map(one =>
+                '<button type="button" class="page-tab'
+                + `${one.key === setTab ? ' on' : ''}" data-set-tab="${esc(one.key)}">`
+                + `${esc(one.title)}</button>`).join('')
+            + '</div>';
+    }
+
+    // Какие вкладки вообще будут. ⚠ Считается **один раз** и тем же порядком, что
+    // и панели ниже: разойдись они, щелчок по вкладке открывал бы соседнюю.
+    function tabRows(site, custom) {
+        const rows = [];
+
+        groups.forEach(group => {
+            if (known.some(spec => spec.group === group.key)) {
+                rows.push({key: group.key, title: group.title});
+            }
+        });
+
+        const shown = new Set(groups.map(group => group.key));
+        if (known.some(spec => !shown.has(spec.group))) {
+            rows.push({key: 'rest', title: 'Прочее'});
+        }
+
+        // «Свои настройки» — последними: они не из реестра, и мешать их к
+        // известным значило бы прятать среди них то, что завели руками.
+        if (custom.length || CAN_EDIT) {
+            rows.push({key: 'custom', title: 'Свои настройки'});
+        }
+
+        return rows;
+    }
+
+    // Показывает открытую панель. ⚠ Классом, а не перерисовкой: перерисовка
+    // теряла бы раскрытый пароль и позицию курсора в поле, которое правят.
+    function setTabPaint() {
+        bodyEl.querySelectorAll('.page-tab[data-set-tab]').forEach(btn =>
+            btn.classList.toggle('on', btn.dataset.setTab === setTab));
+
+        bodyEl.querySelectorAll('[data-set-pane]').forEach(pane =>
+            pane.classList.toggle('off', pane.dataset.setPane !== setTab));
+    }
+
+    // Подпись настройки: **жирное** выделение — жирным, а не звёздочками.
+    //
+    // ⚠ Поймано снимком страницы: в подписях висели «⚠ Ответы приходят **этим же
+    // путём**» — то есть разметка, которую никто не разбирал. Тексты в реестре
+    // пишут так же, как всю документацию проекта, и требовать от автора помнить,
+    // что здесь markdown не работает, — верный способ получить его снова.
+    //
+    // ⚠ **Экранируем сперва, размечаем потом.** Иначе `<b>` из чужой строки уехал
+    // бы в разметку как тег: подписи приходят из кода, но правило «сначала
+    // экранируй» не должно зависеть от того, откуда пришла строка.
+    function noteHtml(text) {
+        return esc(text).replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
     }
 
     function addForm() {
@@ -272,26 +374,31 @@
             const rows = known.filter(spec => spec.group === group.key);
             rows.forEach(spec => shown.add(spec.key));
 
-            return rows.length ? groupBox(group.title, site, rows) : '';
+            return rows.length ? groupBox(group.key, group.title, site, rows) : '';
         }).join('');
 
         // Группы, которых нет в списке с сервера (старый ответ, опечатка в
         // реестре), не теряем — своим блоком в конце. Потерять настройку хуже,
         // чем показать её не в том месте.
         const rest = known.filter(spec => !shown.has(spec.key));
-        if (rest.length) html += groupBox('Прочее', site, rest);
+        if (rest.length) html += groupBox('rest', 'Прочее', site, rest);
 
         return html;
     }
 
-    // Блок группы: заголовок и своя таблица. ⚠ Своя, а не общая — иначе колонки
-    // не разложить: таблица делится только целиком.
+    // Панель группы: своя таблица под своей вкладкой.
     //
-    // Цена — колонки соседних блоков не выровнены между собой. Она приемлема:
-    // группы читают по отдельности («что тут про частоту»), а не сравнивают
-    // построчно сверху вниз.
-    function groupBox(title, site, rows) {
-        return '<div class="set-box">'
+    // ⚠ **Заголовок внутри панели остался**, хотя его же несёт вкладка. Он не
+    // лишний: вкладка отвечает «куда я нажал», заголовок — «что я сейчас читаю»,
+    // и при семи вкладках в две строки первое теряется из виду быстрее, чем
+    // кажется.
+    //
+    // ⚠ **Панели рисуются все разом, а прячутся классом.** Перерисовывать группу
+    // на каждый щелчок значило бы терять раскрытый пароль и позицию курсора в
+    // поле, которое человек только что правил.
+    function groupBox(key, title, site, rows) {
+        return `<div class="set-box${key === setTab ? '' : ' off'}"`
+            + ` data-set-pane="${esc(key)}">`
             + `<div class="set-box-head">${esc(title)}</div>`
             + '<table class="set-table"><tbody>'
             + rows.map(spec => knownRow(site, spec)).join('')
@@ -302,15 +409,18 @@
     // Свои настройки — отдельным блоком, последним: они не из реестра, и мешать
     // их к известным значило бы прятать среди них то, что завели руками.
     function customBox(site, custom) {
+        const off = setTab === 'custom' ? '' : ' off';
+
         if (!custom.length) {
             return CAN_EDIT
-                ? '<div class="set-box"><div class="set-box-head">Свои настройки</div>'
+                ? `<div class="set-box${off}" data-set-pane="custom">`
+                  + '<div class="set-box-head">Свои настройки</div>'
                   + '<div class="site-empty">Своих настроек у этого сайта нет — '
                   + 'заведите, если нужны</div></div>'
                 : '';
         }
 
-        return '<div class="set-box">'
+        return `<div class="set-box${off}" data-set-pane="custom">`
             + '<div class="set-box-head">Свои настройки</div>'
             + '<table class="set-table"><tbody>'
             + custom.map(key => row(site, key)).join('')
@@ -328,7 +438,7 @@
             + '<td>'
             + `<span class="set-title">${esc(spec.title)}</span>`
             + `<span class="set-key-small">${esc(spec.key)}</span>`
-            + (spec.note ? `<span class="set-note">${esc(spec.note)}</span>` : '')
+            + (spec.note ? `<span class="set-note">${noteHtml(spec.note)}</span>` : '')
             + '</td>'
             + '<td>'
             + (spec.options.length ? knownSelect(spec, chosen) : knownInput(spec, chosen))
@@ -389,6 +499,24 @@
     }
 
     function bind() {
+        // ⚠ Вкладки вешаем **до** проверки прав: читать настройки вправе всякий
+        // вошедший, и запертые вкладки у неадмина означали бы страницу, на которой
+        // видна только первая группа из семи.
+        //
+        // Слушатель на полосе, а не на кнопках: полоса переживает перерисовку
+        // панелей, а кнопки — нет. Тот же приём, что на «Профилях».
+        const tabs = bodyEl.querySelector('.set-tabs');
+        if (tabs) {
+            tabs.addEventListener('click', (e) => {
+                const btn = e.target.closest('.page-tab');
+                if (!btn || btn.dataset.setTab === setTab) return;
+
+                setTab = btn.dataset.setTab;
+                localStorage.setItem(SET_TAB_KEY, setTab);
+                setTabPaint();
+            });
+        }
+
         if (!CAN_EDIT) return;
 
         // Набор значений сохраняется сразу по выбору: отдельная кнопка «применить»

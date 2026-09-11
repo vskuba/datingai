@@ -11,6 +11,10 @@
 как уезжает токен, как код отказа превращается во фразу для журнала («403 → сайт
 просит подождать»), как протухший токен приводит к повторному входу.
 
+⚠ Подменяется `dating_site_api` — **общая дверь к сайту**. Через неё ходят и списки
+собеседников, и отправка писем; заглушка на одном из двух вызывающих означала бы,
+что второй ходит на живой сайт.
+
 ## Как пользоваться
 
     async def test_список_приходит(site_api):
@@ -18,18 +22,24 @@
 
         rows = await dating_people_api_rows(PROFILE, 'online', SITE_API_FAKE_BASE, 'пароль')
 
-Готовые положения сайта — методами: `refuse`, `offline`, `expire_token`. Что у
-него лежит — поля `users`, `password`. Что у него спросили — `calls`; по нему
-проверяется «вошли один раз, а не на каждый список».
+Готовые положения сайта — методами: `refuse`, `offline`, `expire_token`,
+`forbid_send`. Что у него лежит — поля `users`, `password`. Что у него спросили —
+`calls`; по нему проверяется «вошли один раз, а не на каждый список». Что ушло —
+`sent`.
+
+⚠ **Письма никуда не уходят.** Это главное, ради чего заглушка нужна отправке:
+`POST /messages/send` на живом сайте — необратимое действие, и одна неосторожная
+сюита означала бы полсотни писем незнакомым людям.
 """
 
+import asyncio
 import json
 import time
 
 import httpx
 import pytest
 
-from src.dating import dating_people_api
+from src.dating import dating_site_api
 
 # Адрес поддельного сайта. Настоящий не годится: тест не должен зависеть ни от
 # доступности ladadate.com, ни от того, что там сегодня в списках.
@@ -55,6 +65,21 @@ SITE_API_FAKE_USERS = {
 }
 
 
+# Входящие письма живого вида: в списке тела нет.
+SITE_API_FAKE_LETTERS = [
+    {'MessageId': 201, 'DatePost': '2026-09-09T09:29:46Z', 'IsReplied': False,
+     'User': {'AccountId': '181685', 'Name': 'Semen', 'Age': 46, 'City': 'Krakow',
+              'Country': 'Poland', 'CountryCode': 'PL',
+              'ProfilePhoto': 'https://site.test/content/photos/a1.jpg'}},
+    {'MessageId': 202, 'DatePost': '2026-09-09T10:02:11Z', 'IsReplied': False,
+     'User': {'AccountId': '812886', 'Name': 'Vincent', 'Age': 49, 'City': 'paris',
+              'Country': 'France', 'CountryCode': 'FR', 'ProfilePhoto': None}},
+]
+
+# Тела — отдельным ответом, как у живого сайта.
+SITE_API_FAKE_BODIES = {201: 'Moto is my life', 202: 'Hello from Paris'}
+
+
 class SiteApiFake:
     """Сайт с заранее заготовленными ответами.
 
@@ -70,9 +95,40 @@ class SiteApiFake:
         # Что у сайта спросили: `(метод, путь)`.
         self.calls: list[tuple[str, str]] = []
 
+        # Насколько ответ уступает цикл событий. Ноль — «один оборот»: этого
+        # довольно, чтобы вторая задача успела войти, пока первая ждёт ответа.
+        self.pause: float = 0.0
+
+        # ⚠ И полные адреса — **с запросом**. `calls` держит голый путь, и по нему
+        # проверяют «куда сходили»; но у части ручек смысл несёт именно запрос
+        # (`?startDate=…` у писем), а в пути его нет вовсе.
+        self.urls: list[str] = []
+
         # Токены, которые сайт считает своими. Выданные им же — чтобы «протухание»
         # можно было устроить, не подделывая подпись.
         self.tokens: set = set()
+
+        # Письма, которые «ушли»: `(uid, тело, CheckId)`. По ним и проверяется, что
+        # отправка дошла до сайта — и что ушло ровно то, что лежало в пуле.
+        self.sent: list[tuple[str, str, str]] = []
+
+        # Разрешения, выданные `check-send`. ⚠ Сайт принимает только своё, и
+        # заглушка тоже: письмо с чужим `CheckId` должно отвергаться здесь, иначе
+        # проверка «шлём разрешение, которое дали» ничего не значит.
+        self.checks: set = set()
+
+        # Кому писать нельзя: `check-send` ответит отказом. Живой сайт так и делает
+        # — например, когда этому человеку уже писали слишком часто.
+        self.no_send: set = set()
+
+        # Входящие письма: что лежит у сайта для нашей девушки. ⚠ Поля — те же, что
+        # у живого (`GET /messages`): список **без текста**, тело отдаётся отдельно
+        # по номеру. Проверять забор на списке с телами значило бы проверять
+        # выдуманный протокол.
+        self.letters: list[dict] = [dict(row) for row in SITE_API_FAKE_LETTERS]
+
+        # Тела писем по номеру — то, что отдаёт `GET /messages/{id}`.
+        self.bodies: dict = dict(SITE_API_FAKE_BODIES)
 
         self._refuse: tuple[int, dict, str] | None = None
         self._offline = ''
@@ -87,6 +143,10 @@ class SiteApiFake:
         """Сайта нет: связь не устанавливается."""
         self._offline = str(reason)
 
+    def forbid_send(self, uid: str) -> None:
+        """Этому адресату сайт писать не даёт: `check-send` отвечает 403."""
+        self.no_send.add(str(uid))
+
     def expire_token(self) -> None:
         """Все выданные токены протухли — сайт отвечает на них 401.
 
@@ -100,6 +160,7 @@ class SiteApiFake:
     def handle(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         self.calls.append((request.method, path))
+        self.urls.append(str(request.url))
 
         if self._offline:
             raise httpx.ConnectError(self._offline, request=request)
@@ -128,6 +189,55 @@ class SiteApiFake:
         if '/users/' in path and state in self.users:
             return self._json(200, {'Users': self.users[state]})
 
+        # ── Письма ──────────────────────────────────────────────────────────
+        if path.endswith('/messages'):
+            # ⚠ Список **без тел**, как у живого: тело отдаётся по номеру ниже.
+            return self._json(200, {'Messages': [
+                {k: v for k, v in row.items()} for row in self.letters]})
+
+        if '/messages/check-send/' in path:
+            uid = path.rsplit('/', 1)[-1]
+            if uid in self.no_send:
+                return self._json(403, {'Error': 'Too many requests',
+                                        'Reason': 'ERROR_TOO_MANY_REQUESTS'})
+
+            check = f'check-{uid}-{len(self.checks)}'
+            self.checks.add(check)
+
+            return self._json(200, {
+                'CheckId': check,
+                'Message': 'You can send a message to this user within the next '
+                           '30 seconds.'})
+
+        # Одно письмо: то же самое плюс `Body`.
+        one = path.rsplit('/', 1)[-1]
+        if '/messages/' in path and one.isdigit():
+            found = next((row for row in self.letters
+                          if str(row.get('MessageId')) == one), None)
+            if not found:
+                return self._json(404, {'Error': 'Message not found',
+                                        'Reason': 'ERROR_MESSAGE_NOT_FOUND'})
+
+            return self._json(200, {**found,
+                                    'Body': self.bodies.get(int(one), ''),
+                                    'Attachment': None})
+
+        if path.endswith('/messages/send'):
+            sent = json.loads(request.content or b'{}')
+            check = str(sent.get('CheckId') or '')
+            if check not in self.checks:
+                # ⚠ Живой сайт разрешение проверяет, и заглушка тоже: иначе тест
+                # «сперва спросили, потом отправили» проходил бы и без первого шага.
+                return self._json(404, {'Error': 'Check not found',
+                                        'Reason': 'ERROR_MESSAGE_NOT_FOUND'})
+
+            self.checks.discard(check)
+            self.sent.append((str(sent.get('RecipientAccountId') or ''),
+                              str(sent.get('Body') or ''), check))
+
+            return self._json(200, {'Status': 'OK',
+                                    'Message': 'Message sent successfully.'})
+
         return self._json(404, {'Error': f'заглушка не знает пути {path}'})
 
     @staticmethod
@@ -147,7 +257,21 @@ class _Httpx:
     def AsyncClient(self, **kwargs) -> httpx.AsyncClient:  # noqa: N802 — имя из httpx
         kwargs.pop('transport', None)
 
-        return httpx.AsyncClient(transport=httpx.MockTransport(self._fake.handle), **kwargs)
+        return httpx.AsyncClient(transport=httpx.MockTransport(self._answer), **kwargs)
+
+    async def _answer(self, request: httpx.Request) -> httpx.Response:
+        """Ответ с уступкой цикла событий.
+
+        ⚠ **`await` здесь не украшение, и без него заглушка врёт.** Живой запрос
+        уступает цикл, поэтому две задачи по-настоящему оказываются внутри входа
+        одновременно — на этом и построена гонка, из-за которой сайт браковал
+        второй вход. Отвечай заглушка синхронно, первый вызов успевал бы целиком
+        до начала второго, и проверка «вход один» зеленела бы **и без замка**:
+        проверено — так она и вела себя, пока сюда не добавили `sleep(0)`.
+        """
+        await asyncio.sleep(self._fake.pause)
+
+        return self._fake.handle(request)
 
 
 class _FakeRedis:
@@ -160,9 +284,19 @@ class _FakeRedis:
     def get(self, key):
         return self.store.get(key)
 
-    def set(self, key, value, ex=None):
+    def set(self, key, value, ex=None, nx=False):
+        # ⚠ `nx` подделывается по-настоящему, а не игнорируется. На нём держится
+        # замок входа (`dating_site_api._lock_take`): «занял» отличается от «уже
+        # занято» именно ответом `set`. Верни заглушка успех всегда — замок
+        # выдавал бы право на вход каждому, и проверка «вход один» зеленела бы,
+        # ничего не проверяя. Ответ повторяет redis-py: `True` либо `None`.
+        if nx and key in self.store:
+            return None
+
         self.store[key] = value
         self.ttl[key] = ex
+
+        return True
 
     def delete(self, key):
         self.store.pop(key, None)
@@ -175,8 +309,11 @@ def site_api(monkeypatch) -> SiteApiFake:
     fake = SiteApiFake()
     fake.redis = _FakeRedis()
 
-    monkeypatch.setattr(dating_people_api, 'httpx', _Httpx(fake))
-    monkeypatch.setattr(dating_people_api, 'redis_conn_get', lambda: fake.redis)
+    # ⚠ Подменяем **транспортный модуль**, а не тот, что зовёт ручку: вход, токен и
+    # разбор отказов живут в `dating_site_api.py` — общие у списков собеседников и
+    # у отправки писем. Подмени мы `dating_people_api`, письма ходили бы наружу.
+    monkeypatch.setattr(dating_site_api, 'httpx', _Httpx(fake))
+    monkeypatch.setattr(dating_site_api, 'redis_conn_get', lambda: fake.redis)
 
     return fake
 

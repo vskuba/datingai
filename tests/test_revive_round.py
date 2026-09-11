@@ -23,6 +23,8 @@ from src.dating.dating_revive import dating_revive_plan
 from src.dating.dating_revive_round import (DATING_REVIVE_PROBE_PARALLEL,
                                             dating_revive_round_run)
 
+pytestmark = pytest.mark.profile
+
 NOW = datetime(2026, 8, 18, 12, 0, 0)
 
 

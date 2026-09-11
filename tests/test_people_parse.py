@@ -11,8 +11,11 @@
 Придумать такую форму нельзя — её можно только увидеть.
 """
 
+import pytest
+
 from src.dating.dating_people import dating_people_rows
 
+pytestmark = pytest.mark.profile
 # Ответ сценария «избранные собеседники: список», как он пришёл с LadaDate.
 ROWS = {'избранные': [
     {'имя': 'Vincent pitchen\n,\xa0\n49',

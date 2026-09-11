@@ -290,6 +290,10 @@ async def dating_profile_view_card(profile_id: int, page: int = 1,
                        # чтобы галочка после перезагрузки страницы показывала то,
                        # что человек поставил, а не снятую.
                        'mailing_on': bool(profile.get('mailing_on')),
+                       # Генерация ответов на входящие. ⚠ **Не `schedule_on`**: тот
+                       # включает вход по сменам, этот — только подготовку ответов в
+                       # пул. Оба видны в карточке, но живут на разных страницах.
+                       'reply_on': bool(profile.get('reply_on')),
                        'contacts_total': total, 'page': page, 'pages': pages}}
 
 

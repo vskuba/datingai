@@ -42,7 +42,8 @@ async def dating_revive_site_presence(site_id: int) -> tuple[dict, str]:
     причина и уходит наружу: соседу объявлением про сайт, человеку — строкой в
     карточке каждой анкеты (`dating_revive_db_site_missing`)."""
     from logging_.logging_ import logger_info
-    from src.dating.dating_presence import dating_presence_ready
+    from http_.http_heartbeat import http_heartbeat_ready
+    from src.dating.dating_heartbeat import dating_heartbeat_config
     from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_site_get
 
     try:
@@ -57,19 +58,26 @@ async def dating_revive_site_presence(site_id: int) -> tuple[dict, str]:
 
         return {}, 'RhapsodyAi не отвечает — проверить анкету нечем'
 
-    presence = dating_json_load(site.get('presence'))
-    if dating_presence_ready(presence):
-        return presence, ''
+    # ⚠ **Отдаём разрешённую настройку, а не описание соседа.** Своя у сайта
+    # старше, соседская читается запасной (`dating_heartbeat_config`) — и здесь
+    # это не мелочь: у сайта со своей настройкой описание соседа пусто, а пустой
+    # словарь вызывающий читает как «проверять нечем». Круг тогда объявлял
+    # «Проверить анкету нечем: » — с пустой причиной, каждую минуту, у анкеты,
+    # которая в этот момент исправно держалась в сети.
+    config = await dating_heartbeat_config(int(site_id))
+    if http_heartbeat_ready(config):
+        return config, ''
 
     # А это надолго и само не пройдёт: `presence` заводится руками на вкладке
     # «Сайты» соседа, и без человека тут ничего не изменится хоть сутки, хоть
     # неделю.
     await _missing_announce(
         site_id, 'not_configured',
-        'у сайта не настроен опрос присутствия (`presence`) — анкеты сайта '
-        'проверяться не будут, пока его не заведут на вкладке «Сайты»')
+        'у сайта не настроено присутствие — анкеты сайта проверяться не будут, '
+        'пока настройку не заведут: «Сайты» → «Присутствие на сайте»')
 
-    return {}, 'у сайта не настроен опрос присутствия — заведите его на вкладке «Сайты»'
+    return {}, ('у сайта не настроено присутствие — заведите его на странице '
+                '«Сайты», раздел «Присутствие на сайте»')
 
 
 async def dating_revive_site_error_write(profile: dict, why: str) -> None:

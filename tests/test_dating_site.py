@@ -24,6 +24,7 @@ from src.uvicorn.routers.dating.dating_site import dating_site_list
 
 from src.uvicorn.routers.dating.dating_site import DATING_SITE_SECRET_MASK as MASK
 
+pytestmark = pytest.mark.core
 KEY = 'тест_ключ'
 OTHER = 'тест_второй'
 
@@ -205,7 +206,11 @@ class TestKnownDurations:
 
     @pytest.mark.parametrize('key, default, values', [
         ('favorites_keep', '604800', ['604800', '259200', '86400']),
-        ('chat_check_every', '300', ['300', '1800', '3600']),
+        # ⚠ Минута — край набора: заход идёт сценарием, то есть живым
+        # браузером у соседа (~40 секунд), и на таком сроке он занят почти
+        # всё время. Второго прогона это не заводит — сайт помечен в Redis
+        # до конца срока, — но браузера не остаётся другим занятиям.
+        ('chat_check_every', '300', ['60', '180', '300', '1800', '3600']),
         ('online_check_every', '120', ['120', '300', '600']),
     ])
     async def test_seconds_setting_offers_its_values(self, rhapsody, monkeypatch,

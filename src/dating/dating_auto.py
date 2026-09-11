@@ -85,6 +85,33 @@ async def dating_auto_round(profiles: list) -> dict:
     return {'profiles': touched, 'sent': sent, 'silent': silent, 'error': ''}
 
 
+async def _answer_on(site_id: int) -> bool:
+    """Отвечает ли агент в чате этого сайта.
+
+    ⚠ **Не прочиталось — не отвечаем.** Молчание стоит задержки до следующего
+    круга (минута), а лишний ответ уходит живому человеку от имени девушки, и
+    отменить его нельзя. Та же сторона ошибки, что у прочих выключателей наружу.
+
+    Спрашиваем на каждую анкету, а не раз на круг: сайтов у смены немного, запрос
+    дешёвый, а кэш пришлось бы гасить при щелчке по галочке — иначе поднятый
+    выключатель ждал бы конца смены.
+    """
+    from mysql_.mysql_ import mysql_get_db_async
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT chat_answer_on FROM dating_site'
+                             ' WHERE site_id = %s', (int(site_id),))
+            row = await db.fetchone()
+    except Exception as e:
+        logger_info(f'[dating] выключатель автоответа сайта #{site_id} '
+                    f'не прочитался: {e}')
+
+        return False
+
+    return bool((row or {}).get('chat_answer_on'))
+
+
 async def _agent_id(profile: dict) -> int:
     """Агент анкеты у соседа. Ищем по имени: его могли удалить или переименовать."""
     card = profile.get('profile')

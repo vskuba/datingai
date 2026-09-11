@@ -16,8 +16,11 @@
 значило бы расширить её контракт.
 """
 
+import pytest
+
 from src.uvicorn.routers.dating.dating_log import _query, _run_text
 
+pytestmark = pytest.mark.page
 SITE = 343
 
 

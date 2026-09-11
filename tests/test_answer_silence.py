@@ -24,7 +24,10 @@ from src.uvicorn.routers.dating.dating_profile import (DatingProfileSave,
                                                        dating_profile_delete)
 from src.uvicorn.routers.dating.dating_profile_view import dating_profile_view_card
 
-SITE = 343
+pytestmark = pytest.mark.chat
+# ⚠ Стенд, а не живой сайт: анкета сюиты не должна попадать в круги воркера
+# (`test_mail_in.py`, `STAND_SITE`).
+SITE = 999_343
 UID = '77'
 
 

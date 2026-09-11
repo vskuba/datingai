@@ -164,6 +164,37 @@ def dating_people_photo_uid(photo: str) -> str:
     return match.group(1) if match else ''
 
 
+def dating_people_name_parts(name: str) -> dict:
+    """Имя собеседника на части: `firstname` и `lastname`.
+
+    Args:
+        name: имя, как его отдал сайт, — «Brian Ritter», «Kevin», «JULIO RODRIGO
+            ZAPATA OLIVA».
+
+    Returns:
+        dict: `{'firstname': …, 'lastname': …}`. **Обе пусты, если делить нечего.**
+
+    ⚠ **Делим по первому пробелу, а не по последнему.** Первое слово — имя, всё
+    остальное фамилия: «JULIO RODRIGO ZAPATA OLIVA» это Хулио и четыре фамилии, а
+    не «JULIO RODRIGO ZAPATA» и «OLIVA». Гадать, где кончается имя, мы не умеем, а
+    первое слово угадывается всегда.
+
+    ⚠ **Нет пробела — обе пустые, а не «имя целиком».** Соблазн вернуть «Kevin»
+    первым именем велик, но тогда пропадает разница между «мы знаем имя отдельно»
+    и «у нас просто строка». Письмо, ссылающееся на `companion_first_name`, должно
+    уметь ответить «этого у нас нет» — а решает, что делать дальше, тот, кто
+    пишет текст (`%if%` в промпте агента, `default_value` у переменной).
+
+    ⚠ **Строка `Tall_Good_Man` — одно слово**, хотя выглядит как три. Подчёркивание
+    не пробел, и придумывать по нему разбиение значило бы звать человека «Tall».
+    """
+    flat = ' '.join(str(name or '').split())
+    first, _, last = flat.partition(' ')
+
+    return {'firstname': first if last else '',
+            'lastname': last if last else ''}
+
+
 def _name_age(value) -> tuple[str, int]:
     """Имя и возраст из склейки вида `Vincent\\n,\\u00a0\\n49`.
 

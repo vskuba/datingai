@@ -18,6 +18,7 @@ import pytest
 
 from datetime_.datetime_ import datetime_offset_hours
 
+pytestmark = pytest.mark.page
 KEY = 'timezone'
 
 

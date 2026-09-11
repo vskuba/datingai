@@ -25,6 +25,7 @@ from logging_.logging_ import logger_info
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_find
 
 from src.dating.dating_log import dating_log_write
+from src.dating.dating_pool import dating_pool_drop
 from src.dating.dating_role import DATING_ROLE_DEFAULT, dating_role_scenario
 
 # Сколько ждать сценарий выхода. Это несколько кликов по уже открытому кабинету;
@@ -169,3 +170,9 @@ async def _state_clear(profile_id: int) -> None:
                          '       keep_online = 0, relogin_since = NULL, relogin_tries = 0, '
                          '       relogin_next_at = NULL WHERE id = %s', (int(profile_id),))
         await db.connection.commit()
+
+    # ⚠ Черновики уходят вместе с анкетой: потолок пула — **на сайт**, и письма,
+    # которые уже некому отправить, занимали бы его, пока анкету не включат
+    # обратно (`dating_pool.py`). Переписка и журнал при этом остаются:
+    # отключение — «не веди её», а не «забудь, что она была».
+    await dating_pool_drop(profile_id, 'анкету отключили')

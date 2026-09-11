@@ -16,6 +16,7 @@ import pytest
 from src.dating import dating_online
 from src.dating.dating_online import DATING_ONLINE_FRESH_SEC, dating_online_check
 
+pytestmark = pytest.mark.chat
 SITE = 343
 
 # Номера выдуманные: тесту всё равно, а живую анкету трогать нельзя даже в тех
@@ -245,3 +246,36 @@ class TestKeyMatchesTheSnapshot:
 
         assert dating_online.DATING_ONLINE_KEY == \
             DATING_PEOPLE_SITE_KEY.format(site_id='{site_id}', kind='online')
+
+
+class TestOnlineShow:
+    """Второй порог — для показа точки, а не для решения об отправке.
+
+    ⚠ **Порога два не по недосмотру.** «Слать ли письмо сейчас» — решение с
+    последствием, и пятиминутный снимок для него уже сомнителен. «Был ли человек на
+    сайте недавно» — сведение к размышлению, и десятиминутной давности оно не
+    портит.
+    """
+
+    def test_show_threshold_is_longer(self):
+        from src.dating.dating_online import (DATING_ONLINE_FRESH_SEC,
+                                              DATING_ONLINE_SHOW_SEC)
+
+        assert DATING_ONLINE_SHOW_SEC > DATING_ONLINE_FRESH_SEC
+
+    def test_no_snapshot_is_not_online(self, monkeypatch):
+        """⚠ Для показа «не знаем» — это **не** «в сети», в отличие от отправки.
+
+        Отправка при незнании пропускает: запрещать по незнанию нельзя, иначе
+        анкета молчала бы всякий раз, когда лента не снята. Показ наоборот молчит:
+        зелёная точка у того, о ком мы ничего не знаем, — прямая неправда.
+        """
+        from src.dating import dating_online
+
+        monkeypatch.setattr(dating_online, '_snapshot', lambda site_id: None)
+
+        show = dating_online.dating_online_show(1, 'x')
+        send = dating_online.dating_online_check(1, 'x')
+
+        assert show['online'] is False and show['known'] is False
+        assert send['online'] is True and send['known'] is False

@@ -18,6 +18,7 @@ import pytest
 from src.dating.dating_profile_cache import _contact_values, _profile_load
 from src.dating.site.site_registry import site_registry_profile
 
+pytestmark = pytest.mark.profile
 # Настройка сайта из RhapsodyAi: интересен корень и где искать анкету.
 PRESENCE = {'base': 'https://goldenbride.net/', 'profile': {'path': '/api/me', 'field': 'user'}}
 

@@ -30,6 +30,7 @@ from src.dating.dating_send import _ack_wait, _hello_wait, _open_dialog, _send_w
 from src.dating.site.site_base import site_base_render
 from src.dating.site.site_registry import site_registry_chat
 
+pytestmark = pytest.mark.chat
 # Драйвер сайта — предмет проверки для всего, что касается формы кадров. Через
 # реестр, а не прямым импортом класса: заодно проверяется, что умолчание реестра
 # ведёт к Goldenbride (пока в закладках нет ключа `driver`, на этом держится прод).
@@ -418,3 +419,103 @@ def _ws_install(monkeypatch, frames: list) -> _WsBox:
     monkeypatch.setattr(dating_send.websockets, 'connect', connect)
 
     return box
+
+
+class TestBodyEncode:
+    """⚠ Кодирование тела HTTP-отправки: чужая древность, воспроизведённая как есть.
+
+    Страница чата LadaDate шлёт сообщение так (`chat-app.js`):
+
+        $.ajax({ url: "/chat-send", data: { id: …, body: escape(mes) } })
+
+    То есть устаревший `escape()` **внутри** form-urlencode — двойное кодирование.
+    Пойманное живым перехватом тело выглядит как `body=Henry%252C%2520do…`, где
+    `%252C` → `%2C` → запятая.
+
+    Сделай мы «правильно», одним слоем, — у собеседника на месте запятой оказался
+    бы `%2C`. Поэтому проверяется именно двойной слой, а не «корректный URL».
+    """
+
+    def test_plain_text_goes_through_untouched(self):
+        from src.dating.site.site_base import site_base_encode
+
+        assert site_base_encode('Hello', '') == 'Hello'
+
+    def test_form_encoding_is_single_layer(self):
+        """`form` — для сайта с нормальной формой: один слой, пробел плюсом."""
+        from src.dating.site.site_base import site_base_encode
+
+        assert site_base_encode('a b&c', 'form') == 'a+b%26c'
+
+    def test_js_escape_form_is_double_encoded(self):
+        """⚠ Двойной слой: `%` первого кодирования сам кодируется во втором."""
+        from src.dating.site.site_base import site_base_encode
+
+        # escape(', ') = '%2C%20'; дальше form-urlencode делает '%252C%2520'.
+        assert site_base_encode(', ', 'js_escape_form') == '%252C%2520'
+
+    def test_non_ascii_becomes_percent_u(self):
+        """⚠ `%uXXXX` нет ни в одном стандарте, и ни один URL-кодировщик так не
+        делает. Проверено живой отправкой: `Michał` доехал целым именно так."""
+        from src.dating.site.site_base import site_base_js_escape
+
+        assert site_base_js_escape('ł') == '%u0142'
+
+    def test_round_trip_matches_what_the_site_gets(self):
+        """Двойное раскодирование возвращает исходный текст — то же, что делает
+        сервер сайта, разбирая тело."""
+        from urllib.parse import unquote
+
+        from src.dating.site.site_base import site_base_encode
+
+        text = 'Henry, do you prefer a relaxed weekend?'
+        got = site_base_encode(text, 'js_escape_form')
+
+        assert unquote(unquote(got)) == text
+
+    def test_unknown_name_leaves_value_as_is(self):
+        """⚠ Опечатка в `presence.send.encode` не должна останавливать отправку:
+        `presence` правят у соседа прямо в базе. Худшее, что случится, — тело
+        уйдёт незакодированным, как было до этой функции."""
+        from src.dating.site.site_base import site_base_encode
+
+        assert site_base_encode('a b', 'формурленкод') == 'a b'
+
+    def test_text_is_encoded_before_substitution(self):
+        """⚠ Порядок важен: кодируем **до** подстановки в шаблон.
+
+        `site_base_render` — простая замена метки, и незакодированный пробел или
+        `&` порвали бы тело `id={{to}}&body={{text}}`: сообщение ушло бы обрезанным
+        по первому пробелу.
+        """
+        from src.dating.site.site_base import site_base_encode, site_base_render
+
+        body = site_base_render('id={{to}}&body={{text}}', '845089',
+                                site_base_encode('a b&c', 'form'), '')
+
+        assert body == 'id=845089&body=a+b%26c'
+
+
+class TestSourceOfSend:
+    """⚠ Чем ушло — первый вопрос разбора, и столбец обязан отвечать точно.
+
+    Раньше в коде стояло `'scenario' if transport == 'scenario' else 'socket'`, и
+    это было верно, пока HTTP-путь никем не был настроен. С переводом LadaDate на
+    `/chat-send` каждое исходящее стало писаться как `socket` — у сайта, у которого
+    сокета нет вовсе, то есть ровно та путаница, от которой столбец и заводился.
+    """
+
+    def test_every_transport_has_its_own_source(self):
+        from src.dating.dating_send import DATING_SEND_SOURCE
+
+        assert DATING_SEND_SOURCE['http'] == 'http'
+        assert DATING_SEND_SOURCE['scenario'] == 'scenario'
+        assert DATING_SEND_SOURCE['ws'] == 'socket'
+
+    def test_unknown_transport_falls_back_to_socket(self):
+        """Незнакомый транспорт — `socket`: умолчание столбца, а не отказ записи.
+        Потерять отправленное сообщение из переписки хуже, чем ошибиться в
+        подписи, чем оно ушло."""
+        from src.dating.dating_send import DATING_SEND_SOURCE
+
+        assert DATING_SEND_SOURCE.get('чего-то новое', 'socket') == 'socket'

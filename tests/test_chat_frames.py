@@ -25,6 +25,7 @@ import pytest
 from src.dating.dating_chat import _confirm, _pending_take
 from src.dating.site.site_registry import site_registry_chat
 
+pytestmark = pytest.mark.chat
 # Драйвер сайта: он и есть предмет проверки. Берётся через реестр, а не прямым
 # импортом класса, — заодно проверяется, что умолчание реестра ведёт к
 # Goldenbride: пока в закладках нет ключа `driver`, на этом держится прод.

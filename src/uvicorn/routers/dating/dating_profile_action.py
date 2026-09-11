@@ -264,6 +264,44 @@ class DatingProfileMailing(BaseModel):
     mailing_on: bool = Field(..., description='Слать ли от анкеты рассылку писем')
 
 
+class DatingProfileReply(BaseModel):
+    """Готовим ли ответы на входящие письма этой анкеты."""
+
+    reply_on: bool = Field(..., description='Генерация ответов в пул')
+
+
+@router.put('/{profile_id}/reply', include_in_schema=False)
+async def dating_profile_action_reply(profile_id: int, data: DatingProfileReply,
+                                      user=Depends(auth_required)):
+    """Включает или выключает **генерацию ответов** на входящие письма.
+
+    ⚠ **Это не `schedule_on`, и путать их нельзя.** Тот выключатель — на «Анкетах»,
+    и он включает вход по сменам: воркер логинит девушку и держит сокет. Здесь речь
+    только о том, готовить ли ответы в пул; наружу от этого ничего не уходит —
+    отправка это третий, свой выключатель (`reply_send_on` у сайта).
+
+    Галочка стояла в блоке расписания и писала в `schedule_on`, то есть человек,
+    разрешая готовить ответы, отправлял анкету в сеть. Вход — действие наружу, самое
+    заметное из всех, и побочным следствием чужого решения он быть не должен.
+
+    ⚠ **Пара к `mailing_on`.** Тот — «участвует ли анкета в рассылке», этот —
+    «готовим ли ответы от её имени». Оба про то, что панель делает от лица девушки, и
+    оба выключены по умолчанию.
+    """
+    await dating_profile_row(profile_id)
+
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE dating_profile SET reply_on = %s WHERE id = %s',
+                         (1 if data.reply_on else 0, profile_id))
+        await db.connection.commit()
+
+    await dating_log_write(profile_id, 'info',
+                           'Генерация ответов включена' if data.reply_on
+                           else 'Генерация ответов выключена')
+
+    return {'result': {'reply_on': data.reply_on}}
+
+
 @router.put('/{profile_id}/mailing', include_in_schema=False)
 async def dating_profile_action_mailing(profile_id: int, data: DatingProfileMailing,
                                         user=Depends(auth_required)):
@@ -545,12 +583,17 @@ async def dating_profile_action_probe(site_id: int = 0,
     """
     site = await dating_profile_site(site_id) if site_id else None
     presence = dating_json_load((site or {}).get('presence'))
-    if not dating_presence_ready(presence):
-        raise HTTPException(status_code=422,
-                            detail='у сайта не настроен опрос присутствия (browser_site.presence)')
+    if not await dating_presence_ready(presence, int(site_id)):
+        raise HTTPException(
+            status_code=422,
+            detail='у сайта не настроено присутствие: заполните «Присутствие: '
+                   'настройка» на странице «Сайты»')
 
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT id, login, status, storage_state FROM dating_profile '
+        # ⚠ `site_id` обязателен: по нему разрешается настройка присутствия
+        # (`dating_heartbeat_config`). Без него опрос падал в «у сайта не
+        # настроено присутствие» у сайта, где оно настроено и работает.
+        await db.execute('SELECT id, login, site_id, status, storage_state FROM dating_profile '
                          ' WHERE site_id = %s AND storage_state IS NOT NULL', (int(site_id),))
         profiles = [dict(row) for row in (await db.fetchall() or [])]
 
@@ -604,9 +647,11 @@ async def dating_profile_action_ping(profile_id: int,
     site = await dating_profile_site(int(profile['site_id']))
 
     presence = dating_json_load(site.get('presence'))
-    if not dating_presence_ready(presence):
-        raise HTTPException(status_code=422,
-                            detail='у сайта не настроен опрос присутствия (browser_site.presence)')
+    if not await dating_presence_ready(presence, int(profile['site_id'])):
+        raise HTTPException(
+            status_code=422,
+            detail='у сайта не настроено присутствие: заполните «Присутствие: '
+                   'настройка» на странице «Сайты»')
 
     result = await dating_presence_probe(profile, presence)
 
@@ -687,8 +732,11 @@ async def dating_profile_action_check(profile_id: int, request: Request,
     profile = await dating_profile_row(profile_id)
     site = await dating_profile_site(int(profile['site_id']))
     presence = dating_json_load(site.get('presence'))
-    if not dating_presence_ready(presence):
-        raise HTTPException(status_code=422, detail='у сайта не настроен опрос присутствия')
+    if not await dating_presence_ready(presence, int(profile['site_id'])):
+        raise HTTPException(
+            status_code=422,
+            detail='у сайта не настроено присутствие: заполните «Присутствие: '
+                   'настройка» на странице «Сайты»')
 
     result = await dating_check_run(profile, presence, dating_login_ws_capture)
 

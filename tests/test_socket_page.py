@@ -16,6 +16,8 @@ from src.dating import dating_socket
 from src.dating.dating_socket import (DATING_SOCKET_TTL_SEC, dating_socket_read,
                                       dating_socket_write)
 
+pytestmark = pytest.mark.chat
+
 
 class _FakeRedis:
     """Redis настолько, насколько его читает и пишет снимок."""

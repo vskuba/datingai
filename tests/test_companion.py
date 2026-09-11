@@ -1,0 +1,721 @@
+"""Собеседники: карточка человека, которому пишут.
+
+⚠ **Главное здесь — накопитель по требованию, а не зеркало списков.** Людей в
+сети на живом сайте сто с лишним, всего на сайте тысячи; строка появляется, когда
+о человеке спросили. Отсюда и правила, которые проверяются ниже: повторный заход
+обновляет, а не задваивает; пустое поле ленты не затирает известное; правка
+человека переживает заходы ленты.
+
+Хранение — по HTTP, в живую панель с живой базой.
+
+⚠ **Номер сайта выдуманный**, как и в остальной сюите: `site_id` — ключ в чужую
+базу, и живые карточки задеть невозможно. Номера людей с приставкой `tst-`: они
+свои, и «что завела, то и убрала» держится на этом.
+"""
+
+import uuid
+
+import pytest
+
+pytestmark = pytest.mark.mail
+SITE = 999_777
+
+
+@pytest.fixture
+async def companion(auth_client):
+    """Своя карточка, которая убирается за собой — **со строкой**.
+
+    ⚠ Ручки удаления у карточек нет намеренно: их не удаляют, а накапливают —
+    человек на сайте никуда не девается. Сюита поэтому долго обходилась стиранием
+    полей: строка оставалась, но пустой и с номером `tst-…`.
+
+    Так копиться и стало: **269 строк за день прогонов**, три из них на живом
+    сайте — и те попали человеку на глаза, во вкладку «Собеседники». Пустая
+    тестовая карточка ничем не лучше заполненной, если она видна в панели.
+
+    Поэтому строку убираем целиком, прямо из базы. Ручку для этого заводить
+    незачем: удаление нужно сюите, а не панели, и появись оно наружу — им бы
+    удаляли карточки с описаниями, которые собирали руками.
+    """
+    uid = f'tst-{uuid.uuid4().hex[:10]}'
+    answer = await auth_client.post('/api/dating/companion', json={
+        'site_id': SITE, 'uid': uid, 'name': 'Julian', 'age': 75,
+        'city': 'Rudkobing', 'country': 'Denmark',
+        'photo': 'https://example.com/x.jpg'})
+
+    yield answer.json()['result']
+
+    await _drop(auth_client, SITE, uid)
+
+
+class TestCompanionSave:
+    """Заведение и обновление из ленты."""
+
+    async def test_created_card_comes_back(self, auth_client, companion):
+        rows = (await auth_client.get(
+            f"/api/dating/companion?site_id={SITE}&find={companion['uid']}")).json()['result']
+
+        assert [row['id'] for row in rows] == [companion['id']]
+        assert rows[0]['name'] == 'Julian'
+        assert rows[0]['age'] == 75
+
+    async def test_second_visit_updates_not_duplicates(self, auth_client, companion):
+        """Человек на сайте один: повторный заход обновляет строку, а не заводит
+        вторую. Держит это уникальный ключ пары «сайт + номер»."""
+        await auth_client.post('/api/dating/companion', json={
+            'site_id': SITE, 'uid': companion['uid'], 'name': 'Julian B.'})
+
+        rows = (await auth_client.get(
+            f"/api/dating/companion?site_id={SITE}&find={companion['uid']}")).json()['result']
+
+        assert len(rows) == 1
+        assert rows[0]['name'] == 'Julian B.'
+
+    async def test_empty_field_does_not_erase(self, auth_client, companion):
+        """⚠ Лента отдаёт разный набор, и заход без города не должен стирать
+        город, снятый прошлым: пустое значение означает «не знаю», а не «сотри»."""
+        await auth_client.post('/api/dating/companion', json={
+            'site_id': SITE, 'uid': companion['uid'], 'name': 'Julian'})
+
+        row = (await auth_client.get(
+            f"/api/dating/companion?site_id={SITE}&find={companion['uid']}")).json()['result'][0]
+
+        assert row['city'] == 'Rudkobing'
+        assert row['country'] == 'Denmark'
+        assert row['age'] == 75
+
+    async def test_cards_are_kept_apart_by_site(self, auth_client, companion):
+        """Один и тот же номер на другом сайте — другой человек."""
+        rows = (await auth_client.get(
+            '/api/dating/companion?site_id=999778')).json()['result']
+
+        assert companion['uid'] not in [row['uid'] for row in rows]
+
+    async def test_no_site_gives_nothing(self, auth_client, companion):
+        """Пустой список, а не все собеседники всех сайтов."""
+        assert (await auth_client.get('/api/dating/companion')).json()['result'] == []
+
+
+class TestCompanionAbout:
+    """Описание и почта — то, что заполняет человек."""
+
+    async def test_new_card_has_no_about(self, auth_client, companion):
+        """⚠ `about_state = none` — «не собирали», а не «там пусто». Различать
+        обязательно: первое повод сходить, второе — повод не ходить второй раз."""
+        assert companion['about_state'] == 'none'
+        assert companion['has_about'] is False
+
+    async def test_edit_fills_about(self, auth_client, companion):
+        answer = await auth_client.put(f"/api/dating/companion/{companion['id']}",
+                                       json={'email': 'j@example.com',
+                                             'about': 'Любит парусный спорт.'})
+        row = answer.json()['result']
+
+        assert row['email'] == 'j@example.com'
+        assert row['about'] == 'Любит парусный спорт.'
+        assert row['has_about'] is True
+
+    async def test_hand_written_about_counts_as_done(self, auth_client, companion):
+        """⚠ Состояние отвечает на вопрос «искали ли подробности», и вписанный
+        руками текст — такой же ответ, как снятый браузером: искать второй раз
+        незачем."""
+        answer = await auth_client.put(f"/api/dating/companion/{companion['id']}",
+                                       json={'about': 'Что-то про него.'})
+
+        assert answer.json()['result']['about_state'] == 'done'
+
+    async def test_erased_about_returns_to_none(self, auth_client, companion):
+        """Стёрли текст — состояние возвращается: значит, за ним ещё сходят."""
+        await auth_client.put(f"/api/dating/companion/{companion['id']}",
+                              json={'about': 'Текст'})
+        answer = await auth_client.put(f"/api/dating/companion/{companion['id']}",
+                                       json={'about': '   '})
+
+        assert answer.json()['result']['about_state'] == 'none'
+        assert answer.json()['result']['has_about'] is False
+
+    async def test_feed_does_not_erase_hand_written(self, auth_client, companion):
+        """⚠ Ради этого правка и отделена от заведения. Заход ленты повторяется
+        при каждом щелчке по человеку, и упоминай он `about` — стирал бы написанное
+        каждый раз."""
+        await auth_client.put(f"/api/dating/companion/{companion['id']}",
+                              json={'email': 'j@example.com', 'about': 'Парусный спорт'})
+
+        await auth_client.post('/api/dating/companion', json={
+            'site_id': SITE, 'uid': companion['uid'], 'name': 'Julian', 'age': 76})
+
+        row = (await auth_client.get(
+            f"/api/dating/companion?site_id={SITE}&find={companion['uid']}")).json()['result'][0]
+
+        assert row['about'] == 'Парусный спорт', 'лента затёрла описание'
+        assert row['email'] == 'j@example.com', 'лента затёрла почту'
+        assert row['age'] == 76, 'а вот возраст лента обновить должна'
+
+    async def test_missing_card_is_404(self, auth_client):
+        answer = await auth_client.put('/api/dating/companion/999999',
+                                       json={'about': 'x'})
+
+        assert answer.status_code == 404
+
+
+class TestCompanionFind:
+    """Поиск режет на сервере: карточек накопятся сотни."""
+
+    async def test_find_by_name(self, auth_client, companion):
+        rows = (await auth_client.get(
+            f'/api/dating/companion?site_id={SITE}&find=Julian')).json()['result']
+
+        assert companion['uid'] in [row['uid'] for row in rows]
+
+    async def test_find_by_uid(self, auth_client, companion):
+        rows = (await auth_client.get(
+            f"/api/dating/companion?site_id={SITE}&find={companion['uid'][:8]}")).json()['result']
+
+        assert companion['uid'] in [row['uid'] for row in rows]
+
+    async def test_nothing_found(self, auth_client, companion):
+        rows = (await auth_client.get(
+            f'/api/dating/companion?site_id={SITE}&find=zzzнетникого')).json()['result']
+
+        assert rows == []
+
+
+class TestCompanionOnline:
+    """Точка «сейчас на сайте» — из снимка ленты, а не походом на сайт.
+
+    ⚠ Лента «Все онлайн» снимается своим кругом и живёт в Redis; сходи мы за ней
+    ради списка карточек, открытие вкладки стоило бы сорока секунд браузера.
+    """
+
+    async def test_answer_has_both_flags(self, auth_client, companion):
+        """⚠ Полей два, а не одно.
+
+        «Не в сети» и «не знаем» — разные ответы: снимка может не быть вовсе или он
+        протух. Слей мы их в `online: False`, панель врала бы про каждого, кого не
+        было в последнем снимке.
+        """
+        rows = (await auth_client.get(
+            f"/api/dating/companion?site_id={SITE}&find={companion['uid']}"
+        )).json()['result']
+
+        assert 'online' in rows[0]
+        assert 'online_known' in rows[0]
+
+    async def test_unknown_site_is_not_online(self, auth_client, companion):
+        """У выдуманного сайта снимка нет — значит «не знаем», и точки не будет.
+
+        ⚠ `online` при этом `False`: точку рисуем **только когда уверены**. Серая
+        точка читалась бы как «оффлайн», а мы не знаем.
+        """
+        rows = (await auth_client.get(
+            f"/api/dating/companion?site_id={SITE}&find={companion['uid']}"
+        )).json()['result']
+
+        assert rows[0]['online'] is False
+        assert rows[0]['online_known'] is False, 'снимок взялся ниоткуда'
+
+    async def test_three_states_are_shown(self, auth_client):
+        """⚠ Состояний **три**, и третье — молчание.
+
+        Зелёное «в сети», серое «не в сети» и **ничего**, когда лента устарела:
+        рисовать в этом случае серое было бы неправдой — оно читается как «его
+        нет», а мы просто не смотрели. Различает их `online_known`.
+
+        Серого поначалу не было вовсе: рассудили, что «нет» и «не знаем» глазом
+        неразличимы. Список от этого выглядел так, будто статуса нет вообще, — на
+        что человек и указал.
+        """
+        page = (await auth_client.get('/admin/dating')).text
+
+        assert 'state-dot' in page, 'точки состояния нет'
+        assert 'state-word' in page, 'состояния словами нет'
+        assert 'row.online_known' in page, 'третье состояние не различается'
+
+    async def test_state_is_words_and_a_dot_together(self, auth_client):
+        """⚠ Слово и точка стоят **рядом**, а не в разных местах карточки.
+
+        Точка была на аватарке: казалось, что там её видно и в списке, и на крупном
+        фото. Но фото есть не у всех — у карточки без него она висела в пустом сером
+        квадрате, — а когда слово переехало к номеру, знак и подпись разошлись.
+        """
+        page = (await auth_client.get('/admin/dating')).text
+
+        assert 'в сети' in page and 'не в сети' in page
+        assert 'comp-face-wrap' in page and 'position: relative' not in \
+            page.split('.comp-face-wrap')[1][:60], 'точка снова висит на аватарке'
+
+    async def test_girls_show_the_same_state(self, auth_client):
+        """⚠ Состояние показывают **обе** вкладки, и одним знаком.
+
+        Вопрос у них общий («на сайте ли человек»), а источник разный: у анкеты это
+        её присутствие, которое держит воркер, у собеседника — снимок ленты. Вид от
+        этого не меняется: два набора знаков для одного вопроса человеку пришлось
+        бы разгадывать дважды.
+        """
+        page = (await auth_client.get('/admin/dating')).text
+
+        # Строку девушки рисует свой код — проверяем, что и он берёт общий класс.
+        assert "row.status === 'online' ? ' on' : ''" in page, \
+            'у девушек нет состояния'
+        assert 'prof-login' in page
+
+
+class TestCompanionDrop:
+    """Удаление карточки.
+
+    ⚠ **Прежде удаления не было, и это было осознанным решением**: карточки
+    накапливают, а не удаляют — человек на сайте никуда не девается. Решение
+    оказалось неполным: карточка заводится по щелчку в ленте и сбором описания, то
+    есть иногда по ошибке или о том, кто больше не нужен, — а список читают
+    глазами.
+    """
+
+    async def test_card_is_gone(self, auth_client, companion):
+        await auth_client.delete(f"/api/dating/companion/{companion['id']}")
+
+        rows = (await auth_client.get(
+            f"/api/dating/companion?site_id={SITE}&find={companion['uid']}"
+        )).json()['result']
+
+        assert rows == []
+
+    async def test_unknown_is_404(self, auth_client):
+        answer = await auth_client.delete('/api/dating/companion/99999999')
+
+        assert answer.status_code == 404
+
+    async def test_letters_survive(self, auth_client, companion):
+        """⚠ **Готовые письма переживают удаление карточки.**
+
+        `dating_mailing.uid` — просто строка, внешнего ключа на карточку нет: письмо
+        помнит, кому оно, само по себе. Иначе удаление карточки уносило бы готовую
+        рассылку — а это минуты работы агента.
+        """
+        from mysql_.mysql_ import mysql_get_db_async
+
+        # Анкета нужна настоящая: у письма внешний ключ на неё. ⚠ Но на
+        # **стенде**, а не на живом сайте: анкета сюиты не должна попадать в круги
+        # воркера (`test_mail_in.py`, `STAND_SITE`).
+        made = await auth_client.post('/api/dating/profile', json={
+            'site_id': 999_343,
+            'login': f'drop-{uuid.uuid4().hex[:8]}@example.com',
+            'password': 'x'})
+        profile_id = made.json()['result']
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO dating_mailing'
+                ' (site_id, profile_id, mail_id, uid, name, body, status)'
+                " VALUES (%s, %s, NULL, %s, 'Кому', 'Текст', 'draft')",
+                (SITE, profile_id, companion['uid']))
+            await db.connection.commit()
+
+        try:
+            await auth_client.delete(f"/api/dating/companion/{companion['id']}")
+
+            letters = (await auth_client.get(
+                f'/api/dating/mailing?site_id={SITE}')).json()['result']
+
+            assert companion['uid'] in [row['uid'] for row in letters], \
+                'удаление карточки унесло письмо из пула'
+        finally:
+            await auth_client.delete(f'/api/dating/profile/{profile_id}')
+
+
+class TestCompanionRights:
+    """Работа с людьми сайта открыта всем вошедшим."""
+
+    async def test_operator_reads(self, dating_client):
+        answer = await dating_client.get(f'/api/dating/companion?site_id={SITE}')
+
+        assert answer.status_code == 200
+
+    async def test_operator_saves(self, auth_client, dating_client):
+        """⚠ Не админское: это работа с людьми сайта, ровно та, ради которой
+        панель и открывают. Карточка заводится щелчком по ленте — потребуй мы
+        админа, оператор не смог бы работать вовсе."""
+        uid = f'tst-{uuid.uuid4().hex[:10]}'
+        answer = await dating_client.post('/api/dating/companion', json={
+            'site_id': SITE, 'uid': uid, 'name': 'Оператор завёл'})
+
+        try:
+            assert answer.status_code == 200
+        finally:
+            await _drop(auth_client, SITE, uid)
+
+    async def test_closed_without_login(self, client):
+        answer = await client.get(f'/api/dating/companion?site_id={SITE}')
+
+        assert answer.status_code in (401, 307)
+
+
+@pytest.fixture
+async def companion_var(auth_client):
+    """Переменная про адресата в реестре тестового сайта.
+
+    ⚠ Заводим свою, а не полагаемся на живой реестр: у выдуманного сайта его нет
+    вовсе, а брать переменные настоящего значило бы ставить проверку в зависимость
+    от того, что кто-то завёл руками.
+    """
+    made = await auth_client.post('/api/dating/mail/var', json={
+        'site_id': SITE, 'name': 'companion_name', 'source': 'companion',
+        'title': 'Имя адресата', 'default_value': ''})
+    var_id = made.json()['result']['id'] if made.status_code == 200 else 0
+
+    yield var_id
+
+    if var_id:
+        await auth_client.delete(f'/api/dating/mail/var/{var_id}')
+
+
+class TestCompanionVars:
+    """Чем подставятся переменные писем для этого человека.
+
+    ⚠ **Своего хранилища у них нет, и заводить его незачем.** Значение выводится
+    из карточки: `companion_name` — это `name` адресата. Храни мы их отдельно, они
+    разошлись бы с карточкой в первую же правку, и письмо ушло бы со старым именем.
+    """
+
+    async def test_value_comes_from_the_card(self, auth_client, companion,
+                                             companion_var):
+        rows = (await auth_client.get(
+            f"/api/dating/companion/{companion['id']}/var")).json()['result']
+        got = {row['name']: row for row in rows}
+
+        assert 'companion_name' in got, 'переменной адресата нет в ответе'
+        assert got['companion_name']['value'] == 'Julian'
+        assert got['companion_name']['field'] == 'name'
+        assert got['companion_name']['from_default'] is False
+
+    async def test_empty_field_is_seen(self, auth_client, companion_var):
+        """⚠ Пустое значение — не мелочь: письмо с ним не уйдёт вовсе, и узнать об
+        этом лучше здесь, чем по молчаливому пропуску в рассылке.
+
+        ⚠ Заводим **отдельную безымянную карточку**, а не обнуляем имя у готовой:
+        пустое значение ленты прежнее не затирает (`dating_companion.py`), и такая
+        попытка ничего бы не изменила — проверка молча одобрила бы что угодно.
+        """
+        uid = f'tst-{uuid.uuid4().hex[:10]}'
+        made = await auth_client.post('/api/dating/companion', json={
+            'site_id': SITE, 'uid': uid, 'name': ''})
+        row = made.json()['result']
+
+        try:
+            rows = (await auth_client.get(
+                f"/api/dating/companion/{row['id']}/var")).json()['result']
+            got = {one['name']: one for one in rows}
+
+            assert got['companion_name']['filled'] is False
+            assert got['companion_name']['value'] == ''
+        finally:
+            await _drop(auth_client, SITE, uid)
+
+    async def test_only_companion_source(self, auth_client, companion,
+                                         companion_var):
+        """Переменные анкеты сюда не попадают: их значения живут у неё, а не у
+        адресата."""
+        rows = (await auth_client.get(
+            f"/api/dating/companion/{companion['id']}/var")).json()['result']
+
+        assert 'girl_name' not in {row['name'] for row in rows}
+
+    async def test_unknown_companion_is_404(self, auth_client):
+        answer = await auth_client.get('/api/dating/companion/99999999/var')
+
+        assert answer.status_code == 404
+
+
+class TestCompanionPages:
+    """Вкладка на «Анкетах» и заведение карточки с «Профилей»."""
+
+    async def test_companions_look_like_girls(self, auth_client):
+        """⚠ Раскладка та же, что у «Девушек»: список слева, карточка справа.
+
+        Прежде это была сетка карточек во всю ширину с правкой прямо в карточке —
+        и расходилась с соседней вкладкой во всём: там выбирают строку и читают
+        подробности справа, здесь надо было раскрывать карточку на месте. Две
+        раскладки на одной странице человек разгадывает заново каждый раз.
+        """
+        page = (await auth_client.get('/admin/dating')).text
+
+        assert 'id="companionRight"' in page, 'правой колонки у собеседников нет'
+        assert 'id="companionWho"' in page, 'нет шапки выбранного'
+        assert 'id="companion"' in page, 'нет места под карточку'
+
+    async def test_companion_card_has_two_tabs(self, auth_client):
+        """Карточка делится на «Общую информацию» и «Переменные» — как у анкеты.
+
+        Разное по природе: первое — что мы о человеке знаем, второе — что из этого
+        попадёт в письмо.
+        """
+        page = (await auth_client.get('/admin/dating')).text
+
+        assert 'compTab' in page, 'нет состояния вкладок карточки'
+        assert 'compVarsLoad' in page, 'нет загрузки переменных адресата'
+        assert '/var`)).result' in page or "/var'" in page
+
+    async def test_delete_is_in_the_list(self, auth_client):
+        """⚠ Крестик — в **строке списка**, а не на карточке справа.
+
+        Убирают карточку, глядя на список («вот эти двое лишние»), а не разглядывая
+        одного человека; заодно не надо открывать карточку ради удаления. Виден при
+        наведении на строку — как крестик смены на ленте расписания: карточек
+        десятки, и десяток красных кружков превратил бы список в предупреждение.
+        """
+        page = (await auth_client.get('/admin/dating')).text
+
+        assert 'data-drop=' in page, 'крестика в строке списка нет'
+        assert 'companionDrop' in page
+        assert 'id="compDrop"' not in page, 'крестик остался и на карточке'
+
+    async def test_list_is_paginated(self, auth_client):
+        """⚠ Карточек накапливаются сотни — список листается страницами.
+
+        Тем же подвалом и тем же способом, что список анкет: число строк подгоняется
+        под высоту панели живым замером, а не зашитым числом — высота зависит от
+        шрифта и размера лица.
+        """
+        page = (await auth_client.get('/admin/dating')).text
+
+        assert 'id="companionsPager"' in page, 'подвала с пейджером нет'
+        assert 'compRowsFit' in page, 'число строк не подгоняется под высоту'
+        assert 'companionsPage = 0' in page, 'страница не сбрасывается на новом списке'
+
+    async def test_page_tab_survives_reload(self, auth_client):
+        """⚠ Вкладка страницы переживает перезагрузку.
+
+        Работая с собеседниками, страницу обновляют — посмотреть свежую ленту,
+        вернуться из чужого профиля в соседней вкладке браузера. Сбрасывать её на
+        «Девушки» каждый раз значит заставлять человека щёлкать по одному и тому же.
+        """
+        page = (await auth_client.get('/admin/dating')).text
+
+        assert 'dating.page.tab' in page, 'вкладка страницы не запоминается'
+
+    async def test_selection_survives_reload(self, auth_client):
+        """⚠ Выбранный переживает перезагрузку страницы.
+
+        Карточку открывают, чтобы дописать описание, а описание пишут, глядя в
+        чужой профиль на другой вкладке браузера, — и возвращаются сюда
+        обновлением. Терять при этом выбранного значило бы искать его в списке
+        заново каждый раз.
+        """
+        page = (await auth_client.get('/admin/dating')).text
+
+        assert 'dating.companion.open' in page, 'выбор не запоминается'
+        assert 'companionRemember' in page
+
+    async def test_first_is_open_by_default(self, auth_client):
+        """Никто не выбран — открываем первого: пустая правая колонка рядом с
+        полным списком читается как «ещё грузится»."""
+        page = (await auth_client.get('/admin/dating')).text
+
+        assert 'if (!companionId && companions.length)' in page, \
+            'первая карточка не открывается сама'
+
+    async def test_editing_moved_to_the_right(self, auth_client):
+        """⚠ Поля правки — **раскрытыми в правой колонке**, а не за кнопкой в
+        списке. В колонке место есть, и прятать два поля за щелчком значило бы
+        беречь пустоту; в списке было наоборот — там десяток раскрытых форм
+        превращался в частокол.
+        """
+        page = (await auth_client.get('/admin/dating')).text
+
+        assert 'comp-more' not in page, 'кнопка «Править» осталась в списке'
+        assert 'comp-field' in page, 'нет полей правки в карточке'
+
+    async def test_dating_page_has_both_tabs(self, auth_client):
+        """⚠ Вкладки про разных людей: «Девушки» — наши учётки, «Собеседники» —
+        те, кому пишут. У вторых нет ни настроек, ни расписания, ни входа."""
+        page = (await auth_client.get('/admin/dating')).text
+
+        assert 'data-tab="girl"' in page
+        assert 'data-tab="companion"' in page
+        assert 'id="companionPane"' in page
+
+    async def test_profile_page_creates_the_card(self, auth_client):
+        """Карточка заводится щелчком по человеку в ленте «Все онлайн» — это и
+        есть «по требованию»."""
+        page = (await auth_client.get('/admin/dating/profile')).text
+
+        assert 'companionTouch' in page
+        assert '/api/dating/companion' in page
+
+
+async def _drop(auth_client, site_id: int, uid: str) -> None:
+    """Убирает следы теста: строку целиком.
+
+    ⚠ **Через базу, а не ручкой** — её нет и заводить не надо (см. фикстуру
+    `companion`). Прецедент тот же, что у пула писем (`test_mailing.py`): когда
+    убирать надо, а наружу такого действия быть не должно, сюита ходит в базу.
+    """
+    from mysql_.mysql_ import mysql_get_db_async
+
+    async with mysql_get_db_async() as db:
+        await db.execute('DELETE FROM dating_companion WHERE site_id = %s AND uid = %s',
+                         (int(site_id), str(uid)))
+        await db.connection.commit()
+
+
+class TestPriority:
+    """⚠ Приоритет в рассылке — **порядок, а не отбор**.
+
+    Пул набирается до потолка и обрывается на полпути по ленте: кому досталось
+    письмо, решал порядок, в каком людей отдал сайт, — для панели случайный.
+    Отметка отвечает «этим в первую очередь».
+
+    Сделай мы из неё фильтр, включённая галочка у одного человека молча выключила
+    бы рассылку всем прочим — а человек отмечал одного, а не отменял остальных.
+    Это и проверяется первым.
+    """
+
+    async def test_new_card_has_no_priority(self, auth_client, companion):
+        """Выключен по умолчанию: отметка у всех — это отсутствие отметки."""
+        row = (await auth_client.get(
+            f'/api/dating/companion?site_id={SITE}')).json()['result']
+        mine = next(one for one in row if one['id'] == companion['id'])
+
+        assert mine['priority'] is False
+
+    async def test_priority_is_switched(self, auth_client, companion):
+        on = await auth_client.put(
+            f"/api/dating/companion/{companion['id']}/priority", json={'priority': True})
+
+        assert on.status_code == 200
+        assert on.json()['result']['priority'] is True
+
+        off = await auth_client.put(
+            f"/api/dating/companion/{companion['id']}/priority", json={'priority': False})
+
+        assert off.json()['result']['priority'] is False
+
+    async def test_unknown_card_is_404(self, auth_client):
+        answer = await auth_client.put('/api/dating/companion/999999999/priority',
+                                       json={'priority': True})
+
+        assert answer.status_code == 404
+
+    async def test_editing_text_does_not_drop_priority(self, auth_client, companion):
+        """⚠ Правка почты и описания **не гасит отметку**.
+
+        Ради этого у приоритета своя ручка: `PUT /{id}` пишет текстовые поля разом, и
+        уедь галочка с ними — она слетала бы при каждом сохранении описания, которое
+        правят куда чаще.
+        """
+        await auth_client.put(f"/api/dating/companion/{companion['id']}/priority",
+                              json={'priority': True})
+        await auth_client.put(f"/api/dating/companion/{companion['id']}",
+                              json={'email': 'a@b.c', 'about': 'Играет на трубе'})
+
+        row = (await auth_client.get(
+            f'/api/dating/companion?site_id={SITE}')).json()['result']
+        mine = next(one for one in row if one['id'] == companion['id'])
+
+        assert mine['priority'] is True, 'правка описания сняла приоритет'
+        assert mine['about'] == 'Играет на трубе'
+
+
+class TestPriorityOrders:
+    """Как отметка влияет на набор пула: перестановка ленты, а не её отбор."""
+
+    async def test_marked_go_first(self):
+        from src.dating.dating_mailing import _by_priority
+        from src.dating import dating_mailing
+
+        people = [{'uid': 'a'}, {'uid': 'b'}, {'uid': 'c'}, {'uid': 'd'}]
+
+        async def marked(site_id):
+            return {'c', 'a'}
+
+        real, dating_mailing._marked = dating_mailing._marked, marked
+        try:
+            got = await _by_priority(1, people)
+        finally:
+            dating_mailing._marked = real
+
+        assert [one['uid'] for one in got] == ['a', 'c', 'b', 'd']
+
+    async def test_nobody_is_dropped(self):
+        """⚠ Главное здесь: неотмеченные остаются, и все до одного."""
+        from src.dating.dating_mailing import _by_priority
+        from src.dating import dating_mailing
+
+        people = [{'uid': str(n)} for n in range(20)]
+
+        async def marked(site_id):
+            return {'7'}
+
+        real, dating_mailing._marked = dating_mailing._marked, marked
+        try:
+            got = await _by_priority(1, people)
+        finally:
+            dating_mailing._marked = real
+
+        assert len(got) == 20, 'отметка превратилась в фильтр'
+        assert {one['uid'] for one in got} == {one['uid'] for one in people}
+        assert got[0]['uid'] == '7'
+
+    async def test_order_inside_halves_is_kept(self):
+        """⚠ Порядок внутри каждой половины — прежний. Перетасуй мы ленту сверх
+        нужного, два набора подряд давали бы разных адресатов без причины."""
+        from src.dating.dating_mailing import _by_priority
+        from src.dating import dating_mailing
+
+        people = [{'uid': one} for one in 'abcdef']
+
+        async def marked(site_id):
+            return {'e', 'b'}
+
+        real, dating_mailing._marked = dating_mailing._marked, marked
+        try:
+            got = [one['uid'] for one in await _by_priority(1, people)]
+        finally:
+            dating_mailing._marked = real
+
+        assert got == ['b', 'e', 'a', 'c', 'd', 'f']
+
+    async def test_no_marks_changes_nothing(self):
+        from src.dating.dating_mailing import _by_priority
+        from src.dating import dating_mailing
+
+        people = [{'uid': one} for one in 'abc']
+
+        async def marked(site_id):
+            return set()
+
+        real, dating_mailing._marked = dating_mailing._marked, marked
+        try:
+            got = await _by_priority(1, people)
+        finally:
+            dating_mailing._marked = real
+
+        assert got == people, 'без отметок лента переставилась'
+
+    async def test_broken_database_does_not_break_the_pool(self):
+        """⚠ Сбой базы возвращает ленту как есть. Приоритет — удобство, и падать
+        из-за него значило бы менять письма на порядок писем."""
+        from src.dating.dating_mailing import _by_priority
+        from src.dating import dating_mailing
+
+        people = [{'uid': one} for one in 'abc']
+
+        async def broken(site_id):
+            raise RuntimeError('база лежит')
+
+        real, dating_mailing._marked = dating_mailing._marked, broken
+        try:
+            got = await _by_priority(1, people)
+        finally:
+            dating_mailing._marked = real
+
+        assert [one['uid'] for one in got] == ['a', 'b', 'c']
+
+    async def test_marked_are_read_by_site(self, auth_client, companion):
+        """Отмеченные спрашиваются **по сайту**: чужие метки в чужой пул не идут."""
+        from src.dating.dating_mailing import _marked
+
+        await auth_client.put(f"/api/dating/companion/{companion['id']}/priority",
+                              json={'priority': True})
+
+        assert companion['uid'] in await _marked(SITE)
+        assert companion['uid'] not in await _marked(SITE + 1)

@@ -39,7 +39,7 @@
 """
 
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from datetime_.datetime_ import datetime_utc_now
 from logging_.logging_ import logger_info
@@ -85,6 +85,20 @@ DATING_CHAT_PANEL_ROUND_DAYS = 1
 DATING_CHAT_PANEL_UID_MAX = 32
 DATING_CHAT_PANEL_NAME_MAX = 190
 DATING_CHAT_PANEL_MSG_UID_MAX = 64
+
+# Страница панели с журналом чата и её поля. ⚠ Путь тот же, на который ходил
+# сценарий: разметка читается ручкой, а не браузером (`dating_panel_fetch.py`).
+DATING_CHAT_PANEL_PATH = 'userchatmessages'
+
+# Ячейки таблицы по порядку. Панель отдаёт пять столбцов: ID, дата UTC, от, кому,
+# текст. ⚠ Имена те же, что у сценария, — разбор строк (`dating_chat_panel_rows`)
+# общий на оба пути, и расходиться им нельзя.
+DATING_CHAT_PANEL_CELLS = ('номер', 'когда', 'от', 'кому', 'текст')
+
+# Какое сообщение считаем свежим. Час: круг ходит от пяти минут, и привезённое за
+# последний час — это то, что человек и правда мог пропустить, пока не смотрел.
+# Всё, что старше, — догон истории, а не событие.
+DATING_CHAT_PANEL_FRESH_SEC = 3600
 
 # Номер собеседника из ячейки. Панель кладёт в неё ссылку с номером и имя рядом:
 # «181685 Semen Gorbunkov». Номер берётся из отдельного поля сценария, а это —
@@ -197,6 +211,22 @@ async def dating_chat_panel_import(site_id: int, days: int) -> dict:
         return {**empty,
                 'error': 'у сайта нет анкет с номером на сайте — сперва импортируйте анкеты'}
 
+    today = datetime_utc_now()
+    date_from = (today - timedelta(days=days)).strftime(DATING_CHAT_PANEL_DATE_FMT)
+    date_to = today.strftime(DATING_CHAT_PANEL_DATE_FMT)
+
+    # ⚠ **Панель настроена — читаем ручкой, а не сценарием.** Разница замерена:
+    # 0,3 секунды против сорока, и главное — без вкладки Chromium у соседа. Круг
+    # ходит от пяти минут, и сорок секунд браузера на заход означали бы, что пул
+    # вкладок занят нами почти всё время (`dating_panel_fetch.py`).
+    #
+    # ⚠ Это **не запасной путь, а выбор по настройке**. Сайт без `admin_url`
+    # (панель не заведена) идёт сценарием, как и раньше, — и молчаливого перехода
+    # с одного на другой нет: иначе сломанная сессия выглядела бы медленной
+    # работой, а не поломкой.
+    if await _panel_ready(site_id):
+        return await _import_by_panel(site_id, profiles, date_from, date_to, empty)
+
     try:
         scenario = await rhapsody_api_scenario_find(site_id, DATING_CHAT_PANEL_SCENARIO)
     except RhapsodyError as e:
@@ -204,10 +234,6 @@ async def dating_chat_panel_import(site_id: int, days: int) -> dict:
 
     if not scenario:
         return {**empty, 'error': f'у сайта нет сценария «{DATING_CHAT_PANEL_SCENARIO}»'}
-
-    today = datetime_utc_now()
-    date_from = (today - timedelta(days=days)).strftime(DATING_CHAT_PANEL_DATE_FMT)
-    date_to = today.strftime(DATING_CHAT_PANEL_DATE_FMT)
 
     # Общей дверью (`dating_scenario_run`): она пишет прогон в журнал прогонов.
     # Анкеты у импорта нет — он идёт по сайту целиком, и приписывать прогон одной
@@ -236,6 +262,73 @@ async def dating_chat_panel_import(site_id: int, days: int) -> dict:
             'total': len(extract.get('сообщения') or []),
             'ours': len(rows),
             'from': date_from, 'to': date_to, 'error': '', **saved}
+
+
+async def _panel_ready(site_id: int) -> bool:
+    """Есть ли у сайта заведённая админ-панель. Она и решает, чем забирать."""
+    from src.dating.dating_panel import DATING_PANEL_URL_SETTING
+    from src.uvicorn.routers.dating.dating_site import dating_site_setting
+
+    return bool(await dating_site_setting(site_id, DATING_PANEL_URL_SETTING))
+
+
+async def _import_by_panel(site_id: int, profiles: dict, date_from: str, date_to: str,
+                           empty: dict) -> dict:
+    """Забор журнала чата ручкой панели: один GET и разбор таблицы.
+
+    ⚠ **Своего входа не делает.** Сессию держит круг панели
+    (`dating_panel_round.py`), и вход отсюда означал бы два входа наперегонки,
+    когда за таблицами придут двое. Протухшая сессия — отказ с причиной: круг
+    поднимет её в свой срок, а мы скажем правду вместо тихой пустоты.
+    """
+    from src.dating.dating_panel_fetch import (DatingPanelFetchError,
+                                               dating_panel_fetch_html,
+                                               dating_panel_fetch_table)
+
+    # `AccountId=0` — «все анкеты»: панель так и подписывает первый пункт селекта.
+    # Спрашивать по одной значило бы тринадцать запросов вместо одного.
+    params = {'AccountId': '0',
+              'DateFrom.DateValue': date_from,
+              'DateTo.DateValue': date_to}
+
+    try:
+        html = await dating_panel_fetch_html(site_id, DATING_CHAT_PANEL_PATH, params)
+    except DatingPanelFetchError as e:
+        return {**empty, 'from': date_from, 'to': date_to, 'error': str(e)}
+
+    table = dating_panel_fetch_table(html)
+    rows = dating_chat_panel_rows({DATING_CHAT_PANEL_FIELD: _cells(table)}, profiles)
+    saved = await dating_chat_panel_save(rows)
+
+    return {'status': 'ok', 'total': len(table), 'ours': len(rows),
+            'from': date_from, 'to': date_to, 'error': '', **saved}
+
+
+def _cells(table: list) -> list[dict]:
+    """Ячейки таблицы — в записи того же вида, что отдаёт сценарий.
+
+    ⚠ Вид общий намеренно: разбор строк (`dating_chat_panel_rows`) один на оба
+    пути, и вторая его копия под ручку разошлась бы с первой на первой же правке.
+
+    Номера сторон берём из **ссылки** ячейки: панель пишет туда «181685 Semen
+    Gorbunkov», где номер — ссылка на карточку, а имя стоит рядом. Текст
+    сообщения — из подсказки `title`, потому что в самой ячейке он обрезан
+    шириной колонки.
+    """
+    out = []
+    for row in table:
+        one = {}
+        for at, name in enumerate(DATING_CHAT_PANEL_CELLS):
+            cell = row[at] if at < len(row) else {}
+            one[name] = cell.get('текст', '')
+            if name in ('от', 'кому'):
+                one[f'{name}_номер'] = cell.get('ссылка', '')
+            if name == 'текст':
+                one['текст_подсказка'] = cell.get('подсказка', '')
+
+        out.append(one)
+
+    return out
 
 
 async def dating_chat_panel_profiles(site_id: int) -> dict:
@@ -279,7 +372,7 @@ async def dating_chat_panel_save(rows: list) -> dict:
     осталась бы без имени и фотографии. Заводим только имя и номер — остальное
     (фото, возраст, город) панель не даёт, и выдумывать его нечем.
     """
-    added, contacts = 0, 0
+    added, contacts, fresh = 0, 0, 0
 
     # Кладём по времени, от старых к свежим. Порядок показа от этого не зависит —
     # карточка чата сортирует по `created_at` (`dating_profile_view.py`), — но
@@ -308,14 +401,43 @@ async def dating_chat_panel_save(rows: list) -> dict:
                 " COALESCE(NULLIF(%s, ''), NOW()))",
                 (row['profile_id'], row['sender_uid'], row['sender_name'], row['text'],
                  row['message_uid'], row['direction'], row['sent_at']))
-            added += 1 if db.rowcount else 0
+            if db.rowcount:
+                added += 1
+                # ⚠ Считаем **свежие отдельно**, и это не украшение отчёта.
+                # «Привезено 5» значит «пять строк, каких у нас не было», а импорт
+                # берёт сутки назад: почти всегда это старая переписка, которую мы
+                # просто не видели. Назови её «новыми сообщениями» — и человек
+                # пойдёт искать в диалогах то, чего там нет: на это и пожаловались,
+                # открыв «Чат → Диалоги» и увидев реплики недельной давности.
+                if _fresh(row.get('sent_at')):
+                    fresh += 1
 
         await db.connection.commit()
 
-    return {'added': added, 'same': len(rows) - added, 'contacts': contacts}
+    return {'added': added, 'fresh': fresh, 'same': len(rows) - added,
+            'contacts': contacts}
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+def _fresh(sent_at) -> bool:
+    """Пришло ли сообщение только что — в пределах `DATING_CHAT_PANEL_FRESH_SEC`.
+
+    ⚠ Считаем по времени **сайта** (`sent_at`), а не по времени импорта: повторный
+    заход иначе делал бы недельную реплику свежей. То же правило и по той же
+    причине, что у порога автоответа на привезённое (`dating.md`, §5.9.2).
+    """
+    if not sent_at:
+        return False
+
+    try:
+        when = datetime.strptime(str(sent_at)[:19], '%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        return False
+
+    return (datetime_utc_now().replace(tzinfo=None) - when).total_seconds() \
+        <= DATING_CHAT_PANEL_FRESH_SEC
+
 
 def _digits(value) -> str:
     """Номер из ячейки: сама ссылка или первое число в тексте."""

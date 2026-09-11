@@ -56,6 +56,7 @@ JSON не опишешь.
 import json
 import secrets
 import time
+from urllib.parse import quote_plus
 
 # Длины колонок `dating_message`, под которые режется разобранное. Здесь, а не в
 # драйвере сайта: ширина колонки — наше свойство, а не его.
@@ -393,6 +394,77 @@ def site_base_render(template: str, to_uid: str, text: str, message_uid: str) ->
     return (template.replace(DATING_SITE_MARK_TO, str(to_uid))
                     .replace(DATING_SITE_MARK_TEXT, str(text))
                     .replace(DATING_SITE_MARK_UID, str(message_uid)))
+
+
+# Незакодированные знаки устаревшего JS `escape()`. ⚠ Набор именно его, а не
+# `encodeURIComponent`: у того `!'()*~` остаются, а `+` кодируется — то есть строка
+# выходит другая.
+SITE_BASE_JS_ESCAPE_SAFE = ('ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+                            'abcdefghijklmnopqrstuvwxyz0123456789@*_+-./')
+
+
+def site_base_js_escape(text: str) -> str:
+    """Кодирует текст так, как это делает устаревшая функция JS `escape()`.
+
+    ⚠ **Зачем нам чужая древность.** Страница чата LadaDate шлёт сообщение так:
+
+        $.ajax({ url: "/chat-send", data: { id: …, body: escape(mes) } })
+
+    То есть `escape` внутри form-urlencode — **двойное кодирование**. Сервер
+    разбирает именно эту пару: пойманное тело выглядит как
+    `body=Henry%252C%2520do…`, где `%252C` → `%2C` → запятая.
+
+    Сделай мы «правильно», одним слоем, — у собеседника на месте запятой оказался
+    бы `%2C`. Поэтому воспроизводим как есть.
+
+    ⚠ Не-ASCII кодируется как `%uXXXX` — этого нет ни в одном стандарте, и ни один
+    URL-кодировщик так не делает. Проверено живой отправкой: `Michał` доехал целым
+    именно так.
+    """
+    out = []
+    for char in str(text or ''):
+        code = ord(char)
+        if char in SITE_BASE_JS_ESCAPE_SAFE:
+            out.append(char)
+        elif code < 256:
+            out.append(f'%{code:02X}')
+        else:
+            out.append(f'%u{code:04X}')
+
+    return ''.join(out)
+
+
+def site_base_encode(value: str, how: str) -> str:
+    """Готовит значение к подстановке в тело запроса.
+
+    Args:
+        value: то, что подставляем, — обычно текст сообщения.
+        how: как кодировать. Задаётся сайтом (`presence.send.encode`):
+
+            | Значение | Что делает | Кому |
+            |----------|-----------|------|
+            | пусто | как есть | кадр сокета, JSON-тело |
+            | `form` | обычный form-urlencode | нормальная форма |
+            | `js_escape_form` | `escape()`, потом form-urlencode | LadaDate |
+
+    ⚠ **Кодировать обязательно, и это не педантизм.** `site_base_render` — простая
+    подстановка: пробел, `&` или `=` в тексте порвали бы тело
+    `id={{to}}&body={{text}}`, и сообщение ушло бы обрезанным по первому пробелу
+    либо не ушло вовсе.
+
+    ⚠ **Незнакомое имя — как есть, а не отказ.** `presence` правят у соседа прямо
+    в базе, и опечатка в ключе не должна останавливать отправку: худшее, что
+    случится, — тело уйдёт незакодированным, как было до этой функции.
+    """
+    how = str(how or '').strip().lower()
+
+    if how == 'form':
+        return quote_plus(str(value or ''))
+
+    if how == 'js_escape_form':
+        return quote_plus(site_base_js_escape(value))
+
+    return str(value or '')
 
 
 def site_base_ulid(length: int = 26, time_length: int = 10) -> str:

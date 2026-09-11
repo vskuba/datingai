@@ -134,7 +134,21 @@ async def dating_profile_list(site_id: int = 0,
             '         WHERE m.profile_id = g.id) AS contacts, '
             '       (SELECT COUNT(*) FROM dating_message m '
             "         WHERE m.profile_id = g.id AND m.direction = 'in' AND m.is_read = 0) AS unread_chat "
-            f'  FROM dating_profile g{where.replace(" site_id", " g.site_id")} ORDER BY g.login',
+            f'  FROM dating_profile g{where.replace(" site_id", " g.site_id")}'
+            # ⚠ **Сперва те, кто в сети, потом по алфавиту.** Список читают,
+            # чтобы найти работу, а работа есть у тех, кто на сайте: круги
+            # рассылки, инвайтов и переписки с избранными берут только их. При
+            # сортировке по логину живая анкета оказывалась двадцатой строкой
+            # среди спящих, и найти её можно было лишь поиском.
+            #
+            # ⚠ **Алфавит — по имени, а не по логину.** Логин это почта
+            # (`natalypetranetskaya67@bigmir.net`), и упорядоченный по ней список
+            # для человека случаен: в строке он видит имя. Имя лежит в JSON
+            # анкеты, поэтому `JSON_EXTRACT`; пусто — падаем на логин, иначе
+            # безымянные ушли бы все в начало.
+            "  ORDER BY g.status = 'online' DESC,"
+            "           COALESCE(NULLIF(JSON_UNQUOTE("
+            "                      JSON_EXTRACT(g.profile, '$.name')), ''), g.login)",
             tuple([''] + params))
         rows = await db.fetchall()
 

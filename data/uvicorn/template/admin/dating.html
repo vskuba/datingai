@@ -18,11 +18,15 @@
         .dating-page {
             --col: 380px;
             grid-template-columns: var(--col) 6px 1fr;
-            grid-template-rows: auto minmax(0, 1fr);
+            /* Три строки: шапка сайта, полоса вкладок, колонки. ⚠ Вкладки — своя
+               строка во всю ширину: каждая включает в себя обе колонки, и стоять
+               внутри одной из них она не может. Та же раскладка, что на
+               «Профилях». */
+            grid-template-rows: auto auto minmax(0, 1fr);
         }
 
         .dating-right {
-            grid-column: 3; grid-row: 2;
+            grid-column: 3; grid-row: 3;
             display: grid; grid-template-rows: minmax(0, 1fr);
             min-height: 0;
         }
@@ -31,12 +35,23 @@
            между панелями не должна спорить с содержимым за внимание. */
         .split { border-radius: 3px; background: transparent; }
         .split:hover, .split.drag { background: #c7d2fe; }
-        .split-col { grid-column: 2; grid-row: 2; cursor: col-resize; }
+        .split-col { grid-column: 2; grid-row: 3; cursor: col-resize; }
 
         /* Место шапки в сетке: во всю ширину над колонками. Сама она общая. */
         .dating-head { grid-column: 1 / -1; }
 
-        .dating-profiles-pane { grid-column: 1; grid-row: 2; }
+        .dating-profiles-pane { grid-column: 1; grid-row: 3; }
+        .page-tabs { grid-column: 1 / -1; grid-row: 2; justify-self: start; }
+        /* ⚠ Собеседники разложены **как девушки**: список слева, карточка справа.
+           Прежде это была сетка во всю ширину с правкой прямо в карточке — и
+           расходилась с соседней вкладкой во всём: там выбирают строку и читают
+           подробности справа, здесь надо было раскрывать карточку на месте.
+           Две раскладки на одной странице человек разгадывает заново каждый раз.
+
+           Панель занимает ту же клетку, что список анкет: вкладки не видны
+           одновременно, и делить между ними место незачем. */
+        .companion-pane { grid-column: 1; grid-row: 3; }
+        .companion-right { grid-column: 3; grid-row: 3; min-width: 0; }
 
         /* Чекбокс автоответа стоит в ряду кнопок и должен читаться как их часть,
            а не как обрывок формы. */
@@ -87,180 +102,257 @@
            полосы выбранное теряется ровно тогда, когда мышь идёт вправо. */
         .profile.active { background: #eef2ff; box-shadow: inset 3px 0 0 #4f46e5; }
 
+        /* ---------- Собеседники ---------- */
+
+        .companion-pane.off, .dating-profiles-pane.off, .dating-right.off,
+        .split-col.off { display: none; }
+
+        /* ⚠ Строками, а не сеткой карточек: список стоит в узкой колонке, той
+           же, где список анкет, и сетка в ней выродилась бы в один столбец. Строка
+           же говорит ровно то, что нужно для выбора: лицо, имя, номер. Остальное —
+           справа, у выбранного.
+
+           Класс оставлен прежним (`comp-grid`), потому что это по-прежнему
+           обёртка списка; изменилась только раскладка внутри. */
+        .comp-grid { display: flex; flex-direction: column; }
+        .comp-card {
+            position: relative; display: flex; gap: 9px; padding: 7px 12px;
+            border-bottom: 1px solid #f1f5f9; background: #fff; cursor: pointer;
+        }
+        .comp-card:hover { background: #f8fafc; }
+        /* Полоса слева у выбранного — тем же приёмом, что у строки анкеты: фон под
+           курсором почти такой же, и без полосы выбранное теряется. */
+        .comp-card.active { background: #eef2ff; box-shadow: inset 3px 0 0 #4f46e5; }
+        .comp-face {
+            flex: 0 0 auto; width: 48px; height: 48px; border-radius: 8px;
+            object-fit: cover; background: #f1f5f9;
+        }
+        .comp-text { min-width: 0; flex: 1 1 auto; display: flex;
+                     flex-direction: column; gap: 2px; }
+        .comp-name { font-size: 13px; font-weight: 600; color: #1e293b;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        /* Номер на сайте — моноширинным: по нему ищут человека в панели
+           агентства, и цифры должны стоять ровно. */
+        .comp-uid { font-family: ui-monospace, Menlo, monospace; font-size: 10px;
+                    color: #94a3b8; }
+        .comp-meta { font-size: 11px; color: #64748b;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        .comp-face-wrap { flex: 0 0 auto; }
+
+        /* ⚠ Классы без приставки `comp-`: состояние показывают **обе** вкладки —
+           и девушки, и собеседники. Вопрос у них общий («на сайте ли человек»), а
+           источник разный: у анкеты это наше присутствие, у собеседника — снимок
+           ленты. Вид от этого не меняется, и два набора классов разошлись бы.
+
+           Точка «в сети» — **сразу за словом**, а не на аватарке.
+           ⚠ На аватарке она и была: казалось, что там её видно и в списке, и на
+           крупном фото. На деле фото есть не у всех — у карточки без него точка
+           висела в пустом сером квадрате, — а когда слово переехало к номеру,
+           точка осталась на месте, и знак разошёлся с подписью. Рядом со словом
+           они читаются как одно. */
+        .state-dot {
+            display: inline-block; vertical-align: middle; margin-left: 5px;
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #16a34a;
+        }
+        /* Серая точка — «знаем, что не в сети». ⚠ Прежде её не было: рассудили,
+           что «его нет» и «мы не знаем» глазом неразличимы. Разница, однако, у нас
+           на руках (`online_known`), и без серой точки список выглядел так, будто
+           статуса нет вовсе — человек об этом и сказал.
+
+           Теперь три состояния, и третье — **отсутствие точки**: лента старая, и
+           сказать нечего. Подпись под шапкой поясняет, какой случай перед тобой. */
+        .state-dot.off { background: #cbd5e1; }
+
+        /* Номер и состояние — одной строкой: номер короткий, и место справа от
+           него всё равно пустует. */
+        .comp-line { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+        .comp-line > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        /* «в сети» — зелёным и жирнее: это единственное в строке, что меняется
+           каждые две минуты, и глаз должен находить его без чтения. */
+        .state-word { font-size: 11px; color: #94a3b8; }
+        .state-word.on { color: #16a34a; font-weight: 600; }
+        /* В карточке точка чуть крупнее — рядом с именем в 15 пикселей
+           восьмипиксельная терялась бы. */
+        .comp-view-name .state-dot { width: 9px; height: 9px; margin-left: 5px; }
+
+        /* «Описания нет» в строке списка — оранжевым: от описания зависит,
+           сможет ли письмо спросить про интересы, и это стоит заметить, не
+           открывая карточку. Само описание живёт справа, у выбранного. */
+        .comp-none { font-size: 11px; color: #b45309; }
+
+        /* Подпись про свежесть ленты — под шапкой списка, до самих строк: она
+           объясняет, чему верить в том, что ниже. */
+        .comp-fresh {
+            padding: 6px 12px; border-bottom: 1px solid #f1f5f9;
+            font-size: 10px; color: #94a3b8; line-height: 1.4;
+        }
+
+        /* ---------- Карточка выбранного собеседника (правая колонка) ---------- */
+
+        /* ⚠ Строение то же, что у карточки анкеты: лицо и подписи сверху, дальше
+           поля. Иначе две вкладки одной страницы читались бы как две разные
+           панели. */
+        .comp-view { display: flex; flex-direction: column; gap: 10px; padding: 2px; }
+
+        /* Крестик «убрать карточку» — в **строке списка**, у правого края.
+           ⚠ Здесь, а не на карточке справа: убирают карточку, глядя на список
+           («вот эти двое лишние»), а не разглядывая одного человека. Заодно не
+           нужно открывать карточку ради удаления.
+
+           Виден при наведении на строку — как крестик смены на ленте расписания:
+           карточек в списке десятки, и десяток красных кружков превратил бы его в
+           предупреждение. */
+        /* ⚠ Бледный, а не алый. Кружок появляется при наведении на **каждую**
+           строку, а строк десятки: сигнальный красный на них читается как
+           тревога — «тут что-то не так», — тогда как это обычное действие.
+           Наливается цветом, только когда до него дотянулись: тогда предупредить
+           о необратимости уместно. */
+        .comp-drop {
+            position: absolute; top: 6px; right: 6px;
+            width: 17px; height: 17px; padding: 0; border: none; border-radius: 50%;
+            background: #fecaca; color: #b91c1c; font-size: 12px; line-height: 17px;
+            cursor: pointer; opacity: 0;
+            transition: opacity .12s ease, background .12s ease, color .12s ease;
+        }
+        .comp-card:hover .comp-drop, .comp-drop:focus-visible { opacity: 1; }
+        .comp-drop:hover { background: #dc2626; color: #fff; }
+        .comp-view-head { display: flex; gap: 12px; align-items: flex-start; }
+        .comp-view-face {
+            flex: 0 0 auto; width: 84px; height: 84px; border-radius: 10px;
+            object-fit: cover; background: #f1f5f9;
+        }
+        .comp-view-title { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+        .comp-view-name { font-size: 15px; font-weight: 600; color: #1e293b; }
+
+        /* Приоритет в рассылке. ⚠ Отбит рамкой сверху и снизу: это решение о
+           человеке, а не сведение о нём, и в ряду с почтой и описанием оно
+           читалось бы как ещё одно поле анкеты. */
+        .comp-priority {
+            display: flex; align-items: center; gap: 7px;
+            margin: 12px 0 2px; padding: 8px 0;
+            border-top: 1px solid #f1f5f9; border-bottom: 1px solid #f1f5f9;
+            font-size: 12px; font-weight: 600; color: #334155; cursor: pointer;
+        }
+        .comp-priority input { margin: 0; cursor: pointer; }
+        .comp-priority-hint { margin: 0 0 12px; }
+        /* Словами рядом с именем, а не только точкой: точка на аватарке мелкая,
+           и на крупной карточке её легко пропустить. */
+        .state-word-big { font-size: 11px; font-weight: 400; color: #16a34a; }
+        .state-word-big.off { color: #94a3b8; }
+
+        /* Поля правки. ⚠ Раскрытыми, а не за кнопкой: в правой колонке место есть,
+           и прятать два поля за щелчком тут значило бы беречь пустоту. В списке
+           было наоборот — там десяток раскрытых форм превращался в частокол. */
+        .comp-field { display: flex; flex-direction: column; gap: 3px; }
+        .comp-field-label {
+            font-size: 10px; font-weight: 700; color: #94a3b8;
+            text-transform: uppercase; letter-spacing: .04em;
+        }
+        .comp-hint { font-size: 10px; color: #94a3b8; line-height: 1.4; }
+        /* Дата съёма — в подписи поля, но приглушённее её: это уточнение к
+           описанию, а не отдельная мысль. */
+        .comp-when { font-weight: 400; color: #94a3b8; text-transform: none;
+                     letter-spacing: 0; }
+        .comp-field input, .comp-field textarea {
+            width: 100%; box-sizing: border-box; padding: 6px 9px;
+            border: 1px solid #d1d5db; border-radius: 6px;
+            font-family: inherit; font-size: 12px; color: #1f2937;
+        }
+        /* ⚠ Описание пишут абзацами, и тянуть его вручную человек не должен:
+           поле растёт по вертикали, но не по горизонтали — иначе оно выломало бы
+           колонку. */
+        .comp-field textarea { resize: vertical; min-height: 90px; line-height: 1.45; }
+        .comp-field input:focus, .comp-field textarea:focus {
+            outline: none; border-color: #a5b4fc; box-shadow: 0 0 0 3px #eef2ff;
+        }
+
+        /* Переменные адресата: имя, чем подставится и откуда взято. */
+        .comp-vars { display: flex; flex-direction: column; gap: 7px; }
+        .comp-var {
+            display: grid; grid-template-columns: minmax(0, 1fr) auto;
+            gap: 3px 8px; padding: 7px 9px;
+            border: 1px solid #f1f5f9; border-radius: 7px; background: #fff;
+        }
+        .comp-var-name { font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+                         color: #4338ca; }
+        /* Значение — крупнее имени: ради него сюда и смотрят. */
+        .comp-var-value { grid-column: 1 / -1; font-size: 12px; color: #1e293b;
+                          overflow-wrap: anywhere; }
+        .comp-var-from { font-size: 10px; color: #94a3b8; white-space: nowrap; }
+        /* ⚠ Пустое значение — красным и словами: письмо с ним не уйдёт вовсе, и
+           узнать об этом лучше здесь, чем по молчаливому пропуску в рассылке. */
+        .comp-var.empty { border-color: #fecaca; background: #fff7f7; }
+        .comp-var.empty .comp-var-value { color: #b91c1c; }
+        .comp-var.fallback .comp-var-from { color: #b45309; }
+
+        /* ---------- Вкладки правой колонки ---------- */
+
+        /* ⚠ Не `.page-tab` из общего файла: те — сегментный переключатель во всю
+           ширину страницы, правящий раскладку целиком. Здесь вкладки внутри одной
+           панели и переключают только её содержимое; заливка акцентом на них
+           перетянула бы внимание с самой анкеты. Подчёркивание вместо заливки и
+           говорит про эту разницу в весе. */
+        .card-tabs {
+            display: flex; gap: 2px; padding: 0 12px;
+            border-bottom: 1px solid #f1f5f9; margin-bottom: 10px;
+        }
+        .card-tab {
+            padding: 7px 10px; border: none; background: none; cursor: pointer;
+            font-family: inherit; font-size: 11px; font-weight: 700; color: #94a3b8;
+            text-transform: uppercase; letter-spacing: .04em;
+            border-bottom: 2px solid transparent; margin-bottom: -1px;
+        }
+        .card-tab:hover:not(.on) { color: #4338ca; }
+        .card-tab.on { color: #4338ca; border-bottom-color: #4f46e5; }
+
+        /* ---------- Переменные анкеты ---------- */
+
+        .var-note { font-size: 11px; color: #94a3b8; line-height: 1.45;
+                    padding: 0 0 8px; }
+        .var-warn { color: #b45309; }
+        .var-list { display: flex; flex-direction: column; gap: 4px; max-width: 520px; }
+
+        /* Имя слева, поле справа: столбец имён читают сверху вниз, отыскивая
+           нужное, а правят по одному. */
+        .var-row { display: flex; align-items: center; gap: 8px; }
+        .var-key {
+            flex: 0 0 150px; font-family: ui-monospace, Menlo, monospace;
+            font-size: 11px; color: #4338ca;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .var-row input {
+            flex: 1 1 auto; min-width: 0; padding: 5px 8px;
+            border: 1px solid #d1d5db; border-radius: 6px;
+            font-family: inherit; font-size: 12px; color: #1e293b;
+        }
+        .var-row input:focus { outline: none; border-color: #c7d2fe; }
+        /* ⚠ Незаполненная — жёлтой рамкой, а не просто пустым полем. Пустое поле
+           читается как «здесь ничего и не нужно», а на деле именно из-за него
+           письмо не уйдёт. */
+        .var-row.empty input { border-color: #fcd34d; background: #fffbeb; }
+
+        .var-foot { display: flex; align-items: center; gap: 9px; margin-top: 10px; }
+        .var-hint { font-size: 11px; color: #b91c1c; }
+
         /* ---------- Расписание входов и выходов ---------- */
 
-        /* ⚠ **Своя ширина, а не «по колонке».** Блок приехал с «Профилей», где
+        /* Вид блока — в `dating_page.css`: тем же расписанием живёт вкладка
+           «Письма рассылка» на «Профилях», и две копии правил разошлись бы.
+
+           ⚠ **Ширина — своя, и остаётся здесь.** Блок приехал с «Профилей», где
            стоял в узкой колонке настроек и ширины не имел вовсе. В правой панели
            «Анкет» она втрое больше — ползунки растянулись во весь экран, время
            уехало от подписи, а лишние пиксели дали горизонтальную прокрутку.
 
-           520 пикселей — по содержимому: «Смена 1», два времени и крестик в один
-           ряд, ползунок под ними. Шире смысла нет, у́же ломается ряд. */
+           520 пикселей — по содержимому: лента суток с подписями времён и
+           кнопка под ней. Шире смысла нет, у́же ломаются подписи. */
         .sched {
             max-width: 520px; padding: 4px 12px 12px;
             border-top: 1px solid #f1f5f9; margin-top: 14px;
         }
-
-        /* Заголовок — как «Настройки анкеты» рядом: блоки одного уровня и
-           выглядеть должны одинаково. `h4` тут смотрелся вдвое крупнее соседа. */
-        /* Заголовок и чекбокс в одну строку: чекбокс про этот блок, и место ему
-           в его шапке, а не в подписи под сменами. */
-        .sched-head-row {
-            display: flex; align-items: baseline; gap: 10px;
-        }
-        .sched-on {
-            margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
-            font-size: 11px; color: #94a3b8; cursor: pointer; user-select: none;
-        }
-        .sched-on input { cursor: pointer; accent-color: #16a34a; }
-        .sched-on:has(input:checked) { color: #166534; font-weight: 600; }
-
-        .sched-title {
-            padding: 8px 0 6px; font-size: 10px; font-weight: 700; color: #94a3b8;
-            text-transform: uppercase; letter-spacing: .04em;
-        }
-
-        /* Пояснения и предупреждения под формой. */
-        .sched-note {
-            font-size: 11px; color: #94a3b8; line-height: 1.4;
-        }
-        .sched-foot {
-            display: flex; align-items: center; gap: 9px; margin-top: 10px;
-        }
-        .sched-foot .sched-note { flex: 1 1 auto; min-width: 0; }
-
-        /* «Сохранено» — на месте подсказки, а не отдельным сообщением. ⚠ Всплывающее
-           уведомление на каждое движение ползунка было бы очередью из десяти
-           одинаковых; здесь оно тихое и на своём месте. */
-        .sched-note.saved { color: #166534; }
-
-        /* Кнопка входа-выхода в подвале расписания. */
-        .sched-door { flex: 0 0 auto; }
-
-        .sched-list { display: flex; flex-direction: column; gap: 4px; }
-
-        /* Строка расписания. Слева цветная планка — по ней тип читается раньше,
-           чем слово: вход и выход чередуются, и глаз ищет ритм, а не текст. */
-        .sched-row {
-            display: flex; flex-direction: column; gap: 2px;
-            padding: 5px 8px 6px 6px; border-radius: 6px;
-            background: #f8fafc; border-left: 3px solid transparent;
-        }
-        .sched-head { display: flex; align-items: center; gap: 7px; }
-        .sched-row { border-left-color: #818cf8; }
-
-        /* Смена, налезающая на предыдущую. Красим её саму, а не только пишем под
-           кнопкой: в расписании из шести смен пересечение без подсветки надо ещё
-           найти. */
-        .sched-row.clash { background: #fef2f2; border-left-color: #dc2626; }
-        .sched-row.clash .sched-kind { color: #b91c1c; }
-
-        .sched-kind { font-size: 11px; font-weight: 700; color: #64748b;
-                      width: 62px; flex: 0 0 auto; }
-
-        /* Время — подписью, а не полем ввода: задают его ползунком ниже. Шрифт
-           моноширинный, столбик времён читают сверху вниз, и цифры должны стоять
-           друг под другом. */
-        .sched-time {
-            margin-left: auto; font-family: ui-monospace, Menlo, monospace;
-            font-size: 12px; color: #374151; white-space: nowrap;
-        }
-        /* Стрелка между входом и выходом — бледнее самих времён: читают времена,
-           а она лишь показывает направление. */
-        .sched-time .exact { color: #cbd5e1; }
-
-        /* ---------- Двойной ползунок суток ---------- */
-
-        /* Вся ширина — сутки, две ручки сужают её до интервала. Собран из двух
-           нативных `input[type=range]`, наложенных друг на друга: у двойного
-           ползунка нет своего элемента, а свой на указателях отнял бы клавиатуру
-           и фокус — по стрелкам такой не подвинешь.
-
-           Поверх ползунков не должно быть ничего, что ловит указатель, поэтому
-           дорожка и заливка нарисованы под ними и `pointer-events` не берут. */
-        .sched-range { position: relative; height: 18px; margin-top: 2px; }
-
-        .sched-track, .sched-fill {
-            position: absolute; top: 7px; height: 4px; border-radius: 2px;
-            pointer-events: none;
-        }
-        .sched-track { left: 0; right: 0; background: #e2e8f0; }
-        .sched-fill { background: #818cf8; }
-
-
-        /* ⚠ `left: 0; right: 0` вместо `width: 100%`: у `input[type=range]` своя
-           внутренняя ширина, и `100%` считался не от контейнера — ползунок вылезал
-           за строку на 14 пикселей, а с ним и ручка уезжала за дорожку. Заметно
-           стало в широкой панели «Анкет»; в узкой колонке «Профилей» те же 14
-           пикселей терялись на глаз. */
-        .sched-range input[type=range] {
-            position: absolute; left: 0; right: 0; width: auto; box-sizing: border-box;
-            height: 18px; margin: 0;
-            -webkit-appearance: none; appearance: none;
-            background: none; pointer-events: none;
-        }
-        /* Ловит указатель только сама ручка: иначе верхний ползунок накрыл бы
-           нижний целиком, и вторую ручку было бы не взять. */
-        .sched-range input[type=range]::-webkit-slider-thumb {
-            -webkit-appearance: none; pointer-events: auto; cursor: grab;
-            width: 13px; height: 13px; border-radius: 50%;
-            background: #fff; border: 2px solid #4f46e5;
-        }
-        .sched-range input[type=range]::-moz-range-thumb {
-            pointer-events: auto; cursor: grab;
-            width: 13px; height: 13px; border-radius: 50%;
-            background: #fff; border: 2px solid #4f46e5;
-        }
-        .sched-range input[type=range]:focus-visible::-webkit-slider-thumb {
-            box-shadow: 0 0 0 3px #c7d2fe;
-        }
-        /* Пересекающиеся смены — красным и на ручках: строка и лента говорят об
-           одном, и глаз не должен искать, к какой из них относится сообщение. */
-        .sched-row.clash .sched-range input[type=range]::-webkit-slider-thumb { border-color: #dc2626; }
-        .sched-row.clash .sched-range input[type=range]::-moz-range-thumb { border-color: #dc2626; }
-        .sched-row.clash .sched-fill { background: #fca5a5; }
-
-        .sched-drop {
-            margin-left: auto; border: none; background: none; cursor: pointer;
-            color: #cbd5e1; font-size: 15px; line-height: 1; padding: 0 2px;
-        }
-        .sched-drop:hover { color: #b91c1c; }
-
-        .sched-add { display: flex; gap: 6px; margin-top: 7px; }
-        .sched-add-btn { font-size: 11px; padding: 3px 9px; }
-
-        /* Лента суток — то единственное, ради чего этот блок выглядит не как
-           список полей. Расписание отвечает на вопрос «когда анкета в сети», и
-           ответ на него — полоса, а не строки: по ней сразу видно и дыры между
-           сменами, и главную беду — вход, за которым не идёт выход. */
-        .sched-day {
-            position: relative; height: 16px; margin-top: 9px;
-            border-radius: 4px; background: #f1f5f9; overflow: hidden;
-        }
-        /* Полоса смены. «Незакрытой» полосы больше не бывает: выход есть у каждой
-           записи по устройству — смена и есть пара «вход-выход». */
-        .sched-span { position: absolute; top: 0; bottom: 0; background: #a5b4fc; }
-        .sched-span.clash { background: #fca5a5; }
-
-        .sched-hours {
-            display: flex; justify-content: space-between;
-            font-size: 9px; color: #cbd5e1; margin-top: 2px;
-        }
-
-        /* Расписание не действует. ⚠ Приглушаем, но **не запираем**: править смены
-           у выключенной анкеты законно — её включат, и они понадобятся. Запертая
-           форма означала бы «нельзя», а нельзя тут только одно — ждать, что она
-           войдёт. */
-        .sched.idle .sched-list, .sched.idle .sched-day { opacity: .55; }
-        .sched-idle {
-            margin: 2px 0 7px; padding: 5px 8px; border-radius: 6px;
-            background: #fff7ed; color: #9a3412; font-size: 11px; line-height: 1.35;
-        }
-
-        .sched-empty { font-size: 11px; color: #94a3b8; padding: 6px 0; }
-        /* Полоса суток под сменами: та же ширина, что у списка. */
-        .sched-day { max-width: 100%; }
-        .sched-warn { color: #b91c1c; }
 
         /* Блоки настроек идут один под другим, и без границы «Учётка» и
            «Автоответ» читаются как одна длинная форма: у обеих поля ввода и
@@ -375,6 +467,19 @@
         <select id="siteSelect" title="Сайт, на котором заведены анкеты"></select>
         <button type="button" class="dating-btn primary" id="addBtn">+ девушка</button>
         <span class="dating-hint" id="hint"></span>
+        {# Админ-панель агентства: та же ссылка и то же состояние, что на
+        «Профилях». Общий модуль (`dating_site.js`), а не копия: разойдясь в
+        мелочах, две копии продолжали бы спрашивать одну ручку. #}
+        <a class="panel-link" id="panelLink" hidden></a>
+    </div>
+
+    {# Полоса вкладок — во всю ширину, над колонками. ⚠ Вкладки про разных людей:
+       «Девушки» — наши учётки, которыми работают; «Собеседники» — те, кому пишут.
+       У вторых нет ни настроек, ни расписания, ни входа: это не наша учётка, а
+       карточка чужого человека. #}
+    <div class="page-tabs" id="pageTabs">
+        <button type="button" class="page-tab on" data-tab="girl">Девушки</button>
+        <button type="button" class="page-tab" data-tab="companion">Собеседники</button>
     </div>
 
     <div class="pane dating-profiles-pane">
@@ -405,6 +510,30 @@
         </div>
 
     </div>
+
+    {# Собеседники: список слева, карточка выбранного справа — **как у девушек**.
+       Прячется классом, а не удалением: переключение вкладки не должно стоить
+       перезагрузки списка. #}
+    <div class="pane companion-pane off" id="companionPane">
+        <div class="pane-head">
+            Собеседники <span id="companionN"></span>
+            <input type="search" id="companionFind" class="pane-find"
+                   placeholder="имя или ID" spellcheck="false" autocomplete="off"
+                   title="Поиск по имени и номеру на сайте">
+        </div>
+        <div class="comp-fresh" id="companionFresh"></div>
+        <div class="pane-body" id="companions"></div>
+        {# ⚠ Тот же подвал, что у списка анкет: карточек накапливаются сотни, и
+           листать их надо тем же способом, каким листают всё остальное. #}
+        <div class="pane-foot" id="companionsPager"></div>
+    </div>
+
+    <div class="dating-right companion-right off" id="companionRight">
+        <div class="pane">
+            <div class="pane-head">Собеседник<span id="companionWho"></span></div>
+            <div class="pane-body" id="companion"></div>
+        </div>
+    </div>
 </div>
 
 <script type="module">
@@ -417,8 +546,15 @@
     // тревоги места в ней нет; журнала на странице нет вовсе, и `logRender` с
     // `logStamp` ей больше не нужны. Всё это осталось на «Профилях».
     import {esc, pagerRender} from '{{ static_url('js/dating_view.js') }}';
+    // Расписание сменами — общее с вкладкой «Письма рассылка» на «Профилях»: вид
+    // и правила ввода там те же, а вопросы разные (`dating_schedule.js`).
+    import {scheduleBandBind, scheduleBodyHtml, scheduleCheck, scheduleSort}
+        from '{{ static_url('js/dating_schedule.js') }}';
     // Загрузка селекта сайта — тоже общая: ключ выбора один на весь раздел.
-    import {DATING_SITE_KEY, datingSiteFill} from '{{ static_url('js/dating_site.js') }}';
+    import {DATING_SITE_KEY, datingSiteFill, datingPanelPaint} from '{{ static_url('js/dating_site.js') }}';
+    // ⚠ Времена с сервера приходят в UTC, сдвигает их страница по настройке
+    // `timezone` — иначе «снято в 08:21» человек прочитал бы как своё время.
+    import {timeShift} from '{{ static_url('js/dating_time.js') }}';
 
     // Под каким URI живёт панель. Локально пусто (корень домена), на проде —
     // `/dating`: домен один на два проекта, и делится он по пути. Прокси префикс
@@ -473,6 +609,12 @@
             return;
         }
         profilesLoad();
+        datingPanelPaint(document.getElementById('panelLink'), BASE, siteEl.value);
+
+        // ⚠ Открыта вкладка собеседников — грузим и их: список спрашивается по
+        // сайту, а сайт стал известен только сейчас. Без этого вкладка,
+        // восстановленная из памяти, показывала бы пустоту до первого щелчка.
+        if (pageTab === 'companion') companionsLoad();
     }
 
     const siteId = () => Number(siteEl.value || 0);
@@ -497,6 +639,22 @@
             return;
         }
         if (siteId() !== requestSite) return;
+
+        // ⚠ Пришли по ссылке с «Профилей» — открываем ту анкету, за которой шли.
+        // **Один раз**: довод в адресе значит «открой», а не «всегда показывай»,
+        // и оставленный он перебивал бы выбор человека при каждом обновлении.
+        //
+        // ⚠ Через `profileSelect`, а не присвоением `currentId`. Присвоение
+        // подсвечивает строку слева — и на этом всё: карточка справа остаётся
+        // пустой, потому что грузит её тот же `profileSelect`. Так и вышло с
+        // первого раза: Diana выбрана, а «Анкета» пуста.
+        if (wantGirlId && profiles.some(row => row.id === wantGirlId)) {
+            const id = wantGirlId;
+            wantGirlId = 0;
+            profileSelect(id);
+
+            return;
+        }
 
         profilesRender();
     }
@@ -599,6 +757,16 @@
                 // Имя режется многоточием в узкой колонке — полное отдаём подсказкой.
                 + `<span class="prof-name" title="${esc(row.name || row.login)}">${esc(row.name || row.login)}</span>`
                 + `<span class="prof-login" title="${esc(row.login)}">${esc(row.login)}</span>`
+                // ⚠ Состояние — тем же знаком, что у собеседников: вопрос один
+                // («на сайте ли»), и разный вид для одного вопроса человеку
+                // пришлось бы разгадывать дважды.
+                //
+                // Источник при этом свой: у анкеты это её присутствие на сайте
+                // (`status`), которое держит воркер, а не снимок чужой ленты.
+                + `<span class="state-word${row.status === 'online' ? ' on' : ''}">`
+                + `${row.status === 'online' ? 'в сети' : 'не в сети'}`
+                + `<span class="state-dot${row.status === 'online' ? '' : ' off'}"></span>`
+                + '</span>'
                 + '</span></span>'
                 // ⚠ Выключенную анкету видно **в списке**, а не только в её
                 // карточке: иначе, глядя на сотню строк, человек не понимает,
@@ -684,135 +852,249 @@
         // переписки: тот же список в двух местах расходился в мелочах (порядок,
         // счётчики, значок «нужен ответ»), и человек не знал, какому верить. Здесь
         // осталось то, чего нет там, — **настройки самой анкеты**.
+        //
+        // ⚠ Колонка поделена на две вкладки: «Общая информация» (карточка с сайта
+        // и настройки) и «Переменные» (чем письма подставляют). Разное по природе:
+        // первое — как анкету ведут, второе — что о ней знают письма. Одной
+        // простынёй переменные тонули бы под расписанием и удалением.
         const scroll = profileEl.scrollTop;
-        profileEl.innerHTML = head + settingsBlock(data);
+        profileEl.innerHTML =
+            '<div class="card-tabs">'
+            + `<button type="button" class="card-tab${cardTab === 'main' ? ' on' : ''}"`
+            + ' data-tab="main">Общая информация</button>'
+            + `<button type="button" class="card-tab${cardTab === 'var' ? ' on' : ''}"`
+            + ' data-tab="var">Переменные</button>'
+            + '</div>'
+            + (cardTab === 'var' ? '<div id="varBox"></div>' : head + settingsBlock(data));
         profileEl.scrollTop = scroll;
+
+        profileEl.querySelectorAll('.card-tab').forEach(btn =>
+            btn.addEventListener('click', () => {
+                if (btn.dataset.tab === cardTab) return;
+                cardTab = btn.dataset.tab;
+                profileLoad();
+            }));
+
+        if (cardTab === 'var') {
+            varsPaint();
+            varsLoad(requestId);
+
+            return;
+        }
 
         settingsBind();
     }
 
-    // Смены, отсортированные по времени входа. Сортируем при каждой отрисовке:
-    // время правят ползунком, и смена, заведённая последней, может оказаться
-    // первой по времени.
-    // ⚠ **Черновик заводится от сохранённого, а не пустым.**
+    // ── Переменные анкеты ────────────────────────────────────────────────────
+    //
+    // ⚠ **Имена заводят не здесь.** Реестр переменных ведут на странице «Письма»,
+    // вкладка «Переменные», и он общий на сайт: заведённая там переменная
+    // появляется у каждой анкеты пустой. Тут проставляют **значения**.
+    //
+    // Значение одно на анкету, кому бы она ни писала: переменные описывают её
+    // саму. Держи мы их на пару «анкета — адресат», агента пришлось бы звать на
+    // каждого собеседника — сотни вызовов вместо одного.
+    //
+    // ⚠ **Пустое значение — это письмо, которое не уйдёт.** Рассылка пропускает
+    // шаблоны, чьих переменных у анкеты нет: «Меня зовут , мне  лет» выдаёт
+    // рассылку вернее, чем что-либо ещё. Поэтому незаполненное здесь помечено, а
+    // не просто оставлено белым.
+
+    // Какая вкладка открыта в правой колонке. Переживает смену анкеты: человек
+    // проставляет переменные подряд у нескольких, и сброс на «Общую» при каждом
+    // выборе отнимал бы то, что он только что открыл.
+    let cardTab = 'main';
+
+    // Переменные текущей анкеты, как их вернул сервер: реестр сайта со значениями.
+    let cardVars = [];
+    let cardVarsFor = 0;
+
+    async function varsLoad(profileId) {
+        try {
+            cardVars = (await getData(
+                `${BASE}/api/dating/profile/${profileId}/var`)).result || [];
+        } catch (e) {
+            if (currentId !== profileId) return;
+            cardVars = [];
+            cardVarsFor = profileId;
+            varsPaint('переменные не пришли: ' + e.message);
+
+            return;
+        }
+
+        // Та же гонка, что у карточки: ответ по уже снятой анкете может прийти
+        // позже ответа по вновь выбранной.
+        if (currentId !== profileId) return;
+
+        cardVarsFor = profileId;
+        varsPaint();
+    }
+
+    function varsPaint(error = '') {
+        const box = document.getElementById('varBox');
+        if (!box) return;
+
+        if (error) {
+            box.innerHTML = `<div class="empty">${esc(error)}</div>`;
+
+            return;
+        }
+
+        // Пока ответ по этой анкете не пришёл, показываем «гружу», а не список
+        // предыдущей: чужие значения, поданные как её, хуже ожидания.
+        if (cardVarsFor !== currentId) {
+            box.innerHTML = '<div class="empty">гружу…</div>';
+
+            return;
+        }
+
+        if (!cardVars.length) {
+            box.innerHTML = '<div class="empty">На этом сайте переменных не '
+                          + 'заведено. Их заводят на странице «Письма», вкладка '
+                          + '«Переменные» — оттуда они и появятся здесь.</div>';
+
+            return;
+        }
+
+        const пусто = cardVars.filter(row => !row.filled).length;
+
+        box.innerHTML = '<div class="prof-set">'
+            + '<div class="prof-set-head">Переменные писем</div>'
+            + '<div class="var-note">Чем письма подставляют переменные этой '
+            + 'анкеты. Имена заводят на странице «Письма» — здесь только значения.'
+            + (пусто
+                ? ` <b class="var-warn">Не заполнено: ${пусто}.</b> Письма с этими `
+                  + 'переменными от анкеты не уйдут.'
+                : '')
+            + '</div>'
+            + '<div class="var-list">'
+            + cardVars.map((row, index) =>
+                `<label class="var-row${row.filled ? '' : ' empty'}">`
+                + `<span class="var-key" title="${esc(row.title || row.name)}">`
+                + `${esc(row.name)}</span>`
+                + `<input type="text" data-index="${index}" maxlength="500"`
+                + ` value="${esc(row.value)}"`
+                // ⚠ Умолчание — подсказкой в поле, а не значением: подставь мы его
+                // в `value`, человек не отличил бы «заполнено у анкеты» от «взято
+                // из реестра», а сохранение превратило бы второе в первое.
+                + ` placeholder="${row.default_value
+                    ? esc(row.default_value) + ' (умолчание)'
+                    : 'пусто — письмо не уйдёт'}">`
+                + '</label>').join('')
+            + '</div>'
+            + '<div class="var-foot">'
+            + '<button type="button" class="dating-btn primary" id="varSaveBtn">'
+            + 'Сохранить</button>'
+            // ⚠ Кнопка гаснет, когда заполнять нечего: агент трогает только
+            // пустые, и нажатие при полном списке стоило бы вызова LLM ради
+            // ничего. Подсказка объясняет, почему она погасла.
+            + `<button type="button" class="dating-btn" id="varAgentBtn"`
+            + `${пусто ? '' : ' disabled'}`
+            + ` title="${пусто
+                ? 'Спросить агента: он заполнит пустые по сведениям анкеты'
+                : 'Все переменные заполнены — агенту нечего добавить'}">`
+            + 'Заполнить агентом</button>'
+            + '<span class="var-hint" id="varHint"></span>'
+            + '</div>'
+            + '</div>';
+
+        box.querySelector('#varSaveBtn').addEventListener('click', varsSave);
+
+        const agent = box.querySelector('#varAgentBtn');
+        if (agent && !agent.disabled) agent.addEventListener('click', varsAgent);
+    }
+
+    // Просит агента заполнить пустые переменные.
+    //
+    // ⚠ **Долгое действие**: это вызов LLM у соседа, десятки секунд. Кнопку
+    // запираем и говорим об этом словами — иначе её нажмут второй раз, и второй
+    // вызов пойдёт поверх первого.
+    async function varsAgent() {
+        const button = document.getElementById('varAgentBtn');
+        const hint = document.getElementById('varHint');
+        const profileId = currentId;
+
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = '<span class="dating-spin"></span>Спрашиваю…';
+        }
+        if (hint) hint.textContent = '';
+
+        let answer;
+        try {
+            answer = await postData(
+                `${BASE}/api/dating/profile/${profileId}/var/agent`, {});
+        } catch (e) {
+            if (hint) hint.textContent = 'агент не ответил: ' + e.message;
+            if (button) {
+                button.disabled = false;
+                button.textContent = 'Заполнить агентом';
+            }
+
+            return;
+        }
+
+        // Пока агент думал, могли выбрать другую анкету: рисовать её значения
+        // поверх чужих нельзя.
+        if (currentId !== profileId) return;
+
+        cardVars = answer.result || [];
+        // ⚠ Говорим и про непроставленное: агент пропускает то, чего в анкете
+        // нет, и молчание об этом читалось бы как «он всё заполнил».
+        say(answer.filled
+            ? `агент заполнил: ${answer.filled}`
+              + (answer.skipped ? `, не нашёл: ${answer.skipped}` : '')
+            : 'агент ничего не нашёл — в анкете нет того, что просили');
+        varsPaint();
+    }
+
+    async function varsSave() {
+        const box = document.getElementById('varBox');
+        if (!box) return;
+
+        const values = {};
+        box.querySelectorAll('.var-row input').forEach(el => {
+            const row = cardVars[Number(el.dataset.index)];
+            if (row) values[row.name] = el.value;
+        });
+
+        const hint = document.getElementById('varHint');
+        try {
+            // `hand`: проставил человек. Приход агента будет слать `agent` — по
+            // этому и отличают угаданное от проверенного.
+            cardVars = (await putData(`${BASE}/api/dating/profile/${currentId}/var`,
+                                      {values, filled_by: 'hand'})).result || [];
+        } catch (e) {
+            if (hint) hint.textContent = 'не сохранилось: ' + e.message;
+
+            return;
+        }
+
+        say('переменные сохранены');
+        varsPaint();
+    }
+
+    // Черновик расписания анкеты. ⚠ **Заводится от сохранённого, а не пустым.**
     //
     // Правки живут в памяти, пока их не сохранили: ползунок двигают подряд, и
     // запрос на каждое движение был бы сотней запросов. Но начинать с пустого
-    // нельзя — человек увидел бы «Пока пусто» у анкеты, у которой расписание есть.
+    // нельзя — человек увидел бы пустую ленту у анкеты, у которой расписание есть.
+    //
+    // Порядок — по времени входа: время правят ползунком, и смена, заведённая
+    // последней, может оказаться первой по времени. Сортирует `scheduleSort` из
+    // общего модуля — тем же порядком лента и рисуется.
     function scheduleRows(profileId) {
         if (!scheduleDraft.has(profileId)) {
             const saved = (cardData && cardData.schedule) || [];
             scheduleDraft.set(profileId, saved.map(item => ({...item})));
         }
 
-        const rows = scheduleDraft.get(profileId) || [];
-
-        return [...rows].sort((a, b) => (a.from || '').localeCompare(b.from || ''));
+        return scheduleSort(scheduleDraft.get(profileId) || []);
     }
 
-    // Расписание годно, когда у каждой смены выход позже входа и смены не
-    // налезают друг на друга.
-    function scheduleCheck(rows) {
-        if (!rows.length) return 'Расписания нет — анкета входит и выходит вручную';
-
-        const empty = rows.find(row => !row.from || !row.to);
-        if (empty) return 'У каждой смены должны быть вход и выход';
-
-        // Выход строго позже входа. Равенство тоже не годится: смена нулевой
-        // длины — это вход, за которым сразу выход, то есть ничего.
-        const backwards = rows.find(row => row.to <= row.from);
-        if (backwards) return `Смена ${backwards.from}–${backwards.to}: выход не позже входа`;
-
-        // **Смены не перекрываются.** Анкета не может войти второй раз, не выйдя:
-        // сайт держит одну сессию на учётку, и второй вход выбросил бы первую.
-        // Проверяем по соседям в отсортированном списке — этого достаточно, чтобы
-        // поймать любое пересечение.
-        const overlap = scheduleOverlap(rows);
-        if (overlap >= 0) {
-            return `Смены ${rows[overlap - 1].from}–${rows[overlap - 1].to} и `
-                 + `${rows[overlap].from}–${rows[overlap].to} налезают друг на друга`;
-        }
-
-        return '';
-    }
-
-    // Номер смены, которая начинается раньше, чем кончилась предыдущая.
-    // `-1` — пересечений нет. Отдельной функцией: ответ нужен и словами под
-    // кнопкой, и подсветкой самой строки.
-    function scheduleOverlap(rows) {
-        for (let i = 1; i < rows.length; i++) {
-            if (rows[i].from < rows[i - 1].to) return i;
-        }
-
-        return -1;
-    }
-
-    // Сутки в минутах — мера всей шкалы: ползунок ходит от 0 до 1440.
-    const DAY_MINUTES = 24 * 60;
-
-    // Шаг ползунка. Четверть часа, а не минута: на ширине колонки минутный шаг
-    // даёт меньше пикселя на деление, и попасть в «10:00» мышью нельзя. Круглые
-    // времена, которыми расписание и задают, кратны пятнадцати все до одного.
-    const STEP_MINUTES = 15;
-
-    const timeText = (minutes) => {
-        const m = Math.max(0, Math.min(Number(minutes) || 0, DAY_MINUTES));
-        return `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:`
-             + `${String(m % 60).padStart(2, '0')}`;
-    };
-
-    const timeMinutes = (text) => {
-        const [h, m] = String(text || '0:0').split(':').map(Number);
-        return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
-    };
-
-    // Подпись к смене: «10:00 → 15:00». Стрелка, а не тире: это не диапазон
-    // значений, а вход и выход — у них есть направление.
-    function timeLabel(item) {
-        return `${esc(item.from)} <span class="exact">→</span> ${esc(item.to)}`;
-    }
-
-    // Ползунок смены: вся ширина — сутки, левая ручка вход, правая выход.
-    // Заливка между ними и есть время, когда анкета в сети.
-    function rangeInput(item) {
-        const from = timeMinutes(item.from);
-        const to = timeMinutes(item.to);
-        const left = (Math.min(from, to) / DAY_MINUTES) * 100;
-        const width = (Math.abs(to - from) / DAY_MINUTES) * 100;
-
-        const slider = (edge, value) =>
-            `<input type="range" min="0" max="${DAY_MINUTES}" step="${STEP_MINUTES}"`
-            + ` value="${value}" data-edge="${edge}"`
-            + ` aria-label="${edge === 'from' ? 'вход' : 'выход'}">`;
-
-        return '<div class="sched-range">'
-             + '<div class="sched-track"></div>'
-             + `<div class="sched-fill" style="left:${left}%;width:${width}%"></div>`
-             + slider('from', from) + slider('to', to)
-             + '</div>';
-    }
-
-    // Лента суток: смены полосами на шкале от полуночи до полуночи.
-    //
-    // Ради неё блок и не выглядит списком полей. Расписание отвечает на вопрос
-    // «когда анкета в сети», а строки на него не отвечают — это надо складывать в
-    // уме. На ленте сразу видны и дыры между сменами, и налезающие друг на друга
-    // смены: их полосы перекрываются.
-    function scheduleDay(rows) {
-        const percent = (time) => (timeMinutes(time) / DAY_MINUTES) * 100;
-
-        const spans = rows.map((item, index) => {
-            const left = percent(item.from);
-            const width = Math.max(percent(item.to) - left, 0.6);
-
-            return `<span class="sched-span${index === scheduleOverlap(rows) ? ' clash' : ''}"`
-                 + ` style="left:${left}%;width:${width}%"></span>`;
-        }).join('');
-
-        return `<div class="sched-day">${spans}</div>`
-             + '<div class="sched-hours"><span>00</span><span>06</span><span>12</span>'
-             + '<span>18</span><span>24</span></div>';
-    }
+    // Что сказать про пустое расписание анкеты. Своё, а не общее: у рассылки
+    // пустое значит «письма шлём руками», здесь — «входит и выходит вручную».
+    const SCHEDULE_EMPTY = 'Расписания нет — анкета входит и выходит вручную';
 
     // Правит черновик и перерисовывает настройки. Перерисовываем целиком, а не
     // одну строку: от правки времени меняется порядок смен и вся лента суток, и
@@ -825,7 +1107,10 @@
     // убрать, двинуть левую ручку, двинуть правую), и забытый вызов означал бы
     // «эта правка не сохраняется», причём молча.
     function scheduleEdit(profileId, change) {
-        const rows = [...(scheduleDraft.get(profileId) || [])];
+        // ⚠ Берём **`scheduleRows()`, а не сам черновик**: он мог не заводиться
+        // вовсе (первая правка после загрузки карточки), и стартовать с пустого
+        // списка значило бы стереть расписание, которое человек видит на ленте.
+        const rows = [...scheduleRows(profileId)];
         change(rows);
         scheduleDraft.set(profileId, rows);
         profileLoad();
@@ -836,70 +1121,11 @@
         const form = card.querySelector('[data-form="schedule"]');
         if (!form) return;
 
-        // Новая смена встаёт в **первый свободный промежуток**, а не в конец:
-        // смены не перекрываются, и запись, севшая поверх соседки, была бы
-        // негодной с первой секунды.
-        form.querySelector('.sched-add-btn').addEventListener('click', () => {
-            const room = scheduleRoom(scheduleRows(row.id));
-            if (!room) return;
-
-            scheduleEdit(row.id, rows => rows.push({from: timeText(room.from),
-                                                    to: timeText(room.to)}));
-        });
-
-        // Строки читаем в том же порядке, в каком нарисовали (по времени входа), —
-        // иначе `data-index` указывал бы не на ту смену.
-        const shown = scheduleRows(row.id);
-        form.querySelectorAll('.sched-row').forEach((line, index) => {
-            const item = shown[index];
-
-            line.querySelector('.sched-drop').addEventListener('click', () =>
-                scheduleEdit(row.id, rows => rows.splice(rows.indexOf(item), 1)));
-
-            // Ползунок шлёт `input` на каждое движение ручки. Перерисовывать по
-            // нему всю колонку нельзя: новый узел не получит захвата указателя, и
-            // ручка выскользнет из-под пальца на первом же шаге. Поэтому пока
-            // тянут — правим черновик и подкрашиваем эту же строку на месте, а
-            // перерисовку откладываем до `change`, то есть до отпускания.
-            const sliders = [...line.querySelectorAll('input[type=range]')];
-            const fill = line.querySelector('.sched-fill');
-            const label = line.querySelector('.sched-time');
-
-            const readEdges = () => {
-                // Ручки не меняются местами: меньшая — вход, большая — выход.
-                // Иначе, перетащив вход за выход, человек получил бы смену
-                // наизнанку и отрицательную ширину заливки.
-                const values = sliders.map(s => Number(s.value)).sort((a, b) => a - b);
-
-                return {from: timeText(values[0]), to: timeText(values[1])};
-            };
-
-            sliders.forEach(slider => {
-                slider.addEventListener('input', () => {
-                    const edges = readEdges();
-                    const draft = scheduleDraft.get(row.id) || [];
-                    const found = draft[draft.indexOf(item)];
-                    if (found) { found.from = edges.from; found.to = edges.to; }
-
-                    const left = (timeMinutes(edges.from) / DAY_MINUTES) * 100;
-                    const width = ((timeMinutes(edges.to) - timeMinutes(edges.from))
-                                   / DAY_MINUTES) * 100;
-                    fill.style.left = `${left}%`;
-                    fill.style.width = `${width}%`;
-                    label.innerHTML = timeLabel(edges);
-                });
-
-                // Отпустили — можно и пересортировать смены, и перерисовать ленту:
-                // захватывать больше нечего.
-                slider.addEventListener('change', () => scheduleEdit(row.id, rows => {
-                    const found = rows[rows.indexOf(item)];
-                    if (!found) return;
-                    const edges = readEdges();
-                    found.from = edges.from;
-                    found.to = edges.to;
-                }));
-            });
-        });
+        // Лента и кнопка «+ Смена» — общие с рассылкой (`dating_schedule.js`).
+        // ⚠ Смены отдаём **в том же порядке**, в каком нарисовали, — иначе
+        // `data-index` в разметке указывал бы не на ту.
+        scheduleBandBind(form, scheduleRows(row.id),
+                         change => scheduleEdit(row.id, change));
 
         // Форму не отправляют — Enter в ней не должен перезагружать страницу.
         form.addEventListener('submit', (e) => e.preventDefault());
@@ -957,15 +1183,28 @@
         // ещё правит, и ругаться на промежуточное состояние («смены налезают»)
         // значило бы кричать на каждое движение ползунка. Причина и так написана
         // под формой, а сохранится расписание, когда станет годным.
-        if (scheduleCheck(rows) && rows.length) return;
+        if (scheduleCheck(rows, SCHEDULE_EMPTY) && rows.length) return;
 
-        const note = document.querySelector('.sched-note');
+        // ⚠ Именно подвальная подсказка, а не первая попавшаяся. `.sched-note` в
+        // блоке два: пояснение в шапке («Когда анкете быть в сети») и строка под
+        // лентой, куда и пишется «сохранено». Без уточнения `querySelector`
+        // возвращал первый — и слово «сохранено» затирало пояснение, а у анкеты
+        // выключенной (там вместо пояснения стоит `.sched-idle`) вставало на
+        // место, куда его и клали. То есть подпись прыгала в зависимости от
+        // состояния анкеты.
+        const note = document.querySelector('.sched-foot .sched-note');
         try {
             await putData(`${BASE}/api/dating/profile/${profileId}/schedule`,
                           {schedule: rows});
-            // Черновик снимаем: сохранённое теперь приходит с сервера, и держать
-            // вторую копию значит однажды показать её вместо правды.
-            scheduleDraft.delete(profileId);
+            // ⚠ **Черновик остаётся, и это не забывчивость.** Прежде он снимался
+            // — и следующее движение ползунка начинало правку с пустого списка:
+            // обработчики ленты держат свои смены по ссылке, а списка под ними уже
+            // не было. Лента пустела, а через полсекунды пустое расписание уезжало
+            // на сервер под надписью «сохранено».
+            //
+            // Вместо снятия обновляем карточку: перерисовка берёт смены из неё,
+            // когда черновика нет, и разойтись им теперь не на чем.
+            if (cardData) cardData.schedule = rows.map(item => ({...item}));
             if (note) {
                 note.textContent = 'сохранено';
                 note.classList.add('saved');
@@ -981,27 +1220,7 @@
         const idle = (cardData && cardData.schedule_idle) || '';
         const on = !!(cardData && cardData.schedule_on);
         const rows = scheduleRows(row.id);
-        const why = scheduleCheck(rows);
-        const overlap = scheduleOverlap(rows);
-
-        const list = rows.length
-            ? rows.map((item, index) =>
-                `<div class="sched-row${index === overlap ? ' clash' : ''}"`
-                + ` data-index="${index}">`
-                + '<div class="sched-head">'
-                + `<span class="sched-kind">Смена ${index + 1}</span>`
-                + `<span class="sched-time">${timeLabel(item)}</span>`
-                + '<button type="button" class="sched-drop" title="Убрать смену">×</button>'
-                + '</div>'
-                + rangeInput(item)
-                + '</div>').join('')
-            : '<div class="sched-empty">Пока пусто. Добавьте смену — '
-              + 'анкета будет входить и выходить сама.</div>';
-
-        // Кнопка одна: смена и есть единица расписания. Отдельных «вход» и
-        // «выход» больше нет — порознь они и позволяли завести «вход, вход».
-        // Гаснет, когда сутки заняты целиком и новую смену ставить некуда.
-        const room = scheduleRoom(rows);
+        const why = scheduleCheck(rows, SCHEDULE_EMPTY);
 
         return `<form class="sched${idle ? ' idle' : ''}" data-form="schedule">`
             + '<div class="sched-head-row">'
@@ -1025,14 +1244,16 @@
                 ? `<div class="sched-idle">${esc(idle)}</div>`
                 : '<div class="sched-note">Когда анкете быть в сети. '
                   + 'Пусто — ведём руками.</div>')
-            + `<div class="sched-list">${list}</div>`
-            + '<div class="sched-add">'
-            + `<button type="button" class="dating-btn sched-add-btn"${room ? '' : ' disabled'}`
-            + ` title="${room ? 'Добавить смену в свободное время'
-                              : 'Свободного времени в сутках не осталось'}">`
-            + '+ Смена</button>'
-            + '</div>'
-            + (rows.length ? scheduleDay(rows) : '')
+            // Лента, «+ Смена» и счётчик — общие с рассылкой
+            // (`dating_schedule.js`). Своё у страницы только шапка и подвал: у
+            // рассылки нет ни выключенной анкеты, ни кнопки «Войти».
+            //
+            // ⚠ Второй довод — **«действует ли расписание»**: идущую смену лента
+            // красит зелёным, и оттенок зависит от ответа. Здесь ответ из двух
+            // частей: снят выключатель — смены не исполняются; выключена сама
+            // анкета — тоже (`schedule_idle`). У рассылки условие своё, и свести
+            // их внутри модуля значило бы затащить в него обе страницы.
+            + scheduleBodyHtml(rows, on && !idle)
             // ⚠ Кнопки «Сохранить» здесь нет: правки уходят сами, как только
             // отпущен ползунок. Расписание правят ползунком, и кнопка после
             // каждого движения означала бы «подвигал и забыл сохранить» —
@@ -1074,28 +1295,6 @@
              + `${online ? 'Выйти' : 'Войти'}</button>`;
     }
 
-    // Куда встанет новая смена: первый промежуток, свободный от уже заведённых.
-    // `null` — свободного места нет.
-    //
-    // Ищем сами, а не ставим «в конец»: смены не перекрываются, и запись, севшая
-    // поверх соседки, была бы негодной с первой же секунды. Пусть человек двигает
-    // готовую смену, а не чинит только что созданную.
-    function scheduleRoom(rows) {
-        const need = STEP_MINUTES * 2;   // смене нужна хотя бы получасовая ширина
-        let cursor = 0;
-
-        for (const item of rows) {
-            const start = timeMinutes(item.from);
-            if (start - cursor >= need) return {from: cursor, to: cursor + need * 2};
-            cursor = Math.max(cursor, timeMinutes(item.to));
-        }
-
-        if (DAY_MINUTES - cursor >= need) {
-            return {from: cursor, to: Math.min(cursor + need * 2, DAY_MINUTES)};
-        }
-
-        return null;
-    }
 
     // Долгое действие: вход, отключение — минуты живого браузера.
     //
@@ -1276,9 +1475,9 @@
     // хранит решение, и пояснение говорит это прямо — молчащая настройка без
     // объяснения читается как поломка.
     //
-    // Умолчание каждой галочки повторяет умолчание её колонки: `enabled` и
-    // `auto_answer` заведены с единицей, `mailing_on` — с нулём. Разойдись они, и
-    // анкета без ответа сервера выглядела бы не так, как она работает.
+    // Умолчание каждой галочки повторяет умолчание её колонки: `enabled` заведён
+    // с единицей, `mailing_on` — с нулём. Разойдись они, и анкета без ответа
+    // сервера выглядела бы не так, как она работает.
     function settingsBlock(data) {
         const on = data.enabled !== false;
         // Строка списка: в ней логин, пароль, роль и пометка — то, что правят
@@ -1290,14 +1489,17 @@
             + setRow('enabledBox', on, 'Анкета включена',
                      'Выключенную анкету воркер не ведёт: не отвечает и ничего не '
                      + 'отправляет. Входящие сообщения при этом принимаются.', true)
-            + setRow('autoBox', data.auto_answer !== false, 'Чат автоответ',
-                     'Отвечает агент, а не человек. Включение сразу разбирает '
-                     + 'накопившееся — ответы могут уйти прямо сейчас.', true)
             // ⚠ Без приглушения, в отличие от двух выше: умолчание здесь снято, и
             // жёлтая строка горела бы у каждой анкеты и всегда. Жёлтый везде —
             // жёлтый нигде, и тогда он перестанет работать у двух первых.
+            // ⚠ Прежний текст («рассылка ещё не работает») устарел: пул
+            // набирается сам по расписанию сайта, письма уходят кнопкой. Подпись,
+            // отставшая от кода, хуже отсутствующей — ей верят.
             + setRow('mailingBox', data.mailing_on === true, 'Письма рассылка',
-                     'Рассылка ещё не работает: галочка только запоминает решение.',
+                     'Пул писем набирается сам по расписанию сайта, отправляет '
+                     + 'человек кнопкой. ⚠ Рассчитано на анкету, которая в сети: '
+                     + 'заведите ей расписание ниже. Панель этого пока не '
+                     + 'требует — пул наберётся и у офлайновой.',
                      false)
             // ⚠ Расписание переехало сюда с «Профилей»: там оно стояло во вкладке
             // «Настройки» рядом с чтением переписки, хотя говорит о том же, о чём
@@ -1338,7 +1540,6 @@
         const row = profiles.find(g => g.id === currentId) || {id: currentId};
 
         setBind('enabledBox', enabledSet);
-        setBind('autoBox', autoSet);
         setBind('mailingBox', mailingSet);
 
         const deleteBtn = document.getElementById('deleteBtn');
@@ -1386,27 +1587,18 @@
         await profileLoad();
     }
 
-    // ⚠ Тот же флаг, что «ai-ответ» на «Профилях», — и то же побочное действие:
-    // включение сразу разбирает накопившееся, и ответы могут уйти в эту же
-    // секунду. Поэтому говорим, сколько ушло: молчаливое «включено» скрыло бы
-    // отправку, о которой человек не просил вслух.
-    async function autoSet(on, box) {
-        const answer = await putData(`${BASE}/api/dating/profile/${currentId}/auto`,
-                                     {auto_answer: on});
-        box.closest('.prof-set-row').classList.toggle('off', !on);
+    // ⚠ **Галочки «Чат автоответ» здесь больше нет.** Решение переехало на сайт
+    // (`dating_site.chat_answer_on`) и живёт на «Профилях», в полосе подвкладок
+    // «Чата» — рядом с диалогами, то есть там, где на чат и смотрят. Прежде, чтобы
+    // его поднять, человек уходил сюда, искал учётку и щёлкал, не видя ни одного
+    // разговора; а разложенное по сорока анкетам, оно требовало сорока включений,
+    // и забытая анкета молча не отвечала.
+    //
+    // Ручка анкеты (`PUT /api/dating/profile/{id}/auto`) осталась и работает —
+    // столбец `auto_answer` из базы не удалён (миграция
+    // `20260911230000_dating_site_chat_answer_on.sql`), — но круг автоответа его
+    // больше не читает, и звать её отсюда незачем.
 
-        // `answered` приходит пустым, когда агента у анкеты ещё нет: разбирать
-        // было некем. Отсюда чтение через умолчание, а не напрямую.
-        const sent = (answer.result && answer.result.answered
-                      && answer.result.answered.sent) || 0;
-        if (!on) say('автоответ выключен');
-        else say(sent ? `автоответ включён, отправлено ${sent}` : 'автоответ включён');
-
-        // Ответы ушли — собеседницы в карточке изменились. Список слева про
-        // автоответ ничего не рисует (значок там только у выключенной), его не
-        // трогаем.
-        if (sent) await profileLoad();
-    }
 
     async function mailingSet(on) {
         await putData(`${BASE}/api/dating/profile/${currentId}/mailing`,
@@ -1513,6 +1705,8 @@
         localStorage.setItem(DATING_SITE_KEY, siteEl.value);
         currentId = 0;
         profilesLoad();
+        // Панель у каждого сайта своя — и адрес, и состояние.
+        datingPanelPaint(document.getElementById('panelLink'), BASE, siteEl.value);
     });
 
     // Разделители. Тянут не рамку, а переменную сетки — так двигается ровно один
@@ -1555,8 +1749,782 @@
     splitDrag(document.getElementById('splitCol'), '--col', 240, Math.round(innerWidth * 0.6),
               (e) => e.clientX - pageEl.getBoundingClientRect().left);
 
+    // ── Вкладка «Собеседники» ────────────────────────────────────────────────
+    //
+    // ⚠ **Это не наши учётки, а карточки чужих людей.** Ни настроек, ни
+    // расписания, ни входа у них нет и быть не может: мы про них только знаем, а
+    // не ведём их. Отсюда и вид — сетка карточек вместо списка с формами.
+    //
+    // ⚠ **Карточка заводится по требованию, а не списком целиком.** Людей в сети
+    // сотни, а на сайте тысячи; строка появляется, когда о человеке спросили — с
+    // «Профилей», из ленты «Все онлайн». Здесь их только показывают и правят.
+    //
+    // Описание и почту сейчас вписывают руками: API сайта их не отдаёт (проверено
+    // живьём), а сценария «карточка мужчины» у соседа ещё нет.
+
+    const companionPaneEl = document.getElementById('companionPane');
+    const companionsEl = document.getElementById('companions');
+    const companionFindEl = document.getElementById('companionFind');
+    const companionNEl = document.getElementById('companionN');
+    const pageTabsEl = document.getElementById('pageTabs');
+    const companionsPagerEl = document.getElementById('companionsPager');
+    const companionRightEl = document.getElementById('companionRight');
+    const companionWhoEl = document.getElementById('companionWho');
+    const companionEl = document.getElementById('companion');
+    const profilesPaneEl = document.querySelector('.dating-profiles-pane');
+    const rightEl = document.querySelector('.dating-right');
+    const splitColEl = document.getElementById('splitCol');
+
+    // Какая вкладка открыта. «Девушки» — наши учётки, «Собеседники» — те, кому
+    // пишут.
+    // ⚠ **Вкладка переживает перезагрузку.** Работая с собеседниками, страницу
+    // обновляют — посмотреть свежую ленту, вернуться из чужого профиля в соседней
+    // вкладке браузера. Сбрасывать её на «Девушки» каждый раз значит заставлять
+    // человека щёлкать по одному и тому же.
+    const PAGE_TAB_KEY = 'dating.page.tab';
+
+    let pageTab = localStorage.getItem(PAGE_TAB_KEY) === 'companion' ? 'companion' : 'girl';
+    let companions = [];
+    // Сколько карточек у сайта **всего** — из ответа ручки, а не длина списка.
+    //
+    // ⚠ Без этого счётчик в шапке показывал длину выдачи и замирал на потолке:
+    // карточек 410, а в шапке вечные «200», и выглядело это как «собеседники
+    // перестали добавляться». Считать их страница не может — она видит присланное.
+    let companionsTotal = 0;
+
+    // Кто выбран в списке собеседников и какая вкладка открыта у его карточки.
+    // ⚠ Своя пара состояний, а не общая с анкетой: вкладки называются одинаково,
+    // но переключают разное, и общее значение перекидывало бы одну при выборе
+    // другой.
+    //
+    // ⚠ **Выбранный переживает перезагрузку.** Карточку открывают, чтобы дописать
+    // описание, а описание пишут, глядя в чужой профиль на другой вкладке
+    // браузера — и возвращаются сюда обновлением страницы. Терять при этом
+    // выбранного значило бы искать его в списке заново каждый раз.
+    const COMPANION_KEY = 'dating.companion.open';
+
+    let companionId = Number(localStorage.getItem(COMPANION_KEY) || 0);
+    let compTab = 'main';
+
+    // ── Ссылка снаружи: `?companion=<uid>&site=<id>` ─────────────────────────
+    //
+    // По ней приходят из карточки письма на «Профилях»: имя адресата ссылается
+    // сюда, на его страницу у нас. Открыть надо ровно то, чего просили — вкладку
+    // собеседников, нужный сайт и нужного человека.
+    //
+    // ⚠ **Номер человека на сайте (`uid`), а не наш `id` карточки.** Письмо знает
+    // первое: `dating_mailing.uid` — это то, кому оно адресовано на сайте, а нашей
+    // карточки у него могло не быть вовсе в тот миг, когда письмо составлялось.
+    // Ссылка на наш `id` требовала бы, чтобы карточка уже существовала **и не
+    // менялась**, а `uid` — то, что у человека есть всегда.
+    //
+    // ⚠ Сайт передаём **отдельным доводом**: `uid` уникален внутри сайта, а не
+    // вообще. Ключ выбранного сайта общий на весь раздел, и по нему человек мог
+    // прийти сюда с другого — тогда искали бы чужого.
+    const linkParams = new URLSearchParams(location.search);
+
+    // Кого просили открыть. Живёт до первой удачной загрузки списка и гаснет:
+    // иначе он перебивал бы выбор человека при каждом обновлении списка.
+    let wantCompanionUid = String(linkParams.get('companion') || '').trim();
+    const wantCompanionSite = Number(linkParams.get('site') || 0);
+
+    // ⚠ Второй довод — `girl=<id>`: по нему приходят с «Профилей», где имя
+    // выбранной анкеты ссылается сюда. Здесь **наш** номер, а не номер на сайте,
+    // и это не разнобой с `companion`: девушка — наша учётка, она заведена у нас
+    // и без сайта, а собеседник существует только там.
+    let wantGirlId = Number(linkParams.get('girl') || 0);
+    const wantGirlSite = Number(linkParams.get('site') || 0);
+
+    if (wantGirlId) {
+        pageTab = 'girl';
+        localStorage.setItem(PAGE_TAB_KEY, pageTab);
+        if (wantGirlSite) {
+            localStorage.setItem(DATING_SITE_KEY, String(wantGirlSite));
+        }
+        history.replaceState(null, '', location.pathname);
+    }
+
+    if (wantCompanionUid) {
+        // ⚠ Вкладку и сайт ставим **до** первой загрузки, а не после: `sitesLoad`
+        // смотрит на `pageTab`, чтобы решить, грузить ли собеседников, а
+        // `datingSiteFill` — на ключ в хранилище, чтобы выбрать сайт.
+        pageTab = 'companion';
+        localStorage.setItem(PAGE_TAB_KEY, pageTab);
+        if (wantCompanionSite) {
+            localStorage.setItem(DATING_SITE_KEY, String(wantCompanionSite));
+        }
+
+        // ⚠ Адрес чистим сразу, ещё до загрузки. Иначе обновление страницы через
+        // час снова уводило бы к тому же человеку, хотя человек давно смотрит
+        // другого: довод в адресе — это «открой», а не «всегда показывай».
+        history.replaceState(null, '', location.pathname);
+    }
+
+    // Какая страница списка открыта и сколько строк на ней помещается.
+    //
+    // ⚠ Страницу **не запоминаем** между перезагрузками, в отличие от выбранного:
+    // список перестраивается (пришли новые карточки, сменился поиск), и седьмая
+    // страница вчерашнего списка сегодня показывает других людей.
+    let companionsPage = 0;
+    let compPerPage = PAGE_SIZE_GUESS;
+
+    // Кого нужно не просто открыть справа, а **показать в списке слева**: номер
+    // карточки, поставленный ссылкой снаружи.
+    //
+    // ⚠ Отдельно от `companionId` и живёт один заход. Выбранный человек — это
+    // надолго, а «пролистай к нему» — разовая просьба: держи мы её постоянно,
+    // список возвращался бы на его страницу при каждой перерисовке, и полистать
+    // соседние было бы нельзя.
+    let showCompanionId = 0;
+
+    // Запоминаем выбор. Ноль — «никто не выбран»: его тоже помним, иначе снятый
+    // выбор возвращался бы при каждом обновлении.
+    function companionRemember() {
+        localStorage.setItem(COMPANION_KEY, String(companionId || 0));
+    }
+
+    function pageTabPaint() {
+        const girls = pageTab === 'girl';
+
+        pageTabsEl.querySelectorAll('.page-tab').forEach(btn =>
+            btn.classList.toggle('on', btn.dataset.tab === pageTab));
+
+        // Прячем классом, а не перерисовкой: переключение вкладки не должно стоить
+        // перезагрузки списка анкет и потери выбранной.
+        profilesPaneEl.classList.toggle('off', !girls);
+        rightEl.classList.toggle('off', !girls);
+        companionPaneEl.classList.toggle('off', girls);
+        companionRightEl.classList.toggle('off', girls);
+
+        // ⚠ Разделитель остаётся **на обеих вкладках**: колонок теперь две и там,
+        // и там, а ширину их тянут одной ручкой — она общая, как и клетка сетки.
+        splitColEl.classList.remove('off');
+    }
+
+    pageTabsEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('.page-tab');
+        if (!btn || btn.dataset.tab === pageTab) return;
+
+        pageTab = btn.dataset.tab;
+        localStorage.setItem(PAGE_TAB_KEY, pageTab);
+        pageTabPaint();
+        if (pageTab === 'companion') companionsLoad();
+    });
+
+    // Забирает карточки сайта целиком, сотнями. ⚠ **Ручка отдаёт их страницами**
+    // (`limit`), и один запрос приносил бы только первую: у живого сайта карточек
+    // уже за четыре сотни, а список на странице листается своим пейджером и ждёт
+    // весь набор.
+    //
+    // ⚠ Круг с потолком, а не `while (true)`: ошибка в счёте на сервере не должна
+    // оборачиваться бесконечным опросом из браузера.
+    async function companionsFetch(site, find) {
+        const все = [];
+        for (let page = 0; page < 50; page++) {
+            const answer = await getData(
+                `${BASE}/api/dating/companion?site_id=${site}&find=${find}&page=${page}`);
+            const часть = answer.result || [];
+            все.push(...часть);
+            companionsTotal = Number(answer.total || все.length);
+
+            // Пришло меньше страницы — она последняя. Сверяем и с `total`: так
+            // круг кончается и когда сервер отдал ровно потолок в последний раз.
+            if (часть.length < Number(answer.limit || часть.length || 1)) break;
+            if (все.length >= companionsTotal) break;
+        }
+
+        return все;
+    }
+
+    async function companionsLoad() {
+        const site = Number(siteEl.value || 0);
+        if (!site) {
+            companions = [];
+            companionsTotal = 0;
+            companionId = 0;
+            companionsPaint();
+            companionPaint();
+
+            return;
+        }
+
+        // ⚠ Новый список — с первой страницы: сменился сайт или поиск, и седьмая
+        // страница прежнего показывала бы совсем других людей.
+        companionsPage = 0;
+
+        const find = encodeURIComponent(companionFindEl.value.trim());
+        try {
+            companions = await companionsFetch(site, find);
+        } catch (e) {
+            companions = [];
+            companionsTotal = 0;
+            say('собеседники не пришли: ' + e.message, true);
+        }
+
+        // Сайт могли переключить, пока ответ ехал.
+        if (Number(siteEl.value || 0) !== site) return;
+
+        // ⚠ Пришли по ссылке из карточки письма — открываем того, кого просили.
+        // **Раньше проверки выбранного**: она сверяет `companionId` со списком, а
+        // до неё его надо успеть подменить.
+        if (wantCompanionUid) {
+            const asked = companions.find(row => row.uid === wantCompanionUid);
+            if (asked) {
+                companionId = asked.id;
+                companionRemember();
+                // ⚠ И **страницу списка** на ту, где он стоит: карточка справа
+                // открылась бы, а строка слева осталась бы на другой странице —
+                // выбранный есть, а глазами его не найти. Считает это сама
+                // отрисовка: здесь `compPerPage` ещё догадка.
+                showCompanionId = companionId;
+            } else {
+                // ⚠ Не нашли — говорим словами и оставляем список как есть.
+                // Молча открыть первого попавшегося было бы хуже всего: человек
+                // пришёл читать про конкретного и прочёл бы про чужого, не заметив
+                // подмены.
+                //
+                // Причин две, и обе законны: карточку могли удалить или её отсёк
+                // поиск, набранный здесь раньше.
+                say(`собеседника ${wantCompanionUid} в списке нет — `
+                    + 'карточку могли удалить или её прячет поиск', true);
+            }
+
+            // Гасим в любом случае: довод в адресе действует один раз, иначе он
+            // перебивал бы выбор человека при каждом обновлении списка.
+            wantCompanionUid = '';
+        }
+
+        // ⚠ Выбранный мог не пережить перезагрузку списка: сменился сайт, поиск
+        // отсёк его строку. Держать выбор на том, кого в списке нет, значит
+        // показывать справа карточку, которой не видно слева.
+        if (companionId && !companions.some(row => row.id === companionId)) {
+            companionId = 0;
+        }
+
+        // ⚠ **Никто не выбран — открываем первого.** Пустая правая колонка рядом с
+        // полным списком читается как «ещё грузится»; а первый в списке — самый
+        // свежий, то есть тот, о ком спросили последним, и открыть его хочется
+        // чаще всего.
+        //
+        // ⚠ Выбор при этом **не запоминаем**: человек его не делал, и держать
+        // случайного первого как «его выбор» значило бы решать за него.
+        if (!companionId && companions.length) companionId = companions[0].id;
+
+        companionsPaint();
+        companionPaint();
+    }
+
+    // ⚠ `tries` — как у списка анкет: первый заход рисует прикидкой, когда подвала
+    // с пейджером ещё нет, и меряет тело панели во всю высоту; появился пейджер —
+    // тело сжалось, и последняя строка уехала под него. Второй заход снимает
+    // лишнюю, третий подтверждает, что сошлось.
+    function companionsPaint(tries = 3) {
+        // ⚠ Счёт — из ответа ручки (`total`), а не длина списка: см. `companionsTotal`.
+        // Расходятся они, когда список ещё дочитывается страницами, — и число из
+        // ответа в этот миг вернее того, что успело приехать.
+        const всего = Math.max(companionsTotal, companions.length);
+        companionNEl.textContent = всего ? String(всего) : '';
+
+        // ⚠ Про свежесть ленты говорим словами. Без этого «точек ни у кого» не
+        // отличить от «ленту давно не снимали» — а это разные вещи: в первом случае
+        // никого нет на сайте, во втором мы просто не знаем.
+        //
+        // Ленту эта страница не снимает: её обновляет круг и «Профили». Поэтому
+        // подпись не жалуется, а объясняет, куда идти.
+        const свежесть = document.getElementById('companionFresh');
+        if (свежесть) {
+            const снимок = companions.find(row => row.online_age >= 0);
+            const кто = companions.filter(row => row.online).length;
+
+            свежесть.textContent = !снимок
+                ? 'Ленту «Все онлайн» давно не снимали — кто в сети, не знаем. '
+                  + 'Она обновляется на «Профилях».'
+                : (кто
+                    ? `На сайте сейчас: ${кто}. Лента снята ${_минут(снимок.online_age)}.`
+                    : `Никого из них сейчас на сайте нет. Лента снята ${_минут(снимок.online_age)}.`);
+        }
+
+        if (!companions.length) {
+            companionsEl.innerHTML = '<div class="comp-empty">'
+                + (companionFindEl.value.trim()
+                    ? 'Никого не нашлось.'
+                    : 'Собеседников пока нет. Карточка заводится, когда о человеке '
+                      + 'спросили — с «Профилей», из ленты «Все онлайн».')
+                + '</div>';
+
+            return;
+        }
+
+        // ⚠ Страницу под искомого считаем **здесь**, а не при разборе ссылки: там
+        // `compPerPage` ещё догадка (`PAGE_SIZE_GUESS`), а настоящее число строк
+        // известно только после замера — ниже по этой же функции. Промах виден
+        // сразу: список открывается на странице, где искомого нет.
+        if (showCompanionId) {
+            const где = companions.findIndex(row => row.id === showCompanionId);
+            if (где >= 0) companionsPage = Math.floor(где / compPerPage);
+        }
+
+        // Страница могла уехать за конец: карточку убрали, поиск отсёк половину.
+        const страниц = Math.max(1, Math.ceil(companions.length / compPerPage));
+        if (companionsPage >= страниц) companionsPage = страниц - 1;
+
+        const видно = companions.slice(companionsPage * compPerPage,
+                                       (companionsPage + 1) * compPerPage);
+
+        companionsEl.innerHTML = '<div class="comp-grid">'
+            + видно.map((row, index) => {
+                const meta = [row.age || '', row.city, row.country]
+                    .map(part => String(part || '').trim()).filter(Boolean).join(' · ');
+
+                return `<div class="comp-card${row.id === companionId ? ' active' : ''}"`
+                    + ` data-index="${index}">`
+                    + '<span class="comp-face-wrap">'
+                    + (row.photo
+                        ? `<img class="comp-face" src="${esc(row.photo)}" alt=""`
+                          + ' referrerpolicy="no-referrer"'
+                          + ' onerror="this.style.visibility=\'hidden\'">'
+                        : '<span class="comp-face"></span>')
+                    + '</span>'
+                    + '<span class="comp-text">'
+                    + `<span class="comp-name" title="${esc(row.name || row.uid)}">`
+                    + `${esc(row.name || 'без имени')}</span>`
+                    // ⚠ Состояние — **в одной строке с номером**, а не отдельной.
+                    // Номер короткий, места справа от него вдоволь, и строк в
+                    // карточке от этого на одну меньше: список читают, скользя
+                    // взглядом вниз, и каждая лишняя строка замедляет поиск.
+                    //
+                    // Словами, а не только точкой на аватарке: точка привязана к
+                    // фото, а фото есть не у всех — у карточки без него она висела
+                    // в пустом сером квадрате и сливалась с ним.
+                    + '<span class="comp-line">'
+                    + `<span class="comp-uid" title="номер на сайте">${esc(row.uid)}</span>`
+                    + (row.online_known
+                        ? `<span class="state-word${row.online ? ' on' : ''}">`
+                          + `${row.online ? 'в сети' : 'не в сети'}</span>`
+                          + _точка(row)
+                        : '')
+                    + '</span>'
+                    + (meta ? `<span class="comp-meta">${esc(meta)}</span>` : '')
+                    // ⚠ В строке — только признак описания, а не текст: строку
+                    // читают, чтобы **выбрать**, а описание бывает на абзац и
+                    // растянуло бы список так, что искать в нём стало бы нечем.
+                    // Само описание — справа, у выбранного.
+                    + (row.has_about
+                        ? '<span class="comp-meta">есть описание</span>'
+                        : '<span class="comp-none">описания нет</span>')
+                    + '</span>'
+                    + `<button type="button" class="comp-drop" data-drop="${index}"`
+                    + ' title="Убрать карточку собеседника"'
+                    + ` aria-label="Убрать карточку ${esc(row.name || row.uid)}">×</button>`
+                    + '</div>';
+            }).join('')
+            + '</div>';
+
+        // ⚠ Крестик гасит всплытие: иначе щелчок по нему ещё и выбирал бы строку —
+        // ту самую, которую человек решил убрать.
+        // ⚠ Индекс — по **видимой** части, а не по всему списку: на второй
+        // странице `data-index="0"` это первая строка страницы, а не первый
+        // собеседник вообще. Смешай мы их — щелчок открывал бы чужую карточку.
+        companionsEl.querySelectorAll('.comp-drop').forEach(btn =>
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const row = видно[Number(btn.dataset.drop)];
+                if (row) companionDrop(row);
+            }));
+
+        companionsEl.querySelectorAll('.comp-card').forEach(el =>
+            el.addEventListener('click', () => {
+                const row = видно[Number(el.dataset.index)];
+                if (!row) return;
+
+                // Повторный щелчок снимает выбор — как строка анкеты.
+                companionId = row.id === companionId ? 0 : row.id;
+                companionRemember();
+                companionsPaint();
+                companionPaint();
+            }));
+
+        const счёт = `${companions.length} собеседник` + _окончание(companions.length);
+
+        pagerRender(companionsPagerEl, страниц, companionsPage, (page) => {
+            companionsPage = page;
+            // Без подгонки (`0`): число строк уже сошлось, а лишний заход дёрнул
+            // бы список под руками.
+            companionsPaint(0);
+            companionsEl.scrollTop = 0;
+        }, счёт);
+
+        // Подгоняем число строк под высоту панели — тем же приёмом, что у анкет.
+        const влезает = compRowsFit();
+        if (tries > 0 && влезает !== compPerPage) {
+            compPerPage = влезает;
+            companionsPaint(tries - 1);
+
+            return;
+        }
+
+        // Число строк сошлось — значит и страница посчитана по настоящему их
+        // числу, и просьба ссылки исполнена. Гасим её: дальше листает человек.
+        showCompanionId = 0;
+    }
+
+    // «1 собеседник», «2 собеседника», «5 собеседников» — по числу.
+    function _окончание(n) {
+        const two = n % 100;
+        if (two >= 11 && two <= 14) return 'ов';
+
+        const one = n % 10;
+        if (one === 1) return '';
+        if (one >= 2 && one <= 4) return 'а';
+
+        return 'ов';
+    }
+
+    // Сколько строк помещается в панели. ⚠ Меряем живую строку, а не считаем по
+    // зашитому числу: высота зависит от шрифта и размера лица, и число разъехалось
+    // бы с разметкой при первой же правке стилей.
+    function compRowsFit() {
+        const probe = companionsEl.querySelector('.comp-card');
+        if (!probe) return compPerPage;
+
+        const rowH = probe.getBoundingClientRect().height;
+        if (rowH < 1) return compPerPage;
+
+        return Math.max(1, Math.floor(companionsEl.clientHeight / rowH));
+    }
+
+    // ── Карточка выбранного собеседника ──────────────────────────────────────
+    //
+    // ⚠ Вкладки те же, что у анкеты: «Общая информация» и «Переменные». Разное по
+    // природе: первое — что мы о человеке знаем, второе — что из этого попадёт в
+    // письмо. Одной простынёй переменные тонули бы под описанием.
+
+    const openCompanion = () => companions.find(row => row.id === companionId) || null;
+
+    function companionPaint() {
+        const row = openCompanion();
+        companionWhoEl.textContent = row ? ` · ${row.name || row.uid}` : '';
+
+        if (!row) {
+            companionEl.innerHTML = '<div class="comp-empty">Выберите собеседника '
+                                  + 'в списке — здесь будет его карточка.</div>';
+
+            return;
+        }
+
+        const scroll = companionEl.scrollTop;
+        companionEl.innerHTML =
+            '<div class="card-tabs">'
+            + `<button type="button" class="card-tab${compTab === 'main' ? ' on' : ''}"`
+            + ' data-tab="main">Общая информация</button>'
+            + `<button type="button" class="card-tab${compTab === 'var' ? ' on' : ''}"`
+            + ' data-tab="var">Переменные</button>'
+            + '</div>'
+            + (compTab === 'var' ? '<div id="compVarBox"></div>' : companionMain(row));
+        companionEl.scrollTop = scroll;
+
+        companionEl.querySelectorAll('.card-tab').forEach(btn =>
+            btn.addEventListener('click', () => {
+                if (btn.dataset.tab === compTab) return;
+                compTab = btn.dataset.tab;
+                companionPaint();
+            }));
+
+        if (compTab === 'var') {
+            compVarsPaint();
+            compVarsLoad(row.id);
+
+            return;
+        }
+
+        companionBind(row);
+    }
+
+    // «Общая информация»: что о человеке известно и что правят руками.
+    function companionMain(row) {
+        const meta = [row.age ? `${row.age} лет` : '', row.city, row.country]
+            .map(part => String(part || '').trim()).filter(Boolean).join(' · ');
+
+        return '<div class="comp-view">'
+            + '<div class="comp-view-head">'
+            + (row.photo
+                ? `<img class="comp-view-face" src="${esc(row.photo)}" alt=""`
+                  + ' referrerpolicy="no-referrer"'
+                  + ' onerror="this.style.visibility=\'hidden\'">'
+                : '<span class="comp-view-face"></span>')
+            + '<span class="comp-view-title">'
+            + `<span class="comp-view-name">${esc(row.name || 'без имени')}`
+            + (row.online_known
+                ? `<span class="state-word-big${row.online ? '' : ' off'}">`
+                  + ` · ${row.online ? 'сейчас на сайте' : 'не в сети'}</span>`
+                  + _точка(row)
+                : '')
+            + '</span>'
+            + `<span class="comp-uid">${esc(row.uid)}</span>`
+            + (meta ? `<span class="comp-meta">${esc(meta)}</span>` : '')
+            + '</span></div>'
+
+            // ⚠ **Приоритет — первым полем, до почты.** Это не сведение о человеке,
+            // а решение о нём: остальное в карточке отвечает «кто он», а галочка —
+            // «что с ним делаем». Решение читают раньше подробностей.
+            + '<label class="comp-priority" title="Пул писем набирается до потолка и '
+            + 'обрывается на полпути по ленте. Отмеченные попадут в него раньше '
+            + 'прочих — но прочие никуда не деваются">'
+            + `<input type="checkbox" data-flag="priority"${row.priority ? ' checked' : ''}>`
+            + '<span>Приоритет в рассылке</span>'
+            + '</label>'
+            + '<div class="comp-hint comp-priority-hint">Кому писать в первую '
+            + 'очередь. Это порядок, а не отбор: неотмеченные остаются в рассылке.'
+            + '</div>'
+
+            // ⚠ Почта и описание — **раскрытыми полями**, а не за кнопкой
+            // «Править»: в правой колонке место есть, и прятать два поля за
+            // щелчком тут значило бы беречь пустоту. В списке было наоборот —
+            // там десяток раскрытых форм превращался в частокол.
+            + '<div class="comp-field">'
+            + '<span class="comp-field-label">Почта</span>'
+            + `<input type="text" data-field="email" value="${esc(row.email)}"`
+            + ' placeholder="почта" spellcheck="false" autocomplete="off">'
+            + '</div>'
+
+            + '<div class="comp-field">'
+            + '<span class="comp-field-label">Описание — про что спросит письмо'
+            // ⚠ Когда сведения сняты — рядом с самим описанием, а не в подвале:
+            // читая текст, человек первым делом спрашивает «насколько это свежо».
+            // Показываем только когда ходили: у вписанного руками даты нет.
+            + (row.about_at
+                ? `<span class="comp-when"> · снято ${esc(timeShift(row.about_at))}</span>`
+                : '')
+            + '</span>'
+            + '<textarea data-field="about" rows="8"'
+            + ' placeholder="полезный текст из профиля: чем занимается, что любит">'
+            + `${esc(row.about)}</textarea>`
+            + '<span class="comp-hint">'
+            + (row.has_about
+                ? 'Сохраняется, когда уходите из поля.'
+                : 'Пока пусто — письмо не спросит про интересы, и вопрос выйдет '
+                  + 'общим. Сохраняется, когда уходите из поля.')
+            + '</span>'
+            + '</div>'
+            + '</div>';
+    }
+
+    // Переключает приоритет собеседника в рассылке.
+    //
+    // ⚠ **Своей ручкой, а не вместе с почтой и описанием.** Те сохраняются по уходу
+    // из поля; уедь галочка с ними — она гасла бы при каждом сохранении текста,
+    // который правят чаще. Здесь щелчок и есть всё действие.
+    async function companionPriority(row, box) {
+        const on = box.checked;
+        box.disabled = true;
+        try {
+            const answer = await putData(
+                `${BASE}/api/dating/companion/${row.id}/priority`, {priority: on});
+            // ⚠ Кладём ответ сервера в список: карточка перерисовывается из него, и
+            // своей догадкой о новом состоянии её подменять незачем.
+            const got = (answer.result || {});
+            const i = companions.findIndex(one => one.id === row.id);
+            if (i >= 0) companions[i] = got;
+            say(on ? 'приоритет включён — этому напишем раньше прочих'
+                   : 'приоритет снят');
+        } catch (e) {
+            box.checked = !on;
+            say('не переключилось: ' + e.message, true);
+        } finally {
+            box.disabled = false;
+        }
+    }
+
+    // Правка полей: сохраняем по уходу из поля, а не по кнопке «Сохранить».
+    // ⚠ Полей два, и кнопка рядом с ними спорила бы за смысл с вкладками сверху.
+    function companionBind(row) {
+        const priority = companionEl.querySelector('[data-flag="priority"]');
+        if (priority) {
+            priority.addEventListener('change', () => companionPriority(row, priority));
+        }
+
+        companionEl.querySelectorAll('[data-field]').forEach(el => {
+            el.addEventListener('change', async () => {
+                const send = {
+                    email: (companionEl.querySelector('[data-field=email]') || {}).value || '',
+                    about: (companionEl.querySelector('[data-field=about]') || {}).value || '',
+                };
+
+                let answer;
+                try {
+                    answer = await putData(`${BASE}/api/dating/companion/${row.id}`, send);
+                } catch (err) {
+                    say('не сохранилось: ' + err.message, true);
+
+                    return;
+                }
+
+                const at = companions.findIndex(one => one.id === row.id);
+                if (at >= 0) companions[at] = answer.result;
+
+                say('сохранено');
+
+                // ⚠ Список перерисовываем, карточку — **нет**: в ней человек и
+                // печатает, и перерисовка дёрнула бы текст под руками. А в списке
+                // меняется признак «есть описание», и он должен догнать правку.
+                companionsPaint();
+            });
+        });
+    }
+
+    // Точка состояния на аватарке. Три случая, и третий — молчание.
+    //
+    // ⚠ **Отсутствие точки значит «не знаем»**, а не «не в сети»: лента могла
+    // устареть. Рисовать в этом случае серую было бы неправдой — она читается как
+    // «его нет», а мы просто не смотрели.
+    function _точка(row) {
+        if (!row.online_known) return '';
+
+        return row.online
+            ? '<span class="state-dot" title="сейчас на сайте"></span>'
+            : '<span class="state-dot off" title="не в сети"></span>';
+    }
+
+    // «12 минут назад» — и «только что» для свежего: цифра «0 минут назад» читается
+    // как поломка.
+    function _минут(sec) {
+        const m = Math.floor(Number(sec || 0) / 60);
+
+        if (m < 1) return 'только что';
+        if (m === 1) return 'минуту назад';
+        if (m < 5) return `${m} минуты назад`;
+
+        return `${m} минут назад`;
+    }
+
+    // Убирает карточку собеседника.
+    //
+    // ⚠ **Спрашиваем, и про описание — прямо.** Удаление необратимо, а описание
+    // стоило полсотни секунд живого браузера: собрать его заново можно, но это
+    // снова минута ожидания. Молчаливое удаление по щелчку тут было бы дороже
+    // лишнего вопроса.
+    async function companionDrop(row) {
+        const кто = row.name || row.uid;
+        const есть = String(row.about || '').trim();
+
+        if (!confirm(`Убрать карточку ${кто}?\n\n`
+                     + (есть
+                        ? 'Описание, снятое с сайта, пропадёт — собирать его заново '
+                          + 'это минута ожидания. '
+                        : '')
+                     + 'Готовые письма этому человеку останутся в пуле.')) {
+            return;
+        }
+
+        try {
+            await deleteData(`${BASE}/api/dating/companion/${row.id}`);
+        } catch (e) {
+            say('не убралось: ' + e.message, true);
+
+            return;
+        }
+
+        say('карточка убрана');
+
+        // Выбор снимаем: того, кого выбрали, больше нет. Список перечитываем с
+        // сервера — соседние карточки могли измениться, пока эту читали.
+        companionId = 0;
+        companionRemember();
+        await companionsLoad();
+    }
+
+    // ── Переменные адресата ──────────────────────────────────────────────────
+    //
+    // ⚠ **Здесь ничего не хранится и не правится.** Значение `companion`-переменной
+    // выводится из карточки: `companion_name` — это имя адресата. Своё хранилище
+    // разошлось бы с карточкой в первую же правку, и письмо ушло бы со старым
+    // именем.
+    //
+    // Вкладка отвечает на другой вопрос: **уйдёт ли письмо этому человеку и как в
+    // нём обратятся**. Пустое значение означает, что не уйдёт.
+
+    let compVars = [];
+    let compVarsFor = 0;
+
+    async function compVarsLoad(wanted) {
+        try {
+            compVars = (await getData(
+                `${BASE}/api/dating/companion/${wanted}/var`)).result || [];
+        } catch (e) {
+            compVars = [];
+            say('переменные не пришли: ' + e.message, true);
+        }
+
+        // Гонка: пока шёл запрос, могли выбрать другого человека или вкладку.
+        if (companionId !== wanted || compTab !== 'var') return;
+
+        compVarsFor = wanted;
+        compVarsPaint();
+    }
+
+    function compVarsPaint() {
+        const box = document.getElementById('compVarBox');
+        if (!box) return;
+
+        // Пока не пришли — не пишем «переменных нет»: это неправда, и человек
+        // успеет её прочитать.
+        if (compVarsFor !== companionId) {
+            box.innerHTML = '<div class="comp-hint">Смотрю…</div>';
+
+            return;
+        }
+
+        if (!compVars.length) {
+            box.innerHTML = '<div class="comp-empty">Переменных про адресата на этом '
+                          + 'сайте нет.<br>Их заводят на «Письмах», вкладка '
+                          + '«Переменные», источник «Про адресата».</div>';
+
+            return;
+        }
+
+        box.innerHTML = '<div class="comp-vars">'
+            + compVars.map(item => {
+                const cls = !item.filled ? ' empty' : (item.from_default ? ' fallback' : '');
+
+                return `<div class="comp-var${cls}">`
+                    + `<span class="comp-var-name">[[${esc(item.name)}]]</span>`
+                    + `<span class="comp-var-from">${esc(varFrom(item))}</span>`
+                    + '<span class="comp-var-value">'
+                    + (item.filled
+                        ? esc(item.value)
+                        : 'пусто — письмо с этой переменной не уйдёт')
+                    + '</span>'
+                    + '</div>';
+            }).join('')
+            + '</div>'
+            + '<div class="comp-hint">Значения берутся из карточки и здесь не '
+            + 'правятся: поправьте поле на вкладке «Общая информация», и они '
+            + 'изменятся сами.</div>';
+    }
+
+    // Откуда взялось значение. Три ответа, и каждый значит своё для отправки.
+    function varFrom(item) {
+        if (!item.filled) return `поле «${item.field}» пусто`;
+        if (item.from_default) return 'умолчание реестра';
+
+        return `поле «${item.field}»`;
+    }
+
+    // Поиск режет на сервере: карточек накопятся сотни, и слать их целиком ради
+    // поиска незачем. Задержка — чтобы не слать запрос на каждую букву.
+    let companionFindTimer = 0;
+    companionFindEl.addEventListener('input', () => {
+        clearTimeout(companionFindTimer);
+        companionFindTimer = setTimeout(companionsLoad, 300);
+    });
+
     layoutRestore();
+    pageTabPaint();
     sitesLoad();
+
+    // ⚠ Список собеседников грузим **после** сайтов: он спрашивается по сайту, а
+    // сайт выбирается там. Своего вызова здесь нет — `sitesLoad` дойдёт до
+    // `companionsLoad` сам, если открыта их вкладка.
     setInterval(probe, PROBE_MS);
 </script>
 {% endblock %}

@@ -44,6 +44,33 @@ DATING_ONLINE_KEY = 'dating:people:site:{site_id}:online'
 DATING_ONLINE_FRESH_SEC = 300
 
 
+# Сколько снимок годится **для показа точки**. Пятнадцать минут против пяти у
+# отправки — и порога два не по недосмотру.
+#
+# ⚠ Вопросы разные. «Слать ли письмо прямо сейчас» — решение с последствием, и
+# пятиминутный снимок для него уже сомнителен. «Был ли человек на сайте недавно» —
+# сведение к размышлению, и десятиминутной давности оно не портит.
+#
+# Практический довод решает: страница «Анкеты» ленту **не снимает вовсе** — её
+# обновляет круг и страница «Профили». С порогом в пять минут точек на вкладке
+# «Собеседники» не бывало бы почти никогда, и признак вышел бы мёртвым.
+DATING_ONLINE_SHOW_SEC = 900
+
+
+def dating_online_show(site_id: int, uid: str) -> dict:
+    """В сети ли человек — **для показа**, а не для решения об отправке.
+
+    Returns:
+        dict: `online`, `known` и `age_sec` — возраст снимка в секундах.
+
+    ⚠ Отличается от `dating_online_check` только сроком годности снимка
+    (`DATING_ONLINE_SHOW_SEC` против `DATING_ONLINE_FRESH_SEC`). Держать две
+    функции проще, чем одну с флагом: у флага нет имени, а у этих двух — есть, и по
+    имени видно, кто чем пользуется.
+    """
+    return _check(int(site_id or 0), str(uid or ''), DATING_ONLINE_SHOW_SEC)
+
+
 def dating_online_check(site_id: int, uid: str) -> dict:
     """В сети ли собеседник по последнему снимку сайта.
 
@@ -59,15 +86,30 @@ def dating_online_check(site_id: int, uid: str) -> dict:
         Разделение важно для страницы: «в сети» и «неизвестно» подписываются
         по-разному, а запрещать по незнанию нельзя.
     """
-    snapshot = _snapshot(int(site_id or 0))
+    got = _check(int(site_id or 0), str(uid or ''), DATING_ONLINE_FRESH_SEC)
+
+    # ⚠ Не знаем — **пропускаем**: запрещать по незнанию нельзя, иначе анкета
+    # молчала бы всякий раз, когда лента не снята.
+    if not got['known']:
+        return {**got, 'online': True}
+
+    return got
+
+
+def _check(site_id: int, uid: str, fresh_sec: int) -> dict:
+    """Общий расчёт: есть ли человек в снимке и не протух ли снимок.
+
+    ⚠ `online: False` при `known: False` — «нет данных», а не «нет в сети».
+    Толкование этого случая разное у отправки и у показа, и делает его вызывающий:
+    отправка пропускает, показ молчит.
+    """
+    snapshot = _snapshot(site_id)
     if not snapshot:
-        return {'online': True, 'known': False, 'age_sec': -1}
+        return {'online': False, 'known': False, 'age_sec': -1}
 
     age = int(time.time() - snapshot['at'])
-    if age >= DATING_ONLINE_FRESH_SEC:
-        # Снимок устарел: состав сети за пять минут меняется, и запрещать по нему
-        # — угадывать. Пропускаем, отметив, что уверенности нет.
-        return {'online': True, 'known': False, 'age_sec': age}
+    if age >= int(fresh_sec):
+        return {'online': False, 'known': False, 'age_sec': age}
 
     people = snapshot.get('people') or []
 
@@ -76,6 +118,22 @@ def dating_online_check(site_id: int, uid: str) -> dict:
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+def dating_online_taken_at(site_id: int) -> float:
+    """Когда снят последний снимок ленты. `0` — снимка нет или Redis молчит.
+
+    ⚠ **Наружу — ради круга приставаний.** Он должен просыпаться на каждое
+    обновление ленты («появился онлайн — можно писать»), а не раз в полчаса по
+    своему сроку: человек заходит на десять минут, и получасовой круг его
+    попросту не застаёт.
+
+    Отдаём метку снимка, а не список: кругу нужно одно — понять, тот же это снимок
+    или новый.
+    """
+    snapshot = _snapshot(int(site_id or 0))
+
+    return float((snapshot or {}).get('at') or 0)
+
 
 def _snapshot(site_id: int) -> dict | None:
     """Снимок «кто в сети» из Redis. Сбой Redis — не беда: вернём «не знаем».

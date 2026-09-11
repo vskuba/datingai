@@ -13,6 +13,7 @@ import pytest
 
 from tests.conftest import ADMIN_USERNAME
 
+pytestmark = pytest.mark.core
 # Пароль тестовых учёток: длиннее минимума, чтобы проверялось правило, а не он.
 PASSWORD = 'test-password-123'
 

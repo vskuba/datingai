@@ -1,0 +1,475 @@
+"""Переписка с избранными: кого берём в работу и как часто ему пишем.
+
+⚠ **Наружу сюита не ходит** (`testing.md`): письмо — это вызов LLM у соседа, а
+отправка ещё и письмо живому человеку. Проверяется то, что решается у нас и что
+ломается:
+
+* `_quiet` — кого берём. Цена ошибки высока в обе стороны: пропустим — разговор
+  так и останется затихшим, возьмём лишнего — напишем тому, кто ждёт ответа на
+  своё письмо, и наше «а расскажи ещё» придёт вместо ответа.
+* `_too_soon` — как часто пишем. Оба предела **про человека**, а не про сайт, и
+  считают они **всё ушедшее ему**: письма считает получатель, а не наши таблицы.
+
+Анкеты заводятся на стенде (`STAND_SITE`), а не на рабочем сайте — иначе их
+подхватили бы круги воркера.
+"""
+
+import json
+import time
+import uuid
+
+import pytest
+
+from mysql_.mysql_ import mysql_get_db_async
+
+from src.dating import dating_favorite_mail
+from src.dating.dating_favorite_mail import _quiet, _too_soon
+
+pytestmark = pytest.mark.mail
+# Стенд у соседа: круги воркера про него не знают — его нет в `dating_site`.
+STAND_SITE = 999_343
+
+
+async def _profile(auth_client, tag: str) -> int:
+    made = (await auth_client.post('/api/dating/profile', json={
+        'site_id': STAND_SITE,
+        'login': f'{tag}-{uuid.uuid4().hex[:8]}@example.com',
+        'password': 'x'})).json()['result']
+
+    return int(made)
+
+
+async def _star(profile_id: int, uid: str, state: str = 'done') -> None:
+    """Человек в избранных у этой анкеты — с него и начинается отбор.
+
+    ⚠ **И в сети**: отбор берёт только тех, кто там сейчас (фикстура `online`).
+    Отмечается здесь, а не отдельным вызовом в каждом тесте: звёздочка и
+    присутствие — два обязательных условия одного и того же, и порознь о втором
+    забывают.
+    """
+    if str(uid) not in _В_СЕТИ:
+        _В_СЕТИ.append(str(uid))
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO dating_favorite (site_id, profile_id, uid, state)'
+            ' VALUES (%s, %s, %s, %s)'
+            ' ON DUPLICATE KEY UPDATE state = VALUES(state)',
+            (STAND_SITE, int(profile_id), str(uid), state))
+        await db.connection.commit()
+
+
+async def _his(profile_id: int, uid: str, when: str) -> None:
+    """Его письмо: последнее слово за ним."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO dating_mail_in'
+            ' (site_id, profile_id, message_id, uid, name, body, date_post)'
+            " VALUES (%s, %s, %s, %s, 'X', 'hi', %s)",
+            (STAND_SITE, int(profile_id), int(uuid.uuid4().int % 10 ** 9), str(uid),
+             when))
+        await db.connection.commit()
+
+
+async def _hers(profile_id: int, uid: str, when: str,
+                table: str = 'dating_mailing') -> None:
+    """Наше ушедшее письмо. Таблица — чтобы проверить, что считаются все три."""
+    async with mysql_get_db_async() as db:
+        if table == 'dating_mailing':
+            await db.execute(
+                'INSERT INTO dating_mailing'
+                ' (site_id, profile_id, mail_id, uid, name, body, status, sent_at)'
+                " VALUES (%s, %s, NULL, %s, 'X', 'hi', 'sent', %s)",
+                (STAND_SITE, int(profile_id), str(uid), when))
+        elif table == 'dating_favorite_mail':
+            await db.execute(
+                'INSERT INTO dating_favorite_mail'
+                ' (site_id, profile_id, uid, name, body, status, sent_at)'
+                " VALUES (%s, %s, %s, 'X', 'hi', 'sent', %s)",
+                (STAND_SITE, int(profile_id), str(uid), when))
+        else:
+            raise AssertionError(f'неизвестная таблица: {table}')
+
+        await db.connection.commit()
+
+
+async def _draft(profile_id: int, uid: str) -> None:
+    """Черновик в пуле: такому человеку второй не готовим."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO dating_favorite_mail'
+            ' (site_id, profile_id, uid, name, body, status)'
+            " VALUES (%s, %s, %s, 'X', 'hi', 'draft')",
+            (STAND_SITE, int(profile_id), str(uid)))
+        await db.connection.commit()
+
+
+# Кто «сейчас в сети» по мнению подменённого снимка ленты. Список, а не
+# переменная: его пополняет `_star`, а читает фикстура `online` — из вложенной
+# функции переменную не присвоить без `global`.
+_В_СЕТИ: list[str] = []
+
+
+class _FakeRedis:
+    """Redis настолько, насколько его читает `dating_online_show`.
+
+    ⚠ **Подмена, а не живой Redis.** Сюита гоняется с хоста, а `dating_redis`
+    виден только внутри docker-сети: порт наружу не выведен, и обращение к нему
+    падает `Name or service not known`. Тот же приём и та же причина, что в
+    `test_online_guard.py`.
+    """
+
+    def get(self, key):
+        return json.dumps({'at': time.time(),
+                           'people': [{'uid': one} for one in _В_СЕТИ]})
+
+
+@pytest.fixture(autouse=True)
+def online(monkeypatch):
+    """Снимок ленты: в сети те, кого завёл `_star`.
+
+    ⚠ `autouse`: **отбор берёт только тех, кто сейчас в сети**, и без подмены
+    `_quiet` не вернул бы ничего — половина здешних проверок молча проверяла бы
+    пустоту. Забыть её в новом тесте проще, чем заметить такую тишину.
+    """
+    _В_СЕТИ.clear()
+    monkeypatch.setattr(dating_favorite_mail, 'dating_online_show',
+                        lambda site_id, uid: {'online': str(uid) in _В_СЕТИ,
+                                              'known': True, 'age_sec': 5})
+
+    yield
+
+    _В_СЕТИ.clear()
+
+
+@pytest.fixture
+async def girl(auth_client):
+    """Анкета на стенде, **в сети**: иначе отбор её не берёт вовсе.
+
+    Убирается вместе со своими письмами — по внешнему ключу.
+    """
+    made = await _profile(auth_client, 'fav')
+
+    async with mysql_get_db_async() as db:
+        await db.execute("UPDATE dating_profile SET status = 'online' WHERE id = %s",
+                         (made,))
+        await db.connection.commit()
+
+    yield made
+
+    async with mysql_get_db_async() as db:
+        await db.execute('DELETE FROM dating_favorite WHERE profile_id = %s', (made,))
+        await db.connection.commit()
+
+    await auth_client.delete(f'/api/dating/profile/{made}')
+
+
+class TestWhoIsQuiet:
+    """Кого берём в работу: разговор затих, последнее слово наше."""
+
+    async def test_our_last_word_makes_the_pair_quiet(self, girl):
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _his(girl, uid, '2026-09-01 10:00:00')
+        await _hers(girl, uid, '2026-09-01 12:00:00')
+
+        row = next((r for r in await _quiet(STAND_SITE) if r['uid'] == uid), None)
+
+        assert row, 'затихший разговор не найден'
+        assert str(row['last_side']) == 'her'
+
+    async def test_his_last_word_is_not_our_business(self, girl):
+        """⚠ Ответить ему должен **круг ответов**, а не этот.
+
+        Напиши мы «а расскажи ещё» поверх его вопроса — он получил бы вместо
+        ответа смену темы, то есть ровно то, из-за чего люди и перестают отвечать.
+        """
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _hers(girl, uid, '2026-09-01 10:00:00')
+        await _his(girl, uid, '2026-09-01 12:00:00')
+
+        assert not [r for r in await _quiet(STAND_SITE) if r['uid'] == uid]
+
+    async def test_a_pending_draft_blocks_a_second_one(self, girl):
+        """⚠ Второй черновик тому же человеку — это два письма подряд, просто
+        отложенных: отправитель шлёт их по одному, но оба уйдут ему."""
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _his(girl, uid, '2026-09-01 10:00:00')
+        await _hers(girl, uid, '2026-09-01 12:00:00')
+        assert [r for r in await _quiet(STAND_SITE) if r['uid'] == uid]
+
+        await _draft(girl, uid)
+
+        assert not [r for r in await _quiet(STAND_SITE) if r['uid'] == uid]
+
+    async def test_someone_who_is_not_a_favorite_is_skipped(self, girl):
+        """Избранным человек стал потому, что ответил на письмо. Не ответивший —
+        это рассылка, а не затихший разговор."""
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _hers(girl, uid, '2026-09-01 12:00:00')
+
+        assert not [r for r in await _quiet(STAND_SITE) if r['uid'] == uid]
+
+    async def test_the_profile_filter_narrows_not_replaces(self, girl, auth_client):
+        """Номер анкеты сужает отбор, а не отбирает заново: чужая анкета своих
+        затихших разговоров здесь не увидит."""
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _his(girl, uid, '2026-09-01 10:00:00')
+        await _hers(girl, uid, '2026-09-01 12:00:00')
+
+        другая = await _profile(auth_client, 'other')
+        try:
+            свои = await _quiet(STAND_SITE, girl)
+            чужие = await _quiet(STAND_SITE, другая)
+
+            assert [r for r in свои if r['uid'] == uid]
+            assert not [r for r in чужие if r['uid'] == uid]
+        finally:
+            await auth_client.delete(f'/api/dating/profile/{другая}')
+
+    async def test_the_oldest_silence_comes_first(self, girl):
+        """Порядок — по давности: заход обрывается по потолку, и обрывать он
+        должен свежих, а не забытых."""
+        старый, свежий = f'u{uuid.uuid4().hex[:8]}', f'u{uuid.uuid4().hex[:8]}'
+        for uid, when in ((старый, '2026-08-01 10:00:00'),
+                          (свежий, '2026-09-05 10:00:00')):
+            await _star(girl, uid)
+            await _his(girl, uid, '2026-07-01 10:00:00')
+            await _hers(girl, uid, when)
+
+        rows = [r['uid'] for r in await _quiet(STAND_SITE, girl)]
+
+        assert rows.index(старый) < rows.index(свежий)
+
+
+class TestBothMustBeOnline:
+    """⚠ Письмо готовится, только когда **оба** на сайте.
+
+    Возобновление разговора застаёт человека в почте, пока он там сидит, и
+    отвечает он девушке — а та должна быть на месте. Написанное в отсутствие
+    уйдёт в груду непрочитанного, и предел в два письма в сутки будет потрачен
+    впустую.
+    """
+
+    async def test_a_sleeping_profile_writes_nobody(self, girl):
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _his(girl, uid, '2026-09-01 10:00:00')
+        await _hers(girl, uid, '2026-09-01 12:00:00')
+        assert [r for r in await _quiet(STAND_SITE) if r['uid'] == uid]
+
+        async with mysql_get_db_async() as db:
+            await db.execute("UPDATE dating_profile SET status = 'offline'"
+                             ' WHERE id = %s', (girl,))
+            await db.connection.commit()
+
+        assert not [r for r in await _quiet(STAND_SITE) if r['uid'] == uid], \
+            'анкета не в сети, а письмо ей готовится'
+
+    async def test_an_absent_companion_is_skipped_with_a_reason(self, girl):
+        """⚠ Отбор его вернёт — присутствие смотрит уже набор, и смотрит по
+        снимку ленты, которого в SQL нет. Проверяем по самому набору: пара
+        пропущена, и причина названа человеком."""
+        from src.dating.dating_favorite_mail import dating_favorite_mail_make
+
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _his(girl, uid, '2026-09-01 10:00:00')
+        await _hers(girl, uid, '2026-09-01 12:00:00')
+
+        # Ушёл с сайта, пока мы думали.
+        _В_СЕТИ.remove(uid)
+
+        got = await dating_favorite_mail_make(STAND_SITE, 5, girl)
+        причины = [one for one in got['reasons'] if uid in one]
+
+        assert got['made'] == 0, 'письмо ушедшему всё-таки написали'
+        assert причины, f'пропуск не назван: {got["reasons"]}'
+        assert 'не в сети' in причины[0], причины[0]
+
+    async def test_limits_are_checked_before_the_agent(self, girl, monkeypatch):
+        """⚠ **Дешёвое раньше платного.** Каждое письмо — вызов LLM, и платить за
+        него ради того, чтобы потом выбросить по пределу, незачем. Проверяем
+        прямо: агент не должен быть позван вовсе."""
+        from src.dating.dating_favorite_mail import dating_favorite_mail_make
+
+        звали = []
+
+        async def _агент(*args, **kwargs):
+            звали.append(args)
+
+            return 'письмо'
+
+        monkeypatch.setattr(dating_favorite_mail, 'dating_favorite_mail_write',
+                            _агент)
+
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _his(girl, uid, '2026-09-01 10:00:00')
+        # Два письма за сутки — предел исчерпан.
+        await _hers(girl, uid, _now_minus_hours(3))
+        await _hers(girl, uid, _now_minus_hours(4))
+
+        got = await dating_favorite_mail_make(STAND_SITE, 5, girl)
+
+        assert got['made'] == 0
+        assert not звали, 'агента позвали, хотя предел уже исчерпан'
+
+
+class TestHowOften:
+    """⚠ Оба предела — про человека, а не про сайт, и считают всё ушедшее ему."""
+
+    async def test_the_daily_cap_counts_every_pool(self, girl):
+        """⚠ Считается и рассылка, и возобновление: в почту они приходят вместе,
+        и разделять их стал бы только тот, кто смотрит в наши таблицы."""
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _hers(girl, uid, _now_minus_hours(5))
+        await _hers(girl, uid, _now_minus_hours(6), 'dating_favorite_mail')
+
+        why = await _too_soon(girl, uid, per_day=2, gap=3600)
+
+        assert 'за сутки' in why, why
+        # ⚠ Склонение — не украшение: «ушло 2 писем» читается как сбой
+        # подстановки, то есть заставляет усомниться в самом числе.
+        assert '2 письма' in why, why
+
+    async def test_the_gap_holds_even_under_the_daily_cap(self, girl):
+        """⚠ Второй предел про другое: два письма подряд за час выдают робота,
+        даже когда за сутки их всего два."""
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _hers(girl, uid, _now_minus_hours(1))
+
+        why = await _too_soon(girl, uid, per_day=5, gap=4 * 3600)
+
+        # ⚠ Проверяем **суть, а не слова**: причина идёт человеку на экран, её
+        # переписывают, и тест, приколоченный к формулировке, падал бы на каждой
+        # правке текста. Здесь важно одно — отказ назван и назван срок.
+        assert why, 'пауза не сработала'
+        assert 'можно через' in why, why
+
+    async def test_a_long_silence_passes_both(self, girl):
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _hers(girl, uid, _now_minus_hours(30))
+
+        assert await _too_soon(girl, uid, per_day=2, gap=4 * 3600) == ''
+
+    async def test_yesterdays_letter_still_counts_for_the_gap(self, girl):
+        """⚠ Пауза считается от последнего ушедшего **за любой срок**, а не за
+        сутки. Письмо, ушедшее 25 часов назад, в дневной счёт не попадает — и без
+        отдельного запроса пауза считалась бы от пустоты.
+        """
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _hers(girl, uid, _now_minus_hours(25))
+
+        # Дневной предел свободен, а пауза в двое суток — нет.
+        why = await _too_soon(girl, uid, per_day=2, gap=48 * 3600)
+
+        assert why, 'вчерашнее письмо не попало в счёт паузы'
+        assert 'можно через' in why, why
+
+
+class TestReasonNamesTheRecipient:
+    """⚠ Причина пропуска обязана называть, **о ком** она.
+
+    «За сутки ему уже ушло два письма» — правда, но про кого? В заходе десятки
+    пар, причины копятся списком, и безымянная строка читается как отказ
+    неизвестно по кому: человек видит её и не знает, ждать ли и кого проверять.
+    Поймано вопросом «непонятно, кому ушло».
+    """
+
+    async def test_the_skip_reason_carries_name_and_uid(self, girl):
+        from src.dating.dating_favorite_mail import dating_favorite_mail_make
+
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _his(girl, uid, '2026-09-01 10:00:00')
+        # Последнее слово наше — пара попадает в отбор; и два письма за сутки,
+        # чтобы она тут же упёрлась в предел.
+        await _hers(girl, uid, _now_minus_hours(3))
+        await _hers(girl, uid, _now_minus_hours(4))
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'UPDATE dating_companion SET name = %s'
+                ' WHERE site_id = %s AND uid = %s', ('Semen', STAND_SITE, uid))
+            await db.execute(
+                'INSERT INTO dating_contact (profile_id, uid, name, photo)'
+                " VALUES (%s, %s, 'Semen', '')", (girl, uid))
+            await db.connection.commit()
+
+        got = await dating_favorite_mail_make(STAND_SITE, 5, girl)
+        причины = [one for one in got['reasons'] if uid in one]
+
+        assert причины, f'адресата нет ни в одной причине: {got["reasons"]}'
+        assert 'Semen' in причины[0], причины[0]
+
+
+class TestWhyThePoolIsEmpty:
+    """⚠ Пустой пул обязан объяснять себя **на странице**, а не в журнале воркера.
+
+    Наблюдалось живьём и этим чинится: анкета в сети, её избранный в сети,
+    генерация включена — а пул пуст, потому что этому человеку писали двадцать
+    минут назад при паузе в четыре часа. В шапке висело «ждёт, когда избранные
+    будут в сети», то есть панель говорила неправду о собственной работе.
+
+    ⚠ Срок круга на этот вопрос **не отвечает**: круг заходит каждые полчаса и
+    каждый раз уходит ни с чем, пока держит пауза. Один срок человек читает как
+    обещание набора к этому сроку.
+    """
+
+    async def test_pause_is_explained_with_the_name(self, girl):
+        from src.dating.dating_favorite_mail import dating_favorite_mail_why
+
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _his(girl, uid, '2026-09-01 10:00:00')
+        # Последнее слово наше — пара в отборе; письмо час назад — пауза держит.
+        await _hers(girl, uid, _now_minus_hours(1))
+
+        why = await dating_favorite_mail_why(STAND_SITE)
+
+        assert 'пауза' in why, why
+        assert uid in why, f'причина не называет адресата: {why}'
+
+    async def test_nobody_to_write_is_an_answer_too(self, girl):
+        """⚠ «Писать некому» — обычное состояние, а не поломка.
+
+        Все разговоры живы, либо избранных нет вовсе. Молчание вместо ответа
+        человек читает как «оно сломалось».
+        """
+        from src.dating.dating_favorite_mail import dating_favorite_mail_why
+
+        assert 'некому' in await dating_favorite_mail_why(STAND_SITE)
+
+    async def test_a_writable_pair_means_no_excuse(self, girl):
+        """Есть кому писать — повода объясняться нет: круг наберёт на заходе.
+
+        Пустая строка здесь и означает «жди набора», а страница показывает вместо
+        неё срок круга.
+        """
+        from src.dating.dating_favorite_mail import dating_favorite_mail_why
+
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _his(girl, uid, '2026-09-01 10:00:00')
+        # Наше письмо давнее — пауза в четыре часа уже прошла.
+        await _hers(girl, uid, _now_minus_hours(9))
+
+        assert await dating_favorite_mail_why(STAND_SITE) == ''
+
+
+def _now_minus_hours(hours: int) -> str:
+    """Метка «столько-то часов назад» в том же виде, в каком её хранит база.
+
+    ⚠ Считаем по часам **процесса**, а не базы, и здесь это допустимо: значения
+    берутся с запасом (час против четырёх), и расхождение в минуты ничего не
+    решает. Само правило в коде считает база (`_since`) — там разница между
+    тремя и пятью часами меняет ответ.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime(
+        '%Y-%m-%d %H:%M:%S')

@@ -17,7 +17,14 @@
 
 // Сколько часов прибавить к UTC. Ноль — «показываем как есть», то есть поведение
 // до появления настройки.
+//
+// ⚠ Отсутствие `window` — законный случай, а не «такого не бывает»: модуль
+// импортируется и вне браузера (сюита ленты расписания гоняет соседний модуль в
+// `node`, `tests/test_schedule_band.js`). Падать там нечему: пояса нет — значит
+// сдвига нет.
 function tzHours() {
+    if (typeof window === 'undefined') return 0;
+
     return Number(window.DATING_TZ) || 0;
 }
 
@@ -56,4 +63,16 @@ export function timeShift(value) {
 // браузера значило бы называть вчерашним то, что для панели сегодняшнее.
 export function timeToday() {
     return timeShift(new Date().toISOString().slice(0, 19).replace('T', ' ')).slice(0, 10);
+}
+
+// Сколько минут прошло с начала **местных** суток панели: 0–1439.
+//
+// ⚠ Мера здесь та же, в какой расписание задано и в какой его читает воркер
+// (`dating_schedule_now(rows, minutes)`, `dating_mailing_round_run(offset_hours)`).
+// Возьми страница часы браузера — оператор из другого пояса видел бы зелёной не ту
+// смену, которую сервер считает идущей, и лента спорила бы с делом.
+export function timeNowMinutes() {
+    const local = timeShift(new Date().toISOString().slice(0, 19).replace('T', ' '));
+
+    return Number(local.slice(11, 13)) * 60 + Number(local.slice(14, 16));
 }

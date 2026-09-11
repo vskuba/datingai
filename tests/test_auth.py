@@ -4,7 +4,7 @@ import pytest
 
 from tests.conftest import ADMIN_PASSWORD, ADMIN_USERNAME
 
-
+pytestmark = pytest.mark.core
 class TestAuth:
 
     async def test_login_ok(self, client):

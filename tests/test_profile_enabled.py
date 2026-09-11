@@ -28,6 +28,8 @@ from src.uvicorn.routers.dating.dating_profile_action import (DatingProfileAuto,
                                                               dating_profile_action_auto,
                                                               dating_profile_action_enabled)
 
+pytestmark = pytest.mark.profile
+
 SITE = 343
 
 # ⚠ **Номера выдуманные, и это не придирка.**

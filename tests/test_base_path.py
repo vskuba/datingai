@@ -6,9 +6,12 @@
 ошибку в путях видно только там.
 """
 
+import pytest
+
 import os
 import re
 
+pytestmark = pytest.mark.page
 BASE_PATH = os.getenv('BASE_PATH', '')
 
 

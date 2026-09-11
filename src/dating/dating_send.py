@@ -44,7 +44,7 @@ from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find
 from src.uvicorn.routers.dating.dating_site import dating_site_setting
 
 from src.dating.dating_presence import DATING_PRESENCE_TIMEOUT, DATING_PRESENCE_UA
-from src.dating.site.site_base import site_base_render
+from src.dating.site.site_base import site_base_encode, site_base_render
 from src.dating.site.site_registry import site_registry_chat
 
 # Сколько ждать ответного кадра после отправки. Сайт отвечает за доли секунды,
@@ -80,6 +80,18 @@ DATING_SEND_PASSWORD_SETTING = 'api_password'
 
 # Наша настройка сайта, которой выбирают транспорт. Ключ — в `DATING_SITE_KNOWN`.
 DATING_SEND_TRANSPORT_SETTING = 'send_transport'
+
+# Транспорт → что записать в `dating_message.source`.
+#
+# ⚠ **Не украшение, а первый вопрос разбора**: сообщение не дошло — смотрят, чем
+# его отправляли. Сокет молчит иначе, чем отказывает ручка, а сценарий падает на
+# шаге вёрстки: три разных места, куда идти смотреть.
+#
+# Раньше здесь стояло `'scenario' if transport == 'scenario' else 'socket'`, и это
+# было верно, пока HTTP-путь никем не был настроен. С переводом LadaDate на
+# `/chat-send` каждое исходящее стало писаться как `socket` — у сайта, у которого
+# сокета нет вовсе, то есть ровно та путаница, от которой столбец и заводился.
+DATING_SEND_SOURCE = {'scenario': 'scenario', 'http': 'http', 'ws': 'socket'}
 
 
 async def dating_send_message(profile: dict, presence: dict, to_uid: str, text: str) -> dict:
@@ -190,7 +202,7 @@ async def dating_send_message(profile: dict, presence: dict, to_uid: str, text: 
     # непринятый сайтом текст показывать в диалоге нельзя.
     if result['ok']:
         await _message_save(int(profile['id']), to_uid, text, message_uid,
-                            'scenario' if transport == 'scenario' else 'socket')
+                            DATING_SEND_SOURCE.get(transport, 'socket'))
         await _answered_mark(int(profile['id']), to_uid)
 
     return result
@@ -309,7 +321,14 @@ async def _send_http(profile: dict, presence: dict, send: dict, to_uid: str, tex
     if not cookies:
         return _fail('вход не выполнен')
 
-    body = site_base_render(str(send.get('body') or ''), to_uid, text, message_uid)
+    # ⚠ **Текст кодируем до подстановки.** `site_base_render` — простая замена
+    # метки: пробел, `&` или `=` в сообщении порвали бы тело `id={{to}}&body={{text}}`,
+    # и оно ушло бы обрезанным по первому пробелу. Как кодировать, знает сайт
+    # (`presence.send.encode`) — у LadaDate это двойное кодирование, потому что
+    # страница шлёт `escape(mes)` внутри form-urlencode (`site_base_encode`).
+    body = site_base_render(str(send.get('body') or ''), to_uid,
+                            site_base_encode(text, str(send.get('encode') or '')),
+                            message_uid)
 
     try:
         async with httpx.AsyncClient(timeout=DATING_PRESENCE_TIMEOUT, cookies=cookies,
@@ -458,8 +477,10 @@ async def _message_save(profile_id: int, to_uid: str, text: str, message_uid: st
                         source: str = 'socket') -> None:
     """Кладёт отправленное в переписку — иначе в диалоге видна только их половина.
 
-    `source` — каким путём ушло. ⚠ Не украшение: у Ladadate сокета нет вовсе, и
-    запись со `socket` заставила бы искать поломку там, где её нет.
+    `source` — каким путём ушло (`DATING_SEND_SOURCE`). ⚠ Не украшение: у Ladadate
+    сокета нет вовсе, и запись со `socket` заставила бы искать поломку там, где её
+    нет. Это уже случалось дважды — сперва со сценарием, потом с HTTP-ручкой, — и
+    оба раза столбец приходилось учить новому значению, а не подгонять под старое.
     """
     try:
         async with mysql_get_db_async() as db:

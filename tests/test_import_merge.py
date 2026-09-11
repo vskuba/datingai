@@ -18,11 +18,15 @@
 известное.
 """
 
+import pytest
+
 from datetime import datetime
 
 from src.dating.dating_import import (dating_import_card, dating_import_match,
                                       dating_import_photo, dating_import_plan,
                                       dating_import_rows)
+
+pytestmark = pytest.mark.profile
 
 NOW = datetime(2026, 8, 30, 12, 0, 0)
 BASE = 'https://ladadate.com'

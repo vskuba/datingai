@@ -17,6 +17,7 @@ from src.dating.site.site_base import DatingSiteChat
 from src.dating.site.site_goldenbride import DatingSiteChatGoldenbride
 from src.dating.site.site_registry import (DATING_SITE_DRIVER_DEFAULT, site_registry_chat)
 
+pytestmark = pytest.mark.profile
 # Выдуманный сайт: те же понятия, другие имена и другая форма. Тело кадра лежит
 # прямо в нём, а не строкой с JSON внутри, — так делает большинство.
 OTHER_SITE = {

@@ -29,7 +29,7 @@
    префикс стоит одной переменной, и разметка к этому готова. #}
 <header class="nav-shell">
 
-    <a class="nav-logo" href="{{ base }}/admin/dating">
+    <a class="nav-logo" href="{{ base }}/admin/dating/profile">
         <span class="nav-logo-mark">💘</span>
         <span class="nav-logo-name">DatingAi</span>
     </a>
@@ -39,7 +39,7 @@
         <!-- Строка 1: разделы -->
         <div class="topbar">
 
-            <a class="tabnav-group" data-group="dating" href="{{ base }}/admin/dating">💘 Dating</a>
+            <a class="tabnav-group" data-group="dating" href="{{ base }}/admin/dating/profile">💘 Dating</a>
 
             {# Разделы про устройство установки — только администратору. Скрытая
                вкладка не защита сама по себе (её страницы и ручки закрыты
@@ -71,12 +71,16 @@
 
             <div class="tabnav-panel" data-group="dating">
                 <span class="tabnav-sep"></span>
-                <a href="{{ base }}/admin/dating">Анкеты</a>
                 <a href="{{ base }}/admin/dating/profile">Профили</a>
+                <a href="{{ base }}/admin/dating">Анкеты</a>
+                {# ⚠ «Писем» здесь больше нет: шаблоны и переменные переехали
+                   подвкладками в «Профили» → «Письма». Текст письма правят там
+                   же, где смотрят на пул и на входящие, — уходить со страницы
+                   ради правки шаблона больше не надо. #}
                 <a href="{{ base }}/admin/dating/log">Журналы</a>
                 <a href="{{ base }}/admin/dating/error">Ошибки</a>
-                <a href="{{ base }}/admin/dating/site">Сайты</a>
-                <a href="{{ base }}/admin/dating/socket">Сокеты</a>
+                <a href="{{ base }}/admin/dating/site">Настройки сайтов</a>
+                <a href="{{ base }}/admin/dating/socket">Онлайн</a>
                 <span class="tabnav-sep"></span>
             </div>
 

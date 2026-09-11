@@ -9,7 +9,7 @@
 """
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.auth.auth import AuthUser, auth_admin_required, auth_required
 from src.uvicorn.routers.setting import setting_timezone_hours
@@ -41,6 +41,22 @@ async def dashboard_dating_profile(request: Request, user: AuthUser = Depends(au
     return await _dashboard_page(request, user, 'admin/dating_profile.html')
 
 
+@router.get('/admin/dating/mail', include_in_schema=False)
+async def dashboard_dating_mail(user: AuthUser = Depends(auth_required)):
+    """Страницы «Письма» больше нет — уводим на её содержимое.
+
+    Шаблоны и переменные переехали подвкладками в «Профили» → «Письма»: текст
+    письма правят там же, где смотрят на пул и на входящие, и уходить со страницы
+    ради правки шаблона больше не надо.
+
+    ⚠ **Отвечаем переадресацией, а не 404.** Адрес прожил месяцы: он в закладках,
+    в переписке и в старых снимках экрана. Отказ на нём читался бы как поломка
+    панели, а не как переезд.
+    """
+    return RedirectResponse(url=f'{uvicorn_base_path()}/admin/dating/profile',
+                            status_code=302)
+
+
 @router.get('/admin/dating/log', response_class=HTMLResponse, include_in_schema=False)
 async def dashboard_dating_log(request: Request, user: AuthUser = Depends(auth_required)):
     """Страница «Журналы»: общая лента работы по учёткам сайта.
@@ -64,7 +80,11 @@ async def dashboard_dating_error(request: Request, user: AuthUser = Depends(auth
 
 @router.get('/admin/dating/site', response_class=HTMLResponse, include_in_schema=False)
 async def dashboard_dating_site(request: Request, user: AuthUser = Depends(auth_required)):
-    """Страница «Сайты»: настройки сайта на нашей стороне.
+    """Страница «Настройки сайтов»: наши настройки к сайту соседа.
+
+    ⚠ Называлась «Сайты» — и обещала больше, чем даёт: заводить и удалять сайты
+    здесь нельзя, их ведёт RhapsodyAi. На странице только настройки, и имя теперь
+    об этом говорит.
 
     Открыта всем вошедшим, как остальные страницы раздела: оператору полезно
     видеть, с чем он работает. Правка при этом закрыта админом — на уровне ручки
@@ -75,11 +95,22 @@ async def dashboard_dating_site(request: Request, user: AuthUser = Depends(auth_
 
 @router.get('/admin/dating/socket', response_class=HTMLResponse, include_in_schema=False)
 async def dashboard_dating_socket(request: Request, user: AuthUser = Depends(auth_required)):
-    """Страница «Сокеты»: кто держит соединение с чатом сайта прямо сейчас.
+    """Страница «Онлайн»: чем анкета держится на сайте прямо сейчас.
 
-    Отвечает на вопрос «почему анкета молчит», который по базе не разобрать: адреса
-    сокета нет вовсе, адрес есть но соединение рвётся, соединение живо но сообщений
-    нет — состояния разные, а в анкете всё выглядит одинаково.
+    Два разных состояния, и на странице они рядом, потому что путают их постоянно:
+
+      **присутствие** — HTTP-удар по таймеру, «видно в списке онлайн». Нужно
+      всем сайтам (`heartbeat.md`);
+      **сокеты** — вебсокет чата, «сообщения приходят живыми». Есть не у всех
+      сайтов: у Ladadate вебсокета нет вовсе.
+
+    Отвечает на вопрос «почему анкета молчит», который по базе не разобрать:
+    присутствия нет, адреса сокета нет, адрес есть но соединение рвётся,
+    соединение живо но сообщений нет — состояния разные, а в анкете всё выглядит
+    одинаково.
+
+    ⚠ Адрес страницы прежний (`/admin/dating/socket`): переименование заголовка
+    не повод ломать закладки и ссылки в переписке.
     """
     return await _dashboard_page(request, user, 'admin/dating_socket.html')
 

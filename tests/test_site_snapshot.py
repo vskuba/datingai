@@ -17,6 +17,7 @@ from src.uvicorn.routers.dating.dating_site import (dating_site_rows, dating_sit
                                                     dating_site_sync_start)
 from src.uvicorn.routers.site import site_list
 
+pytestmark = pytest.mark.core
 # Сайты поддельного соседа.
 LADA, GOLD = 343, 19
 

@@ -43,8 +43,18 @@ from src.uvicorn.routers import users as users_router
 from src.uvicorn.routers.dating import dating_export
 from src.uvicorn.routers.dating import dating_import
 from src.uvicorn.routers.dating import dating_chat as dating_chat_router
+from src.uvicorn.routers.dating import dating_companion as dating_companion_router
 from src.uvicorn.routers.dating import dating_error as dating_error_router
+from src.uvicorn.routers.dating import dating_feed as dating_feed_router
 from src.uvicorn.routers.dating import dating_log as dating_log_router
+from src.uvicorn.routers.dating import dating_mail as dating_mail_router
+from src.uvicorn.routers.dating import dating_mail_var as dating_mail_var_router
+from src.uvicorn.routers.dating import dating_mail_in as dating_mail_in_router
+from src.uvicorn.routers.dating import dating_heartbeat as dating_heartbeat_router
+from src.uvicorn.routers.dating import dating_favorite_mail as dating_favorite_mail_router
+from src.uvicorn.routers.dating import dating_invite as dating_invite_router
+from src.uvicorn.routers.dating import dating_stats as dating_stats_router
+from src.uvicorn.routers.dating import dating_mailing as dating_mailing_router
 from src.uvicorn.routers.dating import dating_people
 from src.uvicorn.routers.dating import dating_site as dating_site_router
 from src.uvicorn.routers.dating import dating_socket as dating_socket_router
@@ -57,7 +67,7 @@ from src.uvicorn.routers.dating import dating_profile_action
 from src.uvicorn.routers.dating import dating_profile_view
 from src.uvicorn.uvicorn_base import uvicorn_base_path
 from src.uvicorn.uvicorn_validation import uvicorn_validation_handler
-from src.worker.dating.chat_worker import chat_worker_recover
+from src.worker.dating.chat_worker import chat_worker_keep_stop, chat_worker_recover
 
 # Куда пускаем без входа. Список короткий и явный: всё остальное — под сессией,
 # и забыть закрыть новую страницу нельзя, потому что закрыто по умолчанию.
@@ -174,6 +184,11 @@ async def main_uvicorn_startup():
 
     # Смену держателя сокетов поднимаем сами: воркер стоит с пустой очередью, а
     # ставить задание руками после каждого перезапуска — верный способ забыть.
+    #
+    # ⚠ Вызов не разовый: он оставляет за собой сторожа, который возвращает смену,
+    # если та оборвалась. Смена ставит себе следующую сама, но лишь дожив до конца
+    # работы, — перезапуск контейнера воркера её обрывает раньше, и без сторожа
+    # установка молча остаётся без держателя (`chat_worker.py`).
     await chat_worker_recover()
 
     logger_info('[uvicorn] DatingAi поднят')
@@ -181,6 +196,9 @@ async def main_uvicorn_startup():
 
 @app.on_event('shutdown')
 async def main_uvicorn_shutdown():
+    # Сторож смены бесконечен: снимаем его сами, иначе остановка сервера ждала бы
+    # его очередного круга либо ругалась незавершённой задачей.
+    await chat_worker_keep_stop()
     await mysql_pool_close()
 
 
@@ -277,6 +295,19 @@ app.include_router(dating_profile_view.router)
 app.include_router(dating_export.router)
 app.include_router(dating_import.router)
 app.include_router(dating_log_router.router)
+app.include_router(dating_feed_router.router)
+# ⚠ Реестр переменных — **до** шаблонов: его пути начинаются с
+# `/api/dating/mail/var`, и запиши мы их после `/api/dating/mail/{mail_id}`,
+# слово «var» однажды прочиталось бы как номер шаблона.
+app.include_router(dating_companion_router.router)
+app.include_router(dating_mail_var_router.router)
+app.include_router(dating_mail_router.router)
+app.include_router(dating_mail_in_router.router)
+app.include_router(dating_mailing_router.router)
+app.include_router(dating_invite_router.router)
+app.include_router(dating_favorite_mail_router.router)
+app.include_router(dating_stats_router.router)
+app.include_router(dating_heartbeat_router.router)
 app.include_router(dating_site_router.router)
 app.include_router(dating_socket_router.router)
 app.include_router(dating_error_router.router)

@@ -33,10 +33,33 @@ from redis_.redis_ import redis_conn_get
 from setting_.setting_ import setting_get
 
 from src.dating.dating_auto import DATING_AUTO_PERIOD_SEC, dating_auto_round
+from src.dating.dating_feed import dating_feed_done, dating_feed_write
+from src.dating.dating_favorite_mail_round import (
+    DATING_FAVORITE_MAIL_ROUND_TICK_SEC, dating_favorite_mail_round_run)
+from src.dating.dating_panel_round import (DATING_PANEL_ROUND_TICK_SEC,
+                                           dating_panel_round_run)
 from src.dating.dating_chat_panel import (DATING_CHAT_PANEL_ROUND_DAYS,
                                           dating_chat_panel_import)
 from src.dating.dating_ready import (DATING_READY_PASSWORD_SETTING, dating_ready_check,
                                      dating_ready_transport, dating_ready_write)
+from src.dating.dating_mail_round import (DATING_MAIL_ROUND_TICK_SEC,
+                                          dating_mail_round_run)
+from src.dating.dating_mailing_round import (DATING_MAILING_ROUND_TICK_SEC,
+                                             dating_mailing_round_run)
+from src.dating.dating_heartbeat_round import (DATING_HEARTBEAT_ROUND_TICK_SEC,
+                                               dating_heartbeat_round_run)
+from src.dating.dating_online_round import (DATING_ONLINE_ROUND_TICK_SEC,
+                                            dating_online_round_run)
+from src.dating.dating_mail_in_round import (DATING_MAIL_IN_ROUND_TICK_SEC,
+                                             dating_mail_in_round_run)
+from src.dating.dating_favorite_round import (DATING_FAVORITE_ROUND_TICK_SEC,
+                                              dating_favorite_round_run)
+from src.dating.dating_invite_round import (DATING_INVITE_ROUND_TICK_SEC,
+                                            dating_invite_round_run)
+from src.dating.dating_reply_round import (DATING_REPLY_ROUND_TICK_SEC,
+                                           dating_reply_round_run)
+from src.dating.dating_send_round import (DATING_SEND_ROUND_TICK_SEC,
+                                          dating_send_round_run)
 from src.dating.dating_schedule_round import (DATING_SCHEDULE_ROUND_TICK_SEC,
                                               dating_schedule_round_run)
 from src.dating.dating_socket import dating_socket_write
@@ -134,6 +157,73 @@ async def dating_chat_hold_run(seconds: float) -> dict:
     # «Забрать сообщения», то есть пока человек смотрит на экран.
     chat = asyncio.create_task(_chat_import_loop(deadline))
 
+    # Рассылка: пул набирается сам по расписанию сайта. ⚠ **Готовит, но не
+    # отправляет** — отправка это отдельный выключатель, и включённое расписание
+    # согласием на неё не является (`dating_mailing_round.py`).
+    mailing = asyncio.create_task(_mailing_loop(deadline))
+
+    # Лента «Все онлайн». ⚠ Прежде её обновляла **только открытая страница**: закрыл
+    # вкладку — и снимок стареет. От него зависят рассылка, точка «в сети» у
+    # собеседника и решение «писать ли сейчас», и все трое молча теряли опору.
+    online = asyncio.create_task(_online_loop(deadline))
+
+    # Шаблоны писем. ⚠ Заготовки пишет агент, и без круга их писали бы, когда
+    # вспомнят: через неделю у сайта те же пять текстов, которыми он писал в
+    # понедельник, — а один и тот же текст на сотню людей читается как рассылка
+    # робота, чем он и является (`dating_mail_round.py`).
+    tmpl = asyncio.create_task(_mail_round_loop(deadline))
+
+    # Присутствие на сайте. ⚠ **Не то же, что `beat` выше, и это разные вещи.**
+    # Тот держит «в чате» у сайтов с сокетом и ходит по анкетам держателя; этот
+    # держит «в сети» по расписанию и работает там, где сокета нет вовсе
+    # (`dating_heartbeat_round.py`). Пока присутствие было только внутри `beat`,
+    # сайт без сокета не мог показать анкету онлайн в принципе.
+    live = asyncio.create_task(_heartbeat_loop(deadline))
+
+    # Отправка писем и ответов. ⚠ **Самое заметное наружу действие панели**: письмо
+    # уходит живому человеку и отменить его нельзя. Поэтому за двумя выключателями
+    # (`mailing_send_on`, `reply_send_on`), по одному письму с паузой и с потолком
+    # в сутки (`dating_send_round.py`).
+    post = asyncio.create_task(_send_loop(deadline))
+
+    # Забор входящих писем. ⚠ **Первый в цепочке почты**, и до него письма
+    # приносила только кнопка — по одной анкете за нажатие. Круги ответов и
+    # отправки при этом работали сами и молча простаивали: отвечать было не на
+    # что, потому что за письмами никто не сходил (`dating_mail_in_round.py`).
+    letters = asyncio.create_task(_mail_in_loop(deadline))
+
+    # Набор ответов. ⚠ До него ответы писала **только кнопка**: выключатель
+    # «генерация ответов» решал, чьи письма брать, но запускал набор человек — и
+    # без нажатия пул стоял пустым, сколько бы писем ни пришло
+    # (`dating_reply_round.py`).
+    answers = asyncio.create_task(_reply_loop(deadline))
+
+    # Звёздочки написавшим. ⚠ Своим кругом, а не внутри забора писем: забор
+    # дешёвый (HTTP, секунды на все анкеты), а звёздочка стоит входа браузером и
+    # ~40 секунд на человека. Повесь её на приход письма — и опоздали бы сами
+    # письма, то есть первое звено цепочки (`dating_favorite_round.py`).
+    stars = asyncio.create_task(_favorite_loop(deadline))
+
+    # Пул инвайтов. ⚠ **Готовит и не отправляет**, как рассылка: реплика уходит
+    # живому человеку в чат, и решение «писать этому сейчас» остаётся за человеком —
+    # кнопкой на карточке. Кругового отправителя у инвайтов нет вовсе.
+    invites = asyncio.create_task(_invite_loop(deadline))
+
+    # Переписка с избранными: письма тем, кто отвечал, но замолчал. ⚠ **Готовит и
+    # не отправляет**, как рассылка; уносит письма общий круг отправки, в часы
+    # сайта. Без этого круга цепочка почты обрывалась на молчании собеседника:
+    # всё, что панель умела, было реакцией на его письмо
+    # (`dating_favorite_mail_round.py`).
+    # ⚠ Имя своё, не `revive`: так уже зовут задачу восстановления входа, и
+    # второе присваивание оставило бы ту без отмены — она пережила бы смену
+    # держателя, продолжая ходить на сайт от имени законченного процесса.
+    revive_talk = asyncio.create_task(_favorite_mail_loop(deadline))
+
+    # Админ-панель агентства: сессия сайта держится живой круглые сутки. ⚠ Круг
+    # **не про анкеты** — учётка у панели одна на сайт, и расписания у неё нет:
+    # панель нужна живой и в три часа ночи, когда придёт круг импорта переписки.
+    panel = asyncio.create_task(_panel_loop(deadline))
+
     try:
         while time.monotonic() < deadline:
             profiles = await _profiles_ready()
@@ -150,13 +240,29 @@ async def dating_chat_hold_run(seconds: float) -> dict:
         revive.cancel()
         chat.cancel()
         sched.cancel()
+        mailing.cancel()
+        online.cancel()
+        tmpl.cancel()
+        live.cancel()
+        post.cancel()
+        answers.cancel()
+        letters.cancel()
+        stars.cancel()
+        revive_talk.cancel()
+        invites.cancel()
+        panel.cancel()
         for held in holders.values():
             held['task'].cancel()
         # Ждём отмены: без этого соединения закрываются уже после выхода, и в
         # логе появляется хвост из «Task was destroyed but it is pending».
         await asyncio.gather(*(held['task'] for held in holders.values()),
                              return_exceptions=True)
-        await _service_wait(beat, answer, revive, chat, sched)
+        # ⚠ Ждать надо **все** отменённые задачи, а не часть: не дождавшаяся
+        # закрывается уже после выхода, и в логе остаётся хвост из «Task was
+        # destroyed but it is pending». `revive_talk` сюда прежде не попадал.
+        await _service_wait(beat, answer, revive, chat, sched, mailing, online,
+                            tmpl, live, post, answers, letters, stars, invites,
+                            revive_talk, panel)
 
     saved = sum(counters.values())
     logger_info(f'[dating] держатель чата закончил: учёток {len(counters)}, сообщений {saved}')
@@ -346,7 +452,12 @@ async def _profiles_ready() -> list[dict]:
 
         # Опрос присутствия — условие только для сокетного пути: у сценарного сайта
         # его может не быть вовсе, а работать с анкетой это не мешает.
-        if not dating_presence_ready(presence) and row.get('storage_state'):
+        #
+        # ⚠ Спрашиваем **и свою настройку сайта** (`site_id`), а не только описание
+        # соседа: сайт, присутствие которого настроено у нас, иначе выпадал бы из
+        # держателя — при том что в сети он держится исправно.
+        if row.get('storage_state') and not await dating_presence_ready(
+                presence, int(row['site_id'])):
             continue
 
         # ⚠ Выключенные анкеты **остаются в списке**, и это не недосмотр: держать
@@ -426,6 +537,218 @@ async def _schedule_loop(deadline: float) -> None:
             logger_info(f'[dating] круг расписания: {e}')
 
 
+async def _mail_in_loop(deadline: float) -> None:
+    """Забирает входящие письма, пока идёт смена.
+
+    ⚠ **Расписание не спрашивается.** Письмо приходит, когда его написали, а не
+    когда у девушки смена; отвечать на него всё равно будут по часам отправки.
+    """
+    while time.monotonic() < deadline:
+        await asyncio.sleep(min(DATING_MAIL_IN_ROUND_TICK_SEC,
+                                max(1.0, deadline - time.monotonic())))
+        try:
+            await dating_mail_in_round_run()
+        except Exception as e:
+            logger_info(f'[dating] круг писем: {e}')
+
+
+async def _invite_loop(deadline: float) -> None:
+    """Набирает пул инвайтов по расписанию сайта, пока идёт смена.
+
+    Тик — минута, как у рассылки: смены заданы с точностью до четверти часа. Сам
+    набор идёт куда реже — у каждого сайта свой срок (`invite_every`), и
+    большинство тиков внутри смены только читают отметку.
+
+    ⚠ Смещение читаем **каждый круг**, а не один раз: настройку `timezone` правят
+    на ходу, и запомненное значение означало бы расписание по старому поясу до
+    конца смены — шесть часов.
+    """
+    while time.monotonic() < deadline:
+        await asyncio.sleep(min(DATING_INVITE_ROUND_TICK_SEC,
+                                max(1.0, deadline - time.monotonic())))
+        try:
+            offset = datetime_offset_hours(await setting_get('timezone', '+0'))
+            await dating_invite_round_run(offset)
+        except Exception as e:
+            logger_info(f'[dating] круг инвайтов: {e}')
+
+
+async def _favorite_mail_loop(deadline: float) -> None:
+    """Набирает пул писем избранным, пока идёт смена.
+
+    Тик — минута, а сам заход идёт по сроку сайта (`favorite_mail_every`, обычно
+    полчаса): большинство тиков только смотрят, не пора ли.
+
+    ⚠ **Расписание не спрашивается**, как у круга ответов. Здесь готовится
+    черновик, который никуда не уходит без второго выключателя; уносит его круг
+    отправки — в свои часы. Второе расписание отвечало бы на тот же вопрос вторым
+    голосом.
+    """
+    while time.monotonic() < deadline:
+        await asyncio.sleep(min(DATING_FAVORITE_MAIL_ROUND_TICK_SEC,
+                                max(1.0, deadline - time.monotonic())))
+        try:
+            await dating_favorite_mail_round_run()
+        except Exception as e:
+            logger_info(f'[dating] круг писем избранным: {e}')
+
+
+async def _panel_loop(deadline: float) -> None:
+    """Держит живой сессию админ-панели каждого сайта, пока идёт смена.
+
+    Тик — минута, а сам заход идёт по сроку сайта (`admin_every`, обычно пять
+    минут): большинство тиков только смотрят, не пора ли.
+
+    ⚠ **Расписания нет и не будет.** Панель — наша собственная страница агентства,
+    и жива она должна быть всегда: в неё входит круг импорта переписки, и в три
+    часа ночи тоже. Смены сайта — про письма живым людям, а не про это.
+    """
+    while time.monotonic() < deadline:
+        await asyncio.sleep(min(DATING_PANEL_ROUND_TICK_SEC,
+                                max(1.0, deadline - time.monotonic())))
+        try:
+            await dating_panel_round_run()
+        except Exception as e:
+            logger_info(f'[dating] круг админ-панели: {e}')
+
+
+async def _favorite_loop(deadline: float) -> None:
+    """Жмёт звёздочки написавшим, пока идёт смена.
+
+    Тик — минута, а сам заход идёт по сроку сайта (`favorite_every`, обычно десять
+    минут): большинство тиков только смотрят, не пора ли.
+
+    ⚠ **Расписание не спрашивается**, как и у забора писем. Человек написал, когда
+    написал; звёздочка при этом никому не показывается в ленте и не требует, чтобы
+    девушка была «на смене».
+    """
+    while time.monotonic() < deadline:
+        await asyncio.sleep(min(DATING_FAVORITE_ROUND_TICK_SEC,
+                                max(1.0, deadline - time.monotonic())))
+        try:
+            await dating_favorite_round_run()
+        except Exception as e:
+            logger_info(f'[dating] круг избранных: {e}')
+
+
+async def _reply_loop(deadline: float) -> None:
+    """Набирает пул ответов, пока идёт смена.
+
+    ⚠ **Расписание не спрашивается**, в отличие от рассылки. Здесь готовится
+    черновик, который никуда не уходит без второго выключателя: набирать его
+    можно когда угодно, а отправит его круг отправки — в свои часы.
+    """
+    while time.monotonic() < deadline:
+        await asyncio.sleep(min(DATING_REPLY_ROUND_TICK_SEC,
+                                max(1.0, deadline - time.monotonic())))
+        try:
+            await dating_reply_round_run()
+        except Exception as e:
+            logger_info(f'[dating] круг ответов: {e}')
+
+
+async def _send_loop(deadline: float) -> None:
+    """Отправляет письма и ответы, пока идёт смена.
+
+    Тик — полминуты, а шлёт круг по своему сроку (`send_every`, обычно три
+    минуты): большинство тиков только смотрят, не пора ли.
+
+    ⚠ Смещение читаем каждый круг: настройку `timezone` правят на ходу, и
+    запомненное значение означало бы отправку по старому поясу до конца смены.
+    """
+    while time.monotonic() < deadline:
+        await asyncio.sleep(min(DATING_SEND_ROUND_TICK_SEC,
+                                max(1.0, deadline - time.monotonic())))
+        try:
+            offset = datetime_offset_hours(await setting_get('timezone', '+0'))
+            await dating_send_round_run(offset)
+        except Exception as e:
+            logger_info(f'[dating] круг отправки: {e}')
+
+
+async def _heartbeat_loop(deadline: float) -> None:
+    """Держит анкеты в сети по их расписанию, пока идёт смена.
+
+    ⚠ **Это про «видно в списке онлайн», а не про чат.** Соседний `_presence_loop`
+    держит присутствие **в чате** у сайтов с сокетом и обходит анкеты держателя;
+    этот работает по расписанию и там, где сокета нет вовсе. Разделение стоило
+    разбирательства: пока присутствие жило только в держателе, сайт без сокета не
+    мог показать анкету онлайн в принципе — держать было нечего, и до удара дело
+    не доходило.
+
+    Тик — пятнадцать секунд, а бьёт круг по сроку сайта (`heartbeat_every`):
+    большинство тиков только смотрят, кому пора.
+
+    ⚠ Смещение читаем **каждый круг**: настройку `timezone` правят на ходу, и
+    запомненное значение означало бы расписание по старому поясу до конца смены.
+    """
+    while time.monotonic() < deadline:
+        await asyncio.sleep(min(DATING_HEARTBEAT_ROUND_TICK_SEC,
+                                max(1.0, deadline - time.monotonic())))
+        try:
+            offset = datetime_offset_hours(await setting_get('timezone', '+0'))
+            await dating_heartbeat_round_run(offset)
+        except Exception as e:
+            logger_info(f'[dating] круг присутствия: {e}')
+
+
+async def _online_loop(deadline: float) -> None:
+    """Держит ленту «Все онлайн» свежей, пока идёт смена.
+
+    Тик — минута; сам съём идёт куда реже, по выдержке сайта
+    (`online_check_every`, обычно две минуты). Большинство тиков только читают
+    время снимка.
+
+    ⚠ Круг **заводит** съём и не ждёт его: это ~40 секунд живого браузера, и
+    держать на них смену незачем — снимок появится в кэше сам.
+    """
+    while time.monotonic() < deadline:
+        await asyncio.sleep(min(DATING_ONLINE_ROUND_TICK_SEC,
+                                max(1.0, deadline - time.monotonic())))
+        try:
+            await dating_online_round_run()
+        except Exception as e:
+            logger_info(f'[dating] круг ленты: {e}')
+
+
+async def _mailing_loop(deadline: float) -> None:
+    """Набирает пул писем по расписанию сайта, пока идёт смена.
+
+    Тик — минута, как у расписания анкет: смены заданы с точностью до четверти
+    часа. Сам набор при этом идёт куда реже — у каждого сайта свой срок
+    (`mailing_every`), и большинство тиков внутри смены только читают отметку.
+
+    ⚠ Смещение читаем **каждый круг**, а не один раз: настройку `timezone` правят
+    на ходу, и запомненное значение означало бы расписание по старому поясу до
+    конца смены — шесть часов.
+    """
+    while time.monotonic() < deadline:
+        await asyncio.sleep(min(DATING_MAILING_ROUND_TICK_SEC,
+                                max(1.0, deadline - time.monotonic())))
+        try:
+            offset = datetime_offset_hours(await setting_get('timezone', '+0'))
+            await dating_mailing_round_run(offset)
+        except Exception as e:
+            logger_info(f'[dating] круг рассылки: {e}')
+
+
+async def _mail_round_loop(deadline: float) -> None:
+    """Круг шаблонов: новые заготовки писем по расписанию сайта.
+
+    ⚠ Смещение читаем **каждый круг**, а не один раз: настройку `timezone` правят на
+    ходу, и запомненное значение означало бы расписание по старому поясу до конца
+    смены. То же правило, что у круга рассылки.
+    """
+    while time.monotonic() < deadline:
+        await asyncio.sleep(min(DATING_MAIL_ROUND_TICK_SEC,
+                                max(1.0, deadline - time.monotonic())))
+        try:
+            offset = datetime_offset_hours(await setting_get('timezone', '+0'))
+            await dating_mail_round_run(offset)
+        except Exception as e:
+            logger_info(f'[dating] круг шаблонов: {e}')
+
+
 async def _chat_import_loop(deadline: float) -> None:
     """Забирает входящие из панели агентства — по каждому сайту в свой срок.
 
@@ -466,19 +789,44 @@ async def _chat_import_round() -> None:
         # фоновых обновлений списков (`dating_people.py`).
         _chat_mark(site_id, int(every))
 
+        # ⚠ В ленту пишем **до** захода и **всегда**, а не только при добыче.
+        # Прежде строка появлялась, лишь когда что-то привезли, — а привозить чаще
+        # всего нечего, и чат в ленте не показывался вовсе: человек видел там одну
+        # почту и решил, что переписка не забирается. Теперь заход виден так же,
+        # как заход за письмами: «иду» → тот же ряд заменяется итогом.
+        # ⚠ Без многоточия: оно читается как обрезанный текст, а не как «идёт».
+        начало = dating_feed_write(site_id, 'chat', 'Забираю переписку из панели')
+
         result = await dating_chat_panel_import(site_id, DATING_CHAT_PANEL_ROUND_DAYS)
 
         if result['status'] == 'error':
             logger_info(f"[dating] переписка сайта #{site_id} не забралась: "
                         f"{result['error']}")
+            dating_feed_done(site_id, начало, 'warn',
+                             f"Переписка не забралась: {result['error']}")
 
             continue
 
-        # В лог — только когда что-то привезли: круг идёт каждые пять минут по
-        # каждому сайту, и «привезено 0» забило бы лог до бесполезности.
+        # В лог — только когда что-то привезли: он растёт бесконечно, и «привезено
+        # 0» забило бы его до бесполезности. Лента живёт иначе — она кольцо на
+        # тридцать записей, и её задача как раз показать, что круг ходил.
         if result['added']:
             logger_info(f"[dating] переписка сайта #{site_id}: "
                         f"новых {result['added']}, собеседников {result['contacts']}")
+
+        # ⚠ **«Привезено» и «свежих» — разные числа, и путать их дорого.** Импорт
+        # берёт сутки назад, и «привезено 5» почти всегда значит пять старых
+        # реплик, которых у нас не было. Назови их новыми — человек откроет «Чат →
+        # Диалоги» и не найдёт там ничего свежего; на это и пожаловались.
+        свежих = int(result.get('fresh') or 0)
+        if not result['added']:
+            итог = 'Новой переписки нет'
+        elif свежих:
+            итог = f"Переписка: сообщений {result['added']}, свежих {свежих}"
+        else:
+            итог = f"Переписка: привезено {result['added']} — все старые"
+
+        dating_feed_done(site_id, начало, 'chat', итог)
 
 
 async def _chat_sites() -> list[int]:

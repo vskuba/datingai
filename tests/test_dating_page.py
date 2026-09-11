@@ -19,6 +19,7 @@ import tempfile
 
 import pytest
 
+pytestmark = pytest.mark.page
 PAGE = '/admin/dating'
 
 
@@ -99,3 +100,90 @@ class TestPageScriptIsValidJs:
                 f'скрипт страницы не проходит `node --check`: {result.stderr}')
         finally:
             os.remove(path)
+
+
+class TestCompanionDeepLink:
+    """⚠ Ссылка снаружи открывает нужного собеседника: `?companion=<uid>&site=<id>`.
+
+    По ней приходят из карточки письма на «Профилях»: имя адресата ссылается сюда.
+    Открыть надо ровно то, чего просили, — вкладку собеседников, нужный сайт и
+    нужного человека.
+
+    Проверяется по разметке: правило здесь — «довод прочитан, вкладка и сайт
+    выставлены до первой загрузки, адрес почищен», и это видно в исходнике. Живьём
+    проверено отдельно, всеми пятьюдесятью ссылками пула.
+    """
+
+    async def test_link_params_are_read(self, auth_client):
+        page = (await auth_client.get(PAGE)).text
+
+        assert "linkParams.get('companion')" in page, 'номер собеседника из адреса не читается'
+        assert "linkParams.get('site')" in page, (
+            'сайт из адреса не читается: `uid` уникален внутри сайта, и без него '
+            'страница открылась бы на том, что был выбран в прошлый раз')
+
+    async def test_tab_and_site_are_set_before_loading(self, auth_client):
+        """⚠ **До** первой загрузки, а не после: `sitesLoad` смотрит на `pageTab`,
+        чтобы решить, грузить ли собеседников, а `datingSiteFill` — на ключ в
+        хранилище, чтобы выбрать сайт. Поставь мы их позже — список приехал бы по
+        прежнему сайту, а вкладка осталась бы на «Девушках»."""
+        page = (await auth_client.get(PAGE)).text
+
+        start = page.find('let wantCompanionUid')
+        assert start != -1, 'разбор ссылки не найден'
+        loading = page.find('sitesLoad();', start)
+        assert loading != -1, 'загрузка сайтов не нашлась после разбора ссылки'
+
+        block = page[start:loading]
+        assert "pageTab = 'companion'" in block, 'вкладка не переключается на собеседников'
+        assert 'localStorage.setItem(DATING_SITE_KEY' in block, 'сайт не выставляется'
+
+    async def test_address_is_cleaned(self, auth_client):
+        """⚠ Довод в адресе — это «открой», а не «всегда показывай». Не почисти
+        мы адрес, обновление страницы через час снова уводило бы к тому же
+        человеку, хотя человек давно смотрит другого."""
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'history.replaceState' in page, 'адрес не чистится после разбора ссылки'
+
+    async def test_missing_companion_is_said_out_loud(self, auth_client):
+        """⚠ Не нашли — говорим словами. Молча открыть первого попавшегося было бы
+        хуже всего: человек пришёл читать про конкретного и прочёл бы про чужого,
+        не заметив подмены."""
+        page = (await auth_client.get(PAGE)).text
+
+        # ⚠ Ищем внутри загрузки списка, а не «где-нибудь рядом»: первое
+        # упоминание `wantCompanionUid` — это разбор адреса в начале файла, до
+        # которого сообщать ещё не о чем.
+        start = page.find('async function companionsLoad()')
+        assert start != -1, 'загрузка списка собеседников не найдена'
+        end = page.find('function companionsPaint(', start)
+        assert end != -1
+        body = page[start:end]
+
+        assert 'в списке нет' in body, 'о ненайденном собеседнике не сообщается'
+        assert 'wantCompanionUid = ' in body, (
+            'просьба не гаснет после разбора: она перебивала бы выбор человека '
+            'при каждом обновлении списка')
+
+    async def test_list_page_is_computed_after_measuring(self, auth_client):
+        """⚠ Страница списка считается **в отрисовке**, а не при разборе ссылки:
+        там `compPerPage` ещё догадка (`PAGE_SIZE_GUESS`), а настоящее число строк
+        известно только после замера. Промах виден сразу — список открывается на
+        странице, где искомого нет, и так оно и вышло на первой проверке.
+        """
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'let showCompanionId' in page, 'просьба «пролистай к нему» не заведена'
+
+        start = page.find('function companionsPaint(')
+        assert start != -1, 'отрисовка списка не найдена'
+        end = page.find('function _окончание(', start)
+        assert end != -1
+        body = page[start:end]
+
+        assert 'showCompanionId' in body, \
+            'страница списка считается вне отрисовки — по догадке о числе строк'
+        assert 'showCompanionId = 0' in body, (
+            'просьба не гаснет: список возвращался бы на его страницу при каждой '
+            'перерисовке, и полистать соседние было бы нельзя')

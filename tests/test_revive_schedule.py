@@ -5,10 +5,14 @@
 молчащей на часы.
 """
 
+import pytest
+
 from datetime import datetime, timedelta
 
 from src.dating.dating_revive import (DATING_REVIVE_GIVE_UP_SEC, dating_revive_delay,
                                       dating_revive_due, dating_revive_state)
+
+pytestmark = pytest.mark.profile
 
 NOW = datetime(2026, 8, 18, 12, 0, 0)
 

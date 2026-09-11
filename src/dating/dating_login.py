@@ -132,8 +132,7 @@ async def dating_login_run(profile_id: int, scenario_id: int = 0, session_id: st
         #
         # Опрос годится обеим ролям — в отличие от чтения анкеты, сценарий которой
         # заведён только для женской.
-        verify = await dating_presence_probe(await _profile_row(profile_id),
-                                             dating_json_load(site.get('presence')))
+        verify = await _verify(await _profile_row(profile_id), site)
         if verify['status'] != 'online':
             # Состояние от неудачного входа стираем: держать cookie, по которым
             # сайт не пускает, значит показывать в карточке вход, которого нет.
@@ -292,6 +291,40 @@ async def dating_login_session_open(site: dict, name: str) -> str:
     видно в полосе вкладок `/admin/browser`."""
     return await rhapsody_api_session_open(url=site['url'], name=name[:100],
                                           site_id=int(site['id']))
+
+
+async def _verify(profile: dict, site: dict) -> dict:
+    """Признал ли сайт вход — по настройке присутствия этого сайта.
+
+    ⚠ **Раньше проверка бывала пустышкой.** Она шла через `presence` соседа, а у
+    сайта без него (Ladadate) описание пусто: шагов нет, проверять нечего, и опрос
+    возвращал `online`, ничего не спросив. Вход объявлялся признанным всегда — то
+    есть ровно там, где проверка и нужна, её не было.
+
+    Теперь спрашиваем настройку присутствия (`dating_heartbeat.py`): своя у сайта
+    старше, соседская читается запасной. Настройки нет вовсе — честно говорим об
+    этом, а не выдаём молчание за успех.
+    """
+    from http_.http_heartbeat import (http_heartbeat_check, http_heartbeat_client,
+                                      http_heartbeat_cookies, http_heartbeat_ready)
+
+    from src.dating.dating_heartbeat import dating_heartbeat_config
+
+    config = await dating_heartbeat_config(int(site.get('id') or profile['site_id']))
+    if not http_heartbeat_ready(config):
+        # ⚠ Не отказ. Вход сценарием прошёл, cookie сняты, и работа с сайтом по
+        # ним пойдёт; неизвестно лишь, признал ли сайт вход. Объявить это провалом
+        # значило бы стереть рабочую сессию из-за незаполненной настройки.
+        return {'status': 'online', 'unread': -1, 'ms': 0,
+                'error': 'присутствие сайта не настроено — вход не проверен'}
+
+    cookies = http_heartbeat_cookies(dating_json_load(profile.get('storage_state')),
+                                     str(config.get('base') or ''))
+    client = http_heartbeat_client()
+    try:
+        return await http_heartbeat_check(client, cookies, config)
+    finally:
+        await client.aclose()
 
 
 async def _state_save(profile_id: int, session_id: str) -> None:
