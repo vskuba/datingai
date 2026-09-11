@@ -587,12 +587,29 @@ class TestReplyChangesRepaintBothPlaces:
         page = (await auth_client.get(PAGE)).text
 
         начало = page.find('function replyShown')
-        тело = page[начало:начало + 400]
+        тело = page[начало:начало + 500]
 
         assert 'mailInReplyEditRefresh()' in тело, \
             'форма под письмом на «Входящих» не перерисовывается'
         assert 'favTalkEditRefresh()' in тело, \
             'форма под разговором на «Фаворитах» не перерисовывается'
+
+    async def test_repaint_touches_the_thread_too(self, auth_client):
+        """⚠ Ленту разговора тоже, и формы мало.
+
+        Ответ показан дважды: полем правки под разговором и репликой в самой ленте,
+        с пометкой «в пуле». Убрали его из пула — исчезало поле, а реплика с чипсом
+        оставалась висеть, будто ответ на месте; уходила она только с перезагрузкой
+        страницы. Поймано на «Фаворитах → Диалоги».
+        """
+        page = (await auth_client.get(PAGE)).text
+
+        начало = page.find('function replyShown')
+        тело = page[начало:начало + 500]
+
+        assert 'replyThreadRefresh()' in тело, 'лента разговора не перечитывается'
+        assert 'function replyThreadRefresh' in page, \
+            'перечитывания ленты нет вовсе'
 
     async def test_modal_closes_only_when_it_is_a_modal(self, auth_client):
         """⚠ Прежде здесь стояло `if (box) modalClose()`, а `box` — узел формы

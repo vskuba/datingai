@@ -4193,6 +4193,14 @@
         const varNew = workEl.querySelector('[data-slot="varNewBtn"]');
         if (varNew) varNew.addEventListener('click', tmplAddNew);
 
+        // ⚠ **«+ шаблон AI» тоже надо привязать, и это чинит мёртвую кнопку.**
+        // `mailAiNew` была написана и нарисована, а обработчика ей не досталось:
+        // нажатие не делало ничего — ни запроса, ни сообщения. Мёртвой она была у
+        // обеих ролей, и на права это не похоже: там кнопка отвечает 403, а тут
+        // молчала. Поймано на проде.
+        const aiNew = workEl.querySelector('[data-slot="aiNewBtn"]');
+        if (aiNew) aiNew.addEventListener('click', mailAiNew);
+
         // Расписание шаблонов: выключатель и «сколько в сутки».
         tmplBind();
 
@@ -7348,8 +7356,34 @@
         mailInReplyPaint();
         mailInReplyEditRefresh();
         favTalkEditRefresh();
+        replyThreadRefresh();
 
         if (box && box.closest('.modal')) modalClose();
+    }
+
+    // Перечитывает **ленту разговора**: черновик виден и в ней, пометкой «в пуле».
+    //
+    // ⚠ **Формы мало.** Ответ показан дважды: полем правки под разговором и
+    // репликой в самой ленте. Убрали его из пула — исчезло поле, а реплика с
+    // чипсом осталась висеть, будто ответ на месте; уходила она только с
+    // перезагрузкой страницы. Ровно это и заметили на «Фаворитах».
+    //
+    // ⚠ **Перечитываем с сервера, а не правим разметку руками.** Ленту собирает
+    // `threadPaint` из ответа ручки, и вторая, «быстрая», сборка на странице
+    // разошлась бы с первой в пометках — а они-то и объясняют, откуда письмо.
+    function replyThreadRefresh() {
+        if (workTab === 'fav' && favTab === 'talks' && favTalkOpen) {
+            const где = favTalks.findIndex(
+                one => `${one.profile_id}|${one.uid}` === favTalkOpen);
+            if (где >= 0) favTalkSelect(где);
+
+            return;
+        }
+
+        if (workTab === 'mail' && mailTab === 'in' && mailInOpenId) {
+            const row = mailIn.find(one => Number(one.id) === Number(mailInOpenId));
+            if (row) mailInTalkShow(row);
+        }
     }
 
     // Перерисовывает правку под открытым письмом на «Входящих».
