@@ -335,7 +335,11 @@
         .var-row.empty input { border-color: #fcd34d; background: #fffbeb; }
 
         .var-foot { display: flex; align-items: center; gap: 9px; margin-top: 10px; }
-        .var-hint { font-size: 11px; color: #b91c1c; }
+        /* ⚠ По умолчанию **не красная**: сюда пишется и «сохранено». Прежде цвет
+           был один на все случаи, и удача выглядела бы отказом. Красной строка
+           становится по классу `bad` — его ставит тот, кто сообщает о беде. */
+        .var-hint { font-size: 11px; color: #16a34a; }
+        .var-hint.bad { color: #b91c1c; }
 
         /* ---------- Расписание входов и выходов ---------- */
 
@@ -1065,11 +1069,27 @@
             cardVars = (await putData(`${BASE}/api/dating/profile/${currentId}/var`,
                                       {values, filled_by: 'hand'})).result || [];
         } catch (e) {
-            if (hint) hint.textContent = 'не сохранилось: ' + e.message;
+            if (hint) {
+                hint.textContent = 'не сохранилось: ' + e.message;
+                hint.classList.add('bad');
+            }
+            showNotification('Переменные не сохранились: ' + e.message, 'error');
 
             return;
         }
 
+        // ⚠ **Отклик — там, где нажали.** Прежде здесь стоял только `say`, а он
+        // пишет в подсказку **шапки** — вверху страницы; кнопка же внизу, в
+        // карточке анкеты, и человек, глядя на неё, не видел ничего: «нажимаю
+        // сохранить — ничего не происходит».
+        //
+        // Теперь строка встаёт рядом с кнопкой и всплывает уведомлением. Шапку
+        // тоже оставляем: там же появляются отказы, и терять их нельзя.
+        if (hint) {
+            hint.textContent = 'сохранено';
+            hint.classList.remove('bad');
+        }
+        showNotification('Переменные сохранены', 'success');
         say('переменные сохранены');
         varsPaint();
     }
