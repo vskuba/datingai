@@ -16,5 +16,23 @@
   "face_on": true,
   "score": null,
   "pass": null
+ },
+ {
+  "file": "87dafda1abbe333c8b45b679e9dada38.png",
+  "scene": "likeness",
+  "seed": 3001,
+  "nsfw": false,
+  "face_on": true,
+  "score": null,
+  "pass": null
+ },
+ {
+  "file": "495ce0a37b3d40ec741c7a90771f8998.png",
+  "scene": "likeness",
+  "seed": 3002,
+  "nsfw": false,
+  "face_on": true,
+  "score": null,
+  "pass": null
  }
 ]

@@ -1,9 +1,83 @@
 {
- "_mem": 92,
- "1": {"_cls": "UNETLoader", "inputs": {"unet_name": "flux1-dev-fp8.safetensors", "weight_dtype": "default"}},
- "2": {"_cls": "DualCLIPLoader", "inputs": {"clip_name1": "clip_l.safetensors", "clip_name2": "t5xxl_fp8_e4m3fn.safetensors", "type": "flux"}},
- "3": {"_cls": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}},
- "4": {"_cls": "CLIPTextEncode", "inputs": {"text": "__PROMPT__", "clip": ["2", 0]}},
- "20": {"_cls": "TrainLoraNode", "inputs": {"model": ["1", 0], "latents": ["0", 0], "positive": ["4", 0], "batch_size": 1, "grad_accumulation_steps": 4, "steps": 100, "learning_rate": 0.0003, "rank": 8, "optimizer": "AdamW", "loss_function": "MSE", "seed": "__SEED__", "training_dtype": "none", "lora_dtype": "bf16", "quantized_backward": true, "algorithm": "LoRA", "gradient_checkpointing": true, "checkpoint_depth": 1, "offloading": false, "existing_lora": "[None]", "bucket_mode": false, "bypass_mode": false}},
- "21": {"_cls": "SaveLoRA", "inputs": {"lora": ["20", 0], "prefix": "diana/diana_face", "steps": ["20", 2]}}
+ "_mem": 89,
+ "1": {
+  "_cls": "UNETLoader",
+  "inputs": {
+   "unet_name": "flux1-dev-fp8.safetensors",
+   "weight_dtype": "default"
+  }
+ },
+ "2": {
+  "_cls": "DualCLIPLoader",
+  "inputs": {
+   "clip_name1": "clip_l.safetensors",
+   "clip_name2": "t5xxl_fp8_e4m3fn.safetensors",
+   "type": "flux"
+  }
+ },
+ "3": {
+  "_cls": "VAELoader",
+  "inputs": {
+   "vae_name": "ae.safetensors"
+  }
+ },
+ "4": {
+  "_cls": "CLIPTextEncode",
+  "inputs": {
+   "text": "__PROMPT__",
+   "clip": [
+    "2",
+    0
+   ]
+  }
+ },
+ "20": {
+  "_cls": "TrainLoraNode",
+  "inputs": {
+   "model": [
+    "1",
+    0
+   ],
+   "latents": [
+    "0",
+    0
+   ],
+   "positive": [
+    "4",
+    0
+   ],
+   "batch_size": 1,
+   "grad_accumulation_steps": 4,
+   "steps": 100,
+   "learning_rate": 0.0003,
+   "rank": 8,
+   "optimizer": "AdamW",
+   "loss_function": "MSE",
+   "seed": "__SEED__",
+   "training_dtype": "none",
+   "lora_dtype": "bf16",
+   "quantized_backward": true,
+   "algorithm": "LoRA",
+   "gradient_checkpointing": true,
+   "checkpoint_depth": 1,
+   "offloading": true,
+   "existing_lora": "[None]",
+   "bucket_mode": false,
+   "bypass_mode": false
+  }
+ },
+ "21": {
+  "_cls": "SaveLoRA",
+  "inputs": {
+   "lora": [
+    "20",
+    0
+   ],
+   "prefix": "diana/diana_face",
+   "steps": [
+    "20",
+    2
+   ]
+  }
+ }
 }
