@@ -73,6 +73,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.dating.dating_json import dating_json_load
 # ⚠ Перестановка очереди — общая с рассылкой: «выбранного вперёд» должно значить
 # одно и то же в обоих пулах, иначе человек, привыкший к одному, обманется вторым.
+from src.dating.dating_block import dating_block_pairs
 from src.dating.dating_mailing import dating_mailing_people_first
 from src.dating.dating_mail_agent import (DATING_INVITE_LANGUAGE,
                                           DatingMailAgentError,
@@ -159,6 +160,10 @@ async def dating_invite_make(site_id: int, limit: int, profile_id: int = 0,
 
     invited = await _invited(site_id)
     talked = await _talked(site_id)
+    # ⚠ Закрывшиеся от анкеты — отдельным набором, а не внутри `talked`. Пары те
+    # же по виду, но вопросы разные: там «уже знакомы», здесь «просил не писать», и
+    # слей мы их, причина пропуска стала бы неразличима.
+    blocked = await dating_block_pairs(site_id)
     # ⚠ Язык спрашиваем **один раз на заход**, а не на реплику: он про сайт, и
     # настройка живёт у соседа — запрос на каждого человека был бы запросом к
     # соседу на каждую реплику.
@@ -166,7 +171,7 @@ async def dating_invite_make(site_id: int, limit: int, profile_id: int = 0,
 
     made, tried, skipped, reasons, left, stopped = 0, 0, 0, [], 0, ''
 
-    for girl, person in _pairs(girls, people, invited, talked):
+    for girl, person in _pairs(girls, people, invited, talked, blocked):
         if tried >= max(int(limit), 0):
             left += 1
             continue
@@ -244,7 +249,7 @@ async def dating_invite_pool_left(site_id: int) -> int:
 
 # ── Приватное ────────────────────────────────────────────────────────────────
 
-def _pairs(girls: list, people: list, invited: set, talked: set):
+def _pairs(girls: list, people: list, invited: set, talked: set, blocked: set = None):
     """Пары «анкета — собеседник», годные для приглашения.
 
     ⚠ **Один инвайт на человека, а не на пару.** Здесь правило строже, чем ключ в
@@ -271,13 +276,22 @@ def _pairs(girls: list, people: list, invited: set, talked: set):
         invited: номера тех, кому инвайт уже готовили или отправляли, — **любой**
             анкетой этого сайта.
         talked: пары, у которых переписка уже есть.
+        blocked: пары, где человек закрылся от анкеты (`dating_block`). Ему эта
+            девушка не пишет ничем и никогда — см. `dating_block.py`.
+
+    ⚠ **Запрет отнимает анкету, а не человека.** Закрылся он от одной девушки —
+    остальные для него незнакомки, и позвать его вправе любая из них. Закрылся от
+    всех — свободных не останется, и он выпадет сам, тем же условием, что и у
+    переписки.
     """
+    blocked = blocked or set()
     for person in people:
         uid = str(person.get('uid') or '').strip()
         if not uid or uid in invited:
             continue
 
-        free = [girl for girl in girls if (girl['id'], uid) not in talked]
+        free = [girl for girl in girls
+                if (girl['id'], uid) not in talked and (girl['id'], uid) not in blocked]
         if not free:
             continue
 

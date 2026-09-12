@@ -1859,6 +1859,40 @@
         line-height: 1.4;
     }
 
+    /* Ответ сайта как есть. ⚠ Моноширинным и тише текста реплики: это не наши
+       слова, а чужая машинная строка, и читают её, когда наше «ушло» не сошлось
+       с тем, что видно на сайте. Перенос по словам — иначе длинный JSON растянул
+       бы строку и увёл полосу прокрутки вбок. */
+    .mail-sent-said {
+        grid-column: 2 / -1;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
+        color: #94a3b8;
+        line-height: 1.35;
+        word-break: break-word;
+    }
+
+    /* «Снять запрет» — текстом, а не кружком, как крестики на карточках пула.
+       ⚠ Действие редкое и обдуманное: кружок рядом с чужим именем нажимается
+       мимоходом, а здесь нажатие возвращает человеку письма, от которых он
+       закрылся. Слово заставляет прочитать, что делаешь. */
+    .block-undo {
+        padding: 2px 8px;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        background: #fff;
+        color: #64748b;
+        font-size: 10px;
+        cursor: pointer;
+        transition: background .12s ease, color .12s ease;
+    }
+
+    .block-undo:hover {
+        background: #4338ca;
+        border-color: #4338ca;
+        color: #fff;
+    }
+
     .mail-sent-empty {
         padding: 20px 12px;
         text-align: center;
@@ -4565,6 +4599,10 @@
         const inviteSentReload = workEl.querySelector('[data-slot="invite-sent-reload"]');
         if (inviteSentReload) inviteSentReload.addEventListener('click', inviteSentLoad);
 
+        // То же у чёрного списка: пополняет его отправка, а не страница.
+        const inviteBlockReload = workEl.querySelector('[data-slot="invite-block-reload"]');
+        if (inviteBlockReload) inviteBlockReload.addEventListener('click', inviteBlockLoad);
+
         // Форму не отправляют — Enter в ней не должен перезагружать страницу.
         workEl.querySelectorAll('[data-form="invite-schedule"], [data-form="invite-make"]')
             .forEach(form => form.addEventListener('submit', (e) => e.preventDefault()));
@@ -4618,7 +4656,7 @@
         const подсказка = `Открыть анкету ${esc(кто)} на «Анкетах» — в новой вкладке`;
 
         workWhoEl.innerHTML = row
-            ? `<a class="work-who-link" rel="noopener"`
+            ? `<a class="work-who-link" target="_blank" rel="noopener"`
               + ` href="${куда}" title="${подсказка}">${esc(кто)}</a>`
             : '';
         workWhoEl.title = кто;
@@ -4971,7 +5009,7 @@
     // ⚠ Порядок — порядок разговора: сперва зовём, смотрим, ушло ли, потом
     // говорим. Он же и умолчание: первая подвкладка та, с которой начинают день, —
     // пул инвайтов набирается кругом ночью, а утром его разбирают.
-    const CHAT_TABS = ['invite', 'sent', 'talk'];
+    const CHAT_TABS = ['invite', 'sent', 'talk', 'block'];
 
     let chatTab = CHAT_TABS.includes(localStorage.getItem(CHAT_TAB_KEY))
         ? localStorage.getItem(CHAT_TAB_KEY) : 'invite';
@@ -5007,6 +5045,7 @@
         // ⚠ Выключатель автоответа живёт в полосе подвкладок и виден только на
         // «Диалогах» — грузим его там же, где показываем.
         if (chatTab === 'talk') chatAnswerLoad();
+        if (chatTab === 'block') inviteBlockShow();
     }
 
     // ── Автоответ в чате: один выключатель на сайт ──────────────────────────
@@ -5180,8 +5219,126 @@
                     ? '<span class="mail-sent-why">осталось в пуле — можно '
                     + 'отправить ещё раз</span>'
                     : '')
+                // ⚠ **Ответ сайта — как есть, и у ушедших тоже.** Наше «ушло»
+                // значит «сайт принял кадр», а не «человек это прочитал»: женской
+                // анкете сайт показывает её сообщение в её же переписке, а мужчина
+                // не получает его, пока не пригласит первым (`needInvite`,
+                // подробности в `dating_send.py`).
+                //
+                // Отличить одно от другого можно **только** по ответу сайта — и
+                // ровно за этим сюда заходят, когда «ушло» не сошлось с тем, что
+                // видно под учёткой собеседника.
+                + (row.answer
+                    ? '<span class="mail-sent-said" title="ответ сайта как есть">'
+                      + `${esc(row.answer)}</span>` : '')
                 + '</div>';
         }).join('');
+    }
+
+    // ── Не пишем: кому эта анкета больше не пишет ───────────────────────────
+    //
+    // ⚠ **Список пополняется сам.** Отправка получает от сайта отказ «он вас
+    // закрыл» (`ERROR_MESSAGE_USER_DENY` у нашего движка), и пара заносится сюда —
+    // вместе с чисткой её черновиков из всех пулов. Правило и его цена —
+    // `dating_block.py`; здесь только показ.
+    //
+    // ⚠ **Анкета — фильтр, а не условие показа**, как у диалогов и доставки: без
+    // выбранной девушки список полон и отвечает на «от кого вообще закрылись».
+    let inviteBlock = [];
+
+    function inviteBlockShow() {
+        if (!workEl.querySelector('[data-chat-pane="block"]')) return;
+
+        inviteBlockPaint();
+        inviteBlockLoad();
+    }
+
+    async function inviteBlockLoad() {
+        const site = siteId();
+        if (!site) {
+            inviteBlock = [];
+            inviteBlockPaint();
+
+            return;
+        }
+
+        try {
+            inviteBlock = (await getData(
+                `${BASE}/api/dating/block?site_id=${site}`)).result || [];
+        } catch (e) {
+            inviteBlock = [];
+            showNotification('Список «не пишем» не пришёл: ' + e.message, 'error');
+        }
+
+        // Сайт могли переключить, пока ответ ехал.
+        if (siteId() !== site) return;
+
+        inviteBlockPaint();
+    }
+
+    function inviteBlockPaint() {
+        const box = slot('invite-block');
+        if (!box) return;
+
+        fillSlot('invite-block-count',
+                 inviteBlock.length ? `пар: ${inviteBlock.length}` : '');
+
+        if (!inviteBlock.length) {
+            box.innerHTML = '<div class="mail-sent-empty">Никто от анкет этого '
+                + 'сайта не закрывался.<br>Сюда попадают пары, которым сайт '
+                + 'отказал словами «вас закрыли»: таким мы больше не пишем — '
+                + 'ни инвайтов, ни писем.</div>';
+
+            return;
+        }
+
+        box.innerHTML = inviteBlock.map(row =>
+            '<div class="mail-sent-row plain">'
+            + '<span class="mail-sent-dot bad" title="ей ему больше не пишем"></span>'
+            // Обе стороны тем же видом, что в «Доставке» и «Диалогах»: вопрос
+            // «кто кому не пишет» — про двоих, и читается он так же.
+            + '<span class="mail-sent-who talk">'
+            + talkSide(row.profile_name, row.profile_photo || '', '',
+                       'анкета, от которой закрылись')
+            // ⚠ Перечёркнутая стрелка: строка отвечает «письма отсюда туда не
+            // идут», и обычная стрелка обещала бы обратное.
+            + '<span class="talk-swap">⇸</span>'
+            + talkSide(row.name, row.photo, row.uid, 'он закрылся от этой анкеты')
+            + '</span>'
+            + `<span class="mail-sent-state bad">${esc(BLOCK_SOURCE[row.source] || '')}</span>`
+            + `<span class="mail-sent-when">${esc(row.created_at ? timeShift(row.created_at) : '')}</span>`
+            // Ответ сайта целиком: по нему и видно, что это не наша догадка.
+            + (row.reason
+                ? `<span class="mail-sent-said">${esc(row.reason)}</span>` : '')
+            + '<span class="mail-sent-text">'
+            + `<button type="button" class="block-undo" data-block="${row.id}"`
+            + ' title="Снять запрет: этой паре снова можно писать">снять запрет</button>'
+            + '</span>'
+            + '</div>').join('');
+
+        // ⚠ Обработчик вешаем **после** отрисовки, как у карточек пула: строки
+        // переписываются целиком на каждое чтение, и повешенный на строку до неё
+        // не пережил бы первого же обновления.
+        box.querySelectorAll('.block-undo').forEach(btn =>
+            btn.addEventListener('click', () => inviteBlockDrop(btn.dataset.block)));
+    }
+
+    // Откуда узнали про запрет. ⚠ Показываем словами, а не кодом: `chat` и `mail`
+    // ничего не говорят тому, кто не читал таблицу.
+    const BLOCK_SOURCE = {chat: 'закрылся в чате', mail: 'закрылся в почте',
+                          hand: 'решение оператора'};
+
+    async function inviteBlockDrop(blockId) {
+        try {
+            await deleteData(`${BASE}/api/dating/block/${Number(blockId)}`);
+        } catch (e) {
+            showNotification('Запрет не снялся: ' + e.message, 'error');
+
+            return;
+        }
+
+        showNotification('Запрет снят — паре снова можно писать', 'success');
+        inviteBlockLoad();
     }
 
     // ── Инвайты: пул первых реплик в чат ─────────────────────────────────────

@@ -138,6 +138,10 @@ async def dating_mail_send_one(letter: dict, profile: dict, base: str,
             profile, base, secret,
             DATING_MAIL_SEND_CHECK_PATH.format(uid=uid), method='GET')
     except DatingSiteApiError as e:
+        # ⚠ Отказ приходит **и на этом шаге**: «можно ли писать этому человеку» —
+        # ровно тот вопрос, на который сайт отвечает «он вас закрыл».
+        await _deny_check(profile, uid, str(e))
+
         raise DatingMailSendError(f'сайт не дал разрешения на отправку: {e}')
 
     check_id = str(check.get(DATING_MAIL_SEND_CHECK_FIELD) or '').strip()
@@ -153,6 +157,8 @@ async def dating_mail_send_one(letter: dict, profile: dict, base: str,
             profile, base, secret, DATING_MAIL_SEND_PATH,
             payload=_payload(check_id, uid, body, reply_to), method='POST')
     except DatingSiteApiError as e:
+        await _deny_check(profile, uid, str(e))
+
         raise DatingMailSendError(f'сайт не принял письмо: {e}')
 
     status = str(answer.get(DATING_MAIL_SEND_STATUS_FIELD) or '').strip()
@@ -227,6 +233,33 @@ async def dating_mail_send_mark(letter: dict, sent: bool, error: str = '',
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+async def _deny_check(profile: dict, uid: str, said: str) -> None:
+    """Не значит ли отказ сайта «он закрылся от этой девушки».
+
+    ⚠ **Внутри отправки, а не у пяти вызывающих.** Письмо шлют кнопка рассылки,
+    кнопка ответа, кнопка избранных и два круга — и каждый читает отказ по-своему.
+    Расставь проверку по ним, первый забытый продолжал бы писать закрывшемуся.
+
+    ⚠ **Разбор — общий с чатом** (`dating_block_deny`): закрылся человек от
+    девушки, а не от способа доставки, и два перечня примет разошлись бы.
+
+    Молчит при любой беде: это подсказка поверх отправки, и уронить ею письмо,
+    которое сайт отказался принять по другой причине, было бы хуже отказа.
+    """
+    from src.dating.dating_block import dating_block_add, dating_block_deny
+
+    site_id = int(profile.get('site_id') or 0)
+    profile_id = int(profile.get('id') or 0)
+    if not site_id or not profile_id:
+        return
+
+    try:
+        if await dating_block_deny(site_id, said):
+            await dating_block_add(site_id, profile_id, uid, reason=said, source='mail')
+    except Exception as e:
+        logger_info(f'[dating] отказ письма не разобрался: {e}')
+
 
 def _payload(check_id: str, uid: str, body: str, reply_to=None) -> dict:
     """Тело запроса `POST /messages/send` — ровно по документации сайта.

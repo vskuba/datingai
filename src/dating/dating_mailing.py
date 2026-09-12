@@ -31,6 +31,7 @@ import random
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.dating_block import dating_block_pairs
 from src.dating.dating_json import dating_json_load
 from src.dating.dating_mail import (dating_mail_missing, dating_mail_render,
                                     dating_mail_vars_found)
@@ -136,6 +137,9 @@ async def dating_mailing_make(site_id: int, templates: list, limit: int,
 
     known = await dating_mail_var_rows(site_id)
     taken = await _taken(site_id)
+    # Закрывшиеся от анкеты: письмо им не уйдёт — сайт откажет тем же отказом, что
+    # и в чате (`dating_block.py`). Отдельным набором, потому что и вопрос свой.
+    blocked = await dating_block_pairs(site_id)
 
     # ⚠ Запас походов на сайт — **на этот заход**. Настройка сайта `mailing_probe`
     # (§3.7.2), ноль — не ходить вовсе и писать тем, о ком уже знаем.
@@ -154,7 +158,7 @@ async def dating_mailing_make(site_id: int, templates: list, limit: int,
     # полсотни лишних походов в базу.
     values_by_girl = {}
 
-    for girl, template, person in _pairs(girls, people, templates, taken):
+    for girl, template, person in _pairs(girls, people, templates, taken, blocked):
         if tried >= limit:
             left += 1
             continue
@@ -400,7 +404,8 @@ def dating_mailing_companion_vars(person: dict, known: list) -> list[dict]:
 
 # ── Приватное ────────────────────────────────────────────────────────────────
 
-def _pairs(girls: list, people: list, templates: list, taken: set):
+def _pairs(girls: list, people: list, templates: list, taken: set,
+           blocked: set = None):
     """Тройки «анкета — адресат — шаблон»: кому, от кого и чем писать.
 
     ⚠ **По адресатам, а не перебором всех сочетаний.** Анкет два десятка, людей в
@@ -416,12 +421,22 @@ def _pairs(girls: list, people: list, templates: list, taken: set):
     занятую пару, и человек оставался без письма, хотя другая анкета или другой
     шаблон были доступны.
 
+    ⚠ **Запрет отнимает анкету, а не адресата.** Закрылся человек от одной
+    девушки — от остальных письмо ему уйдёт: они ему не писали и отказа не
+    получали. Закрылся от всех — свободных троек не останется, и он выпадет сам.
+
     Args:
         taken: тройки, которым письмо уже готовили или отправляли.
+        blocked: пары «анкета — адресат», где человек закрылся от девушки
+            (`dating_block`). ⚠ Пара, а не тройка: он закрылся от неё целиком, и
+            шаблон тут ничего не меняет.
     """
+    blocked = blocked or set()
+
     for person in people:
         free = [(girl, template) for girl in girls for template in templates
-                if (girl['id'], person['uid'], template['id']) not in taken]
+                if (girl['id'], person['uid'], template['id']) not in taken
+                and (girl['id'], person['uid']) not in blocked]
         if not free:
             continue
 

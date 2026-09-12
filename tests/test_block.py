@@ -1,0 +1,219 @@
+"""Чёрный список: кому эта анкета больше не пишет.
+
+⚠ **Написано по живому отказу.** Инвайт от Nadezhda748852 к DDominic909801:
+
+    200 {"IsSuccess":false,"Reason":"ERROR_MESSAGE_USER_DENY",
+         "Message":"User ignore messages from you"}
+
+Собеседник закрылся от анкеты. До этой правки отказ был обычным: реплика
+оставалась в пуле с причиной, круг через сутки готовил следующую — ценой вызова
+LLM, — и так до бесконечности.
+
+Проверяется здесь то, что легко сломать незаметно:
+
+* **примета отказа читается из настройки сайта**, а не зашита в код;
+* **запрет — про пару**: другая наша девушка звать его вправе;
+* **черновики уходят сразу** — иначе круг отправки честно попробует каждый;
+* **ответ на его письмо остаётся**: запрет отвечает на «писать ли первыми».
+"""
+
+import uuid
+
+import pytest
+
+from mysql_.mysql_ import mysql_get_db_async
+
+from src.dating import dating_block
+from src.dating.dating_block import (DATING_BLOCK_DENY_DEFAULT,
+                                     DATING_BLOCK_POOLS, dating_block_add,
+                                     dating_block_deny, dating_block_drop,
+                                     dating_block_pairs, dating_block_rows)
+from src.dating.dating_invite import _pairs as invite_pairs
+from src.dating.dating_mailing import _pairs as mailing_pairs
+
+pytestmark = pytest.mark.chat
+
+STAND_SITE = 999_343
+UID = 'zz-block'
+
+# Ответ сайта целиком — как он и приходит.
+DENY = ('сайт ответил 200: {"IsSuccess":false,"Reason":"ERROR_MESSAGE_USER_DENY",'
+        '"Message":"User ignore messages from you"}')
+
+
+@pytest.fixture
+async def girl(auth_client):
+    """Анкета стенда. Убирает за собой запреты и пулы."""
+    profile_id = int((await auth_client.post('/api/dating/profile', json={
+        'site_id': STAND_SITE,
+        'login': f'blk-{uuid.uuid4().hex[:8]}@example.com',
+        'password': 'x'})).json()['result'])
+
+    yield profile_id
+
+    async with mysql_get_db_async() as db:
+        await db.execute('DELETE FROM dating_block WHERE profile_id = %s', (profile_id,))
+        for table in DATING_BLOCK_POOLS:
+            await db.execute(f'DELETE FROM {table} WHERE profile_id = %s', (profile_id,))
+        await db.execute('DELETE FROM dating_profile WHERE id = %s', (profile_id,))
+        await db.connection.commit()
+
+
+class TestDeny:
+    """Что считается отказом «он закрылся»."""
+
+    async def test_the_site_code_is_recognised(self):
+        assert await dating_block_deny(STAND_SITE, DENY) is True
+
+    async def test_an_ordinary_refusal_is_not(self):
+        """⚠ Обычный отказ — временный, и запрет по нему был бы потерей человека."""
+        assert await dating_block_deny(
+            STAND_SITE, 'сайт ответил 200: {"IsSuccess":false,'
+                        '"Reason":"ERROR_TOO_MANY_REQUESTS"}') is False
+
+    async def test_an_empty_answer_is_not(self):
+        assert await dating_block_deny(STAND_SITE, '') is False
+
+    async def test_the_mark_comes_from_the_site_setting(self, monkeypatch):
+        """⚠ Примету придумывает сайт: коды отказа — его словарь, не наш.
+
+        Умолчание тут лишь потому, что оба наших сайта на одном движке.
+        """
+        async def _said(site_id, key, default=''):
+            assert key == dating_block.DATING_BLOCK_DENY_SETTING
+
+            return 'HE_IS_DONE_WITH_YOU'
+
+        import src.uvicorn.routers.dating.dating_site as site_router
+        monkeypatch.setattr(site_router, 'dating_site_setting', _said)
+
+        assert await dating_block_deny(STAND_SITE, DENY) is False
+        assert await dating_block_deny(STAND_SITE, 'oops HE_IS_DONE_WITH_YOU') is True
+
+    def test_the_default_is_the_code_we_saw_live(self):
+        assert DATING_BLOCK_DENY_DEFAULT == 'ERROR_MESSAGE_USER_DENY'
+
+
+class TestAdd:
+    """Что происходит, когда запрет заносят."""
+
+    async def test_the_pair_is_remembered(self, girl):
+        assert await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY) is True
+        assert (girl, UID) in await dating_block_pairs(STAND_SITE)
+
+    async def test_the_second_time_is_the_same_record(self, girl):
+        await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
+
+        assert await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY) is False
+        assert len(await dating_block_rows(STAND_SITE, girl)) == 1
+
+    async def test_drafts_of_the_pair_are_swept(self, girl):
+        """⚠ Иначе круг отправки честно попробует каждый и получит тот же отказ:
+        запрет откладывал бы работу вместо того, чтобы её отменить."""
+        for table in DATING_BLOCK_POOLS:
+            await _draft(table, girl, UID)
+
+        await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
+
+        for table in DATING_BLOCK_POOLS:
+            assert await _count(table, girl) == 0, f'{table}: черновик остался'
+
+    async def test_what_already_went_is_not_touched(self, girl):
+        """Ушедшее — история, и она правдива: письмо он получил до того, как закрылся."""
+        await _draft('dating_mailing', girl, UID, status='sent')
+
+        await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
+
+        assert await _count('dating_mailing', girl) == 1
+
+    async def test_replies_are_not_a_pool_here(self):
+        """⚠ Ответ на его письмо уходит и после запрета: он написал сам.
+
+        Запрет отвечает на вопрос «писать ли **первыми**», а входящее письмо этот
+        вопрос снимает. Молчать в ответ на прямое обращение хуже.
+        """
+        assert 'dating_mail_reply' not in DATING_BLOCK_POOLS
+
+
+class TestPairsObeyIt:
+    """Наборы пулов запрет соблюдают — и оба одинаково."""
+
+    GIRLS = [{'id': 849, 'login': 'a@example.com'}, {'id': 850, 'login': 'b@example.com'}]
+    PEOPLE = [{'uid': '111', 'name': 'Brian'}]
+    TEMPLATES = [{'id': 7}]
+
+    def test_invites_skip_the_blocked_girl(self):
+        """⚠ Запрет отнимает **анкету**, а не человека: вторая его не знает."""
+        got = list(invite_pairs(self.GIRLS, self.PEOPLE, set(), set(), {(849, '111')}))
+
+        assert [girl['id'] for girl, _ in got] == [850]
+
+    def test_invites_skip_him_when_everyone_is_blocked(self):
+        blocked = {(girl['id'], '111') for girl in self.GIRLS}
+
+        assert list(invite_pairs(self.GIRLS, self.PEOPLE, set(), set(), blocked)) == []
+
+    def test_mailing_skips_the_blocked_girl(self):
+        got = list(mailing_pairs(self.GIRLS, self.PEOPLE, self.TEMPLATES, set(),
+                                 {(849, '111')}))
+
+        assert [girl['id'] for girl, _, _ in got] == [850]
+
+    def test_mailing_skips_him_when_everyone_is_blocked(self):
+        blocked = {(girl['id'], '111') for girl in self.GIRLS}
+
+        assert list(mailing_pairs(self.GIRLS, self.PEOPLE, self.TEMPLATES, set(),
+                                  blocked)) == []
+
+    def test_no_blocks_changes_nothing(self):
+        """Умолчание — пустой набор: старые вызовы работают как работали."""
+        assert len(list(invite_pairs(self.GIRLS, self.PEOPLE, set(), set()))) == 1
+        assert len(list(mailing_pairs(self.GIRLS, self.PEOPLE, self.TEMPLATES,
+                                      set()))) == 1
+
+
+class TestFavoriteMailObeysIt:
+    """У писем избранным запрет стоит условием **в самом запросе**."""
+
+    def test_the_query_asks_about_the_block(self):
+        import inspect
+
+        from src.dating import dating_favorite_mail
+
+        code = inspect.getsource(dating_favorite_mail._quiet)
+
+        assert 'dating_block' in code, 'затихшие разговоры не смотрят на запрет'
+
+
+class TestDrop:
+    """Снять запрет может только человек."""
+
+    async def test_it_goes_away(self, girl):
+        await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
+        one = (await dating_block_rows(STAND_SITE, girl))[0]
+
+        assert await dating_block_drop(int(one['id'])) is True
+        assert await dating_block_pairs(STAND_SITE) == set() \
+            or (girl, UID) not in await dating_block_pairs(STAND_SITE)
+
+    async def test_dropping_what_is_gone_says_so(self):
+        assert await dating_block_drop(999_999_999) is False
+
+
+async def _draft(table: str, profile_id: int, uid: str, status: str = 'draft') -> None:
+    """Черновик в пуле. ⚠ У инвайтов нет `mail_id`, у писем он есть — но пустой
+    столбец допустим, и тест не про него."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            f'INSERT INTO {table} (site_id, profile_id, uid, name, body, status)'
+            ' VALUES (%s, %s, %s, %s, %s, %s)',
+            (STAND_SITE, int(profile_id), uid, 'Dominic', 'привет', status))
+        await db.connection.commit()
+
+
+async def _count(table: str, profile_id: int) -> int:
+    async with mysql_get_db_async() as db:
+        await db.execute(f'SELECT COUNT(*) AS n FROM {table} WHERE profile_id = %s',
+                         (int(profile_id),))
+
+        return int((await db.fetchone())['n'])

@@ -25,6 +25,7 @@
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.dating_block import dating_block_add, dating_block_deny
 from src.dating.dating_feed import dating_feed_write
 from src.dating.dating_json import dating_json_load
 from src.dating.dating_log import dating_log_write
@@ -109,15 +110,34 @@ async def dating_invite_send_one(invite: dict) -> dict:
         # Строка возвращается в пул **чистой**: круг возьмёт её снова, когда
         # человек вернётся в ленту (`_next` смотрит тот же снимок).
         if got.get('offline'):
-            await dating_invite_send_mark(invite_id, sent=False, error='')
+            await dating_invite_send_mark(invite_id, sent=False, error='',
+                                          answer=str(got.get('response') or ''))
 
             return {'ok': False, 'error': 'собеседника нет в сети'}
 
         why = str(got.get('error') or '') or 'сайт не принял'
 
-        return await _fail(site_id, invite_id, profile_id, who, why)
+        said = await _fail(site_id, invite_id, profile_id, who, why,
+                           str(got.get('response') or ''))
 
-    await dating_invite_send_mark(invite_id, sent=True, error='')
+        # ⚠⚠ **«Он закрылся от неё» — отказ навсегда, а не до следующего раза.**
+        # Сайт говорит это кодом в обычном 200-м ответе:
+        # `{"IsSuccess":false,"Reason":"ERROR_MESSAGE_USER_DENY"}`. Не разбери мы
+        # его, круг через сутки приготовил бы этому же человеку следующую реплику —
+        # ценой вызова LLM, — и так до бесконечности.
+        #
+        # ⚠ **После `_fail`, а не до.** Запрет выметает черновики пары из пулов, а
+        # эта строка прямо сейчас занята как `sent` (`_claim`) — чистка прошла бы
+        # мимо неё, и запрещённая реплика осталась бы лежать в пуле. `_fail`
+        # возвращает её в `draft`, и только тогда её видно.
+        if await dating_block_deny(site_id, f'{why} {got.get("response") or ""}'):
+            await dating_block_add(site_id, profile_id, str(invite['uid']), who,
+                                   reason=why, source='chat')
+
+        return said
+
+    await dating_invite_send_mark(invite_id, sent=True, error='',
+                                  answer=str(got.get('response') or ''))
     await dating_log_write(profile_id, 'ok', f'Инвайт ушёл: {who}')
     # ⚠ **И в ленту событий, а не только в журнал анкеты.** Журнал открывают у
     # конкретной девушки и постфактум, а вопрос «панель сейчас пишет живым людям?»
@@ -131,21 +151,30 @@ async def dating_invite_send_one(invite: dict) -> dict:
     return {'ok': True, 'error': ''}
 
 
-async def dating_invite_send_mark(invite_id: int, sent: bool, error: str) -> None:
+async def dating_invite_send_mark(invite_id: int, sent: bool, error: str,
+                                  answer: str = '') -> None:
     """Отмечает исход отправки в пуле.
 
     ⚠ Неудача возвращает строку в `draft` — см. заголовок модуля — **и снимает
     `sent_at`**, поставленный при занятии (`_claim`). Поле отвечает на вопрос
     «когда человек это прочитал», и у неотправленного ответа нет; оставь мы метку,
     неудачная попытка выглядела бы удачной и держала бы человека паузой повтора.
+
+    ⚠ **`answer` — ответ сайта как есть, и он пишется при обоих исходах.** Наше
+    «ушло» значит «сайт принял кадр», а не «человек это прочитал»: у женской анкеты
+    сайт принимает сообщение и показывает его в её же переписке, тогда как мужчина
+    не получает его, пока не пригласит первым (`needInvite`, подробности в
+    `dating_send.py`). Отличить один случай от другого можно только по ответу — и
+    именно за этим на «Доставку» и заходят, когда «ушло» не сходится с тем, что
+    видно на сайте.
     """
     async with mysql_get_db_async() as db:
         await db.execute(
             'UPDATE dating_invite'
-            ' SET status = %s, error = %s, sent_at = IF(%s, NOW(), NULL)'
+            ' SET status = %s, error = %s, answer = %s, sent_at = IF(%s, NOW(), NULL)'
             ' WHERE id = %s',
             ('sent' if sent else 'draft', str(error or '')[:500],
-             1 if sent else 0, int(invite_id)))
+             str(answer or '')[:500], 1 if sent else 0, int(invite_id)))
         await db.connection.commit()
 
 
@@ -209,7 +238,7 @@ def _girl(profile: dict) -> str:
 
 
 async def _fail(site_id: int, invite_id: int, profile_id: int, who: str,
-                why: str) -> dict:
+                why: str, answer: str = '') -> dict:
     """Причина — в строку пула, в журнал анкеты и в ленту; исход — вызывающему.
 
     ⚠ `site_id` обязателен и стоит первым: лента отбрасывает событие с нулевым
@@ -219,7 +248,7 @@ async def _fail(site_id: int, invite_id: int, profile_id: int, who: str,
     ⚠ Причину храним **до** ответа: страница покажет её на карточке, а человек
     закроет вкладку и вернётся завтра — в ответе HTTP её к тому времени нет.
     """
-    await dating_invite_send_mark(invite_id, sent=False, error=why)
+    await dating_invite_send_mark(invite_id, sent=False, error=why, answer=answer)
     await dating_log_write(profile_id, 'fail', f'Инвайт {who}: {why}')
     logger_info(f'[dating] инвайт #{invite_id} не ушёл: {why}')
     # Неудача — тоже событие сайта, и видом `warn`: «пул полон, а ничего не

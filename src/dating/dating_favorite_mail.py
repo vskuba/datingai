@@ -280,6 +280,12 @@ async def _quiet(site_id: int, profile_id: int = 0) -> list[dict]:
         '   AND NOT EXISTS (SELECT 1 FROM dating_favorite_mail d'
         '                    WHERE d.profile_id = f.profile_id AND d.uid = f.uid'
         "                      AND d.status = 'draft')"
+        # ⚠ И закрывшиеся от анкеты. «Ты замолчал» тому, кто просил не писать, —
+        # худшее из наших писем, и сайт его всё равно не примет (`dating_block.py`).
+        # Условием в этом же запросе, а не отсевом после: список уходит в потолок
+        # захода, и отсеки мы их позже — запрещённые пары съедали бы места живых.
+        '   AND NOT EXISTS (SELECT 1 FROM dating_block b'
+        '                    WHERE b.profile_id = f.profile_id AND b.uid = f.uid)'
         ' ORDER BY talk.last_at')
 
     try:

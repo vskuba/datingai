@@ -123,6 +123,11 @@
            Наполняет его страница из ленты событий. #}
         <button type="button" class="page-tab" data-chat-tab="talk">Диалоги<span
             class="tab-fly" data-slot="talkFly"></span></button>
+        {# ⚠ «Не пишем» — **последней**, и это конец того же пути: позвали →
+           посмотрели, ушло ли → поговорили → а вот с этими не разговариваем.
+           Заходят сюда реже всего: список пополняется сам, и открывают его, чтобы
+           понять, почему паре ничего не уходит, либо чтобы снять запрет. #}
+        <button type="button" class="page-tab" data-chat-tab="block">Не пишем</button>
 
         {# ⚠ Правый край полосы — **настройки открытой подвкладки**, как у почты.
            У каждой панели свои, и место у них общее: человек ищет «где это
@@ -358,6 +363,25 @@
                     title="Перечитать журнал доставки">⟳</button>
         </div>
         <div class="mail-sent" data-slot="invite-sent"></div>
+        {% endblock %}
+    </div>
+
+    {# ── Чёрный список: кому эта анкета больше не пишет ──────────────────────
+       ⚠ **Список пополняется сам** — отказом сайта («он вас закрыл»), — и это
+       главное, что о нём надо знать: он не настройка, а память о полученном
+       «нет». Руками сюда заносят тем же видом, с карточки доставки.
+
+       ⚠ Единственное действие здесь — **снять**. Сайт не сообщает, когда человек
+       передумал, и решение попробовать снова принимает оператор. #}
+    <div class="chat-pane off" data-chat-pane="block">
+        {% block work_invite_block %}
+        <div class="mail-sent-head">
+            <span>Не пишем</span>
+            <span class="mail-sent-count" data-slot="invite-block-count"></span>
+            <button type="button" class="people-reload" data-slot="invite-block-reload"
+                    title="Перечитать список">⟳</button>
+        </div>
+        <div class="mail-sent" data-slot="invite-block"></div>
         {% endblock %}
     </div>
 </div>

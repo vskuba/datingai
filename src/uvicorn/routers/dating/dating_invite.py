@@ -94,7 +94,7 @@ async def dating_invite_list(site_id: int = 0, status_: str = 'draft',
         return {'result': [], 'pool': 0, 'send_on': False}
 
     sql = ('SELECT i.id, i.site_id, i.profile_id, i.uid, i.name, i.photo,'
-           ' i.body, i.status, i.error, i.sent_at, i.created_at,'
+           ' i.body, i.status, i.error, i.answer, i.sent_at, i.created_at,'
            ' p.login AS profile_login, p.profile AS profile_card'
            ' FROM dating_invite i'
            ' LEFT JOIN dating_profile p ON p.id = i.profile_id'
@@ -319,7 +319,7 @@ async def _row(invite_id: int) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT i.id, i.site_id, i.profile_id, i.uid, i.name, i.photo,'
-            ' i.body, i.status, i.error, i.sent_at, i.created_at,'
+            ' i.body, i.status, i.error, i.answer, i.sent_at, i.created_at,'
             ' p.login AS profile_login, p.profile AS profile_card'
             ' FROM dating_invite i'
             ' LEFT JOIN dating_profile p ON p.id = i.profile_id'
