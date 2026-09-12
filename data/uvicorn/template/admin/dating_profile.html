@@ -4491,7 +4491,7 @@
         const подсказка = `Открыть анкету ${esc(кто)} на «Анкетах» — в новой вкладке`;
 
         workWhoEl.innerHTML = row
-            ? `<a class="work-who-link" target="_blank" rel="noopener"`
+            ? `<a class="work-who-link" rel="noopener"`
               + ` href="${куда}" title="${подсказка}">${esc(кто)}</a>`
             : '';
         workWhoEl.title = кто;
