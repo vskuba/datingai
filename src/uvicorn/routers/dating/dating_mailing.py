@@ -57,6 +57,10 @@ class DatingMailingGenerate(BaseModel):
     # шаблонов означает «любым из включённых»: выбор на странице **сужает**.
     profile_id: int = Field(0, ge=0,
                             description='Писать только от этой анкеты')
+    first_uid: str = Field('', max_length=32,
+                           description='Кого поставить первым — карточка, '
+                                       'выбранная в ленте «Все онлайн». '
+                                       '⚠ Перестановка, а не отбор')
 
 
 class DatingMailingEdit(BaseModel):
@@ -211,6 +215,9 @@ async def dating_mailing_generate(payload: DatingMailingGenerate,
     # выбрал её в списке и нажал кнопку: «сделано 0» он прочитал бы как «адресатов
     # не нашлось», а дело в галочке, которую он видит на другой странице.
     profile_id = int(payload.profile_id or 0)
+    # Выбранный в ленте — вперёд очереди. ⚠ Не отбор: остальные адресаты
+    # остаются, а уже занятого пропустит `_taken`, как и прежде.
+    first_uid = str(payload.first_uid or '').strip()
     if profile_id and not any(girl['id'] == profile_id for girl in girls):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -234,7 +241,8 @@ async def dating_mailing_generate(payload: DatingMailingGenerate,
         await dating_site_seconds(site_id, 'mailing_batch')
         or DATING_MAILING_BATCH_DEFAULT, DATING_MAILING_BATCH_MAX)
 
-    result = await dating_mailing_make(site_id, templates, limit, profile_id)
+    result = await dating_mailing_make(site_id, templates, limit, profile_id,
+                                       first_uid)
 
     return {'result': {**result, 'limit': limit}}
 

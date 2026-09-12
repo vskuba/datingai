@@ -5692,8 +5692,14 @@
         }
 
         try {
+            // ⚠ **Выбранный в ленте уходит первым в очереди набора.** Человек
+            // выбрал карточку и жмёт «Генерировать» — он ждёт реплику именно
+            // этому, а набор берёт людей лентой и мог бы не дойти до него вовсе.
+            // Это перестановка, а не отбор: остальные в очереди остаются, а уже
+            // позванного сервер пропустит, как и прежде.
             const got = (await postData(`${BASE}/api/dating/invite/generate`,
-                {site_id: site, limit, profile_id: openId || 0})).result || {};
+                {site_id: site, limit, profile_id: openId || 0,
+                 first_uid: openUid || ''})).result || {};
 
             if (note) {
                 note.textContent = got.stopped
@@ -8640,10 +8646,11 @@
 
         let answer;
         try {
+            // Выбранный в ленте — первым, тем же правилом, что у инвайтов.
             answer = await postData(`${BASE}/api/dating/mailing/generate`,
                 {
                     site_id: site, mail_ids: ids, limit: size,
-                    profile_id: girl
+                    profile_id: girl, first_uid: openUid || ''
                 });
         } catch (e) {
             if (note) {
@@ -10212,7 +10219,7 @@
         //
         // Правим тем же обходом, а не перерисовкой пула: перерисовка сбросила бы
         // прокрутку списка, в котором человек как раз и ищет.
-        poolHitPaint();
+        poolHitPaint({scroll: true});
 
         // ⚠ **Выбрали человека — завели ему карточку.** Это и есть «по
         // требованию»: людей в сети сотни, а на сайте тысячи, и складывать их в
@@ -10244,9 +10251,23 @@
     // ⚠ Обходим `.mail-card[data-uid]`, а не каждый пул по имени: на вкладке открыт
     // ровно один из трёх, и селектор по классу достанется четвёртому пулу даром —
     // ему хватит проставить номер в карточке.
-    function poolHitPaint() {
-        workEl.querySelectorAll('.mail-card[data-uid]').forEach(card =>
-            card.classList.toggle('hit', poolHit(card.dataset.uid)));
+    //
+    // `scroll` — подвести найденное к глазам. ⚠ Только по выбору человека, а не на
+    // каждой перерисовке: пул перерисовывается своим кругом, и прокрутка на каждый
+    // круг уводила бы список из-под руки у того, кто его листает.
+    function poolHitPaint({scroll = false} = {}) {
+        let first = null;
+
+        workEl.querySelectorAll('.mail-card[data-uid]').forEach(card => {
+            const hit = poolHit(card.dataset.uid);
+            card.classList.toggle('hit', hit);
+            if (hit && !first) first = card;
+        });
+
+        // ⚠ `block: 'nearest'` — подвинуть ровно настолько, чтобы стало видно.
+        // `center` дёргал бы список и там, где карточка и так на экране: выбрал
+        // соседа — а пул прыгнул.
+        if (scroll && first) first.scrollIntoView({block: 'nearest', behavior: 'smooth'});
     }
 
     async function companionTouch(uid) {

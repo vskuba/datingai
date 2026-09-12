@@ -71,6 +71,9 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_json import dating_json_load
+# ⚠ Перестановка очереди — общая с рассылкой: «выбранного вперёд» должно значить
+# одно и то же в обоих пулах, иначе человек, привыкший к одному, обманется вторым.
+from src.dating.dating_mailing import dating_mailing_people_first
 from src.dating.dating_mail_agent import (DATING_INVITE_LANGUAGE,
                                           DatingMailAgentError,
                                           dating_invite_write)
@@ -100,7 +103,8 @@ class DatingInviteError(RuntimeError):
     """Набрать пул не вышло. Текст годен для страницы и журнала."""
 
 
-async def dating_invite_make(site_id: int, limit: int, profile_id: int = 0) -> dict:
+async def dating_invite_make(site_id: int, limit: int, profile_id: int = 0,
+                             first_uid: str = '') -> dict:
     """Набирает пул инвайтов: по реплике на пару «анкета — собеседник».
 
     Args:
@@ -109,6 +113,9 @@ async def dating_invite_make(site_id: int, limit: int, profile_id: int = 0) -> d
         profile_id: звать только от этой анкеты. Ноль — от всех включённых.
             ⚠ Сужение, а не отбор заново: анкета всё равно должна быть с этого
             сайта и включённой, иначе инвайтов не будет вовсе.
+        first_uid: кого позвать первым — карточка, выбранная в ленте «Все онлайн».
+            ⚠ Перестановка, а не отбор: остальные в очереди остаются. Уже
+            позванного пропустит `_invited`, как и всех прочих.
 
     Returns:
         dict: `made` — готово реплик, `skipped` — пар пропущено, `reasons` — чего
@@ -124,7 +131,7 @@ async def dating_invite_make(site_id: int, limit: int, profile_id: int = 0) -> d
     if profile_id:
         girls = [girl for girl in girls if girl['id'] == int(profile_id)]
 
-    people = await _people(site_id)
+    people = dating_mailing_people_first(await _people(site_id), first_uid)
     if not girls or not people:
         return {'made': 0, 'skipped': 0, 'reasons': [], 'left': 0, 'stopped': ''}
 

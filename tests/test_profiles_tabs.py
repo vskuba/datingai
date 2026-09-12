@@ -731,8 +731,46 @@ class TestPoolHighlight:
         """⚠ Правим классы обходом, а не перерисовкой пула: перерисовка сбросила бы
         прокрутку списка, в котором человек как раз и ищет."""
         page = (await auth_client.get(PAGE)).text
-        start = page.index('function poolHitPaint()')
-        window = page[start:start + 300]
+        start = page.index('function poolHitPaint(')
+        window = page[start:start + 900]
 
         assert "querySelectorAll('.mail-card[data-uid]')" in window
         assert 'classList.toggle' in window
+
+
+class TestPoolHitScroll:
+    """Подсвеченную карточку подводим к глазам: пул длинный, и она бывает внизу."""
+
+    async def test_choice_scrolls_the_card_into_view(self, auth_client):
+        page = (await auth_client.get(PAGE)).text
+        start = page.index('function poolHitPaint(')
+        window = page[start:start + 900]
+
+        assert 'scrollIntoView' in window, 'подсветили, но не показали'
+        assert "block: 'nearest'" in window, \
+            '⚠ `center` дёргал бы список и там, где карточка и так на экране'
+
+    async def test_only_on_choice_not_on_every_repaint(self, auth_client):
+        """⚠ Пул перерисовывается своим кругом, и прокрутка на каждый круг уводила
+        бы список из-под руки у того, кто его листает."""
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'poolHitPaint({scroll: true})' in page, 'выбор не просит прокрутки'
+        assert page.count('poolHitPaint({scroll: true})') == 1, \
+            'прокрутку просит кто-то ещё, кроме выбора'
+
+
+class TestPoolFirstUid:
+    """Выбранный в ленте уходит первым в очереди набора — обоими кнопками."""
+
+    async def test_invite_button_sends_the_choice(self, auth_client):
+        page = (await auth_client.get(PAGE)).text
+        start = page.index('/api/dating/invite/generate')
+
+        assert 'first_uid: openUid' in page[start:start + 400]
+
+    async def test_mailing_button_sends_the_choice(self, auth_client):
+        page = (await auth_client.get(PAGE)).text
+        start = page.index('/api/dating/mailing/generate')
+
+        assert 'first_uid: openUid' in page[start:start + 400]

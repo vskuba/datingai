@@ -90,7 +90,7 @@ def _probe_take(site_id: int) -> None:
 
 
 async def dating_mailing_make(site_id: int, templates: list, limit: int,
-                              profile_id: int = 0) -> dict:
+                              profile_id: int = 0, first_uid: str = '') -> dict:
     """Набирает пул: письма по заданным шаблонам, не больше `limit` попыток.
 
     Args:
@@ -100,6 +100,8 @@ async def dating_mailing_make(site_id: int, templates: list, limit: int,
         profile_id: писать только от этой анкеты. Ноль — от всех, у кого включена
             рассылка. ⚠ Сужение, а не отбор заново: анкета всё равно должна быть с
             рассылкой и с этого сайта, иначе писем не будет вовсе.
+        first_uid: кого поставить первым — карточка, выбранная в ленте «Все
+            онлайн». ⚠ Перестановка, а не отбор: остальные адресаты остаются.
 
     Returns:
         dict: `made` — сколько писем готово, `skipped` — сколько пар пропущено из-за
@@ -113,7 +115,7 @@ async def dating_mailing_make(site_id: int, templates: list, limit: int,
     каждые полчаса, не заваливая пул повторами.
     """
     girls = await _girls(site_id)
-    people = await _people(site_id)
+    people = dating_mailing_people_first(await _people(site_id), first_uid)
 
     # ⚠ Сужаем **после** отбора, а не запросом: правила «включена» и «с рассылкой»
     # должны быть одни на оба случая. Спроси мы анкету отдельным запросом, письма
@@ -656,6 +658,38 @@ async def _people(site_id: int) -> list[dict]:
     people = [row for row in ((cached or {}).get('people') or []) if row.get('uid')]
 
     return await _by_priority(site_id, people) if people else people
+
+
+def dating_mailing_people_first(people: list[dict], uid: str) -> list[dict]:
+    """Ставит выбранного в ленте человека в голову очереди набора.
+
+    Args:
+        people: лента «Все онлайн» в том порядке, в каком её уже отобрали.
+        uid: номер выбранной карточки. Пусто — порядок не трогаем.
+
+    ⚠ **Перестановка, а не отбор** — как и у постоянного приоритета
+    (`_by_priority`): остальные никуда не деваются. Человек выбрал карточку, а не
+    отменил всех прочих, и набор, ограниченный одним адресатом, остановился бы
+    после первой же готовой пары.
+
+    ⚠ **«Уже в пуле» здесь не проверяется, и это не забывчивость.** Проверка уже
+    есть и стоит дальше по дороге: инвайт пропускает того, кому реплику готовили
+    (`_invited`), рассылка — занятую тройку (`_taken`). Поставленный первым, но
+    занятый, просто будет пропущен, как и раньше. Вторая проверка здесь означала
+    бы два места, знающих одно правило.
+
+    ⚠ **Нет его в ленте — ничего не меняем.** Выбор живёт в браузере и переживает
+    смену сайта и обновление ленты: человек, ушедший из сети, не повод
+    переставлять очередь.
+    """
+    uid = str(uid or '').strip()
+    if not uid:
+        return people
+
+    first = [row for row in people if str(row.get('uid') or '') == uid]
+
+    return first + [row for row in people if str(row.get('uid') or '') != uid] \
+        if first else people
 
 
 async def _by_priority(site_id: int, people: list[dict]) -> list[dict]:

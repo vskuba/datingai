@@ -57,6 +57,10 @@ class DatingInviteGenerate(BaseModel):
                        description='Сколько пар пробуем за это нажатие')
     profile_id: int = Field(0, description='Звать только от этой анкеты. '
                                           'Ноль — от всех включённых')
+    first_uid: str = Field('', max_length=32,
+                           description='Кого поставить первым — карточка, '
+                                       'выбранная в ленте «Все онлайн». '
+                                       '⚠ Перестановка, а не отбор')
 
 
 class DatingInviteEdit(BaseModel):
@@ -149,7 +153,7 @@ async def dating_invite_generate(payload: DatingInviteGenerate,
     """
     try:
         got = await dating_invite_make(int(payload.site_id), int(payload.limit),
-                                       int(payload.profile_id))
+                                       int(payload.profile_id), payload.first_uid)
     except DatingInviteError as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
 
