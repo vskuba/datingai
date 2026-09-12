@@ -269,11 +269,11 @@ class TestFailuresDoNotStopTheRound:
         второй прогон, пока идёт первый. Тот же приём, что у сторожа фоновых
         обновлений списков.
         """
-        видел = {}
+        seen = {}
 
         async def _import(site_id, days):
             key = hold.DATING_CHAT_IMPORT_KEY.format(site_id=site_id)
-            видел[int(site_id)] = round_['redis'].store.get(key)
+            seen[int(site_id)] = round_['redis'].store.get(key)
 
             return {'status': 'ok', 'added': 0, 'contacts': 0, 'error': ''}
 
@@ -281,4 +281,4 @@ class TestFailuresDoNotStopTheRound:
 
         await hold._chat_import_round()
 
-        assert видел[SITE] == '1', 'отметку поставили после прогона'
+        assert seen[SITE] == '1', 'отметку поставили после прогона'

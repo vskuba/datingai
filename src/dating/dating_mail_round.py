@@ -218,15 +218,15 @@ async def _write(site_id: int, offset_hours: int) -> int:
     per_day = int(await dating_site_seconds(site_id, DATING_MAIL_ROUND_PER_DAY_SETTING)
                   or DATING_MAIL_ROUND_PER_DAY)
     day = _today(offset_hours)
-    сегодня = await _made_today(site_id, day)
+    already = await _made_today(site_id, day)
 
-    if сегодня >= per_day:
+    if already >= per_day:
         return 0
 
     known = await dating_mail_var_rows(site_id)
     made = 0
 
-    for n in range(сегодня, per_day):
+    for n in range(already, per_day):
         try:
             drafted = await dating_mail_write(site_id, known)
         except DatingMailAgentError as e:

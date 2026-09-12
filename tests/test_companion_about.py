@@ -20,7 +20,7 @@ pytestmark = pytest.mark.mail
 
 # Живой ответ сценария, слово в слово. ⚠ Не выдуманный: выдуманный проверял бы
 # нашу же мысль о том, как выглядит страница, а не саму страницу.
-ЖИВОЙ = (
+LIVE = (
     "Id: 352443 Location London, United Kingdom Occupation Musician Marital Status "
     "Single Children None Height 140 cm Weight 53 kg Hair Color Light Brown "
     "Hair Style Eyes Color Blue Body Type Athletic Birthday (Pisces) 22 Feb 1968 "
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.mail
 )
 
 # Анкета, которую человек не заполнял: подписи есть, значений нет.
-ПУСТАЯ = (
+EMPTY = (
     'Id: 275296 Location Stuttgart, Germany Occupation Marital Status Widowed '
     'Children None Height 175 cm Weight 85 kg Hair Color Dark Brown Hair Style '
     'Eyes Color Blue Body Type Average Birthday (Libra) 17 Oct 1961 Religion '
@@ -46,7 +46,7 @@ class TestParse:
     """Разбор текста на поля."""
 
     def test_fields_are_read(self):
-        got = dating_companion_about_parse(ЖИВОЙ)
+        got = dating_companion_about_parse(LIVE)
 
         assert got['Id:'] == '352443'
         assert got['Occupation'] == 'Musician'
@@ -59,7 +59,7 @@ class TestParse:
         Иначе пришлось бы знать, из скольких слов состоит каждое, а «Location» это
         и «London», и «Stuttgart, Germany», и «New York, United States».
         """
-        got = dating_companion_about_parse(ЖИВОЙ)
+        got = dating_companion_about_parse(LIVE)
 
         assert got['Location'] == 'London, United Kingdom'
         assert got['Hobby'].startswith('music, Composing')
@@ -67,7 +67,7 @@ class TestParse:
     def test_empty_field_is_dropped(self):
         """У незаполненной анкеты между подписями пусто — такого поля быть не
         должно вовсе. ⚠ Иначе агент прочитал бы пустоту как факт."""
-        got = dating_companion_about_parse(ПУСТАЯ)
+        got = dating_companion_about_parse(EMPTY)
 
         assert 'Occupation' not in got, 'пустое занятие попало в поля'
         assert 'About Myself' not in got
@@ -85,7 +85,7 @@ class TestAbout:
     def test_only_what_makes_a_question(self):
         """⚠ Берём не всё: рост, вес и цвет глаз вопроса не рождают, а описание
         читает агент — лишнее в нём соревнуется за внимание с полезным."""
-        about = dating_companion_about_text(dating_companion_about_parse(ЖИВОЙ))
+        about = dating_companion_about_text(dating_companion_about_parse(LIVE))
 
         assert 'Занятие: Musician' in about
         assert 'Увлечения:' in about
@@ -95,7 +95,7 @@ class TestAbout:
     def test_id_and_location_stay_out(self):
         """⚠ Номер у карточки свой, город и страна лежат отдельными колонками.
         Дублируй мы их в описании, правка одного места расходилась бы с другим."""
-        about = dating_companion_about_text(dating_companion_about_parse(ЖИВОЙ))
+        about = dating_companion_about_text(dating_companion_about_parse(LIVE))
 
         assert '352443' not in about
         assert 'London, United Kingdom' not in about
@@ -106,7 +106,7 @@ class TestAbout:
         В описании она попадает агенту как часть рассказа о себе: «Looking for a
         girl to enjoy my nice life... More».
         """
-        about = dating_companion_about_text(dating_companion_about_parse(ЖИВОЙ))
+        about = dating_companion_about_text(dating_companion_about_parse(LIVE))
 
         assert 'More' not in about
         assert 'nice life…' in about, 'обрыв не отмечен многоточием'
@@ -115,7 +115,7 @@ class TestAbout:
         """У анкеты 275296 пусты «Occupation» и «About Myself» — этих строк в
         описании быть не должно. А заполненное рядом остаётся: пустота одного поля
         не повод терять соседей."""
-        about = dating_companion_about_text(dating_companion_about_parse(ПУСТАЯ))
+        about = dating_companion_about_text(dating_companion_about_parse(EMPTY))
 
         assert 'Занятие' not in about, 'пустое занятие попало в описание'
         assert 'О себе' not in about
@@ -136,7 +136,7 @@ class TestHead:
     мусора, о чём человек и спросил.
     """
 
-    @pytest.mark.parametrize('head, имя, лет', [
+    @pytest.mark.parametrize('head, name, age', [
         ('Kevin , 58 SEND MESSAGE START LIVE CHAT ADD TO FAVORITES', 'Kevin', 58),
         ('Gerhard, 64 SEND MESSAGE', 'Gerhard', 64),
         # Двойное имя с дефисом и пробелами — режем по кнопке, не по пробелу.
@@ -144,8 +144,8 @@ class TestHead:
         # Возраст сайт показывает не всегда.
         ('Chris Gunn START LIVE CHAT', 'Chris Gunn', 0),
     ])
-    def test_name_and_age(self, head, имя, лет):
-        assert dating_companion_about_head(head) == (имя, лет)
+    def test_name_and_age(self, head, name, age):
+        assert dating_companion_about_head(head) == (name, age)
 
     def test_header_without_a_name_gives_nothing(self):
         """⚠ Шапка без имени — не повод класть в карточку что попало.
@@ -202,7 +202,7 @@ class TestPlace:
     """Город и страна — отдельными колонками карточки."""
 
     def test_city_and_country(self):
-        got = dating_companion_about_parse(ЖИВОЙ)
+        got = dating_companion_about_parse(LIVE)
 
         assert dating_companion_about_place(got) == ('London', 'United Kingdom')
 

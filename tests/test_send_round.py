@@ -25,7 +25,7 @@ SITE = 999_777
 LIVE_SITE = 343
 
 # Смена во все сутки — чтобы проверки не зависели от часа прогона.
-ВСЕГДА = [{'from': '00:00', 'to': '23:45'}]
+ALWAYS = [{'from': '00:00', 'to': '23:45'}]
 
 
 @pytest.fixture
@@ -37,7 +37,7 @@ async def site(auth_client):
         f'/api/dating/site/{SITE}/mailing-schedule')).json()['result']
 
     await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
-                          json={'schedule': ВСЕГДА})
+                          json={'schedule': ALWAYS})
 
     async with mysql_get_db_async() as db:
         await db.execute('SELECT is_gone FROM dating_site WHERE site_id = %s', (SITE,))
@@ -80,10 +80,10 @@ def post(monkeypatch):
     ⚠ Подменяется `dating_mail_send_one` в модуле круга, а не транспорт: круг
     зовёт её напрямую, и заглушка ниже по стеку оставила бы возможность промаха.
     """
-    ушло = []
+    sent = []
 
     async def fake(letter, profile, base, password, table='dating_mailing'):
-        ушло.append({'id': int(letter['id']), 'table': table})
+        sent.append({'id': int(letter['id']), 'table': table})
 
         from src.dating.dating_mail_send import dating_mail_send_mark
 
@@ -92,7 +92,7 @@ def post(monkeypatch):
     monkeypatch.setattr(round_, 'dating_mail_send_one', fake)
     monkeypatch.setattr(round_, '_sent_at', {})
 
-    return ушло
+    return sent
 
 
 async def _letter(profile_id: int, table: str = 'dating_mailing', **kw) -> int:
@@ -108,7 +108,7 @@ async def _letter(profile_id: int, table: str = 'dating_mailing', **kw) -> int:
     error = kw.get('error', '')
 
     async with mysql_get_db_async() as db:
-        поле, значение = '', ''
+        field, value = '', ''
         args = [SITE, profile_id, uid, error]
 
         if table == 'dating_mail_reply':
@@ -119,13 +119,13 @@ async def _letter(profile_id: int, table: str = 'dating_mailing', **kw) -> int:
                 (SITE, profile_id, int(uuid.uuid4().int % 1_000_000_000), uid))
             await db.connection.commit()
             await db.execute('SELECT LAST_INSERT_ID() AS id')
-            поле, значение = ', mail_in_id', ', %s'
+            field, value = ', mail_in_id', ', %s'
             args.append(int((await db.fetchone())['id']))
 
         await db.execute(
             f'INSERT INTO {table} (site_id, profile_id, uid, name, body, status,'
-            f' error{поле})'
-            f" VALUES (%s, %s, %s, 'Тест', 'Текст письма', 'draft', %s{значение})",
+            f' error{field})'
+            f" VALUES (%s, %s, %s, 'Тест', 'Текст письма', 'draft', %s{value})",
             tuple(args))
         await db.connection.commit()
         await db.execute('SELECT LAST_INSERT_ID() AS id')

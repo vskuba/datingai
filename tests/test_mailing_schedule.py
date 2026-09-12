@@ -25,7 +25,7 @@ pytestmark = pytest.mark.mail
 SITE = 999_777
 SITE_OTHER = 999_778
 
-ДВЕ = [{'from': '09:00', 'to': '12:00'}, {'from': '18:00', 'to': '21:30'}]
+TWO = [{'from': '09:00', 'to': '12:00'}, {'from': '18:00', 'to': '21:30'}]
 
 
 @pytest.fixture
@@ -52,9 +52,9 @@ class TestMailingSchedule:
 
     async def test_saved_schedule_comes_back(self, auth_client, kept):
         await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
-                              json={'schedule': ДВЕ})
+                              json={'schedule': TWO})
 
-        assert (await _got(auth_client, SITE))['schedule'] == ДВЕ
+        assert (await _got(auth_client, SITE))['schedule'] == TWO
 
     async def test_save_normalises_and_sorts(self, auth_client, kept):
         """Время приходит как придётся, а хранится приведённым и по порядку.
@@ -67,12 +67,12 @@ class TestMailingSchedule:
                               json={'schedule': [{'from': '18:00', 'to': '21:30'},
                                                  {'from': '9:0', 'to': '12:00'}]})
 
-        assert (await _got(auth_client, SITE))['schedule'] == ДВЕ
+        assert (await _got(auth_client, SITE))['schedule'] == TWO
 
     async def test_schedule_can_be_cleared(self, auth_client, kept):
         """Пустое расписание — законное состояние («шлём руками»), а не ошибка."""
         await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
-                              json={'schedule': ДВЕ})
+                              json={'schedule': TWO})
         await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
                               json={'schedule': []})
 
@@ -96,7 +96,7 @@ class TestMailingSchedule:
     async def test_sites_keep_their_own(self, auth_client, kept):
         """Расписание одного сайта не видно у другого: ключ — его номер."""
         await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
-                              json={'schedule': ДВЕ})
+                              json={'schedule': TWO})
 
         assert (await _got(auth_client, SITE_OTHER))['schedule'] == []
 
@@ -137,12 +137,12 @@ class TestMailingScheduleIsChecked:
         """Отказ не должен затирать то, что лежало: человек правит ползунком, и
         промежуточное состояние не повод терять сохранённое."""
         await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
-                              json={'schedule': ДВЕ})
+                              json={'schedule': TWO})
         await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
                               json={'schedule': [{'from': '10:00', 'to': '15:00'},
                                                  {'from': '14:00', 'to': '20:00'}]})
 
-        assert (await _got(auth_client, SITE))['schedule'] == ДВЕ
+        assert (await _got(auth_client, SITE))['schedule'] == TWO
 
 
 class TestMailingScheduleOn:
@@ -155,20 +155,20 @@ class TestMailingScheduleOn:
         await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule-on',
                               json={'mailing_schedule_on': True})
         await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
-                              json={'schedule': ДВЕ})
+                              json={'schedule': TWO})
 
         got = await _got(auth_client, SITE)
 
         assert got['mailing_schedule_on'] is True, 'смены сбросили флаг'
-        assert got['schedule'] == ДВЕ
+        assert got['schedule'] == TWO
 
     async def test_shifts_survive_the_flag(self, auth_client, kept):
         await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
-                              json={'schedule': ДВЕ})
+                              json={'schedule': TWO})
         await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule-on',
                               json={'mailing_schedule_on': True})
 
-        assert (await _got(auth_client, SITE))['schedule'] == ДВЕ, 'флаг стёр смены'
+        assert (await _got(auth_client, SITE))['schedule'] == TWO, 'флаг стёр смены'
 
 
 class TestMailingScheduleAndSettings:
@@ -181,7 +181,7 @@ class TestMailingScheduleAndSettings:
 
     async def test_saving_settings_keeps_the_schedule(self, auth_client, kept):
         await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
-                              json={'schedule': ДВЕ})
+                              json={'schedule': TWO})
         await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule-on',
                               json={'mailing_schedule_on': True})
 
@@ -195,14 +195,14 @@ class TestMailingScheduleAndSettings:
             await auth_client.put(f'/api/dating/site/{SITE}',
                                   json={'settings': before})
 
-        assert got['schedule'] == ДВЕ, 'сохранение настроек стёрло расписание'
+        assert got['schedule'] == TWO, 'сохранение настроек стёрло расписание'
         assert got['mailing_schedule_on'] is True, 'сохранение настроек сбросило флаг'
 
     async def test_schedule_does_not_leak_into_settings(self, auth_client, kept):
         """И обратно: расписание не должно проступать в наборе настроек — там его
         никто не ждёт, а страница «Сайты» показала бы его полем ввода."""
         await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
-                              json={'schedule': ДВЕ})
+                              json={'schedule': TWO})
 
         settings = (await auth_client.get(
             f'/api/dating/site/{SITE}')).json()['result']['settings']

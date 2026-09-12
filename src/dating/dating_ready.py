@@ -119,10 +119,10 @@ def dating_ready_check(profile: dict, transport: str, site_password: str = '') -
     if dating_password_pick(profile, site_password):
         return {'can': True, 'why': ''}
 
-    свой = str(profile.get('password_source') or 'site') == 'own'
+    own = str(profile.get('password_source') or 'site') == 'own'
 
     return {'can': False,
-            'why': ('выбран свой пароль, но он не задан' if свой
+            'why': ('выбран свой пароль, но он не задан' if own
                     else 'нет общего пароля сайта: впишите его в настройках сайта')}
 
 

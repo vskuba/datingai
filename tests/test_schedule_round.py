@@ -25,7 +25,7 @@ from src.dating.dating_schedule_round import (dating_schedule_round_drop,
 
 pytestmark = pytest.mark.profile
 
-СМЕНА = '[{"from": "07:00", "to": "11:00"}]'
+SHIFT = '[{"from": "07:00", "to": "11:00"}]'
 
 
 @pytest.fixture
@@ -53,15 +53,15 @@ async def probe(monkeypatch):
             'INSERT INTO dating_profile (site_id, login, password, password_source,'
             ' role, schedule, schedule_on, enabled, status)'
             " VALUES (343, %s, 'x', 'own', 'lady', %s, 1, 1, 'offline')",
-            (login, СМЕНА))
+            (login, SHIFT))
         await db.connection.commit()
         await db.execute('SELECT id FROM dating_profile WHERE login = %s', (login,))
         profile_id = int((await db.fetchone())['id'])
 
-    настоящий = rnd._rows
+    original = rnd._rows
 
     async def _mine():
-        return [row for row in await настоящий() if int(row['id']) == profile_id]
+        return [row for row in await original() if int(row['id']) == profile_id]
 
     monkeypatch.setattr(rnd, '_rows', _mine)
 

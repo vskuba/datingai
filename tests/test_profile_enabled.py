@@ -109,10 +109,10 @@ class TestSendRefusesWhenDisabled:
         вкладки в общем пуле соседа."""
         from src.dating import dating_send
 
-        гоняли = []
+        runs = []
 
         async def _run(*args, **kwargs):
-            гоняли.append(args)
+            runs.append(args)
 
             return {'status': 'ok'}
 
@@ -124,7 +124,7 @@ class TestSendRefusesWhenDisabled:
 
         assert result['ok'] is False
         assert 'выключена' in result['error']
-        assert not гоняли, 'сценарий погнали от выключенной анкеты'
+        assert not runs, 'сценарий погнали от выключенной анкеты'
 
     async def test_disabled_is_not_offline(self, monkeypatch, online):
         """⚠ `offline` здесь **False**, и это не мелочь.
@@ -150,10 +150,10 @@ class TestSendRefusesWhenDisabled:
         """
         from src.dating import dating_send
 
-        гоняли = []
+        runs = []
 
         async def _run(*args, **kwargs):
-            гоняли.append(args)
+            runs.append(args)
 
             return {'status': 'ok', 'extract': {}}
 
@@ -178,7 +178,7 @@ class TestSendRefusesWhenDisabled:
             {'send': {'transport': 'scenario'}}, UID, 'привет')
 
         assert result['ok'] is True, 'анкета без колонки сочтена выключенной'
-        assert гоняли, 'сценарий не погнали'
+        assert runs, 'сценарий не погнали'
         assert saved == [(PROFILE_ID, UID, 'привет')], 'отправленное не записалось'
 
 
@@ -237,24 +237,24 @@ class TestNoDoubleSend:
     async def test_same_text_twice_is_refused(self, dialogue, online, monkeypatch):
         from src.dating import dating_send
 
-        гоняли = []
+        runs = []
         monkeypatch.setattr(dating_send, 'dating_scenario_run',
-                            lambda *a, **k: гоняли.append(a))
+                            lambda *a, **k: runs.append(a))
         dialogue['put']('привет')
 
         result = await self._send('привет')
 
         assert result['ok'] is False
         assert 'уже отправлено' in result['error']
-        assert not гоняли, 'сценарий погнали ради повтора'
+        assert not runs, 'сценарий погнали ради повтора'
 
-    @pytest.mark.parametrize('last, sending, дубль', [
+    @pytest.mark.parametrize('last, sending, duplicate', [
         ('привет', 'привет', True),
         ('Привет', '  привет ', True),          # регистр и пробелы не спасают
         ('привет', 'привет!', False),           # другой текст — другое сообщение
         ('привет', 'как дела?', False),
     ])
-    async def test_comparison_is_by_meaning(self, dialogue, last, sending, дубль):
+    async def test_comparison_is_by_meaning(self, dialogue, last, sending, duplicate):
         """Сравнение по сути, а не побуквенно: агент возвращает тот же текст с
         другим пробелом или регистром, а для собеседника это одно сообщение.
 
@@ -267,7 +267,7 @@ class TestNoDoubleSend:
 
         dialogue['put'](last)
 
-        assert await _said_already(PROFILE_ID, UID, sending) is дубль
+        assert await _said_already(PROFILE_ID, UID, sending) is duplicate
 
     async def test_other_text_goes_through(self, dialogue, online, saved, monkeypatch):
         """Обратная сторона: другой текст отправляется.

@@ -115,7 +115,7 @@ class TestFields:
         обрезана вёрсткой. Какая длиннее, заранее не известно."""
         long_text = 'полный текст, который в теле обрезан'
         rows = dating_chat_panel_rows(_extract(_row(
-            текст='полный текст…', текст_подсказка=long_text)), PROFILES)
+            **{'текст': 'полный текст…', 'текст_подсказка': long_text})), PROFILES)
 
         assert rows[0]['text'] == long_text
 
@@ -128,7 +128,7 @@ class TestFields:
     def test_unreadable_time_does_not_lose_the_message(self):
         """Формат даты сменился — сообщение всё равно наше. Запись ляжет со
         временем импорта: потерять её хуже, чем показать не тем часом."""
-        rows = dating_chat_panel_rows(_extract(_row(когда='вчера вечером')), PROFILES)
+        rows = dating_chat_panel_rows(_extract(_row(**{'когда': 'вчера вечером'})), PROFILES)
 
         assert len(rows) == 1 and rows[0]['sent_at'] == ''
 
@@ -144,12 +144,12 @@ class TestRefuses:
 
     def test_row_without_id_is_skipped(self):
         """Без номера сообщения нечем ловить повторы: каждый прогон плодил бы копии."""
-        assert dating_chat_panel_rows(_extract(_row(номер='')), PROFILES) == []
+        assert dating_chat_panel_rows(_extract(_row(**{'номер': ''})), PROFILES) == []
 
     def test_empty_text_is_skipped(self):
         """Пустая строка в ленте неотличима от сбоя разбора."""
         assert dating_chat_panel_rows(_extract(
-            _row(текст='', текст_подсказка='')), PROFILES) == []
+            _row(**{'текст': '', 'текст_подсказка': ''})), PROFILES) == []
 
     def test_repeat_inside_one_batch_is_dropped(self):
         """Один номер — одна запись, даже если панель показала строку дважды."""

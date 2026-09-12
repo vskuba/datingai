@@ -107,13 +107,13 @@ class TestWorkTemplate:
         import re
 
         html = await work(LADA)
-        страница = pathlib.Path(
+        page_src = pathlib.Path(
             'data/uvicorn/template/admin/dating_profile.html').read_text(encoding='utf-8')
 
-        кнопки = set(re.findall(r'class="page-tab[^"]*" data-tab="(\w+)"', страница))
-        панели = set(re.findall(r'class="work-panel" data-tab="(\w+)"', html))
+        tabs = set(re.findall(r'class="page-tab[^"]*" data-tab="(\w+)"', page_src))
+        panels = set(re.findall(r'class="work-panel" data-tab="(\w+)"', html))
 
-        assert кнопки == панели, f'кнопки {кнопки}, панели {панели}'
+        assert tabs == panels, f'кнопки {tabs}, панели {panels}'
 
     async def test_sites_get_different_markup(self, work):
         """⚠ Ради этого шаблоны и разделены.
@@ -154,9 +154,9 @@ class TestWorkTemplate:
         html = await work(LADA)
 
         assert html.count('data-strip="favorite"') == 1, 'ряд избранных не один'
-        for слот in ('favorite-strip', 'favorite-left', 'favorite-right',
+        for slot in ('favorite-strip', 'favorite-left', 'favorite-right',
                      'favorite-count', 'favorite-when'):
-            assert f'data-slot="{слот}"' in html, f'нет слота {слот}'
+            assert f'data-slot="{slot}"' in html, f'нет слота {slot}'
 
         # ⚠ Колонки избранных не осталось: два способа показать один список
         # разошлись бы в первый же день, а страница рисует ленту.

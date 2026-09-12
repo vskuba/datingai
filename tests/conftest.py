@@ -320,10 +320,10 @@ async def client():
 # ~470 секунд из 426 фактических (часть тестов входит не под всеми ролями).
 #
 # Сессию переиспользуем: она подписанная кука, живёт час, а прогон идёт минуты.
-_СЕССИИ: dict[str, httpx.Cookies] = {}
+_SESSIONS: dict[str, httpx.Cookies] = {}
 
 
-async def _вошли(username: str, password: str) -> httpx.Cookies:
+async def _login(username: str, password: str) -> httpx.Cookies:
     """Куки роли: берём готовые, а нет — входим один раз на весь прогон.
 
     ⚠ **Проверяем, что кука ещё жива**, дешёвым запросом (10 мс): она живёт час, и
@@ -332,11 +332,11 @@ async def _вошли(username: str, password: str) -> httpx.Cookies:
     """
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT,
                                  follow_redirects=False) as http:
-        куки = _СЕССИИ.get(username)
-        if куки is not None:
-            http.cookies = куки
+        cookies = _SESSIONS.get(username)
+        if cookies is not None:
+            http.cookies = cookies
             if (await http.get('/api/dating/site')).status_code == 200:
-                return куки
+                return cookies
 
         response = await http.post('/auth/login', json={'username': username,
                                                         'password': password})
@@ -344,7 +344,7 @@ async def _вошли(username: str, password: str) -> httpx.Cookies:
             f'не вышло войти под {username}: '
             f'{response.status_code} {response.text[:200]}')
 
-        _СЕССИИ[username] = http.cookies
+        _SESSIONS[username] = http.cookies
 
         return http.cookies
 
@@ -357,10 +357,10 @@ async def auth_client():
     у него свой пул соединений, и один на все тесты держал бы его открытым между
     ними. А вот входить заново незачем — см. `_СЕССИИ`.
     """
-    куки = await _вошли(ADMIN_USERNAME, ADMIN_PASSWORD)
+    cookies = await _login(ADMIN_USERNAME, ADMIN_PASSWORD)
 
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT,
-                                 follow_redirects=False, cookies=куки) as http:
+                                 follow_redirects=False, cookies=cookies) as http:
         yield http
 
 
@@ -372,8 +372,8 @@ async def dating_client():
     войти — тест падает здесь: «оператор не может открыть бэкапы» одинаково
     выглядит и когда права работают, и когда учётки просто нет.
     """
-    куки = await _вошли(DATING_USERNAME, DATING_PASSWORD)
+    cookies = await _login(DATING_USERNAME, DATING_PASSWORD)
 
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT,
-                                 follow_redirects=False, cookies=куки) as http:
+                                 follow_redirects=False, cookies=cookies) as http:
         yield http

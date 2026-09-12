@@ -97,10 +97,10 @@ async def dating_mail_in_round_run() -> dict:
         # ⚠ Без многоточия в конце. Оно ставилось как «работа идёт», а читается
         # как обрезанный текст: человек решил, что строку режут, и пошёл искать
         # предел длины. Что работа идёт, видно по самой строке — итог её заменит.
-        начало = dating_feed_write(site_id, 'mail',
-                                   f'Забираю письма: анкет {len(profiles)}')
+        started = dating_feed_write(site_id, 'mail',
+                                    f'Забираю письма: анкет {len(profiles)}')
 
-        пришло = сбоев = свежих = 0
+        arrived = site_failed = fresh = 0
         for number, profile in enumerate(profiles):
             if number:
                 await asyncio.sleep(DATING_MAIL_IN_PAUSE_SEC)
@@ -109,10 +109,10 @@ async def dating_mail_in_round_run() -> dict:
             got = await _fetch(profile, base, password)
             if got is None:
                 failed += 1
-                сбоев += 1
+                site_failed += 1
             else:
-                пришло += int(got.get('added') or 0)
-                свежих += int(got.get('fresh') or 0)
+                arrived += int(got.get('added') or 0)
+                fresh += int(got.get('fresh') or 0)
                 added += int(got.get('added') or 0)
 
         # ⚠ Итог **заменяет** строку «забираю», а не встаёт второй: без него на
@@ -126,15 +126,15 @@ async def dating_mail_in_round_run() -> dict:
         # за неделю: «новых 5» почти всегда значит пять писем, каких у нас не было,
         # а не пять только что пришедших. Человек это проверяет сразу — открывает
         # входящие и находит там позавчерашнее.
-        if not пришло:
-            итог = 'Писем не пришло'
-        elif свежих:
-            итог = f'Писем: {пришло}, свежих {свежих}'
+        if not arrived:
+            summary = 'Писем не пришло'
+        elif fresh:
+            summary = f'Писем: {arrived}, свежих {fresh}'
         else:
-            итог = f'Писем привезено: {пришло} — все старые'
+            summary = f'Писем привезено: {arrived} — все старые'
 
-        dating_feed_done(site_id, начало, 'warn' if сбоев and not пришло else 'mail',
-                         итог + (f' · с отказом анкет: {сбоев}' if сбоев else ''))
+        dating_feed_done(site_id, started, 'warn' if site_failed and not arrived else 'mail',
+                         summary + (f' · с отказом анкет: {site_failed}' if site_failed else ''))
 
     if added or failed:
         logger_info(f'[dating] круг писем: анкет {seen}, новых {added}'

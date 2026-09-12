@@ -29,7 +29,7 @@ pytestmark = pytest.mark.mail
 SITE = 999_777
 
 # Смена во все сутки — чтобы проверка «идёт ли смена» не зависела от часа прогона.
-ВСЕГДА = [{'from': '00:00', 'to': '23:45'}]
+ALWAYS = [{'from': '00:00', 'to': '23:45'}]
 
 
 def _hhmm(minutes: int) -> str:
@@ -55,7 +55,7 @@ async def site(auth_client):
         f'/api/dating/site/{SITE}/mailing-schedule')).json()['result']
 
     await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
-                          json={'schedule': ВСЕГДА})
+                          json={'schedule': ALWAYS})
     await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule-on',
                           json={'mailing_schedule_on': True})
 

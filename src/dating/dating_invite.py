@@ -229,11 +229,11 @@ def _pairs(girls: list, people: list, invited: set, talked: set):
         if not uid or uid in invited:
             continue
 
-        свободные = [girl for girl in girls if (girl['id'], uid) not in talked]
-        if not свободные:
+        free = [girl for girl in girls if (girl['id'], uid) not in talked]
+        if not free:
             continue
 
-        yield random.choice(свободные), person
+        yield random.choice(free), person
 
 
 async def _language(site_id: int) -> str:

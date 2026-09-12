@@ -165,20 +165,20 @@ def dating_import_plan(row: dict, found: dict | None, base: str) -> dict:
 
     # Сравниваем с тем, что уже лежит в кэше анкеты, а не с колонками учётки:
     # именно `profile` импорт и переписывает.
-    было = dict(found.get('card') or {})
+    before = dict(found.get('card') or {})
     changed = [name for name in DATING_IMPORT_CARD_FIELDS
-               if _changed(было.get(name), card.get(name))]
+               if _changed(before.get(name), card.get(name))]
 
     # **Поверх кладём только непустое.** Иначе импорт без карточек стирал бы город
     # и описание, дочитанные импортом с карточками: список их не отдаёт вовсе, и
     # в `card` они приходят пустыми. Заметно это не сразу — пустое не считается
     # изменением, и `same` такую анкету не тронет; но стоит смениться имени, и тот
     # же прогон унёс бы вместе с ним всё, чего не было в списке.
-    свежее = {name: value for name, value in card.items() if value not in (None, '', 0)}
+    fresh = {name: value for name, value in card.items() if value not in (None, '', 0)}
 
     return {'action': 'update' if changed else 'same',
             'login': str(found.get('login') or login),
-            'card': {**было, **свежее},
+            'card': {**before, **fresh},
             'changed': changed}
 
 
@@ -216,17 +216,17 @@ def _card_build(row: dict, base: str) -> dict:
     return card
 
 
-def _changed(было, стало) -> bool:
+def _changed(before, after) -> bool:
     """Поменялось ли поле. Пустое «стало» изменением не считается.
 
     Сайт отдаёт не всё и не всегда: у части анкет не заполнен город, карточку могли
     не читать вовсе. Считай мы пустоту изменением — импорт стирал бы то, что уже
     знает, и каждый прогон «обновлял» бы анкеты в никуда.
     """
-    if стало in (None, '', 0):
+    if after in (None, '', 0):
         return False
 
-    return str(было or '') != str(стало)
+    return str(before or '') != str(after)
 
 
 def _age(birth_year, now: datetime) -> int:

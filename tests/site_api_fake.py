@@ -17,7 +17,7 @@
 
 ## Как пользоваться
 
-    async def test_список_приходит(site_api):
+    async def test_online_list_arrives(site_api):
         site_api.users['online'] = [{'AccountId': '1', 'Name': 'Vincent', 'Age': 49}]
 
         rows = await dating_people_api_rows(PROFILE, 'online', SITE_API_FAKE_BASE, 'пароль')

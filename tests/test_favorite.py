@@ -25,10 +25,10 @@ pytestmark = pytest.mark.mail
 #
 # ⚠ У «до» два пробела подряд — там, где у избранного стоит класс-признак. Так сайт
 # и отдаёт: класс собирается шаблоном, и на месте признака остаётся пустота.
-ДО_ПУСТО = 'favorite__status  profile_btn-friend'
-ПОСЛЕ_НАЖАТИЯ = ('favorite__status profile_btn-friend profile_btn-friend_disable '
-                 'favorite__status-ok')
-УЖЕ_ИЗБРАННЫЙ = 'favorite__status favorite__status-ok profile_btn-friend'
+BEFORE_EMPTY = 'favorite__status  profile_btn-friend'
+AFTER_CLICK = ('favorite__status profile_btn-friend profile_btn-friend_disable '
+               'favorite__status-ok')
+ALREADY_FAVORITE = 'favorite__status favorite__status-ok profile_btn-friend'
 
 
 class TestState:
@@ -36,7 +36,7 @@ class TestState:
 
     def test_pressed_star_lights_up(self):
         """Не горела, нажали — загорелась. Это наша работа, и она удалась."""
-        assert dating_favorite_state(ДО_ПУСТО, ПОСЛЕ_НАЖАТИЯ) \
+        assert dating_favorite_state(BEFORE_EMPTY, AFTER_CLICK) \
                == (DATING_FAVORITE_DONE, '')
 
     def test_already_favorite_is_not_done(self):
@@ -46,12 +46,12 @@ class TestState:
         `done` сделала панель, `already` было и так. Свести их значило бы потерять
         ответ на «а мы-то что сделали».
         """
-        assert dating_favorite_state(УЖЕ_ИЗБРАННЫЙ, УЖЕ_ИЗБРАННЫЙ) \
+        assert dating_favorite_state(ALREADY_FAVORITE, ALREADY_FAVORITE) \
                == (DATING_FAVORITE_ALREADY, '')
 
     def test_star_that_did_not_light_up_is_a_failure(self):
         """Нажали, а класс не появился — нажатие не дошло до сайта."""
-        state, error = dating_favorite_state(ДО_ПУСТО, ДО_ПУСТО)
+        state, error = dating_favorite_state(BEFORE_EMPTY, BEFORE_EMPTY)
 
         assert state == DATING_FAVORITE_FAIL
         assert error
@@ -62,7 +62,7 @@ class TestState:
         Пусто значит, что шага не было или звёздочку не нашли. Ответить на это
         «уже в избранных» значило бы выдумать удачу там, где мы ничего не видели.
         """
-        state, error = dating_favorite_state(УЖЕ_ИЗБРАННЫЙ, '')
+        state, error = dating_favorite_state(ALREADY_FAVORITE, '')
 
         assert state == DATING_FAVORITE_FAIL
         assert error
@@ -73,7 +73,7 @@ class TestState:
         `favorite__status-ok-hidden` — не зажжённая звезда, и попадись такой класс,
         подстрочный поиск счёл бы человека избранным и больше к нему не пришёл.
         """
-        state, _ = dating_favorite_state(ДО_ПУСТО,
+        state, _ = dating_favorite_state(BEFORE_EMPTY,
                                          'favorite__status favorite__status-ok-hidden')
 
         assert state == DATING_FAVORITE_FAIL
@@ -85,7 +85,7 @@ class TestState:
         карточка, скрытый шаблон) превратил бы строку в две. Зажжённая звезда
         где-то на странице означает, что он в избранных.
         """
-        assert dating_favorite_state(ДО_ПУСТО, f'{ДО_ПУСТО}\n{УЖЕ_ИЗБРАННЫЙ}') \
+        assert dating_favorite_state(BEFORE_EMPTY, f'{BEFORE_EMPTY}\n{ALREADY_FAVORITE}') \
                == (DATING_FAVORITE_DONE, '')
 
 

@@ -628,9 +628,9 @@ class TestOncePerTemplate:
     из двух — ложь. Код отсеивает заранее, база ловит гонку двух заходов.
     """
 
-    ДЕВУШКИ = [{'id': 1}, {'id': 2}]
-    ШАБЛОНЫ = [{'id': 10}, {'id': 20}]
-    ЛЮДИ = [{'uid': 'a'}, {'uid': 'b'}]
+    GIRLS = [{'id': 1}, {'id': 2}]
+    TEMPLATES = [{'id': 10}, {'id': 20}]
+    PEOPLE = [{'uid': 'a'}, {'uid': 'b'}]
 
     def test_taken_triple_never_comes_back(self):
         """Занятая тройка не выдаётся. ⚠ Прогонов много: пары собираются
@@ -638,8 +638,8 @@ class TestOncePerTemplate:
         from src.dating.dating_mailing import _pairs
 
         for _ in range(50):
-            for girl, template, person in _pairs(self.ДЕВУШКИ, self.ЛЮДИ,
-                                                 self.ШАБЛОНЫ, {(1, 'a', 10)}):
+            for girl, template, person in _pairs(self.GIRLS, self.PEOPLE,
+                                                 self.TEMPLATES, {(1, 'a', 10)}):
                 assert (girl['id'], person['uid'], template['id']) != (1, 'a', 10)
 
     def test_another_template_to_the_same_person_is_allowed(self):
@@ -650,25 +650,25 @@ class TestOncePerTemplate:
         """
         from src.dating.dating_mailing import _pairs
 
-        видели = set()
+        seen = set()
         for _ in range(60):
-            for girl, template, person in _pairs(self.ДЕВУШКИ, [{'uid': 'a'}],
-                                                 self.ШАБЛОНЫ, {(1, 'a', 10)}):
-                видели.add((girl['id'], template['id']))
+            for girl, template, person in _pairs(self.GIRLS, [{'uid': 'a'}],
+                                                 self.TEMPLATES, {(1, 'a', 10)}):
+                seen.add((girl['id'], template['id']))
 
-        assert (1, 10) not in видели
-        assert (1, 20) in видели, 'другой шаблон от той же анкеты не предлагается'
+        assert (1, 10) not in seen
+        assert (1, 20) in seen, 'другой шаблон от той же анкеты не предлагается'
 
     def test_person_with_no_free_triples_is_skipped(self):
         """Когда для адресата занято всё — его не берут вовсе, а не выдают
         письмо, которое база потом отвергнет."""
         from src.dating.dating_mailing import _pairs
 
-        занято = {(girl, 'a', template) for girl in (1, 2) for template in (10, 20)}
-        кому = {person['uid'] for _, _, person
-                in _pairs(self.ДЕВУШКИ, self.ЛЮДИ, self.ШАБЛОНЫ, занято)}
+        taken = {(girl, 'a', template) for girl in (1, 2) for template in (10, 20)}
+        addressees = {person['uid'] for _, _, person
+                      in _pairs(self.GIRLS, self.PEOPLE, self.TEMPLATES, taken)}
 
-        assert кому == {'b'}, 'адресат без свободных сочетаний попал в работу'
+        assert addressees == {'b'}, 'адресат без свободных сочетаний попал в работу'
 
     async def test_taken_is_keyed_like_the_database(self, auth_client, letter,
                                                     profile):
@@ -680,10 +680,10 @@ class TestOncePerTemplate:
         """
         from src.dating.dating_mailing import _taken
 
-        занято = await _taken(SITE)
+        taken = await _taken(SITE)
 
-        assert (profile, 'tst-uid', 0) in занято, 'письмо из пула не попало в занятые'
-        assert all(len(key) == 3 for key in занято), 'ключ занятых не тройка'
+        assert (profile, 'tst-uid', 0) in taken, 'письмо из пула не попало в занятые'
+        assert all(len(key) == 3 for key in taken), 'ключ занятых не тройка'
 
 
 class TestPoolRights:

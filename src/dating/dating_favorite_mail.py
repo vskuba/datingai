@@ -141,7 +141,7 @@ async def dating_favorite_mail_make(site_id: int, limit: int = 0,
         online = dating_online_show(site_id, uid)
         if not online.get('online'):
             skipped += 1
-            _reason(reasons, f'{_кому(pair)}: не в сети'
+            _reason(reasons, f'{_addressee(pair)}: не в сети'
                              + ('' if online.get('known') else ' (ленту ещё не снимали)'))
             continue
 
@@ -155,7 +155,7 @@ async def dating_favorite_mail_make(site_id: int, limit: int = 0,
         why = await _too_soon(profile_id_, uid, per_day, gap)
         if why:
             skipped += 1
-            _reason(reasons, f'{_кому(pair)}: {why}')
+            _reason(reasons, f'{_addressee(pair)}: {why}')
             continue
 
         if profile_id_ not in girls:
@@ -166,7 +166,7 @@ async def dating_favorite_mail_make(site_id: int, limit: int = 0,
             # Переписки нет вовсе — возобновлять нечего. Такое бывает у избранных,
             # добавленных руками: звёздочка есть, разговора не было.
             skipped += 1
-            _reason(reasons, f'{_кому(pair)}: переписки нет — возобновлять нечего')
+            _reason(reasons, f'{_addressee(pair)}: переписки нет — возобновлять нечего')
             continue
 
         try:
@@ -182,7 +182,7 @@ async def dating_favorite_mail_make(site_id: int, limit: int = 0,
         body = str(body or '').strip()
         if not body:
             skipped += 1
-            _reason(reasons, f'{_кому(pair)}: агент ответил пусто')
+            _reason(reasons, f'{_addressee(pair)}: агент ответил пусто')
             continue
 
         await _put(site_id, profile_id_, pair, body)
@@ -351,74 +351,74 @@ async def _too_soon(profile_id: int, uid: str, per_day: int, gap: int) -> str:
 
         return 'не удалось посчитать, сколько ему уже написали'
 
-    сутки = int((row or {}).get('сутки') or 0)
+    day_sent = int((row or {}).get('сутки') or 0)
     when = (last or {}).get('последнее')
-    прошло = await _since(when) if when is not None else None
+    since = await _since(when) if when is not None else None
 
     # ⚠ **Дневной предел называет, когда он отпустит.** «Ушло два — предел два»
     # отвечает на «почему», но не на «и что теперь»: человек у экрана решает,
     # ждать ему или поднимать настройку, а для этого нужен срок. Сутки считаются
     # скользящим окном, поэтому освободится оно тогда, когда из окна выпадет самое
     # давнее письмо, — но проще и честнее сказать про ближайшее.
-    if сутки >= int(per_day):
-        сколько = f'{сутки} {_писем(сутки)}'
+    if day_sent >= int(per_day):
+        count_word = f'{day_sent} {_letters_word(day_sent)}'
 
-        return (f'за сутки уже ушло {сколько} — предел {int(per_day)} в сутки'
-                + (f', последнее {_назад(прошло)}' if прошло is not None else ''))
+        return (f'за сутки уже ушло {count_word} — предел {int(per_day)} в сутки'
+                + (f', последнее {_ago_word(since)}' if since is not None else ''))
 
-    if прошло is not None and прошло < int(gap):
+    if since is not None and since < int(gap):
         # Сколько ещё ждать — вместо «прошло меньше четырёх часов». Первое можно
         # прочитать и решить, второе требует считать в уме.
-        return (f'писали {_назад(прошло)}, пауза {_часы(gap)} — '
-                f'можно через {_срок(int(gap) - прошло)}')
+        return (f'писали {_ago_word(since)}, пауза {_hours_word(gap)} — '
+                f'можно через {_left_word(int(gap) - since)}')
 
     return ''
 
 
-def _писем(n: int) -> str:
+def _letters_word(n: int) -> str:
     """Склонение: «1 письмо», «2 письма», «5 писем».
 
     ⚠ Не украшение: строка идёт человеку на экран, и «ушло 2 писем» читается как
     сбой подстановки — то есть заставляет усомниться в самом числе.
     """
-    хвост = abs(int(n)) % 100
-    if 11 <= хвост <= 14:
+    tail = abs(int(n)) % 100
+    if 11 <= tail <= 14:
         return 'писем'
 
-    return {1: 'письмо', 2: 'письма', 3: 'письма', 4: 'письма'}.get(хвост % 10, 'писем')
+    return {1: 'письмо', 2: 'письма', 3: 'письма', 4: 'письма'}.get(tail % 10, 'писем')
 
 
-def _часы(seconds: int) -> str:
+def _hours_word(seconds: int) -> str:
     """Срок словами: «4 часа». Настройка в секундах, человек думает часами."""
-    часов = max(1, round(int(seconds) / 3600))
+    hours = max(1, round(int(seconds) / 3600))
 
-    хвост = часов % 100
-    if 11 <= хвост <= 14:
-        слово = 'часов'
+    tail = hours % 100
+    if 11 <= tail <= 14:
+        word = 'часов'
     else:
-        слово = {1: 'час', 2: 'часа', 3: 'часа', 4: 'часа'}.get(часов % 10, 'часов')
+        word = {1: 'час', 2: 'часа', 3: 'часа', 4: 'часа'}.get(hours % 10, 'часов')
 
-    return f'{часов} {слово}'
+    return f'{hours} {word}'
 
 
-def _срок(seconds: int) -> str:
+def _left_word(seconds: int) -> str:
     """Сколько ещё ждать: «2 ч 40 мин», «35 мин».
 
     ⚠ Минуты нужны: пауза бывает в час, и «через 1 ч» вместо «через 5 мин»
     отправило бы человека ждать впустую.
     """
-    минут = max(1, round(int(seconds) / 60))
-    if минут < 60:
-        return f'{минут} мин'
+    minutes = max(1, round(int(seconds) / 60))
+    if minutes < 60:
+        return f'{minutes} мин'
 
-    часов, остаток = divmod(минут, 60)
+    hours, rest = divmod(minutes, 60)
 
-    return f'{часов} ч' + (f' {остаток} мин' if остаток else '')
+    return f'{hours} ч' + (f' {rest} мин' if rest else '')
 
 
-def _назад(seconds: int) -> str:
+def _ago_word(seconds: int) -> str:
     """Когда это было: «40 мин назад», «6 ч назад»."""
-    return f'{_срок(seconds)} назад'
+    return f'{_left_word(seconds)} назад'
 
 
 async def _since(when) -> int:
@@ -521,7 +521,7 @@ async def _put(site_id: int, profile_id: int, pair: dict, body: str) -> None:
         await db.connection.commit()
 
 
-def _кому(pair: dict) -> str:
+def _addressee(pair: dict) -> str:
     """Как назвать адресата в причине пропуска: имя и номер на сайте.
 
     ⚠ **Номер обязателен, а имя бывает пустым.** Имя приходит из карточки и
@@ -580,7 +580,7 @@ async def dating_favorite_mail_why(site_id: int) -> str:
     gap = await _seconds(site_id, DATING_FAVORITE_MAIL_GAP_SETTING,
                          DATING_FAVORITE_MAIL_GAP_DEFAULT)
 
-    причины = []
+    reasons = []
     for pair in pairs:
         why = await _too_soon(int(pair['profile_id']), str(pair['uid']), per_day, gap)
         # Есть хоть одна пара, которой можно писать, — повода объясняться нет:
@@ -588,11 +588,11 @@ async def dating_favorite_mail_why(site_id: int) -> str:
         if not why:
             return ''
 
-        причины.append(f"{_кому(pair)}: {why}")
+        reasons.append(f"{_addressee(pair)}: {why}")
 
     # ⚠ Показываем **одну** причину, а не список: шапка пула — одна строка, и
     # десять причин в ней превратились бы в полосу, которую не читают. Первая —
     # про ближайшую пару: `_quiet` отдаёт их по свежести разговора.
-    хвост = f' (и ещё {len(причины) - 1})' if len(причины) > 1 else ''
+    tail = f' (и ещё {len(reasons) - 1})' if len(reasons) > 1 else ''
 
-    return причины[0] + хвост
+    return reasons[0] + tail

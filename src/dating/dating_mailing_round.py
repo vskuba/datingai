@@ -273,17 +273,17 @@ async def _make(site_id: int) -> tuple[dict | None, bool]:
     await dating_pool_sweep(site_id)
 
     # Сколько уже готово и сколько ещё нужно.
-    сейчас = await _pool_size(site_id)
-    потолок = await _pool_max(site_id)
-    нужно = потолок - сейчас
+    have = await _pool_size(site_id)
+    cap = await _pool_max(site_id)
+    need = cap - have
 
-    if нужно <= 0:
+    if need <= 0:
         return None, True
 
     # ⚠ За один заход берём не больше порции (`mailing_batch`): даже когда до
     # потолка далеко, заход не должен длиться часами — круг вернётся через свой
     # срок и доберёт остальное.
-    limit = min(нужно, await _limit(site_id))
+    limit = min(need, await _limit(site_id))
 
     try:
         result = await dating_mailing_make(site_id, templates, limit)
@@ -301,10 +301,10 @@ async def _make(site_id: int) -> tuple[dict | None, bool]:
         # готовилась, потому что у трёх анкет не заполнен `girl_name`, а по
         # журналу это выглядело как «круг работает, писем нет». Причину набор и
         # так возвращает — кнопка её показывает человеку, круг молчал.
-        почему = '; '.join(result['reasons'])
+        why = '; '.join(result['reasons'])
         logger_info(f"[dating] рассылка сайта #{site_id}: готово {result['made']}, "
                     f"пропущено {result['skipped']}, осталось {result['left']}"
-                    + (f' — {почему}' if почему else ''))
+                    + (f' — {why}' if why else ''))
 
     return result, False
 

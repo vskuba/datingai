@@ -198,7 +198,7 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     # рассылки уходит незнакомому, ответ — тому, кто написал сам и ждёт; ни то, ни
     # другое не обещает, что девушка на сайте прямо сейчас. Здесь обещает: письмо
     # написано под сиюминутный разговор.
-    сеть = " AND p.status = 'online'" if table == 'dating_favorite_mail' else ''
+    online_only = " AND p.status = 'online'" if table == 'dating_favorite_mail' else ''
 
     try:
         async with mysql_get_db_async() as db:
@@ -208,7 +208,7 @@ async def _oldest(site_id: int, table: str) -> dict | None:
                 f'  FROM {table} m'
                 f'  JOIN dating_profile p ON p.id = m.profile_id'
                 f" WHERE m.site_id = %s AND m.status = 'draft' AND m.error = ''"
-                f'   AND p.enabled = 1{сеть}'
+                f'   AND p.enabled = 1{online_only}'
                 f' ORDER BY m.id LIMIT 1', (int(site_id),))
             row = await db.fetchone()
     except Exception as e:

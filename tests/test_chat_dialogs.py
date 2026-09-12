@@ -124,12 +124,12 @@ class TestCompanionCard:
         """
         await _companion(talk['uid'], 'Will', 'https://site/will.jpg')
 
-        без = next(r for r in await _rows() if r['uid'] == talk['uid'])
-        с_фильтром = next(r for r in await _rows(talk['profile_id'])
-                          if r['uid'] == talk['uid'])
+        plain = next(r for r in await _rows() if r['uid'] == talk['uid'])
+        filtered = next(r for r in await _rows(talk['profile_id'])
+                        if r['uid'] == talk['uid'])
 
-        assert без['name'] == с_фильтром['name'] == 'Will'
-        assert без['photo'] == с_фильтром['photo']
+        assert plain['name'] == filtered['name'] == 'Will'
+        assert plain['photo'] == filtered['photo']
 
     async def test_contact_of_the_profile_wins_over_the_site_card(self, talk):
         """Контакт анкеты свежее: он приходит вместе с чатом, а карточка сайта
@@ -228,14 +228,14 @@ class TestFilter:
         assert any(r['uid'] == talk['uid'] for r in await _rows())
 
     async def test_another_profile_filters_the_talk_out(self, talk, auth_client):
-        другая = (await auth_client.post('/api/dating/profile', json={
+        other = (await auth_client.post('/api/dating/profile', json={
             'site_id': STAND_SITE, 'login': f'other-{uuid.uuid4().hex[:8]}@example.com',
             'password': 'x'})).json()['result']
         try:
-            assert not [r for r in await _rows(int(другая))
+            assert not [r for r in await _rows(int(other))
                         if r['uid'] == talk['uid']]
         finally:
-            await auth_client.delete(f'/api/dating/profile/{другая}')
+            await auth_client.delete(f'/api/dating/profile/{other}')
 
     async def test_the_girl_side_comes_with_the_row(self, talk):
         """⚠ Сторона девушки едет **в строке**, а не берётся из выбора слева.

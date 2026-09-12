@@ -158,13 +158,13 @@ class TestWhoIsAnswered:
         """
         await _in(profile, '111', 'первое', minutes=30)
         await _in(profile, '111', 'второе', minutes=20)
-        последнее = await _in(profile, '111', 'третье', minutes=10)
+        last_id = await _in(profile, '111', 'третье', minutes=10)
 
         got = await dating_mail_reply_make(SITE)
         rows = await _replies()
 
         assert got['made'] == 1, 'ответили на каждое письмо'
-        assert rows[0]['mail_in_id'] == последнее
+        assert rows[0]['mail_in_id'] == last_id
 
     async def test_each_companion_gets_one(self, profile, agent):
         """А вот у разных собеседников — свой ответ каждому: это разные разговоры."""
@@ -236,8 +236,8 @@ class TestHistory:
 
         await dating_mail_reply_make(SITE)
 
-        тексты = [one['text'] for one in agent[0]['history']]
-        assert тексты == ['первое', 'второе', 'третье']
+        texts = [one['text'] for one in agent[0]['history']]
+        assert texts == ['первое', 'второе', 'третье']
 
     async def test_history_includes_our_replies(self, profile, agent):
         """⚠ **Из двух источников.** Возьми мы только входящие, агент не знал бы, что
@@ -256,9 +256,9 @@ class TestHistory:
         agent.clear()
         await dating_mail_reply_make(SITE)
 
-        стороны = [one['from'] for one in agent[0]['history']]
-        assert 'her' in стороны, 'наш прошлый ответ не попал в историю'
-        assert стороны == ['him', 'her', 'him'], 'порядок разговора сбит'
+        sides = [one['from'] for one in agent[0]['history']]
+        assert 'her' in sides, 'наш прошлый ответ не попал в историю'
+        assert sides == ['him', 'her', 'him'], 'порядок разговора сбит'
 
     async def test_mailing_letters_are_in_history(self, profile, agent):
         """⚠ **Письмо рассылки — часть разговора, и оно первое.**
@@ -272,11 +272,11 @@ class TestHistory:
 
         await dating_mail_reply_make(SITE)
 
-        стороны = [one['from'] for one in agent[0]['history']]
-        тексты = [one['text'] for one in agent[0]['history']]
+        sides = [one['from'] for one in agent[0]['history']]
+        texts = [one['text'] for one in agent[0]['history']]
 
-        assert тексты[0] == 'Чем увлекаешься?', 'письмо рассылки не попало в историю'
-        assert стороны == ['her', 'him'], 'разговор начат не с нашего письма'
+        assert texts[0] == 'Чем увлекаешься?', 'письмо рассылки не попало в историю'
+        assert sides == ['her', 'him'], 'разговор начат не с нашего письма'
 
     async def test_unsent_mailing_is_not_in_history(self, profile, agent):
         """⚠ **Только отправленные.** Лежащее в пуле он не видел, и считать его
@@ -286,11 +286,11 @@ class TestHistory:
 
         await dating_mail_reply_make(SITE)
 
-        тексты = [one['text'] for one in agent[0]['history']]
+        texts = [one['text'] for one in agent[0]['history']]
 
-        assert 'черновик в пуле' not in тексты, \
+        assert 'черновик в пуле' not in texts, \
             'неотправленное письмо попало в разговор'
-        assert тексты == ['Moto is my life']
+        assert texts == ['Moto is my life']
 
     async def test_history_is_cut_from_the_end(self, auth_client, profile, agent):
         """⚠ Режем **с конца**: «последние N», а не «первые N» — иначе агент получал
@@ -307,11 +307,11 @@ class TestHistory:
         finally:
             await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': before})
 
-        тексты = [one['text'] for one in agent[0]['history']]
+        texts = [one['text'] for one in agent[0]['history']]
 
-        assert len(тексты) == 5
-        assert тексты[-1] == 'письмо 7', 'последнее письмо не последнее в истории'
-        assert тексты[0] == 'письмо 3', 'обрезали не с того конца'
+        assert len(texts) == 5
+        assert texts[-1] == 'письмо 7', 'последнее письмо не последнее в истории'
+        assert texts[0] == 'письмо 3', 'обрезали не с того конца'
 
     async def test_history_size_from_the_setting(self, auth_client):
         before = (await auth_client.get(
@@ -572,9 +572,9 @@ class TestPendingReplyStandsLast:
         # Письмо **позже** черновика: по времени тот встал бы посередине.
         await _in(profile, '111', 'and horses too', minutes=30)
 
-        нить = await dating_mail_reply_thread(profile['id'], '111')
+        thread = await dating_mail_reply_thread(profile['id'], '111')
 
-        assert нить[-1]['kind'] == 'reply' and нить[-1]['status'] == 'draft', \
+        assert thread[-1]['kind'] == 'reply' and thread[-1]['status'] == 'draft', \
             'черновик не в конце разговора'
 
     async def test_others_keep_their_order(self, auth_client, profile, agent):
@@ -590,10 +590,10 @@ class TestPendingReplyStandsLast:
         await dating_mail_reply_make(SITE)
         await _in(profile, '111', 'второе', minutes=30)
 
-        нить = await dating_mail_reply_thread(profile['id'], '111')
-        его = [one['at'] for one in нить if one['from'] == 'him']
+        thread = await dating_mail_reply_thread(profile['id'], '111')
+        his = [one['at'] for one in thread if one['from'] == 'him']
 
-        assert его == sorted(его), 'его письма перетасованы'
+        assert his == sorted(his), 'его письма перетасованы'
 
     async def test_sent_reply_goes_by_delivery_time(self, auth_client, profile,
                                                     agent):
@@ -617,12 +617,12 @@ class TestPendingReplyStandsLast:
                 ' WHERE profile_id = %s AND uid = %s', (profile['id'], '111'))
             await db.connection.commit()
 
-        ответ = [one for one in await dating_mail_reply_thread(profile['id'], '111')
+        reply = [one for one in await dating_mail_reply_thread(profile['id'], '111')
                  if one['kind'] == 'reply'][0]
 
-        assert ответ['status'] == 'sent'
+        assert reply['status'] == 'sent'
         # Час сочинения в разговоре не участвует — в нём стоит час доставки.
-        письмо = [one for one in await dating_mail_reply_thread(profile['id'], '111')
+        letter = [one for one in await dating_mail_reply_thread(profile['id'], '111')
                   if one['kind'] == 'in'][0]
 
-        assert ответ['at'] > письмо['at'], 'ответ встал раньше письма, на которое он'
+        assert reply['at'] > letter['at'], 'ответ встал раньше письма, на которое он'

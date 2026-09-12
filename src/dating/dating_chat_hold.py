@@ -700,14 +700,14 @@ async def _chat_import_round() -> None:
         # почту и решил, что переписка не забирается. Теперь заход виден так же,
         # как заход за письмами: «иду» → тот же ряд заменяется итогом.
         # ⚠ Без многоточия: оно читается как обрезанный текст, а не как «идёт».
-        начало = dating_feed_write(site_id, 'chat', 'Забираю переписку из панели')
+        started = dating_feed_write(site_id, 'chat', 'Забираю переписку из панели')
 
         result = await dating_chat_panel_import(site_id, DATING_CHAT_PANEL_ROUND_DAYS)
 
         if result['status'] == 'error':
             logger_info(f"[dating] переписка сайта #{site_id} не забралась: "
                         f"{result['error']}")
-            dating_feed_done(site_id, начало, 'warn',
+            dating_feed_done(site_id, started, 'warn',
                              f"Переписка не забралась: {result['error']}")
 
             continue
@@ -723,15 +723,15 @@ async def _chat_import_round() -> None:
         # берёт сутки назад, и «привезено 5» почти всегда значит пять старых
         # реплик, которых у нас не было. Назови их новыми — человек откроет «Чат →
         # Диалоги» и не найдёт там ничего свежего; на это и пожаловались.
-        свежих = int(result.get('fresh') or 0)
+        fresh = int(result.get('fresh') or 0)
         if not result['added']:
-            итог = 'Новой переписки нет'
-        elif свежих:
-            итог = f"Переписка: сообщений {result['added']}, свежих {свежих}"
+            summary = 'Новой переписки нет'
+        elif fresh:
+            summary = f"Переписка: сообщений {result['added']}, свежих {fresh}"
         else:
-            итог = f"Переписка: привезено {result['added']} — все старые"
+            summary = f"Переписка: привезено {result['added']} — все старые"
 
-        dating_feed_done(site_id, начало, 'chat', итог)
+        dating_feed_done(site_id, started, 'chat', summary)
 
 
 async def _chat_sites() -> list[int]:

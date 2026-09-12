@@ -130,14 +130,14 @@ async def dating_companion_list(site_id: int = 0, find: str = '',
 
     # ⚠ Счёт берётся **тем же отбором**, что и список, — включая поиск: «найдено 3
     # из 410» отвечало бы на вопрос, которого никто не задавал.
-    считаем = 'SELECT COUNT(*) AS n FROM' + sql.split('FROM', 1)[1]
+    count_sql = 'SELECT COUNT(*) AS n FROM' + sql.split('FROM', 1)[1]
 
     sql += ' ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s'
-    страница = max(0, int(page or 0))
-    args_rows = args + [DATING_COMPANION_LIMIT, страница * DATING_COMPANION_LIMIT]
+    page_no = max(0, int(page or 0))
+    args_rows = args + [DATING_COMPANION_LIMIT, page_no * DATING_COMPANION_LIMIT]
 
     async with mysql_get_db_async() as db:
-        await db.execute(считаем, tuple(args))
+        await db.execute(count_sql, tuple(args))
         total = int((await db.fetchone())['n'])
 
         await db.execute(sql, tuple(args_rows))
@@ -153,7 +153,7 @@ async def dating_companion_list(site_id: int = 0, find: str = '',
     return {'result': [_answer(row, dating_online_show(int(site_id), row['uid']))
                        for row in rows],
             'total': total,
-            'page': страница,
+            'page': page_no,
             'limit': DATING_COMPANION_LIMIT}
 
 

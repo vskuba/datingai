@@ -218,13 +218,13 @@ class TestProfilePing:
         for site in rhapsody.sites:
             site['presence'] = {}
 
-        async def без_настройки(site_id):
+        async def no_setting(site_id):
             return {}
 
         monkeypatch.setattr(dating_presence, 'dating_heartbeat_config',
-                            без_настройки, raising=False)
+                            no_setting, raising=False)
         monkeypatch.setattr('src.dating.dating_heartbeat.dating_heartbeat_config',
-                            без_настройки)
+                            no_setting)
 
         with pytest.raises(HTTPException) as refusal:
             await dating_profile_action_ping(profile['id'], user=None)
@@ -356,27 +356,27 @@ class TestSuiteKeepsOffLiveSites:
         # почти всегда перенесён, и `site_id` стоит строкой ниже. Первая версия
         # сторожа искала в одной строке и пропускала ровно тот случай, ради
         # которого писалась, — проверено возвратом `343` вручную.
-        начало = re.compile(r"/api/dating/profile'|DatingProfileSave\(")
-        номер = re.compile(r"'site_id':\s*(\d[\d_]*)|site_id=(\d[\d_]*)")
-        виноватые = []
+        head_re = re.compile(r"/api/dating/profile'|DatingProfileSave\(")
+        number_re = re.compile(r"'site_id':\s*(\d[\d_]*)|site_id=(\d[\d_]*)")
+        guilty = []
 
-        for файл in sorted(pathlib.Path('tests').glob('test_*.py')):
+        for path in sorted(pathlib.Path('tests').glob('test_*.py')):
             # Заглушка соседа и сверка самого номера сайта — не заведение анкеты.
-            if файл.name in ('test_agent_site.py', 'test_dating_site.py'):
+            if path.name in ('test_agent_site.py', 'test_dating_site.py'):
                 continue
 
-            строки = файл.read_text(encoding='utf-8').splitlines()
-            for индекс, строка in enumerate(строки):
-                if not начало.search(строка):
+            lines = path.read_text(encoding='utf-8').splitlines()
+            for index, line in enumerate(lines):
+                if not head_re.search(line):
                     continue
 
                 # Окно в три строки: дальше этого `site_id` вызова уже не бывает,
                 # а шире — начнём хватать соседние вызовы.
-                окно = ' '.join(строки[индекс:индекс + 3])
-                for первый, второй in номер.findall(окно):
-                    if (первый or второй).replace('_', '') in self.LIVE_SITES:
-                        виноватые.append(f'{файл.name}:{индекс + 1}: {строка.strip()[:70]}')
+                window = ' '.join(lines[index:index + 3])
+                for first, second in number_re.findall(window):
+                    if (first or second).replace('_', '') in self.LIVE_SITES:
+                        guilty.append(f'{path.name}:{index + 1}: {line.strip()[:70]}')
 
-        assert not виноватые, (
+        assert not guilty, (
             'анкета сюиты заводится на рабочем сайте — её возьмут круги воркера. '
-            'Стенд: 999_343.\n' + '\n'.join(виноватые))
+            'Стенд: 999_343.\n' + '\n'.join(guilty))

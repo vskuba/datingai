@@ -23,7 +23,7 @@ from src.dating.dating_mail import (DATING_MAIL_BODY_MAX, dating_mail_check,
 pytestmark = pytest.mark.mail
 
 # Имена, заведённые «на сайте» в тех проверках, где реестр нужен, но база — нет.
-ЕСТЬ = {'firstName', 'lastName'}
+KNOWN = {'firstName', 'lastName'}
 
 SITE = 999_777
 
@@ -66,25 +66,25 @@ class TestCheck:
     """Годен ли шаблон. Причина — словами, для человека."""
 
     def test_good_template_passes(self):
-        assert dating_mail_check('Знакомство', 'Hi [[firstName]]!', ЕСТЬ) == ''
+        assert dating_mail_check('Знакомство', 'Hi [[firstName]]!', KNOWN) == ''
 
     def test_template_without_vars_is_fine(self):
         """Письмо без переменных законно: оно просто уйдёт всем одинаковым."""
-        assert dating_mail_check('Общее', 'Hello!', ЕСТЬ) == ''
+        assert dating_mail_check('Общее', 'Hello!', KNOWN) == ''
 
     @pytest.mark.parametrize('name', ['', '   ', None])
     def test_name_is_required(self, name):
-        assert 'название' in dating_mail_check(name, 'Hi!', ЕСТЬ)
+        assert 'название' in dating_mail_check(name, 'Hi!', KNOWN)
 
     @pytest.mark.parametrize('body', ['', '   ', None])
     def test_body_is_required(self, body):
-        assert 'пустым' in dating_mail_check('Имя', body, ЕСТЬ)
+        assert 'пустым' in dating_mail_check('Имя', body, KNOWN)
 
     def test_too_long_body_is_refused(self):
         """Предел смысловой, а не колонки: простыню в десять тысяч знаков не
         прочитают, зато разошлют тысяче человек."""
         assert 'длиннее' in dating_mail_check('Имя', 'я' * (DATING_MAIL_BODY_MAX + 1),
-                                              ЕСТЬ)
+                                              KNOWN)
 
     def test_unknown_variable_is_refused(self):
         """⚠ Ради этого проверка и заведена.
@@ -93,16 +93,16 @@ class TestCheck:
         [[frstName]]»), и заметить её можно было бы только в журнале отправок — то
         есть после рассылки.
         """
-        why = dating_mail_check('Имя', 'Меня зовут [[frstName]]', ЕСТЬ)
+        why = dating_mail_check('Имя', 'Меня зовут [[frstName]]', KNOWN)
 
         assert 'frstName' in why
         # Причина говорит, что поправить: перечисляет то, что есть.
         assert 'firstName' in why
 
     def test_all_registry_names_are_allowed(self):
-        body = ' '.join('[[%s]]' % name for name in ЕСТЬ)
+        body = ' '.join('[[%s]]' % name for name in KNOWN)
 
-        assert dating_mail_check('Все', body, ЕСТЬ) == ''
+        assert dating_mail_check('Все', body, KNOWN) == ''
 
     @pytest.mark.parametrize('name', ['нет_такой', 'её_имя', 'FirstName'])
     def test_variable_outside_the_registry_is_refused(self, name):
@@ -112,7 +112,7 @@ class TestCheck:
         то, которое завели. Молчаливое совпадение «по смыслу» означало бы письмо,
         которое ушло не с тем, что подставили.
         """
-        assert name in dating_mail_check('Имя', 'Меня зовут [[%s]]' % name, ЕСТЬ)
+        assert name in dating_mail_check('Имя', 'Меня зовут [[%s]]' % name, KNOWN)
 
     def test_site_without_variables_says_where_to_go(self):
         """У сайта без единой переменной список пуст, и это само по себе ответ:
@@ -400,10 +400,10 @@ class TestMailRights:
 
         mail_id = made.json()['result']['id']
         try:
-            правка = await dating_client.put(f'/api/dating/mail/{mail_id}', json={
+            saved = await dating_client.put(f'/api/dating/mail/{mail_id}', json={
                 'site_id': SITE, 'name': 'оператор поправил', 'body': 'Hi again!'})
 
-            assert правка.status_code == 200
+            assert saved.status_code == 200
         finally:
             assert (await dating_client.delete(
                 f'/api/dating/mail/{mail_id}')).status_code == 200

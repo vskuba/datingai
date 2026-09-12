@@ -28,13 +28,13 @@ STAND_SITE = 999_343
 
 # Анкеты агентства. ⚠ Двух Диан не выдумали: на живом сайте их и есть две (#849 и
 # #850), и первый же прогон выдал обеим одного и того же мужчину.
-ДЕВУШКИ = [{'id': 849, 'login': 'diana@example.com'},
-           {'id': 850, 'login': 'diana2@example.com'},
-           {'id': 861, 'login': 'yulia@example.com'}]
+GIRLS = [{'id': 849, 'login': 'diana@example.com'},
+         {'id': 850, 'login': 'diana2@example.com'},
+         {'id': 861, 'login': 'yulia@example.com'}]
 
-ЛЮДИ = [{'uid': '111', 'name': 'Brian'},
-        {'uid': '222', 'name': 'Frank'},
-        {'uid': '333', 'name': 'Ahmet'}]
+PEOPLE = [{'uid': '111', 'name': 'Brian'},
+          {'uid': '222', 'name': 'Frank'},
+          {'uid': '333', 'name': 'Ahmet'}]
 
 
 class TestInviteText:
@@ -126,14 +126,14 @@ class TestPairs:
         Правило строже, чем ключ в базе (`(profile_id, uid)`): тот про то, что
         допустимо в истории, а это — про то, как набирается пул.
         """
-        got = list(_pairs(ДЕВУШКИ, ЛЮДИ, set(), set()))
+        got = list(_pairs(GIRLS, PEOPLE, set(), set()))
 
-        assert len(got) == len(ЛЮДИ), 'человек получил больше одного инвайта'
+        assert len(got) == len(PEOPLE), 'человек получил больше одного инвайта'
         assert sorted(person['uid'] for _, person in got) == ['111', '222', '333']
 
     def test_already_invited_is_skipped(self):
         """Позвали — больше не зовём, **какой бы анкетой это ни было**."""
-        got = list(_pairs(ДЕВУШКИ, ЛЮДИ, {'222'}, set()))
+        got = list(_pairs(GIRLS, PEOPLE, {'222'}, set()))
 
         assert [person['uid'] for _, person in got] == ['111', '333']
 
@@ -147,20 +147,20 @@ class TestPairs:
         # С «111» говорили все, кроме #861.
         talked = {(849, '111'), (850, '111')}
         got = {person['uid']: girl['id'] for girl, person in
-               _pairs(ДЕВУШКИ, ЛЮДИ, set(), talked)}
+               _pairs(GIRLS, PEOPLE, set(), talked)}
 
         assert got['111'] == 861, 'выбрана анкета, у которой с ним переписка'
 
     def test_person_nobody_is_free_for_is_skipped(self):
         """Со всеми нашими он уже говорит — звать некому, и это не ошибка."""
-        talked = {(girl['id'], '111') for girl in ДЕВУШКИ}
-        got = list(_pairs(ДЕВУШКИ, ЛЮДИ, set(), talked))
+        talked = {(girl['id'], '111') for girl in GIRLS}
+        got = list(_pairs(GIRLS, PEOPLE, set(), talked))
 
         assert '111' not in [person['uid'] for _, person in got]
 
     def test_empty_uid_is_not_a_person(self):
         """Пустой номер из ленты — мусор, а не собеседник."""
-        got = list(_pairs(ДЕВУШКИ, [{'uid': '', 'name': 'X'}, ЛЮДИ[0]], set(), set()))
+        got = list(_pairs(GIRLS, [{'uid': '', 'name': 'X'}, PEOPLE[0]], set(), set()))
 
         assert [person['uid'] for _, person in got] == ['111']
 
@@ -170,7 +170,7 @@ class TestPairs:
         Потолок захода отрезает хвост, и отрезать он должен **тех, до кого не
         дошли**, а не тех, кого лента поставила вперёд.
         """
-        got = [person['uid'] for _, person in _pairs(ДЕВУШКИ, ЛЮДИ, set(), set())]
+        got = [person['uid'] for _, person in _pairs(GIRLS, PEOPLE, set(), set())]
 
         assert got == ['111', '222', '333']
 
@@ -434,10 +434,10 @@ class TestRoundReadsTheClock:
         from src.dating.dating_invite_round import _minutes_now
 
         # Полдень по Гринвичу: при сдвиге +3 местное время — 15:00.
-        полдень = 12 * 3600
-        было = time.time
+        noon = 12 * 3600
+        before = time.time
         try:
-            time.time = lambda: полдень
+            time.time = lambda: noon
 
             assert _minutes_now(0) == 12 * 60
             assert _minutes_now(3) == 15 * 60
@@ -446,7 +446,7 @@ class TestRoundReadsTheClock:
 
             assert _minutes_now(3) == 2 * 60
         finally:
-            time.time = было
+            time.time = before
 
     def test_the_round_passes_minutes_not_the_offset(self):
         """⚠ Сторож самой подстановки: в проверку смен должно уходить число из
@@ -460,9 +460,9 @@ class TestRoundReadsTheClock:
 
         from src.dating import dating_invite_round
 
-        код = inspect.getsource(dating_invite_round.dating_invite_round_run)
+        code = inspect.getsource(dating_invite_round.dating_invite_round_run)
 
-        assert 'dating_schedule_now(shifts, minutes)' in код, \
+        assert 'dating_schedule_now(shifts, minutes)' in code, \
             'в проверку смен снова уходит не то число'
-        assert 'dating_schedule_now(shifts, offset)' not in код, \
+        assert 'dating_schedule_now(shifts, offset)' not in code, \
             'сдвиг часового пояса снова передан как минуты суток'

@@ -316,15 +316,15 @@ def dating_mailing_person_key(name: str, fields: dict) -> str:
     `lastname` — одним словом, потому что так их отдаёт разбор имени. Совпадение
     ищется и по хвосту как есть, и по склеенному: `first_name` → `firstname`.
     """
-    куски = str(name or '').lower().split('_')
+    parts = str(name or '').lower().split('_')
 
-    for от in range(len(куски)):
-        хвост = '_'.join(куски[от:])
-        for ключ in (хвост, хвост.replace('_', '')):
-            if ключ in fields:
-                return ключ
+    for start in range(len(parts)):
+        tail = '_'.join(parts[start:])
+        for key in (tail, tail.replace('_', '')):
+            if key in fields:
+                return key
 
-    return куски[-1] if куски else ''
+    return parts[-1] if parts else ''
 
 
 def dating_mailing_companion_vars(person: dict, known: list) -> list[dict]:
@@ -392,12 +392,12 @@ def _pairs(girls: list, people: list, templates: list, taken: set):
         taken: тройки, которым письмо уже готовили или отправляли.
     """
     for person in people:
-        свободные = [(girl, template) for girl in girls for template in templates
-                     if (girl['id'], person['uid'], template['id']) not in taken]
-        if not свободные:
+        free = [(girl, template) for girl in girls for template in templates
+                if (girl['id'], person['uid'], template['id']) not in taken]
+        if not free:
             continue
 
-        yield (*random.choice(свободные), person)
+        yield (*random.choice(free), person)
 
 
 async def _body(template: dict, girl: dict, person: dict, known: list,
@@ -542,12 +542,12 @@ async def _from_feed(site_id: int, person: dict) -> None:
     """
     from src.uvicorn.routers.dating.dating_companion import dating_companion_touch
 
-    ещё = {name: value for name, value in
-           (('name', person.get('name')), ('photo', person.get('photo')),
-            ('age', person.get('age')))
-           if value}
+    extra = {name: value for name, value in
+             (('name', person.get('name')), ('photo', person.get('photo')),
+              ('age', person.get('age')))
+             if value}
 
-    await dating_companion_touch(int(site_id), str(person.get('uid') or ''), **ещё)
+    await dating_companion_touch(int(site_id), str(person.get('uid') or ''), **extra)
 
 
 def _from_person(name: str, person: dict, var: dict) -> str:

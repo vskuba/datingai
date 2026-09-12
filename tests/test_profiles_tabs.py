@@ -443,12 +443,12 @@ class TestReplyPoolWatchesSending:
         «идёт отправка», а отправлять нечего.
         """
         page = (await auth_client.get(PAGE)).text
-        начало = page.index('function replySending(')
-        тело = page[начало:начало + 400]
+        start = page.index('function replySending(')
+        body = page[start:start + 400]
 
-        assert 'reply_send_on' in тело, 'выключатель не спрашивается'
-        assert 'mailScheduleLive()' in тело, 'смена не спрашивается'
-        assert "status === 'draft'" in тело, 'непустой пул не спрашивается'
+        assert 'reply_send_on' in body, 'выключатель не спрашивается'
+        assert 'mailScheduleLive()' in body, 'смена не спрашивается'
+        assert "status === 'draft'" in body, 'непустой пул не спрашивается'
 
     async def test_spinner_says_what_is_happening(self, auth_client):
         """⚠ Повод остался один — отправка, и слово одно.
@@ -485,8 +485,8 @@ class TestGirlNameIsALink:
         assert 'id="workFaceLink"' in page, 'лицо не обёрнуто ссылкой'
         # Обёртка, а не сама картинка: пустая ссылка без содержимого всё равно
         # занимала бы место и ловила щелчки, ведя в никуда.
-        начало = page.index('id="workFaceLink"')
-        assert 'target="_blank"' in page[начало:начало + 200], \
+        start = page.index('id="workFaceLink"')
+        assert 'target="_blank"' in page[start:start + 200], \
             'лицо открывается не новой вкладкой'
 
     async def test_the_counter_lives_outside_the_name(self, auth_client):
@@ -511,9 +511,9 @@ class TestGirlNameIsALink:
         лицо, — и соседство с ней ничего не значит.
         """
         page = (await auth_client.get(PAGE)).text
-        начало = page.index('class="work-who-link"')
+        start = page.index('class="work-who-link"')
 
-        assert 'target="_blank"' in page[начало - 100:начало + 200]
+        assert 'target="_blank"' in page[start - 100:start + 200]
 
 
 class TestListsAreSortedByStatusThenName:
@@ -537,11 +537,11 @@ class TestListsAreSortedByStatusThenName:
 
         from src.uvicorn.routers.dating import dating_profile
 
-        код = inspect.getsource(dating_profile)
+        source = inspect.getsource(dating_profile)
 
-        assert "ORDER BY g.status = 'online' DESC" in код, \
+        assert "ORDER BY g.status = 'online' DESC" in source, \
             'анкеты в сети больше не поднимаются наверх'
-        assert "JSON_EXTRACT(g.profile, '$.name')" in код, \
+        assert "JSON_EXTRACT(g.profile, '$.name')" in source, \
             'алфавит снова по логину, а не по имени'
 
     async def test_people_widgets_sort_without_a_locale(self, auth_client):
@@ -586,12 +586,12 @@ class TestReplyChangesRepaintBothPlaces:
         """Обе формы — и входящих, и фаворитов — в одной перерисовке."""
         page = (await auth_client.get(PAGE)).text
 
-        начало = page.find('function replyShown')
-        тело = page[начало:начало + 500]
+        start = page.find('function replyShown')
+        body = page[start:start + 500]
 
-        assert 'mailInReplyEditRefresh()' in тело, \
+        assert 'mailInReplyEditRefresh()' in body, \
             'форма под письмом на «Входящих» не перерисовывается'
-        assert 'favTalkEditRefresh()' in тело, \
+        assert 'favTalkEditRefresh()' in body, \
             'форма под разговором на «Фаворитах» не перерисовывается'
 
     async def test_repaint_touches_the_thread_too(self, auth_client):
@@ -604,10 +604,10 @@ class TestReplyChangesRepaintBothPlaces:
         """
         page = (await auth_client.get(PAGE)).text
 
-        начало = page.find('function replyShown')
-        тело = page[начало:начало + 500]
+        start = page.find('function replyShown')
+        body = page[start:start + 500]
 
-        assert 'replyThreadRefresh()' in тело, 'лента разговора не перечитывается'
+        assert 'replyThreadRefresh()' in body, 'лента разговора не перечитывается'
         assert 'function replyThreadRefresh' in page, \
             'перечитывания ленты нет вовсе'
 

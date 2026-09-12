@@ -47,8 +47,8 @@ async def _star(profile_id: int, uid: str, state: str = 'done') -> None:
     присутствие — два обязательных условия одного и того же, и порознь о втором
     забывают.
     """
-    if str(uid) not in _В_СЕТИ:
-        _В_СЕТИ.append(str(uid))
+    if str(uid) not in _ONLINE:
+        _ONLINE.append(str(uid))
 
     async with mysql_get_db_async() as db:
         await db.execute(
@@ -107,7 +107,7 @@ async def _draft(profile_id: int, uid: str) -> None:
 # Кто «сейчас в сети» по мнению подменённого снимка ленты. Список, а не
 # переменная: его пополняет `_star`, а читает фикстура `online` — из вложенной
 # функции переменную не присвоить без `global`.
-_В_СЕТИ: list[str] = []
+_ONLINE: list[str] = []
 
 
 class _FakeRedis:
@@ -121,7 +121,7 @@ class _FakeRedis:
 
     def get(self, key):
         return json.dumps({'at': time.time(),
-                           'people': [{'uid': one} for one in _В_СЕТИ]})
+                           'people': [{'uid': one} for one in _ONLINE]})
 
 
 @pytest.fixture(autouse=True)
@@ -132,14 +132,14 @@ def online(monkeypatch):
     `_quiet` не вернул бы ничего — половина здешних проверок молча проверяла бы
     пустоту. Забыть её в новом тесте проще, чем заметить такую тишину.
     """
-    _В_СЕТИ.clear()
+    _ONLINE.clear()
     monkeypatch.setattr(dating_favorite_mail, 'dating_online_show',
-                        lambda site_id, uid: {'online': str(uid) in _В_СЕТИ,
+                        lambda site_id, uid: {'online': str(uid) in _ONLINE,
                                               'known': True, 'age_sec': 5})
 
     yield
 
-    _В_СЕТИ.clear()
+    _ONLINE.clear()
 
 
 @pytest.fixture
@@ -220,29 +220,29 @@ class TestWhoIsQuiet:
         await _his(girl, uid, '2026-09-01 10:00:00')
         await _hers(girl, uid, '2026-09-01 12:00:00')
 
-        другая = await _profile(auth_client, 'other')
+        other = await _profile(auth_client, 'other')
         try:
-            свои = await _quiet(STAND_SITE, girl)
-            чужие = await _quiet(STAND_SITE, другая)
+            ours = await _quiet(STAND_SITE, girl)
+            others = await _quiet(STAND_SITE, other)
 
-            assert [r for r in свои if r['uid'] == uid]
-            assert not [r for r in чужие if r['uid'] == uid]
+            assert [r for r in ours if r['uid'] == uid]
+            assert not [r for r in others if r['uid'] == uid]
         finally:
-            await auth_client.delete(f'/api/dating/profile/{другая}')
+            await auth_client.delete(f'/api/dating/profile/{other}')
 
     async def test_the_oldest_silence_comes_first(self, girl):
         """Порядок — по давности: заход обрывается по потолку, и обрывать он
         должен свежих, а не забытых."""
-        старый, свежий = f'u{uuid.uuid4().hex[:8]}', f'u{uuid.uuid4().hex[:8]}'
-        for uid, when in ((старый, '2026-08-01 10:00:00'),
-                          (свежий, '2026-09-05 10:00:00')):
+        old, fresh = f'u{uuid.uuid4().hex[:8]}', f'u{uuid.uuid4().hex[:8]}'
+        for uid, when in ((old, '2026-08-01 10:00:00'),
+                          (fresh, '2026-09-05 10:00:00')):
             await _star(girl, uid)
             await _his(girl, uid, '2026-07-01 10:00:00')
             await _hers(girl, uid, when)
 
         rows = [r['uid'] for r in await _quiet(STAND_SITE, girl)]
 
-        assert rows.index(старый) < rows.index(свежий)
+        assert rows.index(old) < rows.index(fresh)
 
 
 class TestBothMustBeOnline:
@@ -281,14 +281,14 @@ class TestBothMustBeOnline:
         await _hers(girl, uid, '2026-09-01 12:00:00')
 
         # Ушёл с сайта, пока мы думали.
-        _В_СЕТИ.remove(uid)
+        _ONLINE.remove(uid)
 
         got = await dating_favorite_mail_make(STAND_SITE, 5, girl)
-        причины = [one for one in got['reasons'] if uid in one]
+        reasons = [one for one in got['reasons'] if uid in one]
 
         assert got['made'] == 0, 'письмо ушедшему всё-таки написали'
-        assert причины, f'пропуск не назван: {got["reasons"]}'
-        assert 'не в сети' in причины[0], причины[0]
+        assert reasons, f'пропуск не назван: {got["reasons"]}'
+        assert 'не в сети' in reasons[0], reasons[0]
 
     async def test_limits_are_checked_before_the_agent(self, girl, monkeypatch):
         """⚠ **Дешёвое раньше платного.** Каждое письмо — вызов LLM, и платить за
@@ -296,15 +296,15 @@ class TestBothMustBeOnline:
         прямо: агент не должен быть позван вовсе."""
         from src.dating.dating_favorite_mail import dating_favorite_mail_make
 
-        звали = []
+        called = []
 
-        async def _агент(*args, **kwargs):
-            звали.append(args)
+        async def _agent(*args, **kwargs):
+            called.append(args)
 
             return 'письмо'
 
         monkeypatch.setattr(dating_favorite_mail, 'dating_favorite_mail_write',
-                            _агент)
+                            _agent)
 
         uid = f'u{uuid.uuid4().hex[:8]}'
         await _star(girl, uid)
@@ -316,7 +316,7 @@ class TestBothMustBeOnline:
         got = await dating_favorite_mail_make(STAND_SITE, 5, girl)
 
         assert got['made'] == 0
-        assert not звали, 'агента позвали, хотя предел уже исчерпан'
+        assert not called, 'агента позвали, хотя предел уже исчерпан'
 
 
 class TestHowOften:
@@ -401,10 +401,10 @@ class TestReasonNamesTheRecipient:
             await db.connection.commit()
 
         got = await dating_favorite_mail_make(STAND_SITE, 5, girl)
-        причины = [one for one in got['reasons'] if uid in one]
+        reasons = [one for one in got['reasons'] if uid in one]
 
-        assert причины, f'адресата нет ни в одной причине: {got["reasons"]}'
-        assert 'Semen' in причины[0], причины[0]
+        assert reasons, f'адресата нет ни в одной причине: {got["reasons"]}'
+        assert 'Semen' in reasons[0], reasons[0]
 
 
 class TestWhyThePoolIsEmpty:

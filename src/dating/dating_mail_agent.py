@@ -229,7 +229,7 @@ async def dating_mail_agent_fill(profile: dict, site_id: int,
         return {}
 
     agent_id = await _agent_id(int(site_id))
-    язык = await dating_mail_agent_language(int(site_id))
+    language = await dating_mail_agent_language(int(site_id))
 
     answer = await rhapsody_api_chat_ask(
         agent_id=agent_id,
@@ -252,7 +252,7 @@ async def dating_mail_agent_fill(profile: dict, site_id: int,
                    'mail_var_names': ','.join(row['name'] for row in wanted),
                    # ⚠ Язык — на каждом вызове: без него сосед возьмёт первый
                    # язык узла, а он свой у каждой установки (см. константу).
-                   'user_language': язык})
+                   'user_language': language})
 
     return _values(answer, {row['name'] for row in wanted})
 
@@ -293,7 +293,7 @@ async def dating_mail_write(site_id: int, variables: list[dict],
     """
     agent_id = await _agent_id(int(site_id), DATING_MAIL_WRITE_NAME,
                               DATING_MAIL_WRITE_WORKFLOW)
-    язык = await dating_mail_agent_language(int(site_id))
+    language = await dating_mail_agent_language(int(site_id))
 
     known = variables or []
 
@@ -331,7 +331,7 @@ async def dating_mail_write(site_id: int, variables: list[dict],
                    'mail_hint': str(hint or '').strip() or 'обычное первое письмо',
                    # ⚠ Язык — на каждом вызове: без него сосед возьмёт первый
                    # язык узла, а он свой у каждой установки (см. константу).
-                   'user_language': язык})
+                   'user_language': language})
 
     return _letter_named(answer)
 
@@ -359,7 +359,7 @@ async def dating_mail_question(profile: dict, site_id: int,
     """
     agent_id = await _agent_id(int(site_id), DATING_MAIL_QUESTION_NAME,
                                DATING_MAIL_QUESTION_WORKFLOW)
-    язык = await dating_mail_agent_language(int(site_id))
+    language = await dating_mail_agent_language(int(site_id))
 
     answer = await rhapsody_api_chat_ask(
         agent_id=agent_id,
@@ -369,7 +369,7 @@ async def dating_mail_question(profile: dict, site_id: int,
                    'companion_card': _companion_card(companion),
                    # ⚠ Язык — на каждом вызове: без него сосед возьмёт первый
                    # язык узла, а он свой у каждой установки (см. константу).
-                   'user_language': язык})
+                   'user_language': language})
 
     return _question(answer)
 
@@ -520,7 +520,7 @@ async def dating_mail_reply(profile: dict, site_id: int, history: list[dict],
 
     agent_id = await _agent_id(int(site_id), DATING_MAIL_REPLY_NAME,
                                DATING_MAIL_REPLY_WORKFLOW)
-    язык = await dating_mail_agent_language(int(site_id))
+    language = await dating_mail_agent_language(int(site_id))
 
     answer = await rhapsody_api_chat_ask(
         agent_id=agent_id,
@@ -534,7 +534,7 @@ async def dating_mail_reply(profile: dict, site_id: int, history: list[dict],
                    'companion_card': _companion_card(companion or {}),
                    # ⚠ Язык — на каждом вызове: без него сосед возьмёт первый
                    # язык узла, а он свой у каждой установки (см. константу).
-                   'user_language': язык})
+                   'user_language': language})
 
     return _letter(answer)[:DATING_MAIL_REPLY_MAX]
 
@@ -548,10 +548,10 @@ def _history_text(history: list[dict]) -> str:
     """
     rows = []
     for one in history:
-        кто = 'Он' if str((one or {}).get('from')) == 'him' else 'Она'
+        who = 'Он' if str((one or {}).get('from')) == 'him' else 'Она'
         text = str((one or {}).get('text') or '').strip()
         if text:
-            rows.append(f'{кто}: {text}')
+            rows.append(f'{who}: {text}')
 
     return '\n\n'.join(rows)
 

@@ -150,7 +150,7 @@ def made(monkeypatch):
 
 # ── Кого берём в работу ──────────────────────────────────────────────────────
 
-async def test_сайт_с_генерацией_попадает_в_круг(site, made, clean_mark):
+async def test_reply_round_takes_site_with_making_on(site, made, clean_mark):
     """Поднятый выключатель — и круг берёт сайт сам, без единого нажатия."""
     got = await dating_reply_round_run()
 
@@ -158,8 +158,8 @@ async def test_сайт_с_генерацией_попадает_в_круг(sit
     assert got['made'] >= 1
 
 
-async def test_выключенная_генерация_сайт_не_берёт(site, made, clean_mark,
-                                                   auth_client):
+async def test_reply_round_skips_site_with_making_off(site, made, clean_mark,
+                                                      auth_client):
     """⚠ Выключатель — единственное согласие на набор: снят, и круг проходит мимо."""
     await auth_client.put(f'/api/dating/site/{SITE}/reply-make-on',
                           json={'reply_make_on': False})
@@ -169,7 +169,7 @@ async def test_выключенная_генерация_сайт_не_берё�
     assert SITE not in [call['site_id'] for call in made]
 
 
-async def test_ушедший_сайт_не_берём(site, made, clean_mark):
+async def test_reply_round_skips_gone_site(site, made, clean_mark):
     """Сайт, пропавший у соседа, писем не примет — набирать ответы некому."""
     from mysql_.mysql_ import mysql_get_db_async
 
@@ -183,24 +183,24 @@ async def test_ушедший_сайт_не_берём(site, made, clean_mark):
     assert SITE not in [call['site_id'] for call in made]
 
 
-async def test_отбор_идёт_по_флагу_а_не_по_анкетам(site):
+async def test_reply_round_selects_by_flag_not_by_profiles(site):
     """`_sites` отдаёт сайты, а не анкеты: пул один на сайт."""
     assert SITE in await _sites()
 
 
 # ── Когда идём ───────────────────────────────────────────────────────────────
 
-async def test_второй_заход_подряд_не_идёт(site, made, clean_mark):
+async def test_reply_round_skips_second_pass_in_a_row(site, made, clean_mark):
     """Отметка держит срок: тик раз в минуту не превращается в набор раз в минуту."""
     await dating_reply_round_run()
-    было = len(made)
+    before = len(made)
 
     await dating_reply_round_run()
 
-    assert len(made) == было
+    assert len(made) == before
 
 
-async def test_отметка_ставится_до_набора(site, made, clean_mark):
+async def test_reply_round_marks_before_filling(site, made, clean_mark):
     """⚠ Заход длится минутами, и сорвавшийся не должен звать второй.
 
     Отметку ставим **до** набора: иначе упавший заход оставлял бы сайт открытым,
@@ -213,7 +213,7 @@ async def test_отметка_ставится_до_набора(site, made, cle
     assert clean_mark.store.get(DATING_REPLY_ROUND_KEY.format(site_id=SITE))
 
 
-async def test_срыв_одного_сайта_не_роняет_круг(site, made, clean_mark):
+async def test_reply_round_survives_one_site_failure(site, made, clean_mark):
     """Круг обходит остальные сайты дальше — сбой агента это не конец смены."""
     made.boom = True
 
@@ -222,7 +222,7 @@ async def test_срыв_одного_сайта_не_роняет_круг(site,
     assert got == {'sites': 0, 'made': 0}
 
 
-async def test_сбой_redis_решается_в_сторону_бездействия(site, made, clean_mark):
+async def test_reply_round_redis_failure_means_no_work(site, made, clean_mark):
     """⚠ Цена ошибок несимметрична: лишний заход стоит вызовов LLM, пропущенный — ожидания."""
     clean_mark.broken = True
 
@@ -231,7 +231,7 @@ async def test_сбой_redis_решается_в_сторону_бездейс�
     assert SITE not in [call['site_id'] for call in made]
 
 
-async def test_срок_отметки_и_есть_настройка(site, made, clean_mark):
+async def test_reply_round_mark_ttl_is_the_period_setting(site, made, clean_mark):
     """Redis гасит отметку сам: отдельного «когда истечёт» круг не хранит."""
     await dating_reply_round_run()
 
@@ -239,7 +239,7 @@ async def test_срок_отметки_и_есть_настройка(site, made
             == DATING_REPLY_EVERY_DEFAULT)
 
 
-def test_отметка_и_проверка_ходят_парой(clean_mark):
+def test_reply_round_mark_and_check_share_the_key(clean_mark):
     """`_mark` закрывает, отсутствие отметки открывает — других состояний нет."""
     assert _due(SITE)
 
@@ -250,14 +250,14 @@ def test_отметка_и_проверка_ходят_парой(clean_mark):
 
 # ── Сколько пишем за раз ─────────────────────────────────────────────────────
 
-async def test_за_заход_пишем_ограниченно(site, made, clean_mark):
+async def test_reply_round_writes_a_limited_batch(site, made, clean_mark):
     """⚠ Предел **захода**, а не запаса: заход на три десятка длится полчаса."""
     await dating_reply_round_run()
 
     assert made[0]['limit'] == DATING_REPLY_BATCH_DEFAULT
 
 
-async def test_значение_вне_набора_не_принимается(site, setting):
+async def test_reply_round_rejects_batch_out_of_range(site, setting):
     """⚠ Потолок держит **набор реестра**, а не второе число в коде.
 
     Настройку правят руками, и «500» заняло бы круг до конца смены. Отдельного
@@ -269,29 +269,29 @@ async def test_значение_вне_набора_не_принимается(
     assert await _batch(SITE) == DATING_REPLY_BATCH_DEFAULT
 
 
-async def test_сколько_за_заход_решает_сайт(site, setting):
+async def test_reply_round_batch_size_comes_from_site(site, setting):
     """Значение из набора берётся как есть: предел захода — решение сайта."""
     await setting('reply_batch', '10')
 
     assert await _batch(SITE) == 10
 
 
-async def test_частота_берётся_из_настройки(site, setting):
+async def test_reply_round_period_comes_from_setting(site, setting):
     """Как часто набирать — решение сайта, а не константа кода."""
     await setting('reply_every', '900')
 
     assert await _every(SITE) == 900
 
 
-async def test_без_настройки_частота_по_умолчанию(site):
+async def test_reply_round_period_falls_back_to_default(site):
     """Не задано — пять минут: письма приходят реже, чем стоит спрашивать."""
     assert await _every(SITE) == DATING_REPLY_EVERY_DEFAULT
 
 
 # ── Чем отличается от рассылки ───────────────────────────────────────────────
 
-async def test_расписание_сайта_не_спрашивается(site, made, clean_mark,
-                                                auth_client):
+async def test_reply_round_ignores_site_schedule(site, made, clean_mark,
+                                                 auth_client):
     """⚠ Ключевое отличие от круга рассылки, и оно намеренное.
 
     Расписание рассылки выключено — а ответы всё равно набираются: здесь готовится
@@ -312,22 +312,22 @@ async def test_расписание_сайта_не_спрашивается(sit
             json={'mailing_schedule_on': before['mailing_schedule_on']})
 
 
-async def test_круг_готовит_но_не_отправляет(site, made, clean_mark):
+async def test_reply_round_prepares_but_never_sends(site, made, clean_mark):
     """Круг зовёт только набор. Отправка — другой круг и другой выключатель."""
     import inspect
 
-    исходник = inspect.getsource(round_)
+    source = inspect.getsource(round_)
 
-    assert 'dating_mail_send' not in исходник
-    assert 'reply_send_on' not in исходник
+    assert 'dating_mail_send' not in source
+    assert 'reply_send_on' not in source
 
 
-async def test_пустой_обход_молчит(made, clean_mark, monkeypatch):
+async def test_reply_round_empty_pass_writes_nothing(made, clean_mark, monkeypatch):
     """Нет сайтов с генерацией — нет и запросов: круг просыпается вхолостую часто."""
-    async def нет_сайтов():
+    async def no_sites():
         return []
 
-    monkeypatch.setattr(round_, '_sites', нет_сайтов)
+    monkeypatch.setattr(round_, '_sites', no_sites)
 
     assert await dating_reply_round_run() == {'sites': 0, 'made': 0}
     assert not made
@@ -335,7 +335,7 @@ async def test_пустой_обход_молчит(made, clean_mark, monkeypatc
 
 # ── Кнопки больше нет ────────────────────────────────────────────────────────
 
-def test_кнопки_написать_ответы_в_разметке_нет():
+def test_reply_round_has_no_write_button_in_markup():
     """⚠ Кнопка обещала то, что теперь делает круг, — и осталась бы враньём.
 
     Проверяем разметку, а не намерение: вернись кнопка копипастом из соседней
@@ -343,6 +343,6 @@ def test_кнопки_написать_ответы_в_разметке_нет()
     """
     from pathlib import Path
 
-    разметка = Path('data/uvicorn/template/admin/profile/site/_base.html').read_text()
+    markup = Path('data/uvicorn/template/admin/profile/site/_base.html').read_text()
 
-    assert 'in-reply-make' not in разметка
+    assert 'in-reply-make' not in markup

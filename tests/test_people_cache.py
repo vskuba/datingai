@@ -461,11 +461,11 @@ class TestSource:
             {'people_source': 'api', 'api_base': SITE_API_FAKE_BASE,
              'api_password': SITE_API_FAKE_PASSWORD}))
 
-        async def _нельзя(*args, **kwargs):
+        async def _forbidden(*args, **kwargs):
             raise AssertionError('сценарий у соседа всё-таки прогнали')
 
-        monkeypatch.setattr(dating_people, 'dating_scenario_run', _нельзя)
-        monkeypatch.setattr(dating_people, 'dating_profile_site', _нельзя)
+        monkeypatch.setattr(dating_people, 'dating_scenario_run', _forbidden)
+        monkeypatch.setattr(dating_people, 'dating_profile_site', _forbidden)
 
         answer = await _fill()
 

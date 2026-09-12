@@ -21,7 +21,7 @@ from src.dating.dating_mail_agent import (DATING_MAIL_AGENT_VALUE_MAX,
 pytestmark = pytest.mark.mail
 
 # Что просим у агента — как это приходит из реестра сайта.
-ХОТИМ = {'girl_name', 'girl_city'}
+WANTED = {'girl_name', 'girl_city'}
 
 
 class TestCard:
@@ -104,7 +104,7 @@ class TestValues:
     """Разбор ответа: берём только ожидаемое."""
 
     def test_expected_names_pass(self):
-        values = _values('{"girl_name": "Diana", "girl_city": "Kyiv"}', ХОТИМ)
+        values = _values('{"girl_name": "Diana", "girl_city": "Kyiv"}', WANTED)
 
         assert values == {'girl_name': 'Diana', 'girl_city': 'Kyiv'}
 
@@ -112,7 +112,7 @@ class TestValues:
         """⚠ Принять его значило бы завести переменную, которой нет ни в одном
         реестре: письмо на неё сослаться не может, а у анкеты она висела бы
         непонятной строкой."""
-        values = _values('{"girl_name": "Diana", "выдумка": "мусор"}', ХОТИМ)
+        values = _values('{"girl_name": "Diana", "выдумка": "мусор"}', WANTED)
 
         assert values == {'girl_name': 'Diana'}
 
@@ -120,16 +120,16 @@ class TestValues:
     def test_empty_value_is_dropped(self, raw):
         """⚠ Пустое значение лучше выдуманного, но хранить его незачем: у анкеты
         оно означало бы «заполнено», а письмо всё равно не уйдёт."""
-        assert _values('{"girl_name": %s}' % raw, ХОТИМ) == {}
+        assert _values('{"girl_name": %s}' % raw, WANTED) == {}
 
     def test_number_becomes_a_string(self):
         """Возраст приходит числом законно — отбрасывать его было бы потерей."""
-        assert _values('{"girl_city": 42}', ХОТИМ) == {'girl_city': '42'}
+        assert _values('{"girl_city": 42}', WANTED) == {'girl_city': '42'}
 
     def test_long_value_is_cut(self):
         """Агент иногда отвечает предложением там, где просили слово. Режем, а не
         отбрасываем: обрезанный город полезнее пустого."""
-        values = _values('{"girl_city": "%s"}' % ('я' * 900), ХОТИМ)
+        values = _values('{"girl_city": "%s"}' % ('я' * 900), WANTED)
 
         assert len(values['girl_city']) == DATING_MAIL_AGENT_VALUE_MAX
 
@@ -137,7 +137,7 @@ class TestValues:
     def test_bad_answer_gives_nothing(self, answer):
         """⚠ Пустой словарь, а не исключение: агент мог не найти ничего из
         просимого, и это законный исход, а не сбой."""
-        assert _values(answer, ХОТИМ) == {}
+        assert _values(answer, WANTED) == {}
 
 
 class TestCompanionCard:

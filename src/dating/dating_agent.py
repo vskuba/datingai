@@ -194,10 +194,10 @@ async def dating_agent_id(profile: dict, card: dict) -> int:
     удалить или переименовать в админке RhapsodyAi, и единственный надёжный
     признак — существует ли он сейчас.
     """
-    общий = await dating_agent_universal_name(int(profile.get('site_id') or 0))
+    universal = await dating_agent_universal_name(int(profile.get('site_id') or 0))
 
-    for name in (общий, dating_agent_name((card or {}).get('name') or '',
-                                          str(profile['login']))):
+    for name in (universal, dating_agent_name((card or {}).get('name') or '',
+                                              str(profile['login']))):
         if not name:
             continue
 
@@ -219,14 +219,14 @@ async def dating_agent_universal_name(site_id: int) -> str:
     from src.uvicorn.routers.dating.dating_site import dating_site_setting
 
     try:
-        свой = str(await dating_site_setting(int(site_id or 0),
-                                             DATING_AGENT_SETTING) or '').strip()
+        own = str(await dating_site_setting(int(site_id or 0),
+                                            DATING_AGENT_SETTING) or '').strip()
     except Exception as e:
         logger_info(f'[dating] настройка агента сайта #{site_id} не прочиталась: {e}')
 
         return DATING_AGENT_UNIVERSAL
 
-    return свой or DATING_AGENT_UNIVERSAL
+    return own or DATING_AGENT_UNIVERSAL
 
 
 def dating_agent_vars(profile: dict, card: dict) -> dict:

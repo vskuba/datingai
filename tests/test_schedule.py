@@ -32,9 +32,9 @@ from src.uvicorn.routers.dating.dating_profile_view import dating_profile_view_c
 
 pytestmark = pytest.mark.profile
 SITE = 343
-ТРИ = [{'from': '07:00', 'to': '11:00'},
-       {'from': '14:00', 'to': '18:00'},
-       {'from': '19:00', 'to': '23:00'}]
+THREE = [{'from': '07:00', 'to': '11:00'},
+         {'from': '14:00', 'to': '18:00'},
+         {'from': '19:00', 'to': '23:00'}]
 
 
 class TestLoad:
@@ -150,17 +150,17 @@ class TestMidnight:
 
         assert 'позже начала' in why
 
-    @pytest.mark.parametrize('время', ['24:15', '24:01', '25:00', '30:00'])
-    def test_beyond_midnight_is_refused(self, время):
+    @pytest.mark.parametrize('moment', ['24:15', '24:01', '25:00', '30:00'])
+    def test_beyond_midnight_is_refused(self, moment):
         """⚠ Послабление ровно одно. `24:15` — это уже не «конец суток», а мусор,
         и принять его значило бы завести смену, которой некуда деться."""
-        assert _hhmm(время) == ''
+        assert _hhmm(moment) == ''
 
 
 class TestNow:
     """Должна ли анкета быть в сети в эту минуту."""
 
-    @pytest.mark.parametrize('час, в_сети', [
+    @pytest.mark.parametrize('hour, online', [
         (6, False),    # до первой смены
         (7, True),     # начало ровно
         (10, True),
@@ -171,8 +171,8 @@ class TestNow:
         (23, False),   # ночь
         (3, False),
     ])
-    def test_default_schedule(self, час, в_сети):
-        assert dating_schedule_now(DATING_SCHEDULE_DEFAULT, час * 60) is в_сети
+    def test_default_schedule(self, hour, online):
+        assert dating_schedule_now(DATING_SCHEDULE_DEFAULT, hour * 60) is online
 
     def test_midnight_end_covers_the_last_minute(self):
         """⚠ Смена «до 24:00» действует до последней минуты суток.
@@ -180,11 +180,11 @@ class TestNow:
         Полночь — законный конец смены, и выразить его иначе нечем: `00:00`
         означает начало тех же суток, и смена схлопнулась бы в ноль длины.
         """
-        сутки_напролёт = [{'from': '19:00', 'to': '24:00'}]
+        all_day = [{'from': '19:00', 'to': '24:00'}]
 
-        assert dating_schedule_now(сутки_напролёт, 19 * 60) is True
-        assert dating_schedule_now(сутки_напролёт, 23 * 60 + 59) is True
-        assert dating_schedule_now(сутки_напролёт, 18 * 60 + 59) is False
+        assert dating_schedule_now(all_day, 19 * 60) is True
+        assert dating_schedule_now(all_day, 23 * 60 + 59) is True
+        assert dating_schedule_now(all_day, 18 * 60 + 59) is False
 
     def test_empty_means_not_online(self):
         """⚠ Пустое расписание — `False`, а не «всегда в сети».
@@ -226,17 +226,17 @@ class TestOnlyForEnabled:
         assert dating_schedule_profile_now(
             {'schedule': DATING_SCHEDULE_DEFAULT}, 9 * 60) is True
 
-    @pytest.mark.parametrize('profile, кусок', [
+    @pytest.mark.parametrize('profile, part', [
         ({'enabled': 0, 'schedule': DATING_SCHEDULE_DEFAULT}, 'выключена'),
         ({'enabled': 1, 'schedule': []}, 'руками'),
         ({'enabled': 1, 'schedule': DATING_SCHEDULE_DEFAULT}, ''),
     ])
-    def test_reason_explains_itself(self, profile, кусок):
+    def test_reason_explains_itself(self, profile, part):
         """Почему не действует — словами: блок расписания у выключенной выглядит
         рабочим, и человек ждёт, что анкета войдёт в семь утра."""
         why = dating_schedule_why_idle(profile)
 
-        assert (кусок in why) if кусок else (why == '')
+        assert (part in why) if part else (why == '')
 
 
 class TestStorage:
@@ -260,11 +260,11 @@ class TestStorage:
 
     async def test_saved_schedule_comes_back(self, profile):
         await dating_profile_action_schedule(
-            profile, DatingProfileSchedule(schedule=ТРИ), user=None)
+            profile, DatingProfileSchedule(schedule=THREE), user=None)
 
         card = (await dating_profile_view_card(profile, user=None))['result']
 
-        assert card['schedule'] == ТРИ
+        assert card['schedule'] == THREE
 
     async def test_save_normalises_time(self, profile):
         """`9:0` → `09:00`: одна забытая ведущая ноль ломала бы сравнение строк, на
@@ -293,7 +293,7 @@ class TestStorage:
     async def test_schedule_can_be_cleared(self, profile):
         """Снять расписание можно: это «ведём руками», законное состояние."""
         await dating_profile_action_schedule(
-            profile, DatingProfileSchedule(schedule=ТРИ), user=None)
+            profile, DatingProfileSchedule(schedule=THREE), user=None)
         await dating_profile_action_schedule(
             profile, DatingProfileSchedule(schedule=[]), user=None)
 
@@ -313,7 +313,7 @@ class TestStorage:
 
     async def test_dump_is_readable_back(self, profile):
         """То, что легло в столбец, читается обратно тем же."""
-        assert dating_schedule_load(dating_schedule_dump(ТРИ)) == ТРИ
+        assert dating_schedule_load(dating_schedule_dump(THREE)) == THREE
 
 
 class TestSwitchingOffStopsTheWatch:

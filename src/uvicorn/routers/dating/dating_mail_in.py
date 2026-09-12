@@ -482,10 +482,10 @@ async def dating_mail_in_seen_thread(payload: DatingMailInSeenThread,
         await db.execute('UPDATE dating_mail_in SET seen = 1'
                          ' WHERE profile_id = %s AND uid = %s AND seen = 0',
                          (int(payload.profile_id), str(payload.uid)))
-        сколько = int(db.rowcount or 0)
+        seen = int(db.rowcount or 0)
         await db.connection.commit()
 
-    return {'result': {'seen': сколько}}
+    return {'result': {'seen': seen}}
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

@@ -363,13 +363,13 @@ async def dating_companion_about_collect(profile: dict, uid: str) -> dict:
 
     # ⚠ Пустое не пишем: `dating_companion_touch` правит только названное, и
     # передай мы пустое имя — оно затёрло бы снятое лентой.
-    ещё = {name: value for name, value in
-           (('name', got.get('name')), ('age', got.get('age')),
-            ('city', got.get('city')), ('country', got.get('country')))
-           if value}
+    extra = {name: value for name, value in
+             (('name', got.get('name')), ('age', got.get('age')),
+              ('city', got.get('city')), ('country', got.get('country')))
+             if value}
 
     await dating_companion_touch(
         int(profile['site_id']), uid, about=about,
-        about_state='done' if about else 'empty', about_error='', **ещё)
+        about_state='done' if about else 'empty', about_error='', **extra)
 
     return {'ok': True, 'about': about, 'error': ''}

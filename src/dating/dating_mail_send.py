@@ -195,7 +195,7 @@ async def dating_mail_send_mark(letter: dict, sent: bool, error: str = '',
     временная — сайт просит подождать, протух пароль, — и повтор после неё законен.
     """
     letter_id = int(letter.get('id') or 0)
-    кому = str(letter.get('name') or '').strip() or str(letter.get('uid') or '')
+    addressee = str(letter.get('name') or '').strip() or str(letter.get('uid') or '')
 
     # ⚠ Имя таблицы подставляем **из белого списка**, а не из строки вызывающего:
     # в SQL оно не параметризуется, и любое другое было бы дырой. Здесь их ровно
@@ -222,8 +222,8 @@ async def dating_mail_send_mark(letter: dict, sent: bool, error: str = '',
     await dating_log_write(
         int(letter.get('profile_id') or 0),
         'ok' if sent else 'fail',
-        f'письмо ушло: {кому}' if sent
-        else f'письмо не ушло: {кому} — {str(error or "причина неизвестна")}')
+        f'письмо ушло: {addressee}' if sent
+        else f'письмо не ушло: {addressee} — {str(error or "причина неизвестна")}')
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

@@ -130,10 +130,10 @@ class TestGuardStandsInBothPaths:
         from src.dating import dating_send
 
         redis.put(['999'])
-        гоняли = []
+        runs = []
 
         async def _run(*args, **kwargs):
-            гоняли.append(args)
+            runs.append(args)
 
             return {'status': 'ok'}
 
@@ -145,7 +145,7 @@ class TestGuardStandsInBothPaths:
 
         assert result['ok'] is False
         assert result['offline'] is True, 'отказ выдан за ошибку, а это состояние'
-        assert not гоняли, 'сценарий погнали ради сообщения, которое некому доставить'
+        assert not runs, 'сценарий погнали ради сообщения, которое некому доставить'
 
     async def test_answer_does_not_ask_the_agent_when_offline(self, monkeypatch, redis):
         """Автоответ не спрашивает агента, если собеседника нет в сети.
@@ -157,19 +157,19 @@ class TestGuardStandsInBothPaths:
         from src.dating import dating_answer
 
         redis.put(['999'])
-        спрошено, отправлено = [], []
+        asked, sent = [], []
 
         async def _waiting(profile_id, limit, only, lead):
             return [{'sender_uid': UID, 'sender_name': 'Semen',
                      'text': 'вопрос', 'direction': 'in'}]
 
         async def _ask(agent_id, question, language, profile=None):
-            спрошено.append(question)
+            asked.append(question)
 
             return ('ответ', '')
 
         async def _send(profile, presence, uid, text):
-            отправлено.append(text)
+            sent.append(text)
 
             return {'ok': True, 'error': '', 'offline': False, 'response': '',
                     'message_uid': 'x'}
@@ -186,8 +186,8 @@ class TestGuardStandsInBothPaths:
         result = await dating_answer.dating_answer_run(
             {'id': PROFILE_ID, 'site_id': SITE, 'role': 'lady'}, {}, agent_id=1, limit=5)
 
-        assert not спрошено, 'агента спросили ради ответа, который некому отправить'
-        assert not отправлено
+        assert not asked, 'агента спросили ради ответа, который некому отправить'
+        assert not sent
         assert result['offline'] == 1, 'пропуск не посчитан'
 
     async def test_answer_works_when_online(self, monkeypatch, redis):
@@ -199,19 +199,19 @@ class TestGuardStandsInBothPaths:
         from src.dating import dating_answer
 
         redis.put([UID])
-        спрошено, отправлено = [], []
+        asked, sent = [], []
 
         async def _waiting(profile_id, limit, only, lead):
             return [{'sender_uid': UID, 'sender_name': 'Semen',
                      'text': 'вопрос', 'direction': 'in'}]
 
         async def _ask(agent_id, question, language, profile=None):
-            спрошено.append(question)
+            asked.append(question)
 
             return ('ответ', '')
 
         async def _send(profile, presence, uid, text):
-            отправлено.append(text)
+            sent.append(text)
 
             return {'ok': True, 'error': '', 'offline': False, 'response': '',
                     'message_uid': 'x'}
@@ -229,8 +229,8 @@ class TestGuardStandsInBothPaths:
         result = await dating_answer.dating_answer_run(
             {'id': PROFILE_ID, 'site_id': SITE, 'role': 'lady'}, {}, agent_id=1, limit=5)
 
-        assert спрошено == ['вопрос']
-        assert отправлено == ['ответ']
+        assert asked == ['вопрос']
+        assert sent == ['ответ']
         assert result['sent'] == 1
 
 

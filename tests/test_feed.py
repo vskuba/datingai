@@ -188,10 +188,10 @@ class TestDone:
         dating_feed_write(SITE, 'chat', 'Новых сообщений в чате: 2')
         dating_feed_done(SITE, started, 'mail', 'Новых писем: 4')
 
-        тексты = [row['text'] for row in dating_feed_read(SITE)]
+        texts = [row['text'] for row in dating_feed_read(SITE)]
 
-        assert тексты[0] == 'Новых писем: 4'
-        assert 'Новых сообщений в чате: 2' in тексты
+        assert texts[0] == 'Новых писем: 4'
+        assert 'Новых сообщений в чате: 2' in texts
 
     def test_result_without_a_start_is_still_written(self, ring):
         """Начала не было (Redis моргнул) — итог всё равно должен быть виден."""
@@ -218,10 +218,10 @@ class TestRepeats:
     def test_repeat_refreshes_the_stamp(self, ring):
         """Время у схлопнутой строки — новое: иначе она выглядела бы застрявшей."""
         dating_feed_write(SITE, 'mail', 'Писем не пришло')
-        было = dating_feed_read(SITE)[0]['at']
+        before = dating_feed_read(SITE)[0]['at']
         dating_feed_write(SITE, 'mail', 'Писем не пришло')
 
-        assert dating_feed_read(SITE)[0]['at'] >= было
+        assert dating_feed_read(SITE)[0]['at'] >= before
 
     def test_another_kind_with_the_same_text_is_a_new_line(self, ring):
         """Схлопываем по паре «вид + текст»: разные занятия — разные события."""
@@ -240,9 +240,9 @@ class TestRepeats:
         for _ in range(4):
             dating_feed_write(SITE, 'mail', 'Писем не пришло')
 
-        виды = [row['kind'] for row in dating_feed_read(SITE)[:2]]
+        kinds = [row['kind'] for row in dating_feed_read(SITE)[:2]]
 
-        assert виды == ['mail', 'chat']
+        assert kinds == ['mail', 'chat']
 
 
 class TestAge:

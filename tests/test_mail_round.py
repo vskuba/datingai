@@ -38,7 +38,7 @@ pytestmark = pytest.mark.mail
 SITE = 999_777
 
 # Смена во все сутки — чтобы проверка «идёт ли смена» не зависела от часа прогона.
-ВСЕГДА = [{'from': '00:00', 'to': '23:45'}]
+ALWAYS = [{'from': '00:00', 'to': '23:45'}]
 
 
 @pytest.fixture
@@ -399,7 +399,7 @@ class TestOrder:
         monkeypatch.setattr(round_, 'dating_mail_write', broken)
 
         async def only_ours():
-            return [{'site_id': SITE, 'schedule': ВСЕГДА}]
+            return [{'site_id': SITE, 'schedule': ALWAYS}]
 
         monkeypatch.setattr(round_, '_sites', only_ours)
 
@@ -434,7 +434,7 @@ class TestOrder:
             await _put(f'вчерашний{n}', days_ago=9)
 
         async def only_ours():
-            return [{'site_id': SITE, 'schedule': ВСЕГДА}]
+            return [{'site_id': SITE, 'schedule': ALWAYS}]
 
         monkeypatch.setattr(round_, '_sites', only_ours)
 
@@ -514,10 +514,10 @@ class TestWhoIsTaken:
     async def site(self, auth_client, monkeypatch):
         """Круг видит **только выдуманный сайт** — и ничего больше."""
         await auth_client.put(f'/api/dating/site/{SITE}/template-schedule',
-                              json={'schedule': ВСЕГДА})
+                              json={'schedule': ALWAYS})
 
         async def only_ours():
-            return [{'site_id': SITE, 'schedule': ВСЕГДА}]
+            return [{'site_id': SITE, 'schedule': ALWAYS}]
 
         monkeypatch.setattr(round_, '_sites', only_ours)
 
@@ -564,10 +564,10 @@ class TestWhoIsTaken:
     async def test_mark_stops_the_second_pass(self, site, clean, agent, clean_mark):
         """Второй заход в тот же срок ничего не делает: отметка на месте."""
         await dating_mail_round_run(0)
-        было = len(agent)
+        before = len(agent)
         await dating_mail_round_run(0)
 
-        assert len(agent) == было, 'заход пошёл второй раз, не дождавшись срока'
+        assert len(agent) == before, 'заход пошёл второй раз, не дождавшись срока'
 
     async def test_mark_is_set_before_work(self, site, clean, agent, clean_mark):
         """⚠ Отметка ставится **до** работы: заготовки пишутся минутами, и

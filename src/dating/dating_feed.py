@@ -202,13 +202,13 @@ def _same(raw, kind: str, text: str) -> bool:
         return False
 
     try:
-        было = json.loads(raw)
+        last = json.loads(raw)
     except (TypeError, ValueError):
         return False
 
-    return (str(было.get('kind') or '') == (str(kind) if kind in DATING_FEED_KINDS
+    return (str(last.get('kind') or '') == (str(kind) if kind in DATING_FEED_KINDS
                                             else 'warn')
-            and str(было.get('text') or '') == str(text).strip()[:DATING_FEED_TEXT_MAX])
+            and str(last.get('text') or '') == str(text).strip()[:DATING_FEED_TEXT_MAX])
 
 
 def _row(kind: str, text: str, profile_id: int = 0) -> str:

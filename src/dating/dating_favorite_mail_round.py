@@ -165,10 +165,10 @@ def _fresh_feed(site_id: int) -> bool:
     if not at:
         return False
 
-    было = _feed_seen.get(int(site_id))
+    seen = _feed_seen.get(int(site_id))
     _feed_seen[int(site_id)] = at
 
-    return было is not None and at > было
+    return seen is not None and at > seen
 
 
 def _due(site_id: int) -> bool:

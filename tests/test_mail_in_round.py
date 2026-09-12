@@ -74,13 +74,13 @@ def only_ours(monkeypatch):
     отбор, а не только действие**. Оно появилось после того, как прогон сюиты
     испортил живую анкету, и этот случай — ровно тот же класс.
     """
-    настоящий = round_._sites
+    original = round_._sites
 
-    async def свои():
-        return [row for row in await настоящий()
+    async def ours():
+        return [row for row in await original()
                 if int(row['site_id']) == SITE]
 
-    monkeypatch.setattr(round_, '_sites', свои)
+    monkeypatch.setattr(round_, '_sites', ours)
 
 
 @pytest.fixture
@@ -127,11 +127,11 @@ async def site(auth_client):
     # настройке. Поймано разовым падением в полном прогоне: за полторы тысячи
     # тестов настройки этого сайта правят многие, и один невезучий порядок
     # оставлял его без адреса.
-    стало = (await auth_client.get(
+    after = (await auth_client.get(
         f'/api/dating/site/{SITE}')).json()['result']['settings']
-    assert стало.get('api_base') == 'https://нет.тест', (
+    assert after.get('api_base') == 'https://нет.тест', (
         'адрес API тестовому сайту не записался — круг пропустит его, и '
-        f'проверки ниже будут про другое: {стало}'
+        f'проверки ниже будут про другое: {after}'
     )
 
     yield SITE
@@ -203,8 +203,8 @@ async def profile(auth_client):
 
 # ── Куда идём ────────────────────────────────────────────────────────────────
 
-async def test_сайт_с_забором_попадает_в_круг(site, profile, fetched, clean_mark,
-                                              no_pause, only_ours):
+async def test_mail_in_round_takes_site_with_check_on(site, profile, fetched, clean_mark,
+                                                      no_pause, only_ours):
     """Поднятый выключатель — и письма приходят сами, без единого нажатия."""
     got = await dating_mail_in_round_run()
 
@@ -212,9 +212,9 @@ async def test_сайт_с_забором_попадает_в_круг(site, pro
     assert got['added'] >= 1
 
 
-async def test_выключенный_забор_сайт_не_берёт(site, profile, fetched, clean_mark,
-                                               auth_client, no_pause,
-                                               only_ours):
+async def test_mail_in_round_skips_site_with_check_off(site, profile, fetched, clean_mark,
+                                                       auth_client, no_pause,
+                                                       only_ours):
     """Снятая галочка останавливает **всю** цепочку: отвечать станет не на что."""
     await auth_client.put(f'/api/dating/site/{SITE}/mail-check-on',
                           json={'mail_check_on': False})
@@ -224,8 +224,8 @@ async def test_выключенный_забор_сайт_не_берёт(site, 
     assert not fetched
 
 
-async def test_ушедший_сайт_не_берём(site, profile, fetched, clean_mark, no_pause,
-                                     only_ours):
+async def test_mail_in_round_skips_gone_site(site, profile, fetched, clean_mark, no_pause,
+                                             only_ours):
     """Сайт, пропавший у соседа, писем не отдаст — ходить некуда."""
     from mysql_.mysql_ import mysql_get_db_async
 
@@ -239,8 +239,8 @@ async def test_ушедший_сайт_не_берём(site, profile, fetched, c
     assert not fetched
 
 
-async def test_без_адреса_api_не_ходим(site, profile, fetched, clean_mark,
-                                       auth_client, no_pause, only_ours):
+async def test_mail_in_round_skips_site_without_api_url(site, profile, fetched, clean_mark,
+                                                        auth_client, no_pause, only_ours):
     """⚠ Забор идёт через API сайта: нет `api_base` — некуда стучаться."""
     was = (await auth_client.get(
         f'/api/dating/site/{SITE}')).json()['result']['settings']
@@ -254,12 +254,12 @@ async def test_без_адреса_api_не_ходим(site, profile, fetched, c
 
 # ── Кого обходим внутри сайта ────────────────────────────────────────────────
 
-async def test_обход_идёт_по_анкетам(site, profile):
+async def test_mail_in_round_walks_profile_by_profile(site, profile):
     """⚠ У сайта нет ручки «письма всех наших учёток»: ходим под каждой девушкой."""
     assert profile in [int(row['id']) for row in await _profiles(SITE)]
 
 
-async def test_выключенную_анкету_не_обходим(site, profile, auth_client):
+async def test_mail_in_round_skips_disabled_profile(site, profile, auth_client):
     """Выключенная учётка не работает вовсе — заходить под ней незачем."""
     await auth_client.put(f'/api/dating/profile/{profile}/enabled',
                           json={'enabled': False})
@@ -267,8 +267,8 @@ async def test_выключенную_анкету_не_обходим(site, pro
     assert profile not in [int(row['id']) for row in await _profiles(SITE)]
 
 
-async def test_расписание_не_спрашивается(site, profile, fetched, clean_mark,
-                                          auth_client, no_pause, only_ours):
+async def test_mail_in_round_ignores_schedule(site, profile, fetched, clean_mark,
+                                              auth_client, no_pause, only_ours):
     """⚠ Письмо приходит, когда его написали, а не когда у девушки смена.
 
     Отвечать на него всё равно будут по часам отправки — но лежать оно к тому
@@ -283,8 +283,8 @@ async def test_расписание_не_спрашивается(site, profile,
     assert profile in [call['profile_id'] for call in fetched]
 
 
-async def test_отказ_одной_анкеты_не_уносит_круг(site, profile, fetched,
-                                                 clean_mark, no_pause, only_ours):
+async def test_mail_in_round_survives_one_profile_failure(site, profile, fetched,
+                                                          clean_mark, no_pause, only_ours):
     """У неё мог протухнуть пароль, а у соседних всё в порядке."""
     fetched.boom = True
 
@@ -296,19 +296,19 @@ async def test_отказ_одной_анкеты_не_уносит_круг(sit
 
 # ── Когда идём ───────────────────────────────────────────────────────────────
 
-async def test_второй_заход_подряд_не_идёт(site, profile, fetched, clean_mark,
-                                           no_pause, only_ours):
+async def test_mail_in_round_skips_second_pass_in_a_row(site, profile, fetched, clean_mark,
+                                                        no_pause, only_ours):
     """Отметка держит срок: тик раз в минуту — не обход раз в минуту."""
     await dating_mail_in_round_run()
-    было = len(fetched)
+    before = len(fetched)
 
     await dating_mail_in_round_run()
 
-    assert len(fetched) == было
+    assert len(fetched) == before
 
 
-async def test_отметка_ставится_до_обхода(site, profile, fetched, clean_mark,
-                                          no_pause, only_ours):
+async def test_mail_in_round_marks_before_walking(site, profile, fetched, clean_mark,
+                                                  no_pause, only_ours):
     """Обход идёт секундами на анкету, и следующий тик не должен завести второй."""
     fetched.boom = True
 
@@ -317,7 +317,7 @@ async def test_отметка_ставится_до_обхода(site, profile, 
     assert clean_mark.store.get(DATING_MAIL_IN_ROUND_KEY.format(site_id=SITE))
 
 
-async def test_сбой_redis_решается_в_сторону_бездействия(site, profile, fetched,
+async def test_mail_in_round_redis_failure_means_no_work(site, profile, fetched,
                                                          clean_mark, no_pause,
                                                          only_ours):
     """⚠ Лишний обход — тринадцать входов подряд, а частые заходы сайт считает подозрением."""
@@ -328,8 +328,8 @@ async def test_сбой_redis_решается_в_сторону_бездейс�
     assert not fetched
 
 
-async def test_срок_отметки_и_есть_настройка(site, profile, fetched, clean_mark,
-                                             no_pause, only_ours):
+async def test_mail_in_round_mark_ttl_is_the_period_setting(site, profile, fetched, clean_mark,
+                                                            no_pause, only_ours):
     """Redis гасит отметку сам: отдельного «когда истечёт» круг не хранит."""
     await dating_mail_in_round_run()
 
@@ -337,7 +337,7 @@ async def test_срок_отметки_и_есть_настройка(site, prof
             == DATING_MAIL_IN_EVERY_DEFAULT)
 
 
-async def test_частота_берётся_из_настройки(site, auth_client):
+async def test_mail_in_round_period_comes_from_setting(site, auth_client):
     """Как часто ходить — решение сайта, а не константа кода."""
     was = (await auth_client.get(
         f'/api/dating/site/{SITE}')).json()['result']['settings']
@@ -349,12 +349,12 @@ async def test_частота_берётся_из_настройки(site, auth_
         await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
 
 
-async def test_без_настройки_частота_по_умолчанию(site):
+async def test_mail_in_round_period_falls_back_to_default(site):
     """Не задано — пять минут, как у импорта переписки и по той же причине."""
     assert await _every(SITE) == DATING_MAIL_IN_EVERY_DEFAULT
 
 
-def test_отметка_и_проверка_ходят_парой(clean_mark):
+def test_mail_in_round_mark_and_check_share_the_key(clean_mark):
     """`_mark` закрывает, отсутствие отметки открывает — других состояний нет."""
     assert _due(SITE)
 
@@ -363,12 +363,12 @@ def test_отметка_и_проверка_ходят_парой(clean_mark):
     assert not _due(SITE)
 
 
-async def test_пустой_обход_молчит(fetched, clean_mark, monkeypatch):
+async def test_mail_in_round_empty_pass_writes_nothing(fetched, clean_mark, monkeypatch):
     """Нет сайтов с забором — нет и запросов: круг просыпается вхолостую часто."""
-    async def нет_сайтов():
+    async def no_sites():
         return []
 
-    monkeypatch.setattr(round_, '_sites', нет_сайтов)
+    monkeypatch.setattr(round_, '_sites', no_sites)
 
     assert await dating_mail_in_round_run() == {'sites': 0, 'profiles': 0,
                                                 'added': 0, 'failed': 0}
@@ -376,7 +376,7 @@ async def test_пустой_обход_молчит(fetched, clean_mark, monkeyp
 
 # ── Выключатель ──────────────────────────────────────────────────────────────
 
-async def test_забор_включён_по_умолчанию(auth_client):
+async def test_mail_in_round_check_is_on_by_default(auth_client):
     """⚠ Единственный выключатель почты, поднятый по умолчанию.
 
     Три соседних (`mailing_send_on`, `reply_send_on`, `reply_make_on`) лежат по
@@ -397,7 +397,7 @@ async def test_забор_включён_по_умолчанию(auth_client):
     assert str((row or {}).get('умолчание')) == '1'
 
 
-async def test_ручка_отдаёт_включено_у_незнакомого_сайта(auth_client):
+async def test_mail_in_round_handler_reports_on_for_unknown_site(auth_client):
     """⚠ Сайта нет в снимке — отвечаем «включено», а не «выключено».
 
     Иначе полоса показывала бы снятую галочку там, где круг на самом деле пойдёт.
@@ -407,7 +407,7 @@ async def test_ручка_отдаёт_включено_у_незнакомог�
     assert answer.json()['result']['mail_check_on'] is True
 
 
-async def test_выключатель_меняется_ручкой(site, auth_client):
+async def test_mail_in_round_switch_flips_through_the_handler(site, auth_client):
     """Круглый путь: сняли — прочли снятым, вернули — прочли поднятым."""
     await auth_client.put(f'/api/dating/site/{SITE}/mail-check-on',
                           json={'mail_check_on': False})

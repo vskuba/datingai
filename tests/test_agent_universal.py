@@ -49,10 +49,10 @@ class TestVars:
         Имена на сайте повторяются десятками: три Natalia в списке обычное дело, и
         общий ключ склеил бы их факты в один документ. Логин уникален.
         """
-        первая = dating_agent_vars({'login': 'natalia1@mail.test'}, {'name': 'Natalia'})
-        вторая = dating_agent_vars({'login': 'natalia2@mail.test'}, {'name': 'Natalia'})
+        first = dating_agent_vars({'login': 'natalia1@mail.test'}, {'name': 'Natalia'})
+        second = dating_agent_vars({'login': 'natalia2@mail.test'}, {'name': 'Natalia'})
 
-        assert первая['girl_id'] != вторая['girl_id']
+        assert first['girl_id'] != second['girl_id']
 
     def test_fact_key_matches_the_old_personal_agent(self):
         """⚠ Ключ совпадает с именем прежнего персонального агента, и намеренно.

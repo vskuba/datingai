@@ -248,10 +248,10 @@ class TestSeen:
             await db.connection.commit()
 
         try:
-            счёт = (await dating_mail_in_unread(SITE)).get(profile['id'])
+            count = (await dating_mail_in_unread(SITE)).get(profile['id'])
 
-            assert счёт['all'] == 2, счёт
-            assert счёт['fav'] == 1, 'письмо избранного не отличили от прочих'
+            assert count['all'] == 2, count
+            assert count['fav'] == 1, 'письмо избранного не отличили от прочих'
         finally:
             async with mysql_get_db_async() as db:
                 await db.execute('DELETE FROM dating_favorite WHERE profile_id = %s',
@@ -276,14 +276,14 @@ class TestSeen:
         # ⚠ Помечаем **по разговору**: письма в подделке от разных собеседников,
         # и «два письма» ещё не значит «один разговор». Обходим все и сверяем сумму
         # — так проверяется само правило, а не число писем у заглушки.
-        всего = (await dating_mail_in_unread(SITE))[profile['id']]['all']
-        помечено = 0
+        total = (await dating_mail_in_unread(SITE))[profile['id']]['all']
+        marked = 0
         for uid in {str(row['uid']) for row in rows}:
             got = await dating_mail_in_seen_thread(
                 DatingMailInSeenThread(profile_id=profile['id'], uid=uid), user=None)
-            помечено += got['result']['seen']
+            marked += got['result']['seen']
 
-        assert помечено == всего
+        assert marked == total
         assert profile['id'] not in await dating_mail_in_unread(SITE), \
             'значок остался гореть после прочтения всех разговоров'
 
@@ -396,10 +396,10 @@ class TestListIsSiteWide:
 
         rows = (await auth_client.get(
             f'/api/dating/mail-in?site_id={SITE}')).json()['result']
-        наши = [row for row in rows if int(row['profile_id']) == profile['id']]
+        ours = [row for row in rows if int(row['profile_id']) == profile['id']]
 
-        assert наши, 'письма не попали в список сайта'
-        assert 'girl' in наши[0], 'в ответе нет имени анкеты'
+        assert ours, 'письма не попали в список сайта'
+        assert 'girl' in ours[0], 'в ответе нет имени анкеты'
 
     async def test_girl_falls_back_to_login(self, auth_client, site_api, profile):
         """Карточки у анкеты нет — берём логин, а не пустоту.
@@ -411,9 +411,9 @@ class TestListIsSiteWide:
 
         rows = (await auth_client.get(
             f'/api/dating/mail-in?site_id={SITE}')).json()['result']
-        наше = [row for row in rows if int(row['profile_id']) == profile['id']][0]
+        ours_row = [row for row in rows if int(row['profile_id']) == profile['id']][0]
 
-        assert наше['girl'] == profile['login'], \
+        assert ours_row['girl'] == profile['login'], \
             'без карточки имя должно падать на логин'
 
     async def test_newest_first(self, auth_client, site_api, profile):
@@ -426,9 +426,9 @@ class TestListIsSiteWide:
 
         rows = (await auth_client.get(
             f'/api/dating/mail-in?site_id={SITE}')).json()['result']
-        даты = [row['date_post'] for row in rows if row['date_post']]
+        dates = [row['date_post'] for row in rows if row['date_post']]
 
-        assert даты == sorted(даты, reverse=True), 'порядок не по дате письма'
+        assert dates == sorted(dates, reverse=True), 'порядок не по дате письма'
 
     async def test_without_site_and_profile_it_is_empty(self, auth_client):
         """Ни сайта, ни анкеты — пустой список, а не письма всех сайтов."""
@@ -458,13 +458,13 @@ class TestThreadOfALetter:
 
         rows = (await auth_client.get(
             f'/api/dating/mail-in?site_id={SITE}')).json()['result']
-        письмо = [row for row in rows if int(row['profile_id']) == profile['id']][0]
+        letter = [row for row in rows if int(row['profile_id']) == profile['id']][0]
 
-        нить = (await auth_client.get(
-            f"/api/dating/mail-in/{письмо['id']}/thread")).json()['result']
+        thread = (await auth_client.get(
+            f"/api/dating/mail-in/{letter['id']}/thread")).json()['result']
 
-        assert нить, 'переписка пустая'
-        assert {'from', 'text', 'at', 'photo'} <= set(нить[0])
+        assert thread, 'переписка пустая'
+        assert {'from', 'text', 'at', 'photo'} <= set(thread[0])
 
     async def test_thread_is_oldest_first(self, auth_client, site_api, profile):
         """Старые сверху: разговор читают сверху вниз, как любую переписку."""
@@ -472,13 +472,13 @@ class TestThreadOfALetter:
 
         rows = (await auth_client.get(
             f'/api/dating/mail-in?site_id={SITE}')).json()['result']
-        письмо = [row for row in rows if int(row['profile_id']) == profile['id']][0]
-        нить = (await auth_client.get(
-            f"/api/dating/mail-in/{письмо['id']}/thread")).json()['result']
+        letter = [row for row in rows if int(row['profile_id']) == profile['id']][0]
+        thread = (await auth_client.get(
+            f"/api/dating/mail-in/{letter['id']}/thread")).json()['result']
 
-        когда = [one['at'] for one in нить if one['at']]
+        moments = [one['at'] for one in thread if one['at']]
 
-        assert когда == sorted(когда), 'порядок не от старых к новым'
+        assert moments == sorted(moments), 'порядок не от старых к новым'
 
     async def test_missing_letter_is_404(self, auth_client):
         answer = await auth_client.get('/api/dating/mail-in/99999999/thread')
@@ -495,11 +495,11 @@ class TestThreadOfALetter:
 
         rows = (await auth_client.get(
             f'/api/dating/mail-in?site_id={SITE}')).json()['result']
-        письмо = [row for row in rows if int(row['profile_id']) == profile['id']][0]
-        нить = (await auth_client.get(
-            f"/api/dating/mail-in/{письмо['id']}/thread")).json()['result']
+        letter = [row for row in rows if int(row['profile_id']) == profile['id']][0]
+        thread = (await auth_client.get(
+            f"/api/dating/mail-in/{letter['id']}/thread")).json()['result']
 
-        assert письмо['thread_count'] == len(нить), \
+        assert letter['thread_count'] == len(thread), \
             'счётчик на карточке разошёлся с окном'
 
     async def test_count_is_in_the_list(self, auth_client, site_api, profile):
@@ -533,10 +533,10 @@ class TestListIsByConversation:
 
         rows = (await auth_client.get(
             f'/api/dating/mail-in?site_id={SITE}')).json()['result']
-        наши = [row for row in rows if int(row['profile_id']) == profile['id']]
-        пары = [(row['profile_id'], row['uid']) for row in наши]
+        ours = [row for row in rows if int(row['profile_id']) == profile['id']]
+        pairs = [(row['profile_id'], row['uid']) for row in ours]
 
-        assert len(пары) == len(set(пары)), 'одна переписка показана дважды'
+        assert len(pairs) == len(set(pairs)), 'одна переписка показана дважды'
 
     async def test_the_newest_letter_wins(self, auth_client, site_api, profile):
         """⚠ В строке — **последнее** письмо переписки, а не первое.
@@ -548,14 +548,14 @@ class TestListIsByConversation:
 
         rows = (await auth_client.get(
             f'/api/dating/mail-in?site_id={SITE}')).json()['result']
-        наши = [row for row in rows if int(row['profile_id']) == profile['id']]
+        ours = [row for row in rows if int(row['profile_id']) == profile['id']]
 
-        for row in наши:
-            нить = (await auth_client.get(
+        for row in ours:
+            thread = (await auth_client.get(
                 f"/api/dating/mail-in/{row['id']}/thread")).json()['result']
-            его = [one for one in нить if one['from'] == 'him']
+            his = [one for one in thread if one['from'] == 'him']
 
-            assert его and его[-1]['text'] == row['body'], \
+            assert his and his[-1]['text'] == row['body'], \
                 'в строке не последнее письмо переписки'
 
     async def test_unseen_counts_the_whole_thread(self, auth_client, site_api,
@@ -569,8 +569,8 @@ class TestListIsByConversation:
 
         rows = (await auth_client.get(
             f'/api/dating/mail-in?site_id={SITE}')).json()['result']
-        наши = [row for row in rows if int(row['profile_id']) == profile['id']]
+        ours = [row for row in rows if int(row['profile_id']) == profile['id']]
 
-        assert наши and all('unseen_count' in row for row in наши)
-        assert any(row['unseen_count'] > 0 for row in наши), \
+        assert ours and all('unseen_count' in row for row in ours)
+        assert any(row['unseen_count'] > 0 for row in ours), \
             'свежезабранные письма не считаются непрочитанными'

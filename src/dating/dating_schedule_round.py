@@ -63,33 +63,33 @@ async def dating_schedule_round_run(offset_hours: int = 0) -> dict:
 
     for row in rows:
         profile_id = int(row['id'])
-        в_сети = str(row['status'] or '') == 'online'
-        есть_сокет = bool(str(row['ws_url'] or '').strip())
+        online = str(row['status'] or '') == 'online'
+        has_socket = bool(str(row['ws_url'] or '').strip())
         # ⚠ **Живая сессия — тоже «есть что отпускать».** Присутствие держится на
         # `storage_state`, а не на статусе и не на сокете: пока он лежит, анкета
         # остаётся вошедшей на сайте. Прежде конец смены смотрел только на статус
         # и сокет — и у анкеты, чей статус сбился в `error`, выход не срабатывал
         # вовсе: сессия оставалась жить, а точка в панели не гасла.
-        есть_сессия = bool(row.get('storage_state'))
+        has_state = bool(row.get('storage_state'))
 
         # ⚠ **Выключенную анкету круг отпускает**, даже если расписание включено:
         # «не ведём» значит не ведём совсем (`dating.md`, §5.11).
         if not bool(row['enabled']):
-            if есть_сокет or в_сети or есть_сессия:
+            if has_socket or online or has_state:
                 if await _leave(profile_id, 'анкета выключена'):
                     dropped += 1
 
             continue
 
-        пора = dating_schedule_now(row['schedule'], minutes)
+        on_shift = dating_schedule_now(row['schedule'], minutes)
 
-        if пора and not в_сети:
+        if on_shift and not online:
             if await _enter(profile_id):
                 entered += 1
 
             continue
 
-        if not пора and (в_сети or есть_сокет or есть_сессия):
+        if not on_shift and (online or has_socket or has_state):
             if await _leave(profile_id, 'смена кончилась'):
                 left += 1
 
@@ -125,8 +125,8 @@ async def dating_schedule_round_drop(profile_id: int) -> bool:
     if not row:
         return False
 
-    держится = str(row['status'] or '') == 'online' or bool(str(row['ws_url'] or '').strip())
-    if not держится:
+    held = str(row['status'] or '') == 'online' or bool(str(row['ws_url'] or '').strip())
+    if not held:
         return False
 
     return await _state_clear(int(profile_id))

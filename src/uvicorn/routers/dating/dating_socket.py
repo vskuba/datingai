@@ -39,7 +39,7 @@ async def dating_socket_list(site_id: int = 0, user=Depends(auth_required)):
     строки, страница отвечала бы только на половину вопроса.
     """
     snapshot = dating_socket_read()
-    держат = {int(row['profile_id']): row for row in snapshot['holders']}
+    by_profile = {int(row['profile_id']): row for row in snapshot['holders']}
 
     where, params = '', []
     if int(site_id or 0):
@@ -55,7 +55,7 @@ async def dating_socket_list(site_id: int = 0, user=Depends(auth_required)):
 
     sockets = []
     for row in rows or []:
-        held = держат.get(int(row['id']))
+        held = by_profile.get(int(row['id']))
         url = str(row['ws_url'] or '')
 
         sockets.append({

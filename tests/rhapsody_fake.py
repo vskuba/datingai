@@ -27,12 +27,12 @@ RhapsodyAi, проверяет не нас: он краснеет от чужо�
 
 ## Как пользоваться
 
-    async def test_список_приходит(rhapsody):
+    async def test_site_list_arrives(rhapsody):
         rhapsody.sites = [{'id': 7, 'name': 'Ladadate', 'url': 'https://…'}]
 
         assert await rhapsody_api_site_list() == rhapsody.sites
 
-    async def test_занятый_браузер(rhapsody):
+    async def test_busy_browser_is_named(rhapsody):
         rhapsody.refuse(409, 'предел сессий исчерпан: 25')
 
         with pytest.raises(RhapsodyError, match='браузер соседа занят'):
@@ -206,9 +206,9 @@ class RhapsodyFake:
             # уметь сказать, кто из них у соседа есть.
             #
             # Реестр пуст — прежнее поведение: «нет такого», заведение идёт дальше.
-            имя = path.rsplit('/', 1)[-1]
+            name = path.rsplit('/', 1)[-1]
             for row in self.agents:
-                if str(row.get('name') or '') == имя:
+                if str(row.get('name') or '') == name:
                     return self._ok({**self.agent, **row})
 
             return self._json(404, {'detail': 'нет такого агента'})
