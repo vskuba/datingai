@@ -347,8 +347,10 @@ class TestFeed:
                                 (kind, text)) or '')
         monkeypatch.setattr(dating_invite_send, 'rhapsody_api_site_get', _site())
 
+        # ⚠ Отказ **стойкий**, а не «его нет в сети»: уход из чата состояние, оно
+        # проходит само, в ленту не пишется и строку не глушит (см. `TestOffline…`).
         async def refused(profile, presence, uid, body):
-            return {'ok': False, 'offline': True}
+            return {'ok': False, 'error': 'слишком часто'}
 
         monkeypatch.setattr(dating_invite_send, 'dating_send_message', refused)
         invite_id = await _draft(girl)
@@ -357,7 +359,7 @@ class TestFeed:
 
         assert not got['ok']
         kind, text = said[0]
-        assert kind == 'warn' and 'собеседника нет в чате' in text, text
+        assert kind == 'warn' and 'слишком часто' in text, text
 
 
 def _ok_send():
@@ -388,3 +390,92 @@ async def _invite_row(invite_id: int) -> dict:
         row = await db.fetchone()
 
     return dict(row)
+
+
+class TestOfflineIsNotAFailure:
+    """«Его нет в сети» не глушит черновик и не тратит заход впустую.
+
+    ⚠ Пул набирается раз в полчаса, а люди на сайте живут минутами: через час
+    половина адресатов ушла. Поймано в первый же час работы круга — пул на 50
+    черновиков, в сети из них 27, и круг пошёл заглушать остальные по одной в
+    минуту причиной, которая проходит сама.
+    """
+
+    async def test_away_leaves_the_row_clean(self, girl, monkeypatch):
+        from src.dating import dating_invite_send
+
+        async def away(profile, presence, uid, body):
+            return {'ok': False, 'offline': True}
+
+        monkeypatch.setattr(dating_invite_send, 'dating_send_message', away)
+        monkeypatch.setattr(dating_invite_send, 'rhapsody_api_site_get',
+                            _site_answer())
+        invite_id = await _draft(girl)
+
+        got = await dating_invite_send.dating_invite_send_one(await _one(invite_id))
+        row = await _one(invite_id)
+
+        assert not got['ok'] and 'нет в сети' in got['error']
+        assert row['status'] == 'draft'
+        assert row['error'] == '', '«нет в сети» записали как отказ — строка заглушена'
+
+    async def test_a_real_refusal_still_stops_it(self, girl, monkeypatch):
+        """⚠ Обратное правило остаётся: стойкий отказ строку держит, иначе круг
+        зациклится ровно тогда, когда сайт просит остановиться."""
+        from src.dating import dating_invite_send
+
+        async def refused(profile, presence, uid, body):
+            return {'ok': False, 'error': 'слишком часто'}
+
+        monkeypatch.setattr(dating_invite_send, 'dating_send_message', refused)
+        monkeypatch.setattr(dating_invite_send, 'rhapsody_api_site_get',
+                            _site_answer())
+        invite_id = await _draft(girl)
+
+        await dating_invite_send.dating_invite_send_one(await _one(invite_id))
+        row = await _one(invite_id)
+
+        assert row['status'] == 'draft' and row['error'] == 'слишком часто'
+
+    async def test_round_skips_those_who_left(self, site, girl, sent, monkeypatch):
+        """Круг берёт того, кто в ленте **сейчас**, а не самого старого подряд."""
+        from src.dating import dating_invite_send_round as round_
+
+        old_uid = await _draft_uid(girl, 'ушёл', when='2026-09-01 10:00:00')
+        new_uid = await _draft_uid(girl, 'на месте', when='2026-09-02 10:00:00')
+
+        monkeypatch.setattr(round_, 'dating_online_check',
+                            lambda site_id, uid: {'online': str(uid) == new_uid,
+                                                  'known': True, 'age_sec': 1})
+
+        got = await round_._next(STAND_SITE)
+
+        assert got and got['uid'] == new_uid, f'взяли ушедшего: {got}'
+        assert old_uid != new_uid
+
+
+def _site_answer():
+    async def _got(site_id):
+        return {'id': site_id, 'presence': '{}'}
+
+    return _got
+
+
+async def _one(invite_id: int) -> dict:
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT id, site_id, profile_id, uid, name, body, status,'
+                         ' error FROM dating_invite WHERE id = %s', (int(invite_id),))
+
+        return dict(await db.fetchone())
+
+
+async def _draft_uid(profile_id: int, tag: str, when: str) -> str:
+    uid = f'u{uuid.uuid4().hex[:8]}'
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO dating_invite (site_id, profile_id, uid, name, body,'
+            " status, error, created_at) VALUES (%s, %s, %s, %s, %s, 'draft', '', %s)",
+            (STAND_SITE, int(profile_id), uid, tag, 'Привет!', when))
+        await db.connection.commit()
+
+    return uid

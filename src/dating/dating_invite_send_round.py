@@ -53,6 +53,11 @@
 («слишком часто») превращался бы в бесконечный цикл ровно тогда, когда сайт
 просит остановиться. Ждёт она человека: тот прочтёт причину и нажмёт сам.
 
+⚠ **Кроме «его нет в сети» — это состояние, а не отказ.** Оно проходит само через
+минуты, и глушить им черновик значит терять готовую реплику из-за того, что
+человек отошёл. Такая строка возвращается в пул **чистой**, а круг просто берёт
+следующего — того, кто в ленте сейчас.
+
 ## Сайты обходятся по одному
 
 Отправка — это живой запрос к сайту, а у сайта на нас свои пределы. Два сайта
@@ -67,6 +72,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_invite_send import dating_invite_send_one
 from src.dating.dating_json import dating_json_load
+from src.dating.dating_online import dating_online_check
 from src.dating.dating_schedule import dating_schedule_now
 
 # Как часто круг просыпается. ⚠ Это **не** частота отправки: ту задаёт
@@ -166,6 +172,18 @@ async def _next(site_id: int) -> dict:
     выборки: отбери мы старейшую и отбрось её по статусу, круг стоял бы, пока
     первая в очереди девушка не вернётся, хотя писать было кому.
 
+    ⚠⚠ **И только тому, кто сейчас в сети.** Пул набирается кругом раз в полчаса,
+    а люди на сайте живут минутами: через час половина адресатов ушла. Прежде круг
+    брал старейшую строку не глядя, получал «собеседника нет в сети» — и **писал
+    это в `error`**, то есть глушил черновик состоянием, которое само проходит.
+
+    Поймано в первый же час работы: пул на 50 черновиков, в сети из них 27, и
+    круг пошёл заглушать остальные по одной в минуту.
+
+    Отбор идёт по тому же снимку ленты, что и запрет в самой отправке
+    (`dating_send`): второй источник «кто в сети» разошёлся бы с первым, и круг
+    выбирал бы того, кому отправка всё равно откажет.
+
     Порядок — по возрасту строки: реплика сочинялась под человека, который был в
     чате тогда, и чем дольше она лежит, тем меньше от неё толку.
     """
@@ -177,14 +195,18 @@ async def _next(site_id: int) -> dict:
                 '  JOIN dating_profile p ON p.id = i.profile_id'
                 " WHERE i.site_id = %s AND i.status = 'draft' AND i.error = %s"
                 "   AND p.enabled = 1 AND p.status = 'online'"
-                ' ORDER BY i.created_at, i.id LIMIT 1', (int(site_id), ''))
-            row = await db.fetchone()
+                ' ORDER BY i.created_at, i.id', (int(site_id), ''))
+            rows = await db.fetchall()
     except Exception as e:
         logger_info(f'[dating] очередь инвайтов сайта #{site_id} не спросилась: {e}')
 
         return {}
 
-    return dict(row) if row else {}
+    for row in rows or []:
+        if dating_online_check(int(site_id), str(row['uid']))['online']:
+            return dict(row)
+
+    return {}
 
 
 async def _today(site_id: int) -> int:

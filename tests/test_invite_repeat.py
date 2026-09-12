@@ -178,8 +178,10 @@ class TestNoDouble:
         держала бы человека паузой повтора."""
         from src.dating import dating_invite_send
 
+        # ⚠ Отказ **стойкий**: «его нет в сети» строку не глушит и причины не
+        # пишет — это состояние, и оно проходит само (`dating_invite_send`).
         async def _refused(profile, presence, uid, body):
-            return {'ok': False, 'offline': True}
+            return {'ok': False, 'error': 'слишком часто'}
 
         monkeypatch.setattr(dating_invite_send, 'dating_send_message', _refused)
         monkeypatch.setattr(dating_invite_send, 'rhapsody_api_site_get', _site())
