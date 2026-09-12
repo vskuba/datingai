@@ -257,6 +257,52 @@ async def _tasks_stop() -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+# ── Сайт в нашем снимке ──────────────────────────────────────────────────────
+#
+# Заведение и правка учётки проверяют номер сайта по **нашему снимку**
+# (`dating_profile_site_known`, `api.md` §3.5), а не вживую у соседа: местная
+# работа не должна краснеть от его перезапуска. Снимок наполняется сверкой с
+# меткой `dating`, и стендовой закладки в нём отродясь не лежало — без этой
+# подсадки сюита заводила бы анкеты только после удачной сверки с живым соседом,
+# то есть ровно та зависимость, от которой уходили.
+#
+# Стенд кладётся `is_gone = 1`: строка нужна затем, чтобы номер признавался
+# заведённым, а не чтобы украшать селект сайтов и кормить круги — все круги
+# читают `is_gone = 0` и не увидят её вовсе. Проверка заведения `is_gone` не
+# спрашивает: закладка без метки у соседа — не мёртвая, так у него лежат
+# стенды и рабочие сайты.
+_STAND_SITES = [(999_343, 'Стенд DatingAi: сюита'),
+                # Живые сайты разработочной установки: in-process тесты анкет
+                # привязаны к ним, и на чистой базе снимок должен узнать их сам.
+                (19, 'Goldenbride'), (343, 'Ladadate')]
+
+_site_seeded = False
+
+
+@pytest.fixture(autouse=True)
+async def site_snapshot():
+    """Заводит тестовые сайты в наш снимок, если их там ещё нет."""
+    global _site_seeded
+    if _site_seeded:
+        return
+
+    from datetime_.datetime_ import datetime_utc_now
+
+    now = datetime_utc_now().strftime('%Y-%m-%d %H:%M:%S')
+
+    async with mysql_get_db_async() as db:
+        for site_id, name in _STAND_SITES:
+            # `IGNORE`, а не upsert: живые сайты трогать нечем и незачем, а
+            # стендовая строка либо есть, либо её не было ни разу.
+            await db.execute(
+                'INSERT IGNORE INTO dating_site (site_id, name, url, is_gone, synced_at)'
+                ' VALUES (%s, %s, %s, 1, %s)',
+                (site_id, name, 'http://stand.invalid', now))
+        await db.connection.commit()
+
+    _site_seeded = True
+
+
 @pytest.fixture
 async def client():
     """Клиент без входа — им проверяется, что закрытое закрыто."""

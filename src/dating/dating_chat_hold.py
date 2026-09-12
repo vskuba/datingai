@@ -26,14 +26,13 @@ HTTP-опрос (`dating_presence`) даёт «на сайте», но не «в
 import asyncio
 import time
 
-from logging_.logging_ import logger_info
+from logging_.logging_ import logger_exception, logger_info
 from mysql_.mysql_ import mysql_get_db_async
-from datetime_.datetime_ import datetime_offset_hours
 from redis_.redis_ import redis_conn_get
-from setting_.setting_ import setting_get
 
 from src.dating.dating_auto import DATING_AUTO_PERIOD_SEC, dating_auto_round
 from src.dating.dating_feed import dating_feed_done, dating_feed_write
+from src.dating.dating_round import dating_round_loop, dating_round_offset_loop
 from src.dating.dating_favorite_mail_round import (
     DATING_FAVORITE_MAIL_ROUND_TICK_SEC, dating_favorite_mail_round_run)
 from src.dating.dating_panel_round import (DATING_PANEL_ROUND_TICK_SEC,
@@ -493,7 +492,9 @@ async def _presence_loop(deadline: float) -> None:
             if profiles:
                 await asyncio.gather(*(beat(item) for item in profiles), return_exceptions=True)
         except Exception as e:
-            logger_info(f'[dating] присутствие: {e}')
+            # Своя обёртка, не `dating_round_loop`: присутствие спит **после**
+            # работы — оно нужно с первой секунды смены, а не через тик.
+            logger_exception(f'[dating] присутствие: {e}', exc=e)
 
         await asyncio.sleep(min(DATING_CHAT_HOLD_BEAT_SEC,
                                 max(1.0, deadline - time.monotonic())))
@@ -506,15 +507,13 @@ async def _answer_loop(deadline: float) -> None:
     флаг автоответа переключают прямо в карточке — читать его один раз значило бы
     узнать о выключении только к концу смены.
     """
-    while time.monotonic() < deadline:
-        await asyncio.sleep(min(DATING_AUTO_PERIOD_SEC,
-                                max(1.0, deadline - time.monotonic())))
-        try:
-            profiles = await _profiles_ready()
-            if profiles:
-                await dating_auto_round(profiles)
-        except Exception as e:
-            logger_info(f'[dating] круг автоответа: {e}')
+
+    async def body() -> None:
+        profiles = await _profiles_ready()
+        if profiles:
+            await dating_auto_round(profiles)
+
+    await dating_round_loop(deadline, DATING_AUTO_PERIOD_SEC, 'автоответа', body)
 
 
 async def _schedule_loop(deadline: float) -> None:
@@ -522,19 +521,9 @@ async def _schedule_loop(deadline: float) -> None:
 
     Тик — минута: смены заданы с точностью до четверти часа, чаще смотреть нечего,
     а реже значило бы входить с опозданием до пяти минут.
-
-    ⚠ Смещение читаем **каждый круг**, а не один раз: настройку `timezone` правят
-    на ходу, и запомненное значение означало бы расписание по старому поясу до
-    конца смены — шесть часов.
     """
-    while time.monotonic() < deadline:
-        await asyncio.sleep(min(DATING_SCHEDULE_ROUND_TICK_SEC,
-                                max(1.0, deadline - time.monotonic())))
-        try:
-            offset = datetime_offset_hours(await setting_get('timezone', '+0'))
-            await dating_schedule_round_run(offset)
-        except Exception as e:
-            logger_info(f'[dating] круг расписания: {e}')
+    await dating_round_offset_loop(deadline, DATING_SCHEDULE_ROUND_TICK_SEC,
+                                   'расписания', dating_schedule_round_run)
 
 
 async def _mail_in_loop(deadline: float) -> None:
@@ -543,13 +532,8 @@ async def _mail_in_loop(deadline: float) -> None:
     ⚠ **Расписание не спрашивается.** Письмо приходит, когда его написали, а не
     когда у девушки смена; отвечать на него всё равно будут по часам отправки.
     """
-    while time.monotonic() < deadline:
-        await asyncio.sleep(min(DATING_MAIL_IN_ROUND_TICK_SEC,
-                                max(1.0, deadline - time.monotonic())))
-        try:
-            await dating_mail_in_round_run()
-        except Exception as e:
-            logger_info(f'[dating] круг писем: {e}')
+    await dating_round_loop(deadline, DATING_MAIL_IN_ROUND_TICK_SEC,
+                            'писем', dating_mail_in_round_run)
 
 
 async def _invite_loop(deadline: float) -> None:
@@ -558,19 +542,9 @@ async def _invite_loop(deadline: float) -> None:
     Тик — минута, как у рассылки: смены заданы с точностью до четверти часа. Сам
     набор идёт куда реже — у каждого сайта свой срок (`invite_every`), и
     большинство тиков внутри смены только читают отметку.
-
-    ⚠ Смещение читаем **каждый круг**, а не один раз: настройку `timezone` правят
-    на ходу, и запомненное значение означало бы расписание по старому поясу до
-    конца смены — шесть часов.
     """
-    while time.monotonic() < deadline:
-        await asyncio.sleep(min(DATING_INVITE_ROUND_TICK_SEC,
-                                max(1.0, deadline - time.monotonic())))
-        try:
-            offset = datetime_offset_hours(await setting_get('timezone', '+0'))
-            await dating_invite_round_run(offset)
-        except Exception as e:
-            logger_info(f'[dating] круг инвайтов: {e}')
+    await dating_round_offset_loop(deadline, DATING_INVITE_ROUND_TICK_SEC,
+                                   'инвайтов', dating_invite_round_run)
 
 
 async def _favorite_mail_loop(deadline: float) -> None:
@@ -584,13 +558,8 @@ async def _favorite_mail_loop(deadline: float) -> None:
     отправки — в свои часы. Второе расписание отвечало бы на тот же вопрос вторым
     голосом.
     """
-    while time.monotonic() < deadline:
-        await asyncio.sleep(min(DATING_FAVORITE_MAIL_ROUND_TICK_SEC,
-                                max(1.0, deadline - time.monotonic())))
-        try:
-            await dating_favorite_mail_round_run()
-        except Exception as e:
-            logger_info(f'[dating] круг писем избранным: {e}')
+    await dating_round_loop(deadline, DATING_FAVORITE_MAIL_ROUND_TICK_SEC,
+                            'писем избранным', dating_favorite_mail_round_run)
 
 
 async def _panel_loop(deadline: float) -> None:
@@ -603,13 +572,8 @@ async def _panel_loop(deadline: float) -> None:
     и жива она должна быть всегда: в неё входит круг импорта переписки, и в три
     часа ночи тоже. Смены сайта — про письма живым людям, а не про это.
     """
-    while time.monotonic() < deadline:
-        await asyncio.sleep(min(DATING_PANEL_ROUND_TICK_SEC,
-                                max(1.0, deadline - time.monotonic())))
-        try:
-            await dating_panel_round_run()
-        except Exception as e:
-            logger_info(f'[dating] круг админ-панели: {e}')
+    await dating_round_loop(deadline, DATING_PANEL_ROUND_TICK_SEC,
+                            'админ-панели', dating_panel_round_run)
 
 
 async def _favorite_loop(deadline: float) -> None:
@@ -622,13 +586,8 @@ async def _favorite_loop(deadline: float) -> None:
     написал; звёздочка при этом никому не показывается в ленте и не требует, чтобы
     девушка была «на смене».
     """
-    while time.monotonic() < deadline:
-        await asyncio.sleep(min(DATING_FAVORITE_ROUND_TICK_SEC,
-                                max(1.0, deadline - time.monotonic())))
-        try:
-            await dating_favorite_round_run()
-        except Exception as e:
-            logger_info(f'[dating] круг избранных: {e}')
+    await dating_round_loop(deadline, DATING_FAVORITE_ROUND_TICK_SEC,
+                            'избранных', dating_favorite_round_run)
 
 
 async def _reply_loop(deadline: float) -> None:
@@ -638,13 +597,8 @@ async def _reply_loop(deadline: float) -> None:
     черновик, который никуда не уходит без второго выключателя: набирать его
     можно когда угодно, а отправит его круг отправки — в свои часы.
     """
-    while time.monotonic() < deadline:
-        await asyncio.sleep(min(DATING_REPLY_ROUND_TICK_SEC,
-                                max(1.0, deadline - time.monotonic())))
-        try:
-            await dating_reply_round_run()
-        except Exception as e:
-            logger_info(f'[dating] круг ответов: {e}')
+    await dating_round_loop(deadline, DATING_REPLY_ROUND_TICK_SEC,
+                            'ответов', dating_reply_round_run)
 
 
 async def _send_loop(deadline: float) -> None:
@@ -652,18 +606,9 @@ async def _send_loop(deadline: float) -> None:
 
     Тик — полминуты, а шлёт круг по своему сроку (`send_every`, обычно три
     минуты): большинство тиков только смотрят, не пора ли.
-
-    ⚠ Смещение читаем каждый круг: настройку `timezone` правят на ходу, и
-    запомненное значение означало бы отправку по старому поясу до конца смены.
     """
-    while time.monotonic() < deadline:
-        await asyncio.sleep(min(DATING_SEND_ROUND_TICK_SEC,
-                                max(1.0, deadline - time.monotonic())))
-        try:
-            offset = datetime_offset_hours(await setting_get('timezone', '+0'))
-            await dating_send_round_run(offset)
-        except Exception as e:
-            logger_info(f'[dating] круг отправки: {e}')
+    await dating_round_offset_loop(deadline, DATING_SEND_ROUND_TICK_SEC,
+                                   'отправки', dating_send_round_run)
 
 
 async def _heartbeat_loop(deadline: float) -> None:
@@ -678,18 +623,9 @@ async def _heartbeat_loop(deadline: float) -> None:
 
     Тик — пятнадцать секунд, а бьёт круг по сроку сайта (`heartbeat_every`):
     большинство тиков только смотрят, кому пора.
-
-    ⚠ Смещение читаем **каждый круг**: настройку `timezone` правят на ходу, и
-    запомненное значение означало бы расписание по старому поясу до конца смены.
     """
-    while time.monotonic() < deadline:
-        await asyncio.sleep(min(DATING_HEARTBEAT_ROUND_TICK_SEC,
-                                max(1.0, deadline - time.monotonic())))
-        try:
-            offset = datetime_offset_hours(await setting_get('timezone', '+0'))
-            await dating_heartbeat_round_run(offset)
-        except Exception as e:
-            logger_info(f'[dating] круг присутствия: {e}')
+    await dating_round_offset_loop(deadline, DATING_HEARTBEAT_ROUND_TICK_SEC,
+                                   'присутствия', dating_heartbeat_round_run)
 
 
 async def _online_loop(deadline: float) -> None:
@@ -702,13 +638,8 @@ async def _online_loop(deadline: float) -> None:
     ⚠ Круг **заводит** съём и не ждёт его: это ~40 секунд живого браузера, и
     держать на них смену незачем — снимок появится в кэше сам.
     """
-    while time.monotonic() < deadline:
-        await asyncio.sleep(min(DATING_ONLINE_ROUND_TICK_SEC,
-                                max(1.0, deadline - time.monotonic())))
-        try:
-            await dating_online_round_run()
-        except Exception as e:
-            logger_info(f'[dating] круг ленты: {e}')
+    await dating_round_loop(deadline, DATING_ONLINE_ROUND_TICK_SEC,
+                            'ленты', dating_online_round_run)
 
 
 async def _mailing_loop(deadline: float) -> None:
@@ -717,36 +648,15 @@ async def _mailing_loop(deadline: float) -> None:
     Тик — минута, как у расписания анкет: смены заданы с точностью до четверти
     часа. Сам набор при этом идёт куда реже — у каждого сайта свой срок
     (`mailing_every`), и большинство тиков внутри смены только читают отметку.
-
-    ⚠ Смещение читаем **каждый круг**, а не один раз: настройку `timezone` правят
-    на ходу, и запомненное значение означало бы расписание по старому поясу до
-    конца смены — шесть часов.
     """
-    while time.monotonic() < deadline:
-        await asyncio.sleep(min(DATING_MAILING_ROUND_TICK_SEC,
-                                max(1.0, deadline - time.monotonic())))
-        try:
-            offset = datetime_offset_hours(await setting_get('timezone', '+0'))
-            await dating_mailing_round_run(offset)
-        except Exception as e:
-            logger_info(f'[dating] круг рассылки: {e}')
+    await dating_round_offset_loop(deadline, DATING_MAILING_ROUND_TICK_SEC,
+                                   'рассылки', dating_mailing_round_run)
 
 
 async def _mail_round_loop(deadline: float) -> None:
-    """Круг шаблонов: новые заготовки писем по расписанию сайта.
-
-    ⚠ Смещение читаем **каждый круг**, а не один раз: настройку `timezone` правят на
-    ходу, и запомненное значение означало бы расписание по старому поясу до конца
-    смены. То же правило, что у круга рассылки.
-    """
-    while time.monotonic() < deadline:
-        await asyncio.sleep(min(DATING_MAIL_ROUND_TICK_SEC,
-                                max(1.0, deadline - time.monotonic())))
-        try:
-            offset = datetime_offset_hours(await setting_get('timezone', '+0'))
-            await dating_mail_round_run(offset)
-        except Exception as e:
-            logger_info(f'[dating] круг шаблонов: {e}')
+    """Круг шаблонов: новые заготовки писем по расписанию сайта."""
+    await dating_round_offset_loop(deadline, DATING_MAIL_ROUND_TICK_SEC,
+                                   'шаблонов', dating_mail_round_run)
 
 
 async def _chat_import_loop(deadline: float) -> None:
@@ -765,13 +675,8 @@ async def _chat_import_loop(deadline: float) -> None:
     Chromium у соседа, и пять сайтов разом уронили бы его пул. Тот же порядок, что
     у круга восстановления входов, и по той же причине.
     """
-    while time.monotonic() < deadline:
-        await asyncio.sleep(min(DATING_CHAT_IMPORT_TICK_SEC,
-                                max(1.0, deadline - time.monotonic())))
-        try:
-            await _chat_import_round()
-        except Exception as e:
-            logger_info(f'[dating] круг импорта переписки: {e}')
+    await dating_round_loop(deadline, DATING_CHAT_IMPORT_TICK_SEC,
+                            'импорта переписки', _chat_import_round)
 
 
 async def _chat_import_round() -> None:
@@ -893,13 +798,8 @@ async def _revive_loop(deadline: float) -> None:
     минуту круга. Смена в установке одна (single-flight), так что второго круга
     параллельно не бывает.
     """
-    while time.monotonic() < deadline:
-        await asyncio.sleep(min(DATING_REVIVE_PERIOD_SEC,
-                                max(1.0, deadline - time.monotonic())))
-        try:
-            await dating_revive_round_run()
-        except Exception as e:
-            logger_info(f'[dating] круг восстановления: {e}')
+    await dating_round_loop(deadline, DATING_REVIVE_PERIOD_SEC,
+                            'восстановления', dating_revive_round_run)
 
 
 async def _error_write(profile_id: int, login: str, what: str, detail: str) -> None:

@@ -22,6 +22,7 @@ from urllib.parse import quote
 import httpx
 
 from config.config import config_get
+from http_.http_pool import http_pool_transport
 from logging_.logging_ import logger_info
 
 # Адрес соседа и токен служебной учётки. Токен — `user_access_token` пользователя
@@ -519,9 +520,13 @@ async def _request(method: str, path: str, payload: dict = None,
     started = time.monotonic()
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.request(method, RHAPSODY_API_URL + path,
-                                            json=payload, headers=headers)
+        # Клиент разовый — таймаут-то у каждого вызова свой, — а соединения идут
+        # из общего транспорта: круги ходят к соседу сотнями, и всякий раз
+        # заводить с ним TCP и TLS незачем. Клиента не закрываем: с ним ушёл бы
+        # и общий транспорт, остальные вызовы остались бы без пула.
+        client = httpx.AsyncClient(timeout=timeout, transport=http_pool_transport())
+        response = await client.request(method, RHAPSODY_API_URL + path,
+                                        json=payload, headers=headers)
     except httpx.HTTPError as e:
         # Обрыв связи — тоже ответ, и в логе он нужен: по нему видно, что дело не в
         # соседе, а в сети или в том, что его вовсе нет.

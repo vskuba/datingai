@@ -110,6 +110,7 @@
 - **Новая настройка панели** → `.claude/docs/api.md`, §6.2 (строка в `setting`, страница «Настройки → Значения»)
 - **Показ даты или времени** → `data/uvicorn/public/js/dating_time.js` (⚠ с сервера всё приходит **в UTC**; сдвигает страница по настройке `timezone`)
 - **Отказ, который не про анкету** → `src/dating/dating_error.py` (⚠ строка одна на источник; удача её стирает)
+- **Свой `httpx.AsyncClient` где-то в коде** → `py_modules/http_/http_pool.py` (⚠ клиент разовый — cookie у каждой анкеты свои, — а транспорт общий: `transport=http_pool_transport()` и **клиента не закрывать**, `aclose()` унёс бы транспорт у всех)
 - **Работа с прод-базой или ssh на прод** → `.claude/docs/deploy.md`, §4.5 (⚠ бэкап до записи; защитные правки — отдельным запросом; `--default-character-set=utf8mb4`)
 - **Проверка после правок** → `.claude/docs/testing.md`, §1.0 (⚠ сюита разбита на пять групп: `pytest -m chat` — полминуты против трёх минут на всё. Полный прогон — перед выкладкой)
 
@@ -117,8 +118,9 @@
 
 | File | Purpose |
 |------|---------|
-| `main_uvicorn.py` | Точка входа: middleware, схема на старте, роутеры |
+| `main_uvicorn.py` | Точка входа: middleware, схема на старте, роутеры (⚠ необработанная ошибка уходит наружу общей фразой, текст исключения — только в журнал) |
 | `src/rhapsody/rhapsody_api.py` | **Единственная** дверь к RhapsodyAi |
+| `src/dating/dating_round.py` | Обвязка кругов воркера: сон до дедлайна, часовой пояс каждым кругом, отказ с трейсбеком в журнал |
 | `src/dating/dating_chat.py` | Приём сообщений вебсокетом |
 | `src/dating/site/site_base.py` | Протокол чата по настройке: интерфейс драйвера сайта |
 | `src/dating/site/site_profile.py` | Разбор анкеты и собеседниц: имена полей по настройке |
@@ -160,7 +162,9 @@
 | `src/uvicorn/routers/dating/dating_import.py` | Ручки импорта: готовность и сам импорт с сайта |
 | `src/uvicorn/routers/dating/dating_people.py` | Ручка собеседников: три списка с сайта, выдержка и жёсткий пол |
 | `src/uvicorn/routers/dating/dating_log.py` | Ручка общей ленты: журнал анкет и прогоны сценариев одним списком |
-| `src/uvicorn/routers/dating/dating_site.py` | Сайты: снимок списка соседа, фоновая сверка и наши настройки к нему |
+| `src/uvicorn/routers/dating/dating_site.py` | Сайты: снимок списка соседа, реестр и наши настройки к нему |
+| `src/uvicorn/routers/dating/dating_site_switch.py` | Сайты: выключатели занятий и расписания смен — свои колонки |
+| `src/uvicorn/routers/dating/dating_site_sync.py` | Сайты: фоновая сверка снимка с соседом |
 | `src/dating/dating_mail.py` | Письма: разбор переменных, подстановка, проверка шаблона и нехватки |
 | `src/uvicorn/routers/dating/dating_mail.py` | Ручки шаблонов писем: CRUD по сайту |
 | `src/uvicorn/routers/dating/dating_mail_var.py` | Ручки переменных: реестр сайта (админ) и значения у анкеты (все) |

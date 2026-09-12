@@ -24,3 +24,6 @@ data/seeds/
 .claude-shell
 
 .memsearch
+
+# Рабочие заметки агентов-помощников: к проекту отношения не имеют.
+.deepseek-harness/

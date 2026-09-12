@@ -12,9 +12,10 @@ import pytest
 
 from src.dating.dating_error import (DATING_ERROR_SITES_SYNC, dating_error_clear,
                                      dating_error_rows)
-from src.uvicorn.routers.dating import dating_site
-from src.uvicorn.routers.dating.dating_site import (dating_site_rows, dating_site_sync_now,
-                                                    dating_site_sync_start)
+from src.uvicorn.routers.dating import dating_site, dating_site_sync
+from src.uvicorn.routers.dating.dating_site import dating_site_rows
+from src.uvicorn.routers.dating.dating_site_sync import (dating_site_sync_now,
+                                                         dating_site_sync_start)
 from src.uvicorn.routers.site import site_list
 
 pytestmark = pytest.mark.core
@@ -41,9 +42,9 @@ async def synced(rhapsody):
 
 
 def _guards_clear() -> None:
-    dating_site._sync_task = None
-    dating_site._sync_at[0] = 0.0
-    dating_site._sync_error[0] = ''
+    dating_site_sync._sync_task = None
+    dating_site_sync._sync_at[0] = 0.0
+    dating_site_sync._sync_error[0] = ''
 
 
 async def _sync_stop() -> None:
@@ -54,7 +55,7 @@ async def _sync_stop() -> None:
     соединение, и закрытие пула ждёт его вечно. Так и вышло — сюита повисла на
     первом же прогоне.
     """
-    task = dating_site._sync_task
+    task = dating_site_sync._sync_task
     if task and not task.done():
         task.cancel()
         try:
@@ -218,7 +219,7 @@ class TestSyncGuards:
         assert dating_site_sync_start() is True, 'вторая должна увидеть первую, а не завести свою'
 
         # Дожидаемся, а не гасим: проверяем, сколько запросов ушло соседу.
-        await dating_site._sync_task
+        await dating_site_sync._sync_task
 
         # Один вопрос соседу на две страницы — ради этого сторож и стоит.
         asks = [call for call in synced.calls if '/api/browser/site' in call[1]]
@@ -230,6 +231,6 @@ class TestSyncGuards:
         спрашивался бы у соседа на каждый щелчок по меню."""
         _guards_clear()
         await dating_site_sync_now()
-        dating_site._sync_at[0] = __import__('time').time()
+        dating_site_sync._sync_at[0] = __import__('time').time()
 
         assert dating_site_sync_start() is False

@@ -33,6 +33,7 @@ import time
 import httpx
 import websockets
 
+from http_.http_pool import http_pool_transport
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
@@ -331,14 +332,18 @@ async def _send_http(profile: dict, presence: dict, send: dict, to_uid: str, tex
                             message_uid)
 
     try:
-        async with httpx.AsyncClient(timeout=DATING_PRESENCE_TIMEOUT, cookies=cookies,
-                                     follow_redirects=True,
-                                     headers={'User-Agent': DATING_PRESENCE_UA,
-                                              'Content-Type': str(send.get('content_type')
-                                                                  or 'application/x-www-form-urlencoded'),
-                                              **(presence.get('headers') or {})}) as client:
-            response = await client.post(str(presence.get('base', '')).rstrip('/') + send['path'],
-                                         content=body)
+        # Клиент разовый — куки на анкету, — а соединение из общего транспорта
+        # (`http_pool.py`): отправка идёт по каждой анкете, и заводить TLS
+        # на каждое письмо незачем. Не закрываем: ушёл бы и общий пул.
+        client = httpx.AsyncClient(timeout=DATING_PRESENCE_TIMEOUT, cookies=cookies,
+                                   follow_redirects=True,
+                                   headers={'User-Agent': DATING_PRESENCE_UA,
+                                            'Content-Type': str(send.get('content_type')
+                                                                or 'application/x-www-form-urlencoded'),
+                                            **(presence.get('headers') or {})},
+                                   transport=http_pool_transport())
+        response = await client.post(str(presence.get('base', '')).rstrip('/') + send['path'],
+                                     content=body)
     except Exception as e:
         return _fail(f'{type(e).__name__}: {e}')
 

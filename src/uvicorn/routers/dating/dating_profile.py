@@ -25,9 +25,11 @@
 одним файлом на 856 строк, это было незаметно — и роутер совмещал три разные
 ответственности (`docs-common/code_rules.md`, §4).
 
-Общее у трёх файлов — две функции отсюда: `dating_profile_row` (строка или 404) и
-`dating_profile_site` (сайт-закладка или 422). Они здесь, потому что это про нашу
-запись и её связь с сайтом, а не про действие над ней.
+Общее у трёх файлов — три функции отсюда: `dating_profile_row` (строка или 404),
+`dating_profile_site` (живой сайт-закладка, для тех, кто к нему реально ходит) и
+`dating_profile_site_known` (заведён ли сайт, по нашему снимку — для заведения и
+правки). Они здесь, потому что это про нашу запись и её связь с сайтом, а не
+про действие над ней.
 """
 
 from datetime import datetime
@@ -191,8 +193,12 @@ async def dating_profile_list(site_id: int = 0,
 @router.post('', status_code=201, include_in_schema=False)
 async def dating_profile_create(data: DatingProfileSave,
                              user=Depends(auth_required)):
-    """Заводит учётку. Тот же логин на том же сайте — 409, а не второй такой же."""
-    await dating_profile_site(data.site_id)
+    """Заводит учётку. Тот же логин на том же сайте — 409, а не второй такой же.
+
+    Сайт проверяет наш снимок (`dating_profile_site_known`), а не сосед: строка
+    ложится в нашу базу, и висящий RhapsodyAi не должен мешать местной работе.
+    """
+    await dating_profile_site_known(data.site_id)
 
     try:
         profile_id = await DatingProfileRepository().add({
@@ -217,7 +223,7 @@ async def dating_profile_update(profile_id: int, data: DatingProfileSave,
     """Правит учётку. Пустой пароль оставляет прежний: форма его не показывает,
     и пустое поле означает «не трогать», а не «стереть»."""
     await dating_profile_row(profile_id)
-    await dating_profile_site(data.site_id)
+    await dating_profile_site_known(data.site_id)
 
     values = {'site_id': data.site_id, 'login': data.login,
               'note': data.note, 'role': data.role}
@@ -252,11 +258,12 @@ async def dating_profile_row(profile_id: int) -> dict:
 
 
 async def dating_profile_site(site_id: int) -> dict:
-    """Сайт-закладка, к которой относится учётка. Живёт в RhapsodyAi.
+    """Сайт-закладка целиком: адрес, настройка присутствия. Живёт в RhapsodyAi.
 
-    Своей таблицы сайтов здесь нет и быть не должно: закладки, сценарии и пул
-    Chromium — хозяйство соседа, и вторая копия настройки разошлась бы с первой
-    в тот день, когда сайт переверстает форму входа.
+    Спрашивается **живьём** и только там, где за ним действительно идут: вход,
+    проверка, агент — всё это без соседних данных не имеет смысла, и висящий
+    сосед должен быть виден как 502. Для проверки «заведён ли сайт» при заведении
+    и правке учётки она не годится — там свой снимок, `dating_profile_site_known`.
 
     В `dating_login` живёт вторая такая же функция, и это не дубль под склейку:
     здесь отказ превращается в `HTTPException` с кодом, а там — в
@@ -268,6 +275,39 @@ async def dating_profile_site(site_id: int) -> dict:
         row = await rhapsody_api_site_get(int(site_id))
     except RhapsodyError as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+    if not row:
+        raise HTTPException(status_code=422, detail=f'нет сайта с номером {site_id}')
+
+    return dict(row)
+
+
+async def dating_profile_site_known(site_id: int) -> dict:
+    """Заведён ли сайт — по нашему снимку (`dating_site`), без похода к соседу.
+
+    Заведение и правка учётки — работа нашей базы, и сосед нужен им ровно в одном
+    факте: что закладка с таким номером существует. Спрашивать его вживую
+    значило бы повесить местную работу на чужой uptime: лежащий RhapsodyAi
+    отвечал 502 на заведомо правильный номер, а сюита — которая по своему правилу
+    к соседу не ходит, — краснела на каждом его перезапуске.
+
+    Снимок для этого как раз годится (§3.5): селект на странице предлагает
+    только известные ему номера, а свежесть держит фоновая сверка. Номер, о
+    котором снимок не слыхал вовсе, не заведётся и здесь — тот же 422, что
+    раньше приходил от соседа.
+
+    ⚠ `is_gone` не спрашиваем, и это не забывчивость. Метку ставит сверка, а она
+    спрашивает у соседа список **с меткой** `dating` (`rhapsody_api_site_list`):
+    всё, что лежит у него без этой метки — стенды, его собственная админка, —
+    в снимке помечено ушедшим, хотя закладка жива. Живую проверку делает каждая
+    ручка, которая к соседу реально ходит (`dating_profile_site`).
+    Признак пересмотреть: если панель научат заводить анкету на номер, вписанный
+    человеком руками, строгую соседскую проверку придётся вернуть.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT site_id, name FROM dating_site WHERE site_id = %s',
+                         (int(site_id),))
+        row = await db.fetchone()
 
     if not row:
         raise HTTPException(status_code=422, detail=f'нет сайта с номером {site_id}')

@@ -135,7 +135,7 @@ class TestSiteHandler:
     """
 
     async def test_handler_returns_the_snapshot(self, rhapsody):
-        from src.uvicorn.routers.dating.dating_site import dating_site_sync_now
+        from src.uvicorn.routers.dating.dating_site_sync import dating_site_sync_now
 
         await dating_site_sync_now()
         answer = await site_list(user=None)
@@ -144,7 +144,7 @@ class TestSiteHandler:
         assert 'refreshing' in answer['sync'], 'странице нечем узнать, идёт ли сверка'
 
     async def test_unreachable_neighbour_keeps_the_select(self, rhapsody):
-        from src.uvicorn.routers.dating.dating_site import dating_site_sync_now
+        from src.uvicorn.routers.dating.dating_site_sync import dating_site_sync_now
 
         await dating_site_sync_now()
         rhapsody.offline()

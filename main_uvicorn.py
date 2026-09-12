@@ -27,7 +27,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
 from config.config import config_get
-from logging_.logging_ import logger_info, logging_init
+from logging_.logging_ import logger_exception, logger_info, logging_init
 from mysql_.migration.mysql_migration_up import mysql_migration_up
 from mysql_.mysql_ import mysql_pool_close, mysql_pool_get
 
@@ -57,6 +57,7 @@ from src.uvicorn.routers.dating import dating_stats as dating_stats_router
 from src.uvicorn.routers.dating import dating_mailing as dating_mailing_router
 from src.uvicorn.routers.dating import dating_people
 from src.uvicorn.routers.dating import dating_site as dating_site_router
+from src.uvicorn.routers.dating import dating_site_switch as dating_site_switch_router
 from src.uvicorn.routers.dating import dating_socket as dating_socket_router
 from src.uvicorn.routers.dating import dating_work as dating_work_router
 # Ручки анкеты разложены на три файла по тому, куда они ходят: CRUD своей базы,
@@ -140,13 +141,25 @@ async def main_uvicorn_forbidden_handler(request: Request, exc: HTTPException):
 
 
 async def main_uvicorn_error_middleware(request: Request, call_next):
-    """Необработанная ошибка — 500 с текстом, а не пустой обрыв соединения."""
+    """Необработанная ошибка — 500, но **без внутренностей наружу**.
+
+    Текст исключения остаётся **только в журнале**, наружу уходит общая фраза:
+    в строке исключения живут адреса, пароли и фрагменты чужих данных (у
+    `aiomysql` в текст попадает весь запрос с аргументами), а сам тип и текст —
+    карта внутренностей для того, кто постучится не туда.
+
+    В журнал пишем с трейсбеком: без кадров строчка «'NoneType' object has no
+    attribute 'get'» не показывает, где именно, и искать её приходится по всему
+    обработчику.
+    """
     try:
         return await call_next(request)
     except Exception as e:
-        logger_info(f'[uvicorn] {request.method} {request.url.path}: {type(e).__name__}: {e}')
+        logger_exception(f'[uvicorn] {request.method} {request.url.path}: {type(e).__name__}',
+                         exc=e)
 
-        return JSONResponse(status_code=500, content={'detail': f'{type(e).__name__}: {e}'})
+        return JSONResponse(status_code=500, content={
+            'detail': 'внутренняя ошибка панели; подробности — в журнале'})
 
 
 app = FastAPI(
@@ -309,6 +322,9 @@ app.include_router(dating_favorite_mail_router.router)
 app.include_router(dating_stats_router.router)
 app.include_router(dating_heartbeat_router.router)
 app.include_router(dating_site_router.router)
+# Тот же префикс, что у «Сайтов»: переключатели и расписания — продолжение той же
+# страницы, разложенное по файлам (`dating_site_switch.py`), а не новый раздел.
+app.include_router(dating_site_switch_router.router)
 app.include_router(dating_socket_router.router)
 app.include_router(dating_error_router.router)
 app.include_router(dating_chat_router.router)

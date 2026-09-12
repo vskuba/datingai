@@ -44,6 +44,7 @@ import time
 
 import httpx
 
+from http_.http_pool import http_pool_transport
 from logging_.logging_ import logger_info
 from redis_.redis_ import redis_conn_get
 
@@ -140,21 +141,25 @@ async def dating_site_api_call(profile: dict, base: str, password: str, path: st
     verb = str(method or ('POST' if payload is not None else 'GET')).upper()
 
     token = _token_get(profile_id)
-    async with httpx.AsyncClient(timeout=DATING_SITE_API_TIMEOUT,
-                                 headers={'User-Agent': DATING_SITE_API_UA}) as client:
-        if not token:
-            token = await _login_once(client, profile, base, password)
+    # Клиент разовый, соединения — из общего транспорта (`http_pool.py`):
+    # токен ездит в заголовке, клиент здесь — только настройки вызова, и всякий
+    # раз заводить с сайтом TLS незачем. Не закрываем: ушёл бы и общий пул.
+    client = httpx.AsyncClient(timeout=DATING_SITE_API_TIMEOUT,
+                               headers={'User-Agent': DATING_SITE_API_UA},
+                               transport=http_pool_transport())
+    if not token:
+        token = await _login_once(client, profile, base, password)
 
+    answer = await _request(client, base, path, token, payload, verb)
+    if answer.status_code == 401:
+        _token_drop(profile_id)
+        token = await _login_once(client, profile, base, password)
         answer = await _request(client, base, path, token, payload, verb)
-        if answer.status_code == 401:
-            _token_drop(profile_id)
-            token = await _login_once(client, profile, base, password)
-            answer = await _request(client, base, path, token, payload, verb)
 
-        if answer.status_code >= 400:
-            raise DatingSiteApiError(_refusal(path, answer))
+    if answer.status_code >= 400:
+        raise DatingSiteApiError(_refusal(path, answer))
 
-        return _body(path, answer)
+    return _body(path, answer)
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

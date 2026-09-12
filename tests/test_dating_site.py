@@ -21,6 +21,7 @@ import pytest
 
 from src.uvicorn.routers.dating import dating_site
 from src.uvicorn.routers.dating.dating_site import dating_site_list
+from src.uvicorn.routers.dating.dating_site_sync import dating_site_sync_now
 
 from src.uvicorn.routers.dating.dating_site import DATING_SITE_SECRET_MASK as MASK
 
@@ -106,7 +107,7 @@ class TestSiteList:
         """
         monkeypatch.setattr(dating_site, '_settings_all',
                             _saved({343: {'favorites_keep': '86400'}}))
-        await dating_site.dating_site_sync_now()
+        await dating_site_sync_now()
 
         sites = {site['id']: site for site in
                  (await dating_site_list(user=None))['result']['sites']}
@@ -123,7 +124,7 @@ class TestSiteList:
         появление означало бы, что свой список сайтов у нас всё-таки завёлся.
         """
         monkeypatch.setattr(dating_site, '_settings_all', _saved({777: {KEY: '1'}}))
-        await dating_site.dating_site_sync_now()
+        await dating_site_sync_now()
 
         sites = (await dating_site_list(user=None))['result']['sites']
 

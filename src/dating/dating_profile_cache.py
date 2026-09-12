@@ -20,6 +20,7 @@ import json
 
 import httpx
 
+from http_.http_pool import http_pool_transport
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_presence import DATING_PRESENCE_TIMEOUT, DATING_PRESENCE_UA
@@ -38,15 +39,19 @@ async def dating_profile_cache_refresh(profile: dict, presence: dict) -> dict:
 
     saved_profile, contacts = False, 0
     try:
-        async with httpx.AsyncClient(timeout=DATING_PRESENCE_TIMEOUT, cookies=cookies,
-                                     follow_redirects=True,
-                                     headers={'User-Agent': DATING_PRESENCE_UA,
-                                              # Тело шагов — форма (`mode=…`), и без
-                                              # этого заголовка сайт его не читает.
-                                              'Content-Type': 'application/x-www-form-urlencoded',
-                                              **(presence.get('headers') or {})}) as client:
-            saved_profile = await _profile_load(client, profile, presence)
-            contacts = await _contacts_load(client, profile, presence)
+        # Клиент разовый — куки-то на анкету, и в общем клиенте они потекли бы
+        # между учётками; соединения общие (`http_pool.py`). Не закрываем:
+        # с клиентом ушёл бы и общий транспорт.
+        client = httpx.AsyncClient(timeout=DATING_PRESENCE_TIMEOUT, cookies=cookies,
+                                   follow_redirects=True,
+                                   headers={'User-Agent': DATING_PRESENCE_UA,
+                                            # Тело шагов — форма (`mode=…`), и без
+                                            # этого заголовка сайт его не читает.
+                                            'Content-Type': 'application/x-www-form-urlencoded',
+                                            **(presence.get('headers') or {})},
+                                   transport=http_pool_transport())
+        saved_profile = await _profile_load(client, profile, presence)
+        contacts = await _contacts_load(client, profile, presence)
     except Exception as e:
         return {'profile': saved_profile, 'contacts': contacts, 'error': f'{type(e).__name__}: {e}'}
 
