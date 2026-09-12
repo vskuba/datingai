@@ -466,3 +466,51 @@ class TestRoundReadsTheClock:
             'в проверку смен снова уходит не то число'
         assert 'dating_schedule_now(shifts, offset)' not in code, \
             'сдвиг часового пояса снова передан как минуты суток'
+
+
+class TestAlienNameIsCheap:
+    """Имя чужой письменности отсекается **до** агента, а не после.
+
+    ⚠ Реплика без обращения всё равно будет отброшена, но узнать об этом ценой
+    вызова LLM — плата ни за что, и платится она каждый заход: человек в сети,
+    значит попадает в ленту снова.
+    """
+
+    async def test_alien_name_never_reaches_the_agent(self, monkeypatch):
+        from src.dating import dating_invite
+
+        asked = []
+
+        async def _body(girl, person, site_id, language=''):
+            asked.append(str(person.get('name')))
+
+            return 'Hi!'
+
+        monkeypatch.setattr(dating_invite, '_body', _body)
+        monkeypatch.setattr(dating_invite, '_girls', _answer([{'id': 1}]))
+        monkeypatch.setattr(dating_invite, '_people', _answer(
+            [{'uid': 'a1', 'name': '許萊納'}, {'uid': 'a2', 'name': 'Brian'}]))
+        monkeypatch.setattr(dating_invite, '_invited', _answer(set()))
+        monkeypatch.setattr(dating_invite, '_talked', _answer(set()))
+        monkeypatch.setattr(dating_invite, '_language', _answer('en'))
+        monkeypatch.setattr(dating_invite, '_put', _nothing())
+
+        got = await dating_invite.dating_invite_make(STAND_SITE, 5)
+
+        assert asked == ['Brian'], f'агента позвали зря: {asked}'
+        assert got['made'] == 1 and got['skipped'] == 1
+        assert any('латиниц' in one for one in got['reasons']), got['reasons']
+
+
+def _answer(value):
+    async def _got(*args, **kwargs):
+        return value
+
+    return _got
+
+
+def _nothing():
+    async def _got(*args, **kwargs):
+        return None
+
+    return _got

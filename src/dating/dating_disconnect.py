@@ -24,6 +24,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from logging_.logging_ import logger_info
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_find
 
+from src.dating.dating_json import dating_json_load
 from src.dating.dating_log import dating_log_write
 from src.dating.dating_pool import dating_pool_drop
 from src.dating.dating_role import DATING_ROLE_DEFAULT, dating_role_scenario
@@ -69,11 +70,40 @@ async def dating_disconnect_run(profile: dict, site: dict, presence: dict,
 
 async def _logout(profile: dict, site: dict, presence: dict, runner, session_open,
                   session_list) -> tuple[bool, str]:
-    """Выход на самом сайте — в живой вкладке этой учётки либо во временной."""
+    """Выход на самом сайте: сперва ручкой, а сценарием — только если её нет.
+
+    ⚠ **Ручка старше сценария, и это не экономия секунд.** Выход у сайта обычно
+    один запрос; сценарий ради него поднимает вкладку Chromium (~143 МБ) и стоит
+    десятки секунд. Тот же размен, что у присутствия и у чтения панели: «найти
+    HTTP-ручку вместо сценария».
+
+    ⚠ **Что выход вообще делает — вопрос к сайту, а не к нам.** У Ladadate
+    `GET /signout` отвечает `302` и `Set-Cookie: AUTH=; expires=вчера`, то есть
+    гасит cookie **в браузере**, а сессию на своей стороне оставляет живой:
+    сохранённый `AUTH` после него работает (проверено). Для нас это значит, что
+    честный итог такого выхода — «cookie сброшены», а не «сессия закрыта»;
+    состояние мы всё равно стираем сами, и оно и есть настоящий выход с нашей
+    стороны.
+    """
+    # ⚠ **Шаг ищем в нашей настройке сайта, а соседская — запасная.** Присутствие
+    # у нас своё (`heartbeat` на странице «Сайты»), и выход — его часть: он про то
+    # же соединение и по тем же cookie. Спроси мы только соседа, настройка выхода
+    # оказалась бы единственной, живущей не там, где остальные.
+    from src.dating.dating_heartbeat import dating_heartbeat_config
+
+    config = await dating_heartbeat_config(int(profile['site_id'])) or {}
+    step = config.get('logout')
+    if not (isinstance(step, dict) and step.get('path')):
+        config, step = presence or {}, (presence or {}).get('logout')
+
+    if isinstance(step, dict) and step.get('path'):
+        return await _logout_http(profile, config, step)
+
     role = str(profile.get('role') or DATING_ROLE_DEFAULT)
     name = dating_role_scenario(presence, 'logout_scenario', role)
     if not name:
-        return False, f'у сайта нет сценария выхода для роли «{role}»'
+        return False, (f'у сайта нет ни ручки выхода (`logout` в настройке '
+                       f'присутствия), ни сценария для роли «{role}»')
 
     scenario = await _scenario_find(int(profile['site_id']), name)
     if not scenario:
@@ -104,6 +134,49 @@ async def _logout(profile: dict, site: dict, presence: dict, runner, session_ope
     if result.get('status') == 'error':
         return False, (f"сценарий выхода встал на шаге {result.get('step_no', 0)}: "
                        f"{str(result.get('error') or '')[:200]}")
+
+    return True, ''
+
+
+async def _logout_http(profile: dict, presence: dict, step: dict) -> tuple[bool, str]:
+    """Выход одним запросом по сохранённым cookie. Без браузера и без соседа.
+
+    Шаг описывается как у присутствия — `{path, method, body, headers}`
+    (`docs-common/http_heartbeat.md`, §3), и берётся из той же настройки сайта.
+
+    ⚠ **Ответ не проверяем на «вышли ли».** Сайт на выход отвечает переадресацией
+    на главную, и `200` там значит ровно «запрос дошёл». Настоящая проверка —
+    следующий опрос присутствия, и делать её здесь значило бы обещать больше, чем
+    знаем.
+    """
+    from http_.http_heartbeat import http_heartbeat_client, http_heartbeat_cookies
+
+    if not profile.get('storage_state'):
+        return False, 'вход не снят: выходить нечем'
+
+    base = str(presence.get('base') or '').rstrip('/')
+    if not base:
+        return False, 'у сайта не задан корень (`base`) — некуда слать выход'
+
+    await dating_log_write(int(profile['id']), 'info',
+                           f"Выхожу на сайте ручкой {step.get('path')}")
+
+    client = http_heartbeat_client()
+    try:
+        answer = await client.request(
+            str(step.get('method') or ('POST' if step.get('body') else 'GET')),
+            base + str(step['path']),
+            cookies=http_heartbeat_cookies(dating_json_load(profile['storage_state']), base),
+            content=step.get('body') or None,
+            headers={**(presence.get('headers') or {}), **(step.get('headers') or {})},
+            follow_redirects=False)
+    except Exception as e:
+        return False, f'выход не прошёл: {type(e).__name__}: {e}'
+    finally:
+        await client.aclose()
+
+    if answer.status_code >= 400:
+        return False, f'сайт отказал на выходе: {answer.status_code}'
 
     return True, ''
 

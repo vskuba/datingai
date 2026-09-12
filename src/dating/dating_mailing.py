@@ -35,7 +35,9 @@ from src.dating.dating_json import dating_json_load
 from src.dating.dating_mail import (dating_mail_missing, dating_mail_render,
                                     dating_mail_vars_found)
 from src.dating.dating_mail_agent import DatingMailAgentError, dating_mail_question
-from src.dating.dating_people import dating_people_name_parts
+from src.dating.dating_people import (DATING_PEOPLE_NAME_ALIEN,
+                                      dating_people_name_parts,
+                                      dating_people_name_usable)
 
 # Сколько писем набирает один заход, если настройки сайта нет. Тот же порядок, что
 # у `mailing_batch` в реестре (`dating_site.py`).
@@ -290,7 +292,21 @@ def dating_mailing_person_fields(person: dict) -> dict:
     настоящее `firstname`, в дело пойдёт оно: разбор по пробелу — догадка, а
     присланное сайтом — факт.
     """
-    parts = dating_people_name_parts((person or {}).get('name'))
+    name = (person or {}).get('name')
+
+    # ⚠ **Имя чужой письменности не подставляется вовсе** — ни целиком, ни по
+    # частям. Письма пишутся латиницей, и `Hi 許萊納` читается как сбой
+    # подстановки; решает это `dating_people_name_usable`, одно место на панель.
+    #
+    # Дальше работает уже заведённое правило: пустое значение переменной берёт
+    # `default_value` («Hi there»), а нет и его — письмо такому адресату не
+    # уйдёт. Заводить под этот случай третий исход незачем — он уже описан.
+    if not dating_people_name_usable(name):
+        return {'firstname': '', 'lastname': '',
+                **{key: value for key, value in (person or {}).items()
+                   if value not in (None, '') and key != 'name'}}
+
+    parts = dating_people_name_parts(name)
 
     return {**parts, **{key: value for key, value in (person or {}).items()
                         if value not in (None, '')}}
@@ -363,6 +379,16 @@ def dating_mailing_companion_vars(person: dict, known: list) -> list[dict]:
                      'title': str(var.get('title') or ''),
                      'field': field,
                      'value': value,
+                     # ⚠ **Почему пусто, когда в карточке не пусто.** Имя чужой
+                     # письменности не подставляется (`dating_people_name_usable`),
+                     # и без объяснения страница показывала бы «не заполнено» у
+                     # человека, чьё имя видно тут же рядом, — это читается как
+                     # поломка панели. Пусто у поля — значит объяснять нечего.
+                     'why': DATING_PEOPLE_NAME_ALIEN
+                            if field in ('name', 'firstname', 'lastname')
+                            and str((person or {}).get('name') or '').strip()
+                            and not dating_people_name_usable((person or {}).get('name'))
+                            else '',
                      # ⚠ Различаем «взято из карточки» и «взято из умолчания»:
                      # второе значит, что письмо уйдёт, но обратятся в нём общими
                      # словами — и человек вправе это увидеть до отправки.

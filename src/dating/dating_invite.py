@@ -77,7 +77,8 @@ from src.dating.dating_mailing import dating_mailing_people_first
 from src.dating.dating_mail_agent import (DATING_INVITE_LANGUAGE,
                                           DatingMailAgentError,
                                           dating_invite_write)
-from src.dating.dating_people import DATING_PEOPLE_NAME_MAX, DATING_PEOPLE_UID_MAX
+from src.dating.dating_people import (DATING_PEOPLE_NAME_MAX, DATING_PEOPLE_UID_MAX,
+                                      dating_people_name_usable)
 
 # Сколько кандидатов пробуем за заход. ⚠ Каждый — вызов LLM: полсотни это минуты
 # ожидания у нажатой кнопки, и потому умолчание скромнее, чем у писем.
@@ -97,6 +98,8 @@ DATING_INVITE_POOL_SETTING = 'invite_pool_max'
 # делать: «агент промолчал» — подождать, «без имени» — смотреть промпт у соседа.
 DATING_INVITE_SKIP_SILENT = 'агент не написал реплику'
 DATING_INVITE_SKIP_NAMELESS = 'в реплике нет имени собеседника'
+# ⚠ Отдельная причина, и она **дешёвая**: такую пару отбрасывают до агента.
+DATING_INVITE_SKIP_ALIEN = 'имя не латиницей — обратиться нечем'
 
 
 class DatingInviteError(RuntimeError):
@@ -147,6 +150,20 @@ async def dating_invite_make(site_id: int, limit: int, profile_id: int = 0,
     for girl, person in _pairs(girls, people, invited, talked):
         if tried >= max(int(limit), 0):
             left += 1
+            continue
+
+        # ⚠ **Имя проверяем до агента, а не после.** Реплика без обращения по
+        # имени всё равно будет отброшена (`DATING_INVITE_SKIP_NAMELESS`), но
+        # узнать об этом ценой вызова LLM — плата ни за что, и платится она
+        # каждый заход: человек в сети, значит попадает в ленту снова.
+        #
+        # Поймано живьём: `許萊納` из ленты Ladadate. Агент пишет по-английски и
+        # это имя не вставляет — возвращает пустую реплику. Проверено дважды,
+        # исход один и тот же.
+        if not dating_people_name_usable(person.get('name')):
+            skipped += 1
+            if DATING_INVITE_SKIP_ALIEN not in reasons:
+                reasons.append(DATING_INVITE_SKIP_ALIEN)
             continue
 
         tried += 1
