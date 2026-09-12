@@ -58,7 +58,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from redis_.redis_ import redis_conn_get
 
 from src.dating.dating_feed import dating_feed_write
-from src.dating.dating_pool import dating_pool_sweep
+from src.dating.dating_pool import dating_pool_sweep, dating_pool_sweep_away
 from src.dating.dating_invite import (DATING_INVITE_BATCH_DEFAULT,
                                       DATING_INVITE_BATCH_MAX,
                                       DATING_INVITE_POOL_DEFAULT,
@@ -123,6 +123,11 @@ async def dating_invite_round_run(offset: int = 0) -> dict:
         # ждёт её, — а потолок он занимает: полный пул мёртвых реплик означал бы,
         # что круг не добирает ни одной живой (`dating_pool.py`).
         await dating_pool_sweep(site_id)
+
+        # ⚠ И черновики тех, **кому** писали, если их уже нет в сети. Реплика
+        # зовёт сидящего в чате сейчас; ушёл — звать некого, а место в пуле она
+        # держит. Без этой строки пул зарастал: 50 черновиков, годных 27.
+        await dating_pool_sweep_away(site_id)
 
         left = await _pool_max(site_id) - await dating_invite_pool_left(site_id)
         if left <= 0:

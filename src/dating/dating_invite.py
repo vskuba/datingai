@@ -204,7 +204,12 @@ async def dating_invite_make(site_id: int, limit: int, profile_id: int = 0,
                 reasons.append(why)
             continue
 
-        await _put(site_id, girl, person, text)
+        if not await _put(site_id, girl, person, text):
+            # Ключ не пустил: черновик этой паре уже лежит. Не наша строка и не
+            # ошибка — просто считать её сделанной нельзя.
+            skipped += 1
+            continue
+
         made += 1
         # ⚠ Помечаем **человека**, а не пару: в этом же заходе он не должен
         # достаться второй девушке. Ключ в базе такого не поймает — там пара.
@@ -474,8 +479,19 @@ async def _talked(site_id: int) -> set:
     return {(int(row['profile_id']), str(row['uid'])) for row in rows or []}
 
 
-async def _put(site_id: int, girl: dict, person: dict, text: str) -> None:
-    """Кладёт инвайт в пул. `INSERT IGNORE` ловит гонку двух заходов разом."""
+async def _put(site_id: int, girl: dict, person: dict, text: str) -> bool:
+    """Кладёт инвайт в пул. `INSERT IGNORE` ловит гонку двух заходов разом.
+
+    Returns:
+        bool: легла ли строка. `False` — ключ не пустил: у этой пары уже есть
+            черновик, и его положил другой заход секундой раньше.
+
+    ⚠ **Исход возвращается, а не молчит.** Прежде `INSERT IGNORE` глотал отказ, а
+    круг считал строку сделанной — и, что дороже, уже сходил за текстом к агенту.
+    Пока ключ держал всю историю пары, это случалось каждый заход подряд: приоритет
+    стоял первым в ленте, вызов LLM тратился, в пуле не появлялось ничего, и в
+    журнале значилось «готово».
+    """
     async with mysql_get_db_async() as db:
         await db.execute(
             'INSERT IGNORE INTO dating_invite'
@@ -486,4 +502,7 @@ async def _put(site_id: int, girl: dict, person: dict, text: str) -> None:
              str(person.get('name') or '')[:DATING_PEOPLE_NAME_MAX],
              str(person.get('photo') or '')[:500],
              str(text or '')))
+        put = int(db.rowcount or 0) > 0
         await db.connection.commit()
+
+    return put

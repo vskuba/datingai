@@ -118,6 +118,26 @@ class TestPicks:
         assert (await dating_invite_send_round_run())['sent'] == 1
         assert len(sent) == 1
 
+    async def test_the_priority_one_jumps_the_queue(self, site, girl, sent,
+                                                    monkeypatch):
+        """⚠ Отметка на карточке — про очередь **отправки** тоже, а не только набора.
+
+        Попасть в пул и уйти из пула — разные сроки: при паузе в минуту приоритетная
+        реплика ждала бы полсотни чужих час, а человек в чате десять минут.
+        """
+        old = await _draft_uid(girl, 'Старый', '2026-09-01 10:00:00')
+        vip = await _draft_uid(girl, 'Важный', '2026-09-05 10:00:00')
+        monkeypatch.setattr(dating_invite_send_round, 'dating_online_check',
+                            lambda site_id, uid: {'online': True, 'known': True})
+
+        await _priority(vip)
+        try:
+            await dating_invite_send_round_run()
+        finally:
+            await _priority_drop(vip)
+
+        assert [one['uid'] for one in sent] == [vip], f'ушёл {old}, а не приоритетный'
+
     async def test_oldest_goes_first(self, site, girl, sent):
         """Реплика сочинялась под того, кто был в чате тогда: чем дольше лежит,
         тем меньше от неё толку."""
@@ -467,6 +487,22 @@ async def _one(invite_id: int) -> dict:
                          ' error FROM dating_invite WHERE id = %s', (int(invite_id),))
 
         return dict(await db.fetchone())
+
+
+async def _priority(uid: str) -> None:
+    """Карточка собеседника с поднятой отметкой «Приоритет в рассылке»."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO dating_companion (site_id, uid, name, priority)'
+            " VALUES (%s, %s, 'Важный', 1)", (STAND_SITE, uid))
+        await db.connection.commit()
+
+
+async def _priority_drop(uid: str) -> None:
+    async with mysql_get_db_async() as db:
+        await db.execute('DELETE FROM dating_companion WHERE site_id = %s AND uid = %s',
+                         (STAND_SITE, uid))
+        await db.connection.commit()
 
 
 async def _draft_uid(profile_id: int, tag: str, when: str) -> str:

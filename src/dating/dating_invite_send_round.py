@@ -184,18 +184,32 @@ async def _next(site_id: int) -> dict:
     (`dating_send`): второй источник «кто в сети» разошёлся бы с первым, и круг
     выбирал бы того, кому отправка всё равно откажет.
 
-    Порядок — по возрасту строки: реплика сочинялась под человека, который был в
-    чате тогда, и чем дольше она лежит, тем меньше от неё толку.
+    ⚠⚠ **Приоритетные — первыми.** Отметка на карточке (`dating_companion.priority`)
+    и заведена ради этого: человек указал, с кем говорить в первую очередь. Стой
+    очередь по одному возрасту, его реплика ждала бы полсотни чужих — при паузе в
+    минуту это час, а он в чате десять минут.
+
+    Отметка работает и на наборе (`_by_priority` ставит его первым в ленте), но
+    одного набора мало: попасть в пул и уйти из пула — разные сроки.
+
+    Порядок внутри половин — по возрасту строки: реплика сочинялась под человека,
+    который был в чате тогда, и чем дольше она лежит, тем меньше от неё толку.
     """
     try:
         async with mysql_get_db_async() as db:
+            # ⚠ `LEFT JOIN`: карточка собеседника заводится по требованию, и у
+            # большинства адресатов её нет вовсе. Обычный `JOIN` оставил бы в
+            # очереди только тех, кому её однажды открывали.
             await db.execute(
                 'SELECT i.id, i.site_id, i.profile_id, i.uid, i.name, i.body'
                 '  FROM dating_invite i'
                 '  JOIN dating_profile p ON p.id = i.profile_id'
+                '  LEFT JOIN dating_companion c'
+                '         ON c.site_id = i.site_id AND c.uid = i.uid'
                 " WHERE i.site_id = %s AND i.status = 'draft' AND i.error = %s"
                 "   AND p.enabled = 1 AND p.status = 'online'"
-                ' ORDER BY i.created_at, i.id', (int(site_id), ''))
+                ' ORDER BY COALESCE(c.priority, 0) DESC, i.created_at, i.id',
+                (int(site_id), ''))
             rows = await db.fetchall()
     except Exception as e:
         logger_info(f'[dating] очередь инвайтов сайта #{site_id} не спросилась: {e}')

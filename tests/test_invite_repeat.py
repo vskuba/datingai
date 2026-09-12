@@ -66,6 +66,20 @@ async def _invite(profile_id: int, status: str, ago_sec: int = 0) -> None:
         await db.connection.commit()
 
 
+async def _put_one(profile_id: int) -> bool:
+    """Кладёт черновик тем же путём, каким его кладёт круг, — через `_put`."""
+    return await dating_invite._put(STAND_SITE, {'id': int(profile_id)},
+                                    {'uid': UID, 'name': 'Кто-то'}, 'Hi!')
+
+
+async def _drafts(profile_id: int) -> int:
+    async with mysql_get_db_async() as db:
+        await db.execute("SELECT COUNT(*) AS n FROM dating_invite"
+                         " WHERE profile_id = %s AND status = 'draft'", (int(profile_id),))
+
+        return int((await db.fetchone())['n'])
+
+
 class TestTalked:
     """Разговор — это ответ, а не наш монолог."""
 
@@ -135,6 +149,41 @@ class TestRepeat:
         await _invite(girl, 'sent', ago_sec=90_000)
 
         assert UID in await _invited(STAND_SITE), 'недельную паузу не спросили'
+
+
+class TestKeyHoldsThePoolNotTheHistory:
+    """⚠ Ключ базы держит **пул**, а не историю пары.
+
+    Третье правило того же семейства, и поймано так же — живьём. Код уже пускал
+    повтор (`_invited` считает паузу и потолок), а `UNIQUE (profile_id, uid)` — нет:
+    ушедшая строка держала ключ навсегда, `INSERT IGNORE` молча ничего не вставлял,
+    а круг успевал сходить к агенту и записать «готово». Приоритетный собеседник не
+    попадал в пул больше часа, и вызов LLM тратился каждый заход.
+    """
+
+    async def test_a_sent_invite_does_not_block_the_next_draft(self, girl):
+        await _invite(girl, 'sent', ago_sec=3600)
+
+        assert await _put_one(girl) is True
+        assert await _drafts(girl) == 1
+
+    async def test_two_drafts_to_the_same_person_do_not_fit(self, girl):
+        """Иначе один человек получил бы от одной девушки две карточки в пуле."""
+        assert await _put_one(girl) is True
+        assert await _put_one(girl) is False
+        assert await _drafts(girl) == 1
+
+    async def test_the_draft_frees_the_key_when_it_goes(self, girl):
+        """Отправка снимает строку с ключа: следующий круг зовёт снова."""
+        await _put_one(girl)
+
+        async with mysql_get_db_async() as db:
+            await db.execute("UPDATE dating_invite SET status = 'sent', sent_at = NOW()"
+                             ' WHERE profile_id = %s', (girl,))
+            await db.connection.commit()
+
+        assert await _put_one(girl) is True
+        assert await _drafts(girl) == 1
 
 
 class TestNoDouble:
