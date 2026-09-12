@@ -64,6 +64,35 @@ from src.dating.dating_mail import (DATING_MAIL_VAR_NAME_MAX,
 
 router = APIRouter(tags=['dating'])
 
+# Занятия, из которых переменную можно выключить. Страница рисует по этому списку
+# табличку с галочками, код спрашивает `dating_mail_var_used`.
+#
+# ⚠ **Список живёт здесь, а не на странице.** Ключ читает код при отборе, и
+# набор допустимых — его условие, а не украшение формы. Тот же довод, что у
+# реестра настроек сайта (`dating_site.DATING_SITE_KNOWN`).
+#
+# ⚠ **Занятие — не то же, что `source`.** `source` отвечает, откуда берётся
+# значение (у анкеты, из карточки, вычисляется); занятие — где переменная вообще
+# участвует. Переменная может браться из карточки и при этом не годиться агенту,
+# который пишет шаблоны, — ровно случай `companion_last_name`.
+DATING_MAIL_VAR_USES = [
+    ('mail_write', 'Генерация шаблонов для писем',
+     'агент, сочиняющий черновик шаблона, получает эту переменную и обязан её '
+     'использовать. Снимите — и в новых шаблонах её не будет. ⚠ Уже написанные '
+     'шаблоны не меняются: там её убирают руками'),
+]
+
+
+def dating_mail_var_used(var: dict, use: str) -> bool:
+    """Участвует ли переменная в этом занятии.
+
+    ⚠ **Умолчание — участвует.** В `uses` хранится только снятое, и это сохраняет
+    поведение для строк, заведённых до появления занятия: не найдя ключа, код
+    ведёт себя так же, как вёл, пока галочек не было. Обратное умолчание
+    выключило бы разом весь реестр на всех сайтах.
+    """
+    return bool((var.get('uses') or {}).get(str(use), True))
+
 
 class DatingMailVarSave(BaseModel):
     """Тело заведения и правки переменной."""
@@ -87,6 +116,13 @@ class DatingMailVarSave(BaseModel):
                        description='Подпись для человека и подсказка агенту')
     default_value: str = Field('', max_length=DATING_MAIL_VAR_VALUE_MAX,
                                description='Чем подставлять, если у анкеты пусто')
+    # ⚠ Приходит **весь набор галочек**, а не только снятые: страница держит
+    # табличку перед глазами и шлёт то, что на ней. Правка по одному ключу
+    # означала бы, что снятие — отдельная ручка, а порядок двух правок подряд
+    # начинает значить. Тот же приём, что у настроек сайта.
+    uses: dict[str, bool] = Field(default_factory=dict,
+                                  description='Занятия: {"mail_write": false}. '
+                                              'Нет ключа — участвует')
 
 
 class DatingProfileVarSave(BaseModel):
@@ -120,9 +156,14 @@ async def dating_mail_var_list(site_id: int = 0,
     думает о письме, и алфавит развалил бы эту последовательность.
     """
     if not int(site_id or 0):
-        return {'result': []}
+        return {'result': [], 'uses': _uses_known()}
 
-    return {'result': await dating_mail_var_rows(int(site_id))}
+    # ⚠ Список занятий едет **вместе со списком переменных**, а не отдельной
+    # ручкой: страница рисует по нему табличку в карточке каждой переменной, и
+    # два запроса на один взгляд означали бы карточку без галочек в тот миг,
+    # пока второй ответ в пути. Тот же приём, что у реестра настроек сайта.
+    return {'result': await dating_mail_var_rows(int(site_id)),
+            'uses': _uses_known()}
 
 
 @router.post('/api/dating/mail/var', include_in_schema=False)
@@ -151,10 +192,11 @@ async def dating_mail_var_create(payload: DatingMailVarSave,
                 detail=f'переменная «{payload.name.strip()}» на этом сайте уже есть')
 
         await db.execute(
-            'INSERT INTO dating_mail_var (site_id, name, source, title, default_value)'
-            ' VALUES (%s, %s, %s, %s, %s)',
+            'INSERT INTO dating_mail_var'
+            ' (site_id, name, source, title, default_value, uses)'
+            ' VALUES (%s, %s, %s, %s, %s, %s)',
             (int(payload.site_id), payload.name.strip(), payload.source,
-             payload.title.strip(), payload.default_value))
+             payload.title.strip(), payload.default_value, _uses_dump(payload.uses)))
         await db.connection.commit()
         var_id = db.lastrowid
 
@@ -175,6 +217,9 @@ async def dating_mail_var_update(var_id: int, payload: DatingMailVarSave,
     Нужно другое имя — заводят новую и убирают старую: тогда видно, что шаблоны
     надо поправить.
 
+    ⚠ **Галочки занятий правятся здесь же**, вместе с подписью: они про то, как
+    переменную применяют, а не про то, что она такое.
+
     ⚠ **Имя здесь и не проверяется** — в отличие от заведения. Проверять поле,
     которое не применяешь, значит отказывать в правке подписи из-за значения,
     которое никуда не попадёт. Поймано тестом `test_name_does_not_change_on_update`:
@@ -184,8 +229,10 @@ async def dating_mail_var_update(var_id: int, payload: DatingMailVarSave,
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'UPDATE dating_mail_var SET title = %s, default_value = %s WHERE id = %s',
-            (payload.title.strip(), payload.default_value, int(var_id)))
+            'UPDATE dating_mail_var SET title = %s, default_value = %s, uses = %s'
+            ' WHERE id = %s',
+            (payload.title.strip(), payload.default_value,
+             _uses_dump(payload.uses), int(var_id)))
         await db.connection.commit()
 
     return {'result': await _var_row(var_id)}
@@ -415,7 +462,7 @@ async def dating_mail_var_rows(site_id: int) -> list[dict]:
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT id, site_id, name, source, title, default_value'
+            'SELECT id, site_id, name, source, title, default_value, uses'
             ' FROM dating_mail_var WHERE site_id = %s ORDER BY id', (int(site_id),))
         rows = await db.fetchall()
 
@@ -424,7 +471,13 @@ async def dating_mail_var_rows(site_id: int) -> list[dict]:
              'name': str(row['name']),
              'source': str(row['source']),
              'title': str(row['title']),
-             'default_value': str(row['default_value'])} for row in rows]
+             'default_value': str(row['default_value']),
+             # ⚠ Отдаём **весь набор**, дописав умолчания: странице нужна
+             # табличка целиком, а в базе лежит только снятое. Собирай она
+             # умолчания сама — правило «нет ключа значит участвует» жило бы в
+             # двух местах и однажды разошлось.
+             'uses': {key: dating_mail_var_used({'uses': dating_json_load(row['uses'])}, key)
+                      for key, _, _ in DATING_MAIL_VAR_USES}} for row in rows]
 
 
 async def dating_mail_var_names(site_id: int) -> set[str]:
@@ -478,11 +531,34 @@ def _checked(payload: DatingMailVarSave) -> None:
                             detail=why)
 
 
+def _uses_known() -> list[dict]:
+    """Занятия для страницы: ключ, подпись и пояснение — по одному на строку."""
+    return [{'key': key, 'title': title, 'note': note}
+            for key, title, note in DATING_MAIL_VAR_USES]
+
+
+def _uses_dump(uses) -> str:
+    """Галочки занятий в JSON для базы — **только снятые**.
+
+    ⚠ Храним отказ, а не согласие, и это не экономия места: занятие, добавленное
+    завтра, окажется включённым у всех строк, заведённых сегодня, — то есть
+    поведение не изменится само собой. Храни мы согласие, каждая старая строка
+    молча выпала бы из нового занятия, и искать причину пришлось бы в базе.
+    """
+    import json
+
+    known = {key for key, _, _ in DATING_MAIL_VAR_USES}
+    off = {key: False for key, value in (uses or {}).items()
+           if key in known and not value}
+
+    return json.dumps(off, ensure_ascii=False) if off else None
+
+
 async def _var_row(var_id: int) -> dict:
     """Переменная по номеру или 404."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT id, site_id, name, source, title, default_value'
+            'SELECT id, site_id, name, source, title, default_value, uses'
             ' FROM dating_mail_var WHERE id = %s', (int(var_id),))
         row = await db.fetchone()
 
@@ -495,4 +571,8 @@ async def _var_row(var_id: int) -> dict:
             'name': str(row['name']),
             'source': str(row['source']),
             'title': str(row['title']),
-            'default_value': str(row['default_value'])}
+            'default_value': str(row['default_value']),
+            # Набор целиком, с умолчаниями — тот же вид, что в списке: страница
+            # рисует табличку по одному ответу, каким бы из двух он ни пришёл.
+            'uses': {key: dating_mail_var_used({'uses': dating_json_load(row['uses'])}, key)
+                     for key, _, _ in DATING_MAIL_VAR_USES}}

@@ -3214,6 +3214,25 @@
         letter-spacing: .04em;
     }
 
+    /* Табличка «где участвует»: строка на занятие, галочка у правого края.
+       ⚠ Ширина колонок задана, а не по содержимому: занятий станет больше, и
+       галочки, съезжающие вслед за длиной подписи, читались бы как разные
+       столбцы. */
+    .var-uses {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 12px;
+    }
+
+    .var-uses td {
+        padding: 5px 0;
+        border-bottom: 1px solid #f1f5f9;
+    }
+
+    .var-uses tr:last-child td { border-bottom: 0; }
+    .var-uses-name { color: #334155; cursor: help; }
+    .var-uses-box { width: 28px; text-align: right; }
+
     .mail-form input[type=text], .mail-form textarea, .mail-form select {
         padding: 7px 9px;
         border: 1px solid #d1d5db;
@@ -5402,17 +5421,21 @@
 
     function inviteCard(one, index) {
         const sent = one.status !== 'draft';
-        const можно = !!(inviteSaved.get(siteId()) || {}).invite_send_on;
 
         return `<div class="mail-card${sent ? ' sent' : ''}" data-index="${index}">`
             + '<span class="mail-card-acts">'
             + (sent ? ''
-                // ⚠ Заперта, пока у сайта снята отправка. Подсказка говорит, где
-                // её поднять: запертая кнопка без объяснения читается как поломка.
+                // ⚠ **Выключатель сайта кнопку не запирает**, и это исправление.
+                // Пока круга отправки не было, флаг `invite_send_on` отпирал одну
+                // только эту кнопку — тогда запрет был осмыслен. С кругом флаг стал
+                // значить «слать наружу самим», и запертая кнопка сделала
+                // «остановить автоматику» неотличимым от «запретить себе проверить
+                // руками»: сняв флаг, человек терял способ дослать зависшую реплику.
+                //
+                // Защищаемся от автоматики, а не от человека: он жмёт кнопку на
+                // карточке, где текст перед глазами.
                 : `<button type="button" class="mail-card-send" data-index="${index}"`
-                + ` title="${можно ? 'Отправить эту реплику в чат'
-                    : 'Отправка инвайтов у сайта снята — поднимите её в полосе подвкладок'}"`
-                + `${можно ? '' : ' disabled'}>▶</button>`
+                + ' title="Отправить эту реплику в чат">▶</button>'
                 + `<button type="button" class="mail-card-drop" data-index="${index}"`
                 + ' title="Убрать из пула">×</button>')
             + '</span>'
@@ -11305,6 +11328,8 @@
     // переменную, которой подстановка не знает.
     let vars = [];
 
+    // Занятия, из которых переменную можно выключить, — приходят с реестром.
+    let varUses = [];
     const openMail = () => mails.find(row => row.id === tmplOpenId) || null;
 
     // Что считаем **попыткой** написать переменную. ⚠ Тот же вид, что у сервера
@@ -11921,8 +11946,12 @@
 
         const site = siteId();
         try {
-            vars = (await getData(
-                `${BASE}/api/dating/mail/var?site_id=${site}`)).result || [];
+            const got = await getData(`${BASE}/api/dating/mail/var?site_id=${site}`);
+            vars = got.result || [];
+            // Список занятий — с сервера, вместе с переменными: ключи читает код
+            // при отборе, и знай их только страница, снятая галочка ничего бы не
+            // значила.
+            varUses = got.uses || [];
         } catch (e) {
             if (siteId() !== site) return;
             vars = [];
@@ -12097,6 +12126,8 @@
             + '</span>'
             + '</div>'
 
+            + varUsesBlock(item)
+
             + '<div class="mail-foot">'
             + (CAN_EDIT_SITE
                 ? '<button type="button" class="dating-btn primary" data-slot="varSaveBtn">Сохранить</button>'
@@ -12115,13 +12146,60 @@
         if (drop) drop.addEventListener('click', varDrop);
     }
 
+    // ── Где переменная участвует ─────────────────────────────────────────────
+    //
+    // ⚠ **Табличка, а не одна галочка.** Занятие сейчас одно — генерация шаблонов
+    // агентом, — но вопрос «где эта переменная вообще применяется» задаётся о
+    // каждом из них по отдельности, и строчка на занятие оставляет место второму
+    // и третьему без перекройки карточки.
+    //
+    // Список занятий приходит **с сервера** (`uses` в ответе списка): ключи читает
+    // код при отборе, и знай их только страница, снятая галочка ничего бы не
+    // значила.
+    //
+    // ⚠ Умолчание — **участвует**: в базе хранится только снятое, и занятие,
+    // добавленное завтра, окажется включённым у всех прежних переменных. Иначе
+    // реестр молча выпал бы из нового занятия целиком.
+    function varUsesBlock(item) {
+        if (!varUses.length) return '';
+
+        const uses = item.uses || {};
+
+        return '<div class="mail-field">'
+            + '<span class="mail-label">Где участвует</span>'
+            + '<table class="var-uses">'
+            + varUses.map(use => {
+                const on = uses[use.key] !== false;
+
+                return '<tr>'
+                    + `<td class="var-uses-name" title="${esc(use.note || '')}">`
+                    + `${esc(use.title)}</td>`
+                    + '<td class="var-uses-box">'
+                    + `<input type="checkbox" data-use="${esc(use.key)}"`
+                    + `${on ? ' checked' : ''}${CAN_EDIT_SITE ? '' : ' disabled'}>`
+                    + '</td></tr>';
+            }).join('')
+            + '</table>'
+            + '<span class="mail-found">Снятая галочка убирает переменную из '
+            + 'этого занятия. ⚠ Уже написанные шаблоны она не меняет — там '
+            + 'переменную убирают руками.</span>'
+            + '</div>';
+    }
+
     async function varSave() {
+        const uses = {};
+        (profileEl.querySelectorAll('.var-uses input[data-use]') || [])
+            .forEach(box => {
+                uses[box.dataset.use] = box.checked;
+            });
+
         const send = {
             site_id: siteId(),
             name: (slot('varName') || {}).value || '',
             source: (slot('varSource') || {}).value || 'profile',
             title: (slot('varTitle') || {}).value || '',
             default_value: (slot('varDefault') || {}).value || '',
+            uses,
         };
         const note = slot('varNote');
 

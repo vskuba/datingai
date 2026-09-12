@@ -75,6 +75,11 @@ from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_agent_create,
 DATING_MAIL_AGENT_WORKFLOW = 'dating_mail_vars'
 
 # Workflow черновика письма — тоже чужое имя, у соседа в базе.
+# Занятие, из которого переменную выключают галочкой на вкладке «Переменные».
+# Список занятий — `dating_mail_var.DATING_MAIL_VAR_USES`; ключ здесь, потому что
+# спрашивает его этот модуль.
+DATING_MAIL_VAR_USE_WRITE = 'mail_write'
+
 DATING_MAIL_WRITE_WORKFLOW = 'dating_mail_write'
 
 # Workflow вопроса получателю. ⚠ Отдельный от письма, потому что работает **на
@@ -295,7 +300,22 @@ async def dating_mail_write(site_id: int, variables: list[dict],
                               DATING_MAIL_WRITE_WORKFLOW)
     language = await dating_mail_agent_language(int(site_id))
 
-    known = variables or []
+    # ⚠ **Отбор по занятию, и делается он здесь, а не у вызывающих.** Их двое —
+    # кнопка «+ шаблон AI» и круг шаблонов, — и оба передают реестр целиком.
+    # Фильтруй каждый сам, один однажды забыл бы, и агент вернул бы переменную,
+    # которую из шаблонов как раз убирали.
+    #
+    # Живой случай: `companion_last_name` пуст у любого, чьё имя в одно слово (на
+    # проде 44 из 99), а письмо с незаполненной переменной не уходит. Шаблон
+    # поправили руками — и агент вернул бы её в следующий же черновик, потому что
+    # получает **весь реестр как обязательный** (`mail_var_must` ниже).
+    #
+    # Ленивый импорт: `dating_mail_var` импортирует этот модуль сверху, и обратная
+    # ссылка на уровне модуля была бы циклом.
+    from src.uvicorn.routers.dating.dating_mail_var import dating_mail_var_used
+
+    known = [row for row in (variables or [])
+             if dating_mail_var_used(row, DATING_MAIL_VAR_USE_WRITE)]
 
     answer = await rhapsody_api_chat_ask(
         agent_id=agent_id,
