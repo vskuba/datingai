@@ -222,9 +222,17 @@ ssh rhapsody-prod '... docker exec -i dating_mysql mysql ...' < файл.sql
 ssh rhapsody-prod 'cd ~/datingai && \
   eval "$(grep -E "^MYSQL_(PASSWORD|USER|DATABASE)=" .env.prod | sed "s/^/export /")" && \
   docker exec dating_mysql mysqldump -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" \
-    --single-transaction --routines --triggers "$MYSQL_DATABASE" \
+    --no-tablespaces --single-transaction --routines --triggers "$MYSQL_DATABASE" \
     > backups/before-<что делаем>-$(date +%Y%m%d-%H%M%S).sql'
 ```
+
+⚠ **`--no-tablespaces` обязателен, и без него команда падает.** Прод-пользователь
+базы не имеет права `PROCESS`, а `mysqldump` без этого флага первым делом просит
+список табличных пространств: `Access denied; you need (at least one of) the
+PROCESS privilege(s)`. Коварно оно тем, что **дамп всё равно пишется** и выходит
+полным — падает только код возврата, а с ним и вся цепочка `&&` следом. Выглядит
+как «бэкап не сделался», хотя файл рядом и целый; проверять надо последнюю строку
+(`-- Dump completed on …`), а не код возврата.
 
 **⚠ Составной SQL-файл может оборваться на середине, и это стоило отправленного
 сообщения.** MySQL останавливается на первой ошибке. Файл, где перенос настроек и
