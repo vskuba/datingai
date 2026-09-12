@@ -111,7 +111,13 @@
        Диалог начинается с ответа, а ушедшее без ответа — это доставка. #}
     <div class="page-tabs chat-tabs" data-slot="chat-tabs">
         <button type="button" class="page-tab on" data-chat-tab="invite">Инвайты</button>
-        <button type="button" class="page-tab" data-chat-tab="sent">Доставка</button>
+        {# ⚠ Узел под прыгающие конверты — **внутри кнопки**, а не рядом.
+           Он отвечает на вопрос «панель прямо сейчас пишет живым людям?», и
+           ответ должен быть виден с любой подвкладки чата, не только с
+           «Доставки». Стоя рядом с кнопкой, он ломал бы полосу при переносе;
+           внутри — едет вместе с ней. Наполняет его страница. #}
+        <button type="button" class="page-tab" data-chat-tab="sent">Доставка<span
+            class="tab-fly" data-slot="inviteFly"></span></button>
         <button type="button" class="page-tab" data-chat-tab="talk">Диалоги</button>
 
         {# ⚠ Правый край полосы — **настройки открытой подвкладки**, как у почты.

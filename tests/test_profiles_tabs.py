@@ -620,3 +620,78 @@ class TestReplyChangesRepaintBothPlaces:
 
         assert "box.closest('.modal')" in page, \
             'окно закрывается вслепую — немодальная правка снова потеряет перерисовку'
+
+
+class TestDeliveryLooksLikeDialogs:
+    """«Доставка» инвайтов: обе стороны с лицом и номером, как в «Диалогах».
+
+    ⚠ **Проверяем исходный текст страницы, а не отрисовку.** Строки рисует JS по
+    ответу ручки, и поднимать браузер ради разметки дороже, чем сообщает. Что
+    отрисовка сходится, проверено вживую headless-браузером при заведении.
+    """
+
+    async def test_delivery_row_uses_the_dialog_helper(self, auth_client):
+        """Тот же `talkSide`, что у диалогов, — а не второй набор разметки.
+
+        Вопрос у строки тот же самый («кто кого позвал»), и два разных вида
+        одного вопроса человек читает как два разных списка.
+        """
+        page = (await auth_client.get(PAGE)).text
+        start = page.index("class=\"mail-sent-who talk\"")
+        window = page[start:start + 700]
+
+        assert 'talkSide(row.profile_name, row.profile_photo, row.profile_uid' in window, \
+            'левая сторона строки собрана не общим помощником'
+        assert 'talkSide(row.name, row.photo, row.uid' in window, \
+            'правая сторона строки собрана не общим помощником'
+
+    async def test_delivery_arrow_is_one_way(self, auth_client):
+        """⚠ Односторонняя, в отличие от диалогов: инвайт — первое слово, и
+        ответа у него по определению ещё нет. Придёт — разговор уедет в
+        «Диалоги», где стрелка двусторонняя."""
+        page = (await auth_client.get(PAGE)).text
+        start = page.index("class=\"mail-sent-who talk\"")
+        window = page[start:start + 700]
+
+        assert "'<span class=\"talk-swap\">→</span>'" in window
+
+
+class TestDeliveryFly:
+    """Прыгающие конверты у слова «Доставка»: сколько ушло за пять минут."""
+
+    def test_tab_has_a_place_for_them(self):
+        """Узел — **внутри кнопки**: стоя рядом, он ломал бы полосу при переносе.
+
+        ⚠ Читаем шаблон с диска, а не по HTTP: разметку работы отдаёт сервер по
+        номеру сайта (`dating_work.py`), и живой номер в сюите означал бы, что
+        проверка вида зависит от того, какие сайты сегодня заведены.
+        """
+        import pathlib
+
+        work = pathlib.Path(
+            'data/uvicorn/template/admin/profile/site/_base.html').read_text(encoding='utf-8')
+        start = work.index('data-chat-tab="sent"')
+
+        assert 'data-slot="inviteFly"' in work[start:start + 200]
+
+    async def test_counted_by_the_feed_and_only_invites(self, auth_client):
+        """⚠ По ленте, а не по списку доставки: список грузится, только когда
+        открыта его подвкладка, — а знать «панель пишет сейчас» надо с любой.
+
+        ⚠ Неудачи не считаем: они приходят видом `warn`, и конверт за них обещал
+        бы отправку, которой не было.
+        """
+        page = (await auth_client.get(PAGE)).text
+        start = page.index('function inviteFlyPaint')
+        window = page[start:start + 900]
+
+        assert "row.kind === 'invite'" in window, 'считаются не только инвайты'
+        assert 'FLY_WINDOW_SEC' in window, 'окно в пять минут не спрашивается'
+
+    async def test_feed_is_asked_for_the_whole_ring(self, auth_client):
+        """⚠ Иначе конверты врут: по умолчанию лента отдаёт десяток, а при минуте
+        на реплику первое же чужое событие вытеснило бы инвайт из счёта."""
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'limit=${FEED_LIMIT}' in page
+        assert 'const FEED_LIMIT = 30;' in page

@@ -330,10 +330,19 @@ async def _row(invite_id: int) -> dict:
 
 
 def _answer(row) -> dict:
-    """Строка пула в вид для страницы: имя анкеты вместо её карточки JSON."""
+    """Строка пула в вид для страницы: имя анкеты вместо её карточки JSON.
+
+    ⚠ **Лицо и номер девушки — тоже отсюда.** «Доставка» рисует обе стороны тем
+    же видом, что «Диалоги» (`talkSide`): лицо, имя, номер на сайте. Карточка
+    анкеты у нас уже в руках — джойн всё равно сделан ради имени, — и отдать из
+    неё два поля дешевле, чем заставить страницу спрашивать анкету на каждую
+    строку списка.
+    """
     got = dict(row)
     card = dating_json_load(got.pop('profile_card', None)) or {}
     got['profile_name'] = str(card.get('name') or got.get('profile_login') or '')
+    got['profile_photo'] = str(card.get('photo') or '')
+    got['profile_uid'] = str(card.get('site_uid') or '')
     got['sent_at'] = str(got['sent_at']) if got.get('sent_at') else ''
     got['created_at'] = str(got.get('created_at') or '')
 
