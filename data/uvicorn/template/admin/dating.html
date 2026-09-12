@@ -843,11 +843,28 @@
             `${profile.login || ''}${data.contacts_total ? ` · собеседников: ${data.contacts_total}` : ''}`;
 
         const p = data.profile || {};
+        // Номер на сайте — **ссылкой на саму анкету**, когда её есть куда вести.
+        //
+        // Карточка показывает анкету по-нашему; убедиться, что у неё на сайте то
+        // же лицо, тот же текст и что её вообще не сняли, можно только там. Адрес
+        // собирает сервер (`site_url`, шаблон сайта плюс номер) — страница его не
+        // строит: иначе правило жило бы в двух местах.
+        //
+        // ⚠ Новой вкладкой, как и прочие ссылки наружу: человек работает со
+        // списком анкет, и уводить его с места, до которого он долистал, нельзя.
+        // Пустой `site_url` — обычное дело (нет шаблона у сайта или номера у
+        // анкеты), и тогда номер остаётся просто текстом.
+        const uid = esc(String(p.id || data.login || ''));
+        const ident = data.site_url
+            ? `<a class="card-site-link" href="${esc(data.site_url)}" target="_blank"`
+              + ` rel="noopener" title="Открыть анкету на сайте — в новой вкладке">`
+              + `ID ${uid} ↗</a>`
+            : `ID ${uid}`;
         const head = `<div class="card">
             <img src="${esc(p.photo || '')}" alt="" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'">
             <div>
                 <div class="card-name">${esc(p.name || data.login || '')}</div>
-                <div class="card-meta">ID ${esc(String(p.id || data.login || ''))}
+                <div class="card-meta">${ident}
                     ${p.age ? ' · ' + p.age : ''}${p.city ? ' · ' + esc(p.city) : ''}</div>
                 <div class="card-meta">${esc(p.about || 'описание профиля сайт не отдал')}</div>
             </div></div>`;

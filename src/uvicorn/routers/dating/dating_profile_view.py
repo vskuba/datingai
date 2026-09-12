@@ -21,6 +21,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.auth.auth import auth_required
 from src.dating.dating_json import dating_json_load
 from src.dating.dating_online import dating_online_check
+from src.dating.dating_profile_link import dating_profile_link
 from src.dating.dating_schedule import dating_schedule_load, dating_schedule_why_idle
 from src.uvicorn.routers.dating.dating_log import dating_log_feed
 from src.uvicorn.routers.dating.dating_profile import dating_profile_row
@@ -266,10 +267,20 @@ async def dating_profile_view_card(profile_id: int, page: int = 1,
                     (profile_id, contact['uid'], ''))
                 contact['name'] = ((await db.fetchone()) or {}).get('name') or ''
 
+    # Адрес анкеты на самом сайте: шаблон сайта плюс её номер.
+    #
+    # ⚠ **Собирает сервер, а не страница.** Шаблон — настройка сайта, и знай её
+    # страница, тот же адрес собирался бы в двух местах: разойдись они в мелочи
+    # (кодирование номера, проверка схемы), одна из ссылок вела бы не туда.
+    # Пустая строка — обычный исход: у сайта нет шаблона или у анкеты нет номера.
+    card = dating_json_load(profile.get('profile'))
+    site_url = await dating_profile_link(int(profile.get('site_id') or 0),
+                                         str(card.get('site_uid') or ''))
+
     # `enabled` и `auto_answer` едут в карточку, потому что оба рисуются на ней
     # чекбоксами — на «Анкетах» справа и в окне переписки. Без них страница знала бы
     # состояние только из списка, а карточку открывают и по прямой ссылке.
-    return {'result': {'profile': dating_json_load(profile.get('profile')),
+    return {'result': {'profile': card, 'site_url': site_url,
                        'login': profile['login'], 'contacts': contacts,
                        'enabled': bool(profile.get('enabled', 1)),
                        # Расписание — в настройках анкеты на «Анкетах», рядом с
