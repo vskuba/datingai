@@ -60,7 +60,7 @@
    "algorithm": "LoRA",
    "gradient_checkpointing": true,
    "checkpoint_depth": 1,
-   "offloading": true,
+   "offloading": false,
    "existing_lora": "[None]",
    "bucket_mode": false,
    "bypass_mode": false
