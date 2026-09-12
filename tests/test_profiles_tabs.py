@@ -774,3 +774,56 @@ class TestPoolFirstUid:
         start = page.index('/api/dating/mailing/generate')
 
         assert 'first_uid: openUid' in page[start:start + 400]
+
+
+class TestOnlineCardPriority:
+    """Звёздочка «этого первым» на карточке ленты «Все онлайн».
+
+    ⚠ **Отметка durable, а не подсветка выбора.** Выбор карточки живёт в браузере,
+    и круг, который набирает пул по расписанию, о нём не знает — он работает в
+    воркере. Приоритет же лежит в карточке собеседника, и его слушаются **оба**
+    набора: и кнопка «Генерировать», и круг.
+    """
+
+    async def test_star_is_on_the_card(self, auth_client):
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'function personCardFirst(' in page, 'звезды нет вовсе'
+        assert 'class="person-card-first' in page
+
+    async def test_star_calls_the_priority_handle(self, auth_client):
+        """Ручка своя (`PUT /{id}/priority`), а не общая правка карточки: та пишет
+        почту и описание разом, и галочка гасла бы при каждом сохранении текста."""
+        page = (await auth_client.get(PAGE)).text
+        start = page.index('async function personCardFirstSet')
+        window = page[start:start + 1200]
+
+        assert '/priority`' in window
+        assert "{priority: want}" in window
+
+    async def test_missing_card_is_created_by_the_same_click(self, auth_client):
+        """⚠ Приоритет живёт в карточке, но «сперва заведи, потом отметь» означало
+        бы два действия на одно решение."""
+        page = (await auth_client.get(PAGE)).text
+        start = page.index('async function personCardFirstSet')
+        window = page[start:start + 1200]
+
+        assert 'personCardAdd(uid, star)' in window
+
+    async def test_click_does_not_also_select_the_person(self, auth_client):
+        """⚠ Иначе щелчок по звезде уводил бы страницу с того места, где стоял
+        человек, ради действия, которое его не касается."""
+        page = (await auth_client.get(PAGE)).text
+        start = page.index("querySelectorAll('.person-card-first')")
+        window = page[start:start + 300]
+
+        assert 'stopPropagation' in window
+
+    async def test_marked_star_is_visible_without_hover(self, auth_client):
+        """⚠ Отметка меняет порядок работы круга, и видеть её надо не обводя ленту
+        мышью — в отличие от значка «карточка заведена», который лишь сведение."""
+        page = (await auth_client.get(PAGE)).text
+        start = page.index('.person-card-first.on {')
+        window = page[start:start + 200]
+
+        assert 'opacity: 1' in window

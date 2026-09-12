@@ -2589,6 +2589,44 @@
         opacity: .5;
     }
 
+    /* Звёздочка «этого первым»: приоритет в наборе пула.
+
+       ⚠ Слева от значка карточки, а не поверх него: значки отвечают на разные
+       вопросы («кого уже завели» и «кого брать первым»), и один поверх другого
+       читался бы как одно состояние с двумя видами. */
+    .person-card-first {
+        position: absolute;
+        right: 18px;
+        bottom: 2px;
+        width: 14px;
+        height: 14px;
+        padding: 0;
+        border: none;
+        border-radius: 50%;
+        background: #fef3c7;
+        color: #b45309;
+        font-size: 9px;
+        line-height: 14px;
+        text-align: center;
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity .12s ease;
+    }
+
+    .person-card-first:hover { background: #f59e0b; color: #fff; }
+    .person-card:hover .person-card-first,
+    .person-card-first:focus-visible { opacity: 1; }
+
+    /* ⚠ Отмеченного видно **всегда и в полную силу**, а не по наведению: отметка
+       меняет порядок работы круга, и человек должен видеть её, не обводя ленту
+       мышью. Тот же довод, что у значка заведённой карточки, только сильнее —
+       там сведение, здесь решение. */
+    .person-card-first.on {
+        opacity: 1;
+        background: #f59e0b;
+        color: #fff;
+    }
+
     .person-card-mark.add:disabled {
         opacity: .35;
         cursor: default;
@@ -9615,7 +9653,11 @@
     // ⚠ Держим отдельно от ленты: лента — про сайт и обновляется своим кругом, а
     // это наши записи, и меняются они от нажатия здесь. Слей мы их в одно — снимок
     // ленты затирал бы только что заведённую карточку.
-    let companionsKnown = new Set();
+    // ⚠ **Карта, а не множество**, и это не украшение. Значку «этого первым» нужен
+    // **номер карточки** (ручка приоритета зовётся по нему, не по номеру на сайте)
+    // и её нынешнее состояние — иначе щелчок не знал бы, ставит он отметку или
+    // снимает.
+    let companionsKnown = new Map();
     let companionsKnownFor = 0;
 
     // Значок в углу карточки ленты: завести карточку либо открыть заведённую.
@@ -9628,17 +9670,47 @@
         const uid = String(p.uid || '');
         if (!uid) return '';
 
-        if (companionsKnown.has(uid)) {
-            return `<a class="person-card-mark has" href="${BASE}/admin/dating`
+        const card = companionsKnown.get(uid);
+        if (card) {
+            return personCardFirst(uid, p, card)
+                + `<a class="person-card-mark has" href="${BASE}/admin/dating`
                 + `?companion=${encodeURIComponent(uid)}&site=${siteId()}"`
                 + ' target="_blank" rel="noopener"'
                 + ` title="Карточка ${esc(p.name || uid)} уже заведена — открыть">`
                 + '☰</a>';
         }
 
-        return `<button type="button" class="person-card-mark add" data-add="${esc(uid)}"`
+        return personCardFirst(uid, p, null)
+            + `<button type="button" class="person-card-mark add" data-add="${esc(uid)}"`
             + ` title="Завести карточку ${esc(p.name || uid)}: имя, фото и возраст`
             + ' возьмём из этой ленты">+</button>';
+    }
+
+    // Значок «этого первым»: приоритет собеседника прямо из ленты.
+    //
+    // ⚠ **Отметка durable, а не подсветка.** Выбор карточки живёт в браузере, и
+    // круг, который набирает пул по расписанию, о нём не знает — он работает в
+    // воркере. Приоритет же лежит в карточке собеседника
+    // (`dating_companion.priority`), и его слушаются **оба** набора: и кнопка
+    // «Генерировать», и круг. Поймано живьём: человек выбирал карточку в ленте и
+    // ждал, что круг возьмёт её первой, — а брать было некому.
+    //
+    // ⚠ **Это порядок, а не отбор** (`api.md`, §3.7.1): отмеченные идут первыми,
+    // остальные — следом. Сделай мы из отметки фильтр, она молча выключила бы
+    // работу со всеми прочими.
+    //
+    // ⚠ **У человека без карточки значок живой.** Приоритет живёт в карточке, но
+    // требовать «сперва заведи, потом отметь» значило бы два щелчка на одно
+    // решение: карточки и так заводятся по требованию.
+    function personCardFirst(uid, p, card) {
+        const on = !!(card && card.priority);
+        const who = esc(p.name || uid);
+
+        return `<button type="button" class="person-card-first${on ? ' on' : ''}"`
+            + ` data-first="${esc(uid)}"`
+            + ` title="${on ? `${who} уже первый в очереди набора — снять`
+                : `Взять ${who} первым: следующий набор пула начнёт с него`}">`
+            + `${on ? '★' : '☆'}</button>`;
     }
 
     // Спрашивает, у кого из ленты карточка уже есть.
@@ -9654,13 +9726,51 @@
                 `${BASE}/api/dating/companion?site_id=${site}`)).result || [];
             if (siteId() !== site) return;
 
-            companionsKnown = new Set(rows.map(row => String(row.uid)));
+            companionsKnown = new Map(rows.map(row =>
+                [String(row.uid), {id: Number(row.id), priority: !!row.priority}]));
             companionsKnownFor = site;
         } catch (e) {
             // ⚠ Молча: значок — украшение ленты, и его отсутствие не повод пугать
             // человека уведомлением поверх работающего списка.
-            companionsKnown = new Set();
+            companionsKnown = new Map();
         }
+    }
+
+    // Ставит и снимает приоритет прямо из ленты.
+    //
+    // ⚠ **Карточки нет — заводим её тем же щелчком.** Приоритет живёт в карточке,
+    // и «сперва заведи, потом отметь» означало бы два действия на одно решение.
+    // Карточки и так заводятся по требованию (`api.md`, §3.7.1).
+    async function personCardFirstSet(uid, star) {
+        uid = String(uid || '');
+        if (!uid) return;
+
+        star.disabled = true;
+        try {
+            if (!companionsKnown.has(uid)) {
+                await personCardAdd(uid, star);
+            }
+
+            const card = companionsKnown.get(uid);
+            if (!card) return;                     // завести не вышло — там уже сказали
+
+            const want = !card.priority;
+            await putData(`${BASE}/api/dating/companion/${card.id}/priority`,
+                          {priority: want});
+            card.priority = want;
+
+            showNotification(want
+                ? 'Возьмём первым при следующем наборе'
+                : 'Приоритет снят', 'success');
+        } catch (e) {
+            showNotification('Приоритет не изменился: ' + e.message, 'error');
+        } finally {
+            star.disabled = false;
+        }
+
+        // ⚠ Перерисовываем **обе** ленты: ряд «Все онлайн» стоит и в «Чате», и в
+        // «Письмах рассылка», и звёздочка должна смениться в обоих.
+        peopleOnlinePaint();
     }
 
     // Заводит карточку человека из ленты — тем, что лента о нём знает.
@@ -9674,6 +9784,7 @@
         const person = (state.people || []).find(one => String(one.uid) === String(uid));
         if (!person) return;
 
+        const was = button.disabled;
         button.disabled = true;
         try {
             await postData(`${BASE}/api/dating/companion`, {
@@ -9687,13 +9798,17 @@
                 city: '', country: ''
             });
         } catch (e) {
-            button.disabled = false;
+            button.disabled = was;
             showNotification('Карточка не завелась: ' + e.message, 'error');
 
             return;
         }
 
-        companionsKnown.add(String(uid));
+        // ⚠ Номер новой карточки нам не вернули явно — перечитываем список: без
+        // номера значок «этого первым» не сможет позвать свою ручку, и остался бы
+        // мёртвым до перезагрузки страницы.
+        companionsKnownFor = 0;
+        await companionsKnownLoad();
         showNotification(`Карточка заведена: ${person.name || uid}`, 'success');
         // Перерисовываем ленту целиком: значок должен смениться на «открыть», а
         // ряда их два — в «Чате» и в «Письмах рассылка».
@@ -10023,6 +10138,14 @@
             mark.addEventListener('click', (e) => {
                 e.stopPropagation();
                 if (mark.dataset.add) personCardAdd(mark.dataset.add, mark);
+            }));
+
+        // Звёздочка «этого первым» — по тем же правилам, что и значок карточки:
+        // всплытие гасим, иначе щелчок ещё и выбирал бы человека в чате.
+        box.querySelectorAll('.person-card-first').forEach(star =>
+            star.addEventListener('click', (e) => {
+                e.stopPropagation();
+                personCardFirstSet(star.dataset.first, star);
             }));
     }
 

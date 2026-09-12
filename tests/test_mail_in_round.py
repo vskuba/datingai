@@ -73,12 +73,25 @@ def only_ours(monkeypatch):
     Правило общее и записано в `testing.md`: **тест, зовущий круг, подменяет его
     отбор, а не только действие**. Оно появилось после того, как прогон сюиты
     испортил живую анкету, и этот случай — ровно тот же класс.
-    """
-    original = round_._sites
 
+    ⚠⚠ **Отбор задаётся, а не фильтруется поверх живого**, и это исправление
+    флейка. Раньше фикстура звала настоящий `_sites` и оставляла из ответа наш
+    номер — то есть зависела от строки сайта в базе. А строку правит **фоновая
+    сверка в контейнере панели**: она спрашивает у соседа список с меткой
+    `dating`, не находит там выдуманный номер и честно метит его `is_gone = 1`.
+    Заводится сверка от любого показа списка сайтов, не чаще раза в полминуты, —
+    и за трёхминутный прогон срабатывает несколько раз.
+
+    Фикстура `site` метку снимает, но **один раз, при подготовке**: попади сверка
+    в промежуток между ней и вызовом круга — и круг не увидит сайта вовсе. Тест
+    падал на «анкета не попала в круг», хотя круг работал верно. Один раз на
+    шесть полных прогонов.
+
+    Тесты, которые проверяют **сам отбор** (снятый выключатель, ушедший сайт),
+    эту фикстуру не берут: они зовут настоящий `_sites` и смотрят его ответ.
+    """
     async def ours():
-        return [row for row in await original()
-                if int(row['site_id']) == SITE]
+        return [{'site_id': SITE}]
 
     monkeypatch.setattr(round_, '_sites', ours)
 
@@ -212,20 +225,20 @@ async def test_mail_in_round_takes_site_with_check_on(site, profile, fetched, cl
     assert got['added'] >= 1
 
 
-async def test_mail_in_round_skips_site_with_check_off(site, profile, fetched, clean_mark,
-                                                       auth_client, no_pause,
-                                                       only_ours):
-    """Снятая галочка останавливает **всю** цепочку: отвечать станет не на что."""
+async def test_mail_in_round_skips_site_with_check_off(site, auth_client):
+    """Снятая галочка останавливает **всю** цепочку: отвечать станет не на что.
+
+    ⚠ Спрашиваем **настоящий отбор**, а не гоняем круг с подменённым: подмена
+    отвечала бы на вопрос «взял ли круг то, что мы ему дали», а вопрос здесь —
+    «попадает ли такой сайт в отбор вообще».
+    """
     await auth_client.put(f'/api/dating/site/{SITE}/mail-check-on',
                           json={'mail_check_on': False})
 
-    await dating_mail_in_round_run()
-
-    assert not fetched
+    assert SITE not in [int(row['site_id']) for row in await round_._sites()]
 
 
-async def test_mail_in_round_skips_gone_site(site, profile, fetched, clean_mark, no_pause,
-                                             only_ours):
+async def test_mail_in_round_skips_gone_site(site):
     """Сайт, пропавший у соседа, писем не отдаст — ходить некуда."""
     from mysql_.mysql_ import mysql_get_db_async
 
@@ -234,9 +247,16 @@ async def test_mail_in_round_skips_gone_site(site, profile, fetched, clean_mark,
                          (SITE,))
         await db.connection.commit()
 
-    await dating_mail_in_round_run()
+    assert SITE not in [int(row['site_id']) for row in await round_._sites()]
 
-    assert not fetched
+
+async def test_mail_in_round_takes_a_live_site_with_the_switch_on(site):
+    """Обратная сторона тех же двух: сайт с поднятой галочкой в отбор попадает.
+
+    ⚠ Без неё пара выше зеленела бы и у сломанного отбора, который не берёт
+    никого вовсе.
+    """
+    assert SITE in [int(row['site_id']) for row in await round_._sites()]
 
 
 async def test_mail_in_round_skips_site_without_api_url(site, profile, fetched, clean_mark,
