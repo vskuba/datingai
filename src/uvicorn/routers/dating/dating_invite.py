@@ -71,6 +71,8 @@ class DatingInviteEdit(BaseModel):
 
 @router.get('', include_in_schema=False)
 async def dating_invite_list(site_id: int = 0, status_: str = 'draft',
+                             page: int = 1, per: int = 0,
+                             profile_id: int = 0, uid: str = '',
                              user: AuthUser = Depends(auth_required)):
     """Пул инвайтов сайта — свежие сверху.
 
@@ -87,8 +89,30 @@ async def dating_invite_list(site_id: int = 0, status_: str = 'draft',
             подвкладка `sent,failed`, она молчала бы ровно о тех репликах, ради
             которых на неё и заходят, — о не дошедших.
 
+        page: страница, с единицы. `per` — сколько строк на ней; ноль означает
+            «все», и это **умолчание**: пул читают целиком, страницами ходит
+            только журнал доставки.
+
+            ⚠ **Перелистывание на сервере, а не в браузере.** Журнал растёт на
+            реплику в минуту, и отдать его целиком значит однажды отдать всё
+            подряд. Обрежь мы его потолком — отбор именами (ниже) искал бы внутри
+            обрезка и молчал о том, что за ним.
+        profile_id: показать только реплики этой анкеты. Ноль — всех.
+        uid: показать только реплики этому собеседнику. Пусто — всем.
+
+            ⚠ **Отбор тоже на сервере, и по той же причине.** Фильтруй страница
+            то, что ей прислали, «все письма Семёну» означало бы «те письма
+            Семёну, что попали на текущую страницу».
+
     В ответе, помимо полей строки, — имя анкеты: карточка показывает «от кого
     кому», и без него страница делала бы запрос на каждую реплику.
+
+    У вопроса `delivery` в ответе есть ещё `who`: кто вообще встречается в журнале
+    — анкеты и собеседники с числом строк. Из них страница рисует чипсы отбора.
+
+    ⚠ **`who` считается по всему журналу, а не по странице.** Имя, ушедшее на
+    третью страницу, иначе пропало бы из отбора — то есть отобрать по нему было бы
+    нечем именно тогда, когда это нужнее всего.
     """
     if not int(site_id or 0):
         return {'result': [], 'pool': 0, 'send_on': False}
@@ -109,15 +133,40 @@ async def dating_invite_list(site_id: int = 0, status_: str = 'draft',
     # ⚠ «Всё про доставку» — статусы **плюс черновики с причиной отказа**:
     # неудавшаяся отправка оставляет реплику в пуле, и по статусу её от нетронутой
     # не отличить.
-    if 'delivery' in asked:
+    delivery = 'delivery' in asked
+
+    if delivery:
         sql += (" AND (i.status IN ('sent', 'failed')"
                 "      OR (i.status = 'draft' AND i.error <> ''))")
     elif wanted:
         sql += ' AND i.status IN (%s)' % ', '.join(['%s'] * len(wanted))
         args.extend(wanted)
 
-    sql += ' ORDER BY i.id DESC LIMIT %s'
-    args.append(DATING_INVITE_LIMIT)
+    # ⚠ Отбор именами прикладывается **после** выбора состояний, к тому же запросу:
+    # он сужает уже отобранное, а не спрашивает другое.
+    if int(profile_id or 0):
+        sql += ' AND i.profile_id = %s'
+        args.append(int(profile_id))
+
+    if str(uid or '').strip():
+        sql += ' AND i.uid = %s'
+        args.append(str(uid).strip())
+
+    # ⚠ Сколько всего — **отдельным счётом по тем же условиям**, а не длиной
+    # выборки: страница показывает 25 строк, а «страниц 7» считается по всем.
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT COUNT(*) AS n FROM (' + sql + ') AS all_rows',
+                         tuple(args))
+        total = int(((await db.fetchone()) or {}).get('n') or 0)
+
+    per = min(int(per or 0) or DATING_INVITE_LIMIT, DATING_INVITE_LIMIT)
+    pages = max(1, -(-total // per))
+    # ⚠ Страницу поправляем, а не отвергаем: список мог укоротиться, пока человек
+    # листал, и отказ вместо последней страницы читался бы как поломка.
+    page = min(max(int(page or 1), 1), pages)
+
+    sql += ' ORDER BY i.id DESC LIMIT %s OFFSET %s'
+    args.extend([per, (page - 1) * per])
 
     async with mysql_get_db_async() as db:
         await db.execute(sql, tuple(args))
@@ -134,6 +183,8 @@ async def dating_invite_list(site_id: int = 0, status_: str = 'draft',
     # Отдельной ручкой было бы хуже: два запроса на один взгляд, и ответы из
     # разных моментов времени — «пул пуст» из одного, «уже набирали» из другого.
     return {'result': [_answer(row) for row in rows or []],
+            'page': page, 'pages': pages, 'total': total,
+            'who': await _who(int(site_id)) if delivery else {},
             'pool': await dating_invite_pool_left(int(site_id)),
             'next_sec': dating_invite_round_next(int(site_id)),
             'send_on': await _send_on(int(site_id))}
@@ -312,6 +363,56 @@ async def _send_on(site_id: int) -> bool:
         return False
 
     return bool((row or {}).get('invite_send_on'))
+
+
+async def _who(site_id: int) -> dict:
+    """Кто встречается в журнале доставки: анкеты и собеседники, с числом строк.
+
+    Returns:
+        dict: `girls` — `[{profile_id, name, n}]`, `people` — `[{uid, name, n}]`,
+        чаще встречающиеся первыми.
+
+    ⚠ **По всему журналу, а не по странице** — иначе отобрать по имени можно было
+    бы лишь то, что и так видно.
+
+    ⚠ **Порядок по числу строк, а не по алфавиту.** Полоса чипсов обрезается
+    высотой, и первыми должны стоять те, кого в журнале много: ради них отбор и
+    заводят. Алфавит ставил бы вперёд случайного «Adrian» с одной репликой.
+
+    ⚠ **Условие то же, что у `delivery`.** Разойдись они, чипс отбирал бы строки,
+    которых в списке нет, и список пустел бы на нажатие.
+    """
+    where = ("i.site_id = %s AND (i.status IN ('sent', 'failed')"
+             "                    OR (i.status = 'draft' AND i.error <> ''))")
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT i.profile_id, COUNT(*) AS n, p.login AS profile_login,'
+            '       p.profile AS profile_card'
+            '  FROM dating_invite i'
+            '  LEFT JOIN dating_profile p ON p.id = i.profile_id'
+            f' WHERE {where}'
+            ' GROUP BY i.profile_id, p.login, p.profile'
+            ' ORDER BY n DESC, i.profile_id', (int(site_id),))
+        girls = [dict(row) for row in await db.fetchall() or []]
+
+        await db.execute(
+            'SELECT i.uid, MAX(i.name) AS name, COUNT(*) AS n'
+            '  FROM dating_invite i'
+            f' WHERE {where}'
+            ' GROUP BY i.uid ORDER BY n DESC, i.uid', (int(site_id),))
+        people = [dict(row) for row in await db.fetchall() or []]
+
+    out = []
+    for one in girls:
+        card = dating_json_load(one.pop('profile_card', None)) or {}
+        out.append({'profile_id': int(one['profile_id']),
+                    'name': str(card.get('name') or one.get('profile_login') or ''),
+                    'n': int(one['n'])})
+
+    return {'girls': out,
+            'people': [{'uid': str(one['uid']), 'name': str(one.get('name') or ''),
+                        'n': int(one['n'])} for one in people]}
 
 
 async def _row(invite_id: int) -> dict:

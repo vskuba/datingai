@@ -1872,6 +1872,60 @@
         word-break: break-word;
     }
 
+    /* Полоса отбора именами. ⚠ Высота ограничена и прокручивается: адресатов в
+       журнале бывают сотни, и полоса чипсов на пол-экрана оставила бы список без
+       места — то есть спрятала бы то, ради чего отбор и нужен. */
+    .sent-filter {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        max-height: 56px;
+        overflow-y: auto;
+        margin-bottom: 6px;
+    }
+
+    .sent-filter:empty {
+        display: none;
+    }
+
+    .sent-chip {
+        padding: 2px 8px;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        background: #fff;
+        color: #475569;
+        font-size: 10px;
+        line-height: 1.5;
+        cursor: pointer;
+        transition: background .12s ease, color .12s ease, border-color .12s ease;
+    }
+
+    .sent-chip:hover {
+        border-color: #c7d2fe;
+    }
+
+    /* ⚠ Нажатый чипс залит, а не подчёркнут: полоса читается боковым зрением, и
+       отбор должен быть виден, не вчитываясь, — иначе пустой список объясняют
+       поломкой, а не собственным нажатием. */
+    .sent-chip.on {
+        background: #4338ca;
+        border-color: #4338ca;
+        color: #fff;
+    }
+
+    /* Счёт строк у имени: тише имени — он подсказка, а не подпись. */
+    .sent-chip-n {
+        opacity: .6;
+    }
+
+    /* Подпись ряда: чья это полоса. Не чипс — нажимать её нечего. */
+    .sent-chip-label {
+        align-self: center;
+        margin-right: 2px;
+        color: #94a3b8;
+        font-size: 10px;
+    }
+
     /* «Снять запрет» — текстом, а не кружком, как крестики на карточках пула.
        ⚠ Действие редкое и обдуманное: кружок рядом с чужим именем нажимается
        мимоходом, а здесь нажатие возвращает человеку письма, от которых он
@@ -5123,6 +5177,21 @@
     // ⚠ Отвеченные инвайты при этом **остаются в «Диалогах»**: пришёл ответ —
     // значит разговор пошёл, и ничем от прочих он не отличается.
     let inviteSent = [];
+    // Кто встречается в журнале — из ответа ручки, а не из списка на экране:
+    // отобрать надо уметь и по тому, кто уехал на третью страницу.
+    let inviteSentWho = {girls: [], people: []};
+    // Отбор именами: анкета и собеседник — **порознь**, и оба могут быть подняты.
+    // Ноль и пустая строка означают «все».
+    let inviteSentGirl = 0;
+    let inviteSentUid = '';
+    // Страница, с нуля — как у прочих пейджеров панели (`pagerRender`).
+    let inviteSentPage = 0;
+    let inviteSentPages = 1;
+    let inviteSentTotal = 0;
+
+    // Сколько строк на странице. ⚠ Двадцать пять, а не сотня: строка журнала
+    // высокая — в ней обе стороны, текст реплики и ответ сайта.
+    const INVITE_SENT_PER = 25;
 
     function inviteSentShow() {
         if (!workEl.querySelector('[data-chat-pane="sent"]')) return;
@@ -5145,9 +5214,23 @@
             // реплику в пуле** (`draft` с причиной), чтобы её можно было
             // повторить. Спроси мы по статусам — подвкладка молчала бы ровно о
             // тех инвайтах, ради которых на неё и заходят.
-            inviteSent = (await getData(
-                `${BASE}/api/dating/invite?site_id=${site}&status_=delivery`)
-            ).result || [];
+            //
+            // ⚠ **Страница и отбор — в запросе, а не в браузере.** Журнал растёт
+            // на реплику в минуту; отбери мы имена среди присланного, «все реплики
+            // Семёну» означало бы «те, что попали на открытую страницу».
+            const got = (await getData(
+                `${BASE}/api/dating/invite?site_id=${site}&status_=delivery`
+                + `&page=${inviteSentPage + 1}&per=${INVITE_SENT_PER}`
+                + `&profile_id=${inviteSentGirl}&uid=${encodeURIComponent(inviteSentUid)}`
+            )) || {};
+
+            inviteSent = got.result || [];
+            inviteSentWho = got.who || {girls: [], people: []};
+            inviteSentPages = Math.max(1, Number(got.pages) || 1);
+            inviteSentTotal = Number(got.total) || 0;
+            // Номер берём из ответа: сервер поправит его, если журнал укоротился и
+            // страница уехала за конец. Ручка считает с единицы, пейджер — с нуля.
+            inviteSentPage = Math.max(0, (Number(got.page) || 1) - 1);
         } catch (e) {
             inviteSent = [];
             showNotification('Доставка инвайтов не пришла: ' + e.message, 'error');
@@ -5159,20 +5242,89 @@
         inviteSentPaint();
     }
 
+    // Нажатие по чипсу: тот же чипс второй раз снимает отбор.
+    //
+    // ⚠ **Страницу сбрасываем в первую.** Отбор меняет длину журнала, и седьмая
+    // страница «всех» почти наверняка пуста у одного собеседника — человек нажал
+    // бы имя и увидел пустоту.
+    function inviteSentPick(what, value) {
+        if (what === 'girl') {
+            inviteSentGirl = (inviteSentGirl === value) ? 0 : value;
+        } else {
+            inviteSentUid = (inviteSentUid === value) ? '' : value;
+        }
+
+        inviteSentPage = 0;
+        inviteSentLoad();
+    }
+
+    // Полоса чипсов: подпись ряда и имена с числом строк.
+    //
+    // ⚠ Число рядом с именем — не украшение: по нему видно, где искать. «Семён 12»
+    // и «Adrian 1» отвечают на разные вопросы, и без счёта они выглядят одинаково.
+    function inviteSentChips(slotName, label, rows, key, active) {
+        const box = slot(slotName);
+        if (!box) return;
+
+        if (!rows.length) {
+            box.innerHTML = '';
+
+            return;
+        }
+
+        box.innerHTML = `<span class="sent-chip-label">${esc(label)}</span>`
+            + rows.map(one => {
+                const value = key === 'girl' ? Number(one.profile_id) : String(one.uid);
+                const on = key === 'girl'
+                    ? active === value : String(active) === value;
+
+                return `<button type="button" class="sent-chip${on ? ' on' : ''}"`
+                    + ` data-pick="${esc(String(value))}"`
+                    + ` title="${on ? 'Снять отбор' : 'Показать только это'}">`
+                    + `${esc(one.name || one.uid || '—')}`
+                    + `<span class="sent-chip-n"> ${Number(one.n) || 0}</span></button>`;
+            }).join('');
+
+        box.querySelectorAll('.sent-chip').forEach(btn =>
+            btn.addEventListener('click', () => inviteSentPick(
+                key, key === 'girl' ? Number(btn.dataset.pick) : btn.dataset.pick)));
+    }
+
     function inviteSentPaint() {
         const box = slot('invite-sent');
         if (!box) return;
 
+        // Чипсы рисуем всегда, даже когда список пуст: пустота бывает **следствием
+        // отбора**, и снять его должно быть чем.
+        inviteSentChips('invite-sent-girls', 'от кого:',
+                        inviteSentWho.girls || [], 'girl', inviteSentGirl);
+        inviteSentChips('invite-sent-people', 'кому:',
+                        inviteSentWho.people || [], 'uid', inviteSentUid);
+
+        const отобрано = inviteSentGirl || inviteSentUid;
         const дошло = inviteSent.filter(row => row.status === 'sent').length;
         const нет = inviteSent.length - дошло;
 
-        fillSlot('invite-sent-count', inviteSent.length
-            ? `ушло ${дошло}${нет ? ` · не ушло ${нет}` : ''}` : '');
+        // ⚠ Счёт в шапке — **по всему журналу** (`total`), а исходы — по странице:
+        // «ушло 3» рядом с «всего 174» читалось бы как потеря ста семидесяти.
+        fillSlot('invite-sent-count', inviteSentTotal
+            ? `всего ${inviteSentTotal}`
+              + (inviteSent.length ? ` · на странице: ушло ${дошло}`
+                 + `${нет ? `, не ушло ${нет}` : ''}` : '')
+            : '');
+
+        // ⚠ Прокрутку держим сами: список перечитывается своим кругом раз в
+        // полминуты, а человек в это время читает нижние строки.
+        const scroll = box.scrollTop;
 
         if (!inviteSent.length) {
-            box.innerHTML = '<div class="mail-sent-empty">Инвайтов с этого сайта '
-                + 'пока не уходило.<br>Здесь появятся отправленные — и те, что '
-                + 'отправить не вышло, с причиной.</div>';
+            box.innerHTML = отобрано
+                ? '<div class="mail-sent-empty">По этому отбору ничего нет.<br>'
+                  + 'Нажмите поднятое имя ещё раз, чтобы снять его.</div>'
+                : '<div class="mail-sent-empty">Инвайтов с этого сайта '
+                  + 'пока не уходило.<br>Здесь появятся отправленные — и те, что '
+                  + 'отправить не вышло, с причиной.</div>';
+            inviteSentPagerPaint();
 
             return;
         }
@@ -5233,6 +5385,19 @@
                       + `${esc(row.answer)}</span>` : '')
                 + '</div>';
         }).join('');
+
+        box.scrollTop = scroll;
+        inviteSentPagerPaint();
+    }
+
+    function inviteSentPagerPaint() {
+        const foot = slot('invite-sent-pager');
+        if (!foot) return;
+
+        pagerRender(foot, inviteSentPages, inviteSentPage, (pick) => {
+            inviteSentPage = pick;
+            inviteSentLoad();
+        }, inviteSentTotal ? `реплик: ${inviteSentTotal}` : '');
     }
 
     // ── Не пишем: кому эта анкета больше не пишет ───────────────────────────
@@ -11691,6 +11856,18 @@
 
         if (workTab === 'chat' && chatTab === 'invite') inviteLoad();
         if (workTab === 'fav' && favTab === 'talk') favMailLoad();
+
+        // ⚠ **И журналы доставки — все три.** Их наполняет круг отправки, а не
+        // нажатие: реплика уходит раз в минуту, письмо раз в три. Страница же
+        // читала их только при открытии подвкладки, и человек, смотрящий на
+        // «Доставку», видел застывший список — при том, что отправка шла.
+        //
+        // Кнопка «⟳» остаётся: круг ходит раз в полминуты, а «ушло ли **сейчас**»
+        // иногда спрашивают, не дожидаясь.
+        if (workTab === 'chat' && chatTab === 'sent') inviteSentLoad();
+        if (workTab === 'chat' && chatTab === 'block') inviteBlockLoad();
+        if (workTab === 'mail' && mailTab === 'sent') mailSentLoad();
+        if (workTab === 'fav' && favTab === 'sent') favSentLoad();
     }, POOL_IDLE_MS);
 
     // Переключение вкладок. Нажатие по кнопке, а не по всей полосе: полоса тянется

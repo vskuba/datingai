@@ -140,7 +140,7 @@ async def dating_mail_send_one(letter: dict, profile: dict, base: str,
     except DatingSiteApiError as e:
         # ⚠ Отказ приходит **и на этом шаге**: «можно ли писать этому человеку» —
         # ровно тот вопрос, на который сайт отвечает «он вас закрыл».
-        await _deny_check(profile, uid, str(e))
+        await _deny_check(profile, letter, table, uid, str(e))
 
         raise DatingMailSendError(f'сайт не дал разрешения на отправку: {e}')
 
@@ -157,7 +157,7 @@ async def dating_mail_send_one(letter: dict, profile: dict, base: str,
             profile, base, secret, DATING_MAIL_SEND_PATH,
             payload=_payload(check_id, uid, body, reply_to), method='POST')
     except DatingSiteApiError as e:
-        await _deny_check(profile, uid, str(e))
+        await _deny_check(profile, letter, table, uid, str(e))
 
         raise DatingMailSendError(f'сайт не принял письмо: {e}')
 
@@ -176,7 +176,8 @@ async def dating_mail_send_one(letter: dict, profile: dict, base: str,
 
 
 async def dating_mail_send_mark(letter: dict, sent: bool, error: str = '',
-                                table: str = 'dating_mailing') -> None:
+                                table: str = 'dating_mailing',
+                                final: bool = False) -> None:
     """Записывает исход отправки: в строку письма и в журнал анкеты.
 
     Args:
@@ -199,6 +200,14 @@ async def dating_mail_send_mark(letter: dict, sent: bool, error: str = '',
     `failed` его бы похоронил: уникальный ключ `uq_dating_mailing_once` считает и
     неудавшиеся, и второй раз такое письмо уже не сгенерировать. Причина же обычно
     временная — сайт просит подождать, протух пароль, — и повтор после неё законен.
+
+    ⚠ **`final` — ровно тот случай, когда хоронить правильно.** Сайт ответил «он
+    вас закрыл»: второго письма этой паре не будет никогда, и ключ, который его не
+    даст сгенерировать, здесь не помеха, а то же самое решение.
+
+    ⚠ **И только так попытку видно в «Доставке».** Запрет выметает черновики пары
+    из пулов (`dating_block.py`); останься письмо `draft`, его снесло бы следом — и
+    отказ исчез бы бесследно, как будто отправки не было.
     """
     letter_id = int(letter.get('id') or 0)
     addressee = str(letter.get('name') or '').strip() or str(letter.get('uid') or '')
@@ -213,6 +222,9 @@ async def dating_mail_send_mark(letter: dict, sent: bool, error: str = '',
         sql = (f"UPDATE {table} SET status = 'sent', sent_at = NOW(), error = ''"
                ' WHERE id = %s')
         args = (letter_id,)
+    elif final:
+        sql = f"UPDATE {table} SET status = 'failed', error = %s WHERE id = %s"
+        args = (str(error or '')[:DATING_MAIL_SEND_ERROR_MAX], letter_id)
     else:
         sql = f'UPDATE {table} SET error = %s WHERE id = %s'
         args = (str(error or '')[:DATING_MAIL_SEND_ERROR_MAX], letter_id)
@@ -234,7 +246,8 @@ async def dating_mail_send_mark(letter: dict, sent: bool, error: str = '',
 
 # ── Приватное ────────────────────────────────────────────────────────────────
 
-async def _deny_check(profile: dict, uid: str, said: str) -> None:
+async def _deny_check(profile: dict, letter: dict, table: str, uid: str,
+                      said: str) -> None:
     """Не значит ли отказ сайта «он закрылся от этой девушки».
 
     ⚠ **Внутри отправки, а не у пяти вызывающих.** Письмо шлют кнопка рассылки,
@@ -255,8 +268,17 @@ async def _deny_check(profile: dict, uid: str, said: str) -> None:
         return
 
     try:
-        if await dating_block_deny(site_id, said):
-            await dating_block_add(site_id, profile_id, uid, reason=said, source='mail')
+        if not await dating_block_deny(site_id, said):
+            return
+
+        # ⚠ Сперва хороним это письмо, потом заносим запрет: тот выметает из пулов
+        # **черновики**, и `draft` снесло бы вместе с прочими — отказ пропал бы из
+        # «Доставки», хотя ради него всё и затевалось.
+        await dating_mail_send_mark(letter, sent=False, error=said, table=table,
+                                    final=True)
+        await dating_block_add(site_id, profile_id, uid,
+                               str(letter.get('name') or ''), reason=said,
+                               source='mail')
     except Exception as e:
         logger_info(f'[dating] отказ письма не разобрался: {e}')
 
