@@ -1,0 +1,92 @@
+#!/bin/sh
+# Не пускает пуш, если указатель подмодуля смотрит на коммит, которого нет в его
+# origin.
+#
+# ⚠ **Ловим то, на чём споткнулись четыре раза за один день.** Автовыкладка
+# (`.github/workflows/deploy.yml`) делает `checkout` с `submodules: recursive` и
+# тянет `py_modules` **из origin по указателю в коммите**, а не рабочую копию с
+# машины. Незапушенный подмодуль роняет её так:
+#
+#     fatal: remote error: upload-pack: not our ref af348fb…
+#     Fetched in submodule path 'py_modules', but it did not contain af348fb…
+#
+# Читается это как поломка выкладки, хотя причина — забытый `git push` в соседнем
+# репозитории. Локальная сюита беды не видит вовсе: она читает рабочую копию.
+#
+# ⚠ **Проверяем все коммиты пуша, а не только верхушку.** Выкладка идёт по
+# верхушке, но промежуточный коммит с битым указателем ломает любой чужой
+# `checkout` на нём — и обнаружится это через неделю у того, кто не виноват.
+#
+# Обойти намеренно: `git push --no-verify`.
+
+set -eu
+
+zero='0000000000000000000000000000000000000000'
+bad=''
+
+# Подмодулей может не быть вовсе (свежая выкачка без `--recursive`) — тогда
+# проверять нечего, и мешать пушу незачем.
+[ -f .gitmodules ] || exit 0
+
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    [ "$local_sha" = "$zero" ] && continue          # удаление ветки
+
+    if [ "$remote_sha" = "$zero" ]; then
+        # Новая ветка: историю целиком не обходим — она может быть длиной в год.
+        commits="$local_sha"
+    else
+        commits=$(git rev-list "$remote_sha..$local_sha")
+    fi
+
+    for path in $(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' \
+                  | awk '{print $2}'); do
+        [ -d "$path/.git" ] || [ -f "$path/.git" ] || continue
+
+        # Указатели, встречающиеся в пушимых коммитах, — по одному разу каждый.
+        wanted=$(for one in $commits; do
+                     git rev-parse "$one:$path" 2>/dev/null || true
+                 done | sort -u)
+
+        for sha in $wanted; do
+            # Есть ли он в origin подмодуля. Смотрим по локальной памяти о нём —
+            # сети это не стоит.
+            if git -C "$path" merge-base --is-ancestor "$sha" \
+                   refs/remotes/origin/HEAD 2>/dev/null \
+               || git -C "$path" branch -r --contains "$sha" 2>/dev/null | grep -q .
+            then
+                continue
+            fi
+
+            # ⚠ Память могла устареть: коммит мог уехать в origin с другой машины.
+            # Прежде чем останавливать человека, спрашиваем сеть — но только здесь,
+            # на пути отказа, а не на каждом пуше.
+            git -C "$path" fetch --quiet origin 2>/dev/null || true
+            if git -C "$path" branch -r --contains "$sha" 2>/dev/null | grep -q .; then
+                continue
+            fi
+
+            bad="$bad
+  $path → $sha"
+        done
+    done
+done
+
+[ -z "$bad" ] && exit 0
+
+cat >&2 <<MESSAGE
+
+  ✗ Пуш остановлен: указатель подмодуля смотрит на коммит, которого нет в origin.
+$bad
+
+  Выкладка тянет подмодуль из origin по указателю и упадёт на
+  «not our ref» — то есть сломается она, а не то, что вы правили.
+
+  Что сделать:
+      git -C <подмодуль> push origin HEAD
+
+  Если это осознанно (ветка не поедет в выкладку):
+      git push --no-verify
+
+MESSAGE
+
+exit 1
