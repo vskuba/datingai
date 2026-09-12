@@ -118,7 +118,11 @@
            внутри — едет вместе с ней. Наполняет его страница. #}
         <button type="button" class="page-tab" data-chat-tab="sent">Доставка<span
             class="tab-fly" data-slot="inviteFly"></span></button>
-        <button type="button" class="page-tab" data-chat-tab="talk">Диалоги</button>
+        {# ⚠ Такой же узел, как у «Доставки», и по той же причине: «кто-то
+           заговорил» надо видеть с любой подвкладки, а не только с этой.
+           Наполняет его страница из ленты событий. #}
+        <button type="button" class="page-tab" data-chat-tab="talk">Диалоги<span
+            class="tab-fly" data-slot="talkFly"></span></button>
 
         {# ⚠ Правый край полосы — **настройки открытой подвкладки**, как у почты.
            У каждой панели свои, и место у них общее: человек ищет «где это
@@ -402,7 +406,8 @@
         {# ⚠ «Диалоги» последними, и порядок тот же, что у писем: **что уйдёт → что
            ушло → что из этого вышло**. Пул правят перед отправкой, журнал читают,
            чтобы понять, дошло ли, а переписку — чтобы увидеть сам разговор. #}
-        <button type="button" class="page-tab" data-fav-tab="talks">Диалоги</button>
+        <button type="button" class="page-tab" data-fav-tab="talks">Диалоги<span
+            class="tab-fly" data-slot="favTalkFly"></span></button>
 
         {# ⚠ **Те же два выключателя, что на «Письмах → Входящие»** — и те же
            имена слотов: флаг один на сайт (`reply_make_on`, `reply_send_on`), а

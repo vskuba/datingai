@@ -28,6 +28,7 @@ import websockets
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.dating_feed import dating_feed_write
 from src.dating.dating_log import dating_log_message_in
 from src.dating.site.site_registry import site_registry_chat
 
@@ -197,9 +198,22 @@ async def _pending_take(socket, profile_id: int, raw, site) -> int:
 
 
 async def _message_save(profile_id: int, message: dict) -> bool:
-    """Кладёт сообщение. Повтор (тот же `message_uid`) молча пропускается."""
+    """Кладёт сообщение. Повтор (тот же `message_uid`) молча пропускается.
+
+    ⚠ Здесь же рождается событие «новый диалог»: первое слово от человека —
+    единственное место, где его видно. Спрашиваем **до** записи, иначе своя же
+    строка и окажется тем «прежним разговором», которого мы ищем.
+    """
     try:
         async with mysql_get_db_async() as db:
+            # Существование, а не счёт: у разговора бывают сотни реплик, а вопрос
+            # тут двоичный. Индекс тот же — `idx_dating_message_dialog`.
+            await db.execute(
+                'SELECT 1 FROM dating_message'
+                " WHERE profile_id = %s AND sender_uid = %s AND direction = 'in'"
+                ' LIMIT 1', (profile_id, message['sender_uid']))
+            first = not await db.fetchone()
+
             await db.execute(
                 'INSERT IGNORE INTO dating_message '
                 '(profile_id, sender_uid, sender_name, text, message_uid) VALUES (%s, %s, %s, %s, %s)',
@@ -208,10 +222,41 @@ async def _message_save(profile_id: int, message: dict) -> bool:
             added = bool(db.rowcount)
             await db.connection.commit()
 
+        if added and first:
+            await _talk_new(profile_id, message)
+
         return added
     except Exception as e:
         logger_info(f'[dating] сообщение не записалось: {e}')
         return False
+
+
+async def _talk_new(profile_id: int, message: dict) -> None:
+    """Отмечает в ленте начало разговора: человек ответил впервые.
+
+    ⚠ **Только живой сокет.** Ту же первую реплику привозит импорт переписки из
+    панели агентства (`dating_chat_panel.py`) — но там их сотни разом, за месяц
+    назад, и лента заполнилась бы «новыми диалогами» годичной давности. Событие
+    здесь про **сейчас**.
+
+    Сбой ленты молчит: она подсказка, а не работа. Не записалось событие — реплика
+    всё равно легла, и разговор виден на своей вкладке.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT site_id FROM dating_profile WHERE id = %s',
+                             (profile_id,))
+            row = await db.fetchone()
+
+        site_id = int((row or {}).get('site_id') or 0)
+        if not site_id:
+            return
+
+        who = str(message.get('sender_name') or '').strip() \
+            or str(message.get('sender_uid') or '')
+        dating_feed_write(site_id, 'talk', f'Новый диалог: {who}', profile_id)
+    except Exception as e:
+        logger_info(f'[dating] начало разговора не отметилось: {e}')
 
 
 async def _confirm(socket, message: dict, site) -> None:

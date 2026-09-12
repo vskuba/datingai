@@ -35,6 +35,9 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_people import DATING_PEOPLE_NAME_MAX, DATING_PEOPLE_UID_MAX
+from src.dating.dating_feed import dating_feed_write
+from src.dating.dating_favorite import (DATING_FAVORITE_STATES,
+                                        DATING_FAVORITE_STATES_SQL)
 from src.dating.dating_site_api import DatingSiteApiError, dating_site_api_call
 
 # Что зовём. Пути из документации сайта.
@@ -152,6 +155,7 @@ async def dating_mail_in_fetch(profile: dict, base: str, password: str) -> dict:
             bodies += 1
 
         await _put(site_id, profile_id, message_id, row, text)
+        await _talk_new(site_id, profile_id, row)
         added += 1
         # ⚠ **«Привезено» и «свежих» — разные числа.** Забор берёт письма от
         # последнего известного минус запас, а первый заход — за несколько суток:
@@ -277,6 +281,51 @@ async def _put(site_id: int, profile_id: int, message_id: int, row: dict,
              _stamp(row.get(DATING_MAIL_IN_DATE)),
              1 if row.get(DATING_MAIL_IN_REPLIED) else 0))
         await db.connection.commit()
+
+
+async def _talk_new(site_id: int, profile_id: int, row: dict) -> None:
+    """Отмечает в ленте начало переписки с избранным: он написал впервые.
+
+    ⚠ **Только избранные, и только первое письмо.** Вкладка «Фавориты → Диалоги»
+    показывает переписку с ними, и счётчик у её названия отвечает на один вопрос:
+    «кто-то из них заговорил?». Письмо от незнакомца — работа «Писем → Входящих»,
+    и там свой вид события.
+
+    ⚠ **Первым считается письмо, после которого писем стало одно.** Спросить «есть
+    ли прежние» **до** записи здесь нельзя: `_put` уже отработал, а вставлял он
+    `INSERT IGNORE` — повтор мы бы приняли за первое слово. Поэтому вопрос задаётся
+    после и считает строки.
+
+    Сбой ленты молчит: она подсказка, а не работа.
+    """
+    user = row.get(DATING_MAIL_IN_USER)
+    user = user if isinstance(user, dict) else {}
+    uid = str(user.get(DATING_MAIL_IN_USER_FIELDS['uid']) or '')
+    if not uid:
+        return
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT COUNT(*) AS n FROM dating_mail_in'
+                             ' WHERE profile_id = %s AND uid = %s',
+                             (int(profile_id), uid))
+            if int(((await db.fetchone()) or {}).get('n') or 0) != 1:
+                return
+
+            # ⚠ Тем же набором состояний, каким их отбирает сама вкладка: возьми
+            # мы шире, счётчик считал бы разговор, которого в списке нет.
+            await db.execute(
+                'SELECT 1 FROM dating_favorite WHERE profile_id = %s AND uid = %s'
+                f'   AND state IN ({DATING_FAVORITE_STATES_SQL}) LIMIT 1',
+                (int(profile_id), uid, *DATING_FAVORITE_STATES))
+            if not await db.fetchone():
+                return
+
+        who = str(user.get(DATING_MAIL_IN_USER_FIELDS['name']) or '').strip() or uid
+        dating_feed_write(int(site_id), 'favtalk', f'Новый диалог: {who}',
+                          int(profile_id))
+    except Exception as e:
+        logger_info(f'[dating] начало переписки с избранным не отметилось: {e}')
 
 
 async def _touch_replied(profile_id: int, message_id: int, replied: bool) -> None:

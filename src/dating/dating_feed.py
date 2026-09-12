@@ -60,7 +60,12 @@ DATING_FEED_TEXT_MAX = 200
 
 # Виды событий. ⚠ Закрытый список: по виду страница красит строку, и вид, о
 # котором она не знает, приехал бы бесцветным.
-DATING_FEED_KINDS = ('mail', 'chat', 'reply', 'invite', 'fav', 'panel', 'warn')
+DATING_FEED_KINDS = ('mail', 'chat', 'reply', 'invite', 'fav', 'panel', 'warn',
+                     # ⚠ Начало разговора — свой вид, а не `chat` и не `fav`. По
+                     # нему считается счётчик у слова «Диалоги», и слейся он с
+                     # общим, у вкладки прыгала бы каждая привезённая реплика.
+                     # Два вида, потому что и вкладки две: чат и письма избранным.
+                     'talk', 'favtalk')
 
 
 def dating_feed_write(site_id: int, kind: str, text: str, profile_id: int = 0) -> str:
