@@ -430,3 +430,52 @@ def _saved(rows: dict):
 
 async def _settings(auth_client, site_id: int) -> dict:
     return (await auth_client.get(f'/api/dating/site/{site_id}')).json()['result']['settings']
+
+
+class TestCompanionAccount:
+    """Учётка для просмотра собеседников: логин и пароль парой.
+
+    ⚠ **Сегодня карточку читают под самой девушкой** (`dating_companion_about`):
+    сайт считает просмотры, и заходы «ниоткуда» выглядят иначе, чем интерес той,
+    кто потом напишет. Эта пара — для работы, которой такая привязка не нужна.
+    """
+
+    async def test_both_live_in_the_work_group(self, rhapsody, monkeypatch):
+        """В «Работе с сайтом», рядом с прочими адресами и учётками: человек ищет
+        настройку там, где видит её работу."""
+        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+        known = {row['key']: row
+                 for row in (await dating_site_list(user=None))['result']['known']}
+
+        assert known['companion_login']['group'] == 'work'
+        assert known['companion_password']['group'] == 'work'
+
+    async def test_password_is_a_secret_and_login_is_not(self, rhapsody, monkeypatch):
+        """⚠ Пароль приходит маской: ответ списка уходит на каждую смену сайта и
+        оседает в журналах браузера. Логин не секрет — его видно на самом сайте."""
+        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+        known = {row['key']: row
+                 for row in (await dating_site_list(user=None))['result']['known']}
+
+        assert known['companion_password']['secret'] is True
+        assert known['companion_login']['secret'] is False
+
+    async def test_both_are_free_fields(self, rhapsody, monkeypatch):
+        """Набора значений у учётки быть не может — она своя у каждого сайта."""
+        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+        known = {row['key']: row
+                 for row in (await dating_site_list(user=None))['result']['known']}
+
+        for key in ('companion_login', 'companion_password'):
+            assert known[key]['options'] == [], key
+            assert known[key]['default'] == '', key
+
+    async def test_saved_password_comes_back_masked(self, auth_client, kept):
+        """Тот же порядок, что у пароля API: сохранили — в списке маска."""
+        await auth_client.put(f'/api/dating/site/{SITE}', json={
+            'settings': {'companion_password': 'тайна', 'companion_login': 'watcher'}})
+
+        got = await _settings(auth_client, SITE)
+
+        assert got['companion_password'] == MASK
+        assert got['companion_login'] == 'watcher', 'логин не секрет — его не маскируют'

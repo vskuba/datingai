@@ -695,3 +695,44 @@ class TestDeliveryFly:
 
         assert 'limit=${FEED_LIMIT}' in page
         assert 'const FEED_LIMIT = 30;' in page
+
+
+class TestPoolHighlight:
+    """Выбрали человека в ленте «Все онлайн» — в пуле подсветилось всё, что ему
+    приготовлено.
+
+    ⚠ Выбрав кого-то, человек спрашивает «а с ним у нас что?». Пул отвечает на это
+    молча, если карточки в нём ничем не отличаются.
+    """
+
+    async def test_every_pool_card_carries_the_uid(self, auth_client):
+        """Без номера в карточке искать её пришлось бы по имени, а имена на сайте
+        повторяются.
+
+        Пулов три — инвайты, письма избранным и рассылка, — и номер нужен всем:
+        подсветку делает один обход по `.mail-card[data-uid]`.
+        """
+        page = (await auth_client.get(PAGE)).text
+
+        assert page.count('data-uid="${esc(one.uid') == 2, \
+            'инвайты или письма избранным остались без номера в карточке'
+        assert page.count('data-uid="${esc(row.uid') == 1, \
+            'карточка рассылки осталась без номера'
+
+    async def test_empty_choice_highlights_nothing(self, auth_client):
+        """⚠ Иначе снятие выбора зажигало бы весь пул разом: карточки без номера
+        сравнялись бы с пустой строкой."""
+        page = (await auth_client.get(PAGE)).text
+        start = page.index('function poolHit(uid)')
+
+        assert 'Boolean(openUid)' in page[start:start + 200]
+
+    async def test_choice_repaints_in_place(self, auth_client):
+        """⚠ Правим классы обходом, а не перерисовкой пула: перерисовка сбросила бы
+        прокрутку списка, в котором человек как раз и ищет."""
+        page = (await auth_client.get(PAGE)).text
+        start = page.index('function poolHitPaint()')
+        window = page[start:start + 300]
+
+        assert "querySelectorAll('.mail-card[data-uid]')" in window
+        assert 'classList.toggle' in window
