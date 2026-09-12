@@ -25,6 +25,7 @@
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.dating_feed import dating_feed_write
 from src.dating.dating_json import dating_json_load
 from src.dating.dating_log import dating_log_write
 from src.dating.dating_send import dating_send_message
@@ -53,38 +54,46 @@ async def dating_invite_send_one(invite: dict) -> dict:
 
     profile = await _profile(profile_id)
     if not profile:
-        return await _fail(invite_id, profile_id, who, 'анкеты больше нет')
+        return await _fail(site_id, invite_id, profile_id, who, 'анкеты больше нет')
 
     try:
         site = await rhapsody_api_site_get(site_id)
     except RhapsodyError as e:
         # Сосед лежит — это «сейчас не отправить», а не «не отправлять».
         # Инвайт остаётся в пуле с причиной и уйдёт следующим заходом.
-        return await _fail(invite_id, profile_id, who, str(e))
+        return await _fail(site_id, invite_id, profile_id, who, str(e))
 
     if not site:
-        return await _fail(invite_id, profile_id, who, f'у соседа нет сайта {site_id}')
+        return await _fail(site_id, invite_id, profile_id, who, f'у соседа нет сайта {site_id}')
 
     try:
         got = await dating_send_message(profile, dating_json_load(site.get('presence')),
                                         str(invite['uid']), str(invite['body']))
     except RhapsodyError as e:
-        return await _fail(invite_id, profile_id, who, str(e))
+        return await _fail(site_id, invite_id, profile_id, who, str(e))
     except Exception as e:
         # Чего не предусмотрели. Круг обязан пережить это и пойти дальше: один
         # странный ответ сайта не повод останавливать отправку по всему сайту.
         logger_info(f'[dating] инвайт #{invite_id} сорвался: {type(e).__name__}: {e}')
 
-        return await _fail(invite_id, profile_id, who, f'{type(e).__name__}: {e}')
+        return await _fail(site_id, invite_id, profile_id, who, f'{type(e).__name__}: {e}')
 
     if not got.get('ok'):
         why = str(got.get('error') or '') or (
             'собеседника нет в чате' if got.get('offline') else 'сайт не принял')
 
-        return await _fail(invite_id, profile_id, who, why)
+        return await _fail(site_id, invite_id, profile_id, who, why)
 
     await dating_invite_send_mark(invite_id, sent=True, error='')
     await dating_log_write(profile_id, 'ok', f'Инвайт ушёл: {who}')
+    # ⚠ **И в ленту событий, а не только в журнал анкеты.** Журнал открывают у
+    # конкретной девушки и постфактум, а вопрос «панель сейчас пишет живым людям?»
+    # задают о сайте целиком и в тот же момент. Отправку видно с любой страницы
+    # раздела — она стоит в полосе вкладок (`api.md`, §3.12).
+    #
+    # «От → кому», а не «инвайт ушёл»: одна девушка зовёт многих, и без обеих
+    # сторон строка не отвечает ни на «кто пишет», ни на «кого позвали».
+    dating_feed_write(site_id, 'invite', f'Инвайт: {_girl(profile)} → {who}', profile_id)
 
     return {'ok': True, 'error': ''}
 
@@ -123,8 +132,24 @@ async def _profile(profile_id: int) -> dict:
     return dict(row) if row else {}
 
 
-async def _fail(invite_id: int, profile_id: int, who: str, why: str) -> dict:
-    """Причина — в строку пула и в журнал анкеты, исход — вызывающему.
+def _girl(profile: dict) -> str:
+    """Как назвать девушку в ленте: имя из анкеты, а нет его — логин.
+
+    Имя привозит чтение анкеты с сайта и заполнено не у всех; логин есть всегда.
+    Пустая левая половина строки («Инвайт:  → David») читалась бы как сбой.
+    """
+    card = dating_json_load(profile.get('profile')) or {}
+
+    return str(card.get('name') or '').strip() or str(profile.get('login') or '')
+
+
+async def _fail(site_id: int, invite_id: int, profile_id: int, who: str,
+                why: str) -> dict:
+    """Причина — в строку пула, в журнал анкеты и в ленту; исход — вызывающему.
+
+    ⚠ `site_id` обязателен и стоит первым: лента отбрасывает событие с нулевым
+    сайтом молча, и забытый аргумент означал бы неудачу, которой не видно нигде,
+    кроме журнала конкретной девушки.
 
     ⚠ Причину храним **до** ответа: страница покажет её на карточке, а человек
     закроет вкладку и вернётся завтра — в ответе HTTP её к тому времени нет.
@@ -132,5 +157,9 @@ async def _fail(invite_id: int, profile_id: int, who: str, why: str) -> dict:
     await dating_invite_send_mark(invite_id, sent=False, error=why)
     await dating_log_write(profile_id, 'fail', f'Инвайт {who}: {why}')
     logger_info(f'[dating] инвайт #{invite_id} не ушёл: {why}')
+    # Неудача — тоже событие сайта, и видом `warn`: «пул полон, а ничего не
+    # уходит» иначе выглядит как остановившийся круг, хотя круг работает и
+    # получает отказ за отказом.
+    dating_feed_write(site_id, 'warn', f'Инвайт не ушёл: {who} — {why}', profile_id)
 
     return {'ok': False, 'error': why}

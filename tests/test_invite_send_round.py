@@ -289,3 +289,102 @@ async def _draft(profile_id: int, error: str = '', when: str = '') -> int:
         await db.connection.commit()
 
     return int(made)
+
+
+class TestFeed:
+    """Лента событий: «От → кому» видно с любой страницы раздела.
+
+    ⚠ Журнал анкеты этого не заменяет: его открывают у конкретной девушки и
+    постфактум, а вопрос «панель сейчас пишет живым людям?» задают о сайте
+    целиком и в тот же момент.
+    """
+
+    async def test_sent_invite_shows_who_wrote_whom(self, girl, monkeypatch):
+        from src.dating import dating_invite_send
+        from src.dating.dating_feed import dating_feed_read
+
+        said = []
+        monkeypatch.setattr(dating_invite_send, 'dating_feed_write',
+                            lambda site_id, kind, text, profile_id=0: said.append(
+                                (site_id, kind, text)) or '')
+        monkeypatch.setattr(dating_invite_send, 'dating_send_message',
+                            _ok_send())
+        monkeypatch.setattr(dating_invite_send, 'rhapsody_api_site_get', _site())
+        await _name(girl, 'Diana')
+        invite_id = await _draft(girl)
+
+        got = await dating_invite_send.dating_invite_send_one(
+            await _invite_row(invite_id))
+
+        assert got['ok']
+        assert said, 'отправка прошла молча — в ленте ничего'
+        site_id, kind, text = said[0]
+        assert kind == 'invite' and site_id == STAND_SITE
+        assert text == 'Инвайт: Diana → Frank', text
+
+    async def test_girl_without_a_name_shows_her_login(self, girl, monkeypatch):
+        """Пустая левая половина («Инвайт:  → Frank») читалась бы как сбой."""
+        from src.dating import dating_invite_send
+
+        said = []
+        monkeypatch.setattr(dating_invite_send, 'dating_feed_write',
+                            lambda site_id, kind, text, profile_id=0: said.append(text) or '')
+        monkeypatch.setattr(dating_invite_send, 'dating_send_message', _ok_send())
+        monkeypatch.setattr(dating_invite_send, 'rhapsody_api_site_get', _site())
+        invite_id = await _draft(girl)
+
+        await dating_invite_send.dating_invite_send_one(await _invite_row(invite_id))
+
+        assert said and said[0].startswith('Инвайт: inv-'), said
+
+    async def test_failure_is_a_warning_in_the_feed(self, girl, monkeypatch):
+        """«Пул полон, а ничего не уходит» иначе выглядит как вставший круг."""
+        from src.dating import dating_invite_send
+
+        said = []
+        monkeypatch.setattr(dating_invite_send, 'dating_feed_write',
+                            lambda site_id, kind, text, profile_id=0: said.append(
+                                (kind, text)) or '')
+        monkeypatch.setattr(dating_invite_send, 'rhapsody_api_site_get', _site())
+
+        async def refused(profile, presence, uid, body):
+            return {'ok': False, 'offline': True}
+
+        monkeypatch.setattr(dating_invite_send, 'dating_send_message', refused)
+        invite_id = await _draft(girl)
+
+        got = await dating_invite_send.dating_invite_send_one(await _invite_row(invite_id))
+
+        assert not got['ok']
+        kind, text = said[0]
+        assert kind == 'warn' and 'собеседника нет в чате' in text, text
+
+
+def _ok_send():
+    async def _send(profile, presence, uid, body):
+        return {'ok': True}
+
+    return _send
+
+
+def _site():
+    async def _got(site_id):
+        return {'id': site_id, 'presence': '{}'}
+
+    return _got
+
+
+async def _name(profile_id: int, name: str) -> None:
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE dating_profile SET profile = %s WHERE id = %s',
+                         ('{"name": "%s"}' % name, int(profile_id)))
+        await db.connection.commit()
+
+
+async def _invite_row(invite_id: int) -> dict:
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT id, site_id, profile_id, uid, name, body'
+                         ' FROM dating_invite WHERE id = %s', (int(invite_id),))
+        row = await db.fetchone()
+
+    return dict(row)
