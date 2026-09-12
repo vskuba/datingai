@@ -108,6 +108,18 @@ DATING_INVITE_SKIP_ALIEN = 'имя не латиницей — обратить�
 DATING_INVITE_REPEAT_SETTING = 'invite_repeat_after'
 DATING_INVITE_REPEAT_DEFAULT = 86400
 
+# Сколько раз за сутки можно позвать **одного** человека.
+#
+# ⚠ **Второй предел обязателен рядом с первым, и порознь они не работают.** Пауза
+# отвечает «как часто», потолок — «сколько всего»: с одной лишь пятиминутной паузой
+# молчащий получил бы под сотню приглашений за день, пока сидит на сайте.
+#
+# ⚠ **Это не `invite_send_max_day`.** Тот про сайт целиком («сколько реплик уходит
+# наружу»), этот — про одного человека. Общий потолок не мешает вылить всю дневную
+# норму на одного и того же.
+DATING_INVITE_REPEAT_MAX_SETTING = 'invite_repeat_max_day'
+DATING_INVITE_REPEAT_MAX_DEFAULT = 10
+
 
 class DatingInviteError(RuntimeError):
     """Набрать пул не вышло. Текст годен для страницы и журнала."""
@@ -372,28 +384,35 @@ async def _invited(site_id: int) -> set:
     приоритетом. Очистка пула не помогала: она сносит черновики, а ушедшее
     остаётся.
 
-    ⚠ **Пауза обязательна, и вот почему.** Без неё круг зовёт молчащего каждый
-    заход, пока тот в ленте: при получасовом сроке это десятки одинаковых
-    «здравствуйте» в сутки от одной девушки — навязчивость, которую человек видит
-    первой. Срок — настройка сайта `invite_repeat_after` (сутки по умолчанию).
+    ⚠ **Держат человека три условия, и каждое своё.**
 
-    ⚠ **Черновик в пуле держит человека независимо от срока.** Он ждёт отправки, и
-    второй просто задвоил бы карточку.
+      **Черновик в пуле** — он ждёт отправки, и второй задвоил бы карточку;
+      **ушёл недавно** — `invite_repeat_after`, «как часто»;
+      **за сутки уже довольно** — `invite_repeat_max_day`, «сколько всего».
+
+    ⚠ **Пауза и потолок порознь не работают.** Без паузы круг зовёт молчащего
+    каждый заход, пока тот в ленте. Без потолка пятиминутная пауза даёт под сотню
+    приглашений за день — навязчивость, которую человек видит первой.
+
+    ⚠ **Сутки скользящие** (`NOW() - INTERVAL 1 DAY`), а не календарные: полночь
+    ничего не значит для того, кто читает сообщения.
     """
     from src.uvicorn.routers.dating.dating_site import dating_site_seconds
 
     after = int(await dating_site_seconds(int(site_id), DATING_INVITE_REPEAT_SETTING)
                 or DATING_INVITE_REPEAT_DEFAULT)
+    per_day = int(await dating_site_seconds(int(site_id),
+                                            DATING_INVITE_REPEAT_MAX_SETTING)
+                  or DATING_INVITE_REPEAT_MAX_DEFAULT)
 
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'SELECT DISTINCT uid FROM dating_invite'
-                ' WHERE site_id = %s'
-                "   AND (status = 'draft'"
-                '        OR sent_at IS NULL'
-                '        OR sent_at > NOW() - INTERVAL %s SECOND)',
-                (int(site_id), after))
+                'SELECT uid FROM dating_invite WHERE site_id = %s GROUP BY uid'
+                "  HAVING SUM(status <> 'sent') > 0"
+                '      OR MAX(sent_at) > NOW() - INTERVAL %s SECOND'
+                '      OR SUM(sent_at > NOW() - INTERVAL 1 DAY) >= %s',
+                (int(site_id), after, per_day))
             rows = await db.fetchall()
     except Exception as e:
         logger_info(f'[dating] готовые инвайты сайта #{site_id} не спросились: {e}')

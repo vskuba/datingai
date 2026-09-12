@@ -5693,6 +5693,18 @@
             && slot('invite-pool').querySelector(`.mail-card[data-index="${index}"]`);
         if (card) card.classList.add('sending');
 
+        // ⚠ **Кнопку гасим на время полёта.** Отправка сценарием идёт десятками
+        // секунд, и человек, не увидев отклика, жмёт ещё раз — так Semen получил
+        // **четыре одинаковых** реплики подряд. Класс `sending` красит карточку,
+        // но щелчки не останавливает: он про вид, а не про действие.
+        //
+        // Это половина защиты, и меньшая: вкладок бывает две, а рядом работает
+        // круг отправки. Настоящий сторож — занятие строки на сервере
+        // (`dating_invite_send._claim`); здесь мы лишь не даём человеку упереться
+        // в него зря.
+        const button = card && card.querySelector('.mail-card-send');
+        if (button) button.disabled = true;
+
         try {
             const got = (await postData(
                 `${BASE}/api/dating/invite/${one.id}/send`, {})).result;
@@ -5708,6 +5720,7 @@
             return;
         } finally {
             if (card) card.classList.remove('sending');
+            if (button) button.disabled = false;
         }
 
         invitePaint();

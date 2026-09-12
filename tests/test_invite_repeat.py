@@ -10,6 +10,7 @@
 Очистка пула не помогала — она сносит черновики, а ушедшее остаётся.
 """
 
+import asyncio
 import uuid
 
 import pytest
@@ -134,3 +135,88 @@ class TestRepeat:
         await _invite(girl, 'sent', ago_sec=90_000)
 
         assert UID in await _invited(STAND_SITE), 'недельную паузу не спросили'
+
+
+class TestNoDouble:
+    """Одну реплику нельзя отправить дважды, сколько бы раз ни попросили.
+
+    ⚠ **Живой случай, ради которого правило и появилось.** Semen Gorbunkov получил
+    четыре одинаковых «Semen, what do you do for fun…» с разницей в 12 секунд:
+    отправка сценарием идёт десятками секунд, кнопка оставалась живой, и человек
+    нажал ещё трижды. Четыре запроса прочитали строку как `draft` раньше, чем
+    первый успел её отметить.
+    """
+
+    async def test_four_at_once_send_one(self, girl, monkeypatch):
+        """⚠ Именно **одновременно**: последовательные вызовы отсёк бы и старый
+        сторож «тот же текст подряд». Ловится только гонка."""
+        from src.dating import dating_invite_send
+
+        sent = []
+
+        async def _send(profile, presence, uid, body):
+            sent.append(body)
+            # Пауза внутри отправки — та самая, в которую пролезали дубли.
+            await asyncio.sleep(0.2)
+
+            return {'ok': True}
+
+        monkeypatch.setattr(dating_invite_send, 'dating_send_message', _send)
+        monkeypatch.setattr(dating_invite_send, 'rhapsody_api_site_get', _site())
+        invite_id = await _invite_row(girl)
+        row = await _row(invite_id)
+
+        got = await asyncio.gather(*(dating_invite_send.dating_invite_send_one(dict(row))
+                                     for _ in range(4)))
+
+        assert len(sent) == 1, f'реплика ушла {len(sent)} раза вместо одного'
+        assert [one['ok'] for one in got].count(True) == 1
+        assert all('уже отправляется' in one['error'] for one in got if not one['ok'])
+
+    async def test_failure_returns_it_to_the_pool(self, girl, monkeypatch):
+        """⚠ И **снимает метку отправки**: иначе неудача выглядела бы удачей и
+        держала бы человека паузой повтора."""
+        from src.dating import dating_invite_send
+
+        async def _refused(profile, presence, uid, body):
+            return {'ok': False, 'offline': True}
+
+        monkeypatch.setattr(dating_invite_send, 'dating_send_message', _refused)
+        monkeypatch.setattr(dating_invite_send, 'rhapsody_api_site_get', _site())
+        invite_id = await _invite_row(girl)
+
+        assert not (await dating_invite_send.dating_invite_send_one(
+            dict(await _row(invite_id))))['ok']
+
+        back = await _row(invite_id)
+
+        assert back['status'] == 'draft', 'строка не вернулась в пул'
+        assert back['sent_at'] is None, 'метка отправки осталась у неотправленного'
+        assert back['error'], 'причина не записана'
+
+
+def _site():
+    async def _got(site_id):
+        return {'id': site_id, 'presence': '{}'}
+
+    return _got
+
+
+async def _invite_row(profile_id: int) -> int:
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO dating_invite (site_id, profile_id, uid, name, body, status)'
+            " VALUES (%s, %s, %s, %s, %s, 'draft')",
+            (STAND_SITE, int(profile_id), UID, 'Кто-то', 'Hi there!'))
+        made = db.lastrowid
+        await db.connection.commit()
+
+    return int(made)
+
+
+async def _row(invite_id: int) -> dict:
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT id, site_id, profile_id, uid, name, body, status,'
+                         ' error, sent_at FROM dating_invite WHERE id = %s', (invite_id,))
+
+        return dict(await db.fetchone())

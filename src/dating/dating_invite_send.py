@@ -52,6 +52,24 @@ async def dating_invite_send_one(invite: dict) -> dict:
     profile_id = int(invite['profile_id'])
     who = str(invite.get('name') or '') or str(invite['uid'])
 
+    # ⚠⚠ **Занимаем строку до отправки — иначе одну реплику пошлют несколько раз.**
+    #
+    # Поймано живьём: Semen Gorbunkov получил **четыре одинаковых** «Semen, what do
+    # you do for fun…» с разницей в 12 секунд. Отправка сценарием идёт десятками
+    # секунд, кнопка на карточке при этом оставалась живой — человек, не увидев
+    # отклика, нажал ещё трижды. Четыре запроса прочитали строку как `draft`
+    # раньше, чем первый успел её отметить, и все четыре ушли.
+    #
+    # Защита «тот же текст подряд не шлём» (`dating_send._said_already`) здесь не
+    # помогает **по устройству**: она читает последнюю реплику диалога, а все
+    # четыре успели прочитать её до того, как хоть одна записалась. Проверка и
+    # запись должны быть одним действием, и здесь это условный `UPDATE`.
+    #
+    # Гонка не только человеческая: круг отправки и кнопка ходят одной дорогой, и
+    # круг вправе взять строку ровно в тот миг, когда по ней щёлкнули.
+    if not await _claim(invite_id):
+        return {'ok': False, 'error': 'инвайт уже отправляется или отправлен'}
+
     profile = await _profile(profile_id)
     if not profile:
         return await _fail(site_id, invite_id, profile_id, who, 'анкеты больше нет')
@@ -101,14 +119,15 @@ async def dating_invite_send_one(invite: dict) -> dict:
 async def dating_invite_send_mark(invite_id: int, sent: bool, error: str) -> None:
     """Отмечает исход отправки в пуле.
 
-    ⚠ Неудача оставляет строку `draft` — см. заголовок модуля. `sent_at` при этом
-    не трогается: он отвечает на вопрос «когда человек это прочитал», и у
-    неотправленного ответа нет.
+    ⚠ Неудача возвращает строку в `draft` — см. заголовок модуля — **и снимает
+    `sent_at`**, поставленный при занятии (`_claim`). Поле отвечает на вопрос
+    «когда человек это прочитал», и у неотправленного ответа нет; оставь мы метку,
+    неудачная попытка выглядела бы удачной и держала бы человека паузой повтора.
     """
     async with mysql_get_db_async() as db:
         await db.execute(
             'UPDATE dating_invite'
-            ' SET status = %s, error = %s, sent_at = IF(%s, NOW(), sent_at)'
+            ' SET status = %s, error = %s, sent_at = IF(%s, NOW(), NULL)'
             ' WHERE id = %s',
             ('sent' if sent else 'draft', str(error or '')[:500],
              1 if sent else 0, int(invite_id)))
@@ -116,6 +135,37 @@ async def dating_invite_send_mark(invite_id: int, sent: bool, error: str) -> Non
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+async def _claim(invite_id: int) -> bool:
+    """Занимает строку под отправку. `False` — её уже взял кто-то другой.
+
+    Условный `UPDATE` — единственный способ сделать «проверить и занять» одним
+    действием: между `SELECT status` и `UPDATE` помещается сколько угодно чужих
+    запросов, а между условием и записью внутри одного `UPDATE` — ни одного.
+
+    ⚠ **Занимаем как «отправлено», а не как «отправляется».** Отдельного состояния
+    нет, и заводить его миграцией ради нескольких секунд полёта не стоит: неудача
+    вернёт строку в `draft` тем же `dating_invite_send_mark`. Цена размена —
+    процесс, умерший ровно посреди отправки, оставит строку `sent` при недошедшей
+    реплике. Обратный порядок хуже: он терял бы запись о **дошедшей**, а
+    непоказанная доставка дороже показанной лишней.
+
+    Сбой базы — отказ занять: не сумев отметить, мы не имеем права слать.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                "UPDATE dating_invite SET status = 'sent', sent_at = NOW()"
+                " WHERE id = %s AND status = 'draft'", (int(invite_id),))
+            taken = int(db.rowcount or 0)
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] инвайт #{invite_id} не занялся: {e}')
+
+        return False
+
+    return taken == 1
+
 
 async def _profile(profile_id: int) -> dict:
     """Анкета, от имени которой пишем. Пусто — её удалили, пока реплика лежала."""
