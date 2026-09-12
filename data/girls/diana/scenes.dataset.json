@@ -1,0 +1,18 @@
+[
+ {"id": "face_front_smile", "prompt": "face close-up straight at camera, gentle smile", "nsfw": false, "face_on": true},
+ {"id": "face_front_neutral", "prompt": "face close-up straight at camera, calm neutral look", "nsfw": false, "face_on": true},
+ {"id": "face_three_quarter", "prompt": "face close-up, head turned three quarters to the side", "nsfw": false, "face_on": true},
+ {"id": "face_profile", "prompt": "face close-up, full side profile view", "nsfw": false, "face_on": true},
+ {"id": "face_laughing", "prompt": "face close-up, open laughing smile, eyes slightly closed", "nsfw": false, "face_on": true},
+ {"id": "face_thinking", "prompt": "face close-up, looking slightly aside, thoughtful", "nsfw": false, "face_on": true},
+ {"id": "half_body_casual", "prompt": "half body photo, white t-shirt, arms relaxed", "nsfw": false, "face_on": true},
+ {"id": "half_body_smart", "prompt": "half body photo, light blouse, city street behind", "nsfw": false, "face_on": true},
+ {"id": "waist_up_outdoor", "prompt": "waist-up photo, autumn park behind, soft evening light", "nsfw": false, "face_on": true},
+ {"id": "waist_up_cafe", "prompt": "waist-up photo, cafe table with coffee cup, warm light", "nsfw": false, "face_on": true},
+ {"id": "full_body_street", "prompt": "full body photo, jeans and sneakers, old european street", "nsfw": false, "face_on": true},
+ {"id": "full_body_sea", "prompt": "full body photo, light summer dress, sea shore behind", "nsfw": false, "face_on": true},
+ {"id": "sport_hoodie", "prompt": "half body photo, gray hoodie, sport hall behind", "nsfw": false, "face_on": true},
+ {"id": "evening_dress", "prompt": "half body photo, dark evening dress, warm bokeh lights", "nsfw": false, "face_on": true},
+ {"id": "morning_kitchen", "prompt": "half body photo, kitchen with morning sun, mug in hands", "nsfw": false, "face_on": true},
+ {"id": "no_makeup_close", "prompt": "face close-up without makeup, gray daylight, honest look", "nsfw": false, "face_on": true}
+]
