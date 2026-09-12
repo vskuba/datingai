@@ -22,8 +22,6 @@
 виден клиенту.
 """
 
-import asyncio
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -50,16 +48,12 @@ from src.dating.dating_login import (DatingLoginError, dating_login_run,
                                      dating_login_session_all, dating_login_session_close,
                                      dating_login_session_close_old, dating_login_ws_capture)
 from src.dating.dating_presence import dating_presence_probe, dating_presence_ready
+from src.dating.dating_status import dating_status_probe_site, dating_status_write
 from src.dating.dating_profile_cache import dating_profile_cache_refresh
 from src.dating.dating_send import dating_send_message
 from src.uvicorn.routers.dating.dating_profile import dating_profile_row, dating_profile_site
 
 router = APIRouter(prefix='/api/dating/profile', tags=['dating'])
-
-# Сколько учёток опрашиваем разом. Замер: один запрос к сайту идёт ~0.6с, значит
-# двести учёток раз в 15 секунд требуют девяти параллельных — берём с запасом.
-DATING_PROFILE_ACTION_PROBE_PARALLEL = 16
-
 
 class DatingProfileLogin(BaseModel):
     """Вход под учёткой: в какой сессии и каким сценарием."""
@@ -603,59 +597,29 @@ async def dating_profile_action_probe(site_id: int = 0,
     """Опрашивает учётки сайта: держит онлайн и снимает счётчики.
 
     Идёт по HTTP с сохранёнными cookie, без браузера — замер на живом сайте:
-    вкладка Chromium стоит ~143 МБ, а клиент с cookie единицы килобайт. Ради
-    этого страница и зовёт эту ручку раз в 15 секунд, а не гоняет сценарии.
+    вкладка Chromium стоит ~143 МБ, а клиент с cookie единицы килобайт.
 
-    Опрашиваются разом: у двухсот учёток последовательный круг занял бы минуты,
-    а параллельный укладывается в секунды (`DATING_PROFILE_ACTION_PROBE_PARALLEL`).
+    ⚠ **Теперь это не единственный опрашивающий.** То же самое делает круг
+    воркера (`dating_status_round.py`), и делает независимо от того, открыта ли
+    панель: прежде статус двигала только эта ручка, и у анкеты без смен он не
+    менялся неделями, пока никто не смотрел. Ручка осталась ради **немедленного**
+    ответа — открыл страницу, нажал, увидел сейчас, а не через минуту.
+
+    Работа у обоих одна (`dating_status_probe_site`): правило «`last_seen_at`
+    двигает только подтверждённый вход» и правило «в «Ошибки» — только смену
+    состояния» знать по-разному им нельзя.
     """
     site = await dating_profile_site(site_id) if site_id else None
-    presence = dating_json_load((site or {}).get('presence'))
-    if not await dating_presence_ready(presence, int(site_id)):
+    got = await dating_status_probe_site(int(site_id),
+                                         dating_json_load((site or {}).get('presence')))
+    if not got['ready']:
         raise HTTPException(
             status_code=422,
             detail='у сайта не настроено присутствие: заполните «Присутствие: '
                    'настройка» на странице «Сайты»')
 
-    async with mysql_get_db_async() as db:
-        # ⚠ `site_id` обязателен: по нему разрешается настройка присутствия
-        # (`dating_heartbeat_config`). Без него опрос падал в «у сайта не
-        # настроено присутствие» у сайта, где оно настроено и работает.
-        await db.execute('SELECT id, login, site_id, status, storage_state FROM dating_profile '
-                         ' WHERE site_id = %s AND storage_state IS NOT NULL', (int(site_id),))
-        profiles = [dict(row) for row in (await db.fetchall() or [])]
-
-    if not profiles:
-        return {'result': {'checked': 0, 'online': 0}}
-
-    limit = asyncio.Semaphore(DATING_PROFILE_ACTION_PROBE_PARALLEL)
-
-    async def probe(profile):
-        async with limit:
-            return profile, await dating_presence_probe(profile, presence)
-
-    done = await asyncio.gather(*(probe(profile) for profile in profiles), return_exceptions=False)
-
-    async with mysql_get_db_async() as db:
-        for profile, result in done:
-            await _probe_write(db, int(profile['id']), result)
-        await db.connection.commit()
-
-    # В журнал ошибок — только смена состояния, а не каждый неудачный круг: опрос
-    # идёт раз в 15 секунд, и сотня учёток залила бы вкладку за минуту одним и тем
-    # же. Текущее состояние и так видно на карточке.
-    for profile, result in done:
-        if result['status'] != 'online' and str(profile.get('status') or '') == 'online':
-            await rhapsody_api_error_write('dating', f"учётка «{profile['login']}» ушла из сети: "
-                                                f"{result['error'] or result['status']}",
-                                      context={'profile_id': profile['id'], 'site_id': site_id,
-                                               'where': 'опрос присутствия'})
-
-    online = sum(1 for _, r in done if r['status'] == 'online')
-
-    return {'result': {'checked': len(done), 'online': online,
-                       'profiles': [{'id': g['id'], 'status': r['status'], 'unread': r['unread'],
-                                  'error': r['error'], 'ms': r['ms']} for g, r in done]}}
+    return {'result': {'checked': got['checked'], 'online': got['online'],
+                       'profiles': got['profiles']}}
 
 
 @router.post('/{profile_id}/ping', include_in_schema=False)
@@ -684,7 +648,7 @@ async def dating_profile_action_ping(profile_id: int,
     result = await dating_presence_probe(profile, presence)
 
     async with mysql_get_db_async() as db:
-        await _probe_write(db, profile_id, result)
+        await dating_status_write(db, profile_id, result)
         await db.connection.commit()
 
     # В журнал — каждый пинг, в отличие от кругового опроса: там строка на каждую
@@ -844,28 +808,5 @@ async def _session_open_for(site: dict, profile: dict) -> str:
     return await rhapsody_api_session_open(url=site['url'], name=str(profile['login'])[:100],
                                           site_id=int(site['id']),
                                           storage_state=profile.get('storage_state') or {})
-
-
-async def _probe_write(db, profile_id: int, result: dict) -> None:
-    """Кладёт итог опроса присутствия в карточку учётки. Без `commit` — его делает
-    вызвавший: круговой опрос пишет сотню строк одной транзакцией.
-
-    Одна на круговой опрос (`/probe`) и на пинг одной анкеты (`/{id}/ping`): у
-    результата есть правило, которое нельзя знать по-разному в двух местах, —
-    **`last_seen_at` двигает только подтверждённый вход.** Смысл поля «когда сайт
-    последний раз признал учётку», а не «когда мы стучались»; сдвинь его неудачный
-    опрос — и по колонке «Вход» уже не отличить живую анкету от той, что отвалилась
-    неделю назад.
-
-    `unread = -1` («не спрашивали») кладём нулём: колонка целочисленная и означает
-    количество, а минус первое письмо ничего не значит.
-    """
-    seen = 'NOW()' if result['status'] == 'online' else 'last_seen_at'
-    await db.execute(
-        f'UPDATE dating_profile SET status = %s, unread = %s, last_error = %s, '
-        f'       last_seen_at = {seen} WHERE id = %s',
-        (result['status'],
-         result['unread'] if result['unread'] >= 0 else 0,
-         result['error'], int(profile_id)))
 
 

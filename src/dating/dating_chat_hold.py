@@ -55,6 +55,10 @@ from src.dating.dating_favorite_round import (DATING_FAVORITE_ROUND_TICK_SEC,
                                               dating_favorite_round_run)
 from src.dating.dating_invite_round import (DATING_INVITE_ROUND_TICK_SEC,
                                             dating_invite_round_run)
+from src.dating.dating_invite_send_round import (DATING_INVITE_SEND_ROUND_TICK_SEC,
+                                                 dating_invite_send_round_run)
+from src.dating.dating_status_round import (DATING_STATUS_ROUND_TICK_SEC,
+                                            dating_status_round_run)
 from src.dating.dating_reply_round import (DATING_REPLY_ROUND_TICK_SEC,
                                            dating_reply_round_run)
 from src.dating.dating_send_round import (DATING_SEND_ROUND_TICK_SEC,
@@ -203,10 +207,21 @@ async def dating_chat_hold_run(seconds: float) -> dict:
     # письма, то есть первое звено цепочки (`dating_favorite_round.py`).
     stars = asyncio.create_task(_favorite_loop(deadline))
 
-    # Пул инвайтов. ⚠ **Готовит и не отправляет**, как рассылка: реплика уходит
-    # живому человеку в чат, и решение «писать этому сейчас» остаётся за человеком —
-    # кнопкой на карточке. Кругового отправителя у инвайтов нет вовсе.
+    # Пул инвайтов. ⚠ **Готовит и не отправляет** — как рассылка, и по той же
+    # причине: «набрать» и «послать наружу» это два решения и два выключателя.
     invites = asyncio.create_task(_invite_loop(deadline))
+
+    # Отправка инвайтов. ⚠ Своим кругом, а не внутри почтового: там письма, здесь
+    # чат — другой транспорт, другая свежесть (реплика зовёт того, кто **сейчас** в
+    # чате) и свои пауза с потолком (`dating_invite_send_round.py`).
+    invites_out = asyncio.create_task(_invite_send_loop(deadline))
+
+    # Опрос: жив ли вход у анкеты. ⚠ **Не присутствие и не восстановление.** Тот
+    # бьёт, чтобы держать в сети, второй чинит упавший вход; этот только
+    # спрашивает и записывает — иначе колонка «В сети» показывает то, что записала
+    # последняя открытая страница, и у анкеты без смен это может быть неделя
+    # назад (`dating_status_round.py`).
+    asking = asyncio.create_task(_status_loop(deadline))
 
     # Переписка с избранными: письма тем, кто отвечал, но замолчал. ⚠ **Готовит и
     # не отправляет**, как рассылка; уносит письма общий круг отправки, в часы
@@ -249,6 +264,8 @@ async def dating_chat_hold_run(seconds: float) -> dict:
         stars.cancel()
         revive_talk.cancel()
         invites.cancel()
+        invites_out.cancel()
+        asking.cancel()
         panel.cancel()
         for held in holders.values():
             held['task'].cancel()
@@ -545,6 +562,33 @@ async def _invite_loop(deadline: float) -> None:
     """
     await dating_round_offset_loop(deadline, DATING_INVITE_ROUND_TICK_SEC,
                                    'инвайтов', dating_invite_round_run)
+
+
+async def _invite_send_loop(deadline: float) -> None:
+    """Круг отправки инвайтов: реплики уходят в чат сами, по одной.
+
+    Тик — пятнадцать секунд, а шлёт круг по своему сроку (`invite_send_every`,
+    обычно минута): большинство тиков только смотрят, не пора ли.
+
+    ⚠ Смещение пояса нужно: смены отправки те же, что у набора
+    (`invite_schedule`), и заданы они местным временем.
+    """
+    await dating_round_offset_loop(deadline, DATING_INVITE_SEND_ROUND_TICK_SEC,
+                                   'отправки инвайтов', dating_invite_send_round_run)
+
+
+async def _status_loop(deadline: float) -> None:
+    """Круг опроса: колонка «В сети» свежая без открытой страницы.
+
+    Тик — пятнадцать секунд, а спрашивает круг по сроку сайта (`probe_every`,
+    обычно минута): большинство тиков только смотрят, кому пора.
+
+    ⚠ Расписания **не спрашивает**, поэтому и смещения пояса ему не нужно: «жив
+    ли вход» — вопрос круглосуточный, по нему смотрят и ночью. Тот же довод, что
+    у круга админ-панели.
+    """
+    await dating_round_loop(deadline, DATING_STATUS_ROUND_TICK_SEC,
+                            'опроса', dating_status_round_run)
 
 
 async def _favorite_mail_loop(deadline: float) -> None:

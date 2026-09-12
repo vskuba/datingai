@@ -28,8 +28,8 @@ from src.dating.dating_revive_site import (dating_revive_site_error_write,
 # Как часто смена сверяет вход анкет с сайтом.
 DATING_REVIVE_PERIOD_SEC = 60
 
-# Сколько опросов идёт разом. Столько же и по той же причине берёт ручка опроса
-# (`DATING_PROFILE_ACTION_PROBE_PARALLEL`): опрос — это единицы килобайт по HTTP, и
+# Сколько опросов идёт разом. Столько же и по той же причине берёт круговой опрос
+# (`DATING_STATUS_PARALLEL`): опрос — это единицы килобайт по HTTP, и
 # двести анкет подряд не уложились бы в минуту круга. Входы этим числом не
 # ограничены — они идут строго по одному, вкладка Chromium стоит куда дороже.
 DATING_REVIVE_PROBE_PARALLEL = 16

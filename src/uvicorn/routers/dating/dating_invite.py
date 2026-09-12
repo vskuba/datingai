@@ -9,15 +9,18 @@
 ⚠ **Шаблона у инвайта нет.** Текст сочиняет агент под конкретного человека, и
 `generate` не принимает списка шаблонов — принимать было бы нечего.
 
-⚠ **Отправка идёт в чат, а не в почту сайта.** Поэтому здесь
-`dating_send_message` (тот же путь, что у кнопки в окне переписки и у автоответа),
-а не `dating_mail_send_one`. Разница видна и в ответе: «принял ли сайт кадр» — это
-не «дошло до адресата», и путать их дорого (`dating_send.py`).
+⚠ **Отправка идёт в чат, а не в почту сайта.** Дорога у неё своя —
+`dating_invite_send.py` поверх `dating_send_message` (тот же путь, что у кнопки в
+окне переписки и у автоответа), а не `dating_mail_send_one`. Разница видна и в
+ответе: «принял ли сайт кадр» — это не «дошло до адресата», и путать их дорого
+(`dating_send.py`).
 
 ⚠ **Отправку запирает выключатель сайта** `invite_send_on`, снятый по умолчанию.
-Кругового отправителя у инвайтов нет вовсе, но флаг нужен: он отвечает на вопрос
-«можно ли сейчас писать наружу с этого сайта», и запертая кнопка честнее кнопки,
-которая пишет живому человеку по неосторожному щелчку.
+Он же и включает круг отправки (`dating_invite_send_round.py`): реплики уходят
+сами, а кнопка здесь остаётся для проверки текста руками и для тех строк, что
+круг пропустил с ошибкой. Запертая кнопка честнее кнопки, которая пишет живому
+человеку по неосторожному щелчку, — а запертый круг честнее круга, который делает
+это без спроса и молча.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -32,13 +35,9 @@ from src.dating.dating_invite import (DATING_INVITE_BATCH_DEFAULT,
                                       DatingInviteError, dating_invite_make,
                                       dating_invite_pool_left)
 from src.dating.dating_invite_round import dating_invite_round_next
+from src.dating.dating_invite_send import dating_invite_send_one
 from src.dating.dating_json import dating_json_load
-from src.dating.dating_log import dating_log_write
 from src.dating.dating_mail_agent import DATING_INVITE_MAX
-from src.dating.dating_send import dating_send_message
-from src.rhapsody.rhapsody_api import RhapsodyError
-from src.uvicorn.routers.dating.dating_profile import (dating_profile_row,
-                                                       dating_profile_site)
 
 router = APIRouter(prefix='/api/dating/invite', tags=['dating'])
 
@@ -77,7 +76,8 @@ async def dating_invite_list(site_id: int = 0, status_: str = 'draft',
             `delivery` — не статус, а вопрос: «что происходило с отправкой».
             Он шире перечисления `sent,failed`, и по той же причине, что у писем:
             неудачная отправка **оставляет инвайт в пуле** (`draft` с непустой
-            причиной, см. `_mark`), чтобы её можно было повторить. Спрашивай
+            причиной, см. `dating_invite_send_mark`), чтобы её можно было
+            повторить — рукой, потому что круг такую строку не берёт. Спрашивай
             подвкладка `sent,failed`, она молчала бы ровно о тех репликах, ради
             которых на неё и заходят, — о не дошедших.
 
@@ -188,9 +188,13 @@ async def dating_invite_send(invite_id: int,
         HTTPException: 404 — инвайта нет; 403 — отправка у сайта снята;
             409 — не ушло, с причиной словами.
 
-    ⚠ **Отправку заводит человек, а не круг.** Реплика уходит живому человеку в
-    чат, и решение «этому написать сейчас» принимается по прочтении — на карточке,
-    где текст перед глазами.
+    ⚠ **Кнопка — не единственный отправитель.** Реплики уходят сами
+    (`dating_invite_send_round.py`); кнопка остаётся тем, чем была при отладке:
+    ею проверяют текст глазами и досылают то, что круг пропустил с ошибкой —
+    такую строку он не берёт до вмешательства человека.
+
+    Отправляют оба **одной дорогой** (`dating_invite_send_one`): отметка исхода,
+    запись в журнал и то, что считать удачей, разойтись у них не должны.
 
     ⚠ **403 при снятом выключателе, а не молчаливый отказ.** Кнопку на странице
     запирает тот же флаг, но запрет обязан стоять и здесь: страницу открывают в
@@ -218,34 +222,12 @@ async def dating_invite_send(invite_id: int,
             detail='отправка инвайтов у сайта снята — поднимите «отправка '
                    'инвайтов» в полосе подвкладок')
 
-    profile = await dating_profile_row(int(invite['profile_id']))
-
-    try:
-        site = await dating_profile_site(site_id)
-        got = await dating_send_message(profile, dating_json_load(site.get('presence')),
-                                        str(invite['uid']), str(invite['body']))
-    except RhapsodyError as e:
-        await _mark(invite_id, sent=False, error=str(e))
-
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-    except HTTPException:
-        raise
-
-    if not got.get('ok'):
-        # ⚠ Причину храним **до** ответа: страница покажет её на карточке, а человек
-        # закроет вкладку и вернётся завтра — в ответе HTTP её к тому времени нет.
-        why = str(got.get('error') or '') or (
-            'собеседника нет в чате' if got.get('offline') else 'сайт не принял')
-        await _mark(invite_id, sent=False, error=why)
-        await dating_log_write(int(invite['profile_id']), 'fail',
-                               f"Инвайт {invite['name'] or invite['uid']}: {why}")
-        logger_info(f'[dating] инвайт #{invite_id} не ушёл: {why}')
-
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=why)
-
-    await _mark(invite_id, sent=True, error='')
-    await dating_log_write(int(invite['profile_id']), 'ok',
-                           f"Инвайт ушёл: {invite['name'] or invite['uid']}")
+    got = await dating_invite_send_one(invite)
+    if not got['ok']:
+        # Причина уже лежит в строке пула и в журнале — её положил отправитель:
+        # человек закроет вкладку и вернётся завтра, а в ответе HTTP её к тому
+        # времени нет.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=got['error'])
 
     return {'result': await _row(invite_id)}
 
@@ -325,24 +307,6 @@ async def _send_on(site_id: int) -> bool:
         return False
 
     return bool((row or {}).get('invite_send_on'))
-
-
-async def _mark(invite_id: int, sent: bool, error: str) -> None:
-    """Отмечает исход отправки.
-
-    ⚠ **Неудача оставляет инвайт в пуле** (`draft` с непустой причиной), а не
-    переводит в `failed`. Отказ обычно временный — собеседник вышел из чата, вход
-    не прошёл, — и повторить надо тем же нажатием. `failed` означал бы «больше не
-    пробуем», чего никто не решал. То же правило, что у писем.
-    """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            "UPDATE dating_invite"
-            " SET status = %s, error = %s, sent_at = IF(%s, NOW(), sent_at)"
-            " WHERE id = %s",
-            ('sent' if sent else 'draft', str(error or '')[:500],
-             1 if sent else 0, int(invite_id)))
-        await db.connection.commit()
 
 
 async def _row(invite_id: int) -> dict:

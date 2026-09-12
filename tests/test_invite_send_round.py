@@ -1,0 +1,291 @@
+"""Круг отправки инвайтов: кого берёт, когда молчит и чем ограничен.
+
+⚠ **Ни одна реплика наружу не уходит.** Сама отправка (`dating_invite_send_one`)
+подменена: настоящая ушла бы живому человеку в чат. Проверяется здесь **отбор** —
+кого круг берёт и почему пропускает; что отправитель делает с ответом сайта,
+проверяет `tests/test_invite.py` на кнопке, а дорога у них одна.
+
+⚠ Сайт и анкеты — стендовые (`999_343`): круг ходит по всем сайтам, и живой номер
+означал бы работу по настоящим анкетам.
+"""
+
+import time
+import uuid
+
+import pytest
+
+from mysql_.mysql_ import mysql_get_db_async
+
+from src.dating import dating_invite_send_round
+from src.dating.dating_invite_send_round import (DATING_INVITE_SEND_EVERY_MIN,
+                                                 dating_invite_send_round_run)
+
+pytestmark = pytest.mark.chat
+
+STAND_SITE = 999_343
+
+# Пустой стенд для проверок самого отбора: ни анкет, ни пула.
+BARE_SITE = 999_779
+
+# Смена на все сутки: круг сверяет часы, а тест не про часы.
+ALWAYS = '[{"from": "00:00", "to": "23:45"}]'
+
+
+@pytest.fixture(autouse=True)
+def no_pause(monkeypatch):
+    """Снимает паузу между репликами: она про живой сайт, а не про отбор."""
+    dating_invite_send_round._sent_at.clear()
+    monkeypatch.setattr(dating_invite_send_round, '_every', _answer(0))
+
+    yield
+
+    dating_invite_send_round._sent_at.clear()
+
+
+@pytest.fixture
+def site(monkeypatch):
+    """⚠⚠ Сужает **отбор** круга до стенда — и не трогает флаг в базе.
+
+    Правило общее (`testing.md`): тест, зовущий круг, подменяет его отбор, а не
+    только действие. Здесь у него есть вторая, более острая причина: **этот же
+    круг крутит живой воркер в соседнем контейнере**, по той же базе. Подними мы
+    `invite_send_on` у строки, воркер увидел бы её раньше теста, взял его же
+    черновики и попробовал отправить их по-настоящему — а его отправку никакой
+    `monkeypatch` не подменяет: это другой процесс.
+
+    Поймано флейком: `test_one_per_pass` падал через раз, потому что одну из трёх
+    реплик успевал забрать воркер.
+
+    Отбор возвращаем прямо, минуя базу: строка сайта так и остаётся `is_gone = 1`
+    с опущенным флагом, и живому кругу её не видно вовсе.
+    """
+    async def ours():
+        return [{'site_id': STAND_SITE, 'invite_schedule': ALWAYS}]
+
+    monkeypatch.setattr(dating_invite_send_round, '_sites', ours)
+
+    return STAND_SITE
+
+
+@pytest.fixture
+async def girl(auth_client):
+    """Анкета стенда, которая **в сети**: без этого круг её не берёт."""
+    profile_id = int((await auth_client.post('/api/dating/profile', json={
+        'site_id': STAND_SITE,
+        'login': f'inv-{uuid.uuid4().hex[:8]}@example.com',
+        'password': 'x'})).json()['result'])
+
+    await _status(profile_id, 'online')
+
+    yield profile_id
+
+    async with mysql_get_db_async() as db:
+        await db.execute('DELETE FROM dating_invite WHERE profile_id = %s', (profile_id,))
+        await db.execute('DELETE FROM dating_profile WHERE id = %s', (profile_id,))
+        await db.connection.commit()
+
+
+@pytest.fixture
+def sent(monkeypatch):
+    """Перехваченная отправка: список ушедших вместо похода на сайт."""
+    got = []
+
+    async def _send(invite):
+        got.append(dict(invite))
+
+        return {'ok': True, 'error': ''}
+
+    monkeypatch.setattr(dating_invite_send_round, 'dating_invite_send_one', _send)
+
+    return got
+
+
+class TestPicks:
+    """Кого круг берёт."""
+
+    async def test_draft_of_an_online_girl_goes(self, site, girl, sent):
+        await _draft(girl)
+
+        got = await dating_invite_send_round_run()
+
+        assert got['sent'] == 1 and len(sent) == 1
+
+    async def test_one_per_pass(self, site, girl, sent):
+        """⚠ По одной за заход: пул, ушедший залпом, — это робот, чем он и является."""
+        for _ in range(3):
+            await _draft(girl)
+
+        assert (await dating_invite_send_round_run())['sent'] == 1
+        assert len(sent) == 1
+
+    async def test_oldest_goes_first(self, site, girl, sent):
+        """Реплика сочинялась под того, кто был в чате тогда: чем дольше лежит,
+        тем меньше от неё толку."""
+        first = await _draft(girl, when='2026-09-01 10:00:00')
+        await _draft(girl, when='2026-09-02 10:00:00')
+
+        await dating_invite_send_round_run()
+
+        assert sent[0]['id'] == first
+
+
+class TestSkips:
+    """Кого не берёт — и это главное, потому что реплика уходит живому человеку."""
+
+    async def test_offline_girl_writes_nothing(self, site, girl, sent):
+        """Реплика уходит её сессией, а ответ читать некому, если её нет."""
+        await _draft(girl)
+        await _status(girl, 'offline')
+
+        assert (await dating_invite_send_round_run())['sent'] == 0
+        assert not sent
+
+    async def test_disabled_girl_writes_nothing(self, site, girl, sent):
+        """«Не ведём» значит не ведём совсем."""
+        await _draft(girl)
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE dating_profile SET enabled = 0 WHERE id = %s', (girl,))
+            await db.connection.commit()
+
+        assert (await dating_invite_send_round_run())['sent'] == 0
+
+    async def test_row_with_an_error_waits_for_a_human(self, site, girl, sent):
+        """⚠ Взявшись за неудачную строку снова, круг зациклился бы на отказе
+        сайта («слишком часто») ровно тогда, когда тот просит остановиться."""
+        await _draft(girl, error='собеседника нет в чате')
+
+        assert (await dating_invite_send_round_run())['sent'] == 0
+        assert not sent
+
+    async def test_outside_the_shift_nothing_goes(self, girl, sent, monkeypatch):
+        """Реплика в четыре утра выдаёт робота вернее любого текста.
+
+        ⚠ Смена считается **от текущей минуты**, а не вписана числом: тест с
+        постоянными часами зеленел бы или краснел смотря по времени прогона —
+        ровно тот флейк, что уже описан у почтовых тестов.
+        """
+        hour = (time.gmtime().tm_hour + 6) % 24
+        away = '[{"from": "%02d:00", "to": "%02d:15"}]' % (hour, hour)
+
+        async def dead_hours():
+            return [{'site_id': STAND_SITE, 'invite_schedule': away}]
+
+        monkeypatch.setattr(dating_invite_send_round, '_sites', dead_hours)
+        await _draft(girl)
+
+        assert (await dating_invite_send_round_run())['sent'] == 0
+        assert not sent
+
+    async def test_day_cap_stops_the_round(self, site, girl, sent, monkeypatch):
+        """Потолок считается **по факту отправки**, а не по попыткам."""
+        monkeypatch.setattr(dating_invite_send_round, '_max_day', _answer(0))
+        await _draft(girl)
+
+        assert (await dating_invite_send_round_run())['sent'] == 0
+        assert not sent
+
+
+class TestSelection:
+    """Сам отбор сайтов — на настоящем `_sites`, без подмены.
+
+    ⚠ Стенд здесь **свой и пустой** (`999_779`): у него нет ни пула, ни анкет, и
+    живой воркер, увидев поднятый флаг, не найдёт что отправить. Проверять флаг на
+    стенде с черновиками значило бы отдать их ему.
+    """
+
+    async def test_site_without_the_switch_is_not_taken(self):
+        await _flag(BARE_SITE, on=False)
+
+        assert BARE_SITE not in [int(row['site_id'])
+                                 for row in await dating_invite_send_round._sites()]
+
+    async def test_site_with_the_switch_is_taken(self):
+        """⚠ Поднятый `invite_send_on` — это и есть решение «наружу писать»."""
+        try:
+            await _flag(BARE_SITE, on=True)
+
+            assert BARE_SITE in [int(row['site_id'])
+                                 for row in await dating_invite_send_round._sites()]
+        finally:
+            await _flag(BARE_SITE, on=False)
+
+    async def test_gone_site_is_not_taken(self):
+        """Закладку убрали у соседа — писать с неё некому."""
+        try:
+            await _flag(BARE_SITE, on=True, gone=True)
+
+            assert BARE_SITE not in [int(row['site_id'])
+                                     for row in await dating_invite_send_round._sites()]
+        finally:
+            await _flag(BARE_SITE, on=False)
+
+
+class TestPause:
+    """Пауза между репликами."""
+
+    async def test_second_pass_in_a_row_waits(self, site, girl, sent, monkeypatch):
+        monkeypatch.setattr(dating_invite_send_round, '_every', _answer(600))
+        await _draft(girl)
+        await _draft(girl)
+
+        assert (await dating_invite_send_round_run())['sent'] == 1
+        assert (await dating_invite_send_round_run())['sent'] == 0, \
+            'вторая реплика ушла, не дождавшись паузы'
+
+    async def test_hard_floor_beats_the_setting(self):
+        """⚠ Настройку правят руками, и «5» превратило бы смену в очередь из
+        сотен реплик в час — то самое, от чего пауза и заведена."""
+        dating_invite_send_round._sent_at.clear()
+
+        assert DATING_INVITE_SEND_EVERY_MIN >= 20
+
+
+# ── Вспомогательное ──────────────────────────────────────────────────────────
+
+def _answer(value):
+    """Подменённая настройка: всегда одно и то же число."""
+    async def _got(site_id):
+        return value
+
+    return _got
+
+
+async def _flag(site_id: int, on: bool, gone: bool = False) -> None:
+    """Выключатель отправки у стендового сайта."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO dating_site (site_id, name, invite_send_on, invite_schedule, is_gone)'
+            ' VALUES (%s, %s, %s, %s, %s)'
+            ' ON DUPLICATE KEY UPDATE invite_send_on = VALUES(invite_send_on),'
+            '                         is_gone = VALUES(is_gone)',
+            (int(site_id), 'Стенд DatingAi: отбор', 1 if on else 0, ALWAYS,
+             1 if (gone or not on) else 0))
+        await db.connection.commit()
+
+
+async def _status(profile_id: int, status: str) -> None:
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE dating_profile SET status = %s WHERE id = %s',
+                         (status, int(profile_id)))
+        await db.connection.commit()
+
+
+async def _draft(profile_id: int, error: str = '', when: str = '') -> int:
+    """Реплика в пуле. Возвращает её номер."""
+    async with mysql_get_db_async() as db:
+        if when:
+            await db.execute(
+                'INSERT INTO dating_invite (site_id, profile_id, uid, name, body,'
+                " status, error, created_at) VALUES (%s, %s, %s, %s, %s, 'draft', %s, %s)",
+                (STAND_SITE, int(profile_id), f'u{uuid.uuid4().hex[:8]}', 'Frank',
+                 'Привет!', error, when))
+        else:
+            await db.execute(
+                'INSERT INTO dating_invite (site_id, profile_id, uid, name, body,'
+                " status, error) VALUES (%s, %s, %s, %s, %s, 'draft', %s)",
+                (STAND_SITE, int(profile_id), f'u{uuid.uuid4().hex[:8]}', 'Frank',
+                 'Привет!', error))
+        made = db.lastrowid
+        await db.connection.commit()
+
+    return int(made)
