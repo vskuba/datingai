@@ -493,6 +493,46 @@ async def _one(invite_id: int) -> dict:
         return dict(await db.fetchone())
 
 
+class TestReasonDoesNotRepeatTheAnswer:
+    """⚠ Ответ сайта в карточке — **один раз**, а не дважды.
+
+    `dating_send` собирает причину как «сайт ответил 200: <тело>», а тело мы
+    храним отдельно и показываем своей строкой. Выходило так:
+
+        сайт ответил 200: {"IsSuccess":false,"Reason":"ERROR_MESSAGE_USER_DENY"…}
+        {"IsSuccess":false,"Reason":"ERROR_MESSAGE_USER_DENY"…}
+    """
+
+    def test_the_body_is_cut_out_of_the_reason(self):
+        from src.dating.dating_invite_send import _why_short
+
+        body = '{"IsSuccess":false,"Reason":"ERROR_MESSAGE_USER_DENY"}'
+
+        assert _why_short(f'сайт ответил 200: {body}', body) == 'сайт ответил 200'
+
+    def test_a_reason_without_the_body_is_untouched(self):
+        from src.dating.dating_invite_send import _why_short
+
+        assert _why_short('слишком часто', '') == 'слишком часто'
+        assert _why_short('слишком часто', '{"ok":1}') == 'слишком часто'
+
+    def test_a_long_answer_is_still_found(self):
+        """⚠ В причину тело уезжает обрезанным (200 знаков), а хранится целиком."""
+        from src.dating.dating_invite_send import _why_short
+
+        body = '{"Message":"' + 'x' * 400 + '"}'
+
+        assert _why_short(f'сайт ответил 200: {body[:200]}', body) == 'сайт ответил 200'
+
+    def test_nothing_left_means_keep_the_original(self):
+        """Молчащая строка отказа хуже повторяющейся."""
+        from src.dating.dating_invite_send import _why_short
+
+        body = '{"IsSuccess":false}'
+
+        assert _why_short(body, body) == body
+
+
 async def _priority(uid: str) -> None:
     """Карточка собеседника с поднятой отметкой «Приоритет в рассылке»."""
     async with mysql_get_db_async() as db:

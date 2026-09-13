@@ -190,12 +190,43 @@ async def dating_invite_send_mark(invite_id: int, sent: bool, error: str,
             ' SET status = %s, error = %s, answer = %s, sent_at = IF(%s, NOW(), NULL)'
             ' WHERE id = %s',
             ('sent' if sent else ('failed' if final else 'draft'),
-             str(error or '')[:500],
+             _why_short(str(error or ''), str(answer or ''))[:500],
              str(answer or '')[:500], 1 if sent else 0, int(invite_id)))
         await db.connection.commit()
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+def _why_short(error: str, answer: str) -> str:
+    """Причина без тела ответа: его показывает отдельная строка карточки.
+
+    ⚠ **Иначе ответ сайта виден дважды.** `dating_send` собирает причину как
+    «сайт ответил 200: <тело>», а тело мы с недавних пор храним отдельно
+    (`answer`) и показываем своей строкой. На карточке выходило так:
+
+        сайт ответил 200: {"IsSuccess":false,"Reason":"ERROR_MESSAGE_USER_DENY"...}
+        {"IsSuccess":false,"Reason":"ERROR_MESSAGE_USER_DENY"...}
+
+    Режем **при записи, а не при показе**: причину читают ещё и страница пула, и
+    журнал анкеты, и в каждом из этих мест `answer` рядом нет — вырезай мы тело на
+    карточке, оно осталось бы в остальных.
+
+    ⚠ В причину тело уезжает обрезанным (`dating_send` берёт первые 200 знаков), а
+    в `answer` — целиком: поэтому ищем **начало** ответа, а не его целиком.
+
+    Пустой остаток — не причина: тогда возвращаем исходную строку, пусть и с
+    повтором. Молчащая строка отказа хуже повторяющейся.
+    """
+    head = str(answer or '')[:200]
+    if not head or head not in error:
+        return error
+
+    left = error.replace(head, '').strip().rstrip(':').strip()
+
+    return left or error
+
+
+
 
 async def _claim(invite_id: int) -> bool:
     """Занимает строку под отправку. `False` — её уже взял кто-то другой.
