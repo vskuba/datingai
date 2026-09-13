@@ -984,6 +984,42 @@ async def _settings_all() -> dict[int, dict]:
             logger_info(f"[dating] настройки сайта #{row['site_id']} не разобрались: {e}")
             continue
 
-        found[int(row['site_id'])] = value if isinstance(value, dict) else {}
+        found[int(row['site_id'])] = _strings(value) if isinstance(value, dict) else {}
 
     return found
+
+
+def _strings(settings: dict) -> dict:
+    """Значения — строками, чем бы они ни лежали в базе.
+
+    ⚠⚠ **Иначе ломается сохранение настроек сайта целиком.** Страница читает набор,
+    правит одно поле и шлёт обратно; принимает его `dict[str, str]`. Значение,
+    лежащее в базе объектом, возвращается объектом — и запись отвечает
+    «Heartbeat: неверное значение» на **любую** правку, включая те, что этого поля
+    не касаются.
+
+    Поймано живьём: `heartbeat` у Ladadate записали `JSON_SET`'ом с настоящим
+    объектом (правка присутствия шла запросом к базе, а не через страницу), и с
+    того дня на сайте не сохранялась ни одна настройка. Сюита показала то же
+    самое — двадцать три теста, которые правят настройки по ходу.
+
+    Чиним **на чтении**, а не на записи: так набор одинаков для всех читателей, и
+    первое же сохранение приводит базу в порядок само.
+
+    ⚠ Объект сворачиваем обратно в JSON, а не в `str(dict)`: питоновские кавычки
+    прочитать обратно нечем.
+    """
+    out = {}
+    for key, value in settings.items():
+        if isinstance(value, str):
+            out[str(key)] = value
+        elif isinstance(value, bool):
+            out[str(key)] = '1' if value else ''
+        elif value is None:
+            out[str(key)] = ''
+        elif isinstance(value, (int, float)):
+            out[str(key)] = str(value)
+        else:
+            out[str(key)] = json.dumps(value, ensure_ascii=False)
+
+    return out

@@ -650,8 +650,7 @@ class TestDeliveryLooksLikeDialogs:
         одного вопроса человек читает как два разных списка.
         """
         page = (await auth_client.get(PAGE)).text
-        start = page.index("class=\"mail-sent-who talk\"")
-        window = page[start:start + 700]
+        window = _delivery_row(page)
 
         assert 'talkSide(row.profile_name, row.profile_photo, row.profile_uid' in window, \
             'левая сторона строки собрана не общим помощником'
@@ -663,10 +662,21 @@ class TestDeliveryLooksLikeDialogs:
         ответа у него по определению ещё нет. Придёт — разговор уедет в
         «Диалоги», где стрелка двусторонняя."""
         page = (await auth_client.get(PAGE)).text
-        start = page.index("class=\"mail-sent-who talk\"")
-        window = page[start:start + 700]
 
-        assert "'<span class=\"talk-swap\">→</span>'" in window
+        assert "'<span class=\"talk-swap\">→</span>'" in _delivery_row(page)
+
+
+def _delivery_row(page: str) -> str:
+    """Кусок страницы, где собирается строка доставки: от «кто кому» до конца `</div>`.
+
+    ⚠ **Ищем по границам, а не «столько-то знаков вперёд».** Было второе, и первая
+    же правка строки — имена стали чипсами отбора — увела вторую половину за окно:
+    оба теста покраснели, хотя проверяемое стояло на месте. Окно с числом знаков
+    ломается от любого комментария рядом.
+    """
+    start = page.index('class="mail-sent-who talk"')
+
+    return page[start:page.index("+ '</div>';", start)]
 
 
 class TestDeliveryFly:

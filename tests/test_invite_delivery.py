@@ -5,8 +5,12 @@
 «все реплики Семёну» означало бы «те из них, что попали в эти триста», причём
 молча: список выглядел бы полным.
 
-Здесь и проверяется, что ответ считает по **всему** журналу: и число страниц, и
-состав чипсов.
+Здесь и проверяется, что число страниц считается по **всему** журналу, а отбор
+сужает его целиком, а не присланную страницу.
+
+⚠ **Списка имён ручка при этом не отдаёт.** Отдавала: за сутки это полторы сотни
+чипсов стеной поверх самого журнала. Отбор начинается в карточке — имя и так стоит
+в строке перед глазами, — а в полосу сверху попадает уже выбранное, с крестиком.
 """
 
 import uuid
@@ -104,6 +108,44 @@ class TestPages:
         assert got['page'] == got['pages'] and got['result']
 
 
+class TestOrder:
+    """⚠ Порядок — по времени события, а не по номеру строки.
+
+    `id` — это порядок, в котором реплики **сочинили**; круг берёт из пула
+    старейшую, и с порядком отправки он не совпадает вовсе.
+    """
+
+    async def test_the_latest_send_is_on_top(self, auth_client, journal):
+        await _sent_at(journal[0], 'zz-a', '2026-09-01 10:00:00')
+        await _sent_at(journal[0], 'zz-b', '2026-09-08 10:00:00')
+        await _sent_at(journal[0], 'zz-c', '2026-09-03 10:00:00')
+
+        got = await _ask(auth_client, per=100, profile_id=journal[0])
+        uids = [row['uid'] for row in got['result'] if row['status'] == 'sent']
+
+        assert uids == ['zz-b', 'zz-c', 'zz-a'], uids
+
+    async def test_the_failed_one_keeps_its_place(self, auth_client, journal):
+        """⚠ У неудачной `sent_at` снят — временем остаётся `updated_at`.
+
+        Без этого такие строки уезжали бы в конец журнала, то есть прятались бы
+        ровно те, ради которых на вкладку и заходят.
+        """
+        await _sent_at(journal[0], 'zz-a', '2026-09-01 10:00:00')
+
+        got = await _ask(auth_client, per=100, profile_id=journal[0])
+        uids = [row['uid'] for row in got['result']]
+
+        assert uids.index('zz-d') < uids.index('zz-a'), uids
+
+    async def test_the_time_of_the_event_comes_back(self, auth_client, journal):
+        """Карточка показывает время первым — брать его должно откуда."""
+        got = await _ask(auth_client, per=100)
+        failed = [row for row in got['result'] if row['uid'] == 'zz-d'][0]
+
+        assert failed['updated_at'], 'у неудачной строки нет времени события'
+
+
 class TestFilters:
     """Отбор именами."""
 
@@ -124,27 +166,37 @@ class TestFilters:
 
         assert got['total'] == 1
 
-    async def test_the_chips_come_from_the_whole_journal(self, auth_client, journal):
-        """⚠ Имя, уехавшее на третью страницу, обязано остаться в отборе — иначе
-        отобрать по нему нечем именно тогда, когда это и нужно."""
+    async def test_no_list_of_names_comes_back(self, auth_client, journal):
+        """⚠ Ручка **не** перечисляет имена журнала, и это решение, а не пропуск.
+
+        Перечисляла: за сутки — полторы сотни чипсов стеной поверх самого журнала.
+        Отбор начинается в карточке: имя и так стоит в строке перед глазами.
+        """
         got = await _ask(auth_client, per=2)
 
-        people = {one['uid'] for one in got['who']['people']}
-        assert {'zz-a', 'zz-b', 'zz-c', 'zz-d'} <= people
-        assert 'zz-e' not in people, 'нетронутый черновик попал в отбор'
+        assert 'who' not in got, 'ручка снова отдаёт список имён'
 
-    async def test_the_chips_carry_the_count(self, auth_client, journal):
-        got = await _ask(auth_client, per=2)
 
-        counts = {one['uid']: one['n'] for one in got['who']['people']}
-        assert counts['zz-a'] == 2 and counts['zz-d'] == 1
+class TestTheStripStartsEmpty:
+    """⚠ Полоса отбора пуста, пока по имени не нажали.
 
-    async def test_the_busiest_chip_comes_first(self, auth_client, journal):
-        """Полоса обрезается высотой: первыми должны стоять те, кого много."""
-        got = await _ask(auth_client, per=2)
-        rows = [one['n'] for one in got['who']['people']]
+    Так и родилась правка: полоса перечисляла всех, кто есть в журнале, и за сутки
+    это полторы сотни чипсов поверх самого журнала.
+    """
 
-        assert rows == sorted(rows, reverse=True)
+    async def test_the_work_template_has_one_strip(self, auth_client):
+        page = (await auth_client.get('/admin/dating/profile/work',
+                                      params={'site_id': STAND_SITE})).text
+
+        assert 'data-slot="invite-sent-filter"' in page, 'полосы отбора нет'
+        assert 'invite-sent-girls' not in page and 'invite-sent-people' not in page, \
+            'вернулись полосы со всеми именами'
+
+    async def test_the_pager_is_there(self, auth_client):
+        page = (await auth_client.get('/admin/dating/profile/work',
+                                      params={'site_id': STAND_SITE})).text
+
+        assert 'data-slot="invite-sent-pager"' in page
 
 
 class TestPoolIsNotBroken:
@@ -156,6 +208,14 @@ class TestPoolIsNotBroken:
                                              'status_': 'draft'})).json()
 
         assert len({row['uid'] for row in got['result']}) == 2, got['result']
+
+
+async def _sent_at(profile_id: int, uid: str, when: str) -> None:
+    """Двигает время отправки строки: порядок журнала проверяется им."""
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE dating_invite SET sent_at = %s'
+                         ' WHERE profile_id = %s AND uid = %s', (when, profile_id, uid))
+        await db.connection.commit()
 
 
 async def _ask(client, per: int = 25, page: int = 1, profile_id: int = 0,

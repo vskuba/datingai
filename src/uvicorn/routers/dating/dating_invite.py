@@ -107,18 +107,18 @@ async def dating_invite_list(site_id: int = 0, status_: str = 'draft',
     В ответе, помимо полей строки, — имя анкеты: карточка показывает «от кого
     кому», и без него страница делала бы запрос на каждую реплику.
 
-    У вопроса `delivery` в ответе есть ещё `who`: кто вообще встречается в журнале
-    — анкеты и собеседники с числом строк. Из них страница рисует чипсы отбора.
-
-    ⚠ **`who` считается по всему журналу, а не по странице.** Имя, ушедшее на
-    третью страницу, иначе пропало бы из отбора — то есть отобрать по нему было бы
-    нечем именно тогда, когда это нужнее всего.
+    ⚠ **Списка имён для отбора ручка не отдаёт, и это решение.** Он был: `who` со
+    всеми анкетами и собеседниками журнала. За сутки это полторы сотни имён —
+    стена чипсов поверх самого журнала, которую человек и увидел. Отбор начинается
+    в карточке: имя, по которому хотят отобрать, и так стоит в строке перед
+    глазами.
     """
     if not int(site_id or 0):
         return {'result': [], 'pool': 0, 'send_on': False}
 
     sql = ('SELECT i.id, i.site_id, i.profile_id, i.uid, i.name, i.photo,'
            ' i.body, i.status, i.error, i.answer, i.sent_at, i.created_at,'
+           ' i.updated_at,'
            ' p.login AS profile_login, p.profile AS profile_card'
            ' FROM dating_invite i'
            ' LEFT JOIN dating_profile p ON p.id = i.profile_id'
@@ -133,9 +133,7 @@ async def dating_invite_list(site_id: int = 0, status_: str = 'draft',
     # ⚠ «Всё про доставку» — статусы **плюс черновики с причиной отказа**:
     # неудавшаяся отправка оставляет реплику в пуле, и по статусу её от нетронутой
     # не отличить.
-    delivery = 'delivery' in asked
-
-    if delivery:
+    if 'delivery' in asked:
         sql += (" AND (i.status IN ('sent', 'failed')"
                 "      OR (i.status = 'draft' AND i.error <> ''))")
     elif wanted:
@@ -165,7 +163,16 @@ async def dating_invite_list(site_id: int = 0, status_: str = 'draft',
     # листал, и отказ вместо последней страницы читался бы как поломка.
     page = min(max(int(page or 1), 1), pages)
 
-    sql += ' ORDER BY i.id DESC LIMIT %s OFFSET %s'
+    # ⚠ **По времени события, а не по номеру строки.** `id` — это порядок, в
+    # котором реплики **сочинили**, а журнал отвечает на «что происходило с
+    # отправкой»: круг берёт из пула старейшую, и порядок отправки с порядком
+    # заведения не совпадает вовсе.
+    #
+    # ⚠ У неудачной `sent_at` нет — его снимает сама неудача, — и временем события
+    # остаётся `updated_at`: минута, когда исход записали. Без `COALESCE` такие
+    # строки уезжали бы в конец журнала, то есть прятались бы ровно те, ради
+    # которых на вкладку заходят.
+    sql += ' ORDER BY COALESCE(i.sent_at, i.updated_at) DESC, i.id DESC LIMIT %s OFFSET %s'
     args.extend([per, (page - 1) * per])
 
     async with mysql_get_db_async() as db:
@@ -184,7 +191,6 @@ async def dating_invite_list(site_id: int = 0, status_: str = 'draft',
     # разных моментов времени — «пул пуст» из одного, «уже набирали» из другого.
     return {'result': [_answer(row) for row in rows or []],
             'page': page, 'pages': pages, 'total': total,
-            'who': await _who(int(site_id)) if delivery else {},
             'pool': await dating_invite_pool_left(int(site_id)),
             'next_sec': dating_invite_round_next(int(site_id)),
             'send_on': await _send_on(int(site_id))}
@@ -365,62 +371,13 @@ async def _send_on(site_id: int) -> bool:
     return bool((row or {}).get('invite_send_on'))
 
 
-async def _who(site_id: int) -> dict:
-    """Кто встречается в журнале доставки: анкеты и собеседники, с числом строк.
-
-    Returns:
-        dict: `girls` — `[{profile_id, name, n}]`, `people` — `[{uid, name, n}]`,
-        чаще встречающиеся первыми.
-
-    ⚠ **По всему журналу, а не по странице** — иначе отобрать по имени можно было
-    бы лишь то, что и так видно.
-
-    ⚠ **Порядок по числу строк, а не по алфавиту.** Полоса чипсов обрезается
-    высотой, и первыми должны стоять те, кого в журнале много: ради них отбор и
-    заводят. Алфавит ставил бы вперёд случайного «Adrian» с одной репликой.
-
-    ⚠ **Условие то же, что у `delivery`.** Разойдись они, чипс отбирал бы строки,
-    которых в списке нет, и список пустел бы на нажатие.
-    """
-    where = ("i.site_id = %s AND (i.status IN ('sent', 'failed')"
-             "                    OR (i.status = 'draft' AND i.error <> ''))")
-
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'SELECT i.profile_id, COUNT(*) AS n, p.login AS profile_login,'
-            '       p.profile AS profile_card'
-            '  FROM dating_invite i'
-            '  LEFT JOIN dating_profile p ON p.id = i.profile_id'
-            f' WHERE {where}'
-            ' GROUP BY i.profile_id, p.login, p.profile'
-            ' ORDER BY n DESC, i.profile_id', (int(site_id),))
-        girls = [dict(row) for row in await db.fetchall() or []]
-
-        await db.execute(
-            'SELECT i.uid, MAX(i.name) AS name, COUNT(*) AS n'
-            '  FROM dating_invite i'
-            f' WHERE {where}'
-            ' GROUP BY i.uid ORDER BY n DESC, i.uid', (int(site_id),))
-        people = [dict(row) for row in await db.fetchall() or []]
-
-    out = []
-    for one in girls:
-        card = dating_json_load(one.pop('profile_card', None)) or {}
-        out.append({'profile_id': int(one['profile_id']),
-                    'name': str(card.get('name') or one.get('profile_login') or ''),
-                    'n': int(one['n'])})
-
-    return {'girls': out,
-            'people': [{'uid': str(one['uid']), 'name': str(one.get('name') or ''),
-                        'n': int(one['n'])} for one in people]}
-
-
 async def _row(invite_id: int) -> dict:
     """Строка пула или 404."""
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT i.id, i.site_id, i.profile_id, i.uid, i.name, i.photo,'
             ' i.body, i.status, i.error, i.answer, i.sent_at, i.created_at,'
+           ' i.updated_at,'
             ' p.login AS profile_login, p.profile AS profile_card'
             ' FROM dating_invite i'
             ' LEFT JOIN dating_profile p ON p.id = i.profile_id'
@@ -449,6 +406,9 @@ def _answer(row) -> dict:
     got['profile_photo'] = str(card.get('photo') or '')
     got['profile_uid'] = str(card.get('site_uid') or '')
     got['sent_at'] = str(got['sent_at']) if got.get('sent_at') else ''
+    # ⚠ Время события у **неудачной** строки: `sent_at` у неё снят, и без этого
+    # поля карточка показывала бы пустое место там, где стоит время отправки.
+    got['updated_at'] = str(got['updated_at']) if got.get('updated_at') else ''
     got['created_at'] = str(got.get('created_at') or '')
 
     return got

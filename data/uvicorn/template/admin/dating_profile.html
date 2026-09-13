@@ -1839,9 +1839,29 @@
        он в несколько абзацев, а реплика — одно-два предложения, и она видна
        целиком прямо в строке. Поэтому ни курсора-руки, ни подсветки: и то и
        другое обещало бы нажатие, которого нет. */
+    /* ⚠ Колонок пять: точка, **время**, «кто кому», исход, место под хвост.
+       Время стоит вторым и в разметке, и в сетке: журнал читают сверху вниз
+       вопросом «что было последним», а дата у правого края заставляла прыгать
+       взглядом через всю строку на каждой записи. */
     .mail-sent-row.plain {
-        grid-template-columns: 8px minmax(0, 1fr) auto auto;
+        grid-template-columns: 8px auto minmax(0, 1fr) auto;
         cursor: default;
+    }
+
+    /* Время в начале строки: не переносится и не жмётся именами. */
+    .mail-sent-when.first {
+        white-space: nowrap;
+        color: #94a3b8;
+        font-variant-numeric: tabular-nums;
+    }
+
+    /* ⚠ Хвостовые строки — **со второй колонки, а не с первой**, и правило здесь
+       своё: `.mail-sent-text`, `-why` и `-said` делит журнал писем, где сетка
+       другая и время стоит справа. Общая правка сдвинула бы там весь хвост. */
+    .mail-sent-row.plain .mail-sent-text,
+    .mail-sent-row.plain .mail-sent-why,
+    .mail-sent-row.plain .mail-sent-said {
+        grid-column: 3 / -1;
     }
 
     .mail-sent-row.plain:hover {
@@ -1888,42 +1908,66 @@
         display: none;
     }
 
+    /* Чипс в полосе отбора. ⚠ Залит, а не подчёркнут: полоса читается боковым
+       зрением, и отбор должен быть виден, не вчитываясь, — иначе короткий список
+       объясняют поломкой, а не собственным нажатием. */
     .sent-chip {
-        padding: 2px 8px;
-        border: 1px solid #e2e8f0;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 4px 2px 8px;
+        border: 1px solid #4338ca;
         border-radius: 10px;
-        background: #fff;
-        color: #475569;
+        background: #4338ca;
+        color: #fff;
         font-size: 10px;
         line-height: 1.5;
-        cursor: pointer;
-        transition: background .12s ease, color .12s ease, border-color .12s ease;
     }
 
-    .sent-chip:hover {
-        border-color: #c7d2fe;
+    /* Подпись «от кого» / «кому»: без неё два имени в полосе неразличимы —
+       девушку от мужчины по имени не отличить. */
+    .sent-chip-label.on {
+        opacity: .7;
     }
 
-    /* ⚠ Нажатый чипс залит, а не подчёркнут: полоса читается боковым зрением, и
-       отбор должен быть виден, не вчитываясь, — иначе пустой список объясняют
-       поломкой, а не собственным нажатием. */
-    .sent-chip.on {
-        background: #4338ca;
-        border-color: #4338ca;
+    /* Крестик — кнопка внутри чипса. ⚠ Не весь чипс: по имени в полосе тянет
+       нажать, чтобы «посмотреть ещё раз», и снимать отбор этим было бы
+       неожиданно. */
+    .sent-chip-x {
+        padding: 0 3px;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
         color: #fff;
+        font-size: 11px;
+        line-height: 1.3;
+        cursor: pointer;
+        opacity: .75;
     }
 
-    /* Счёт строк у имени: тише имени — он подсказка, а не подпись. */
-    .sent-chip-n {
-        opacity: .6;
+    .sent-chip-x:hover {
+        background: rgba(255, 255, 255, .25);
+        opacity: 1;
     }
 
-    /* Подпись ряда: чья это полоса. Не чипс — нажимать её нечего. */
-    .sent-chip-label {
-        align-self: center;
-        margin-right: 2px;
-        color: #94a3b8;
-        font-size: 10px;
+    /* Имя в строке журнала — оно же кнопка отбора. ⚠ Без рамки: строку читают,
+       а не разглядывают, и два обведённых имени в каждой из двадцати пяти строк
+       превратили бы журнал в поле кнопок. Отклик — по наведению. */
+    .sent-pick {
+        display: inline-flex;
+        border-radius: 10px;
+        padding: 1px 4px;
+        margin: -1px -4px;
+        cursor: pointer;
+        transition: background .12s ease;
+    }
+
+    .sent-pick:hover {
+        background: #eef2ff;
+    }
+
+    .sent-pick.on {
+        background: #e0e7ff;
     }
 
     /* «Снять запрет» — текстом, а не кружком, как крестики на карточках пула.
@@ -5177,13 +5221,20 @@
     // ⚠ Отвеченные инвайты при этом **остаются в «Диалогах»**: пришёл ответ —
     // значит разговор пошёл, и ничем от прочих он не отличается.
     let inviteSent = [];
-    // Кто встречается в журнале — из ответа ручки, а не из списка на экране:
-    // отобрать надо уметь и по тому, кто уехал на третью страницу.
-    let inviteSentWho = {girls: [], people: []};
     // Отбор именами: анкета и собеседник — **порознь**, и оба могут быть подняты.
     // Ноль и пустая строка означают «все».
+    //
+    // ⚠ **Отбор начинается в карточке**, а не в полосе сверху. Полоса сперва
+    // перечисляла всех, кто встречается в журнале, — за сутки это полторы сотни
+    // имён, стена чипсов поверх самого журнала. Имя, по которому хотят отобрать,
+    // человек **видит перед собой в строке**: там он по нему и нажимает.
+    //
+    // Имя храним рядом с номером: полоса отбора показывает его, а строк, из
+    // которых его можно было бы взять, на других страницах может не быть.
     let inviteSentGirl = 0;
+    let inviteSentGirlName = '';
     let inviteSentUid = '';
+    let inviteSentUidName = '';
     // Страница, с нуля — как у прочих пейджеров панели (`pagerRender`).
     let inviteSentPage = 0;
     let inviteSentPages = 1;
@@ -5225,7 +5276,6 @@
             )) || {};
 
             inviteSent = got.result || [];
-            inviteSentWho = got.who || {girls: [], people: []};
             inviteSentPages = Math.max(1, Number(got.pages) || 1);
             inviteSentTotal = Number(got.total) || 0;
             // Номер берём из ответа: сервер поправит его, если журнал укоротился и
@@ -5242,64 +5292,84 @@
         inviteSentPaint();
     }
 
-    // Нажатие по чипсу: тот же чипс второй раз снимает отбор.
+    // Нажатие по имени в карточке: отобрать по нему. То же имя второй раз —
+    // снять отбор, как и крестик в полосе.
     //
     // ⚠ **Страницу сбрасываем в первую.** Отбор меняет длину журнала, и седьмая
     // страница «всех» почти наверняка пуста у одного собеседника — человек нажал
     // бы имя и увидел пустоту.
-    function inviteSentPick(what, value) {
+    //
+    // ⚠ **По одному имени на сторону.** Нажатие на другую девушку заменяет
+    // прежнюю, а не добавляет вторую: «от Соломии или от Дианы» — вопрос, которого
+    // никто не задавал, а показывать в полосе десяток чипсов значит вернуть ту
+    // самую стену, от которой уходим.
+    function inviteSentPick(what, value, name) {
         if (what === 'girl') {
-            inviteSentGirl = (inviteSentGirl === value) ? 0 : value;
+            const same = inviteSentGirl === Number(value);
+            inviteSentGirl = same ? 0 : Number(value);
+            inviteSentGirlName = same ? '' : String(name || '');
         } else {
-            inviteSentUid = (inviteSentUid === value) ? '' : value;
+            const same = inviteSentUid === String(value);
+            inviteSentUid = same ? '' : String(value);
+            inviteSentUidName = same ? '' : String(name || '');
         }
 
         inviteSentPage = 0;
         inviteSentLoad();
     }
 
-    // Полоса чипсов: подпись ряда и имена с числом строк.
+    // Полоса отбора: только выбранное, каждое — с крестиком.
     //
-    // ⚠ Число рядом с именем — не украшение: по нему видно, где искать. «Семён 12»
-    // и «Adrian 1» отвечают на разные вопросы, и без счёта они выглядят одинаково.
-    function inviteSentChips(slotName, label, rows, key, active) {
-        const box = slot(slotName);
+    // ⚠ Пусто — полосы нет вовсе (`.sent-filter:empty`): пустая рамка над списком
+    // обещала бы отбор, которого не делали.
+    function inviteSentFilterPaint() {
+        const box = slot('invite-sent-filter');
         if (!box) return;
 
-        if (!rows.length) {
-            box.innerHTML = '';
-
-            return;
+        const chips = [];
+        if (inviteSentGirl) {
+            chips.push({what: 'girl', label: 'от кого',
+                        name: inviteSentGirlName || `#${inviteSentGirl}`,
+                        value: inviteSentGirl});
+        }
+        if (inviteSentUid) {
+            chips.push({what: 'uid', label: 'кому',
+                        name: inviteSentUidName || inviteSentUid,
+                        value: inviteSentUid});
         }
 
-        box.innerHTML = `<span class="sent-chip-label">${esc(label)}</span>`
-            + rows.map(one => {
-                const value = key === 'girl' ? Number(one.profile_id) : String(one.uid);
-                const on = key === 'girl'
-                    ? active === value : String(active) === value;
+        box.innerHTML = chips.map(one =>
+            `<span class="sent-chip on" title="Отобрано: ${esc(one.label)}">`
+            + `<span class="sent-chip-label on">${esc(one.label)}:</span> `
+            + `${esc(one.name)}`
+            // ⚠ Крестик — **кнопка внутри чипса**, а не весь чипс: по имени в
+            // полосе тянет нажать, чтобы «посмотреть ещё раз», и снимать отбор
+            // этим движением было бы неожиданно.
+            + `<button type="button" class="sent-chip-x" data-what="${one.what}"`
+            + ' title="Снять отбор">×</button></span>').join('');
 
-                return `<button type="button" class="sent-chip${on ? ' on' : ''}"`
-                    + ` data-pick="${esc(String(value))}"`
-                    + ` title="${on ? 'Снять отбор' : 'Показать только это'}">`
-                    + `${esc(one.name || one.uid || '—')}`
-                    + `<span class="sent-chip-n"> ${Number(one.n) || 0}</span></button>`;
-            }).join('');
+        box.querySelectorAll('.sent-chip-x').forEach(btn =>
+            btn.addEventListener('click', () => {
+                if (btn.dataset.what === 'girl') {
+                    inviteSentGirl = 0;
+                    inviteSentGirlName = '';
+                } else {
+                    inviteSentUid = '';
+                    inviteSentUidName = '';
+                }
 
-        box.querySelectorAll('.sent-chip').forEach(btn =>
-            btn.addEventListener('click', () => inviteSentPick(
-                key, key === 'girl' ? Number(btn.dataset.pick) : btn.dataset.pick)));
+                inviteSentPage = 0;
+                inviteSentLoad();
+            }));
     }
 
     function inviteSentPaint() {
         const box = slot('invite-sent');
         if (!box) return;
 
-        // Чипсы рисуем всегда, даже когда список пуст: пустота бывает **следствием
-        // отбора**, и снять его должно быть чем.
-        inviteSentChips('invite-sent-girls', 'от кого:',
-                        inviteSentWho.girls || [], 'girl', inviteSentGirl);
-        inviteSentChips('invite-sent-people', 'кому:',
-                        inviteSentWho.people || [], 'uid', inviteSentUid);
+        // Полосу рисуем всегда, даже когда список пуст: пустота бывает
+        // **следствием отбора**, и снять его должно быть чем.
+        inviteSentFilterPaint();
 
         const отобрано = inviteSentGirl || inviteSentUid;
         const дошло = inviteSent.filter(row => row.status === 'sent').length;
@@ -5320,7 +5390,7 @@
         if (!inviteSent.length) {
             box.innerHTML = отобрано
                 ? '<div class="mail-sent-empty">По этому отбору ничего нет.<br>'
-                  + 'Нажмите поднятое имя ещё раз, чтобы снять его.</div>'
+                  + 'Снимите его крестиком в полосе сверху.</div>'
                 : '<div class="mail-sent-empty">Инвайтов с этого сайта '
                   + 'пока не уходило.<br>Здесь появятся отправленные — и те, что '
                   + 'отправить не вышло, с причиной.</div>';
@@ -5335,6 +5405,12 @@
             return '<div class="mail-sent-row plain">'
                 + `<span class="mail-sent-dot ${ok ? 'ok' : 'bad'}"`
                 + ` title="${ok ? 'ушло' : 'не ушло'}"></span>`
+                // ⚠ **Время — первым, до имён.** Журнал читают сверху вниз и
+                // вопросом «что происходило последним»; дата у правого края
+                // заставляла прыгать взглядом через всю строку на каждой записи.
+                // Порядок в разметке — он же порядок чтения.
+                + '<span class="mail-sent-when first">'
+                + `${esc(_sentWhen(row))}</span>`
                 // ⚠ **Обе стороны — тем же видом, что в «Диалогах»** (`talkSide`):
                 // лицо, имя, номер на сайте. Строка отвечает на вопрос «кто кого
                 // позвал», а он тот же самый; два разных вида одного вопроса
@@ -5344,13 +5420,27 @@
                 // не было вовсе, а его-то и ищут, когда идут смотреть человека на
                 // сайте, — имена на сайте повторяются.
                 + '<span class="mail-sent-who talk">'
+                // ⚠ **Имя в строке — и есть чипс отбора.** Оно уже перед глазами:
+                // человек смотрит на строку и хочет «покажи всё от неё» — нажать
+                // ему естественнее здесь, а не искать то же имя в полосе из
+                // полутора сотен.
+                + `<span class="sent-pick${inviteSentGirl === row.profile_id ? ' on' : ''}"`
+                + ` data-girl="${row.profile_id}"`
+                + ` data-name="${esc(row.profile_name || '')}"`
+                + ' title="Показать всё, что ушло от этой анкеты">'
                 + talkSide(row.profile_name, row.profile_photo, row.profile_uid,
                            'анкета, от которой ушла реплика')
+                + '</span>'
                 // ⚠ Стрелка **односторонняя**, в отличие от диалогов: инвайт это
                 // первое слово, и ответа у него по определению ещё нет. Приди он —
                 // разговор уедет в «Диалоги», где стрелка двусторонняя.
                 + '<span class="talk-swap">→</span>'
+                + `<span class="sent-pick${inviteSentUid === String(row.uid) ? ' on' : ''}"`
+                + ` data-uid="${esc(String(row.uid))}"`
+                + ` data-name="${esc(row.name || '')}"`
+                + ' title="Показать всё, что писали этому человеку">'
                 + talkSide(row.name, row.photo, row.uid, 'кого позвали')
+                + '</span>'
                 + '</span>'
                 // ⚠ «Ушло», а не «доставлено», и это не синоним. Сайт отвечает
                 // «принял кадр»; дошла ли реплика до человека, он не говорит
@@ -5358,8 +5448,6 @@
                 // никто не подтверждал, — врать в журнале.
                 + `<span class="mail-sent-state ${ok ? 'ok' : 'bad'}">`
                 + `${ok ? 'ушло' : 'не ушло'}</span>`
-                + '<span class="mail-sent-when">'
-                + `${esc(row.sent_at ? timeShift(row.sent_at) : '')}</span>`
                 // ⚠ Текст реплики — **в строке, а не в окне по щелчку**. Инвайт
                 // это одно-два предложения: окно ради них было бы лишним шагом,
                 // а прочитать, что именно ушло человеку, — главное, зачем сюда
@@ -5386,8 +5474,24 @@
                 + '</div>';
         }).join('');
 
+        // ⚠ Обработчики — после отрисовки: строки переписываются целиком своим
+        // кругом, и повешенное на прежние узлы не пережило бы первого обновления.
+        box.querySelectorAll('.sent-pick').forEach(one =>
+            one.addEventListener('click', () => one.dataset.girl
+                ? inviteSentPick('girl', one.dataset.girl, one.dataset.name)
+                : inviteSentPick('uid', one.dataset.uid, one.dataset.name)));
+
         box.scrollTop = scroll;
         inviteSentPagerPaint();
+    }
+
+    // Когда со строкой случилось то, что видно. ⚠ У ушедшей это `sent_at`, а у
+    // неудачной его нет вовсе — отметку снимает сама неудача, — и остаётся
+    // `updated_at`: минута, когда исход записали.
+    function _sentWhen(row) {
+        const when = row.sent_at || row.updated_at || row.created_at || '';
+
+        return when ? timeShift(when) : '';
     }
 
     function inviteSentPagerPaint() {
