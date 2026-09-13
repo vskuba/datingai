@@ -118,25 +118,49 @@ class TestTalked:
 
 
 class TestRepeat:
-    """Молчащего зовём снова — но не сразу."""
+    """Молчащего зовём снова — но не сразу, и считаем **по паре**."""
 
-    async def test_draft_holds_him_regardless_of_time(self, girl):
+    async def test_draft_holds_the_pair(self, girl):
         """Черновик ждёт отправки, и второй задвоил бы карточку."""
         await _invite(girl, 'draft')
 
-        assert UID in await _invited(STAND_SITE)
+        assert (girl, UID) in await _invited(STAND_SITE)
 
-    async def test_fresh_send_holds_him(self, girl):
+    async def test_fresh_send_holds_the_pair(self, girl):
         """⚠ Без паузы круг звал бы его каждый заход, пока он в ленте."""
         await _invite(girl, 'sent', ago_sec=60)
 
-        assert UID in await _invited(STAND_SITE)
+        assert (girl, UID) in await _invited(STAND_SITE)
 
-    async def test_old_send_lets_him_back(self, girl):
+    async def test_another_girl_is_free_meanwhile(self, girl, auth_client):
+        """⚠⚠ **Предел у каждой девушки свой.**
+
+        Было `GROUP BY uid` — «сколько получил он от агентства целиком», — и пять
+        свободных анкет упирались в счёт, набранный тремя другими. Поймано на
+        приоритетном собеседнике: десять реплик за сутки от трёх анкет, потолок
+        десять, и остальные молчали, хотя ни одна ему не писала.
+        """
+        await _invite(girl, 'sent', ago_sec=60)
+
+        other = int((await auth_client.post('/api/dating/profile', json={
+            'site_id': STAND_SITE,
+            'login': f'rep-{uuid.uuid4().hex[:8]}@example.com',
+            'password': 'x'})).json()['result'])
+        try:
+            held = await _invited(STAND_SITE)
+
+            assert (girl, UID) in held
+            assert (other, UID) not in held, 'чужая пауза закрыла вторую анкету'
+        finally:
+            async with mysql_get_db_async() as db:
+                await db.execute('DELETE FROM dating_profile WHERE id = %s', (other,))
+                await db.connection.commit()
+
+    async def test_old_send_lets_the_pair_back(self, girl):
         """Сутки прошли, ответа нет — приглашение не состоялось, зовём снова."""
         await _invite(girl, 'sent', ago_sec=90_000)
 
-        assert UID not in await _invited(STAND_SITE)
+        assert (girl, UID) not in await _invited(STAND_SITE)
 
     async def test_pause_comes_from_the_site(self, girl, monkeypatch):
         """Срок — настройка сайта, а не число в коде."""
@@ -148,7 +172,7 @@ class TestRepeat:
                             week)
         await _invite(girl, 'sent', ago_sec=90_000)
 
-        assert UID in await _invited(STAND_SITE), 'недельную паузу не спросили'
+        assert (girl, UID) in await _invited(STAND_SITE), 'недельную паузу не спросили'
 
 
 class TestKeyHoldsThePoolNotTheHistory:

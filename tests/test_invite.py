@@ -131,11 +131,45 @@ class TestPairs:
         assert len(got) == len(PEOPLE), 'человек получил больше одного инвайта'
         assert sorted(person['uid'] for _, person in got) == ['111', '222', '333']
 
-    def test_already_invited_is_skipped(self):
-        """Позвали — больше не зовём, **какой бы анкетой это ни было**."""
-        got = list(_pairs(GIRLS, PEOPLE, {'222'}, set()))
+    def test_the_pass_marks_every_girl_not_just_the_chosen_one(self):
+        """⚠ «Один за заход» держит **вызывающий**, и теперь это видно хуже.
+
+        Пока занятость считалась по человеку, метка `invited.add(uid)` закрывала
+        его сама собой. Теперь набор — это пары, и пометить надо **все** пары с
+        ним, иначе следующая девушка возьмёт его в том же заходе: две реплики
+        одному мужчине за минуту, то есть ровно та беда с двумя Дианами.
+
+        Проверяем по исходному тексту: подделать заход целиком дороже, чем он
+        стоит, а строка эта — единственное, что правило держит.
+        """
+        import inspect
+
+        from src.dating.dating_invite import dating_invite_make
+
+        code = inspect.getsource(dating_invite_make)
+
+        assert "invited.update((one['id'], str(person['uid'])) for one in girls)" in code, \
+            'заход больше не метит всех девушек — человек получит две реплики разом'
+
+    def test_a_busy_pair_is_skipped(self):
+        """Этой девушке звать его рано — черновик в пуле либо не вышла пауза."""
+        busy = {(girl['id'], '222') for girl in GIRLS}
+        got = list(_pairs(GIRLS, PEOPLE, busy, set()))
 
         assert [person['uid'] for _, person in got] == ['111', '333']
+
+    def test_a_busy_pair_does_not_take_him_from_the_others(self):
+        """⚠⚠ **Предел у каждой девушки свой.**
+
+        Прежде «позвали» считалось по человеку: занятость одной анкеты закрывала
+        его для всех. Пять свободных девушек упирались в счёт, набранный тремя
+        другими, — поймано на приоритетном собеседнике.
+        """
+        got = list(_pairs(GIRLS, PEOPLE, {(849, '222')}, set()))
+        who = {person['uid']: girl['id'] for girl, person in got}
+
+        assert who.get('222') in (850, 861), who
+        assert sorted(who) == ['111', '222', '333']
 
     def test_girls_who_talked_are_not_chosen(self):
         """⚠ Свободные — те, кто с ним не говорил.
