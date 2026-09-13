@@ -76,6 +76,10 @@ class DatingProfileResponse(BaseModel):
     login: str = Field(..., description='Логин или почта', examples=['natalia@example.com'])
     role: str = Field('lady', description='Чей кабинет на сайте: lady | man')
     name: str = Field('', description='Имя из анкеты; пусто — анкету ещё не читали')
+    # ⚠ Поле обязано быть **в модели ответа**, а не только в строке: `response_model`
+    # выбрасывает всё, чего в ней нет, и молча — страница получала бы `undefined`.
+    # Так и вышло на первом прогоне.
+    age: int = Field(0, description='Возраст из анкеты; 0 — анкету ещё не читали')
     site_uid: str = Field('', description='Номер анкеты на сайте; по нему её ищут в панели сайта')
     photo: str = Field('', description='Фотография из анкеты, полный адрес')
     has_password: bool = Field(..., description='Пароль задан — под учёткой можно входить')
@@ -178,10 +182,15 @@ async def dating_profile_list(site_id: int = 0,
         row['revive_state'] = dating_revive_state(row.pop('relogin_since', None),
                                                   row.pop('db_now', None) or datetime.now())
         # Имя и фотография — в список: карточку узнают по лицу, а не по номеру.
-        # Анкета целиком отдаётся отдельной ручкой: в списке из неё нужны два поля.
+        # Анкета целиком отдаётся отдельной ручкой: в списке из неё нужны немногие
+        # поля.
         profile = dating_json_load(row.pop('profile', None))
         row['name'] = str(profile.get('name') or '')
         row['photo'] = str(profile.get('photo') or '')
+        # ⚠ Возраст — рядом с именем в списке. Анкеты у агентства по именам
+        # повторяются (двух Диан и трёх Елен видно прямо сейчас), и различить их в
+        # строке больше нечем: логин это почта, номер на сайте — число.
+        row['age'] = int(profile.get('age') or 0)
         # Номер анкеты на сайте — в список: по нему ищут в поиске страницы, и по
         # нему же приходят просьбы «посмотри анкету 643694». Кладёт его импорт
         # (`dating_import`), у заведённых руками он пуст.

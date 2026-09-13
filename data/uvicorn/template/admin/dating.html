@@ -759,7 +759,16 @@
                 + ' onerror="this.style.visibility=\'hidden\'">'
                 + '<span class="prof-who-text">'
                 // Имя режется многоточием в узкой колонке — полное отдаём подсказкой.
-                + `<span class="prof-name" title="${esc(row.name || row.login)}">${esc(row.name || row.login)}</span>`
+                // ⚠ Возраст — **рядом с именем, а не внутри него**: у имени
+                // обрезка многоточием, и длинное имя съело бы возраст вместе со
+                // своим хвостом. Обёртка та же, что на «Профилях»
+                // (`prof-name-row` в `dating_page.css`): одна учётка обязана
+                // выглядеть одинаково на обеих страницах.
+                + '<span class="prof-name-row">'
+                + `<span class="prof-name" title="${esc(row.name || row.login)}">`
+                + `${esc(row.name || row.login)}</span>`
+                + (row.age ? `<span class="prof-age">${Number(row.age)}</span>` : '')
+                + '</span>'
                 + `<span class="prof-login" title="${esc(row.login)}">${esc(row.login)}</span>`
                 // ⚠ Состояние — тем же знаком, что у собеседников: вопрос один
                 // («на сайте ли»), и разный вид для одного вопроса человеку

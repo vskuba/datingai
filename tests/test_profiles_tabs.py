@@ -760,6 +760,48 @@ class TestTheFilterStripKeepsItsHeight:
             'подсветка снова вылезает за ячейку и будет срезана'
 
 
+class TestAgeStandsByTheName:
+    """⚠ Возраст в строке учётки — на обеих страницах и одинаково.
+
+    Имена у анкет повторяются: прямо сейчас у агентства две Дианы и три Елены, и
+    различить их в списке больше нечем — логин это почта, номер на сайте число.
+    Возраст лежал в анкете с сайта и не показывался нигде, кроме большой карточки.
+    """
+
+    def test_the_model_carries_the_age(self):
+        """⚠⚠ Поле обязано быть **в модели ответа**, а не только в строке.
+
+        `response_model` выбрасывает всё, чего в ней нет, и делает это молча:
+        страница получала `undefined` при живом поле в словаре. Поймано на первом
+        же прогоне — и починено добавлением поля в модель, а не в запрос.
+
+        ⚠ Спрашиваем **модель**, а не живой список: сюита не ходит на рабочие
+        сайты (`test_profile_crud.py` сторожит это), а на стенде анкет может не
+        быть вовсе — тест зеленел бы от пустоты.
+        """
+        from src.uvicorn.routers.dating.dating_profile import DatingProfileResponse
+
+        assert 'age' in DatingProfileResponse.model_fields, \
+            'модель ответа съест возраст, и страница получит undefined'
+
+    async def test_both_pages_draw_it(self, auth_client):
+        """Одна учётка обязана выглядеть одинаково на «Анкетах» и «Профилях»."""
+        for page in ('/admin/dating', PAGE):
+            text = (await auth_client.get(page)).text
+
+            assert 'prof-age' in text, f'{page}: возраста нет в строке'
+
+    async def test_the_style_is_shared(self):
+        """⚠ Правило — в общем `dating_page.css`, а не копией на каждой странице:
+        копия разъехалась бы в день первой правки. Так уже было с `.prof-name`."""
+        import pathlib
+
+        css = pathlib.Path('data/uvicorn/public/css/dating_page.css').read_text(
+            encoding='utf-8')
+
+        assert '.prof-age' in css and '.prof-name-row' in css
+
+
 class TestDeliveryFly:
     """Прыгающие конверты у слова «Доставка»: сколько ушло за пять минут."""
 
