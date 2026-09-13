@@ -399,6 +399,9 @@
                     title="Перечитать список">⟳</button>
         </div>
         <div class="mail-sent" data-slot="invite-block"></div>
+        {# ⚠ Пейджер тот же, что у журнала доставки: список копится сам и не
+           убывает — запрет не истекает, и каждый отказ сайта добавляет строку. #}
+        <div class="pane-foot" data-slot="invite-block-pager"></div>
         {% endblock %}
     </div>
 </div>

@@ -33,15 +33,28 @@ class DatingBlockAdd(BaseModel):
 
 
 @router.get('', include_in_schema=False)
-async def dating_block_list(site_id: int = 0, profile_id: int = 0,
+async def dating_block_list(site_id: int = 0, profile_id: int = 0, page: int = 1,
+                            per: int = 0,
                             user: AuthUser = Depends(auth_required)):
-    """Чёрный список сайта, свежие сверху.
+    """Чёрный список сайта, свежие сверху, страницами.
 
     Args:
         site_id: сайт-закладка. Ноль — пустой список, а не запреты всех сайтов.
         profile_id: сузить до одной анкеты. Ноль — все анкеты сайта.
+        page: страница, с единицы. За концом — поправится сама.
+        per: строк на странице. Ноль — предел по умолчанию.
+
+    Returns:
+        dict: `result` — записи страницы, рядом `page`, `pages`, `total`.
+
+    ⚠ **Страницы на сервере.** Список копится сам и не убывает: запрет не истекает,
+    и каждый отказ сайта добавляет строку.
     """
-    return {'result': await dating_block_rows(int(site_id or 0), int(profile_id or 0))}
+    got = await dating_block_rows(int(site_id or 0), int(profile_id or 0),
+                                  int(page or 1), int(per or 0))
+
+    return {'result': got['rows'], 'page': got['page'], 'pages': got['pages'],
+            'total': got['total']}
 
 
 @router.post('', include_in_schema=False)

@@ -183,7 +183,14 @@ async def dating_block_pairs(site_id: int) -> set:
     return {(int(row['profile_id']), str(row['uid'])) for row in rows or []}
 
 
-async def dating_block_rows(site_id: int, profile_id: int = 0) -> list[dict]:
+# Сколько запретов на странице. ⚠ Столько же, сколько у журнала доставки: списки
+# соседние, строки одного вида, и разная длина страницы читалась бы как разница по
+# существу, которой нет.
+DATING_BLOCK_PAGE = 25
+
+
+async def dating_block_rows(site_id: int, profile_id: int = 0, page: int = 1,
+                            per: int = 0) -> dict:
     """Чёрный список сайта для страницы, свежие сверху.
 
     Args:
@@ -192,13 +199,37 @@ async def dating_block_rows(site_id: int, profile_id: int = 0) -> list[dict]:
 
             ⚠ **Фильтр, а не условие показа**, как у диалогов и доставки: без
             выбора список полон и отвечает на «от кого вообще закрылись».
+        page: страница, с единицы.
+        per: строк на странице. Ноль — `DATING_BLOCK_PAGE`.
+
+    Returns:
+        dict: `rows` — записи страницы, `page`, `pages`, `total`.
+
+    ⚠ **Страницы на сервере, а не в браузере.** Список копится сам и не убывает:
+    запрет не истекает, и каждый отказ сайта добавляет строку. Отдавать его целиком
+    значит однажды отдать всё подряд — и тем медленнее, чем дольше панель работает.
+
+    ⚠ **Страница за концом правится, а не отвергается**: человек мог снять запрет с
+    последней страницы, и отказ вместо предыдущей читался бы как поломка. То же
+    правило, что у журнала доставки.
     """
     site_id = int(site_id or 0)
     if not site_id:
-        return []
+        return {'rows': [], 'page': 1, 'pages': 1, 'total': 0}
+
+    where = ' WHERE b.site_id = %s AND (%s = 0 OR b.profile_id = %s)'
+    args = (site_id, int(profile_id or 0), int(profile_id or 0))
+
+    per = max(1, int(per or 0) or DATING_BLOCK_PAGE)
 
     try:
         async with mysql_get_db_async() as db:
+            await db.execute('SELECT COUNT(*) AS n FROM dating_block b' + where, args)
+            total = int(((await db.fetchone()) or {}).get('n') or 0)
+
+            pages = max(1, -(-total // per))
+            page = min(max(int(page or 1), 1), pages)
+
             await db.execute(
                 'SELECT b.id, b.profile_id, b.uid, b.reason, b.source, b.created_at,'
                 '       COALESCE(NULLIF(b.name, %s), comp.name, %s) AS name,'
@@ -207,14 +238,14 @@ async def dating_block_rows(site_id: int, profile_id: int = 0) -> list[dict]:
                 '  JOIN dating_profile p ON p.id = b.profile_id'
                 '  LEFT JOIN dating_companion comp'
                 '    ON comp.site_id = b.site_id AND comp.uid = b.uid'
-                ' WHERE b.site_id = %s AND (%s = 0 OR b.profile_id = %s)'
-                ' ORDER BY b.created_at DESC, b.id DESC',
-                ('', '', site_id, int(profile_id or 0), int(profile_id or 0)))
+                + where +
+                ' ORDER BY b.created_at DESC, b.id DESC LIMIT %s OFFSET %s',
+                ('', '', *args, per, (page - 1) * per))
             rows = await db.fetchall()
     except Exception as e:
         logger_info(f'[dating] чёрный список сайта #{site_id} не прочитался: {e}')
 
-        return []
+        return {'rows': [], 'page': 1, 'pages': 1, 'total': 0}
 
     from src.dating.dating_json import dating_json_load
 
@@ -235,7 +266,7 @@ async def dating_block_rows(site_id: int, profile_id: int = 0) -> list[dict]:
         got['created_at'] = str(got['created_at']) if got.get('created_at') else ''
         out.append(got)
 
-    return out
+    return {'rows': out, 'page': page, 'pages': pages, 'total': total}
 
 
 async def dating_block_drop(block_id: int) -> bool:

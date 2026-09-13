@@ -105,7 +105,7 @@ class TestAdd:
         await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
 
         assert await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY) is False
-        assert len(await dating_block_rows(STAND_SITE, girl)) == 1
+        assert (await dating_block_rows(STAND_SITE, girl))['total'] == 1
 
     async def test_drafts_of_the_pair_are_swept(self, girl):
         """⚠ Иначе круг отправки честно попробует каждый и получит тот же отказ:
@@ -148,7 +148,7 @@ class TestTheRowHasBothFaces:
                             site_uid='643694')
         await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
 
-        one = (await dating_block_rows(STAND_SITE, girl))[0]
+        one = (await dating_block_rows(STAND_SITE, girl))['rows'][0]
 
         assert one['profile_name'] == 'Диана'
         assert one['profile_photo'] == 'https://site/di.jpg'
@@ -158,7 +158,7 @@ class TestTheRowHasBothFaces:
         """Карточки с сайта может не быть — тогда имя из логина, лицо пустое."""
         await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
 
-        one = (await dating_block_rows(STAND_SITE, girl))[0]
+        one = (await dating_block_rows(STAND_SITE, girl))['rows'][0]
 
         assert one['profile_name'] and one['profile_photo'] == ''
 
@@ -213,12 +213,52 @@ class TestFavoriteMailObeysIt:
         assert 'dating_block' in code, 'затихшие разговоры не смотрят на запрет'
 
 
+class TestThePageOfTheList:
+    """⚠ Список копится сам и не убывает: запрет не истекает.
+
+    Каждый отказ сайта добавляет строку, и отдавать его целиком значит однажды
+    отдать всё подряд — тем медленнее, чем дольше панель работает.
+    """
+
+    async def test_the_count_is_the_whole_list(self, girl):
+        for n in range(3):
+            await dating_block_add(STAND_SITE, girl, f'{UID}-{n}', 'Dominic', DENY)
+
+        got = await dating_block_rows(STAND_SITE, girl, page=1, per=2)
+
+        assert got['total'] == 3 and got['pages'] == 2
+        assert len(got['rows']) == 2
+
+    async def test_the_second_page_is_other_rows(self, girl):
+        for n in range(3):
+            await dating_block_add(STAND_SITE, girl, f'{UID}-{n}', 'Dominic', DENY)
+
+        first = await dating_block_rows(STAND_SITE, girl, page=1, per=2)
+        second = await dating_block_rows(STAND_SITE, girl, page=2, per=2)
+
+        assert {one['id'] for one in first['rows']} \
+            & {one['id'] for one in second['rows']} == set()
+
+    async def test_a_page_past_the_end_comes_back(self, girl):
+        """⚠ Правим, а не отвергаем: запрет могли снять с последней страницы."""
+        await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
+
+        got = await dating_block_rows(STAND_SITE, girl, page=99, per=2)
+
+        assert got['page'] == got['pages'] and got['rows']
+
+    async def test_an_empty_list_is_one_page(self, girl):
+        got = await dating_block_rows(STAND_SITE, girl)
+
+        assert got == {'rows': [], 'page': 1, 'pages': 1, 'total': 0}
+
+
 class TestDrop:
     """Снять запрет может только человек."""
 
     async def test_it_goes_away(self, girl):
         await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
-        one = (await dating_block_rows(STAND_SITE, girl))[0]
+        one = (await dating_block_rows(STAND_SITE, girl))['rows'][0]
 
         assert await dating_block_drop(int(one['id'])) is True
         assert await dating_block_pairs(STAND_SITE) == set() \

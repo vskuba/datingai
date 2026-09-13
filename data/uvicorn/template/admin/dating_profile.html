@@ -2055,6 +2055,29 @@
         background: #e0e7ff;
     }
 
+    /* Строка чёрного списка: колонок четыре — время, «кто кому», откуда узнали,
+       кнопка. ⚠ Ведущего кружка исхода тут нет: в этом списке все записи об одном
+       и том же, и одинаковый значок в каждой строке не сообщал бы ничего — а рядом
+       с лицом девушки он ещё и читался как **её** статус. */
+    .mail-sent-row.plain.block {
+        grid-template-columns: auto minmax(0, 1fr) auto auto;
+    }
+
+    /* Перечёркнутая стрелка — линией поверх обычной: готовых глифов в шрифтах
+       нет (см. разметку строки). */
+    .mail-sent-row.plain.block .talk-swap {
+        color: #dc2626;
+        text-decoration: line-through;
+    }
+
+    /* Собеседник со своим кружком: признак принадлежит той стороне, о которой
+       говорит. Кружок — после имени, вплотную. */
+    .block-him {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+    }
+
     /* «Снять запрет» — текстом, а не кружком, как крестики на карточках пула.
        ⚠ Действие редкое и обдуманное: кружок рядом с чужим именем нажимается
        мимоходом, а здесь нажатие возвращает человеку письма, от которых он
@@ -5606,6 +5629,10 @@
     // ⚠ **Анкета — фильтр, а не условие показа**, как у диалогов и доставки: без
     // выбранной девушки список полон и отвечает на «от кого вообще закрылись».
     let inviteBlock = [];
+    // Страница списка, с нуля — как у прочих пейджеров панели.
+    let inviteBlockPage = 0;
+    let inviteBlockPages = 1;
+    let inviteBlockTotal = 0;
 
     function inviteBlockShow() {
         if (!workEl.querySelector('[data-chat-pane="block"]')) return;
@@ -5624,8 +5651,17 @@
         }
 
         try {
-            inviteBlock = (await getData(
-                `${BASE}/api/dating/block?site_id=${site}`)).result || [];
+            // ⚠ Страница в запросе, а не в браузере: список копится сам и не
+            // убывает — запрет не истекает (`dating_block.py`).
+            const got = (await getData(`${BASE}/api/dating/block?site_id=${site}`
+                + `&page=${inviteBlockPage + 1}`)) || {};
+
+            inviteBlock = got.result || [];
+            inviteBlockPages = Math.max(1, Number(got.pages) || 1);
+            inviteBlockTotal = Number(got.total) || 0;
+            // Номер берём из ответа: запрет могли снять с последней страницы, и
+            // сервер поправит нас на предыдущую.
+            inviteBlockPage = Math.max(0, (Number(got.page) || 1) - 1);
         } catch (e) {
             inviteBlock = [];
             showNotification('Список «не пишем» не пришёл: ' + e.message, 'error');
@@ -5641,10 +5677,13 @@
         const box = slot('invite-block');
         if (!box) return;
 
+        // ⚠ Счёт — по всему списку, а не по странице: «пар: 25» при семидесяти
+        // запретах читалось бы как полный ответ.
         fillSlot('invite-block-count',
-                 inviteBlock.length ? `пар: ${inviteBlock.length}` : '');
+                 inviteBlockTotal ? `пар: ${inviteBlockTotal}` : '');
 
         if (!inviteBlock.length) {
+            inviteBlockPagerPaint();
             box.innerHTML = '<div class="mail-sent-empty">Никто от анкет этого '
                 + 'сайта не закрывался.<br>Сюда попадают пары, которым сайт '
                 + 'отказал словами «вас закрыли»: таким мы больше не пишем — '
@@ -5654,8 +5693,11 @@
         }
 
         box.innerHTML = inviteBlock.map(row =>
-            '<div class="mail-sent-row plain">'
-            + '<span class="mail-sent-dot bad" title="ей ему больше не пишем"></span>'
+            '<div class="mail-sent-row plain block">'
+            // ⚠ **Время первым**, как в «Доставке»: списки соседние, и порядок
+            // чтения у них один.
+            + `<span class="mail-sent-when first">`
+            + `${esc(row.created_at ? timeShift(row.created_at) : '')}</span>`
             // Обе стороны тем же видом, что в «Доставке» и «Диалогах»: вопрос
             // «кто кому не пишет» — про двоих, и читается он так же.
             + '<span class="mail-sent-who talk">'
@@ -5663,18 +5705,31 @@
                        'анкета, от которой закрылись')
             // ⚠ Перечёркнутая стрелка: строка отвечает «письма отсюда туда не
             // идут», и обычная стрелка обещала бы обратное.
-            + '<span class="talk-swap">⇸</span>'
+            // ⚠ Стрелка обычная, а перечёркивает её **стиль**. Перечёркнутых
+            // стрелок в юникоде хватает (`⇸`, `↛`), но шрифта под них нет: браузер
+            // молча подставлял то обычную стрелку — строка говорила «письма идут»
+            // ровно там, где они не идут, — то огрызок в два пикселя. Оба раза
+            // видно на снимке.
+            + '<span class="talk-swap" title="письма отсюда туда не идут">→</span>'
+            // ⚠⚠ **Красный кружок — у собеседника, а не у анкеты.** Он стоял
+            // первым в строке, рядом с лицом девушки, и читался как её статус —
+            // при том, что закрылся-то **он**. Признак принадлежит той стороне,
+            // о которой говорит.
+            + '<span class="block-him">'
             + talkSide(row.name, row.photo, row.uid, 'он закрылся от этой анкеты')
+            + '<span class="mail-sent-dot bad" title="он закрылся от этой анкеты">'
+            + '</span></span>'
             + '</span>'
-            + `<span class="mail-sent-state bad">${esc(BLOCK_SOURCE[row.source] || '')}</span>`
-            + `<span class="mail-sent-when">${esc(row.created_at ? timeShift(row.created_at) : '')}</span>`
-            // Ответ сайта целиком: по нему и видно, что это не наша догадка.
-            + (row.reason
-                ? `<span class="mail-sent-said">${esc(row.reason)}</span>` : '')
-            + '<span class="mail-sent-text">'
+            // ⚠ **Ответ сайта — подсказкой, а не строкой.** Это машинный текст в
+            // сотню знаков: выведенный как есть, он занимал строку в каждой
+            // записи и оттеснял то, ради чего список открывают, — кто и когда.
+            // Нужен он редко, и тогда его читают наведением.
+            + `<span class="mail-sent-state bad" title="${esc(row.reason || '')}">`
+            + `${esc(BLOCK_SOURCE[row.source] || '')}</span>`
+            // ⚠ Кнопка — **после** слов «закрылся в чате»: сперва человек читает,
+            // что случилось, и только потом решает, отменять ли.
             + `<button type="button" class="block-undo" data-block="${row.id}"`
             + ' title="Снять запрет: этой паре снова можно писать">снять запрет</button>'
-            + '</span>'
             + '</div>').join('');
 
         // ⚠ Обработчик вешаем **после** отрисовки, как у карточек пула: строки
@@ -5682,6 +5737,18 @@
         // не пережил бы первого же обновления.
         box.querySelectorAll('.block-undo').forEach(btn =>
             btn.addEventListener('click', () => inviteBlockDrop(btn.dataset.block)));
+
+        inviteBlockPagerPaint();
+    }
+
+    function inviteBlockPagerPaint() {
+        const foot = slot('invite-block-pager');
+        if (!foot) return;
+
+        pagerRender(foot, inviteBlockPages, inviteBlockPage, (pick) => {
+            inviteBlockPage = pick;
+            inviteBlockLoad();
+        }, inviteBlockTotal ? `пар: ${inviteBlockTotal}` : '');
     }
 
     // Откуда узнали про запрет. ⚠ Показываем словами, а не кодом: `chat` и `mail`
