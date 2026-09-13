@@ -715,6 +715,51 @@ class TestDeliveryRowIsCompact:
         assert page.count('<span class="mail-sent-why">') >= 1
 
 
+class TestTheFilterStripKeepsItsHeight:
+    """⚠⚠ Полоса отбора не сжимается — иначе пейджер срезает чипсы.
+
+    Панель доставки — колонка флекса: шапка, полоса отбора, список, пейджер.
+    Прокручиваемый там только список, но сжимаются по умолчанию **все**: стоило
+    появиться пейджеру — и браузер отбирал высоту у полосы, разрезая чипсы
+    пополам.
+
+    Заметил это заказчик, и по верной примете: «обрезается у всех, у кого есть
+    пагинация; без неё правильно». Воспроизведено снимком стенда и им же
+    проверено.
+    """
+
+    async def test_the_strip_does_not_shrink(self, auth_client):
+        page = (await auth_client.get(PAGE)).text
+        start = page.index('.sent-filter {')
+        block = page[start:page.index('}', start)]
+
+        assert 'flex: 0 0 auto' in block, \
+            'полоса отбора снова сжимается — пейджер срежет чипсы'
+
+    async def test_the_head_does_not_shrink_either(self, auth_client):
+        """По той же причине: в колонке с пейджером высоту отбирают у всех, кто
+        это позволяет."""
+        page = (await auth_client.get(PAGE)).text
+        start = page.index('.mail-sent-head {')
+        block = page[start:page.index('}', start)]
+
+        assert 'flex: 0 0 auto' in block
+
+    async def test_the_pick_stays_inside_its_cell(self, auth_client):
+        """⚠ И подсветка выбранного имени не вылезает за ячейку.
+
+        У «кто кому» стоит `overflow: hidden` — она же режет длинные имена
+        многоточием, — и вылезшие за край два пикселя заливки она честно срезала:
+        у чипса пропадало левое скругление.
+        """
+        page = (await auth_client.get(PAGE)).text
+        start = page.index('.sent-pick {')
+        block = page[start:page.index('}', start)]
+
+        assert 'margin: 0 -2px' not in block, \
+            'подсветка снова вылезает за ячейку и будет срезана'
+
+
 class TestDeliveryFly:
     """Прыгающие конверты у слова «Доставка»: сколько ушло за пять минут."""
 
