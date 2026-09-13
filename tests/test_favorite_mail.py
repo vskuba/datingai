@@ -245,6 +245,60 @@ class TestWhoIsQuiet:
         assert rows.index(old) < rows.index(fresh)
 
 
+class TestAStarIsEnough:
+    """⚠⚠ Переписки в нашей базе быть не обязано — хватает звёздочки.
+
+    Поймано заказчиком: вкладка отвечала «писать некому: у избранных нет затихших
+    разговоров» при полутора десятках избранных у каждой анкеты. Звёздочку ставят
+    тому, кто отвечал; разговор шёл на сайте — возможно, задолго до панели, — и в
+    нашу базу мог не приехать вовсе.
+    """
+
+    async def test_a_favorite_without_any_letters_is_taken(self, girl):
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+
+        row = next((r for r in await _quiet(STAND_SITE) if r['uid'] == uid), None)
+
+        assert row, 'избранный без переписки в базе выпал из отбора'
+        assert row['last_side'] is None, 'последним не говорил никто — так и должно'
+
+    async def test_he_still_loses_to_the_reply_round(self, girl):
+        """⚠ Правило «последним говорил не он» осталось: есть его письмо —
+        отвечает круг ответов, а не приставание."""
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _his(girl, uid, '2026-09-01 10:00:00')
+
+        assert not [r for r in await _quiet(STAND_SITE) if r['uid'] == uid]
+
+    async def test_those_never_written_to_come_first(self, girl):
+        """Повод у них старше всех: им не писали никогда."""
+        never = f'u{uuid.uuid4().hex[:8]}'
+        talked = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, never)
+        await _star(girl, talked)
+        await _hers(girl, talked, '2026-09-01 12:00:00')
+
+        order = [r['uid'] for r in await _quiet(STAND_SITE)
+                 if r['uid'] in (never, talked)]
+
+        assert order == [never, talked], order
+
+    async def test_the_agent_is_told_there_is_no_history(self):
+        """⚠ Пустая переменная заставила бы модель сослаться на слова, которых
+        она не видела, — то есть выдумать разговор."""
+        import inspect
+
+        from src.dating import dating_mail_agent
+
+        code = inspect.getsource(dating_mail_agent.dating_favorite_mail_write)
+
+        assert 'DATING_FAVORITE_MAIL_NO_HISTORY' in code
+        assert 'нечего возобновлять' not in code, \
+            'пустая история снова считается отказом'
+
+
 class TestBothMustBeOnline:
     """⚠ Письмо готовится, только когда **оба** на сайте.
 
