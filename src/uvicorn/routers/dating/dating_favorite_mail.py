@@ -38,6 +38,7 @@ from src.dating.dating_mail_send import (DatingMailSendError, dating_mail_send_m
                                          dating_mail_send_one)
 from src.dating.dating_online import dating_online_show
 from src.uvicorn.routers.dating.dating_site import dating_site_setting
+from src.uvicorn.routers.setting import setting_timezone_hours
 
 router = APIRouter(prefix='/api/dating/favorite-mail', tags=['dating'])
 
