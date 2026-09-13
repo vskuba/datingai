@@ -1153,15 +1153,17 @@
         <button type="button" class="page-tab" data-stats-tab="profiles">По профилям</button>
     </div>
 
+    {# ⚠ Окно — **над обеими панелями**, а не внутри одной: срок один на обе, и
+       переключатель, спрятанный в «Общей», не объяснял бы, почему числа «По
+       профилям» изменились. «За всё время» первым: это умолчание и самый частый
+       вопрос. #}
+    <div class="stats-range" data-slot="stats-range">
+        <button type="button" class="stats-range-btn on" data-hours="0">за всё время</button>
+        <button type="button" class="stats-range-btn" data-hours="24">сутки</button>
+        <button type="button" class="stats-range-btn" data-hours="12">12 часов</button>
+    </div>
+
     <div class="stats-pane" data-stats-pane="all">
-        {# ⚠ Окно — **рядом с числами, а не в шапке страницы**: оно меняет именно
-           их, и переключатель в другом месте читался бы как настройка вкладки.
-           «За всё время» первым: это умолчание и самый частый вопрос. #}
-        <div class="stats-range" data-slot="stats-range">
-            <button type="button" class="stats-range-btn on" data-hours="0">за всё время</button>
-            <button type="button" class="stats-range-btn" data-hours="24">сутки</button>
-            <button type="button" class="stats-range-btn" data-hours="12">12 часов</button>
-        </div>
         {# Подпись — про охват: «по сайту» или «по анкете». Её ставит страница: без
            анкеты числа по всему сайту, с анкетой — по ней, и человек должен видеть,
            что он читает. #}
@@ -1173,9 +1175,9 @@
        между собой. Сузь она до одной строки, вкладка отвечала бы на вопрос
        «Общей», только хуже. #}
     <div class="stats-pane off" data-stats-pane="profiles">
-        <div class="stats-note">Работа каждой анкеты: ушло/не ушло по трём
-            занятиям. Выбор анкеты слева здесь не сужает — вкладку открывают,
-            чтобы сравнить девушек между собой.</div>
+        <div class="stats-note" data-slot="stats-profiles-note">Работа каждой
+            анкеты: ушло/не ушло по трём занятиям. Выбор анкеты слева здесь не
+            сужает — вкладку открывают, чтобы сравнить девушек между собой.</div>
         <div class="stats-rows" data-slot="stats-profiles"></div>
     </div>
     {% endblock %}

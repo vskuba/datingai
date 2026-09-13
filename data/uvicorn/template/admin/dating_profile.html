@@ -5286,9 +5286,12 @@
     // минут работы.
     let statsHours = Number(localStorage.getItem(STATS_HOURS_KEY) || 0) || 0;
 
-    // Строки «По профилям» и сайт, для которого они сняты.
+    // Строки «По профилям» и то, для чего они сняты: сайт **и окно**.
+    //
+    // ⚠ Окно в ключе: те же анкеты за сутки — другие числа, и показывать вчерашние
+    // нельзя даже секунду. Тот же довод, что у общей сводки.
     let statsProfiles = [];
-    let statsProfilesFor = 0;
+    let statsProfilesFor = '';
 
     function statsTabPaint() {
         const tabs = slot('stats-tabs');
@@ -5318,7 +5321,8 @@
 
         // ⚠ Вторую сводку грузим **только когда её смотрят**: она считает строку
         // на анкету, а открывают её редко. Тот же приём, что у подвкладок чата.
-        if (statsTab === 'profiles' && statsProfilesFor !== siteId()) {
+        if (statsTab === 'profiles'
+            && statsProfilesFor !== `${siteId()}|${statsHours}`) {
             statsProfilesLoad();
         }
     }
@@ -5334,7 +5338,8 @@
 
         try {
             statsProfiles = (await getData(
-                `${BASE}/api/dating/stats/profiles?site_id=${site}`)).result || [];
+                `${BASE}/api/dating/stats/profiles?site_id=${site}`
+                + `&hours=${statsHours}`)).result || [];
         } catch (e) {
             statsProfiles = [];
             showNotification('Статистика по анкетам не пришла: ' + e.message, 'error');
@@ -5342,7 +5347,7 @@
 
         if (siteId() !== site) return;
 
-        statsProfilesFor = site;
+        statsProfilesFor = `${site}|${statsHours}`;
         statsProfilesPaint();
     }
 
@@ -5350,8 +5355,16 @@
         const box = slot('stats-profiles');
         if (!box) return;
 
+        // ⚠ Подпись говорит и про срок: «у всех нули» за 12 часов — это ответ, а
+        // не поломка, и человек должен видеть, за какое время он смотрит.
+        fillSlot('stats-profiles-note',
+                 'Работа каждой анкеты: ушло/не ушло по трём занятиям. Выбор '
+                 + 'анкеты слева здесь не сужает — вкладку открывают, чтобы '
+                 + 'сравнить девушек между собой.'
+                 + (statsHours ? ` За последние ${statsHours} ч.` : ''));
+
         if (!statsProfiles.length) {
-            box.innerHTML = statsProfilesFor === siteId()
+            box.innerHTML = statsProfilesFor === `${siteId()}|${statsHours}`
                 ? '<div class="work-soon">У сайта нет анкет.</div>'
                 : '<div class="work-soon">Считаю…</div>';
 

@@ -127,12 +127,15 @@ def _empty(site_id: int, profile_id: int) -> dict:
 
 
 @router.get('/profiles', include_in_schema=False)
-async def dating_stats_profiles(site_id: int = 0,
+async def dating_stats_profiles(site_id: int = 0, hours: int = 0,
                                 user: AuthUser = Depends(auth_required)):
     """Работа каждой анкеты сайта: ушло и не ушло по трём занятиям.
 
     Args:
         site_id: сайт-закладка. Ноль — пустой список.
+        hours: окно в часах — 12, 24 или ноль («за всё время»). То же, что у
+            общей сводки: числа стоят на соседних вкладках, и разные сроки у них
+            читались бы как разница по существу.
 
     Returns:
         dict: `result` — строка на анкету: `profile_id`, `name`, `photo`, `uid`,
@@ -158,6 +161,14 @@ async def dating_stats_profiles(site_id: int = 0,
     if not int(site_id or 0):
         return {'result': []}
 
+    # ⚠ **Время неудачи мы знаем приблизительно, и честнее так и считать.**
+    # У ушедшего есть `sent_at`; у неудачи его нет — инвайт его снимает, а письмо
+    # и не ставило. Точное время лежало бы в `updated_at`, но он есть только у
+    # `dating_invite`: у двух почтовых пулов его нет вовсе. Одно правило на три
+    # таблицы лучше трёх разных, поэтому берём `COALESCE(sent_at, created_at)` —
+    # «когда ушло, а если не ушло, то когда приготовили».
+    when = 'COALESCE(sent_at, created_at)'
+
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
@@ -176,9 +187,11 @@ async def dating_stats_profiles(site_id: int = 0,
                                 ('dating_favorite_mail', 'favorite'),
                                 ('dating_mailing', 'mailing')):
                 await db.execute(
-                    f"SELECT profile_id, SUM(status = 'sent') AS sent,"
-                    f"       SUM(status = 'failed'"
-                    f"           OR (status = 'draft' AND error <> '')) AS failed"
+                    f"SELECT profile_id,"
+                    f"       SUM(status = 'sent'{_window('sent_at', hours)}) AS sent,"
+                    f"       SUM((status = 'failed'"
+                    f"            OR (status = 'draft' AND error <> ''))"
+                    f"{_window(when, hours)}) AS failed"
                     f'  FROM {table} WHERE site_id = %s GROUP BY profile_id',
                     (int(site_id),))
                 for row in await db.fetchall() or []:

@@ -266,6 +266,33 @@ class TestByProfiles:
 
         assert row['invite'] == {'sent': 0, 'failed': 1}
 
+    async def test_the_window_narrows_the_profiles_too(self, auth_client, talks):
+        """⚠ Окно одно на обе вкладки: числа стоят рядом, и разные сроки у них
+        читались бы как разница по существу."""
+        girl = talks['girls'][0]
+        await _invite_at(girl, 'sent', hours=30)
+
+        whole = next(one for one in await _profiles(auth_client)
+                     if one['profile_id'] == girl)
+        day = next(one for one in await _profiles(auth_client, hours=24)
+                   if one['profile_id'] == girl)
+
+        assert whole['invite']['sent'] == 1
+        assert day['invite']['sent'] == 0, 'старая реплика осталась в сутках'
+
+    async def test_a_failure_is_dated_too(self, auth_client, talks):
+        """⚠ Время неудачи известно **приблизительно**: `sent_at` у неё нет — инвайт
+        его снимает, письмо и не ставило, — а `updated_at` есть только у инвайтов.
+        Берём `COALESCE(sent_at, created_at)`, одно правило на три таблицы.
+        """
+        girl = talks['girls'][0]
+        await _invite_at(girl, 'failed', hours=30, error='он вас закрыл')
+
+        day = next(one for one in await _profiles(auth_client, hours=24)
+                   if one['profile_id'] == girl)
+
+        assert day['invite']['failed'] == 0, 'старая неудача осталась в сутках'
+
     async def test_no_site_no_rows(self, auth_client):
         got = (await auth_client.get('/api/dating/stats/profiles',
                                      params={'site_id': 0})).json()
@@ -297,9 +324,29 @@ async def _message_at(profile_id: int, side: str, hours: int) -> None:
         await db.connection.commit()
 
 
-async def _profiles(client) -> list:
+async def _profiles(client, hours: int = 0) -> list:
     return (await client.get('/api/dating/stats/profiles',
-                             params={'site_id': STAND_SITE})).json()['result']
+                             params={'site_id': STAND_SITE,
+                                     'hours': hours})).json()['result']
+
+
+async def _invite_at(profile_id: int, status: str, hours: int,
+                     error: str = '') -> None:
+    """Инвайт такой-то давности: окно проверяется им.
+
+    ⚠ `created_at` двигаем тоже: у неудачи время берётся из него — `sent_at` у неё
+    нет.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO dating_invite (site_id, profile_id, uid, name, body, status,'
+            ' error, sent_at, created_at)'
+            " VALUES (%s, %s, %s, 'Кто-то', 'привет', %s, %s,"
+            "         IF(%s = 'sent', NOW() - INTERVAL %s HOUR, NULL),"
+            '         NOW() - INTERVAL %s HOUR)',
+            (STAND_SITE, int(profile_id), f'zz-{uuid.uuid4().hex[:8]}', status,
+             error, status, int(hours), int(hours)))
+        await db.connection.commit()
 
 
 async def _invite(profile_id: int, status: str, error: str = '') -> None:

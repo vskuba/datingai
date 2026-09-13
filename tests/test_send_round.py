@@ -36,9 +36,27 @@ ALWAYS = [{'from': '00:00', 'to': '24:00'}]
 
 
 @pytest.fixture
-async def site(auth_client):
-    """Сайт с включёнными выключателями отправки. Убирает за собой всё."""
+async def site(auth_client, monkeypatch):
+    """Сайт с включёнными выключателями отправки. Убирает за собой всё.
+
+    ⚠⚠ **И снимает дневной потолок, иначе тесты зависят от соседей.**
+
+    `_today` считает **все** письма стенда, ушедшие сегодня, — включая оставленные
+    другими файлами сюиты: они бегут раньше по алфавиту и убирают за собой только
+    свои строки. Наберётся сорок — и круг молча перестаёт отправлять, а тесты здесь
+    падают на `assert ... == 1` без единого намёка на причину. Так же молчит и
+    объяснение простоя: `dating_send_why` честно скажет «норма выбрана».
+
+    Поймано живьём: полный прогон покраснел один раз из трёх, файл поодиночке
+    зеленел всегда. Воспроизведено набивкой счётчика до 45 — тогда краснеют сразу
+    три теста.
+
+    ⚠ Тесты **про сам потолок** задают его себе обратно: `_max_day` подменяется
+    точечно, и видно это прямо в них.
+    """
     from mysql_.mysql_ import mysql_get_db_async
+
+    monkeypatch.setattr(round_, '_max_day', _fixed(10 ** 6))
 
     before = (await auth_client.get(
         f'/api/dating/site/{SITE}/mailing-schedule')).json()['result']
@@ -271,8 +289,13 @@ class TestDailyCap:
     больше писем от одной девушки.
     """
 
-    async def test_cap_stops_sending(self, auth_client, site, profile, post):
+    async def test_cap_stops_sending(self, auth_client, site, profile, post,
+                                     monkeypatch):
         from mysql_.mysql_ import mysql_get_db_async
+
+        # ⚠ Потолок возвращаем себе: фикстура `post` снимает его для всех прочих
+        # тестов файла (см. там же, почему). Здесь он и есть предмет проверки.
+        monkeypatch.setattr(round_, '_max_day', _fixed(10))
 
         before = (await auth_client.get(
             f'/api/dating/site/{SITE}')).json()['result']['settings']
