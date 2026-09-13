@@ -96,17 +96,47 @@ async def _chat(site_id: int, profile_id: int) -> dict:
     `dating_message` её нет, и это правильно — сообщение принадлежит переписке
     анкеты, а сайт у анкеты уже записан.
 
+    ⚠⚠ **«Разговоров» — столько же, сколько строк на вкладке «Диалоги».** Правило
+    одно: пара «анкета — собеседник», где есть хоть одна **входящая** реплика.
+    Разойдись они, два числа об одном и том же спорили бы на соседних вкладках, и
+    верить нельзя было бы ни одному.
+
+    ⚠ **«Исходящих» при этом много больше**, и это не противоречие: инвайт тоже
+    ложится сюда исходящей репликой. Сто шестьдесят пять отправленных приглашений
+    при одном ответе — это один разговор, а не сто шестьдесят пять.
+
     ⚠ **«Ждут ответа» считается тем же правилом, что значок ↩ в списке диалогов**
     (последняя реплика входящая, не отвечена и агент не промолчал). Своя копия
     правила разошлась бы с тем, что человек видит на «Чате», и верить нельзя было
     бы обеим.
     """
     sql = ("SELECT SUM(m.direction = 'in') AS `in`,"
-           "       SUM(m.direction = 'out') AS `out`,"
-           '       COUNT(DISTINCT m.sender_uid) AS dialogs'
+           "       SUM(m.direction = 'out') AS `out`"
            '  FROM dating_message m'
            '  JOIN dating_profile p ON p.id = m.profile_id'
            ' WHERE p.site_id = %s AND (%s = 0 OR m.profile_id = %s)')
+
+    # ⚠⚠ **Разговор — это пара, которой ответили**, слово в слово как на вкладке
+    # «Диалоги» (`dating_chat.py`). Здесь стоял `COUNT(DISTINCT m.sender_uid)`, и
+    # он врал дважды.
+    #
+    # Во-первых, `sender_uid` у исходящей реплики — это **адресат**, а не
+    # отправитель: столбец один на обе стороны. Значит считались все, кому мы
+    # когда-либо писали, — а пишем мы первыми, инвайтами, сотнями.
+    #
+    # Во-вторых, считались люди, а не пары: один мужчина у двух наших анкет — два
+    # разговора, и на вкладке их именно два.
+    #
+    # Поймано заказчиком на живом проде: «входящих 6, исходящих 165, разговоров
+    # 93» — при одном настоящем диалоге. Девяносто три это те, кого позвали и кто
+    # промолчал.
+    dialogs_sql = (
+        'SELECT COUNT(*) AS n FROM ('
+        '  SELECT m.profile_id, m.sender_uid FROM dating_message m'
+        '    JOIN dating_profile p ON p.id = m.profile_id'
+        '   WHERE p.site_id = %s AND (%s = 0 OR m.profile_id = %s)'
+        '   GROUP BY m.profile_id, m.sender_uid'
+        "  HAVING SUM(m.direction = 'in') > 0) AS d")
 
     waiting_sql = (
         '  SELECT COUNT(*) AS n FROM ('
@@ -127,6 +157,9 @@ async def _chat(site_id: int, profile_id: int) -> dict:
             await db.execute(sql, args)
             row = dict((await db.fetchone()) or {})
 
+            await db.execute(dialogs_sql, args)
+            dialogs = int(((await db.fetchone()) or {}).get('n') or 0)
+
             await db.execute(waiting_sql, args)
             waiting = int(((await db.fetchone()) or {}).get('n') or 0)
     except Exception as e:
@@ -135,7 +168,7 @@ async def _chat(site_id: int, profile_id: int) -> dict:
         return {'in': 0, 'out': 0, 'dialogs': 0, 'waiting': 0}
 
     return {'in': int(row.get('in') or 0), 'out': int(row.get('out') or 0),
-            'dialogs': int(row.get('dialogs') or 0), 'waiting': waiting}
+            'dialogs': dialogs, 'waiting': waiting}
 
 
 async def _mail(site_id: int, profile_id: int) -> dict:
