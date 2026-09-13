@@ -1848,6 +1848,45 @@
         cursor: default;
     }
 
+    /* ⚠ **Имя и номер — в одну строку, а не в две.** `talkSide` общий с
+       «Диалогами», и там две строки уместны: список из полутора десятков
+       разговоров, каждый читают. Здесь же строк двадцать пять на странице, и
+       вторая строка у каждой из двух сторон удваивала высоту журнала.
+
+       Она же и чинила обрезанный чипс: подсветка `.sent-pick` выравнивается по
+       базовой линии первой строки, и вторая вылезала из-под заливки. */
+    .mail-sent-row.plain .person-text {
+        flex-direction: row;
+        align-items: baseline;
+        gap: 5px;
+    }
+
+    .mail-sent-row.plain .person-face {
+        width: 18px;
+        height: 18px;
+        font-size: 9px;
+        line-height: 18px;
+    }
+
+    .mail-sent-row.plain .talk-side {
+        gap: 5px;
+    }
+
+    /* Плотнее: поля и просветы у журнала свои — он длинный, и то, что уместно у
+       карточки пула, здесь множится на страницу. */
+    .mail-sent-row.plain {
+        padding: 4px 8px;
+        gap: 6px;
+        align-items: center;
+    }
+
+    .mail-sent-row.plain .mail-sent-text,
+    .mail-sent-row.plain .mail-sent-why,
+    .mail-sent-row.plain .mail-sent-said {
+        line-height: 1.3;
+        margin-top: 1px;
+    }
+
     /* Время в начале строки: не переносится и не жмётся именами. */
     .mail-sent-when.first {
         white-space: nowrap;
@@ -1867,6 +1906,31 @@
     .mail-sent-row.plain:hover {
         background: #fff;
         border-color: #f1f5f9;
+    }
+
+    /* Исход строки — заливкой всей карточки, а не только точкой.
+       ⚠ **Бледной, а не насыщенной**: поверх заливки читают текст реплики и ответ
+       сайта, и цвет здесь — фон, а не подпись. Точка и слово остаются на месте:
+       заливка не различима на монохромном экране и не читается вслух.
+       ⚠ Правило после `:hover`, иначе наведение возвращало бы белый: у обоих
+       селекторов вес одинаковый, и решает порядок. */
+    .mail-sent-row.plain.ok,
+    .mail-sent-row.plain.ok:hover {
+        background: #f0fdf4;
+        border-color: #dcfce7;
+    }
+
+    .mail-sent-row.plain.bad,
+    .mail-sent-row.plain.bad:hover {
+        background: #fef2f2;
+        border-color: #fee2e2;
+    }
+
+    /* ⚠ Ответ сайта у неудачной строки — красным, а не серым. Серый он потому,
+       что обычно это машинная подробность к слову «ушло»; у не ушедшей он и есть
+       причина, и читать его будут первым. */
+    .mail-sent-row.plain.bad .mail-sent-said {
+        color: #b91c1c;
     }
 
     /* Сама реплика — под строкой, во всю ширину. ⚠ **Не `.mail-sent-why`**: та
@@ -1955,9 +2019,13 @@
        превратили бы журнал в поле кнопок. Отклик — по наведению. */
     .sent-pick {
         display: inline-flex;
-        border-radius: 10px;
-        padding: 1px 4px;
-        margin: -1px -4px;
+        align-items: center;
+        border-radius: 8px;
+        /* ⚠ Поля **сверху и снизу тоже**, иначе заливка режет содержимое по
+           краям: было `1px 4px` при отрицательном внешнем поле — имя с номером
+           не помещались, и чипс девушки выглядел обрезанным. */
+        padding: 2px 6px;
+        margin: 0 -2px;
         cursor: pointer;
         transition: background .12s ease;
     }
@@ -5402,7 +5470,7 @@
         box.innerHTML = inviteSent.map(row => {
             const ok = row.status === 'sent';
 
-            return '<div class="mail-sent-row plain">'
+            return `<div class="mail-sent-row plain ${ok ? 'ok' : 'bad'}">`
                 + `<span class="mail-sent-dot ${ok ? 'ok' : 'bad'}"`
                 + ` title="${ok ? 'ушло' : 'не ушло'}"></span>`
                 // ⚠ **Время — первым, до имён.** Журнал читают сверху вниз и
@@ -5453,11 +5521,18 @@
                 // а прочитать, что именно ушло человеку, — главное, зачем сюда
                 // заходят.
                 + `<span class="mail-sent-text">${esc(row.body || '')}</span>`
-                + (!ok && row.error
-                    ? `<span class="mail-sent-why">${esc(row.error)}</span>` : '')
-                + (row.status === 'draft'
-                    ? '<span class="mail-sent-why">осталось в пуле — можно '
-                    + 'отправить ещё раз</span>'
+                // ⚠ Причина и «осталось в пуле» — **одной строкой**. Порознь
+                // они занимали две, а говорят об одном: почему не ушло и что с
+                // этим теперь. Журнал читают списком, и каждая лишняя строка
+                // умножается на двадцать пять.
+                + (!ok && (row.error || row.status === 'draft')
+                    ? '<span class="mail-sent-why">'
+                      + `${esc(row.error || '')}`
+                      + (row.status === 'draft'
+                          ? `${row.error ? ' · ' : ''}осталось в пуле — можно `
+                            + 'отправить ещё раз'
+                          : '')
+                      + '</span>'
                     : '')
                 // ⚠ **Ответ сайта — как есть, и у ушедших тоже.** Наше «ушло»
                 // значит «сайт принял кадр», а не «человек это прочитал»: женской

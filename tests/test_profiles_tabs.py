@@ -679,6 +679,37 @@ def _delivery_row(page: str) -> str:
     return page[start:page.index("+ '</div>';", start)]
 
 
+class TestDeliveryRowIsCompact:
+    """Карточка журнала — плотная, и заливка не режет содержимое.
+
+    ⚠ **Смотрено в браузере, а не выведено из кода.** Имя с номером рисовались в
+    две строки (`talkSide` общий с «Диалогами»), и подсветка выбранного имени,
+    выровненная по базовой линии первой строки, вторую не вмещала: чипс девушки
+    выглядел обрезанным. Здесь сторожим оба следствия правки.
+    """
+
+    async def test_names_go_in_one_line(self, auth_client):
+        page = (await auth_client.get(PAGE)).text
+
+        assert '.mail-sent-row.plain .person-text' in page, \
+            'имя с номером снова в две строки — журнал вдвое выше, чипс режется'
+
+    async def test_the_pick_has_room_for_its_content(self, auth_client):
+        """⚠ Поля **сверху и снизу тоже**: с `1px 4px` заливка резала содержимое."""
+        page = (await auth_client.get(PAGE)).text
+        start = page.index('.sent-pick {')
+        block = page[start:page.index('}', start)]
+
+        assert 'padding: 2px 6px' in block, 'у подсветки чипса опять нет полей'
+
+    async def test_the_reason_and_the_pool_note_share_a_line(self, auth_client):
+        """Порознь они занимали две строки, а говорят об одном."""
+        page = (await auth_client.get(PAGE)).text
+
+        assert "осталось в пуле — можно " in page
+        assert page.count('<span class="mail-sent-why">') >= 1
+
+
 class TestDeliveryFly:
     """Прыгающие конверты у слова «Доставка»: сколько ушло за пять минут."""
 
