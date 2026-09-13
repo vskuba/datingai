@@ -383,6 +383,36 @@
         font-size: 12px;
     }
 
+    /* Окно времени: кнопки-переключатели над сеткой. ⚠ Тише вкладок и мельче их:
+       вкладки решают «что смотрим», окно — «за какой срок», и одинаковый вид
+       поставил бы два разных вопроса вровень. */
+    .stats-range {
+        display: flex;
+        gap: 6px;
+        padding: 10px 12px 0;
+    }
+
+    .stats-range-btn {
+        padding: 2px 9px;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        background: #fff;
+        color: #64748b;
+        font-size: 11px;
+        cursor: pointer;
+        transition: background .12s ease, color .12s ease, border-color .12s ease;
+    }
+
+    .stats-range-btn:hover {
+        border-color: #c7d2fe;
+    }
+
+    .stats-range-btn.on {
+        background: #4338ca;
+        border-color: #4338ca;
+        color: #fff;
+    }
+
     /* Полоса подвкладок статистики и её панели. ⚠ Прячем классом, а не
        перерисовкой: возврат на «Общую» не должен стоить пересчёта. */
     .stats-tabs {
@@ -5230,6 +5260,11 @@
     // подпись над сеткой об этом говорит, иначе человек читал бы сайт как анкету.
     let statsData = null;
     let statsFor = '';
+    // Окно в часах: 0 — за всё время, 24 — сутки, 12 — полсуток. ⚠ Скользящее, а
+    // не календарное: вопрос к нему «сколько сделано за последние сутки», и
+    // полночь на него не отвечает — в 00:10 календарные сутки показали бы десять
+    // минут работы.
+    let statsHours = Number(localStorage.getItem(STATS_HOURS_KEY) || 0) || 0;
 
     // ── Подвкладки статистики ────────────────────────────────────────────────
     //
@@ -5237,6 +5272,7 @@
     // вопросы, и общий ключ с чатом означал бы, что переход по вкладкам меняет
     // открытую панель статистики.
     const STATS_TAB_KEY = 'dating.profile.statstab';
+    const STATS_HOURS_KEY = 'dating.profile.statshours';
     const STATS_TABS = ['all', 'profiles'];
 
     let statsTab = STATS_TABS.includes(localStorage.getItem(STATS_TAB_KEY))
@@ -5261,12 +5297,15 @@
         if (!workEl.querySelector('[data-slot="stats"]')) return;
 
         statsTabPaint();
+        statsRangePaint();
         statsPaint();
         statsProfilesPaint();
 
         // Ключ охвата: сайт и анкета вместе. Смена любого из двух — другие числа,
         // и старые показывать нельзя даже секунду.
-        const key = `${siteId()}|${openId || 0}`;
+        // ⚠ Окно — часть ключа: другие часы это другие числа, и показывать старые
+        // нельзя даже секунду.
+        const key = `${siteId()}|${openId || 0}|${statsHours}`;
         if (statsFor !== key) statsLoad(key);
 
         // ⚠ Вторую сводку грузим **только когда её смотрят**: она считает строку
@@ -5361,6 +5400,30 @@
         statsShow();
     });
 
+    // Переключение окна времени. ⚠ Выбор запоминаем: человек, смотрящий за сутки,
+    // смотрит так весь день — и возвращать его к «за всё время» на каждой смене
+    // анкеты значило бы заставлять нажимать заново.
+    workEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('.stats-range-btn');
+        if (!btn) return;
+
+        const hours = Number(btn.dataset.hours) || 0;
+        if (hours === statsHours) return;
+
+        statsHours = hours;
+        localStorage.setItem(STATS_HOURS_KEY, String(hours));
+        statsRangePaint();
+        statsShow();
+    });
+
+    function statsRangePaint() {
+        const box = slot('stats-range');
+        if (!box) return;
+
+        box.querySelectorAll('.stats-range-btn').forEach(btn =>
+            btn.classList.toggle('on', (Number(btn.dataset.hours) || 0) === statsHours));
+    }
+
     async function statsLoad(key) {
         const site = siteId();
         if (!site) {
@@ -5372,15 +5435,15 @@
         let got;
         try {
             got = (await getData(`${BASE}/api/dating/stats?site_id=${site}`
-                + `&profile_id=${openId || 0}`)).result || null;
+                + `&profile_id=${openId || 0}&hours=${statsHours}`)).result || null;
         } catch (e) {
             showNotification('Статистика не пришла: ' + e.message, 'error');
 
             return;
         }
 
-        // Пока ответ ехал, могли переключить сайт или анкету.
-        if (`${siteId()}|${openId || 0}` !== key) return;
+        // Пока ответ ехал, могли переключить сайт, анкету или окно.
+        if (`${siteId()}|${openId || 0}|${statsHours}` !== key) return;
 
         statsData = got;
         statsFor = key;
@@ -5392,10 +5455,15 @@
         if (!box) return;
 
         const row = openRow();
-        fillSlot('stats-note', row
+        // ⚠ Подпись говорит и про охват, и про срок: два сужения сразу, и
+        // человек должен видеть оба — иначе «мало» читается как поломка.
+        const срок = statsHours
+            ? ` За последние ${statsHours} ч.`
+            : '';
+        fillSlot('stats-note', (row
             ? `Числа по анкете ${row.name || row.login}. Уберите выбор в списке `
               + 'слева, чтобы увидеть весь сайт.'
-            : 'Числа по всему сайту. Выберите анкету слева, чтобы сузить.');
+            : 'Числа по всему сайту. Выберите анкету слева, чтобы сузить.') + срок);
 
         if (!statsData) {
             box.innerHTML = '<div class="work-soon">Считаю…</div>';
@@ -5439,7 +5507,8 @@
                 ? `⚠ LLM: ${esc(s.llm.error)}`
                 : `⚠ LLM — по всей панели и за ${s.llm.days || 7} дней: журнал `
                   + 'у соседа дольше не живёт, а какой анкете принадлежал вызов, '
-                  + 'он не знает. Фильтр по анкете этих чисел не касается.')
+                  + 'он не знает. Ни фильтр по анкете, ни окно времени этих чисел '
+                  + 'не касаются.')
             // ⚠ Разметка тегом, а не звёздочками: это HTML, и `**ушедшее**`
             // попало бы на страницу звёздочками как есть. Так и вышло — видно на
             // снимке страницы, а не в тестах: те сверяют слоты, а не текст.
@@ -7007,27 +7076,31 @@
 
         box.innerHTML = favSent.map((one, index) => {
             const ok = one.status === 'sent';
+            // ⚠ **Ответ сайта — подсказкой строки.** «Доставлено» это наш вывод
+            // из его слов, а не его слова; когда вывод не сходится с тем, что
+            // видно на сайте, разбираются по самому ответу. Выведенный строкой,
+            // он занимал бы место под каждым письмом — а нужен редко.
+            const подсказка = [one.error, one.answer].filter(Boolean).join('\n');
 
-            return `<div class="mail-sent-row plain" data-index="${index}">`
-                + `<span class="mail-sent-dot ${ok ? 'ok' : 'bad'}"`
-                + ` title="${ok ? 'доставлено' : 'не доставлено'}"></span>`
-                + `<span class="mail-sent-who">${esc(one.girl || '—')} `
-                + `<span class="to">→ ${esc(one.name || one.uid)}</span></span>`
+            return `<div class="mail-sent-row plain one ${ok ? 'ok' : 'bad'}"`
+                + ` data-index="${index}"`
+                + `${подсказка ? ` title="${esc(подсказка)}"` : ''}>`
+                + `<span class="mail-sent-dot ${ok ? 'ok' : 'bad'}"></span>`
+                + `<span class="mail-sent-when first">`
+                + `${esc(one.sent_at ? timeShift(one.sent_at) : '')}</span>`
+                // ⚠ **Обе стороны — тем же видом, что в «Диалогах»** (`talkSide`):
+                // лицо, имя, номер. Прежде здесь стояло «Диана → 803656»: у имени
+                // не было запасного источника, и собеседник, приехавший со списка
+                // избранных сайта, оставался голым номером.
+                + '<span class="mail-sent-who talk">'
+                + talkSide(one.profile_name || one.girl, one.profile_photo,
+                           one.profile_uid, 'анкета, от которой ушло письмо')
+                + '<span class="talk-swap">→</span>'
+                + talkSide(one.name, one.photo, one.uid, 'кому написали')
+                + '</span>'
+                + `<span class="mail-sent-text one">${esc(one.body || '')}</span>`
                 + `<span class="mail-sent-state ${ok ? 'ok' : 'bad'}">`
                 + `${ok ? 'доставлено' : 'не ушло'}</span>`
-                + '<span class="mail-sent-when">'
-                // ⚠ `timeShift`, а не голая метка: с сервера всё приходит в UTC.
-                + `${esc(one.sent_at ? timeShift(one.sent_at) : '')}</span>`
-                // ⚠ Текст письма — **в строке**, как у инвайтов: сюда заходят
-                // посмотреть, что именно ушло человеку, и окно ради этого было бы
-                // лишним шагом. Длинное письмо обрежет CSS.
-                + `<span class="mail-sent-text">${esc(one.body || '')}</span>`
-                + (!ok && one.error
-                    ? `<span class="mail-sent-why">${esc(one.error)}</span>` : '')
-                + (one.status === 'draft'
-                    ? '<span class="mail-sent-why">осталось в пуле — можно '
-                    + 'отправить ещё раз</span>'
-                    : '')
                 + '</div>';
         }).join('');
     }

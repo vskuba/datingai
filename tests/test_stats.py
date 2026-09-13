@@ -130,6 +130,59 @@ class TestRepliesAreCountedRaw:
         assert got['out'] == 2 and got['dialogs'] == 1
 
 
+class TestTheWindow:
+    """Окно времени: сутки, полсуток или всё.
+
+    ⚠ **Скользящее, а не календарное.** Вопрос к нему «сколько сделано за
+    последние сутки», и полночь на него не отвечает: в 00:10 календарные сутки
+    показали бы десять минут работы.
+    """
+
+    async def test_old_replies_fall_out_of_the_day(self, auth_client, talks):
+        girl = talks['girls'][0]
+        await _message_at(girl, 'in', hours=30)
+
+        whole = await _chat(auth_client)
+        day = await _chat(auth_client, hours=24)
+
+        assert whole['in'] > day['in'], 'старая реплика осталась в сутках'
+
+    async def test_a_fresh_reply_is_inside_both(self, auth_client, talks):
+        girl = talks['girls'][0]
+        before = (await _chat(auth_client, hours=12))['in']
+        await _message_at(girl, 'in', hours=1)
+
+        assert (await _chat(auth_client, hours=12))['in'] == before + 1
+
+    async def test_twelve_is_narrower_than_a_day(self, auth_client, talks):
+        girl = talks['girls'][0]
+        await _message_at(girl, 'in', hours=18)
+
+        day = await _chat(auth_client, hours=24)
+        half = await _chat(auth_client, hours=12)
+
+        assert day['in'] > half['in']
+
+    async def test_zero_means_everything(self, auth_client, talks):
+        """Ноль — «за всё время», а не «за ноль часов»."""
+        girl = talks['girls'][0]
+        await _message_at(girl, 'in', hours=400)
+
+        assert (await _chat(auth_client, hours=0))['in'] >= 1
+
+    async def test_the_window_reaches_every_group(self):
+        """⚠ Окно обязано доезжать до **всех** занятий, а не только до чата:
+        числа стоят рядом, и одно «за всё время» среди суточных врёт молча."""
+        import inspect
+
+        from src.uvicorn.routers.dating import dating_stats
+
+        code = inspect.getsource(dating_stats.dating_stats_get)
+
+        for group in ('_chat', '_mail', '_favorite', '_invite'):
+            assert f'{group}(site_id, profile_id, hours)' in code, group
+
+
 class TestByProfiles:
     """Вкладка «По профилям»: кто из девушек работает.
 
@@ -232,6 +285,18 @@ async def _letter(table: str, profile_id: int, status: str, error: str = '') -> 
         await db.connection.commit()
 
 
+async def _message_at(profile_id: int, side: str, hours: int) -> None:
+    """Реплика такой-то давности: окно проверяется ею."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO dating_message (profile_id, sender_uid, sender_name,'
+            ' direction, text, source, message_uid, created_at)'
+            " VALUES (%s, 'zz-win', 'Кто-то', %s, 'привет', 'scenario', %s,"
+            '         NOW() - INTERVAL %s HOUR)',
+            (int(profile_id), side, f'zz-{uuid.uuid4().hex[:12]}', int(hours)))
+        await db.connection.commit()
+
+
 async def _profiles(client) -> list:
     return (await client.get('/api/dating/stats/profiles',
                              params={'site_id': STAND_SITE})).json()['result']
@@ -249,9 +314,10 @@ async def _invite(profile_id: int, status: str, error: str = '') -> None:
         await db.connection.commit()
 
 
-async def _chat(client, profile_id: int = 0) -> dict:
+async def _chat(client, profile_id: int = 0, hours: int = 0) -> dict:
     got = (await client.get('/api/dating/stats',
                             params={'site_id': STAND_SITE,
-                                    'profile_id': profile_id})).json()
+                                    'profile_id': profile_id,
+                                    'hours': hours})).json()
 
     return got['result']['chat']

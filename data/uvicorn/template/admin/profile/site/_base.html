@@ -1154,6 +1154,14 @@
     </div>
 
     <div class="stats-pane" data-stats-pane="all">
+        {# ⚠ Окно — **рядом с числами, а не в шапке страницы**: оно меняет именно
+           их, и переключатель в другом месте читался бы как настройка вкладки.
+           «За всё время» первым: это умолчание и самый частый вопрос. #}
+        <div class="stats-range" data-slot="stats-range">
+            <button type="button" class="stats-range-btn on" data-hours="0">за всё время</button>
+            <button type="button" class="stats-range-btn" data-hours="24">сутки</button>
+            <button type="button" class="stats-range-btn" data-hours="12">12 часов</button>
+        </div>
         {# Подпись — про охват: «по сайту» или «по анкете». Её ставит страница: без
            анкеты числа по всему сайту, с анкетой — по ней, и человек должен видеть,
            что он читает. #}

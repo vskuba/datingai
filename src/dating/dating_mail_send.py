@@ -45,6 +45,8 @@
 чем заводить то, чем никто не пользуется.
 """
 
+import json
+
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
@@ -161,15 +163,23 @@ async def dating_mail_send_one(letter: dict, profile: dict, base: str,
 
         raise DatingMailSendError(f'сайт не принял письмо: {e}')
 
+    # ⚠ Ответ сайта храним **как есть**, и у удачи тоже: «доставлено» — это наш
+    # вывод из его слов, а не его слова. У инвайтов этот же разрыв уже стоил
+    # времени: панель числила реплики ушедшими, а в чате у собеседника было пусто.
+    said = json.dumps(answer, ensure_ascii=False)[:DATING_MAIL_SEND_ERROR_MAX]
+
     status = str(answer.get(DATING_MAIL_SEND_STATUS_FIELD) or '').strip()
     if status.upper() != DATING_MAIL_SEND_STATUS_OK:
         # ⚠ Код 200 с чужим `Status` — тоже неудача. Сайт вправе отвечать «принял
         # запрос, но не отправил», и считать это успехом значило бы объявить
         # ушедшим письмо, которого адресат не увидит.
+        await dating_mail_send_mark(letter, sent=False, table=table, answer=said,
+                                    error='')
+
         raise DatingMailSendError(
             f'сайт ответил не «{DATING_MAIL_SEND_STATUS_OK}»: {status or "пусто"}')
 
-    await dating_mail_send_mark(letter, sent=True, table=table)
+    await dating_mail_send_mark(letter, sent=True, table=table, answer=said)
     logger_info(f'[dating] письмо #{letter_id} ушло: анкета #{profile.get("id")} → {uid}')
 
     return {'sent': True}
@@ -177,7 +187,7 @@ async def dating_mail_send_one(letter: dict, profile: dict, base: str,
 
 async def dating_mail_send_mark(letter: dict, sent: bool, error: str = '',
                                 table: str = 'dating_mailing',
-                                final: bool = False) -> None:
+                                final: bool = False, answer: str = '') -> None:
     """Записывает исход отправки: в строку письма и в журнал анкеты.
 
     Args:
@@ -218,16 +228,23 @@ async def dating_mail_send_mark(letter: dict, sent: bool, error: str = '',
     if str(table) not in DATING_MAIL_SEND_TABLES:
         raise DatingMailSendError(f'неизвестный пул писем: {table}')
 
+    # ⚠ Ответ сайта пишем, только когда он есть: пустая строка затёрла бы то, что
+    # записала сама отправка, — исход отмечают дважды (здесь и у вызывающего).
+    said = str(answer or '')[:DATING_MAIL_SEND_ERROR_MAX]
+    tail = ', answer = %s' if said else ''
+
     if sent:
         sql = (f"UPDATE {table} SET status = 'sent', sent_at = NOW(), error = ''"
-               ' WHERE id = %s')
-        args = (letter_id,)
+               f'{tail} WHERE id = %s')
+        args = ((said, letter_id) if said else (letter_id,))
     elif final:
-        sql = f"UPDATE {table} SET status = 'failed', error = %s WHERE id = %s"
-        args = (str(error or '')[:DATING_MAIL_SEND_ERROR_MAX], letter_id)
+        sql = f"UPDATE {table} SET status = 'failed', error = %s{tail} WHERE id = %s"
+        args = ((str(error or '')[:DATING_MAIL_SEND_ERROR_MAX], said, letter_id)
+                if said else (str(error or '')[:DATING_MAIL_SEND_ERROR_MAX], letter_id))
     else:
-        sql = f'UPDATE {table} SET error = %s WHERE id = %s'
-        args = (str(error or '')[:DATING_MAIL_SEND_ERROR_MAX], letter_id)
+        sql = f'UPDATE {table} SET error = %s{tail} WHERE id = %s'
+        args = ((str(error or '')[:DATING_MAIL_SEND_ERROR_MAX], said, letter_id)
+                if said else (str(error or '')[:DATING_MAIL_SEND_ERROR_MAX], letter_id))
 
     async with mysql_get_db_async() as db:
         await db.execute(sql, args)

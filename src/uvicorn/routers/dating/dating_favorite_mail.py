@@ -92,13 +92,26 @@ async def dating_favorite_mail_list(site_id: int = 0, status_: str = 'draft',
     if not int(site_id or 0):
         return {'result': [], 'pool': 0, 'send_on': False, 'send_why': ''}
 
-    sql = ('SELECT m.id, m.site_id, m.profile_id, m.uid, m.name, m.photo,'
-           ' m.body, m.status, m.error, m.sent_at, m.created_at,'
+    # ⚠ **Имя и лицо собеседника подмешиваем из карточек**, а не берём только из
+    # строки пула. В строку они попали при наборе, а у пары, приехавшей со списка
+    # избранных сайта, их не было вовсе: в «Доставке» человек оставался голым
+    # номером. Порядок источников тот же, что у диалогов: контакт анкеты (свежее)
+    # → карточка сайта → то, что записали при наборе.
+    sql = ('SELECT m.id, m.site_id, m.profile_id, m.uid,'
+           '       COALESCE(NULLIF(c.name, %s), NULLIF(comp.name, %s),'
+           '                NULLIF(m.name, %s), %s) AS name,'
+           '       COALESCE(NULLIF(comp.photo, %s), NULLIF(c.photo, %s),'
+           '                NULLIF(m.photo, %s), %s) AS photo,'
+           ' m.body, m.status, m.error, m.answer, m.sent_at, m.created_at,'
            ' p.login AS profile_login, p.profile AS profile_card'
            ' FROM dating_favorite_mail m'
            ' LEFT JOIN dating_profile p ON p.id = m.profile_id'
+           ' LEFT JOIN dating_contact c'
+           '   ON c.profile_id = m.profile_id AND c.uid = m.uid'
+           ' LEFT JOIN dating_companion comp'
+           '   ON comp.site_id = m.site_id AND comp.uid = m.uid'
            ' WHERE m.site_id = %s')
-    args = [int(site_id)]
+    args = ['', '', '', '', '', '', '', '', int(site_id)]
 
     asked = [one.strip() for one in str(status_ or '').split(',')]
     wanted = [one for one in asked if one in ('draft', 'sent', 'failed')]
@@ -479,6 +492,11 @@ def _answer(row) -> dict:
     # читается как подпись робота. Логин остаётся запасным.
     got['girl'] = str(card.get('name') or got.get('profile_login') or '')
     got['profile_name'] = got['girl']
+    # ⚠ Лицо и номер анкеты — тоже: «Доставка» рисует обе стороны тем же видом,
+    # что «Диалоги» (`talkSide`), а тому нужны три поля на сторону. Без них девушка
+    # оставалась буквой в кружке, хотя карточка уже была в руках запроса.
+    got['profile_photo'] = str(card.get('photo') or '')
+    got['profile_uid'] = str(card.get('site_uid') or '')
     got['sent_at'] = str(got['sent_at']) if got.get('sent_at') else ''
     got['created_at'] = str(got.get('created_at') or '')
 

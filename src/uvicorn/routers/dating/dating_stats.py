@@ -51,7 +51,7 @@ router = APIRouter(prefix='/api/dating/stats', tags=['dating'])
 
 
 @router.get('', include_in_schema=False)
-async def dating_stats_get(site_id: int = 0, profile_id: int = 0,
+async def dating_stats_get(site_id: int = 0, profile_id: int = 0, hours: int = 0,
                            user: AuthUser = Depends(auth_required)):
     """Числа по сайту, а с `profile_id` — по одной анкете.
 
@@ -63,25 +63,61 @@ async def dating_stats_get(site_id: int = 0, profile_id: int = 0,
     ⚠ **Ноль сайта — пустые числа, а не сумма по всем сайтам.** Селект сайта стоит
     в шапке страницы и пустым не бывает; сумма по разным сайтам не значит ничего —
     у них разные анкеты и разные собеседники.
+
+    Args:
+        hours: окно в часах — 12, 24 или ноль («за всё время»).
+
+            ⚠ **Скользящее окно, а не календарные сутки.** Вопрос к нему «сколько
+            сделано за последние сутки», и полночь на него не отвечает: в 00:10
+            календарные сутки показали бы десять минут работы.
+
+            ⚠ **Считается по времени события**, и у каждого занятия оно своё:
+            реплика — когда написана, письмо — когда ушло, черновик — когда
+            приготовлен. Общей колонки у них нет, и подставлять одну значило бы
+            считать разное одинаково.
+
+            ⚠ **LLM окну не подчиняется**: журнал живёт у соседа, он отдаёт его за
+            свои семь дней и разрезать их не умеет. Подпись под сеткой об этом
+            говорит — иначе числа рядом читались бы как одно окно.
     """
     site_id, profile_id = int(site_id or 0), int(profile_id or 0)
+    hours = int(hours or 0)
     if not site_id:
         return {'result': _empty(site_id, profile_id)}
 
     return {'result': {'site_id': site_id, 'profile_id': profile_id,
-                       'chat': await _chat(site_id, profile_id),
-                       'mail': await _mail(site_id, profile_id),
-                       'favorite': await _favorite(site_id, profile_id),
-                       'invite': await _invite(site_id, profile_id),
+                       'hours': hours,
+                       'chat': await _chat(site_id, profile_id, hours),
+                       'mail': await _mail(site_id, profile_id, hours),
+                       'favorite': await _favorite(site_id, profile_id, hours),
+                       'invite': await _invite(site_id, profile_id, hours),
                        'llm': await _llm()}}
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
 
+
+def _window(column: str, hours: int) -> str:
+    """Кусок условия «за последние N часов». Ноль часов — пустая строка.
+
+    Args:
+        column: колонка со временем события. ⚠ Своя у каждого занятия: реплика —
+            когда написана, письмо — когда ушло, черновик — когда приготовлен.
+        hours: окно. Ноль означает «за всё время», и тогда условия нет вовсе.
+
+    ⚠ **Число подставляем в текст, а не параметром**, и это не оплошность: `hours`
+    приводится к `int` вызывающим, а `INTERVAL ? HOUR` с плейсхолдером MySQL не
+    принимает. Колонка — наша константа из этого файла.
+    """
+    hours = int(hours or 0)
+
+    return f' AND {column} > NOW() - INTERVAL {hours} HOUR' if hours > 0 else ''
+
+
 def _empty(site_id: int, profile_id: int) -> dict:
     """Пустой ответ той же формы. ⚠ Формы одной: страница не должна помнить, какая
     ветка что кладёт, — отсутствующий ключ читался бы как ноль только случайно."""
-    return {'site_id': site_id, 'profile_id': profile_id,
+    return {'site_id': site_id, 'profile_id': profile_id, 'hours': 0,
             'chat': {'in': 0, 'out': 0, 'dialogs': 0, 'waiting': 0},
             'mail': {'in': 0, 'out': 0, 'draft': 0, 'unseen': 0},
             'favorite': {'added': 0, 'already': 0, 'failed': 0},
@@ -177,7 +213,7 @@ async def dating_stats_profiles(site_id: int = 0,
     return {'result': out}
 
 
-async def _chat(site_id: int, profile_id: int) -> dict:
+async def _chat(site_id: int, profile_id: int, hours: int = 0) -> dict:
     """Реплики чата: пришло, ушло, сколько разговоров и сколько ждут ответа.
 
     ⚠ **Отбор по сайту идёт через анкету**, а не по своей колонке: у
@@ -198,11 +234,14 @@ async def _chat(site_id: int, profile_id: int) -> dict:
     правила разошлась бы с тем, что человек видит на «Чате», и верить нельзя было
     бы обеим.
     """
+    # Время события у реплики — когда она написана.
+    since = _window('m.created_at', hours)
+
     sql = ("SELECT SUM(m.direction = 'in') AS `in`,"
            "       SUM(m.direction = 'out') AS `out`"
            '  FROM dating_message m'
            '  JOIN dating_profile p ON p.id = m.profile_id'
-           ' WHERE p.site_id = %s AND (%s = 0 OR m.profile_id = %s)')
+           ' WHERE p.site_id = %s AND (%s = 0 OR m.profile_id = %s)' + since)
 
     # ⚠⚠ **Разговор — это пара, которой ответили**, слово в слово как на вкладке
     # «Диалоги» (`dating_chat.py`). Здесь стоял `COUNT(DISTINCT m.sender_uid)`, и
@@ -222,7 +261,7 @@ async def _chat(site_id: int, profile_id: int) -> dict:
         'SELECT COUNT(*) AS n FROM ('
         '  SELECT m.profile_id, m.sender_uid FROM dating_message m'
         '    JOIN dating_profile p ON p.id = m.profile_id'
-        '   WHERE p.site_id = %s AND (%s = 0 OR m.profile_id = %s)'
+        '   WHERE p.site_id = %s AND (%s = 0 OR m.profile_id = %s)' + since +
         '   GROUP BY m.profile_id, m.sender_uid'
         "  HAVING SUM(m.direction = 'in') > 0) AS d")
 
@@ -231,7 +270,7 @@ async def _chat(site_id: int, profile_id: int) -> dict:
         '    SELECT m.profile_id, m.sender_uid, MAX(m.created_at) AS last_at'
         '      FROM dating_message m'
         '      JOIN dating_profile p ON p.id = m.profile_id'
-        '     WHERE p.site_id = %s AND (%s = 0 OR m.profile_id = %s)'
+        '     WHERE p.site_id = %s AND (%s = 0 OR m.profile_id = %s)' + since +
         '     GROUP BY m.profile_id, m.sender_uid) d'
         '  JOIN dating_message last'
         '    ON last.profile_id = d.profile_id AND last.sender_uid = d.sender_uid'
@@ -259,7 +298,7 @@ async def _chat(site_id: int, profile_id: int) -> dict:
             'dialogs': dialogs, 'waiting': waiting}
 
 
-async def _mail(site_id: int, profile_id: int) -> dict:
+async def _mail(site_id: int, profile_id: int, hours: int = 0) -> dict:
     """Письма: пришло, ушло, лежит в пулах, непрочитано.
 
     ⚠ **Исходящее — это `sent`, а не «сколько наготовили».** Пул рассылки и пул
@@ -278,7 +317,9 @@ async def _mail(site_id: int, profile_id: int) -> dict:
         async with mysql_get_db_async() as db:
             await db.execute(
                 'SELECT COUNT(*) AS n, SUM(seen = 0) AS unseen FROM dating_mail_in'
-                ' WHERE site_id = %s AND (%s = 0 OR profile_id = %s)', args)
+                ' WHERE site_id = %s AND (%s = 0 OR profile_id = %s)'
+                # Время события у входящего письма — когда его написали на сайте.
+                + _window('date_post', hours), args)
             row = dict((await db.fetchone()) or {})
             got['in'] = int(row.get('n') or 0)
             got['unseen'] = int(row.get('unseen') or 0)
@@ -287,8 +328,13 @@ async def _mail(site_id: int, profile_id: int) -> dict:
             # общий — «сколько ушло и сколько ждёт».
             for table in ('dating_mailing', 'dating_mail_reply'):
                 await db.execute(
-                    f"SELECT SUM(status = 'sent') AS sent,"
-                    f"       SUM(status = 'draft') AS draft FROM {table}"
+                    # ⚠ Два числа — два времени: ушедшее меряется отправкой,
+                    # лежащее в пуле — заведением. Одна колонка на оба считала бы
+                    # «готово вчера, ушло сегодня» дважды или ни разу.
+                    f"SELECT SUM(status = 'sent'{_window('sent_at', hours)})"
+                    '         AS sent,'
+                    f"       SUM(status = 'draft'{_window('created_at', hours)})"
+                    f'         AS draft FROM {table}'
                     ' WHERE site_id = %s AND (%s = 0 OR profile_id = %s)', args)
                 row = dict((await db.fetchone()) or {})
                 got['out'] += int(row.get('sent') or 0)
@@ -299,7 +345,7 @@ async def _mail(site_id: int, profile_id: int) -> dict:
     return got
 
 
-async def _favorite(site_id: int, profile_id: int) -> dict:
+async def _favorite(site_id: int, profile_id: int, hours: int = 0) -> dict:
     """Избранные: добавили сами, были там до нас, не вышло.
 
     ⚠ **Пары «вход/выход» здесь нет, и выдумывать её нельзя.** Звёздочку жмём мы;
@@ -312,7 +358,10 @@ async def _favorite(site_id: int, profile_id: int) -> dict:
                 "SELECT SUM(state = 'done') AS added,"
                 "       SUM(state = 'already') AS already,"
                 "       SUM(state = 'fail') AS failed FROM dating_favorite"
-                ' WHERE site_id = %s AND (%s = 0 OR profile_id = %s)',
+                ' WHERE site_id = %s AND (%s = 0 OR profile_id = %s)'
+                # Время события у звезды — когда её поставили (или переписали с
+                # сайта): `updated_at` двигался бы на каждой сверке.
+                + _window('created_at', hours),
                 (site_id, profile_id, profile_id))
             row = dict((await db.fetchone()) or {})
     except Exception as e:
@@ -325,7 +374,7 @@ async def _favorite(site_id: int, profile_id: int) -> dict:
             'failed': int(row.get('failed') or 0)}
 
 
-async def _invite(site_id: int, profile_id: int) -> dict:
+async def _invite(site_id: int, profile_id: int, hours: int = 0) -> dict:
     """Инвайты: ушло и лежит в пуле.
 
     ⚠ **Входящего у инвайта не бывает по определению**: это первая реплика тому, с
@@ -334,8 +383,11 @@ async def _invite(site_id: int, profile_id: int) -> dict:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                "SELECT SUM(status = 'sent') AS sent,"
-                "       SUM(status = 'draft') AS draft FROM dating_invite"
+                # Те же два времени, что у писем: ушедшее меряется отправкой,
+                # лежащее в пуле — заведением.
+                f"SELECT SUM(status = 'sent'{_window('sent_at', hours)}) AS sent,"
+                f"       SUM(status = 'draft'{_window('created_at', hours)})"
+                '         AS draft FROM dating_invite'
                 ' WHERE site_id = %s AND (%s = 0 OR profile_id = %s)',
                 (site_id, profile_id, profile_id))
             row = dict((await db.fetchone()) or {})

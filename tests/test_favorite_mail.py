@@ -301,18 +301,23 @@ class TestAStarIsEnough:
 
         assert order == [never, talked], order
 
-    async def test_the_agent_is_told_there_is_no_history(self):
-        """⚠ Пустая переменная заставила бы модель сослаться на слова, которых
-        она не видела, — то есть выдумать разговор."""
+    def test_an_empty_history_is_not_a_refusal(self):
+        """⚠ Пустая история — законный случай: звезда означает, что разговор был.
+
+        Разбирает её **промпт у соседа** (`%if mail_history%`), а не мы: инструкция
+        в переменной данных стояла не на своём месте и не работала — модель всё
+        равно сочиняла общее прошлое, «ту кофейню, о которой мы говорили».
+        """
         import inspect
 
         from src.dating import dating_mail_agent
 
         code = inspect.getsource(dating_mail_agent.dating_favorite_mail_write)
 
-        assert 'DATING_FAVORITE_MAIL_NO_HISTORY' in code
         assert 'нечего возобновлять' not in code, \
             'пустая история снова считается отказом'
+        assert 'DATING_FAVORITE_MAIL_NO_HISTORY' not in code, \
+            'указание снова уезжает вместо данных — промпт не ветвится'
 
 
 class TestTheBatchCountsLetters:
