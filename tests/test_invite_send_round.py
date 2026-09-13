@@ -493,6 +493,49 @@ async def _one(invite_id: int) -> dict:
         return dict(await db.fetchone())
 
 
+class TestTheDayIsLocal:
+    """⚠⚠ Сутки дневной нормы — **местные**, а не серверные.
+
+    Поймано на живом проде и выглядело как поломка панели. База живёт по UTC, смены
+    и часы панели — по местному времени (+3). Ночная смена 00:00–05:00 перешла
+    границу суток UTC, за час выбрала все сто реплик «нового дня» — и отправка
+    встала до следующей полуночи UTC. В пуле при этом лежало полсотни готовых, а
+    девять анкет были в сети.
+    """
+
+    async def test_a_send_before_local_midnight_is_yesterday(self, girl):
+        """Реплика двухчасовой давности при местном часе 01:00 — вчерашняя.
+
+        ⚠ Смещение считается **от текущего часа**, а не вписано числом: тест с
+        постоянными часами зеленел бы или краснел смотря по времени прогона.
+        """
+        before = await dating_invite_send_round._today(STAND_SITE, _offset_to(1))
+        await _sent_hours_ago(girl, 2)
+
+        assert await dating_invite_send_round._today(STAND_SITE, _offset_to(1)) == before
+
+    async def test_the_same_send_counts_when_the_local_day_covers_it(self, girl):
+        """⚠ Та же самая реплика при местном часе 12:00 — сегодняшняя.
+
+        Две проверки на одной строке и есть доказательство: меняется только
+        часовой пояс, а ответ — на противоположный.
+        """
+        before = await dating_invite_send_round._today(STAND_SITE, _offset_to(12))
+        await _sent_hours_ago(girl, 2)
+
+        assert await dating_invite_send_round._today(STAND_SITE,
+                                                     _offset_to(12)) == before + 1
+
+    async def test_the_offset_reaches_the_counter(self):
+        """Смещение обязано доезжать из круга в счётчик — иначе правка мертва."""
+        import inspect
+
+        code = inspect.getsource(dating_invite_send_round.dating_invite_send_round_run)
+
+        assert '_today(site_id, offset_hours)' in code, \
+            'круг снова считает сутки без часового пояса'
+
+
 class TestReasonDoesNotRepeatTheAnswer:
     """⚠ Ответ сайта в карточке — **один раз**, а не дважды.
 
@@ -531,6 +574,24 @@ class TestReasonDoesNotRepeatTheAnswer:
         body = '{"IsSuccess":false}'
 
         assert _why_short(body, body) == body
+
+
+def _offset_to(hour: int) -> int:
+    """Смещение, при котором местный час равен заданному. От «сейчас», а не числом."""
+    import time
+
+    return (int(hour) - time.gmtime().tm_hour) % 24
+
+
+async def _sent_hours_ago(profile_id: int, hours: int) -> None:
+    """Ушедшая реплика столько-то часов назад — счёт суток проверяется ею."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO dating_invite (site_id, profile_id, uid, name, body, status,'
+            ' sent_at) VALUES (%s, %s, %s, %s, %s, %s, NOW() - INTERVAL %s HOUR)',
+            (STAND_SITE, int(profile_id), f'u{uuid.uuid4().hex[:8]}', 'Frank',
+             'Привет!', 'sent', int(hours)))
+        await db.connection.commit()
 
 
 async def _priority(uid: str) -> None:

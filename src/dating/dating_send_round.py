@@ -100,7 +100,7 @@ async def dating_send_round_run(offset_hours: int = 0) -> dict:
         if time.time() - _sent_at.get(site_id, 0.0) < every:
             continue
 
-        if await _today(site_id) >= await _max_day(site_id):
+        if await _today(site_id, offset_hours) >= await _max_day(site_id):
             continue
 
         # ⚠ Ответы вперёд прочего. Человек ждёт ответа на своё письмо, а
@@ -248,26 +248,38 @@ async def _send(letter: dict, table: str) -> bool:
     return True
 
 
-async def _today(site_id: int) -> int:
+async def _today(site_id: int, offset_hours: int = 0) -> int:
     """Сколько писем сайта ушло за сегодня — всеми тремя пулами.
 
     ⚠ Потолок **общий**: письма считает получатель, а не наши таблицы. Раздельные
     потолки означали бы втрое больше писем от одной девушки — при том, что в почту
     они приходят вместе.
+
+    ⚠⚠ **Сутки местные, а не серверные** — та же поправка и та же причина, что у
+    инвайтов (`dating_invite_send_round.py`): база живёт по UTC, смены и панель —
+    по местному времени, и при смещении в три часа норма кончалась в три ночи.
     """
+    # Местная дата считается **один раз**: три подзапроса с `NOW()` внутри могли бы
+    # разойтись на границе суток — редко, но именно на ней это и важно.
+    hours = int(offset_hours or 0)
+    today = None
     try:
         async with mysql_get_db_async() as db:
+            await db.execute('SELECT DATE(NOW() + INTERVAL %s HOUR) AS d', (hours,))
+            today = ((await db.fetchone()) or {}).get('d')
+
             await db.execute(
                 "SELECT (SELECT COUNT(*) FROM dating_mailing"
                 "         WHERE site_id = %s AND status = 'sent'"
-                '           AND DATE(sent_at) = CURDATE())'
+                '           AND DATE(sent_at + INTERVAL %s HOUR) = %s)'
                 " + (SELECT COUNT(*) FROM dating_mail_reply"
                 "     WHERE site_id = %s AND status = 'sent'"
-                '       AND DATE(sent_at) = CURDATE())'
+                '       AND DATE(sent_at + INTERVAL %s HOUR) = %s)'
                 " + (SELECT COUNT(*) FROM dating_favorite_mail"
                 "     WHERE site_id = %s AND status = 'sent'"
-                '       AND DATE(sent_at) = CURDATE()) AS ушло',
-                (int(site_id), int(site_id), int(site_id)))
+                '       AND DATE(sent_at + INTERVAL %s HOUR) = %s) AS ушло',
+                (int(site_id), hours, today, int(site_id), hours, today,
+                 int(site_id), hours, today))
             row = await db.fetchone()
     except Exception as e:
         logger_info(f'[dating] дневной счёт отправки не спросился: {e}')

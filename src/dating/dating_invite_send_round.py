@@ -120,7 +120,7 @@ async def dating_invite_send_round_run(offset_hours: int = 0) -> dict:
         if time.time() - _sent_at.get(site_id, 0.0) < await _every(site_id):
             continue
 
-        if await _today(site_id) >= await _max_day(site_id):
+        if await _today(site_id, offset_hours) >= await _max_day(site_id):
             continue
 
         invite = await _next(site_id)
@@ -223,14 +223,32 @@ async def _next(site_id: int) -> dict:
     return {}
 
 
-async def _today(site_id: int) -> int:
-    """Сколько реплик сайта ушло за сегодня. Считаем по факту, а не по попыткам."""
+async def _today(site_id: int, offset_hours: int = 0) -> int:
+    """Сколько реплик сайта ушло за сегодня. Считаем по факту, а не по попыткам.
+
+    ⚠⚠ **Сутки — местные, а не серверные.** Прежде здесь стояло `DATE(sent_at) =
+    CURDATE()`, то есть календарный день **базы**, а она живёт по UTC. Смены же
+    заданы местным временем, и панель показывает местное: при смещении в три часа
+    сутки нормы кончались в три часа ночи — посреди ночной смены.
+
+    Ровно это и наблюдалось: ночная смена (00:00–05:00 местных) прошла границу
+    суток UTC, за час выбрала все сто реплик «нового дня» — и до следующей полуночи
+    UTC отправка стояла. В пуле при этом лежало полсотни готовых, девять анкет были
+    в сети, и по всем признакам панель выглядела сломанной.
+
+    ⚠ Календарные сутки, а не скользящие, — намеренно: настройка называется «в
+    сутки», и человек читает её как «с полуночи». Скользящее окно у нас есть, но у
+    другого вопроса — «как часто звать **одного и того же**» (`dating_invite.py`),
+    где полночь и правда ничего не значит.
+    """
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
                 'SELECT COUNT(*) AS n FROM dating_invite'
-                " WHERE site_id = %s AND status = 'sent' AND DATE(sent_at) = CURDATE()",
-                (int(site_id),))
+                " WHERE site_id = %s AND status = 'sent'"
+                '   AND DATE(sent_at + INTERVAL %s HOUR)'
+                '     = DATE(NOW() + INTERVAL %s HOUR)',
+                (int(site_id), int(offset_hours or 0), int(offset_hours or 0)))
             row = await db.fetchone()
     except Exception as e:
         logger_info(f'[dating] дневной счёт инвайтов #{site_id} не спросился: {e}')
