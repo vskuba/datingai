@@ -1144,11 +1144,32 @@
    вкладку, чем показывать нули. #}
 <div class="work-panel" data-tab="stats">
     {% block work_stats %}
-    {# Подпись — про охват: «по сайту» или «по анкете». Её ставит страница: без
-       анкеты числа по всему сайту, с анкетой — по ней, и человек должен видеть,
-       что он читает. #}
-    <div class="stats-note" data-slot="stats-note"></div>
-    <div class="stats-grid" data-slot="stats"></div>
+    {# ⚠ Подвкладки, а не две сетки подряд: вопросы разные. «Общая» отвечает
+       «сколько сделано на сайте», «По профилям» — «кто из девушек работает».
+       Вторая нужна редко и была бы шумом под первой; а поставь мы её первой —
+       шумом стала бы первая. #}
+    <div class="page-tabs stats-tabs" data-slot="stats-tabs">
+        <button type="button" class="page-tab on" data-stats-tab="all">Общая</button>
+        <button type="button" class="page-tab" data-stats-tab="profiles">По профилям</button>
+    </div>
+
+    <div class="stats-pane" data-stats-pane="all">
+        {# Подпись — про охват: «по сайту» или «по анкете». Её ставит страница: без
+           анкеты числа по всему сайту, с анкетой — по ней, и человек должен видеть,
+           что он читает. #}
+        <div class="stats-note" data-slot="stats-note"></div>
+        <div class="stats-grid" data-slot="stats"></div>
+    </div>
+
+    {# ⚠ Здесь выбор анкеты слева **не сужает**: смысл вкладки — сравнить всех
+       между собой. Сузь она до одной строки, вкладка отвечала бы на вопрос
+       «Общей», только хуже. #}
+    <div class="stats-pane off" data-stats-pane="profiles">
+        <div class="stats-note">Инвайты по каждой анкете сайта. Выбор анкеты слева
+            здесь не сужает: вкладку открывают, чтобы сравнить девушек между
+            собой.</div>
+        <div class="stats-rows" data-slot="stats-profiles"></div>
+    </div>
     {% endblock %}
 </div>
 {% endblock %}

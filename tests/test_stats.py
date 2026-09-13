@@ -63,6 +63,7 @@ async def talks(auth_client):
 
     async with mysql_get_db_async() as db:
         for girl in girls:
+            await db.execute('DELETE FROM dating_invite WHERE profile_id = %s', (girl,))
             await db.execute('DELETE FROM dating_message WHERE profile_id = %s', (girl,))
             await db.execute('DELETE FROM dating_profile WHERE id = %s', (girl,))
         await db.connection.commit()
@@ -125,6 +126,79 @@ class TestRepliesAreCountedRaw:
         got = await _chat(auth_client, profile_id=talks['girls'][0])
 
         assert got['out'] == 2 and got['dialogs'] == 1
+
+
+class TestByProfiles:
+    """Вкладка «По профилям»: кто из девушек работает.
+
+    ⚠ Вопрос **другой**, чем у общей сводки: та отвечает «сколько сделано на
+    сайте» — одно число на занятие. Здесь строка на анкету, и открывают её, чтобы
+    сравнить девушек между собой.
+    """
+
+    async def test_every_profile_is_there_even_the_silent_one(self, auth_client,
+                                                              talks):
+        """⚠ Ноль — это ответ: «она включена, а инвайтов от неё не ушло ни одного».
+
+        Отбери мы только тех, у кого реплики есть, молчащая анкета просто пропала
+        бы из списка — и вопрос «а почему от неё ничего» остался бы без ответа.
+        """
+        rows = await _profiles(auth_client)
+        mine = [one for one in rows if one['profile_id'] in talks['girls']]
+
+        assert len(mine) == 2, 'анкета без инвайтов выпала из сводки'
+        assert all(one['tried'] == 0 for one in mine)
+
+    async def test_sent_and_failed_are_counted(self, auth_client, talks):
+        girl = talks['girls'][0]
+        await _invite(girl, 'sent')
+        await _invite(girl, 'sent')
+        await _invite(girl, 'failed', error='он вас закрыл')
+
+        row = next(one for one in await _profiles(auth_client)
+                   if one['profile_id'] == girl)
+
+        assert (row['sent'], row['failed'], row['tried']) == (2, 1, 3)
+
+    async def test_a_draft_with_a_reason_counts_as_a_failure(self, auth_client,
+                                                             talks):
+        """⚠ Неудачная отправка **оставляет реплику в пуле** с причиной, и по
+        статусу её от нетронутой не отличить.
+
+        Спроси мы `status = 'failed'`, число молчало бы ровно о тех попытках,
+        ради которых вкладку и открывают.
+        """
+        girl = talks['girls'][0]
+        await _invite(girl, 'draft', error='слишком часто')
+        await _invite(girl, 'draft')
+
+        row = next(one for one in await _profiles(auth_client)
+                   if one['profile_id'] == girl)
+
+        assert (row['failed'], row['draft'], row['tried']) == (1, 1, 1)
+
+    async def test_no_site_no_rows(self, auth_client):
+        got = (await auth_client.get('/api/dating/stats/profiles',
+                                     params={'site_id': 0})).json()
+
+        assert got['result'] == []
+
+
+async def _profiles(client) -> list:
+    return (await client.get('/api/dating/stats/profiles',
+                             params={'site_id': STAND_SITE})).json()['result']
+
+
+async def _invite(profile_id: int, status: str, error: str = '') -> None:
+    """Инвайт в нужном состоянии. ⚠ `uid` свой у каждого: ключ пула — пара."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO dating_invite (site_id, profile_id, uid, name, body, status,'
+            ' error, sent_at) VALUES (%s, %s, %s, %s, %s, %s, %s,'
+            "                         IF(%s = 'sent', NOW(), NULL))",
+            (STAND_SITE, int(profile_id), f'zz-{uuid.uuid4().hex[:8]}', 'Кто-то',
+             'привет', status, error, status))
+        await db.connection.commit()
 
 
 async def _chat(client, profile_id: int = 0) -> dict:

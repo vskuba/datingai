@@ -44,6 +44,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import AuthUser, auth_required
 from src.dating.dating_agent import DATING_AGENT_NODE
+from src.dating.dating_json import dating_json_load
 from src.rhapsody.rhapsody_api import RHAPSODY_API_LLM_DAYS, rhapsody_api_llm_usage
 
 router = APIRouter(prefix='/api/dating/stats', tags=['dating'])
@@ -87,6 +88,74 @@ def _empty(site_id: int, profile_id: int) -> dict:
             'invite': {'out': 0, 'draft': 0},
             'llm': {'days': 0, 'requests': 0, 'errors': 0, 'tokens_input': 0,
                     'tokens_output': 0, 'rows': [], 'error': ''}}
+
+
+@router.get('/profiles', include_in_schema=False)
+async def dating_stats_profiles(site_id: int = 0,
+                                user: AuthUser = Depends(auth_required)):
+    """Инвайты по каждой анкете сайта: сколько ушло и сколько нет.
+
+    Args:
+        site_id: сайт-закладка. Ноль — пустой список.
+
+    Returns:
+        dict: `result` — строка на анкету: `profile_id`, `name`, `photo`, `uid`,
+        `status`, `sent`, `failed`, `draft`, `tried`.
+
+    ⚠ **Своя ручка, а не поле в общей.** Общая отвечает «сколько сделано на
+    сайте» — одно число на занятие; здесь вопрос другой: «кто из девушек
+    работает». Слей их, каждое открытие вкладки считало бы десяток строк ради
+    четырёх чисел в шапке.
+
+    ⚠ **«Не ушло» — это `failed` плюс черновики с причиной.** Неудачная отправка
+    оставляет реплику в пуле (`dating_invite_send.py`), и по статусу её от
+    нетронутой не отличить: спроси мы `status = 'failed'`, число молчало бы ровно о
+    тех попытках, ради которых вкладку и открывают.
+
+    ⚠ **Анкеты без единой реплики тоже в списке.** Ноль — это ответ: «она включена,
+    в сети, а инвайтов от неё не ушло ни одного» — то, что и надо увидеть.
+    """
+    if not int(site_id or 0):
+        return {'result': []}
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT p.id AS profile_id, p.status, p.enabled,'
+                '       p.login AS profile_login, p.profile AS profile_card,'
+                "       COALESCE(SUM(i.status = 'sent'), 0) AS sent,"
+                "       COALESCE(SUM(i.status = 'failed'"
+                "                    OR (i.status = 'draft' AND i.error <> '')), 0)"
+                '         AS failed,'
+                "       COALESCE(SUM(i.status = 'draft' AND i.error = ''), 0) AS draft"
+                '  FROM dating_profile p'
+                '  LEFT JOIN dating_invite i ON i.profile_id = p.id'
+                ' WHERE p.site_id = %s'
+                ' GROUP BY p.id, p.status, p.enabled, p.login, p.profile'
+                ' ORDER BY sent DESC, p.id', (int(site_id),))
+            rows = await db.fetchall()
+    except Exception as e:
+        logger_info(f'[dating] статистика по анкетам не сосчиталась: {e}')
+
+        return {'result': []}
+
+    out = []
+    for row in rows or []:
+        card = dating_json_load(row['profile_card']) or {}
+        sent, failed = int(row['sent'] or 0), int(row['failed'] or 0)
+        out.append({'profile_id': int(row['profile_id']),
+                    'name': str(card.get('name') or row['profile_login'] or ''),
+                    'photo': str(card.get('photo') or ''),
+                    'uid': str(card.get('site_uid') or ''),
+                    'status': str(row['status'] or ''),
+                    'enabled': bool(row['enabled']),
+                    'sent': sent, 'failed': failed,
+                    'draft': int(row['draft'] or 0),
+                    # Попытки — сумма исходов, а не отдельный счётчик: второй
+                    # разошёлся бы с первыми на первой же правке.
+                    'tried': sent + failed})
+
+    return {'result': out}
 
 
 async def _chat(site_id: int, profile_id: int) -> dict:

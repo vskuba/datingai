@@ -383,6 +383,89 @@
         font-size: 12px;
     }
 
+    /* Полоса подвкладок статистики и её панели. ⚠ Прячем классом, а не
+       перерисовкой: возврат на «Общую» не должен стоить пересчёта. */
+    .stats-tabs {
+        padding: 8px 12px 0;
+    }
+
+    .stats-pane.off {
+        display: none;
+    }
+
+    /* Строки «По профилям»: анкета слева, числа справа столбиками. ⚠ Сеткой, а не
+       таблицей: колонок пять, и на узком экране таблица уезжала бы вбок, унося
+       числа за край — а читают именно их. */
+    .stats-rows {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 12px;
+        overflow: auto;
+    }
+
+    .stats-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) repeat(4, 64px);
+        gap: 8px;
+        align-items: center;
+        padding: 6px 10px;
+        border: 1px solid #f1f5f9;
+        border-radius: 8px;
+        background: #fff;
+        font-size: 12px;
+    }
+
+    /* Шапка столбцов: те же колонки, тот же отступ — иначе числа не встанут под
+       своими подписями. */
+    .stats-row.head {
+        border-color: transparent;
+        background: transparent;
+        color: #94a3b8;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+    }
+
+    /* Имя с номером — в одну строку и лицо поменьше, как в журнале доставки:
+       строк здесь столько же, сколько анкет, и вторая строка у каждой удваивала
+       бы высоту вкладки, которую читают одним взглядом. */
+    .stats-row .person-text {
+        flex-direction: row;
+        align-items: baseline;
+        gap: 5px;
+    }
+
+    .stats-row .person-face {
+        width: 18px;
+        height: 18px;
+        font-size: 9px;
+        line-height: 18px;
+    }
+
+    .stats-row .talk-side {
+        gap: 5px;
+    }
+
+    .stats-row-n {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .stats-row-n.ok {
+        color: #047857;
+    }
+
+    .stats-row-n.bad {
+        color: #b91c1c;
+    }
+
+    /* Ноль — тише прочих: строка «ни одного инвайта» не должна кричать наравне с
+       работой. */
+    .stats-row-n.zero {
+        color: #cbd5e1;
+    }
+
     .stats-card {
         border: 1px solid #e2e8f0;
         border-radius: 10px;
@@ -1902,6 +1985,31 @@
 
     .pool-why:empty {
         display: none;
+    }
+
+    /* ⚠ Строка доставки **в одну линию**: время, «кто кому», текст реплики,
+       исход. Было три строки на запись — текст, причина и ответ сайта шли под
+       карточкой, — и двадцать пять записей превращались в простыню. Причина с
+       ответом уехали в подсказку строки: нужны они тогда, когда «ушло» не сходится
+       с тем, что видно на сайте. */
+    .mail-sent-row.plain.one {
+        grid-template-columns: 8px auto auto minmax(0, 1fr) auto;
+    }
+
+    /* Текст реплики в строке: обрезаем многоточием, а не переносим. ⚠ `minmax(0,
+       1fr)` у колонки обязателен — без нуля в минимуме грид даёт ячейке ширину
+       содержимого, и обрезка не срабатывает вовсе. */
+    /* ⚠ Селектор **с обоими классами строки**: правило выше
+       (`.mail-sent-row.plain .mail-sent-text`) уводит хвост на свою строку и по
+       весу сильнее одиночного класса. Поймано снимком: текст всё равно падал на
+       вторую строку, а «ушло» — на третью. */
+    .mail-sent-row.plain.one .mail-sent-text {
+        grid-column: auto;
+        margin-top: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: #475569;
     }
 
     /* Время в начале строки: не переносится и не жмётся именами. */
@@ -5087,16 +5195,122 @@
     let statsData = null;
     let statsFor = '';
 
+    // ── Подвкладки статистики ────────────────────────────────────────────────
+    //
+    // ⚠ Ключ свой, как у прочих полос: «Общая» и «По профилям» отвечают на разные
+    // вопросы, и общий ключ с чатом означал бы, что переход по вкладкам меняет
+    // открытую панель статистики.
+    const STATS_TAB_KEY = 'dating.profile.statstab';
+    const STATS_TABS = ['all', 'profiles'];
+
+    let statsTab = STATS_TABS.includes(localStorage.getItem(STATS_TAB_KEY))
+        ? localStorage.getItem(STATS_TAB_KEY) : 'all';
+
+    // Строки «По профилям» и сайт, для которого они сняты.
+    let statsProfiles = [];
+    let statsProfilesFor = 0;
+
+    function statsTabPaint() {
+        const tabs = slot('stats-tabs');
+        if (!tabs) return;
+
+        tabs.querySelectorAll('.page-tab').forEach(btn =>
+            btn.classList.toggle('on', btn.dataset.statsTab === statsTab));
+
+        workEl.querySelectorAll('[data-stats-pane]').forEach(pane =>
+            pane.classList.toggle('off', pane.dataset.statsPane !== statsTab));
+    }
+
     function statsShow() {
         if (!workEl.querySelector('[data-slot="stats"]')) return;
 
+        statsTabPaint();
         statsPaint();
+        statsProfilesPaint();
 
         // Ключ охвата: сайт и анкета вместе. Смена любого из двух — другие числа,
         // и старые показывать нельзя даже секунду.
         const key = `${siteId()}|${openId || 0}`;
         if (statsFor !== key) statsLoad(key);
+
+        // ⚠ Вторую сводку грузим **только когда её смотрят**: она считает строку
+        // на анкету, а открывают её редко. Тот же приём, что у подвкладок чата.
+        if (statsTab === 'profiles' && statsProfilesFor !== siteId()) {
+            statsProfilesLoad();
+        }
     }
+
+    async function statsProfilesLoad() {
+        const site = siteId();
+        if (!site) {
+            statsProfiles = [];
+            statsProfilesPaint();
+
+            return;
+        }
+
+        try {
+            statsProfiles = (await getData(
+                `${BASE}/api/dating/stats/profiles?site_id=${site}`)).result || [];
+        } catch (e) {
+            statsProfiles = [];
+            showNotification('Статистика по анкетам не пришла: ' + e.message, 'error');
+        }
+
+        if (siteId() !== site) return;
+
+        statsProfilesFor = site;
+        statsProfilesPaint();
+    }
+
+    function statsProfilesPaint() {
+        const box = slot('stats-profiles');
+        if (!box) return;
+
+        if (!statsProfiles.length) {
+            box.innerHTML = statsProfilesFor === siteId()
+                ? '<div class="work-soon">У сайта нет анкет.</div>'
+                : '<div class="work-soon">Считаю…</div>';
+
+            return;
+        }
+
+        box.innerHTML = '<div class="stats-row head"><span>анкета</span>'
+            + '<span class="stats-row-n">попыток</span>'
+            + '<span class="stats-row-n">ушло</span>'
+            + '<span class="stats-row-n">не ушло</span>'
+            + '<span class="stats-row-n">в пуле</span></div>'
+            + statsProfiles.map(row =>
+                '<div class="stats-row">'
+                + '<span class="mail-sent-who talk">'
+                + talkSide(row.name, row.photo, row.uid,
+                           row.status === 'online' ? 'сейчас в сети' : 'не в сети',
+                           row.status === 'online')
+                + '</span>'
+                + statsNum(row.tried)
+                + statsNum(row.sent, 'ok')
+                + statsNum(row.failed, 'bad')
+                + statsNum(row.draft)
+                + '</div>').join('');
+    }
+
+    // Число в строке. ⚠ Ноль рисуем тише прочих и **без цвета исхода**: красный
+    // ноль в столбце «не ушло» читается как беда, которой нет.
+    function statsNum(value, kind = '') {
+        const n = Number(value) || 0;
+
+        return `<span class="stats-row-n ${n ? kind : 'zero'}">${statsNumber(n)}</span>`;
+    }
+
+    // Переключение подвкладок статистики. Нажатие по кнопке, а не по всей полосе.
+    workEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('.stats-tabs .page-tab');
+        if (!btn || btn.dataset.statsTab === statsTab) return;
+
+        statsTab = btn.dataset.statsTab;
+        localStorage.setItem(STATS_TAB_KEY, statsTab);
+        statsShow();
+    });
 
     async function statsLoad(key) {
         const site = siteId();
@@ -5509,29 +5723,25 @@
 
         box.innerHTML = inviteSent.map(row => {
             const ok = row.status === 'sent';
+            // ⚠ **Ответ сайта и причина — в подсказке строки, а не в ней самой.**
+            // Это машинный текст в сотню знаков; выведенный как есть, он занимал
+            // две строки под каждой карточкой, и двадцать пять записей на странице
+            // превращались в простыню. Нужен он тогда, когда «ушло» не сходится с
+            // тем, что видно на сайте, — и тогда его читают наведением.
+            const подсказка = [row.error, row.answer].filter(Boolean).join('\n');
 
-            return `<div class="mail-sent-row plain ${ok ? 'ok' : 'bad'}">`
-                + `<span class="mail-sent-dot ${ok ? 'ok' : 'bad'}"`
-                + ` title="${ok ? 'ушло' : 'не ушло'}"></span>`
-                // ⚠ **Время — первым, до имён.** Журнал читают сверху вниз и
-                // вопросом «что происходило последним»; дата у правого края
-                // заставляла прыгать взглядом через всю строку на каждой записи.
-                // Порядок в разметке — он же порядок чтения.
-                + '<span class="mail-sent-when first">'
-                + `${esc(_sentWhen(row))}</span>`
+            return `<div class="mail-sent-row plain one ${ok ? 'ok' : 'bad'}"`
+                + `${подсказка ? ` title="${esc(подсказка)}"` : ''}>`
+                + `<span class="mail-sent-dot ${ok ? 'ok' : 'bad'}"></span>`
+                // ⚠ **Время — первым.** Журнал читают сверху вниз вопросом «что
+                // происходило последним»; дата у правого края заставляла прыгать
+                // взглядом через всю строку на каждой записи.
+                + `<span class="mail-sent-when first">${esc(_sentWhen(row))}</span>`
                 // ⚠ **Обе стороны — тем же видом, что в «Диалогах»** (`talkSide`):
                 // лицо, имя, номер на сайте. Строка отвечает на вопрос «кто кого
                 // позвал», а он тот же самый; два разных вида одного вопроса
                 // человек читает как два разных списка.
-                //
-                // Прежде здесь стояли голые имена: «Diana → Frank». Номера в них
-                // не было вовсе, а его-то и ищут, когда идут смотреть человека на
-                // сайте, — имена на сайте повторяются.
                 + '<span class="mail-sent-who talk">'
-                // ⚠ **Имя в строке — и есть чипс отбора.** Оно уже перед глазами:
-                // человек смотрит на строку и хочет «покажи всё от неё» — нажать
-                // ему естественнее здесь, а не искать то же имя в полосе из
-                // полутора сотен.
                 + `<span class="sent-pick${inviteSentGirl === row.profile_id ? ' on' : ''}"`
                 + ` data-girl="${row.profile_id}"`
                 + ` data-name="${esc(row.profile_name || '')}"`
@@ -5540,8 +5750,7 @@
                            'анкета, от которой ушла реплика')
                 + '</span>'
                 // ⚠ Стрелка **односторонняя**, в отличие от диалогов: инвайт это
-                // первое слово, и ответа у него по определению ещё нет. Приди он —
-                // разговор уедет в «Диалоги», где стрелка двусторонняя.
+                // первое слово, и ответа у него по определению ещё нет.
                 + '<span class="talk-swap">→</span>'
                 + `<span class="sent-pick${inviteSentUid === String(row.uid) ? ' on' : ''}"`
                 + ` data-uid="${esc(String(row.uid))}"`
@@ -5550,42 +5759,14 @@
                 + talkSide(row.name, row.photo, row.uid, 'кого позвали')
                 + '</span>'
                 + '</span>'
+                // ⚠ Текст реплики — **в той же строке и с обрезкой**: он длиной в
+                // предложение, и место под него есть только оставшееся. Целиком он
+                // виден в подсказке строки — там же, где ответ сайта.
+                + `<span class="mail-sent-text one">${esc(row.body || '')}</span>`
                 // ⚠ «Ушло», а не «доставлено», и это не синоним. Сайт отвечает
-                // «принял кадр»; дошла ли реплика до человека, он не говорит
-                // вовсе (`dating_send.py`). Обещать доставку словом, которого
-                // никто не подтверждал, — врать в журнале.
+                // «принял кадр»; дошла ли реплика, он не говорит вовсе.
                 + `<span class="mail-sent-state ${ok ? 'ok' : 'bad'}">`
                 + `${ok ? 'ушло' : 'не ушло'}</span>`
-                // ⚠ Текст реплики — **в строке, а не в окне по щелчку**. Инвайт
-                // это одно-два предложения: окно ради них было бы лишним шагом,
-                // а прочитать, что именно ушло человеку, — главное, зачем сюда
-                // заходят.
-                + `<span class="mail-sent-text">${esc(row.body || '')}</span>`
-                // ⚠ Причина и «осталось в пуле» — **одной строкой**. Порознь
-                // они занимали две, а говорят об одном: почему не ушло и что с
-                // этим теперь. Журнал читают списком, и каждая лишняя строка
-                // умножается на двадцать пять.
-                + (!ok && (row.error || row.status === 'draft')
-                    ? '<span class="mail-sent-why">'
-                      + `${esc(row.error || '')}`
-                      + (row.status === 'draft'
-                          ? `${row.error ? ' · ' : ''}осталось в пуле — можно `
-                            + 'отправить ещё раз'
-                          : '')
-                      + '</span>'
-                    : '')
-                // ⚠ **Ответ сайта — как есть, и у ушедших тоже.** Наше «ушло»
-                // значит «сайт принял кадр», а не «человек это прочитал»: женской
-                // анкете сайт показывает её сообщение в её же переписке, а мужчина
-                // не получает его, пока не пригласит первым (`needInvite`,
-                // подробности в `dating_send.py`).
-                //
-                // Отличить одно от другого можно **только** по ответу сайта — и
-                // ровно за этим сюда заходят, когда «ушло» не сошлось с тем, что
-                // видно под учёткой собеседника.
-                + (row.answer
-                    ? '<span class="mail-sent-said" title="ответ сайта как есть">'
-                      + `${esc(row.answer)}</span>` : '')
                 + '</div>';
         }).join('');
 
