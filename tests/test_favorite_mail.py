@@ -39,6 +39,22 @@ async def _profile(auth_client, tag: str) -> int:
     return int(made)
 
 
+def _answer(value):
+    """Подменённый агент: всегда один и тот же текст."""
+    async def _got(*args, **kwargs):
+        return value
+
+    return _got
+
+
+def _nothing():
+    """Подменённая сверка звёзд: тест её не проверяет и на сайт не ходит."""
+    async def _got(*args, **kwargs):
+        return None
+
+    return _got
+
+
 async def _star(profile_id: int, uid: str, state: str = 'done') -> None:
     """Человек в избранных у этой анкеты — с него и начинается отбор.
 
@@ -297,6 +313,54 @@ class TestAStarIsEnough:
         assert 'DATING_FAVORITE_MAIL_NO_HISTORY' in code
         assert 'нечего возобновлять' not in code, \
             'пустая история снова считается отказом'
+
+
+class TestTheBatchCountsLetters:
+    """⚠⚠ Потолок захода считает **написанное**, а не просмотренное.
+
+    Поймано на живом проде: у сайта 88 избранных, в сети из них трое, и первые
+    десять по порядку (а порядок — по давности разговора) оказывались офлайн.
+    Круг честно докладывал «готово 0, пропущено 10, осталось 78» — и так каждый
+    заход, пока пул стоял пустым.
+
+    Пропуск стоит чтения Redis и одного запроса в базу; письмо — вызова LLM.
+    Ограничивать надо второе.
+    """
+
+    async def test_skips_do_not_eat_the_batch(self, girl, monkeypatch):
+        """Девять офлайн впереди и один в сети — письмо всё равно готовится."""
+        import src.dating.dating_favorite_mail as mod
+
+        away = [f'u{uuid.uuid4().hex[:8]}' for _ in range(9)]
+        near = f'u{uuid.uuid4().hex[:8]}'
+        for uid in (*away, near):
+            await _star(girl, uid)
+            await _hers(girl, uid, '2026-09-01 10:00:00')
+
+        # ⚠ Порядок задаём сами: у всех пар одно время, и полагаться на него
+        # значило бы проверять сортировку базы, а не правило. Настоящий отбор при
+        # этом остаётся — подменяется только порядок и состав.
+        real = mod._quiet
+        order = {uid: n for n, uid in enumerate((*away, near))}
+
+        async def quiet(site_id, profile_id=0):
+            rows = await real(site_id, profile_id)
+
+            return sorted([one for one in rows if str(one['uid']) in order],
+                          key=lambda one: order[str(one['uid'])])
+
+        monkeypatch.setattr(mod, '_quiet', quiet)
+        monkeypatch.setattr(mod, 'dating_online_show',
+                            lambda site_id, uid: {'online': str(uid) == near,
+                                                  'known': True})
+        monkeypatch.setattr(mod, 'dating_favorite_mail_write',
+                            _answer('Давно не общались, как ты?'))
+        monkeypatch.setattr(mod, '_sync_stars', _nothing())
+
+        got = await mod.dating_favorite_mail_make(STAND_SITE, limit=1)
+
+        assert got['made'] == 1, got
+        assert got['skipped'] == 9, 'пропуски перестали считаться вовсе'
 
 
 class TestBothMustBeOnline:
