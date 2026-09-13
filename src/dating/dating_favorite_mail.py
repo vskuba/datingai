@@ -68,7 +68,10 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_favorite import (DATING_FAVORITE_STATES,
-                                        DATING_FAVORITE_STATES_SQL)
+                                        DATING_FAVORITE_STATES_SQL,
+                                        dating_favorite_sync)
+from src.dating.dating_ready import dating_password_pick
+from src.uvicorn.routers.dating.dating_site import dating_site_setting
 from src.dating.dating_mail_agent import (DatingMailAgentError,
                                           dating_favorite_mail_write)
 from src.dating.dating_online import dating_online_show
@@ -121,6 +124,12 @@ async def dating_favorite_mail_make(site_id: int, limit: int = 0,
     можно жать, пока пул не наберётся, а круг может будить набор хоть каждые
     полчаса.
     """
+    # ⚠⚠ **Сперва сверяем звёзды с сайтом.** Наша таблица знала только тех, кто
+    # писал письма: круг звёздочек заполняет её отправителями. В виджете «Мои
+    # фавориты» у анкеты восемнадцать человек, у нас лежал один — и пул честно
+    # отвечал «писать некому». Подробности — `dating_favorite_sync`.
+    await _sync_stars(site_id, profile_id)
+
     pairs = await _quiet(site_id, profile_id)
     if not pairs:
         return {'made': 0, 'skipped': 0, 'reasons': [], 'left': 0, 'stopped': ''}
@@ -232,6 +241,43 @@ async def dating_favorite_mail_pool_left(site_id: int) -> int:
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+async def _sync_stars(site_id: int, profile_id: int = 0) -> None:
+    """Переписывает списки избранных с сайта в нашу таблицу — по анкетам в сети.
+
+    ⚠ **Только те, кто в сети**, и это не экономия: письмо всё равно пишут от
+    анкеты на смене (`_quiet` берёт только их), а спрашивать сайт под спящей
+    значило бы ходить туда ради строк, которые сегодня не понадобятся.
+
+    ⚠ **Сбой одной анкеты не уносит остальных** и не роняет набор: список не
+    пришёл — работаем по тому, что уже знаем. `dating_favorite_sync` молчит сам.
+
+    ⚠ **Без `api_base` не ходим вовсе**: у сайта без своего API списка избранных
+    не спросить, и звёзды туда попадают только кругом звёздочек.
+    """
+    base = str(await dating_site_setting(int(site_id), 'api_base') or '').strip()
+    if not base:
+        return
+
+    password = str(await dating_site_setting(int(site_id), 'api_password') or '')
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT id, site_id, login, password, password_source'
+                '  FROM dating_profile'
+                " WHERE site_id = %s AND enabled = 1 AND status = 'online'"
+                '   AND (%s = 0 OR id = %s)',
+                (int(site_id), int(profile_id or 0), int(profile_id or 0)))
+            girls = [dict(row) for row in await db.fetchall() or []]
+    except Exception as e:
+        logger_info(f'[dating] анкеты для сверки избранных не спросились: {e}')
+
+        return
+
+    for girl in girls:
+        await dating_favorite_sync(girl, base, dating_password_pick(girl, password))
+
 
 async def _quiet(site_id: int, profile_id: int = 0) -> list[dict]:
     """Пары «анкета — избранный», которым сейчас уместно написать.

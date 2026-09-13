@@ -106,6 +106,11 @@ DATING_FAVORITE_TRIES_MAX = 3
 # при одном значении в базе — старые строки нечем было бы отличить от новых.
 DATING_FAVORITE_REASON_MAIL = 'mail_in'
 
+# Повод записи: «так сказал список сайта». ⚠ Не `mail_in`: тот означает «человек
+# написал нам письмо, и мы решили нажать звезду», а здесь звезда уже стояла — мы
+# лишь переписали к себе то, что у сайта и так есть.
+DATING_FAVORITE_REASON_SITE = 'site_list'
+
 # Исходы. Отдельными константами, потому что по ним ветвится и круг, и запись.
 DATING_FAVORITE_DONE = 'done'
 DATING_FAVORITE_ALREADY = 'already'
@@ -235,6 +240,53 @@ async def dating_favorite_uids(profile: dict, base: str, password: str) -> set:
     return {str(row.get(DATING_FAVORITE_LIST_UID) or '').strip()
             for row in rows if isinstance(row, dict)
             and str(row.get(DATING_FAVORITE_LIST_UID) or '').strip()}
+
+
+async def dating_favorite_sync(profile: dict, base: str, password: str) -> int:
+    """Переписывает список избранных с сайта в нашу таблицу. Возвращает — сколько
+    записей добавилось.
+
+    ⚠⚠ **Ради этого и написано: наша таблица знала не всех.** Заполнял её круг
+    звёздочек, и только теми, кто **писал письма**: «у девушки в избранных бывают
+    десятки людей, заведённых руками, и таскать их всех незачем — вопрос к ней
+    задают лишь про тех, кто написал».
+
+    Довод был верен, пока «Приставание» требовало переписки в нашей базе. Теперь
+    хватает звезды (`dating_favorite_mail.py`), и наша таблица стала узким местом:
+    в виджете «Мои фавориты» у анкеты восемнадцать человек, в таблице — один, и пул
+    честно отвечал «писать некому».
+
+    ⚠ **Только добавляем, ничего не убираем.** Снятая на сайте звезда и не
+    пришедший список выглядят отсюда одинаково, а удаление унесло бы и состояние
+    (`state`, `tries`, `error`), и историю. Кому мы больше не пишем — знает чёрный
+    список, и это другой вопрос.
+
+    ⚠ **Состояние `already`**, а не `done`: звезда уже стояла, мы её не нажимали.
+    Отличить это важно в статистике — «добавили сами» против «были там до нас».
+    """
+    try:
+        uids = await dating_favorite_uids(profile, base, password)
+    except DatingFavoriteError as e:
+        logger_info(f'[dating] список избранных анкеты #{profile.get("id")}: {e}')
+
+        return 0
+
+    if not uids:
+        return 0
+
+    known = set(await dating_favorite_settled(int(profile['id'])))
+    fresh = [uid for uid in uids if uid not in known]
+
+    for uid in fresh:
+        await dating_favorite_mark(int(profile['site_id']), int(profile['id']), uid,
+                                   DATING_FAVORITE_ALREADY, '',
+                                   DATING_FAVORITE_REASON_SITE)
+
+    if fresh:
+        logger_info(f'[dating] избранные анкеты #{profile["id"]}: '
+                    f'переписано с сайта {len(fresh)}')
+
+    return len(fresh)
 
 
 async def dating_favorite_settled(profile_id: int) -> dict:

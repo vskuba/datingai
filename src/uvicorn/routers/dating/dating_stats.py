@@ -93,27 +93,31 @@ def _empty(site_id: int, profile_id: int) -> dict:
 @router.get('/profiles', include_in_schema=False)
 async def dating_stats_profiles(site_id: int = 0,
                                 user: AuthUser = Depends(auth_required)):
-    """Инвайты по каждой анкете сайта: сколько ушло и сколько нет.
+    """Работа каждой анкеты сайта: ушло и не ушло по трём занятиям.
 
     Args:
         site_id: сайт-закладка. Ноль — пустой список.
 
     Returns:
         dict: `result` — строка на анкету: `profile_id`, `name`, `photo`, `uid`,
-        `status`, `sent`, `failed`, `draft`, `tried`.
+        `status`, и по паре чисел на занятие — `invite`, `favorite`, `mailing`,
+        каждое `{'sent': …, 'failed': …}`.
+
+    ⚠ **Три занятия, а не одно.** Вопрос вкладки — «кто из девушек работает», а
+    работа у анкеты троякая: зовёт в чат, пристаёт к избранным, шлёт рассылку.
+    Одни инвайты отвечали бы на него только про чат.
 
     ⚠ **Своя ручка, а не поле в общей.** Общая отвечает «сколько сделано на
-    сайте» — одно число на занятие; здесь вопрос другой: «кто из девушек
-    работает». Слей их, каждое открытие вкладки считало бы десяток строк ради
-    четырёх чисел в шапке.
+    сайте» — одно число на занятие; здесь строка на анкету. Слей их, каждое
+    открытие вкладки считало бы десяток строк ради четырёх чисел в шапке.
 
     ⚠ **«Не ушло» — это `failed` плюс черновики с причиной.** Неудачная отправка
-    оставляет реплику в пуле (`dating_invite_send.py`), и по статусу её от
-    нетронутой не отличить: спроси мы `status = 'failed'`, число молчало бы ровно о
-    тех попытках, ради которых вкладку и открывают.
+    оставляет строку в пуле, и по статусу её от нетронутой не отличить: спроси мы
+    `status = 'failed'`, число молчало бы ровно о тех попытках, ради которых
+    вкладку и открывают.
 
-    ⚠ **Анкеты без единой реплики тоже в списке.** Ноль — это ответ: «она включена,
-    в сети, а инвайтов от неё не ушло ни одного» — то, что и надо увидеть.
+    ⚠ **Анкеты без единой строки тоже в списке.** Ноль — это ответ: «она включена,
+    в сети, а работы от неё не ушло» — то, что и надо увидеть.
     """
     if not int(site_id or 0):
         return {'result': []}
@@ -122,38 +126,53 @@ async def dating_stats_profiles(site_id: int = 0,
         async with mysql_get_db_async() as db:
             await db.execute(
                 'SELECT p.id AS profile_id, p.status, p.enabled,'
-                '       p.login AS profile_login, p.profile AS profile_card,'
-                "       COALESCE(SUM(i.status = 'sent'), 0) AS sent,"
-                "       COALESCE(SUM(i.status = 'failed'"
-                "                    OR (i.status = 'draft' AND i.error <> '')), 0)"
-                '         AS failed,'
-                "       COALESCE(SUM(i.status = 'draft' AND i.error = ''), 0) AS draft"
-                '  FROM dating_profile p'
-                '  LEFT JOIN dating_invite i ON i.profile_id = p.id'
-                ' WHERE p.site_id = %s'
-                ' GROUP BY p.id, p.status, p.enabled, p.login, p.profile'
-                ' ORDER BY sent DESC, p.id', (int(site_id),))
-            rows = await db.fetchall()
+                '       p.login AS profile_login, p.profile AS profile_card'
+                '  FROM dating_profile p WHERE p.site_id = %s'
+                ' ORDER BY p.id', (int(site_id),))
+            girls = [dict(row) for row in await db.fetchall() or []]
+
+            # ⚠ Запрос на занятие, а не один сшитый: у трёх таблиц одинаковые
+            # столбцы и разные объёмы, и `LEFT JOIN` всех трёх разом умножал бы
+            # строки друг на друга — классическая ошибка, которую видно только на
+            # живых данных, когда числа втрое больше правды.
+            work = {}
+            for table, kind in (('dating_invite', 'invite'),
+                                ('dating_favorite_mail', 'favorite'),
+                                ('dating_mailing', 'mailing')):
+                await db.execute(
+                    f"SELECT profile_id, SUM(status = 'sent') AS sent,"
+                    f"       SUM(status = 'failed'"
+                    f"           OR (status = 'draft' AND error <> '')) AS failed"
+                    f'  FROM {table} WHERE site_id = %s GROUP BY profile_id',
+                    (int(site_id),))
+                for row in await db.fetchall() or []:
+                    work.setdefault(int(row['profile_id']), {})[kind] = {
+                        'sent': int(row['sent'] or 0),
+                        'failed': int(row['failed'] or 0)}
     except Exception as e:
         logger_info(f'[dating] статистика по анкетам не сосчиталась: {e}')
 
         return {'result': []}
 
+    empty = {'sent': 0, 'failed': 0}
     out = []
-    for row in rows or []:
-        card = dating_json_load(row['profile_card']) or {}
-        sent, failed = int(row['sent'] or 0), int(row['failed'] or 0)
-        out.append({'profile_id': int(row['profile_id']),
-                    'name': str(card.get('name') or row['profile_login'] or ''),
+    for girl in girls:
+        card = dating_json_load(girl['profile_card']) or {}
+        mine = work.get(int(girl['profile_id']), {})
+        out.append({'profile_id': int(girl['profile_id']),
+                    'name': str(card.get('name') or girl['profile_login'] or ''),
                     'photo': str(card.get('photo') or ''),
                     'uid': str(card.get('site_uid') or ''),
-                    'status': str(row['status'] or ''),
-                    'enabled': bool(row['enabled']),
-                    'sent': sent, 'failed': failed,
-                    'draft': int(row['draft'] or 0),
-                    # Попытки — сумма исходов, а не отдельный счётчик: второй
-                    # разошёлся бы с первыми на первой же правке.
-                    'tried': sent + failed})
+                    'status': str(girl['status'] or ''),
+                    'enabled': bool(girl['enabled']),
+                    'invite': mine.get('invite', dict(empty)),
+                    'favorite': mine.get('favorite', dict(empty)),
+                    'mailing': mine.get('mailing', dict(empty))})
+
+    # ⚠ Порядок — по работе, а не по номеру: вкладку открывают, чтобы увидеть, кто
+    # работает, и молчащие анкеты должны оказаться внизу сами.
+    out.sort(key=lambda one: -(one['invite']['sent'] + one['favorite']['sent']
+                               + one['mailing']['sent']))
 
     return {'result': out}
 

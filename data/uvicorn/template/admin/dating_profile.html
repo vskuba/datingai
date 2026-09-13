@@ -406,7 +406,7 @@
 
     .stats-row {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) repeat(4, 64px);
+        grid-template-columns: minmax(0, 1fr) repeat(3, 84px);
         gap: 8px;
         align-items: center;
         padding: 6px 10px;
@@ -462,8 +462,27 @@
 
     /* Ноль — тише прочих: строка «ни одного инвайта» не должна кричать наравне с
        работой. */
-    .stats-row-n.zero {
+    .stats-row-n.zero,
+    .stats-row-n .zero {
         color: #cbd5e1;
+    }
+
+    /* Числа в паре: цвет несут они, а дробь между ними — только разделитель. */
+    .stats-row-n b {
+        font-weight: 600;
+    }
+
+    .stats-row-n b.ok {
+        color: #047857;
+    }
+
+    .stats-row-n b.bad {
+        color: #b91c1c;
+    }
+
+    .stats-slash {
+        color: #cbd5e1;
+        padding: 0 1px;
     }
 
     .stats-card {
@@ -5292,11 +5311,14 @@
             return;
         }
 
+        // ⚠ Колонка на занятие, а в ней **пара чисел через дробь**: «ушло/не
+        // ушло». Порознь они занимали по столбцу каждое, и строка из пяти чисел
+        // читалась дольше, чем отвечала. «Попыток» убрано вовсе: это сумма двух
+        // соседних, и держать её значило показывать одно и то же дважды.
         box.innerHTML = '<div class="stats-row head"><span>анкета</span>'
-            + '<span class="stats-row-n">попыток</span>'
-            + '<span class="stats-row-n">ушло</span>'
-            + '<span class="stats-row-n">не ушло</span>'
-            + '<span class="stats-row-n">в пуле</span></div>'
+            + '<span class="stats-row-n">инвайты</span>'
+            + '<span class="stats-row-n">фавориты</span>'
+            + '<span class="stats-row-n">рассылка</span></div>'
             + statsProfiles.map(row =>
                 '<div class="stats-row">'
                 + '<span class="mail-sent-who talk">'
@@ -5304,19 +5326,29 @@
                            row.status === 'online' ? 'сейчас в сети' : 'не в сети',
                            row.status === 'online')
                 + '</span>'
-                + statsNum(row.tried)
-                + statsNum(row.sent, 'ok')
-                + statsNum(row.failed, 'bad')
-                + statsNum(row.draft)
+                + statsPair(row.invite, 'инвайтов')
+                + statsPair(row.favorite, 'писем избранным')
+                + statsPair(row.mailing, 'писем рассылки')
                 + '</div>').join('');
     }
 
-    // Число в строке. ⚠ Ноль рисуем тише прочих и **без цвета исхода**: красный
-    // ноль в столбце «не ушло» читается как беда, которой нет.
-    function statsNum(value, kind = '') {
-        const n = Number(value) || 0;
+    // Пара «ушло/не ушло» одной ячейкой.
+    //
+    // ⚠ **Ноль рисуем тише прочих и без цвета исхода**: красный ноль в «не ушло»
+    // читается как беда, которой нет, а зелёный ноль обещает работу, которой не
+    // было.
+    //
+    // ⚠ Дробь — разделитель, а не действие: сама она серая, цвет несут числа.
+    function statsPair(one, what) {
+        const sent = Number((one || {}).sent) || 0;
+        const failed = Number((one || {}).failed) || 0;
 
-        return `<span class="stats-row-n ${n ? kind : 'zero'}">${statsNumber(n)}</span>`;
+        return `<span class="stats-row-n" title="${esc(what)}: ушло ${sent}`
+            + `, не ушло ${failed}">`
+            + `<b class="${sent ? 'ok' : 'zero'}">${statsNumber(sent)}</b>`
+            + '<span class="stats-slash">/</span>'
+            + `<b class="${failed ? 'bad' : 'zero'}">${statsNumber(failed)}</b>`
+            + '</span>';
     }
 
     // Переключение подвкладок статистики. Нажатие по кнопке, а не по всей полосе.

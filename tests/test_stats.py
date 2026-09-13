@@ -64,6 +64,8 @@ async def talks(auth_client):
     async with mysql_get_db_async() as db:
         for girl in girls:
             await db.execute('DELETE FROM dating_invite WHERE profile_id = %s', (girl,))
+            for table in ('dating_mailing', 'dating_favorite_mail'):
+                await db.execute(f'DELETE FROM {table} WHERE profile_id = %s', (girl,))
             await db.execute('DELETE FROM dating_message WHERE profile_id = %s', (girl,))
             await db.execute('DELETE FROM dating_profile WHERE id = %s', (girl,))
         await db.connection.commit()
@@ -147,7 +149,7 @@ class TestByProfiles:
         mine = [one for one in rows if one['profile_id'] in talks['girls']]
 
         assert len(mine) == 2, 'анкета без инвайтов выпала из сводки'
-        assert all(one['tried'] == 0 for one in mine)
+        assert all(one['invite'] == {'sent': 0, 'failed': 0} for one in mine)
 
     async def test_sent_and_failed_are_counted(self, auth_client, talks):
         girl = talks['girls'][0]
@@ -158,7 +160,41 @@ class TestByProfiles:
         row = next(one for one in await _profiles(auth_client)
                    if one['profile_id'] == girl)
 
-        assert (row['sent'], row['failed'], row['tried']) == (2, 1, 3)
+        assert row['invite'] == {'sent': 2, 'failed': 1}
+
+    async def test_three_activities_come_separately(self, auth_client, talks):
+        """⚠ Работа у анкеты троякая: зовёт в чат, пристаёт к избранным, шлёт
+        рассылку. Одни инвайты отвечали бы только про чат."""
+        girl = talks['girls'][0]
+        await _invite(girl, 'sent')
+        await _letter('dating_favorite_mail', girl, 'sent')
+        await _letter('dating_mailing', girl, 'sent')
+        await _letter('dating_mailing', girl, 'draft', error='слишком часто')
+
+        row = next(one for one in await _profiles(auth_client)
+                   if one['profile_id'] == girl)
+
+        assert row['invite']['sent'] == 1
+        assert row['favorite'] == {'sent': 1, 'failed': 0}
+        assert row['mailing'] == {'sent': 1, 'failed': 1}
+
+    async def test_the_pools_are_not_multiplied_by_each_other(self, auth_client,
+                                                              talks):
+        """⚠⚠ Три таблицы считаются **порознь**, а не одним сшитым `LEFT JOIN`.
+
+        Сшей их, строки перемножились бы: две рассылки и три инвайта дали бы шесть
+        и шесть. Ошибка видна только на живых данных — числа втрое больше правды.
+        """
+        girl = talks['girls'][0]
+        for _ in range(3):
+            await _invite(girl, 'sent')
+        for _ in range(2):
+            await _letter('dating_mailing', girl, 'sent')
+
+        row = next(one for one in await _profiles(auth_client)
+                   if one['profile_id'] == girl)
+
+        assert (row['invite']['sent'], row['mailing']['sent']) == (3, 2)
 
     async def test_a_draft_with_a_reason_counts_as_a_failure(self, auth_client,
                                                              talks):
@@ -175,13 +211,25 @@ class TestByProfiles:
         row = next(one for one in await _profiles(auth_client)
                    if one['profile_id'] == girl)
 
-        assert (row['failed'], row['draft'], row['tried']) == (1, 1, 1)
+        assert row['invite'] == {'sent': 0, 'failed': 1}
 
     async def test_no_site_no_rows(self, auth_client):
         got = (await auth_client.get('/api/dating/stats/profiles',
                                      params={'site_id': 0})).json()
 
         assert got['result'] == []
+
+
+async def _letter(table: str, profile_id: int, status: str, error: str = '') -> None:
+    """Письмо в пуле. ⚠ `uid` свой у каждого: ключ пула — пара, а у рассылки тройка."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            f'INSERT INTO {table} (site_id, profile_id, uid, name, body, status,'
+            ' error, sent_at) VALUES (%s, %s, %s, %s, %s, %s, %s,'
+            "                        IF(%s = 'sent', NOW(), NULL))",
+            (STAND_SITE, int(profile_id), f'zz-{uuid.uuid4().hex[:8]}', 'Кто-то',
+             'привет', status, error, status))
+        await db.connection.commit()
 
 
 async def _profiles(client) -> list:
