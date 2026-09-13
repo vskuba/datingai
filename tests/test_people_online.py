@@ -70,6 +70,43 @@ class TestTheFeedDecides:
         assert got['name'] == 'Semen Gorbunkov' and got['uid'] == '181685'
 
 
+class TestThePageKeepsUpWithTheFeed:
+    """⚠⚠ Сервер проставляет «в сети» **в момент выдачи списка**, и этого мало.
+
+    Избранных снимают раз в несколько часов (`favorites_keep`), ленту — каждые
+    пару минут. Между выдачами точка снова отстаёт от ленты, и человек видит серый
+    кружок у того, кто минуту назад зашёл. Страница догоняет ленту сама
+    (`stripDotsPaint`), не дожидаясь новой съёмки.
+
+    ⚠ Проверяем по исходному тексту страницы: сюита браузера не имеет, а поведение
+    это её, а не сервера.
+    """
+
+    async def test_the_page_repaints_dots_after_the_feed(self, auth_client):
+        page = (await auth_client.get('/admin/dating/profile')).text
+
+        assert 'function stripDotsPaint' in page, \
+            'точки лент больше не догоняют ленту онлайна'
+        assert 'stripDotsPaint();' in page, 'перекраску никто не зовёт'
+
+    async def test_the_dot_carries_its_own_tooltip(self, auth_client):
+        """⚠ Подпись — **у точки**, а не у карточки: так её обновляют вместе с
+        цветом. Пока статус жил в подписи карточки, обновить его значило собрать
+        подпись заново из имени и возраста, которых у точки нет."""
+        page = (await auth_client.get('/admin/dating/profile')).text
+
+        assert "title=\"${p.online ? 'в сети' : 'не в сети'}\"" in page, \
+            'у точки пропала своя подпись — она разойдётся с цветом'
+
+    async def test_the_feed_strip_is_left_alone(self, auth_client):
+        """Лента онлайна сама и есть ответ: перекрашивать её по себе незачем."""
+        page = (await auth_client.get('/admin/dating/profile')).text
+        start = page.index('function stripDotsPaint')
+        block = page[start:start + 900]
+
+        assert "dataset.strip === 'online'" in block
+
+
 class TestWhenWeDoNotKnow:
     """⚠ «Не знаем» — не повод гасить точку."""
 

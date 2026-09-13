@@ -10182,12 +10182,18 @@
         return peopleSorted(state.people).map(p =>
             `<div class="person-card${String(openUid) === String(p.uid) ? ' open' : ''}"`
             + ` data-uid="${esc(p.uid)}"`
-            + ` title="${esc(p.name)}${p.age ? ', ' + p.age : ''}`
-            + `${p.online ? ' · в сети' : ''}">`
+            + ` title="${esc(p.name)}${p.age ? ', ' + p.age : ''}">`
             + `<span class="person-face">${esc((p.name || '?').slice(0, 1).toUpperCase())}`
             + (p.photo ? `<img src="${esc(p.photo)}" alt="" referrerpolicy="no-referrer"`
                 + ' onerror="this.remove()">' : '')
-            + `<span class="person-dot${p.online ? ' online' : ''}"></span>`
+            // ⚠ **Подпись — у самой точки, а не у карточки.** Так её обновляет
+            // `stripDotsPaint` вместе с цветом, одним касанием: списки снимаются
+            // раз в несколько часов, а лента — каждые две минуты, и между
+            // съёмками точка иначе расходится с ней. Пока статус жил в подписи
+            // карточки, обновить пришлось бы всю подпись — то есть собрать её
+            // заново из имени и возраста, которых у точки нет.
+            + `<span class="person-dot${p.online ? ' online' : ''}"`
+            + ` title="${p.online ? 'в сети' : 'не в сети'}"></span>`
             + '</span>'
             + `<span class="person-card-name">${esc(p.name || 'без имени')}</span>`
             + `<span class="person-card-age">${p.age ? p.age : ''}</span>`
@@ -10414,12 +10420,12 @@
         return peopleSorted(state.people).map(p =>
             `<div class="person${String(openUid) === String(p.uid) ? ' open' : ''}"`
             + ` data-uid="${esc(p.uid)}"`
-            + ` title="${esc(p.name)}${p.age ? ', ' + p.age : ''}`
-            + `${p.online ? ' · в сети' : ''}">`
+            + ` title="${esc(p.name)}${p.age ? ', ' + p.age : ''}">`
             // Точка — перед лицом: столбец точек у левого края читается сверху
             // вниз одним движением глаза. Стояла она справа, у переменного края
             // строки, и «кто в сети» приходилось выискивать по всей колонке.
-            + `<span class="person-dot${p.online ? ' online' : ''}"></span>`
+            + `<span class="person-dot${p.online ? ' online' : ''}"`
+            + ` title="${p.online ? 'в сети' : 'не в сети'}"></span>`
             + `<span class="person-face">${esc((p.name || '?').slice(0, 1).toUpperCase())}`
             + (p.photo ? `<img src="${esc(p.photo)}" alt="" referrerpolicy="no-referrer"`
                 + ' onerror="this.remove()">' : '')
@@ -10528,6 +10534,38 @@
         return true;
     }
 
+    // Точки «в сети» у карточек лент — вслед за свежей лентой онлайна.
+    //
+    // ⚠⚠ **Список и лента живут с разной скоростью.** Избранных снимают раз в
+    // несколько часов (`favorites_keep`), ленту — каждые пару минут; сервер
+    // проставляет «в сети» в момент выдачи списка, но между выдачами точка снова
+    // отстаёт. Здесь она догоняет ленту, не дожидаясь новой съёмки.
+    //
+    // Точечно, а не пересборкой карточек: лента — это прокручиваемая полоса, и
+    // перерисовка сбрасывала бы место, до которого человек долистал. Тот же приём
+    // и тот же довод, что у точек в диалогах (`chatDotsPaint`).
+    //
+    // ⚠ Ленту онлайна не трогаем: принадлежность ей и означает «в сети».
+    function stripDotsPaint() {
+        workEl.querySelectorAll('.strip-row').forEach(row => {
+            if (row.dataset.strip === 'online') return;
+
+            row.querySelectorAll('.person-card[data-uid], .person[data-uid]')
+                .forEach(card => {
+                    const dot = card.querySelector('.person-dot');
+                    if (!dot) return;
+
+                    // ⚠ Ленты нет вовсе — точку не трогаем: «не знаем» это не
+                    // «не в сети», и гасить по незнанию хуже устаревшей правды.
+                    if (!peopleCache.get(ONLINE_KEY)) return;
+
+                    const online = peopleOnlineHas(card.dataset.uid);
+                    dot.classList.toggle('online', online);
+                    dot.title = online ? 'в сети' : 'не в сети';
+                });
+        });
+    }
+
     function peopleOnlinePaint() {
         // Рядов нет — сайт ленту не завёл (у Goldenbride её нет вовсе). Это не
         // сбой: наполнять нечего, и молча выходим.
@@ -10535,6 +10573,7 @@
                         PEOPLE_EMPTY.online)) return;
 
         chatDotsPaint();
+        stripDotsPaint();
     }
 
     async function peopleLoad(kind, fresh = false) {

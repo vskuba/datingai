@@ -18,6 +18,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating import dating_invite_send_round
 from src.dating.dating_invite_send_round import (DATING_INVITE_SEND_EVERY_MIN,
+                                                 DATING_INVITE_SEND_ROUND_TICK_SEC,
                                                  dating_invite_send_why,
                                                  dating_invite_send_round_run)
 
@@ -257,12 +258,39 @@ class TestPause:
         assert (await dating_invite_send_round_run())['sent'] == 0, \
             'вторая реплика ушла, не дождавшись паузы'
 
-    async def test_hard_floor_beats_the_setting(self):
-        """⚠ Настройку правят руками, и «5» превратило бы смену в очередь из
-        сотен реплик в час — то самое, от чего пауза и заведена."""
-        dating_invite_send_round._sent_at.clear()
+    async def test_the_floor_guards_a_typo_not_a_decision(self):
+        """⚠ Предел сторожит `0` и `-1`, вписанные руками, а не выбор заказчика.
 
-        assert DATING_INVITE_SEND_EVERY_MIN >= 20
+        Был двадцать секунд «чтобы смена не превратилась в очередь из сотен
+        реплик в час». Довод верен, но частоту выбирает владелец панели: он и
+        просил трёхсекундную паузу. Предел остался, чтобы ноль в базе не означал
+        отправку без пауз вовсе.
+        """
+        assert DATING_INVITE_SEND_EVERY_MIN >= 1
+
+    def test_the_floor_equals_the_tick(self):
+        """⚠⚠ **Тик — потолок частоты.** Пауза короче тика недостижима: круг не
+        проснётся вовремя, и страница обещала бы то, чего он не сделает.
+
+        Поймано на правке «добавь три секунды»: настройка добавилась бы, а тик
+        остался бы пятнадцатью — то есть три означало бы пятнадцать, и молча.
+        """
+        assert DATING_INVITE_SEND_EVERY_MIN == DATING_INVITE_SEND_ROUND_TICK_SEC
+
+    async def test_every_option_of_the_page_is_reachable(self):
+        """⚠ Каждый пункт списка на странице обязан быть достижимым.
+
+        Иначе человек выбирает «3 секунды», а круг шлёт раз в пятнадцать — и
+        поломкой это не выглядит, потому что реплики-то уходят.
+        """
+        from src.uvicorn.routers.dating.dating_site import DATING_SITE_KNOWN
+
+        options = DATING_SITE_KNOWN['invite_send_every']['options']
+        low = min(int(value) for value, _ in options)
+
+        assert low >= DATING_INVITE_SEND_EVERY_MIN, \
+            f'на странице предлагают {low} с, а круг не пойдёт чаще ' \
+            f'{DATING_INVITE_SEND_EVERY_MIN} с'
 
 
 # ── Вспомогательное ──────────────────────────────────────────────────────────
