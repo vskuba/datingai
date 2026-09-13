@@ -28,11 +28,13 @@ from src.dating.dating_mail import DATING_MAIL_BODY_MAX
 from src.dating.dating_mail_send import (DatingMailSendError, dating_mail_send_mark,
                                          dating_mail_send_one)
 from src.dating.dating_online import dating_online_show
+from src.dating.dating_send_round import dating_send_why
 from src.dating.dating_mailing import (DATING_MAILING_BATCH_DEFAULT,
                                        DATING_MAILING_BATCH_MAX,
                                        dating_mailing_gaps, dating_mailing_girls,
                                        dating_mailing_make, dating_mailing_people,
                                        dating_mailing_templates)
+from src.uvicorn.routers.setting import setting_timezone_hours
 from src.uvicorn.routers.dating.dating_site import (dating_site_seconds,
                                                     dating_site_setting)
 
@@ -92,7 +94,7 @@ async def dating_mailing_list(site_id: int = 0, status_: str = 'draft',
     письмо.
     """
     if not int(site_id or 0):
-        return {'result': []}
+        return {'result': [], 'send_why': ''}
 
     sql = ('SELECT m.id, m.site_id, m.profile_id, m.mail_id, m.uid, m.name,'
            ' m.body, m.status, m.error, m.sent_at, m.created_at,'
@@ -129,7 +131,11 @@ async def dating_mailing_list(site_id: int = 0, status_: str = 'draft',
         await db.execute(sql, tuple(args))
         rows = await db.fetchall()
 
-    return {'result': [_answer(row) for row in rows]}
+    return {'result': [_answer(row) for row in rows],
+            # ⚠ Почему полный пул не уходит — вместе со списком: «50 из 50» без
+            # объяснения читается как поломка (`dating_send_round.py`).
+            'send_why': await dating_send_why(int(site_id), 'dating_mailing',
+                                              await setting_timezone_hours())}
 
 
 @router.get('/gaps', include_in_schema=False)

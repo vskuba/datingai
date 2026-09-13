@@ -1887,6 +1887,23 @@
         margin-top: 1px;
     }
 
+    /* Почему из пула ничего не уходит. ⚠ Красным и во всю ширину шапки: это не
+       подпись к счётчику, а ответ на вопрос «почему стоит». Пустая — не
+       показывается вовсе (`:empty`), иначе пустая рамка обещала бы беду там, где
+       всё идёт. */
+    .pool-why {
+        grid-column: 1 / -1;
+        margin-top: 2px;
+        color: #b91c1c;
+        font-size: 10px;
+        font-weight: 400;
+        line-height: 1.35;
+    }
+
+    .pool-why:empty {
+        display: none;
+    }
+
     /* Время в начале строки: не переносится и не жмётся именами. */
     .mail-sent-when.first {
         white-space: nowrap;
@@ -5697,6 +5714,8 @@
     let invitePoolFor = 0;
     // Через сколько секунд круг вернётся к сайту. `-1` — спросить не вышло.
     let inviteNext = -1;
+    // Почему из пула ничего не уходит — строкой от ручки. Пусто значит «уходит».
+    let inviteSendWhy = '';
     let inviteMakeBusy = false;
     let inviteMakeFrom = 0;
 
@@ -5723,6 +5742,7 @@
         const site = siteId();
         if (!site) {
             invitePool = [];
+            inviteSendWhy = '';
 
             return;
         }
@@ -5743,6 +5763,7 @@
         // Срок следующего захода приходит **вместе со списком**: два запроса на
         // один взгляд дали бы ответы из разных моментов времени.
         inviteNext = answer.next_sec === undefined ? -1 : Number(answer.next_sec);
+        inviteSendWhy = String(answer.send_why || '');
         invitePoolFor = site;
         invitePaint();
     }
@@ -5958,6 +5979,10 @@
 
         fillSlot('invite-pool-count',
             poolCount(invitePool.length, saved.invite_pool_max));
+        // ⚠ Причина простоя — из ответа ручки, а не собранная страницей: её
+        // считает тот же код, что решает за круг (`dating_invite_send_round.py`).
+        // Своя копия правила разошлась бы с ним на первой же правке.
+        fillSlot('invite-pool-why', inviteSendWhy);
 
         // От кого пойдут реплики — словами: выбор анкеты в списке слева иначе
         // влиял бы на генерацию молча.
@@ -6732,6 +6757,7 @@
     // разных моментов времени.
     let favMailNext = -1;
     let favMailWhy = '';
+    let favMailSendWhy = '';
 
     // Настройки сайта: оба выключателя и оба предела частоты. По сайтам, как у
     // инвайтов: переключение сайта не должно показывать чужие значения.
@@ -6797,6 +6823,10 @@
         // Срок круга и причина пустоты приходят вместе со списком — см. `favMailNext`.
         favMailNext = answer.next_sec === undefined ? -1 : Number(answer.next_sec);
         favMailWhy = String(answer.why || '');
+        // ⚠ Две разные причины: `why` — почему пул **пуст** (набор), `send_why` —
+        // почему полный пул **не уходит** (отправка). Ответ на один вопрос ничего
+        // не говорит о другом.
+        favMailSendWhy = String(answer.send_why || '');
         favMailPoolFor = site;
         favMailPaint();
     }
@@ -6833,6 +6863,7 @@
         const saved = favMailSaved.get(siteId()) || {};
         const drafts = favMailDrafts();
 
+        fillSlot('fav-mail-pool-why', favMailSendWhy);
         fillSlot('fav-mail-pool-count',
             poolCount(favMailPool.length, saved.favorite_mail_pool_max));
 
@@ -8681,6 +8712,8 @@
 
     // Пул и шаблоны выбранного сайта, как их вернул сервер.
     let mailPool = [];
+    // Почему из пула ничего не уходит — строкой от ручки (`dating_send_round.py`).
+    let mailSendWhy = '';
     let mailTemplates = [];
     let mailPoolFor = 0;
 
@@ -8712,6 +8745,7 @@
         const site = siteId();
         if (!site) {
             mailPool = [];
+            mailSendWhy = '';
             mailTemplates = [];
 
             return;
@@ -8732,6 +8766,7 @@
         if (siteId() !== site) return;
 
         mailPool = pool.result || [];
+        mailSendWhy = String(pool.send_why || '');
         // Выключенные шаблоны в заготовку не предлагаем: рассылка их не берёт, и
         // выбрать такой значило бы нажать кнопку впустую.
         mailTemplates = (templates.result || []).filter(row => row.enabled);
@@ -8880,6 +8915,7 @@
         const box = slot('mail-pool');
         if (!box) return;
 
+        fillSlot('mail-pool-why', mailSendWhy);
         fillSlot('mail-pool-count', poolCount(
             mailPool.length, (mailSaved.get(siteId()) || {}).mailing_pool_max));
 

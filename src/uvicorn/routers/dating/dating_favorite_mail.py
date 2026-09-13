@@ -22,6 +22,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import AuthUser, auth_required
+from src.dating.dating_send_round import dating_send_why
 from src.dating.dating_favorite import (DATING_FAVORITE_STATES,
                                         DATING_FAVORITE_STATES_SQL)
 from src.dating.dating_favorite_mail import (DATING_FAVORITE_MAIL_BATCH_DEFAULT,
@@ -88,7 +89,7 @@ async def dating_favorite_mail_list(site_id: int = 0, status_: str = 'draft',
     показывает «от кого кому», и без них страница делала бы запрос на письмо.
     """
     if not int(site_id or 0):
-        return {'result': [], 'pool': 0, 'send_on': False}
+        return {'result': [], 'pool': 0, 'send_on': False, 'send_why': ''}
 
     sql = ('SELECT m.id, m.site_id, m.profile_id, m.uid, m.name, m.photo,'
            ' m.body, m.status, m.error, m.sent_at, m.created_at,'
@@ -132,6 +133,13 @@ async def dating_favorite_mail_list(site_id: int = 0, status_: str = 'draft',
             'pool': await dating_favorite_mail_pool_left(int(site_id)),
             'next_sec': dating_favorite_mail_round_next(int(site_id)),
             'why': await dating_favorite_mail_why(int(site_id)),
+            # ⚠ `why` — про **набор** («почему пул пуст»), `send_why` — про
+            # **отправку** («почему полный пул не уходит»). Вопроса два, и ответ на
+            # один ничего не говорит о другом: пул бывает пуст при живой отправке и
+            # полон при выбранной норме.
+            'send_why': await dating_send_why(
+                int(site_id), DATING_FAVORITE_MAIL_TABLE,
+                await setting_timezone_hours()),
             'send_on': await _send_on(int(site_id))}
 
 

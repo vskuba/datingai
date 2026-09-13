@@ -126,7 +126,95 @@ async def dating_send_round_run(offset_hours: int = 0) -> dict:
     return {'sent': sent, 'failed': failed}
 
 
+async def dating_send_why(site_id: int, table: str, offset_hours: int = 0) -> str:
+    """Почему из этого пула сейчас ничего не уходит. Пусто — уходит, повода нет.
+
+    Args:
+        site_id: сайт-закладка.
+        table: чей пул спрашивают — `dating_mailing`, `dating_mail_reply` или
+            `dating_favorite_mail`. У каждого свой выключатель, а всё прочее —
+            смены, пауза, дневной потолок — **общее**: отправитель один.
+        offset_hours: часовое смещение панели.
+
+    Returns:
+        str: одна строка для шапки пула, человеческими словами.
+
+    ⚠⚠ **Молчащий пул неотличим от сломанного, и это уже стоило времени.** «Пул
+    50 из 50», анкеты в сети, смена идёт — и ничего не уходит; причина законная,
+    но лежит в журнале воркера, а человек смотрит на страницу.
+
+    ⚠ **Общий потолок объясняется прямо.** У трёх пулов он один (`send_max_day`), и
+    выбрать его может соседний: рассылка встала, потому что ответы съели норму. Без
+    этой строки объяснение не найти нигде — числа лежат в разных таблицах.
+
+    ⚠ **Считается теми же вопросами и в том же порядке, что и круг**, а не второй
+    их копией.
+    """
+    # ⚠ Список таблиц берём у самой отправки, а не пишем второй: разойдись они,
+    # шапка молчала бы у пула, который отправитель знает.
+    from src.dating.dating_mail_send import DATING_MAIL_SEND_TABLES
+
+    site_id = int(site_id or 0)
+    if not site_id or str(table) not in DATING_MAIL_SEND_TABLES:
+        return ''
+
+    flag = {'dating_mailing': 'mailing_send_on', 'dating_mail_reply': 'reply_send_on',
+            'dating_favorite_mail': 'favorite_mail_send_on'}[str(table)]
+    said = {'dating_mailing': 'рассылки', 'dating_mail_reply': 'ответов',
+            'dating_favorite_mail': 'писем избранным'}[str(table)]
+
+    try:
+        site = {int(one['site_id']): one for one in await _sites()}.get(site_id)
+        if not site or not int(site.get(flag) or 0):
+            return f'отправка {said} выключена'
+
+        if not dating_schedule_now(dating_json_load(site['mailing_schedule']),
+                                   _minutes_now(offset_hours)):
+            return 'сейчас не смена: письма уходят по часам, заданным у сайта'
+
+        today, cap = await _today(site_id, offset_hours), await _max_day(site_id)
+        if today >= cap:
+            return (f'на сегодня норма выбрана: ушло {today} из {cap} — '
+                    'общая на рассылку, ответы и письма избранным. '
+                    'Поднять — настройка сайта «Писем наружу в сутки»')
+
+        if await _oldest(site_id, str(table)):
+            return ''
+
+        return await _nothing_to_send(site_id, str(table))
+    except Exception as e:
+        logger_info(f'[dating] повод простоя отправки не спросился: {e}')
+
+        return ''
+
+
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+
+async def _nothing_to_send(site_id: int, table: str) -> str:
+    """Почему очередь пуста: черновиков нет вовсе или все с прежней ошибкой."""
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                f"SELECT COUNT(*) AS всего, SUM(error <> '') AS с_ошибкой"
+                f'  FROM {table} WHERE site_id = %s AND status = %s',
+                (int(site_id), 'draft'))
+            row = dict((await db.fetchone()) or {})
+    except Exception as e:
+        logger_info(f'[dating] разбор простоя отправки не удался: {e}')
+
+        return ''
+
+    total = int(row.get('всего') or 0)
+    if not total:
+        return 'пул пуст: отправлять нечего'
+
+    if int(row.get('с_ошибкой') or 0) >= total:
+        return ('все письма с ошибкой — круг такие не берёт, '
+                'их досылают кнопкой')
+
+    return ''
+
 
 async def _sites() -> list[dict]:
     """Сайты, где включён хоть один выключатель отправки."""

@@ -18,6 +18,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating import dating_invite_send_round
 from src.dating.dating_invite_send_round import (DATING_INVITE_SEND_EVERY_MIN,
+                                                 dating_invite_send_why,
                                                  dating_invite_send_round_run)
 
 pytestmark = pytest.mark.chat
@@ -267,8 +268,13 @@ class TestPause:
 # ── Вспомогательное ──────────────────────────────────────────────────────────
 
 def _answer(value):
-    """Подменённая настройка: всегда одно и то же число."""
-    async def _got(site_id):
+    """Подменённая настройка: всегда одно и то же число.
+
+    ⚠ Принимает **любые** доводы: у подменяемых разные подписи — `_max_day(site_id)`,
+    а `_today(site_id, offset_hours)`. Заглушка с одним параметром роняла бы вторую
+    `TypeError`, и та, проглоченная защитным `except`, выглядела бы как «повода нет».
+    """
+    async def _got(*args, **kwargs):
         return value
 
     return _got
@@ -491,6 +497,76 @@ async def _one(invite_id: int) -> dict:
                          ' error FROM dating_invite WHERE id = %s', (int(invite_id),))
 
         return dict(await db.fetchone())
+
+
+class TestWhyItStands:
+    """⚠⚠ Молчащий пул обязан объяснять себя.
+
+    Поймано живьём и стоило человеку часов: «пул инвайтов 50 из 50», девять анкет
+    в сети, смена идёт — и ничего не уходит. Причина была законной (выбрана
+    дневная норма), но лежала в журнале воркера, а человек смотрел на страницу.
+
+    ⚠ Ответ считается **теми же вопросами, что решает круг**, поэтому проверяется
+    каждая развилка порознь: слитая проверка «строка непустая» зеленела бы и на
+    неверном объяснении.
+    """
+
+    async def test_the_switch_off_says_so(self):
+        """Отбор круга стенд не включает — значит выключатель снят."""
+        assert await dating_invite_send_why(STAND_SITE, 0) \
+            == 'отправка инвайтов выключена'
+
+    async def test_outside_the_shift_says_so(self, monkeypatch):
+        hour = (time.gmtime().tm_hour + 6) % 24
+        away = '[{"from": "%02d:00", "to": "%02d:15"}]' % (hour, hour)
+
+        async def dead_hours():
+            return [{'site_id': STAND_SITE, 'invite_schedule': away}]
+
+        monkeypatch.setattr(dating_invite_send_round, '_sites', dead_hours)
+
+        assert 'не смена' in await dating_invite_send_why(STAND_SITE, 0)
+
+    async def test_the_day_cap_says_how_much(self, site, monkeypatch):
+        """⚠ Числа в строке — те же, по которым круг и остановился."""
+        monkeypatch.setattr(dating_invite_send_round, '_max_day', _answer(7))
+        monkeypatch.setattr(dating_invite_send_round, '_today', _answer(7))
+
+        said = await dating_invite_send_why(STAND_SITE, 0)
+
+        assert 'норма выбрана' in said and 'ушло 7 из 7' in said
+
+    async def test_an_empty_pool_says_so(self, site, girl):
+        assert await dating_invite_send_why(STAND_SITE, 0) \
+            == 'пул пуст: отправлять нечего'
+
+    async def test_a_sleeping_girl_says_so(self, site, girl):
+        await _draft(girl)
+        await _status(girl, 'offline')
+
+        assert 'не в сети' in await dating_invite_send_why(STAND_SITE, 0)
+
+    async def test_drafts_with_errors_say_so(self, site, girl, monkeypatch):
+        await _draft(girl, error='слишком часто')
+        monkeypatch.setattr(dating_invite_send_round, 'dating_online_check',
+                            lambda site_id, uid: {'online': True, 'known': True})
+
+        assert 'с ошибкой' in await dating_invite_send_why(STAND_SITE, 0)
+
+    async def test_nobody_online_says_so(self, site, girl, monkeypatch):
+        await _draft(girl)
+        monkeypatch.setattr(dating_invite_send_round, 'dating_online_check',
+                            lambda site_id, uid: {'online': False, 'known': True})
+
+        assert 'нет сейчас в сети' in await dating_invite_send_why(STAND_SITE, 0)
+
+    async def test_silence_when_all_is_well(self, site, girl, monkeypatch):
+        """⚠ Пустая строка — не «нет данных», а «идёт»: её страница не показывает."""
+        await _draft(girl)
+        monkeypatch.setattr(dating_invite_send_round, 'dating_online_check',
+                            lambda site_id, uid: {'online': True, 'known': True})
+
+        assert await dating_invite_send_why(STAND_SITE, 0) == ''
 
 
 class TestTheDayIsLocal:

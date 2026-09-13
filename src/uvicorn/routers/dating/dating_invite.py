@@ -38,8 +38,10 @@ from src.dating.dating_invite import (DATING_INVITE_BATCH_DEFAULT,
                                       dating_invite_pool_left)
 from src.dating.dating_invite_round import dating_invite_round_next
 from src.dating.dating_invite_send import dating_invite_send_one
+from src.dating.dating_invite_send_round import dating_invite_send_why
 from src.dating.dating_json import dating_json_load
 from src.dating.dating_mail_agent import DATING_INVITE_MAX
+from src.uvicorn.routers.setting import setting_timezone_hours
 
 router = APIRouter(prefix='/api/dating/invite', tags=['dating'])
 
@@ -114,7 +116,7 @@ async def dating_invite_list(site_id: int = 0, status_: str = 'draft',
     глазами.
     """
     if not int(site_id or 0):
-        return {'result': [], 'pool': 0, 'send_on': False}
+        return {'result': [], 'pool': 0, 'send_on': False, 'send_why': ''}
 
     sql = ('SELECT i.id, i.site_id, i.profile_id, i.uid, i.name, i.photo,'
            ' i.body, i.status, i.error, i.answer, i.sent_at, i.created_at,'
@@ -193,6 +195,11 @@ async def dating_invite_list(site_id: int = 0, status_: str = 'draft',
             'page': page, 'pages': pages, 'total': total,
             'pool': await dating_invite_pool_left(int(site_id)),
             'next_sec': dating_invite_round_next(int(site_id)),
+            # ⚠ **Почему ничего не уходит — вместе со списком**, а не отдельной
+            # ручкой: «пул 50 из 50» и объяснение простоя читают одним взглядом, и
+            # два запроса дали бы два разных момента времени.
+            'send_why': await dating_invite_send_why(
+                int(site_id), await setting_timezone_hours()),
             'send_on': await _send_on(int(site_id))}
 
 

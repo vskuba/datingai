@@ -15,7 +15,7 @@ import uuid
 import pytest
 
 from src.dating import dating_send_round as round_
-from src.dating.dating_send_round import dating_send_round_run
+from src.dating.dating_send_round import dating_send_round_run, dating_send_why
 
 pytestmark = pytest.mark.mail
 # Выдуманный сайт: у соседа его нет, живую отправку задеть невозможно.
@@ -338,6 +338,70 @@ class TestScheduleIsRespected:
         await dating_send_round_run(0)
 
         assert post == []
+
+
+class TestWhyItStands:
+    """⚠⚠ Молчащий пул обязан объяснять себя — то же правило, что у инвайтов.
+
+    У писем оно острее: дневной потолок **общий** на три пула, и встать рассылка
+    может оттого, что норму съели ответы. Числа при этом лежат в разных таблицах, и
+    сложить их человеку негде.
+    """
+
+    async def test_the_switch_off_says_so(self):
+        """Выключатели стенда сняты, пока фикстура `site` их не подняла."""
+        said = await dating_send_why(SITE, 'dating_mailing', 0)
+
+        assert said == 'отправка рассылки выключена'
+
+    async def test_each_pool_names_itself(self):
+        """⚠ Три пула — три выключателя, и путать их нельзя: человек пойдёт снимать
+        не тот."""
+        assert 'ответов' in await dating_send_why(SITE, 'dating_mail_reply', 0)
+        assert 'избранным' in await dating_send_why(SITE, 'dating_favorite_mail', 0)
+
+    async def test_outside_the_shift_says_so(self, site, auth_client):
+        await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
+                              json={'schedule': [{'from': '00:00', 'to': '00:15'}]})
+
+        # Полдень по местному — заведомо вне смены 00:00–00:15.
+        said = await dating_send_why(SITE, 'dating_mailing', 12 - _utc_hour())
+
+        assert 'не смена' in said
+
+    async def test_the_day_cap_says_it_is_shared(self, site, monkeypatch):
+        """⚠ Строка обязана сказать, что потолок **общий**: встала рассылка, а
+        выбрали норму ответы — искать причину человек пойдёт не туда."""
+        import src.dating.dating_send_round as round_
+
+        monkeypatch.setattr(round_, '_max_day', _fixed(5))
+        monkeypatch.setattr(round_, '_today', _fixed(5))
+
+        said = await dating_send_why(SITE, 'dating_mailing', 0)
+
+        assert 'ушло 5 из 5' in said and 'общая' in said
+
+    async def test_an_empty_pool_says_so(self, site):
+        assert await dating_send_why(SITE, 'dating_mailing', 0) \
+            == 'пул пуст: отправлять нечего'
+
+    async def test_silence_when_there_is_a_letter(self, site, profile):
+        """Есть что отправить — сказать нечего."""
+        await _letter(profile)
+
+        assert await dating_send_why(SITE, 'dating_mailing', 0) == ''
+
+    async def test_an_unknown_pool_is_silent(self, site):
+        """Чужое имя таблицы — не повод объяснять: в SQL оно и не поедет."""
+        assert await dating_send_why(SITE, 'dating_users', 0) == ''
+
+
+def _fixed(value):
+    """Заглушка настройки. ⚠ Любые доводы: у `_today` их два, у `_max_day` один."""
+    async def _got(*args, **kwargs):
+        return value
+
+    return _got
 
 
 def _utc_hour() -> int:
