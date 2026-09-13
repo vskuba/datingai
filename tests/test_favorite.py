@@ -89,6 +89,58 @@ class TestState:
                == (DATING_FAVORITE_DONE, '')
 
 
+class TestRowsFromTheSite:
+    """Список избранных читается **записями**, а не номерами.
+
+    ⚠ **Заведено по живой жалобе.** В пуле «Приставания» карточки подписывались
+    номером: «Диана → 803656». Имени взять было неоткуда — в `dating_contact`
+    человека нет (в чате не говорили), в `dating_companion` тоже (карточку заводят
+    по требованию), — а сайт отдавал его в том же ответе, за которым мы уже
+    ходили ради номеров.
+    """
+
+    def test_the_record_carries_name_and_face(self):
+        """Имена полей — общие с `dating_people_api`: движок и запись те же."""
+        from src.dating.dating_people_api import DATING_PEOPLE_API_FIELDS
+
+        assert DATING_PEOPLE_API_FIELDS['name'] == 'Name'
+        assert DATING_PEOPLE_API_FIELDS['photo'] == 'ProfilePhoto'
+        assert DATING_PEOPLE_API_FIELDS['uid'] == 'AccountId'
+
+    async def test_rows_are_parsed(self, monkeypatch):
+        """Разбор ответа сайта: запись за записью, без походов наружу."""
+        from src.dating import dating_favorite
+
+        async def answer(*args, **kwargs):
+            return {'Users': [
+                {'AccountId': '803656', 'Name': 'Jiwen He', 'Age': 39,
+                 'City': 'Berlin', 'Country': 'Germany',
+                 'ProfilePhoto': 'https://site/x.jpg'},
+                {'AccountId': '  ', 'Name': 'Пустой номер'},
+                'не словарь']}
+
+        monkeypatch.setattr(dating_favorite, 'dating_site_api_call', answer)
+
+        rows = await dating_favorite.dating_favorite_rows({'id': 1}, 'base', 'pw')
+
+        assert len(rows) == 1, 'мусор из ответа попал в записи'
+        assert rows[0] == {'uid': '803656', 'name': 'Jiwen He',
+                           'photo': 'https://site/x.jpg', 'age': 39,
+                           'city': 'Berlin', 'country': 'Germany'}
+
+    async def test_uids_still_work(self, monkeypatch):
+        """⚠ Прежняя функция осталась: ею живёт круг звёздочек, и менять ему
+        подпись ради чужой нужды незачем."""
+        from src.dating import dating_favorite
+
+        async def answer(*args, **kwargs):
+            return {'Users': [{'AccountId': '1'}, {'AccountId': '2'}]}
+
+        monkeypatch.setattr(dating_favorite, 'dating_site_api_call', answer)
+
+        assert await dating_favorite.dating_favorite_uids({}, 'b', 'p') == {'1', '2'}
+
+
 class TestPick:
     """Кого брать в заход."""
 

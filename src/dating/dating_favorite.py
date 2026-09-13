@@ -53,7 +53,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_log import dating_log_write
-from src.dating.dating_people import DATING_PEOPLE_UID_MAX
+from src.dating.dating_people import DATING_PEOPLE_NAME_MAX, DATING_PEOPLE_UID_MAX
 from src.dating.dating_ready import dating_password_pick
 from src.dating.dating_scenario import dating_scenario_run
 from src.dating.dating_site_api import DatingSiteApiError, dating_site_api_call
@@ -214,6 +214,64 @@ def dating_favorite_pick(letters: list, favorites: set, settled: dict,
     return pick
 
 
+async def dating_favorite_rows(profile: dict, base: str, password: str) -> list[dict]:
+    """Избранные этой девушки **записями**, а не номерами: имя, лицо, возраст, город.
+
+    Returns:
+        list: `{uid, name, photo, age, city, country}`. Пусто — избранных нет либо
+        список не пришёл.
+
+    Raises:
+        DatingFavoriteError: сайт отказал.
+
+    ⚠ **Заведено потому, что имён брать было неоткуда.** Прежде список читался
+    ради одних номеров (`dating_favorite_uids`), и в пуле «Приставания» карточки
+    подписывались номером: `Диана → 803656`. У инвайтов имя есть — их ленту сайт
+    отдаёт с именами, — а сюда оно не попадало ни от кого: в `dating_contact`
+    человека нет (в чате не говорили), в `dating_companion` тоже (карточку заводят
+    по требованию).
+
+    А сайт отдаёт всё сразу — `Name`, `ProfilePhoto`, `Age`, `City`, `Country` — в
+    том же ответе, за который мы уже сходили.
+
+    ⚠ **Имена полей — общие с `dating_people_api`**: это один и тот же движок и
+    одна и та же запись пользователя. Второй словарь имён разошёлся бы с первым.
+    """
+    from src.dating.dating_people_api import DATING_PEOPLE_API_FIELDS
+
+    try:
+        body = await dating_site_api_call(profile, base, password,
+                                          DATING_FAVORITE_LIST_PATH, method='GET')
+    except DatingSiteApiError as e:
+        raise DatingFavoriteError(f'список избранных не пришёл: {e}')
+
+    rows = body.get(DATING_FAVORITE_LIST_ROWS)
+    if not isinstance(rows, list):
+        return []
+
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+
+        uid = str(row.get(DATING_FAVORITE_LIST_UID) or '').strip()
+        if not uid:
+            continue
+
+        age = row.get(DATING_PEOPLE_API_FIELDS['age'])
+        out.append({
+            'uid': uid[:DATING_PEOPLE_UID_MAX],
+            'name': str(row.get(DATING_PEOPLE_API_FIELDS['name'])
+                        or '').strip()[:DATING_PEOPLE_NAME_MAX],
+            'photo': str(row.get(DATING_PEOPLE_API_FIELDS['photo'])
+                         or '').strip()[:500],
+            'age': int(age) if isinstance(age, int) else 0,
+            'city': str(row.get('City') or '').strip()[:DATING_PEOPLE_NAME_MAX],
+            'country': str(row.get('Country') or '').strip()[:DATING_PEOPLE_NAME_MAX]})
+
+    return out
+
+
 async def dating_favorite_uids(profile: dict, base: str, password: str) -> set:
     """Номера тех, кто у этой девушки в избранных, — списком с сайта.
 
@@ -265,17 +323,23 @@ async def dating_favorite_sync(profile: dict, base: str, password: str) -> int:
     Отличить это важно в статистике — «добавили сами» против «были там до нас».
     """
     try:
-        uids = await dating_favorite_uids(profile, base, password)
+        rows = await dating_favorite_rows(profile, base, password)
     except DatingFavoriteError as e:
         logger_info(f'[dating] список избранных анкеты #{profile.get("id")}: {e}')
 
         return 0
 
-    if not uids:
+    if not rows:
         return 0
 
+    # ⚠ **Карточки заводим всем из списка, а не только новым.** Имя и лицо нужны
+    # пулу и «Доставке» — без них человек подписан номером, — и приходят они в том
+    # же ответе. Заведение дешёвое (один `INSERT … ON DUPLICATE`), а «только
+    # новым» означало бы, что у знакомых пар имя не появится никогда.
+    await _cards_put(int(profile['site_id']), rows)
+
     known = set(await dating_favorite_settled(int(profile['id'])))
-    fresh = [uid for uid in uids if uid not in known]
+    fresh = [one['uid'] for one in rows if one['uid'] not in known]
 
     for uid in fresh:
         await dating_favorite_mark(int(profile['site_id']), int(profile['id']), uid,
@@ -287,6 +351,41 @@ async def dating_favorite_sync(profile: dict, base: str, password: str) -> int:
                     f'переписано с сайта {len(fresh)}')
 
     return len(fresh)
+
+
+async def _cards_put(site_id: int, rows: list[dict]) -> None:
+    """Кладёт карточки собеседников из списка избранных.
+
+    ⚠ **Пустое значение не стирает прежнее** (`IF(VALUES(x) = '', x, VALUES(x))`):
+    сайт иногда отдаёт запись без фотографии, и затирать ею снятое сценарием лицо
+    значило бы терять то, за чем ходили в браузер. Тот же приём, что у ручки
+    карточки собеседника.
+
+    ⚠ **`priority` и `about` не трогаем вовсе** — их ставит человек и агент, а
+    список сайта про них ничего не знает.
+    """
+    if not rows:
+        return
+
+    try:
+        async with mysql_get_db_async() as db:
+            for one in rows:
+                await db.execute(
+                    'INSERT INTO dating_companion'
+                    ' (site_id, uid, name, photo, age, city, country)'
+                    ' VALUES (%s, %s, %s, %s, %s, %s, %s)'
+                    ' ON DUPLICATE KEY UPDATE'
+                    "  name = IF(VALUES(name) = '', name, VALUES(name)),"
+                    "  photo = IF(VALUES(photo) = '', photo, VALUES(photo)),"
+                    '  age = IF(VALUES(age) = 0, age, VALUES(age)),'
+                    "  city = IF(VALUES(city) = '', city, VALUES(city)),"
+                    "  country = IF(VALUES(country) = '', country, VALUES(country))",
+                    (int(site_id), one['uid'], one['name'], one['photo'],
+                     int(one['age'] or 0), one['city'], one['country']))
+
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] карточки избранных сайта #{site_id} не легли: {e}')
 
 
 async def dating_favorite_settled(profile_id: int) -> dict:
