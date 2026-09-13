@@ -260,7 +260,7 @@ async def dating_people_site_list(site_id: int, kind: str, fresh: bool = False,
     # и без неё, а лишний запрос в базу на каждую перерисовку страницы не нужен.
     if cached and time.time() - cached['at'] < (await _floor_sec(site_id) if fresh
                                                 else await _fresh_sec(kind, site_id)):
-        return _answer(cached, cached=True, error='')
+        return _answer(cached, cached=True, error='', site_id=site_id, kind=kind)
 
     profile = await _site_profile(site_id)
     if not profile:
@@ -355,7 +355,7 @@ async def _list(kind: str, fresh: bool, profile: dict, key: str, log_id: int,
     # «обновить» (`fresh`) выдержку обходит, но пол — нет: он про предел самого
     # сайта, а не про то, чего хочет страница.
     if cached and time.time() - cached['at'] < (floor if fresh else fresh_sec):
-        return _answer(cached, cached=True, error='')
+        return _answer(cached, cached=True, error='', site_id=site_id, kind=kind)
 
     # ⚠ **Ручка не ждёт прогона. Никогда.**
     #
@@ -372,7 +372,8 @@ async def _list(kind: str, fresh: bool, profile: dict, key: str, log_id: int,
     return _answer(cached, cached=bool(cached),
                    error=_refresh_error.get(key, ''),
                    refreshing=_refresh_start(profile, kind, key, log_id, fresh,
-                                             fresh_sec, floor))
+                                             fresh_sec, floor),
+                   site_id=site_id, kind=kind)
 
 
 async def dating_people_snap_due(site_id: int) -> bool:
@@ -761,7 +762,8 @@ async def _snapshot(profile: dict, kind: str) -> list:
     return dating_people_rows(run.get('extract') or {}, spec['field'])
 
 
-def _answer(snapshot: dict | None, cached: bool, error: str, refreshing: bool = False) -> dict:
+def _answer(snapshot: dict | None, cached: bool, error: str, refreshing: bool = False,
+            site_id: int = 0, kind: str = '') -> dict:
     """Ответ ручки из снимка. Нет снимка — пустой список и возраст `-1`.
 
     `-1` вместо нуля: ноль значит «снят только что», и показать его там, где
@@ -777,9 +779,46 @@ def _answer(snapshot: dict | None, cached: bool, error: str, refreshing: bool = 
     # Возраст меряется календарными часами, а не монотонными: снимок переживает
     # перезапуск процесса, а монотонные часы после него начинаются заново — и
     # недельный снимок объявили бы свежим.
-    return {'result': {'people': snapshot['people'],
+    return {'result': {'people': _online_now(snapshot['people'], site_id, kind),
                        'cached': cached,
                        'age_sec': max(0, int(time.time() - snapshot['at'])),
                        'taken_at': snapshot['when'],
                        'refreshing': refreshing,
                        'error': error}}
+
+
+def _online_now(people: list, site_id: int, kind: str) -> list:
+    """Проставляет «в сети» по ленте сайта, а не по тому, что сказал список.
+
+    ⚠⚠ **Список избранных врал про онлайн, и врал долго.** Его снимают раз в
+    несколько часов (`favorites_keep`) и держат в кэше; признак `online` в нём —
+    это «был ли он в сети **в момент съёмки**». Человек смотрел на виджет «Мои
+    фавориты», видел серую точку у собеседника, который в это же время горел
+    зелёным в ленте «Все онлайн», — и оба списка были по-своему правы.
+
+    Ответ на «кто в сети прямо сейчас» в панели один — снимок ленты
+    (`dating_online.py`): по нему решает отправка, по нему же светятся точки в
+    диалогах. Здесь он и берётся.
+
+    ⚠ **Ленту не трогаем**: принадлежность ей и означает «в сети», и спрашивать
+    её саму о себе незачем.
+
+    ⚠ **«Не знаем» — не повод гасить точку.** Ленты может не быть вовсе (её ещё не
+    снимали) или она протухла; тогда оставляем то, что сказал список — соврать
+    «офлайн» там, где мы просто не смотрели, хуже устаревшей правды.
+    """
+    site_id = int(site_id or 0)
+    if not site_id or kind == 'online' or not people:
+        return people
+
+    from src.dating.dating_online import dating_online_check
+
+    out = []
+    for one in people:
+        row = dict(one)
+        state = dating_online_check(site_id, str(row.get('uid') or ''))
+        if state.get('known'):
+            row['online'] = bool(state.get('online'))
+        out.append(row)
+
+    return out

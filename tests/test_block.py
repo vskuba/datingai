@@ -135,6 +135,34 @@ class TestAdd:
         assert 'dating_mail_reply' not in DATING_BLOCK_POOLS
 
 
+class TestTheRowHasBothFaces:
+    """⚠ Строка рисует **обе стороны** тем же видом, что «Доставка» и «Диалоги».
+
+    Тому виду (`talkSide`) нужны три поля на сторону: имя, лицо, номер на сайте.
+    Лица девушки ручка сперва не отдавала вовсе — та оставалась буквой в кружке,
+    хотя её фотография лежала в той же строке запроса.
+    """
+
+    async def test_the_girl_comes_with_her_face(self, girl, auth_client):
+        await _profile_card(girl, name='Диана', photo='https://site/di.jpg',
+                            site_uid='643694')
+        await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
+
+        one = (await dating_block_rows(STAND_SITE, girl))[0]
+
+        assert one['profile_name'] == 'Диана'
+        assert one['profile_photo'] == 'https://site/di.jpg'
+        assert one['profile_uid'] == '643694'
+
+    async def test_a_profile_without_a_card_is_not_a_failure(self, girl):
+        """Карточки с сайта может не быть — тогда имя из логина, лицо пустое."""
+        await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
+
+        one = (await dating_block_rows(STAND_SITE, girl))[0]
+
+        assert one['profile_name'] and one['profile_photo'] == ''
+
+
 class TestPairsObeyIt:
     """Наборы пулов запрет соблюдают — и оба одинаково."""
 
@@ -198,6 +226,19 @@ class TestDrop:
 
     async def test_dropping_what_is_gone_says_so(self):
         assert await dating_block_drop(999_999_999) is False
+
+
+async def _profile_card(profile_id: int, name: str, photo: str,
+                        site_uid: str) -> None:
+    """Кладёт анкету с сайта: из неё берутся имя, лицо и номер девушки."""
+    import json
+
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE dating_profile SET profile = %s WHERE id = %s',
+                         (json.dumps({'name': name, 'photo': photo,
+                                      'site_uid': site_uid}, ensure_ascii=False),
+                          int(profile_id)))
+        await db.connection.commit()
 
 
 async def _draft(table: str, profile_id: int, uid: str, status: str = 'draft') -> None:
