@@ -635,6 +635,33 @@ class TestPriorityOrders:
 
         assert [one['uid'] for one in got] == ['a', 'c', 'b', 'd']
 
+    async def test_the_mark_travels_in_the_record(self):
+        """⚠⚠ **Отметка не только сортирует, но и едет в записи** (`priority`).
+
+        Порядок отвечает «кого взять раньше», а набору инвайтов нужно второе:
+        отмеченному пишут **все** свободные девушки, а не одна. Без признака он
+        спрашивал бы базу заново на каждого человека в ленте — двести запросов на
+        заход.
+        """
+        from src.dating.dating_mailing import _by_priority
+        from src.dating import dating_mailing
+
+        people = [{'uid': 'a'}, {'uid': 'b'}]
+
+        async def marked(site_id):
+            return {'a'}
+
+        real, dating_mailing._marked = dating_mailing._marked, marked
+        try:
+            got = await _by_priority(1, people)
+        finally:
+            dating_mailing._marked = real
+
+        assert [one['priority'] for one in got] == [True, False]
+        # ⚠ Лента лежит в кэше снимка: допиши мы поле на месте, изменилось бы то,
+        # что показывает страница.
+        assert 'priority' not in people[0], 'запись ленты изменили на месте'
+
     async def test_nobody_is_dropped(self):
         """⚠ Главное здесь: неотмеченные остаются, и все до одного."""
         from src.dating.dating_mailing import _by_priority

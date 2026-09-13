@@ -151,6 +151,45 @@ class TestPairs:
         assert "invited.update((one['id'], str(person['uid'])) for one in girls)" in code, \
             'заход больше не метит всех девушек — человек получит две реплики разом'
 
+    def test_a_priority_person_is_taken_by_every_free_girl(self):
+        """⚠⚠ **Отметка «Приоритет» сильнее правила «один за заход».**
+
+        Пока правило было общим, отмеченный получал одну реплику за проход круга, а
+        следующую — через полчаса, от случайной девушки. Со стороны панели это
+        выглядело как «приоритет не работает»: одно письмо и тишина.
+        """
+        people = [{'uid': '111', 'name': 'Brian', 'priority': True}]
+        got = list(_pairs(GIRLS, people, set(), set()))
+
+        assert len(got) == len(GIRLS), 'приоритетного взяла не каждая девушка'
+        assert sorted(girl['id'] for girl, _ in got) == sorted(g['id'] for g in GIRLS)
+
+    def test_a_priority_person_still_obeys_his_own_pairs(self):
+        """Свой предел у каждой девушки остаётся: занятая пара выпадает."""
+        people = [{'uid': '111', 'name': 'Brian', 'priority': True}]
+        got = list(_pairs(GIRLS, people, {(849, '111')}, set()))
+
+        assert sorted(girl['id'] for girl, _ in got) == [850, 861]
+
+    def test_an_ordinary_person_still_gets_one(self):
+        """⚠ Для прочих правило не тронуто: две наши девушки, написавшие разом,
+        выдают агентство первой же репликой."""
+        people = [{'uid': '111', 'name': 'Brian'}]
+
+        assert len(list(_pairs(GIRLS, people, set(), set()))) == 1
+
+    def test_the_pass_marks_only_the_used_pair_for_a_priority_one(self):
+        """⚠ Иначе первая же реплика закрыла бы его для остальных — и «приоритет»
+        снова означал бы одну реплику за заход."""
+        import inspect
+
+        from src.dating.dating_invite import dating_invite_make
+
+        code = inspect.getsource(dating_invite_make)
+
+        assert "if person.get('priority'):" in code
+        assert "invited.add((girl['id'], str(person['uid'])))" in code
+
     def test_a_busy_pair_is_skipped(self):
         """Этой девушке звать его рано — черновик в пуле либо не вышла пауза."""
         busy = {(girl['id'], '222') for girl in GIRLS}

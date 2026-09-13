@@ -757,7 +757,16 @@ async def _by_priority(site_id: int, people: list[dict]) -> list[dict]:
     if not marked:
         return people
 
-    return sorted(people, key=lambda row: 0 if str(row.get('uid')) in marked else 1)
+    # ⚠ **Отметку не только сортируем, но и ставим в запись** (`priority`). Порядок
+    # отвечает «кого взять раньше», а набору инвайтов нужно второе: «этому пишут
+    # все свободные девушки, а не одна». Без признака он спрашивал бы базу заново
+    # на каждого человека в ленте — двести запросов на заход.
+    #
+    # ⚠ Копией, а не правкой на месте: лента лежит в кэше снимка, и дописав в неё
+    # поле, мы изменили бы то, что показывает страница.
+    return sorted(({**row, 'priority': str(row.get('uid')) in marked}
+                   for row in people),
+                  key=lambda row: 0 if row['priority'] else 1)
 
 
 async def _marked(site_id: int) -> set:
