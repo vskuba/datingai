@@ -56,6 +56,7 @@ from src.dating.dating_log import dating_log_write
 from src.dating.dating_people import DATING_PEOPLE_NAME_MAX, DATING_PEOPLE_UID_MAX
 from src.dating.dating_ready import dating_password_pick
 from src.dating.dating_scenario import dating_scenario_run
+from src.dating.dating_request import DATING_REQUEST_PEOPLE
 from src.dating.dating_site_api import DatingSiteApiError, dating_site_api_call
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
                                        rhapsody_api_site_get)
@@ -241,7 +242,8 @@ async def dating_favorite_rows(profile: dict, base: str, password: str) -> list[
 
     try:
         body = await dating_site_api_call(profile, base, password,
-                                          DATING_FAVORITE_LIST_PATH, method='GET')
+                                          DATING_FAVORITE_LIST_PATH, method='GET',
+                                          door=DATING_REQUEST_PEOPLE)
     except DatingSiteApiError as e:
         raise DatingFavoriteError(f'список избранных не пришёл: {e}')
 
@@ -287,7 +289,8 @@ async def dating_favorite_uids(profile: dict, base: str, password: str) -> set:
     """
     try:
         body = await dating_site_api_call(profile, base, password,
-                                          DATING_FAVORITE_LIST_PATH, method='GET')
+                                          DATING_FAVORITE_LIST_PATH, method='GET',
+                                          door=DATING_REQUEST_PEOPLE)
     except DatingSiteApiError as e:
         raise DatingFavoriteError(f'список избранных не пришёл: {e}')
 

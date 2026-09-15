@@ -39,6 +39,9 @@ Cookie берутся из `dating_site.panel_state`, а живость держ
 
 from html.parser import HTMLParser
 
+import time
+from urllib.parse import urlencode
+
 from logging_.logging_ import logger_info
 
 from http_.http_heartbeat import http_heartbeat_client, http_heartbeat_cookies
@@ -92,21 +95,36 @@ async def dating_panel_fetch_html(site_id: int, path: str, params: dict = None) 
         raise DatingPanelFetchError('в панель ещё не входили: нет cookie')
 
     client = http_heartbeat_client()
+    started = time.monotonic()
     try:
         answer = await client.get(f"{base}/{str(path or '').lstrip('/')}",
                                   params=params or {}, cookies=cookies,
                                   follow_redirects=False,
                                   timeout=DATING_PANEL_FETCH_TIMEOUT)
     except Exception as e:
+        await _note(site_id, path, params, 0,
+                    f'панель не ответила: {type(e).__name__}: {e}', started)
+
         raise DatingPanelFetchError(f'панель не ответила: {type(e).__name__}: {e}')
     finally:
         await client.aclose()
 
+    # ⚠ Переадресация здесь — **отказ**, а не удача: панель уводит на форму входа
+    # тогда, когда сессию не признала. По коду `302` этого не видно, поэтому исход
+    # в журнал пишем разобранным.
     if answer.status_code in (301, 302, 303, 307, 308):
+        await _note(site_id, path, params, answer.status_code,
+                    'панель увела на вход: сессия не признана', started)
+
         raise DatingPanelFetchError('панель увела на вход: сессия не признана')
 
     if answer.status_code != 200:
+        await _note(site_id, path, params, answer.status_code,
+                    f'панель ответила {answer.status_code}', started)
+
         raise DatingPanelFetchError(f'панель ответила {answer.status_code}')
+
+    await _note(site_id, path, params, answer.status_code, '', started)
 
     return answer.text
 
@@ -208,3 +226,31 @@ class _Table(HTMLParser):
         self._cell['текст'] += data
         if self._in_link:
             self._cell['ссылка'] += data
+
+
+async def _note(site_id: int, path: str, params: dict, status: int, error: str,
+                started: float) -> None:
+    """Строка в журнал запросов. Панель — дверь **сайта**, а не анкеты.
+
+    ⚠ Поэтому `profile_id` здесь ноль: сессию панели держит сайт целиком
+    (`dating_panel.py`), и приписать поход какой-то одной девушке было бы
+    неправдой — в панели видны все.
+
+    ⚠ **Путь пишем тот, что ушёл на самом деле** — со слешем и со строкой
+    запроса. Вызывающие передают его без ведущего слеша (`userchatmessages`:
+    адрес собирается от корня панели), и в журнал он попадал в этом же виде —
+    `GET userchatmessages`. Человек читает это как оборванную строку, а даты, по
+    которым панель и спрашивают, пропадали вовсе.
+    """
+    from src.dating.dating_request import (DATING_REQUEST_PANEL, dating_request_ms,
+                                           dating_request_write)
+
+    shown = '/' + str(path or '').lstrip('/')
+    if params:
+        shown += '?' + urlencode({key: value for key, value in params.items()
+                                  if value not in (None, '')})
+
+    await dating_request_write(
+        door=DATING_REQUEST_PANEL, profile_id=0, site_id=int(site_id),
+        method='GET', path=shown, status=int(status or 0),
+        ok=not error, error=error, ms=dating_request_ms(started))

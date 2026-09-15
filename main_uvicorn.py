@@ -47,6 +47,7 @@ from src.uvicorn.routers.dating import dating_companion as dating_companion_rout
 from src.uvicorn.routers.dating import dating_error as dating_error_router
 from src.uvicorn.routers.dating import dating_feed as dating_feed_router
 from src.uvicorn.routers.dating import dating_log as dating_log_router
+from src.uvicorn.routers.dating import dating_request as dating_request_router
 from src.uvicorn.routers.dating import dating_mail as dating_mail_router
 from src.uvicorn.routers.dating import dating_mail_var as dating_mail_var_router
 from src.uvicorn.routers.dating import dating_mail_in as dating_mail_in_router
@@ -311,6 +312,7 @@ app.include_router(dating_proxy_router.router)
 app.include_router(dating_export.router)
 app.include_router(dating_import.router)
 app.include_router(dating_log_router.router)
+app.include_router(dating_request_router.router)
 app.include_router(dating_feed_router.router)
 # ⚠ Реестр переменных — **до** шаблонов: его пути начинаются с
 # `/api/dating/mail/var`, и запиши мы их после `/api/dating/mail/{mail_id}`,

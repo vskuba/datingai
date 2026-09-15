@@ -9,7 +9,12 @@
            (`dating_page.css`). Здесь только раскладка этой страницы: шапка и под
            ней одна панель во всю оставшуюся высоту, как на «Профилях». Колонок и
            разделителей нет — делить нечего. */
-        .dating-page { grid-template-rows: auto minmax(0, 1fr); }
+        /* Три ряда: шапка, полоса вкладок, лента во весь остаток.
+           ⚠ Рядов именно три, а не два. С двумя полоса вкладок попадала в ряд
+           `1fr` и растягивалась на всю высоту страницы — узкий белый столб с
+           двумя кнопками посередине, а лента уезжала под него. Панель при этом
+           одна: спрятанная (`display: none`) ряда не занимает. */
+        .dating-page { grid-template-rows: auto auto minmax(0, 1fr); }
 
         /* Отбор в шапке панели, а не в шапке страницы: там уже стоит селект сайта,
            общий на весь раздел, и третий ряд управления оттеснил бы саму ленту. */
@@ -64,6 +69,47 @@
         .feed-row.slow .feed-text { color: #b45309; }
 
         .feed-empty { padding: 18px; color: #9ca3af; font-size: 12px; text-align: center; }
+
+        /* Панель прячем классом, а не удалением: обе рисуются один раз, и
+           переключение вкладки не перезагружает ленту, на которую человек уже
+           смотрел. */
+        .pane.off { display: none; }
+
+        /* Запрос читается столбцами, а не фразой: время, дверь, кто, путь, исход.
+           Поэтому свои ширины — иначе путь растянул бы строку и сдвинул исход за
+           край. */
+        .req-row {
+            display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+            padding: 5px 12px; border-bottom: 1px solid #f1f3f7;
+            font-size: 12px; white-space: nowrap;
+        }
+        .req-row:hover { background: #fbfcfe; }
+        .req-time { flex: 0 0 96px; color: #94a3b8; font-variant-numeric: tabular-nums; }
+        .req-door { flex: 0 0 110px; color: #475569; }
+        .req-who { flex: 0 0 150px; color: #64748b; overflow: hidden; text-overflow: ellipsis; }
+        .req-who.none { color: #cbd5e1; }
+        .req-path {
+            flex: 1 1 auto; color: #334155; overflow: hidden; text-overflow: ellipsis;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+        }
+        /* Код и длительность — числа, и читают их столбиком: моноширинные цифры
+           не дают колонке прыгать. */
+        .req-status { flex: 0 0 46px; text-align: right; font-variant-numeric: tabular-nums; }
+        .req-ms { flex: 0 0 64px; text-align: right; color: #94a3b8;
+                  font-variant-numeric: tabular-nums; }
+        .req-ip { flex: 0 0 116px; color: #94a3b8; font-size: 11px; }
+        .req-ip.none { color: #e2e8f0; }
+        /* Неудача — цветом всей строки: по этой вкладке ходят искать именно их. */
+        .req-row.bad { background: #fff7ed; }
+        .req-row.bad .req-status, .req-row.bad .req-path { color: #b45309; }
+        /* ⚠ Причина — **отдельной строкой во всю ширину**, а не колонкой в конце.
+           Встав в ряд, она отнимала место у пути, и у строки с отказом столбцы
+           кода и длительности разъезжались с соседними — глаз перестаёт читать
+           колонку сверху вниз ровно там, где по ней и ищут. */
+        .req-row.bad .req-err {
+            flex: 1 0 100%; padding-left: 216px;
+            color: #b45309; white-space: normal;
+        }
     </style>
 {% endblock %}
 
@@ -76,7 +122,16 @@
         <span class="dating-hint" id="hint"></span>
     </div>
 
-    <div class="pane">
+    {# ⚠ **Две вкладки, а не один список с фильтром.** Предметы разные: «Журнал»
+       отвечает «что происходило с анкетой» и живёт десятками строк в сутки,
+       «Запросы» — «куда мы ходили наружу», и там десятки тысяч. Одна лента на
+       двоих утопила бы первое во втором. #}
+    <div class="page-tabs" id="logTabs">
+        <button class="page-tab active" data-tab="log">📜 Журнал</button>
+        <button class="page-tab" data-tab="request">🌐 Запросы</button>
+    </div>
+
+    <div class="pane" id="pane-log">
         <div class="pane-head">
             <div class="log-tools">
                 <select id="kind" title="Что показывать">
@@ -100,6 +155,30 @@
             <div class="feed-empty">Загружаю…</div>
         </div>
         <div class="pane-foot" id="pager"></div>
+    </div>
+
+    {# Запросы наружу: вход, письма, списки, присутствие, отправка, кабинет,
+       панель агентства, сокет. ⚠ Прогоны сценариев сюда не попадают — у них своя
+       таблица с шагом и трассой, и вторая запись об одном событии разошлась бы с
+       первой при первой же правке. #}
+    <div class="pane off" id="pane-request">
+        <div class="pane-head">
+            <div class="log-tools">
+                <select id="door" title="Какая дверь наружу">
+                    <option value="">Все двери</option>
+                </select>
+                <select id="result" title="Чем кончилось">
+                    <option value="all">Любой исход</option>
+                    <option value="fail">Только неудачи</option>
+                    <option value="ok">Только удачные</option>
+                </select>
+                <span class="log-count" id="reqCount"></span>
+            </div>
+        </div>
+        <div class="pane-body" id="reqFeed">
+            <div class="feed-empty">Загружаю…</div>
+        </div>
+        <div class="pane-foot" id="reqPager"></div>
     </div>
 </div>
 {% endblock %}
@@ -215,7 +294,9 @@
 
     siteEl.addEventListener('change', () => {
         localStorage.setItem(DATING_SITE_KEY, siteEl.value);
+        reqPage = 1;
         reset();
+        if (tab === 'request') reqLoad();
     });
     kindEl.addEventListener('change', reset);
     levelEl.addEventListener('change', reset);
@@ -231,16 +312,150 @@
             siteEl.innerHTML = '<option value="">сайты не пришли</option>';
             showNotification('Список сайтов не пришёл: ' + e.message, 'error');
         }
-        hintEl.textContent = 'работа по анкетам и прогоны сценариев одной лентой';
+        tabPaint();
         await load();
+        if (tab === 'request') await reqLoad();
     })();
 
     // Круг не трогает страницу, пока её читают: скрытая вкладка не обновляется, а
     // на второй и дальше странице лента не дёргается — туда ушли смотреть
     // конкретное место, и подмена содержимого под руками сбила бы чтение.
     setInterval(() => {
-        if (document.hidden || page !== 1) return;
-        load();
+        if (document.hidden) return;
+
+        if (tab === 'log' && page === 1) load();
+        if (tab === 'request' && reqPage === 1) reqLoad();
     }, RELOAD_MS);
+
+    // ── Вкладка «Запросы» ────────────────────────────────────────────────────
+    //
+    // ⚠ **Отдельная лента, а не третий вид общей.** Журнал отвечает «что
+    // происходило с анкетой» и живёт десятками строк в сутки; запросов наружу
+    // около 52 тысяч в сутки на тринадцать анкет — одно присутствие даёт 37
+    // тысяч. Смешав, мы утопили бы первое во втором.
+    //
+    // ⚠ Названия дверей приходят **с сервера** (`doors` в ответе): свой список
+    // разошёлся бы с тем, что пишет журнал, и вкладка показывала бы `mail` там,
+    // где в базе лежит «письма».
+    const doorEl = document.getElementById('door');
+    const resultEl = document.getElementById('result');
+    const reqFeedEl = document.getElementById('reqFeed');
+    const reqPagerEl = document.getElementById('reqPager');
+    const reqCountEl = document.getElementById('reqCount');
+
+    let reqPage = 1;
+    let doorsFilled = false;
+
+    async function reqLoad() {
+        if (!siteId()) {
+            reqFeedEl.innerHTML = '<div class="feed-empty">Выберите сайт</div>';
+            pagerRender(reqPagerEl, 0, 0, () => {});
+            reqCountEl.textContent = '';
+            return;
+        }
+
+        const query = new URLSearchParams({
+            site_id: siteId(), door: doorEl.value, result: resultEl.value, page: reqPage,
+        });
+
+        let data;
+        try {
+            data = (await getData(`${BASE}/api/dating/request?${query}`)).result;
+        } catch (e) {
+            reqFeedEl.innerHTML = `<div class="feed-empty">Лента не пришла: ${esc(e.message)}</div>`;
+            return;
+        }
+
+        doorsFill(data.doors || {});
+        reqPage = Number(data.page || 1);
+        reqCountEl.textContent = data.total ? `запросов: ${data.total}` : '';
+
+        reqFeedEl.innerHTML = data.rows.length
+            ? data.rows.map(reqRow).join('')
+            : '<div class="feed-empty">По этому отбору запросов нет</div>';
+
+        pagerRender(reqPagerEl, Number(data.pages || 1), reqPage - 1, (pick) => {
+            reqPage = pick + 1;
+            reqLoad();
+            reqFeedEl.scrollTop = 0;
+        });
+    }
+
+    // Названия дверей — с сервера, и запоминаются здесь же: рисует их `reqRow`,
+    // который ответа уже не видит.
+    let doorNames = {};
+
+    // Список в селекте заполняем **один раз**: он от отбора не зависит, а
+    // перерисовка сбрасывала бы выбранное человеком прямо под рукой.
+    function doorsFill(doors) {
+        doorNames = {...doorNames, ...doors};
+
+        if (doorsFilled || !Object.keys(doors).length) return;
+
+        doorEl.insertAdjacentHTML('beforeend', Object.entries(doors)
+            .map(([key, title]) => `<option value="${esc(key)}">${esc(title)}</option>`)
+            .join(''));
+        doorsFilled = true;
+    }
+
+    function reqRow(r) {
+        // ⚠ Исход — из `ok`, а не из кода. У сайта бывает `200` с телом
+        // `{"IsSuccess": false}`, и по коду отказ от удачи не отличить.
+        const bad = r.ok ? '' : ' bad';
+
+        return `<div class="req-row${bad}" title="${esc(r.error || '')}">`
+            + `<span class="req-time">${esc(timeShift(r.created_at).slice(5, 19))}</span>`
+            + `<span class="req-door">${esc(doorTitle(r.door))}</span>`
+            // Поход по сайту (лента, панель) анкеты не имеет — говорим это словом:
+            // пустая клетка читается как «имя потерялось».
+            + `<span class="req-who${r.profile_name ? '' : ' none'}">`
+            + `${esc(r.profile_name || 'весь сайт')}</span>`
+            + `<span class="req-path">${esc(r.method)} ${esc(r.path)}</span>`
+            + `<span class="req-status">${r.status || '—'}</span>`
+            + `<span class="req-ms">${r.ms} мс</span>`
+            // Пусто — шли общим адресом сервера. Бледным, а не прочерком: это
+            // обычное состояние, а не пробел в данных.
+            + `<span class="req-ip${r.proxy_ip ? '' : ' none'}">`
+            + `${esc(r.proxy_ip || 'общий IP')}</span>`
+            + (r.ok ? '' : `<span class="req-err">${esc(r.error || '')}</span>`)
+            + '</div>';
+    }
+
+    function doorTitle(door) {
+        return doorNames[door] || door;
+    }
+
+    doorEl.addEventListener('change', () => { reqPage = 1; reqLoad(); });
+    resultEl.addEventListener('change', () => { reqPage = 1; reqLoad(); });
+
+    // ── Переключение вкладок ─────────────────────────────────────────────────
+    //
+    // Вкладку помним между заходами: разбирают такое длинными заходами, и
+    // возвращаться к «Запросам» вручную после каждой перезагрузки незачем.
+    const TAB_KEY = 'dating_log_tab';
+    let tab = localStorage.getItem(TAB_KEY) === 'request' ? 'request' : 'log';
+
+    function tabPaint() {
+        document.querySelectorAll('#logTabs .page-tab').forEach(one => {
+            one.classList.toggle('active', one.dataset.tab === tab);
+        });
+        document.getElementById('pane-log').classList.toggle('off', tab !== 'log');
+        document.getElementById('pane-request').classList.toggle('off', tab !== 'request');
+        hintEl.textContent = tab === 'log'
+            ? 'работа по анкетам и прогоны сценариев одной лентой'
+            : 'каждый поход наружу: куда, чем кончилось и за сколько';
+    }
+
+    document.getElementById('logTabs').addEventListener('click', (e) => {
+        const btn = e.target.closest('.page-tab');
+        if (!btn || btn.dataset.tab === tab) return;
+
+        tab = btn.dataset.tab;
+        localStorage.setItem(TAB_KEY, tab);
+        tabPaint();
+        // Лента второй вкладки грузится при первом заходе на неё: держать обе
+        // свежими значило бы два запроса там, где смотрят в один.
+        if (tab === 'request') reqLoad();
+    });
 </script>
 {% endblock %}

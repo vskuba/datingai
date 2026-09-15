@@ -52,6 +52,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_log import dating_log_write
 from src.dating.dating_ready import dating_password_pick
+from src.dating.dating_request import DATING_REQUEST_SEND
 from src.dating.dating_site_api import DatingSiteApiError, dating_site_api_call
 
 # Что зовём. Пути из документации сайта.
@@ -138,7 +139,8 @@ async def dating_mail_send_one(letter: dict, profile: dict, base: str,
         # ── Шаг 1: можно ли писать этому человеку ───────────────────────────
         check = await dating_site_api_call(
             profile, base, secret,
-            DATING_MAIL_SEND_CHECK_PATH.format(uid=uid), method='GET')
+            DATING_MAIL_SEND_CHECK_PATH.format(uid=uid), method='GET',
+            door=DATING_REQUEST_SEND)
     except DatingSiteApiError as e:
         # ⚠ Отказ приходит **и на этом шаге**: «можно ли писать этому человеку» —
         # ровно тот вопрос, на который сайт отвечает «он вас закрыл».
@@ -157,7 +159,8 @@ async def dating_mail_send_one(letter: dict, profile: dict, base: str,
     try:
         answer = await dating_site_api_call(
             profile, base, secret, DATING_MAIL_SEND_PATH,
-            payload=_payload(check_id, uid, body, reply_to), method='POST')
+            payload=_payload(check_id, uid, body, reply_to), method='POST',
+            door=DATING_REQUEST_SEND)
     except DatingSiteApiError as e:
         await _deny_check(profile, letter, table, uid, str(e))
 

@@ -85,7 +85,11 @@ def site(monkeypatch):
 
         return token
 
-    async def _request(client, base, path, token, payload, verb):
+    # ⚠ Подпись повторяет живую целиком, включая анкету и дверь: транспорт пишет
+    # ими строку в журнал запросов, и заглушка, не принявшая их, ловила бы
+    # `TypeError` вместо проверяемого правила.
+    async def _request(client, base, path, token, payload, verb,
+                       profile=None, door=''):
         seen['request'] += 1
         seen.setdefault('tokens', []).append(token)
         answers = seen['answers']

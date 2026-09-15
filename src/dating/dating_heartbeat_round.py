@@ -43,6 +43,7 @@ from src.dating.dating_heartbeat import (dating_heartbeat_config,
                                          dating_heartbeat_proxies,
                                          dating_heartbeat_sessions)
 from src.dating.dating_json import dating_json_load
+from src.dating.dating_request import dating_request_ms
 from src.dating.dating_proxy import (dating_proxy_enabled,
                                      dating_proxy_required)
 from src.dating.dating_schedule import dating_schedule_now
@@ -134,9 +135,21 @@ async def dating_heartbeat_round_run(offset_hours: int = 0) -> dict:
                 if client is None:
                     client = clients[url] = http_heartbeat_client(url)
 
+                started = time.monotonic()
                 done = await http_heartbeat_send_many(client, group, config)
                 beaten += sum(1 for ok in done.values() if ok)
                 failed += sum(1 for ok in done.values() if not ok)
+
+                # ⚠ **Строка на каждый удар, а не на пачку.** Присутствие — самая
+                # частая дверь наружу (раз в полминуты на анкету), и именно
+                # поэтому его надо видеть поимённо: пропавшая анкета отличается
+                # от пропавшего сайта только тем, чьи удары перестали доходить.
+                #
+                # Длительность у всех в пачке общая: они шли одним залпом, и
+                # делить её по одному нечем — `http_heartbeat_send_many` отдаёт
+                # исход, а не время каждого.
+                await _note(site_id, group, done, url, proxies,
+                            dating_request_ms(started), config)
     finally:
         for client in clients.values():
             await client.aclose()
@@ -150,6 +163,50 @@ async def dating_heartbeat_round_run(offset_hours: int = 0) -> dict:
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+async def _note(site_id: int, group: dict, done: dict, url: str, proxies: dict,
+                ms: int, config: dict) -> None:
+    """Пишет удары присутствия в журнал запросов — по строке на анкету.
+
+    ⚠ **Адрес выхода берём из карты, а не из строки подключения** (`url` здесь —
+    именно она, с паролем канала). В журнал едет увиденный IP, и берётся он у
+    анкеты: `dating_heartbeat_proxies` отдаёт строки, а адрес лежит в
+    `dating_profile.proxy_ip`.
+    """
+    from src.dating.dating_request import (DATING_REQUEST_HEARTBEAT,
+                                           dating_request_write)
+
+    path = str((config.get('beat') or {}).get('path') or '')
+    method = str((config.get('beat') or {}).get('method') or 'POST').upper()
+    seen = await _proxy_ips(list(group)) if url else {}
+
+    for profile_id in group:
+        ok = bool(done.get(profile_id))
+        await dating_request_write(
+            door=DATING_REQUEST_HEARTBEAT, profile_id=int(profile_id),
+            site_id=int(site_id), method=method, path=path,
+            # ⚠ Кода ответа у пачки нет: движок ударов отдаёт «дошло или нет», а
+            # не сам ответ. Ноль здесь честнее выдуманного `200`.
+            status=0, ok=ok, error='' if ok else 'удар не дошёл',
+            ms=ms, proxy_ip=str(seen.get(int(profile_id)) or ''))
+
+
+async def _proxy_ips(profile_ids: list) -> dict:
+    """Увиденные адреса анкет: `{номер: IP}`. Пусто — ходят общим адресом."""
+    if not profile_ids:
+        return {}
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT id, proxy_ip FROM dating_profile WHERE id IN (%s)'
+                % ', '.join(['%s'] * len(profile_ids)),
+                tuple(int(one) for one in profile_ids))
+            rows = await db.fetchall()
+    except Exception:
+        return {}
+
+    return {int(row['id']): str(row['proxy_ip'] or '') for row in rows or []}
 
 async def _sites() -> list[int]:
     """Сайты, на которых есть кого держать в сети.

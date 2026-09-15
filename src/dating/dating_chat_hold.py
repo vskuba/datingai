@@ -59,6 +59,8 @@ from src.dating.dating_invite_send_round import (DATING_INVITE_SEND_ROUND_TICK_S
                                                  dating_invite_send_round_run)
 from src.dating.dating_proxy_round import (DATING_PROXY_ROUND_TICK_SEC,
                                            dating_proxy_round_run)
+from src.dating.dating_request_round import (DATING_REQUEST_ROUND_TICK_SEC,
+                                             dating_request_round_run)
 from src.dating.dating_status_round import (DATING_STATUS_ROUND_TICK_SEC,
                                             dating_status_round_run)
 from src.dating.dating_reply_round import (DATING_REPLY_ROUND_TICK_SEC,
@@ -246,6 +248,11 @@ async def dating_chat_hold_run(seconds: float) -> dict:
     # общие, и два расписания означали бы двойной стук к провайдеру без пользы.
     proxies = asyncio.create_task(_proxy_loop(deadline))
 
+    # Чистка журнала запросов: он растёт быстрее всего в базе — около 52 тысяч
+    # строк в сутки, — и без уборки за месяц перерос бы всё остальное вместе
+    # взятое (`dating_request_round.py`).
+    swept = asyncio.create_task(_request_loop(deadline))
+
     try:
         while time.monotonic() < deadline:
             profiles = await _profiles_ready()
@@ -276,6 +283,7 @@ async def dating_chat_hold_run(seconds: float) -> dict:
         asking.cancel()
         panel.cancel()
         proxies.cancel()
+        swept.cancel()
         for held in holders.values():
             held['task'].cancel()
         # Ждём отмены: без этого соединения закрываются уже после выхода, и в
@@ -611,6 +619,19 @@ async def _proxy_loop(deadline: float) -> None:
     """
     await dating_round_loop(deadline, DATING_PROXY_ROUND_TICK_SEC,
                             'проверки выходов', dating_proxy_round_run)
+
+
+async def _request_loop(deadline: float) -> None:
+    """Убирает старые записи журнала запросов, пока идёт смена.
+
+    Тик — минута, сама чистка раз в час: таблица терпит, а блокировка на
+    миллионе строк — нет.
+
+    ⚠ Расписания **не спрашивает**: мусор копится круглосуточно, и ночью быстрее
+    всего — присутствие бьёт и в три часа.
+    """
+    await dating_round_loop(deadline, DATING_REQUEST_ROUND_TICK_SEC,
+                            'чистки журнала запросов', dating_request_round_run)
 
 
 async def _favorite_mail_loop(deadline: float) -> None:

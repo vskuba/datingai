@@ -1,0 +1,186 @@
+"""Журнал внешних запросов: куда ходили, что ответили, сколько заняло.
+
+## Зачем отдельно от журнала анкеты
+
+`dating_log` отвечает на вопрос «что происходило с этой девушкой»: вошли,
+потеряли вход, написали, ответили. Читает его человек, глазами, в правой колонке
+на «Профилях» — и строк там десятки в сутки.
+
+Здесь вопрос другой: **куда и зачем мы ходили наружу и что нам ответили**. Таких
+походов по настройкам прода около 52 тысяч в сутки на тринадцать анкет — одно
+присутствие даёт 37 тысяч. Сложи мы это в журнал анкеты, лента превратилась бы в
+поток ударов присутствия, за которым не видно ни одного настоящего события.
+
+⚠ **Слепота обходится дорого, и это проверено.** Круг ленты «Все онлайн» стучался
+в `POST /auth/login` каждые две минуты, вход не проходил, за сутки набралось 484
+неудачи — и сайт закрыл наш IP целиком, всем анкетам разом. В панели это
+выглядело как «списки не обновляются»: строки о том, что мы ломимся на сайт
+каждые две минуты, не было нигде, кроме `docker logs`.
+
+## Что считается запросом
+
+Всё, что уходит **к сайту знакомств** (и к его панели агентства): вход, API,
+присутствие, кабинет, сокет чата. Дверь называется занятием, а не путём —
+`login`, `mail`, `people` человек понимает сразу, а `/users/my-favorites` нет.
+
+⚠ **Прогоны сценариев сюда не пишутся.** У них своя таблица со своими полями —
+шаг, на котором встали, и трасса (`dating_scenario_run`). Вторая запись об одном
+событии разошлась бы с первой при первой же правке.
+
+⚠ **Походы к соседу (RhapsodyAi) — тоже не сюда**, кроме проверки выходов. Он не
+внешний мир, а вторая половина установки: его отказы видны на «Ошибках» и в
+журнале прогонов.
+
+## Чего здесь нет намеренно
+
+**Ни тела запроса, ни тела ответа, ни строки подключения к прокси.** В них
+пароли, cookie и переписка живых людей, а журнал читают в консоли и копируют в
+переписку. Остаётся увиденный IP — по нему видно, каким адресом нас застал сайт,
+и он не секрет (`py_modules/docs/observability_rules.md`, §10).
+
+## Запись не имеет права ронять работу
+
+Тот же закон, что у журнала анкеты: упавшая запись — это потерянная строка, а не
+потерянное письмо. Здесь всё молча гасится.
+"""
+
+import time
+
+from logging_.logging_ import logger_info
+from mysql_.mysql_ import mysql_get_db_async
+from setting_.setting_ import setting_get
+
+# Двери наружу. Строкой, а не `enum` в базе: занятия прибавляются (прокси
+# появились через полгода после чата), и каждое новое стоило бы миграции.
+DATING_REQUEST_LOGIN = 'login'
+DATING_REQUEST_MAIL = 'mail'
+DATING_REQUEST_PEOPLE = 'people'
+DATING_REQUEST_HEARTBEAT = 'heartbeat'
+DATING_REQUEST_SEND = 'send'
+DATING_REQUEST_PANEL = 'panel'
+DATING_REQUEST_CABINET = 'cabinet'
+DATING_REQUEST_SOCKET = 'socket'
+DATING_REQUEST_PROXY = 'proxy'
+
+# Как называть двери человеку. Страница берёт отсюда, а не держит свою копию:
+# два списка разошлись бы, и вкладка показывала бы `mail` там, где журнал пишет
+# «письма».
+DATING_REQUEST_DOORS = {
+    DATING_REQUEST_LOGIN: 'вход',
+    DATING_REQUEST_MAIL: 'письма',
+    DATING_REQUEST_PEOPLE: 'списки',
+    DATING_REQUEST_HEARTBEAT: 'присутствие',
+    DATING_REQUEST_SEND: 'отправка',
+    DATING_REQUEST_PANEL: 'панель агентства',
+    DATING_REQUEST_CABINET: 'кабинет',
+    DATING_REQUEST_SOCKET: 'сокет чата',
+    DATING_REQUEST_PROXY: 'проверка выходов',
+}
+
+# Сколько суток держим. Настройка панели: разбирают такое задним числом, и трое
+# суток означают, что «вечер пятницы» будет на месте в понедельник утром.
+#
+# ⚠ Срок обязателен, а не желателен: 52 тысячи строк в сутки — это полтора
+# миллиона в месяц, больше всей остальной базы вместе взятой.
+DATING_REQUEST_KEEP_SETTING = 'request_keep_days'
+DATING_REQUEST_KEEP_DEFAULT = 3
+
+# Пределы колонок — по схеме.
+DATING_REQUEST_PATH_MAX = 255
+DATING_REQUEST_ERROR_MAX = 500
+
+
+async def dating_request_write(door: str, profile_id: int = 0, site_id: int = 0,
+                               method: str = '', path: str = '', status: int = 0,
+                               ok: bool = False, error: str = '', ms: int = 0,
+                               proxy_ip: str = '') -> None:
+    """Строка журнала запросов. **Не бросает** — сбой журнала не роняет работу.
+
+    Args:
+        door: занятие — одно из `DATING_REQUEST_*`.
+        profile_id: чьей учёткой ходили. Ноль — поход по сайту.
+        site_id: сайт-закладка. По нему отбирает страница.
+        method: `GET`, `POST`, `WS`.
+        path: путь без адреса сайта.
+        status: код ответа. Ноль — ответа не было вовсе.
+        ok: удачей ли кончилось. ⚠ **Не то же, что код**: у сайта бывает `200` с
+            телом `{"IsSuccess": false}`, и по коду отказ не отличить.
+        error: чем кончилось, если не удачей. Словами, для человека.
+        ms: сколько заняло.
+        proxy_ip: каким адресом нас видели. Пусто — общий адрес сервера.
+
+    ⚠ **Повторы не схлопываем**, в отличие от журнала анкеты. Там строка отвечает
+    «что с девушкой», и десять одинаковых подряд — шум; здесь строка отвечает
+    «сколько раз мы сходили», и схлопнув их, мы потеряли бы ровно то число, ради
+    которого журнал и заведён. Четыреста восемьдесят четыре неудачных входа за
+    сутки — это четыреста восемьдесят четыре строки.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO dating_request'
+                ' (profile_id, site_id, door, method, path, status, ok, error, ms, proxy_ip)'
+                ' VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
+                (int(profile_id or 0), int(site_id or 0), str(door or '')[:16],
+                 str(method or '')[:8], str(path or '')[:DATING_REQUEST_PATH_MAX],
+                 int(status or 0), 1 if ok else 0,
+                 str(error or '')[:DATING_REQUEST_ERROR_MAX], int(ms or 0),
+                 str(proxy_ip or '')[:45]))
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] журнал запросов: {e}')
+
+
+def dating_request_ms(started: float) -> int:
+    """Сколько прошло с `time.monotonic()`, в миллисекундах.
+
+    Монотонные часы, а не календарные: перевод времени и поправка NTP посреди
+    запроса дали бы отрицательную длительность, и «-4 мс» в журнале выглядело бы
+    поломкой там, где всё в порядке.
+    """
+    return max(0, int((time.monotonic() - float(started)) * 1000))
+
+
+async def dating_request_keep_days() -> int:
+    """Сколько суток держим записи. Настройка панели, умолчание — трое."""
+    try:
+        value = await setting_get(DATING_REQUEST_KEEP_SETTING,
+                                  str(DATING_REQUEST_KEEP_DEFAULT))
+
+        return max(1, int(str(value).strip() or DATING_REQUEST_KEEP_DEFAULT))
+    except Exception:
+        return DATING_REQUEST_KEEP_DEFAULT
+
+
+async def dating_request_sweep() -> int:
+    """Убирает записи старше срока. Возвращает, сколько убрано.
+
+    ⚠ **Режем пачками, а не одним `DELETE`.** Полтора миллиона строк одним
+    запросом держат блокировку минутами, а таблица в это время пишется каждым
+    кругом: запись встала бы в очередь за чисткой. Пачка в десять тысяч проходит
+    за доли секунды, и между пачками писатели успевают вклиниться.
+    """
+    days = await dating_request_keep_days()
+    gone = 0
+
+    try:
+        async with mysql_get_db_async() as db:
+            for _ in range(100):
+                await db.execute(
+                    'DELETE FROM dating_request'
+                    ' WHERE created_at < NOW() - INTERVAL %s DAY LIMIT 10000', (days,))
+                cut = int(db.rowcount or 0)
+                await db.connection.commit()
+                gone += cut
+
+                if cut < 10000:
+                    break
+    except Exception as e:
+        logger_info(f'[dating] чистка журнала запросов: {e}')
+
+        return gone
+
+    if gone:
+        logger_info(f'[dating] журнал запросов: убрано {gone} строк старше {days} сут')
+
+    return gone

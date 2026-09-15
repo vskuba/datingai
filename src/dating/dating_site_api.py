@@ -149,7 +149,8 @@ class DatingSiteApiError(RuntimeError):
 
 
 async def dating_site_api_call(profile: dict, base: str, password: str, path: str,
-                               payload: dict = None, method: str = '') -> dict:
+                               payload: dict = None, method: str = '',
+                               door: str = '') -> dict:
     """Один запрос к API сайта под этой анкетой. Ответ — разобранным.
 
     Args:
@@ -159,6 +160,10 @@ async def dating_site_api_call(profile: dict, base: str, password: str, path: st
         path: путь ручки, от корня (`/users/online`).
         payload: тело запроса. `None` — запрос без тела.
         method: `GET` или `POST`. Пусто — по наличию тела, как и было у списков.
+        door: занятие для журнала запросов — `mail`, `people`, `send`… Пусто —
+            запишем как `people`: списки были первым и остаются самым частым
+            занятием этой двери. ⚠ Занятие называет **вызывающий**: по пути его
+            не угадать, `/messages` это и забор писем, и отправка.
 
     Returns:
         dict: тело ответа. Не словарь (сайт вправе отдать список) — пустой словарь:
@@ -174,6 +179,9 @@ async def dating_site_api_call(profile: dict, base: str, password: str, path: st
     profile_id = int(profile.get('id') or 0)
     verb = str(method or ('POST' if payload is not None else 'GET')).upper()
 
+    from src.dating.dating_request import DATING_REQUEST_LOGIN, DATING_REQUEST_PEOPLE
+
+    door = str(door or DATING_REQUEST_PEOPLE)
     token = _token_get(profile_id)
     # Клиент разовый, соединения — из общего транспорта (`http_pool.py`):
     # токен ездит в заголовке, клиент здесь — только настройки вызова, и всякий
@@ -189,11 +197,11 @@ async def dating_site_api_call(profile: dict, base: str, password: str, path: st
     if not token:
         token = await _login_once(client, profile, base, password)
 
-    answer = await _request(client, base, path, token, payload, verb)
+    answer = await _request(client, base, path, token, payload, verb, profile, door)
     if answer.status_code == 401:
         _token_drop(profile_id)
         token = await _login_once(client, profile, base, password)
-        answer = await _request(client, base, path, token, payload, verb)
+        answer = await _request(client, base, path, token, payload, verb, profile, door)
 
     if answer.status_code >= 400:
         raise DatingSiteApiError(_refusal(path, answer))
@@ -444,8 +452,11 @@ async def _login(client: httpx.AsyncClient, profile: dict, base: str,
         raise DatingSiteApiError('нечем войти в API сайта: нет логина или пароля '
                                  '(настройка сайта «Пароль анкет для API»)')
 
+    from src.dating.dating_request import DATING_REQUEST_LOGIN
+
     answer = await _request(client, base, DATING_SITE_API_LOGIN_PATH, '',
-                            {'Login': login, 'Password': password}, 'POST')
+                            {'Login': login, 'Password': password}, 'POST',
+                            profile, DATING_REQUEST_LOGIN)
     if answer.status_code >= 400:
         raise DatingSiteApiError(_refusal(DATING_SITE_API_LOGIN_PATH, answer))
 
@@ -459,18 +470,63 @@ async def _login(client: httpx.AsyncClient, profile: dict, base: str,
 
 
 async def _request(client: httpx.AsyncClient, base: str, path: str, token: str,
-                   payload: dict, method: str) -> httpx.Response:
-    """Один запрос к сайту. Обрыв связи — сразу словами, а не стеком."""
+                   payload: dict, method: str, profile: dict = None,
+                   door: str = '') -> httpx.Response:
+    """Один запрос к сайту. Обрыв связи — сразу словами, а не стеком.
+
+    ⚠⚠ **Здесь же пишется строка журнала запросов, и это единственное место.**
+    Через `dating_site_api` идут все двери к сайту — вход, письма, списки,
+    избранные, отправка, — и записывай мы каждую у себя, полдюжины копий разошлись
+    бы в мелочах: одна считала бы миллисекунды, другая забыла бы про выход, третья
+    не отличила бы `200` с `IsSuccess: false` от удачи.
+
+    Цена слепоты известна: 484 неудачных входа за сутки не были видны в панели
+    нигде, и сайт закрыл наш IP раньше, чем мы поняли, что происходит.
+    """
     url = str(base).rstrip('/') + path
     headers = {'Authorization': f'Bearer {token}'} if token else {}
+    started = time.monotonic()
 
     try:
         if method == 'POST':
-            return await client.post(url, json=payload or {}, headers=headers)
-
-        return await client.get(url, headers=headers)
+            answer = await client.post(url, json=payload or {}, headers=headers)
+        else:
+            answer = await client.get(url, headers=headers)
     except httpx.HTTPError as e:
+        # Ответа не было вовсе: код нулевой, причина словами.
+        await _note(profile, door, method, path, 0, False, f'сайт не отвечает: {e}',
+                    started)
+
         raise DatingSiteApiError(f'сайт не отвечает: {e}')
+
+    # ⚠ Удача — это `2xx`, а **не** «ответ пришёл». Разбор тела живёт выше
+    # (`IsSuccess`, `_refusal`), и уточнить исход умеет только он; здесь мы
+    # честно пишем то, что видит транспорт, а `_refusal` допишет причину сам.
+    await _note(profile, door, method, path, answer.status_code,
+                answer.status_code < 400,
+                '' if answer.status_code < 400 else _refusal(path, answer), started)
+
+    return answer
+
+
+async def _note(profile: dict, door: str, method: str, path: str, status: int,
+                ok: bool, error: str, started: float) -> None:
+    """Строка в журнал запросов. Ничего не бросает и ничего не ждёт от вызова.
+
+    ⚠ Дверь приходит от вызывающего: транспорт по пути занятия не угадает —
+    `/messages` это и забор писем, и отправка.
+    """
+    from src.dating.dating_request import (DATING_REQUEST_LOGIN, dating_request_ms,
+                                           dating_request_write)
+
+    await dating_request_write(
+        door=str(door or DATING_REQUEST_LOGIN),
+        profile_id=int((profile or {}).get('id') or 0),
+        site_id=int((profile or {}).get('site_id') or 0),
+        method=method, path=path, status=status, ok=ok, error=error,
+        ms=dating_request_ms(started),
+        # ⚠ Адрес, а не строка подключения: в ней пароль канала.
+        proxy_ip=str((profile or {}).get('proxy_ip') or ''))
 
 
 def _body(path: str, answer: httpx.Response) -> dict:

@@ -55,6 +55,7 @@ JWT, а `GET /users/{state}` — списки людей. Всё, ради че�
 
 from src.dating.dating_people import (DATING_PEOPLE_NAME_MAX, DATING_PEOPLE_UID_MAX,
                                       dating_people_photo_uid)
+from src.dating.dating_request import DATING_REQUEST_PEOPLE
 from src.dating.dating_site_api import DatingSiteApiError, dating_site_api_call
 
 # Что зовём. Путь из документации сайта; `{state}` — вид списка.
@@ -110,7 +111,8 @@ async def dating_people_api_rows(profile: dict, kind: str, base: str,
         raise DatingPeopleApiError(f'API сайта не отдаёт список «{kind}»')
 
     body = await dating_site_api_call(
-        profile, base, password, DATING_PEOPLE_API_USERS_PATH.format(state=state))
+        profile, base, password, DATING_PEOPLE_API_USERS_PATH.format(state=state),
+        door=DATING_REQUEST_PEOPLE)
 
     return _rows(body.get(DATING_PEOPLE_API_ROWS), online=(kind == 'online'))
 

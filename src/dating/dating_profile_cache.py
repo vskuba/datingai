@@ -18,6 +18,8 @@
 
 import json
 
+import time
+
 import httpx
 
 from http_.http_pool import http_pool_transport
@@ -68,8 +70,11 @@ async def _profile_load(client, profile: dict, presence: dict) -> bool:
         return False
 
     url = str(presence.get('base', '')).rstrip('/') + str(step.get('path') or '')
-    response = await (client.get(url) if str(step.get('method', 'GET')).upper() == 'GET'
+    method = str(step.get('method', 'GET')).upper()
+    started = time.monotonic()
+    response = await (client.get(url) if method == 'GET'
                       else client.post(url, content=str(step.get('body') or '')))
+    await _note(profile, method, str(step.get('path') or ''), response, started)
     data = _json(response)
     # Поле названо настройкой — значит его отсутствие это «сайт анкету не дал», а
     # не «возьмём что есть». Иначе отказ (`{"error":…,"success":false}`) прошёл бы
@@ -106,8 +111,11 @@ async def _contacts_load(client, profile: dict, presence: dict) -> int:
         return 0
 
     url = str(presence.get('base', '')).rstrip('/') + str(step.get('path') or '')
+    started = time.monotonic()
     response = await (client.post(url, content=str(step.get('body') or ''))
                       if step.get('body') else client.get(url))
+    await _note(profile, 'POST' if step.get('body') else 'GET',
+                str(step.get('path') or ''), response, started)
     try:
         data = response.json()
     except Exception:
@@ -173,3 +181,25 @@ def _json(response) -> dict:
         return {}
 
     return data if isinstance(data, dict) else {}
+
+
+async def _note(profile: dict, method: str, path: str, response, started: float) -> None:
+    """Строка в журнал запросов: кабинет — тоже дверь наружу.
+
+    ⚠ Её легко не заметить: страница кабинета читается редко и выглядит «своим»
+    запросом. Но идёт она к тому же сайту, под той же cookie и через тот же выход,
+    и считается сайтом наравне с прочими.
+    """
+    from src.dating.dating_request import (DATING_REQUEST_CABINET,
+                                           dating_request_ms, dating_request_write)
+
+    status = int(getattr(response, 'status_code', 0) or 0)
+    # ⚠ Путь со слешем: в настройке сайта его пишут и так, и так, а в журнале
+    # `GET userchatmessages` читается как оборванная строка.
+    shown = '/' + str(path or '').lstrip('/')
+    await dating_request_write(
+        door=DATING_REQUEST_CABINET, profile_id=int(profile.get('id') or 0),
+        site_id=int(profile.get('site_id') or 0), method=method, path=shown,
+        status=status, ok=status < 400,
+        error='' if status < 400 else f'сайт ответил {status}',
+        ms=dating_request_ms(started), proxy_ip=str(profile.get('proxy_ip') or ''))

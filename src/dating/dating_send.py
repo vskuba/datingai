@@ -285,11 +285,35 @@ async def _send_ws(profile: dict, site, to_uid: str, text: str, message_uid: str
     """Кадр в чат-сокет — так шлёт сама страница сайта.
 
     Порядок разговора здесь, форма кадров — у драйвера сайта (`site`).
+
+    ⚠ **В журнал запросов пишется весь разговор целиком, одной строкой.** Сокет —
+    не запрос: открылся, поздоровался, отдал кадр, дождался подтверждения. Строка
+    на каждый кадр отвечала бы на вопрос, которого никто не задаёт, а строка на
+    отправку отвечает на тот, который задают всегда: ушло ли сообщение и за
+    сколько.
     """
+    # ⚠⚠ **Наружу не пошли — строки в журнале нет.** Адрес сокета не снят: до
+    # сайта мы не дотянулись ни разу, и запись об этом означала бы, что журнал
+    # запросов врёт о походе, которого не было. Такую беду показывает журнал
+    # анкеты — она про неё, а не про сайт.
     url = str(profile.get('ws_url') or '').strip()
     if not url:
         return _fail('адрес чат-сокета не снят: сначала «Залогиниться»')
 
+    started = time.monotonic()
+    got = await _send_ws_run(profile, site, to_uid, text, message_uid)
+    await _note_socket(profile, to_uid, got, started)
+
+    return got
+
+
+async def _send_ws_run(profile: dict, site, to_uid: str, text: str,
+                       message_uid: str) -> dict:
+    """Сам разговор по сокету. Вынесен, чтобы исход писался в журнал одним местом.
+
+    Адрес сокета проверен вызывающим: без него сюда не заходят вовсе.
+    """
+    url = str(profile.get('ws_url') or '').strip()
     frame = site.send_frame(to_uid, text, message_uid)
 
     try:
@@ -527,3 +551,21 @@ async def _answered_mark(profile_id: int, to_uid: str) -> None:
 def _fail(error: str) -> dict:
     return {'ok': False, 'error': error, 'offline': False,
             'response': '', 'message_uid': ''}
+
+
+async def _note_socket(profile: dict, to_uid: str, got: dict, started: float) -> None:
+    """Строка журнала об отправке кадром. Путь — адрес сокета без параметров.
+
+    ⚠ Адрес режем до вопросительного знака: в строке сокета у некоторых сайтов
+    едет токен сессии, а журнал читают в консоли и копируют в переписку.
+    """
+    from src.dating.dating_request import (DATING_REQUEST_SOCKET, dating_request_ms,
+                                           dating_request_write)
+
+    url = str(profile.get('ws_url') or '').split('?')[0]
+    await dating_request_write(
+        door=DATING_REQUEST_SOCKET, profile_id=int(profile.get('id') or 0),
+        site_id=int(profile.get('site_id') or 0), method='WS',
+        path=f'{url} → {to_uid}', status=0, ok=bool(got.get('ok')),
+        error=str(got.get('error') or ''), ms=dating_request_ms(started),
+        proxy_ip=str(profile.get('proxy_ip') or ''))

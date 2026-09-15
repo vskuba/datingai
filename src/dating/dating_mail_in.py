@@ -38,6 +38,7 @@ from src.dating.dating_people import DATING_PEOPLE_NAME_MAX, DATING_PEOPLE_UID_M
 from src.dating.dating_feed import dating_feed_write
 from src.dating.dating_favorite import (DATING_FAVORITE_STATES,
                                         DATING_FAVORITE_STATES_SQL)
+from src.dating.dating_request import DATING_REQUEST_MAIL
 from src.dating.dating_site_api import DatingSiteApiError, dating_site_api_call
 
 # Что зовём. Пути из документации сайта.
@@ -123,7 +124,8 @@ async def dating_mail_in_fetch(profile: dict, base: str, password: str) -> dict:
     try:
         body = await dating_site_api_call(
             profile, base, secret,
-            f'{DATING_MAIL_IN_LIST_PATH}?startDate={since}', method='GET')
+            f'{DATING_MAIL_IN_LIST_PATH}?startDate={since}', method='GET',
+            door=DATING_REQUEST_MAIL)
     except DatingSiteApiError as e:
         raise DatingMailInError(f'письма не забрались: {e}')
 
@@ -248,7 +250,8 @@ async def _body(profile: dict, base: str, secret: str, message_id: int) -> str:
     try:
         answer = await dating_site_api_call(
             profile, base, secret,
-            DATING_MAIL_IN_ONE_PATH.format(message_id=int(message_id)), method='GET')
+            DATING_MAIL_IN_ONE_PATH.format(message_id=int(message_id)), method='GET',
+            door=DATING_REQUEST_MAIL)
     except DatingSiteApiError as e:
         logger_info(f'[dating] тело письма #{message_id} не забралось: {e}')
 
