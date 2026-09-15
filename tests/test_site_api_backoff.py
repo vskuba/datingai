@@ -148,7 +148,10 @@ class TestWords:
         limit = _fail_words(2388, DATING_SITE_API_FAIL_KIND_LIMIT)
         other = _fail_words(300, DATING_SITE_API_FAIL_KIND_OTHER)
 
-        assert 'закрыл наш IP' in limit and 'Пароль тут ни при чём' in limit
+        assert 'закрыл вход' in limit and 'Пароль тут ни при чём' in limit
+        # ⚠ И срок назван суточным: час здесь был ошибкой, из-за которой предел
+        # сайта не опустевал никогда — мы давали ему 24 неудачи в сутки.
+        assert 'суточный' in limit
         assert 'прошлый вход не прошёл' in other
 
     def test_the_wait_is_human(self, redis):
@@ -191,3 +194,67 @@ class TestWords:
     def test_unknown_mark_reads_as_ordinary(self, redis):
         """Метки нет вовсе — объясняем обычным отказом, а не блокировкой адреса."""
         assert _fail_kind(99) == DATING_SITE_API_FAIL_KIND_OTHER
+
+
+class TestSiteWideBan:
+    """⚠⚠ Закрыт адрес — не трогаем сайт **ни одной** анкетой.
+
+    **Написано по неделе простоя.** Упёршись одной анкетой в «предел по адресу», мы
+    шли пробовать остальными двенадцатью — и добавляли двенадцать неудач к
+    счётчику, который и так переполнен. Счётчик у сайта суточный: пока мы стучимся,
+    он не опустеет никогда, и запрет держится не сутки, а бесконечно.
+
+    Различать роды предела обязательно:
+
+        ERROR_SING_IN_BY_IP_DAILY_FAILED_LIMIT       — закрыт наш адрес;
+        ERROR_SING_IN_BY_ACCOUNT_DAILY_FAILED_LIMIT  — закрыта эта учётка.
+
+    Первый — про всех сразу.
+    """
+
+    def test_an_ip_ban_closes_the_whole_site(self, redis):
+        from src.dating.dating_site_api import _fail_site_left, _fail_site_mark
+
+        _fail_site_mark(343, 'Exceeded the daily limit registrations '
+                             '(ERROR_SING_IN_BY_IP_DAILY_FAILED_LIMIT)')
+
+        assert _fail_site_left(343) == DATING_SITE_API_FAIL_LIMIT_SEC
+
+    def test_an_account_ban_does_not_close_the_site(self, redis):
+        """⚠ Предел учётки — про неё одну: остальные девушки работать могут.
+
+        Ошибиться здесь в эту сторону значит остановить двенадцать анкет из-за
+        одной, у которой, может быть, просто сменили пароль.
+        """
+        from src.dating.dating_site_api import _fail_site_left, _fail_site_mark
+
+        _fail_site_mark(343, 'Exceeded the limit of invalid login attempts per day '
+                             '(ERROR_SING_IN_BY_ACCOUNT_DAILY_FAILED_LIMIT)')
+
+        assert _fail_site_left(343) == 0
+
+    def test_an_ordinary_refusal_does_not_close_the_site(self, redis):
+        from src.dating.dating_site_api import _fail_site_left, _fail_site_mark
+
+        _fail_site_mark(343, 'Login or password invalid')
+
+        assert _fail_site_left(343) == 0
+
+    def test_the_daily_limit_waits_a_whole_day(self, redis):
+        """⚠⚠ Сутки, а не час.
+
+        Час здесь и стоял, и это была ошибка ценой в неделю: пробуя раз в час, мы
+        давали сайту 24 неудачи в сутки — ровно столько, чтобы суточный предел не
+        опустел никогда.
+        """
+        assert DATING_SITE_API_FAIL_LIMIT_SEC >= 24 * 3600
+
+    def test_a_ban_can_be_lifted_by_hand(self, redis):
+        """Сменили выход — адрес другой, и ждать нечего."""
+        from src.dating.dating_site_api import (_fail_site_left, _fail_site_mark,
+                                                dating_site_api_fail_clear)
+
+        _fail_site_mark(343, 'ERROR_SING_IN_BY_IP_DAILY_FAILED_LIMIT')
+        dating_site_api_fail_clear(site_id=343)
+
+        assert _fail_site_left(343) == 0

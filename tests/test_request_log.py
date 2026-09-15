@@ -235,3 +235,92 @@ class TestNotEveryFailureIsARequest:
 
         assert got['ok'] is False
         assert not written, f'записали поход, которого не было: {written}'
+
+
+class TestNothingGoesOutside:
+    """⚠⚠ Сторож сюиты: ни одного живого запроса наружу.
+
+    **Написано по живому следу.** Сюита четыре раза за прогон входила на
+    ladadate.com под живыми анкетами — и кормила счётчик неудачных входов, из-за
+    которого сайт закрыл нам адрес целиком. Заметить это было нечем: тест зеленел,
+    просто медленнее.
+
+    Прежний сторож стоял на **сокете** и ставился `monkeypatch`'ем на каждый тест.
+    Обе части и подвели: часть работы уходит в фоновые задачи, которые тест не
+    ждёт (списки собеседников так и устроены), — они доживали до конца прогона,
+    когда сторожа уже нет.
+
+    Теперь запрет на **HTTP** и на **весь прогон** (`conftest.no_outside_http`).
+    Здесь проверяется, что он на месте и что дыр в нём нет.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_live_http_call_is_refused(self):
+        """Обычный httpx наружу — отказ с внятной причиной."""
+        import httpx
+
+        async with httpx.AsyncClient(timeout=5) as client:
+            with pytest.raises(AssertionError, match='полез наружу'):
+                await client.get('https://ladadate.com/api/auth/login')
+
+    def test_a_sync_call_is_refused_too(self):
+        """⚠ Синхронный клиент тоже: дверь одна, а стучатся в неё по-разному."""
+        import httpx
+
+        with httpx.Client(timeout=5) as client:
+            with pytest.raises(AssertionError, match='полез наружу'):
+                client.get('https://ladadate.com/')
+
+    @pytest.mark.asyncio
+    async def test_a_websocket_is_refused(self):
+        """⚠ Вебсокет httpx не видит вовсе — у него свой стек.
+
+        Чат и отправка ходят именно так, и без этой заглушки «запрет на HTTP»
+        оставлял бы открытой дверь, через которую уходит живое сообщение человеку.
+        """
+        import websockets
+
+        with pytest.raises(AssertionError, match='полез наружу'):
+            await websockets.connect('wss://ladadate.com/chat')
+
+    @pytest.mark.asyncio
+    async def test_the_panel_itself_is_allowed(self, auth_client):
+        """А сама панель — можно: через неё сюита и работает."""
+        assert (await auth_client.get('/api/dating/site')).status_code == 200
+
+
+class TestOnlyOnlineProfilesGoOut:
+    """⚠⚠ Наружу ходим только под анкетой, которая в сети.
+
+    **Три круга с одним и тем же промахом**, и каждый чинился отдельно: списки
+    собеседников, избранные и — последним — забор писем. Все трое ходили по
+    `enabled`, не глядя на состояние анкеты, а ходят они **под самой девушкой**:
+    `POST /auth/login` её логином.
+
+    Пока вход получался, это были лишние запросы. Когда общий агентский пароль
+    перестал подходить — тринадцать неудачных входов каждые две минуты, девять
+    тысяч в сутки. Счётчик у сайта суточный, и опустеть он не мог: мы сами не
+    давали. Так запрет и держался неделю.
+    """
+
+    async def test_the_mail_round_skips_sleeping_profiles(self):
+        """Забор писем: условие «в сети» стоит **в запросе**, а не в питоне после.
+
+        Отбор после выборки означал бы, что база честно отдаёт всех, а забыть
+        отсеять их может любая следующая правка.
+        """
+        import inspect
+
+        from src.dating import dating_mail_in_round
+
+        code = inspect.getsource(dating_mail_in_round._profiles)
+
+        assert "status = 'online'" in code, \
+            'круг писем снова ходит к спящим анкетам — это вход под каждой'
+
+    async def test_the_favorite_round_skips_them_too(self):
+        import inspect
+
+        from src.dating import dating_favorite_round
+
+        assert "status = 'online'" in inspect.getsource(dating_favorite_round._profiles)

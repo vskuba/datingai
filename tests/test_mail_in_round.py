@@ -204,9 +204,13 @@ async def profile(auth_client):
         'password': 'x'})
     made = created.json()['result']
 
+    # ⚠ И **в сеть**: круг ходит за письмами только под анкетой с живой сессией.
+    # Забор идёт под самой девушкой (`POST /auth/login`), и спящая означала бы
+    # новый вход на каждый заход — тринадцать неудач каждые две минуты, которыми
+    # мы сами и держали блокировку сайта.
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_profile SET site_id = %s WHERE id = %s',
-                         (SITE, made))
+        await db.execute("UPDATE dating_profile SET site_id = %s, status = 'online'"
+                         ' WHERE id = %s', (SITE, made))
         await db.connection.commit()
 
     yield made

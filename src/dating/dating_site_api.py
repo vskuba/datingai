@@ -101,12 +101,35 @@ DATING_SITE_API_FAIL_KEY = 'dating:site_api:fail:{profile_id}'
 DATING_SITE_API_FAIL_FIRST_SEC = 300
 DATING_SITE_API_FAIL_MAX_SEC = 3600
 
-# ⚠ Особый случай: сайт сказал «суточный лимит». Лестница тут не поможет — ждать
-# надо не минуты, а до сброса счётчика у него. Час: точного срока он не называет,
-# а сутки означали бы, что после случайной блокировки анкета молчит до завтра.
-DATING_SITE_API_FAIL_LIMIT_SEC = 3600
+# ⚠⚠ **Сайт сказал «суточный лимит» — молчим сутки, а не час.**
+#
+# Здесь стоял час, и это была ошибка, стоившая нам недели работы. Счётчик у сайта
+# **суточный**; пробуя раз в час, мы даём ему 24 неудачи в сутки — ровно столько,
+# чтобы предел никогда не опустел. Блокировка при этом держится не сутки, а
+# бесконечно, и виноваты в этом мы сами.
+#
+# Сутки с запасом: сайт точного срока не называет, а лишний час молчания не стоит
+# ничего — пока предел не сброшен, войти всё равно нельзя.
+DATING_SITE_API_FAIL_LIMIT_SEC = 25 * 3600
+
+# Приметы «предел исчерпан». ⚠ Ищем **словами, а не кодом**: коды сайт придумывает
+# сам, и в одну блокировку он прислал две разные формулировки.
 DATING_SITE_API_FAIL_LIMIT_MARKS = ('DAILY_FAILED_LIMIT', 'daily limit',
                                     'invalid login attempts per day')
+
+# ⚠⚠ **Предел бывает двух родов, и путать их дорого.**
+#
+#   `ERROR_SING_IN_BY_IP_DAILY_FAILED_LIMIT`      — закрыт **наш адрес**;
+#   `ERROR_SING_IN_BY_ACCOUNT_DAILY_FAILED_LIMIT` — закрыта **эта учётка**.
+#
+# Первый означает, что пробовать другими анкетами того же сайта бессмысленно: их
+# всех видно с того же адреса. Прежде мы этого не различали и, упёршись одной
+# анкетой, шли пробовать остальными двенадцатью — то есть добавляли двенадцать
+# неудач к счётчику, который и так переполнен.
+DATING_SITE_API_FAIL_IP_MARKS = ('BY_IP', 'daily limit registrations')
+
+# Метка на **весь сайт**: адрес закрыт, и трогать его не стоит ни одной анкетой.
+DATING_SITE_API_FAIL_SITE_KEY = 'dating:site_api:fail:site:{site_id}'
 # Каким был отказ — запоминаем вместе со сроком, чтобы сказать человеку правду.
 # «Сайт закрыл наш адрес» и «пароль не подошёл» чинятся по-разному, и одинаковая
 # строка в журнале заставляла бы гадать, что именно случилось.
@@ -253,6 +276,12 @@ async def _login_once(client: httpx.AsyncClient, profile: dict, base: str,
     # ⚠ **Отказавший вход не повторяем сразу.** Иначе круг, идущий каждые две
     # минуты, за час набирает сайту тридцать неудач — и тот закрывает наш IP
     # целиком, для всех анкет разом. Так и случилось; см. `DATING_SITE_API_FAIL_KEY`.
+    # ⚠ Сперва адрес, потом анкета. Закрыт адрес — бессмысленно пробовать любой
+    # учёткой этого сайта: сайт видит их все с одного IP.
+    site_left = _fail_site_left(int(profile.get('site_id') or 0))
+    if site_left:
+        raise DatingSiteApiError(_fail_words(site_left, DATING_SITE_API_FAIL_KIND_LIMIT))
+
     left = _fail_left(profile_id)
     if left:
         raise DatingSiteApiError(_fail_words(left, _fail_kind(profile_id)))
@@ -278,6 +307,9 @@ async def _login_once(client: httpx.AsyncClient, profile: dict, base: str,
             except DatingSiteApiError as e:
                 # Отказ входа запоминаем: следующая попытка — не раньше срока.
                 _fail_mark(profile_id, str(e))
+                # ⚠ И, если закрыт адрес, — весь сайт: остальные анкеты живут за
+                # тем же IP, и каждая их попытка продлевает общий запрет.
+                _fail_site_mark(int(profile.get('site_id') or 0), str(e))
                 raise
             else:
                 _fail_clear(profile_id)
@@ -305,6 +337,67 @@ def _fail_left(profile_id: int) -> int:
             DATING_SITE_API_FAIL_KEY.format(profile_id=profile_id)) or 0))
     except Exception:
         return 0
+
+
+def _fail_site_left(site_id: int) -> int:
+    """Сколько секунд ещё не трогаем сайт **ни одной анкетой**. Ноль — можно.
+
+    ⚠ Сбой Redis отвечает нулём — по тому же доводу, что и у метки анкеты: без
+    Redis нет ни счётчика, ни общего токена, и запирать работу наглухо из-за
+    недоступного Redis значило бы менять редкую беду на постоянный простой.
+    """
+    if not int(site_id or 0):
+        return 0
+
+    try:
+        return max(0, int(redis_conn_get().ttl(
+            DATING_SITE_API_FAIL_SITE_KEY.format(site_id=int(site_id))) or 0))
+    except Exception:
+        return 0
+
+
+def _fail_site_mark(site_id: int, error: str) -> None:
+    """Закрывает сайт целиком, если сайт сказал, что закрыт **адрес**.
+
+    ⚠⚠ **Это не перестраховка, а исправление живой беды.** Упёршись одной анкетой
+    в «предел по адресу», мы шли пробовать остальными двенадцатью — и добавляли
+    двенадцать неудач к счётчику, который и так переполнен. Так запрет и держался
+    неделю: его продлевали мы сами.
+    """
+    if not int(site_id or 0):
+        return
+
+    low = str(error).lower()
+    if not any(mark.lower() in low for mark in DATING_SITE_API_FAIL_IP_MARKS):
+        return
+
+    try:
+        redis_conn_get().set(
+            DATING_SITE_API_FAIL_SITE_KEY.format(site_id=int(site_id)),
+            DATING_SITE_API_FAIL_LIMIT_SEC, ex=DATING_SITE_API_FAIL_LIMIT_SEC)
+    except Exception as e:
+        logger_info(f'[dating] запрет по адресу не записался: {e}')
+
+        return
+
+    logger_info(f'[dating] сайт #{site_id}: закрыт наш IP — не трогаем сайт '
+                f'{DATING_SITE_API_FAIL_LIMIT_SEC // 3600} ч ни одной анкетой')
+
+
+def dating_site_api_fail_clear(site_id: int = 0, profile_id: int = 0) -> None:
+    """Снимает запрет руками — когда человек знает то, чего не знает код.
+
+    Например: сменили выход наружу, и адрес теперь другой; или на стороне сайта
+    подтвердили, что предел сброшен. Ждать в этих случаях нечего.
+    """
+    try:
+        conn = redis_conn_get()
+        if int(site_id or 0):
+            conn.delete(DATING_SITE_API_FAIL_SITE_KEY.format(site_id=int(site_id)))
+        if int(profile_id or 0):
+            conn.delete(DATING_SITE_API_FAIL_KEY.format(profile_id=int(profile_id)))
+    except Exception as e:
+        logger_info(f'[dating] запрет не снялся: {e}')
 
 
 def _fail_kind(profile_id: int) -> str:
@@ -349,11 +442,12 @@ def _fail_words(left: int, kind: str) -> str:
       Повторяем не сразу, чтобы не превратить одну беду во вторую.
     """
     if kind == DATING_SITE_API_FAIL_KIND_LIMIT:
-        return (f'сайт закрыл наш IP-адрес — на нём превышен его суточный предел '
-                f'неудачных входов. Пароль тут ни при чём: до его проверки сайт не '
-                f'доходит. Снова попробуем войти через {_fail_when(left)}; раньше '
-                f'бесполезно — новые попытки только продлевают запрет. Чинится '
-                f'сменой выхода наружу (прокси) или ожиданием')
+        return (f'сайт закрыл вход — у него превышен суточный предел неудачных '
+                f'попыток. Пароль тут ни при чём: до его проверки сайт не доходит. '
+                f'⚠ Ждём {_fail_when(left)} и раньше не пробуем: счётчик у сайта '
+                f'**суточный**, и каждая новая попытка продлевает запрет ещё на '
+                f'сутки — именно так он и держался неделю. Снять раньше можно, '
+                f'только сменив выход наружу: предел считается по адресу')
 
     return (f'прошлый вход не прошёл, повторим через {_fail_when(left)}. Сразу не '
             f'повторяем нарочно: сайт считает неудачные входы по нашему IP-адресу '
