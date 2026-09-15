@@ -324,3 +324,76 @@ class TestOnlyOnlineProfilesGoOut:
         from src.dating import dating_favorite_round
 
         assert "status = 'online'" in inspect.getsource(dating_favorite_round._profiles)
+
+
+class TestSuiteWritesNothing:
+    """⚠⚠ Сюита не оставляет в журнале запросов ни строки.
+
+    **Поймано глазами.** Рядом с настоящими отказами сайта в журнале лежали
+    `GET /users/my-favorites → 403 Too many requests` — четыре штуки за четыре
+    десятых секунды, из теста «сайт просит подождать». Отличить их от живых
+    походов было нечем: дверь, путь и код у поддельного сайта те же.
+
+    Цена ошибки не в мусоре: по этому журналу считают, сколько раз мы постучались
+    к сайту на самом деле, и решают, ждать ли сутки до следующей попытки.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_write_from_the_suite_is_dropped(self):
+        """Прямая запись из теста никуда не идёт — выключатель поднят на прогон."""
+        from mysql_.mysql_ import mysql_get_db_async
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT COUNT(*) AS n FROM dating_request')
+            before = int((await db.fetchone())['n'])
+
+        await dating_request_write(door=DATING_REQUEST_LOGIN, profile_id=1,
+                                   site_id=SITE, path='/auth/login', status=400)
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT COUNT(*) AS n FROM dating_request')
+            after = int((await db.fetchone())['n'])
+
+        assert after == before, 'сюита написала в журнал внешних запросов'
+
+    @pytest.mark.asyncio
+    async def test_the_switch_can_be_lowered(self, monkeypatch):
+        """⚠ Сам выключатель работает в обе стороны — иначе он молча гасил бы
+        журнал и на живой установке."""
+        rows = []
+
+        async def _note(**kwargs):
+            rows.append(kwargs)
+
+        monkeypatch.setattr(dating_request, 'mysql_get_db_async', _fake_db(rows))
+        dating_request.dating_request_off(False)
+        try:
+            await dating_request_write(door=DATING_REQUEST_LOGIN, profile_id=1)
+        finally:
+            dating_request.dating_request_off(True)
+
+        assert rows, 'с опущенным выключателем запись не пошла'
+
+
+def _fake_db(rows):
+    """Подделка базы: запоминает, что запись дошла до `INSERT`."""
+    class _Db:
+        async def execute(self, sql, args=None):
+            rows.append(args)
+
+        @property
+        def connection(self):
+            class _Conn:
+                async def commit(self):
+                    return None
+
+            return _Conn()
+
+    class _Ctx:
+        async def __aenter__(self):
+            return _Db()
+
+        async def __aexit__(self, *args):
+            return False
+
+    return lambda: _Ctx()

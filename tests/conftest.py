@@ -52,6 +52,7 @@ import httpx  # noqa: E402 — после правки адреса базы
 import pytest  # noqa: E402
 
 from http_.http_mock import http_mock_guard  # noqa: E402
+from src.dating.dating_request import dating_request_off  # noqa: E402
 from mysql_.mysql_ import mysql_get_db_async, mysql_pool_close  # noqa: E402
 
 # Поддельный сосед. Фикстура объявлена здесь, чтобы её было видно из любого теста
@@ -151,6 +152,29 @@ def no_outside_http():
     with http_mock_guard(allow=[(host, _BASE_PORT)
                                 for host in ('127.0.0.1', 'localhost', '::1')]):
         yield
+
+
+@pytest.fixture(scope='session', autouse=True)
+def no_test_rows_in_request_log():
+    """⚠⚠ **Сюита не пишет в журнал внешних запросов.**
+
+    Журнал отвечает на вопрос «сколько раз мы сходили к сайту»: по нему считают
+    нашу вину в блокировке и решают, ждать ли сутки. Строка от заглушки делает этот
+    ответ ложью — и ложью **неотличимой**: дверь, путь и код у поддельного сайта те
+    же, что у живого.
+
+    Поймано глазами: в журнале рядом с настоящими отказами лежали
+    `GET /users/my-favorites → 403 Too many requests` — четыре штуки за четыре
+    десятых секунды, из теста «сайт просит подождать». Человек читал их как живые
+    походы и считал, что мы до сих пор стучимся к сайту.
+
+    ⚠ Выключатель поднимается **на весь прогон**, по тому же доводу, что и запрет
+    HTTP: фоновые задачи переживают тест, и выключатель, снятый вместе с тестом,
+    их бы не застал.
+    """
+    dating_request_off(True)
+    yield
+    dating_request_off(False)
 
 
 @pytest.fixture(autouse=True)
