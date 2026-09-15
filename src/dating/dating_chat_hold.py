@@ -57,6 +57,8 @@ from src.dating.dating_invite_round import (DATING_INVITE_ROUND_TICK_SEC,
                                             dating_invite_round_run)
 from src.dating.dating_invite_send_round import (DATING_INVITE_SEND_ROUND_TICK_SEC,
                                                  dating_invite_send_round_run)
+from src.dating.dating_proxy_round import (DATING_PROXY_ROUND_TICK_SEC,
+                                           dating_proxy_round_run)
 from src.dating.dating_status_round import (DATING_STATUS_ROUND_TICK_SEC,
                                             dating_status_round_run)
 from src.dating.dating_reply_round import (DATING_REPLY_ROUND_TICK_SEC,
@@ -238,6 +240,12 @@ async def dating_chat_hold_run(seconds: float) -> dict:
     # панель нужна живой и в три часа ночи, когда придёт круг импорта переписки.
     panel = asyncio.create_task(_panel_loop(deadline))
 
+    # Проверка выходов: прокси умирают молча, и узнать об этом до того, как анкета
+    # не сможет войти, можно только спрашивая (`dating_proxy_round.py`). ⚠ Круг
+    # один на установку, срок берёт наименьший из настроенных сайтами: выходы
+    # общие, и два расписания означали бы двойной стук к провайдеру без пользы.
+    proxies = asyncio.create_task(_proxy_loop(deadline))
+
     try:
         while time.monotonic() < deadline:
             profiles = await _profiles_ready()
@@ -267,6 +275,7 @@ async def dating_chat_hold_run(seconds: float) -> dict:
         invites_out.cancel()
         asking.cancel()
         panel.cancel()
+        proxies.cancel()
         for held in holders.values():
             held['task'].cancel()
         # Ждём отмены: без этого соединения закрываются уже после выхода, и в
@@ -589,6 +598,19 @@ async def _status_loop(deadline: float) -> None:
     """
     await dating_round_loop(deadline, DATING_STATUS_ROUND_TICK_SEC,
                             'опроса', dating_status_round_run)
+
+
+async def _proxy_loop(deadline: float) -> None:
+    """Просит реестр проверять выходы, пока идёт смена.
+
+    Тик — минута, а сам заход идёт по сроку из настроек сайтов (обычно десять
+    минут): большинство тиков только смотрят, не пора ли.
+
+    ⚠ Расписания анкет **не спрашивает**: выход нужен живым и ночью — утром по
+    нему пойдёт первая же смена, и узнать, что канал умер, лучше заранее.
+    """
+    await dating_round_loop(deadline, DATING_PROXY_ROUND_TICK_SEC,
+                            'проверки выходов', dating_proxy_round_run)
 
 
 async def _favorite_mail_loop(deadline: float) -> None:

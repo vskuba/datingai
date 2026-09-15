@@ -305,7 +305,8 @@ async def dating_companion_about_fetch(profile: dict, uid: str) -> dict:
             {'login_url': login_url,
              'profile_login': str(profile.get('login') or ''),
              'companion_uid': uid},
-            {'girl_password': password}, keep_session=False)
+            {'girl_password': password}, keep_session=False,
+            proxy_id=int(profile.get('proxy_id') or 0))
     except RhapsodyError as e:
         raise DatingCompanionAboutError(str(e)) from e
 

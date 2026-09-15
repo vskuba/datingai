@@ -532,7 +532,8 @@ async def _run(profile: dict, uid: str, site_password: str) -> dict:
             {'login_url': str((site or {}).get('url') or '').rstrip('/'),
              'profile_login': str(profile.get('login') or ''),
              'companion_uid': uid},
-            {'girl_password': password}, keep_session=False)
+            {'girl_password': password}, keep_session=False,
+            proxy_id=int(profile.get('proxy_id') or 0))
     except RhapsodyError as e:
         raise DatingFavoriteError(str(e)) from e
 

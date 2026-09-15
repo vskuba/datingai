@@ -43,6 +43,7 @@ from src.auth.auth import auth_required
 from src.mysql_.repository.dating_profile_repository import DatingProfileRepository
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_site_get
 from src.dating.dating_json import dating_json_load
+from src.dating.dating_proxy import dating_proxy_enabled
 from src.dating.dating_schedule import DATING_SCHEDULE_DEFAULT, dating_schedule_dump
 from src.dating.dating_revive import dating_revive_state
 
@@ -100,6 +101,19 @@ class DatingProfileResponse(BaseModel):
     revive_state: str = Field('ok', description='ok | failing | given_up — состояние автовхода')
     relogin_next_at: datetime | None = Field(
         None, description='Срок следующей попытки входа по лестнице отката; не признак тревоги')
+    # Выход анкеты наружу. ⚠ **Номер и увиденный адрес, но не строка подключения**:
+    # в ней пароль канала, и место ему в клиенте, который через канал идёт, а не
+    # в ответе странице (`.claude/docs/proxy.md`).
+    #
+    # ⚠ Поля обязаны быть **здесь**, а не только в запросе: `response_model`
+    # отбрасывает всё, чего нет в схеме, — молча, без единой ошибки. Так и вышло:
+    # колонки уже уехали в `SELECT`, а до страницы не доезжали.
+    proxy_id: int = Field(0, description='Выход в реестре RhapsodyAi; 0 — не закреплён')
+    proxy_ip: str = Field('', description='Каким адресом анкету видит сайт')
+    # ⚠ Свойство **сайта**, а не анкеты, и всё же едет в каждой строке: карточка
+    # рисуется сразу по списку, и спроси она настройки сайта отдельным запросом —
+    # блок «Выход наружу» успел бы мигнуть у сайта, где выходы выключены.
+    proxy_on: bool = Field(False, description='Пользуется ли сайт выходами вообще')
 
     model_config = ConfigDict(json_schema_extra={
         'example': {'id': 3, 'site_id': 19, 'login': 'natalia@example.com',
@@ -134,6 +148,10 @@ async def dating_profile_list(site_id: int = 0,
             '       g.mailing_on, '
             '       g.password_source, '
             '       g.keep_online, g.relogin_since, g.relogin_next_at, NOW() AS db_now, '
+            # Выход анкеты: номер в реестре соседа и адрес, каким её видит сайт.
+            # ⚠ **Только это, без `proxy_url`**: в нём пароль канала, и место ему
+            # в клиенте, который через канал идёт, а не в ответе странице.
+            '       g.proxy_id, g.proxy_ip, '
             '       g.password <> %s AS has_password, '
             '       g.storage_state IS NOT NULL AS has_state, '
             '       (SELECT COUNT(DISTINCT m.sender_uid) FROM dating_message m '
@@ -195,6 +213,16 @@ async def dating_profile_list(site_id: int = 0,
         # нему же приходят просьбы «посмотри анкету 643694». Кладёт его импорт
         # (`dating_import`), у заведённых руками он пуст.
         row['site_uid'] = str(profile.get('site_uid') or '')
+
+    # Выключатель выходов — свойство сайта, и спрашиваем мы его **по сайту**, а не
+    # по строке: без `site_id` список идёт по всем сайтам сразу, и запрос на
+    # каждую из шестидесяти анкет дал бы шестьдесят одинаковых ответов.
+    known: dict[int, bool] = {}
+    for row in rows or []:
+        one = int(row.get('site_id') or 0)
+        if one not in known:
+            known[one] = await dating_proxy_enabled(one)
+        row['proxy_on'] = known[one]
 
     return {'result': rows}
 

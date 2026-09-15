@@ -96,7 +96,16 @@ RHAPSODY_API_LOG_HIDE = {'secrets'}
 
 
 class RhapsodyError(RuntimeError):
-    """RhapsodyAi не ответил или ответил отказом. Текст пригоден для журнала анкеты."""
+    """RhapsodyAi не ответил или ответил отказом. Текст пригоден для журнала анкеты.
+
+    `code` — код ответа соседа, 0 при обрыве связи. Нужен там, где отказ бывает
+    обычным исходом: «за ключом выход не закреплён» — это 404, и разбирать его
+    поиском подстроки в тексте значило бы сломаться от правки формулировки.
+    """
+
+    def __init__(self, message: str, code: int = 0):
+        super().__init__(message)
+        self.code = int(code or 0)
 
 
 async def rhapsody_api_site_get(site_id: int) -> dict:
@@ -268,7 +277,8 @@ def rhapsody_api_scenario_keys(steps: list) -> set:
 
 
 async def rhapsody_api_scenario_run(scenario_id: int, session_id: str, variables: dict,
-                                    secrets: dict, keep_session: bool = True) -> dict:
+                                    secrets: dict, keep_session: bool = True,
+                                    proxy_id: int = 0) -> dict:
     """Гонит сценарий в браузере RhapsodyAi. **По одному за раз.**
 
     `secrets` уходят отдельным полем, а не в `variables`: RhapsodyAi прячет их в
@@ -289,27 +299,112 @@ async def rhapsody_api_scenario_run(scenario_id: int, session_id: str, variables
     Замок **внутрипроцессный**. Воркер `rq` живёт отдельным процессом, и его входы
     сюда не выстраиваются: чтобы свести и их, нужен замок в Redis. Пока не сведены —
     беды нет, воркер ходит редко и по своим анкетам.
+
+    `proxy_id` — выход анкеты для **временной** вкладки прогона (`session_id`
+    пуст). ⚠ Без него сценарий, который логинится сам — отправка, звёздочка,
+    карточка собеседника, — ходил бы с общего адреса сервера, и лимит сайта
+    складывался бы на нём. У готовой сессии выход задан при её открытии, и
+    подменять его нечем.
     """
     async with _run_lock:
         return (await _request('POST', f'/api/browser/scenario/{int(scenario_id)}/run',
                                {'session_id': str(session_id or ''),
                                 'variables': variables or {},
                                 'secrets': secrets or {},
-                                'keep_session': bool(keep_session)},
+                                'keep_session': bool(keep_session),
+                                'proxy_id': int(proxy_id or 0)},
                                timeout=RHAPSODY_API_TIMEOUT_SCENARIO)).get('result') or {}
 
 
 async def rhapsody_api_session_open(url: str = '', name: str = '', storage_state: dict = None,
-                                    site_id: int = 0) -> str:
-    """Заводит сессию браузера и отдаёт её номер."""
+                                    site_id: int = 0, proxy_id: int = 0) -> str:
+    """Заводит сессию браузера и отдаёт её номер.
+
+    `proxy_id` — выход из реестра соседа (`/api/browser/proxy`). ⚠ **Номер, а не
+    адрес**: разворачивает его сосед, у него же реестр и лежит, — пароль канала не
+    ездит через сеть ради того, что он и так знает.
+
+    ⚠ **Выход обязан быть тем же, каким ходят наши двери.** Сайт считает учётки по
+    внешнему адресу: вход браузером с одного IP и присутствие с другого выглядят
+    для него как две попытки на одну учётку, а не как одна анкета.
+    """
     data = await _request('POST', '/api/browser/session',
                           {'url': str(url or ''), 'name': str(name or ''),
                            'storage_state': storage_state or None,
-                           'site_id': int(site_id or 0)},
+                           'site_id': int(site_id or 0),
+                           'proxy_id': int(proxy_id or 0)},
                           timeout=RHAPSODY_API_TIMEOUT_SCENARIO)
     session = data.get('session') or data
 
     return str(session.get('session_id') or '')
+
+
+# Список выходов и когда его брали. ⚠ **Кэш на секунды, а не на минуты.**
+# Список читают с двух сторон: страница настроек при каждом показе и раздача при
+# каждом входе анкеты — а меняется он редко, руками человека. Пятнадцать секунд
+# убирают залп одинаковых запросов (открыл страницу, нажал сохранить, вернулся) и
+# при этом не прячут только что заведённый выход дольше, чем длится вздох.
+_proxy_cache: dict = {'rows': None, 'at': 0.0}
+RHAPSODY_API_PROXY_FRESH_SEC = 15
+
+
+def rhapsody_api_proxy_forget() -> None:
+    """Сбрасывает кэш списка выходов. Звать после проверки: она меняет адреса."""
+    _proxy_cache['rows'] = None
+
+
+async def rhapsody_api_proxy_list(ready: bool = True) -> list:
+    """Выходы из реестра соседа — **с адресами и паролями**.
+
+    Args:
+        ready: только проверенные и включённые. Так и спрашиваем: непроверенный
+            выход нам не годится — неизвестно, каким адресом его видят, а считаем
+            мы своих именно по адресу.
+
+    Returns:
+        list: строки `{id, name, url, check_ip, …}`; `url` с паролем канала.
+
+    ⚠ **Раздачу ведём мы, а не он.** Реестр отвечает «какие выходы есть и какие
+    живые»; кому какой достанется и сколько анкет допустимо на один внешний
+    адрес, знаем только мы — предел выдумывает сайт знакомств, про который у
+    соседа не слыхали. Поэтому здесь список, а не «дай мне выход»
+    (`src/dating/dating_proxy.py`).
+    """
+    # ⚠ Кэш общий на оба вида запроса, а фильтр `ready` накладывается **после**:
+    # два кэша (годные и все) расходились бы в свежести, и страница показывала бы
+    # одно, а раздача брала другое.
+    if (_proxy_cache['rows'] is None
+            or time.monotonic() - _proxy_cache['at'] > RHAPSODY_API_PROXY_FRESH_SEC):
+        data = await _request('GET', '/api/browser/proxy/address?ready=false')
+        _proxy_cache.update({'rows': list(data.get('result') or []),
+                             'at': time.monotonic()})
+
+    rows = _proxy_cache['rows']
+
+    if ready:
+        rows = [row for row in rows
+                if row.get('check_ok') and row.get('is_enabled') and row.get('check_ip')]
+
+    return list(rows)
+
+
+async def rhapsody_api_proxy_check_all() -> list:
+    """Просит реестр проверить **все** выходы и отдаёт итоги.
+
+    ⚠ **Проверяет он, а не мы.** Своя проверка пошла бы с адреса нашего
+    контейнера, и увиденный IP оказался бы не тем: реестр считает адрес по походу
+    через сам прокси. Один источник — одна правда.
+
+    Идёт секунды на выход и до минуты на два десятка: у соседа они проверяются
+    пачками по пять. Срок ожидания поэтому сценарный, а не обычный.
+    """
+    data = await _request('POST', '/api/browser/proxy/check', {},
+                          timeout=RHAPSODY_API_TIMEOUT_SCENARIO)
+
+    # Проверка меняет увиденные адреса и годность — кэш списка после неё врёт.
+    rhapsody_api_proxy_forget()
+
+    return list(data.get('result') or [])
 
 
 async def rhapsody_api_session_list() -> list:
@@ -539,7 +634,7 @@ async def _request(method: str, path: str, payload: dict = None,
                 f'{_body_short(response)}')
 
     if response.status_code >= 400:
-        raise RhapsodyError(_error_text(path, response))
+        raise RhapsodyError(_error_text(path, response), code=response.status_code)
 
     try:
         return response.json() if response.content else {}

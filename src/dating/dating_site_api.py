@@ -48,6 +48,8 @@ from http_.http_pool import http_pool_transport
 from logging_.logging_ import logger_info
 from redis_.redis_ import redis_conn_get
 
+from src.dating.dating_proxy import dating_proxy_url
+
 # Вход. Путь из документации сайта.
 DATING_SITE_API_LOGIN_PATH = '/auth/login'
 
@@ -79,6 +81,38 @@ DATING_SITE_API_LOGIN_LOCK_TTL = 30
 # Сколько ждём чужого входа, прежде чем идти своим. Полминуты — это срок замка:
 # дольше ждать нечего, к тому времени держатель либо положил токен, либо умер.
 DATING_SITE_API_LOGIN_WAIT_STEP = 0.25
+
+# ⚠⚠ **Пауза после неудачного входа. Написано по живой блокировке.**
+#
+# Сайт считает **неудачные** попытки входа с одного IP за сутки и, набрав своё,
+# закрывает адрес целиком: `ERROR_SING_IN_BY_IP_DAILY_FAILED_LIMIT`. Дальше не
+# входит уже никто — ни та анкета, что ошиблась, ни двенадцать соседних.
+#
+# Без паузы мы сами кормили этот счётчик: круг ленты ходит каждые две минуты, при
+# отказе токена не появляется, и следующий заход честно пробует снова. Тридцать
+# неудач в час, семьсот в сутки — блокировка держалась ровно столько, сколько
+# работал воркер, и снять её было нечем.
+#
+# Отсюда лестница: первая неудача — пять минут молчания, дальше вдвое, потолок —
+# час. Успешный вход стирает её. Числа не выверены до секунды и не могут быть: они
+# лишь обязаны быть **много больше** тика круга (2 минуты) и **много меньше**
+# суток, за которые сайт считает свой лимит.
+DATING_SITE_API_FAIL_KEY = 'dating:site_api:fail:{profile_id}'
+DATING_SITE_API_FAIL_FIRST_SEC = 300
+DATING_SITE_API_FAIL_MAX_SEC = 3600
+
+# ⚠ Особый случай: сайт сказал «суточный лимит». Лестница тут не поможет — ждать
+# надо не минуты, а до сброса счётчика у него. Час: точного срока он не называет,
+# а сутки означали бы, что после случайной блокировки анкета молчит до завтра.
+DATING_SITE_API_FAIL_LIMIT_SEC = 3600
+DATING_SITE_API_FAIL_LIMIT_MARKS = ('DAILY_FAILED_LIMIT', 'daily limit',
+                                    'invalid login attempts per day')
+# Каким был отказ — запоминаем вместе со сроком, чтобы сказать человеку правду.
+# «Сайт закрыл наш адрес» и «пароль не подошёл» чинятся по-разному, и одинаковая
+# строка в журнале заставляла бы гадать, что именно случилось.
+DATING_SITE_API_FAIL_KIND_LIMIT = 'limit'
+DATING_SITE_API_FAIL_KIND_OTHER = 'fail'
+
 DATING_SITE_API_LOGIN_WAIT_TRIES = 120
 
 # Сколько держим токен, если срок в нём не прочитался. Час — заведомо меньше
@@ -144,9 +178,14 @@ async def dating_site_api_call(profile: dict, base: str, password: str, path: st
     # Клиент разовый, соединения — из общего транспорта (`http_pool.py`):
     # токен ездит в заголовке, клиент здесь — только настройки вызова, и всякий
     # раз заводить с сайтом TLS незачем. Не закрываем: ушёл бы и общий пул.
+    # ⚠ **Выход анкеты, а не общий.** Здесь живёт `POST /auth/login`, а сайт
+    # считает учётки по внешнему адресу: войди мы с общего IP сервера, лимит
+    # сложился бы на нём — и следующая девушка получила бы отказ входа.
+    # Транспорт свой у каждого выхода (`http_pool.py`), соединения внутри выхода
+    # переиспользуются.
     client = httpx.AsyncClient(timeout=DATING_SITE_API_TIMEOUT,
                                headers={'User-Agent': DATING_SITE_API_UA},
-                               transport=http_pool_transport())
+                               transport=http_pool_transport(await dating_proxy_url(profile)))
     if not token:
         token = await _login_once(client, profile, base, password)
 
@@ -160,6 +199,22 @@ async def dating_site_api_call(profile: dict, base: str, password: str, path: st
         raise DatingSiteApiError(_refusal(path, answer))
 
     return _body(path, answer)
+
+
+def dating_site_api_has_token(profile_id: int) -> bool:
+    """Лежит ли у анкеты живой токен. Нужен тому, кто **выбирает**, кем идти.
+
+    ⚠ **Токен живёт у каждой анкеты свой** (`dating:site_api:{profile_id}`), и это
+    не мелочь для того, кто берёт «любую подходящую». Взяв каждый раз новую
+    анкету, он каждый раз получает вход заново — а сайт считает входы с адреса и
+    закрывает его, набрав своё. Спросив сперва здесь, вызывающий возьмёт ту, у
+    которой вход уже есть, и не потратит ни одной попытки.
+
+    Сбой Redis отвечает `False`: «не знаем» здесь безопаснее «есть», потому что
+    ошибка в эту сторону стоит лишнего входа, а в обратную — работы по мёртвому
+    токену и лишнего же входа следом.
+    """
+    return bool(_token_get(int(profile_id)))
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
@@ -187,22 +242,169 @@ async def _login_once(client: httpx.AsyncClient, profile: dict, base: str,
     """
     profile_id = int(profile.get('id') or 0)
 
+    # ⚠ **Отказавший вход не повторяем сразу.** Иначе круг, идущий каждые две
+    # минуты, за час набирает сайту тридцать неудач — и тот закрывает наш IP
+    # целиком, для всех анкет разом. Так и случилось; см. `DATING_SITE_API_FAIL_KEY`.
+    left = _fail_left(profile_id)
+    if left:
+        raise DatingSiteApiError(_fail_words(left, _fail_kind(profile_id)))
+
     for _ in range(DATING_SITE_API_LOGIN_WAIT_TRIES):
-        if _lock_take(profile_id):
-            try:
-                return await _login(client, profile, base, password)
-            finally:
-                _lock_free(profile_id)
-
-        await asyncio.sleep(DATING_SITE_API_LOGIN_WAIT_STEP)
-
-        # ⚠ Токен читаем **после** сна, а не до: до сна его заведомо нет — мы
-        # только что его не нашли, оттого и вошли в эту функцию.
+        # ⚠ **Токен перечитываем перед каждой попыткой взять замок, а не только
+        # после сна.** Между чтением токена у вызывающего и этой строкой есть
+        # `await` — с появлением своего выхода у анкеты (`dating_proxy`) их стало
+        # больше, — и за это время соседний вызов успевает войти целиком: замок
+        # он уже отпустил, а мы о его токене ещё не знаем. Тогда замок свободен,
+        # и мы честно делаем **второй вход** — тот самый, который сайт бракует
+        # как подозрение.
+        #
+        # Ловится это только гонкой: тест «два списка разом — один вход» покраснел
+        # ровно в тот день, когда перед входом добавился один лишний await.
         token = _token_get(profile_id)
         if token:
             return token
 
+        if _lock_take(profile_id):
+            try:
+                token = await _login(client, profile, base, password)
+            except DatingSiteApiError as e:
+                # Отказ входа запоминаем: следующая попытка — не раньше срока.
+                _fail_mark(profile_id, str(e))
+                raise
+            else:
+                _fail_clear(profile_id)
+
+                return token
+            finally:
+                _lock_free(profile_id)
+
+        # Замок занят — ждём того, кто вошёл первым: его токен станет нашим на
+        # следующем витке (проверка стоит в начале цикла).
+        await asyncio.sleep(DATING_SITE_API_LOGIN_WAIT_STEP)
+
     return await _login(client, profile, base, password)
+
+
+def _fail_left(profile_id: int) -> int:
+    """Сколько секунд ещё молчим после неудачного входа. Ноль — можно пробовать.
+
+    ⚠ Сбой Redis отвечает нулём: без него нет ни счётчика, ни общего токена, и
+    запирать анкету наглухо из-за недоступного Redis значило бы менять редкую
+    беду на постоянный простой.
+    """
+    try:
+        return max(0, int(redis_conn_get().ttl(
+            DATING_SITE_API_FAIL_KEY.format(profile_id=profile_id)) or 0))
+    except Exception:
+        return 0
+
+
+def _fail_kind(profile_id: int) -> str:
+    """Каким был прошлый отказ: `limit` — сайт закрыл адрес, `fail` — прочее."""
+    try:
+        raw = str(redis_conn_get().get(
+            DATING_SITE_API_FAIL_KEY.format(profile_id=profile_id)) or '')
+    except Exception:
+        return DATING_SITE_API_FAIL_KIND_OTHER
+
+    return (raw.split(':')[1] if ':' in raw else DATING_SITE_API_FAIL_KIND_OTHER)
+
+
+def _fail_wait(raw) -> int:
+    """Срок из значения метки. Понимает и старую запись — голое число.
+
+    ⚠ Старую понимать обязательно: метки лежат в Redis до часа, и выкладка
+    посреди этого часа встретит записи прежнего вида. Уронить на них разбор
+    значило бы потерять паузу ровно тогда, когда она нужнее всего.
+    """
+    try:
+        return int(str(raw or '').split(':')[0] or 0)
+    except ValueError:
+        return 0
+
+
+def _fail_words(left: int, kind: str) -> str:
+    """Почему сейчас не входим — словами, которые понятны без чтения кода.
+
+    ⚠⚠ **Строка уезжает в журнал анкеты, и человек читает её вместо объяснения.**
+    Прежняя («вход отложен на 2388 с: прошлая попытка не прошла…») отвечала на
+    вопрос «что случилось» так, что спрашивать приходилось заново: непонятно, кто
+    отложил, почему счёт в секундах и при чём тут адрес. Здесь сказано прямо: мы
+    не пробуем войти, вот сколько ещё не будем, и вот зачем.
+
+    Два разных случая, и путать их дорого — чинятся они по-разному:
+
+    * `limit` — **сайт закрыл наш адрес**. Пароль ни при чём, и менять его
+      бессмысленно: сайт не доходит до проверки. Лечится сменой выхода наружу
+      (прокси) либо ожиданием, пока у него сбросится суточный счёт;
+    * `fail` — вход не прошёл по другой причине (пароль, сессия, молчание сайта).
+      Повторяем не сразу, чтобы не превратить одну беду во вторую.
+    """
+    if kind == DATING_SITE_API_FAIL_KIND_LIMIT:
+        return (f'сайт закрыл наш IP-адрес — на нём превышен его суточный предел '
+                f'неудачных входов. Пароль тут ни при чём: до его проверки сайт не '
+                f'доходит. Снова попробуем войти через {_fail_when(left)}; раньше '
+                f'бесполезно — новые попытки только продлевают запрет. Чинится '
+                f'сменой выхода наружу (прокси) или ожиданием')
+
+    return (f'прошлый вход не прошёл, повторим через {_fail_when(left)}. Сразу не '
+            f'повторяем нарочно: сайт считает неудачные входы по нашему IP-адресу '
+            f'и, набрав своё, закрывает его сразу всем анкетам')
+
+
+def _fail_when(left: int) -> str:
+    """Срок словами: «40 мин», «3 мин», «45 с». Секунды в журнале не читаются."""
+    left = max(0, int(left))
+    if left >= 3600:
+        minutes = left % 3600 // 60
+
+        # «1 ч 0 мин» человек читает как опечатку, а не как ровный час.
+        return f'{left // 3600} ч' + (f' {minutes} мин' if minutes else '')
+
+    return f'{left // 60} мин' if left >= 60 else f'{left} с'
+
+
+def _fail_mark(profile_id: int, error: str) -> None:
+    """Запоминает неудачный вход: следующая попытка — через растущий срок.
+
+    ⚠ **Сайт сказал «суточный лимит» — ждём час, а не пять минут.** Лестница
+    здесь бессмысленна: счётчик у него суточный, и частые попытки его же и
+    продлевают. Отличаем по словам из ответа — коды сайт придумывает сам, и
+    привязываться к одному было бы хрупко.
+    """
+    key = DATING_SITE_API_FAIL_KEY.format(profile_id=profile_id)
+    hard = any(mark.lower() in str(error).lower() for mark in DATING_SITE_API_FAIL_LIMIT_MARKS)
+
+    try:
+        conn = redis_conn_get()
+        if hard:
+            wait = DATING_SITE_API_FAIL_LIMIT_SEC
+        else:
+            # Лестница: удваиваем прежний срок, начиная с первого.
+            was = _fail_wait(conn.get(key))
+            wait = min(DATING_SITE_API_FAIL_MAX_SEC,
+                       was * 2 if was else DATING_SITE_API_FAIL_FIRST_SEC)
+
+        # ⚠ Срок и вид отказа — **в одном значении**, через двоеточие. Вторым
+        # ключом они разъехались бы: у каждого свой срок жизни, и переживший
+        # соседа отвечал бы про отказ, которого уже нет.
+        kind = DATING_SITE_API_FAIL_KIND_LIMIT if hard else DATING_SITE_API_FAIL_KIND_OTHER
+        conn.set(key, f'{wait}:{kind}', ex=wait)
+    except Exception as e:
+        logger_info(f'[dating] пауза после отказа входа не записалась: {e}')
+
+        return
+
+    logger_info(f'[dating] анкета #{profile_id}: вход не прошёл, молчим {wait} с'
+                + (' (сайт назвал суточный лимит)' if hard else ''))
+
+
+def _fail_clear(profile_id: int) -> None:
+    """Удачный вход стирает паузу: лестница считается заново."""
+    try:
+        redis_conn_get().delete(DATING_SITE_API_FAIL_KEY.format(profile_id=profile_id))
+    except Exception:
+        pass
 
 
 def _lock_take(profile_id: int) -> bool:

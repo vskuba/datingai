@@ -28,7 +28,7 @@ from src.dating.dating_block import (DATING_BLOCK_DENY_DEFAULT,
                                      DATING_BLOCK_POOLS, dating_block_add,
                                      dating_block_deny, dating_block_drop,
                                      dating_block_pairs, dating_block_rows)
-from src.dating.dating_invite import _pairs as invite_pairs
+from src.dating.dating_invite import _cards as invite_cards
 from src.dating.dating_mailing import _pairs as mailing_pairs
 
 pytestmark = pytest.mark.chat
@@ -172,14 +172,14 @@ class TestPairsObeyIt:
 
     def test_invites_skip_the_blocked_girl(self):
         """⚠ Запрет отнимает **анкету**, а не человека: вторая его не знает."""
-        got = list(invite_pairs(self.GIRLS, self.PEOPLE, set(), set(), {(849, '111')}))
+        got = list(invite_cards(self.GIRLS, self.PEOPLE, set(), set(), {(849, '111')}))
 
         assert [girl['id'] for girl, _ in got] == [850]
 
     def test_invites_skip_him_when_everyone_is_blocked(self):
         blocked = {(girl['id'], '111') for girl in self.GIRLS}
 
-        assert list(invite_pairs(self.GIRLS, self.PEOPLE, set(), set(), blocked)) == []
+        assert list(invite_cards(self.GIRLS, self.PEOPLE, set(), set(), blocked)) == []
 
     def test_mailing_skips_the_blocked_girl(self):
         got = list(mailing_pairs(self.GIRLS, self.PEOPLE, self.TEMPLATES, set(),
@@ -195,7 +195,7 @@ class TestPairsObeyIt:
 
     def test_no_blocks_changes_nothing(self):
         """Умолчание — пустой набор: старые вызовы работают как работали."""
-        assert len(list(invite_pairs(self.GIRLS, self.PEOPLE, set(), set()))) == 1
+        assert len(list(invite_cards(self.GIRLS, self.PEOPLE, set(), set()))) == 1
         assert len(list(mailing_pairs(self.GIRLS, self.PEOPLE, self.TEMPLATES,
                                       set()))) == 1
 

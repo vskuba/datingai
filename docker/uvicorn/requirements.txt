@@ -11,7 +11,16 @@ python-multipart==0.0.20
 
 # Обращения к RhapsodyAi и вебсокет живого чата
 httpx==0.28.1
-websockets==14.1
+# ⚠ 15.x, а не 14.1: параметра `proxy` у `websockets.connect` до неё не было, а
+# сокет обязан идти тем же выходом, что и вход, — сайт считает учётки по IP.
+websockets==15.0.1
+
+# Выход анкеты через прокси (`src/dating/dating_proxy.py`). Оба пакета — про
+# SOCKS, и оба нужны: httpx без `socksio` не умеет `socks5://` вовсе, а
+# `websockets` берёт SOCKS через `python-socks`. HTTP-прокси работают и без них,
+# но канал под анкету чаще продают именно SOCKS5.
+socksio==1.0.0
+python-socks[asyncio]==2.7.1
 
 # База: пул для приложения, драйвер и накат схемы
 aiomysql==0.2.0

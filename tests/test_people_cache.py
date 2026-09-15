@@ -27,7 +27,10 @@ from src.uvicorn.routers.dating.dating_people import (DATING_PEOPLE_FLOOR_SEC,
 from tests.site_api_fake import SITE_API_FAKE_BASE, SITE_API_FAKE_PASSWORD
 
 pytestmark = pytest.mark.profile
-PROFILE = {'id': 849, 'site_id': 343, 'login': 'diana@example.com'}
+# ⚠ **Анкета здесь в сети, и это не украшение фикстуры.** Списку избранных нужен
+# вход под самой девушкой, и спящей его не снимают вовсе (`_hold_why`) — тесты
+# ниже про кэш, а не про это правило; само правило стережёт `TestOfflineIsNotAsked`.
+PROFILE = {'id': 849, 'site_id': 343, 'login': 'diana@example.com', 'status': 'online'}
 SITE = {'id': 343, 'name': 'Ladadate'}
 PEOPLE = [{'uid': '812886', 'name': 'Vincent', 'age': 49, 'photo': '', 'photo_uid': '',
            'online': False, 'is_new': False, 'link': ''}]
@@ -763,6 +766,127 @@ class TestCacheKeeps:
         answer = await _fill()
 
         assert answer['people'] == PEOPLE
+
+
+class TestOfflineIsNotAsked:
+    """⚠⚠ Анкете не в сети список с сайта не снимают.
+
+    **Написано по живому следу в журнале.** Открытая страница «Профили» зовёт эту
+    ручку на каждое открытие карточки, а решение «идти или нет» принималось только
+    по возрасту снимка:
+
+        21:39:52 Diana | Избранные с сайта не снялись: вход отложен на 2388 с
+
+    Анкета была офлайн вторые сутки, а панель всё равно шла за её избранными — то
+    есть за входом под спящей учёткой. Лестница пауз вход не пустила и написала эту
+    строку; но самой попытки быть не должно.
+
+    ⚠ Разница с лентой «Все онлайн» существенная: та про **сайт** и снимается от
+    лица любой работающей девушки, а избранные и диалоги — данные **этой** анкеты,
+    и прочитать их можно, только войдя под ней.
+    """
+
+    @pytest.fixture
+    def offline(self, door, monkeypatch):
+        """Та же анкета, но спящая."""
+        async def _profile(profile_id):
+            return {**PROFILE, 'status': 'offline'}
+
+        monkeypatch.setattr(dating_people, 'dating_profile_row', _profile)
+        # Токена нет: он — единственное, что делает поход бесплатным.
+        monkeypatch.setattr(dating_people, 'dating_site_api_has_token', lambda one: False)
+
+        return door
+
+    async def test_offline_profile_is_not_snapped(self, offline, monkeypatch):
+        """Снимка нет, анкета спит — на сайт не идём и говорим почему."""
+        monkeypatch.setattr(dating_people, '_snapshot',
+                            _snapshot(fails='сюда ходить не должны'))
+
+        answer = (await dating_people_list(849, 'favorite', user=None))['result']
+
+        assert answer['refreshing'] is False, 'завели обновление спящей анкете'
+        assert 'не в сети' in answer['error']
+
+    async def test_the_old_snapshot_is_still_shown(self, offline, monkeypatch):
+        """⚠ Прежний снимок отдаём: он честнее пустоты.
+
+        Человек смотрит, кого девушка набрала за смену, — список позавчерашний, но
+        это тот самый список, и пометка рядом объясняет, почему он не свежий.
+        """
+        monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
+        monkeypatch.setattr(dating_people, 'dating_profile_row',
+                            lambda one: _answer_profile(PROFILE))
+        await _fill()
+
+        monkeypatch.setattr(dating_people, 'dating_profile_row',
+                            lambda one: _answer_profile({**PROFILE, 'status': 'offline'}))
+        _stale(offline, KEY)
+        monkeypatch.setattr(dating_people, '_snapshot',
+                            _snapshot(fails='сюда ходить не должны'))
+
+        answer = (await dating_people_list(849, 'favorite', user=None))['result']
+
+        assert answer['cached'] is True and answer['people'], 'снимок потерян'
+        assert 'не в сети' in answer['error']
+
+    async def test_the_button_does_not_override_it(self, offline, monkeypatch):
+        """⚠ Кнопка «обновить» этого не обходит — в отличие от выдержки.
+
+        Выдержка про нашу бережливость, а здесь про цену для сайта: щелчок её не
+        отменяет.
+        """
+        monkeypatch.setattr(dating_people, '_snapshot',
+                            _snapshot(fails='сюда ходить не должны'))
+
+        answer = (await dating_people_list(849, 'favorite', fresh=True,
+                                           user=None))['result']
+
+        assert answer['refreshing'] is False
+
+    async def test_a_live_token_makes_it_free(self, door, monkeypatch):
+        """⚠ Даром — можно: пока токен цел, поход не стоит ни входа, ни риска.
+
+        Девушка ушла со смены час назад, токен живёт двенадцать часов, а человек
+        смотрит, кого она набрала. Запрещать тут нечего.
+        """
+        async def _profile(profile_id):
+            return {**PROFILE, 'status': 'offline'}
+
+        async def _api_ready(site_id):
+            return True
+
+        monkeypatch.setattr(dating_people, 'dating_profile_row', _profile)
+        monkeypatch.setattr(dating_people, '_api_ready', _api_ready)
+        monkeypatch.setattr(dating_people, 'dating_site_api_has_token', lambda one: True)
+        monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
+
+        answer = (await dating_people_list(849, 'favorite', user=None))['result']
+
+        assert answer['refreshing'] is True, 'отказали там, где поход бесплатен'
+
+    async def test_the_site_feed_is_not_touched(self, offline, monkeypatch):
+        """⚠ Лента сайта под правило не попадает: она не про эту анкету.
+
+        Её анкету выбирает сам сервер — и выбирает **только из тех, кто в сети**
+        (`_site_profile`); второе условие здесь всё сломало бы, потому что строка
+        оттуда приходит без поля `status`.
+        """
+        monkeypatch.setattr(dating_people, '_site_profile', _site_profile())
+        monkeypatch.setattr(dating_people, '_snapshot', _snapshot(PEOPLE))
+
+        answer = (await dating_people.dating_people_site_list(
+            343, 'online', user=None))['result']
+
+        assert answer['refreshing'] is True, 'ленту сайта перестали снимать'
+
+
+def _answer_profile(row: dict):
+    """Готовая корутина со строкой анкеты — для подмены `dating_profile_row`."""
+    async def _got():
+        return dict(row)
+
+    return _got()
 
 
 async def _fill(profile_id: int = PROFILE['id'], kind: str = 'favorite') -> dict:

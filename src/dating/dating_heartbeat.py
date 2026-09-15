@@ -39,6 +39,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from http_.http_heartbeat import http_heartbeat_cookies, http_heartbeat_ready
 
 from src.dating.dating_json import dating_json_load
+from src.dating.dating_proxy import dating_proxy_enabled
 
 # Наша настройка сайта: JSON в формате движка.
 DATING_HEARTBEAT_SETTING = 'heartbeat'
@@ -99,7 +100,7 @@ async def dating_heartbeat_sessions(site_id: int, profile_ids: list = None) -> d
     if not http_heartbeat_ready(config):
         return {}
 
-    sql = ('SELECT id, storage_state FROM dating_profile'
+    sql = ('SELECT id, storage_state, proxy_url FROM dating_profile'
            ' WHERE site_id = %s AND enabled = 1 AND storage_state IS NOT NULL')
     args = [int(site_id)]
 
@@ -124,6 +125,49 @@ async def dating_heartbeat_sessions(site_id: int, profile_ids: list = None) -> d
             found[int(row['id'])] = cookies
 
     return found
+
+
+async def dating_heartbeat_proxies(site_id: int, profile_ids: list = None) -> dict:
+    """Выходы анкет сайта: `{номер анкеты: адрес прокси}`.
+
+    ⚠ **Отдельным вопросом, а не полем в сессиях.** Форму `{id: cookie}` читает
+    общий модуль ударов, и приделывать к ней второе значение значило бы менять
+    сигнатуру в общей библиотеке ради одного потребителя. Круг спрашивает оба
+    списка и группирует анкеты по выходу сам.
+
+    Анкеты без выхода приходят с пустой строкой — они пойдут прямым адресом
+    сервера, и решает, допустимо ли это, круг (`proxy_required`).
+
+    ⚠ Читается **кэш** (`dating_profile.proxy_url`), а не реестр соседа: удар
+    идёт каждые полминуты по всем анкетам, и поход к соседу на каждую означал бы,
+    что его перезапуск гасит присутствие всей установки.
+
+    ⚠⚠ **Сайт выходами не пользуется — карта пустая, и в базу мы не идём.** Кэш в
+    колонке переживает выключение (её чистят на выключателе, но строка могла
+    остаться от прежней жизни сайта), а удары эту колонку читают напрямую, минуя
+    `dating_proxy_url`. Не спроси мы выключатель здесь — присутствие продолжало бы
+    ходить через канал, которого для сайта уже нет.
+    """
+    if not await dating_proxy_enabled(int(site_id)):
+        return {}
+
+    sql = 'SELECT id, proxy_url FROM dating_profile WHERE site_id = %s'
+    args = [int(site_id)]
+
+    if profile_ids:
+        sql += ' AND id IN (%s)' % ', '.join(['%s'] * len(profile_ids))
+        args.extend(int(one) for one in profile_ids)
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(sql, tuple(args))
+            rows = await db.fetchall()
+    except Exception as e:
+        logger_info(f'[dating] выходы для присутствия не спросились: {e}')
+
+        return {}
+
+    return {int(row['id']): str(row['proxy_url'] or '') for row in rows or []}
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

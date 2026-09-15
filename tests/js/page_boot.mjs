@@ -51,6 +51,13 @@ const postData = getData, putData = getData, deleteData = getData;
 const esc = (s) => String(s ?? '');
 const onlineDot = esc, warnBadge = esc, seenText = esc, timeShort = esc;
 const timeFull = esc, logRender = () => '', pagerRender = () => {};
+// Возраст словами из dating_time.js. ⚠ Нужны здесь потому, что страница берёт
+// timeAgoSec НА ВЕРХНЕМ УРОВНЕ: лента событий меряет возраст тем же помощником,
+// что и колонки собеседников, и делает это присваиванием, а не вызовом внутри
+// функции. Ровно это стенд и поймал при первой правке.
+// ⚠ Обратных кавычек здесь быть не может — заглушка сама лежит в шаблонной
+// строке, и первая же кавычка обрывает её (поймано этой же правкой).
+const timeAgo = esc, timeAgoSec = esc;
 const showNotification = () => {};
 `.trim();
 

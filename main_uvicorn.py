@@ -67,6 +67,7 @@ from src.uvicorn.routers.dating import dating_work as dating_work_router
 from src.uvicorn.routers.dating import dating_profile
 from src.uvicorn.routers.dating import dating_profile_action
 from src.uvicorn.routers.dating import dating_profile_view
+from src.uvicorn.routers.dating import dating_proxy as dating_proxy_router
 from src.uvicorn.uvicorn_base import uvicorn_base_path
 from src.uvicorn.uvicorn_validation import uvicorn_validation_handler
 from src.worker.dating.chat_worker import chat_worker_keep_stop, chat_worker_recover
@@ -306,6 +307,7 @@ app.include_router(setting_router.router)
 app.include_router(dating_profile.router)
 app.include_router(dating_profile_action.router)
 app.include_router(dating_profile_view.router)
+app.include_router(dating_proxy_router.router)
 app.include_router(dating_export.router)
 app.include_router(dating_import.router)
 app.include_router(dating_log_router.router)

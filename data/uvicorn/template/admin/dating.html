@@ -406,6 +406,35 @@
         .pass-src:focus, .pass-value:focus { outline: none; border-color: #c7d2fe; }
         .pass-note { margin-top: 6px; font-size: 11px; color: #94a3b8; line-height: 1.4; }
 
+        /* ── Выход анкеты наружу ─────────────────────────────────────────────
+           Живёт рядом с паролем и такими же мерками: оба отвечают на вопрос
+           «чем эта анкета заходит на сайт». Адрес прокси здесь не показывается
+           вовсе — в нём пароль канала; сервер его и не отдаёт. */
+        .pxy-out { max-width: 520px; padding: 4px 12px 12px; }
+        .pxy-out-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        /* Адрес — моноширинным: его сверяют глазами с чужой панелью, а там
+           различают `1` и `l`, `0` и `O`. */
+        .pxy-out-ip {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px; color: #0f172a; background: #f1f5f9;
+            border-radius: 6px; padding: 3px 8px;
+        }
+        .pxy-out-none { font-size: 12px; color: #b45309; }
+        /* Кнопка выбора — рядом с адресом и неприметная: выход достаётся сам, и
+           менять его приходится редко. */
+        .pxy-out-pick {
+            border: 0; background: none; cursor: pointer; color: #94a3b8;
+            font-size: 11px; padding: 2px 4px; border-radius: 4px; margin-left: auto;
+        }
+        .pxy-out-pick:hover { background: #f1f5f9; color: #4f46e5; }
+        .pxy-out-form { display: none; gap: 8px; align-items: center; margin-top: 8px; }
+        .pxy-out-form.open { display: flex; flex-wrap: wrap; }
+        .pxy-out-select {
+            flex: 1 1 260px; min-width: 0; padding: 4px 8px; font-size: 12px;
+            border: 1px solid #d1d5db; border-radius: 6px; background: #fff; color: #374151;
+        }
+        .pxy-out-select:focus { outline: none; border-color: #c7d2fe; }
+
         /* ── Настройки анкеты в правой колонке ───────────────────────────────
            Пришли на место списка собеседниц: тот живёт на «Профилях», в окне
            переписки, и держать его в двух местах значило расходиться в мелочах. */
@@ -776,7 +805,12 @@
                 //
                 // Источник при этом свой: у анкеты это её присутствие на сайте
                 // (`status`), которое держит воркер, а не снимок чужой ленты.
-                + `<span class="state-word${row.status === 'online' ? ' on' : ''}">`
+                // ⚠ У той, что в сети, подсказка называет **её выход**: каким
+                // адресом её видит сайт прямо сейчас. У спящей его нет и быть не
+                // может — выход назначается при входе (`proxyHint`).
+                + `<span class="state-word${row.status === 'online' ? ' on' : ''}"`
+                + `${row.status === 'online' && row.proxy_ip
+                    ? ` title="выход: ${esc(row.proxy_ip)}"` : ''}>`
                 + `${row.status === 'online' ? 'в сети' : 'не в сети'}`
                 + `<span class="state-dot${row.status === 'online' ? '' : ' off'}"></span>`
                 + '</span>'
@@ -1468,6 +1502,152 @@
             : '⚠ Свой пароль выбран, но не задан: войти нечем.';
     }
 
+    // ── Выход анкеты ─────────────────────────────────────────────────────────
+    //
+    // ⚠ **Показываем увиденный IP, а не адрес прокси.** В адресе пароль канала,
+    // и сервер его не отдаёт вовсе (`dating_profile.proxy_url` наружу не едет).
+    // Да и вопрос у человека другой: не «через какой сервер», а «каким адресом
+    // эту анкету видит сайт» — сайт считает учётки именно по нему.
+    //
+    // Правится это не здесь: выходы заводит и раздаёт сосед, на вкладке «Proxy»
+    // (`.claude/docs/proxy.md`). Здесь только видно, что досталось анкете, —
+    // иначе, чтобы это узнать, пришлось бы искать её среди чужих строк реестра.
+    function proxyBlock(row) {
+        // ⚠ **Блока нет у анкеты не в сети, и это не экономия места.** Выход
+        // назначается сам, при первом же походе к сайту, и заранее неизвестно,
+        // какой достанется: реестр к тому времени изменится, а прежний может
+        // не влезть в предел. Показывать спящей анкете адрес из кэша значит
+        // обещать то, чего не будет, — а по нему потом ищут причину блокировки.
+        //
+        // Онлайн — другое дело: выход уже взят, и это тот самый адрес, которым
+        // её видит сайт **сейчас**.
+        if (row.status !== 'online') return '';
+
+        // ⚠ **Сайт выходами не пользуется — блока нет совсем.** Не «выхода нет»:
+        // это разные вещи. «Нет» означало бы недосмотр, который надо чинить, а
+        // здесь механизм выключен осознанно, галочкой на вкладке «Прокси», и
+        // анкета ходит общим адресом сервера по решению человека. Кнопка
+        // «выбрать» тем более лишняя — ручка такой выбор отвергает.
+        if (!row.proxy_on) return '';
+
+        const ip = String(row.proxy_ip || '');
+        const id = Number(row.proxy_id || 0);
+
+        // Две разные беды, и различать их важно: выхода нет вовсе — значит
+        // анкета ходит общим адресом сервера, и её вход складывается в лимит
+        // вместе со всеми. Выход есть, а адреса нет — прокси в реестре не
+        // проверен, и куда его считать, неизвестно.
+        const note = !id
+            ? '<span class="pxy-out-none">своего выхода нет — анкета ходит общим '
+              + 'адресом сервера</span>'
+            : (ip
+                ? `<span class="pxy-out-ip">${esc(ip)}</span>`
+                  + `<span class="pass-note" style="margin:0">выход #${id}</span>`
+                : `<span class="pxy-out-none">выход #${id} не проверен: `
+                  + 'адрес неизвестен</span>');
+
+        return '<div class="pxy-out">'
+            + '<div class="pass-title">Выход наружу</div>'
+            + `<div class="pxy-out-line">${note}`
+            // Селект появляется по нажатию, а не сразу: выход достаётся сам, и
+            // менять его приходится редко. Постоянный список из двадцати каналов
+            // в карточке анкеты был бы шумом при работе, которая к нему не
+            // относится.
+            + '<button type="button" class="pxy-out-pick" id="proxyPick">'
+            + (id ? 'сменить' : 'выбрать') + '</button>'
+            + '</div>'
+            + '<div class="pxy-out-form" id="proxyForm"></div>'
+            + '<div class="pass-note">Сайт считает учётки по внешнему адресу: с одного '
+            + 'IP он пускает ограниченное число анкет. Выходы заводят и проверяют в '
+            + 'RhapsodyAi, вкладка «Proxy»; кому какой достанется, панель решает сама.</div>'
+            + '</div>';
+    }
+
+    // ── Выбор выхода руками ──────────────────────────────────────────────────
+    //
+    // ⚠ **Список с занятостью считает сервер, а не страница.** Занятость — это
+    // сколько НАШИХ анкет уже сидит за увиденным адресом, и знает это только
+    // наша база: у соседа в реестре про анкеты не знают вовсе.
+    async function proxyPickOpen() {
+        const box = document.getElementById('proxyForm');
+        if (box.classList.contains('open')) {
+            box.classList.remove('open');
+            return;
+        }
+
+        box.classList.add('open');
+        box.innerHTML = '<span class="pass-note">Спрашиваю реестр…</span>';
+
+        let data;
+        try {
+            data = await getData(`${BASE}/api/dating/profile/${currentId}/proxy`);
+        } catch (e) {
+            box.innerHTML = `<span class="pxy-out-none">${esc(e.message)}</span>`;
+            return;
+        }
+
+        const rows = data.result || [];
+        const seats = data.seats || 1;
+
+        // Строка выхода говорит всё, что нужно для выбора: адрес, сколько наших
+        // за ним уже сидит и предел сайта. Непроверенные и выключенные показаны,
+        // но выбрать их нельзя — иначе непонятно, почему их нет в списке.
+        const options = rows.map(one => {
+            const bad = !one.check_ok || !one.is_enabled;
+            const where = one.check_ip || 'адрес неизвестен';
+            const busy = bad ? '' : ` · занято ${one.taken} из ${seats}`;
+            const why = !one.is_enabled ? ' — выключен'
+                      : (!one.check_ok ? ' — не проверен' : '');
+
+            return `<option value="${one.id}"${bad ? ' disabled' : ''}`
+                 + `${one.id === data.current ? ' selected' : ''}>`
+                 + `${esc(one.name)} · ${esc(where)}${busy}${why}</option>`;
+        }).join('');
+
+        box.innerHTML = '<select class="pxy-out-select" id="proxySelect">'
+            + `<option value="0"${data.current ? '' : ' selected'}>— выбирать автоматически —</option>`
+            + options
+            + '</select>'
+            + '<button type="button" class="dating-btn primary" id="proxySave">Применить</button>';
+
+        document.getElementById('proxySave').addEventListener('click', proxyPickSave);
+    }
+
+    async function proxyPickSave() {
+        const value = +document.getElementById('proxySelect').value || 0;
+
+        try {
+            const got = await putData(`${BASE}/api/dating/profile/${currentId}/proxy`,
+                                      {proxy_id: value});
+            const done = got.result || {};
+            // ⚠ Говорим, сколько анкет за этим адресом уже сидит. Выбор руками
+            // предел не проверяет (человек решает), но узнать об этом он должен
+            // сразу, а не из блокировки учётки.
+            say(value
+                ? `выход «${done.name}» · ${done.proxy_ip}`
+                  + (done.neighbours ? ` — за этим адресом уже ${done.neighbours} анкет(ы)` : '')
+                  // ⚠ Страна вне отбора — выбор принят, но продержится до
+                  // следующего перезахвата: раздача вернёт анкету в свои страны.
+                  + (done.country_aside
+                      ? ` ⚠ страна ${done.country || '?'} не отмечена у сайта — круг вернёт обратно`
+                      : '')
+                : 'выход будет выбран автоматически');
+        } catch (e) {
+            return say(e.message, true);
+        }
+
+        document.getElementById('proxyForm').classList.remove('open');
+        await profileLoad();
+        await profilesLoad();
+    }
+
+    // ⚠ Блок рисуется не всегда (только у анкеты в сети), поэтому привязка
+    // проверяет наличие кнопки, а не полагается на неё.
+    function proxyBind() {
+        const pick = document.getElementById('proxyPick');
+        if (pick) pick.addEventListener('click', proxyPickOpen);
+    }
+
     function passwordBind() {
         const form = profileEl.querySelector('[data-form="password"]');
         if (!form) return;
@@ -1550,6 +1730,11 @@
             // выключатель, — как эту анкету ведут.
             + passwordBlock(data)
             + scheduleBlock(row)
+            // ⚠ **После расписания, а не перед ним.** Расписание отвечает «когда
+            // она работает», выход — «каким адресом её видно, пока работает»:
+            // второе имеет смысл только после первого, и читается оно в том же
+            // порядке.
+            + proxyBlock(row)
             // Удаление — внизу и отдельной полосой: это единственное здесь
             // необратимое действие, и стоять рядом с галочками ему нельзя.
             + '<div class="prof-set-danger">'
@@ -1591,6 +1776,7 @@
         // Обработчики расписания: блок перерисовывается вместе с настройками,
         // поэтому вешаются каждый раз — узлы новые.
         passwordBind();
+        proxyBind();
         scheduleBind(profileEl, row);
     }
 

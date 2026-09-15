@@ -34,6 +34,7 @@ import httpx
 import websockets
 
 from http_.http_pool import http_pool_transport
+from http_.http_proxy import http_proxy_ws_url
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
@@ -45,6 +46,7 @@ from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find
 from src.uvicorn.routers.dating.dating_site import dating_site_setting
 
 from src.dating.dating_presence import DATING_PRESENCE_TIMEOUT, DATING_PRESENCE_UA
+from src.dating.dating_proxy import dating_proxy_url
 from src.dating.site.site_base import site_base_encode, site_base_render
 from src.dating.site.site_registry import site_registry_chat
 
@@ -263,7 +265,8 @@ async def _send_scenario(profile: dict, to_uid: str, text: str, message_uid: str
              'chat_url': pattern.replace(DATING_SEND_UID_MARK, str(to_uid)),
              'message': text},
             {'girl_password': password},
-            keep_session=False)
+            keep_session=False,
+            proxy_id=int(profile.get('proxy_id') or 0))
     except RhapsodyError as e:
         return _fail(str(e))
 
@@ -290,7 +293,12 @@ async def _send_ws(profile: dict, site, to_uid: str, text: str, message_uid: str
     frame = site.send_frame(to_uid, text, message_uid)
 
     try:
+        # ⚠ **Сокет идёт тем же выходом, что и вход.** Сайт считает учётки по
+        # внешнему адресу, и сокет с другого IP для него — вторая учётка на ту же
+        # анкету. `proxy=None` (выхода нет) значит прямой выход: разбираться, можно
+        # ли так, — дело вызывающего, здесь мы лишь не подменяем адрес молча.
         async with websockets.connect(url, open_timeout=DATING_PRESENCE_TIMEOUT,
+                                      proxy=http_proxy_ws_url(await dating_proxy_url(profile)) or None,
                                       subprotocols=[site.subprotocol()]) as socket:
             # Сначала дожидаемся приветствия сервера. До него он присланное молча
             # игнорирует — без ошибки, без отказа, просто в никуда. Именно так
@@ -341,7 +349,9 @@ async def _send_http(profile: dict, presence: dict, send: dict, to_uid: str, tex
                                             'Content-Type': str(send.get('content_type')
                                                                 or 'application/x-www-form-urlencoded'),
                                             **(presence.get('headers') or {})},
-                                   transport=http_pool_transport())
+                                   # Выход анкеты, а не общий: отправка идёт под
+                                   # той же учёткой, что и вход (`dating_proxy.py`).
+                                   transport=http_pool_transport(await dating_proxy_url(profile)))
         response = await client.post(str(presence.get('base', '')).rstrip('/') + send['path'],
                                      content=body)
     except Exception as e:

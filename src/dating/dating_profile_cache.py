@@ -24,6 +24,7 @@ from http_.http_pool import http_pool_transport
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_presence import DATING_PRESENCE_TIMEOUT, DATING_PRESENCE_UA
+from src.dating.dating_proxy import dating_proxy_url
 from src.dating.site.site_registry import site_registry_profile
 
 # Сколько собеседниц держим: список сайта отдаёт сотни, а на странице читаются
@@ -49,7 +50,9 @@ async def dating_profile_cache_refresh(profile: dict, presence: dict) -> dict:
                                             # этого заголовка сайт его не читает.
                                             'Content-Type': 'application/x-www-form-urlencoded',
                                             **(presence.get('headers') or {})},
-                                   transport=http_pool_transport())
+                                   # Выход анкеты, а не общий: сайт считает учётки
+                                   # по внешнему адресу (`dating_proxy.py`).
+                                   transport=http_pool_transport(await dating_proxy_url(profile)))
         saved_profile = await _profile_load(client, profile, presence)
         contacts = await _contacts_load(client, profile, presence)
     except Exception as e:

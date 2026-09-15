@@ -17,7 +17,7 @@ import random
 
 import pytest
 
-from src.dating.dating_invite import _pairs as invite_pairs
+from src.dating.dating_invite import _cards as invite_cards
 from src.dating.dating_mailing import _pairs as mailing_pairs
 
 pytestmark = pytest.mark.chat
@@ -34,23 +34,35 @@ TEMPLATES = [{'id': 7}, {'id': 8}]
 class TestEveryCardPicksAnew:
     """Выбор — на каждую карточку, а не один на заход."""
 
-    def test_invites_choose_for_every_person(self, monkeypatch):
+    def test_invites_choose_a_person_for_every_card(self, monkeypatch):
+        """⚠⚠ **У инвайтов случай переехал с анкеты на собеседника.**
+
+        Раньше выбирали девушку (человек был задан лентой) — теперь наоборот:
+        девушки идут по очереди, а случайный тут собеседник. Ровное чередование
+        анкет по журналу сайта читалось бы как рассылка, а очередь по девушкам
+        делит пул поровну — это и проверяет соседний тест.
+        """
         seen = _watch(monkeypatch)
 
-        got = list(invite_pairs(GIRLS, PEOPLE, set(), set()))
+        got = list(invite_cards(GIRLS, PEOPLE, set(), set()))
 
         assert len(got) == len(PEOPLE), 'не всем нашлась пара'
         assert len(seen) == len(PEOPLE), \
-            'выбор сделан не на каждую карточку — пул уйдёт от одной анкеты'
+            'выбор сделан не на каждую карточку'
 
-    def test_invites_choose_among_all_free_girls(self, monkeypatch):
+    def test_invites_choose_among_all_free_people(self, monkeypatch):
         """⚠ Из **всех** свободных, а не из первых двух: суженный набор — тот же
-        перекос, только незаметнее."""
+        перекос, только незаметнее.
+
+        Набор тает на глазах: каждый выданный человек занят до конца пула
+        (одинаковый текст двоим — провал), поэтому кандидатов на карточку ровно
+        столько, сколько осталось.
+        """
         seen = _watch(monkeypatch)
 
-        list(invite_pairs(GIRLS, PEOPLE, set(), set()))
+        list(invite_cards(GIRLS, PEOPLE, set(), set()))
 
-        assert {len(one) for one in seen} == {len(GIRLS)}
+        assert [len(one) for one in seen] == list(range(len(PEOPLE), 0, -1))
 
     def test_mailing_chooses_for_every_person(self, monkeypatch):
         seen = _watch(monkeypatch)
@@ -82,13 +94,16 @@ class TestItActuallySpreads:
     """
 
     def test_invites_spread_over_the_girls(self):
-        random.seed(20260913)
+        """⚠ У инвайтов дележ стал **точным**, а не вероятным.
 
-        used = [girl['id'] for girl, _ in invite_pairs(GIRLS, PEOPLE, set(), set())]
+        Очередь по девушкам не зависит от случая: тридцать карточек на троих —
+        ровно по десять. Прежде это был перекос «не больше половины», потому что
+        анкета бросалась жребием на каждого человека.
+        """
+        used = [girl['id'] for girl, _ in invite_cards(GIRLS, PEOPLE, set(), set())]
 
         assert set(used) == {1, 2, 3}, used
-        # Ни одна не должна забрать больше половины: тридцать карточек на троих.
-        assert max(used.count(one) for one in set(used)) < len(PEOPLE) // 2
+        assert [used.count(one) for one in (1, 2, 3)] == [10, 10, 10], used
 
     def test_mailing_spreads_over_the_girls(self):
         random.seed(20260913)

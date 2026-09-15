@@ -1,0 +1,265 @@
+"""Токен работает, пока живёт: вход — только когда его нет или сайт его отверг.
+
+⚠⚠ **Правило простое, но нарушение его стоило суток работы сайта.** Круг ленты
+«Все онлайн» ходит каждые две минуты. Пока вход получается — это один вход в 12
+часов и три сотни запросов по готовому токену. Стоит же входу пойти в каждый
+заход — и счётчик неудач на стороне сайта набирает своё за сутки:
+`ERROR_SING_IN_BY_IP_DAILY_FAILED_LIMIT`, адрес закрыт для всех анкет разом.
+
+Здесь стережётся два ответа на «когда входим»:
+
+* **есть токен** — не входим никогда, сколько бы запросов ни шло;
+* **сайт ответил `401`** — токен забываем и входим ровно один раз.
+
+И отдельно — как выбирается анкета, от лица которой снимается лента. Список
+собеседников у сайта один на всех: под какой девушкой ни смотри, ответ тот же.
+Значит выбор — вопрос не правильности, а цены: берём ту, у которой токен уже
+есть, и не тратим попытку входа.
+"""
+
+import pytest
+
+from src.dating import dating_site_api
+from src.dating.dating_site_api import (DATING_SITE_API_TOKEN_KEY,
+                                        dating_site_api_call,
+                                        dating_site_api_has_token)
+from src.uvicorn.routers.dating import dating_people
+
+pytestmark = pytest.mark.profile
+
+SITE = 999_343
+BASE = 'https://example.invalid/api'
+
+# Номера выдуманные: живую анкету тест не трогает даже в ветках, где входа нет.
+PROFILE = {'id': 999_401, 'login': 'first@example.invalid'}
+
+
+class _Redis:
+    """Redis настолько, насколько его читает кэш токена."""
+
+    def __init__(self, store: dict = None):
+        self.store = dict(store or {})
+
+    def get(self, key):
+        return self.store.get(key)
+
+    def set(self, key, value, ex=None, nx=False):
+        if nx and key in self.store:
+            return False
+
+        self.store[key] = value
+
+        return True
+
+    def ttl(self, key):
+        return 0
+
+    def delete(self, key):
+        self.store.pop(key, None)
+
+
+class _Answer:
+    """Ответ сайта: код и тело. Больше вызову ничего не нужно."""
+
+    def __init__(self, status: int, body=None):
+        self.status_code = status
+        self.text = ''
+        self._body = body if body is not None else {'result': []}
+
+    def json(self):
+        return self._body
+
+
+@pytest.fixture
+def site(monkeypatch):
+    """Подменяет всё, что ходит наружу, и считает входы.
+
+    Считаем именно **входы**, а не запросы: беда была в них.
+    """
+    seen = {'login': 0, 'request': 0, 'answers': []}
+
+    async def _login(client, profile, base, password):
+        seen['login'] += 1
+        token = f'token-{seen["login"]}'
+        dating_site_api._token_put(int(profile['id']), token)
+
+        return token
+
+    async def _request(client, base, path, token, payload, verb):
+        seen['request'] += 1
+        seen.setdefault('tokens', []).append(token)
+        answers = seen['answers']
+
+        return answers.pop(0) if answers else _Answer(200)
+
+    async def _proxy(profile):
+        return ''
+
+    monkeypatch.setattr(dating_site_api, '_login', _login)
+    monkeypatch.setattr(dating_site_api, '_request', _request)
+    monkeypatch.setattr(dating_site_api, 'dating_proxy_url', _proxy)
+    monkeypatch.setattr(dating_site_api, 'http_pool_transport', lambda proxy='': None)
+
+    return seen
+
+
+@pytest.fixture
+def redis(monkeypatch):
+    fake = _Redis()
+    monkeypatch.setattr(dating_site_api, 'redis_conn_get', lambda: fake)
+
+    return fake
+
+
+class TestTokenReuse:
+    """Пока токен живой, входа быть не должно."""
+
+    @pytest.mark.asyncio
+    async def test_first_call_logs_in_once(self, site, redis):
+        """Первый запрос токена не имеет — входит и запоминает его."""
+        await dating_site_api_call(PROFILE, BASE, 'secret', '/users/online')
+
+        assert site['login'] == 1
+        assert redis.get(DATING_SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']))
+
+    @pytest.mark.asyncio
+    async def test_next_calls_reuse_token(self, site, redis):
+        """Десять заходов подряд — вход по-прежнему один.
+
+        Это и есть круг ленты: раз в две минуты, весь день. Сломайся правило —
+        тут стало бы десять входов, а на сайте за сутки семьсот.
+        """
+        for _ in range(10):
+            await dating_site_api_call(PROFILE, BASE, 'secret', '/users/online')
+
+        assert site['login'] == 1
+        assert site['request'] == 10
+        # Все запросы ушли с одним и тем же токеном — тем, что выдан на входе.
+        assert set(site['tokens']) == {'token-1'}
+
+    @pytest.mark.asyncio
+    async def test_ready_token_skips_login(self, site, redis):
+        """Токен уже лежит в Redis — входа нет вовсе, даже первого."""
+        redis.set(DATING_SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']), 'ready')
+
+        await dating_site_api_call(PROFILE, BASE, 'secret', '/users/online')
+
+        assert site['login'] == 0
+        assert site['tokens'] == ['ready']
+
+    @pytest.mark.asyncio
+    async def test_401_relogins_once(self, site, redis):
+        """Сайт отверг токен — забываем его и входим заново. Ровно один раз."""
+        redis.set(DATING_SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']), 'stale')
+        site['answers'] = [_Answer(401)]
+
+        await dating_site_api_call(PROFILE, BASE, 'secret', '/users/online')
+
+        assert site['login'] == 1
+        assert site['tokens'] == ['stale', 'token-1']
+
+    @pytest.mark.asyncio
+    async def test_after_401_the_new_token_serves(self, site, redis):
+        """А следующий заход идёт уже новым токеном — и снова без входа."""
+        redis.set(DATING_SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']), 'stale')
+        site['answers'] = [_Answer(401)]
+
+        await dating_site_api_call(PROFILE, BASE, 'secret', '/users/online')
+        await dating_site_api_call(PROFILE, BASE, 'secret', '/users/online')
+
+        assert site['login'] == 1
+        assert site['tokens'][-1] == 'token-1'
+
+
+class TestHasToken:
+    """Публичная проверка, которой пользуется выбор анкеты."""
+
+    def test_says_no_without_token(self, redis):
+        assert dating_site_api_has_token(PROFILE['id']) is False
+
+    def test_says_yes_with_token(self, redis):
+        redis.set(DATING_SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']), 'live')
+
+        assert dating_site_api_has_token(PROFILE['id']) is True
+
+    def test_redis_failure_says_no(self, monkeypatch):
+        """Сбой Redis отвечает «нет»: лишний вход дешевле молчаливой поломки."""
+        def _boom():
+            raise RuntimeError('redis лёг')
+
+        monkeypatch.setattr(dating_site_api, 'redis_conn_get', _boom)
+
+        assert dating_site_api_has_token(PROFILE['id']) is False
+
+
+class TestPickProfile:
+    """Кем идём за лентой: только в сети и, по возможности, с готовым токеном."""
+
+    @pytest.fixture
+    def rows(self, monkeypatch):
+        """Подменяет базу: отдаёт то, что положили в `rows['out']`."""
+        state = {'out': [], 'sql': ''}
+
+        class _Db:
+            async def execute(self, sql, args=None):
+                state['sql'] = sql
+                state['args'] = args
+
+            async def fetchall(self):
+                return state['out']
+
+        class _Conn:
+            async def __aenter__(self):
+                return _Db()
+
+            async def __aexit__(self, *a):
+                return False
+
+        monkeypatch.setattr(dating_people, 'mysql_get_db_async', lambda: _Conn())
+
+        return state
+
+    @pytest.mark.asyncio
+    async def test_nobody_online_means_no_profile(self, rows, monkeypatch):
+        """Никого в сети — пусто, и вызывающий на сайт не пойдёт.
+
+        Ради этого всё и затевалось: спящей анкетой лента не снимается.
+        """
+        rows['out'] = []
+
+        assert await dating_people._site_profile(SITE) == {}
+
+    @pytest.mark.asyncio
+    async def test_only_online_asked_of_the_base(self, rows, monkeypatch):
+        """В запрос уходит условие «в сети» — а не отбор в питоне после."""
+        rows['out'] = [{'id': 1, 'site_id': SITE, 'login': 'a'}]
+        monkeypatch.setattr(dating_people, 'dating_site_api_has_token', lambda one: False)
+
+        await dating_people._site_profile(SITE)
+
+        assert "status = 'online'" in rows['sql']
+        assert 'enabled = 1' in rows['sql']
+
+    @pytest.mark.asyncio
+    async def test_prefers_the_one_holding_a_token(self, rows, monkeypatch):
+        """Из трёх онлайн берём ту, у которой токен, — даже если она не первая."""
+        rows['out'] = [{'id': 11, 'site_id': SITE, 'login': 'a'},
+                       {'id': 22, 'site_id': SITE, 'login': 'b'},
+                       {'id': 33, 'site_id': SITE, 'login': 'c'}]
+        monkeypatch.setattr(dating_people, 'dating_site_api_has_token',
+                            lambda one: one == 22)
+
+        got = await dating_people._site_profile(SITE)
+
+        assert got['id'] == 22
+
+    @pytest.mark.asyncio
+    async def test_no_token_anywhere_takes_the_first(self, rows, monkeypatch):
+        """Токена нет ни у кого — берём первую: один вход на двенадцать часов."""
+        rows['out'] = [{'id': 11, 'site_id': SITE, 'login': 'a'},
+                       {'id': 22, 'site_id': SITE, 'login': 'b'}]
+        monkeypatch.setattr(dating_people, 'dating_site_api_has_token', lambda one: False)
+
+        got = await dating_people._site_profile(SITE)
+
+        assert got['id'] == 11

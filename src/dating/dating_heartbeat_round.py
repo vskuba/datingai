@@ -40,8 +40,11 @@ from http_.http_heartbeat import (http_heartbeat_client, http_heartbeat_ready,
 
 from src.dating.dating_heartbeat import (dating_heartbeat_config,
                                          dating_heartbeat_every,
+                                         dating_heartbeat_proxies,
                                          dating_heartbeat_sessions)
 from src.dating.dating_json import dating_json_load
+from src.dating.dating_proxy import (dating_proxy_enabled,
+                                     dating_proxy_required)
 from src.dating.dating_schedule import dating_schedule_now
 
 # Как часто круг просыпается. ⚠ Это **не** период удара: бить чаще, чем задано
@@ -73,10 +76,15 @@ async def dating_heartbeat_round_run(offset_hours: int = 0) -> dict:
 
     minutes = _minutes_now(offset_hours)
 
-    # ⚠ Клиент один на весь круг, а не на сайт: соединения к тому же хосту
-    # переиспользуются, и тысяча анкет проходит одним пулом.
-    client = http_heartbeat_client()
+    # ⚠ **Клиент на выход, а не один на круг.** Раньше он был один: соединения к
+    # тому же хосту переиспользовались, и тысяча анкет проходила одним пулом. Но
+    # сайт считает учётки по внешнему адресу, и удары всех анкет с одного IP — это
+    # ровно то, за что он закрывает вход. Теперь клиент заводится на каждый выход
+    # и живёт до конца круга; переиспользование соединений при этом не теряется —
+    # оно и имело смысл только внутри одного выхода.
+    clients: dict[str, object] = {}
     ran = beaten = failed = 0
+    skipped = 0
     try:
         for site_id in sites:
             config = await dating_heartbeat_config(site_id)
@@ -100,17 +108,45 @@ async def dating_heartbeat_round_run(offset_hours: int = 0) -> dict:
             if not sessions:
                 continue
 
-            done = await http_heartbeat_send_many(client, sessions, config)
-            beaten += sum(1 for ok in done.values() if ok)
-            failed += sum(1 for ok in done.values() if not ok)
+            # Выходы читаем кэшем и разбиваем сессии по ним: у каждой анкеты
+            # свой адрес, а бить надо пачками — по клиенту на адрес.
+            proxies = await dating_heartbeat_proxies(site_id, list(sessions))
+            # ⚠ Требование выхода — только у сайта, который выходами пользуется.
+            # Иначе снятая галочка «использовать выходы» гасила бы присутствие
+            # всех его анкет разом: выхода нет ни у кого, а требование включено
+            # панелью — оно общее на установку.
+            required = (await dating_proxy_required()
+                        and await dating_proxy_enabled(site_id))
+
+            groups: dict[str, dict] = {}
+            for profile_id, cookies in sessions.items():
+                url = proxies.get(profile_id) or ''
+                if not url and required:
+                    # ⚠ Молча ударить с общего адреса нельзя: именно так лимит
+                    # сайта и складывается на одном IP. Пропускаем — «в сети» у
+                    # этой анкеты погаснет, и это честный признак беды.
+                    skipped += 1
+                    continue
+                groups.setdefault(url, {})[profile_id] = cookies
+
+            for url, group in groups.items():
+                client = clients.get(url)
+                if client is None:
+                    client = clients[url] = http_heartbeat_client(url)
+
+                done = await http_heartbeat_send_many(client, group, config)
+                beaten += sum(1 for ok in done.values() if ok)
+                failed += sum(1 for ok in done.values() if not ok)
     finally:
-        await client.aclose()
+        for client in clients.values():
+            await client.aclose()
 
-    if beaten or failed:
+    if beaten or failed or skipped:
         logger_info(f'[dating] присутствие: сайтов {ran}, ударов {beaten}'
-                    + (f', не дошло {failed}' if failed else ''))
+                    + (f', не дошло {failed}' if failed else '')
+                    + (f', без выхода пропущено {skipped}' if skipped else ''))
 
-    return {'sites': ran, 'beaten': beaten, 'failed': failed}
+    return {'sites': ran, 'beaten': beaten, 'failed': failed, 'skipped': skipped}
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

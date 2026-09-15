@@ -94,6 +94,7 @@ from src.dating.dating_people_api import (DatingPeopleApiError, dating_people_ap
                                           dating_people_api_rows)
 from src.dating.dating_ready import dating_password_pick
 from src.dating.dating_scenario import dating_scenario_run
+from src.dating.dating_site_api import dating_site_api_has_token
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
                                        rhapsody_api_scenario_forget)
 from src.uvicorn.routers.dating.dating_profile import dating_profile_row, dating_profile_site
@@ -248,7 +249,9 @@ async def dating_people_site_list(site_id: int, kind: str, fresh: bool = False,
     десять входов на сайт вместо одного, ради одинакового ответа.
 
     Анкета всё равно нужна: сценарий заходит в кабинет, а кабинет нужен чей-то.
-    Берём любую (`_site_profile`) — какая именно, на результат не влияет.
+    На **результат** выбор не влияет — список один и тот же под любой учёткой, —
+    а вот на **цену** влияет: у каждой анкеты свой токен, и взяв ту, у которой он
+    уже есть, мы обходимся без входа вовсе. Этим и занят `_site_profile`.
     """
     if kind not in DATING_PEOPLE_KINDS:
         raise HTTPException(status_code=422, detail=f'неизвестный список «{kind}»')
@@ -264,8 +267,16 @@ async def dating_people_site_list(site_id: int, kind: str, fresh: bool = False,
 
     profile = await _site_profile(site_id)
     if not profile:
+        # ⚠ Не «нет анкет», а «нет анкет **в сети**»: разница существенная —
+        # первое чинят заведением учётки, второе проходит само, когда начнётся
+        # смена. Отдаём прежний снимок, если он есть: он честнее пустоты.
+        if cached:
+            return _answer(cached, cached=True, error='ни одна анкета не в сети — '
+                           'список не обновляется', site_id=site_id, kind=kind)
+
         raise HTTPException(status_code=422,
-                            detail='у сайта нет ни одной анкеты — под кем заходить?')
+                            detail='ни одна анкета сайта не в сети — под кем заходить? '
+                                   'Список снимается от лица работающей девушки')
 
     return await _list(kind, fresh, profile, key, log_id=0, cached=cached)
 
@@ -311,13 +322,13 @@ async def dating_people_list(profile_id: int, kind: str, fresh: bool = False,
     profile = await dating_profile_row(profile_id)
 
     return await _list(kind, fresh, profile, _key(kind, profile_id=profile_id),
-                       log_id=profile_id)
+                       log_id=profile_id, hold=await _hold_why(profile))
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 async def _list(kind: str, fresh: bool, profile: dict, key: str, log_id: int,
-                cached: dict | None = None) -> dict:
+                cached: dict | None = None, hold: str = '') -> dict:
     """Общее тело обоих списков: кэш, фоновое обновление, запись в журнал.
 
     Args:
@@ -329,6 +340,8 @@ async def _list(kind: str, fresh: bool, profile: dict, key: str, log_id: int,
             писать его в журнал случайно выбранной было бы враньём. След прогона
             при этом остаётся в журнале прогонов (`dating_scenario.py`).
         cached: уже прочитанный снимок, если вызывающий его читал.
+        hold: почему на сайт сейчас не идём (`_hold_why`). Непусто — отдаём
+            прежний снимок с этой причиной и обновления **не заводим**.
     """
     site_id = int(profile.get('site_id') or 0)
     keep = await _keep_sec(kind, site_id)
@@ -356,6 +369,18 @@ async def _list(kind: str, fresh: bool, profile: dict, key: str, log_id: int,
     # сайта, а не про то, чего хочет страница.
     if cached and time.time() - cached['at'] < (floor if fresh else fresh_sec):
         return _answer(cached, cached=True, error='', site_id=site_id, kind=kind)
+
+    # ⚠⚠ **Анкете не в сети список не снимаем.** Снимок берётся **под ней**: для
+    # сайта это вход, а вход под спящей учёткой — лишний поход наружу, который в
+    # плохой день кормит счётчик неудачных входов и стоит блокировки адреса всей
+    # установке. Отдаём прежний снимок с причиной: он честнее пустоты, и человек
+    # видит, почему список не обновился.
+    #
+    # ⚠ Кнопка «обновить» этого **не обходит** — в отличие от выдержки. Выдержка
+    # про нашу бережливость, а здесь про цену для сайта, и щелчок её не отменяет.
+    if hold:
+        return _answer(cached, cached=bool(cached), error=hold,
+                       site_id=site_id, kind=kind)
 
     # ⚠ **Ручка не ждёт прогона. Никогда.**
     #
@@ -509,6 +534,41 @@ async def _refresh_run(profile: dict, kind: str, key: str, log_id: int) -> None:
         await dating_log_write(log_id, 'ok', f'{title} с сайта: {len(people)} собеседников')
 
 
+async def _hold_why(profile: dict) -> str:
+    """Почему за списком этой анкеты на сайт не идём. Пустая строка — идём.
+
+    ⚠⚠ **Написано по живому следу в журнале.** Открытая страница «Профили» зовёт
+    эту ручку на каждое открытие карточки (вкладки «Чат» и «Фавориты»), а решение
+    «идти или нет» принималось **только по возрасту снимка**: состояние анкеты не
+    смотрели вовсе. В журнале это выглядело так:
+
+        21:39:52 Diana | Избранные с сайта не снялись: вход отложен на 2388 с
+
+    Анкета была офлайн вторые сутки, а панель всё равно шла за её избранными — то
+    есть за входом под спящей учёткой. Лестница пауз (`dating_site_api`) вход не
+    пустила, и строка — это её отчёт; но самой попытки быть не должно.
+
+    ⚠ **Разница с лентой «Все онлайн» существенная.** Та про **сайт**: список
+    мужчин один на всех, и снять его можно от лица любой работающей девушки.
+    Избранные и диалоги — данные **этой** анкеты, и прочитать их можно, только
+    войдя под ней.
+
+    ⚠ **Даром — можно.** Токен API живёт у анкеты 12 часов: пока он цел, запрос не
+    стоит ни входа, ни риска, и запрещать его незачем — девушка ушла со смены час
+    назад, а человек смотрит, кого она набрала. Нет токена (или сайт работает
+    сценарием, где токена не бывает вовсе) — поход означает вход, и мы его не
+    делаем.
+    """
+    if str(profile.get('status') or '') == 'online':
+        return ''
+
+    site_id = int(profile.get('site_id') or 0)
+    if await _api_ready(site_id) and dating_site_api_has_token(int(profile.get('id') or 0)):
+        return ''
+
+    return 'анкета не в сети — список не обновляется'
+
+
 async def _api_ready(site_id: int) -> bool:
     """Настроен ли у сайта его собственный API.
 
@@ -617,22 +677,61 @@ def _key(kind: str, profile_id: int = 0, site_id: int = 0) -> str:
             else DATING_PEOPLE_SITE_KEY.format(site_id=site_id, kind=kind))
 
 
+# Сколько онлайн-анкет перебираем в поисках живого токена. Двадцати хватает: это
+# перебор ключей Redis, каждый — доли миллисекунды, а больше двадцати девушек
+# одновременно в сети у одного сайта пока не бывало.
+DATING_PEOPLE_ONLINE_PICK_MAX = 20
+
+
 async def _site_profile(site_id: int) -> dict:
-    """Любая анкета сайта — под ней сценарий зайдёт в кабинет.
+    """Анкета **в сети**, под которой снимаем список. Нет таких — пустой словарь.
 
     Какая именно, на результат не влияет: «кто в сети» одинаков под любой учёткой.
-    Но порядок задан явно (сначала те, у кого снят вход, дальше по номеру), чтобы
+    Порядок задан явно (сперва те, у кого снят вход, дальше по номеру), чтобы
     список не снимался то одной анкетой, то другой: в журнале прогонов это
     выглядело бы как случайная чехарда.
+
+    ⚠⚠ **Только `status = 'online'`, и это исправление живой беды.** Прежде бралась
+    любая анкета сайта, даже спящая, — и круг ленты ходил на сайт круглые сутки, в
+    том числе когда работать было некому. Смысла в снимке тогда нет: лента «Все
+    онлайн» нужна тем анкетам, что сейчас в чате, а их ноль.
+
+    Цена такого хождения оказалась высокой. Общий агентский пароль перестал
+    подходить 13 сентября, вход стал давать `400`, токена не появлялось — и круг
+    честно пробовал войти **каждые две минуты**. За сутки 484 неудачных входа, и
+    сайт закрыл наш IP целиком: `ERROR_SING_IN_BY_IP_DAILY_FAILED_LIMIT`. Анкета в
+    сети такого не устроит: пока она в сети, вход у неё уже есть.
+
+    ⚠⚠ **Среди онлайн берём ту, у которой уже есть токен.** Токен API живёт у
+    каждой анкеты свой и держится 12 часов. Возьми мы просто «первую по номеру»,
+    смена онлайн-состава (утро, вечер, чужое расписание) означала бы новый вход
+    при каждой перемене — а входы сайт считает и за них закрывает адрес. Спросив
+    сперва Redis, круг чаще всего не логинится вовсе: ходит тем, что уже есть.
+
+    Токена нет ни у кого — берём первую по прежнему правилу, и это один вход на
+    двенадцать часов, а не один на каждые две минуты.
+
+    ⚠ **`password_source` и `password` в выборке не нужны.** Пароль берётся общий
+    агентский (`dating_password_pick` без этих полей отвечает «общий»), и это
+    верно: список снимается от лица сайта, а не конкретной девушки.
     """
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, site_id, login FROM dating_profile '
             ' WHERE site_id = %s AND login <> %s'
-            ' ORDER BY storage_state IS NULL, id LIMIT 1', (int(site_id), ''))
-        row = await db.fetchone()
+            "   AND enabled = 1 AND status = 'online'"
+            ' ORDER BY storage_state IS NULL, id LIMIT %s',
+            (int(site_id), '', DATING_PEOPLE_ONLINE_PICK_MAX))
+        rows = await db.fetchall() or []
 
-    return dict(row) if row else {}
+    if not rows:
+        return {}
+
+    for row in rows:
+        if dating_site_api_has_token(int(row['id'])):
+            return dict(row)
+
+    return dict(rows[0])
 
 
 def _cache_get(key: str) -> dict | None:

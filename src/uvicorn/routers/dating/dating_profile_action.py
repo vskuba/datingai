@@ -30,6 +30,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_agent_find,
+                                       rhapsody_api_proxy_list,
                                        rhapsody_api_error_write,
                                        rhapsody_api_session_open)
 from src.dating.dating_agent import dating_agent_ensure
@@ -50,6 +51,8 @@ from src.dating.dating_login import (DatingLoginError, dating_login_run,
 from src.dating.dating_presence import dating_presence_probe, dating_presence_ready
 from src.dating.dating_status import dating_status_probe_site, dating_status_write
 from src.dating.dating_profile_cache import dating_profile_cache_refresh
+from src.dating.dating_proxy import (dating_proxy_countries, dating_proxy_forget,
+                                     dating_proxy_seats, dating_proxy_set)
 from src.dating.dating_send import dating_send_message
 from src.uvicorn.routers.dating.dating_profile import dating_profile_row, dating_profile_site
 
@@ -126,6 +129,156 @@ async def dating_profile_action_password(profile_id: int, data: DatingProfilePas
 
     return {'result': {'password_source': source,
                        'has_password': bool(str(row.get('password') or ''))}}
+
+
+class DatingProfileProxy(BaseModel):
+    """Какой выход наружу у анкеты."""
+
+    proxy_id: int = Field(..., ge=0,
+                          description='Номер выхода в реестре соседа; 0 — выбрать самим')
+
+
+@router.put('/{profile_id}/proxy', include_in_schema=False)
+async def dating_profile_action_proxy(profile_id: int, data: DatingProfileProxy,
+                                      user=Depends(auth_required)):
+    """Ставит анкете выход наружу — руками.
+
+    Обычно выход достаётся сам: первая же дверь, собравшаяся к сайту, берёт
+    свободный адрес (`dating_proxy.py`). Руками его меняют, когда у человека есть
+    знание, которого у раздачи нет: этот канал быстрее, тот из нужной страны, а
+    вот этим анкета уже входила месяц назад и сайт её с него помнит.
+
+    `proxy_id = 0` — «выбирай сам»: кэш чистится, и следующая же дверь возьмёт
+    выход по общему правилу.
+
+    ⚠ **Предел «анкет на IP» здесь не проверяется, и это намеренно.** Раздача его
+    соблюдает, а человек — решает: он мог узнать, что сайт терпит больше, или
+    сажает вторую анкету на адрес осознанно и ненадолго. Молча отказать тому, кто
+    выбрал вручную, значило бы спорить с ним настройкой, которую он же и ставил.
+    Сколько анкет уже сидит за этим адресом, ответ показывает — пусть видит.
+
+    ⚠ **Смена выхода у живой анкеты видна сайту.** Он помнит, с какого адреса она
+    входила, и переезд выглядит подозрительнее паузы. Поэтому действие ручное и
+    остаётся в журнале анкеты.
+
+    ⚠ **Страна не запрещается, но называется.** Отбор стран человек ставил сам,
+    чипсами; выбрать вручную канал из другой он может осознанно. Но держаться
+    такой выбор будет лишь до следующего перезахвата: раздача фильтрует по
+    стране и переселит анкету обратно — ответ говорит об этом заранее, иначе это
+    выглядит как «панель сама всё меняет».
+    """
+    profile = await dating_profile_row(profile_id)
+    await _proxy_on(profile)
+    proxy_id = int(data.proxy_id or 0)
+
+    if not proxy_id:
+        await dating_proxy_forget(profile_id)
+        await dating_log_write(profile_id, 'info',
+                               'Выход наружу: выбирается автоматически')
+
+        return {'result': {'proxy_id': 0, 'proxy_ip': '', 'neighbours': 0}}
+
+    rows = await rhapsody_api_proxy_list(ready=False)
+    got = next((row for row in rows if int(row['id']) == proxy_id), None)
+
+    if not got:
+        raise HTTPException(status_code=404, detail=f'выхода #{proxy_id} нет в реестре')
+    if not got.get('check_ok') or not got.get('check_ip'):
+        # ⚠ Непроверенный выход поставить нельзя даже руками: неизвестно, каким
+        # адресом он виден, а значит и считать его не с чем — ни нам, ни сайту.
+        raise HTTPException(status_code=409,
+                            detail=f'выход «{got["name"]}» не проверен: нажмите «Проверить» '
+                                   f'на странице «Браузер → Прокси» у соседа')
+    if not got.get('is_enabled'):
+        raise HTTPException(status_code=409, detail=f'выход «{got["name"]}» выключен')
+
+    await dating_proxy_set(profile_id, got)
+
+    async with mysql_get_db_async() as db:
+        await db.execute("SELECT COUNT(*) AS n FROM dating_profile "
+                         " WHERE proxy_ip = %s AND id <> %s",
+                         (str(got['check_ip']), profile_id))
+        neighbours = int(((await db.fetchone()) or {}).get('n') or 0)
+
+    # ⚠ **Страну при ручном выборе не запрещаем, но говорим о ней.** Отбор стран
+    # человек ставил сам, чипсами, — и поставить вручную канал из другой страны
+    # он может осознанно («на разок, проверить»). А может и промахнуться: в
+    # списке видны все каналы, и турецкий стоит рядом с украинским.
+    #
+    # Молчать тут нельзя: следующий круг переселит анкету обратно (раздача
+    # фильтрует по стране), и выглядеть это будет как «панель сама всё меняет».
+    countries = await dating_proxy_countries(int(profile.get('site_id') or 0))
+    country = str(got.get('check_country') or '')
+    aside = bool(countries) and country not in countries
+
+    await dating_log_write(profile_id, 'info',
+                           f'Выход наружу выбран вручную: «{got["name"]}» ({got["check_ip"]})'
+                           + (f' — страна {country or "неизвестна"} вне отбора сайта'
+                              if aside else ''))
+
+    return {'result': {'proxy_id': proxy_id, 'proxy_ip': got['check_ip'],
+                       'name': got['name'], 'neighbours': neighbours,
+                       'country': country,
+                       # Страница скажет это человеку словами: выбор принят, но
+                       # держаться он будет лишь до следующего перезахвата.
+                       'country_aside': aside}}
+
+
+@router.get('/{profile_id}/proxy', include_in_schema=False)
+async def dating_profile_action_proxy_list(profile_id: int, user=Depends(auth_required)):
+    """Выходы, из которых можно выбрать, — с занятостью **нашими** анкетами.
+
+    Занятость считает эта ручка, а не реестр: он про наши анкеты не знает.
+    Считается по увиденному адресу — два выхода одного пула делят предел сайта,
+    и человек, выбирающий руками, должен это видеть.
+
+    ⚠ Пароль канала в ответ не идёт: страница его не показывает и не должна.
+    """
+    profile = await dating_profile_row(profile_id)
+    # ⚠ До похода к соседу: у сайта без выходов выбирать не из чего, и спрашивать
+    # ради этого чужой сервер незачем.
+    await _proxy_on(profile)
+
+    try:
+        rows = await rhapsody_api_proxy_list(ready=False)
+    except RhapsodyError as e:
+        raise HTTPException(status_code=502, detail=f'реестр выходов не ответил: {e}')
+
+    async with mysql_get_db_async() as db:
+        await db.execute("SELECT proxy_ip, COUNT(*) AS n FROM dating_profile "
+                         " WHERE proxy_ip <> '' AND id <> %s GROUP BY proxy_ip",
+                         (profile_id,))
+        busy = {str(row['proxy_ip']): int(row['n']) for row in await db.fetchall() or []}
+
+    seats = await dating_proxy_seats(int(profile.get('site_id') or 0))
+
+    return {'result': [{'id': int(row['id']), 'name': row['name'],
+                        'check_ip': row.get('check_ip') or '',
+                        'check_ok': bool(row.get('check_ok')),
+                        'is_enabled': bool(row.get('is_enabled')),
+                        'taken': busy.get(str(row.get('check_ip') or ''), 0)}
+                       for row in rows],
+            'seats': seats, 'current': int(profile.get('proxy_id') or 0)}
+
+
+async def _proxy_on(profile: dict) -> None:
+    """Пользуется ли сайт анкеты выходами. Нет — 409 с тем, что нажать.
+
+    ⚠ **Отказ, а не молчаливое согласие.** Поставить выход анкете сайта, где
+    прокси выключены, значит записать в базу адрес, которым никто не пойдёт:
+    двери спрашивают выключатель и получают пусто. Человек видел бы выбранный
+    канал в карточке и считал бы, что анкета ходит им.
+
+    Код 409, а не 422: тело запроса правильное, не сходится состояние — и чинится
+    оно в другом месте, о котором и говорит текст.
+    """
+    from src.dating.dating_proxy import dating_proxy_enabled
+
+    if not await dating_proxy_enabled(int(profile.get('site_id') or 0)):
+        raise HTTPException(
+            status_code=409,
+            detail='у сайта выключены выходы: включите галочку «Использовать '
+                   'выходы» на вкладке «Прокси» в настройках сайта')
 
 
 class DatingProfileSchedule(BaseModel):
@@ -805,8 +958,11 @@ async def _session_open_for(site: dict, profile: dict) -> str:
     Нужна отключению: выходить на сайте надо из авторизованной вкладки, а живой
     вкладки к этому моменту может уже не быть.
     """
+    # Выход тот же, что у входа: сайт сверяет адрес и с выходом тоже, а «вышел с
+    # чужого IP» — это для него не выход, а подозрение.
     return await rhapsody_api_session_open(url=site['url'], name=str(profile['login'])[:100],
                                           site_id=int(site['id']),
+                                          proxy_id=int(profile.get('proxy_id') or 0),
                                           storage_state=profile.get('storage_state') or {})
 
 

@@ -32,6 +32,7 @@ from src.dating.dating_ready import dating_password_pick
 from src.uvicorn.routers.dating.dating_site import dating_site_setting
 from src.dating.dating_scenario import dating_scenario_run
 from src.dating.dating_profile_page import dating_profile_page_read
+from src.dating.dating_proxy import dating_proxy_ready, dating_proxy_url
 from src.dating.dating_ws import dating_ws_capture
 
 
@@ -92,11 +93,23 @@ async def dating_login_run(profile_id: int, scenario_id: int = 0, session_id: st
     # сейчас», ради которого человек и смотрит в журнал.
     await dating_log_write(profile_id, 'info', 'Вход запущен')
 
+    # ⚠ **Выход берём до входа, а не после.** Именно вход сайт и считает по
+    # внешнему адресу: с одного IP он пускает ограниченное число девушек, дальше
+    # отвергает. Войди мы общим адресом сервера — место на нём заняла бы эта
+    # анкета, а следующая получила бы отказ, причём без внятной причины.
+    #
+    # Пока `proxy_required` снят, отсутствие выхода вход не останавливает: на
+    # свежей установке прокси ещё не заведены, и глушить работу до их появления
+    # значит менять одну беду на другую (`dating_proxy.py`).
+    can_go, why = await dating_proxy_ready(profile)
+    if not can_go:
+        raise DatingLoginError(why)
+
     closed = await dating_login_session_close_old(profile['login'], session_id)
     if closed:
         await dating_log_write(profile_id, 'info', f'Прежних вкладок закрыто: {closed}')
 
-    session_id = session_id or await dating_login_session_open(site, profile['login'])
+    session_id = session_id or await dating_login_session_open(site, profile['login'], profile)
     secrets = {name: (profile['login'] if name in DATING_LOGIN_LOGIN_KEYS else password)
                for name in scenario['keys']}
 
@@ -286,11 +299,26 @@ async def dating_login_session_close(session_id: str) -> None:
         logger_info(f'[dating] вкладка {session_id} не закрылась: {e}')
 
 
-async def dating_login_session_open(site: dict, name: str) -> str:
+async def dating_login_session_open(site: dict, name: str, profile: dict = None) -> str:
     """Заводит сессию браузера на адрес сайта — под именем учётки, чтобы её было
-    видно в полосе вкладок `/admin/browser`."""
+    видно в полосе вкладок `/admin/browser`.
+
+    ⚠ **Вкладка идёт через выход анкеты**, тот же, которым ходят наши HTTP и
+    сокет. Сайт считает учётки по внешнему адресу: вход браузером с одного IP и
+    присутствие с другого для него — две попытки на одну учётку.
+
+    `profile` не обязателен только ради старых вызовов без анкеты на руках; с ним
+    вкладка получает выход, без него — общий адрес сервера.
+    """
+    proxy_id = int((profile or {}).get('proxy_id') or 0)
+    if profile and not proxy_id:
+        # Выход ещё не закреплён — занимаем его сейчас, до входа: именно вход и
+        # считается сайтом, и делать это с общего адреса нельзя.
+        await dating_proxy_url(profile)
+        proxy_id = int(profile.get('proxy_id') or 0)
+
     return await rhapsody_api_session_open(url=site['url'], name=name[:100],
-                                          site_id=int(site['id']))
+                                          site_id=int(site['id']), proxy_id=proxy_id)
 
 
 async def _verify(profile: dict, site: dict) -> dict:

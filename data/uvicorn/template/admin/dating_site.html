@@ -136,6 +136,146 @@
            значений растянулся бы на всю колонку. */
         .set-select { width: auto; min-width: 160px; padding: 5px 8px; }
 
+        /* ── Вкладка «Прокси»: пул выходов ───────────────────────────────────
+           Стоит над настройками группы: выбирать «анкет на IP», не видя самих
+           адресов и их занятости, нечем.
+
+           Оформление отдельное от таблицы настроек намеренно: это не настройка,
+           а состояние — карточка со своим фоном, рамкой и шапкой. Смешавшись со
+           строками настроек, пул читался бы как ещё одно поле. */
+        .pxy-pool {
+            margin: 0 0 18px; border: 1px solid #e8eaf0; border-radius: 12px;
+            background: #fff; overflow: hidden;
+        }
+
+        /* Главный выключатель группы. Стоит над пулом и над настройками, потому
+           что отвечает не «как», а «пользуемся ли вообще»: снят — за ним нет
+           ничего, и показывать пул с настройками значило бы предлагать крутить
+           то, что не работает.
+
+           Выключенное состояние приглушённое, включённое — с зелёной рамкой:
+           человек заходит сюда редко, и первый вопрос у него именно про это. */
+        .pxy-on {
+            display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap;
+            margin: 0 0 18px; padding: 14px 16px; border-radius: 12px;
+            border: 1px solid #e8eaf0; background: #f8fafc;
+        }
+        .pxy-on.on { border-color: #bbf7d0; background: #f0fdf4; }
+        .pxy-on-sw {
+            display: inline-flex; align-items: center; gap: 9px; cursor: pointer;
+            font-size: 13px; font-weight: 600; color: #1e293b; white-space: nowrap;
+        }
+        .pxy-on-sw input { width: 17px; height: 17px; cursor: pointer; }
+        .pxy-on-note {
+            flex: 1 1 260px; font-size: 12px; line-height: 1.5; color: #64748b;
+        }
+        .pxy-on-note b { color: #334155; font-weight: 600; }
+        .pxy-pool-head {
+            display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+            font-size: 12px; color: #64748b; padding: 12px 16px;
+            background: linear-gradient(180deg, #fbfcfe 0%, #f6f8fb 100%);
+            border-bottom: 1px solid #eef1f6;
+        }
+        .pxy-pool-head b { color: #1e293b; font-weight: 600; }
+        /* Галочка и кнопка — прижаты вправо; между ними воздух, чтобы галочка
+           не читалась как подпись к кнопке. */
+        .pxy-pool-head .pxy-cc-row { flex: 1 1 auto; }
+        .pxy-pool-head .pxy-auto { margin-left: auto; }
+        .pxy-auto {
+            display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+            font-size: 12px; color: #64748b; white-space: nowrap;
+        }
+        .pxy-auto input { width: 15px; height: 15px; cursor: pointer; }
+        .pxy-pool-note { font-size: 12px; color: #94a3b8; padding: 18px 16px; }
+        .pxy-pool-note.bad { color: #b45309; }
+
+        .pxy-pool-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .pxy-pool-table th {
+            text-align: left; padding: 8px 12px; font-size: 10px; font-weight: 600;
+            color: #a3adbd; text-transform: uppercase; letter-spacing: .05em;
+            border-bottom: 1px solid #eef1f6; white-space: nowrap; background: #fcfdfe;
+        }
+        /* ⚠ Всё в одну строку: выходов бывает два десятка, и вторая линия под
+           именем удваивала высоту таблицы ради адреса, на который смотрят
+           изредка. Он теперь своей колонкой. */
+        .pxy-pool-table td {
+            padding: 3px 12px; border-bottom: 1px solid #f4f6f9;
+            white-space: nowrap; vertical-align: middle;
+        }
+        .pxy-pool-table tr:last-child td { border-bottom: 0; }
+        .pxy-pool-table tbody tr:hover td { background: #fafbfd; }
+
+        /* ⚠ Мёртвый выход бледный и внизу списка: он в реестре есть, но раздача
+           его не возьмёт. Причина — на месте пинга: иначе «бледный» читается как
+           «выключен человеком», а это другая беда. */
+        .pxy-pool-table tr.dead td { opacity: .46; }
+
+        .pxy-pool-name { font-weight: 600; color: #1e293b; }
+        .pxy-pool-where {
+            font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #9aa5b5;
+        }
+        .pxy-pool-ip {
+            font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #0f172a;
+        }
+        .pxy-c-cc { width: 72px; }
+        .pxy-dim { color: #cbd5e1; }
+        /* Чипсы стран — слева в шапке пула: они решают, из чего берём каналы, и
+           стоят там же, где кнопка проверки, — в полосе управления, а не над
+           таблицей отдельной строкой. */
+        .pxy-cc-row { display: flex; flex-wrap: wrap; gap: 6px; }
+        .pxy-chip {
+            border: 1px solid #e6e9f0; background: #fcfdfe; color: #7c8798;
+            border-radius: 8px; padding: 4px 11px; font-size: 12px; cursor: pointer;
+            font-family: inherit; display: inline-flex; align-items: center; gap: 6px;
+            transition: background .12s, border-color .12s, color .12s;
+        }
+        .pxy-chip i {
+            font-style: normal; font-size: 10px; font-weight: 600; color: #b8c0cd;
+        }
+        .pxy-chip:hover { border-color: #cdd6ea; background: #fff; color: #5b6474; }
+        /* ⚠ **Включённый чипс — светлый, а не залитый.** Их бывает пять-шесть в
+           ряд, и сплошная заливка превращала полосу в пестрядь, которая спорит с
+           таблицей под ней за внимание. Держит состояние рамка и тон текста:
+           этого хватает, чтобы «включено» читалось с одного взгляда, а строки
+           пула оставались главными на вкладке. */
+        .pxy-chip.on {
+            background: #eef1fb; border-color: #c3ccef; color: #4a53a8; font-weight: 600;
+        }
+        .pxy-chip.on i { color: #8f9ad4; }
+        .pxy-chip.on:hover { background: #e7ebf9; border-color: #b3bfe9; }
+        /* Наш адрес живёт в заголовке панели: заголовок слева, адрес прижат
+           вправо — они про разное и слипаться не должны. */
+        .set-box-own {
+            float: right; font-size: 11px; font-weight: 400; color: #94a3b8;
+            text-transform: none; letter-spacing: 0;
+        }
+        .pxy-ip-own {
+            font-family: ui-monospace, Menlo, monospace; color: #475569; font-weight: 600;
+        }
+        /* «наш» у выхода — предупреждение, а не пометка: такой канал не скрывает
+           ничего, и все анкеты за ним окажутся на одном адресе. */
+        .pxy-warn {
+            font-size: 10px; font-weight: 700; color: #b45309; background: #fffbeb;
+            border: 1px solid #fde68a; border-radius: 4px; padding: 1px 5px;
+            white-space: nowrap;
+        }
+        /* Код страны — плашкой: две буквы в потоке текста теряются, а по ним
+           сверяют канал с легендой анкеты. */
+        .pxy-cc {
+            font-family: ui-monospace, Menlo, monospace; font-size: 10px; font-weight: 700;
+            color: #475569; background: #eef1f6; border-radius: 4px; padding: 2px 6px;
+            letter-spacing: .04em;
+        }
+        /* Пинг — не просто число: по нему выбирают канал, и «15 секунд» должно
+           отличаться от «200 мс» с одного взгляда. Цвет считается плавно
+           (`pingColor`), поэтому здесь только вес и отказ. */
+        .pxy-pool-ping { color: #64748b; font-weight: 600; }
+        .pxy-pool-ping .bad { color: #b91c1c; font-weight: 400; white-space: normal; }
+        .pxy-c-seats { width: 86px; text-align: right; color: #475569; }
+        .pxy-c-seats.full { color: #b45309; font-weight: 600; } сайт ходит, не сверяясь
+           с галочками по одной. */
+        .pxy-pool-table tr.on td { background: #f5f7ff; }
+
         /* Секрет с глазом: поле и кнопка в строку. `flex` у обоймы, а не отступ у
            кнопки — поле тянется, кнопка держит свой размер. */
         .set-secret { display: flex; align-items: center; gap: 6px; }
@@ -178,7 +318,7 @@
 
 {% block scripts %}
 <script type="module">
-    import {getData, putData} from '{{ static_url('js/api.js') }}';
+    import {getData, postData, putData} from '{{ static_url('js/api.js') }}';
     import {showNotification} from '{{ static_url('js/notification.js') }}';
     import {esc} from '{{ static_url('js/dating_view.js') }}';
     import {DATING_SITE_KEY, datingSiteFill} from '{{ static_url('js/dating_site.js') }}';
@@ -264,6 +404,15 @@
             + '</div>';
 
         bind();
+
+        // ⚠ **Пул грузится, только если его вкладка открыта.** Он ходит к соседу,
+        // а `paint()` зовётся на каждое сохранение любой настройки и на каждую
+        // смену сайта — то есть чужой сервис опрашивался бы там, где о прокси
+        // никто не спрашивал.
+        //
+        // Своим запросом, а не вместе со страницей: настройки не должны ждать
+        // чужой ответ, чтобы показаться.
+        if (setTab === 'proxy') poolLoad();
     }
 
     // Полоса вкладок: по вкладке на непустую группу плюс «Свои настройки».
@@ -296,6 +445,8 @@
         const rows = [];
 
         groups.forEach(group => {
+            // Скрытые строкой настройки тоже считаются: у «Прокси» вкладка нужна
+            // и ради пула, даже если бы все её настройки правились не полями.
             if (known.some(spec => spec.group === group.key)) {
                 rows.push({key: group.key, title: group.title});
             }
@@ -371,10 +522,17 @@
         const shown = new Set();
 
         let html = groups.map(group => {
-            const rows = known.filter(spec => spec.group === group.key);
+            // ⚠ `kind: 'hidden'` — настройка есть, а строки у неё нет: её правят
+            // не полем, а чем-то на той же вкладке (отбор выходов — галочками в
+            // пуле). В `shown` она всё равно попадает, иначе уехала бы в «Прочее».
+            const rows = known.filter(spec => spec.group === group.key
+                                              && spec.kind !== 'hidden');
+            known.filter(spec => spec.group === group.key && spec.kind === 'hidden')
+                 .forEach(spec => shown.add(spec.key));
             rows.forEach(spec => shown.add(spec.key));
 
-            return rows.length ? groupBox(group.key, group.title, site, rows) : '';
+            return (rows.length || group.key === 'proxy')
+                ? groupBox(group.key, group.title, site, rows) : '';
         }).join('');
 
         // Группы, которых нет в списке с сервера (старый ответ, опечатка в
@@ -397,13 +555,395 @@
     // на каждый щелчок значило бы терять раскрытый пароль и позицию курсора в
     // поле, которое человек только что правил.
     function groupBox(key, title, site, rows) {
+        // ⚠ **За снятым выключателем не рисуем ничего**, кроме него самого. Пул
+        // ходит к соседу, а настройки под ним — «сколько анкет на IP», «из каких
+        // стран», — отвечают на вопросы, которых при выключенных прокси не
+        // возникает. Показывать их значило бы предлагать крутить неработающее.
+        const on = key !== 'proxy' || proxyOn();
+
         return `<div class="set-box${key === setTab ? '' : ' off'}"`
             + ` data-set-pane="${esc(key)}">`
-            + `<div class="set-box-head">${esc(title)}</div>`
-            + '<table class="set-table"><tbody>'
-            + rows.map(spec => knownRow(site, spec)).join('')
-            + '</tbody></table>'
+            + `<div class="set-box-head">${esc(title)}`
+            // ⚠ Наш собственный адрес — в заголовке панели, а не в шапке пула.
+            // Он не про пул: это то, чем ходит сама машина, и сравнивать с ним
+            // выходы человек будет, скользя глазом сверху вниз. Место пустует до
+            // загрузки — адрес приходит вместе со списком (`directText`).
+            + (key === 'proxy' && on ? '<span class="set-box-own" id="poolOwn"></span>' : '')
+            + '</div>'
+            // Выключатель — самым верхом группы: он старше всего, что под ним.
+            + (key === 'proxy' ? proxyOnBox() : '')
+            // ⚠ Пул выходов — **над** настройками этой группы, а не под ними.
+            // Настройки без него слепые: «анкет на IP» не выбрать, не видя,
+            // сколько этих адресов есть и сколько уже занято.
+            + (key === 'proxy' && on ? '<div id="proxyPool" class="pxy-pool"></div>' : '')
+            + (on
+                ? '<table class="set-table"><tbody>'
+                  + rows.map(spec => knownRow(site, spec)).join('')
+                  + '</tbody></table>'
+                : '')
             + '</div>';
+    }
+
+    // ── Главный выключатель выходов ──────────────────────────────────────────
+    //
+    // ⚠ **Он про весь механизм, а не про эту страницу.** Снят — прокси не
+    // используются нигде: ни при входе, ни в чате, ни в присутствии, ни кругом
+    // проверки. Анкеты ходят общим адресом сервера, как ходили до появления
+    // прокси в проекте. По умолчанию снят: каналы покупают не в первый день.
+    //
+    // ⚠ **Снятие снимает выходы с анкет сайта** — на сервере, вместе с
+    // сохранением (`dating_proxy_forget_site`). Иначе адрес остался бы в кэше
+    // анкеты, а удары присутствия читают его прямо из колонки.
+    const PROXY_ON_KEY = 'proxy_enabled';
+
+    function proxyOn() {
+        const site = current() || {};
+        const spec = known.find(one => one.key === PROXY_ON_KEY) || {};
+        const value = (site.settings || {})[PROXY_ON_KEY];
+
+        return String(value === undefined ? (spec.default || '0') : value) === '1';
+    }
+
+    function proxyOnBox() {
+        const on = proxyOn();
+        const note = on
+            ? 'Анкетам раздаются выходы из реестра соседа: каждая ходит своим '
+              + 'адресом — вход, чат, письма и присутствие через один и тот же. '
+              + '<b>Выключение снимет выходы со всех анкет сайта</b>, и они '
+              + 'вернутся на общий адрес сервера.'
+            : 'Сейчас все анкеты сайта ходят <b>общим адресом сервера</b>: прокси '
+              + 'не используются нигде — ни при входе, ни в чате, ни в '
+              + 'присутствии. Включать стоит, когда каналы заведены и проверены '
+              + 'у соседа, на вкладке «Proxy».';
+
+        return `<div class="pxy-on${on ? ' on' : ''}">`
+            + (CAN_EDIT
+                ? '<label class="pxy-on-sw">'
+                  + `<input type="checkbox" id="proxyOnBox"${on ? ' checked' : ''}>`
+                  + ' Использовать выходы (прокси)</label>'
+                : `<span class="pxy-on-sw">Выходы ${on ? 'используются' : 'выключены'}</span>`)
+            + `<div class="pxy-on-note">${note}</div>`
+            + '</div>';
+    }
+
+    async function proxyOnSave() {
+        const on = document.getElementById('proxyOnBox').checked;
+        if (!on && !confirm('Выключить выходы у сайта?\n\nВыходы будут сняты со '
+                            + 'всех его анкет, и они начнут ходить общим адресом '
+                            + 'сервера. Сайт считает учётки по адресу.')) {
+            document.getElementById('proxyOnBox').checked = true;
+            return;
+        }
+
+        // `save` перерисовывает страницу целиком и сам грузит пул, если вкладка
+        // открыта, — второй раз звать `poolLoad` не нужно.
+        await save({[PROXY_ON_KEY]: on ? '1' : '0'});
+    }
+
+    // ── Пул выходов ──────────────────────────────────────────────────────────
+    //
+    // ⚠ **Порядок задаёт сервер.** Живые сверху, мёртвые вниз — тем же правилом,
+    // по которому выходы раздаются анкетам (`dating_proxy_pool`). Сортируй
+    // страница сама, человек видел бы «первым пойдёт этот», а шёл бы другой.
+    let _pool = [];
+    let _poolSeats = 1;
+    // Страны реестра и то, какие из них отмечены. Пустой отбор значит «все».
+    let _countries = [];
+    let _picked = new Set();
+    // Наш собственный внешний адрес — без прокси. Нужен для сравнения: выход,
+    // выходящий им же, ничего не скрывает.
+    let _direct = {};
+
+    async function poolLoad() {
+        // ⚠ Выключено — панели пула на странице нет вовсе, и спрашивать реестр
+        // незачем. Ручка ответит тем же (`enabled: false`), но запрос по сети
+        // ради заведомо пустого ответа — цена без покупки.
+        if (!proxyOn()) return;
+
+        const box = document.getElementById('proxyPool');
+        if (!box) return;
+
+        box.innerHTML = '<div class="pxy-pool-note">Спрашиваю реестр…</div>';
+
+        let data;
+        try {
+            data = await getData(`${BASE}/api/dating/proxy?site_id=${siteId()}`);
+        } catch (e) {
+            box.innerHTML = `<div class="pxy-pool-note bad">${esc(e.message)}</div>`;
+            return;
+        }
+
+        // Сервер сказал «выключено», а страница думала иначе: настройку сменили
+        // в другой вкладке. Перерисовываемся по правде сервера, а не по своей.
+        if (data.enabled === false) {
+            const site = current();
+            if (site) site.settings = {...(site.settings || {}), [PROXY_ON_KEY]: '0'};
+            paint();
+            return;
+        }
+
+        _pool = data.result || [];
+        _direct = data.direct || {};
+        _countries = data.countries || [];
+        _picked = new Set(data.picked || []);
+        _poolSeats = data.seats || 1;
+        poolRender(_poolSeats);
+        directText();
+    }
+
+    function poolRender(seats) {
+        const box = document.getElementById('proxyPool');
+        if (!box) return;
+
+        const live = _pool.filter(one => one.live);
+        const ips = new Set(live.map(one => one.check_ip));
+        if (!_pool.length) {
+            box.innerHTML = '<div class="pxy-pool-note bad">Реестр пуст. Выходы заводят '
+                + 'в RhapsodyAi: страница браузера, вкладка «Proxy».</div>';
+            return;
+        }
+
+        // ⚠ **В шапке — только то, чем управляют.** Слева отбор стран, справа
+        // проверка; счёт живых и адресов отсюда убран намеренно: числа эти уже
+        // есть в чипсах (у каждой страны свой счёт живых) и в самой таблице, а
+        // третьим местом они лишь спорили за внимание с тем, что нажимают.
+        box.innerHTML = '<div class="pxy-pool-head">'
+            + countryChips()
+            // ⚠ Автопроверка стоит рядом с кнопкой, а не строкой в настройках
+            // ниже: обе про одно — проверку выходов, — и разносить их по разным
+            // концам вкладки значило бы искать вторую, найдя первую.
+            + autoBox()
+            + (CAN_EDIT ? '<button type="button" class="site-btn" id="poolCheck">Проверить сейчас</button>' : '')
+            + '</div>'
+            + '<table class="pxy-pool-table">'
+            + '<thead><tr>'
+            + '<th>Выход</th><th>Адрес</th><th>Внешний IP</th>'
+            + '<th class="pxy-c-cc" title="Откуда выходит канал: код страны ISO-3166">Страна</th>'
+            + '<th>Пинг</th>'
+            + '<th class="pxy-c-seats">Анкеты</th>'
+            + '</tr></thead><tbody>'
+            + _pool.map(one => poolRow(one, seats)).join('')
+            + '</tbody></table>';
+
+        const check = document.getElementById('poolCheck');
+        if (check) check.addEventListener('click', poolCheck);
+
+        const auto = document.getElementById('poolAuto');
+        if (auto) auto.addEventListener('change', autoSave);
+
+        if (CAN_EDIT) {
+            box.querySelectorAll('.pxy-chip').forEach(chip => {
+                chip.addEventListener('click', () => chipToggle(chip.dataset.cc));
+            });
+        }
+
+    }
+
+    // Чипсы стран: из каких каналов сайт берёт выходы.
+    //
+    // ⚠ **Фильтруют не показ, а работу.** Выключенная страна остаётся в таблице
+    // бледной — канал ведь жив, — но анкетам не достаётся. Прячь мы такие
+    // строки, человек искал бы их в реестре, гадая, куда делись.
+    //
+    // ⚠ Ничего не отмечено — берём из **любых** стран. Обратное умолчание
+    // оставило бы новый сайт без выходов молча.
+    function countryChips() {
+        if (!_countries.length) return '';
+
+        const all = !_picked.size;
+
+        return '<div class="pxy-cc-row">'
+            + `<button type="button" class="pxy-chip${all ? ' on' : ''}" data-cc="">`
+            + 'любая страна</button>'
+            + _countries.map(one =>
+                `<button type="button" class="pxy-chip${_picked.has(one.code) ? ' on' : ''}"`
+                + ` data-cc="${esc(one.code)}"`
+                + ` title="каналов ${one.total}, из них живых ${one.live}">`
+                + `${esc(one.code)} <i>${one.live}</i></button>`).join('')
+            + '</div>';
+    }
+
+    // ⚠ **Сохраняем спустя паузу, а не на каждый щелчок.** Сохранение
+    // перечитывает сайт и перерисовывает пул; отмечая три страны подряд, человек
+    // получал бы одну — второй щелчок приходился бы по узлу, который вот-вот
+    // заменят. На галочках выходов эта беда уже случалась, проверено живьём.
+    const CHIP_DELAY_MS = 600;
+    let _chipTimer = null;
+
+    function chipToggle(code) {
+        // «Любая страна» — не пункт списка, а его сброс: отмечать её вместе с
+        // конкретной бессмысленно, и щелчок по ней просто снимает отбор.
+        if (!code) {
+            _picked.clear();
+        } else if (_picked.has(code)) {
+            _picked.delete(code);
+        } else {
+            _picked.add(code);
+        }
+
+        // Рисуем сразу: чипс без отклика читается как непрошедший щелчок.
+        chipPaint();
+
+        clearTimeout(_chipTimer);
+        _chipTimer = setTimeout(async () => {
+            await save({proxy_countries: [..._picked].join(',')});
+            // Отбор меняет, какие каналы годны, — пул перечитываем: выключенная
+            // страна должна побледнеть, а счёт живых в шапке сойтись.
+            await poolLoad();
+        }, CHIP_DELAY_MS);
+    }
+
+    // Перерисовываем **только чипсы**, а не таблицу: сменившийся под пальцем
+    // узел съедает следующий щелчок (та же беда, что была с галочками).
+    function chipPaint() {
+        const row = document.querySelector('.pxy-cc-row');
+        if (!row) return;
+
+        row.querySelectorAll('.pxy-chip').forEach(chip => {
+            const code = chip.dataset.cc;
+            chip.classList.toggle('on', code ? _picked.has(code) : !_picked.size);
+        });
+    }
+
+    // Наш собственный адрес — в шапке, рядом со счётом выходов.
+    //
+    // ⚠ **Он здесь не для справки, а для сравнения.** Выход, у которого
+    // увиденный IP совпал с нашим, ничего не скрывает: запрос идёт мимо него
+    // либо он прозрачный. Для сайта это худший случай — все «разные» анкеты
+    // окажутся на одном адресе, и узнаем мы об этом из блокировок.
+    function directText() {
+        const box = document.getElementById('poolOwn');
+        if (!box) return;
+
+        if (!_direct.ip) {
+            box.innerHTML = '';
+            return;
+        }
+
+        const same = _pool.filter(one => one.is_direct).length;
+
+        box.innerHTML = `наш адрес <span class="pxy-ip-own">${esc(_direct.ip)}</span>`
+            + (same ? ` <span class="pxy-warn">${same} выход(а) идут им же — они `
+                      + 'ничего не скрывают</span>' : '');
+    }
+
+    // Автопроверка: та же настройка сайта (`proxy_ping_every`), но галочкой и в
+    // шапке пула. Значение остаётся секундами — круг читает его как срок.
+    //
+    // ⚠ **Она не про эту вкладку, а про воркер.** У соседа похожая галочка
+    // работает, пока открыта страница; здесь — постоянно, круглые сутки, и
+    // закрытый браузер ей не помеха. Подпись поэтому без слова «пока».
+    function autoBox() {
+        if (!CAN_EDIT) return '';
+
+        const on = autoOn();
+
+        return '<label class="pxy-auto" title="Круг воркера будет проверять все выходы '
+            + 'раз в пять минут. Работает и с закрытой панелью.">'
+            + `<input type="checkbox" id="poolAuto"${on ? ' checked' : ''}>`
+            + ' проверять каждые 5 минут</label>';
+    }
+
+    // Включена ли автопроверка. Умолчание берём из реестра, а не из литерала:
+    // два места разошлись бы, и страница показывала бы не то, что делает круг.
+    function autoOn() {
+        const site = current() || {};
+        const spec = known.find(one => one.key === PING_KEY) || {};
+        const value = (site.settings || {})[PING_KEY];
+
+        return String(value === undefined ? spec.default : value) !== '0';
+    }
+
+    async function autoSave() {
+        const on = document.getElementById('poolAuto').checked;
+        // `300` и `0` — значения из реестра: настройка хранится сроком в
+        // секундах, потому что круг читает её как срок (`dating_proxy_round.py`).
+        await save({[PING_KEY]: on ? '300' : '0'});
+    }
+
+    const PING_KEY = 'proxy_ping_every';
+
+    // Строка пула — **в одну линию**: адрес подключения своей колонкой, а не
+    // второй строкой под именем. Выходов бывает два десятка, и строка в две
+    // линии удваивает высоту таблицы ради того, на что смотрят изредка.
+    function poolRow(one, seats) {
+        // Мёртвая строка серая целиком: она в списке есть, но работать ею нельзя,
+        // и раздача её не возьмёт. Причина — на месте пинга: иначе «серый»
+        // читается как «выключен человеком», а это разные беды.
+        // ⚠ Три разных «нет», и человек должен различать их с одного взгляда:
+        // выключен человеком, не отвечает сам, жив но страна не отмечена.
+        // Последнее чинится щелчком по чипсу, первые два — нет.
+        const why = !one.is_enabled ? 'выключен в реестре'
+                  : (!one.check_ok ? (one.check_error || 'не отвечает')
+                     : (!one.check_ip ? 'не проверен'
+                        : (one.country_off ? 'страна не отмечена' : '')));
+
+        return `<tr class="${one.live ? '' : 'dead'}">`
+            + `<td class="pxy-pool-name">${esc(one.name)}</td>`
+            + `<td class="pxy-pool-where">${esc(one.scheme)}://${esc(one.host)}:${one.port}</td>`
+            + `<td class="pxy-pool-ip">${esc(one.check_ip || '—')}`
+            // ⚠ Совпал с нашим — выход не скрывает ничего. Метка рядом с самим
+            // адресом: там на него и смотрят.
+            + (one.is_direct
+                ? ' <span class="pxy-warn" title="Тот же адрес, с которого ходит '
+                  + 'сервер: этот выход ничего не скрывает — запрос идёт мимо него '
+                  + 'либо он прозрачный">наш</span>' : '')
+            + '</td>'
+            // ⚠ Страна — **откуда канал выходит на самом деле**, а не что
+            // написано в его имени: заведённый как «UA 193.93.54.238» отвечал
+            // `TR`. Сайт сверяет геолокацию входа с легендой анкеты.
+            + `<td class="pxy-c-cc">`
+            + (one.check_country ? `<span class="pxy-cc">${esc(one.check_country)}</span>`
+                                 : '<span class="pxy-dim">—</span>') + '</td>'
+            + `<td class="pxy-pool-ping">`
+            + (one.live ? pingText(one.check_ms) : `<span class="bad">${esc(why)}</span>`)
+            + '</td>'
+            + `<td class="pxy-c-seats${one.full ? ' full' : ''}">`
+            + (one.live ? `${one.taken} / ${seats}` : '') + '</td>'
+            + '</tr>';
+    }
+
+    // Цвет пинга: плавно от зелёного к красному.
+    //
+    // ⚠ **Шкала логарифмическая, а не линейная.** Пинги живых каналов лежат от
+    // 200 мс до 18 секунд; по прямой шкале всё медленнее секунды слилось бы в
+    // один красный, и разница между 2 и 15 секундами пропала бы — а она и есть
+    // та, по которой канал выбирают.
+    //
+    // Границы грубые намеренно: точнее их не знает никто, а цвет здесь подсказка
+    // «что брать», а не приговор.
+    const PING_FAST_MS = 150;
+    const PING_SLOW_MS = 15000;
+
+    function pingColor(ms) {
+        const span = Math.log(PING_SLOW_MS / PING_FAST_MS);
+        const at = Math.log(Math.max(PING_FAST_MS, Math.min(PING_SLOW_MS, ms)) / PING_FAST_MS);
+
+        // 130° — зелёный, 0° — красный. Светлота 38%, иначе жёлтая середина
+        // теряется на белом фоне.
+        return `hsl(${Math.round(130 * (1 - at / span))}, 72%, 38%)`;
+    }
+
+    function pingText(ms) {
+        if (!ms) return '';
+
+        return `<span style="color:${pingColor(ms)}">${ms} мс</span>`;
+    }
+
+    async function poolCheck() {
+        const button = document.getElementById('poolCheck');
+        button.disabled = true;
+        button.textContent = 'Проверяю…';
+
+        try {
+            const got = (await postData(`${BASE}/api/dating/proxy/check`, {})).result;
+            showNotification(`Проверено ${got.checked}, годных ${got.ok}`,
+                             got.ok === got.checked ? 'success' : 'error');
+        } catch (e) {
+            showNotification('Проверка не прошла: ' + e.message, 'error');
+        }
+
+        await poolLoad();
     }
 
     // Свои настройки — отдельным блоком, последним: они не из реестра, и мешать
@@ -514,10 +1054,17 @@
                 setTab = btn.dataset.setTab;
                 localStorage.setItem(SET_TAB_KEY, setTab);
                 setTabPaint();
+
+                // Пул грузится при первом заходе на свою вкладку: до этого его
+                // панель нарисована пустой, и там нечего показывать.
+                if (setTab === 'proxy' && !_pool.length) poolLoad();
             });
         }
 
         if (!CAN_EDIT) return;
+
+        const proxySwitch = document.getElementById('proxyOnBox');
+        if (proxySwitch) proxySwitch.addEventListener('change', proxyOnSave);
 
         // Набор значений сохраняется сразу по выбору: отдельная кнопка «применить»
         // у селекта из трёх вариантов — лишний шаг, а несохранённый выбор в нём не

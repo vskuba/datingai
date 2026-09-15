@@ -1,24 +1,30 @@
-"""Инвайты: разбор реплики агента и отбор «кого зовём».
+"""Инвайты: разбор шаблона от агента и раздача его по парам.
 
 ⚠ **Наружу сюита не ходит** (`testing.md`): инвайт — это вызов LLM у соседа, а
 отправка ещё и реплика живому человеку в чат. Проверяется то, что и ломается, —
 две чистые функции:
 
-* `_invite` — что взять из ответа агента. Требование к тексту одно и жёсткое:
-  **имя собеседника внутри реплики**. Оно отличает написанное человеку от
-  рассылки, и первая реплика — то место, где это решает, ответят или нет.
-* `_pairs` — кого зовём и от кого. Здесь всё решается у нас, и цена ошибки высока
-  в обе стороны: пропустим — человек не получит приглашения, возьмём лишнего —
-  два «здравствуйте» от двух наших девушек одному мужчине.
+* `_invite` — что взять из ответа агента. Текст теперь **шаблон**: один абзац,
+  свои метки на месте имён и ни одной чужой;
+* `_cards` — кому и от кого. Здесь всё решается у нас, и цена ошибки высока в обе
+  стороны: пропустим — человек не получит приглашения, возьмём лишнего — двое
+  получат **одинаковую** реплику от разных наших девушек.
+
+⚠⚠ **Что изменилось и почему тесты переписаны.** Прежде агента звали на каждую
+пару, а требованием к тексту было имя собеседника внутри реплики. Теперь вызов
+один на весь пул, текст общий, а имя — необязательная метка. Отсюда и новое
+главное правило: **собеседники в пуле уникальны** (см. `TestCards`).
 """
 
 import pytest
 
 import uuid
 
-from src.dating.dating_invite import _pairs
+from src.dating.dating_invite import _cards, _fill
 from src.dating.dating_mail_agent import (DATING_INVITE_LANGUAGE,
-                                          DATING_INVITE_MAX, _invite)
+                                          DATING_INVITE_MAX,
+                                          DATING_INVITE_SLOT_GIRL,
+                                          DATING_INVITE_SLOT_MAN, _invite)
 
 pytestmark = pytest.mark.chat
 
@@ -36,166 +42,261 @@ PEOPLE = [{'uid': '111', 'name': 'Brian'},
           {'uid': '222', 'name': 'Frank'},
           {'uid': '333', 'name': 'Ahmet'}]
 
+MAN_SLOT = f'[[{DATING_INVITE_SLOT_MAN}]]'
+GIRL_SLOT = f'[[{DATING_INVITE_SLOT_GIRL}]]'
+
 
 class TestInviteText:
-    """Что берём из ответа агента."""
+    """Что берём из ответа агента: шаблон, а не готовую реплику."""
 
-    def test_reply_with_the_name_is_taken(self):
-        assert _invite('Brian, давно вы реставрируете мотоциклы?', 'Brian Ritter') \
-               == 'Brian, давно вы реставрируете мотоциклы?'
+    def test_plain_template_is_taken(self):
+        assert _invite('Спорим, ты сейчас улыбнулся?') == 'Спорим, ты сейчас улыбнулся?'
 
-    def test_name_may_stand_anywhere(self):
-        """⚠ Место обращения выбирает модель, а не мы.
+    def test_slot_survives(self):
+        """Метка — то, ради чего шаблон и просят: её заменит подстановка."""
+        assert _invite(f'{MAN_SLOT}, ты всегда так смотришь?', man_slot=True) \
+               == f'{MAN_SLOT}, ты всегда так смотришь?'
 
-        Шаблон с зашитым местом («%s, а вы…») дал бы одну рамку на весь пул, и
-        двадцать реплик подряд читались бы как двадцать копий.
+    def test_curly_and_percent_forms_are_normalised(self):
+        """⚠ Модель пишет метку как привыкла — приводим к своему виду.
+
+        `{companion_name}`, `%companion_name%` и `[[ companion_name ]]` означают
+        одно; спорить об этом в промпте дороже, чем нормализовать здесь. Не
+        приведи мы их — метка уехала бы в чат живому человеку прямо в скобках.
         """
-        assert _invite('Давно катаетесь, Brian?', 'Brian Ritter') \
-               == 'Давно катаетесь, Brian?'
+        assert _invite('{companion_name}, привет', man_slot=True) == f'{MAN_SLOT}, привет'
+        assert _invite('%companion_name%, привет', man_slot=True) == f'{MAN_SLOT}, привет'
+        assert _invite('[[ companion_name ]], привет', man_slot=True) \
+               == f'{MAN_SLOT}, привет'
+
+    def test_unknown_slot_drops_the_template(self):
+        """⚠⚠ Выдуманную метку подставить нечем — она уйдёт в чат в скобках.
+
+        Отбрасываем весь шаблон: следующий заход попросит новый, и это дешевле
+        полусотни испорченных реплик — текст-то один на весь пул.
+        """
+        assert _invite('Привет, [[his_city]] — красивый город.') == ''
+
+    def test_paragraphs_become_one(self):
+        """⚠ Один абзац — требование: в окне чата текст в три абзаца читается
+        как вставленный из документа.
+
+        Переносы **сводим в пробел**, а не режем по первому абзацу: модель охотно
+        разбивает две фразы на две строки, и вторую терять незачем.
+        """
+        assert _invite('Скучно.\n\nРазвлечёшь?') == 'Скучно. Развлечёшь?'
 
     def test_quotes_are_stripped(self):
         """Просили «только текст», а модель подаёт его репликой в кавычках — в
         чате они выглядят цитатой неизвестно кого."""
-        assert _invite('«Давно катаетесь, Brian?»', 'Brian') \
-               == 'Давно катаетесь, Brian?'
-
-    def test_reply_without_the_name_is_dropped(self):
-        """⚠ Имени нет — реплики нет.
-
-        Отбрасываем, а не приписываем имя сами: приписанное встало бы в начало у
-        всех инвайтов подряд, то есть вернуло бы ровно ту рамку, от которой уходим.
-        Человек при этом не теряется: в пул он не лёг, и следующий заход круга
-        возьмёт его заново.
-        """
-        assert _invite('Привет! Как дела?', 'Brian') == ''
+        assert _invite('«Спорим, ты сейчас улыбнулся?»') == 'Спорим, ты сейчас улыбнулся?'
 
     def test_model_reasoning_is_dropped(self):
-        """Рассуждение модели про человека имени в себе не несёт — на этом и
-        отсекается. ⚠ У вопроса в письме защита другая (знак вопроса на конце),
-        и здесь она не годится: инвайт бывает и предложением."""
-        assert _invite('Given the profile, I should ask Brian... no wait.', 'Frank') == ''
+        """Рассуждающие модели обрамляют размышления `<think>…</think>`."""
+        assert _invite('<think>подумаю…</think>Ты опасен, я вижу.') \
+               == 'Ты опасен, я вижу.'
 
-    def test_offer_without_a_question_mark_is_kept(self):
-        """⚠ Знака вопроса **не требуем** — в отличие от вопроса в письме.
+    def test_missing_slot_is_not_a_refusal(self):
+        """⚠ Просили метку, а её нет — текст всё равно годен.
 
-        Инвайт бывает предложением («расскажите, если захочется»), и правило
-        «кончается на ?» отбрасывало бы годные реплики.
+        Реплика без имени остаётся репликой, а отказ стоил бы всего пула: заход
+        один, шаблон один.
         """
-        assert _invite('Frank, расскажите про свою мастерскую, если захочется.',
-                       'Frank') \
-               == 'Frank, расскажите про свою мастерскую, если захочется.'
+        assert _invite('Ты всегда так молчалив?', man_slot=True) \
+               == 'Ты всегда так молчалив?'
 
-    def test_unknown_companion_needs_no_name(self):
-        """Имени в базе нет — проверять нечего, и общая реплика законна: сайт не
-        всегда отдаёт имя, а без инвайта человек остался бы вовсе."""
-        assert _invite('Расскажите про свои увлечения?', '') \
-               == 'Расскажите про свои увлечения?'
+    def test_long_template_is_cut_not_dropped(self):
+        """Длинный текст режем: пустой пул хуже длинной реплики."""
+        got = _invite('А' * (DATING_INVITE_MAX + 100))
 
-    def test_short_name_is_not_checked(self):
-        """⚠ Слова короче трёх букв не проверяем: они нашлись бы в любом тексте по
-        совпадению, и проверка пропускала бы что угодно, изображая работу."""
-        assert _invite('Расскажите про свои увлечения?', 'Li') \
-               == 'Расскажите про свои увлечения?'
+        assert len(got) == DATING_INVITE_MAX
 
-    def test_only_the_first_paragraph_is_taken(self):
-        """Модель охотно поясняет свой выбор, и пояснение уехало бы в чат следом
-        за репликой."""
-        assert _invite('Brian, давно катаетесь?\n\nЯ спросил про мотоциклы, потому '
-                       'что они у него в профиле.', 'Brian') \
-               == 'Brian, давно катаетесь?'
-
-    def test_long_reply_is_cut_not_dropped(self):
-        """Предел держит правило «одна-две фразы» и тогда, когда модель просьбу
-        пропустила. Режем, а не отбрасываем: обрезанная реплика полезнее
-        человека, оставшегося без приглашения."""
-        got = _invite('Brian, ' + 'очень длинная фраза. ' * 100, 'Brian')
-
-        assert got and len(got) == DATING_INVITE_MAX
+    def test_silence_is_empty(self):
+        assert _invite('') == ''
 
 
-class TestPairs:
-    """Кого зовём и от кого."""
+class TestJudge:
+    """⚠⚠ Судья у соседа: панель обязана видеть его вердикт, а не только текст.
 
-    def test_one_invite_per_person(self):
-        """⚠ Настоящая ошибка, поймана живым прогоном.
+    Судья заведён потому, что шаблон уходит полусотне живых людей без единого
+    человеческого взгляда между «модель написала» и «сайт отправил». Прежде
+    негодная реплика портила одну карточку из двадцати; теперь — весь пул.
 
-        У агентства две Дианы (#849 и #850), и первый заход выдал **два
-        приветствия одному и тому же мужчине** — от обеих. Для него это не два
-        знакомства, а агентство, которое выдало себя первой же репликой.
+    Цепочка у соседа: черновик → судья → правка по замечанию → ответ конвертом
+    (`VERDICT` / `WHY` / `TEXT`). Здесь проверяется наша сторона конверта.
+    """
 
-        Правило строже, чем ключ в базе (`(profile_id, uid)`): тот про то, что
-        допустимо в истории, а это — про то, как набирается пул.
+    def test_verdict_yes_passes(self):
+        assert _invite('VERDICT: yes\nWHY: \nTEXT: Спорим, ты сейчас улыбнулся?') \
+               == 'Спорим, ты сейчас улыбнулся?'
+
+    def test_verdict_no_drops_the_text(self):
+        """⚠ Судья забраковал — текста нет, каким бы правдоподобным он ни выглядел.
+
+        Это главное, ради чего конверт и заведён: без вердикта панель видела бы
+        одну строку и доверяла бы ей одинаково в обоих случаях.
         """
-        got = list(_pairs(GIRLS, PEOPLE, set(), set()))
+        assert _invite('VERDICT: no\nWHY: это отказ модели\n'
+                       'TEXT: I cannot help with that request') == ''
 
-        assert len(got) == len(PEOPLE), 'человек получил больше одного инвайта'
+    def test_verdict_fixed_passes(self):
+        """`fixed` — «забраковал, но правка сняла замечание»: законный исход."""
+        assert _invite('VERDICT: fixed\nWHY: было третье лицо\n'
+                       'TEXT: Спорим, ты улыбнулся?') == 'Спорим, ты улыбнулся?'
+
+    def test_text_may_carry_newlines(self):
+        """⚠ `TEXT:` стоит последним намеренно: реплику берём до конца ответа.
+
+        Обрежь мы её по строке — ушла бы половина текста, а с ним и смысл.
+        """
+        assert _invite('VERDICT: yes\nWHY: \nTEXT: Скучно.\nРазвлечёшь?') \
+               == 'Скучно. Развлечёшь?'
+
+    def test_answer_without_the_envelope_still_works(self):
+        """⚠ Конверта может не быть — так отвечает workflow без судьи.
+
+        Стенд, чужая инсталляция, старая версия у соседа: текст берём как есть, а
+        проверки формы работают всё равно.
+        """
+        assert _invite('Спорим, ты сейчас улыбнулся?') == 'Спорим, ты сейчас улыбнулся?'
+
+
+class TestSafetyNet:
+    """Наши проверки поверх судьи: они про форму, он — про смысл.
+
+    ⚠ Обе нужны. Судья пропустил выдуманную метку на живой проверке — форму ловим
+    сами; отказ модели формально безупречен — тут решает судья.
+    """
+
+    def test_model_refusal_is_dropped(self):
+        """⚠⚠ Поймано на живом прогоне первого же дня.
+
+        «I can't help with crafting flirt or pickup messages, but here's a neutral
+        opener: …» — отказ выглядит текстом и уехал бы в чат **всему пулу разом**,
+        вместе с извинением. Прежней версии это почти не грозило: отказ не
+        содержал имени собеседника и отсеивался проверкой имени.
+        """
+        assert _invite("I can't help with crafting flirt messages, but here's a "
+                       'neutral opener: Hi there!') == ''
+
+    def test_apology_is_dropped(self):
+        assert _invite("I'm sorry, but I won't write that.") == ''
+
+    def test_cyrillic_is_dropped_when_latin_is_asked(self):
+        """⚠⚠ Кириллица там, где ждут латиницу, — это **недоставка**.
+
+        Фильтр сайта отклоняет такое молча для нас («Message not delivered.
+        Unacceptable words: …»), и однажды это уже стоило целого пула. Поймано
+        снова живьём: шаг правки читает замечание судьи — оно по-русски, для
+        человека, — и уходит в его язык.
+        """
+        assert _invite('VERDICT: fixed\nWHY: метка\nTEXT: Угадаешь, о чём я подумала?',
+                       language='en') == ''
+
+    def test_cyrillic_is_fine_for_a_cyrillic_site(self):
+        """Язык не латинский — кириллица и есть ожидаемое."""
+        assert _invite('VERDICT: yes\nWHY: \nTEXT: Угадаешь, о чём я подумала?',
+                       language='ru') == 'Угадаешь, о чём я подумала?'
+
+
+class TestFill:
+    """Подстановка имён в шаблон."""
+
+    def test_first_names_only(self):
+        """⚠ В чате обращаются «Brian», а не «Brian Ritter»: фамилия звучит как
+        обращение из документа. То же правило у имени девушки."""
+        got = _fill(f'{GIRL_SLOT} тут, {MAN_SLOT}?',
+                    {'id': 849, 'profile': '{"name": "Diana K."}'},
+                    {'uid': '111', 'name': 'Brian Ritter'})
+
+        assert got == 'Diana тут, Brian?'
+
+    def test_template_without_slots_is_untouched(self):
+        got = _fill('Спорим, ты сейчас улыбнулся?',
+                    {'id': 849, 'profile': '{"name": "Diana"}'},
+                    {'uid': '111', 'name': 'Brian'})
+
+        assert got == 'Спорим, ты сейчас улыбнулся?'
+
+
+class TestCards:
+    """Кому и от кого. Главное правило теперь — уникальность собеседников."""
+
+    def test_one_card_per_person(self):
+        """⚠⚠ **Один человек — одна карточка на весь пул.**
+
+        Текст в пуле общий: отправь его две наши девушки одному мужчине — он
+        получит два одинаковых сообщения от разных незнакомок, то есть увидит
+        агентство. Прежнее правило («один инвайт за заход») ловило ту же беду на
+        двух Дианах, #849 и #850, написавших одному человеку в первом же прогоне.
+        """
+        got = list(_cards(GIRLS, PEOPLE, set(), set()))
+
+        assert len(got) == len(PEOPLE), 'человек получил больше одной карточки'
         assert sorted(person['uid'] for _, person in got) == ['111', '222', '333']
 
-    def test_the_pass_marks_every_girl_not_just_the_chosen_one(self):
-        """⚠ «Один за заход» держит **вызывающий**, и теперь это видно хуже.
+    def test_girls_take_turns(self):
+        """⚠ Очередь по девушкам делит пул поровну.
 
-        Пока занятость считалась по человеку, метка `invited.add(uid)` закрывала
-        его сама собой. Теперь набор — это пары, и пометить надо **все** пары с
-        ним, иначе следующая девушка возьмёт его в том же заходе: две реплики
-        одному мужчине за минуту, то есть ровно та беда с двумя Дианами.
-
-        Проверяем по исходному тексту: подделать заход целиком дороже, чем он
-        стоит, а строка эта — единственное, что правило держит.
+        Бери мы каждый раз первую свободную — весь пул уходил бы от анкеты с
+        меньшим `id`: она выигрывает всегда.
         """
-        import inspect
+        people = [{'uid': str(one), 'name': f'M{one}'} for one in range(1, 10)]
+        got = list(_cards(GIRLS, people, set(), set()))
 
-        from src.dating.dating_invite import dating_invite_make
+        # Девять человек на три анкеты — по три карточки каждой.
+        counts = {}
+        for girl, _ in got:
+            counts[girl['id']] = counts.get(girl['id'], 0) + 1
 
-        code = inspect.getsource(dating_invite_make)
+        assert counts == {849: 3, 850: 3, 861: 3}, counts
 
-        assert "invited.update((one['id'], str(person['uid'])) for one in girls)" in code, \
-            'заход больше не метит всех девушек — человек получит две реплики разом'
+    def test_first_round_gives_each_girl_one(self):
+        """Порядок именно круговой: сперва всем по одной, потом по второй."""
+        people = [{'uid': str(one), 'name': f'M{one}'} for one in range(1, 7)]
+        got = [girl['id'] for girl, _ in _cards(GIRLS, people, set(), set())]
 
-    def test_a_priority_person_is_taken_by_every_free_girl(self):
-        """⚠⚠ **Отметка «Приоритет» сильнее правила «один за заход».**
+        assert sorted(got[:3]) == [849, 850, 861]
+        assert sorted(got[3:]) == [849, 850, 861]
 
-        Пока правило было общим, отмеченный получал одну реплику за проход круга, а
-        следующую — через полчаса, от случайной девушки. Со стороны панели это
-        выглядело как «приоритет не работает»: одно письмо и тишина.
+    def test_taken_person_is_not_given_twice(self):
+        """⚠ Занятость считается **по всему пулу**, а не по заходу.
+
+        Кнопку «Генерировать» жмут поверх непустого пула, и без этого набора
+        второй заход выдал бы тем же людям вторую карточку — с тем же текстом, но
+        от другой девушки.
         """
-        people = [{'uid': '111', 'name': 'Brian', 'priority': True}]
-        got = list(_pairs(GIRLS, people, set(), set()))
+        got = list(_cards(GIRLS, PEOPLE, set(), set(), taken={'222'}))
 
-        assert len(got) == len(GIRLS), 'приоритетного взяла не каждая девушка'
-        assert sorted(girl['id'] for girl, _ in got) == sorted(g['id'] for g in GIRLS)
+        assert sorted(person['uid'] for _, person in got) == ['111', '333']
 
-    def test_a_priority_person_still_obeys_his_own_pairs(self):
-        """Свой предел у каждой девушки остаётся: занятая пара выпадает."""
-        people = [{'uid': '111', 'name': 'Brian', 'priority': True}]
-        got = list(_pairs(GIRLS, people, {(849, '111')}, set()))
+    def test_taken_is_filled_as_we_go(self):
+        """Набор занятых пополняется на ходу — им же вызывающий и пользуется."""
+        taken = set()
+        list(_cards(GIRLS, PEOPLE, set(), set(), taken=taken))
 
-        assert sorted(girl['id'] for girl, _ in got) == [850, 861]
+        assert taken == {'111', '222', '333'}
 
-    def test_an_ordinary_person_still_gets_one(self):
-        """⚠ Для прочих правило не тронуто: две наши девушки, написавшие разом,
-        выдают агентство первой же репликой."""
-        people = [{'uid': '111', 'name': 'Brian'}]
+    def test_priority_goes_first_but_once(self):
+        """⚠ **Приоритет — теперь порядок, а не число реплик.**
 
-        assert len(list(_pairs(GIRLS, people, set(), set()))) == 1
+        Прежде отмеченному писали все свободные девушки; с общим шаблоном это
+        пять одинаковых сообщений подряд одному человеку. Он уходит первым, но
+        карточку получает одну.
+        """
+        people = [{'uid': '111', 'name': 'Brian'},
+                  {'uid': '999', 'name': 'Mark', 'priority': True}]
+        got = list(_cards(GIRLS, people, set(), set()))
 
-    def test_the_pass_marks_only_the_used_pair_for_a_priority_one(self):
-        """⚠ Иначе первая же реплика закрыла бы его для остальных — и «приоритет»
-        снова означал бы одну реплику за заход."""
-        import inspect
-
-        from src.dating.dating_invite import dating_invite_make
-
-        code = inspect.getsource(dating_invite_make)
-
-        assert "if person.get('priority'):" in code
-        assert "invited.add((girl['id'], str(person['uid'])))" in code
+        assert got[0][1]['uid'] == '999', 'приоритетный ушёл не первым'
+        assert [person['uid'] for _, person in got].count('999') == 1
 
     def test_a_busy_pair_is_skipped(self):
         """Этой девушке звать его рано — черновик в пуле либо не вышла пауза."""
         busy = {(girl['id'], '222') for girl in GIRLS}
-        got = list(_pairs(GIRLS, PEOPLE, busy, set()))
+        got = list(_cards(GIRLS, PEOPLE, busy, set()))
 
-        assert [person['uid'] for _, person in got] == ['111', '333']
+        assert sorted(person['uid'] for _, person in got) == ['111', '333']
 
     def test_a_busy_pair_does_not_take_him_from_the_others(self):
         """⚠⚠ **Предел у каждой девушки свой.**
@@ -204,48 +305,53 @@ class TestPairs:
         его для всех. Пять свободных девушек упирались в счёт, набранный тремя
         другими, — поймано на приоритетном собеседнике.
         """
-        got = list(_pairs(GIRLS, PEOPLE, {(849, '222')}, set()))
-        who = {person['uid']: girl['id'] for girl, person in got}
+        got = {person['uid']: girl['id'] for girl, person in
+               _cards(GIRLS, PEOPLE, {(849, '222')}, set())}
 
-        assert who.get('222') in (850, 861), who
-        assert sorted(who) == ['111', '222', '333']
+        assert sorted(got) == ['111', '222', '333']
+        assert got['222'] in (850, 861), got
 
     def test_girls_who_talked_are_not_chosen(self):
         """⚠ Свободные — те, кто с ним не говорил.
 
-        Выбирай мы наугад из всех, случай раз за разом выпадал бы на анкету, у
-        которой с ним уже переписка, и человек оставался без инвайта, хотя другая
-        девушка была свободна.
+        Иначе случай раз за разом выпадал бы на анкету, у которой с ним уже
+        переписка, и человек оставался без инвайта, хотя другая была свободна.
         """
-        # С «111» говорили все, кроме #861.
         talked = {(849, '111'), (850, '111')}
         got = {person['uid']: girl['id'] for girl, person in
-               _pairs(GIRLS, PEOPLE, set(), talked)}
+               _cards(GIRLS, PEOPLE, set(), talked)}
 
         assert got['111'] == 861, 'выбрана анкета, у которой с ним переписка'
 
     def test_person_nobody_is_free_for_is_skipped(self):
         """Со всеми нашими он уже говорит — звать некому, и это не ошибка."""
         talked = {(girl['id'], '111') for girl in GIRLS}
-        got = list(_pairs(GIRLS, PEOPLE, set(), talked))
+        got = list(_cards(GIRLS, PEOPLE, set(), talked))
 
         assert '111' not in [person['uid'] for _, person in got]
 
+    def test_blocked_pair_is_skipped(self):
+        """Закрылся от анкеты — пишет другая: запрет отнимает пару, не человека."""
+        got = {person['uid']: girl['id'] for girl, person in
+               _cards(GIRLS, PEOPLE, set(), set(), blocked={(849, '111'), (850, '111')})}
+
+        assert got['111'] == 861
+
     def test_empty_uid_is_not_a_person(self):
         """Пустой номер из ленты — мусор, а не собеседник."""
-        got = list(_pairs(GIRLS, [{'uid': '', 'name': 'X'}, PEOPLE[0]], set(), set()))
+        got = list(_cards(GIRLS, [{'uid': '', 'name': 'X'}, PEOPLE[0]], set(), set()))
 
         assert [person['uid'] for _, person in got] == ['111']
 
-    def test_order_follows_the_feed(self):
-        """⚠ Порядок — тот, в каком пришла лента (приоритетные первыми).
+    def test_it_ends_when_nobody_is_left(self):
+        """⚠ Обход конечен: круг без единой выдачи заканчивает набор.
 
-        Потолок захода отрезает хвост, и отрезать он должен **тех, до кого не
-        дошли**, а не тех, кого лента поставила вперёд.
+        Генератор крутит девушек по кругу — без этого условия он крутился бы
+        вечно, а вызывающий ждал бы, пока наберётся пул, которому неоткуда взяться.
         """
-        got = [person['uid'] for _, person in _pairs(GIRLS, PEOPLE, set(), set())]
+        got = list(_cards(GIRLS, PEOPLE, set(), set()))
 
-        assert got == ['111', '222', '333']
+        assert len(got) == 3
 
 
 class TestInviteLanguage:
@@ -279,15 +385,30 @@ class TestInviteLanguage:
         assert (await _asked_with(language='')).get('user_language') \
                == DATING_INVITE_LANGUAGE
 
-    async def test_companion_name_goes_separately(self, monkeypatch):
-        """⚠ Имя — своей переменной, а не только внутри карточки: карточку модель
-        читает целиком и обращение из неё берёт не всегда."""
+    async def test_slots_are_asked_by_us(self, monkeypatch):
+        """⚠ Какие метки ставить — говорим мы, а не решает модель.
+
+        «Вставляй имя изредка» она понимает как «вставляй всегда»: вероятность у
+        неё стилистическая. Жребий (5% и 30%) бросает панель, а сюда едет прямое
+        указание.
+        """
+        got = await _asked_with(language='en', man_slot=True)
+
+        assert DATING_INVITE_SLOT_MAN in got.get('invite_slots', '')
+
+    async def test_no_cards_go_to_the_agent(self, monkeypatch):
+        """⚠⚠ Ни карточки девушки, ни карточки мужчины: шаблон общий.
+
+        Просить персонализацию, а потом раздать её пятидесяти разным людям —
+        обман самих себя, и стоит он вызова LLM на каждого.
+        """
         got = await _asked_with(language='en')
 
-        assert got.get('invite_companion_name') == 'Brian Ritter'
+        assert 'girl_card' not in got and 'companion_card' not in got
 
 
-async def _asked_with(language: str) -> dict:
+async def _asked_with(language: str, girl_slot: bool = False,
+                      man_slot: bool = False) -> dict:
     """Какие переменные ушли бы агенту. Транспорт подменён: проверяется вызов."""
     from src.dating import dating_mail_agent as agent
 
@@ -299,15 +420,13 @@ async def _asked_with(language: str) -> dict:
     async def _ask(agent_id, question, companion_id=1, variables=None):
         sent.update(variables or {})
 
-        return 'Brian, давно катаетесь?'
+        return 'Спорим, ты сейчас улыбнулся?'
 
     real_id, real_ask = agent._agent_id, agent.rhapsody_api_chat_ask
     agent._agent_id = _agent_id
     agent.rhapsody_api_chat_ask = _ask
     try:
-        await agent.dating_invite_write(
-            {'id': 849, 'site_id': 343, 'login': 'd@e.com'}, 343,
-            {'uid': '111', 'name': 'Brian Ritter'}, language)
+        await agent.dating_invite_template(343, language, girl_slot, man_slot)
     finally:
         agent._agent_id = real_id
         agent.rhapsody_api_chat_ask = real_ask
@@ -541,38 +660,80 @@ class TestRoundReadsTheClock:
             'сдвиг часового пояса снова передан как минуты суток'
 
 
-class TestAlienNameIsCheap:
-    """Имя чужой письменности отсекается **до** агента, а не после.
+class TestAlienName:
+    """Нелатинское имя мешает, **только когда шаблон его просит**.
 
-    ⚠ Реплика без обращения всё равно будет отброшена, но узнать об этом ценой
-    вызова LLM — плата ни за что, и платится она каждый заход: человек в сети,
-    значит попадает в ленту снова.
+    ⚠⚠ **Это изменение к лучшему, и оно неожиданное.** Прежде такая пара
+    отбрасывалась всегда: агент писал по-английски и `許萊納` в реплику не
+    вставлял — проверено дважды на живой ленте Ladadate, исход один. Теперь имя
+    нужно лишь трети шаблонов, и в остальных случаях человек остаётся в работе.
     """
 
-    async def test_alien_name_never_reaches_the_agent(self, monkeypatch):
-        from src.dating import dating_invite
+    async def test_alien_name_is_skipped_when_the_slot_is_there(self, monkeypatch):
+        got = await _made_with(monkeypatch, f'{MAN_SLOT}, привет')
 
-        asked = []
-
-        async def _body(girl, person, site_id, language=''):
-            asked.append(str(person.get('name')))
-
-            return 'Hi!'
-
-        monkeypatch.setattr(dating_invite, '_body', _body)
-        monkeypatch.setattr(dating_invite, '_girls', _answer([{'id': 1}]))
-        monkeypatch.setattr(dating_invite, '_people', _answer(
-            [{'uid': 'a1', 'name': '許萊納'}, {'uid': 'a2', 'name': 'Brian'}]))
-        monkeypatch.setattr(dating_invite, '_invited', _answer(set()))
-        monkeypatch.setattr(dating_invite, '_talked', _answer(set()))
-        monkeypatch.setattr(dating_invite, '_language', _answer('en'))
-        monkeypatch.setattr(dating_invite, '_put', _nothing())
-
-        got = await dating_invite.dating_invite_make(STAND_SITE, 5)
-
-        assert asked == ['Brian'], f'агента позвали зря: {asked}'
         assert got['made'] == 1 and got['skipped'] == 1
         assert any('латиниц' in one for one in got['reasons']), got['reasons']
+
+    async def test_alien_name_is_fine_without_the_slot(self, monkeypatch):
+        """Без метки имя не нужно вовсе — карточка делается обоим."""
+        got = await _made_with(monkeypatch, 'Спорим, ты сейчас улыбнулся?')
+
+        assert got['made'] == 2 and got['skipped'] == 0
+
+
+class TestOneCallPerPool:
+    """⚠⚠ Вызов агента — **один на заход**, сколько бы карточек ни вышло.
+
+    Ради этого всё и делалось: пул в полсотни карточек стоил полусотни вызовов
+    LLM и минут ожидания у нажатой кнопки.
+    """
+
+    async def test_agent_is_asked_once(self, monkeypatch):
+        calls = []
+
+        async def _template(site_id, language, girl_slot=False, man_slot=False):
+            calls.append(site_id)
+
+            return 'Спорим, ты сейчас улыбнулся?'
+
+        monkeypatch.setattr('src.dating.dating_invite.dating_invite_template', _template)
+        got = await _made_with(monkeypatch, None, people=[
+            {'uid': str(one), 'name': f'M{one}'} for one in range(1, 8)])
+
+        assert got['made'] == 7, got
+        assert len(calls) == 1, f'агента позвали {len(calls)} раз вместо одного'
+
+    async def test_silent_agent_makes_nothing(self, monkeypatch):
+        """Шаблона нет — карточек нет, и это не отказ: следующий заход попросит
+        новый."""
+        got = await _made_with(monkeypatch, '')
+
+        assert got['made'] == 0
+        assert got['reasons'], 'причина простоя не названа'
+
+
+async def _made_with(monkeypatch, template, people=None) -> dict:
+    """Заход набора с подменённым агентом и базой. Возвращает его итог."""
+    from src.dating import dating_invite
+
+    if template is not None:
+        async def _template(site_id, language, girl_slot=False, man_slot=False):
+            return template
+
+        monkeypatch.setattr(dating_invite, 'dating_invite_template', _template)
+
+    monkeypatch.setattr(dating_invite, '_girls', _answer([{'id': 1, 'profile': '{}'}]))
+    monkeypatch.setattr(dating_invite, '_people', _answer(people or [
+        {'uid': 'a1', 'name': '許萊納'}, {'uid': 'a2', 'name': 'Brian'}]))
+    monkeypatch.setattr(dating_invite, '_invited', _answer(set()))
+    monkeypatch.setattr(dating_invite, '_talked', _answer(set()))
+    monkeypatch.setattr(dating_invite, '_pool_uids', _answer(set()))
+    monkeypatch.setattr(dating_invite, 'dating_block_pairs', _answer(set()))
+    monkeypatch.setattr(dating_invite, '_language', _answer('en'))
+    monkeypatch.setattr(dating_invite, '_put', _nothing())
+
+    return await dating_invite.dating_invite_make(STAND_SITE, 50)
 
 
 def _answer(value):

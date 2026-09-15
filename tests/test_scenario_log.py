@@ -40,8 +40,15 @@ def written(monkeypatch):
 
 
 def _run(returns=None, fails=''):
-    """Подменённый прогон у соседа: отдаёт ответ или бросает отказ связи."""
-    async def _call(scenario_id, session_id, variables, secrets, keep_session=True):
+    """Подменённый прогон у соседа: отдаёт ответ или бросает отказ связи.
+
+    ⚠ **`**kwargs` — не лень, а защита от ложной поломки.** Подмена повторяет
+    сигнатуру чужой функции, и всякий новый её параметр (так было с `proxy_id`)
+    ронял бы здесь одиннадцать тестов разом — с `TypeError` вместо той ошибки,
+    ради которой тест написан. Проверяют они журнал прогонов, а не форму вызова:
+    сузив подмену, мы стерегли бы не то.
+    """
+    async def _call(scenario_id, session_id, variables, secrets, keep_session=True, **kwargs):
         if fails:
             raise RhapsodyError(fails)
 
@@ -71,7 +78,9 @@ class TestRunIsRecorded:
         """
         sent = []
 
-        async def _slow(scenario_id, session_id, variables, secrets, keep_session=True):
+        # `**kwargs` по той же причине, что у `_run` выше: подмена не должна
+        # падать от нового параметра чужой функции.
+        async def _slow(scenario_id, session_id, variables, secrets, keep_session=True, **kwargs):
             # К этому моменту отметка обязана уже лежать в журнале.
             sent.append([row['status'] for row in written])
 

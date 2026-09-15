@@ -69,7 +69,8 @@ DATING_SCENARIO_NAME_MAX = 200
 
 async def dating_scenario_run(scenario: dict, site_id: int, profile_id: int = 0,
                               session_id: str = '', variables: dict = None,
-                              secrets: dict = None, keep_session: bool = True) -> dict:
+                              secrets: dict = None, keep_session: bool = True,
+                              proxy_id: int = 0) -> dict:
     """Гонит сценарий и записывает прогон в журнал.
 
     Args:
@@ -81,6 +82,11 @@ async def dating_scenario_run(scenario: dict, site_id: int, profile_id: int = 0,
         variables: подстановки; уходят соседу и попадают в его журнал.
         secrets: то же, но в журнал соседа не попадает — там пароли.
         keep_session: оставить вкладку живой после прогона.
+        proxy_id: выход анкеты для временной вкладки. ⚠ **Нужен всякий раз, когда
+            сценарий логинится под анкетой, а вкладки ещё нет**: иначе вход уйдёт
+            с общего адреса сервера, и лимит сайта сложится на нём
+            (`.claude/docs/proxy.md`). Ноль — работа по сайту целиком (импорт,
+            выгрузка): анкеты у неё нет, и выход брать не у кого.
 
     Returns:
         dict: ответ соседа как есть — `status`, `step_no`, `error`, `extract`.
@@ -101,7 +107,8 @@ async def dating_scenario_run(scenario: dict, site_id: int, profile_id: int = 0,
 
     try:
         run = await rhapsody_api_scenario_run(scenario_id, session_id, variables or {},
-                                              secrets or {}, keep_session=keep_session)
+                                              secrets or {}, keep_session=keep_session,
+                                              proxy_id=int(proxy_id or 0))
     except RhapsodyError as e:
         # Сосед не ответил — прогона не было вовсе. Записываем это как отказ на
         # шаге 0: сценарий не начинался, и приписывать ему шаг было бы враньём.

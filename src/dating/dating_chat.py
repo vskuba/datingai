@@ -25,11 +25,13 @@ import json
 
 import websockets
 
+from http_.http_proxy import http_proxy_ws_url
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_feed import dating_feed_write
 from src.dating.dating_log import dating_log_message_in
+from src.dating.dating_proxy import dating_proxy_url
 from src.dating.site.site_registry import site_registry_chat
 
 # Сколько собеседников перечисляем в запросе истории. Сервер принимает список, но
@@ -71,8 +73,13 @@ async def dating_chat_listen(profile: dict, seconds: float = 0,
     deadline = asyncio.get_event_loop().time() + seconds if seconds else None
 
     try:
+        # ⚠ **Сокет идёт тем же выходом, что и вход.** Сайт считает учётки по
+        # внешнему адресу, и сокет с другого IP для него — вторая учётка на ту же
+        # анкету. `proxy=None` (выхода нет) значит прямой выход: разбираться, можно
+        # ли так, — дело вызывающего, здесь мы лишь не подменяем адрес молча.
         async with websockets.connect(url, open_timeout=DATING_CHAT_HELLO_TIMEOUT,
                                       subprotocols=[site.subprotocol()],
+                                      proxy=http_proxy_ws_url(await dating_proxy_url(profile)) or None,
                                       ping_interval=20) as socket:
             while True:
                 left = DATING_CHAT_IDLE_MAX

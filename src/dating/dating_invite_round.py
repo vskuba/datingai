@@ -34,12 +34,18 @@
 круг набирал бы пул каждую минуту: пятьсот сорок заходов вместо восемнадцати, и
 каждый стоит вызовов LLM на человека.
 
-## ⚠ Пул — запас, а не поток
+## ⚠⚠ Пул набирается целиком и только пустой
 
-Круг добирает пул, **пока в нём не станет `invite_pool_max` неотправленных**
-(обычно 20), и на этом встаёт. Инвайты ждут человека, а онлайн меняется: сотня
-приглашений успеет устареть раньше, чем до неё дойдёт очередь — люди уйдут с сайта,
-а реплика про их занятия останется.
+Круг **не добирает** неполный пул: он ждёт, пока уйдёт последняя карточка, и тогда
+берёт у агента новый шаблон и раскладывает его на весь пул (`invite_pool_max`).
+
+Так устроено потому, что шаблон один на заход. Доложи круг десять карточек к сорока
+прежним — в пуле лежали бы два разных текста вперемешку, и человек, читающий его
+сверху вниз, видел бы то одну реплику, то другую без всякого правила.
+
+⚠ **Застрявшие с ошибкой карточки в счёт не идут.** Отправитель их не берёт (их
+дошлёт человек кнопкой), и одна такая строка иначе остановила бы инвайты насовсем:
+пул никогда не стал бы пустым.
 
 ⚠ **Когда набирали — помним в Redis**, а не в памяти процесса: смена держателя
 перезапускается (свой срок, деплой, падение), и после каждого перезапуска пул
@@ -59,9 +65,7 @@ from redis_.redis_ import redis_conn_get
 
 from src.dating.dating_feed import dating_feed_write
 from src.dating.dating_pool import dating_pool_sweep, dating_pool_sweep_away
-from src.dating.dating_invite import (DATING_INVITE_BATCH_DEFAULT,
-                                      DATING_INVITE_BATCH_MAX,
-                                      DATING_INVITE_POOL_DEFAULT,
+from src.dating.dating_invite import (DATING_INVITE_POOL_DEFAULT,
                                       DatingInviteError, dating_invite_make,
                                       dating_invite_pool_left)
 from src.dating.dating_json import dating_json_load
@@ -129,13 +133,21 @@ async def dating_invite_round_run(offset: int = 0) -> dict:
         # держит. Без этой строки пул зарастал: 50 черновиков, годных 27.
         await dating_pool_sweep_away(site_id)
 
-        left = await _pool_max(site_id) - await dating_invite_pool_left(site_id)
-        if left <= 0:
+        # ⚠⚠ **Набираем только пустой пул, а не добираем неполный.** Шаблон один
+        # на заход: доложи мы десять карточек к сорока прежним, в пуле оказались
+        # бы два текста вперемешку — и человек, читая его сверху вниз, видел бы то
+        # одну реплику, то другую без всякого правила. Пул кончился — берём новый
+        # шаблон и раскладываем его целиком.
+        #
+        # ⚠ Строки с прежней ошибкой не в счёт: отправитель их не берёт (их
+        # дошлёт человек), и одна такая застрявшая карточка иначе остановила бы
+        # инвайты навсегда.
+        if await dating_invite_pool_left(site_id, ready_only=True):
             continue
 
         ran += 1
         try:
-            got = await dating_invite_make(site_id, min(left, await _batch(site_id)))
+            got = await dating_invite_make(site_id, await _pool_max(site_id))
         except DatingInviteError as e:
             logger_info(f'[dating] инвайты сайта #{site_id}: {e}')
             continue
@@ -191,11 +203,6 @@ async def _every(site_id: int) -> int:
     """Как часто добирать пул внутри смены, в секундах."""
     return await _seconds(site_id, DATING_INVITE_EVERY_SETTING)
 
-
-async def _batch(site_id: int) -> int:
-    """Сколько пар пробуем за заход."""
-    return min(await _seconds(site_id, 'invite_batch') or DATING_INVITE_BATCH_DEFAULT,
-               DATING_INVITE_BATCH_MAX)
 
 
 async def _pool_max(site_id: int) -> int:

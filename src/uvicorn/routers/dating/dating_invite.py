@@ -51,12 +51,13 @@ DATING_INVITE_LIMIT = 300
 
 
 class DatingInviteGenerate(BaseModel):
-    """Повод набрать пул. ⚠ Шаблонов здесь нет — их у инвайта не бывает."""
+    """Повод набрать пул: один шаблон от агента, карточки — подстановкой."""
 
     site_id: int = Field(..., description='Сайт-закладка')
     limit: int = Field(DATING_INVITE_BATCH_DEFAULT, ge=1,
                        le=DATING_INVITE_BATCH_MAX,
-                       description='Сколько пар пробуем за это нажатие')
+                       description='Сколько карточек сделать за это нажатие. '
+                                   '⚠ Не число вызовов LLM: вызов один')
     profile_id: int = Field(0, description='Звать только от этой анкеты. '
                                           'Ноль — от всех включённых')
     first_uid: str = Field('', max_length=32,
