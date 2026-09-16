@@ -40,7 +40,8 @@ Cookie берутся из `dating_site.panel_state`, а живость держ
 from html.parser import HTMLParser
 
 import time
-from urllib.parse import urlencode
+
+import httpx
 
 from logging_.logging_ import logger_info
 
@@ -102,7 +103,7 @@ async def dating_panel_fetch_html(site_id: int, path: str, params: dict = None) 
                                   follow_redirects=False,
                                   timeout=DATING_PANEL_FETCH_TIMEOUT)
     except Exception as e:
-        await _note(site_id, path, params, 0,
+        await _note(site_id, base, path, params, 0,
                     f'панель не ответила: {type(e).__name__}: {e}', started)
 
         raise DatingPanelFetchError(f'панель не ответила: {type(e).__name__}: {e}')
@@ -113,18 +114,18 @@ async def dating_panel_fetch_html(site_id: int, path: str, params: dict = None) 
     # тогда, когда сессию не признала. По коду `302` этого не видно, поэтому исход
     # в журнал пишем разобранным.
     if answer.status_code in (301, 302, 303, 307, 308):
-        await _note(site_id, path, params, answer.status_code,
+        await _note(site_id, base, path, params, answer.status_code,
                     'панель увела на вход: сессия не признана', started)
 
         raise DatingPanelFetchError('панель увела на вход: сессия не признана')
 
     if answer.status_code != 200:
-        await _note(site_id, path, params, answer.status_code,
+        await _note(site_id, base, path, params, answer.status_code,
                     f'панель ответила {answer.status_code}', started)
 
         raise DatingPanelFetchError(f'панель ответила {answer.status_code}')
 
-    await _note(site_id, path, params, answer.status_code, '', started)
+    await _note(site_id, base, path, params, answer.status_code, '', started)
 
     return answer.text
 
@@ -228,27 +229,34 @@ class _Table(HTMLParser):
             self._cell['ссылка'] += data
 
 
-async def _note(site_id: int, path: str, params: dict, status: int, error: str,
-                started: float) -> None:
+async def _note(site_id: int, base: str, path: str, params: dict, status: int,
+                error: str, started: float) -> None:
     """Строка в журнал запросов. Панель — дверь **сайта**, а не анкеты.
 
     ⚠ Поэтому `profile_id` здесь ноль: сессию панели держит сайт целиком
     (`dating_panel.py`), и приписать поход какой-то одной девушке было бы
     неправдой — в панели видны все.
 
-    ⚠ **Путь пишем тот, что ушёл на самом деле** — со слешем и со строкой
-    запроса. Вызывающие передают его без ведущего слеша (`userchatmessages`:
-    адрес собирается от корня панели), и в журнал он попадал в этом же виде —
-    `GET userchatmessages`. Человек читает это как оборванную строку, а даты, по
-    которым панель и спрашивают, пропадали вовсе.
+    ⚠⚠ **Путь пишем от корня сайта, а не от корня панели.** Вызывающие передают
+    его относительным (`userchatmessages`), потому что адрес собирается от корня
+    панели (`https://ladadate.com/partner/agency`). Запиши мы этот кусок как есть —
+    в журнале стоит `/userchatmessages`, а на сайт ушло
+    `/partner/agency/userchatmessages`: путь, которого на сайте нет. Человек по
+    нему ничего не найдёт и не поймёт, в какую панель мы вообще стучимся.
+
+    Собираем ровно то, что ушло: корень панели плюс путь плюс строка запроса, и
+    отрезаем адрес сайта — он один на все строки и в каждой был бы шумом.
     """
     from src.dating.dating_request import (DATING_REQUEST_PANEL, dating_request_ms,
                                            dating_request_write)
 
-    shown = '/' + str(path or '').lstrip('/')
+    url = httpx.URL(f"{str(base or '').rstrip('/')}/{str(path or '').lstrip('/')}")
     if params:
-        shown += '?' + urlencode({key: value for key, value in params.items()
-                                  if value not in (None, '')})
+        url = url.copy_merge_params({key: value for key, value in params.items()
+                                     if value not in (None, '')})
+
+    # `raw_path` — путь со строкой запроса и без адреса сайта, ровно как в запросе.
+    shown = url.raw_path.decode('utf-8', 'replace')
 
     await dating_request_write(
         door=DATING_REQUEST_PANEL, profile_id=0, site_id=int(site_id),

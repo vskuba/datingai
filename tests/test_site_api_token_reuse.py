@@ -267,3 +267,64 @@ class TestPickProfile:
         got = await dating_people._site_profile(SITE)
 
         assert got['id'] == 11
+
+
+class TestRedisGivesBytes:
+    """⚠⚠ Живой Redis отдаёт **байты**, и подделка обязана вести себя так же.
+
+    **Здесь сюита была слепа, и это стоило недели простоя.** Клиент Redis заведён
+    без `decode_responses`, то есть `get` возвращает `bytes`. Прежний код читал их
+    через `str()` — а `str(b"eyJhbGci…")` даёт питоновское представление,
+    `b'eyJhbGci…'`, вместе с буквой `b` и кавычками.
+
+    Токен от этого становился негодным, сайт отвечал
+    `401 IDX12709: CanReadToken() returned false`, и панель **входила заново на
+    каждый запрос** вместо одного входа в 12 часов. Сайт счёл это перебором
+    паролей и закрыл наш адрес.
+
+    Тесты выше этого не ловили: их поддельный Redis отдавал `str`. Поэтому здесь
+    он отдаёт байты — как настоящий.
+    """
+
+    @pytest.fixture
+    def redis_bytes(self, monkeypatch):
+        """Redis, отдающий байты. Ровно как живой."""
+        class _Bytes(_Redis):
+            def get(self, key):
+                value = self.store.get(key)
+
+                return value.encode() if isinstance(value, str) else value
+
+        fake = _Bytes()
+        monkeypatch.setattr(dating_site_api, 'redis_conn_get', lambda: fake)
+
+        return fake
+
+    @pytest.mark.asyncio
+    async def test_a_cached_token_still_works(self, site, redis_bytes):
+        """Токен из байтов уходит на сайт **чистым**, без `b'…'`."""
+        redis_bytes.set(DATING_SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']),
+                        'eyJhbGci.payload.sig')
+
+        await dating_site_api_call(PROFILE, BASE, 'secret', '/users/online')
+
+        assert site['login'] == 0, 'вошли заново при живом токене'
+        assert site['tokens'] == ['eyJhbGci.payload.sig'], site['tokens']
+
+    @pytest.mark.asyncio
+    async def test_ten_calls_still_cost_one_login(self, site, redis_bytes):
+        """⚠ Тот же счёт, что и с текстовым Redis: десять заходов — один вход.
+
+        Сломайся чтение — здесь было бы десять входов, и это ровно та картина,
+        которую живой журнал показал: `login 200 → 401 → login 200` на каждом
+        круге.
+        """
+        for _ in range(10):
+            await dating_site_api_call(PROFILE, BASE, 'secret', '/users/online')
+
+        assert site['login'] == 1, f'входов {site["login"]} вместо одного'
+
+    def test_has_token_reads_bytes_too(self, redis_bytes):
+        redis_bytes.set(DATING_SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']), 'live')
+
+        assert dating_site_api_has_token(PROFILE['id']) is True

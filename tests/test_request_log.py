@@ -199,23 +199,32 @@ class TestPathIsTheRealOne:
     """
 
     @pytest.mark.asyncio
-    async def test_the_panel_path_keeps_the_slash_and_query(self, written):
+    async def test_the_panel_path_is_the_full_one(self, written):
+        """⚠⚠ Путь **от корня сайта**, а не от корня панели.
+
+        Вызывающие передают его относительным (`userchatmessages`), потому что
+        адрес собирается от корня панели. Запиши мы этот кусок как есть — в
+        журнале стоит `/userchatmessages`, а на сайт ушло
+        `/partner/agency/userchatmessages`: путь, которого на сайте нет вовсе.
+        """
         from src.dating import dating_panel_fetch
 
-        await dating_panel_fetch._note(SITE, 'userchatmessages',
-                                       {'AccountId': 0, 'DateFrom': '14.09.2026'},
-                                       200, '', time.monotonic())
+        await dating_panel_fetch._note(
+            SITE, 'https://ladadate.com/partner/agency', 'userchatmessages',
+            {'AccountId': 0, 'DateFrom': '14.09.2026'}, 200, '', time.monotonic())
 
-        assert written[0]['path'].startswith('/userchatmessages?'), written[0]['path']
+        assert written[0]['path'].startswith('/partner/agency/userchatmessages?'), \
+            written[0]['path']
         assert 'DateFrom=14.09.2026' in written[0]['path']
 
     @pytest.mark.asyncio
     async def test_empty_params_do_not_leave_a_dangling_question_mark(self, written):
         from src.dating import dating_panel_fetch
 
-        await dating_panel_fetch._note(SITE, '/page', None, 200, '', time.monotonic())
+        await dating_panel_fetch._note(SITE, 'https://x.test/root', '/page', None,
+                                       200, '', time.monotonic())
 
-        assert written[0]['path'] == '/page'
+        assert written[0]['path'] == '/root/page'
 
 
 class TestNotEveryFailureIsARequest:

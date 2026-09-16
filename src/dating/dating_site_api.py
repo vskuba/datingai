@@ -46,7 +46,7 @@ import httpx
 
 from http_.http_pool import http_pool_transport
 from logging_.logging_ import logger_info
-from redis_.redis_ import redis_conn_get
+from redis_.redis_ import redis_conn_get, redis_text
 
 from src.dating.dating_proxy import dating_proxy_url
 
@@ -403,8 +403,8 @@ def dating_site_api_fail_clear(site_id: int = 0, profile_id: int = 0) -> None:
 def _fail_kind(profile_id: int) -> str:
     """Каким был прошлый отказ: `limit` — сайт закрыл адрес, `fail` — прочее."""
     try:
-        raw = str(redis_conn_get().get(
-            DATING_SITE_API_FAIL_KEY.format(profile_id=profile_id)) or '')
+        raw = redis_text(redis_conn_get().get(
+            DATING_SITE_API_FAIL_KEY.format(profile_id=profile_id)))
     except Exception:
         return DATING_SITE_API_FAIL_KIND_OTHER
 
@@ -419,7 +419,7 @@ def _fail_wait(raw) -> int:
     значило бы потерять паузу ровно тогда, когда она нужнее всего.
     """
     try:
-        return int(str(raw or '').split(':')[0] or 0)
+        return int(redis_text(raw).split(':')[0] or 0)
     except ValueError:
         return 0
 
@@ -656,7 +656,21 @@ def _refusal(path: str, answer: httpx.Response) -> str:
 
 
 def _token_get(profile_id: int) -> str:
-    """Токен анкеты из Redis. Сбой Redis — не беда: войдём заново."""
+    """Токен анкеты из Redis. Сбой Redis — не беда: войдём заново.
+
+    ⚠⚠ **Через `redis_text`, а не `str()`, и это не придирка.** Redis отдаёт
+    **байты**; `str(b"eyJhbGci…")` даёт питоновское представление — `b'eyJhbGci…'`,
+    вместе с буквой `b` и кавычками. Сайт на такой токен отвечает
+    `401 IDX12709: CanReadToken() returned false`, кэш перестаёт работать целиком,
+    и вход идёт **на каждый запрос** вместо одного в 12 часов.
+
+    Так и случилось: сайт счёл это перебором паролей и закрыл наш адрес на неделю.
+    Причину искали в паролях и в кругах, а она была в одной этой строке.
+
+    ⚠ Поймать сюитой было нельзя: поддельный Redis отдаёт `str`, как и положено
+    подделке. Видно только на живом — по паре строк «login 200 → 401 → login 200»
+    в журнале запросов.
+    """
     try:
         raw = redis_conn_get().get(DATING_SITE_API_TOKEN_KEY.format(profile_id=profile_id))
     except Exception as e:
@@ -664,7 +678,7 @@ def _token_get(profile_id: int) -> str:
 
         return ''
 
-    return str(raw or '')
+    return redis_text(raw)
 
 
 def _token_put(profile_id: int, token: str) -> None:
