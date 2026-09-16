@@ -178,3 +178,69 @@ class TestSettingIsRegistered:
         keys = {row['key'] for row in got['known']}
 
         assert {'presence', 'heartbeat'} <= keys
+
+
+class TestStoredValueIsValidJson:
+    """⚠⚠ Значение в базе обязано разбираться — проверяем сами, а не на глаз.
+
+    **Живая беда, стоившая двух выкладок.** Миграция переезда положила описание
+    строкой, экранировав только одинарные кавычки. В строковом литерале MySQL
+    обратный слэш — **тоже** escape-символ, а у Ladadate внутри JSON стоит
+
+        "ok_mark": "\\"IsSuccess\\":true"
+
+    При вставке `\\"` стало `"`, и строка порвалась на 211-м знаке.
+
+    ⚠ **Молча.** Накат прошёл без ошибок — для MySQL это законная строка, — а
+    проверка «ПОСЛЕ» смотрела `JSON_TYPE` и `LIKE '%"send"%'`: битая строка
+    остаётся строкой и подстроку содержит. Код же читал пустоту и честно уходил к
+    соседу, так что единственной приметой был неизменившийся ритм его запросов.
+
+    Отсюда правило: значение проверяется **разбором**, и здесь, и в миграции
+    (`JSON_VALID`), а пишется hex-литералом — он escape-последовательностей не
+    знает вовсе.
+    """
+
+    async def test_every_stored_description_parses(self):
+        """Все описания в базе стенда разбираются в словарь."""
+        import json
+
+        from mysql_.mysql_ import mysql_get_db_async
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT site_id, JSON_UNQUOTE(JSON_EXTRACT(settings, %s)) AS raw'
+                '  FROM dating_site'
+                ' WHERE JSON_EXTRACT(settings, %s) IS NOT NULL', ('$.presence',) * 2)
+            rows = await db.fetchall()
+
+        for row in rows or []:
+            raw = row['raw']
+            if not raw or raw == 'null':
+                continue
+
+            try:
+                got = json.loads(raw)
+            except ValueError as e:
+                raise AssertionError(
+                    f"описание сайта #{row['site_id']} не разбирается: {e}. "
+                    f'Похоже на экранирование в миграции: пиши значение '
+                    f'hex-литералом, `CONVERT(X\'…\' USING utf8mb4)`') from e
+
+            assert isinstance(got, dict), \
+                f"описание сайта #{row['site_id']} — не словарь, а {type(got).__name__}"
+
+    def test_the_migration_checks_itself(self):
+        """⚠ Миграция обязана проверять **разбор**, а не тип и подстроку.
+
+        `JSON_TYPE` вернёт `STRING` и битой строке, `LIKE '%"send"%'` найдёт в ней
+        подстроку — обе проверки прошлую беду пропустили. `JSON_VALID` ловит.
+        """
+        import pathlib
+
+        text = pathlib.Path(
+            'migrations/20260916180000_dating_site_presence_fix.sql').read_text(
+                encoding='utf-8')
+
+        assert 'JSON_VALID' in text, 'миграция снова не проверяет разбор'
+        assert "CONVERT(X'" in text, 'значение снова пишется строковым литералом'
