@@ -451,7 +451,7 @@ async def dating_mail_question(profile: dict, site_id: int,
 async def dating_invite_template(site_id: int, language: str = DATING_INVITE_LANGUAGE,
                                  girl_slot: bool = False, man_slot: bool = False,
                                  angle: str = '', length: str = '',
-                                 avoid: list = None) -> str:
+                                 avoid: list = None, country: str = '') -> str:
     """Сочиняет **шаблон** первой реплики в чат — один на весь пул инвайтов.
 
     Args:
@@ -464,6 +464,8 @@ async def dating_invite_template(site_id: int, language: str = DATING_INVITE_LAN
         length: какой длины просить — от трёх слов до абзаца.
         avoid: что уже писали этому сайту; модель получает список со словами «так
             уже было».
+        country: откуда девушки сайта — настройка `girl_country`. Пусто —
+            агент про место молчит, и это законно.
 
     Returns:
         str: текст шаблона. Пустая строка — агент промолчал или прислал не то, и
@@ -516,6 +518,18 @@ async def dating_invite_template(site_id: int, language: str = DATING_INVITE_LAN
                    'invite_angle': str(angle or ''),
                    'invite_length': str(length or ''),
                    'invite_avoid': _avoid_text(avoid),
+                   'invite_country': str(country or ''),
+                   # ⚠⚠ **Часовой пояс панели, и та же переменная, что у чата.**
+                   # Ею агент зовёт инструмент `datetime_current_get` и получает
+                   # готовую фразу: день недели, дата, время и словесное время
+                   # суток («вечер», «раннее утро»).
+                   #
+                   # Ради этого всё и заведено: в пуле прода лежал шаблон «My
+                   # thoughts have turned sideways **tonight**» — модель писала
+                   # про вечер, не зная, который час. Перепутанное время суток
+                   # выдаёт робота вернее любой другой приметы: живой человек в
+                   # этом не ошибается.
+                   'datetime_current_get_zone': await _timezone(),
                    # Та же переменная, что у автоответа и писем (`user_language`
                    # у соседа): две переменные одного смысла разошлись бы.
                    'user_language': str(language or DATING_INVITE_LANGUAGE)})
@@ -666,6 +680,19 @@ async def dating_mail_agent_name(site_id: int) -> str:
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+async def _timezone() -> str:
+    """Часовой пояс панели — тот же, по которому живут круги и страницы.
+
+    ⚠ **Настройка одна на всё, и второй заводить нельзя.** По ней сдвигаются
+    смены расписания (`dating_round.py`), метки времени на страницах
+    (`dating_time.js`) и теперь время, которое видит агент. Разойдись они — агент
+    писал бы «доброе утро» ровно тогда, когда у панели смена ещё ночная.
+    """
+    from src.uvicorn.routers.setting import setting_get
+
+    return str(await setting_get('timezone', '+0') or '+0')
+
 
 async def _agent_id(site_id: int, pattern: str = DATING_MAIL_AGENT_NAME,
                     workflow: str = DATING_MAIL_AGENT_WORKFLOW) -> int:

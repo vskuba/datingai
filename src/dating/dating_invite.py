@@ -190,6 +190,10 @@ DATING_INVITE_POOL_DEFAULT = 20
 # до потолка, и это число — уже `invite_pool_max`. Вторая настройка о том же
 # означала бы два места, где заводят одно и то же.
 DATING_INVITE_POOL_SETTING = 'invite_pool_max'
+# Откуда девушки сайта. Уезжает агенту вместе с текущим временем: время без места
+# половинчато — чужой праздник или чужой сезон выдают так же, как перепутанный
+# вечер.
+DATING_INVITE_COUNTRY_SETTING = 'girl_country'
 
 # Почему пара пропущена. Строки уезжают на страницу, и человек по ним понимает, что
 # делать: «агент промолчал» — подождать, «без имени» — смотреть промпт у соседа.
@@ -490,7 +494,24 @@ async def _template(site_id: int, language: str):
         int(site_id), language, girl_slot, man_slot,
         angle=random.choice(DATING_INVITE_ANGLES),
         length=random.choice(DATING_INVITE_LENGTHS),
-        avoid=await _avoid(site_id))
+        avoid=await _avoid(site_id),
+        country=await _country(site_id))
+
+
+async def _country(site_id: int) -> str:
+    """Откуда девушки сайта — настройка `girl_country`. Пусто — законно.
+
+    ⚠ **Настройка сайта, а не анкеты, и это вынужденно.** Шаблон один на всех
+    девушек сайта, и страна конкретной анкеты была бы враньём для остальных
+    сорока девяти. Агентство и так держит анкеты одной страны.
+
+    Уезжает агенту рядом со временем: зная место, он не напишет про чужой
+    праздник или чужой сезон. Пусто — агент про место молчит, и это лучше
+    догадки.
+    """
+    from src.uvicorn.routers.dating.dating_site import dating_site_setting
+
+    return str(await dating_site_setting(int(site_id), DATING_INVITE_COUNTRY_SETTING))
 
 
 async def _avoid(site_id: int) -> list[str]:

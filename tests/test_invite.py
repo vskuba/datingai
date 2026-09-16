@@ -696,7 +696,7 @@ class TestOneCallPerPool:
         # заглушка, не принявшая их, ловила бы `TypeError` вместо проверяемого
         # правила.
         async def _template(site_id, language, girl_slot=False, man_slot=False,
-                            angle='', length='', avoid=None):
+                            angle='', length='', avoid=None, country=''):
             calls.append(site_id)
 
             return 'Спорим, ты сейчас улыбнулся?'
@@ -723,7 +723,7 @@ async def _made_with(monkeypatch, template, people=None) -> dict:
 
     if template is not None:
         async def _template(site_id, language, girl_slot=False, man_slot=False,
-                            angle='', length='', avoid=None):
+                            angle='', length='', avoid=None, country=''):
             return template
 
         monkeypatch.setattr(dating_invite, 'dating_invite_template', _template)
@@ -782,7 +782,7 @@ class TestVariety:
         sent = {}
 
         async def _template(site_id, language, girl_slot=False, man_slot=False,
-                            angle='', length='', avoid=None):
+                            angle='', length='', avoid=None, country=''):
             sent.update({'angle': angle, 'length': length, 'avoid': avoid})
 
             return 'текст'
@@ -809,7 +809,7 @@ class TestVariety:
         seen = set()
 
         async def _template(site_id, language, girl_slot=False, man_slot=False,
-                            angle='', length='', avoid=None):
+                            angle='', length='', avoid=None, country=''):
             seen.add((angle, length))
 
             return 'текст'
@@ -1028,3 +1028,109 @@ class TestPoolRefills:
 
         assert 'ready_only=True' in code, \
             'застрявшие карточки снова считаются годными — добор встанет'
+
+
+class TestNowAndPlace:
+    """⚠⚠ Агент знает, который час и откуда девушка.
+
+    **Поймано в живом пуле прода:**
+
+        «My thoughts have turned sideways **tonight**, spinning loops of quiet…»
+
+    Модель писала про вечер, не зная, вечер сейчас или утро. Получатель читает
+    реплику в своё время, и перепутанное время суток выдаёт робота вернее любой
+    другой приметы: живой человек про это не ошибается.
+
+    ⚠ **Приём взят у чата, а не выдуман заново.** `dating_talk` давно держит шаг
+    `datetime_current_get` и кладёт его ответ в промпт секцией «Текущее время».
+    Инструмент отдаёт готовую фразу — день недели, дату, время и словесное время
+    суток. Вторая реализация времени разошлась бы с первой на первой же правке.
+
+    ⚠ **Страна — настройка сайта, а не анкеты.** Шаблон один на всех девушек
+    сайта, и страна конкретной анкеты была бы враньём для остальных сорока
+    девяти.
+    """
+
+    async def test_the_timezone_goes_to_the_agent(self, monkeypatch):
+        """Часовой пояс уезжает той же переменной, что у чата."""
+        from src.dating import dating_mail_agent
+
+        said = {}
+
+        async def _ask(**kwargs):
+            said.update(kwargs.get('variables') or {})
+
+            return 'Привет!'
+
+        monkeypatch.setattr(dating_mail_agent, 'rhapsody_api_chat_ask', _ask)
+        monkeypatch.setattr(dating_mail_agent, '_agent_id',
+                            lambda *a, **k: _async(7))
+
+        await dating_mail_agent.dating_invite_template(343, 'en', country='Украина')
+
+        assert 'datetime_current_get_zone' in said, \
+            'агент снова не знает времени — вернутся реплики про вечер в полдень'
+        assert said['invite_country'] == 'Украина'
+
+    async def test_the_timezone_is_the_panel_one(self, monkeypatch):
+        """⚠ Пояс берётся из настройки панели, а не пишется числом в коде.
+
+        По той же настройке сдвигаются смены расписания и метки времени на
+        страницах. Заведи мы второй источник — агент писал бы «доброе утро»
+        ровно тогда, когда у панели смена ещё ночная.
+        """
+        import inspect
+
+        from src.dating import dating_mail_agent
+
+        code = inspect.getsource(dating_mail_agent._timezone)
+
+        assert "setting_get('timezone'" in code
+
+    async def test_an_empty_country_is_allowed(self, monkeypatch):
+        """Пустая страна — законный случай: агент про место молчит.
+
+        Лучше молчание, чем догадка: приписать девушке чужую страну хуже, чем
+        не упоминать её вовсе.
+        """
+        from src.dating import dating_mail_agent
+
+        said = {}
+
+        async def _ask(**kwargs):
+            said.update(kwargs.get('variables') or {})
+
+            return 'Привет!'
+
+        monkeypatch.setattr(dating_mail_agent, 'rhapsody_api_chat_ask', _ask)
+        monkeypatch.setattr(dating_mail_agent, '_agent_id', lambda *a, **k: _async(7))
+
+        await dating_mail_agent.dating_invite_template(343, 'en')
+
+        assert said['invite_country'] == ''
+
+    async def test_the_country_is_a_site_setting(self, auth_client):
+        """Ключ в реестре — иначе страну негде задать."""
+        got = (await auth_client.get('/api/dating/site')).json()['result']
+        known = {row['key']: row for row in got['known']}
+
+        assert 'girl_country' in known
+        assert known['girl_country']['default'] == '', \
+            'у страны появилось умолчание — сайт без настройки соврёт о месте'
+
+    def test_the_maker_asks_the_setting(self):
+        """Набор пула читает настройку, а не константу."""
+        import inspect
+
+        from src.dating import dating_invite
+
+        assert 'country=await _country(site_id)' in inspect.getsource(
+            dating_invite._template)
+
+
+def _async(value):
+    """Готовая корутина с этим значением — для подмены `_agent_id`."""
+    async def _got():
+        return value
+
+    return _got()
