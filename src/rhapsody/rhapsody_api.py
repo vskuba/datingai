@@ -16,6 +16,7 @@
 
 import asyncio
 import json
+import sys
 import time
 from urllib.parse import quote
 
@@ -114,6 +115,19 @@ async def rhapsody_api_site_get(site_id: int) -> dict:
     Отдельной ручкой, а не из списка: в списке `presence` нет — она простыня, и
     возить её в каждой строке селекта незачем.
     """
+    # ⚠ **Пишем, кто позвал.** Описание сайта переехало к нам
+    # (`dating_site_presence.py`), и каждый оставшийся поход за карточкой — повод
+    # спросить «а зачем». Без имени вызывающего такой поиск превращается в
+    # перебор шестнадцати мест по журналу, где все строки одинаковы: это уже
+    # стоило получаса на живом проде.
+    #
+    # Кадр берётся напрямую (`sys._getframe`), а не разбором стека: `inspect.stack`
+    # читает исходники всех кадров и стоит миллисекунды — на вызове, который сам
+    # укладывается в девять.
+    who = sys._getframe(1)
+    logger_info(f'[rhapsody] карточку сайта #{int(site_id)} просит '
+                f'{who.f_globals.get("__name__", "?")}.{who.f_code.co_name}')
+
     try:
         data = await _request('GET', f'/api/browser/site/{int(site_id)}')
     except RhapsodyError as e:
