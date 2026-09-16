@@ -340,11 +340,71 @@ class TestAliveMark:
         assert http_heartbeat_step_ok({}, None) is False
 
 
+class TestOwnSettingWins:
+    """⚠⚠ Есть своя настройка — к соседу не ходим вовсе.
+
+    **Цена запасного пути, снятая с прода за час:** `/api/browser/site/19` —
+    343 запроса. Два килобайта настроек, не менявшихся месяцами, спрашивались по
+    анкете на каждом круге опроса; лежащий сосед гасил присутствие Goldenbride
+    целиком, хотя удар шлём мы сами, своим клиентом и по своим cookie.
+
+    Настройку перенесли миграцией `20260916150000_dating_goldenbride_heartbeat` —
+    **тем самым переводчиком** `_from_neighbour`, что работает в бою, а не руками.
+    Отсюда правило, которое и сторожит этот класс: своё старше соседского, и
+    соседа не спрашивают даже «на всякий случай».
+    """
+
+    async def test_the_neighbour_is_not_asked(self, monkeypatch):
+        """Сосед подменяется взрывом: дошёл вызов — тест падает с его причиной."""
+        from src.dating import dating_heartbeat
+
+        async def _boom(site_id):
+            raise AssertionError(f'пошли к соседу за сайтом #{site_id}, '
+                                 f'имея свою настройку')
+
+        monkeypatch.setattr(dating_heartbeat, '_presence_of', _boom)
+
+        async def _own(site_id, key, default=''):
+            return json.dumps(CONFIG)
+
+        monkeypatch.setattr('src.uvicorn.routers.dating.dating_site.dating_site_setting',
+                            _own)
+
+        got = await dating_heartbeat.dating_heartbeat_config(19)
+
+        assert got['base'] == BASE
+
+    async def test_without_own_setting_the_neighbour_is_the_fallback(self, monkeypatch):
+        """⚠ Запасной путь остаётся, и убирать его рано.
+
+        Он нужен новому сайту, которому присутствие ещё не переносили: пока
+        настройки нет, перевод соседского описания — единственное, чем анкета
+        держится в сети. Уберём — и заведение сайта станет двухходовым.
+        """
+        from src.dating import dating_heartbeat
+
+        async def _empty(site_id, key, default=''):
+            return ''
+
+        async def _neighbour(site_id):
+            return {'base': BASE, 'heartbeat': {'path': '/hb'}}
+
+        monkeypatch.setattr('src.uvicorn.routers.dating.dating_site.dating_site_setting',
+                            _empty)
+        monkeypatch.setattr(dating_heartbeat, '_presence_of', _neighbour)
+
+        got = await dating_heartbeat.dating_heartbeat_config(19)
+
+        assert got == {'base': BASE, 'beat': {'path': '/hb'}}
+
+
 class TestNeighbourConfigIsTranslated:
     """Старое описание соседа читается как запасное — с переводом ключей.
 
-    ⚠ Перенос руками уронил бы работающий сайт ради опрятности: у Goldenbride
-    присутствие описано в `browser_site.presence` вперемешку с кадрами чата.
+    ⚠ **Перевод делает код, а не человек**, и это не вопрос опрятности. Когда
+    присутствие Goldenbride переезжало в нашу настройку, значение для миграции
+    собрал этот самый `_from_neighbour`: перепиши его человек руками — и ошибка в
+    GWT-теле или в `auth_field` всплыла бы не здесь, а погасшей колонкой «В сети».
     """
 
     def test_old_keys_become_new(self):
