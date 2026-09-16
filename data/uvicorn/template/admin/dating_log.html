@@ -112,6 +112,18 @@
         }
         .req-who-text { overflow: hidden; text-overflow: ellipsis; }
         .req-who.none { color: #cbd5e1; }
+        .req-size { flex: 0 0 62px; text-align: right; color: #94a3b8; font-size: 11px; }
+        /* Ответ нулевой длины — не пробел в данных, а сам по себе примета:
+           сайт ответил кодом и промолчал. Красим бледнее, но показываем. */
+        .req-size.none { color: #cbd5e1; }
+        /* Тело отказа — во всю ширину под строкой: оно длинное, и втиснутое в
+           колонку обрезалось бы ровно на том месте, ради которого его хранят. */
+        .req-body {
+            flex: 1 0 100%; color: #7c2d12; background: #fffbeb; font-size: 11px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            padding: 3px 6px; border-radius: 4px; margin-top: 2px;
+            white-space: pre-wrap; word-break: break-all;
+        }
         .req-path {
             flex: 1 1 auto; color: #334155; overflow: hidden; text-overflow: ellipsis;
             font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
@@ -424,6 +436,18 @@
         doorsFilled = true;
     }
 
+    // Размер ответа человеческими единицами: в ленте важно «мало или много», а
+    // не точное число байт.
+    function size(bytes) {
+        if (bytes < 1024) {
+            return `${bytes} Б`;
+        }
+
+        return bytes < 1024 * 1024
+            ? `${Math.round(bytes / 1024)} КБ`
+            : `${(bytes / 1024 / 1024).toFixed(1)} МБ`;
+    }
+
     function reqRow(r) {
         // ⚠ Исход — из `ok`, а не из кода. У сайта бывает `200` с телом
         // `{"IsSuccess": false}`, и по коду отказ от удачи не отличить.
@@ -441,11 +465,21 @@
             + `<span class="req-path">${esc(r.method)} ${esc(r.path)}</span>`
             + `<span class="req-status">${r.status || '—'}</span>`
             + `<span class="req-ms">${r.ms} мс</span>`
+            // ⚠ Размер ответа: «200 · 43 Б» рядом с «200 · 8 КБ» показывает
+            // тихий отказ глазом. У сайтов знакомств это самый частый вид
+            // отказа — код удачи с телом отказа, — и по одному коду его не
+            // отличить: на проде так застряли 156 инвайтов.
+            + `<span class="req-size${r.bytes ? '' : ' none'}">`
+            + `${r.bytes ? size(r.bytes) : '0 Б'}</span>`
             // Пусто — шли общим адресом сервера. Бледным, а не прочерком: это
             // обычное состояние, а не пробел в данных.
             + `<span class="req-ip${r.proxy_ip ? '' : ' none'}">`
             + `${esc(r.proxy_ip || 'общий IP')}</span>`
             + (r.ok ? '' : `<span class="req-err">${esc(r.error || '')}</span>`)
+            // Тело — только у отказа и только если сайт что-то сказал. Отдельной
+            // строкой под остальным: оно длинное и ломает колонки.
+            + (!r.ok && r.body
+                ? `<span class="req-body">${esc(r.body)}</span>` : '')
             + '</div>';
     }
 

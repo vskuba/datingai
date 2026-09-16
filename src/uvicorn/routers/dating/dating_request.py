@@ -108,7 +108,7 @@ async def dating_request_list(site_id: int = 0, profile_id: int = 0, door: str =
         # которых её и завели, — ленту «Все онлайн» и сессию панели.
         await db.execute(
             'SELECT r.id, r.profile_id, r.door, r.method, r.path, r.status, r.ok,'
-            '       r.error, r.ms, r.proxy_ip, r.created_at,'
+            '       r.error, r.ms, r.proxy_ip, r.created_at, r.bytes, r.body,'
             "       COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(p.profile, '$.name')), ''),"
             "                p.login, '') AS profile_name,"
             # ⚠⚠ **Лицо рядом с именем, потому что имена повторяются.** На сайте

@@ -77,6 +77,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_invite_send import dating_invite_send_one
+from src.dating.dating_idle import dating_idle_write
 from src.dating.dating_json import dating_json_load
 from src.dating.dating_online import dating_online_check
 from src.dating.dating_schedule import dating_schedule_now
@@ -149,18 +150,34 @@ async def dating_invite_send_round_run(offset_hours: int = 0) -> dict:
     for site in await _sites():
         site_id = int(site['site_id'])
 
-        if not dating_schedule_now(dating_json_load(site['invite_schedule']), minutes):
+        # ⚠⚠ **Почему не пошли — записью, а не молчанием.** Причину считает тот же
+        # код, что отвечает странице (`dating_invite_send_why`): своя копия правил
+        # разошлась бы с кругом на первой же правке. Пишется **смена** причины, а
+        # не каждый заход — иначе за ночь набежало бы пятьсот одинаковых строк
+        # (`dating_idle.py`).
+        #
+        # Беда, ради которой заведено, случилась живьём: пул застыл на 21
+        # черновике и не набирался неделю, а со стороны выглядел работающим.
+        # ⚠ Размен осознанный: `_why` внутри снова спрашивает список сайтов, то
+        # есть на заход выходит лишний запрос к **своей** базе. Он дешёвый, а
+        # единственный источник правил дороже: разойдись круг с ответом странице,
+        # человек читал бы «уходит» там, где не уходит.
+        why = await dating_invite_send_why(site_id, offset_hours)
+        if why:
+            await dating_idle_write('invite_send', why, site_id=site_id)
             continue
 
         if time.time() - _sent_at.get(site_id, 0.0) < await _every(site_id):
             continue
 
-        if await _today(site_id, offset_hours) >= await _max_day(site_id):
-            continue
-
         invite = await _next(site_id)
         if not invite:
+            await dating_idle_write('invite_send', 'пул пуст: отправлять нечего',
+                                    site_id=site_id)
             continue
+
+        # Пошли — гасим прежнее объявление о простое, если оно было.
+        await dating_idle_write('invite_send', '', site_id=site_id)
 
         # ⚠ Отметку о заходе ставим **до** отправки, а не после. Отправка идёт
         # секунды, а тик — пятнадцать: не отметь мы сразу, второй тик успел бы

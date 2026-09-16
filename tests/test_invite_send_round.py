@@ -638,13 +638,27 @@ class TestTheDayIsLocal:
                                                      _offset_to(12)) == before + 1
 
     async def test_the_offset_reaches_the_counter(self):
-        """Смещение обязано доезжать из круга в счётчик — иначе правка мертва."""
+        """Смещение доезжает из круга до счёта суток — иначе всё выше напрасно.
+
+        ⚠ **Путь стал длиннее на звено, и это не ослабление.** Прежде круг сам
+        спрашивал `_today(site_id, offset_hours)`; теперь он спрашивает «почему
+        стоим» (`dating_invite_send_why`), а сутки считает уже тот — тем же
+        вызовом и тем же смещением.
+
+        Сделано ради журнала простоя: причина, по которой круг не пошёл, должна
+        быть **одна** и для страницы, и для записи, и для самого решения. Держи
+        круг свою копию правил — она разошлась бы с ответом странице на первой
+        же правке, и человек читал бы «уходит» там, где не уходит.
+        """
         import inspect
 
-        code = inspect.getsource(dating_invite_send_round.dating_invite_send_round_run)
+        run = inspect.getsource(dating_invite_send_round.dating_invite_send_round_run)
+        why = inspect.getsource(dating_invite_send_round.dating_invite_send_why)
 
-        assert '_today(site_id, offset_hours)' in code, \
-            'круг снова считает сутки без часового пояса'
+        assert 'dating_invite_send_why(site_id, offset_hours)' in run, \
+            'круг решает сам, мимо общей причины — правила разойдутся'
+        assert '_today(site_id, offset_hours)' in why, \
+            'причина снова считает сутки без часового пояса'
 
 
 class TestReasonDoesNotRepeatTheAnswer:

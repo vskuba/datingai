@@ -596,15 +596,19 @@ async def _request(client: httpx.AsyncClient, base: str, path: str, token: str,
     # ⚠ Удача — это `2xx`, а **не** «ответ пришёл». Разбор тела живёт выше
     # (`IsSuccess`, `_refusal`), и уточнить исход умеет только он; здесь мы
     # честно пишем то, что видит транспорт, а `_refusal` допишет причину сам.
+    # ⚠ Тело отдаём журналу **целиком**: что с ним делать, решает он — длину
+    # пишет всегда, само тело только у отказа. Реши мы здесь, правило пришлось бы
+    # повторить в шести местах, откуда пишут запросы.
     await _note(profile, door, method, path, answer.status_code,
                 answer.status_code < 400,
-                '' if answer.status_code < 400 else _refusal(path, answer), started)
+                '' if answer.status_code < 400 else _refusal(path, answer), started,
+                body=answer.text)
 
     return answer
 
 
 async def _note(profile: dict, door: str, method: str, path: str, status: int,
-                ok: bool, error: str, started: float) -> None:
+                ok: bool, error: str, started: float, body: str = '') -> None:
     """Строка в журнал запросов. Ничего не бросает и ничего не ждёт от вызова.
 
     ⚠ Дверь приходит от вызывающего: транспорт по пути занятия не угадает —
@@ -620,7 +624,9 @@ async def _note(profile: dict, door: str, method: str, path: str, status: int,
         method=method, path=path, status=status, ok=ok, error=error,
         ms=dating_request_ms(started),
         # ⚠ Адрес, а не строка подключения: в ней пароль канала.
-        proxy_ip=str((profile or {}).get('proxy_ip') or ''))
+        proxy_ip=str((profile or {}).get('proxy_ip') or ''),
+        # Длина пишется всегда, тело — только у отказа (`_body_keep`).
+        body=body)
 
 
 def _body(path: str, answer: httpx.Response) -> dict:

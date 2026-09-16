@@ -60,6 +60,7 @@ import time
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.dating_request import dating_request_about
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_run
 
 # Длина имени сценария — та же, что в схеме (`VARCHAR(200)`). Режем здесь, чтобы
@@ -106,9 +107,16 @@ async def dating_scenario_run(scenario: dict, site_id: int, profile_id: int = 0,
     await _write(site_id, profile_id, scenario_id, name, 'sent', 0, '', 0)
 
     try:
-        run = await rhapsody_api_scenario_run(scenario_id, session_id, variables or {},
-                                              secrets or {}, keep_session=keep_session,
-                                              proxy_id=int(proxy_id or 0))
+        # ⚠ Называем работу journal'у запросов: он пишет строку в единственной
+        # двери к соседу и анкету оттуда вывести не может — путь `/api/browser/…`
+        # одинаков и у прогона по анкете, и у справочника сайта. Без этого 3512
+        # строк в сутки лежали бы без владельца (`dating_request_about`).
+        with dating_request_about(profile_id=int(profile_id or 0),
+                                  site_id=int(site_id or 0)):
+            run = await rhapsody_api_scenario_run(scenario_id, session_id,
+                                                  variables or {}, secrets or {},
+                                                  keep_session=keep_session,
+                                                  proxy_id=int(proxy_id or 0))
     except RhapsodyError as e:
         # Сосед не ответил — прогона не было вовсе. Записываем это как отказ на
         # шаге 0: сценарий не начинался, и приписывать ему шаг было бы враньём.

@@ -50,6 +50,7 @@
 потерянное письмо. Здесь всё молча гасится.
 """
 
+import contextvars
 import time
 
 from logging_.logging_ import logger_info
@@ -107,6 +108,15 @@ DATING_REQUEST_KEEP_DEFAULT = 3
 DATING_REQUEST_PATH_MAX = 255
 DATING_REQUEST_ERROR_MAX = 500
 
+# Сколько знаков тела храним у отказа. Пятьсот — столько же, сколько у причины:
+# сообщение об ошибке у сайтов короткое, а всё длиннее этого уже не сообщение, а
+# страница, и читать её в ленте всё равно никто не станет.
+DATING_REQUEST_BODY_MAX = 500
+
+# Чья работа идёт сейчас — ставит вызывающий (`dating_request_about`). Нули
+# значат «никто не назвался», и это законно: к соседу ходят и без анкеты.
+_about = contextvars.ContextVar('dating_request_about', default=(0, 0))
+
 # ⚠⚠ **Выключатель записи. Его поднимают заглушки в сюите, и больше никто.**
 #
 # Журнал отвечает на вопрос «сколько раз мы сходили к сайту» — по нему считают
@@ -139,7 +149,7 @@ def dating_request_off(off: bool = True) -> None:
 async def dating_request_write(door: str, profile_id: int = 0, site_id: int = 0,
                                method: str = '', path: str = '', status: int = 0,
                                ok: bool = False, error: str = '', ms: int = 0,
-                               proxy_ip: str = '') -> None:
+                               proxy_ip: str = '', body: str = '') -> None:
     """Строка журнала запросов. **Не бросает** — сбой журнала не роняет работу.
 
     Args:
@@ -154,6 +164,9 @@ async def dating_request_write(door: str, profile_id: int = 0, site_id: int = 0,
         error: чем кончилось, если не удачей. Словами, для человека.
         ms: сколько заняло.
         proxy_ip: каким адресом нас видели. Пусто — общий адрес сервера.
+        body: тело ответа. Длина пишется всегда, само тело — **только у
+            отказа**, первые `DATING_REQUEST_BODY_MAX` знаков и с вырезанными
+            секретами.
 
     ⚠ **Из сюиты не пишется ничего** (`dating_request_off`): строка от поддельного
     сайта неотличима от живой, а по этому журналу считают, сколько раз мы
@@ -173,16 +186,101 @@ async def dating_request_write(door: str, profile_id: int = 0, site_id: int = 0,
         async with mysql_get_db_async() as db:
             await db.execute(
                 'INSERT INTO dating_request'
-                ' (profile_id, site_id, door, method, path, status, ok, error, ms, proxy_ip)'
-                ' VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
+                ' (profile_id, site_id, door, method, path, status, ok, error, ms,'
+                '  proxy_ip, bytes, body)'
+                ' VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
                 (int(profile_id or 0), int(site_id or 0), str(door or '')[:16],
                  str(method or '')[:8], str(path or '')[:DATING_REQUEST_PATH_MAX],
                  int(status or 0), 1 if ok else 0,
                  str(error or '')[:DATING_REQUEST_ERROR_MAX], int(ms or 0),
-                 str(proxy_ip or '')[:45]))
+                 str(proxy_ip or '')[:45],
+                 len(body or ''), _body_keep(body, ok)))
             await db.connection.commit()
     except Exception as e:
         logger_info(f'[dating] журнал запросов: {e}')
+
+
+class dating_request_about:
+    """Кому принадлежит то, что идёт наружу прямо сейчас: анкета и сайт.
+
+    Менеджер контекста. Ставится вокруг работы, а читается **дверью** — той, что
+    пишет строку журнала:
+
+        async with dating_request_about(profile_id=849, site_id=343):
+            await rhapsody_api_scenario_run(...)
+
+    ## ⚠⚠ Зачем, если анкету «приписать нельзя»
+
+    Здесь стояло прямо обратное: «анкеты у строки нет, приписать её значило бы
+    соврать в двух случаях из трёх». Довод верен — но он про **угадывание**. К
+    соседу ходят и по анкете (прогон сценария), и по сайту (справочник, агенты),
+    и вовсе без них (проверка выходов); разобрать это по пути запроса нельзя.
+
+    А вот сам вызывающий знает всегда. Разница между «сервер догадался» и
+    «работа назвала себя» — это разница между враньём и данными.
+
+    Цена молчания видна на проде: 3512 строк `rhapsody` за сутки, и ни на одну
+    нельзя ответить «кому готовили инвайт, когда сосед лёг».
+
+    ## ⚠ Контекст, а не аргумент, и это вынужденно
+
+    Дверь к соседу одна, а вызывают её из полусотни мест через десяток
+    промежуточных функций. Протащить два числа сквозь них значило бы править
+    полсотни сигнатур ради журнала — и первая же забытая снова дала бы пустоту.
+
+    ⚠ **`contextvars`, а не глобальная переменная.** Круги воркера идут
+    одновременно в одном процессе: глобальная приписала бы запросы одной анкеты
+    работе другой — то есть вернула бы то самое враньё, только тише.
+    """
+
+    def __init__(self, profile_id: int = 0, site_id: int = 0):
+        self.about = (int(profile_id or 0), int(site_id or 0))
+        self.token = None
+
+    def __enter__(self):
+        self.token = _about.set(self.about)
+
+        return self
+
+    def __exit__(self, *exc):
+        _about.reset(self.token)
+
+        return False
+
+    async def __aenter__(self):
+        return self.__enter__()
+
+    async def __aexit__(self, *exc):
+        return self.__exit__(*exc)
+
+
+def dating_request_about_get() -> tuple[int, int]:
+    """Чья работа идёт сейчас: `(анкета, сайт)`. Нули — никто не назвался."""
+    return _about.get()
+
+
+def _body_keep(body: str, ok: bool) -> str:
+    """Что от тела оставить в журнале.
+
+    ⚠⚠ **Тело удачного ответа не храним вовсе, и это не экономия места.** Там
+    переписка живых людей, списки собеседников, почта — 52 тысячи строк в сутки
+    превратили бы журнал в копию базы сайта, причём с личными данными внутри.
+
+    У отказа же тела как такового нет: есть сообщение об ошибке. Ради него всё и
+    заведено — **156 инвайтов на проде застряли с причиной «сайт ответил 200»**,
+    и что сайт сказал на самом деле, восстановить теперь нечем.
+
+    ⚠ **Секреты вырезаются перед записью.** Тело отказа входа вполне может нести
+    эхо отправленного логина, а у нас уже был день, когда пароли уезжали в журнал
+    открытым текстом. Правила — общие с журналом базы (`logging_secret.py`): две
+    копии разошлись бы молча, оставив журнал «вычищенным» только на вид.
+    """
+    from logging_.logging_secret import logging_secret_clean
+
+    if ok or not body:
+        return ''
+
+    return logging_secret_clean(str(body))[:DATING_REQUEST_BODY_MAX]
 
 
 def dating_request_ms(started: float) -> int:

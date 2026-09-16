@@ -681,14 +681,19 @@ async def _note(method: str, path: str, status: int, ok: bool, error: str,
     Ничего не бросает: сбой журнала не имеет права уронить работу.
     """
     from src.dating.dating_request import (DATING_REQUEST_RHAPSODY,
+                                           dating_request_about_get,
                                            dating_request_write)
+
+    # Чья это работа — спрашиваем у неё самой, а не выводим из пути.
+    profile_id, site_id = dating_request_about_get()
 
     # ⚠ Строку запроса режем: в ней бывают номера и метки, но длина её не
     # ограничена, а колонка — 255 знаков.
     await dating_request_write(door=DATING_REQUEST_RHAPSODY, method=str(method or ''),
                                path=str(path or '')[:255], status=int(status or 0),
                                ok=bool(ok), error=str(error or ''),
-                               ms=_ms(started))
+                               ms=_ms(started),
+                               profile_id=profile_id, site_id=site_id)
 
 
 def _ms(started: float) -> int:

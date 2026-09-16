@@ -290,7 +290,8 @@ async def dating_mail_agent_fill(profile: dict, site_id: int,
     agent_id = await _agent_id(int(site_id))
     language = await dating_mail_agent_language(int(site_id))
 
-    answer = await rhapsody_api_chat_ask(
+    answer = await _chat_ask(
+        int(site_id),
         agent_id=agent_id,
         # ⚠ Вопрос короткий намеренно: вся работа задана промптом workflow, а сюда
         # уходит только повод его запустить. Длинный вопрос спорил бы с промптом
@@ -371,7 +372,8 @@ async def dating_mail_write(site_id: int, variables: list[dict],
     known = [row for row in (variables or [])
              if dating_mail_var_used(row, DATING_MAIL_VAR_USE_WRITE)]
 
-    answer = await rhapsody_api_chat_ask(
+    answer = await _chat_ask(
+        int(site_id),
         agent_id=agent_id,
         question='Напиши шаблон письма.',
         companion_id=DATING_MAIL_AGENT_COMPANION_ID,
@@ -435,7 +437,8 @@ async def dating_mail_question(profile: dict, site_id: int,
                                DATING_MAIL_QUESTION_WORKFLOW)
     language = await dating_mail_agent_language(int(site_id))
 
-    answer = await rhapsody_api_chat_ask(
+    answer = await _chat_ask(
+        int(site_id),
         agent_id=agent_id,
         question='Придумай вопрос получателю.',
         companion_id=DATING_MAIL_AGENT_COMPANION_ID,
@@ -510,7 +513,8 @@ async def dating_invite_template(site_id: int, language: str = DATING_INVITE_LAN
     agent_id = await _agent_id(int(site_id), DATING_INVITE_NAME,
                                DATING_INVITE_WORKFLOW)
 
-    answer = await rhapsody_api_chat_ask(
+    answer = await _chat_ask(
+        int(site_id),
         agent_id=agent_id,
         question='Напиши шаблон первой реплики в чат.',
         companion_id=DATING_MAIL_AGENT_COMPANION_ID,
@@ -578,7 +582,8 @@ async def dating_favorite_mail_write(profile: dict, site_id: int,
     agent_id = await _agent_id(int(site_id), DATING_FAVORITE_MAIL_NAME,
                                DATING_FAVORITE_MAIL_WORKFLOW)
 
-    answer = await rhapsody_api_chat_ask(
+    answer = await _chat_ask(
+        int(site_id),
         agent_id=agent_id,
         question='Напиши письмо, возобновляющее разговор.',
         companion_id=DATING_MAIL_AGENT_COMPANION_ID,
@@ -634,7 +639,8 @@ async def dating_mail_reply(profile: dict, site_id: int, history: list[dict],
                                DATING_MAIL_REPLY_WORKFLOW)
     language = await dating_mail_agent_language(int(site_id))
 
-    answer = await rhapsody_api_chat_ask(
+    answer = await _chat_ask(
+        int(site_id),
         agent_id=agent_id,
         question='Напиши ответ на последнее письмо.',
         companion_id=DATING_MAIL_AGENT_COMPANION_ID,
@@ -692,6 +698,24 @@ async def _timezone() -> str:
     from src.uvicorn.routers.setting import setting_get
 
     return str(await setting_get('timezone', '+0') or '+0')
+
+
+async def _chat_ask(site_id: int, **kwargs):
+    """Вопрос агенту — с именем работы для журнала запросов.
+
+    ⚠ **Обёртка на одну строку, и заводится она не ради красоты.** Дверь к соседу
+    одна на все занятия, и анкету с сайтом она из пути вывести не может:
+    `/chat/ask` одинаков и у инвайта, и у письма, и у автоответа. Без имени
+    работы строки журнала лежат без владельца — на проде их 3512 в сутки, и ни на
+    одну нельзя ответить «кому это готовили».
+
+    Здесь известен хотя бы сайт; анкета известна не всегда (шаблон инвайта пишут
+    на весь пул, а не девушке), и ноль в её месте — честный ответ.
+    """
+    from src.dating.dating_request import dating_request_about
+
+    with dating_request_about(site_id=int(site_id or 0)):
+        return await rhapsody_api_chat_ask(**kwargs)
 
 
 async def _agent_id(site_id: int, pattern: str = DATING_MAIL_AGENT_NAME,
