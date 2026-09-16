@@ -964,9 +964,9 @@ class TestPoolRefills:
     Со стороны это выглядело как «работает, но пул не растёт»: круг исправно чистил
     ушедших собеседников и не добавлял ничего.
 
-    ⚠ **Разные тексты в пуле оказались пользой.** Пул в полсотни одним шаблоном —
-    это полсотни живых людей с одинаковой репликой; порциями по десять на тот же
-    пул выходит пять разных текстов.
+    ⚠ **Разные тексты в пуле оказались пользой.** Пул, набранный с нуля, выходит
+    одним текстом на всех; дальше он расходуется отправкой, и каждый следующий
+    заход добирает израсходованное **своим** текстом.
     """
 
     def test_the_round_refills_a_partial_pool(self):
@@ -984,15 +984,35 @@ class TestPoolRefills:
         assert '_pool_max(site_id) - await dating_invite_pool_left' in code, \
             'круг снова ждёт пустого пула — при выключенной отправке он застынет'
 
-    def test_a_batch_is_smaller_than_the_pool(self):
-        """⚠ Порция меньше потолка: иначе весь пул — один текст на полсотни людей."""
-        from src.dating.dating_invite import (DATING_INVITE_BATCH,
-                                              DATING_INVITE_POOL_DEFAULT)
+    async def test_the_batch_is_not_a_setting_of_its_own(self, auth_client):
+        """⚠⚠ Сколько карточек за заход — вопрос уже отвеченный, размером пула.
 
-        assert DATING_INVITE_BATCH < DATING_INVITE_POOL_DEFAULT, \
-            'порция не меньше пула — разнотекстовым он не станет'
-        assert DATING_INVITE_BATCH >= 5, \
-            'порция слишком мала: каждая стоит вызова LLM'
+        Здесь недолго стояла отдельная настройка «сколько человек получат один
+        текст», и завёл её я, а не задача: круг брал порцию в десять, число это
+        ничем не выводилось, и настройка была попыткой оправдать его задним
+        числом. Заказчик отверг — верно: два места, где заводят одно и то же
+        число, расходятся на первой же правке, и человек не знает, какое из них
+        главнее.
+
+        Круг набирает всё, чего не хватает до `invite_pool_max`.
+        """
+        got = (await auth_client.get('/api/dating/site')).json()['result']
+        keys = {row['key'] for row in got['known']}
+
+        assert 'invite_pool_max' in keys
+        assert 'invite_batch' not in keys, \
+            'вернулась вторая настройка о том же числе'
+
+    def test_the_round_takes_everything_missing(self):
+        """Круг просит ровно недостающее, без своей мерки поверх."""
+        import inspect
+
+        code = inspect.getsource(
+            __import__('src.dating.dating_invite_round', fromlist=['x']
+                       ).dating_invite_round_run)
+
+        assert 'dating_invite_make(site_id, left)' in code, \
+            'круг снова режет добор своей меркой'
 
     def test_failed_drafts_do_not_count_as_full(self):
         """⚠ Застрявшие с ошибкой в счёт не идут.
