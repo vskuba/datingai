@@ -66,12 +66,23 @@ async def dating_site_presence(site_id: int) -> dict:
     нечем» — тот же исход, что и раньше. Бросать отсюда нельзя: зовут из петель
     держателя, и упавшая петля унесла бы чат целиком.
     """
+    from logging_.logging_ import logger_info
     from src.uvicorn.routers.dating.dating_site import dating_site_setting
 
-    own = dating_json_load(await dating_site_setting(site_id,
-                                                     DATING_SITE_PRESENCE_SETTING))
+    raw = await dating_site_setting(site_id, DATING_SITE_PRESENCE_SETTING)
+    own = dating_json_load(raw)
     if own:
         return own
+
+    # ⚠ **Уход к соседу — событие, а не будни.** Описание сайта полагается держать
+    # у себя; поход за ним значит либо «сайт ещё не настроен», либо «настройку
+    # стёрли», и человеку это надо видеть, не читая счётчики журнала запросов.
+    #
+    # Длина прочитанного здесь не для красоты: она разделяет два разных случая —
+    # настройки нет вовсе (ноль) и настройка есть, но не разобралась (не ноль).
+    # Второе — сломанный JSON в поле, которое правят руками.
+    logger_info(f'[dating] описание сайта #{int(site_id)} не взято у себя '
+                f'(в настройке {len(str(raw or ""))} байт) — спрашиваем соседа')
 
     return await dating_site_presence_neighbour(site_id)
 
