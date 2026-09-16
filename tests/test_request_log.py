@@ -479,3 +479,45 @@ class TestNeighbourIsExternalToo:
                                                DATING_REQUEST_RHAPSODY)
 
         assert DATING_REQUEST_DOORS[DATING_REQUEST_RHAPSODY] == 'сосед RhapsodyAi'
+
+
+class TestSitelessRowsAreVisible:
+    """⚠⚠ Записать и не показать — хуже, чем не записать.
+
+    **Поймано глазами.** Походы к соседу писались в журнал исправно — двести с
+    лишним в час, — но лента отбирала `WHERE site_id = %s`, а у них `site_id = 0`.
+    В итоге во вкладке «Запросы» не было **ни одной** строки соседа, и человек
+    законно решил, что их не пишут вовсе.
+
+    Молчаливое враньё о полноте опаснее дыры: дыру ищут, а полному на вид журналу
+    верят.
+
+    ⚠ Ноль здесь не «потерялся», а значит «поход не про конкретный сайт»: к соседу
+    ходят за справочником, агентами и проверкой выходов — сайта там нет и быть не
+    может.
+    """
+
+    def test_the_query_lets_site_less_rows_through(self):
+        """Проверяем сам отбор: поднять ленту без базы дороже, чем она стоит."""
+        import inspect
+
+        from src.uvicorn.routers.dating import dating_request as handle
+
+        code = inspect.getsource(handle.dating_request_list)
+
+        assert 'r.site_id = 0' in code, \
+            'лента снова прячет походы без сайта — соседа в ней не будет'
+
+    @pytest.mark.asyncio
+    async def test_a_neighbour_row_has_no_site(self, written, rhapsody):
+        """⚠ И сама дверь сайта не приписывает — иначе это была бы неправда.
+
+        К соседу ходят и по анкете, и по сайту, и вовсе без них. Приписать строке
+        сайт значило бы соврать в двух случаях из трёх.
+        """
+        from src.rhapsody.rhapsody_api import rhapsody_api_site_list
+
+        rhapsody.sites = []
+        await rhapsody_api_site_list()
+
+        assert written[0].get('site_id', 0) == 0
