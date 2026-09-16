@@ -406,3 +406,76 @@ def _fake_db(rows):
             return False
 
     return lambda: _Ctx()
+
+
+class TestNeighbourIsExternalToo:
+    """⚠⚠ Сосед — тоже наружу, и его походы обязаны быть в журнале.
+
+    **Исправление ошибки суждения.** Сперва RhapsodyAi исключили с доводом «он не
+    внешний мир, а вторая половина установки». Довод неверен: ходим мы к нему по
+    HTTP, он падает, отказывает и тормозит ровно как чужой сайт. Человек, глядя в
+    журнал, видел не «все внешние запросы», а «часть» — и не знал, какую.
+
+    Через соседа идут прогоны сценариев, вызовы LLM, справочник сайтов и агенты:
+    это и медленнее всего (прогон — десятки секунд), и чаще всего виновато, когда
+    «ничего не работает».
+    """
+
+    @pytest.fixture
+    def door(self, monkeypatch):
+        rows = []
+
+        async def _note(**kwargs):
+            rows.append(kwargs)
+
+        monkeypatch.setattr(dating_request, 'dating_request_write', _note)
+
+        return rows
+
+    @pytest.mark.asyncio
+    async def test_a_good_call_is_written(self, door, rhapsody):
+        from src.rhapsody.rhapsody_api import rhapsody_api_site_list
+
+        rhapsody.sites = [{'id': 7, 'name': 'Ladadate', 'url': 'https://x.test'}]
+        await rhapsody_api_site_list()
+
+        assert door, 'поход к соседу не попал в журнал'
+        assert door[0]['door'] == 'rhapsody' and door[0]['ok'] is True
+        assert door[0]['status'] == 200
+
+    @pytest.mark.asyncio
+    async def test_a_refusal_is_written(self, door, rhapsody):
+        """Отказ соседа — строка с его кодом и разобранной причиной."""
+        from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_site_list
+
+        rhapsody.refuse(409, 'предел сессий исчерпан: 25')
+
+        with pytest.raises(RhapsodyError):
+            await rhapsody_api_site_list()
+
+        assert door[0]['ok'] is False and door[0]['status'] == 409
+        assert door[0]['error'], 'причина отказа не записана'
+
+    @pytest.mark.asyncio
+    async def test_no_profile_is_attached(self, door, rhapsody):
+        """⚠ Анкеты у строки нет, и это не упущение.
+
+        К соседу ходят и по анкете (прогон сценария), и по сайту (справочник,
+        агенты), и вовсе без них (проверка выходов). Дверь про **соседа**, а не про
+        девушку; приписать ей анкету значило бы соврать в двух случаях из трёх.
+        """
+        rhapsody.sites = []
+        from src.rhapsody.rhapsody_api import rhapsody_api_site_list
+
+        await rhapsody_api_site_list()
+
+        # ⚠ Ключа может не быть вовсе: дверь его просто не передаёт, а умолчание
+        # у `dating_request_write` — ноль. Проверяем смысл, а не форму вызова.
+        assert door[0].get('profile_id', 0) == 0
+
+    @pytest.mark.asyncio
+    async def test_the_door_has_a_human_name(self):
+        from src.dating.dating_request import (DATING_REQUEST_DOORS,
+                                               DATING_REQUEST_RHAPSODY)
+
+        assert DATING_REQUEST_DOORS[DATING_REQUEST_RHAPSODY] == 'сосед RhapsodyAi'

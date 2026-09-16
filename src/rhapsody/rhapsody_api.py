@@ -627,6 +627,7 @@ async def _request(method: str, path: str, payload: dict = None,
         # соседе, а в сети или в том, что его вовсе нет.
         logger_info(f'[rhapsody] ← {method} {path}: связь оборвалась за '
                     f'{_ms(started)} мс: {e}')
+        await _note(method, path, 0, False, f'RhapsodyAi недоступен: {e}', started)
 
         raise RhapsodyError(f'RhapsodyAi недоступен: {e}')
 
@@ -634,12 +635,46 @@ async def _request(method: str, path: str, payload: dict = None,
                 f'{_body_short(response)}')
 
     if response.status_code >= 400:
+        await _note(method, path, response.status_code, False,
+                    _error_text(path, response), started)
+
         raise RhapsodyError(_error_text(path, response), code=response.status_code)
+
+    await _note(method, path, response.status_code, True, '', started)
 
     try:
         return response.json() if response.content else {}
     except ValueError:
         raise RhapsodyError(f'{path} → ответ не JSON: {response.text[:150]}')
+
+
+async def _note(method: str, path: str, status: int, ok: bool, error: str,
+                started: float) -> None:
+    """Строка в журнал внешних запросов: сосед — тоже наружу.
+
+    ⚠⚠ **Пишем здесь, в единственной двери.** Вызывающих у соседа десяток, и
+    первый забытый снова оставил бы слепое место — тот же довод, по которому
+    здесь же пишется и лог процесса.
+
+    ⚠ **Анкеты у строки нет.** К соседу ходят и по анкете (прогон сценария), и по
+    сайту (справочник, агенты), и вовсе без них (проверка выходов). Дверь про
+    **соседа**, а не про девушку; приписать ей анкету значило бы соврать в двух
+    случаях из трёх. Чья работа — видно в журнале прогонов.
+
+    ⚠ **Путь без тела.** В теле прогона едут пароли анкет (`secrets`), а журнал
+    читают в консоли и копируют в переписку.
+
+    Ничего не бросает: сбой журнала не имеет права уронить работу.
+    """
+    from src.dating.dating_request import (DATING_REQUEST_RHAPSODY,
+                                           dating_request_write)
+
+    # ⚠ Строку запроса режем: в ней бывают номера и метки, но длина её не
+    # ограничена, а колонка — 255 знаков.
+    await dating_request_write(door=DATING_REQUEST_RHAPSODY, method=str(method or ''),
+                               path=str(path or '')[:255], status=int(status or 0),
+                               ok=bool(ok), error=str(error or ''),
+                               ms=_ms(started))
 
 
 def _ms(started: float) -> int:

@@ -27,6 +27,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.dating_block import dating_block_add, dating_block_deny
 from src.dating.dating_feed import dating_feed_write
+from src.dating.dating_invite import dating_invite_marks_strip
 from src.dating.dating_json import dating_json_load
 from src.dating.dating_log import dating_log_write
 from src.dating.dating_send import dating_send_message
@@ -85,9 +86,19 @@ async def dating_invite_send_one(invite: dict) -> dict:
     if not site:
         return await _fail(site_id, invite_id, profile_id, who, f'у соседа нет сайта {site_id}')
 
+    # ⚠⚠ **Последний рубеж: сырой метки наружу не уходит.** Подстановка живёт в
+    # наборе пула (`dating_invite._fill`), но между набором и отправкой стоит
+    # человек: он правит текст на странице и может вписать `[[…]]` руками, увидев
+    # такую метку в соседней карточке. Да и сам пул мог быть набран прежней
+    # версией — на проде так и лежало 23 карточки из 36.
+    #
+    # Вырезаем тем же помощником, что и набор: два правила разошлись бы, и второе
+    # оказалось бы слабее ровно там, где оно последнее.
+    body = dating_invite_marks_strip(str(invite['body']))
+
     try:
         got = await dating_send_message(profile, dating_json_load(site.get('presence')),
-                                        str(invite['uid']), str(invite['body']))
+                                        str(invite['uid']), body)
     except RhapsodyError as e:
         return await _fail(site_id, invite_id, profile_id, who, str(e))
     except Exception as e:

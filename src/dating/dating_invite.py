@@ -92,6 +92,7 @@
 """
 
 import random
+import re
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
@@ -351,6 +352,38 @@ async def dating_invite_pool_left(site_id: int, ready_only: bool = False) -> int
     return int((row or {}).get('n') or 0)
 
 
+def dating_invite_marks_strip(text: str) -> str:
+    """Убирает метки, которые подставить не вышло. Страховка, а не основной путь.
+
+    ⚠⚠ **Сырой метки в готовом инвайте быть не может.** Письмо человек читает и
+    правит перед отправкой, а инвайт уносит круг — `[[companion_name]]` уедет в
+    чат живому человеку ровно так, в скобках.
+
+    ⚠ **Вырезаем вместе с лишним знаком препинания.** Простое удаление оставляет
+    «I'm curious, , what's…» — две запятые подряд читаются как опечатка, то есть
+    беда остаётся, просто выглядит иначе.
+
+    ⚠ **Заглавная буква возвращается**, если метка стояла первой: «[[girl_name]]
+    здесь» без этого станет «здесь» со строчной.
+    """
+    clean = str(text or '')
+    if '[[' not in clean:
+        return clean
+
+    mark = r'\[\[[^\]]*\]\]'
+    # Метка между двумя знаками — оставляем второй: «curious, [[X]], what» → «curious, what».
+    clean = re.sub(rf'[,;:]\s*{mark}\s*([,.;:!?])', r'\1', clean)
+    # Метка перед знаком и после него — знак остаётся, метка уходит.
+    clean = re.sub(rf'\s*{mark}\s*([,.;:!?])', r'\1', clean)
+    clean = re.sub(rf'([,;:])\s*{mark}', r'\1', clean)
+    # Всё прочее — метка вместе с окружающими пробелами.
+    clean = re.sub(rf'\s*{mark}\s*', ' ', clean)
+
+    clean = re.sub(r'\s{2,}', ' ', clean).strip(' ,;:')
+
+    return clean[:1].upper() + clean[1:] if clean else clean
+
+
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 def _cards(girls: list, people: list, invited: set, talked: set,
@@ -484,11 +517,21 @@ async def _avoid(site_id: int) -> list[str]:
 
 
 def _fill(template: str, girl: dict, person: dict) -> str:
-    """Подставляет имена в шаблон. Метки те же двойные скобки, что у писем.
+    """Подставляет имена в шаблон и вычищает то, что подставить не вышло.
 
     ⚠ **Имя — первое слово, а не полное.** В ленте лежит «Brian Ritter», а в чате
     обращаются «Brian»; фамилия в реплике звучит как обращение из документа. То же
     правило у девушки: в анкете «Diana K.», в реплике «Diana».
+
+    ⚠⚠ **Одно слово — это тоже имя**, и здесь была живая беда. `dating_people_name_parts`
+    отвечает пустотой на имя без пробела («Paulo», «CLAY», «Tall_Good_Man»): так
+    задумано для писем, где промпт сам решает через `%if%`, чем звать. Инвайт же
+    берёт ответ буквально — и получал пустоту, а `dating_mail_render` на пустое
+    значение **оставляет метку в тексте**.
+
+    Итог был виден в пуле прода: 23 карточки из 36 с «I'm curious,
+    [[companion_name]], what's…» — при том, что имя у человека есть. Поэтому здесь
+    падаем на первое слово полного имени, а не на пустоту.
 
     ⚠ **Подстановка не рекурсивная** (`dating_mail_render`): имя, в котором
     случайно окажется `[[…]]`, второй раз не разбирается.
@@ -498,10 +541,22 @@ def _fill(template: str, girl: dict, person: dict) -> str:
     girl_name = str(dating_json_load(girl.get('profile')).get('name') or '')
     person_name = str(person.get('name') or '')
 
-    return dating_mail_render(template, {
-        DATING_INVITE_SLOT_GIRL: dating_people_name_parts(girl_name)['firstname'],
-        DATING_INVITE_SLOT_MAN: str(person.get('firstname')
-                                    or dating_people_name_parts(person_name)['firstname'])})
+    filled = dating_mail_render(template, {
+        DATING_INVITE_SLOT_GIRL: _first_word(girl_name),
+        DATING_INVITE_SLOT_MAN: (str(person.get('firstname') or '').strip()
+                                 or _first_word(person_name))})
+
+    return dating_invite_marks_strip(filled)
+
+
+def _first_word(name: str) -> str:
+    """Чем звать: первое слово имени. Одно слово — оно само.
+
+    ⚠ Не `dating_people_name_parts`: та отвечает пустотой на имя без пробела, и
+    это верно **для писем** — там решает промпт. Здесь пустота означает метку,
+    оставшуюся в тексте у живого человека.
+    """
+    return str(name or '').strip().split(' ')[0].strip()
 
 
 async def _pool_uids(site_id: int) -> set:

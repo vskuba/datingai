@@ -863,3 +863,88 @@ class TestVariety:
 
         assert _avoid_text([]) == '' and _avoid_text(None) == ''
         assert _avoid_text(['', '   ']) == '', 'пробелы просочились в список'
+
+
+class TestNoRawMarks:
+    """⚠⚠ Сырой метки в готовом инвайте не бывает. Ни при каких условиях.
+
+    **Поймано в живом пуле прода: 23 карточки из 36** с текстом «I'm curious,
+    [[companion_name]], what's on your mind?» — и это при том, что имя у человека
+    есть: Paulo, CLAY, Chris.
+
+    Причин было две, и обе здесь закрыты.
+
+    **Корень.** `dating_people_name_parts` отвечает пустотой на имя без пробела —
+    так задумано **для писем**, где промпт сам решает через `%if%`, чем звать.
+    Инвайт брал ответ буквально, а `dating_mail_render` на пустое значение
+    оставляет метку в тексте.
+
+    **Страховка.** Даже с верным именем метка может дожить до отправки: человек
+    правит текст на странице руками, а пул мог быть набран прежней версией. Письмо
+    в таком случае прочтут и поправят, инвайт уносит круг — и `[[…]]` уедет в чат
+    живому человеку прямо в скобках.
+    """
+
+    def test_a_one_word_name_is_a_name(self):
+        """⚠ «Paulo» — это имя, а не «имени нет»."""
+        got = _fill("I'm curious, [[companion_name]], what's on your mind?",
+                    {'profile': '{}'}, {'name': 'Paulo'})
+
+        assert got == "I'm curious, Paulo, what's on your mind?"
+
+    def test_a_full_name_still_gives_the_first_word(self):
+        """А двусловное по-прежнему режется: в чате зовут «Brian», не «Brian Ritter»."""
+        got = _fill('Hey [[companion_name]]!', {'profile': '{}'}, {'name': 'Brian Ritter'})
+
+        assert got == 'Hey Brian!'
+
+    def test_a_missing_name_leaves_no_mark(self):
+        """Имени нет вовсе — метки в тексте всё равно не остаётся."""
+        got = _fill('Hey [[companion_name]], guess what?', {'profile': '{}'}, {'name': ''})
+
+        assert '[[' not in got and ']]' not in got
+
+    def test_stripping_does_not_leave_double_punctuation(self):
+        """⚠ Вырезаем **вместе с лишним знаком**: «curious, , what» читается как
+        опечатка, то есть беда остаётся, просто выглядит иначе."""
+        from src.dating.dating_invite import dating_invite_marks_strip
+
+        got = dating_invite_marks_strip("I'm curious, [[companion_name]], what's up?")
+
+        assert got == "I'm curious, what's up?"
+        assert ', ,' not in got
+
+    def test_a_leading_mark_keeps_the_capital(self):
+        """«[[girl_name]] здесь» без этого стало бы «здесь» со строчной."""
+        from src.dating.dating_invite import dating_invite_marks_strip
+
+        assert dating_invite_marks_strip('[[girl_name]] здесь, и мне скучно') \
+               == 'Здесь, и мне скучно'
+
+    def test_a_trailing_mark_leaves_no_dangling_comma(self):
+        from src.dating.dating_invite import dating_invite_marks_strip
+
+        assert dating_invite_marks_strip('скажи мне, [[companion_name]]') == 'Скажи мне'
+
+    def test_clean_text_is_untouched(self):
+        """⚠ Текст без меток обязан пройти **байт в байт**: страховка не вправе
+        переписывать то, что и так верно."""
+        from src.dating.dating_invite import dating_invite_marks_strip
+
+        was = 'Спорим, ты сейчас улыбнулся?'
+        assert dating_invite_marks_strip(was) == was
+
+    def test_sending_strips_marks_too(self):
+        """⚠ Последний рубеж — сама отправка: между набором и ею стоит человек.
+
+        Проверяем по исходнику: позвать отправку без базы и живого сайта дороже,
+        чем она стоит, а строка эта — единственное, что держит правило.
+        """
+        import inspect
+
+        from src.dating import dating_invite_send
+
+        code = inspect.getsource(dating_invite_send)
+
+        assert 'dating_invite_marks_strip(str(invite[' in code, \
+            'отправка снова берёт текст как есть — метка уедет в чат'
