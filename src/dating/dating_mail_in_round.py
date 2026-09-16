@@ -52,6 +52,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from redis_.redis_ import redis_conn_get
 
 from src.dating.dating_mail_in import DatingMailInError, dating_mail_in_fetch
+from src.dating.dating_ready import dating_ready_online
 
 # Как часто круг просыпается. ⚠ Не частота забора: её задаёт `mail_check_every`.
 DATING_MAIL_IN_ROUND_TICK_SEC = 60
@@ -118,6 +119,17 @@ async def dating_mail_in_round_run() -> dict:
         for number, profile in enumerate(profiles):
             if number:
                 await asyncio.sleep(DATING_MAIL_IN_PAUSE_SEC)
+
+            # ⚠⚠ **Статус перечитываем перед самим походом.** Отбор выше взял
+            # анкеты `status = 'online'`, но обход идёт по одной с паузой — сайт
+            # считает частые заходы подозрением, — и список успевает устареть.
+            #
+            # Поймано живьём: смена кончилась на второй секунде обхода, и два
+            # `GET /messages` ушли под анкетами, которые уже были офлайн. Вреда
+            # в тот раз не вышло (токен жив, входа не было), но правило «под
+            # спящей наружу не ходим» держится не на везении.
+            if not await dating_ready_online(int(profile['id'])):
+                continue
 
             seen += 1
             got = await _fetch(profile, base, password)

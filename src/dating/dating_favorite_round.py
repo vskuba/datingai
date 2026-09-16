@@ -64,6 +64,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 from redis_.redis_ import redis_conn_get
 
+from src.dating.dating_ready import dating_ready_online
 from src.dating.dating_favorite import (DATING_FAVORITE_ALREADY,
                                         DATING_FAVORITE_DONE,
                                         DATING_FAVORITE_REASON_MAIL,
@@ -126,6 +127,13 @@ async def dating_favorite_round_run() -> dict:
         for profile in profiles:
             if left <= 0:
                 break
+
+            # ⚠ **Статус перед походом, а не только при отборе.** Звёздочка — это
+            # вход под девушкой на сайте, и заходы разведены паузой: за время
+            # обхода список успевает устареть. Та же беда, что поймана у писем
+            # (`dating_ready_online`), и тот же ответ.
+            if not await dating_ready_online(int(profile['id'])):
+                continue
 
             seen += 1
             got = await _profile_run(profile, base, password, left)
