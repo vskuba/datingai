@@ -517,3 +517,63 @@ class TestSiteSettingIsRegistered:
 
         assert dating_json_load('{сломано}') == {}
         assert dating_json_load(json.dumps(CONFIG))['base'] == BASE
+
+
+class TestTheTwoPeriodsExplainThemselves:
+    """⚠⚠ Два срока в группе «Присутствие», и подписи обязаны их разводить.
+
+    Заказчик спросил прямо: «а в чём разница и зачем нужен второй параметр?» —
+    и вопрос был законный, потому что подписи на него не отвечали.
+
+    | | `heartbeat_every` | `probe_every` |
+    |--|--|--|
+    | что делает | шлёт один запрос `beat` | шлёт `beat` + `alive`, читает непрочитанные |
+    | зачем | чтобы **сайт** показывал анкету онлайн | чтобы **панель** знала правду |
+    | куда пишет | никуда | `status`, `last_seen_at`, `unread`, `last_error` |
+
+    Первое — **действие** («я здесь»), второе — **вопрос с ответом**, на котором
+    стоит автовосстановление входа. Отсюда и разная частота: бить часто,
+    спрашивать редко.
+
+    ⚠ **Одним параметром не обойтись ни в какую сторону.** Оставь только удар —
+    панель не узнает о протухшей сессии: удар «проходит» и на мёртвом входе, и
+    колонка «В сети» зеленела бы у анкеты, которой на сайте нет (это уже было,
+    см. §4 про `beat` и `alive`). Оставь только опрос — присутствие провалится
+    по частоте: раз в минуту мало, сайт гасит онлайн между заходами.
+    """
+
+    async def test_the_labels_do_not_look_alike(self, auth_client):
+        """Подписи разводят «говорю» и «спрашиваю» — иначе вопрос вернётся."""
+        got = (await auth_client.get('/api/dating/site')).json()['result']
+        title = {row['key']: row['title'] for row in got['known']}
+
+        assert 'говорить сайту' in title['heartbeat_every'], \
+            'подпись присутствия снова не говорит, что это действие, а не вопрос'
+        assert 'В сети' in title['probe_every'], \
+            'подпись опроса снова не называет то, ради чего он идёт'
+
+    async def test_the_probe_note_names_what_it_writes(self, auth_client):
+        """⚠ У опроса в пояснении — то, что он пишет в панель.
+
+        Без этого он выглядит проверкой ради проверки, и первым делом его
+        выкручивают в «15 минут», не зная, что вместе с ним замедлится и
+        автовосстановление входа.
+        """
+        got = (await auth_client.get('/api/dating/site')).json()['result']
+        note = {row['key']: row['note'] for row in got['known']}
+
+        assert 'автовосстановление' in note['probe_every']
+        assert 'пишет ответ в панель' in note['probe_every']
+
+    async def test_the_key_did_not_move(self, auth_client):
+        """⚠⚠ Переименована **подпись**, а не ключ, и это осознанно.
+
+        Ключ живёт в `dating_site.settings` у каждого сайта: переезд означал бы
+        миграцию значений, и забытый сайт молча свалился бы на умолчание. Цена
+        несоразмерна — ключ видит один разработчик, а человек читает подпись.
+        """
+        got = (await auth_client.get('/api/dating/site')).json()['result']
+        keys = {row['key'] for row in got['known']}
+
+        assert 'probe_every' in keys, 'ключ переехал — у сайтов слетят значения'
+        assert 'heartbeat_every' in keys
