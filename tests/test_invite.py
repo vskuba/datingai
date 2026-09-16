@@ -692,7 +692,11 @@ class TestOneCallPerPool:
     async def test_agent_is_asked_once(self, monkeypatch):
         calls = []
 
-        async def _template(site_id, language, girl_slot=False, man_slot=False):
+        # ⚠ Подпись повторяет живую целиком, включая жребий на приём и длину:
+        # заглушка, не принявшая их, ловила бы `TypeError` вместо проверяемого
+        # правила.
+        async def _template(site_id, language, girl_slot=False, man_slot=False,
+                            angle='', length='', avoid=None):
             calls.append(site_id)
 
             return 'Спорим, ты сейчас улыбнулся?'
@@ -718,7 +722,8 @@ async def _made_with(monkeypatch, template, people=None) -> dict:
     from src.dating import dating_invite
 
     if template is not None:
-        async def _template(site_id, language, girl_slot=False, man_slot=False):
+        async def _template(site_id, language, girl_slot=False, man_slot=False,
+                            angle='', length='', avoid=None):
             return template
 
         monkeypatch.setattr(dating_invite, 'dating_invite_template', _template)
@@ -729,6 +734,7 @@ async def _made_with(monkeypatch, template, people=None) -> dict:
     monkeypatch.setattr(dating_invite, '_invited', _answer(set()))
     monkeypatch.setattr(dating_invite, '_talked', _answer(set()))
     monkeypatch.setattr(dating_invite, '_pool_uids', _answer(set()))
+    monkeypatch.setattr(dating_invite, '_avoid', _answer([]))
     monkeypatch.setattr(dating_invite, 'dating_block_pairs', _answer(set()))
     monkeypatch.setattr(dating_invite, '_language', _answer('en'))
     monkeypatch.setattr(dating_invite, '_put', _nothing())
@@ -754,3 +760,106 @@ def _nothing():
         return True
 
     return _got
+
+
+class TestVariety:
+    """⚠⚠ Разнообразие задаётся снаружи, а не просьбой к модели.
+
+    **Поймано живым прогоном.** Промпт просил «игриво и с провокацией», и модель
+    слушалась — но одинаково: три шаблона из трёх начинались с одного оборота,
+    «I bet you're trouble», «You look like trouble», «I have a feeling you're
+    trouble». Просьба «будь разной» этого не лечит: у модели сильные притяжения,
+    и температура их не ломает.
+
+    Лечится тем же приёмом, что и метки имён: жребий бросаем мы. Три оси — приём,
+    длина и список «так уже было», — и модель получает не пожелание, а указание.
+    """
+
+    async def test_the_angle_and_length_reach_the_agent(self, monkeypatch):
+        """Приём и длина уезжают агенту переменными, а не остаются у нас."""
+        from src.dating import dating_invite
+
+        sent = {}
+
+        async def _template(site_id, language, girl_slot=False, man_slot=False,
+                            angle='', length='', avoid=None):
+            sent.update({'angle': angle, 'length': length, 'avoid': avoid})
+
+            return 'текст'
+
+        async def _avoid(site_id):
+            return []
+
+        monkeypatch.setattr(dating_invite, 'dating_invite_template', _template)
+        monkeypatch.setattr(dating_invite, '_avoid', _avoid)
+
+        await dating_invite._template(STAND_SITE, 'en')
+
+        assert sent['angle'] in dating_invite.DATING_INVITE_ANGLES
+        assert sent['length'] in dating_invite.DATING_INVITE_LENGTHS
+
+    async def test_the_dice_actually_roll(self, monkeypatch):
+        """⚠ Жребий **на каждый заход**, а не один раз при запуске.
+
+        Выбери мы приём однажды — пул выходил бы разнообразным между сайтами и
+        одинаковым внутри дня, то есть ровно там, где это видно человеку.
+        """
+        from src.dating import dating_invite
+
+        seen = set()
+
+        async def _template(site_id, language, girl_slot=False, man_slot=False,
+                            angle='', length='', avoid=None):
+            seen.add((angle, length))
+
+            return 'текст'
+
+        async def _avoid(site_id):
+            return []
+
+        monkeypatch.setattr(dating_invite, 'dating_invite_template', _template)
+        monkeypatch.setattr(dating_invite, '_avoid', _avoid)
+
+        for _ in range(30):
+            await dating_invite._template(STAND_SITE, 'en')
+
+        # Восемь приёмов на четыре длины: за тридцать бросков сочетаний обязано
+        # набраться заметно больше одного. Точного числа не требуем — это жребий.
+        assert len(seen) > 5, f'жребий не бросается: сочетаний всего {len(seen)}'
+
+    async def test_the_angles_differ_by_substance(self):
+        """⚠ Приёмы отличаются **по существу**, а не по словам.
+
+        «Дерзкий вопрос» и «игривый вопрос» дали бы одно и то же: вопрос. Список
+        разводит сами заходы — вопрос, вызов, признание, игра, — и только поэтому
+        работает.
+        """
+        from src.dating.dating_invite import DATING_INVITE_ANGLES
+
+        assert len(DATING_INVITE_ANGLES) >= 6, 'приёмов мало — пул будет однообразным'
+        assert len(set(DATING_INVITE_ANGLES)) == len(DATING_INVITE_ANGLES)
+
+    async def test_the_lengths_cover_both_ends(self):
+        """От трёх слов до абзаца: однообразие длины видно так же, как слов."""
+        from src.dating.dating_invite import DATING_INVITE_LENGTHS
+
+        together = ' '.join(DATING_INVITE_LENGTHS)
+        assert 'коротко' in together and 'абзац' in together
+
+    def test_the_avoid_list_is_numbered(self):
+        """Список прошлых шаблонов идёт перечнем, а не одним текстом с переносами."""
+        from src.dating.dating_mail_agent import _avoid_text
+
+        assert _avoid_text(['раз', 'два']) == '1. раз\n2. два'
+
+    def test_an_empty_avoid_list_is_empty_text(self):
+        """⚠ Пусто — пустая строка: заголовок «так уже было» без единой строки под
+        ним модель читает как противоречие и начинает выдумывать, чего избегать.
+
+        Прячет его условный блок в промпте у соседа (`%if invite_avoid%`), и
+        пустая строка — то, на что он смотрит.
+        """
+        from src.dating.dating_mail_agent import _avoid_text
+
+        assert _avoid_text([]) == '' and _avoid_text(None) == ''
+        assert _avoid_text(['', '   ']) == '', 'пробелы просочились в список'

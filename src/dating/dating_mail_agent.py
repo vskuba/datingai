@@ -450,7 +450,9 @@ async def dating_mail_question(profile: dict, site_id: int,
 
 
 async def dating_invite_template(site_id: int, language: str = DATING_INVITE_LANGUAGE,
-                                 girl_slot: bool = False, man_slot: bool = False) -> str:
+                                 girl_slot: bool = False, man_slot: bool = False,
+                                 angle: str = '', length: str = '',
+                                 avoid: list = None) -> str:
     """Сочиняет **шаблон** первой реплики в чат — один на весь пул инвайтов.
 
     Args:
@@ -458,6 +460,11 @@ async def dating_invite_template(site_id: int, language: str = DATING_INVITE_LAN
         language: код языка реплики. ⚠ **Передаётся всегда**, см. оговорку ниже.
         girl_slot: нужна ли в тексте метка имени девушки (`[[girl_name]]`).
         man_slot: нужна ли метка имени собеседника (`[[companion_name]]`).
+        angle: приём — каким заходом писать (вопрос, вызов, признание…). Жребий
+            бросает вызывающий (`dating_invite.DATING_INVITE_ANGLES`).
+        length: какой длины просить — от трёх слов до абзаца.
+        avoid: что уже писали этому сайту; модель получает список со словами «так
+            уже было».
 
     Returns:
         str: текст шаблона. Пустая строка — агент промолчал или прислал не то, и
@@ -485,6 +492,13 @@ async def dating_invite_template(site_id: int, language: str = DATING_INVITE_LAN
     имя девушки, 30% на имя мужчины), и «вставляй имя иногда» модель понимает как
     «вставляй всегда». Здесь она получает прямое указание: метка нужна или нет.
 
+    ⚠⚠ **Тем же приёмом добывается и разнообразие.** Один и тот же промпт модель
+    отвечает похоже: у неё сильные притяжения, и «будь разной» их не ломает —
+    живой прогон дал три шаблона из трёх, начинавшихся с «you're trouble».
+    Поэтому снаружи приходят **приём** и **длина** жребием, а `avoid` показывает,
+    что уже писали. Модель не выбирает, насколько ей быть разной; ей говорят, чем
+    быть на этот раз.
+
     ⚠ **Язык передаём явно, и это не мелочь.** Первый прогон прежней версии дал
     все реплики **по-русски** — мужчинам на англоязычном сайте, потому что правило
     было «пиши на языке его профиля», профиля у них нет, и модель ушла в язык
@@ -500,6 +514,9 @@ async def dating_invite_template(site_id: int, language: str = DATING_INVITE_LAN
         question='Напиши шаблон первой реплики в чат.',
         companion_id=DATING_MAIL_AGENT_COMPANION_ID,
         variables={'invite_slots': _slots(girl_slot, man_slot),
+                   'invite_angle': str(angle or ''),
+                   'invite_length': str(length or ''),
+                   'invite_avoid': _avoid_text(avoid),
                    # Та же переменная, что у автоответа и писем (`user_language`
                    # у соседа): две переменные одного смысла разошлись бы.
                    'user_language': str(language or DATING_INVITE_LANGUAGE)})
@@ -867,6 +884,21 @@ def _slots(girl_slot: bool, man_slot: bool) -> str:
 
     return ('Меток в тексте быть не должно вовсе: ни своего имени, ни обращения по '
             'имени. Реплика обращена к нему и без этого.')
+
+
+def _avoid_text(avoid) -> str:
+    """Список прошлых шаблонов строкой для промпта. Пусто — пустая строка.
+
+    ⚠ **Пустую строку промпт прячет сам** (`%if invite_avoid%…%endif%` у соседа):
+    заголовок «так уже было» без единой строки под ним модель читает как
+    противоречие и начинает выдумывать, чего избегать.
+
+    Нумеруем, а не маркируем: номер показывает, что это перечень примеров, а не
+    один длинный текст с переносами.
+    """
+    rows = [str(one).strip() for one in (avoid or []) if str(one).strip()]
+
+    return '\n'.join(f'{n}. {one}' for n, one in enumerate(rows, 1))
 
 
 def _invite(answer: str, girl_slot: bool = False, man_slot: bool = False,
