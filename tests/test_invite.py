@@ -948,3 +948,63 @@ class TestNoRawMarks:
 
         assert 'dating_invite_marks_strip(str(invite[' in code, \
             'отправка снова берёт текст как есть — метка уедет в чат'
+
+
+class TestPoolRefills:
+    """⚠⚠ Пул добирается порциями, а не ждёт, пока опустеет.
+
+    **Поймано на живом проде: пул застыл навсегда.** Здесь стояло «набираем только
+    пустой пул» — довод был, что шаблон один на заход и доложенные карточки лягут
+    вторым текстом вперемешку с первым. Эстетически верно, а на деле:
+
+        в пуле 21 черновик, отправка инвайтов выключена (её включают отдельным
+        выключателем) → пул не расходуется → не опустеет → круг не наберёт
+        никогда.
+
+    Со стороны это выглядело как «работает, но пул не растёт»: круг исправно чистил
+    ушедших собеседников и не добавлял ничего.
+
+    ⚠ **Разные тексты в пуле оказались пользой.** Пул в полсотни одним шаблоном —
+    это полсотни живых людей с одинаковой репликой; порциями по десять на тот же
+    пул выходит пять разных текстов.
+    """
+
+    def test_the_round_refills_a_partial_pool(self):
+        """Условие набора — «меньше потолка», а не «пусто».
+
+        Проверяем по исходнику: позвать круг без базы и соседа дороже, чем он
+        стоит, а строка эта — единственное, что держит правило.
+        """
+        import inspect
+
+        from src.dating import dating_invite_round
+
+        code = inspect.getsource(dating_invite_round.dating_invite_round_run)
+
+        assert '_pool_max(site_id) - await dating_invite_pool_left' in code, \
+            'круг снова ждёт пустого пула — при выключенной отправке он застынет'
+
+    def test_a_batch_is_smaller_than_the_pool(self):
+        """⚠ Порция меньше потолка: иначе весь пул — один текст на полсотни людей."""
+        from src.dating.dating_invite import (DATING_INVITE_BATCH,
+                                              DATING_INVITE_POOL_DEFAULT)
+
+        assert DATING_INVITE_BATCH < DATING_INVITE_POOL_DEFAULT, \
+            'порция не меньше пула — разнотекстовым он не станет'
+        assert DATING_INVITE_BATCH >= 5, \
+            'порция слишком мала: каждая стоит вызова LLM'
+
+    def test_failed_drafts_do_not_count_as_full(self):
+        """⚠ Застрявшие с ошибкой в счёт не идут.
+
+        Отправитель их не берёт — их дошлёт человек, — и одна такая строка иначе
+        считалась бы за живую: пул выглядел бы полным, не будучи им.
+        """
+        import inspect
+
+        from src.dating import dating_invite_round
+
+        code = inspect.getsource(dating_invite_round.dating_invite_round_run)
+
+        assert 'ready_only=True' in code, \
+            'застрявшие карточки снова считаются годными — добор встанет'
