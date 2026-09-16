@@ -49,13 +49,18 @@ DATING_LOGIN_PASSWORD_KEYS = ('password', 'pass', 'pwd')
 DATING_LOGIN_PASSWORD_SETTING = 'api_password'
 
 
-async def dating_login_run(profile_id: int, scenario_id: int = 0, session_id: str = '') -> dict:
+async def dating_login_run(profile_id: int, scenario_id: int = 0, session_id: str = '',
+                           force: bool = False) -> dict:
     """Входит под учёткой: сценарий, состояние, проверка опросом, адрес сокета.
 
     Args:
         profile_id: номер учётки.
         scenario_id: сценарий входа; 0 — найти по подстановкам сайта.
         session_id: готовая вкладка; пусто — завести свою и закрыть после.
+        force: вход по кнопке человека. Проходит и через паузу, и через
+            исчерпанный счётчик неудач: человек у экрана знает больше автомата —
+            он мог сменить пароль, разблокировать учётку, дождаться конца чужой
+            блокировки. Отказывать ему значило бы чинить сайт через базу.
 
     Returns:
         dict: `status` — `success` или `error`, `session_id`, `scenario`, `error`,
@@ -63,8 +68,30 @@ async def dating_login_run(profile_id: int, scenario_id: int = 0, session_id: st
 
     Raises:
         DatingLoginError: входить нечем — нет пароля, сайта или сценария входа.
+        DatingLoginHeld: входить **рано** — идёт пауза после неудачи или попытки
+            кончились. Отдельным исключением, потому что это не поломка: круг
+            обязан промолчать и уйти, а не писать строку, похожую на отказ.
+
+    ⚠⚠ **Проверка повторов стоит здесь, а не в кругах, и это главное в ней.**
+    Лестница пауз автовосстановления существовала и раньше — но её спрашивал круг
+    восстановления, а круг расписания входил прямым вызовом, мимо всех правил. На
+    проде это дало девять входов за четырнадцать минут у анкеты, чей вход сайт не
+    признавал (`dating_login_retry.py`).
+
+    Правило у двери обойти нельзя, не переписав саму дверь. Потому оно и здесь, а
+    не в трёх местах, откуда входят.
     """
+    from src.dating.dating_login_retry import (DatingLoginHeld,
+                                               dating_login_retry_allowed,
+                                               dating_login_retry_fail)
+
     profile = await _profile_row(profile_id)
+
+    if not force:
+        allowed, why = await dating_login_retry_allowed(profile)
+        if not allowed:
+            raise DatingLoginHeld(why)
+
     site = await _site_check(int(profile['site_id']))
 
     # ⚠ **Вход брал только свой пароль анкеты** — в отличие от отправки и списков,
@@ -188,6 +215,13 @@ async def dating_login_run(profile_id: int, scenario_id: int = 0, session_id: st
         session_id = ''
 
     if result.get('status') == 'error':
+        # ⚠ **Считаем неудачу здесь, у самой двери.** Считай её вызывающие — первый
+        # же забывший вход не попал бы в счётчик, а именно так и вышло с кругом
+        # расписания: он входил мимо всех правил и долбил сайт каждые 86 секунд.
+        #
+        # Записывается и вход по кнопке (`force`): человек обошёл паузу, но его
+        # неудача такая же настоящая, и следующему автомату о ней знать полезно.
+        await dating_login_retry_fail(profile_id)
         await rhapsody_api_error_write(
             'dating', f"вход под «{profile['login']}» не прошёл: {result.get('error', '')}",
             session_id=session_id,
@@ -374,11 +408,17 @@ async def _state_save(profile_id: int, session_id: str) -> None:
 
 
 async def _keep_online_set(profile_id: int) -> None:
-    """Успешный вход: анкета под присмотром, череда неудач обнулена."""
+    """Успешный вход: анкета под присмотром, череда неудач обнулена.
+
+    ⚠ **Счётчик повторов гаснет здесь же, одним запросом с тревогой.** Удача по
+    одной двери не должна означать разного в двух местах: разойдись они — анкета
+    вошла бы, а автомат считал бы её всё ещё исчерпавшей попытки.
+    """
     try:
         async with mysql_get_db_async() as db:
             await db.execute('UPDATE dating_profile SET keep_online = 1, logged_in_at = NOW(), '
                              '       relogin_since = NULL, relogin_tries = 0, '
+                             '       login_fail_tries = 0, login_fail_at = NULL, '
                              '       relogin_next_at = NULL WHERE id = %s', (int(profile_id),))
             await db.connection.commit()
     except Exception as e:

@@ -36,6 +36,8 @@ async def dating_revive_login_try(profile: dict, login_run, plan: dict,
     Убираем при этом **только за собой**: список живых вкладок анкеты снимается до
     входа, и гасится потом лишь то, что появилось сверх него, — см. `_sessions_drop`.
     """
+    from src.dating.dating_login_retry import DatingLoginHeld
+
     profile_id = int(profile['id'])
     await dating_revive_db_log(profile_id, 'info',
                f"{'Обновляю вход заранее' if planned else 'Вхожу заново'} "
@@ -52,6 +54,18 @@ async def dating_revive_login_try(profile: dict, login_run, plan: dict,
         # отмена — это смена, которая не заканчивается.
         await _sessions_drop(profile, before)
         raise
+    except DatingLoginHeld as e:
+        # ⚠ **Пауза после неудач — не отказ, и строка в журнале другая.** Дверь
+        # входа держит счётчик повторов (`dating_login_retry.py`), и он строже
+        # лестницы этого круга: лестница считает **все** поводы войти, включая
+        # плановое обновление сессии, а счётчик — только отказы сайта.
+        #
+        # Пишем `info`, а не `fail`: «сейчас рано» и «войти не вышло» человек
+        # чинит по-разному, а `fail` красит карточку тревожным без повода.
+        await dating_revive_db_log(profile_id, 'info', f'Вход отложен: {str(e)[:300]}')
+        await _sessions_drop(profile, before)
+
+        return False
     except Exception as e:
         # Сосед не ответил (`RhapsodyError`), сценария нет, база отвалилась —
         # вкладка при этом уже открыта, а её номер сгорел вместе с вызовом.

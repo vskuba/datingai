@@ -526,8 +526,12 @@ async def dating_profile_action_login(profile_id: int, data: DatingProfileLogin,
     await dating_profile_row(profile_id)
 
     try:
+        # ⚠ `force=True` — вход по кнопке проходит и паузу после неудач, и
+        # исчерпанный счётчик. Человек у экрана знает больше автомата: он мог
+        # сменить пароль, разблокировать учётку, дождаться конца чужой
+        # блокировки. Отказывать ему значило бы чинить сайт через базу.
         result = await dating_login_run(profile_id, int(data.scenario_id or 0),
-                                        str(data.session_id or ''))
+                                        str(data.session_id or ''), force=True)
     except DatingLoginError as e:
         # «Войти нечем» — это ошибка запроса, а не сбой: нет пароля, нет сценария,
         # нет сайта. 422 отличает её от 502 «сосед не отвечает».

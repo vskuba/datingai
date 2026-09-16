@@ -177,10 +177,23 @@ async def _enter(profile_id: int) -> bool:
     """Вход по расписанию. Не бросает: один сорванный вход не должен лишать
     остальных."""
     from src.dating.dating_login import DatingLoginError, dating_login_run
+    from src.dating.dating_login_retry import DatingLoginHeld
 
     try:
         await dating_log_write(profile_id, 'info', 'Расписание: смена началась, вхожу')
         result = await dating_login_run(profile_id)
+    except DatingLoginHeld as e:
+        # ⚠⚠ **Пауза — не отказ, и журнал об этом молчит.** Круг идёт раз в минуту;
+        # пиши он сюда строку, четверть часа паузы дала бы пятнадцать одинаковых
+        # записей, и настоящая причина утонула бы в них.
+        #
+        # Именно этот круг и долбил сайт: он входил прямым вызовом, мимо лестницы
+        # автовосстановления, — девять входов за четырнадцать минут. Теперь
+        # правило стоит у самой двери (`dating_login_retry.py`), а здесь остаётся
+        # только уйти молча.
+        logger_info(f'[dating] расписание, вход #{profile_id} отложен: {e}')
+
+        return False
     except DatingLoginError as e:
         await dating_log_write(profile_id, 'fail', f'Расписание: войти не вышло — {e}')
 
