@@ -72,10 +72,9 @@ from src.dating.dating_schedule_round import (DATING_SCHEDULE_ROUND_TICK_SEC,
 from src.dating.dating_socket import dating_socket_write
 from src.uvicorn.routers.dating.dating_site import (dating_site_seconds,
                                                     dating_site_settings)
-from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_error_write,
-                                       rhapsody_api_site_get)
+from src.rhapsody.rhapsody_api import rhapsody_api_error_write
+from src.dating.dating_site_presence import dating_site_presence
 from src.dating.dating_chat import dating_chat_listen
-from src.dating.dating_json import dating_json_load
 from src.dating.dating_presence import dating_presence_beat, dating_presence_ready
 from src.dating.dating_revive_round import (DATING_REVIVE_PERIOD_SEC,
                                             dating_revive_round_run)
@@ -439,16 +438,23 @@ async def _profiles_ready() -> list[dict]:
     сайта, а та живёт у соседа и читается по сайту, а не по анкете.
     """
     async with mysql_get_db_async() as db:
+        # ⚠ Адрес сайта — **левым** join-ом к снимку (`dating_site`), а не
+        # обычным: строка снимка появляется сверкой с соседом, и анкета сайта,
+        # который ещё не сверяли, иначе выпала бы из работы целиком. Прежде
+        # адрес брался из карточки соседа, и для этого её и спрашивали.
         await db.execute(
-            'SELECT id, login, site_id, storage_state, ws_url, auto_answer, '
-            '       auto_answer_only, enabled, can_work, work_reason, role, profile, '
-            '       password <> %s AS has_password '
-            '  FROM dating_profile WHERE enabled = 1 ORDER BY id', ('',))
+            'SELECT p.id, p.login, p.site_id, p.storage_state, p.ws_url, '
+            '       p.auto_answer, p.auto_answer_only, p.enabled, p.can_work, '
+            '       p.work_reason, p.role, p.profile, '
+            '       p.password <> %s AS has_password, '
+            '       COALESCE(s.url, %s) AS site_url '
+            '  FROM dating_profile p '
+            '  LEFT JOIN dating_site s ON s.site_id = p.site_id '
+            ' WHERE p.enabled = 1 ORDER BY p.id', ('', ''))
         rows = await db.fetchall()
 
-    # Настройка сайта живёт в RhapsodyAi, и join-ом её больше не взять. Спрашиваем
-    # по разу на сайт, а не на анкету: сайтов единицы, анкет сотни, и сотня
-    # одинаковых запросов на каждый круг — это минута на пустом месте.
+    # Описание сайта — по разу на сайт, а не на анкету: сайтов единицы, анкет
+    # сотни, и сотня одинаковых чтений на каждый круг была бы работой впустую.
     sites: dict[int, dict] = {}
     # Настройки сайта и общий пароль — по разу на сайт, не на анкету: сайтов
     # единицы, анкет сотни.
@@ -458,18 +464,20 @@ async def _profiles_ready() -> list[dict]:
     for row in rows or []:
         site_id = int(row['site_id'])
         if site_id not in sites:
-            try:
-                sites[site_id] = await rhapsody_api_site_get(site_id)
-            except RhapsodyError as e:
-                logger_info(f'[dating] сайт #{site_id} не спросился: {e}')
-                sites[site_id] = {}
-
+            # ⚠⚠ **Описание берём у себя, а не у соседа.** Этот отбор зовут три
+            # петли держателя — присутствие раз в 15 секунд, главный цикл и
+            # автоответ раз в минуту, — и каждая спрашивала карточку сайта
+            # ручкой `GET /api/browser/site/{id}`. По журналу прода: 412
+            # обращений в час на сайт ради трёхсот байт, не менявшихся пять дней.
+            #
+            # Хуже цены зависимость: сосед лежит — встаёт чат, хотя отправка
+            # идёт нашей ручкой по нашим cookie и браузера не касается вовсе.
+            sites[site_id] = await dating_site_presence(site_id)
             settings[site_id] = await dating_site_settings(site_id)
             site_passwords[site_id] = str(
                 (settings[site_id] or {}).get(DATING_READY_PASSWORD_SETTING) or '')
 
-        site = sites[site_id]
-        presence = dating_json_load(site.get('presence'))
+        presence = sites[site_id]
 
         # Готовность считаем и записываем всегда — даже для той анкеты, которую
         # дальше не возьмём. ⚠ Иначе причина «нет пароля» не появилась бы в панели
@@ -502,7 +510,13 @@ async def _profiles_ready() -> list[dict]:
                    'auto_answer_only': row['auto_answer_only'],
                    'enabled': row['enabled'], 'role': row['role'],
                    'profile': row['profile']}
-        ready.append({'profile': profile, 'presence': presence, 'site_url': site.get('url', '')})
+        ready.append({'profile': profile, 'presence': presence,
+                      # ⚠ Адрес — из нашего снимка списка сайтов, а не из карточки
+                      # соседа: снимок и заведён затем, чтобы раздел не зависел от
+                      # него в мелочах (`api.md`, §3.5). Пустой снимок — не беда:
+                      # `base` описания говорит то же самое.
+                      'site_url': str(row.get('site_url')
+                                      or presence.get('base') or '')})
 
     return ready
 

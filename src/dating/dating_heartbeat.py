@@ -173,22 +173,15 @@ async def dating_heartbeat_proxies(site_id: int, profile_ids: list = None) -> di
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 async def _presence_of(site_id: int) -> dict:
-    """Описание сайта у соседа. Молчание соседа — пустой словарь, а не отказ.
+    """Описание сайта: своё, а соседское — запасное. Пусто — работать нечем.
 
-    Присутствие не должно ложиться оттого, что сосед перезапускается: у сайта со
-    своей настройкой он вообще ни при чём, а у старого — круг просто пропустит
-    заход и вернётся через полминуты.
+    ⚠ **Ходить к соседу здесь больше не обязательно**: описание переехало в нашу
+    настройку сайта (`dating_site_presence.py`). Сайт со своей настройкой его не
+    спрашивает вовсе; у сайта без настройки всё как было.
     """
-    from src.rhapsody.rhapsody_api import rhapsody_api_site_get
+    from src.dating.dating_site_presence import dating_site_presence
 
-    try:
-        site = await rhapsody_api_site_get(int(site_id))
-    except Exception as e:
-        logger_info(f'[dating] описание сайта #{site_id} не пришло: {e}')
-
-        return {}
-
-    return dating_json_load((site or {}).get('presence'))
+    return await dating_site_presence(int(site_id))
 
 
 def _from_neighbour(presence: dict) -> dict:
