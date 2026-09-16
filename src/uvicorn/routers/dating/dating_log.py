@@ -81,7 +81,8 @@ async def dating_log_list(site_id: int = 0, kind: str = 'all', level: str = '',
         dict: `rows` — строки ленты, `total`, `page`, `pages`.
 
         В строке: `source` (`profile` или `scenario`), `level`, `text`,
-        `created_at`, `profile_id`, `profile_name`, и у прогонов — `scenario_name`,
+        `created_at`, `profile_id`, `profile_name`, `profile_photo`, и у
+        прогонов — `scenario_name`,
         `step_no`, `ms`.
 
     Raises:
@@ -155,6 +156,16 @@ async def dating_log_feed(site_id: int = 0, profile_id: int = 0, kind: str = 'al
 # разошедшиеся копии дали бы «ищу по одному, показываю другое».
 _NAME = ("COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(p.profile, '$.name')), 'null'),"
          " p.login, '')")
+
+# Фотография анкеты — рядом с именем. ⚠⚠ **Имена у девушек повторяются**, и в
+# ленте это не мелочь: две Дианы на одном сайте различались только глазами
+# читающего, который держал в голове, какая из них какая. Лицо в строке снимает
+# вопрос без чтения.
+#
+# Тем же выражением, что и имя: приходит из карточки сайта, своей колонки нет.
+# Пусто — обычный случай (анкету ещё не читали), и страница рисует кружок с
+# буквой; прочерка тут быть не должно.
+_PHOTO = ("COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(p.profile, '$.photo')), 'null'), '')")
 
 # Как уровень ленты ложится на исход прогона. Таблицей, а не цепочкой `if`: список
 # уровней растёт со стороны журнала анкеты, и забытая ветка молча отдаёт всё
@@ -235,6 +246,7 @@ def _query(site_id: int, profile_id: int, kind: str, level: str, q: str) -> tupl
         parts.append(
             "SELECT l.id, 'profile' AS source, l.level, l.text, l.created_at,"
             f'       p.id AS profile_id, {_NAME} AS profile_name,'
+            f'       {_PHOTO} AS profile_photo,'
             "       '' AS scenario_name, 0 AS step_no, 0 AS ms"
             '  FROM dating_log l'
             '  JOIN dating_profile p ON p.id = l.profile_id'
@@ -273,6 +285,7 @@ def _query(site_id: int, profile_id: int, kind: str, level: str, q: str) -> tupl
             "                     WHEN 'sent' THEN 'info' ELSE 'fail' END AS level,"
             "       COALESCE(r.error, '') AS text, r.created_at,"
             f'       r.profile_id, {_NAME} AS profile_name,'
+            f'       {_PHOTO} AS profile_photo,'
             '       r.scenario_name, r.step_no, r.ms'
             '  FROM dating_scenario_run r'
             '  LEFT JOIN dating_profile p ON p.id = r.profile_id'

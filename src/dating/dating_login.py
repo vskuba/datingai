@@ -200,12 +200,27 @@ async def dating_login_run(profile_id: int, scenario_id: int = 0, session_id: st
         # сессии, и после входа он мёртв. Без этого держатель вечно висел на
         # мёртвом адресе — соединение выглядело живым, а сообщения уходили в
         # «пропущенные». Снимаем в этой же вкладке: вторая выбила бы первую.
-        await dating_log_write(profile_id, 'info', 'Снимаю адрес чат-сокета')
-        ws_url = await dating_login_ws_capture(await _profile_row(profile_id), session_id)
-        await dating_log_write(
-            profile_id, 'ok' if ws_url else 'fail',
-            'Адрес чат-сокета снят, чат подхватит держатель в течение минуты' if ws_url
-            else 'Адрес чат-сокета снять не вышло — живой чат работать не будет')
+        # ⚠⚠ **Только у сайта с сокетом**, и это не оптимизация. У Ladadate
+        # сокета нет вовсе — чат там обычный HTTP, — но перехват запускался всё
+        # равно: `dating_ws_capture` берёт `presence.chat_url`, а когда его нет,
+        # подставляет **корень сайта** и честно ждёт сокета на главной странице.
+        #
+        # Стоило это вкладки живого Chromium у соседа на каждый вход и строки
+        # «Адрес чат-сокета снять не вышло — живой чат работать не будет» в
+        # журнале. Строка при этом врала дважды: снимать было нечего, а чат у
+        # Ladadate работает и без сокета.
+        #
+        # Признак берём тот же, по которому решается отправка
+        # (`dating_ready_transport`): сокет нужен ровно там, где им пишут.
+        if await _ws_needed(int(profile['site_id']), site):
+            await dating_log_write(profile_id, 'info', 'Снимаю адрес чат-сокета')
+            ws_url = await dating_login_ws_capture(await _profile_row(profile_id),
+                                                   session_id)
+            await dating_log_write(
+                profile_id, 'ok' if ws_url else 'fail',
+                'Адрес чат-сокета снят, чат подхватит держатель в течение минуты'
+                if ws_url
+                else 'Адрес чат-сокета снять не вышло — живой чат работать не будет')
 
         # И закрываем вкладку. Сайт отдаёт сообщение одному соединению, а
         # оставленная страница чата — тоже соединение: она молча забирала
@@ -258,6 +273,27 @@ async def dating_login_profile_page(profile: dict, presence: dict, session_id: s
                                   context={'profile_id': profile['id'], 'where': 'чтение анкеты'})
 
     return result['profile'] if result['ok'] else {}
+
+
+async def _ws_needed(site_id: int, site: dict) -> bool:
+    """Нужен ли этому сайту адрес чат-сокета.
+
+    ⚠ **Спрашиваем транспорт отправки, а не наличие `chat_url`.** Транспорт и
+    есть ответ на вопрос «чем тут разговаривают»: `ws` значит сокет, `http` и
+    `scenario` — что сокета нет и искать его незачем. Проверяй мы `chat_url`,
+    правило разошлось бы с отправкой в первый же день, когда у сайта заведут
+    адрес чата без сокета.
+
+    Наша настройка при этом старше соседской — то же правило, что везде
+    (`dating_ready.py`).
+    """
+    from src.dating.dating_ready import dating_ready_transport
+    from src.uvicorn.routers.dating.dating_site import dating_site_settings
+
+    transport = dating_ready_transport(dating_json_load(site.get('presence')),
+                                       await dating_site_settings(int(site_id)))
+
+    return transport == 'ws'
 
 
 async def dating_login_ws_capture(profile: dict, session_id: str = '') -> str:

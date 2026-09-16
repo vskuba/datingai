@@ -218,3 +218,65 @@ class TestHoldIsNotAFailure:
         from src.dating.dating_login import DatingLoginError
 
         assert not issubclass(DatingLoginHeld, DatingLoginError)
+
+
+class TestSocketOnlyWhereItExists:
+    """⚠⚠ Адрес чат-сокета снимается только у сайта, который им пишет.
+
+    **Поймано в журнале прода:**
+
+        21:59 · Nadezhda — Адрес чат-сокета снять не вышло, живой чат работать
+        не будет
+
+    У Ladadate сокета **нет вовсе**: чат там обычный HTTP, проверено перехватом
+    сети (`heartbeat.md`, §4). А перехват запускался всё равно —
+    `dating_ws_capture` берёт `presence.chat_url`, а когда его нет, подставляет
+    **корень сайта** и честно ждёт сокета на главной странице.
+
+    Стоило это вкладки живого Chromium у соседа на каждый вход. И строка врала
+    дважды: снимать было нечего, а чат у Ladadate работает и без сокета — то
+    есть человека пугали поломкой, которой нет.
+    """
+
+    def test_the_login_asks_before_capturing(self):
+        import inspect
+
+        from src.dating import dating_login
+
+        code = inspect.getsource(dating_login.dating_login_run)
+
+        assert '_ws_needed(' in code, \
+            'вход снова снимает сокет у всех — у сайта без сокета это враньё в журнале'
+
+    async def test_a_http_site_needs_no_socket(self):
+        """Ladadate: транспорт `http` — сокет не нужен."""
+        from src.dating.dating_login import _ws_needed
+
+        site = {'presence': {'send': {'transport': 'http'}}}
+
+        assert not await _ws_needed(999_343, site)
+
+    async def test_a_ws_site_still_needs_it(self):
+        """⚠ Goldenbride: транспорт `ws` — сокет нужен, и правило его не трогает."""
+        from src.dating.dating_login import _ws_needed
+
+        site = {'presence': {'send': {'transport': 'ws'}}}
+
+        assert await _ws_needed(999_343, site)
+
+    async def test_our_setting_wins_over_the_neighbour(self, monkeypatch):
+        """⚠ Наша настройка старше соседского описания — как и у отправки.
+
+        Сайт, которому в «Чем отправляем сообщения» поставили `scenario`, пишет
+        сценарием, даже если у соседа в описании стоит `ws`. Сокет ему не нужен.
+        """
+        from src.dating import dating_login
+
+        async def _settings(site_id):
+            return {'send_transport': 'scenario'}
+
+        monkeypatch.setattr('src.uvicorn.routers.dating.dating_site.dating_site_settings',
+                            _settings)
+
+        assert not await dating_login._ws_needed(
+            999_343, {'presence': {'send': {'transport': 'ws'}}})

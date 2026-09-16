@@ -258,3 +258,57 @@ class TestFeedHandler:
         response = await dating_client.get('/api/dating/log', params={'site_id': SITE})
 
         assert response.status_code == 200
+
+
+class TestFaceInTheFeed:
+    """⚠⚠ Лицо анкеты рядом с именем — потому что имена повторяются.
+
+    На сайте две Дианы, и в ленте они различались только памятью читающего:
+    строки одинаковые, понять, чья работа, можно было лишь открыв «Анкеты».
+    Лицо узнаётся быстрее имени, поэтому стоит первым.
+
+    ⚠ **Пустое фото — обычное дело, а не пробел в данных**: анкету просто ещё не
+    читали с сайта. Страница рисует пустую клетку того же размера — иначе имена
+    ездят влево-вправо и столбец перестаёт читаться сверху вниз.
+    """
+
+    async def test_the_feed_returns_a_photo(self, auth_client):
+        rows = (await auth_client.get('/api/dating/log',
+                                      params={'site_id': SITE, 'per_page': 5})
+                ).json()['result']['rows']
+
+        if not rows:
+            pytest.skip('журнал стенда пуст')
+
+        assert 'profile_photo' in rows[0], \
+            'фото не приходит — в ленте снова не отличить двух девушек с одним именем'
+
+    async def test_the_requests_tab_returns_it_too(self, auth_client):
+        """Вкладка «Запросы» — та же беда и то же лекарство."""
+        rows = (await auth_client.get('/api/dating/request',
+                                      params={'site_id': SITE, 'per_page': 5})
+                ).json()['result']['rows']
+
+        if not rows:
+            pytest.skip('журнал запросов стенда пуст')
+
+        assert 'profile_photo' in rows[0]
+
+    def test_both_feeds_share_one_renderer(self):
+        """⚠ Рисует лицо **общий** помощник, а не две копии в разметке.
+
+        Второй экземпляр разошёлся бы с первым на первой же правке — и первым
+        потерялся бы `referrerpolicy`, без которого сайты знакомств отвечают
+        `403` на запрос с чужим `Referer`, и аватарки пусты при верных адресах.
+        """
+        import pathlib
+
+        page = pathlib.Path(
+            'data/uvicorn/template/admin/dating_log.html').read_text(encoding='utf-8')
+        view = pathlib.Path(
+            'data/uvicorn/public/js/dating_view.js').read_text(encoding='utf-8')
+
+        assert 'export function face(' in view
+        assert page.count('face(r.profile_photo') == 2, \
+            'лицо рисуется не в обеих лентах'
+        assert 'referrerpolicy' in view

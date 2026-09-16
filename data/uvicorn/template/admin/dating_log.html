@@ -45,11 +45,31 @@
         }
         /* Имя анкеты фиксированной ширины: столбец имён читается сверху вниз, а
            плавающая ширина заставляла бы искать начало текста в каждой строке. */
+        /* ⚠⚠ **Лицо перед именем, потому что имена повторяются.** На сайте две
+           Дианы, и в ленте они различались только памятью читающего: строки
+           одинаковые, понять, чья работа, можно было лишь открыв «Анкеты».
+
+           Лицо узнаётся быстрее имени — за тем оно и стоит первым. */
         .feed-who {
-            flex: 0 0 110px; overflow: hidden; text-overflow: ellipsis;
-            white-space: nowrap; color: #475569; font-size: 11px;
+            flex: 0 0 132px; overflow: hidden; display: flex; gap: 5px;
+            align-items: center; white-space: nowrap; color: #475569;
+            font-size: 11px;
         }
+        .feed-who-text { overflow: hidden; text-overflow: ellipsis; }
         .feed-who.none { color: #cbd5e1; }
+
+        /* Размер — под строку ленты: она в 12 пикселей, и общий `.profile-face`
+           (34 пикселя) разогнал бы её вдвое. Место занято **всегда**, пустое
+           тоже: иначе имена ездят влево-вправо и столбец перестаёт читаться
+           сверху вниз — та же беда, от которой в списке анкет стоит заглушка.
+
+           ⚠ `referrerpolicy` обязателен: сайты знакомств отдают фото по прямому
+           запросу, а с чужим `Referer` отвечают 403 — картинки были бы пустыми
+           при верных адресах (`dating_page.css`). */
+        .feed-face {
+            width: 18px; height: 18px; border-radius: 4px; object-fit: cover;
+            background: #eef2f7; flex: 0 0 auto;
+        }
         .feed-text { flex: 1 1 auto; min-width: 0; word-break: break-word; }
 
         .feed-row.ok .feed-text { color: #166534; }
@@ -86,7 +106,11 @@
         .req-row:hover { background: #fbfcfe; }
         .req-time { flex: 0 0 96px; color: #94a3b8; font-variant-numeric: tabular-nums; }
         .req-door { flex: 0 0 110px; color: #475569; }
-        .req-who { flex: 0 0 150px; color: #64748b; overflow: hidden; text-overflow: ellipsis; }
+        .req-who {
+            flex: 0 0 170px; color: #64748b; overflow: hidden; display: flex;
+            gap: 5px; align-items: center;
+        }
+        .req-who-text { overflow: hidden; text-overflow: ellipsis; }
         .req-who.none { color: #cbd5e1; }
         .req-path {
             flex: 1 1 auto; color: #334155; overflow: hidden; text-overflow: ellipsis;
@@ -187,7 +211,7 @@
 <script type="module">
     import {getData} from '{{ static_url('js/api.js') }}';
     import {showNotification} from '{{ static_url('js/notification.js') }}';
-    import {esc, pagerRender} from '{{ static_url('js/dating_view.js') }}';
+    import {esc, face, pagerRender} from '{{ static_url('js/dating_view.js') }}';
     import {DATING_SITE_KEY, datingSiteFill} from '{{ static_url('js/dating_site.js') }}';
     // Метки приходят с сервера в UTC — сдвигает страница (`dashboard_frontend.md`, §3.8).
     import {timeShift} from '{{ static_url('js/dating_time.js') }}';
@@ -280,7 +304,9 @@
             // потерялось».
             + `<span class="feed-who${r.profile_name ? '' : ' none'}"`
             + ` title="${esc(r.profile_name || 'по сайту целиком')}">`
-            + `${esc(r.profile_name || 'весь сайт')}</span>`
+            + face(r.profile_photo, 'feed-face')
+            + `<span class="feed-who-text">${esc(r.profile_name || 'весь сайт')}</span>`
+            + '</span>'
             + `<span class="feed-text">${esc(r.text)}</span>`
             + '</div>';
     }
@@ -409,7 +435,9 @@
             // Поход по сайту (лента, панель) анкеты не имеет — говорим это словом:
             // пустая клетка читается как «имя потерялось».
             + `<span class="req-who${r.profile_name ? '' : ' none'}">`
-            + `${esc(r.profile_name || 'весь сайт')}</span>`
+            + face(r.profile_photo, 'feed-face')
+            + `<span class="req-who-text">${esc(r.profile_name || 'весь сайт')}</span>`
+            + '</span>'
             + `<span class="req-path">${esc(r.method)} ${esc(r.path)}</span>`
             + `<span class="req-status">${r.status || '—'}</span>`
             + `<span class="req-ms">${r.ms} мс</span>`
