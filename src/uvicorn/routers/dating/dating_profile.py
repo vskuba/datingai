@@ -41,7 +41,6 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
 from src.mysql_.repository.dating_profile_repository import DatingProfileRepository
-from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_site_get
 from src.dating.dating_json import dating_json_load
 from src.dating.dating_proxy import dating_proxy_enabled
 from src.dating.dating_schedule import DATING_SCHEDULE_DEFAULT, dating_schedule_dump
@@ -295,28 +294,45 @@ async def dating_profile_row(profile_id: int) -> dict:
 
 
 async def dating_profile_site(site_id: int) -> dict:
-    """Сайт-закладка целиком: адрес, настройка присутствия. Живёт в RhapsodyAi.
+    """Сайт анкеты: номер, имя, адрес и описание — всё из нашей базы.
 
-    Спрашивается **живьём** и только там, где за ним действительно идут: вход,
-    проверка, агент — всё это без соседних данных не имеет смысла, и висящий
-    сосед должен быть виден как 502. Для проверки «заведён ли сайт» при заведении
-    и правке учётки она не годится — там свой снимок, `dating_profile_site_known`.
+    Вид ответа прежний (`id`, `name`, `url`, `presence`), потому что его читают
+    девять ручок раздела; изменился источник.
 
-    В `dating_login` живёт вторая такая же функция, и это не дубль под склейку:
-    здесь отказ превращается в `HTTPException` с кодом, а там — в
-    `DatingLoginError`, потому что модуль входа зовут из воркера `rq`, где FastAPI
-    нет вовсе. Слить их значит либо втащить FastAPI в воркер, либо потерять коды
-    ответа у ручек.
+    ⚠⚠ **Прежде это был живой запрос карточки у соседа**, и стоил он больше, чем
+    казалось. Ручку `/probe` дёргает открытая страница «Анкеты» раз в две минуты,
+    `/ping` — по кнопке, а карточка приезжала ради одного `presence`, который
+    переехал к нам (`dating_site_presence.py`). По журналу прода: четыре десятка
+    обращений в час от одной открытой вкладки.
+
+    Хуже цены была зависимость: `RhapsodyError` превращался здесь в `502`, то есть
+    лежащий сосед отнимал **отправку сообщения и проверку входа** — работу,
+    которая идёт ручкой самого сайта по нашим cookie и браузера не касается.
+
+    ⚠ **Сосед по-прежнему нужен, но за другим** — за сценариями входа и проверки.
+    Там его молчание и видно, там оно и уместно.
+
+    Raises:
+        HTTPException: 422 — сайта нет ни в снимке списка, ни в настройках. Это
+            «анкета привязана к сайту, которого не существует», то есть ошибка
+            запроса, а не сбой шлюза — код прежний.
     """
-    try:
-        row = await rhapsody_api_site_get(int(site_id))
-    except RhapsodyError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    from src.dating.dating_site_presence import dating_site_presence
+    from src.uvicorn.routers.dating.dating_site import dating_site_rows
 
-    if not row:
+    presence = await dating_site_presence(int(site_id))
+    row = next((one for one in await dating_site_rows()
+                if int(one['id']) == int(site_id)), None)
+
+    if not row and not presence:
         raise HTTPException(status_code=422, detail=f'нет сайта с номером {site_id}')
 
-    return dict(row)
+    return {'id': int(site_id),
+            'name': str((row or {}).get('name') or ''),
+            # ⚠ Адрес из снимка, а пусто — из описания: `base` говорит то же
+            # самое, и сайт, который ещё не сверяли, иначе остался бы без адреса.
+            'url': str((row or {}).get('url') or presence.get('base') or ''),
+            'presence': presence}
 
 
 async def dating_profile_site_known(site_id: int) -> dict:

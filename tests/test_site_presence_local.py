@@ -143,6 +143,27 @@ class TestLoopsDoNotAskTheNeighbour:
         assert 'rhapsody_api_site_get' not in code, \
             'вернулся запрос, результат которого не используется'
 
+    def test_the_profile_handles_do_not_ask_either(self):
+        """⚠⚠ Ручки раздела — тоже, и это была последняя дверь.
+
+        `dating_profile_site` ходила к соседу живьём, а её читают девять ручек.
+        Дороже всех обходилась `/probe`: её дёргает **открытая страница «Анкеты»**
+        раз в две минуты, и карточка приезжала ради одного `presence`.
+
+        Хуже цены была зависимость: `RhapsodyError` превращался там в `502`, то
+        есть лежащий сосед отнимал отправку сообщения и проверку входа — работу,
+        которая идёт ручкой самого сайта по нашим cookie.
+        """
+        import inspect
+
+        from src.uvicorn.routers.dating import dating_profile
+
+        code = inspect.getsource(dating_profile.dating_profile_site)
+
+        assert 'dating_site_presence' in code, \
+            'ручки раздела снова спрашивают карточку у соседа'
+        assert 'rhapsody_api_site_get' not in code
+
     def test_the_site_url_comes_from_our_snapshot(self):
         """Адрес сайта — из снимка `dating_site`, за ним к соседу не ходят.
 
