@@ -13,7 +13,6 @@
 
 import time
 
-from src.dating.dating_json import dating_json_load
 
 # Когда каждому сайту в последний раз писали объявление о пропавшем опросе — ключ
 # `(site_id, reason)`, значение — момент записи. `reason` — часть ключа, а не

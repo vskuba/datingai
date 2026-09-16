@@ -595,23 +595,15 @@ async def _pool_uids(site_id: int) -> set:
 
 
 async def _language(site_id: int) -> str:
-    """Язык реплик этого сайта. Не задан — `en`.
+    """Язык реплик сайта. Не настроен — общее умолчание.
 
-    ⚠ **Берётся из `presence.answer_language` у соседа**, той же настройки, что у
-    автоответа: язык — свойство сайта, а не занятия, и второе место для него
-    разошлось бы с первым. Сосед недоступен — умолчание: инвайт на английском
-    хуже идеального, а инвайт, не написанный вовсе, хуже любого.
+    ⚠ **Читается из нашего описания сайта**, а не спрашивается у соседа: круг
+    инвайтов идёт раз в минуту, и запрос за тремя сотнями байт ради одного слова
+    `"en"` стоил бы шестидесяти обращений в час (`dating_site_presence.py`).
     """
-    from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_site_get
+    from src.dating.dating_site_presence import dating_site_presence
 
-    try:
-        site = await rhapsody_api_site_get(int(site_id))
-    except RhapsodyError as e:
-        logger_info(f'[dating] язык сайта #{site_id} не спросился: {e}')
-
-        return DATING_INVITE_LANGUAGE
-
-    presence = dating_json_load((site or {}).get('presence')) or {}
+    presence = await dating_site_presence(int(site_id))
 
     return str(presence.get('answer_language') or DATING_INVITE_LANGUAGE)
 

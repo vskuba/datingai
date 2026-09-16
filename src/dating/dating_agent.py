@@ -58,7 +58,7 @@ import re
 from src.dating.dating_log import dating_log_write
 from src.dating.dating_role import DATING_ROLE_DEFAULT
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_agent_create,
-                                       rhapsody_api_agent_find, rhapsody_api_site_get)
+                                       rhapsody_api_agent_find)
 
 # Узел RhapsodyAi, под которым живут агенты анкет.
 DATING_AGENT_NODE = 'Dating'
@@ -305,8 +305,14 @@ async def dating_agent_site(site_id: int) -> str:
     Подставлять что-нибудь вместо него нельзя: агент приписался бы к чужому сайту,
     а разбирать потом, откуда он взялся, было бы уже не по чему.
     """
-    site = await rhapsody_api_site_get(int(site_id or 0))
-    slug = DATING_AGENT_SITE_RE.sub('', str(site.get('name') or '').lower())
+    # ⚠ Имя — из **нашего снимка** списка сайтов (`dating_site`), а не карточкой у
+    # соседа: снимок затем и заведён, чтобы раздел не зависел от него в мелочах
+    # (`api.md`, §3.5). Ведёт список по-прежнему он, сверка идёт в фоне.
+    from src.uvicorn.routers.dating.dating_site import dating_site_rows
+
+    row = next((one for one in await dating_site_rows()
+                if int(one['id']) == int(site_id or 0)), {})
+    slug = DATING_AGENT_SITE_RE.sub('', str(row.get('name') or '').lower())
 
     return slug[:DATING_AGENT_SITE_MAX]
 

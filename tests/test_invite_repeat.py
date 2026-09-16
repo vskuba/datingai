@@ -235,7 +235,7 @@ class TestNoDouble:
             return {'ok': True}
 
         monkeypatch.setattr(dating_invite_send, 'dating_send_message', _send)
-        monkeypatch.setattr(dating_invite_send, 'rhapsody_api_site_get', _site())
+        monkeypatch.setattr(dating_invite_send, 'dating_site_presence', _site())
         invite_id = await _invite_row(girl)
         row = await _row(invite_id)
 
@@ -257,7 +257,7 @@ class TestNoDouble:
             return {'ok': False, 'error': 'слишком часто'}
 
         monkeypatch.setattr(dating_invite_send, 'dating_send_message', _refused)
-        monkeypatch.setattr(dating_invite_send, 'rhapsody_api_site_get', _site())
+        monkeypatch.setattr(dating_invite_send, 'dating_site_presence', _site())
         invite_id = await _invite_row(girl)
 
         assert not (await dating_invite_send.dating_invite_send_one(
@@ -271,8 +271,15 @@ class TestNoDouble:
 
 
 def _site():
+    """Описание сайта — то, что отдаёт `dating_site_presence` из нашей базы.
+
+    ⚠ Пустое описание здесь законно: транспорт стенду задаёт настройка сайта, а
+    не описание. Прежде заглушка изображала карточку соседа (`{'presence': '{}'}`)
+    — за ней ходили ручкой, пока описание не переехало к нам.
+    """
+
     async def _got(site_id):
-        return {'id': site_id, 'presence': '{}'}
+        return {}
 
     return _got
 

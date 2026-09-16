@@ -65,7 +65,6 @@ import re
 from logging_.logging_ import logger_info
 
 from src.dating.dating_agent import (DATING_AGENT_NODE, dating_agent_site)
-from src.dating.dating_json import dating_json_load
 from src.dating.dating_mail import DATING_MAIL_VAR_RE
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_agent_create,
                                        rhapsody_api_agent_find, rhapsody_api_chat_ask)
@@ -1146,16 +1145,11 @@ async def dating_mail_agent_language(site_id: int) -> str:
     Сосед недоступен — умолчание: письмо на английском хуже идеального, а письмо,
     не написанное вовсе, хуже любого.
     """
-    from src.dating.dating_json import dating_json_load
-    from src.rhapsody.rhapsody_api import rhapsody_api_site_get
+    # ⚠ Из **нашего** описания сайта (`dating_site_presence.py`), а не запросом к
+    # соседу: язык спрашивают круги — рассылка, ответы, инвайты, — и поход за
+    # тремя сотнями байт ради слова `"en"` повторялся бы десятками раз в час.
+    from src.dating.dating_site_presence import dating_site_presence
 
-    try:
-        site = await rhapsody_api_site_get(int(site_id))
-    except Exception as e:
-        logger_info(f'[dating] язык сайта #{site_id} не спросился: {e}')
-
-        return DATING_MAIL_AGENT_LANGUAGE
-
-    presence = dating_json_load((site or {}).get('presence')) or {}
+    presence = await dating_site_presence(int(site_id))
 
     return str(presence.get('answer_language') or DATING_MAIL_AGENT_LANGUAGE)

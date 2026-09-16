@@ -418,11 +418,25 @@ async def _site_check(site_id: int) -> dict:
     воркера `rq`, где FastAPI нет и HTTP-кода поставить некому. Молчание соседа
     (`RhapsodyError`) не перехватывается: это не «войти нечем», а сбой связи.
     """
-    row = await rhapsody_api_site_get(int(site_id))
-    if not row:
+    # ⚠ **Описание — из нашей настройки**, адрес и имя — из снимка списка сайтов.
+    # Прежде обе половины брались карточкой у соседа; вход идёт сценарием, то
+    # есть сосед всё равно нужен, но за **сценарием**, а не за настройкой.
+    from src.dating.dating_site_presence import dating_site_presence
+    from src.uvicorn.routers.dating.dating_site import dating_site_rows
+
+    presence = await dating_site_presence(int(site_id))
+    row = next((one for one in await dating_site_rows()
+                if int(one['id']) == int(site_id)), None)
+
+    if not row and not presence:
         raise DatingLoginError(f'нет сайта с номером {site_id}')
 
-    return dict(row)
+    return {'id': int(site_id),
+            'name': str((row or {}).get('name') or ''),
+            # ⚠ Адрес из снимка, а пусто — из описания: `base` говорит то же
+            # самое, и сайт, который ещё не сверяли, иначе не вошёл бы вовсе.
+            'url': str((row or {}).get('url') or presence.get('base') or ''),
+            'presence': presence}
 
 
 async def _profile_row(profile_id: int) -> dict:

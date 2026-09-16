@@ -367,7 +367,7 @@ class TestFeed:
                                 (site_id, kind, text)) or '')
         monkeypatch.setattr(dating_invite_send, 'dating_send_message',
                             _ok_send())
-        monkeypatch.setattr(dating_invite_send, 'rhapsody_api_site_get', _site())
+        monkeypatch.setattr(dating_invite_send, 'dating_site_presence', _site())
         await _name(girl, 'Diana')
         invite_id = await _draft(girl)
 
@@ -388,7 +388,7 @@ class TestFeed:
         monkeypatch.setattr(dating_invite_send, 'dating_feed_write',
                             lambda site_id, kind, text, profile_id=0: said.append(text) or '')
         monkeypatch.setattr(dating_invite_send, 'dating_send_message', _ok_send())
-        monkeypatch.setattr(dating_invite_send, 'rhapsody_api_site_get', _site())
+        monkeypatch.setattr(dating_invite_send, 'dating_site_presence', _site())
         invite_id = await _draft(girl)
 
         await dating_invite_send.dating_invite_send_one(await _invite_row(invite_id))
@@ -403,7 +403,7 @@ class TestFeed:
         monkeypatch.setattr(dating_invite_send, 'dating_feed_write',
                             lambda site_id, kind, text, profile_id=0: said.append(
                                 (kind, text)) or '')
-        monkeypatch.setattr(dating_invite_send, 'rhapsody_api_site_get', _site())
+        monkeypatch.setattr(dating_invite_send, 'dating_site_presence', _site())
 
         # ⚠ Отказ **стойкий**, а не «его нет в сети»: уход из чата состояние, оно
         # проходит само, в ленту не пишется и строку не глушит (см. `TestOffline…`).
@@ -428,8 +428,15 @@ def _ok_send():
 
 
 def _site():
+    """Описание сайта — то, что отдаёт `dating_site_presence` из нашей базы.
+
+    ⚠ Пустое описание здесь законно: транспорт стенду задаёт настройка сайта, а
+    не описание. Прежде заглушка изображала карточку соседа (`{'presence': '{}'}`)
+    — за ней ходили ручкой, пока описание не переехало к нам.
+    """
+
     async def _got(site_id):
-        return {'id': site_id, 'presence': '{}'}
+        return {}
 
     return _got
 
@@ -466,7 +473,7 @@ class TestOfflineIsNotAFailure:
             return {'ok': False, 'offline': True}
 
         monkeypatch.setattr(dating_invite_send, 'dating_send_message', away)
-        monkeypatch.setattr(dating_invite_send, 'rhapsody_api_site_get',
+        monkeypatch.setattr(dating_invite_send, 'dating_site_presence',
                             _site_answer())
         invite_id = await _draft(girl)
 
@@ -486,7 +493,7 @@ class TestOfflineIsNotAFailure:
             return {'ok': False, 'error': 'слишком часто'}
 
         monkeypatch.setattr(dating_invite_send, 'dating_send_message', refused)
-        monkeypatch.setattr(dating_invite_send, 'rhapsody_api_site_get',
+        monkeypatch.setattr(dating_invite_send, 'dating_site_presence',
                             _site_answer())
         invite_id = await _draft(girl)
 

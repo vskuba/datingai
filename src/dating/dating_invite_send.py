@@ -31,7 +31,8 @@ from src.dating.dating_invite import dating_invite_marks_strip
 from src.dating.dating_json import dating_json_load
 from src.dating.dating_log import dating_log_write
 from src.dating.dating_send import dating_send_message
-from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_site_get
+from src.rhapsody.rhapsody_api import RhapsodyError
+from src.dating.dating_site_presence import dating_site_presence
 
 
 async def dating_invite_send_one(invite: dict) -> dict:
@@ -76,15 +77,17 @@ async def dating_invite_send_one(invite: dict) -> dict:
     if not profile:
         return await _fail(site_id, invite_id, profile_id, who, 'анкеты больше нет')
 
-    try:
-        site = await rhapsody_api_site_get(site_id)
-    except RhapsodyError as e:
-        # Сосед лежит — это «сейчас не отправить», а не «не отправлять».
-        # Инвайт остаётся в пуле с причиной и уйдёт следующим заходом.
-        return await _fail(site_id, invite_id, profile_id, who, str(e))
-
-    if not site:
-        return await _fail(site_id, invite_id, profile_id, who, f'у соседа нет сайта {site_id}')
+    # ⚠ **Описание сайта берём у себя** (`dating_site_presence.py`): сайту со своей
+    # настройкой сосед для отправки не нужен вовсе — реплика уходит ручкой самого
+    # сайта по нашим cookie. Прежде здесь стоял запрос его карточки, и лежащий
+    # сосед останавливал отправку, которой не касался.
+    #
+    # ⚠ **Пустое описание отказом не считаем**, и это не недосмотр: сайт, у
+    # которого «Чем отправляем сообщения» стоит `scenario`, работает без описания
+    # вовсе — реплику уносит браузер соседа. Проверь мы пустоту здесь, такой сайт
+    # перестал бы отправлять, ничего не нарушив. Нечем ли отправлять, знает
+    # `dating_send_message`, и причину он называет сам — обе разом.
+    presence = await dating_site_presence(site_id)
 
     # ⚠⚠ **Последний рубеж: сырой метки наружу не уходит.** Подстановка живёт в
     # наборе пула (`dating_invite._fill`), но между набором и отправкой стоит
@@ -97,8 +100,7 @@ async def dating_invite_send_one(invite: dict) -> dict:
     body = dating_invite_marks_strip(str(invite['body']))
 
     try:
-        got = await dating_send_message(profile, dating_json_load(site.get('presence')),
-                                        str(invite['uid']), body)
+        got = await dating_send_message(profile, presence, str(invite['uid']), body)
     except RhapsodyError as e:
         return await _fail(site_id, invite_id, profile_id, who, str(e))
     except Exception as e:

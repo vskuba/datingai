@@ -40,7 +40,6 @@ from fastapi.responses import HTMLResponse
 from logging_.logging_ import logger_info
 
 from src.auth.auth import AuthUser, auth_required
-from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_site_get
 from src.uvicorn.routers.dating.dating_site import dating_site_setting
 from src.uvicorn.uvicorn_base import uvicorn_base_path
 
@@ -169,11 +168,11 @@ async def _site_name(site_id: int) -> str:
     Отказ соседа не должен закрывать страницу: разметка `#work` от него не
     зависит, а без имени мы теряем только автоподбор файла.
     """
-    try:
-        site = await rhapsody_api_site_get(int(site_id))
-    except RhapsodyError as e:
-        logger_info(f'[dating] имя сайта #{site_id} не пришло: {e}')
+    # ⚠ Из нашего снимка списка сайтов, а не карточкой у соседа: страница
+    # открывается человеком, и лежащий сосед не должен ронять выбор разметки.
+    from src.uvicorn.routers.dating.dating_site import dating_site_rows
 
-        return ''
+    row = next((one for one in await dating_site_rows()
+                if int(one['id']) == int(site_id)), {})
 
-    return str(site.get('name') or '')
+    return str(row.get('name') or '')
