@@ -17,12 +17,12 @@ import uuid
 import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
-from src.dating import dating_answer
-from src.dating.dating_answer import _waiting_find, dating_answer_run
-from src.uvicorn.routers.dating.dating_profile import (DatingProfileSave,
-                                                       dating_profile_create,
-                                                       dating_profile_delete)
-from src.uvicorn.routers.dating.dating_profile_view import dating_profile_view_card
+from src.dating import answer
+from src.dating.answer import _waiting_find, answer_run
+from src.uvicorn.routers.dating.profile_ import (DatingProfileSave,
+                                                       profile_create,
+                                                       profile_delete)
+from src.uvicorn.routers.dating.profile_view import profile_view_card
 
 pytestmark = pytest.mark.chat
 # ⚠ Стенд, а не живой сайт: анкета сюиты не должна попадать в круги воркера
@@ -39,7 +39,7 @@ async def talk(rhapsody):
     существующих. Фикстура `rhapsody` нужна потому, что заведение анкеты сверяет
     сайт у соседа.
     """
-    answer = await dating_profile_create(
+    answer = await profile_create(
         DatingProfileSave(site_id=SITE, login=f'silent-{uuid.uuid4().hex[:8]}',
                           password='x'), user=None)
     profile_id = int(answer['result'])
@@ -56,7 +56,7 @@ async def talk(rhapsody):
     yield profile_id
 
     try:
-        await dating_profile_delete(profile_id, user=None)
+        await profile_delete(profile_id, user=None)
     except Exception:
         pass
 
@@ -74,8 +74,8 @@ def silent_agent(monkeypatch):
     async def _send(profile, presence, uid, text):
         raise AssertionError('после молчания отправлять нечего')
 
-    monkeypatch.setattr(dating_answer, '_agent_ask', _ask)
-    monkeypatch.setattr(dating_answer, 'dating_send_message', _send)
+    monkeypatch.setattr(answer, '_agent_ask', _ask)
+    monkeypatch.setattr(answer, 'send_message', _send)
 
     return asked
 
@@ -84,7 +84,7 @@ class TestSilenceIsRemembered:
     """Метка ложится и закрывает повод."""
 
     async def test_silence_marks_the_message(self, talk, silent_agent):
-        result = await dating_answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
+        result = await answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
                                          {}, agent_id=1, limit=5)
 
         assert result['silent'] == 1 and result['sent'] == 0
@@ -102,9 +102,9 @@ class TestSilenceIsRemembered:
         """⚠ Главное здесь: второй круг агента **не спрашивает**.
 
         Прежде спрашивал — каждые пять минут, до конца времён. Отметка попытки
-        держит только `DATING_ANSWER_RETRY_SEC`, и потом всё повторялось.
+        держит только `ANSWER_RETRY_SEC`, и потом всё повторялось.
         """
-        await dating_answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
+        await answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
                                 {}, agent_id=1, limit=5)
         assert len(silent_agent) == 1
 
@@ -114,13 +114,13 @@ class TestSilenceIsRemembered:
                              ' WHERE profile_id = %s', (talk,))
             await db.connection.commit()
 
-        await dating_answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
+        await answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
                                 {}, agent_id=1, limit=5)
 
         assert len(silent_agent) == 1, 'агента спросили о том же во второй раз'
 
     async def test_selection_skips_the_silenced(self, talk, silent_agent):
-        await dating_answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
+        await answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
                                 {}, agent_id=1, limit=5)
 
         assert await _waiting_find(talk, 5, [], False) == []
@@ -131,13 +131,13 @@ class TestSilenceIsRemembered:
         Мигающий значок требует того, чего не будет — круг про это сообщение больше
         не спросит.
         """
-        card = (await dating_profile_view_card(talk, user=None))['result']
+        card = (await profile_view_card(talk, user=None))['result']
         assert card['contacts'][0]['needs_answer'] is True, 'значок не горел изначально'
 
-        await dating_answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
+        await answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
                                 {}, agent_id=1, limit=5)
 
-        card = (await dating_profile_view_card(talk, user=None))['result']
+        card = (await profile_view_card(talk, user=None))['result']
 
         assert card['contacts'][0]['needs_answer'] is False, 'значок остался мигать'
 
@@ -146,10 +146,10 @@ class TestSilenceIsRemembered:
 
         Человек ждёт ответа, его нет, и непонятно: сломалось или так задумано.
         """
-        await dating_answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
+        await answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
                                 {}, agent_id=1, limit=5)
 
-        card = (await dating_profile_view_card(talk, user=None))['result']
+        card = (await profile_view_card(talk, user=None))['result']
         last = card['contacts'][0]['messages_last'][-1]
 
         assert last['answer_silent_at'] is not None
@@ -164,7 +164,7 @@ class TestSilenceIsNotForever:
         Иначе одно молчание закрыло бы разговор навсегда: собеседник пишет, а мы
         молчим, потому что когда-то решили промолчать на другое сообщение.
         """
-        await dating_answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
+        await answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
                                 {}, agent_id=1, limit=5)
         assert len(silent_agent) == 1
 
@@ -177,14 +177,14 @@ class TestSilenceIsNotForever:
                 (talk, UID, f'probe-{uuid.uuid4().hex[:12]}'))
             await db.connection.commit()
 
-        await dating_answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
+        await answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
                                 {}, agent_id=1, limit=5)
 
         assert len(silent_agent) == 2, 'новое сообщение осталось без внимания'
 
     async def test_badge_lights_up_again(self, talk, silent_agent):
         """И значок снова горит: повод появился новый."""
-        await dating_answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
+        await answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
                                 {}, agent_id=1, limit=5)
 
         async with mysql_get_db_async() as db:
@@ -196,7 +196,7 @@ class TestSilenceIsNotForever:
                 (talk, UID, f'probe-{uuid.uuid4().hex[:12]}'))
             await db.connection.commit()
 
-        card = (await dating_profile_view_card(talk, user=None))['result']
+        card = (await profile_view_card(talk, user=None))['result']
 
         assert card['contacts'][0]['needs_answer'] is True
 
@@ -220,10 +220,10 @@ class TestAnswerStillWorks:
             return {'ok': True, 'error': '', 'offline': False, 'response': '',
                     'message_uid': 'x'}
 
-        monkeypatch.setattr(dating_answer, '_agent_ask', _ask)
-        monkeypatch.setattr(dating_answer, 'dating_send_message', _send)
+        monkeypatch.setattr(answer, '_agent_ask', _ask)
+        monkeypatch.setattr(answer, 'send_message', _send)
 
-        result = await dating_answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
+        result = await answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
                                          {}, agent_id=1, limit=5)
 
         assert sent == ['и тебе привет'] and result['sent'] == 1

@@ -17,8 +17,8 @@ import random
 
 import pytest
 
-from src.dating.dating_invite import _cards as invite_cards
-from src.dating.dating_mailing import _pairs as mailing_pairs
+from src.dating.invite import _cards as invite_cards
+from src.dating.mailing import _pairs as mailing_pairs
 
 pytestmark = pytest.mark.chat
 
@@ -126,9 +126,9 @@ class TestFavoriteMailKeepsItsGirl:
     def test_the_pair_comes_from_the_conversation(self):
         import inspect
 
-        from src.dating import dating_favorite_mail
+        from src.dating import favorite_mail
 
-        code = inspect.getsource(dating_favorite_mail)
+        code = inspect.getsource(favorite_mail)
 
         assert 'random' not in code, \
             'у писем избранным появился случайный выбор анкеты'

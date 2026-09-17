@@ -1,7 +1,7 @@
 """Круг шаблонов: заготовки пишутся сами и старые уходят сами.
 
 ⚠ **Наружу сюита не ходит** (`testing.md`): написание заготовки — это вызов LLM у
-соседа. Поэтому подменяется `dating_mail_write` — единственная дорогая часть; всё
+соседа. Поэтому подменяется `mail_write` — единственная дорогая часть; всё
 остальное работает по-настоящему, с живой базой.
 
 ⚠ **Сайт выдуманный.** Своей таблицы сайтов здесь нет, `site_id` — просто ключ, и
@@ -27,9 +27,9 @@ import uuid
 
 import pytest
 
-from src.dating import dating_mail_round as round_
-from src.dating.dating_mail_round import (DATING_MAIL_ROUND_KEY,
-                                          dating_mail_round_run, _made_today,
+from src.dating import mail_round as round_
+from src.dating.mail_round import (MAIL_ROUND_KEY,
+                                          mail_round_run, _made_today,
                                           _sweep, _today, _write)
 
 pytestmark = pytest.mark.mail
@@ -85,7 +85,7 @@ def agent(monkeypatch):
         return {'title': f'Draft title {len(calls)}',
                 'body': f'Hi [[companion_name]]! Draft #{len(calls)}'}
 
-    monkeypatch.setattr(round_, 'dating_mail_write', fake)
+    monkeypatch.setattr(round_, 'mail_write', fake)
 
     return calls
 
@@ -197,7 +197,7 @@ class TestSweep:
         """⚠ Бережём **самые свежие**, а не первые попавшиеся: список сортируется по
         дате, и «запас» должен состоять из тех, что новее прочих.
 
-        ⚠ Числа берутся **из набора настройки** (`3`, а не `2`): `dating_site_seconds`
+        ⚠ Числа берутся **из набора настройки** (`3`, а не `2`): `site_seconds`
         значение вне набора отвергает и подставляет умолчание — тест на «двух в
         сутки» проверял бы нашу выдумку о том, что настройке можно задать что угодно.
         """
@@ -233,7 +233,7 @@ class TestSweep:
         assert len(await _names()) == 4
 
     async def test_letters_survive(self, auth_client, clean):
-        """⚠ Готовые письма уборка не уносит: у `dating_mailing.mail_id` внешний
+        """⚠ Готовые письма уборка не уносит: у `mailing.mail_id` внешний
         ключ с `ON DELETE SET NULL`, и письмо помнит свой текст само."""
         from mysql_.mysql_ import mysql_get_db_async
 
@@ -335,7 +335,7 @@ class TestWrite:
     async def test_agent_refusal_stops_the_pass(self, auth_client, clean, monkeypatch):
         """Отказ агента обрывает заход, а не одну заготовку: следующие упрутся в то
         же самое, а недостающие доберутся через час."""
-        from src.dating.dating_mail_agent import DatingMailAgentError
+        from src.dating.mail_agent import DatingMailAgentError
 
         calls = []
 
@@ -343,7 +343,7 @@ class TestWrite:
             calls.append(1)
             raise DatingMailAgentError('браузер соседа занят')
 
-        monkeypatch.setattr(round_, 'dating_mail_write', broken)
+        monkeypatch.setattr(round_, 'mail_write', broken)
 
         was = await _settings(auth_client, template_per_day='3')
         try:
@@ -359,7 +359,7 @@ class TestWrite:
         async def empty(site_id, variables, hint=''):
             return {'title': '', 'body': '   '}
 
-        monkeypatch.setattr(round_, 'dating_mail_write', empty)
+        monkeypatch.setattr(round_, 'mail_write', empty)
 
         made = await _write(SITE, 0)
 
@@ -381,7 +381,7 @@ class TestOrder:
     def test_write_goes_before_sweep(self):
         import inspect
 
-        code = inspect.getsource(dating_mail_round_run)
+        code = inspect.getsource(mail_round_run)
 
         assert code.index('_write(site_id') < code.index('_sweep(site_id)'), \
             'уборка идёт раньше написания: не ответит агент — и сайт останется с ' \
@@ -395,7 +395,7 @@ class TestOrder:
         новое. Убери мы раньше — один заход с занятым соседом, и рассылке нечем
         писать до завтра.
         """
-        from src.dating.dating_mail_agent import DatingMailAgentError
+        from src.dating.mail_agent import DatingMailAgentError
 
         for n in range(4):
             await _put(f'вчерашний{n}', days_ago=9)
@@ -403,7 +403,7 @@ class TestOrder:
         async def broken(site_id, variables, hint=''):
             raise DatingMailAgentError('браузер соседа занят')
 
-        monkeypatch.setattr(round_, 'dating_mail_write', broken)
+        monkeypatch.setattr(round_, 'mail_write', broken)
 
         async def only_ours():
             return [{'site_id': SITE, 'schedule': ALWAYS}]
@@ -424,7 +424,7 @@ class TestOrder:
 
         was = await _settings(auth_client, template_keep='2', template_per_day='3')
         try:
-            result = await dating_mail_round_run(0)
+            result = await mail_round_run(0)
         finally:
             await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
 
@@ -459,7 +459,7 @@ class TestOrder:
 
         was = await _settings(auth_client, template_keep='2', template_per_day='3')
         try:
-            result = await dating_mail_round_run(0)
+            result = await mail_round_run(0)
         finally:
             await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
 
@@ -478,7 +478,7 @@ class TestSitesFilter:
     async def test_only_sites_with_schedule_on(self, auth_client):
         """Отбор идёт по `template_schedule_on`, а не по наличию смен: смены правят
         ползунком, и промежуточные состояния законны."""
-        from src.dating.dating_mail_round import _sites
+        from src.dating.mail_round import _sites
 
         before = (await auth_client.get(
             f'/api/dating/site/{SITE}/template-schedule')).json()['result']
@@ -552,7 +552,7 @@ class TestWhoIsTaken:
         return fake
 
     async def test_site_with_schedule_is_taken(self, site, clean, agent, clean_mark):
-        result = await dating_mail_round_run(0)
+        result = await mail_round_run(0)
 
         assert result['made'] >= 1, 'сайт со сменой пропущен'
 
@@ -565,23 +565,23 @@ class TestWhoIsTaken:
 
         monkeypatch.setattr(round_, '_sites', no_shifts)
 
-        assert (await dating_mail_round_run(0))['made'] == 0
+        assert (await mail_round_run(0))['made'] == 0
         assert not agent, 'агента позвали при пустом расписании'
 
     async def test_mark_stops_the_second_pass(self, site, clean, agent, clean_mark):
         """Второй заход в тот же срок ничего не делает: отметка на месте."""
-        await dating_mail_round_run(0)
+        await mail_round_run(0)
         before = len(agent)
-        await dating_mail_round_run(0)
+        await mail_round_run(0)
 
         assert len(agent) == before, 'заход пошёл второй раз, не дождавшись срока'
 
     async def test_mark_is_set_before_work(self, site, clean, agent, clean_mark):
         """⚠ Отметка ставится **до** работы: заготовки пишутся минутами, и
         следующий тик завёл бы вторую пачку поверх первой."""
-        await dating_mail_round_run(0)
+        await mail_round_run(0)
 
-        assert clean_mark.get(DATING_MAIL_ROUND_KEY.format(site_id=SITE))
+        assert clean_mark.get(MAIL_ROUND_KEY.format(site_id=SITE))
 
     async def test_broken_redis_stops_the_round(self, monkeypatch, site, clean, agent):
         """⚠ Сбой Redis решается в сторону бездействия: лишний заход — это вызовы
@@ -591,7 +591,7 @@ class TestWhoIsTaken:
 
         monkeypatch.setattr(round_, 'redis_conn_get', broken)
 
-        assert (await dating_mail_round_run(0))['made'] == 0
+        assert (await mail_round_run(0))['made'] == 0
         assert not agent
 
 
@@ -610,7 +610,7 @@ class TestTitleFromAgent:
         async def named(site_id, variables, hint=''):
             return {'title': 'Warm and curious', 'body': 'Hi [[companion_name]]!'}
 
-        monkeypatch.setattr(round_, 'dating_mail_write', named)
+        monkeypatch.setattr(round_, 'mail_write', named)
 
         was = await _settings(auth_client, template_per_day='3')
         try:
@@ -627,7 +627,7 @@ class TestTitleFromAgent:
         async def unnamed(site_id, variables, hint=''):
             return {'title': '', 'body': 'Hi [[companion_name]]!'}
 
-        monkeypatch.setattr(round_, 'dating_mail_write', unnamed)
+        monkeypatch.setattr(round_, 'mail_write', unnamed)
 
         was = await _settings(auth_client, template_per_day='3')
         try:
@@ -643,12 +643,12 @@ class TestTitleFromAgent:
     async def test_name_is_cut_to_the_column(self, auth_client, clean, monkeypatch):
         """Длинное имя обрезается: столбец держит 190 знаков, а колонка списка —
         куда меньше."""
-        from src.dating.dating_mail import DATING_MAIL_NAME_MAX
+        from src.dating.mail import MAIL_NAME_MAX
 
         async def wordy(site_id, variables, hint=''):
             return {'title': 'Очень ' * 100, 'body': 'Hi [[companion_name]]!'}
 
-        monkeypatch.setattr(round_, 'dating_mail_write', wordy)
+        monkeypatch.setattr(round_, 'mail_write', wordy)
 
         was = await _settings(auth_client, template_per_day='3')
         try:
@@ -656,7 +656,7 @@ class TestTitleFromAgent:
         finally:
             await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
 
-        assert all(len(one) <= DATING_MAIL_NAME_MAX for one in await _names())
+        assert all(len(one) <= MAIL_NAME_MAX for one in await _names())
 
 
 class TestAnswerShape:
@@ -668,7 +668,7 @@ class TestAnswerShape:
     """
 
     def test_title_and_body_are_split(self):
-        from src.dating.dating_mail_agent import _letter_named
+        from src.dating.mail_agent import _letter_named
 
         got = _letter_named('TITLE: Short and direct\n\nHi [[companion_name]],\n\nHow are you?')
 
@@ -677,7 +677,7 @@ class TestAnswerShape:
 
     def test_missing_mark_is_not_a_failure(self):
         """Метки нет — текст целиком остаётся телом, а имя пустое."""
-        from src.dating.dating_mail_agent import _letter_named
+        from src.dating.mail_agent import _letter_named
 
         got = _letter_named('Hi [[companion_name]],\n\nNo title here')
 
@@ -686,7 +686,7 @@ class TestAnswerShape:
 
     def test_quotes_are_stripped(self):
         """LLM берёт название в кавычки при первой возможности."""
-        from src.dating.dating_mail_agent import _letter_named
+        from src.dating.mail_agent import _letter_named
 
         assert _letter_named('TITLE: "Warm and playful"\n\nТекст')['title'] \
             == 'Warm and playful'
@@ -694,7 +694,7 @@ class TestAnswerShape:
     def test_thinking_is_cut_before_the_mark(self):
         """⚠ Размышления модели снимаются **до** разбора метки: иначе `TITLE:`
         оказывается не в начале, и название теряется вместе с ним."""
-        from src.dating.dating_mail_agent import _letter_named
+        from src.dating.mail_agent import _letter_named
 
         got = _letter_named('<think>подумаю…</think>TITLE: Short\n\nТекст письма')
 

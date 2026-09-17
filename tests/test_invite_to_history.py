@@ -51,10 +51,10 @@ class TestSendingDoesNotWrite:
     def test_the_sender_says_no_history(self):
         import inspect
 
-        from src.dating import dating_invite_send
+        from src.dating import invite_send
 
         assert 'to_history=False' in inspect.getsource(
-            dating_invite_send.dating_invite_send_one), \
+            invite_send.invite_send_one), \
             'инвайт снова пишется в диалог при отправке'
 
     def test_ordinary_sending_still_writes(self):
@@ -64,16 +64,16 @@ class TestSendingDoesNotWrite:
         """
         import inspect
 
-        from src.dating.dating_send import dating_send_message
+        from src.dating.send import send_message
 
-        assert 'to_history: bool = True' in inspect.getsource(dating_send_message)
+        assert 'to_history: bool = True' in inspect.getsource(send_message)
 
 
 class TestFirstAnswerBringsThem:
     """Первый ответ — момент, когда приглашения становятся диалогом."""
 
     async def test_they_are_copied(self, girl):
-        from src.dating.dating_chat import _message_save
+        from src.dating.chat import _message_save
 
         await _invites(girl, 3)
         await _message_save(girl, _incoming('Привет!'))
@@ -82,7 +82,7 @@ class TestFirstAnswerBringsThem:
 
     async def test_the_newest_ones_are_taken(self, girl):
         """Берутся **последние**: старые приглашения человек уже не помнит."""
-        from src.dating.dating_chat import _message_save
+        from src.dating.chat import _message_save
 
         await _invites(girl, 3)
         await _message_save(girl, _incoming('Привет!'))
@@ -94,9 +94,9 @@ class TestFirstAnswerBringsThem:
 
         Поставь мы `NOW()` — приглашение оказалось бы **новее** ответа на него, и
         диалог читался бы задом наперёд. Разбор истории идёт по времени, а не по
-        `id` (`dating_send._said_already`), так что это не косметика.
+        `id` (`send._said_already`), так что это не косметика.
         """
-        from src.dating.dating_chat import _message_save
+        from src.dating.chat import _message_save
 
         await _invites(girl, 1)
         await _message_save(girl, _incoming('Привет!'))
@@ -108,7 +108,7 @@ class TestFirstAnswerBringsThem:
 
     async def test_the_second_answer_copies_nothing(self, girl):
         """⚠ Переносим один раз: на второй ответ приглашения уже в переписке."""
-        from src.dating.dating_chat import _message_save
+        from src.dating.chat import _message_save
 
         await _invites(girl, 3)
         await _message_save(girl, _incoming('Привет!'))
@@ -118,7 +118,7 @@ class TestFirstAnswerBringsThem:
 
     async def test_a_stranger_brings_nothing(self, girl):
         """Ответ от того, кому не писали, — законный случай: он начал сам."""
-        from src.dating.dating_chat import _message_save
+        from src.dating.chat import _message_save
 
         await _message_save(girl, _incoming('Привет, я сам нашёл'))
 
@@ -130,7 +130,7 @@ class TestWhatIsNotCopied:
 
     async def test_a_draft_is_not_copied(self, girl):
         """Черновик в пуле человеку не уходил — в диалоге ему места нет."""
-        from src.dating.dating_chat import _message_save
+        from src.dating.chat import _message_save
 
         await _invites(girl, 1, status='draft')
         await _message_save(girl, _incoming('Привет!'))
@@ -139,7 +139,7 @@ class TestWhatIsNotCopied:
 
     async def test_a_failed_one_is_not_copied(self, girl):
         """Не дошедшее — тоже не разговор."""
-        from src.dating.dating_chat import _message_save
+        from src.dating.chat import _message_save
 
         await _invites(girl, 1, status='failed')
         await _message_save(girl, _incoming('Привет!'))
@@ -148,7 +148,7 @@ class TestWhatIsNotCopied:
 
     async def test_another_companion_is_not_touched(self, girl):
         """Приглашения другому человеку в этот диалог не попадают."""
-        from src.dating.dating_chat import _message_save
+        from src.dating.chat import _message_save
 
         await _invites(girl, 2, uid='other-999')
         await _message_save(girl, _incoming('Привет!'))
@@ -164,7 +164,7 @@ class TestTheSourceIsMarked:
     """
 
     async def test_the_source_says_invite(self, girl):
-        from src.dating.dating_chat import _message_save
+        from src.dating.chat import _message_save
 
         await _invites(girl, 1)
         await _message_save(girl, _incoming('Привет!'))

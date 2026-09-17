@@ -17,8 +17,8 @@ Ladadate — один агент, два вызова: «I'm diana» и «i'm ek
 
 import pytest
 
-from src.dating.dating_agent import (DATING_AGENT_SETTING, DATING_AGENT_UNIVERSAL,
-                                     dating_agent_id, dating_agent_vars)
+from src.dating.agent import (AGENT_SETTING, AGENT_UNIVERSAL,
+                                     agent_id, agent_vars)
 
 pytestmark = pytest.mark.profile
 
@@ -29,7 +29,7 @@ class TestVars:
     """Чем агент узнаёт, кто он сейчас."""
 
     def test_name_comes_from_the_card(self):
-        got = dating_agent_vars({'login': 'diana9021@mail.test'}, {'name': 'Diana'})
+        got = agent_vars({'login': 'diana9021@mail.test'}, {'name': 'Diana'})
 
         assert got['girl_name'] == 'Diana'
 
@@ -39,7 +39,7 @@ class TestVars:
         Уйди в промпт пустота — агент назвался бы никак, а собеседник получил бы
         «You are a girl .». Логин хуже читается, но он есть всегда.
         """
-        got = dating_agent_vars({'login': 'diana9021@mail.test'}, {})
+        got = agent_vars({'login': 'diana9021@mail.test'}, {})
 
         assert got['girl_name'] == 'diana9021@mail.test'
 
@@ -49,8 +49,8 @@ class TestVars:
         Имена на сайте повторяются десятками: три Natalia в списке обычное дело, и
         общий ключ склеил бы их факты в один документ. Логин уникален.
         """
-        first = dating_agent_vars({'login': 'natalia1@mail.test'}, {'name': 'Natalia'})
-        second = dating_agent_vars({'login': 'natalia2@mail.test'}, {'name': 'Natalia'})
+        first = agent_vars({'login': 'natalia1@mail.test'}, {'name': 'Natalia'})
+        second = agent_vars({'login': 'natalia2@mail.test'}, {'name': 'Natalia'})
 
         assert first['girl_id'] != second['girl_id']
 
@@ -58,11 +58,11 @@ class TestVars:
         """⚠ Ключ совпадает с именем прежнего персонального агента, и намеренно.
 
         У тех в `workflow_variable` лежало `{"girl_id": "diana_9021"}` — то же
-        самое, что строит `dating_agent_name`. Совпадение переносит накопленные
+        самое, что строит `agent_name`. Совпадение переносит накопленные
         факты на общего агента: разойдись ключи, анкета начала бы с чистого листа,
         и её история осталась бы лежать мёртвой.
         """
-        got = dating_agent_vars({'login': 'bogiladiana9021@bigmir.net'},
+        got = agent_vars({'login': 'bogiladiana9021@bigmir.net'},
                                 {'name': 'Diana'})
 
         assert got['girl_id'] == 'diana_9021'
@@ -73,9 +73,9 @@ class TestWhichAgentAnswers:
 
     async def test_universal_agent_is_taken_first(self, rhapsody):
         """Все анкеты ходят к одному агенту — ради этого всё и затевалось."""
-        rhapsody.agents = [{'id': 1663, 'name': DATING_AGENT_UNIVERSAL}]
+        rhapsody.agents = [{'id': 1663, 'name': AGENT_UNIVERSAL}]
 
-        got = await dating_agent_id({'id': 1, 'site_id': SITE, 'login': 'a@b.test'},
+        got = await agent_id({'id': 1, 'site_id': SITE, 'login': 'a@b.test'},
                                     {'name': 'Diana'})
 
         assert got == 1663
@@ -89,7 +89,7 @@ class TestWhichAgentAnswers:
         """
         rhapsody.agents = [{'id': 726, 'name': 'diana_9021'}]
 
-        got = await dating_agent_id(
+        got = await agent_id(
             {'id': 1, 'site_id': SITE, 'login': 'bogiladiana9021@bigmir.net'},
             {'name': 'Diana'})
 
@@ -100,7 +100,7 @@ class TestWhichAgentAnswers:
         об этом в журнал; падать здесь нельзя, обход идёт по всем анкетам."""
         rhapsody.agents = []
 
-        got = await dating_agent_id({'id': 1, 'site_id': SITE, 'login': 'a@b.test'},
+        got = await agent_id({'id': 1, 'site_id': SITE, 'login': 'a@b.test'},
                                     {'name': 'Diana'})
 
         assert got == 0
@@ -110,22 +110,22 @@ class TestSiteMayChooseAnother:
     """Настройка сайта сильнее умолчания."""
 
     async def test_default_is_the_universal_one(self, rhapsody):
-        from src.dating.dating_agent import dating_agent_universal_name
+        from src.dating.agent import agent_universal_name
 
-        assert await dating_agent_universal_name(SITE) == DATING_AGENT_UNIVERSAL
+        assert await agent_universal_name(SITE) == AGENT_UNIVERSAL
 
     async def test_site_setting_wins(self, auth_client, rhapsody):
         """⚠ Настройка, а не константа: подход новый, и вернуться к прежним
         агентам должно быть можно правкой строки, а не выкладкой."""
-        from src.dating.dating_agent import dating_agent_universal_name
+        from src.dating.agent import agent_universal_name
 
         before = ((await auth_client.get(f'/api/dating/site/{SITE}')).json()
                   ['result']['settings'])
         try:
             await auth_client.put(f'/api/dating/site/{SITE}',
-                                  json={'settings': {DATING_AGENT_SETTING: 'свой_агент'}})
+                                  json={'settings': {AGENT_SETTING: 'свой_агент'}})
 
-            assert await dating_agent_universal_name(SITE) == 'свой_агент'
+            assert await agent_universal_name(SITE) == 'свой_агент'
         finally:
             await auth_client.put(f'/api/dating/site/{SITE}',
                                   json={'settings': before})

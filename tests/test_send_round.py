@@ -2,7 +2,7 @@
 
 ⚠⚠ **Ни одно письмо здесь наружу не уходит, и это главное свойство файла.**
 Отправка — необратимое действие: письмо приходит живому человеку от имени
-девушки. Подменяется `dating_mail_send_one` — единственная функция, которая
+девушки. Подменяется `mail_send_one` — единственная функция, которая
 ходит на сайт; всё остальное (кого брать, когда, сколько) работает
 по-настоящему, с живой базой.
 
@@ -14,8 +14,8 @@ import uuid
 
 import pytest
 
-from src.dating import dating_send_round as round_
-from src.dating.dating_send_round import dating_send_round_run, dating_send_why
+from src.dating import send_round as round_
+from src.dating.send_round import send_round_run, send_why
 
 pytestmark = pytest.mark.mail
 # Выдуманный сайт: у соседа его нет, живую отправку задеть невозможно.
@@ -45,7 +45,7 @@ async def site(auth_client, monkeypatch):
     другими файлами сюиты: они бегут раньше по алфавиту и убирают за собой только
     свои строки. Наберётся сорок — и круг молча перестаёт отправлять, а тесты здесь
     падают на `assert ... == 1` без единого намёка на причину. Так же молчит и
-    объяснение простоя: `dating_send_why` честно скажет «норма выбрана».
+    объяснение простоя: `send_why` честно скажет «норма выбрана».
 
     Поймано живьём: полный прогон покраснел один раз из трёх, файл поодиночке
     зеленел всегда. Воспроизведено набивкой счётчика до 45 — тогда краснеют сразу
@@ -102,7 +102,7 @@ async def profile(auth_client):
 def post(monkeypatch):
     """Подменяет **поход на сайт**: считает письма вместо отправки.
 
-    ⚠ Подменяется `dating_mail_send_one` в модуле круга, а не транспорт: круг
+    ⚠ Подменяется `mail_send_one` в модуле круга, а не транспорт: круг
     зовёт её напрямую, и заглушка ниже по стеку оставила бы возможность промаха.
     """
     sent = []
@@ -110,11 +110,11 @@ def post(monkeypatch):
     async def fake(letter, profile, base, password, table='mailing'):
         sent.append({'id': int(letter['id']), 'table': table})
 
-        from src.dating.dating_mail_send import dating_mail_send_mark
+        from src.dating.mail_send import mail_send_mark
 
-        await dating_mail_send_mark(letter, sent=True, table=table)
+        await mail_send_mark(letter, sent=True, table=table)
 
-    monkeypatch.setattr(round_, 'dating_mail_send_one', fake)
+    monkeypatch.setattr(round_, 'mail_send_one', fake)
     monkeypatch.setattr(round_, '_sent_at', {})
 
     return sent
@@ -177,7 +177,7 @@ class TestSwitchesRule:
                              ' reply_send_on = 0 WHERE site_id = %s', (SITE,))
             await db.connection.commit()
 
-        assert (await dating_send_round_run(0))['sent'] == 0
+        assert (await send_round_run(0))['sent'] == 0
         assert post == [], 'письмо ушло при снятом выключателе'
 
     async def test_mailing_switch_does_not_send_replies(self, auth_client, site,
@@ -195,7 +195,7 @@ class TestSwitchesRule:
                              ' WHERE site_id = %s', (SITE,))
             await db.connection.commit()
 
-        await dating_send_round_run(0)
+        await send_round_run(0)
 
         assert post == [], 'ответ ушёл при снятом своём выключателе'
 
@@ -211,7 +211,7 @@ class TestOneAtATime:
         for _ in range(3):
             await _letter(profile)
 
-        await dating_send_round_run(0)
+        await send_round_run(0)
 
         assert len(post) == 1, 'за один заход ушло больше одного письма'
 
@@ -220,17 +220,17 @@ class TestOneAtATime:
         await _letter(profile)
         await _letter(profile)
 
-        await dating_send_round_run(0)
-        await dating_send_round_run(0)
+        await send_round_run(0)
+        await send_round_run(0)
 
         assert len(post) == 1, 'пауза между письмами не соблюдена'
 
     async def test_pause_has_a_floor(self):
         """⚠ Нижний предел поверх настройки: «5» в поле превратило бы смену в
         очередь из сотни писем в час — то, от чего пауза и заведена."""
-        from src.dating.dating_send_round import DATING_SEND_EVERY_MIN
+        from src.dating.send_round import SEND_EVERY_MIN
 
-        assert DATING_SEND_EVERY_MIN >= 30
+        assert SEND_EVERY_MIN >= 30
 
 
 class TestRepliesGoFirst:
@@ -240,7 +240,7 @@ class TestRepliesGoFirst:
         await _letter(profile, 'mailing')
         await _letter(profile, 'mail_reply')
 
-        await dating_send_round_run(0)
+        await send_round_run(0)
 
         assert post and post[0]['table'] == 'mail_reply'
 
@@ -256,22 +256,22 @@ class TestFailedLetterIsLeftAlone:
     async def test_letter_with_error_is_skipped(self, site, profile, post):
         await _letter(profile, error='сайт просит подождать')
 
-        await dating_send_round_run(0)
+        await send_round_run(0)
 
         assert post == [], 'круг повторил письмо, на котором уже споткнулся'
 
     async def test_failure_is_remembered(self, site, profile, post, monkeypatch):
         """Отказ ложится в `error`, а письмо остаётся в пуле — не `failed`."""
         from mysql_.mysql_ import mysql_get_db_async
-        from src.dating.dating_mail_send import DatingMailSendError
+        from src.dating.mail_send import DatingMailSendError
 
         async def broken(letter, profile, base, password, table='mailing'):
             raise DatingMailSendError('сайт просит подождать')
 
-        monkeypatch.setattr(round_, 'dating_mail_send_one', broken)
+        monkeypatch.setattr(round_, 'mail_send_one', broken)
         letter_id = await _letter(profile)
 
-        assert (await dating_send_round_run(0))['failed'] == 1
+        assert (await send_round_run(0))['failed'] == 1
 
         async with mysql_get_db_async() as db:
             await db.execute('SELECT status, error FROM mailing WHERE id = %s',
@@ -313,7 +313,7 @@ class TestDailyCap:
 
             await _letter(profile)
 
-            assert (await dating_send_round_run(0))['sent'] == 0
+            assert (await send_round_run(0))['sent'] == 0
             assert post == [], 'письмо ушло сверх дневного потолка'
         finally:
             await auth_client.put(f'/api/dating/site/{SITE}',
@@ -325,7 +325,7 @@ class TestDailyCap:
         Непрочитанный счёт означает неизвестный потолок, а лишнее письмо отменить
         нельзя: сомнение решается в сторону молчания.
         """
-        from src.dating.dating_send_round import _today
+        from src.dating.send_round import _today
 
         def broken():
             raise RuntimeError('база лежит')
@@ -347,7 +347,7 @@ class TestScheduleIsRespected:
         await _letter(profile)
 
         # Двенадцать дня — заведомо вне смены 00:00–00:15.
-        await dating_send_round_run(12 - _utc_hour())
+        await send_round_run(12 - _utc_hour())
 
         assert post == [], 'письмо ушло вне смены'
 
@@ -358,7 +358,7 @@ class TestScheduleIsRespected:
                               json={'schedule': []})
         await _letter(profile)
 
-        await dating_send_round_run(0)
+        await send_round_run(0)
 
         assert post == []
 
@@ -373,50 +373,50 @@ class TestWhyItStands:
 
     async def test_the_switch_off_says_so(self):
         """Выключатели стенда сняты, пока фикстура `site` их не подняла."""
-        said = await dating_send_why(SITE, 'mailing', 0)
+        said = await send_why(SITE, 'mailing', 0)
 
         assert said == 'отправка рассылки выключена'
 
     async def test_each_pool_names_itself(self):
         """⚠ Три пула — три выключателя, и путать их нельзя: человек пойдёт снимать
         не тот."""
-        assert 'ответов' in await dating_send_why(SITE, 'mail_reply', 0)
-        assert 'избранным' in await dating_send_why(SITE, 'favorite_mail', 0)
+        assert 'ответов' in await send_why(SITE, 'mail_reply', 0)
+        assert 'избранным' in await send_why(SITE, 'favorite_mail', 0)
 
     async def test_outside_the_shift_says_so(self, site, auth_client):
         await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
                               json={'schedule': [{'from': '00:00', 'to': '00:15'}]})
 
         # Полдень по местному — заведомо вне смены 00:00–00:15.
-        said = await dating_send_why(SITE, 'mailing', 12 - _utc_hour())
+        said = await send_why(SITE, 'mailing', 12 - _utc_hour())
 
         assert 'не смена' in said
 
     async def test_the_day_cap_says_it_is_shared(self, site, monkeypatch):
         """⚠ Строка обязана сказать, что потолок **общий**: встала рассылка, а
         выбрали норму ответы — искать причину человек пойдёт не туда."""
-        import src.dating.dating_send_round as round_
+        import src.dating.send_round as round_
 
         monkeypatch.setattr(round_, '_max_day', _fixed(5))
         monkeypatch.setattr(round_, '_today', _fixed(5))
 
-        said = await dating_send_why(SITE, 'mailing', 0)
+        said = await send_why(SITE, 'mailing', 0)
 
         assert 'ушло 5 из 5' in said and 'общая' in said
 
     async def test_an_empty_pool_says_so(self, site):
-        assert await dating_send_why(SITE, 'mailing', 0) \
+        assert await send_why(SITE, 'mailing', 0) \
             == 'пул пуст: отправлять нечего'
 
     async def test_silence_when_there_is_a_letter(self, site, profile):
         """Есть что отправить — сказать нечего."""
         await _letter(profile)
 
-        assert await dating_send_why(SITE, 'mailing', 0) == ''
+        assert await send_why(SITE, 'mailing', 0) == ''
 
     async def test_an_unknown_pool_is_silent(self, site):
         """Чужое имя таблицы — не повод объяснять: в SQL оно и не поедет."""
-        assert await dating_send_why(SITE, 'dating_users', 0) == ''
+        assert await send_why(SITE, 'dating_users', 0) == ''
 
 
 def _fixed(value):

@@ -14,11 +14,11 @@
 
 import pytest
 
-from src.dating import dating_feed as feed_
-from src.uvicorn.routers.dating.dating_feed import dating_feed_list
-from src.dating.dating_feed import (DATING_FEED_KEEP, DATING_FEED_TEXT_MAX,
-                                    dating_feed_done, dating_feed_read,
-                                    dating_feed_write)
+from src.dating import feed as feed_
+from src.uvicorn.routers.dating.feed import feed_list
+from src.dating.feed import (FEED_KEEP, FEED_TEXT_MAX,
+                                    feed_done, feed_read,
+                                    feed_write)
 
 pytestmark = pytest.mark.core
 
@@ -101,9 +101,9 @@ class TestWrite:
     """Что попадает в кольцо."""
 
     def test_event_comes_back(self, ring):
-        dating_feed_write(SITE, 'mail', 'Забираю письма: анкет 13')
+        feed_write(SITE, 'mail', 'Забираю письма: анкет 13')
 
-        rows = dating_feed_read(SITE)
+        rows = feed_read(SITE)
 
         assert len(rows) == 1
         assert rows[0]['text'] == 'Забираю письма: анкет 13'
@@ -115,20 +115,20 @@ class TestWrite:
         Переворачивай она список сама — платила бы за порядок, который можно
         задать при записи.
         """
-        dating_feed_write(SITE, 'mail', 'первое')
-        dating_feed_write(SITE, 'chat', 'второе')
+        feed_write(SITE, 'mail', 'первое')
+        feed_write(SITE, 'chat', 'второе')
 
-        assert [row['text'] for row in dating_feed_read(SITE)] == ['второе', 'первое']
+        assert [row['text'] for row in feed_read(SITE)] == ['второе', 'первое']
 
     def test_ring_forgets_the_oldest(self, ring):
         """Кольцо, а не журнал: старое выбрасывается само, чистить нечего."""
-        for n in range(DATING_FEED_KEEP + 5):
-            dating_feed_write(SITE, 'mail', f'событие {n}')
+        for n in range(FEED_KEEP + 5):
+            feed_write(SITE, 'mail', f'событие {n}')
 
-        rows = dating_feed_read(SITE, DATING_FEED_KEEP)
+        rows = feed_read(SITE, FEED_KEEP)
 
-        assert len(rows) == DATING_FEED_KEEP
-        assert rows[0]['text'] == f'событие {DATING_FEED_KEEP + 4}'
+        assert len(rows) == FEED_KEEP
+        assert rows[0]['text'] == f'событие {FEED_KEEP + 4}'
 
     def test_unknown_kind_becomes_warn(self, ring):
         """⚠ Вид из закрытого набора: им страница красит строку.
@@ -136,9 +136,9 @@ class TestWrite:
         Вид, о котором она не знает, приехал бы бесцветным — а событие, которое
         никто не назвал, скорее про беду, чем про удачу.
         """
-        dating_feed_write(SITE, 'выдуманный', 'что-то')
+        feed_write(SITE, 'выдуманный', 'что-то')
 
-        assert dating_feed_read(SITE)[0]['kind'] == 'warn'
+        assert feed_read(SITE)[0]['kind'] == 'warn'
 
     def test_long_text_is_cut_on_write(self, ring):
         """⚠ Режем при записи, а не при показе: строка живёт в одну строку полосы.
@@ -146,20 +146,20 @@ class TestWrite:
         Обрезанная на странице занимала бы место в кольце целиком и уезжала бы в
         ответ ручки — трафик ради текста, который никто не увидит.
         """
-        dating_feed_write(SITE, 'mail', 'я' * (DATING_FEED_TEXT_MAX + 50))
+        feed_write(SITE, 'mail', 'я' * (FEED_TEXT_MAX + 50))
 
-        assert len(dating_feed_read(SITE)[0]['text']) == DATING_FEED_TEXT_MAX
+        assert len(feed_read(SITE)[0]['text']) == FEED_TEXT_MAX
 
     def test_empty_text_is_not_an_event(self, ring):
-        dating_feed_write(SITE, 'mail', '   ')
+        feed_write(SITE, 'mail', '   ')
 
-        assert dating_feed_read(SITE) == []
+        assert feed_read(SITE) == []
 
     def test_no_site_no_event(self, ring):
         """Событий «вообще» не бывает: они всегда про конкретный сайт."""
-        dating_feed_write(0, 'mail', 'ничьё')
+        feed_write(0, 'mail', 'ничьё')
 
-        assert dating_feed_read(0) == []
+        assert feed_read(0) == []
 
 
 class TestDone:
@@ -171,10 +171,10 @@ class TestDone:
         Человек видит начало работы и не знает, чем она кончилась, — ровно то, на
         что и пожаловались: «Забираю письма: анкет 13, нужно выводить результат».
         """
-        started = dating_feed_write(SITE, 'mail', 'Забираю письма: анкет 13…')
-        dating_feed_done(SITE, started, 'mail', 'Новых писем: 4')
+        started = feed_write(SITE, 'mail', 'Забираю письма: анкет 13…')
+        feed_done(SITE, started, 'mail', 'Новых писем: 4')
 
-        rows = dating_feed_read(SITE)
+        rows = feed_read(SITE)
 
         assert [row['text'] for row in rows] == ['Новых писем: 4']
 
@@ -184,20 +184,20 @@ class TestDone:
         Слепой `lset 0` стёр бы его событие — то есть лента теряла бы записи тем
         чаще, чем больше работы идёт разом.
         """
-        started = dating_feed_write(SITE, 'mail', 'Забираю письма: анкет 13…')
-        dating_feed_write(SITE, 'chat', 'Новых сообщений в чате: 2')
-        dating_feed_done(SITE, started, 'mail', 'Новых писем: 4')
+        started = feed_write(SITE, 'mail', 'Забираю письма: анкет 13…')
+        feed_write(SITE, 'chat', 'Новых сообщений в чате: 2')
+        feed_done(SITE, started, 'mail', 'Новых писем: 4')
 
-        texts = [row['text'] for row in dating_feed_read(SITE)]
+        texts = [row['text'] for row in feed_read(SITE)]
 
         assert texts[0] == 'Новых писем: 4'
         assert 'Новых сообщений в чате: 2' in texts
 
     def test_result_without_a_start_is_still_written(self, ring):
         """Начала не было (Redis моргнул) — итог всё равно должен быть виден."""
-        dating_feed_done(SITE, '', 'mail', 'Новых писем: 4')
+        feed_done(SITE, '', 'mail', 'Новых писем: 4')
 
-        assert [row['text'] for row in dating_feed_read(SITE)] == ['Новых писем: 4']
+        assert [row['text'] for row in feed_read(SITE)] == ['Новых писем: 4']
 
 
 class TestRepeats:
@@ -210,25 +210,25 @@ class TestRepeats:
     """
 
     def test_same_event_twice_is_one_line(self, ring):
-        dating_feed_write(SITE, 'mail', 'Писем не пришло')
-        dating_feed_write(SITE, 'mail', 'Писем не пришло')
+        feed_write(SITE, 'mail', 'Писем не пришло')
+        feed_write(SITE, 'mail', 'Писем не пришло')
 
-        assert len(dating_feed_read(SITE)) == 1
+        assert len(feed_read(SITE)) == 1
 
     def test_repeat_refreshes_the_stamp(self, ring):
         """Время у схлопнутой строки — новое: иначе она выглядела бы застрявшей."""
-        dating_feed_write(SITE, 'mail', 'Писем не пришло')
-        before = dating_feed_read(SITE)[0]['at']
-        dating_feed_write(SITE, 'mail', 'Писем не пришло')
+        feed_write(SITE, 'mail', 'Писем не пришло')
+        before = feed_read(SITE)[0]['at']
+        feed_write(SITE, 'mail', 'Писем не пришло')
 
-        assert dating_feed_read(SITE)[0]['at'] >= before
+        assert feed_read(SITE)[0]['at'] >= before
 
     def test_another_kind_with_the_same_text_is_a_new_line(self, ring):
         """Схлопываем по паре «вид + текст»: разные занятия — разные события."""
-        dating_feed_write(SITE, 'mail', 'ничего нет')
-        dating_feed_write(SITE, 'chat', 'ничего нет')
+        feed_write(SITE, 'mail', 'ничего нет')
+        feed_write(SITE, 'chat', 'ничего нет')
 
-        assert len(dating_feed_read(SITE)) == 2
+        assert len(feed_read(SITE)) == 2
 
     def test_chat_survives_a_chattier_mail_round(self, ring):
         """Ради чего всё: частая почта не должна выталкивать переписку из двух строк.
@@ -236,11 +236,11 @@ class TestRepeats:
         Почта ходит чаще и повторяет один и тот же итог; переписка должна остаться
         видимой второй строкой.
         """
-        dating_feed_write(SITE, 'chat', 'Новой переписки нет')
+        feed_write(SITE, 'chat', 'Новой переписки нет')
         for _ in range(4):
-            dating_feed_write(SITE, 'mail', 'Писем не пришло')
+            feed_write(SITE, 'mail', 'Писем не пришло')
 
-        kinds = [row['kind'] for row in dating_feed_read(SITE)[:2]]
+        kinds = [row['kind'] for row in feed_read(SITE)[:2]]
 
         assert kinds == ['mail', 'chat']
 
@@ -249,9 +249,9 @@ class TestAge:
     """Возраст считается при чтении, а не хранится."""
 
     def test_age_is_counted_on_read(self, ring):
-        dating_feed_write(SITE, 'mail', 'свежее')
+        feed_write(SITE, 'mail', 'свежее')
 
-        assert dating_feed_read(SITE)[0]['age_sec'] >= 0
+        assert feed_read(SITE)[0]['age_sec'] >= 0
 
 
 class TestSeparateSites:
@@ -262,9 +262,9 @@ class TestSeparateSites:
     """
 
     def test_other_site_does_not_see_it(self, ring):
-        dating_feed_write(SITE, 'mail', 'наше')
+        feed_write(SITE, 'mail', 'наше')
 
-        assert dating_feed_read(SITE + 1) == []
+        assert feed_read(SITE + 1) == []
 
 
 class TestHandle:
@@ -277,9 +277,9 @@ class TestHandle:
     """
 
     async def test_handle_answers_with_the_ring(self, ring):
-        dating_feed_write(SITE, 'chat', 'Новых сообщений в чате: 3')
+        feed_write(SITE, 'chat', 'Новых сообщений в чате: 3')
 
-        got = (await dating_feed_list(site_id=SITE, user=None))['result']
+        got = (await feed_list(site_id=SITE, user=None))['result']
 
         assert got[0]['text'] == 'Новых сообщений в чате: 3'
 
@@ -288,12 +288,12 @@ class TestHandle:
 
         Для показа это одно и то же, и различать их на странице нечем.
         """
-        assert (await dating_feed_list(user=None))['result'] == []
+        assert (await feed_list(user=None))['result'] == []
 
     async def test_limit_does_not_exceed_the_ring(self, ring):
         for n in range(5):
-            dating_feed_write(SITE, 'mail', f'событие {n}')
+            feed_write(SITE, 'mail', f'событие {n}')
 
-        got = (await dating_feed_list(site_id=SITE, limit=9999, user=None))['result']
+        got = (await feed_list(site_id=SITE, limit=9999, user=None))['result']
 
         assert len(got) == 5

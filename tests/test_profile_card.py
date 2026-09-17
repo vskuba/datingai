@@ -6,16 +6,16 @@
 имени, и выглядело это как «сайт не отдал анкету».
 
 ⚠ **`profile` и `card` — разные вещи.** `profile` — учётка в нашей базе
-(`dating_profile`), `card` — анкета, прочитанная с сайта. У них разные
+(`profile_`), `card` — анкета, прочитанная с сайта. У них разные
 идентификаторы: у первой номер нашей строки, у второй — номер на сайте. Так они
-зовутся и в коде страниц (`.profile*` против `.card*`), и в `dating_agent_ensure`.
+зовутся и в коде страниц (`.profile*` против `.card*`), и в `agent_ensure`.
 """
 
 import json
 
 import pytest
 
-from src.dating.dating_profile_cache import _contact_values, _profile_load
+from src.dating.profile_cache import _contact_values, _profile_load
 from src.dating.site.site_registry import site_registry_profile
 
 pytestmark = pytest.mark.profile
@@ -233,7 +233,7 @@ class _FakeDb:
 def db(monkeypatch):
     """Подменяет базу. Сам разбор и выбор строки остаются настоящими — они и
     проверяются."""
-    from src.dating import dating_profile_cache
+    from src.dating import profile_cache
 
     box = _FakeDb()
 
@@ -244,6 +244,6 @@ def db(monkeypatch):
         async def __aexit__(self, *args):
             return False
 
-    monkeypatch.setattr(dating_profile_cache, 'mysql_get_db_async', lambda: Ctx())
+    monkeypatch.setattr(profile_cache, 'mysql_get_db_async', lambda: Ctx())
 
     return box

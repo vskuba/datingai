@@ -18,7 +18,7 @@
 
 import pytest
 
-from src.uvicorn.routers.dating.dating_log import _query, _run_text
+from src.uvicorn.routers.dating.log import _query, _run_text
 
 pytestmark = pytest.mark.page
 SITE = 343
@@ -153,7 +153,7 @@ class TestProfileScope:
         """⚠ Прогон — одна строка в базе, показанная в двух местах.
 
         Журнал анкеты на «Профилях» и общая лента «Журналов» складывают одни и те
-        же две таблицы; разница только в отборе. Дублировать прогон в `dating_log`
+        же две таблицы; разница только в отборе. Дублировать прогон в `log`
         значило бы держать две записи об одном событии, которые разойдутся при
         первой же правке текста.
         """

@@ -1,7 +1,7 @@
 """Собеседники с сайта: разбор карточек, снятых сценарием.
 
 Юнит-тесты без сети и браузера. Правила вынесены в чистые функции
-(`src/dating/dating_people.py`) именно затем: чтобы проверять их, не входя на
+(`src/dating/people.py`) именно затем: чтобы проверять их, не входя на
 живой сайт под анкетой — каждый такой вход стоит десятков секунд и приближает
 блокировку.
 
@@ -13,7 +13,7 @@
 
 import pytest
 
-from src.dating.dating_people import dating_people_rows
+from src.dating.people import people_rows
 
 pytestmark = pytest.mark.profile
 # Ответ сценария «избранные собеседники: список», как он пришёл с LadaDate.
@@ -35,7 +35,7 @@ class TestPeopleRows:
     """Разбор списка целиком."""
 
     def test_rows_parsed(self):
-        rows = dating_people_rows(ROWS, 'избранные')
+        rows = people_rows(ROWS, 'избранные')
 
         assert [row['uid'] for row in rows] == ['812886', '102348']
         assert rows[0]['name'] == 'Vincent pitchen'
@@ -44,20 +44,20 @@ class TestPeopleRows:
     def test_uid_comes_from_link(self):
         """Номер анкеты берётся **из ссылки**: отдельного поля под него сайт не
         отдаёт, а без номера человека нечем отличить."""
-        rows = dating_people_rows(ROWS, 'избранные')
+        rows = people_rows(ROWS, 'избранные')
 
         assert rows[1]['uid'] == '102348'
 
     def test_online_read_from_class(self):
         """«В сети» — по подстройке в классе карточки, а не по точному значению:
         рядом стоит `people__item-content`, и порядок сайт не гарантирует."""
-        rows = dating_people_rows(ROWS, 'избранные')
+        rows = people_rows(ROWS, 'избранные')
 
         assert rows[0]['online'] is False
         assert rows[1]['online'] is True
 
     def test_new_mark(self):
-        rows = dating_people_rows(ROWS, 'избранные')
+        rows = people_rows(ROWS, 'избранные')
 
         assert rows[0]['is_new'] is True
         assert rows[1]['is_new'] is False
@@ -69,7 +69,7 @@ class TestPeopleRows:
         `placeholder-loading.svg`. Оставь мы её — страница показала бы сломанную
         картинку вместо буквы имени.
         """
-        rows = dating_people_rows(ROWS, 'избранные')
+        rows = people_rows(ROWS, 'избранные')
 
         assert rows[0]['photo'].endswith('7f23711d.jpg')
         assert rows[1]['photo'] == '', 'заглушка должна отбрасываться'
@@ -82,7 +82,7 @@ class TestPeopleRows:
         именно те диалоги, ради которых кнопку и нажимают; поймано на живом
         кабинете, где из тринадцати терялись двое.
         """
-        rows = dating_people_rows({'избранные': [{'имя': 'Без ссылки', 'ссылка': ''}]},
+        rows = people_rows({'избранные': [{'имя': 'Без ссылки', 'ссылка': ''}]},
                                   'избранные')
 
         assert len(rows) == 1
@@ -90,7 +90,7 @@ class TestPeopleRows:
 
     def test_row_without_anything_skipped(self):
         """Ни ссылки, ни фото, ни имени — записывать нечего."""
-        assert dating_people_rows({'избранные': [{'имя': '', 'ссылка': ''}]}, 'избранные') == []
+        assert people_rows({'избранные': [{'имя': '', 'ссылка': ''}]}, 'избранные') == []
 
     def test_template_row_skipped(self):
         """Скрытая строка-образец не человек.
@@ -99,7 +99,7 @@ class TestPeopleRows:
         и отсекается она по тексту. Без этого в списке диалогов появлялся
         собеседник по имени «Name, age».
         """
-        rows = dating_people_rows(
+        rows = people_rows(
             {'избранные': [{'имя': 'Name, age', 'ссылка': '/chat#'}]}, 'избранные')
 
         assert rows == []
@@ -111,10 +111,10 @@ class TestPeopleRows:
         Суффикс размера не часть номера: не отсеки его, и один человек показался
         бы в колонках дважды, а значок «есть переписка» не нашёл бы себе пару.
         """
-        cabinet = dating_people_rows({'x': [
+        cabinet = people_rows({'x': [
             {'имя': 'Semen', 'ссылка': '/profile/181685-men',
              'фото': 'https://ladadate.com/content/photos/5fd22e8755dc4a8199d3570e9406bc4a.jpg'}]}, 'x')
-        chat = dating_people_rows({'x': [
+        chat = people_rows({'x': [
             {'имя': 'Semen', 'ссылка': '/chat#',
              'фото': 'https://ladadate.com/content/photos/5fd22e8755dc4a8199d3570e9406bc4a-s.jpg'}]}, 'x')
 
@@ -128,24 +128,24 @@ class TestPeopleRows:
         строками хуже, чем потерять дубль.
         """
         one = ROWS['избранные'][0]
-        rows = dating_people_rows({'избранные': [one, dict(one)]}, 'избранные')
+        rows = people_rows({'избранные': [one, dict(one)]}, 'избранные')
 
         assert len(rows) == 1
 
     def test_garbage_is_empty_list(self):
         """Мусор вместо списка — пустой результат, а не исключение: ответ приходит
         из сети, и одна кривая запись не должна ронять колонку целиком."""
-        assert dating_people_rows({}, 'избранные') == []
-        assert dating_people_rows({'избранные': 'строка'}, 'избранные') == []
-        assert dating_people_rows({'избранные': [None, 42]}, 'избранные') == []
-        assert dating_people_rows(ROWS, 'не-тот-шаг') == []
+        assert people_rows({}, 'избранные') == []
+        assert people_rows({'избранные': 'строка'}, 'избранные') == []
+        assert people_rows({'избранные': [None, 42]}, 'избранные') == []
+        assert people_rows(ROWS, 'не-тот-шаг') == []
 
 
 class TestNameAge:
     """Имя и возраст из склейки, которую отдаёт разметка сайта."""
 
     def _one(self, name: str) -> dict:
-        rows = dating_people_rows(
+        rows = people_rows(
             {'x': [{'имя': name, 'ссылка': '/profile/1-men-from-x'}]}, 'x')
 
         return rows[0]

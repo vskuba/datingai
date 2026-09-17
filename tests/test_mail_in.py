@@ -1,7 +1,7 @@
 """Входящие письма: забор через API сайта и наш признак «просмотрено».
 
 ⚠ **Наружу сюита не ходит** (`testing.md`): весь разговор с сайтом идёт через
-заглушку (`site_api_fake.py`), подменяющую транспорт в `dating_site_api.py`.
+заглушку (`site_api_fake.py`), подменяющую транспорт в `site_api.py`.
 
 ## Что здесь ловится
 
@@ -21,8 +21,8 @@ import uuid
 
 import pytest
 
-from src.dating.dating_mail_in import (DatingMailInError, dating_mail_in_fetch,
-                                       dating_mail_in_unread, _stamp)
+from src.dating.mail_in import (DatingMailInError, mail_in_fetch,
+                                       mail_in_unread, _stamp)
 
 from tests.site_api_fake import SITE_API_FAKE_BASE, SITE_API_FAKE_PASSWORD
 
@@ -32,7 +32,7 @@ SITE = 999_777
 
 # Анкета заводится на **стенде** — закладке, которая есть у соседа, но не помечена
 # `dating`. Заведение анкеты сверяет сайт у соседа (выдуманный номер оно отвергает:
-# «нет сайта с номером 999777»), а `dating_mail_in.profile_id` — внешний ключ.
+# «нет сайта с номером 999777»), а `mail_in.profile_id` — внешний ключ.
 #
 # ⚠ **Раньше здесь стоял живой 343 (Ladadate), и это стало опасно.** У сайта
 # включились круги избранных и инвайтов, а они берут **все включённые анкеты
@@ -42,7 +42,7 @@ SITE = 999_777
 # Нашлось это по сюите: два полных прогона из четырёх дали сбои в разных файлах, а
 # по отдельности те же файлы зелёные.
 #
-# ⚠ **Стенда нет в `dating_site`, и это и есть разведение.** Круги обходят сайты
+# ⚠ **Стенда нет в `site_`, и это и есть разведение.** Круги обходят сайты
 # по строкам той таблицы; сайта в ней нет — ни один круг про анкету не узнает,
 # какие бы флаги ни включили у настоящих сайтов завтра.
 STAND_SITE = 999_343
@@ -76,7 +76,7 @@ async def profile(auth_client):
 
 
 async def _fetch(profile):
-    return await dating_mail_in_fetch(profile, SITE_API_FAKE_BASE,
+    return await mail_in_fetch(profile, SITE_API_FAKE_BASE,
                                       SITE_API_FAKE_PASSWORD)
 
 
@@ -153,7 +153,7 @@ class TestFetch:
 
     async def test_no_api_base_is_told_plainly(self, site_api, profile):
         with pytest.raises(DatingMailInError) as got:
-            await dating_mail_in_fetch(profile, '', SITE_API_FAKE_PASSWORD)
+            await mail_in_fetch(profile, '', SITE_API_FAKE_PASSWORD)
 
         assert 'Адрес API' in str(got.value)
 
@@ -215,14 +215,14 @@ class TestSeen:
     async def test_unread_is_counted_by_profile(self, auth_client, site_api, profile):
         await _fetch(profile)
 
-        assert (await dating_mail_in_unread(SITE)).get(profile['id'])['all'] == 2
+        assert (await mail_in_unread(SITE)).get(profile['id'])['all'] == 2
 
         rows = (await auth_client.get(
             f"/api/dating/mail-in?profile_id={profile['id']}")).json()['result']
         await auth_client.put(f"/api/dating/mail-in/{rows[0]['id']}/seen",
                               json={'seen': True})
 
-        assert (await dating_mail_in_unread(SITE)).get(profile['id'])['all'] == 1
+        assert (await mail_in_unread(SITE)).get(profile['id'])['all'] == 1
 
     async def test_unread_says_how_many_are_from_favorites(self, site_api, profile):
         """⚠ Счётчик обязан знать, **где** лежат эти письма.
@@ -233,7 +233,7 @@ class TestSeen:
         щёлкал по конверту с числом и попадал на «писем пока нет».
         """
         from mysql_.mysql_ import mysql_get_db_async
-        from src.dating.dating_favorite import DATING_FAVORITE_STATES
+        from src.dating.favorite import FAVORITE_STATES
 
         await _fetch(profile)
         rows = await _rows(profile['id'])
@@ -244,11 +244,11 @@ class TestSeen:
                 'INSERT INTO favorite (site_id, profile_id, uid, state)'
                 ' VALUES (%s, %s, %s, %s)'
                 ' ON DUPLICATE KEY UPDATE state = VALUES(state)',
-                (SITE, profile['id'], uid, DATING_FAVORITE_STATES[0]))
+                (SITE, profile['id'], uid, FAVORITE_STATES[0]))
             await db.connection.commit()
 
         try:
-            count = (await dating_mail_in_unread(SITE)).get(profile['id'])
+            count = (await mail_in_unread(SITE)).get(profile['id'])
 
             assert count['all'] == 2, count
             assert count['fav'] == 1, 'письмо избранного не отличили от прочих'
@@ -267,8 +267,8 @@ class TestSeen:
         списке анкет показывал «2 непрочитано» у разговора, прочитанного целиком, и
         погасить его было нечем. Поймано на проде.
         """
-        from src.uvicorn.routers.dating.dating_mail_in import (
-            DatingMailInSeenThread, dating_mail_in_seen_thread)
+        from src.uvicorn.routers.dating.mail_in import (
+            DatingMailInSeenThread, mail_in_seen_thread)
 
         await _fetch(profile)
         rows = await _rows(profile['id'])
@@ -276,15 +276,15 @@ class TestSeen:
         # ⚠ Помечаем **по разговору**: письма в подделке от разных собеседников,
         # и «два письма» ещё не значит «один разговор». Обходим все и сверяем сумму
         # — так проверяется само правило, а не число писем у заглушки.
-        total = (await dating_mail_in_unread(SITE))[profile['id']]['all']
+        total = (await mail_in_unread(SITE))[profile['id']]['all']
         marked = 0
         for uid in {str(row['uid']) for row in rows}:
-            got = await dating_mail_in_seen_thread(
+            got = await mail_in_seen_thread(
                 DatingMailInSeenThread(profile_id=profile['id'], uid=uid), user=None)
             marked += got['result']['seen']
 
         assert marked == total
-        assert profile['id'] not in await dating_mail_in_unread(SITE), \
+        assert profile['id'] not in await mail_in_unread(SITE), \
             'значок остался гореть после прочтения всех разговоров'
 
     async def test_marking_a_thread_leaves_other_people_alone(self, site_api, profile):
@@ -293,17 +293,17 @@ class TestSeen:
         Прочитать разговор с одним не значит прочитать переписку со всеми
         остальными: у анкеты их бывают десятки.
         """
-        from src.uvicorn.routers.dating.dating_mail_in import (
-            DatingMailInSeenThread, dating_mail_in_seen_thread)
+        from src.uvicorn.routers.dating.mail_in import (
+            DatingMailInSeenThread, mail_in_seen_thread)
 
         await _fetch(profile)
 
-        got = await dating_mail_in_seen_thread(
+        got = await mail_in_seen_thread(
             DatingMailInSeenThread(profile_id=profile['id'], uid='нет-такого'),
             user=None)
 
         assert got['result']['seen'] == 0
-        assert (await dating_mail_in_unread(SITE))[profile['id']]['all'] == 2, \
+        assert (await mail_in_unread(SITE))[profile['id']]['all'] == 2, \
             'метка чужого разговора погасила письма этой анкеты'
 
     async def test_seen_can_be_taken_back(self, auth_client, site_api, profile):
@@ -452,7 +452,7 @@ class TestThreadOfALetter:
 
         Разговор один, и второй способ его собрать разошёлся бы с первым в день,
         когда добавится третий источник реплик. Поэтому ручка зовёт тот же
-        `dating_mail_reply_thread`.
+        `mail_reply_thread`.
         """
         await _fetch(profile)
 
@@ -524,7 +524,7 @@ class TestListIsByConversation:
     последнее письмо пары «анкета — собеседник», прежние видны в окне.
 
     Правило «последнее в переписке» одно на проект — тем же `NOT EXISTS`, что у
-    отбора писем для ответа (`dating_mail_reply._to_answer`).
+    отбора писем для ответа (`mail_reply._to_answer`).
     """
 
     async def test_one_row_per_companion(self, auth_client, site_api, profile):

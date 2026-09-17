@@ -25,12 +25,12 @@ pytestmark = pytest.mark.mail
 SITE = 999_777
 
 # Сайт для анкеты — стенд у соседа: заведение учётки сверяет номер, и выдуманный
-# отвергает. ⚠ Тот же приём, что в `test_mail_var.py`: `dating_mailing.profile_id`
+# отвергает. ⚠ Тот же приём, что в `test_mail_var.py`: `mailing.profile_id`
 # — внешний ключ, и без настоящей анкеты письмо в базу не ляжет.
 #
 # ⚠ **Стенд, а не живой сайт.** Закладка `999343` есть у соседа, но не помечена
 # `dating`: заведение анкеты её примет (оно сверяет номер), а в селект сайтов и в
-# `dating_site` она не попадёт — значит ни один круг воркера про эту анкету не
+# `site_` она не попадёт — значит ни один круг воркера про эту анкету не
 # узнает. Пока здесь стоял живой 343, тестовая анкета попадала в круги избранных и
 # инвайтов наравне с рабочими (`test_mail_in.py`, там же подробности).
 STAND_SITE = 999_343
@@ -48,7 +48,7 @@ STAND_SITE = 999_343
 async def profile(auth_client):
     """Анкета выдуманного сайта: письмо без неё в базу не ляжет.
 
-    ⚠ `dating_mailing.profile_id` — внешний ключ с `ON DELETE CASCADE`, и это не
+    ⚠ `mailing.profile_id` — внешний ключ с `ON DELETE CASCADE`, и это не
     формальность: письмо от удалённой анкеты отправить невозможно, а лежать в
     пуле ему незачем. Каскад же убирает за этой фикстурой всё разом.
     """
@@ -266,7 +266,7 @@ class TestGirlRowIsWhole:
 
     async def test_fields_needed_for_login_are_there(self, auth_client, profile):
         """Поля входа приходят из набора, а не добираются вторым запросом."""
-        from src.dating.dating_mailing import dating_mailing_girls
+        from src.dating.mailing import mailing_girls
         from mysql_.mysql_ import mysql_get_db_async
 
         async with mysql_get_db_async() as db:
@@ -277,7 +277,7 @@ class TestGirlRowIsWhole:
                              " status = 'online' WHERE id = %s", (profile,))
             await db.connection.commit()
 
-        girls = await dating_mailing_girls(STAND_SITE)
+        girls = await mailing_girls(STAND_SITE)
         mine = next((one for one in girls if one['id'] == profile), None)
 
         assert mine, 'анкета с рассылкой не попала в набор'
@@ -294,21 +294,21 @@ class TestGirlRowIsWhole:
         """
         from mysql_.mysql_ import mysql_get_db_async
 
-        from src.dating.dating_mailing import dating_mailing_girls
+        from src.dating.mailing import mailing_girls
 
         async with mysql_get_db_async() as db:
             await db.execute("UPDATE profile SET mailing_on = 1,"
                              " status = 'online' WHERE id = %s", (profile,))
             await db.connection.commit()
 
-        assert any(one['id'] == profile for one in await dating_mailing_girls(STAND_SITE))
+        assert any(one['id'] == profile for one in await mailing_girls(STAND_SITE))
 
         async with mysql_get_db_async() as db:
             await db.execute("UPDATE profile SET status = 'offline'"
                              ' WHERE id = %s', (profile,))
             await db.connection.commit()
 
-        assert not [one for one in await dating_mailing_girls(STAND_SITE)
+        assert not [one for one in await mailing_girls(STAND_SITE)
                     if one['id'] == profile], \
             'анкета не в сети, а письма от неё готовятся'
 
@@ -316,7 +316,7 @@ class TestGirlRowIsWhole:
         """⚠ Проверяем **тем же способом**, каким пользуется сбор описания: он
         читает `profile['site_id']` первой же строкой, и расхождение полей — это
         падение посреди рассылки, а не отказ на входе."""
-        from src.dating.dating_mailing import dating_mailing_girls
+        from src.dating.mailing import mailing_girls
         from mysql_.mysql_ import mysql_get_db_async
 
         async with mysql_get_db_async() as db:
@@ -327,15 +327,15 @@ class TestGirlRowIsWhole:
                              " status = 'online' WHERE id = %s", (profile,))
             await db.connection.commit()
 
-        mine = next(one for one in await dating_mailing_girls(STAND_SITE)
+        mine = next(one for one in await mailing_girls(STAND_SITE)
                     if one['id'] == profile)
 
-        # Ровно то, что делает `dating_companion_about_fetch` до похода на сайт.
+        # Ровно то, что делает `companion_about_fetch` до похода на сайт.
         assert int(mine['site_id']) == STAND_SITE
 
-        from src.dating.dating_ready import dating_password_pick
+        from src.dating.ready import password_pick
 
-        dating_password_pick(mine, 'общий')
+        password_pick(mine, 'общий')
 
 
 class TestCardGetsTheFeed:
@@ -353,14 +353,14 @@ class TestCardGetsTheFeed:
     async def test_feed_fields_are_saved(self, auth_client):
         import uuid
 
-        from src.dating.dating_mailing import _from_feed
-        from src.uvicorn.routers.dating.dating_companion import dating_companion_get
+        from src.dating.mailing import _from_feed
+        from src.uvicorn.routers.dating.companion import companion_get
 
         uid = f'tst-{uuid.uuid4().hex[:10]}'
         try:
             await _from_feed(SITE, {'uid': uid, 'name': 'Пауло',
                                     'photo': 'https://x/p.jpg', 'age': 60})
-            row = await dating_companion_get(SITE, uid)
+            row = await companion_get(SITE, uid)
 
             assert row['name'] == 'Пауло'
             assert row['photo'] == 'https://x/p.jpg'
@@ -380,15 +380,15 @@ class TestCardGetsTheFeed:
         """
         import uuid
 
-        from src.dating.dating_mailing import _from_feed
-        from src.uvicorn.routers.dating.dating_companion import (
-            dating_companion_get, dating_companion_touch)
+        from src.dating.mailing import _from_feed
+        from src.uvicorn.routers.dating.companion import (
+            companion_get, companion_touch)
 
         uid = f'tst-{uuid.uuid4().hex[:10]}'
         try:
-            await dating_companion_touch(SITE, uid, name='Пауло', photo='p.jpg')
+            await companion_touch(SITE, uid, name='Пауло', photo='p.jpg')
             await _from_feed(SITE, {'uid': uid, 'name': '', 'photo': '', 'age': 0})
-            row = await dating_companion_get(SITE, uid)
+            row = await companion_get(SITE, uid)
 
             assert row['name'] == 'Пауло', 'пустое имя из ленты затёрло known'
             assert row['photo'] == 'p.jpg'
@@ -527,7 +527,7 @@ class TestCardForEveryone:
         """Порядок строк в `_card`: лента — раньше вопроса «а идти ли»."""
         import inspect
 
-        from src.dating.dating_mailing import _card
+        from src.dating.mailing import _card
 
         code = inspect.getsource(_card)
 
@@ -540,7 +540,7 @@ class TestCardForEveryone:
         четыре пробела значит верхний уровень тела функции."""
         import inspect
 
-        from src.dating.dating_mailing import _card
+        from src.dating.mailing import _card
 
         line = next(one for one in inspect.getsource(_card).splitlines()
                     if 'await _from_feed' in one)
@@ -559,14 +559,14 @@ class TestCardForEveryone:
         """
         from mysql_.mysql_ import mysql_get_db_async
 
-        from src.dating.dating_mailing import _from_feed
-        from src.uvicorn.routers.dating.dating_companion import dating_companion_get
+        from src.dating.mailing import _from_feed
+        from src.uvicorn.routers.dating.companion import companion_get
 
         uid = f'tst-{uuid.uuid4().hex[:10]}'
         try:
             await _from_feed(SITE, {'uid': uid})
 
-            assert await dating_companion_get(SITE, uid), 'пустая лента не завела карточку'
+            assert await companion_get(SITE, uid), 'пустая лента не завела карточку'
         finally:
             async with mysql_get_db_async() as db:
                 await db.execute('DELETE FROM companion WHERE uid = %s', (uid,))
@@ -576,14 +576,14 @@ class TestCardForEveryone:
         """А что лента знает — попадает в карточку: имя, фото, возраст."""
         from mysql_.mysql_ import mysql_get_db_async
 
-        from src.dating.dating_mailing import _from_feed
-        from src.uvicorn.routers.dating.dating_companion import dating_companion_get
+        from src.dating.mailing import _from_feed
+        from src.uvicorn.routers.dating.companion import companion_get
 
         uid = f'tst-{uuid.uuid4().hex[:10]}'
         try:
             await _from_feed(SITE, {'uid': uid, 'name': 'Кевин',
                                     'photo': 'p.jpg', 'age': 58})
-            card = await dating_companion_get(SITE, uid)
+            card = await companion_get(SITE, uid)
 
             assert card['name'] == 'Кевин'
             assert card['photo'] == 'p.jpg'
@@ -599,15 +599,15 @@ class TestCardForEveryone:
         должна означать «сотри имя»."""
         from mysql_.mysql_ import mysql_get_db_async
 
-        from src.dating.dating_mailing import _from_feed
-        from src.uvicorn.routers.dating.dating_companion import dating_companion_get
+        from src.dating.mailing import _from_feed
+        from src.uvicorn.routers.dating.companion import companion_get
 
         uid = f'tst-{uuid.uuid4().hex[:10]}'
         try:
             await _from_feed(SITE, {'uid': uid, 'name': 'Кевин'})
             await _from_feed(SITE, {'uid': uid})
 
-            assert (await dating_companion_get(SITE, uid))['name'] == 'Кевин', \
+            assert (await companion_get(SITE, uid))['name'] == 'Кевин', \
                 'пустая лента затёрла имя'
         finally:
             async with mysql_get_db_async() as db:
@@ -635,7 +635,7 @@ class TestOncePerTemplate:
     def test_taken_triple_never_comes_back(self):
         """Занятая тройка не выдаётся. ⚠ Прогонов много: пары собираются
         случайным выбором, и один проход доказал бы разве что везение."""
-        from src.dating.dating_mailing import _pairs
+        from src.dating.mailing import _pairs
 
         for _ in range(50):
             for girl, template, person in _pairs(self.GIRLS, self.PEOPLE,
@@ -648,7 +648,7 @@ class TestOncePerTemplate:
         Ради этого правило и ослаблено: иначе знакомый собеседник выпадал бы из
         рассылки навсегда после первого же письма.
         """
-        from src.dating.dating_mailing import _pairs
+        from src.dating.mailing import _pairs
 
         seen = set()
         for _ in range(60):
@@ -662,7 +662,7 @@ class TestOncePerTemplate:
     def test_person_with_no_free_triples_is_skipped(self):
         """Когда для адресата занято всё — его не берут вовсе, а не выдают
         письмо, которое база потом отвергнет."""
-        from src.dating.dating_mailing import _pairs
+        from src.dating.mailing import _pairs
 
         taken = {(girl, 'a', template) for girl in (1, 2) for template in (10, 20)}
         addressees = {person['uid'] for _, _, person
@@ -678,7 +678,7 @@ class TestOncePerTemplate:
         которых вставка падает: пул молча недобирал бы до потолка, и причину
         пришлось бы искать в логе.
         """
-        from src.dating.dating_mailing import _taken
+        from src.dating.mailing import _taken
 
         taken = await _taken(SITE)
 
@@ -715,7 +715,7 @@ async def mailing_girl():
 
     ⚠ **Строкой в базу, а не ручкой.** Заведение анкеты сверяет сайт у поддельного
     соседа, и выдуманный номер оно отвергает, — а нехватка переменных считается по
-    `dating_profile.site_id`, и анкета обязана лежать на том же сайте, где реестр и
+    `profile_.site_id`, и анкета обязана лежать на том же сайте, где реестр и
     шаблоны. Внешнего ключа на `site_id` нет (`database.md`), так что строка
     ложится.
 
@@ -755,7 +755,7 @@ class TestGapsAreNamed:
 
     async def test_profile_without_values_is_named(self, auth_client, mailing_girl):
         """Анкета без значения названа, и названа **вместе с переменной**."""
-        from src.dating.dating_mailing import dating_mailing_gaps
+        from src.dating.mailing import mailing_gaps
 
         var = (await auth_client.post('/api/dating/mail/var', json={
             'site_id': SITE, 'name': 'tstGap', 'title': 'Имя',
@@ -765,7 +765,7 @@ class TestGapsAreNamed:
             'body': 'Привет, [[tstGap]]!', 'enabled': True})).json()['result']['id']
 
         try:
-            gaps = await dating_mailing_gaps(SITE)
+            gaps = await mailing_gaps(SITE)
 
             assert gaps.get(mailing_girl) == ['tstGap'], \
                 'анкета без значения не названа или названа без переменной'
@@ -775,7 +775,7 @@ class TestGapsAreNamed:
 
     async def test_filled_profile_is_silent(self, auth_client, mailing_girl):
         """Заполнили — и анкета пропадает из ответа: жаловаться больше не на что."""
-        from src.dating.dating_mailing import dating_mailing_gaps
+        from src.dating.mailing import mailing_gaps
 
         var = (await auth_client.post('/api/dating/mail/var', json={
             'site_id': SITE, 'name': 'tstGap', 'title': 'Имя',
@@ -788,7 +788,7 @@ class TestGapsAreNamed:
             await auth_client.put(f'/api/dating/profile/{mailing_girl}/var',
                                   json={'values': {'tstGap': 'Diana'}})
 
-            assert mailing_girl not in await dating_mailing_gaps(SITE), \
+            assert mailing_girl not in await mailing_gaps(SITE), \
                 'у заполненной анкеты всё равно нашлась нехватка'
         finally:
             await auth_client.delete(f'/api/dating/mail/{mail}')
@@ -803,7 +803,7 @@ class TestGapsAreNamed:
         переменных» горела бы у всех и всегда, и первая же настоящая нехватка
         потерялась бы среди неё.
         """
-        from src.dating.dating_mailing import dating_mailing_gaps
+        from src.dating.mailing import mailing_gaps
 
         var = (await auth_client.post('/api/dating/mail/var', json={
             'site_id': SITE, 'name': 'tstHis', 'title': 'Его имя',
@@ -813,7 +813,7 @@ class TestGapsAreNamed:
             'body': 'Привет, [[tstHis]]!', 'enabled': True})).json()['result']['id']
 
         try:
-            assert mailing_girl not in await dating_mailing_gaps(SITE), \
+            assert mailing_girl not in await mailing_gaps(SITE), \
                 'переменная адресата посчиталась нехваткой анкеты'
         finally:
             await auth_client.delete(f'/api/dating/mail/{mail}')
@@ -826,7 +826,7 @@ class TestGapsAreNamed:
         писем пропустит. Промолчи мы про неё как про «в целом рабочую» — объяснять
         пришлось бы потом, почему писем вдвое меньше ожидаемого.
         """
-        from src.dating.dating_mailing import dating_mailing_gaps
+        from src.dating.mailing import mailing_gaps
 
         var = (await auth_client.post('/api/dating/mail/var', json={
             'site_id': SITE, 'name': 'tstGap', 'title': 'Имя',
@@ -839,7 +839,7 @@ class TestGapsAreNamed:
             'body': 'Привет, [[tstGap]]!', 'enabled': True})).json()['result']['id']
 
         try:
-            assert mailing_girl in await dating_mailing_gaps(SITE), \
+            assert mailing_girl in await mailing_gaps(SITE), \
                 'нехватка в одном шаблоне из двух осталась незамеченной'
         finally:
             await auth_client.delete(f'/api/dating/mail/{with_var}')
@@ -852,7 +852,7 @@ class TestGapsAreNamed:
         ⚠ Иначе метка горела бы у анкеты, которая на деле пишет: переменную с
         умолчанием затем и заводят, чтобы не заполнять её каждой из сотни.
         """
-        from src.dating.dating_mailing import dating_mailing_gaps
+        from src.dating.mailing import mailing_gaps
 
         var = (await auth_client.post('/api/dating/mail/var', json={
             'site_id': SITE, 'name': 'tstGap', 'title': 'Имя',
@@ -862,7 +862,7 @@ class TestGapsAreNamed:
             'body': 'Привет, [[tstGap]]!', 'enabled': True})).json()['result']['id']
 
         try:
-            assert mailing_girl not in await dating_mailing_gaps(SITE), \
+            assert mailing_girl not in await mailing_gaps(SITE), \
                 'анкета с умолчанием реестра посчитана незаполненной'
         finally:
             await auth_client.delete(f'/api/dating/mail/{mail}')
@@ -875,9 +875,9 @@ class TestGapsAreNamed:
         ⚠ Пустой ответ здесь честнее выдуманного: без шаблонов не готовится ни
         одно письмо ни у кого, и метка на анкете указала бы не туда.
         """
-        from src.dating.dating_mailing import dating_mailing_gaps
+        from src.dating.mailing import mailing_gaps
 
-        assert await dating_mailing_gaps(SITE) == {}, \
+        assert await mailing_gaps(SITE) == {}, \
             'на сайте без шаблонов нашлась нехватка у анкеты'
 
 
@@ -934,7 +934,7 @@ class TestNameIsAnAddress:
     """
 
     def test_full_name_gives_the_first_word(self):
-        from src.dating.dating_mailing import _from_person
+        from src.dating.mailing import _from_person
 
         assert _from_person('companion_name', {'name': 'Semen Gorbunkov'},
                             {'default_value': ''}) == 'Semen'
@@ -944,10 +944,10 @@ class TestNameIsAnAddress:
 
         Замени мы `[[companion_name]]` на `[[companion_first_name]]` в готовых
         письмах — адресатам с именем одним словом подставлять стало бы нечего:
-        `firstname` у них пуст намеренно (`dating_people_name_parts`), нехватка
+        `firstname` у них пуст намеренно (`people_name_parts`), нехватка
         переменной останавливает отправку, и письмо не ушло бы вовсе.
         """
-        from src.dating.dating_mailing import _from_person
+        from src.dating.mailing import _from_person
 
         assert _from_person('companion_name', {'name': 'Kevin'},
                             {'default_value': ''}) == 'Kevin'
@@ -958,14 +958,14 @@ class TestNameIsAnAddress:
         Он отвечает на вопрос «знаем ли мы имя отдельно», и подменять его целым
         именем значило бы стереть разницу между «знаем» и «просто строка».
         """
-        from src.dating.dating_mailing import _from_person
+        from src.dating.mailing import _from_person
 
         assert _from_person('companion_first_name', {'name': 'Kevin'},
                             {'default_value': ''}) == ''
 
     def test_other_fields_are_untouched(self):
         """Правило — только про `…_name`: прочие поля берутся как лежат."""
-        from src.dating.dating_mailing import _from_person
+        from src.dating.mailing import _from_person
 
         assert _from_person('his_city', {'name': 'Semen Gorbunkov', 'city': 'Kyiv'},
                             {'default_value': ''}) == 'Kyiv'

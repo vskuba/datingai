@@ -356,21 +356,21 @@ class TestOwnSettingWins:
 
     async def test_the_neighbour_is_not_asked(self, monkeypatch):
         """Сосед подменяется взрывом: дошёл вызов — тест падает с его причиной."""
-        from src.dating import dating_heartbeat
+        from src.dating import heartbeat
 
         async def _boom(site_id):
             raise AssertionError(f'пошли к соседу за сайтом #{site_id}, '
                                  f'имея свою настройку')
 
-        monkeypatch.setattr(dating_heartbeat, '_presence_of', _boom)
+        monkeypatch.setattr(heartbeat, '_presence_of', _boom)
 
         async def _own(site_id, key, default=''):
             return json.dumps(CONFIG)
 
-        monkeypatch.setattr('src.uvicorn.routers.dating.dating_site.dating_site_setting',
+        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_setting',
                             _own)
 
-        got = await dating_heartbeat.dating_heartbeat_config(19)
+        got = await heartbeat.heartbeat_config(19)
 
         assert got['base'] == BASE
 
@@ -381,7 +381,7 @@ class TestOwnSettingWins:
         настройки нет, перевод соседского описания — единственное, чем анкета
         держится в сети. Уберём — и заведение сайта станет двухходовым.
         """
-        from src.dating import dating_heartbeat
+        from src.dating import heartbeat
 
         async def _empty(site_id, key, default=''):
             return ''
@@ -389,11 +389,11 @@ class TestOwnSettingWins:
         async def _neighbour(site_id):
             return {'base': BASE, 'heartbeat': {'path': '/hb'}}
 
-        monkeypatch.setattr('src.uvicorn.routers.dating.dating_site.dating_site_setting',
+        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_setting',
                             _empty)
-        monkeypatch.setattr(dating_heartbeat, '_presence_of', _neighbour)
+        monkeypatch.setattr(heartbeat, '_presence_of', _neighbour)
 
-        got = await dating_heartbeat.dating_heartbeat_config(19)
+        got = await heartbeat.heartbeat_config(19)
 
         assert got == {'base': BASE, 'beat': {'path': '/hb'}}
 
@@ -408,7 +408,7 @@ class TestNeighbourConfigIsTranslated:
     """
 
     def test_old_keys_become_new(self):
-        from src.dating.dating_heartbeat import _from_neighbour
+        from src.dating.heartbeat import _from_neighbour
 
         got = _from_neighbour({'base': BASE,
                                'heartbeat': {'path': '/hb'},
@@ -423,7 +423,7 @@ class TestNeighbourConfigIsTranslated:
         Тащить их значило бы вернуть ту самую связку с чатом, ради разрыва которой
         модуль и написан.
         """
-        from src.dating.dating_heartbeat import _from_neighbour
+        from src.dating.heartbeat import _from_neighbour
 
         got = _from_neighbour({'base': BASE, 'heartbeat': {'path': '/hb'},
                                'send': {'frame': {'method': 'sendPrivateMessage'}},
@@ -433,12 +433,12 @@ class TestNeighbourConfigIsTranslated:
 
     def test_config_without_steps_is_not_config(self):
         """Описание без шагов — не настройка: держать сайт им нечем."""
-        from src.dating.dating_heartbeat import _from_neighbour
+        from src.dating.heartbeat import _from_neighbour
 
         assert _from_neighbour({'base': BASE, 'driver': 'goldenbride'}) == {}
 
     def test_nothing_in_nothing_out(self):
-        from src.dating.dating_heartbeat import _from_neighbour
+        from src.dating.heartbeat import _from_neighbour
 
         assert _from_neighbour({}) == {}
 
@@ -513,10 +513,10 @@ class TestSiteSettingIsRegistered:
         Она правится руками в поле формы, то есть сломанной бывает по определению.
         Разбор молча отдаёт пустоту, а пустая настройка значит «не настроено».
         """
-        from src.dating.dating_json import dating_json_load
+        from src.dating.json_column import json_column_load
 
-        assert dating_json_load('{сломано}') == {}
-        assert dating_json_load(json.dumps(CONFIG))['base'] == BASE
+        assert json_column_load('{сломано}') == {}
+        assert json_column_load(json.dumps(CONFIG))['base'] == BASE
 
 
 class TestTheTwoPeriodsExplainThemselves:
@@ -568,7 +568,7 @@ class TestTheTwoPeriodsExplainThemselves:
     async def test_the_key_did_not_move(self, auth_client):
         """⚠⚠ Переименована **подпись**, а не ключ, и это осознанно.
 
-        Ключ живёт в `dating_site.settings` у каждого сайта: переезд означал бы
+        Ключ живёт в `site_.settings` у каждого сайта: переезд означал бы
         миграцию значений, и забытый сайт молча свалился бы на умолчание. Цена
         несоразмерна — ключ видит один разработчик, а человек читает подпись.
         """

@@ -1,7 +1,7 @@
 """Пул ответов: агент пишет ответы на входящие, человек их читает.
 
 ⚠ **Наружу сюита не ходит** (`testing.md`): написание ответа — вызов LLM у соседа.
-Подменяется `dating_mail_reply` — единственная дорогая часть; всё остальное работает
+Подменяется `mail_reply` — единственная дорогая часть; всё остальное работает
 по-настоящему, с живой базой.
 
 ## Что здесь ловится
@@ -23,9 +23,9 @@ import uuid
 
 import pytest
 
-from src.dating import dating_mail_reply as mod
-from src.dating.dating_mail_reply import (_history, _history_size, _to_answer,
-                                          dating_mail_reply_make)
+from src.dating import mail_reply as mod
+from src.dating.mail_reply import (_history, _history_size, _to_answer,
+                                          mail_reply_make)
 
 pytestmark = pytest.mark.mail
 
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.mail
 SITE = 999_777
 
 # Анкета заводится на живом номере: заведение сверяет сайт у соседа, а
-# `dating_mail_in.profile_id` — внешний ключ.
+# `mail_in.profile_id` — внешний ключ.
 LIVE_SITE = 343
 
 
@@ -42,7 +42,7 @@ async def profile(auth_client):
     """Анкета и включённая генерация ответов. Каскад убирает за ней всё.
 
     ⚠ **Генерация включается у сайта, а не у анкеты.** Флаг переехал в
-    `dating_site.reply_make_on` (миграция `20260910120000_...`): пул ответов один
+    `site_.reply_make_on` (миграция `20260910120000_...`): пул ответов один
     на сайт, и «отвечаем ли вообще» отвечается один раз. Прежде фикстура ставила
     `reply_on` анкете — после переезда это ничего не включало, и все проверки
     набора молча возвращали ноль.
@@ -81,7 +81,7 @@ def agent(monkeypatch):
 
         return f'Ответ №{len(calls)}'
 
-    monkeypatch.setattr(mod, 'dating_mail_reply', fake)
+    monkeypatch.setattr(mod, 'mail_reply', fake)
 
     return calls
 
@@ -142,7 +142,7 @@ class TestWhoIsAnswered:
     async def test_reply_is_written(self, profile, agent):
         await _in(profile, '111', 'Moto is my life')
 
-        got = await dating_mail_reply_make(SITE)
+        got = await mail_reply_make(SITE)
         rows = await _replies()
 
         assert got['made'] == 1
@@ -160,7 +160,7 @@ class TestWhoIsAnswered:
         await _in(profile, '111', 'второе', minutes=20)
         last_id = await _in(profile, '111', 'третье', minutes=10)
 
-        got = await dating_mail_reply_make(SITE)
+        got = await mail_reply_make(SITE)
         rows = await _replies()
 
         assert got['made'] == 1, 'ответили на каждое письмо'
@@ -171,7 +171,7 @@ class TestWhoIsAnswered:
         await _in(profile, '111', 'привет от первого')
         await _in(profile, '222', 'привет от второго')
 
-        got = await dating_mail_reply_make(SITE)
+        got = await mail_reply_make(SITE)
 
         assert got['made'] == 2
         assert {row['uid'] for row in await _replies()} == {'111', '222'}
@@ -180,8 +180,8 @@ class TestWhoIsAnswered:
         """⚠ Один ответ на письмо: повторный заход не кладёт второй."""
         await _in(profile, '111', 'Moto is my life')
 
-        await dating_mail_reply_make(SITE)
-        again = await dating_mail_reply_make(SITE)
+        await mail_reply_make(SITE)
+        again = await mail_reply_make(SITE)
 
         assert again['made'] == 0, 'написали второй ответ на то же письмо'
         assert len(await _replies()) == 1
@@ -197,14 +197,14 @@ class TestWhoIsAnswered:
                               json={'reply_make_on': False})
         await _in(profile, '111', 'Moto is my life')
 
-        assert (await dating_mail_reply_make(SITE))['made'] == 0
+        assert (await mail_reply_make(SITE))['made'] == 0
         assert not agent, 'агента позвали при выключенной генерации'
 
     async def test_letter_without_body_is_skipped(self, profile, agent):
         """Текста нет — отвечать не на что: тело ещё не забрали с сайта."""
         await _in(profile, '111', '')
 
-        assert (await dating_mail_reply_make(SITE))['made'] == 0
+        assert (await mail_reply_make(SITE))['made'] == 0
         assert not agent
 
     async def test_disabled_profile_is_skipped(self, auth_client, profile, agent):
@@ -217,7 +217,7 @@ class TestWhoIsAnswered:
                              (profile['id'],))
             await db.connection.commit()
         try:
-            assert (await dating_mail_reply_make(SITE))['made'] == 0
+            assert (await mail_reply_make(SITE))['made'] == 0
         finally:
             async with mysql_get_db_async() as db:
                 await db.execute('UPDATE profile SET enabled = 1 WHERE id = %s',
@@ -234,7 +234,7 @@ class TestHistory:
         await _in(profile, '111', 'второе', minutes=20)
         await _in(profile, '111', 'третье', minutes=10)
 
-        await dating_mail_reply_make(SITE)
+        await mail_reply_make(SITE)
 
         texts = [one['text'] for one in agent[0]['history']]
         assert texts == ['первое', 'второе', 'третье']
@@ -250,11 +250,11 @@ class TestHistory:
         событий, которой в жизни не бывает.
         """
         await _in(profile, '111', 'привет', minutes=30)
-        await dating_mail_reply_make(SITE)
+        await mail_reply_make(SITE)
 
         await _in(profile, '111', 'как дела?', minutes=-1)
         agent.clear()
-        await dating_mail_reply_make(SITE)
+        await mail_reply_make(SITE)
 
         sides = [one['from'] for one in agent[0]['history']]
         assert 'her' in sides, 'наш прошлый ответ не попал в историю'
@@ -270,7 +270,7 @@ class TestHistory:
         await _out(profile, '111', 'Чем увлекаешься?', minutes=40)
         await _in(profile, '111', 'Moto is my life', minutes=30)
 
-        await dating_mail_reply_make(SITE)
+        await mail_reply_make(SITE)
 
         sides = [one['from'] for one in agent[0]['history']]
         texts = [one['text'] for one in agent[0]['history']]
@@ -284,7 +284,7 @@ class TestHistory:
         await _out(profile, '111', 'черновик в пуле', minutes=40, status='draft')
         await _in(profile, '111', 'Moto is my life', minutes=30)
 
-        await dating_mail_reply_make(SITE)
+        await mail_reply_make(SITE)
 
         texts = [one['text'] for one in agent[0]['history']]
 
@@ -303,7 +303,7 @@ class TestHistory:
         try:
             await auth_client.put(f'/api/dating/site/{SITE}',
                                   json={'settings': {**before, 'reply_history': '5'}})
-            await dating_mail_reply_make(SITE)
+            await mail_reply_make(SITE)
         finally:
             await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': before})
 
@@ -327,15 +327,15 @@ class TestHistory:
     async def test_history_size_has_a_hard_cap(self, monkeypatch):
         """⚠ Жёсткий потолок поверх настройки: «500» превратило бы промпт в
         простыню, на которую модель ответит первым, что увидит."""
-        from src.dating.dating_mail_reply import DATING_MAIL_REPLY_HISTORY_MAX
-        import src.uvicorn.routers.dating.dating_site as site_mod
+        from src.dating.mail_reply import MAIL_REPLY_HISTORY_MAX
+        import src.uvicorn.routers.dating.site_ as site_mod
 
         async def huge(site_id, key):
             return 5000
 
-        monkeypatch.setattr(site_mod, 'dating_site_seconds', huge)
+        monkeypatch.setattr(site_mod, 'site_seconds', huge)
 
-        assert await _history_size(SITE) == DATING_MAIL_REPLY_HISTORY_MAX
+        assert await _history_size(SITE) == MAIL_REPLY_HISTORY_MAX
 
     async def test_companion_card_is_passed(self, auth_client, profile, agent):
         """Карточка собеседника уходит агенту: без неё ответ выйдет общим."""
@@ -344,7 +344,7 @@ class TestHistory:
             'city': 'Krakow', 'country': 'Poland'})
         await _in(profile, '111', 'Moto is my life')
 
-        await dating_mail_reply_make(SITE)
+        await mail_reply_make(SITE)
 
         assert (agent[0]['companion'] or {}).get('name') == 'Semen'
 
@@ -354,13 +354,13 @@ class TestThread:
 
     async def test_thread_has_all_three_sources(self, profile, agent):
         """Его письма, наши ответы и письма рассылки — в одном разговоре."""
-        from src.dating.dating_mail_reply import dating_mail_reply_thread
+        from src.dating.mail_reply import mail_reply_thread
 
         await _out(profile, '111', 'Чем увлекаешься?', minutes=40)
         await _in(profile, '111', 'Moto is my life', minutes=30)
-        await dating_mail_reply_make(SITE)
+        await mail_reply_make(SITE)
 
-        thread = await dating_mail_reply_thread(int(profile['id']), '111')
+        thread = await mail_reply_thread(int(profile['id']), '111')
 
         assert [one['kind'] for one in thread] == ['mailing', 'in', 'reply']
         assert [one['from'] for one in thread] == ['her', 'him', 'her']
@@ -368,21 +368,21 @@ class TestThread:
     async def test_thread_marks_the_kind(self, profile, agent):
         """⚠ Письмо рассылки помечено: девушка его не писала — оно ушло шаблоном, и
         путать его с ответом человек не должен."""
-        from src.dating.dating_mail_reply import dating_mail_reply_thread
+        from src.dating.mail_reply import mail_reply_thread
 
         await _out(profile, '111', 'Чем увлекаешься?', minutes=40)
-        thread = await dating_mail_reply_thread(int(profile['id']), '111')
+        thread = await mail_reply_thread(int(profile['id']), '111')
 
         assert thread[0]['kind'] == 'mailing'
         assert thread[0]['id'], 'номер реплики не приехал — по нему отсеивают текущий'
 
     async def test_thread_is_oldest_first(self, profile, agent):
-        from src.dating.dating_mail_reply import dating_mail_reply_thread
+        from src.dating.mail_reply import mail_reply_thread
 
         await _in(profile, '111', 'первое', minutes=30)
         await _in(profile, '111', 'второе', minutes=10)
 
-        thread = await dating_mail_reply_thread(int(profile['id']), '111')
+        thread = await mail_reply_thread(int(profile['id']), '111')
 
         assert [one['text'] for one in thread] == ['первое', 'второе']
 
@@ -393,7 +393,7 @@ class TestRefusal:
     async def test_agent_refusal_stops_the_pass(self, profile, monkeypatch):
         """⚠ Обрывает **весь заход**: сосед занят, и следующие письма упрутся в то
         же самое. Круг вернётся через свой срок."""
-        from src.dating.dating_mail_agent import DatingMailAgentError
+        from src.dating.mail_agent import DatingMailAgentError
 
         calls = []
 
@@ -401,12 +401,12 @@ class TestRefusal:
             calls.append(1)
             raise DatingMailAgentError('браузер соседа занят')
 
-        monkeypatch.setattr(mod, 'dating_mail_reply', broken)
+        monkeypatch.setattr(mod, 'mail_reply', broken)
 
         await _in(profile, '111', 'первое')
         await _in(profile, '222', 'второе')
 
-        got = await dating_mail_reply_make(SITE)
+        got = await mail_reply_make(SITE)
 
         assert got['made'] == 0
         assert len(calls) == 1, 'после отказа продолжили дёргать агента'
@@ -416,10 +416,10 @@ class TestRefusal:
         async def empty(profile, site_id, history, companion=None):
             return '   '
 
-        monkeypatch.setattr(mod, 'dating_mail_reply', empty)
+        monkeypatch.setattr(mod, 'mail_reply', empty)
         await _in(profile, '111', 'Moto is my life')
 
-        got = await dating_mail_reply_make(SITE)
+        got = await mail_reply_make(SITE)
 
         assert got['made'] == 0
         assert await _replies() == []
@@ -432,7 +432,7 @@ class TestEndpoint:
         """⚠ **Пул общий на сайт**, и ручка спрашивается по сайту, а не по анкете:
         читает ответы один человек и подряд."""
         await _in(profile, '111', 'Moto is my life')
-        await dating_mail_reply_make(SITE)
+        await mail_reply_make(SITE)
 
         rows = (await auth_client.get(
             f'/api/dating/mail-in/reply?site_id={SITE}')).json()['result']
@@ -469,14 +469,14 @@ class TestNoSending:
     def test_making_does_not_send(self):
         import inspect
 
-        assert 'dating_mail_send' not in inspect.getsource(mod), \
+        assert 'mail_send' not in inspect.getsource(mod), \
             'набор пула ответов научился отправлять письма'
 
 
 class TestGenerationSwitchIsSiteWide:
     """⚠ Выключатель генерации — у сайта, а не у анкеты, и это переезд.
 
-    Прежде решение принималось по анкете (`dating_profile.reply_on`). Отбор был
+    Прежде решение принималось по анкете (`profile_.reply_on`). Отбор был
     честным — «у этой отвечаем, у той пишем руками», — но включать приходилось
     сорок раз, а забытая анкета молчала, и причину искали в поломке.
 
@@ -564,15 +564,15 @@ class TestPendingReplyStandsLast:
 
     async def test_draft_is_at_the_end(self, auth_client, profile, agent):
         """Черновик стоит последним, даже когда написан раньше свежих писем."""
-        from src.dating.dating_mail_reply import (dating_mail_reply_make,
-                                                  dating_mail_reply_thread)
+        from src.dating.mail_reply import (mail_reply_make,
+                                                  mail_reply_thread)
 
         await _in(profile, '111', 'Moto is my life')
-        await dating_mail_reply_make(SITE)
+        await mail_reply_make(SITE)
         # Письмо **позже** черновика: по времени тот встал бы посередине.
         await _in(profile, '111', 'and horses too', minutes=30)
 
-        thread = await dating_mail_reply_thread(profile['id'], '111')
+        thread = await mail_reply_thread(profile['id'], '111')
 
         assert thread[-1]['kind'] == 'reply' and thread[-1]['status'] == 'draft', \
             'черновик не в конце разговора'
@@ -583,14 +583,14 @@ class TestPendingReplyStandsLast:
         Правило про черновик не должно перетасовать разговор: его читают сверху
         вниз, как любую переписку.
         """
-        from src.dating.dating_mail_reply import (dating_mail_reply_make,
-                                                  dating_mail_reply_thread)
+        from src.dating.mail_reply import (mail_reply_make,
+                                                  mail_reply_thread)
 
         await _in(profile, '111', 'первое')
-        await dating_mail_reply_make(SITE)
+        await mail_reply_make(SITE)
         await _in(profile, '111', 'второе', minutes=30)
 
-        thread = await dating_mail_reply_thread(profile['id'], '111')
+        thread = await mail_reply_thread(profile['id'], '111')
         his = [one['at'] for one in thread if one['from'] == 'him']
 
         assert his == sorted(his), 'его письма перетасованы'
@@ -603,11 +603,11 @@ class TestPendingReplyStandsLast:
         раньше, чем собеседник его получил.
         """
         from mysql_.mysql_ import mysql_get_db_async
-        from src.dating.dating_mail_reply import (dating_mail_reply_make,
-                                                  dating_mail_reply_thread)
+        from src.dating.mail_reply import (mail_reply_make,
+                                                  mail_reply_thread)
 
         await _in(profile, '111', 'Moto is my life')
-        await dating_mail_reply_make(SITE)
+        await mail_reply_make(SITE)
 
         # Отправлен на два часа позже, чем написан.
         async with mysql_get_db_async() as db:
@@ -617,12 +617,12 @@ class TestPendingReplyStandsLast:
                 ' WHERE profile_id = %s AND uid = %s', (profile['id'], '111'))
             await db.connection.commit()
 
-        reply = [one for one in await dating_mail_reply_thread(profile['id'], '111')
+        reply = [one for one in await mail_reply_thread(profile['id'], '111')
                  if one['kind'] == 'reply'][0]
 
         assert reply['status'] == 'sent'
         # Час сочинения в разговоре не участвует — в нём стоит час доставки.
-        letter = [one for one in await dating_mail_reply_thread(profile['id'], '111')
+        letter = [one for one in await mail_reply_thread(profile['id'], '111')
                   if one['kind'] == 'in'][0]
 
         assert reply['at'] > letter['at'], 'ответ встал раньше письма, на которое он'

@@ -22,11 +22,11 @@ import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating import dating_favorite_mail
-from src.dating.dating_favorite_mail import _quiet, _too_soon
+from src.dating import favorite_mail
+from src.dating.favorite_mail import _quiet, _too_soon
 
 pytestmark = pytest.mark.mail
-# Стенд у соседа: круги воркера про него не знают — его нет в `dating_site`.
+# Стенд у соседа: круги воркера про него не знают — его нет в `site_`.
 STAND_SITE = 999_343
 
 
@@ -127,7 +127,7 @@ _ONLINE: list[str] = []
 
 
 class _FakeRedis:
-    """Redis настолько, насколько его читает `dating_online_show`.
+    """Redis настолько, насколько его читает `online_show`.
 
     ⚠ **Подмена, а не живой Redis.** Сюита гоняется с хоста, а `dating_redis`
     виден только внутри docker-сети: порт наружу не выведен, и обращение к нему
@@ -149,7 +149,7 @@ def online(monkeypatch):
     пустоту. Забыть её в новом тесте проще, чем заметить такую тишину.
     """
     _ONLINE.clear()
-    monkeypatch.setattr(dating_favorite_mail, 'dating_online_show',
+    monkeypatch.setattr(favorite_mail, 'online_show',
                         lambda site_id, uid: {'online': str(uid) in _ONLINE,
                                               'known': True, 'age_sec': 5})
 
@@ -310,9 +310,9 @@ class TestAStarIsEnough:
         """
         import inspect
 
-        from src.dating import dating_mail_agent
+        from src.dating import mail_agent
 
-        code = inspect.getsource(dating_mail_agent.dating_favorite_mail_write)
+        code = inspect.getsource(mail_agent.favorite_mail_write)
 
         assert 'нечего возобновлять' not in code, \
             'пустая история снова считается отказом'
@@ -334,7 +334,7 @@ class TestTheBatchCountsLetters:
 
     async def test_skips_do_not_eat_the_batch(self, girl, monkeypatch):
         """Девять офлайн впереди и один в сети — письмо всё равно готовится."""
-        import src.dating.dating_favorite_mail as mod
+        import src.dating.favorite_mail as mod
 
         away = [f'u{uuid.uuid4().hex[:8]}' for _ in range(9)]
         near = f'u{uuid.uuid4().hex[:8]}'
@@ -355,14 +355,14 @@ class TestTheBatchCountsLetters:
                           key=lambda one: order[str(one['uid'])])
 
         monkeypatch.setattr(mod, '_quiet', quiet)
-        monkeypatch.setattr(mod, 'dating_online_show',
+        monkeypatch.setattr(mod, 'online_show',
                             lambda site_id, uid: {'online': str(uid) == near,
                                                   'known': True})
-        monkeypatch.setattr(mod, 'dating_favorite_mail_write',
+        monkeypatch.setattr(mod, 'favorite_mail_write',
                             _answer('Давно не общались, как ты?'))
         monkeypatch.setattr(mod, '_sync_stars', _nothing())
 
-        got = await mod.dating_favorite_mail_make(STAND_SITE, limit=1)
+        got = await mod.favorite_mail_make(STAND_SITE, limit=1)
 
         assert got['made'] == 1, got
         assert got['skipped'] == 9, 'пропуски перестали считаться вовсе'
@@ -396,7 +396,7 @@ class TestBothMustBeOnline:
         """⚠ Отбор его вернёт — присутствие смотрит уже набор, и смотрит по
         снимку ленты, которого в SQL нет. Проверяем по самому набору: пара
         пропущена, и причина названа человеком."""
-        from src.dating.dating_favorite_mail import dating_favorite_mail_make
+        from src.dating.favorite_mail import favorite_mail_make
 
         uid = f'u{uuid.uuid4().hex[:8]}'
         await _star(girl, uid)
@@ -406,7 +406,7 @@ class TestBothMustBeOnline:
         # Ушёл с сайта, пока мы думали.
         _ONLINE.remove(uid)
 
-        got = await dating_favorite_mail_make(STAND_SITE, 5, girl)
+        got = await favorite_mail_make(STAND_SITE, 5, girl)
         reasons = [one for one in got['reasons'] if uid in one]
 
         assert got['made'] == 0, 'письмо ушедшему всё-таки написали'
@@ -417,7 +417,7 @@ class TestBothMustBeOnline:
         """⚠ **Дешёвое раньше платного.** Каждое письмо — вызов LLM, и платить за
         него ради того, чтобы потом выбросить по пределу, незачем. Проверяем
         прямо: агент не должен быть позван вовсе."""
-        from src.dating.dating_favorite_mail import dating_favorite_mail_make
+        from src.dating.favorite_mail import favorite_mail_make
 
         called = []
 
@@ -426,7 +426,7 @@ class TestBothMustBeOnline:
 
             return 'письмо'
 
-        monkeypatch.setattr(dating_favorite_mail, 'dating_favorite_mail_write',
+        monkeypatch.setattr(favorite_mail, 'favorite_mail_write',
                             _agent)
 
         uid = f'u{uuid.uuid4().hex[:8]}'
@@ -436,7 +436,7 @@ class TestBothMustBeOnline:
         await _hers(girl, uid, _now_minus_hours(3))
         await _hers(girl, uid, _now_minus_hours(4))
 
-        got = await dating_favorite_mail_make(STAND_SITE, 5, girl)
+        got = await favorite_mail_make(STAND_SITE, 5, girl)
 
         assert got['made'] == 0
         assert not called, 'агента позвали, хотя предел уже исчерпан'
@@ -504,7 +504,7 @@ class TestReasonNamesTheRecipient:
     """
 
     async def test_the_skip_reason_carries_name_and_uid(self, girl):
-        from src.dating.dating_favorite_mail import dating_favorite_mail_make
+        from src.dating.favorite_mail import favorite_mail_make
 
         uid = f'u{uuid.uuid4().hex[:8]}'
         await _star(girl, uid)
@@ -523,7 +523,7 @@ class TestReasonNamesTheRecipient:
                 " VALUES (%s, %s, 'Semen', '')", (girl, uid))
             await db.connection.commit()
 
-        got = await dating_favorite_mail_make(STAND_SITE, 5, girl)
+        got = await favorite_mail_make(STAND_SITE, 5, girl)
         reasons = [one for one in got['reasons'] if uid in one]
 
         assert reasons, f'адресата нет ни в одной причине: {got["reasons"]}'
@@ -544,7 +544,7 @@ class TestWhyThePoolIsEmpty:
     """
 
     async def test_pause_is_explained_with_the_name(self, girl):
-        from src.dating.dating_favorite_mail import dating_favorite_mail_why
+        from src.dating.favorite_mail import favorite_mail_why
 
         uid = f'u{uuid.uuid4().hex[:8]}'
         await _star(girl, uid)
@@ -552,7 +552,7 @@ class TestWhyThePoolIsEmpty:
         # Последнее слово наше — пара в отборе; письмо час назад — пауза держит.
         await _hers(girl, uid, _now_minus_hours(1))
 
-        why = await dating_favorite_mail_why(STAND_SITE)
+        why = await favorite_mail_why(STAND_SITE)
 
         assert 'пауза' in why, why
         assert uid in why, f'причина не называет адресата: {why}'
@@ -563,9 +563,9 @@ class TestWhyThePoolIsEmpty:
         Все разговоры живы, либо избранных нет вовсе. Молчание вместо ответа
         человек читает как «оно сломалось».
         """
-        from src.dating.dating_favorite_mail import dating_favorite_mail_why
+        from src.dating.favorite_mail import favorite_mail_why
 
-        assert 'некому' in await dating_favorite_mail_why(STAND_SITE)
+        assert 'некому' in await favorite_mail_why(STAND_SITE)
 
     async def test_a_writable_pair_means_no_excuse(self, girl):
         """Есть кому писать — повода объясняться нет: круг наберёт на заходе.
@@ -573,7 +573,7 @@ class TestWhyThePoolIsEmpty:
         Пустая строка здесь и означает «жди набора», а страница показывает вместо
         неё срок круга.
         """
-        from src.dating.dating_favorite_mail import dating_favorite_mail_why
+        from src.dating.favorite_mail import favorite_mail_why
 
         uid = f'u{uuid.uuid4().hex[:8]}'
         await _star(girl, uid)
@@ -581,7 +581,7 @@ class TestWhyThePoolIsEmpty:
         # Наше письмо давнее — пауза в четыре часа уже прошла.
         await _hers(girl, uid, _now_minus_hours(9))
 
-        assert await dating_favorite_mail_why(STAND_SITE) == ''
+        assert await favorite_mail_why(STAND_SITE) == ''
 
 
 def _now_minus_hours(hours: int) -> str:

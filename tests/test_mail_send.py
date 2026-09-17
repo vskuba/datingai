@@ -3,7 +3,7 @@
 ⚠⚠ **Наружу не уходит ни одно письмо, и это здесь главное.** `POST /messages/send`
 на живом сайте — действие необратимое: письмо получает живой человек, отменить его
 нечем. Поэтому весь разговор с сайтом идёт через заглушку (`site_api_fake.py`),
-которая подменяет **транспорт** — `httpx` внутри `dating_site_api.py`. Под проверкой
+которая подменяет **транспорт** — `httpx` внутри `site_api.py`. Под проверкой
 остаётся всё, ради чего модуль написан: порядок шагов, разбор ответа, что уезжает в
 теле запроса и что ложится в базу.
 
@@ -28,7 +28,7 @@ import uuid
 
 import pytest
 
-from src.dating.dating_mail_send import (DatingMailSendError, dating_mail_send_one)
+from src.dating.mail_send import (DatingMailSendError, mail_send_one)
 
 from tests.site_api_fake import SITE_API_FAKE_BASE, SITE_API_FAKE_PASSWORD
 
@@ -38,7 +38,7 @@ pytestmark = pytest.mark.mail
 SITE = 999_777
 
 # Анкета заводится на живом номере (`rhapsody_fake.py` его знает): заведение сверяет
-# сайт, а `dating_mailing.profile_id` — внешний ключ. Тот же развод и та же причина,
+# сайт, а `mailing.profile_id` — внешний ключ. Тот же развод и та же причина,
 # что в `test_mailing.py`.
 LIVE_SITE = 343
 
@@ -111,7 +111,7 @@ async def _row(letter_id: int) -> dict:
 async def _send(letter, profile, site_api=None):
     """Отправка с общим паролем сайта. Своей обёрткой — доводов четыре, и повторять
     их в каждом тесте значило бы прятать за ними то, что тест проверяет."""
-    return await dating_mail_send_one(letter, profile, SITE_API_FAKE_BASE,
+    return await mail_send_one(letter, profile, SITE_API_FAKE_BASE,
                                       SITE_API_FAKE_PASSWORD)
 
 
@@ -175,7 +175,7 @@ class TestSendGoes:
         «вложения нет». Утверждения разные."""
         import json
 
-        from src.dating.dating_mail_send import _payload
+        from src.dating.mail_send import _payload
 
         body = _payload('c1', '812886', 'текст')
 
@@ -205,13 +205,13 @@ class TestSendRefused:
         """⚠ **Неудача не сжигает письмо.** Строка остаётся `draft`: причина обычно
         временная, а `failed` его бы похоронил — уникальный ключ считает и
         неудавшиеся, и повторно такое письмо уже не сгенерировать."""
-        from src.dating.dating_mail_send import dating_mail_send_mark
+        from src.dating.mail_send import mail_send_mark
 
         site_api.forbid_send('812886')
         try:
             await _send(letter, profile)
         except DatingMailSendError as e:
-            await dating_mail_send_mark(letter, sent=False, error=str(e))
+            await mail_send_mark(letter, sent=False, error=str(e))
 
         row = await _row(letter['id'])
 
@@ -291,7 +291,7 @@ class TestSendGuards:
     async def test_no_api_base_is_told_plainly(self, site_api, letter, profile):
         """Адрес API не задан — говорим про настройку, а не про пустой URL."""
         with pytest.raises(DatingMailSendError) as got:
-            await dating_mail_send_one(letter, profile, '', SITE_API_FAKE_PASSWORD)
+            await mail_send_one(letter, profile, '', SITE_API_FAKE_PASSWORD)
 
         assert 'Адрес API' in str(got.value)
 
@@ -300,7 +300,7 @@ class TestSendGuards:
         """⚠ Пароля нет — говорим про настройку сайта. Молчаливый 400 человек
         прочитал бы как «сайт сломался»."""
         with pytest.raises(DatingMailSendError) as got:
-            await dating_mail_send_one(letter, {**profile, 'password': '',
+            await mail_send_one(letter, {**profile, 'password': '',
                                                 'password_source': 'own'},
                                        SITE_API_FAKE_BASE, '')
 
@@ -316,7 +316,7 @@ class TestPasswordSource:
 
     async def test_site_password_is_used_when_asked(self, site_api, letter, profile):
         """`password_source = site` — берём общий, даже когда свой заполнен."""
-        await dating_mail_send_one(
+        await mail_send_one(
             letter, {**profile, 'password': 'чужой-пароль', 'password_source': 'site'},
             SITE_API_FAKE_BASE, SITE_API_FAKE_PASSWORD)
 
@@ -325,7 +325,7 @@ class TestPasswordSource:
     async def test_own_password_is_used_when_asked(self, site_api, letter, profile):
         """`password_source = own` — берём свой, даже когда общий верный."""
         with pytest.raises(DatingMailSendError):
-            await dating_mail_send_one(
+            await mail_send_one(
                 letter, {**profile, 'password': 'неверный', 'password_source': 'own'},
                 SITE_API_FAKE_BASE, SITE_API_FAKE_PASSWORD)
 
@@ -342,19 +342,19 @@ class TestNoRoundSends:
     async def test_mailing_round_does_not_send(self):
         import inspect
 
-        from src.dating import dating_mailing_round
+        from src.dating import mailing_round
 
-        code = inspect.getsource(dating_mailing_round)
+        code = inspect.getsource(mailing_round)
 
-        assert 'dating_mail_send' not in code, \
+        assert 'mail_send' not in code, \
             'круг набора пула научился отправлять письма'
 
     async def test_making_the_pool_does_not_send(self):
         import inspect
 
-        from src.dating import dating_mailing
+        from src.dating import mailing
 
-        assert 'dating_mail_send' not in inspect.getsource(dating_mailing), \
+        assert 'mail_send' not in inspect.getsource(mailing), \
             'набор пула научился отправлять письма'
 
 
@@ -451,13 +451,13 @@ class TestDeliveryIsRecorded:
     async def test_failure_reaches_the_journal(self, site_api, letter, profile):
         """⚠ И неудача тоже — **с причиной**. «Не ушло» без причины отправляет
         человека искать её в другом месте, а другого места нет."""
-        from src.dating.dating_mail_send import dating_mail_send_mark
+        from src.dating.mail_send import mail_send_mark
 
         site_api.forbid_send('812886')
         try:
             await _send(letter, profile)
         except DatingMailSendError as e:
-            await dating_mail_send_mark(letter, sent=False, error=str(e))
+            await mail_send_mark(letter, sent=False, error=str(e))
 
         rows = await _log(profile['id'])
         mine = [row for row in rows if 'письмо не ушло' in row['text']]
@@ -479,7 +479,7 @@ class TestDeliveryIsRecorded:
         """Имени нет — берём номер: строка «письмо ушло: » без адресата бесполезна."""
         from mysql_.mysql_ import mysql_get_db_async
 
-        from src.dating.dating_mail_send import dating_mail_send_mark
+        from src.dating.mail_send import mail_send_mark
 
         async with mysql_get_db_async() as db:
             await db.execute(
@@ -492,7 +492,7 @@ class TestDeliveryIsRecorded:
             made = int((await db.fetchone())['id'])
 
         try:
-            await dating_mail_send_mark(await _row(made), sent=True)
+            await mail_send_mark(await _row(made), sent=True)
             rows = await _log(profile['id'])
 
             assert any('999001' in row['text'] for row in rows), \
@@ -522,13 +522,13 @@ class TestDeliveryTab:
                                            profile):
         """⚠ Главная проверка здесь. Письмо осталось `draft`, и по статусу его от
         нетронутого не отличить — а на «Доставке» оно быть обязано."""
-        from src.dating.dating_mail_send import dating_mail_send_mark
+        from src.dating.mail_send import mail_send_mark
 
         site_api.forbid_send('812886')
         try:
             await _send(letter, profile)
         except DatingMailSendError as e:
-            await dating_mail_send_mark(letter, sent=False, error=str(e))
+            await mail_send_mark(letter, sent=False, error=str(e))
 
         rows = await _delivery(auth_client)
         mine = next((row for row in rows if row['id'] == letter['id']), None)
@@ -549,13 +549,13 @@ class TestDeliveryTab:
     async def test_pool_still_holds_the_failed_letter(self, auth_client, site_api,
                                                       letter, profile):
         """И в пуле оно остаётся: «Доставка» показывает попытку, а не уносит письмо."""
-        from src.dating.dating_mail_send import dating_mail_send_mark
+        from src.dating.mail_send import mail_send_mark
 
         site_api.forbid_send('812886')
         try:
             await _send(letter, profile)
         except DatingMailSendError as e:
-            await dating_mail_send_mark(letter, sent=False, error=str(e))
+            await mail_send_mark(letter, sent=False, error=str(e))
 
         pool = (await auth_client.get(
             f'/api/dating/mailing?site_id={SITE}&status_=draft')).json()['result']

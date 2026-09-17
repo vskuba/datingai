@@ -14,7 +14,7 @@
 
 import pytest
 
-from src.dating.dating_mailing import dating_mailing_people_first
+from src.dating.mailing import mailing_people_first
 
 pytestmark = pytest.mark.mail
 
@@ -26,13 +26,13 @@ FEED = [{'uid': 'a', 'name': 'Первый'},
 class TestFirst:
 
     def test_chosen_goes_to_the_head(self):
-        got = dating_mailing_people_first(FEED, 'c')
+        got = mailing_people_first(FEED, 'c')
 
         assert [one['uid'] for one in got] == ['c', 'a', 'b']
 
     def test_others_stay(self):
         """⚠ Отбор вместо перестановки остановил бы заход после первой пары."""
-        got = dating_mailing_people_first(FEED, 'b')
+        got = mailing_people_first(FEED, 'b')
 
         assert len(got) == len(FEED)
         assert {one['uid'] for one in got} == {'a', 'b', 'c'}
@@ -40,18 +40,18 @@ class TestFirst:
     def test_order_of_the_rest_is_kept(self):
         """Лента приходит от сайта в своём порядке; тасовать её сверх нужного —
         значит давать разных адресатов двум заходам подряд без причины."""
-        got = dating_mailing_people_first(FEED, 'b')
+        got = mailing_people_first(FEED, 'b')
 
         assert [one['uid'] for one in got] == ['b', 'a', 'c']
 
     @pytest.mark.parametrize('uid', ['', None, '   '])
     def test_no_choice_changes_nothing(self, uid):
-        assert dating_mailing_people_first(FEED, uid) == FEED
+        assert mailing_people_first(FEED, uid) == FEED
 
     def test_stranger_changes_nothing(self):
         """⚠ Выбор живёт в браузере и переживает смену сайта и обновление ленты:
         ушедший из сети не повод переставлять очередь."""
-        assert dating_mailing_people_first(FEED, 'нет-такого') == FEED
+        assert mailing_people_first(FEED, 'нет-такого') == FEED
 
     def test_empty_feed_survives(self):
-        assert dating_mailing_people_first([], 'a') == []
+        assert mailing_people_first([], 'a') == []

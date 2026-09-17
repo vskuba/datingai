@@ -4,19 +4,19 @@
 под живой анкетой и ~40 секунд, а ещё и **действие на чужом сайте**, которое видит
 живой человек. Проверяется то, что и ломается, — две чистые функции:
 
-* `dating_favorite_state` — что случилось, по классу до и после. Классы меняет сайт,
+* `favorite_state` — что случилось, по классу до и после. Классы меняет сайт,
   а не мы, и образцы здесь **живые**: сняты пробными прогонами под анкетой 849.
-* `dating_favorite_pick` — кого брать в заход. Здесь всё решается у нас, и цена
+* `favorite_pick` — кого брать в заход. Здесь всё решается у нас, и цена
   ошибки высока в обе стороны: пропустим — человек не попадёт в избранные, возьмём
   лишнего — сорок секунд браузера, а то и снятая звёздочка.
 """
 
 import pytest
 
-from src.dating.dating_favorite import (DATING_FAVORITE_ALREADY, DATING_FAVORITE_DONE,
-                                        DATING_FAVORITE_FAIL,
-                                        DATING_FAVORITE_TRIES_MAX,
-                                        dating_favorite_pick, dating_favorite_state)
+from src.dating.favorite import (FAVORITE_ALREADY, FAVORITE_DONE,
+                                        FAVORITE_FAIL,
+                                        FAVORITE_TRIES_MAX,
+                                        favorite_pick, favorite_state)
 
 pytestmark = pytest.mark.mail
 
@@ -36,8 +36,8 @@ class TestState:
 
     def test_pressed_star_lights_up(self):
         """Не горела, нажали — загорелась. Это наша работа, и она удалась."""
-        assert dating_favorite_state(BEFORE_EMPTY, AFTER_CLICK) \
-               == (DATING_FAVORITE_DONE, '')
+        assert favorite_state(BEFORE_EMPTY, AFTER_CLICK) \
+               == (FAVORITE_DONE, '')
 
     def test_already_favorite_is_not_done(self):
         """⚠ Горела до нас — `already`, а не `done`.
@@ -46,14 +46,14 @@ class TestState:
         `done` сделала панель, `already` было и так. Свести их значило бы потерять
         ответ на «а мы-то что сделали».
         """
-        assert dating_favorite_state(ALREADY_FAVORITE, ALREADY_FAVORITE) \
-               == (DATING_FAVORITE_ALREADY, '')
+        assert favorite_state(ALREADY_FAVORITE, ALREADY_FAVORITE) \
+               == (FAVORITE_ALREADY, '')
 
     def test_star_that_did_not_light_up_is_a_failure(self):
         """Нажали, а класс не появился — нажатие не дошло до сайта."""
-        state, error = dating_favorite_state(BEFORE_EMPTY, BEFORE_EMPTY)
+        state, error = favorite_state(BEFORE_EMPTY, BEFORE_EMPTY)
 
-        assert state == DATING_FAVORITE_FAIL
+        assert state == FAVORITE_FAIL
         assert error
 
     def test_empty_after_is_a_failure_not_success(self):
@@ -62,9 +62,9 @@ class TestState:
         Пусто значит, что шага не было или звёздочку не нашли. Ответить на это
         «уже в избранных» значило бы выдумать удачу там, где мы ничего не видели.
         """
-        state, error = dating_favorite_state(ALREADY_FAVORITE, '')
+        state, error = favorite_state(ALREADY_FAVORITE, '')
 
-        assert state == DATING_FAVORITE_FAIL
+        assert state == FAVORITE_FAIL
         assert error
 
     def test_class_is_read_by_whole_word(self):
@@ -73,10 +73,10 @@ class TestState:
         `favorite__status-ok-hidden` — не зажжённая звезда, и попадись такой класс,
         подстрочный поиск счёл бы человека избранным и больше к нему не пришёл.
         """
-        state, _ = dating_favorite_state(BEFORE_EMPTY,
+        state, _ = favorite_state(BEFORE_EMPTY,
                                          'favorite__status favorite__status-ok-hidden')
 
-        assert state == DATING_FAVORITE_FAIL
+        assert state == FAVORITE_FAIL
 
     def test_several_stars_on_the_page_count_as_one_lit(self):
         """⚠ `extract` отдаёт все совпадения через перевод строки.
@@ -85,8 +85,8 @@ class TestState:
         карточка, скрытый шаблон) превратил бы строку в две. Зажжённая звезда
         где-то на странице означает, что он в избранных.
         """
-        assert dating_favorite_state(BEFORE_EMPTY, f'{BEFORE_EMPTY}\n{ALREADY_FAVORITE}') \
-               == (DATING_FAVORITE_DONE, '')
+        assert favorite_state(BEFORE_EMPTY, f'{BEFORE_EMPTY}\n{ALREADY_FAVORITE}') \
+               == (FAVORITE_DONE, '')
 
 
 class TestRowsFromTheSite:
@@ -94,22 +94,22 @@ class TestRowsFromTheSite:
 
     ⚠ **Заведено по живой жалобе.** В пуле «Приставания» карточки подписывались
     номером: «Диана → 803656». Имени взять было неоткуда — в `dating_contact`
-    человека нет (в чате не говорили), в `dating_companion` тоже (карточку заводят
+    человека нет (в чате не говорили), в `companion` тоже (карточку заводят
     по требованию), — а сайт отдавал его в том же ответе, за которым мы уже
     ходили ради номеров.
     """
 
     def test_the_record_carries_name_and_face(self):
-        """Имена полей — общие с `dating_people_api`: движок и запись те же."""
-        from src.dating.dating_people_api import DATING_PEOPLE_API_FIELDS
+        """Имена полей — общие с `people_api`: движок и запись те же."""
+        from src.dating.people_api import PEOPLE_API_FIELDS
 
-        assert DATING_PEOPLE_API_FIELDS['name'] == 'Name'
-        assert DATING_PEOPLE_API_FIELDS['photo'] == 'ProfilePhoto'
-        assert DATING_PEOPLE_API_FIELDS['uid'] == 'AccountId'
+        assert PEOPLE_API_FIELDS['name'] == 'Name'
+        assert PEOPLE_API_FIELDS['photo'] == 'ProfilePhoto'
+        assert PEOPLE_API_FIELDS['uid'] == 'AccountId'
 
     async def test_rows_are_parsed(self, monkeypatch):
         """Разбор ответа сайта: запись за записью, без походов наружу."""
-        from src.dating import dating_favorite
+        from src.dating import favorite
 
         async def answer(*args, **kwargs):
             return {'Users': [
@@ -119,9 +119,9 @@ class TestRowsFromTheSite:
                 {'AccountId': '  ', 'Name': 'Пустой номер'},
                 'не словарь']}
 
-        monkeypatch.setattr(dating_favorite, 'dating_site_api_call', answer)
+        monkeypatch.setattr(favorite, 'site_api_call', answer)
 
-        rows = await dating_favorite.dating_favorite_rows({'id': 1}, 'base', 'pw')
+        rows = await favorite.favorite_rows({'id': 1}, 'base', 'pw')
 
         assert len(rows) == 1, 'мусор из ответа попал в записи'
         assert rows[0] == {'uid': '803656', 'name': 'Jiwen He',
@@ -131,14 +131,14 @@ class TestRowsFromTheSite:
     async def test_uids_still_work(self, monkeypatch):
         """⚠ Прежняя функция осталась: ею живёт круг звёздочек, и менять ему
         подпись ради чужой нужды незачем."""
-        from src.dating import dating_favorite
+        from src.dating import favorite
 
         async def answer(*args, **kwargs):
             return {'Users': [{'AccountId': '1'}, {'AccountId': '2'}]}
 
-        monkeypatch.setattr(dating_favorite, 'dating_site_api_call', answer)
+        monkeypatch.setattr(favorite, 'site_api_call', answer)
 
-        assert await dating_favorite.dating_favorite_uids({}, 'b', 'p') == {'1', '2'}
+        assert await favorite.favorite_uids({}, 'b', 'p') == {'1', '2'}
 
 
 class TestPick:
@@ -150,7 +150,7 @@ class TestPick:
         ⚠ Не из экономии: кнопка на сайте это **переключатель**, и нажатие по уже
         избранному сняло бы звёздочку.
         """
-        assert dating_favorite_pick(['1', '2', '3'], {'2'}, {}, 10) == ['1', '3']
+        assert favorite_pick(['1', '2', '3'], {'2'}, {}, 10) == ['1', '3']
 
     def test_settled_are_skipped_even_without_the_site_list(self):
         """⚠ Удачу помним и без списка сайта.
@@ -158,23 +158,23 @@ class TestPick:
         Список мог не прийти вовсе (сайт молчит, API не настроен), и пустое
         множество не должно означать «добавить всех заново».
         """
-        settled = {'1': {'state': DATING_FAVORITE_DONE, 'tries': 0},
-                   '2': {'state': DATING_FAVORITE_ALREADY, 'tries': 0}}
+        settled = {'1': {'state': FAVORITE_DONE, 'tries': 0},
+                   '2': {'state': FAVORITE_ALREADY, 'tries': 0}}
 
-        assert dating_favorite_pick(['1', '2', '3'], set(), settled, 10) == ['3']
+        assert favorite_pick(['1', '2', '3'], set(), settled, 10) == ['3']
 
     def test_failure_is_retried_until_the_cap(self):
         """Отказ повторяем: причина обычно временная — занятая вкладка, сеть."""
-        settled = {'1': {'state': DATING_FAVORITE_FAIL, 'tries': 1}}
+        settled = {'1': {'state': FAVORITE_FAIL, 'tries': 1}}
 
-        assert dating_favorite_pick(['1'], set(), settled, 10) == ['1']
+        assert favorite_pick(['1'], set(), settled, 10) == ['1']
 
     def test_failure_stops_at_the_cap(self):
         """⚠ Но не вечно: три захода — уже про причину, которая сама не пройдёт."""
-        settled = {'1': {'state': DATING_FAVORITE_FAIL,
-                         'tries': DATING_FAVORITE_TRIES_MAX}}
+        settled = {'1': {'state': FAVORITE_FAIL,
+                         'tries': FAVORITE_TRIES_MAX}}
 
-        assert dating_favorite_pick(['1'], set(), settled, 10) == []
+        assert favorite_pick(['1'], set(), settled, 10) == []
 
     def test_batch_cuts_the_tail_keeping_order(self):
         """Потолок отрезает хвост, а порядок задают письма — свежие первыми.
@@ -182,16 +182,16 @@ class TestPick:
         Человек, написавший минуту назад, ждёт звёздочки больше, чем тот, чьё письмо
         лежит с прошлой недели.
         """
-        assert dating_favorite_pick(['9', '8', '7', '6'], set(), {}, 2) == ['9', '8']
+        assert favorite_pick(['9', '8', '7', '6'], set(), {}, 2) == ['9', '8']
 
     def test_zero_batch_takes_nobody(self):
         """Потолок в ноль — заход без работы, а не заход без потолка."""
-        assert dating_favorite_pick(['1', '2'], set(), {}, 0) == []
+        assert favorite_pick(['1', '2'], set(), {}, 0) == []
 
     def test_repeated_sender_is_taken_once(self):
         """Два письма от одного человека — одна звёздочка."""
-        assert dating_favorite_pick(['5', '5', '6'], set(), {}, 10) == ['5', '6']
+        assert favorite_pick(['5', '5', '6'], set(), {}, 10) == ['5', '6']
 
     def test_empty_uid_is_not_a_person(self):
         """Пустой номер из базы — мусор, а не собеседник: на него не ходим."""
-        assert dating_favorite_pick(['', '  ', '7'], set(), {}, 10) == ['7']
+        assert favorite_pick(['', '  ', '7'], set(), {}, 10) == ['7']

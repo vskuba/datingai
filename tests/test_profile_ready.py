@@ -11,8 +11,8 @@
 
 import pytest
 
-from src.dating.dating_ready import (dating_ready_check, dating_ready_transport,
-                                     dating_ready_write)
+from src.dating.ready import (ready_check, ready_transport,
+                                     ready_write)
 
 pytestmark = pytest.mark.profile
 
@@ -36,7 +36,7 @@ class TestScenarioTransport:
     def test_password_is_enough(self):
         """⚠ Главный случай, из-за которого признак и завёлся: **входа нет, а
         работать можно.** Сценарий войдёт сам."""
-        state = dating_ready_check(NO_LOGIN, 'scenario')
+        state = ready_check(NO_LOGIN, 'scenario')
 
         assert state['can'] is True and state['why'] == ''
 
@@ -46,7 +46,7 @@ class TestScenarioTransport:
         ⚠ Выбор явный: `password_source = 'site'`. Прежде общий подставлялся сам,
         если своего нет, и по анкете было не видно, под каким паролем она работает.
         """
-        state = dating_ready_check({**NO_PASSWORD, 'password_source': 'site'},
+        state = ready_check({**NO_PASSWORD, 'password_source': 'site'},
                                    'scenario', site_password='общий')
 
         assert state['can'] is True
@@ -58,7 +58,7 @@ class TestScenarioTransport:
         вопреки явно сделанному выбору: человек сказал «свой», а анкета пошла бы
         под чужим.
         """
-        state = dating_ready_check(NO_PASSWORD, 'scenario', site_password='общий')
+        state = ready_check(NO_PASSWORD, 'scenario', site_password='общий')
 
         assert state['can'] is False
         assert 'свой' in state['why']
@@ -67,24 +67,24 @@ class TestScenarioTransport:
         """Нечем войти — и причина сказана словами: без неё панель говорит «не
         работает», а человек ищет поломку в коде вместо того, чтобы вписать пароль.
         """
-        state = dating_ready_check(NO_PASSWORD, 'scenario')
+        state = ready_check(NO_PASSWORD, 'scenario')
 
         assert state['can'] is False
         assert 'парол' in state['why']
 
     def test_login_is_not_required(self):
         """Снятый вход сценарию не мешает, но и не требуется: он входит заново."""
-        assert dating_ready_check(LOGGED, 'scenario')['can'] is True
+        assert ready_check(LOGGED, 'scenario')['can'] is True
 
 
 class TestSocketTransport:
     """Сокету нужен снятый вход: адрес берётся из него."""
 
     def test_logged_in_is_ready(self):
-        assert dating_ready_check(LOGGED, 'ws')['can'] is True
+        assert ready_check(LOGGED, 'ws')['can'] is True
 
     def test_without_login_is_refused(self):
-        state = dating_ready_check(NO_LOGIN, 'ws')
+        state = ready_check(NO_LOGIN, 'ws')
 
         assert state['can'] is False
         assert 'вход' in state['why']
@@ -95,15 +95,15 @@ class TestSocketTransport:
         Прежний отбор (`storage_state IS NOT NULL`) такую анкету брал, и держатель
         падал на пустом адресе.
         """
-        state = dating_ready_check({**LOGGED, 'ws_url': ''}, 'ws')
+        state = ready_check({**LOGGED, 'ws_url': ''}, 'ws')
 
         assert state['can'] is False
         assert 'сокет' in state['why']
 
     def test_http_transport_needs_login_but_not_socket(self):
         """HTTP-ручка сайта: запрос идёт с cookie входа, а адрес сокета ни к чему."""
-        assert dating_ready_check({**LOGGED, 'ws_url': ''}, 'http')['can'] is True
-        assert dating_ready_check(NO_LOGIN, 'http')['can'] is False
+        assert ready_check({**LOGGED, 'ws_url': ''}, 'http')['can'] is True
+        assert ready_check(NO_LOGIN, 'http')['can'] is False
 
 
 class TestDisabledIsNotReady:
@@ -113,7 +113,7 @@ class TestDisabledIsNotReady:
     def test_disabled_beats_everything(self, transport):
         """Иначе панель показывала бы «готова» у той, с которой ничего не делают, и
         человек искал бы поломку в работе, а не в галочке."""
-        state = dating_ready_check({**LOGGED, 'enabled': 0}, transport)
+        state = ready_check({**LOGGED, 'enabled': 0}, transport)
 
         assert state['can'] is False
         assert 'выключена' in state['why']
@@ -125,26 +125,26 @@ class TestTransportChoice:
     def test_our_setting_wins(self):
         """⚠ То же правило, что в отправке: `presence` описывает сайт, но правит его
         только сосед, а «чем отправлять» решает наша сторона."""
-        assert dating_ready_transport({'send': {'transport': 'ws'}},
+        assert ready_transport({'send': {'transport': 'ws'}},
                                       {'send_transport': 'scenario'}) == 'scenario'
 
     def test_presence_default_falls_back_to_the_site(self):
         """`presence` в настройке — «как настроено у сайта»."""
-        assert dating_ready_transport({'send': {'transport': 'ws'}},
+        assert ready_transport({'send': {'transport': 'ws'}},
                                       {'send_transport': 'presence'}) == 'ws'
 
     def test_no_settings_reads_the_site(self):
-        assert dating_ready_transport({'send': {'transport': 'ws'}}, {}) == 'ws'
+        assert ready_transport({'send': {'transport': 'ws'}}, {}) == 'ws'
 
     def test_nothing_configured_is_http(self):
         """Умолчание — `http`: так было до появления настройки, и менять его значило
         бы тихо переключить сайты, которых правка не касалась."""
-        assert dating_ready_transport({}, {}) == 'http'
+        assert ready_transport({}, {}) == 'http'
 
     def test_presence_may_be_a_json_string(self):
         """`presence` приходит от соседа то словарём, то строкой JSON — разбор общий
-        (`dating_json.py`), и здесь это не должно ломаться."""
-        assert dating_ready_transport('{"send": {"transport": "ws"}}', {}) == 'ws'
+        (`json_column.py`), и здесь это не должно ломаться."""
+        assert ready_transport('{"send": {"transport": "ws"}}', {}) == 'ws'
 
 
 class TestWriteIsQuiet:
@@ -153,20 +153,20 @@ class TestWriteIsQuiet:
     async def test_broken_database_does_not_raise(self, monkeypatch):
         """⚠ Признак — служебное сведение: сбой его записи не повод срывать круг
         воркера, внутри которого он и считается."""
-        from src.dating import dating_ready
+        from src.dating import ready
 
         def _broken():
             raise RuntimeError('база недоступна')
 
-        monkeypatch.setattr(dating_ready, 'mysql_get_db_async', _broken)
+        monkeypatch.setattr(ready, 'mysql_get_db_async', _broken)
 
         # Не падает и ничего не возвращает — это и проверяем.
-        assert await dating_ready_write(849, {'can': True, 'why': ''}) is None
+        assert await ready_write(849, {'can': True, 'why': ''}) is None
 
     async def test_reason_is_cut_to_the_column(self, monkeypatch):
         """Причина режется по длине колонки: `varchar(200)`, а текст приходит от
         сайта и бывает длинным."""
-        from src.dating import dating_ready
+        from src.dating import ready
 
         seen = {}
 
@@ -188,8 +188,8 @@ class TestWriteIsQuiet:
             async def __aexit__(self, *args):
                 return False
 
-        monkeypatch.setattr(dating_ready, 'mysql_get_db_async', lambda: _Db())
+        monkeypatch.setattr(ready, 'mysql_get_db_async', lambda: _Db())
 
-        await dating_ready_write(849, {'can': False, 'why': 'ы' * 500})
+        await ready_write(849, {'can': False, 'why': 'ы' * 500})
 
         assert len(seen['args'][1]) == 200

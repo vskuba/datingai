@@ -13,8 +13,8 @@ import uuid
 
 import pytest
 
-from src.dating.dating_mail_agent import (DATING_MAIL_AGENT_VALUE_MAX,
-                                          DATING_MAIL_QUESTION_MAX, _card,
+from src.dating.mail_agent import (MAIL_AGENT_VALUE_MAX,
+                                          MAIL_QUESTION_MAX, _card,
                                           _companion_card, _json_chunk, _letter,
                                           _question, _values, _wanted_text)
 
@@ -131,7 +131,7 @@ class TestValues:
         отбрасываем: обрезанный город полезнее пустого."""
         values = _values('{"girl_city": "%s"}' % ('я' * 900), WANTED)
 
-        assert len(values['girl_city']) == DATING_MAIL_AGENT_VALUE_MAX
+        assert len(values['girl_city']) == MAIL_AGENT_VALUE_MAX
 
     @pytest.mark.parametrize('answer', ['не знаю', '', '[1, 2]', '{сломано'])
     def test_bad_answer_gives_nothing(self, answer):
@@ -229,7 +229,7 @@ class TestQuestion:
         text = _question('я' * 200 + '? ' + 'б' * 300 + '?')
 
         assert text == 'я' * 200 + '?'
-        assert len(text) <= DATING_MAIL_QUESTION_MAX
+        assert len(text) <= MAIL_QUESTION_MAX
 
     def test_question_without_a_mark_in_range_is_dropped(self):
         """Знак есть, но за пределом: обрубок без него в письме читается как

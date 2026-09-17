@@ -10,7 +10,7 @@
 
 import pytest
 
-from src.dating import dating_chat_hold as hold
+from src.dating import chat_hold as hold
 
 pytestmark = pytest.mark.chat
 SITE, OTHER = 343, 19
@@ -53,7 +53,7 @@ def round_(monkeypatch):
         return list(state['sites'])
 
     async def _seconds(site_id, key):
-        assert key == hold.DATING_CHAT_IMPORT_SETTING, key
+        assert key == hold.CHAT_IMPORT_SETTING, key
 
         return int(state['every'].get(int(site_id), 0))
 
@@ -63,8 +63,8 @@ def round_(monkeypatch):
         return dict(state['result'])
 
     monkeypatch.setattr(hold, '_chat_sites', _sites)
-    monkeypatch.setattr(hold, 'dating_site_seconds', _seconds)
-    monkeypatch.setattr(hold, 'dating_chat_panel_import', _import)
+    monkeypatch.setattr(hold, 'site_seconds', _seconds)
+    monkeypatch.setattr(hold, 'chat_panel_import', _import)
     monkeypatch.setattr(hold, 'redis_conn_get', lambda: state['redis'])
 
     return state
@@ -77,8 +77,8 @@ class TestSchedule:
         """Отметки нет ни у кого — забираем у всех, у кого настройка задана."""
         await hold._chat_import_round()
 
-        assert round_['imported'] == [(SITE, hold.DATING_CHAT_PANEL_ROUND_DAYS),
-                                      (OTHER, hold.DATING_CHAT_PANEL_ROUND_DAYS)]
+        assert round_['imported'] == [(SITE, hold.CHAT_PANEL_ROUND_DAYS),
+                                      (OTHER, hold.CHAT_PANEL_ROUND_DAYS)]
 
     async def test_second_round_skips_marked(self, round_):
         """⚠ Второй обход подряд не забирает: срок не вышел.
@@ -102,8 +102,8 @@ class TestSchedule:
         """
         await hold._chat_import_round()
 
-        assert round_['redis'].ttl[hold.DATING_CHAT_IMPORT_KEY.format(site_id=SITE)] == 300
-        assert round_['redis'].ttl[hold.DATING_CHAT_IMPORT_KEY.format(site_id=OTHER)] == 3600
+        assert round_['redis'].ttl[hold.CHAT_IMPORT_KEY.format(site_id=SITE)] == 300
+        assert round_['redis'].ttl[hold.CHAT_IMPORT_KEY.format(site_id=OTHER)] == 3600
 
     async def test_expired_mark_lets_it_through(self, round_):
         """Отметка погасла — забираем снова. Так круг и работает: ключа нет
@@ -120,7 +120,7 @@ class TestSchedule:
         """Свой срок у каждого сайта: одному хватает часа, другому нужны пять минут."""
         await hold._chat_import_round()
         # Гасим отметку только у одного — второй должен остаться пропущенным.
-        round_['redis'].store.pop(hold.DATING_CHAT_IMPORT_KEY.format(site_id=SITE))
+        round_['redis'].store.pop(hold.CHAT_IMPORT_KEY.format(site_id=SITE))
         round_['imported'].clear()
 
         await hold._chat_import_round()
@@ -172,7 +172,7 @@ class TestHoldersNeedASocket:
                  'presence': {}, 'site_url': 'https://site'}]
 
     async def test_only_profiles_with_a_socket_are_held(self, monkeypatch):
-        monkeypatch.setattr(hold, 'dating_chat_hold_profile',
+        monkeypatch.setattr(hold, 'chat_hold_profile',
                             lambda *a, **k: _never())
 
         holders, counters = {}, {}
@@ -190,7 +190,7 @@ class TestHoldersNeedASocket:
         Обратная сторона: без неё правило могло бы отсечь всех, и чат перестал бы
         работать вовсе.
         """
-        monkeypatch.setattr(hold, 'dating_chat_hold_profile',
+        monkeypatch.setattr(hold, 'chat_hold_profile',
                             lambda *a, **k: _never())
 
         holders, counters = {}, {}
@@ -209,7 +209,7 @@ class TestHoldersNeedASocket:
     async def test_lost_socket_stops_the_holder(self, monkeypatch):
         """Адрес пропал (выход, протухший вход) — держателя гасим: висеть на
         мёртвом адресе хуже, чем не висеть вовсе."""
-        monkeypatch.setattr(hold, 'dating_chat_hold_profile',
+        monkeypatch.setattr(hold, 'chat_hold_profile',
                             lambda *a, **k: _never())
 
         holders, counters = {}, {}
@@ -244,7 +244,7 @@ class TestFailuresDoNotStopTheRound:
 
             return {'status': 'ok', 'added': 1, 'contacts': 1, 'error': ''}
 
-        monkeypatch.setattr(hold, 'dating_chat_panel_import', _import)
+        monkeypatch.setattr(hold, 'chat_panel_import', _import)
 
         await hold._chat_import_round()
 
@@ -272,12 +272,12 @@ class TestFailuresDoNotStopTheRound:
         seen = {}
 
         async def _import(site_id, days):
-            key = hold.DATING_CHAT_IMPORT_KEY.format(site_id=site_id)
+            key = hold.CHAT_IMPORT_KEY.format(site_id=site_id)
             seen[int(site_id)] = round_['redis'].store.get(key)
 
             return {'status': 'ok', 'added': 0, 'contacts': 0, 'error': ''}
 
-        monkeypatch.setattr(hold, 'dating_chat_panel_import', _import)
+        monkeypatch.setattr(hold, 'chat_panel_import', _import)
 
         await hold._chat_import_round()
 

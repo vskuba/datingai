@@ -90,7 +90,7 @@ RHAPSODY_API_LOG_MAX = 300
 
 # Ключи тела запроса, чьё содержимое в лог не попадает.
 #
-# ⚠ `secrets` — пароли анкет: их кладёт `dating_scenario`, и в логе им места нет.
+# ⚠ `secrets` — пароли анкет: их кладёт `scenario`, и в логе им места нет.
 # Сам сосед их тоже не пишет (в его журнале прогонов остаётся `{{girl_password}}`),
 # и терять эту защиту на нашей стороне нельзя.
 RHAPSODY_API_LOG_HIDE = {'secrets'}
@@ -116,7 +116,7 @@ async def rhapsody_api_site_get(site_id: int) -> dict:
     возить её в каждой строке селекта незачем.
     """
     # ⚠ **Пишем, кто позвал.** Описание сайта переехало к нам
-    # (`dating_site_presence.py`), и каждый оставшийся поход за карточкой — повод
+    # (`site_presence.py`), и каждый оставшийся поход за карточкой — повод
     # спросить «а зачем». Без имени вызывающего такой поиск превращается в
     # перебор шестнадцати мест по журналу, где все строки одинаковы: это уже
     # стоило получаса на живом проде.
@@ -382,7 +382,7 @@ async def rhapsody_api_proxy_list(ready: bool = True) -> list:
     живые»; кому какой достанется и сколько анкет допустимо на один внешний
     адрес, знаем только мы — предел выдумывает сайт знакомств, про который у
     соседа не слыхали. Поэтому здесь список, а не «дай мне выход»
-    (`src/dating/dating_proxy.py`).
+    (`src/dating/proxy.py`).
     """
     # ⚠ Кэш общий на оба вида запроса, а фильтр `ready` накладывается **после**:
     # два кэша (годные и все) расходились бы в свежести, и страница показывала бы
@@ -497,7 +497,7 @@ async def rhapsody_api_agent_create(node: str, workflow: str, name: str, title: 
 
     `site` — метка сайта-владельца (`goldenbride`, `ladadate`): у соседа она
     обязательна и проверяется форматом `^[a-z0-9]+$`, иначе `422`. Собирает её
-    `dating_agent_site` из имени сайта-закладки; довод обязательный и без умолчания
+    `agent_site` из имени сайта-закладки; довод обязательный и без умолчания
     намеренно — агент без сайта у соседа не заводится, и подставить сюда что-нибудь
     «по умолчанию» значило бы приписать анкету чужому сайту.
     """
@@ -555,7 +555,7 @@ async def rhapsody_api_llm_usage(node: str, days: int = RHAPSODY_API_LLM_DAYS) -
     """Сколько запросов к LLM ушло и сколько токенов потрачено.
 
     Args:
-        node: узел у соседа **по имени** (`DATING_AGENT_NODE`, «Dating»).
+        node: узел у соседа **по имени** (`AGENT_NODE`, «Dating»).
         days: за сколько дней. ⚠ Сосед клампит до семи — дольше журнал не живёт.
 
     Returns:
@@ -680,16 +680,16 @@ async def _note(method: str, path: str, status: int, ok: bool, error: str,
 
     Ничего не бросает: сбой журнала не имеет права уронить работу.
     """
-    from src.dating.dating_request import (DATING_REQUEST_RHAPSODY,
-                                           dating_request_about_get,
-                                           dating_request_write)
+    from src.dating.request import (REQUEST_RHAPSODY,
+                                           request_about_get,
+                                           request_write)
 
     # Чья это работа — спрашиваем у неё самой, а не выводим из пути.
-    profile_id, site_id = dating_request_about_get()
+    profile_id, site_id = request_about_get()
 
     # ⚠ Строку запроса режем: в ней бывают номера и метки, но длина её не
     # ограничена, а колонка — 255 знаков.
-    await dating_request_write(door=DATING_REQUEST_RHAPSODY, method=str(method or ''),
+    await request_write(door=REQUEST_RHAPSODY, method=str(method or ''),
                                path=str(path or '')[:255], status=int(status or 0),
                                ok=bool(ok), error=str(error or ''),
                                ms=_ms(started),
@@ -707,7 +707,7 @@ def _payload_short(payload) -> str:
 
     ⚠ Секреты вырезаются по имени ключа, а не по значению: сравнивать значения
     неоткуда — пароль приходит сюда уже подставленным. Ключ `secrets` кладёт
-    `dating_scenario`, и его содержимое в лог попадать не должно ни при каких
+    `scenario`, и его содержимое в лог попадать не должно ни при каких
     условиях.
     """
     if not isinstance(payload, dict) or not payload:

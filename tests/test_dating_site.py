@@ -19,11 +19,11 @@
 
 import pytest
 
-from src.uvicorn.routers.dating import dating_site
-from src.uvicorn.routers.dating.dating_site import dating_site_list
-from src.uvicorn.routers.dating.dating_site_sync import dating_site_sync_now
+from src.uvicorn.routers.dating import site_
+from src.uvicorn.routers.dating.site_ import site_list
+from src.uvicorn.routers.dating.site_sync import site_sync_now
 
-from src.uvicorn.routers.dating.dating_site import DATING_SITE_SECRET_MASK as MASK
+from src.uvicorn.routers.dating.site_ import SITE_SECRET_MASK as MASK
 
 pytestmark = pytest.mark.core
 KEY = 'тест_ключ'
@@ -105,12 +105,12 @@ class TestSiteList:
         значения ведём мы. Сайт без сохранённых настроек виден с пустым набором —
         иначе его нельзя было бы настроить в первый раз.
         """
-        monkeypatch.setattr(dating_site, '_settings_all',
+        monkeypatch.setattr(site_, '_settings_all',
                             _saved({343: {'favorites_keep': '86400'}}))
-        await dating_site_sync_now()
+        await site_sync_now()
 
         sites = {site['id']: site for site in
-                 (await dating_site_list(user=None))['result']['sites']}
+                 (await site_list(user=None))['result']['sites']}
 
         assert 343 in sites and 19 in sites
         assert sites[343]['name'] == 'Ladadate' and sites[343]['url']
@@ -123,19 +123,19 @@ class TestSiteList:
         Список ведёт он: строка без имени и адреса в селекте бесполезна, а её
         появление означало бы, что свой список сайтов у нас всё-таки завёлся.
         """
-        monkeypatch.setattr(dating_site, '_settings_all', _saved({777: {KEY: '1'}}))
-        await dating_site_sync_now()
+        monkeypatch.setattr(site_, '_settings_all', _saved({777: {KEY: '1'}}))
+        await site_sync_now()
 
-        sites = (await dating_site_list(user=None))['result']['sites']
+        sites = (await site_list(user=None))['result']['sites']
 
         assert 777 not in [site['id'] for site in sites]
 
     async def test_known_settings_come_with_their_values(self, rhapsody, monkeypatch):
         """Реестр известных настроек уезжает на страницу: набор значений — условие
         кода, и страница рисует по нему селект, а не выдумывает свой."""
-        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+        monkeypatch.setattr(site_, '_settings_all', _saved({}))
 
-        known = (await dating_site_list(user=None))['result']['known']
+        known = (await site_list(user=None))['result']['known']
         keep = next(row for row in known if row['key'] == 'favorites_keep')
 
         assert [option['value'] for option in keep['options']] == ['604800', '259200', '86400']
@@ -149,10 +149,10 @@ class TestSiteList:
         снимком и сверяем в фоне — лежащий сосед не повод показывать пустую
         страницу настроек. Отказ сверки виден на «Ошибках» (`test_site_snapshot.py`).
         """
-        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+        monkeypatch.setattr(site_, '_settings_all', _saved({}))
         rhapsody.offline()
 
-        sites = (await dating_site_list(user=None))['result']['sites']
+        sites = (await site_list(user=None))['result']['sites']
 
         assert sites, 'страница настроек опустела вместе с соседом'
 
@@ -167,8 +167,8 @@ class TestKnownGroups:
     """
 
     async def test_every_setting_lands_in_a_known_group(self, rhapsody, monkeypatch):
-        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
-        answer = (await dating_site_list(user=None))['result']
+        monkeypatch.setattr(site_, '_settings_all', _saved({}))
+        answer = (await site_list(user=None))['result']
 
         groups = {group['key'] for group in answer['groups']}
 
@@ -180,11 +180,11 @@ class TestKnownGroups:
     async def test_groups_keep_their_order(self, rhapsody, monkeypatch):
         """Порядок групп — с сервера, и он значит: от частого к редкому. Сроки и
         транспорт правят на ходу, доступ к API вписывают раз при заведении."""
-        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
-        answer = (await dating_site_list(user=None))['result']
+        monkeypatch.setattr(site_, '_settings_all', _saved({}))
+        answer = (await site_list(user=None))['result']
 
         assert [group['key'] for group in answer['groups']] == \
-            [key for key, _ in dating_site.DATING_SITE_GROUPS]
+            [key for key, _ in site_.SITE_GROUPS]
         assert all(group['title'] for group in answer['groups']), 'группе нужна подпись'
 
     @pytest.mark.parametrize('key, group', [
@@ -195,9 +195,9 @@ class TestKnownGroups:
     async def test_setting_is_in_its_group(self, rhapsody, monkeypatch, key, group):
         """Разбивка, которую просили: доступ к API отдельно, частота онлайна
         отдельно."""
-        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+        monkeypatch.setattr(site_, '_settings_all', _saved({}))
         known = {row['key']: row
-                 for row in (await dating_site_list(user=None))['result']['known']}
+                 for row in (await site_list(user=None))['result']['known']}
 
         assert known[key]['group'] == group
 
@@ -216,10 +216,10 @@ class TestKnownDurations:
     ])
     async def test_seconds_setting_offers_its_values(self, rhapsody, monkeypatch,
                                                      key, default, values):
-        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+        monkeypatch.setattr(site_, '_settings_all', _saved({}))
 
         known = {row['key']: row for row in
-                 (await dating_site_list(user=None))['result']['known']}
+                 (await site_list(user=None))['result']['known']}
 
         assert [option['value'] for option in known[key]['options']] == values
         assert known[key]['default'] == default
@@ -232,20 +232,20 @@ class TestKnownDurations:
         «месяц», и проверка шла бы месяц, хотя ни одна страница такого не
         предлагала. Поймать это иначе нечем — молча работало бы не то.
         """
-        from src.uvicorn.routers.dating.dating_site import dating_site_seconds
+        from src.uvicorn.routers.dating.site_ import site_seconds
 
         await auth_client.put(f'/api/dating/site/{SITE}',
                               json={'settings': {'chat_check_every': '99999'}})
 
-        assert await dating_site_seconds(SITE, 'chat_check_every') == 300
+        assert await site_seconds(SITE, 'chat_check_every') == 300
 
     async def test_chosen_value_is_used(self, auth_client, kept):
         await auth_client.put(f'/api/dating/site/{SITE}',
                               json={'settings': {'chat_check_every': '3600'}})
 
-        from src.uvicorn.routers.dating.dating_site import dating_site_seconds
+        from src.uvicorn.routers.dating.site_ import site_seconds
 
-        assert await dating_site_seconds(SITE, 'chat_check_every') == 3600
+        assert await site_seconds(SITE, 'chat_check_every') == 3600
 
 
 class TestSecretSettings:
@@ -307,10 +307,10 @@ class TestSecretSettings:
     async def test_registry_tells_the_page_it_is_secret(self, rhapsody, monkeypatch):
         """Страница рисует пароль полем-звёздочками по признаку из реестра, а не по
         догадке об имени ключа."""
-        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+        monkeypatch.setattr(site_, '_settings_all', _saved({}))
 
         known = {row['key']: row for row in
-                 (await dating_site_list(user=None))['result']['known']}
+                 (await site_list(user=None))['result']['known']}
 
         assert known['api_password']['secret'] is True
         assert known['api_base']['secret'] is False
@@ -415,9 +415,9 @@ async def _secret_in_base(site_id: int) -> str:
     виден — в этом и смысл проверки. Иначе «маска означает не трогать» проверялось
     бы маской же, то есть ничем.
     """
-    from src.uvicorn.routers.dating.dating_site import dating_site_setting
+    from src.uvicorn.routers.dating.site_ import site_setting
 
-    return await dating_site_setting(site_id, 'api_password')
+    return await site_setting(site_id, 'api_password')
 
 
 def _saved(rows: dict):
@@ -435,7 +435,7 @@ async def _settings(auth_client, site_id: int) -> dict:
 class TestCompanionAccount:
     """Учётка для просмотра собеседников: логин и пароль парой.
 
-    ⚠ **Сегодня карточку читают под самой девушкой** (`dating_companion_about`):
+    ⚠ **Сегодня карточку читают под самой девушкой** (`companion_about`):
     сайт считает просмотры, и заходы «ниоткуда» выглядят иначе, чем интерес той,
     кто потом напишет. Эта пара — для работы, которой такая привязка не нужна.
     """
@@ -443,9 +443,9 @@ class TestCompanionAccount:
     async def test_both_live_in_the_work_group(self, rhapsody, monkeypatch):
         """В «Работе с сайтом», рядом с прочими адресами и учётками: человек ищет
         настройку там, где видит её работу."""
-        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+        monkeypatch.setattr(site_, '_settings_all', _saved({}))
         known = {row['key']: row
-                 for row in (await dating_site_list(user=None))['result']['known']}
+                 for row in (await site_list(user=None))['result']['known']}
 
         assert known['companion_login']['group'] == 'work'
         assert known['companion_password']['group'] == 'work'
@@ -453,18 +453,18 @@ class TestCompanionAccount:
     async def test_password_is_a_secret_and_login_is_not(self, rhapsody, monkeypatch):
         """⚠ Пароль приходит маской: ответ списка уходит на каждую смену сайта и
         оседает в журналах браузера. Логин не секрет — его видно на самом сайте."""
-        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+        monkeypatch.setattr(site_, '_settings_all', _saved({}))
         known = {row['key']: row
-                 for row in (await dating_site_list(user=None))['result']['known']}
+                 for row in (await site_list(user=None))['result']['known']}
 
         assert known['companion_password']['secret'] is True
         assert known['companion_login']['secret'] is False
 
     async def test_both_are_free_fields(self, rhapsody, monkeypatch):
         """Набора значений у учётки быть не может — она своя у каждого сайта."""
-        monkeypatch.setattr(dating_site, '_settings_all', _saved({}))
+        monkeypatch.setattr(site_, '_settings_all', _saved({}))
         known = {row['key']: row
-                 for row in (await dating_site_list(user=None))['result']['known']}
+                 for row in (await site_list(user=None))['result']['known']}
 
         for key in ('companion_login', 'companion_password'):
             assert known[key]['options'] == [], key

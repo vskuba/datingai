@@ -52,34 +52,34 @@ class TestTheCheckItself:
     """Вопрос «всё ещё в сети?» — к своей базе и по одной анкете."""
 
     async def test_an_online_profile_passes(self, girl):
-        from src.dating.dating_ready import dating_ready_online
+        from src.dating.ready import ready_online
 
         await _status(girl, 'online')
 
-        assert await dating_ready_online(girl) is True
+        assert await ready_online(girl) is True
 
     async def test_a_profile_gone_offline_is_stopped(self, girl):
-        from src.dating.dating_ready import dating_ready_online
+        from src.dating.ready import ready_online
 
         await _status(girl, 'offline')
 
-        assert await dating_ready_online(girl) is False
+        assert await ready_online(girl) is False
 
     async def test_a_disabled_profile_is_stopped_too(self, girl):
         """⚠ Выключенную анкету не ведут вовсе — статус тут ни при чём."""
-        from src.dating.dating_ready import dating_ready_online
+        from src.dating.ready import ready_online
 
         await _status(girl, 'online', enabled=0)
         try:
-            assert await dating_ready_online(girl) is False
+            assert await ready_online(girl) is False
         finally:
             await _status(girl, 'online', enabled=1)
 
     async def test_an_unknown_profile_is_stopped(self):
         """Анкеты нет — идти не под кем."""
-        from src.dating.dating_ready import dating_ready_online
+        from src.dating.ready import ready_online
 
-        assert await dating_ready_online(999_999_999) is False
+        assert await ready_online(999_999_999) is False
 
     async def test_a_silent_database_reads_as_online(self, monkeypatch):
         """⚠⚠ Молчание базы читается как «в сети», а не как «стой».
@@ -88,14 +88,14 @@ class TestTheCheckItself:
         две минуты, а лишний пропуск тише, но вреднее — письма не заберутся, и
         понять почему будет нечем.
         """
-        from src.dating import dating_ready
+        from src.dating import ready
 
         def _broken():
             raise RuntimeError('база отвалилась')
 
         monkeypatch.setattr('mysql_.mysql_.mysql_get_db_async', _broken)
 
-        assert await dating_ready.dating_ready_online(1) is True
+        assert await ready.ready_online(1) is True
 
 
 class TestRoundsAskBeforeGoing:
@@ -104,23 +104,23 @@ class TestRoundsAskBeforeGoing:
     def test_the_mail_round_asks(self):
         import inspect
 
-        from src.dating import dating_mail_in_round
+        from src.dating import mail_in_round
 
-        code = inspect.getsource(dating_mail_in_round.dating_mail_in_round_run)
+        code = inspect.getsource(mail_in_round.mail_in_round_run)
 
-        assert 'dating_ready_online(' in code, \
+        assert 'ready_online(' in code, \
             'круг писем снова ходит по устаревшему списку'
-        assert code.index('sleep(') < code.index('dating_ready_online('), \
+        assert code.index('sleep(') < code.index('ready_online('), \
             'проверка стоит до паузы — тогда она проверяет то же, что и отбор'
 
     def test_the_favorites_round_asks(self):
         """Звёздочка — это вход под девушкой, и заходы так же разведены паузой."""
         import inspect
 
-        from src.dating import dating_favorite_round
+        from src.dating import favorite_round
 
-        assert 'dating_ready_online(' in inspect.getsource(
-            dating_favorite_round.dating_favorite_round_run)
+        assert 'ready_online(' in inspect.getsource(
+            favorite_round.favorite_round_run)
 
     def test_the_check_goes_to_our_own_base(self):
         """⚠ Запрос к **своей** базе: он не идёт наружу и сайтом не считается.
@@ -130,9 +130,9 @@ class TestRoundsAskBeforeGoing:
         """
         import inspect
 
-        from src.dating.dating_ready import dating_ready_online
+        from src.dating.ready import ready_online
 
-        code = inspect.getsource(dating_ready_online)
+        code = inspect.getsource(ready_online)
 
         assert 'FROM profile' in code
         assert 'httpx' not in code and 'rhapsody' not in code

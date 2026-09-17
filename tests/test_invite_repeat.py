@@ -17,8 +17,8 @@ import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating import dating_invite
-from src.dating.dating_invite import _invited, _talked
+from src.dating import invite
+from src.dating.invite import _invited, _talked
 
 pytestmark = pytest.mark.chat
 
@@ -68,7 +68,7 @@ async def _invite(profile_id: int, status: str, ago_sec: int = 0) -> None:
 
 async def _put_one(profile_id: int) -> bool:
     """Кладёт черновик тем же путём, каким его кладёт круг, — через `_put`."""
-    return await dating_invite._put(STAND_SITE, {'id': int(profile_id)},
+    return await invite._put(STAND_SITE, {'id': int(profile_id)},
                                     {'uid': UID, 'name': 'Кто-то'}, 'Hi!')
 
 
@@ -167,8 +167,8 @@ class TestRepeat:
         async def week(site_id, key):
             return 604_800
 
-        monkeypatch.setattr(dating_invite, 'DATING_INVITE_REPEAT_DEFAULT', 1)
-        monkeypatch.setattr('src.uvicorn.routers.dating.dating_site.dating_site_seconds',
+        monkeypatch.setattr(invite, 'INVITE_REPEAT_DEFAULT', 1)
+        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_seconds',
                             week)
         await _invite(girl, 'sent', ago_sec=90_000)
 
@@ -223,7 +223,7 @@ class TestNoDouble:
     async def test_four_at_once_send_one(self, girl, monkeypatch):
         """⚠ Именно **одновременно**: последовательные вызовы отсёк бы и старый
         сторож «тот же текст подряд». Ловится только гонка."""
-        from src.dating import dating_invite_send
+        from src.dating import invite_send
 
         sent = []
 
@@ -234,12 +234,12 @@ class TestNoDouble:
 
             return {'ok': True}
 
-        monkeypatch.setattr(dating_invite_send, 'dating_send_message', _send)
-        monkeypatch.setattr(dating_invite_send, 'dating_site_presence', _site())
+        monkeypatch.setattr(invite_send, 'send_message', _send)
+        monkeypatch.setattr(invite_send, 'site_presence', _site())
         invite_id = await _invite_row(girl)
         row = await _row(invite_id)
 
-        got = await asyncio.gather(*(dating_invite_send.dating_invite_send_one(dict(row))
+        got = await asyncio.gather(*(invite_send.invite_send_one(dict(row))
                                      for _ in range(4)))
 
         assert len(sent) == 1, f'реплика ушла {len(sent)} раза вместо одного'
@@ -249,18 +249,18 @@ class TestNoDouble:
     async def test_failure_returns_it_to_the_pool(self, girl, monkeypatch):
         """⚠ И **снимает метку отправки**: иначе неудача выглядела бы удачей и
         держала бы человека паузой повтора."""
-        from src.dating import dating_invite_send
+        from src.dating import invite_send
 
         # ⚠ Отказ **стойкий**: «его нет в сети» строку не глушит и причины не
-        # пишет — это состояние, и оно проходит само (`dating_invite_send`).
+        # пишет — это состояние, и оно проходит само (`invite_send`).
         async def _refused(profile, presence, uid, body, to_history=True):
             return {'ok': False, 'error': 'слишком часто'}
 
-        monkeypatch.setattr(dating_invite_send, 'dating_send_message', _refused)
-        monkeypatch.setattr(dating_invite_send, 'dating_site_presence', _site())
+        monkeypatch.setattr(invite_send, 'send_message', _refused)
+        monkeypatch.setattr(invite_send, 'site_presence', _site())
         invite_id = await _invite_row(girl)
 
-        assert not (await dating_invite_send.dating_invite_send_one(
+        assert not (await invite_send.invite_send_one(
             dict(await _row(invite_id))))['ok']
 
         back = await _row(invite_id)
@@ -271,7 +271,7 @@ class TestNoDouble:
 
 
 def _site():
-    """Описание сайта — то, что отдаёт `dating_site_presence` из нашей базы.
+    """Описание сайта — то, что отдаёт `site_presence` из нашей базы.
 
     ⚠ Пустое описание здесь законно: транспорт стенду задаёт настройка сайта, а
     не описание. Прежде заглушка изображала карточку соседа (`{'presence': '{}'}`)

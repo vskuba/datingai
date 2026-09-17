@@ -15,11 +15,11 @@ import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.uvicorn.routers.dating.dating_chat import dating_chat_dialogs
+from src.uvicorn.routers.dating.chat import chat_dialogs
 
 pytestmark = pytest.mark.chat
 # Стенд у соседа: заведение анкеты сверяет номер, а круги воркера про него не
-# знают — его нет в `dating_site`.
+# знают — его нет в `site_`.
 STAND_SITE = 999_343
 
 
@@ -74,7 +74,7 @@ async def talk(auth_client):
 
 
 async def _rows(profile_id: int = 0) -> list[dict]:
-    got = await dating_chat_dialogs(site_id=STAND_SITE, profile_id=profile_id,
+    got = await chat_dialogs(site_id=STAND_SITE, profile_id=profile_id,
                                     user=None)
 
     return got['result']['contacts']
@@ -96,7 +96,7 @@ class TestCompanionCard:
 
     В списке висели две строки «без имени» и с пустым квадратом вместо
     фотографии — при том, что и имя, и адрес фотографии лежали в базе рядом, в
-    `dating_companion`.
+    `companion`.
 
     Запрос джойнил только `dating_contact` — собеседниц **этой анкеты**. Строки
     там нет у диалога, где говорили только мы: отправка кладёт реплику в
@@ -152,7 +152,7 @@ class TestCompanionCard:
     async def test_empty_contact_field_falls_through_to_the_card(self, talk):
         """⚠ Пустая строка — не значение, и `COALESCE` тут не годится.
 
-        У `dating_contact.photo` пустая строка — обычное дело: контакт заводится
+        У `contact.photo` пустая строка — обычное дело: контакт заводится
         по списку с сайта, где фотографии может не быть. Считай мы её значением,
         до карточки сайта запрос не дошёл бы никогда — а лицо там есть.
         """
@@ -215,7 +215,7 @@ class TestOnlyAnswered:
     async def test_the_count_matches_the_list(self, talk):
         """⚠ Счёт и список отбирают одинаково: пейджер рисуется по счёту, и
         разойдись они — последняя страница выходила бы пустой."""
-        got = await dating_chat_dialogs(site_id=STAND_SITE, profile_id=0, user=None)
+        got = await chat_dialogs(site_id=STAND_SITE, profile_id=0, user=None)
 
         assert int(got['result']['contacts_total']) >= 1
         assert len(got['result']['contacts']) <= int(got['result']['contacts_total'])

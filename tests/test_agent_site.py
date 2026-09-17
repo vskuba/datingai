@@ -6,7 +6,7 @@
 добыть имя сайта из справочника соседа и привести его к этому формату.
 
 Ведёт список по-прежнему сосед — сайты заводит человек на той стороне, — но имя
-берётся из **нашего снимка** этого списка (`dating_site`), а не запросом его
+берётся из **нашего снимка** этого списка (`site_`), а не запросом его
 карточки. Снимок затем и заведён, чтобы раздел не зависел от соседа в мелочах
 (`api.md`, §3.5); сверка идёт в фоне. Имя там человеческое — `Goldenbride`,
 `Ladadate`, — а уехать должно `goldenbride`, `ladadate`.
@@ -21,7 +21,7 @@
 import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating.dating_agent import dating_agent_site
+from src.dating.agent import agent_site
 
 pytestmark = pytest.mark.profile
 
@@ -47,27 +47,27 @@ class TestSiteSlug:
     async def test_human_name_becomes_slug(self):
         await _snapshot(19, 'Goldenbride')
 
-        assert await dating_agent_site(19) == 'goldenbride'
+        assert await agent_site(19) == 'goldenbride'
 
     async def test_second_site_keeps_its_own_name(self):
         """Метка — имя своего сайта, а не общая для дейтинга: агенты разных сайтов различимы."""
         await _snapshot(19, 'Goldenbride')
         await _snapshot(343, 'Ladadate')
 
-        assert await dating_agent_site(343) == 'ladadate'
-        assert await dating_agent_site(19) == 'goldenbride'
+        assert await agent_site(343) == 'ladadate'
+        assert await agent_site(19) == 'goldenbride'
 
     async def test_spaces_and_signs_are_dropped(self):
         """У соседа формат без пробелов и знаков — чистим сами, а не ловим потом `422`."""
         await _snapshot(7, 'Golden Bride-2!')
         try:
-            assert await dating_agent_site(7) == 'goldenbride2'
+            assert await agent_site(7) == 'goldenbride2'
         finally:
             await _snapshot_drop(7)
 
     async def test_unknown_site_gives_empty(self):
         """Сайта нет — пустая строка, и решает вызывающий. Выдумывать метку нельзя."""
-        assert await dating_agent_site(99999) == ''
+        assert await agent_site(99999) == ''
 
     async def test_a_silent_neighbour_does_not_stop_the_slug(self, rhapsody):
         """⚠⚠ Лежащий сосед метку больше не отнимает.
@@ -79,7 +79,7 @@ class TestSiteSlug:
         await _snapshot(19, 'Goldenbride')
         rhapsody.offline()
 
-        assert await dating_agent_site(19) == 'goldenbride'
+        assert await agent_site(19) == 'goldenbride'
 
     async def test_name_without_latin_gives_empty(self):
         """
@@ -90,7 +90,7 @@ class TestSiteSlug:
         """
         await _snapshot(5, 'Знакомства')
         try:
-            assert await dating_agent_site(5) == ''
+            assert await agent_site(5) == ''
         finally:
             await _snapshot_drop(5)
 

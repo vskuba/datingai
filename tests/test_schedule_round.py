@@ -19,9 +19,9 @@ import uuid
 import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
-from src.dating import dating_schedule_round as rnd
-from src.dating.dating_schedule_round import (dating_schedule_round_drop,
-                                              dating_schedule_round_run)
+from src.dating import schedule_round as rnd
+from src.dating.schedule_round import (schedule_round_drop,
+                                              schedule_round_run)
 
 pytestmark = pytest.mark.profile
 
@@ -113,7 +113,7 @@ class TestRoundFollowsTheSchedule:
     async def test_enters_when_the_shift_starts(self, probe, clock, door):
         clock['hour'] = 9
 
-        result = await dating_schedule_round_run(0)
+        result = await schedule_round_run(0)
 
         assert door['entered'] == [probe]
         assert result['entered'] == 1
@@ -125,19 +125,19 @@ class TestRoundFollowsTheSchedule:
         соседа шестьдесят раз в час вместо одного.
         """
         clock['hour'] = 9
-        await dating_schedule_round_run(0)
+        await schedule_round_run(0)
         door['entered'].clear()
 
-        await dating_schedule_round_run(0)
+        await schedule_round_run(0)
 
         assert door['entered'] == []
 
     async def test_leaves_when_the_shift_ends(self, probe, clock, door):
         clock['hour'] = 9
-        await dating_schedule_round_run(0)
+        await schedule_round_run(0)
 
         clock['hour'] = 12
-        result = await dating_schedule_round_run(0)
+        result = await schedule_round_run(0)
 
         assert [uid for uid, _ in door['left']] == [probe]
         assert result['left'] == 1
@@ -145,7 +145,7 @@ class TestRoundFollowsTheSchedule:
     async def test_does_not_enter_outside_the_shift(self, probe, clock, door):
         clock['hour'] = 3
 
-        await dating_schedule_round_run(0)
+        await schedule_round_run(0)
 
         assert door['entered'] == []
 
@@ -153,10 +153,10 @@ class TestRoundFollowsTheSchedule:
         """⚠ Выход гасит адрес сокета: держатель отпускает соединение по пустому
         адресу, и это единственное, что делает выход немедленным."""
         clock['hour'] = 9
-        await dating_schedule_round_run(0)
+        await schedule_round_run(0)
 
         clock['hour'] = 12
-        await dating_schedule_round_run(0)
+        await schedule_round_run(0)
 
         async with mysql_get_db_async() as db:
             await db.execute('SELECT ws_url, status, storage_state FROM profile'
@@ -185,7 +185,7 @@ class TestRoundDoesNotTouchManualLogins:
                              " ws_url = 'wss://x?t=1' WHERE id = %s", (probe,))
             await db.connection.commit()
 
-        result = await dating_schedule_round_run(0)
+        result = await schedule_round_run(0)
 
         assert result['checked'] == 0, 'круг взял анкету без включённого расписания'
         assert door['left'] == [], 'ручной вход сброшен кругом'
@@ -201,14 +201,14 @@ class TestRoundDoesNotTouchManualLogins:
         """А вот выключенную анкету круг отпускает: «не ведём» значит не ведём
         совсем — даже с включённым расписанием."""
         clock['hour'] = 9
-        await dating_schedule_round_run(0)
+        await schedule_round_run(0)
 
         async with mysql_get_db_async() as db:
             await db.execute('UPDATE profile SET enabled = 0 WHERE id = %s',
                              (probe,))
             await db.connection.commit()
 
-        result = await dating_schedule_round_run(0)
+        result = await schedule_round_run(0)
 
         assert result['dropped'] == 1
         assert door['left'] and 'выключена' in door['left'][-1][1]
@@ -224,7 +224,7 @@ class TestDropIsImmediate:
                              ' WHERE id = %s', (probe,))
             await db.connection.commit()
 
-        assert await dating_schedule_round_drop(probe) is True
+        assert await schedule_round_drop(probe) is True
 
         async with mysql_get_db_async() as db:
             await db.execute('SELECT status, ws_url FROM profile WHERE id = %s',
@@ -236,12 +236,12 @@ class TestDropIsImmediate:
     async def test_drop_of_offline_profile_says_nothing_happened(self, probe):
         """⚠ `False`, когда рвать нечего: говорить человеку «сокет снят» у анкеты,
         которой и не было в сети, — неправда."""
-        assert await dating_schedule_round_drop(probe) is False
+        assert await schedule_round_drop(probe) is False
 
     async def test_drop_of_missing_profile_is_quiet(self):
         """Удалённая анкета — не повод падать: ручка могла прийти по устаревшей
         странице."""
-        assert await dating_schedule_round_drop(99_999_999) is False
+        assert await schedule_round_drop(99_999_999) is False
 
 
 class TestLocalTime:
@@ -279,7 +279,7 @@ class TestSessionIsReleasedToo:
                              " storage_state = '{}' WHERE id = %s", (probe,))
             await db.connection.commit()
 
-        result = await dating_schedule_round_run(0)
+        result = await schedule_round_run(0)
 
         assert result['left'] == 1, 'выход не сработал при живой сессии'
 
@@ -300,7 +300,7 @@ class TestSessionIsReleasedToo:
                              " ws_url = '', storage_state = '{}' WHERE id = %s", (probe,))
             await db.connection.commit()
 
-        assert (await dating_schedule_round_run(0))['dropped'] == 1
+        assert (await schedule_round_run(0))['dropped'] == 1
 
     async def test_nothing_to_release_is_not_a_leave(self, probe, clock, door):
         """⚠ Пустая анкета вне смены выхода **не** считает.
@@ -315,4 +315,4 @@ class TestSessionIsReleasedToo:
                              ' storage_state = NULL WHERE id = %s', (probe,))
             await db.connection.commit()
 
-        assert (await dating_schedule_round_run(0))['left'] == 0
+        assert (await schedule_round_run(0))['left'] == 0

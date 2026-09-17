@@ -2,7 +2,7 @@
 
 Отвечает на вопрос «почему анкета молчит», который по базе не разобрать: адреса
 сокета нет вовсе, адрес есть но соединение рвётся, соединение живо но сообщений
-нет. В `dating_profile` все три выглядят одинаково.
+нет. В `profile_` все три выглядят одинаково.
 
 ⚠ Redis подменён: проверяется сведение двух источников, а не работа держателя.
 """
@@ -12,9 +12,9 @@ import time
 
 import pytest
 
-from src.dating import dating_socket
-from src.dating.dating_socket import (DATING_SOCKET_TTL_SEC, dating_socket_read,
-                                      dating_socket_write)
+from src.dating import socket_
+from src.dating.socket_ import (SOCKET_TTL_SEC, socket_read,
+                                      socket_write)
 
 pytestmark = pytest.mark.chat
 
@@ -54,7 +54,7 @@ class _Task:
 @pytest.fixture
 def redis(monkeypatch):
     fake = _FakeRedis()
-    monkeypatch.setattr(dating_socket, 'redis_conn_get', lambda: fake)
+    monkeypatch.setattr(socket_, 'redis_conn_get', lambda: fake)
 
     return fake
 
@@ -63,12 +63,12 @@ class TestSnapshot:
     """Что кладёт воркер и что читает панель."""
 
     def test_write_then_read(self, redis):
-        dating_socket_write(
+        socket_write(
             {849: {'ws_url': 'wss://site/ws?token=abcdef123456', 'login': 'diana@x',
                    'task': _Task()}},
             {849: 7}, shift_left=1200)
 
-        snapshot = dating_socket_read()
+        snapshot = socket_read()
 
         assert snapshot['alive'] is True
         assert snapshot['holders'][0]['profile_id'] == 849
@@ -84,22 +84,22 @@ class TestSnapshot:
         один адрес от другого при переподключении — ровно за этим на него и
         смотрят.
         """
-        dating_socket_write(
+        socket_write(
             {1: {'ws_url': 'wss://site/ws?token=СЕКРЕТ-ЦЕЛИКОМ', 'login': 'x',
                  'task': _Task()}},
             {}, shift_left=0)
 
-        url = dating_socket_read()['holders'][0]['ws_url']
+        url = socket_read()['holders'][0]['ws_url']
 
         assert 'СЕКРЕТ' not in url and 'token=' not in url
         assert url.startswith('wss://site/ws')
 
     def test_finished_task_is_not_alive(self, redis):
         """Задача кончилась — соединения нет, хотя держатель в списке ещё есть."""
-        dating_socket_write({1: {'ws_url': 'wss://x', 'login': 'x', 'task': _Task(done=True)}},
+        socket_write({1: {'ws_url': 'wss://x', 'login': 'x', 'task': _Task(done=True)}},
                             {}, shift_left=0)
 
-        assert dating_socket_read()['holders'][0]['alive'] is False
+        assert socket_read()['holders'][0]['alive'] is False
 
     def test_ttl_outlives_one_round(self, redis):
         """⚠ Снимок живёт дольше круга смены.
@@ -107,11 +107,11 @@ class TestSnapshot:
         Одного пропущенного круга (сеть моргнула, база задумалась) мало, чтобы
         объявлять держатель мёртвым; двух уже достаточно — значит смена встала.
         """
-        from src.dating.dating_chat_hold import DATING_CHAT_HOLD_RESCAN_SEC
+        from src.dating.chat_hold import CHAT_HOLD_RESCAN_SEC
 
-        dating_socket_write({}, {}, shift_left=0)
+        socket_write({}, {}, shift_left=0)
 
-        assert DATING_SOCKET_TTL_SEC > DATING_CHAT_HOLD_RESCAN_SEC * 2 - 1
+        assert SOCKET_TTL_SEC > CHAT_HOLD_RESCAN_SEC * 2 - 1
 
 
 class TestNoSnapshotIsNotEmpty:
@@ -122,26 +122,26 @@ class TestNoSnapshotIsNotEmpty:
         анкетами. Слей их — и страница показывала бы «сокетов нет» при мёртвом
         воркере, отправляя человека искать не там.
         """
-        snapshot = dating_socket_read()
+        snapshot = socket_read()
 
         assert snapshot['alive'] is False and snapshot['holders'] == []
 
     def test_broken_redis_says_not_alive(self, redis):
         redis.broken = True
 
-        assert dating_socket_read()['alive'] is False
+        assert socket_read()['alive'] is False
 
     def test_junk_says_not_alive(self, redis):
-        redis.store[dating_socket.DATING_SOCKET_KEY] = 'не json'
+        redis.store[socket_.SOCKET_KEY] = 'не json'
 
-        assert dating_socket_read()['alive'] is False
+        assert socket_read()['alive'] is False
 
     def test_write_does_not_raise_on_broken_redis(self, redis):
         """⚠ Сбой записи не должен ронять круг: страница переживёт пустой список,
         анкеты без держателя — нет."""
         redis.broken = True
 
-        assert dating_socket_write({}, {}, shift_left=0) is None
+        assert socket_write({}, {}, shift_left=0) is None
 
 
 class TestHandler:
@@ -155,31 +155,31 @@ class TestHandler:
         снят» — самый частый ответ; спрячь такие строки, и она отвечала бы только
         на половину вопроса.
         """
-        from src.uvicorn.routers.dating.dating_socket import dating_socket_list
+        from src.uvicorn.routers.dating.socket_ import socket_list
 
-        answer = (await dating_socket_list(site_id=343, user=None))['result']
+        answer = (await socket_list(site_id=343, user=None))['result']
 
         assert answer['sockets'], 'анкеты без адреса пропали из списка'
         assert all('has_url' in s for s in answer['sockets'])
 
     async def test_counts_are_over_ready_not_all(self, redis, rhapsody):
         """«Держится из готовых», а не «из всех»: анкета без адреса — не недостача."""
-        from src.uvicorn.routers.dating.dating_socket import dating_socket_list
+        from src.uvicorn.routers.dating.socket_ import socket_list
 
-        answer = (await dating_socket_list(site_id=343, user=None))['result']
+        answer = (await socket_list(site_id=343, user=None))['result']
 
         assert answer['ready'] == sum(1 for s in answer['sockets'] if s['has_url'])
         assert answer['held'] <= answer['ready']
 
     async def test_alive_flag_reaches_the_page(self, redis, rhapsody):
         """Снимка нет — страница должна это знать, а не показывать пустой список."""
-        from src.uvicorn.routers.dating.dating_socket import dating_socket_list
+        from src.uvicorn.routers.dating.socket_ import socket_list
 
-        answer = (await dating_socket_list(site_id=343, user=None))['result']
+        answer = (await socket_list(site_id=343, user=None))['result']
         assert answer['alive'] is False
 
-        dating_socket_write({}, {}, shift_left=600)
-        answer = (await dating_socket_list(site_id=343, user=None))['result']
+        socket_write({}, {}, shift_left=600)
+        answer = (await socket_list(site_id=343, user=None))['result']
 
         assert answer['alive'] is True
 

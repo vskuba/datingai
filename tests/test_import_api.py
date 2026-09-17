@@ -19,8 +19,8 @@
 import pytest
 from fastapi import HTTPException
 
-from src.uvicorn.routers.dating.dating_import import (dating_import_profile,
-                                                      dating_import_ready)
+from src.uvicorn.routers.dating.import_ import (import_profile,
+                                                      import_ready)
 
 pytestmark = pytest.mark.profile
 
@@ -40,7 +40,7 @@ class TestImportReady:
     async def test_site_with_scenario_is_ready(self, rhapsody):
         """Признак берётся у соседа, а не из своей настройки: сценарий заводят там,
         и своя галочка разъехалась бы с ним в день переименования."""
-        result = (await dating_import_ready(SITE_WITH_IMPORT, user=None))['result']
+        result = (await import_ready(SITE_WITH_IMPORT, user=None))['result']
 
         assert result['ready'] is True, result
 
@@ -48,7 +48,7 @@ class TestImportReady:
         """Сайт не выбран — «не готово» с причиной, а не отказ ручки: страница
         открывается до всякого выбора, и 4xx на ровном месте выглядел бы поломкой.
         """
-        result = (await dating_import_ready(user=None))['result']
+        result = (await import_ready(user=None))['result']
 
         assert result['ready'] is False
         assert result['why']
@@ -56,7 +56,7 @@ class TestImportReady:
 
     async def test_site_without_scenario_is_not_ready(self, rhapsody):
         """У сайта нет сценария импорта — кнопка гаснет, и причина сказана словами."""
-        result = (await dating_import_ready(SITE_WITHOUT_IMPORT, user=None))['result']
+        result = (await import_ready(SITE_WITHOUT_IMPORT, user=None))['result']
 
         assert result['ready'] is False
         assert 'сценар' in result['why'].lower(), result['why']
@@ -64,7 +64,7 @@ class TestImportReady:
     async def test_unknown_site_is_not_ready(self, rhapsody):
         """Несуществующий сайт — тоже «не готово», а не 502: у соседа его просто
         нет, и это ответ, а не сбой связи."""
-        result = (await dating_import_ready(SITE_MISSING, user=None))['result']
+        result = (await import_ready(SITE_MISSING, user=None))['result']
 
         assert result['ready'] is False
 
@@ -77,7 +77,7 @@ class TestImportReady:
         """
         rhapsody.refuse(409, 'предел сессий исчерпан: 25')
 
-        result = (await dating_import_ready(SITE_WITH_IMPORT, user=None))['result']
+        result = (await import_ready(SITE_WITH_IMPORT, user=None))['result']
 
         assert result['ready'] is False
         assert 'браузер соседа занят' in result['why'], result['why']
@@ -88,7 +88,7 @@ class TestImportProfile:
 
     async def test_no_site_is_422(self, rhapsody):
         with pytest.raises(HTTPException) as refusal:
-            await dating_import_profile(user=None)
+            await import_profile(user=None)
 
         assert refusal.value.status_code == 422
 
@@ -99,7 +99,7 @@ class TestImportProfile:
         соседней панели, и текст отказа должен так и говорить.
         """
         with pytest.raises(HTTPException) as refusal:
-            await dating_import_profile(SITE_WITHOUT_IMPORT, user=None)
+            await import_profile(SITE_WITHOUT_IMPORT, user=None)
 
         assert refusal.value.status_code == 422
         assert 'сценар' in str(refusal.value.detail).lower()

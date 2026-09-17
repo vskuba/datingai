@@ -52,7 +52,7 @@ import httpx  # noqa: E402 — после правки адреса базы
 import pytest  # noqa: E402
 
 from http_.http_mock import http_mock_guard  # noqa: E402
-from src.dating.dating_request import dating_request_off  # noqa: E402
+from src.dating.request import request_off  # noqa: E402
 from mysql_.mysql_ import mysql_get_db_async, mysql_pool_close  # noqa: E402
 
 # Поддельный сосед. Фикстура объявлена здесь, чтобы её было видно из любого теста
@@ -130,7 +130,7 @@ _BASE_PORT = int((BASE_URL.rsplit(':', 1) + ['80'])[1].split('/')[0])
 # ⚠⚠ **Сторож на сокете не поймал живые входы на ladadate.com, и вот почему.**
 # Он ставился `monkeypatch`'ем на каждый тест и снимался после него — а часть
 # работы уходит в **фоновые задачи**, которых тест не ждёт (списки собеседников
-# так и устроены: ручка не ждёт прогона никогда, `dating_people._refresh_start`).
+# так и устроены: ручка не ждёт прогона никогда, `people._refresh_start`).
 # Задача доживает до следующего теста или до конца прогона, когда сторожа уже нет,
 # и спокойно идёт на живой сайт. В журнале запросов это видно поимённо: четыре
 # настоящих `POST /auth/login` под живыми анкетами за один прогон сюиты, каждый со
@@ -172,9 +172,9 @@ def no_test_rows_in_request_log():
     HTTP: фоновые задачи переживают тест, и выключатель, снятый вместе с тестом,
     их бы не застал.
     """
-    dating_request_off(True)
+    request_off(True)
     yield
-    dating_request_off(False)
+    request_off(False)
 
 
 @pytest.fixture(autouse=True)
@@ -314,7 +314,7 @@ async def _tasks_stop() -> None:
 # ── Сайт в нашем снимке ──────────────────────────────────────────────────────
 #
 # Заведение и правка учётки проверяют номер сайта по **нашему снимку**
-# (`dating_profile_site_known`, `api.md` §3.5), а не вживую у соседа: местная
+# (`profile_site_known`, `api.md` §3.5), а не вживую у соседа: местная
 # работа не должна краснеть от его перезапуска. Снимок наполняется сверкой с
 # меткой `dating`, и стендовой закладки в нём отродясь не лежало — без этой
 # подсадки сюита заводила бы анкеты только после удачной сверки с живым соседом,

@@ -15,13 +15,13 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 from fastapi import HTTPException
 
-from src.dating.dating_chat_panel import (DATING_CHAT_PANEL_PREFIX,
-                                          dating_chat_panel_rows)
-from src.dating import dating_chat_panel
-from src.uvicorn.routers.dating import dating_chat
-from src.dating.dating_chat_panel import DATING_CHAT_PANEL_DAYS_MAX as DATING_CHAT_DAYS_MAX
-from src.uvicorn.routers.dating.dating_chat import (dating_chat_import,
-                                                    dating_chat_ready)
+from src.dating.chat_panel import (CHAT_PANEL_PREFIX,
+                                          chat_panel_rows)
+from src.dating import chat_panel
+from src.uvicorn.routers.dating import chat
+from src.dating.chat_panel import CHAT_PANEL_DAYS_MAX as DATING_CHAT_DAYS_MAX
+from src.uvicorn.routers.dating.chat import (chat_import,
+                                                    chat_ready)
 
 pytestmark = pytest.mark.chat
 
@@ -48,7 +48,7 @@ class TestDirection:
     """⚠ Своя сторона узнаётся по `site_uid`, а не по цвету ячейки."""
 
     def test_message_to_our_profile_is_incoming(self):
-        rows = dating_chat_panel_rows(_extract(ROW), PROFILES)
+        rows = chat_panel_rows(_extract(ROW), PROFILES)
 
         assert len(rows) == 1
         assert rows[0]['profile_id'] == 849
@@ -63,7 +63,7 @@ class TestDirection:
         группировка карточки: положи мы туда автора, исходящие уехали бы в
         отдельный «диалог с самим собой».
         """
-        rows = dating_chat_panel_rows(_extract(_row(
+        rows = chat_panel_rows(_extract(_row(
             **{'от_номер': '643694', 'от': '643694 Diana',
                'кому_номер': '181685', 'кому': '181685 Semen Gorbunkov'})), PROFILES)
 
@@ -77,14 +77,14 @@ class TestDirection:
         Пропуск — не ошибка разбора: приписать чужую переписку своей анкете было
         бы куда хуже.
         """
-        rows = dating_chat_panel_rows(_extract(_row(
+        rows = chat_panel_rows(_extract(_row(
             **{'кому_номер': '999999', 'кому': '999999 Чужая'})), PROFILES)
 
         assert rows == []
 
     def test_both_sides_ours_counts_as_incoming(self):
         """Обе стороны наши — считаем входящим: получателю оно и пришло."""
-        rows = dating_chat_panel_rows(_extract(_row(
+        rows = chat_panel_rows(_extract(_row(
             **{'от_номер': '486221', 'от': '486221 Elena'})), PROFILES)
 
         assert rows[0]['direction'] == 'in' and rows[0]['profile_id'] == 849
@@ -99,14 +99,14 @@ class TestFields:
         У сокета там ULID кадра, здесь числовой номер панели; без приставки они
         однажды сойдутся, и сообщение потеряется как «повтор».
         """
-        rows = dating_chat_panel_rows(_extract(ROW), PROFILES)
+        rows = chat_panel_rows(_extract(ROW), PROFILES)
 
-        assert rows[0]['message_uid'] == DATING_CHAT_PANEL_PREFIX + '36594474'
+        assert rows[0]['message_uid'] == CHAT_PANEL_PREFIX + '36594474'
 
     def test_name_keeps_its_spaces(self):
         """Имя режется по номеру, а не по первому пробелу: «Semen Gorbunkov» иначе
         потерял бы половину."""
-        rows = dating_chat_panel_rows(_extract(ROW), PROFILES)
+        rows = chat_panel_rows(_extract(ROW), PROFILES)
 
         assert rows[0]['sender_name'] == 'Semen Gorbunkov'
 
@@ -114,27 +114,27 @@ class TestFields:
         """⚠ Сайт кладёт полную строку в подсказку, а в теле она может быть
         обрезана вёрсткой. Какая длиннее, заранее не известно."""
         long_text = 'полный текст, который в теле обрезан'
-        rows = dating_chat_panel_rows(_extract(_row(
+        rows = chat_panel_rows(_extract(_row(
             **{'текст': 'полный текст…', 'текст_подсказка': long_text})), PROFILES)
 
         assert rows[0]['text'] == long_text
 
     def test_time_is_taken_as_is(self):
         """Панель подписывает колонку «Date UTC» — перевод был бы догадкой."""
-        rows = dating_chat_panel_rows(_extract(ROW), PROFILES)
+        rows = chat_panel_rows(_extract(ROW), PROFILES)
 
         assert rows[0]['sent_at'] == '2026-09-01 13:11:28'
 
     def test_unreadable_time_does_not_lose_the_message(self):
         """Формат даты сменился — сообщение всё равно наше. Запись ляжет со
         временем импорта: потерять её хуже, чем показать не тем часом."""
-        rows = dating_chat_panel_rows(_extract(_row(**{'когда': 'вчера вечером'})), PROFILES)
+        rows = chat_panel_rows(_extract(_row(**{'когда': 'вчера вечером'})), PROFILES)
 
         assert len(rows) == 1 and rows[0]['sent_at'] == ''
 
     def test_uid_falls_back_to_the_cell(self):
         """Ссылки в ячейке может не оказаться — номер тогда берётся из текста."""
-        rows = dating_chat_panel_rows(_extract(_row(**{'от_номер': ''})), PROFILES)
+        rows = chat_panel_rows(_extract(_row(**{'от_номер': ''})), PROFILES)
 
         assert rows[0]['sender_uid'] == '181685'
 
@@ -144,22 +144,22 @@ class TestRefuses:
 
     def test_row_without_id_is_skipped(self):
         """Без номера сообщения нечем ловить повторы: каждый прогон плодил бы копии."""
-        assert dating_chat_panel_rows(_extract(_row(**{'номер': ''})), PROFILES) == []
+        assert chat_panel_rows(_extract(_row(**{'номер': ''})), PROFILES) == []
 
     def test_empty_text_is_skipped(self):
         """Пустая строка в ленте неотличима от сбоя разбора."""
-        assert dating_chat_panel_rows(_extract(
+        assert chat_panel_rows(_extract(
             _row(**{'текст': '', 'текст_подсказка': ''})), PROFILES) == []
 
     def test_repeat_inside_one_batch_is_dropped(self):
         """Один номер — одна запись, даже если панель показала строку дважды."""
-        rows = dating_chat_panel_rows(_extract(ROW, dict(ROW)), PROFILES)
+        rows = chat_panel_rows(_extract(ROW, dict(ROW)), PROFILES)
 
         assert len(rows) == 1
 
     def test_junk_extract_is_empty(self):
         for extract in ({}, {'сообщения': None}, {'сообщения': ['строка']}, None):
-            assert dating_chat_panel_rows(extract, PROFILES) == []
+            assert chat_panel_rows(extract, PROFILES) == []
 
 
 class TestHandler:
@@ -168,12 +168,12 @@ class TestHandler:
     async def test_ready_says_no_without_a_scenario(self, rhapsody):
         rhapsody.forget_scenarios()
 
-        result = (await dating_chat_ready(343, user=None))['result']
+        result = (await chat_ready(343, user=None))['result']
 
         assert result['ready'] is False and 'сценар' in result['why'].lower()
 
     async def test_ready_says_no_without_a_site(self, rhapsody):
-        result = (await dating_chat_ready(user=None))['result']
+        result = (await chat_ready(user=None))['result']
 
         assert result['ready'] is False
         assert not rhapsody.calls, 'к соседу пошли, не зная сайта'
@@ -182,13 +182,13 @@ class TestHandler:
         """Отказ соседа гасит кнопку, но подсказка другая: чинить человеку разное."""
         rhapsody.refuse(409, 'предел сессий исчерпан: 25')
 
-        result = (await dating_chat_ready(343, user=None))['result']
+        result = (await chat_ready(343, user=None))['result']
 
         assert result['ready'] is False and 'браузер соседа занят' in result['why']
 
     async def test_no_site_is_422(self, rhapsody):
         with pytest.raises(HTTPException) as refusal:
-            await dating_chat_import(user=None)
+            await chat_import(user=None)
 
         assert refusal.value.status_code == 422
 
@@ -201,7 +201,7 @@ class TestHandler:
         нечем прокрутить.
         """
         with pytest.raises(HTTPException) as refusal:
-            await dating_chat_import(343, days=days, user=None)
+            await chat_import(343, days=days, user=None)
 
         assert refusal.value.status_code == 422
 
@@ -212,10 +212,10 @@ class TestHandler:
         вкладка в общем пуле соседа — платить их за ответ, который некуда
         положить, незачем.
         """
-        monkeypatch.setattr(dating_chat_panel, 'dating_chat_panel_profiles', _profiles({}))
+        monkeypatch.setattr(chat_panel, 'chat_panel_profiles', _profiles({}))
 
         with pytest.raises(HTTPException) as refusal:
-            await dating_chat_import(343, user=None)
+            await chat_import(343, user=None)
 
         assert refusal.value.status_code == 422
         assert not rhapsody.calls, 'сценарий погнали, не имея анкет'
@@ -228,11 +228,11 @@ class TestHandler:
         вышло у него.
         """
         _by_scenario(monkeypatch)
-        monkeypatch.setattr(dating_chat_panel, 'dating_chat_panel_profiles', _profiles(PROFILES))
-        monkeypatch.setattr(dating_chat_panel, 'dating_scenario_run',
+        monkeypatch.setattr(chat_panel, 'chat_panel_profiles', _profiles(PROFILES))
+        monkeypatch.setattr(chat_panel, 'scenario_run',
                             _run({'status': 'error', 'step_no': 7, 'error': 'нет таблицы'}))
 
-        answer = (await dating_chat_import(343, user=None))['result']
+        answer = (await chat_import(343, user=None))['result']
 
         assert answer['status'] == 'error' and 'шаге 7' in answer['error']
         assert answer['added'] == 0
@@ -241,12 +241,12 @@ class TestHandler:
         """Диапазон уезжает подстановками в том формате, который принимает панель."""
         seen = {}
         _by_scenario(monkeypatch)
-        monkeypatch.setattr(dating_chat_panel, 'dating_chat_panel_profiles', _profiles(PROFILES))
-        monkeypatch.setattr(dating_chat_panel, 'dating_scenario_run', _run({'status': 'ok'}, seen))
-        monkeypatch.setattr(dating_chat_panel, 'dating_chat_panel_save',
+        monkeypatch.setattr(chat_panel, 'chat_panel_profiles', _profiles(PROFILES))
+        monkeypatch.setattr(chat_panel, 'scenario_run', _run({'status': 'ok'}, seen))
+        monkeypatch.setattr(chat_panel, 'chat_panel_save',
                             _saved({'added': 0, 'same': 0, 'contacts': 0}))
 
-        await dating_chat_import(343, days=7, user=None)
+        await chat_import(343, days=7, user=None)
 
         assert seen['variables']['account_id'] == '0', 'спросили одну анкету вместо всех'
         for key in ('date_from', 'date_to'):
@@ -278,11 +278,11 @@ class TestImportedAnswerThreshold:
         Фикстура `rhapsody` обязательна: заведение анкеты сверяет сайт у соседа, и
         без заглушки тест пошёл бы к нему по-настоящему.
         """
-        from src.uvicorn.routers.dating.dating_profile import (DatingProfileSave,
-                                                               dating_profile_create,
-                                                               dating_profile_delete)
+        from src.uvicorn.routers.dating.profile_ import (DatingProfileSave,
+                                                               profile_create,
+                                                               profile_delete)
 
-        answer = await dating_profile_create(
+        answer = await profile_create(
             # Сайт из списка поддельного соседа: заведение сверяет его у соседа, и
             # выдуманного номера тот не знает. ⚠ Берём **стенд**, а не рабочий
             # сайт: анкета сюиты не должна попадать в круги воркера
@@ -294,7 +294,7 @@ class TestImportedAnswerThreshold:
         yield profile_id
 
         try:
-            await dating_profile_delete(profile_id, user=None)
+            await profile_delete(profile_id, user=None)
         except Exception:
             pass
 
@@ -313,7 +313,7 @@ class TestImportedAnswerThreshold:
     async def test_fresh_panel_message_is_answered(self, dialogue):
         """Свежее привезённое отвечается: иначе у сайта без сокета не отвечалось бы
         ничего."""
-        from src.dating.dating_answer import _waiting_find
+        from src.dating.answer import _waiting_find
 
         await self._put(dialogue, 'panel', age_hours=2)
 
@@ -323,7 +323,7 @@ class TestImportedAnswerThreshold:
         """⚠ Старое привезённое — нет. Импорт за 60 дней остаётся доступным кнопкой,
         и без порога первый же такой прогон дал бы агенту десятки поводов написать
         по старым письмам, живым людям."""
-        from src.dating.dating_answer import _waiting_find
+        from src.dating.answer import _waiting_find
 
         await self._put(dialogue, 'panel', age_hours=48)
 
@@ -340,7 +340,7 @@ class TestImportedAnswerThreshold:
         Порядок вставки здесь и воспроизводит эту ловушку: сперва свежее, потом
         старое, как оно и происходит при импорте после сокета.
         """
-        from src.dating.dating_answer import _waiting_find
+        from src.dating.answer import _waiting_find
 
         await self._put(dialogue, 'socket', age_hours=2)
         await self._put(dialogue, 'panel', age_hours=50)
@@ -353,7 +353,7 @@ class TestImportedAnswerThreshold:
         """Порог только для привезённого: поймавшееся сокетом старое сообщение
         осталось без ответа не потому, что оно старое, а потому что мы не ответили —
         и ответить всё ещё надо."""
-        from src.dating.dating_answer import _waiting_find
+        from src.dating.answer import _waiting_find
 
         await self._put(dialogue, 'socket', age_hours=48)
 
@@ -367,9 +367,9 @@ class TestImportedAnswerThreshold:
         """
         import inspect
 
-        from src.dating import dating_chat_panel
+        from src.dating import chat_panel
 
-        code = inspect.getsource(dating_chat_panel.dating_chat_panel_save)
+        code = inspect.getsource(chat_panel.chat_panel_save)
 
         assert "1, 'panel'" in code
 
@@ -385,7 +385,7 @@ def _by_scenario(monkeypatch) -> None:
     async def _no_panel(site_id):
         return False
 
-    monkeypatch.setattr(dating_chat_panel, '_panel_ready', _no_panel)
+    monkeypatch.setattr(chat_panel, '_panel_ready', _no_panel)
 
 
 def _profiles(rows: dict):

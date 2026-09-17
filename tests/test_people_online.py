@@ -10,14 +10,14 @@
     181685 Semen Gorbunkov | в списке: False | по ленте: True known True
 
 Ответ на «кто в сети прямо сейчас» в панели один — снимок ленты
-(`dating_online.py`): по нему решает отправка, по нему светятся точки в диалогах.
+(`online.py`): по нему решает отправка, по нему светятся точки в диалогах.
 Теперь по нему же светятся карточки любого списка.
 """
 
 import pytest
 
-from src.dating import dating_online
-from src.uvicorn.routers.dating.dating_people import _online_now
+from src.dating import online
+from src.uvicorn.routers.dating.people import _online_now
 
 pytestmark = pytest.mark.core
 
@@ -36,7 +36,7 @@ def feed(monkeypatch):
     def check(site_id, uid):
         return state.get(str(uid), {'online': False, 'known': False, 'age_sec': -1})
 
-    monkeypatch.setattr(dating_online, 'dating_online_check', check)
+    monkeypatch.setattr(online, 'online_check', check)
 
     return state
 

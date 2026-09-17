@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from src.dating.dating_chat import _confirm, _pending_take
+from src.dating.chat import _confirm, _pending_take
 from src.dating.site.site_registry import site_registry_chat
 
 pytestmark = pytest.mark.chat
@@ -281,7 +281,7 @@ def saver(monkeypatch):
     проверить форму разбора иначе нечем. Подменяем ровно три выхода наружу,
     оставляя всю логику разбора настоящей.
     """
-    from src.dating import dating_chat
+    from src.dating import chat
 
     box = _Saver()
 
@@ -298,8 +298,8 @@ def saver(monkeypatch):
                                   'method': METHOD_CONFIRM,
                                   'messageIdForConfirm': message['message_uid']})
 
-    monkeypatch.setattr(dating_chat, '_message_save', save)
-    monkeypatch.setattr(dating_chat, 'dating_log_message_in', log)
-    monkeypatch.setattr(dating_chat, '_confirm', confirm)
+    monkeypatch.setattr(chat, '_message_save', save)
+    monkeypatch.setattr(chat, 'log_message_in', log)
+    monkeypatch.setattr(chat, '_confirm', confirm)
 
     return box

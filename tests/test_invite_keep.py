@@ -50,7 +50,7 @@ class TestTrim:
     """Сколько строк остаётся у пары после подрезки."""
 
     async def test_old_rows_are_cut_to_the_limit(self, girl):
-        from src.dating.dating_invite import _keep_last
+        from src.dating.invite import _keep_last
 
         await _rows(girl, old=5)
 
@@ -61,7 +61,7 @@ class TestTrim:
 
     async def test_the_newest_survive(self, girl):
         """⚠ Остаются **последние**, а не первые попавшиеся."""
-        from src.dating.dating_invite import _keep_last
+        from src.dating.invite import _keep_last
 
         made = await _rows(girl, old=4)
         await _keep_last(girl, UID, 2)
@@ -69,7 +69,7 @@ class TestTrim:
         assert await _ids(girl) == sorted(made)[-2:]
 
     async def test_one_is_a_legal_setting(self, girl):
-        from src.dating.dating_invite import _keep_last
+        from src.dating.invite import _keep_last
 
         await _rows(girl, old=3)
         await _keep_last(girl, UID, 1)
@@ -77,7 +77,7 @@ class TestTrim:
         assert await _count(girl) == 1
 
     async def test_nothing_to_cut_is_not_an_error(self, girl):
-        from src.dating.dating_invite import _keep_last
+        from src.dating.invite import _keep_last
 
         await _rows(girl, old=1)
 
@@ -89,7 +89,7 @@ class TestTodayIsUntouchable:
     """⚠⚠ Сутки неприкосновенны: на них стоит дневной потолок повторов."""
 
     async def test_todays_rows_survive_even_above_the_limit(self, girl):
-        from src.dating.dating_invite import _keep_last
+        from src.dating.invite import _keep_last
 
         await _rows(girl, fresh=6)
 
@@ -99,7 +99,7 @@ class TestTodayIsUntouchable:
 
     async def test_old_are_cut_while_fresh_stay(self, girl):
         """Смешанный случай: старое уходит, сегодняшнее остаётся целиком."""
-        from src.dating.dating_invite import _keep_last
+        from src.dating.invite import _keep_last
 
         await _rows(girl, old=5, fresh=3)
         await _keep_last(girl, UID, 2)
@@ -111,7 +111,7 @@ class TestTodayIsUntouchable:
         """Условие суток — в самом запросе, а не в вызывающем коде."""
         import inspect
 
-        from src.dating.dating_invite import _keep_last
+        from src.dating.invite import _keep_last
 
         code = inspect.getsource(_keep_last)
 
@@ -125,7 +125,7 @@ class TestItRunsOnInsert:
     def test_the_insert_trims(self):
         import inspect
 
-        from src.dating.dating_invite import _put
+        from src.dating.invite import _put
 
         assert '_keep_last(' in inspect.getsource(_put)
 
@@ -136,9 +136,9 @@ class TestItRunsOnInsert:
         """
         import inspect
 
-        from src.dating.dating_invite import dating_invite_make
+        from src.dating.invite import invite_make
 
-        code = inspect.getsource(dating_invite_make)
+        code = inspect.getsource(invite_make)
 
         assert 'keep = await _keep(site_id)' in code
         assert code.index('keep = await _keep') < code.index('for girl, person in')
@@ -156,14 +156,14 @@ class TestItRunsOnInsert:
         Падать из-за необрезанного хвоста значило бы терять работу ради
         опрятности.
         """
-        from src.dating import dating_invite
+        from src.dating import invite
 
         def _broken():
             raise RuntimeError('база отвалилась')
 
         monkeypatch.setattr('mysql_.mysql_.mysql_get_db_async', _broken)
 
-        assert await dating_invite._keep_last(girl, UID, 2) == 0
+        assert await invite._keep_last(girl, UID, 2) == 0
 
 
 async def _rows(profile_id: int, old: int = 0, fresh: int = 0) -> list[int]:

@@ -17,8 +17,8 @@ import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating import dating_chat
-from src.dating.dating_chat import _message_save
+from src.dating import chat
+from src.dating.chat import _message_save
 
 pytestmark = pytest.mark.chat
 
@@ -47,7 +47,7 @@ def feed(monkeypatch):
     """Перехваченная лента: список событий вместо Redis."""
     got = []
 
-    monkeypatch.setattr(dating_chat, 'dating_feed_write',
+    monkeypatch.setattr(chat, 'feed_write',
                         lambda site_id, kind, text, profile_id=0:
                         got.append({'site_id': site_id, 'kind': kind, 'text': text,
                                     'profile_id': profile_id}))
@@ -107,9 +107,9 @@ class TestNotFromThePanel:
     def test_panel_import_writes_no_talk_event(self):
         import inspect
 
-        from src.dating import dating_chat_panel
+        from src.dating import chat_panel
 
-        assert "'talk'" not in inspect.getsource(dating_chat_panel)
+        assert "'talk'" not in inspect.getsource(chat_panel)
 
 
 def _said(text: str) -> dict:

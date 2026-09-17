@@ -18,10 +18,10 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from src.dating import dating_revive_login, dating_revive_round
-from src.dating.dating_revive import dating_revive_plan
-from src.dating.dating_revive_round import (DATING_REVIVE_PROBE_PARALLEL,
-                                            dating_revive_round_run)
+from src.dating import revive_login, revive_round
+from src.dating.revive import revive_plan
+from src.dating.revive_round import (REVIVE_PROBE_PARALLEL,
+                                            revive_round_run)
 
 pytestmark = pytest.mark.profile
 
@@ -29,7 +29,7 @@ NOW = datetime(2026, 8, 18, 12, 0, 0)
 
 
 def _profile(**kw) -> dict:
-    """Строка учётки такой, какой её отдаёт `dating_revive_db_profiles_kept`.
+    """Строка учётки такой, какой её отдаёт `revive_db_profiles_kept`.
 
     Возраст входа приходит числом секунд, а не моментом времени: `logged_in_at`
     пишет `NOW()` базы, и вычитать его из `datetime.now()` контейнера значило бы
@@ -56,7 +56,7 @@ def _login_stub(state: dict, pause=timedelta(0), ok: bool = True, opens: tuple =
 
     Args:
         opens: вкладки, которые вход успевает открыть, парами `(номер, сайт)` —
-            настоящий `dating_login_run` заводит свою до того, как упасть.
+            настоящий `login_run` заводит свою до того, как упасть.
         raises: чем вход обрывается. `None` — доходит до конца.
         session_id: номер вкладки в ответе: вход отдаёт её живой, когда сценарий
             вернул ошибку.
@@ -91,8 +91,8 @@ def _login_stub(state: dict, pause=timedelta(0), ok: bool = True, opens: tuple =
 def round_stub(monkeypatch):
     """Круг с подменёнными краями: без базы, без соседа, без живого сайта.
 
-    Подменяются соседи круга — тонкие функции из `dating_revive_db`,
-    `dating_revive_site` и `dating_revive_login` (они для того и выделены: тяжёлые
+    Подменяются соседи круга — тонкие функции из `revive_db`,
+    `revive_site` и `revive_login` (они для того и выделены: тяжёлые
     импорты живут внутри них, и сюита запускается без зависимостей проекта).
     Порядок работы, счётчики и решения при этом настоящие — беды, ради которых
     написаны эти тесты, живут именно в них.
@@ -170,25 +170,25 @@ def round_stub(monkeypatch):
     # зовёт соседей по именам своего модуля, и патч по месту объявления до него бы
     # не дошёл. Уборка вкладок живёт в модуле входа и подменяется в нём же.
     for module, name, func in (
-            (dating_revive_round, 'dating_revive_db_profiles_kept', profiles_kept),
-            (dating_revive_round, 'dating_revive_site_presence', presence_of),
-            (dating_revive_round, 'dating_revive_db_now', db_now),
-            (dating_revive_round, '_probe_one', probe_one),
-            (dating_revive_round, 'dating_revive_db_probe_save', probe_save),
-            (dating_revive_round, 'dating_revive_db_plan_save', plan_save),
-            (dating_revive_round, 'dating_revive_db_log', log),
-            (dating_revive_round, 'dating_revive_site_error_write', error_write),
-            (dating_revive_round, 'dating_revive_db_site_missing', presence_missing_mark),
-            (dating_revive_login, 'dating_revive_db_log', log),
-            (dating_revive_login, '_sessions_list', sessions_list),
-            (dating_revive_login, '_session_close', session_close)):
+            (revive_round, 'revive_db_profiles_kept', profiles_kept),
+            (revive_round, 'revive_site_presence', presence_of),
+            (revive_round, 'revive_db_now', db_now),
+            (revive_round, '_probe_one', probe_one),
+            (revive_round, 'revive_db_probe_save', probe_save),
+            (revive_round, 'revive_db_plan_save', plan_save),
+            (revive_round, 'revive_db_log', log),
+            (revive_round, 'revive_site_error_write', error_write),
+            (revive_round, 'revive_db_site_missing', presence_missing_mark),
+            (revive_login, 'revive_db_log', log),
+            (revive_login, '_sessions_list', sessions_list),
+            (revive_login, '_session_close', session_close)):
         monkeypatch.setattr(module, name, func)
 
     return state
 
 
 def _apply(profile: dict, plan: dict) -> dict:
-    """Учётка после круга: ровно то, что записал бы `dating_revive_db_plan_save`.
+    """Учётка после круга: ровно то, что записал бы `revive_db_plan_save`.
 
     Нужна там, где проверяется не одно решение, а цепочка кругов: беда с лестницей
     видна только на последовательности, по одному вызову она выглядит безобидно.
@@ -203,7 +203,7 @@ class TestRevivePlan:
 
     def test_online_and_fresh_needs_nothing(self):
         """Вход жив и свеж — трогать нечего."""
-        assert dating_revive_plan(_profile(), online=True, now=NOW)['action'] == 'none'
+        assert revive_plan(_profile(), online=True, now=NOW)['action'] == 'none'
 
     def test_online_but_old_is_refreshed(self):
         """Профилактика: входу больше двадцати часов — обновляем заранее.
@@ -213,7 +213,7 @@ class TestRevivePlan:
         в сети, человеку тут делать нечего.
         """
         profile = _profile(login_age_sec=21 * 3600)
-        plan = dating_revive_plan(profile, online=True, now=NOW)
+        plan = revive_plan(profile, online=True, now=NOW)
 
         assert plan['action'] == 'login'
         assert plan['relogin_since'] is None
@@ -230,11 +230,11 @@ class TestRevivePlan:
         """
         profile = _profile(login_age_sec=3600, logged_in_at=NOW - timedelta(hours=30))
 
-        assert dating_revive_plan(profile, online=True, now=NOW)['action'] == 'none'
+        assert revive_plan(profile, online=True, now=NOW)['action'] == 'none'
 
     def test_no_age_means_old(self):
         """Возраст неизвестен (входа не было) — считаем вход протухшим и обновляем."""
-        assert dating_revive_plan(_profile(login_age_sec=None),
+        assert revive_plan(_profile(login_age_sec=None),
                                   online=True, now=NOW)['action'] == 'login'
 
     def test_planned_login_failure_waits_on_ladder(self):
@@ -246,7 +246,7 @@ class TestRevivePlan:
         """
         profile = _profile(login_age_sec=21 * 3600, relogin_tries=1,
                            relogin_next_at=NOW + timedelta(minutes=4))
-        plan = dating_revive_plan(profile, online=True, now=NOW)
+        plan = revive_plan(profile, online=True, now=NOW)
 
         assert plan['action'] == 'none'
         assert plan['relogin_since'] is None
@@ -257,7 +257,7 @@ class TestRevivePlan:
         """Срок повторного планового входа настал — входим, лестница едет дальше."""
         profile = _profile(login_age_sec=21 * 3600, relogin_tries=1,
                            relogin_next_at=NOW - timedelta(seconds=1))
-        plan = dating_revive_plan(profile, online=True, now=NOW)
+        plan = revive_plan(profile, online=True, now=NOW)
 
         assert plan['action'] == 'login'
         assert plan['relogin_since'] is None
@@ -266,7 +266,7 @@ class TestRevivePlan:
 
     def test_offline_starts_chain(self):
         """Первый отказ начинает череду: попытка через минуту, а не сейчас."""
-        plan = dating_revive_plan(_profile(), online=False, now=NOW)
+        plan = revive_plan(_profile(), online=False, now=NOW)
 
         assert plan['action'] == 'wait'
         assert plan['relogin_since'] == NOW
@@ -277,7 +277,7 @@ class TestRevivePlan:
         """Срок не настал — молчим, попытку не двигаем."""
         profile = _profile(relogin_since=NOW - timedelta(minutes=1),
                            relogin_next_at=NOW + timedelta(minutes=4), relogin_tries=1)
-        plan = dating_revive_plan(profile, online=False, now=NOW)
+        plan = revive_plan(profile, online=False, now=NOW)
 
         assert plan['action'] == 'none'
         assert plan['relogin_since'] == NOW - timedelta(minutes=1)
@@ -288,7 +288,7 @@ class TestRevivePlan:
         """Срок настал — входим, и следующая попытка назначается по лестнице."""
         profile = _profile(relogin_since=NOW - timedelta(minutes=6),
                            relogin_next_at=NOW - timedelta(seconds=1), relogin_tries=1)
-        plan = dating_revive_plan(profile, online=False, now=NOW)
+        plan = revive_plan(profile, online=False, now=NOW)
 
         assert plan['action'] == 'login'
         assert plan['relogin_tries'] == 2
@@ -298,7 +298,7 @@ class TestRevivePlan:
         """Сутки прошли — попытки прекращаются, срок следующей стирается."""
         profile = _profile(relogin_since=NOW - timedelta(hours=25),
                            relogin_next_at=NOW - timedelta(minutes=1), relogin_tries=9)
-        plan = dating_revive_plan(profile, online=False, now=NOW)
+        plan = revive_plan(profile, online=False, now=NOW)
 
         assert plan['action'] == 'give_up'
         assert plan['relogin_next_at'] is None
@@ -308,7 +308,7 @@ class TestRevivePlan:
         тысячу раз, а сосед и журнал должны увидеть только переход."""
         profile = _profile(relogin_since=NOW - timedelta(hours=30), relogin_next_at=None,
                            relogin_tries=12)
-        plan = dating_revive_plan(profile, online=False, now=NOW)
+        plan = revive_plan(profile, online=False, now=NOW)
 
         assert plan['action'] == 'none'
         assert plan['relogin_since'] == NOW - timedelta(hours=30)
@@ -318,13 +318,13 @@ class TestRevivePlan:
     def test_recovery_clears_alarm_but_keeps_ladder(self):
         """Анкета снова в сети — тревога гаснет, откат остаётся.
 
-        Откат обнуляет только удавшийся вход (`dating_login_run`). Стереть его здесь
+        Откат обнуляет только удавшийся вход (`login_run`). Стереть его здесь
         значило бы: сайт полежал минуту, встал — и круг снова волен ходить в браузер
         соседа каждую минуту, потому что паузу забыли.
         """
         profile = _profile(relogin_since=NOW - timedelta(hours=2), relogin_tries=4,
                            relogin_next_at=NOW + timedelta(minutes=90))
-        plan = dating_revive_plan(profile, online=True, now=NOW)
+        plan = revive_plan(profile, online=True, now=NOW)
 
         assert plan['action'] == 'clear'
         assert plan['relogin_since'] is None
@@ -341,7 +341,7 @@ class TestRevivePlan:
         profile = _profile(login_age_sec=23 * 3600,
                            relogin_since=NOW - timedelta(hours=3), relogin_tries=5,
                            relogin_next_at=NOW + timedelta(minutes=30))
-        plan = dating_revive_plan(profile, online=True, now=NOW)
+        plan = revive_plan(profile, online=True, now=NOW)
 
         assert plan['action'] == 'clear'
         assert plan['relogin_since'] is None
@@ -356,7 +356,7 @@ class TestRevivePlan:
         profile = _profile(login_age_sec=30 * 3600,
                            relogin_since=NOW - timedelta(hours=26), relogin_tries=14,
                            relogin_next_at=NOW + timedelta(hours=1))
-        plan = dating_revive_plan(profile, online=True, now=NOW)
+        plan = revive_plan(profile, online=True, now=NOW)
 
         assert plan['action'] == 'clear'
         assert plan['relogin_since'] is None
@@ -367,7 +367,7 @@ class TestRevivePlan:
         profile = _profile(login_age_sec=23 * 3600,
                            relogin_since=NOW - timedelta(hours=3), relogin_tries=3,
                            relogin_next_at=NOW - timedelta(seconds=1))
-        plan = dating_revive_plan(profile, online=True, now=NOW)
+        plan = revive_plan(profile, online=True, now=NOW)
 
         assert plan['action'] == 'login'
         assert plan['relogin_since'] is None
@@ -382,7 +382,7 @@ class TestRevivePlan:
         одного удачного опроса, и по ней «повод новый» ловилось бы посреди живой паузы.
         """
         profile = _profile(relogin_tries=4, relogin_next_at=NOW - timedelta(minutes=30))
-        plan = dating_revive_plan(profile, online=False, now=NOW)
+        plan = revive_plan(profile, online=False, now=NOW)
 
         assert plan['action'] == 'wait'
         assert plan['relogin_since'] == NOW
@@ -397,7 +397,7 @@ class TestRevivePlan:
         назначенного срока туда ходить нельзя независимо от тревоги.
         """
         profile = _profile(relogin_tries=3, relogin_next_at=NOW + timedelta(minutes=40))
-        plan = dating_revive_plan(profile, online=False, now=NOW)
+        plan = revive_plan(profile, online=False, now=NOW)
 
         assert plan['action'] == 'wait'
         assert plan['relogin_since'] == NOW
@@ -414,23 +414,23 @@ class TestRevivePlan:
         """
         profile = _profile()
 
-        down = dating_revive_plan(profile, online=False, now=NOW)
+        down = revive_plan(profile, online=False, now=NOW)
         assert down['action'] == 'wait'
         assert down['relogin_next_at'] == NOW + timedelta(minutes=1)
 
-        first = dating_revive_plan(_apply(profile, down), online=False,
+        first = revive_plan(_apply(profile, down), online=False,
                                    now=NOW + timedelta(minutes=1))
         assert first['action'] == 'login'
         assert first['relogin_tries'] == 1
         assert first['relogin_next_at'] == NOW + timedelta(minutes=6)
 
-        blink = dating_revive_plan(_apply(profile, first), online=True,
+        blink = revive_plan(_apply(profile, first), online=True,
                                    now=NOW + timedelta(minutes=2))
         assert blink['action'] == 'clear'
         assert blink['relogin_since'] is None
         assert blink['relogin_next_at'] == NOW + timedelta(minutes=6)
 
-        again = dating_revive_plan(_apply(profile, blink), online=False,
+        again = revive_plan(_apply(profile, blink), online=False,
                                    now=NOW + timedelta(minutes=3))
         assert again['action'] == 'wait'
         assert again['relogin_since'] == NOW + timedelta(minutes=3)
@@ -438,7 +438,7 @@ class TestRevivePlan:
         assert again['relogin_next_at'] == NOW + timedelta(minutes=6)
 
         # Второй вход — не раньше срока, назначенного первым: лестница цела.
-        early = dating_revive_plan(_apply(profile, again), online=False,
+        early = revive_plan(_apply(profile, again), online=False,
                                    now=NOW + timedelta(minutes=4))
         assert early['action'] == 'none'
         assert early['relogin_next_at'] == NOW + timedelta(minutes=6)
@@ -458,7 +458,7 @@ class TestReviveRoundOrder:
         round_stub['profiles'] = _profiles(8)
         round_stub['probe_pause'] = 0.05
 
-        counts = await dating_revive_round_run(login_run=_login_stub(round_stub))
+        counts = await revive_round_run(login_run=_login_stub(round_stub))
 
         assert counts['checked'] == 8
         assert counts['online'] == 8
@@ -466,12 +466,12 @@ class TestReviveRoundOrder:
 
     async def test_probes_do_not_flood(self, round_stub):
         """Разом — но не все: у соседа и у сайта есть предел, отсюда ограничитель."""
-        round_stub['profiles'] = _profiles(DATING_REVIVE_PROBE_PARALLEL + 5)
+        round_stub['profiles'] = _profiles(REVIVE_PROBE_PARALLEL + 5)
         round_stub['probe_pause'] = 0.02
 
-        await dating_revive_round_run(login_run=_login_stub(round_stub))
+        await revive_round_run(login_run=_login_stub(round_stub))
 
-        assert round_stub['probe_peak'] == DATING_REVIVE_PROBE_PARALLEL
+        assert round_stub['probe_peak'] == REVIVE_PROBE_PARALLEL
 
     async def test_logins_go_one_at_a_time(self, round_stub):
         """Входы — строго по одному, и это требование не обсуждается.
@@ -481,7 +481,7 @@ class TestReviveRoundOrder:
         """
         round_stub['profiles'] = _profiles(4, login_age_sec=21 * 3600)
 
-        counts = await dating_revive_round_run(login_run=_login_stub(round_stub))
+        counts = await revive_round_run(login_run=_login_stub(round_stub))
 
         assert counts['tried'] == 4
         assert counts['revived'] == 4
@@ -501,7 +501,7 @@ class TestReviveRoundOrder:
                      relogin_tries=1, relogin_next_at=NOW + timedelta(minutes=2))]
         round_stub['status'] = {2: 'offline'}
 
-        await dating_revive_round_run(
+        await revive_round_run(
             login_run=_login_stub(round_stub, pause=timedelta(minutes=5)))
 
         assert round_stub['logins'] == [1, 2]
@@ -528,7 +528,7 @@ class TestReviveRoundCleanup:
         """
         round_stub['profiles'] = self._profile_due()
 
-        counts = await dating_revive_round_run(
+        counts = await revive_round_run(
             login_run=_login_stub(round_stub, opens=(('new', 1),),
                                   raises=RuntimeError('сосед не ответил')))
 
@@ -545,7 +545,7 @@ class TestReviveRoundCleanup:
         round_stub['profiles'] = self._profile_due()
 
         with pytest.raises(asyncio.CancelledError):
-            await dating_revive_round_run(
+            await revive_round_run(
                 login_run=_login_stub(round_stub, opens=(('new', 1),),
                                       raises=asyncio.CancelledError()))
 
@@ -559,7 +559,7 @@ class TestReviveRoundCleanup:
         """
         round_stub['profiles'] = self._profile_due()
 
-        await dating_revive_round_run(
+        await revive_round_run(
             login_run=_login_stub(round_stub, ok=False, opens=(('kept', 1),),
                                   session_id='kept'))
 
@@ -578,7 +578,7 @@ class TestReviveRoundCleanup:
         round_stub['profiles'] = self._profile_due()
         round_stub['sessions'] = [{'session_id': 'human', 'name': 'g1', 'site_id': 1}]
 
-        await dating_revive_round_run(
+        await revive_round_run(
             login_run=_login_stub(round_stub,
                                   raises=RuntimeError('для сайта нет сценария входа')))
 
@@ -589,7 +589,7 @@ class TestReviveRoundCleanup:
         round_stub['profiles'] = self._profile_due()
         round_stub['sessions'] = [{'session_id': 'human', 'name': 'g1', 'site_id': 1}]
 
-        await dating_revive_round_run(
+        await revive_round_run(
             login_run=_login_stub(round_stub, opens=(('new', 1),),
                                   raises=RuntimeError('сосед не ответил')))
 
@@ -603,7 +603,7 @@ class TestReviveRoundCleanup:
         """
         round_stub['profiles'] = self._profile_due()
 
-        await dating_revive_round_run(
+        await revive_round_run(
             login_run=_login_stub(round_stub, opens=(('new', 1), ('twin', 2)),
                                   raises=RuntimeError('сосед не ответил')))
 
@@ -619,7 +619,7 @@ class TestReviveRoundCleanup:
         round_stub['profiles'] = self._profile_due()
         round_stub['close_raises'] = RuntimeError('сосед не ответил на закрытие')
 
-        counts = await dating_revive_round_run(
+        counts = await revive_round_run(
             login_run=_login_stub(round_stub, opens=(('new', 1),),
                                   raises=RuntimeError('пароль не подошёл')))
 
@@ -634,7 +634,7 @@ class TestReviveRoundProbeFailure:
     async def test_broken_probe_does_not_break_the_round(self, round_stub):
         """Опрос бросил — анкета считается не в сети, остальные проверяются дальше.
 
-        Сейчас круг держится только на том, что `dating_presence_probe` глушит своё
+        Сейчас круг держится только на том, что `presence_probe` глушит своё
         внутри. Гарантии нет: cookie из `storage_state` читаются **до** его `try`, и
         кривое состояние (`cookies` списком строк) бросит наружу. Без перехвата круг
         обрывался бы целиком — и не разово: следующий круг споткнулся бы о ту же
@@ -643,7 +643,7 @@ class TestReviveRoundProbeFailure:
         round_stub['profiles'] = _profiles(3)
         round_stub['probe_raise'] = {2: TypeError('cookies списком строк')}
 
-        counts = await dating_revive_round_run(login_run=_login_stub(round_stub))
+        counts = await revive_round_run(login_run=_login_stub(round_stub))
 
         assert counts['checked'] == 3
         # Две живые анкеты посчитаны, сломанная — нет, но круг дошёл до конца.
@@ -659,7 +659,7 @@ class TestReviveRoundProbeFailure:
         round_stub['profiles'] = _profiles(1)
         round_stub['probe_raise'] = {1: TypeError('cookies списком строк')}
 
-        await dating_revive_round_run(login_run=_login_stub(round_stub))
+        await revive_round_run(login_run=_login_stub(round_stub))
 
         profile_id, plan = round_stub['saved'][0]
         assert (profile_id, plan['action']) == (1, 'wait')
@@ -684,7 +684,7 @@ class TestReviveRoundLoginResult:
                                            relogin_next_at=NOW - timedelta(seconds=1))]
         round_stub['status'] = {1: 'error'}
 
-        counts = await dating_revive_round_run(login_run=_login_stub(round_stub))
+        counts = await revive_round_run(login_run=_login_stub(round_stub))
 
         assert round_stub['logins'] == [1]
         assert counts['revived'] == 1
@@ -698,7 +698,7 @@ class TestReviveRoundLoginResult:
                                            relogin_next_at=NOW - timedelta(seconds=1))]
         round_stub['status'] = {1: 'error'}
 
-        counts = await dating_revive_round_run(login_run=_login_stub(round_stub, ok=False))
+        counts = await revive_round_run(login_run=_login_stub(round_stub, ok=False))
 
         assert counts['revived'] == 0
         assert [text for _, _, text in round_stub['logs'] if 'не вышло' in text]
@@ -718,7 +718,7 @@ class TestReviveRoundSiteMissing:
         round_stub['profiles'] = _profiles(3)
         round_stub['presence'] = {1: {}}
 
-        counts = await dating_revive_round_run(login_run=_login_stub(round_stub))
+        counts = await revive_round_run(login_run=_login_stub(round_stub))
 
         assert [profile_id for profile_id, _ in round_stub['missing']] == [1, 2, 3]
         assert all('опрос' in why for _, why in round_stub['missing'])
@@ -736,7 +736,7 @@ class TestReviveRoundSiteMissing:
         round_stub['profiles'] = _profiles(2)
         round_stub['presence'] = {1: {}}
 
-        await dating_revive_round_run(login_run=_login_stub(round_stub))
+        await revive_round_run(login_run=_login_stub(round_stub))
 
         assert round_stub['saved'] == []
         assert round_stub['logins'] == []
@@ -745,7 +745,7 @@ class TestReviveRoundSiteMissing:
         """У настроенного сайта пометок нет вовсе — иначе она обесценится."""
         round_stub['profiles'] = _profiles(2)
 
-        await dating_revive_round_run(login_run=_login_stub(round_stub))
+        await revive_round_run(login_run=_login_stub(round_stub))
 
         assert round_stub['missing'] == []
 
@@ -756,7 +756,7 @@ class TestReviveRoundBackoff:
     async def test_lost_backoff_cancels_the_login(self, round_stub):
         """Запись отката не легла — входить в этом круге нельзя.
 
-        `dating_revive_db_plan_save` гасит исключение, как и положено журналам. Но если строка не
+        `revive_db_plan_save` гасит исключение, как и положено журналам. Но если строка не
         записалась, а вход всё равно состоялся, следующий круг увидит прежний, уже
         наступивший срок и войдёт снова через минуту — и так до бесконечности. Это
         единственный путь, где лестницу можно превысить; пропущенная попытка
@@ -765,7 +765,7 @@ class TestReviveRoundBackoff:
         round_stub['profiles'] = _profiles(2, login_age_sec=21 * 3600)
         round_stub['plan_saved'] = False
 
-        counts = await dating_revive_round_run(login_run=_login_stub(round_stub))
+        counts = await revive_round_run(login_run=_login_stub(round_stub))
 
         assert round_stub['logins'] == []
         assert counts['tried'] == 0
@@ -774,7 +774,7 @@ class TestReviveRoundBackoff:
         """Откат записан — попытка идёт как обычно: пропускаем только потерю записи."""
         round_stub['profiles'] = _profiles(2, login_age_sec=21 * 3600)
 
-        counts = await dating_revive_round_run(login_run=_login_stub(round_stub))
+        counts = await revive_round_run(login_run=_login_stub(round_stub))
 
         assert round_stub['logins'] == [1, 2]
         assert counts['tried'] == 2

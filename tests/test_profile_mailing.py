@@ -1,8 +1,8 @@
 """⚠ Рассылка писем: столбец жив, отбор его не читает.
 
-`dating_profile.mailing_on` заводился как третий выключатель анкеты — «шлём ли от
+`profile_.mailing_on` заводился как третий выключатель анкеты — «шлём ли от
 неё рассылку». Отбор рассылки его больше не спрашивает: в неё идут **все**
-включённые анкеты, которые сейчас в сети (`dating_mailing._girls`). Разложенное по
+включённые анкеты, которые сейчас в сети (`mailing._girls`). Разложенное по
 учёткам решение означало тринадцать включений, а забытая анкета молча не писала.
 
 ⚠ **Столбец и ручка остались, и проверяются здесь именно они.** Удалить столбец —
@@ -24,16 +24,16 @@ import uuid
 import pytest
 from fastapi import HTTPException
 
-from src.uvicorn.routers.dating.dating_profile import (DatingProfileSave,
-                                                       dating_profile_create,
-                                                       dating_profile_delete,
-                                                       dating_profile_list,
-                                                       dating_profile_row)
-from src.uvicorn.routers.dating.dating_profile_action import (
+from src.uvicorn.routers.dating.profile_ import (DatingProfileSave,
+                                                       profile_create,
+                                                       profile_delete,
+                                                       profile_list,
+                                                       profile_row)
+from src.uvicorn.routers.dating.profile_action import (
     DatingProfileAuto, DatingProfileEnabled, DatingProfileMailing,
-    dating_profile_action_auto, dating_profile_action_enabled,
-    dating_profile_action_mailing)
-from src.uvicorn.routers.dating.dating_profile_view import dating_profile_view_card
+    profile_action_auto, profile_action_enabled,
+    profile_action_mailing)
+from src.uvicorn.routers.dating.profile_view import profile_view_card
 
 pytestmark = pytest.mark.mail
 SITE = 343
@@ -46,7 +46,7 @@ async def profile(rhapsody):
     ⚠ Чужую трогать нельзя: щёлкая её флагами, сюита меняла бы работу настоящей
     учётки — и человек искал бы поломку там, где её нет.
     """
-    answer = await dating_profile_create(
+    answer = await profile_create(
         DatingProfileSave(site_id=SITE, login=f'mailing-{uuid.uuid4().hex[:10]}',
                           password='secret', note='тест рассылки'),
         user=None)
@@ -55,7 +55,7 @@ async def profile(rhapsody):
     yield profile_id
 
     try:
-        await dating_profile_delete(profile_id, user=None)
+        await profile_delete(profile_id, user=None)
     except HTTPException:
         pass
 
@@ -86,13 +86,13 @@ class TestMailingEndpoint:
         Состояния «ведём руками, рассылка идёт» и «отвечаем в чате, не рассылаем»
         законны. Задень один флаг другим — и они стали бы недостижимы.
         """
-        await dating_profile_action_auto(
+        await profile_action_auto(
             profile, DatingProfileAuto(auto_answer=False), request=None, user=None)
         await _set(profile, True)
-        await dating_profile_action_enabled(
+        await profile_action_enabled(
             profile, DatingProfileEnabled(enabled=False), user=None)
 
-        row = await dating_profile_row(profile)
+        row = await profile_row(profile)
 
         assert bool(row['mailing_on']) is True, 'выключение анкеты сбросило рассылку'
         assert bool(row['auto_answer']) is False, 'рассылка вернула автоответ'
@@ -106,7 +106,7 @@ class TestMailingEndpoint:
         держится.
         """
         await _set(profile, True)
-        card = (await dating_profile_view_card(profile, user=None))['result']
+        card = (await profile_view_card(profile, user=None))['result']
 
         assert card['mailing_on'] is True
 
@@ -118,7 +118,7 @@ class TestMailingEndpoint:
         из `test_profile_enabled.py`: тот же урок, тот же способ проверки.
         """
         await _set(profile, True)
-        rows = (await dating_profile_list(site_id=SITE, user=None))['result']
+        rows = (await profile_list(site_id=SITE, user=None))['result']
         found = next(row for row in rows if int(row['id']) == profile)
 
         assert found['mailing_on'] is True
@@ -126,7 +126,7 @@ class TestMailingEndpoint:
     async def test_mailing_reaches_the_list_over_http(self, rhapsody, profile, auth_client):
         """Тот же список, но по-настоящему по HTTP — где поле и терялось.
 
-        Соседний тест зовёт `dating_profile_list` в процессе и сериализацию
+        Соседний тест зовёт `profile_list` в процессе и сериализацию
         FastAPI обходит стороной: что вернула функция, то и получил тест. Здесь
         ответ идёт через реальный HTTP-стек панели, и `response_model`, не
         объявивший поле, отбрасывает его молча — без исключения, без падения,
@@ -170,7 +170,7 @@ class TestPageCarriesTheBoxes:
     сразу, а мёртвую галочку — только щелчком.
 
     ⚠ **«Чат автоответ» отсюда ушёл.** Решение переехало на сайт
-    (`dating_site.chat_answer_on`) и живёт на «Профилях», в полосе подвкладок
+    (`site_.chat_answer_on`) и живёт на «Профилях», в полосе подвкладок
     «Чата» — рядом с диалогами, то есть там, где на чат и смотрят. Прежде, чтобы
     его поднять, человек уходил на «Анкеты», искал учётку и щёлкал, не видя ни
     одного разговора; а разложенное по сорока анкетам, оно требовало сорока
@@ -181,7 +181,7 @@ class TestPageCarriesTheBoxes:
         """⚠ Сторож переезда: галочки «Письма рассылка» на «Анкетах» больше нет.
 
         Вернись она — решений стало бы два: одно у анкеты, другое в отборе
-        (`dating_mailing._girls` берёт всех, кто в сети), и человек, снявший
+        (`mailing._girls` берёт всех, кто в сети), и человек, снявший
         галочку, гадал бы, почему письма всё равно идут. Тот же сторож и та же
         причина, что у «Чат автоответа» ниже.
 
@@ -210,9 +210,9 @@ class TestPageCarriesTheBoxes:
 
 
 async def _set(profile_id: int, mailing_on: bool) -> None:
-    await dating_profile_action_mailing(
+    await profile_action_mailing(
         profile_id, DatingProfileMailing(mailing_on=mailing_on), user=None)
 
 
 async def _mailing(profile_id: int) -> bool:
-    return bool((await dating_profile_row(profile_id))['mailing_on'])
+    return bool((await profile_row(profile_id))['mailing_on'])

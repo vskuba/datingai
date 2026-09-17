@@ -10,12 +10,12 @@
 
 import pytest
 
-from src.dating.dating_error import (DATING_ERROR_SITES_SYNC, dating_error_clear,
-                                     dating_error_rows)
-from src.uvicorn.routers.dating import dating_site, dating_site_sync
-from src.uvicorn.routers.dating.dating_site import dating_site_rows
-from src.uvicorn.routers.dating.dating_site_sync import (dating_site_sync_now,
-                                                         dating_site_sync_start)
+from src.dating.error import (ERROR_SITES_SYNC, error_clear,
+                                     error_rows)
+from src.uvicorn.routers.dating import site_, site_sync
+from src.uvicorn.routers.dating.site_ import site_rows
+from src.uvicorn.routers.dating.site_sync import (site_sync_now,
+                                                         site_sync_start)
 from src.uvicorn.routers.site import site_list
 
 pytestmark = pytest.mark.core
@@ -32,19 +32,19 @@ async def synced(rhapsody):
     """
     await _sync_stop()
     _guards_clear()
-    await dating_site_sync_now()
+    await site_sync_now()
 
     yield rhapsody
 
     await _sync_stop()
     _guards_clear()
-    await dating_error_clear(DATING_ERROR_SITES_SYNC)
+    await error_clear(ERROR_SITES_SYNC)
 
 
 def _guards_clear() -> None:
-    dating_site_sync._sync_task = None
-    dating_site_sync._sync_at[0] = 0.0
-    dating_site_sync._sync_error[0] = ''
+    site_sync._sync_task = None
+    site_sync._sync_at[0] = 0.0
+    site_sync._sync_error[0] = ''
 
 
 async def _sync_stop() -> None:
@@ -55,7 +55,7 @@ async def _sync_stop() -> None:
     соединение, и закрытие пула ждёт его вечно. Так и вышло — сюита повисла на
     первом же прогоне.
     """
-    task = dating_site_sync._sync_task
+    task = site_sync._sync_task
     if task and not task.done():
         task.cancel()
         try:
@@ -68,7 +68,7 @@ class TestSnapshot:
     """Что лежит в снимке и что из него показывается."""
 
     async def test_sync_fills_the_snapshot(self, synced):
-        rows = {row['id']: row for row in await dating_site_rows()}
+        rows = {row['id']: row for row in await site_rows()}
 
         assert LADA in rows and GOLD in rows
         assert rows[LADA]['name'] == 'Ladadate' and rows[LADA]['url']
@@ -81,9 +81,9 @@ class TestSnapshot:
         отвечает. Живёт расхождение ровно столько, сколько сосед недоступен.
         """
         synced.sites[0]['name'] = 'Ladadate новое имя'
-        await dating_site_sync_now()
+        await site_sync_now()
 
-        rows = {row['id']: row for row in await dating_site_rows()}
+        rows = {row['id']: row for row in await site_rows()}
 
         assert rows[LADA]['name'] == 'Ladadate новое имя'
 
@@ -91,9 +91,9 @@ class TestSnapshot:
         """Закладку убрали у соседа — из селекта она уходит: предлагать её к выбору
         значит обещать работу, которой не будет."""
         synced.sites = [site for site in synced.sites if site['id'] != GOLD]
-        await dating_site_sync_now()
+        await site_sync_now()
 
-        assert GOLD not in [row['id'] for row in await dating_site_rows()]
+        assert GOLD not in [row['id'] for row in await site_rows()]
 
     async def test_gone_site_keeps_its_settings(self, synced):
         """⚠ Ушедший сайт **метится, а не удаляется**.
@@ -102,23 +102,23 @@ class TestSnapshot:
         убрать по ошибке или на время — восстановить её у соседа куда проще, чем
         вспомнить, что было настроено здесь.
         """
-        from src.uvicorn.routers.dating.dating_site import dating_site_save, DatingSiteSave
+        from src.uvicorn.routers.dating.site_ import site_save, DatingSiteSave
 
-        await dating_site_save(GOLD, DatingSiteSave(settings={'тест_снимок': '1'}), user=None)
+        await site_save(GOLD, DatingSiteSave(settings={'тест_снимок': '1'}), user=None)
         try:
             synced.sites = [site for site in synced.sites if site['id'] != GOLD]
-            await dating_site_sync_now()
+            await site_sync_now()
 
             # Закладку вернули: сайт снова в списке, и настройки должны быть на месте.
             synced.sites = [{'id': GOLD, 'name': 'Goldenbride',
                              'url': 'https://goldenbride.net', 'tags': 'dating'}]
-            await dating_site_sync_now()
+            await site_sync_now()
 
-            from src.uvicorn.routers.dating.dating_site import dating_site_setting
+            from src.uvicorn.routers.dating.site_ import site_setting
 
-            assert await dating_site_setting(GOLD, 'тест_снимок') == '1', 'настройки потеряны'
+            assert await site_setting(GOLD, 'тест_снимок') == '1', 'настройки потеряны'
         finally:
-            await dating_site_save(GOLD, DatingSiteSave(settings={}), user=None)
+            await site_save(GOLD, DatingSiteSave(settings={}), user=None)
 
 
 class TestNeighbourDown:
@@ -141,9 +141,9 @@ class TestNeighbourDown:
         """
         synced.offline()
         _guards_clear()
-        await dating_site_sync_now()
+        await site_sync_now()
 
-        assert len(await dating_site_rows()) == 2
+        assert len(await site_rows()) == 2
 
     async def test_refusal_lands_on_the_errors_page(self, synced):
         """Отказ сверки виден на «Ошибках», а не вместо списка.
@@ -153,10 +153,10 @@ class TestNeighbourDown:
         """
         synced.offline()
         _guards_clear()
-        await dating_site_sync_now()
+        await site_sync_now()
 
-        rows = [row for row in await dating_error_rows()
-                if row['source'] == DATING_ERROR_SITES_SYNC]
+        rows = [row for row in await error_rows()
+                if row['source'] == ERROR_SITES_SYNC]
 
         assert rows, 'отказ сверки нигде не записан'
         assert 'RhapsodyAi недоступен' in rows[0]['message']
@@ -171,10 +171,10 @@ class TestNeighbourDown:
         synced.offline()
         for _ in range(3):
             _guards_clear()
-            await dating_site_sync_now()
+            await site_sync_now()
 
-        rows = [row for row in await dating_error_rows()
-                if row['source'] == DATING_ERROR_SITES_SYNC]
+        rows = [row for row in await error_rows()
+                if row['source'] == ERROR_SITES_SYNC]
 
         assert len(rows) == 1, f'строк отказа: {len(rows)}'
         assert rows[0]['hits'] >= 3, 'повторы не считаются'
@@ -184,21 +184,21 @@ class TestNeighbourDown:
         оставь мы её после починки — странице перестали бы верить."""
         synced.offline()
         _guards_clear()
-        await dating_site_sync_now()
+        await site_sync_now()
 
         synced._offline = ''
         _guards_clear()
-        await dating_site_sync_now()
+        await site_sync_now()
 
-        assert not [row for row in await dating_error_rows()
-                    if row['source'] == DATING_ERROR_SITES_SYNC]
+        assert not [row for row in await error_rows()
+                    if row['source'] == ERROR_SITES_SYNC]
 
     async def test_settings_page_does_not_502(self, synced):
         """Страница настроек тоже переживает: 502 отсюда больше не приходит."""
         synced.offline()
         _guards_clear()
 
-        answer = await dating_site.dating_site_list(user=None)
+        answer = await site_.site_list(user=None)
 
         assert len(answer['result']['sites']) == 2
 
@@ -215,11 +215,11 @@ class TestSyncGuards:
         _guards_clear()
         synced.calls.clear()
 
-        assert dating_site_sync_start() is True
-        assert dating_site_sync_start() is True, 'вторая должна увидеть первую, а не завести свою'
+        assert site_sync_start() is True
+        assert site_sync_start() is True, 'вторая должна увидеть первую, а не завести свою'
 
         # Дожидаемся, а не гасим: проверяем, сколько запросов ушло соседу.
-        await dating_site_sync._sync_task
+        await site_sync._sync_task
 
         # Один вопрос соседу на две страницы — ради этого сторож и стоит.
         asks = [call for call in synced.calls if '/api/browser/site' in call[1]]
@@ -230,7 +230,7 @@ class TestSyncGuards:
         """После сверки следующая — не раньше выдержки: иначе список сайтов
         спрашивался бы у соседа на каждый щелчок по меню."""
         _guards_clear()
-        await dating_site_sync_now()
-        dating_site_sync._sync_at[0] = __import__('time').time()
+        await site_sync_now()
+        site_sync._sync_at[0] = __import__('time').time()
 
-        assert dating_site_sync_start() is False
+        assert site_sync_start() is False

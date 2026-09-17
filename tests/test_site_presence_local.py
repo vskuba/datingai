@@ -15,15 +15,15 @@
 
 ⚠ **Кеш эту беду не лечит, и это был первый неверный ответ.** Кеш признаёт, что
 настройка живёт не там, где её читают. Настройки сайтов у нас и так свои —
-`dating_site.settings`, страница «Сайты», правка человеком.
+`site_.settings`, страница «Сайты», правка человеком.
 """
 
 import json
 
 import pytest
 
-from src.dating.dating_site_presence import (dating_site_presence,
-                                             dating_site_presence_neighbour)
+from src.dating.site_presence import (site_presence,
+                                             site_presence_neighbour)
 
 pytestmark = pytest.mark.profile
 
@@ -51,13 +51,13 @@ class TestOwnSettingWins:
 
     async def test_the_neighbour_is_not_asked(self, monkeypatch):
         """Сосед подменяется взрывом: дойдёт вызов — тест назовёт причину."""
-        import src.dating.dating_site_presence as module
+        import src.dating.site_presence as module
 
-        monkeypatch.setattr('src.uvicorn.routers.dating.dating_site.dating_site_setting',
+        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_setting',
                             _own(json.dumps(CONFIG)))
-        monkeypatch.setattr(module, 'dating_site_presence_neighbour', _boom)
+        monkeypatch.setattr(module, 'site_presence_neighbour', _boom)
 
-        assert (await dating_site_presence(343))['send']['transport'] == 'http'
+        assert (await site_presence(343))['send']['transport'] == 'http'
 
     async def test_a_broken_setting_is_not_a_config(self, monkeypatch):
         """⚠ Мусор в поле читается как «не настроено», а не роняет петлю.
@@ -65,16 +65,16 @@ class TestOwnSettingWins:
         Поле правится руками, то есть сломанным бывает по определению. Брось мы
         отсюда — упал бы держатель, а вместе с ним чат всех сайтов сразу.
         """
-        monkeypatch.setattr('src.uvicorn.routers.dating.dating_site.dating_site_setting',
+        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_setting',
                             _own('{сломано}'))
 
         async def _nothing(site_id):
             return {}
 
-        import src.dating.dating_site_presence as module
-        monkeypatch.setattr(module, 'dating_site_presence_neighbour', _nothing)
+        import src.dating.site_presence as module
+        monkeypatch.setattr(module, 'site_presence_neighbour', _nothing)
 
-        assert await dating_site_presence(343) == {}
+        assert await site_presence(343) == {}
 
 
 class TestNeighbourIsTheFallback:
@@ -86,17 +86,17 @@ class TestNeighbourIsTheFallback:
     """
 
     async def test_without_own_setting_the_neighbour_answers(self, monkeypatch):
-        import src.dating.dating_site_presence as module
+        import src.dating.site_presence as module
 
-        monkeypatch.setattr('src.uvicorn.routers.dating.dating_site.dating_site_setting',
+        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_setting',
                             _own(''))
 
         async def _neighbour(site_id):
             return {'base': 'https://neighbour.test'}
 
-        monkeypatch.setattr(module, 'dating_site_presence_neighbour', _neighbour)
+        monkeypatch.setattr(module, 'site_presence_neighbour', _neighbour)
 
-        assert (await dating_site_presence(343))['base'] == 'https://neighbour.test'
+        assert (await site_presence(343))['base'] == 'https://neighbour.test'
 
     async def test_a_silent_neighbour_is_emptiness_not_a_failure(self, monkeypatch):
         """Молчание соседа — пустое описание, а не исключение наверх."""
@@ -107,7 +107,7 @@ class TestNeighbourIsTheFallback:
 
         monkeypatch.setattr(rhapsody_api, 'rhapsody_api_site_get', _dead)
 
-        assert await dating_site_presence_neighbour(343) == {}
+        assert await site_presence_neighbour(343) == {}
 
 
 class TestLoopsDoNotAskTheNeighbour:
@@ -120,11 +120,11 @@ class TestLoopsDoNotAskTheNeighbour:
     def test_the_holder_reads_our_setting(self):
         import inspect
 
-        from src.dating import dating_chat_hold
+        from src.dating import chat_hold
 
-        code = inspect.getsource(dating_chat_hold._profiles_ready)
+        code = inspect.getsource(chat_hold._profiles_ready)
 
-        assert 'dating_site_presence(site_id)' in code, \
+        assert 'site_presence(site_id)' in code, \
             'отбор снова спрашивает карточку у соседа — это три петли держателя'
         assert 'rhapsody_api_site_get' not in code
 
@@ -136,9 +136,9 @@ class TestLoopsDoNotAskTheNeighbour:
         """
         import inspect
 
-        from src.dating import dating_revive_site
+        from src.dating import revive_site
 
-        code = inspect.getsource(dating_revive_site.dating_revive_site_presence)
+        code = inspect.getsource(revive_site.revive_site_presence)
 
         assert 'rhapsody_api_site_get' not in code, \
             'вернулся запрос, результат которого не используется'
@@ -146,7 +146,7 @@ class TestLoopsDoNotAskTheNeighbour:
     def test_the_profile_handles_do_not_ask_either(self):
         """⚠⚠ Ручки раздела — тоже, и это была последняя дверь.
 
-        `dating_profile_site` ходила к соседу живьём, а её читают девять ручек.
+        `profile_site` ходила к соседу живьём, а её читают девять ручек.
         Дороже всех обходилась `/probe`: её дёргает **открытая страница «Анкеты»**
         раз в две минуты, и карточка приезжала ради одного `presence`.
 
@@ -156,16 +156,16 @@ class TestLoopsDoNotAskTheNeighbour:
         """
         import inspect
 
-        from src.uvicorn.routers.dating import dating_profile
+        from src.uvicorn.routers.dating import profile_
 
-        code = inspect.getsource(dating_profile.dating_profile_site)
+        code = inspect.getsource(profile_.profile_site)
 
-        assert 'dating_site_presence' in code, \
+        assert 'site_presence' in code, \
             'ручки раздела снова спрашивают карточку у соседа'
         assert 'rhapsody_api_site_get' not in code
 
     def test_the_site_url_comes_from_our_snapshot(self):
-        """Адрес сайта — из снимка `dating_site`, за ним к соседу не ходят.
+        """Адрес сайта — из снимка `site_`, за ним к соседу не ходят.
 
         ⚠ Join **левый**: строка снимка появляется сверкой, и анкета сайта,
         который ещё не сверяли, иначе выпала бы из работы целиком.
@@ -173,7 +173,7 @@ class TestLoopsDoNotAskTheNeighbour:
         import inspect
 
         code = inspect.getsource(
-            __import__('src.dating.dating_chat_hold', fromlist=['x'])._profiles_ready)
+            __import__('src.dating.chat_hold', fromlist=['x'])._profiles_ready)
 
         assert 'LEFT JOIN site' in code
 

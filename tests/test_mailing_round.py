@@ -5,7 +5,7 @@
 кого он берёт в работу, когда считает, что пора, и что делает с отметкой. Набор
 проверяется отдельно (`test_mailing.py`), а его качество — живыми прогонами.
 
-Отсюда приём: подменяется `dating_mailing_make` — единственная дорогая часть.
+Отсюда приём: подменяется `mailing_make` — единственная дорогая часть.
 Всё, что до неё, работает по-настоящему, с живой базой и живым Redis.
 
 ⚠ **Круг готовит письма, но не отправляет их.** Это проверяется прямо: строка,
@@ -15,13 +15,13 @@
 
 import pytest
 
-from src.dating import dating_mailing_round as round_
-from src.dating.dating_mailing_round import (DATING_MAILING_EVERY_DEFAULT,
-                                             DATING_MAILING_POOL_MAX,
-                                             DATING_MAILING_POOL_MAX_DEFAULT,
-                                             DATING_MAILING_ROUND_KEY,
+from src.dating import mailing_round as round_
+from src.dating.mailing_round import (MAILING_EVERY_DEFAULT,
+                                             MAILING_POOL_MAX,
+                                             MAILING_POOL_MAX_DEFAULT,
+                                             MAILING_ROUND_KEY,
                                              _due, _mark, _minutes_now, _pool_max,
-                                             _pool_size, dating_mailing_round_run)
+                                             _pool_size, mailing_round_run)
 
 pytestmark = pytest.mark.mail
 
@@ -151,7 +151,7 @@ def made(monkeypatch):
 
         return dict(calls.result)
 
-    monkeypatch.setattr(round_, 'dating_mailing_make', fake)
+    monkeypatch.setattr(round_, 'mailing_make', fake)
 
     return calls
 
@@ -240,7 +240,7 @@ class TestWhoIsTaken:
         живой базе расписание рассылки бывает включено и у настоящих сайтов, и
         равенство ломалось бы от чужой настройки, ничего не проверяя по
         существу."""
-        await dating_mailing_round_run(0)
+        await mailing_round_run(0)
 
         assert SITE in [call['site_id'] for call in made], \
             'сайт со включённым расписанием пропущен'
@@ -253,7 +253,7 @@ class TestWhoIsTaken:
         await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule-on',
                               json={'mailing_schedule_on': False})
 
-        await dating_mailing_round_run(0)
+        await mailing_round_run(0)
 
         assert not [call for call in made if call['site_id'] == SITE]
 
@@ -275,7 +275,7 @@ class TestWhoIsTaken:
             f'/api/dating/site/{SITE}/mailing-schedule',
             json={'schedule': [{'from': _hhmm(start), 'to': _hhmm(start + 15)}]})
 
-        await dating_mailing_round_run(0)
+        await mailing_round_run(0)
 
         assert not [call for call in made if call['site_id'] == SITE]
 
@@ -294,14 +294,14 @@ class TestWhoIsTaken:
                              (SITE,))
             await db.connection.commit()
 
-        await dating_mailing_round_run(0)
+        await mailing_round_run(0)
 
         assert not [call for call in made if call['site_id'] == SITE]
 
     async def test_site_without_templates_is_skipped(self, site, made, clean_mark):
         """⚠ Шаблонов нет — набирать нечем, и звать набор незачем. Сайт при этом
         остаётся в списке проверенных: он настроен, просто пуст."""
-        result = await dating_mailing_round_run(0)
+        result = await mailing_round_run(0)
 
         assert not [call for call in made if call['site_id'] == SITE]
         assert result['checked'] >= 1
@@ -314,15 +314,15 @@ class TestHowOften:
         """⚠ **Смены задают часы, а не частоту.** Круг просыпается раз в минуту, и
         без второго срока девятичасовая смена означала бы пятьсот сорок заходов
         вместо восемнадцати получасовых — каждый ценой в вызовы LLM."""
-        await dating_mailing_round_run(0)
-        await dating_mailing_round_run(0)
+        await mailing_round_run(0)
+        await mailing_round_run(0)
 
         assert len([call for call in made if call['site_id'] == SITE]) == 1
 
     async def test_mark_is_set_before_work(self, site, template, made, clean_mark):
         """⚠ Отметка ставится **до** набора, а не после: он длится минуты, и
         следующий тик круга завёл бы второй, пока идёт первый."""
-        await dating_mailing_round_run(0)
+        await mailing_round_run(0)
 
         assert not _due(SITE), 'отметка не поставлена — круг зайдёт повторно'
 
@@ -336,19 +336,19 @@ class TestHowOften:
         _mark(SITE, 1800)
 
         assert not _due(SITE)
-        assert clean_mark.ttl[DATING_MAILING_ROUND_KEY.format(site_id=SITE)] == 1800
+        assert clean_mark.ttl[MAILING_ROUND_KEY.format(site_id=SITE)] == 1800
 
     async def test_mark_life_is_never_zero(self, clean_mark):
         """Ноль или мусор в настройке — ключ всё равно живёт: вечная отметка хуже,
         но и мгновенная означала бы набор на каждом тике."""
         _mark(SITE, 0)
 
-        assert clean_mark.ttl[DATING_MAILING_ROUND_KEY.format(site_id=SITE)] >= 1
+        assert clean_mark.ttl[MAILING_ROUND_KEY.format(site_id=SITE)] >= 1
 
     async def test_default_is_half_an_hour(self):
         """Умолчание — полчаса: за это время лента онлайна успевает смениться
         (снимается раз в две минуты), и появляются новые адресаты."""
-        assert DATING_MAILING_EVERY_DEFAULT == 1800
+        assert MAILING_EVERY_DEFAULT == 1800
 
 
 class TestBatch:
@@ -361,7 +361,7 @@ class TestBatch:
         try:
             await auth_client.put(f'/api/dating/site/{SITE}',
                                   json={'settings': {**before, 'mailing_batch': '10'}})
-            await dating_mailing_round_run(0)
+            await mailing_round_run(0)
         finally:
             await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': before})
 
@@ -381,7 +381,7 @@ class TestBatch:
             'site_id': SITE, 'name': f'tst-{uuid.uuid4().hex[:6]}',
             'body': 'Выключенное', 'enabled': False})).json()['result']['id']
         try:
-            await dating_mailing_round_run(0)
+            await mailing_round_run(0)
         finally:
             await auth_client.delete(f'/api/dating/mail/{second}')
             await auth_client.delete(f'/api/dating/mail/{off}')
@@ -404,7 +404,7 @@ class TestPoolCeiling:
         """В пуле восемнадцать при потолке двадцать — берём два, а не порцию.
 
         ⚠ Числа не круглые не от лени: значения настроек берутся **из набора
-        реестра** (`dating_site_seconds` чужое отвергает), и «потолок 5» проверял
+        реестра** (`site_seconds` чужое отвергает), и «потолок 5» проверял
         бы не круг, а нашу выдумку о том, что настройке можно задать что угодно.
         """
         await pool(18)
@@ -414,7 +414,7 @@ class TestPoolCeiling:
             await auth_client.put(f'/api/dating/site/{SITE}', json={
                 'settings': {**before, 'mailing_pool_max': '20',
                              'mailing_batch': '50'}})
-            await dating_mailing_round_run(0)
+            await mailing_round_run(0)
         finally:
             await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': before})
 
@@ -431,7 +431,7 @@ class TestPoolCeiling:
         try:
             await auth_client.put(f'/api/dating/site/{SITE}', json={
                 'settings': {**before, 'mailing_pool_max': '20'}})
-            await dating_mailing_round_run(0)
+            await mailing_round_run(0)
         finally:
             await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': before})
 
@@ -447,7 +447,7 @@ class TestPoolCeiling:
             await auth_client.put(f'/api/dating/site/{SITE}', json={
                 'settings': {**before, 'mailing_pool_max': '100',
                              'mailing_batch': '10'}})
-            await dating_mailing_round_run(0)
+            await mailing_round_run(0)
         finally:
             await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': before})
 
@@ -479,7 +479,7 @@ class TestPoolCeiling:
         вторая.
 
         ⚠ **Через форму до неё не добраться**, и это не упущение теста:
-        `dating_site_seconds` принимает только значения из набора реестра, а там
+        `site_seconds` принимает только значения из набора реестра, а там
         максимум 200. Потолок стережёт другое — строку, правленную мимо панели
         (руками в базе, миграцией, будущим набором пошире). Поэтому подменяется
         чтение настройки, а не пишется невозможное значение: тест на «положим 5000
@@ -488,14 +488,14 @@ class TestPoolCeiling:
         async def huge(site_id, key):
             return 5000
 
-        import src.uvicorn.routers.dating.dating_site as site_mod
-        monkeypatch.setattr(site_mod, 'dating_site_seconds', huge)
+        import src.uvicorn.routers.dating.site_ as site_mod
+        monkeypatch.setattr(site_mod, 'site_seconds', huge)
 
-        assert await _pool_max(SITE) == DATING_MAILING_POOL_MAX
+        assert await _pool_max(SITE) == MAILING_POOL_MAX
 
     async def test_default_is_fifty(self):
         """Сайт без настройки — пятьдесят: столько человек прочитывает за раз."""
-        assert DATING_MAILING_POOL_MAX_DEFAULT == 50
+        assert MAILING_POOL_MAX_DEFAULT == 50
         assert await _pool_max(999_111) == 50
 
 
@@ -506,7 +506,7 @@ class TestRoundDoesNotSend:
                                                   template, made, clean_mark):
         """Включённое расписание не включает отправку. Это разные решения: человек
         заводит смены, чтобы к утру был готов пул, который он прочтёт."""
-        await dating_mailing_round_run(0)
+        await mailing_round_run(0)
 
         row = (await auth_client.get(
             f'/api/dating/site/{SITE}/mailing-schedule')).json()['result']
@@ -555,7 +555,7 @@ class TestSlotAfterAWastedPass:
         made.result.update({'made': 5, 'skipped': 43,
                             'reasons': ['не хватает переменных: girl_name']})
 
-        await dating_mailing_round_run(0)
+        await mailing_round_run(0)
 
         assert _due(SITE), 'слот занят после захода, потратившего себя на пропуски'
 
@@ -570,7 +570,7 @@ class TestSlotAfterAWastedPass:
         made.result.update({'made': 47, 'skipped': 1,
                             'reasons': ['не хватает переменных: girl_name']})
 
-        await dating_mailing_round_run(0)
+        await mailing_round_run(0)
 
         assert not _due(SITE), 'слот отпущен после здорового захода'
 
@@ -584,7 +584,7 @@ class TestSlotAfterAWastedPass:
         made.result.update({'made': 2, 'skipped': 30,
                             'reasons': ['агент не ответил: question_to_companion']})
 
-        await dating_mailing_round_run(0)
+        await mailing_round_run(0)
 
         assert not _due(SITE), 'слот отпущен после захода, стоившего вызовов LLM'
 
@@ -599,7 +599,7 @@ class TestSlotAfterAWastedPass:
             'не хватает переменных: girl_name',
             'агент не ответил: question_to_companion']})
 
-        await dating_mailing_round_run(0)
+        await mailing_round_run(0)
 
         assert not _due(SITE), 'слот отпущен, хотя часть пропусков была платной'
 
@@ -613,7 +613,7 @@ class TestSlotAfterAWastedPass:
         """
         made.result.update({'made': 0, 'skipped': 12, 'reasons': []})
 
-        await dating_mailing_round_run(0)
+        await mailing_round_run(0)
 
         assert not _due(SITE), 'слот отпущен по незнакомой причине'
 
@@ -622,7 +622,7 @@ class TestSlotAfterAWastedPass:
         """Пропусков нет вовсе — обычный заход, обычный слот."""
         made.result.update({'made': 20, 'skipped': 0, 'reasons': []})
 
-        await dating_mailing_round_run(0)
+        await mailing_round_run(0)
 
         assert not _due(SITE), 'слот отпущен после захода без единого пропуска'
 
@@ -635,10 +635,10 @@ class TestSlotAfterAWastedPass:
         """
         made.result.update({'made': 5, 'skipped': 43,
                             'reasons': ['не хватает переменных: girl_name']})
-        await dating_mailing_round_run(0)
+        await mailing_round_run(0)
 
         made.result.update({'made': 43, 'skipped': 0, 'reasons': []})
-        await dating_mailing_round_run(0)
+        await mailing_round_run(0)
 
         assert len([call for call in made if call['site_id'] == SITE]) == 2, \
             'второй заход не состоялся, хотя слот был отпущен'

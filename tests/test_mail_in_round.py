@@ -5,7 +5,7 @@
 идёт, кого обходит внутри сайта, когда считает, что пора, и что делает с отказом
 одной анкеты. Сам разбор ответа сайта проверяется отдельно (`test_mail_in.py`).
 
-Отсюда приём: подменяется `dating_mail_in_fetch` — единственное, что ходит наружу.
+Отсюда приём: подменяется `mail_in_fetch` — единственное, что ходит наружу.
 
 ⚠ **Круг обходит анкеты, а не сайты**, и это не деталь реализации: у сайта нет
 ручки «письма всех наших учёток». Сайт решает, пойдём ли и как часто; ходим под
@@ -14,11 +14,11 @@
 
 import pytest
 
-from src.dating import dating_mail_in_round as round_
-from src.dating.dating_mail_in_round import (DATING_MAIL_IN_EVERY_DEFAULT,
-                                             DATING_MAIL_IN_ROUND_KEY, _due,
+from src.dating import mail_in_round as round_
+from src.dating.mail_in_round import (MAIL_IN_EVERY_DEFAULT,
+                                             MAIL_IN_ROUND_KEY, _due,
                                              _every, _mark, _profiles, _sites,
-                                             dating_mail_in_round_run)
+                                             mail_in_round_run)
 
 pytestmark = pytest.mark.mail
 
@@ -103,7 +103,7 @@ def no_pause(monkeypatch):
     ⚠ Секунда на анкету — защита от «тринадцати входов в одну секунду», и в живом
     круге она нужна. В тесте она только удлиняет прогон: наружу никто не ходит.
     """
-    monkeypatch.setattr(round_, 'DATING_MAIL_IN_PAUSE_SEC', 0)
+    monkeypatch.setattr(round_, 'MAIL_IN_PAUSE_SEC', 0)
 
 
 @pytest.fixture
@@ -173,13 +173,13 @@ def fetched(monkeypatch):
     async def fake(profile, base, password):
         calls.append({'profile_id': int(profile['id']), 'base': base})
         if calls.boom:
-            from src.dating.dating_mail_in import DatingMailInError
+            from src.dating.mail_in import DatingMailInError
 
             raise DatingMailInError('сайт не ответил')
 
         return dict(calls.result)
 
-    monkeypatch.setattr(round_, 'dating_mail_in_fetch', fake)
+    monkeypatch.setattr(round_, 'mail_in_fetch', fake)
 
     return calls
 
@@ -223,7 +223,7 @@ async def profile(auth_client):
 async def test_mail_in_round_takes_site_with_check_on(site, profile, fetched, clean_mark,
                                                       no_pause, only_ours):
     """Поднятый выключатель — и письма приходят сами, без единого нажатия."""
-    got = await dating_mail_in_round_run()
+    got = await mail_in_round_run()
 
     assert profile in [call['profile_id'] for call in fetched]
     assert got['added'] >= 1
@@ -271,7 +271,7 @@ async def test_mail_in_round_skips_site_without_api_url(site, profile, fetched, 
     await auth_client.put(f'/api/dating/site/{SITE}',
                           json={'settings': {**was, 'api_base': ''}})
 
-    await dating_mail_in_round_run()
+    await mail_in_round_run()
 
     assert not fetched
 
@@ -302,7 +302,7 @@ async def test_mail_in_round_ignores_schedule(site, profile, fetched, clean_mark
     await auth_client.put(f'/api/dating/profile/{profile}/schedule-on',
                           json={'schedule_on': True})
 
-    await dating_mail_in_round_run()
+    await mail_in_round_run()
 
     assert profile in [call['profile_id'] for call in fetched]
 
@@ -312,7 +312,7 @@ async def test_mail_in_round_survives_one_profile_failure(site, profile, fetched
     """У неё мог протухнуть пароль, а у соседних всё в порядке."""
     fetched.boom = True
 
-    got = await dating_mail_in_round_run()
+    got = await mail_in_round_run()
 
     assert got['failed'] == 1
     assert got['added'] == 0
@@ -323,10 +323,10 @@ async def test_mail_in_round_survives_one_profile_failure(site, profile, fetched
 async def test_mail_in_round_skips_second_pass_in_a_row(site, profile, fetched, clean_mark,
                                                         no_pause, only_ours):
     """Отметка держит срок: тик раз в минуту — не обход раз в минуту."""
-    await dating_mail_in_round_run()
+    await mail_in_round_run()
     before = len(fetched)
 
-    await dating_mail_in_round_run()
+    await mail_in_round_run()
 
     assert len(fetched) == before
 
@@ -336,9 +336,9 @@ async def test_mail_in_round_marks_before_walking(site, profile, fetched, clean_
     """Обход идёт секундами на анкету, и следующий тик не должен завести второй."""
     fetched.boom = True
 
-    await dating_mail_in_round_run()
+    await mail_in_round_run()
 
-    assert clean_mark.store.get(DATING_MAIL_IN_ROUND_KEY.format(site_id=SITE))
+    assert clean_mark.store.get(MAIL_IN_ROUND_KEY.format(site_id=SITE))
 
 
 async def test_mail_in_round_redis_failure_means_no_work(site, profile, fetched,
@@ -347,7 +347,7 @@ async def test_mail_in_round_redis_failure_means_no_work(site, profile, fetched,
     """⚠ Лишний обход — тринадцать входов подряд, а частые заходы сайт считает подозрением."""
     clean_mark.broken = True
 
-    await dating_mail_in_round_run()
+    await mail_in_round_run()
 
     assert not fetched
 
@@ -355,10 +355,10 @@ async def test_mail_in_round_redis_failure_means_no_work(site, profile, fetched,
 async def test_mail_in_round_mark_ttl_is_the_period_setting(site, profile, fetched, clean_mark,
                                                             no_pause, only_ours):
     """Redis гасит отметку сам: отдельного «когда истечёт» круг не хранит."""
-    await dating_mail_in_round_run()
+    await mail_in_round_run()
 
-    assert (clean_mark.ttl[DATING_MAIL_IN_ROUND_KEY.format(site_id=SITE)]
-            == DATING_MAIL_IN_EVERY_DEFAULT)
+    assert (clean_mark.ttl[MAIL_IN_ROUND_KEY.format(site_id=SITE)]
+            == MAIL_IN_EVERY_DEFAULT)
 
 
 async def test_mail_in_round_period_comes_from_setting(site, auth_client):
@@ -375,7 +375,7 @@ async def test_mail_in_round_period_comes_from_setting(site, auth_client):
 
 async def test_mail_in_round_period_falls_back_to_default(site):
     """Не задано — пять минут, как у импорта переписки и по той же причине."""
-    assert await _every(SITE) == DATING_MAIL_IN_EVERY_DEFAULT
+    assert await _every(SITE) == MAIL_IN_EVERY_DEFAULT
 
 
 def test_mail_in_round_mark_and_check_share_the_key(clean_mark):
@@ -394,7 +394,7 @@ async def test_mail_in_round_empty_pass_writes_nothing(fetched, clean_mark, monk
 
     monkeypatch.setattr(round_, '_sites', no_sites)
 
-    assert await dating_mail_in_round_run() == {'sites': 0, 'profiles': 0,
+    assert await mail_in_round_run() == {'sites': 0, 'profiles': 0,
                                                 'added': 0, 'failed': 0}
 
 

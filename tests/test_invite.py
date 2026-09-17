@@ -20,15 +20,15 @@ import pytest
 
 import uuid
 
-from src.dating.dating_invite import _cards, _fill
-from src.dating.dating_mail_agent import (DATING_INVITE_LANGUAGE,
-                                          DATING_INVITE_MAX,
-                                          DATING_INVITE_SLOT_GIRL,
-                                          DATING_INVITE_SLOT_MAN, _invite)
+from src.dating.invite import _cards, _fill
+from src.dating.mail_agent import (INVITE_LANGUAGE,
+                                          INVITE_MAX,
+                                          INVITE_SLOT_GIRL,
+                                          INVITE_SLOT_MAN, _invite)
 
 pytestmark = pytest.mark.chat
 
-# Стенд у соседа: круги воркера про него не знают — его нет в `dating_site`.
+# Стенд у соседа: круги воркера про него не знают — его нет в `site_`.
 # Тот же, что у диалогов (`test_chat_dialogs.py`), и по той же причине.
 STAND_SITE = 999_343
 
@@ -42,8 +42,8 @@ PEOPLE = [{'uid': '111', 'name': 'Brian'},
           {'uid': '222', 'name': 'Frank'},
           {'uid': '333', 'name': 'Ahmet'}]
 
-MAN_SLOT = f'[[{DATING_INVITE_SLOT_MAN}]]'
-GIRL_SLOT = f'[[{DATING_INVITE_SLOT_GIRL}]]'
+MAN_SLOT = f'[[{INVITE_SLOT_MAN}]]'
+GIRL_SLOT = f'[[{INVITE_SLOT_GIRL}]]'
 
 
 class TestInviteText:
@@ -107,9 +107,9 @@ class TestInviteText:
 
     def test_long_template_is_cut_not_dropped(self):
         """Длинный текст режем: пустой пул хуже длинной реплики."""
-        got = _invite('А' * (DATING_INVITE_MAX + 100))
+        got = _invite('А' * (INVITE_MAX + 100))
 
-        assert len(got) == DATING_INVITE_MAX
+        assert len(got) == INVITE_MAX
 
     def test_silence_is_empty(self):
         assert _invite('') == ''
@@ -363,7 +363,7 @@ class TestInviteLanguage:
 
     ⚠ **Это про доставку, а не про вкус.** Фильтр сайта отклоняет кириллицу
     («Message not delivered. Unacceptable words: …», см.
-    `dating_answer.DATING_ANSWER_LANGUAGE`), то есть пул был бы пулом
+    `answer.ANSWER_LANGUAGE`), то есть пул был бы пулом
     недоставляемых сообщений.
 
     Проверяем то, что и ломалось: язык **уезжает агенту переменной**. Самого
@@ -383,7 +383,7 @@ class TestInviteLanguage:
         Английский — то же умолчание и по той же причине, что у автоответа.
         """
         assert (await _asked_with(language='')).get('user_language') \
-               == DATING_INVITE_LANGUAGE
+               == INVITE_LANGUAGE
 
     async def test_slots_are_asked_by_us(self, monkeypatch):
         """⚠ Какие метки ставить — говорим мы, а не решает модель.
@@ -394,7 +394,7 @@ class TestInviteLanguage:
         """
         got = await _asked_with(language='en', man_slot=True)
 
-        assert DATING_INVITE_SLOT_MAN in got.get('invite_slots', '')
+        assert INVITE_SLOT_MAN in got.get('invite_slots', '')
 
     async def test_no_cards_go_to_the_agent(self, monkeypatch):
         """⚠⚠ Ни карточки девушки, ни карточки мужчины: шаблон общий.
@@ -410,7 +410,7 @@ class TestInviteLanguage:
 async def _asked_with(language: str, girl_slot: bool = False,
                       man_slot: bool = False) -> dict:
     """Какие переменные ушли бы агенту. Транспорт подменён: проверяется вызов."""
-    from src.dating import dating_mail_agent as agent
+    from src.dating import mail_agent as agent
 
     sent = {}
 
@@ -426,7 +426,7 @@ async def _asked_with(language: str, girl_slot: bool = False,
     agent._agent_id = _agent_id
     agent.rhapsody_api_chat_ask = _ask
     try:
-        await agent.dating_invite_template(343, language, girl_slot, man_slot)
+        await agent.invite_template(343, language, girl_slot, man_slot)
     finally:
         agent._agent_id = real_id
         agent.rhapsody_api_chat_ask = real_ask
@@ -447,42 +447,42 @@ class TestCompanionNameParts:
     """
 
     def test_two_words_split(self):
-        from src.dating.dating_people import dating_people_name_parts
+        from src.dating.people import people_name_parts
 
-        assert dating_people_name_parts('Brian Ritter') == {
+        assert people_name_parts('Brian Ritter') == {
             'firstname': 'Brian', 'lastname': 'Ritter'}
 
     def test_first_word_wins_not_the_last(self):
         """⚠ Делим по **первому** пробелу: «JULIO RODRIGO ZAPATA OLIVA» — это
         Хулио и четыре фамилии, а не наоборот. Где кончается имя, мы не знаем, а
         первое слово угадывается всегда."""
-        from src.dating.dating_people import dating_people_name_parts
+        from src.dating.people import people_name_parts
 
-        assert dating_people_name_parts('JULIO RODRIGO ZAPATA OLIVA') == {
+        assert people_name_parts('JULIO RODRIGO ZAPATA OLIVA') == {
             'firstname': 'JULIO', 'lastname': 'RODRIGO ZAPATA OLIVA'}
 
     def test_single_word_gives_nothing(self):
-        from src.dating.dating_people import dating_people_name_parts
+        from src.dating.people import people_name_parts
 
-        assert dating_people_name_parts('Kevin') == {'firstname': '', 'lastname': ''}
+        assert people_name_parts('Kevin') == {'firstname': '', 'lastname': ''}
 
     def test_underscores_are_not_spaces(self):
         """⚠ `Tall_Good_Man` — одно слово, хотя выглядит как три. Разбери мы его
         по подчёркиванию, человека звали бы «Tall»."""
-        from src.dating.dating_people import dating_people_name_parts
+        from src.dating.people import people_name_parts
 
-        assert dating_people_name_parts('Tall_Good_Man')['firstname'] == ''
+        assert people_name_parts('Tall_Good_Man')['firstname'] == ''
 
     def test_extra_spaces_do_not_make_parts(self):
-        from src.dating.dating_people import dating_people_name_parts
+        from src.dating.people import people_name_parts
 
-        assert dating_people_name_parts('  Ales   kumer ') == {
+        assert people_name_parts('  Ales   kumer ') == {
             'firstname': 'Ales', 'lastname': 'kumer'}
 
     def test_empty_name_is_not_a_crash(self):
-        from src.dating.dating_people import dating_people_name_parts
+        from src.dating.people import people_name_parts
 
-        assert dating_people_name_parts(None) == {'firstname': '', 'lastname': ''}
+        assert people_name_parts(None) == {'firstname': '', 'lastname': ''}
 
 
 class TestCompanionVars:
@@ -491,9 +491,9 @@ class TestCompanionVars:
     def test_parts_are_derived_not_stored(self):
         """⚠ Части имени выводятся из `name`, а не лежат в карточке: заведи мы под
         них колонки, они разошлись бы с именем в первую же правку."""
-        from src.dating.dating_mailing import dating_mailing_person_fields
+        from src.dating.mailing import mailing_person_fields
 
-        got = dating_mailing_person_fields({'name': 'Brian Ritter', 'age': 51})
+        got = mailing_person_fields({'name': 'Brian Ritter', 'age': 51})
 
         assert got['firstname'] == 'Brian' and got['lastname'] == 'Ritter'
         assert got['name'] == 'Brian Ritter', 'полное имя должно остаться'
@@ -501,22 +501,22 @@ class TestCompanionVars:
     def test_real_field_beats_the_derived_one(self):
         """Появись у сайта настоящее `firstname` — в дело идёт оно: разбор по
         пробелу это догадка, а присланное сайтом — факт."""
-        from src.dating.dating_mailing import dating_mailing_person_fields
+        from src.dating.mailing import mailing_person_fields
 
-        got = dating_mailing_person_fields({'name': 'Kevin', 'firstname': 'Kev'})
+        got = mailing_person_fields({'name': 'Kevin', 'firstname': 'Kev'})
 
         assert got['firstname'] == 'Kev'
 
     def test_variable_resolves_to_the_first_name(self):
         """Переменная в общем виде — `companion_first_name` — берёт поле `firstname`."""
-        from src.dating.dating_mailing import dating_mailing_companion_vars
+        from src.dating.mailing import mailing_companion_vars
 
         known = [{'name': 'companion_first_name', 'source': 'companion',
                   'title': '', 'default_value': ''},
                  {'name': 'companion_last_name', 'source': 'companion',
                   'title': '', 'default_value': ''}]
         rows = {r['name']: r for r in
-                dating_mailing_companion_vars({'name': 'Brian Ritter'}, known)}
+                mailing_companion_vars({'name': 'Brian Ritter'}, known)}
 
         assert rows['companion_first_name']['value'] == 'Brian'
         assert rows['companion_last_name']['value'] == 'Ritter'
@@ -529,12 +529,12 @@ class TestCompanionVars:
         ограничения переменные и звались `companion_firstName` — camelCase посреди
         snake_case; разбор научился длинным хвостам, и помесь убрана.
         """
-        from src.dating.dating_mailing import dating_mailing_person_key
+        from src.dating.mailing import mailing_person_key
 
         fields = {'name': 'Brian Ritter', 'firstname': 'Brian', 'lastname': 'Ritter'}
 
-        assert dating_mailing_person_key('companion_first_name', fields) == 'firstname'
-        assert dating_mailing_person_key('companion_name', fields) == 'name'
+        assert mailing_person_key('companion_first_name', fields) == 'firstname'
+        assert mailing_person_key('companion_name', fields) == 'name'
 
     def test_camel_case_still_works(self):
         """⚠ Старая форма понимается по-прежнему, и это не совместимость ради неё.
@@ -543,20 +543,20 @@ class TestCompanionVars:
         сайт в другой инсталляции может держать camelCase до сих пор. Отказать ему
         значило бы остановить его рассылку накатом.
         """
-        from src.dating.dating_mailing import dating_mailing_person_key
+        from src.dating.mailing import mailing_person_key
 
         fields = {'name': 'Brian Ritter', 'firstname': 'Brian'}
 
-        assert dating_mailing_person_key('companion_firstName', fields) == 'firstname'
+        assert mailing_person_key('companion_firstName', fields) == 'firstname'
 
     def test_single_word_leaves_the_variable_unfilled(self):
         """Пусто — законный исход: письмо не уйдёт, пока человек не решит, чем
         заменить. Это лучше, чем уйти с фамилией вместо имени."""
-        from src.dating.dating_mailing import dating_mailing_companion_vars
+        from src.dating.mailing import mailing_companion_vars
 
         known = [{'name': 'companion_first_name', 'source': 'companion',
                   'title': '', 'default_value': ''}]
-        row = dating_mailing_companion_vars({'name': 'Kevin'}, known)[0]
+        row = mailing_companion_vars({'name': 'Kevin'}, known)[0]
 
         assert row['value'] == '' and row['filled'] is False
 
@@ -578,7 +578,7 @@ class TestDelivery:
     async def test_delivery_shows_sent_and_failed_attempts(self, auth_client):
         from mysql_.mysql_ import mysql_get_db_async
 
-        from src.uvicorn.routers.dating.dating_invite import dating_invite_list
+        from src.uvicorn.routers.dating.invite import invite_list
 
         made = (await auth_client.post('/api/dating/profile', json={
             'site_id': STAND_SITE,
@@ -596,7 +596,7 @@ class TestDelivery:
                         (STAND_SITE, made, uid, 'X', 'hi', state, error))
                 await db.connection.commit()
 
-            got = await dating_invite_list(site_id=STAND_SITE, status_='delivery',
+            got = await invite_list(site_id=STAND_SITE, status_='delivery',
                                            user=None)
             uids = {str(row['uid']) for row in got['result']}
 
@@ -610,7 +610,7 @@ class TestDelivery:
 class TestRoundReadsTheClock:
     """⚠ Круг сверяет смены с **минутами суток**, а не со сдвигом пояса.
 
-    Живая поломка, и тихая: в `dating_schedule_now` уезжал `offset` (то есть
+    Живая поломка, и тихая: в `schedule_now` уезжал `offset` (то есть
     `3`), и проверка сравнивала расписание с 00:03 — в смену `07:45–22:15` это не
     попадает никогда. Круг исправно находил сайт, молча его пропускал и возвращал
     `sites: 0`. Включённая на странице генерация не давала ни одной реплики, а
@@ -623,7 +623,7 @@ class TestRoundReadsTheClock:
     def test_minutes_of_the_local_day(self):
         import time
 
-        from src.dating.dating_invite_round import _minutes_now
+        from src.dating.invite_round import _minutes_now
 
         # Полдень по Гринвичу: при сдвиге +3 местное время — 15:00.
         noon = 12 * 3600
@@ -645,18 +645,18 @@ class TestRoundReadsTheClock:
         `_minutes_now`, а не сам сдвиг.
 
         Проверяем по исходнику — позвать круг без базы нельзя, а разница между
-        `dating_schedule_now(shifts, offset)` и `(shifts, minutes)` ровно в одном
+        `schedule_now(shifts, offset)` и `(shifts, minutes)` ровно в одном
         слове.
         """
         import inspect
 
-        from src.dating import dating_invite_round
+        from src.dating import invite_round
 
-        code = inspect.getsource(dating_invite_round.dating_invite_round_run)
+        code = inspect.getsource(invite_round.invite_round_run)
 
-        assert 'dating_schedule_now(shifts, minutes)' in code, \
+        assert 'schedule_now(shifts, minutes)' in code, \
             'в проверку смен снова уходит не то число'
-        assert 'dating_schedule_now(shifts, offset)' not in code, \
+        assert 'schedule_now(shifts, offset)' not in code, \
             'сдвиг часового пояса снова передан как минуты суток'
 
 
@@ -701,7 +701,7 @@ class TestOneCallPerPool:
 
             return 'Спорим, ты сейчас улыбнулся?'
 
-        monkeypatch.setattr('src.dating.dating_invite.dating_invite_template', _template)
+        monkeypatch.setattr('src.dating.invite.invite_template', _template)
         got = await _made_with(monkeypatch, None, people=[
             {'uid': str(one), 'name': f'M{one}'} for one in range(1, 8)])
 
@@ -719,27 +719,27 @@ class TestOneCallPerPool:
 
 async def _made_with(monkeypatch, template, people=None) -> dict:
     """Заход набора с подменённым агентом и базой. Возвращает его итог."""
-    from src.dating import dating_invite
+    from src.dating import invite
 
     if template is not None:
         async def _template(site_id, language, girl_slot=False, man_slot=False,
                             angle='', length='', avoid=None, country=''):
             return template
 
-        monkeypatch.setattr(dating_invite, 'dating_invite_template', _template)
+        monkeypatch.setattr(invite, 'invite_template', _template)
 
-    monkeypatch.setattr(dating_invite, '_girls', _answer([{'id': 1, 'profile': '{}'}]))
-    monkeypatch.setattr(dating_invite, '_people', _answer(people or [
+    monkeypatch.setattr(invite, '_girls', _answer([{'id': 1, 'profile': '{}'}]))
+    monkeypatch.setattr(invite, '_people', _answer(people or [
         {'uid': 'a1', 'name': '許萊納'}, {'uid': 'a2', 'name': 'Brian'}]))
-    monkeypatch.setattr(dating_invite, '_invited', _answer(set()))
-    monkeypatch.setattr(dating_invite, '_talked', _answer(set()))
-    monkeypatch.setattr(dating_invite, '_pool_uids', _answer(set()))
-    monkeypatch.setattr(dating_invite, '_avoid', _answer([]))
-    monkeypatch.setattr(dating_invite, 'dating_block_pairs', _answer(set()))
-    monkeypatch.setattr(dating_invite, '_language', _answer('en'))
-    monkeypatch.setattr(dating_invite, '_put', _nothing())
+    monkeypatch.setattr(invite, '_invited', _answer(set()))
+    monkeypatch.setattr(invite, '_talked', _answer(set()))
+    monkeypatch.setattr(invite, '_pool_uids', _answer(set()))
+    monkeypatch.setattr(invite, '_avoid', _answer([]))
+    monkeypatch.setattr(invite, 'block_pairs', _answer(set()))
+    monkeypatch.setattr(invite, '_language', _answer('en'))
+    monkeypatch.setattr(invite, '_put', _nothing())
 
-    return await dating_invite.dating_invite_make(STAND_SITE, 50)
+    return await invite.invite_make(STAND_SITE, 50)
 
 
 def _answer(value):
@@ -777,7 +777,7 @@ class TestVariety:
 
     async def test_the_angle_and_length_reach_the_agent(self, monkeypatch):
         """Приём и длина уезжают агенту переменными, а не остаются у нас."""
-        from src.dating import dating_invite
+        from src.dating import invite
 
         sent = {}
 
@@ -790,13 +790,13 @@ class TestVariety:
         async def _avoid(site_id):
             return []
 
-        monkeypatch.setattr(dating_invite, 'dating_invite_template', _template)
-        monkeypatch.setattr(dating_invite, '_avoid', _avoid)
+        monkeypatch.setattr(invite, 'invite_template', _template)
+        monkeypatch.setattr(invite, '_avoid', _avoid)
 
-        await dating_invite._template(STAND_SITE, 'en')
+        await invite._template(STAND_SITE, 'en')
 
-        assert sent['angle'] in dating_invite.DATING_INVITE_ANGLES
-        assert sent['length'] in dating_invite.DATING_INVITE_LENGTHS
+        assert sent['angle'] in invite.INVITE_ANGLES
+        assert sent['length'] in invite.INVITE_LENGTHS
 
     async def test_the_dice_actually_roll(self, monkeypatch):
         """⚠ Жребий **на каждый заход**, а не один раз при запуске.
@@ -804,7 +804,7 @@ class TestVariety:
         Выбери мы приём однажды — пул выходил бы разнообразным между сайтами и
         одинаковым внутри дня, то есть ровно там, где это видно человеку.
         """
-        from src.dating import dating_invite
+        from src.dating import invite
 
         seen = set()
 
@@ -817,11 +817,11 @@ class TestVariety:
         async def _avoid(site_id):
             return []
 
-        monkeypatch.setattr(dating_invite, 'dating_invite_template', _template)
-        monkeypatch.setattr(dating_invite, '_avoid', _avoid)
+        monkeypatch.setattr(invite, 'invite_template', _template)
+        monkeypatch.setattr(invite, '_avoid', _avoid)
 
         for _ in range(30):
-            await dating_invite._template(STAND_SITE, 'en')
+            await invite._template(STAND_SITE, 'en')
 
         # Восемь приёмов на четыре длины: за тридцать бросков сочетаний обязано
         # набраться заметно больше одного. Точного числа не требуем — это жребий.
@@ -834,21 +834,21 @@ class TestVariety:
         разводит сами заходы — вопрос, вызов, признание, игра, — и только поэтому
         работает.
         """
-        from src.dating.dating_invite import DATING_INVITE_ANGLES
+        from src.dating.invite import INVITE_ANGLES
 
-        assert len(DATING_INVITE_ANGLES) >= 6, 'приёмов мало — пул будет однообразным'
-        assert len(set(DATING_INVITE_ANGLES)) == len(DATING_INVITE_ANGLES)
+        assert len(INVITE_ANGLES) >= 6, 'приёмов мало — пул будет однообразным'
+        assert len(set(INVITE_ANGLES)) == len(INVITE_ANGLES)
 
     async def test_the_lengths_cover_both_ends(self):
         """От трёх слов до абзаца: однообразие длины видно так же, как слов."""
-        from src.dating.dating_invite import DATING_INVITE_LENGTHS
+        from src.dating.invite import INVITE_LENGTHS
 
-        together = ' '.join(DATING_INVITE_LENGTHS)
+        together = ' '.join(INVITE_LENGTHS)
         assert 'коротко' in together and 'абзац' in together
 
     def test_the_avoid_list_is_numbered(self):
         """Список прошлых шаблонов идёт перечнем, а не одним текстом с переносами."""
-        from src.dating.dating_mail_agent import _avoid_text
+        from src.dating.mail_agent import _avoid_text
 
         assert _avoid_text(['раз', 'два']) == '1. раз\n2. два'
 
@@ -859,7 +859,7 @@ class TestVariety:
         Прячет его условный блок в промпте у соседа (`%if invite_avoid%`), и
         пустая строка — то, на что он смотрит.
         """
-        from src.dating.dating_mail_agent import _avoid_text
+        from src.dating.mail_agent import _avoid_text
 
         assert _avoid_text([]) == '' and _avoid_text(None) == ''
         assert _avoid_text(['', '   ']) == '', 'пробелы просочились в список'
@@ -874,9 +874,9 @@ class TestNoRawMarks:
 
     Причин было две, и обе здесь закрыты.
 
-    **Корень.** `dating_people_name_parts` отвечает пустотой на имя без пробела —
+    **Корень.** `people_name_parts` отвечает пустотой на имя без пробела —
     так задумано **для писем**, где промпт сам решает через `%if%`, чем звать.
-    Инвайт брал ответ буквально, а `dating_mail_render` на пустое значение
+    Инвайт брал ответ буквально, а `mail_render` на пустое значение
     оставляет метку в тексте.
 
     **Страховка.** Даже с верным именем метка может дожить до отправки: человек
@@ -907,32 +907,32 @@ class TestNoRawMarks:
     def test_stripping_does_not_leave_double_punctuation(self):
         """⚠ Вырезаем **вместе с лишним знаком**: «curious, , what» читается как
         опечатка, то есть беда остаётся, просто выглядит иначе."""
-        from src.dating.dating_invite import dating_invite_marks_strip
+        from src.dating.invite import invite_marks_strip
 
-        got = dating_invite_marks_strip("I'm curious, [[companion_name]], what's up?")
+        got = invite_marks_strip("I'm curious, [[companion_name]], what's up?")
 
         assert got == "I'm curious, what's up?"
         assert ', ,' not in got
 
     def test_a_leading_mark_keeps_the_capital(self):
         """«[[girl_name]] здесь» без этого стало бы «здесь» со строчной."""
-        from src.dating.dating_invite import dating_invite_marks_strip
+        from src.dating.invite import invite_marks_strip
 
-        assert dating_invite_marks_strip('[[girl_name]] здесь, и мне скучно') \
+        assert invite_marks_strip('[[girl_name]] здесь, и мне скучно') \
                == 'Здесь, и мне скучно'
 
     def test_a_trailing_mark_leaves_no_dangling_comma(self):
-        from src.dating.dating_invite import dating_invite_marks_strip
+        from src.dating.invite import invite_marks_strip
 
-        assert dating_invite_marks_strip('скажи мне, [[companion_name]]') == 'Скажи мне'
+        assert invite_marks_strip('скажи мне, [[companion_name]]') == 'Скажи мне'
 
     def test_clean_text_is_untouched(self):
         """⚠ Текст без меток обязан пройти **байт в байт**: страховка не вправе
         переписывать то, что и так верно."""
-        from src.dating.dating_invite import dating_invite_marks_strip
+        from src.dating.invite import invite_marks_strip
 
         was = 'Спорим, ты сейчас улыбнулся?'
-        assert dating_invite_marks_strip(was) == was
+        assert invite_marks_strip(was) == was
 
     def test_sending_strips_marks_too(self):
         """⚠ Последний рубеж — сама отправка: между набором и ею стоит человек.
@@ -942,11 +942,11 @@ class TestNoRawMarks:
         """
         import inspect
 
-        from src.dating import dating_invite_send
+        from src.dating import invite_send
 
-        code = inspect.getsource(dating_invite_send)
+        code = inspect.getsource(invite_send)
 
-        assert 'dating_invite_marks_strip(str(invite[' in code, \
+        assert 'invite_marks_strip(str(invite[' in code, \
             'отправка снова берёт текст как есть — метка уедет в чат'
 
 
@@ -977,11 +977,11 @@ class TestPoolRefills:
         """
         import inspect
 
-        from src.dating import dating_invite_round
+        from src.dating import invite_round
 
-        code = inspect.getsource(dating_invite_round.dating_invite_round_run)
+        code = inspect.getsource(invite_round.invite_round_run)
 
-        assert '_pool_max(site_id) - await dating_invite_pool_left' in code, \
+        assert '_pool_max(site_id) - await invite_pool_left' in code, \
             'круг снова ждёт пустого пула — при выключенной отправке он застынет'
 
     async def test_the_batch_is_not_a_setting_of_its_own(self, auth_client):
@@ -1008,10 +1008,10 @@ class TestPoolRefills:
         import inspect
 
         code = inspect.getsource(
-            __import__('src.dating.dating_invite_round', fromlist=['x']
-                       ).dating_invite_round_run)
+            __import__('src.dating.invite_round', fromlist=['x']
+                       ).invite_round_run)
 
-        assert 'dating_invite_make(site_id, left)' in code, \
+        assert 'invite_make(site_id, left)' in code, \
             'круг снова режет добор своей меркой'
 
     def test_failed_drafts_do_not_count_as_full(self):
@@ -1022,9 +1022,9 @@ class TestPoolRefills:
         """
         import inspect
 
-        from src.dating import dating_invite_round
+        from src.dating import invite_round
 
-        code = inspect.getsource(dating_invite_round.dating_invite_round_run)
+        code = inspect.getsource(invite_round.invite_round_run)
 
         assert 'ready_only=True' in code, \
             'застрявшие карточки снова считаются годными — добор встанет'
@@ -1053,7 +1053,7 @@ class TestNowAndPlace:
 
     async def test_the_timezone_goes_to_the_agent(self, monkeypatch):
         """Часовой пояс уезжает той же переменной, что у чата."""
-        from src.dating import dating_mail_agent
+        from src.dating import mail_agent
 
         said = {}
 
@@ -1062,11 +1062,11 @@ class TestNowAndPlace:
 
             return 'Привет!'
 
-        monkeypatch.setattr(dating_mail_agent, 'rhapsody_api_chat_ask', _ask)
-        monkeypatch.setattr(dating_mail_agent, '_agent_id',
+        monkeypatch.setattr(mail_agent, 'rhapsody_api_chat_ask', _ask)
+        monkeypatch.setattr(mail_agent, '_agent_id',
                             lambda *a, **k: _async(7))
 
-        await dating_mail_agent.dating_invite_template(343, 'en', country='Украина')
+        await mail_agent.invite_template(343, 'en', country='Украина')
 
         assert 'datetime_current_get_zone' in said, \
             'агент снова не знает времени — вернутся реплики про вечер в полдень'
@@ -1081,9 +1081,9 @@ class TestNowAndPlace:
         """
         import inspect
 
-        from src.dating import dating_mail_agent
+        from src.dating import mail_agent
 
-        code = inspect.getsource(dating_mail_agent._timezone)
+        code = inspect.getsource(mail_agent._timezone)
 
         assert "setting_get('timezone'" in code
 
@@ -1093,7 +1093,7 @@ class TestNowAndPlace:
         Лучше молчание, чем догадка: приписать девушке чужую страну хуже, чем
         не упоминать её вовсе.
         """
-        from src.dating import dating_mail_agent
+        from src.dating import mail_agent
 
         said = {}
 
@@ -1102,10 +1102,10 @@ class TestNowAndPlace:
 
             return 'Привет!'
 
-        monkeypatch.setattr(dating_mail_agent, 'rhapsody_api_chat_ask', _ask)
-        monkeypatch.setattr(dating_mail_agent, '_agent_id', lambda *a, **k: _async(7))
+        monkeypatch.setattr(mail_agent, 'rhapsody_api_chat_ask', _ask)
+        monkeypatch.setattr(mail_agent, '_agent_id', lambda *a, **k: _async(7))
 
-        await dating_mail_agent.dating_invite_template(343, 'en')
+        await mail_agent.invite_template(343, 'en')
 
         assert said['invite_country'] == ''
 
@@ -1122,10 +1122,10 @@ class TestNowAndPlace:
         """Набор пула читает настройку, а не константу."""
         import inspect
 
-        from src.dating import dating_invite
+        from src.dating import invite
 
         assert 'country=await _country(site_id)' in inspect.getsource(
-            dating_invite._template)
+            invite._template)
 
 
 def _async(value):

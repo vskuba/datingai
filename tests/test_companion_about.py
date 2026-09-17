@@ -11,10 +11,10 @@
 
 import pytest
 
-from src.dating.dating_companion_about import (dating_companion_about_head,
-                                               dating_companion_about_parse,
-                                               dating_companion_about_place,
-                                               dating_companion_about_text)
+from src.dating.companion_about import (companion_about_head,
+                                               companion_about_parse,
+                                               companion_about_place,
+                                               companion_about_text)
 
 pytestmark = pytest.mark.mail
 
@@ -46,7 +46,7 @@ class TestParse:
     """Разбор текста на поля."""
 
     def test_fields_are_read(self):
-        got = dating_companion_about_parse(LIVE)
+        got = companion_about_parse(LIVE)
 
         assert got['Id:'] == '352443'
         assert got['Occupation'] == 'Musician'
@@ -59,7 +59,7 @@ class TestParse:
         Иначе пришлось бы знать, из скольких слов состоит каждое, а «Location» это
         и «London», и «Stuttgart, Germany», и «New York, United States».
         """
-        got = dating_companion_about_parse(LIVE)
+        got = companion_about_parse(LIVE)
 
         assert got['Location'] == 'London, United Kingdom'
         assert got['Hobby'].startswith('music, Composing')
@@ -67,7 +67,7 @@ class TestParse:
     def test_empty_field_is_dropped(self):
         """У незаполненной анкеты между подписями пусто — такого поля быть не
         должно вовсе. ⚠ Иначе агент прочитал бы пустоту как факт."""
-        got = dating_companion_about_parse(EMPTY)
+        got = companion_about_parse(EMPTY)
 
         assert 'Occupation' not in got, 'пустое занятие попало в поля'
         assert 'About Myself' not in got
@@ -76,7 +76,7 @@ class TestParse:
 
     @pytest.mark.parametrize('text', ['', None, '   ', 'ничего похожего'])
     def test_junk_gives_nothing(self, text):
-        assert dating_companion_about_parse(text) == {}
+        assert companion_about_parse(text) == {}
 
 
 class TestAbout:
@@ -85,7 +85,7 @@ class TestAbout:
     def test_only_what_makes_a_question(self):
         """⚠ Берём не всё: рост, вес и цвет глаз вопроса не рождают, а описание
         читает агент — лишнее в нём соревнуется за внимание с полезным."""
-        about = dating_companion_about_text(dating_companion_about_parse(LIVE))
+        about = companion_about_text(companion_about_parse(LIVE))
 
         assert 'Занятие: Musician' in about
         assert 'Увлечения:' in about
@@ -95,7 +95,7 @@ class TestAbout:
     def test_id_and_location_stay_out(self):
         """⚠ Номер у карточки свой, город и страна лежат отдельными колонками.
         Дублируй мы их в описании, правка одного места расходилась бы с другим."""
-        about = dating_companion_about_text(dating_companion_about_parse(LIVE))
+        about = companion_about_text(companion_about_parse(LIVE))
 
         assert '352443' not in about
         assert 'London, United Kingdom' not in about
@@ -106,7 +106,7 @@ class TestAbout:
         В описании она попадает агенту как часть рассказа о себе: «Looking for a
         girl to enjoy my nice life... More».
         """
-        about = dating_companion_about_text(dating_companion_about_parse(LIVE))
+        about = companion_about_text(companion_about_parse(LIVE))
 
         assert 'More' not in about
         assert 'nice life…' in about, 'обрыв не отмечен многоточием'
@@ -115,7 +115,7 @@ class TestAbout:
         """У анкеты 275296 пусты «Occupation» и «About Myself» — этих строк в
         описании быть не должно. А заполненное рядом остаётся: пустота одного поля
         не повод терять соседей."""
-        about = dating_companion_about_text(dating_companion_about_parse(EMPTY))
+        about = companion_about_text(companion_about_parse(EMPTY))
 
         assert 'Занятие' not in about, 'пустое занятие попало в описание'
         assert 'О себе' not in about
@@ -124,7 +124,7 @@ class TestAbout:
     def test_nothing_at_all_gives_nothing(self):
         """Совсем пустой ответ — законный исход, а не сбой: страница могла не
         открыться, и описание останется пустым."""
-        assert dating_companion_about_text(dating_companion_about_parse('')) == ''
+        assert companion_about_text(companion_about_parse('')) == ''
 
 
 class TestHead:
@@ -145,7 +145,7 @@ class TestHead:
         ('Chris Gunn START LIVE CHAT', 'Chris Gunn', 0),
     ])
     def test_name_and_age(self, head, name, age):
-        assert dating_companion_about_head(head) == (name, age)
+        assert companion_about_head(head) == (name, age)
 
     def test_header_without_a_name_gives_nothing(self):
         """⚠ Шапка без имени — не повод класть в карточку что попало.
@@ -154,11 +154,11 @@ class TestHead:
         списке собеседников это читается как поломка — лучше пусто, и страница
         покажет букву.
         """
-        assert dating_companion_about_head('Id: 12345 Location Berlin') == ('', 0)
+        assert companion_about_head('Id: 12345 Location Berlin') == ('', 0)
 
     @pytest.mark.parametrize('head', ['', None, '   '])
     def test_nothing(self, head):
-        assert dating_companion_about_head(head) == ('', 0)
+        assert companion_about_head(head) == ('', 0)
 
 
 class TestJunk:
@@ -173,7 +173,7 @@ class TestJunk:
     """
 
     def test_tags_are_stripped(self):
-        got = dating_companion_about_text({
+        got = companion_about_text({
             'About Myself': '<font style="vertical-align: inherit;">Mein Leben ist '
                             'eine Achterbahnfahrt.</font>'})
 
@@ -184,7 +184,7 @@ class TestJunk:
     def test_truncated_tag_is_stripped(self):
         """⚠ И **обрывок тега в конце**: сайт режет длинный текст по числу знаков,
         не разбирая разметку, и на срезе остаётся «…dem Tod zu stellen. </fo»."""
-        got = dating_companion_about_text({
+        got = companion_about_text({
             'About Myself': 'Mein Leben ist eine Achterbahnfahrt. </fo'})
 
         assert '<' not in got
@@ -193,7 +193,7 @@ class TestJunk:
     def test_spaces_are_squeezed(self):
         """Пробелы схлопываем **после** тегов: на их месте остаются пустые места, и
         без этого в описании зияли бы дыры."""
-        got = dating_companion_about_text({'Hobby': 'Ich   habe  <b>viele</b>  Hobbys'})
+        got = companion_about_text({'Hobby': 'Ich   habe  <b>viele</b>  Hobbys'})
 
         assert got == 'Увлечения: Ich habe viele Hobbys'
 
@@ -202,17 +202,17 @@ class TestPlace:
     """Город и страна — отдельными колонками карточки."""
 
     def test_city_and_country(self):
-        got = dating_companion_about_parse(LIVE)
+        got = companion_about_parse(LIVE)
 
-        assert dating_companion_about_place(got) == ('London', 'United Kingdom')
+        assert companion_about_place(got) == ('London', 'United Kingdom')
 
     def test_country_only(self):
         """Сайт пишет «Location Germany», когда города нет. ⚠ Одно слово — это
         страна, а не город: страна у мужчины есть всегда, город не всегда."""
-        assert dating_companion_about_place({'Location': 'Germany'}) == ('', 'Germany')
+        assert companion_about_place({'Location': 'Germany'}) == ('', 'Germany')
 
     def test_nothing(self):
-        assert dating_companion_about_place({}) == ('', '')
+        assert companion_about_place({}) == ('', '')
 
 
 class TestOnceOnly:
@@ -231,9 +231,9 @@ class TestOnceOnly:
         """
         import inspect
 
-        from src.dating import dating_mailing
+        from src.dating import mailing
 
-        code = inspect.getsource(dating_mailing._card)
+        code = inspect.getsource(mailing._card)
 
         assert "== 'none'" in code, 'условие «не спрашивали» исчезло'
         assert '_probe_left' in code, 'предел походов не проверяется'
@@ -243,14 +243,14 @@ class TestOnceOnly:
         свежо описание, и её же показывает карточка на «Анкетах»."""
         import uuid
 
-        from src.uvicorn.routers.dating.dating_companion import (
-            dating_companion_get, dating_companion_touch)
+        from src.uvicorn.routers.dating.companion import (
+            companion_get, companion_touch)
 
         uid = f'tst-{uuid.uuid4().hex[:10]}'
         try:
-            await dating_companion_touch(999_777, uid, about='Играет на трубе',
+            await companion_touch(999_777, uid, about='Играет на трубе',
                                          about_state='done')
-            row = await dating_companion_get(999_777, uid)
+            row = await companion_get(999_777, uid)
 
             assert row['about'] == 'Играет на трубе'
             assert row['about_state'] == 'done'
@@ -268,15 +268,15 @@ class TestOnceOnly:
         бы чужое своими пустотами."""
         import uuid
 
-        from src.uvicorn.routers.dating.dating_companion import (
-            dating_companion_get, dating_companion_touch)
+        from src.uvicorn.routers.dating.companion import (
+            companion_get, companion_touch)
 
         uid = f'tst-{uuid.uuid4().hex[:10]}'
         try:
-            await dating_companion_touch(999_777, uid, name='Джон', photo='p.jpg')
-            await dating_companion_touch(999_777, uid, about='Ходит под парусом',
+            await companion_touch(999_777, uid, name='Джон', photo='p.jpg')
+            await companion_touch(999_777, uid, about='Ходит под парусом',
                                          about_state='done')
-            row = await dating_companion_get(999_777, uid)
+            row = await companion_get(999_777, uid)
 
             assert row['name'] == 'Джон', 'описание затёрло имя'
             assert row['about'] == 'Ходит под парусом'

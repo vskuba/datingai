@@ -13,11 +13,11 @@
 
 import pytest
 
-from src.dating import dating_panel
-from src.dating.dating_panel import (dating_panel_name, dating_panel_root,
-                                     dating_panel_show, dating_panel_check,
-                                     dating_panel_keep, _split)
-from src.dating.dating_panel_fetch import dating_panel_fetch_table
+from src.dating import panel
+from src.dating.panel import (panel_name, panel_root,
+                                     panel_show, panel_check,
+                                     panel_keep, _split)
+from src.dating.panel_fetch import panel_fetch_table
 
 pytestmark = pytest.mark.core
 
@@ -97,7 +97,7 @@ class TestProbeUrl:
 
     async def test_config_asks_the_page_after_login(self, panel_site):
         """Шаг проверки идёт на ту же страницу, что стоит в настройке."""
-        config = await dating_panel._config(SITE)
+        config = await panel._config(SITE)
         step = config['alive'][0]
 
         assert config['base'] == 'https://panel.test'
@@ -116,7 +116,7 @@ class TestName:
         ('panel.test', 'panel.test'),
     ])
     def test_name_is_the_host(self, url, name):
-        assert dating_panel_name(url) == name
+        assert panel_name(url) == name
 
 
 class TestShow:
@@ -127,13 +127,13 @@ class TestShow:
 
         Пустая ссылка в шапке обещала бы то, чего некому исполнить.
         """
-        got = await dating_panel_show(999_782)
+        got = await panel_show(999_782)
 
         assert got['on'] is False
         assert got['url'] == ''
 
     async def test_panel_shows_its_link_and_name(self, panel_site):
-        got = await dating_panel_show(SITE)
+        got = await panel_show(SITE)
 
         assert got['on'] is True
         assert got['url'] == PANEL
@@ -145,7 +145,7 @@ class TestShow:
         Сведи их в одно, и панель, настроенная минуту назад, выглядела бы
         сломанной до первого захода круга.
         """
-        assert (await dating_panel_show(SITE))['status'] == ''
+        assert (await panel_show(SITE))['status'] == ''
 
 
 class TestCheck:
@@ -165,27 +165,27 @@ class TestCheck:
 
             return {'status': 'online', 'error': '', 'ms': 0}
 
-        monkeypatch.setattr(dating_panel, 'http_heartbeat_check', _never)
+        monkeypatch.setattr(panel, 'http_heartbeat_check', _never)
 
-        got = await dating_panel_check(SITE)
+        got = await panel_check(SITE)
 
         assert got['status'] == 'offline'
         assert not called, 'спросили панель, хотя предъявить нечего'
 
     async def test_answer_is_saved_to_the_site(self, panel_site, monkeypatch):
         """Ответ панели ложится в строку сайта — из неё его и читает шапка."""
-        monkeypatch.setattr(dating_panel, '_row',
+        monkeypatch.setattr(panel, '_row',
                             _row_with({'panel_state': _state(), 'panel_status': '',
                                        'panel_error': ''}))
-        monkeypatch.setattr(dating_panel, 'http_heartbeat_check',
+        monkeypatch.setattr(panel, 'http_heartbeat_check',
                             _answer({'status': 'online', 'error': '', 'ms': 12}))
 
-        await dating_panel_check(SITE)
-        # ⚠ Подмены снимаем до показа: `dating_panel_show` читает ту же строку
+        await panel_check(SITE)
+        # ⚠ Подмены снимаем до показа: `panel_show` читает ту же строку
         # сайта, и с подменённой он показал бы не записанное, а подставленное.
         monkeypatch.undo()
 
-        assert (await dating_panel_show(SITE))['status'] == 'online'
+        assert (await panel_show(SITE))['status'] == 'online'
 
     async def test_success_wipes_the_old_error(self, panel_site, monkeypatch):
         """⚠ Удача стирает прежний отказ: строка живёт до следующей удачи.
@@ -193,20 +193,20 @@ class TestCheck:
         Иначе панель, починившаяся сама, показывала бы вчерашнюю причину рядом с
         зелёной точкой.
         """
-        monkeypatch.setattr(dating_panel, '_row',
+        monkeypatch.setattr(panel, '_row',
                             _row_with({'panel_state': _state()}))
-        monkeypatch.setattr(dating_panel, 'http_heartbeat_check',
+        monkeypatch.setattr(panel, 'http_heartbeat_check',
                             _answer({'status': 'error', 'error': 'сеть легла', 'ms': 0}))
-        await dating_panel_check(SITE)
+        await panel_check(SITE)
 
-        monkeypatch.setattr(dating_panel, 'http_heartbeat_check',
+        monkeypatch.setattr(panel, 'http_heartbeat_check',
                             _answer({'status': 'online', 'error': '', 'ms': 8}))
-        await dating_panel_check(SITE)
+        await panel_check(SITE)
         # Подмены снимаем до показа — он читает ту же строку сайта.
         monkeypatch.undo()
 
-        assert (await dating_panel_show(SITE))['status'] == 'online'
-        assert (await dating_panel_show(SITE))['error'] == ''
+        assert (await panel_show(SITE))['status'] == 'online'
+        assert (await panel_show(SITE))['error'] == ''
 
 
 class TestKeep:
@@ -218,12 +218,12 @@ class TestKeep:
         Вкладка Chromium стоит секунд и памяти, а чужая сетевая икота проходит
         сама: круг придёт снова через `admin_every`.
         """
-        monkeypatch.setattr(dating_panel, '_row', _row_with({'panel_state': _state()}))
-        monkeypatch.setattr(dating_panel, 'http_heartbeat_check',
+        monkeypatch.setattr(panel, '_row', _row_with({'panel_state': _state()}))
+        monkeypatch.setattr(panel, 'http_heartbeat_check',
                             _answer({'status': 'error', 'error': 'таймаут', 'ms': 0}))
-        monkeypatch.setattr(dating_panel, 'dating_panel_login', _login_forbidden())
+        monkeypatch.setattr(panel, 'panel_login', _login_forbidden())
 
-        got = await dating_panel_keep(SITE)
+        got = await panel_keep(SITE)
 
         assert got['status'] == 'error'
         assert got['logged_in'] is False
@@ -237,12 +237,12 @@ class TestKeep:
 
             return {'status': 'ok', 'error': ''}
 
-        monkeypatch.setattr(dating_panel, '_row', _row_with({'panel_state': _state()}))
-        monkeypatch.setattr(dating_panel, 'http_heartbeat_check',
+        monkeypatch.setattr(panel, '_row', _row_with({'panel_state': _state()}))
+        monkeypatch.setattr(panel, 'http_heartbeat_check',
                             _answer({'status': 'offline', 'error': 'не признала', 'ms': 3}))
-        monkeypatch.setattr(dating_panel, 'dating_panel_login', _login)
+        monkeypatch.setattr(panel, 'panel_login', _login)
 
-        got = await dating_panel_keep(SITE)
+        got = await panel_keep(SITE)
 
         assert logins == [SITE]
         assert got['logged_in'] is True
@@ -260,12 +260,12 @@ class TestKeep:
         async def _check(*args, **kwargs):
             return next(answers)
 
-        monkeypatch.setattr(dating_panel, '_row', _row_with({'panel_state': _state()}))
-        monkeypatch.setattr(dating_panel, 'http_heartbeat_check', _check)
-        monkeypatch.setattr(dating_panel, 'dating_panel_login',
+        monkeypatch.setattr(panel, '_row', _row_with({'panel_state': _state()}))
+        monkeypatch.setattr(panel, 'http_heartbeat_check', _check)
+        monkeypatch.setattr(panel, 'panel_login',
                             lambda site_id: _ok({'status': 'ok', 'error': ''}))
 
-        got = await dating_panel_keep(SITE)
+        got = await panel_keep(SITE)
 
         assert got['status'] == 'online'
 
@@ -282,7 +282,7 @@ class TestRoot:
         ('https://panel.test', 'https://panel.test'),
     ])
     def test_root_is_the_folder_of_the_page(self, url, root):
-        assert dating_panel_root(url) == root
+        assert panel_root(url) == root
 
 
 class TestTable:
@@ -294,21 +294,21 @@ class TestTable:
         Возьми разбор все `tr`, и «ID / Date UTC / From» приехало бы первым
         сообщением — неизвестно от кого и неизвестно когда.
         """
-        rows = dating_panel_fetch_table(PAGE)
+        rows = panel_fetch_table(PAGE)
 
         assert len(rows) == 2
         assert rows[0][0]['текст'] == '37641085'
 
     def test_cell_keeps_both_link_and_text(self):
         """Панель пишет в ячейку «181685 Semen Gorbunkov»: номер ссылкой, имя рядом."""
-        cell = dating_panel_fetch_table(PAGE)[0][2]
+        cell = panel_fetch_table(PAGE)[0][2]
 
         assert cell['ссылка'] == '181685'
         assert cell['текст'] == '181685 Semen Gorbunkov'
 
     def test_full_text_comes_from_the_title(self):
         """⚠ Полный текст лежит в подсказке: в самой ячейке он обрезан шириной."""
-        cell = dating_panel_fetch_table(PAGE)[1][4]
+        cell = panel_fetch_table(PAGE)[1][4]
 
         assert cell['подсказка'] == 'pretty chill honestly. just watching a series'
 
@@ -318,9 +318,9 @@ class TestTable:
         Разойдись они — и забор ручкой однажды стал бы читать таблицу иначе, чем
         забор сценарием, а заметить это было бы нечем.
         """
-        from src.dating.dating_chat_panel import _cells
+        from src.dating.chat_panel import _cells
 
-        one = _cells(dating_panel_fetch_table(PAGE))[0]
+        one = _cells(panel_fetch_table(PAGE))[0]
 
         assert one['номер'] == '37641085'
         assert one['когда'] == '2026-09-02 19:12:09'
@@ -331,12 +331,12 @@ class TestTable:
     def test_rows_turn_into_messages(self):
         """Сквозная проверка: таблица → записи `dating_message`.
 
-        ⚠ Здесь и видно, ради чего имена общие: `dating_chat_panel_rows` не знает,
+        ⚠ Здесь и видно, ради чего имена общие: `chat_panel_rows` не знает,
         откуда пришли строки, и разбирает их одинаково.
         """
-        from src.dating.dating_chat_panel import _cells, dating_chat_panel_rows
+        from src.dating.chat_panel import _cells, chat_panel_rows
 
-        got = dating_chat_panel_rows({'сообщения': _cells(dating_panel_fetch_table(PAGE))},
+        got = chat_panel_rows({'сообщения': _cells(panel_fetch_table(PAGE))},
                                      {'643694': 77})
 
         assert [one['direction'] for one in got] == ['in', 'out']
@@ -350,13 +350,13 @@ class TestTransport:
     """Чем забираем переписку: ручкой панели или сценарием."""
 
     async def test_site_with_a_panel_goes_by_the_handle(self, panel_site):
-        from src.dating.dating_chat_panel import _panel_ready
+        from src.dating.chat_panel import _panel_ready
 
         assert await _panel_ready(SITE) is True
 
     async def test_site_without_a_panel_keeps_the_scenario(self):
         """⚠ Не запасной путь, а выбор по настройке: без адреса панели — сценарий."""
-        from src.dating.dating_chat_panel import _panel_ready
+        from src.dating.chat_panel import _panel_ready
 
         assert await _panel_ready(999_782) is False
 

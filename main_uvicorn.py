@@ -40,35 +40,35 @@ from src.uvicorn.routers import seed as seed_router
 from src.uvicorn.routers import setting as setting_router
 from src.uvicorn.routers import site as site_router
 from src.uvicorn.routers import users as users_router
-from src.uvicorn.routers.dating import dating_export
-from src.uvicorn.routers.dating import dating_import
-from src.uvicorn.routers.dating import dating_chat as dating_chat_router
-from src.uvicorn.routers.dating import dating_companion as dating_companion_router
-from src.uvicorn.routers.dating import dating_error as dating_error_router
-from src.uvicorn.routers.dating import dating_feed as dating_feed_router
-from src.uvicorn.routers.dating import dating_log as dating_log_router
-from src.uvicorn.routers.dating import dating_request as dating_request_router
-from src.uvicorn.routers.dating import dating_mail as dating_mail_router
-from src.uvicorn.routers.dating import dating_mail_var as dating_mail_var_router
-from src.uvicorn.routers.dating import dating_mail_in as dating_mail_in_router
-from src.uvicorn.routers.dating import dating_heartbeat as dating_heartbeat_router
-from src.uvicorn.routers.dating import dating_favorite_mail as dating_favorite_mail_router
-from src.uvicorn.routers.dating import dating_block as dating_block_router
-from src.uvicorn.routers.dating import dating_invite as dating_invite_router
-from src.uvicorn.routers.dating import dating_stats as dating_stats_router
-from src.uvicorn.routers.dating import dating_mailing as dating_mailing_router
-from src.uvicorn.routers.dating import dating_people
-from src.uvicorn.routers.dating import dating_site as dating_site_router
-from src.uvicorn.routers.dating import dating_site_switch as dating_site_switch_router
-from src.uvicorn.routers.dating import dating_socket as dating_socket_router
-from src.uvicorn.routers.dating import dating_work as dating_work_router
+from src.uvicorn.routers.dating import export
+from src.uvicorn.routers.dating import import_
+from src.uvicorn.routers.dating import chat as dating_chat_router
+from src.uvicorn.routers.dating import companion as dating_companion_router
+from src.uvicorn.routers.dating import error as dating_error_router
+from src.uvicorn.routers.dating import feed as dating_feed_router
+from src.uvicorn.routers.dating import log as dating_log_router
+from src.uvicorn.routers.dating import request as dating_request_router
+from src.uvicorn.routers.dating import mail as dating_mail_router
+from src.uvicorn.routers.dating import mail_var as dating_mail_var_router
+from src.uvicorn.routers.dating import mail_in as dating_mail_in_router
+from src.uvicorn.routers.dating import heartbeat as dating_heartbeat_router
+from src.uvicorn.routers.dating import favorite_mail as dating_favorite_mail_router
+from src.uvicorn.routers.dating import block as dating_block_router
+from src.uvicorn.routers.dating import invite as dating_invite_router
+from src.uvicorn.routers.dating import stats as dating_stats_router
+from src.uvicorn.routers.dating import mailing as dating_mailing_router
+from src.uvicorn.routers.dating import people
+from src.uvicorn.routers.dating import site_ as dating_site_router
+from src.uvicorn.routers.dating import site_switch as dating_site_switch_router
+from src.uvicorn.routers.dating import socket_ as dating_socket_router
+from src.uvicorn.routers.dating import work as dating_work_router
 # Ручки анкеты разложены на три файла по тому, куда они ходят: CRUD своей базы,
 # действия наружу, чтение для страниц. Роутер у всех трёх один и тот же
-# (`/api/dating/profile`) — снаружи это одна группа ручек, см. шапку `dating_profile.py`.
-from src.uvicorn.routers.dating import dating_profile
-from src.uvicorn.routers.dating import dating_profile_action
-from src.uvicorn.routers.dating import dating_profile_view
-from src.uvicorn.routers.dating import dating_proxy as dating_proxy_router
+# (`/api/dating/profile`) — снаружи это одна группа ручек, см. шапку `profile_.py`.
+from src.uvicorn.routers.dating import profile_
+from src.uvicorn.routers.dating import profile_action
+from src.uvicorn.routers.dating import profile_view
+from src.uvicorn.routers.dating import proxy as dating_proxy_router
 from src.uvicorn.uvicorn_base import uvicorn_base_path
 from src.uvicorn.uvicorn_validation import uvicorn_validation_handler
 from src.worker.dating.chat_worker import chat_worker_keep_stop, chat_worker_recover
@@ -305,12 +305,12 @@ app.include_router(auth_router.router)
 app.include_router(dashboard.router)
 app.include_router(site_router.router)
 app.include_router(setting_router.router)
-app.include_router(dating_profile.router)
-app.include_router(dating_profile_action.router)
-app.include_router(dating_profile_view.router)
+app.include_router(profile_.router)
+app.include_router(profile_action.router)
+app.include_router(profile_view.router)
 app.include_router(dating_proxy_router.router)
-app.include_router(dating_export.router)
-app.include_router(dating_import.router)
+app.include_router(export.router)
+app.include_router(import_.router)
 app.include_router(dating_log_router.router)
 app.include_router(dating_request_router.router)
 app.include_router(dating_feed_router.router)
@@ -329,13 +329,13 @@ app.include_router(dating_stats_router.router)
 app.include_router(dating_heartbeat_router.router)
 app.include_router(dating_site_router.router)
 # Тот же префикс, что у «Сайтов»: переключатели и расписания — продолжение той же
-# страницы, разложенное по файлам (`dating_site_switch.py`), а не новый раздел.
+# страницы, разложенное по файлам (`site_switch.py`), а не новый раздел.
 app.include_router(dating_site_switch_router.router)
 app.include_router(dating_socket_router.router)
 app.include_router(dating_error_router.router)
 app.include_router(dating_chat_router.router)
 app.include_router(dating_work_router.router)
-app.include_router(dating_people.router)
+app.include_router(people.router)
 app.include_router(seed_router.router)
 app.include_router(backup_router.router)
 app.include_router(users_router.router)

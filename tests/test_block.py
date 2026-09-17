@@ -23,13 +23,13 @@ import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating import dating_block
-from src.dating.dating_block import (DATING_BLOCK_DENY_DEFAULT,
-                                     DATING_BLOCK_POOLS, dating_block_add,
-                                     dating_block_deny, dating_block_drop,
-                                     dating_block_pairs, dating_block_rows)
-from src.dating.dating_invite import _cards as invite_cards
-from src.dating.dating_mailing import _pairs as mailing_pairs
+from src.dating import block
+from src.dating.block import (BLOCK_DENY_DEFAULT,
+                                     BLOCK_POOLS, block_add,
+                                     block_deny, block_drop,
+                                     block_pairs, block_rows)
+from src.dating.invite import _cards as invite_cards
+from src.dating.mailing import _pairs as mailing_pairs
 
 pytestmark = pytest.mark.chat
 
@@ -53,7 +53,7 @@ async def girl(auth_client):
 
     async with mysql_get_db_async() as db:
         await db.execute('DELETE FROM block WHERE profile_id = %s', (profile_id,))
-        for table in DATING_BLOCK_POOLS:
+        for table in BLOCK_POOLS:
             await db.execute(f'DELETE FROM {table} WHERE profile_id = %s', (profile_id,))
         await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
         await db.connection.commit()
@@ -63,16 +63,16 @@ class TestDeny:
     """Что считается отказом «он закрылся»."""
 
     async def test_the_site_code_is_recognised(self):
-        assert await dating_block_deny(STAND_SITE, DENY) is True
+        assert await block_deny(STAND_SITE, DENY) is True
 
     async def test_an_ordinary_refusal_is_not(self):
         """⚠ Обычный отказ — временный, и запрет по нему был бы потерей человека."""
-        assert await dating_block_deny(
+        assert await block_deny(
             STAND_SITE, 'сайт ответил 200: {"IsSuccess":false,'
                         '"Reason":"ERROR_TOO_MANY_REQUESTS"}') is False
 
     async def test_an_empty_answer_is_not(self):
-        assert await dating_block_deny(STAND_SITE, '') is False
+        assert await block_deny(STAND_SITE, '') is False
 
     async def test_the_mark_comes_from_the_site_setting(self, monkeypatch):
         """⚠ Примету придумывает сайт: коды отказа — его словарь, не наш.
@@ -80,49 +80,49 @@ class TestDeny:
         Умолчание тут лишь потому, что оба наших сайта на одном движке.
         """
         async def _said(site_id, key, default=''):
-            assert key == dating_block.DATING_BLOCK_DENY_SETTING
+            assert key == block.BLOCK_DENY_SETTING
 
             return 'HE_IS_DONE_WITH_YOU'
 
-        import src.uvicorn.routers.dating.dating_site as site_router
-        monkeypatch.setattr(site_router, 'dating_site_setting', _said)
+        import src.uvicorn.routers.dating.site_ as site_router
+        monkeypatch.setattr(site_router, 'site_setting', _said)
 
-        assert await dating_block_deny(STAND_SITE, DENY) is False
-        assert await dating_block_deny(STAND_SITE, 'oops HE_IS_DONE_WITH_YOU') is True
+        assert await block_deny(STAND_SITE, DENY) is False
+        assert await block_deny(STAND_SITE, 'oops HE_IS_DONE_WITH_YOU') is True
 
     def test_the_default_is_the_code_we_saw_live(self):
-        assert DATING_BLOCK_DENY_DEFAULT == 'ERROR_MESSAGE_USER_DENY'
+        assert BLOCK_DENY_DEFAULT == 'ERROR_MESSAGE_USER_DENY'
 
 
 class TestAdd:
     """Что происходит, когда запрет заносят."""
 
     async def test_the_pair_is_remembered(self, girl):
-        assert await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY) is True
-        assert (girl, UID) in await dating_block_pairs(STAND_SITE)
+        assert await block_add(STAND_SITE, girl, UID, 'Dominic', DENY) is True
+        assert (girl, UID) in await block_pairs(STAND_SITE)
 
     async def test_the_second_time_is_the_same_record(self, girl):
-        await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
+        await block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
 
-        assert await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY) is False
-        assert (await dating_block_rows(STAND_SITE, girl))['total'] == 1
+        assert await block_add(STAND_SITE, girl, UID, 'Dominic', DENY) is False
+        assert (await block_rows(STAND_SITE, girl))['total'] == 1
 
     async def test_drafts_of_the_pair_are_swept(self, girl):
         """⚠ Иначе круг отправки честно попробует каждый и получит тот же отказ:
         запрет откладывал бы работу вместо того, чтобы её отменить."""
-        for table in DATING_BLOCK_POOLS:
+        for table in BLOCK_POOLS:
             await _draft(table, girl, UID)
 
-        await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
+        await block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
 
-        for table in DATING_BLOCK_POOLS:
+        for table in BLOCK_POOLS:
             assert await _count(table, girl) == 0, f'{table}: черновик остался'
 
     async def test_what_already_went_is_not_touched(self, girl):
         """Ушедшее — история, и она правдива: письмо он получил до того, как закрылся."""
         await _draft('mailing', girl, UID, status='sent')
 
-        await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
+        await block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
 
         assert await _count('mailing', girl) == 1
 
@@ -132,7 +132,7 @@ class TestAdd:
         Запрет отвечает на вопрос «писать ли **первыми**», а входящее письмо этот
         вопрос снимает. Молчать в ответ на прямое обращение хуже.
         """
-        assert 'mail_reply' not in DATING_BLOCK_POOLS
+        assert 'mail_reply' not in BLOCK_POOLS
 
 
 class TestTheRowHasBothFaces:
@@ -146,9 +146,9 @@ class TestTheRowHasBothFaces:
     async def test_the_girl_comes_with_her_face(self, girl, auth_client):
         await _profile_card(girl, name='Диана', photo='https://site/di.jpg',
                             site_uid='643694')
-        await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
+        await block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
 
-        one = (await dating_block_rows(STAND_SITE, girl))['rows'][0]
+        one = (await block_rows(STAND_SITE, girl))['rows'][0]
 
         assert one['profile_name'] == 'Диана'
         assert one['profile_photo'] == 'https://site/di.jpg'
@@ -156,9 +156,9 @@ class TestTheRowHasBothFaces:
 
     async def test_a_profile_without_a_card_is_not_a_failure(self, girl):
         """Карточки с сайта может не быть — тогда имя из логина, лицо пустое."""
-        await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
+        await block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
 
-        one = (await dating_block_rows(STAND_SITE, girl))['rows'][0]
+        one = (await block_rows(STAND_SITE, girl))['rows'][0]
 
         assert one['profile_name'] and one['profile_photo'] == ''
 
@@ -206,9 +206,9 @@ class TestFavoriteMailObeysIt:
     def test_the_query_asks_about_the_block(self):
         import inspect
 
-        from src.dating import dating_favorite_mail
+        from src.dating import favorite_mail
 
-        code = inspect.getsource(dating_favorite_mail._quiet)
+        code = inspect.getsource(favorite_mail._quiet)
 
         assert 'block' in code, 'затихшие разговоры не смотрят на запрет'
 
@@ -222,33 +222,33 @@ class TestThePageOfTheList:
 
     async def test_the_count_is_the_whole_list(self, girl):
         for n in range(3):
-            await dating_block_add(STAND_SITE, girl, f'{UID}-{n}', 'Dominic', DENY)
+            await block_add(STAND_SITE, girl, f'{UID}-{n}', 'Dominic', DENY)
 
-        got = await dating_block_rows(STAND_SITE, girl, page=1, per=2)
+        got = await block_rows(STAND_SITE, girl, page=1, per=2)
 
         assert got['total'] == 3 and got['pages'] == 2
         assert len(got['rows']) == 2
 
     async def test_the_second_page_is_other_rows(self, girl):
         for n in range(3):
-            await dating_block_add(STAND_SITE, girl, f'{UID}-{n}', 'Dominic', DENY)
+            await block_add(STAND_SITE, girl, f'{UID}-{n}', 'Dominic', DENY)
 
-        first = await dating_block_rows(STAND_SITE, girl, page=1, per=2)
-        second = await dating_block_rows(STAND_SITE, girl, page=2, per=2)
+        first = await block_rows(STAND_SITE, girl, page=1, per=2)
+        second = await block_rows(STAND_SITE, girl, page=2, per=2)
 
         assert {one['id'] for one in first['rows']} \
             & {one['id'] for one in second['rows']} == set()
 
     async def test_a_page_past_the_end_comes_back(self, girl):
         """⚠ Правим, а не отвергаем: запрет могли снять с последней страницы."""
-        await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
+        await block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
 
-        got = await dating_block_rows(STAND_SITE, girl, page=99, per=2)
+        got = await block_rows(STAND_SITE, girl, page=99, per=2)
 
         assert got['page'] == got['pages'] and got['rows']
 
     async def test_an_empty_list_is_one_page(self, girl):
-        got = await dating_block_rows(STAND_SITE, girl)
+        got = await block_rows(STAND_SITE, girl)
 
         assert got == {'rows': [], 'page': 1, 'pages': 1, 'total': 0}
 
@@ -257,15 +257,15 @@ class TestDrop:
     """Снять запрет может только человек."""
 
     async def test_it_goes_away(self, girl):
-        await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
-        one = (await dating_block_rows(STAND_SITE, girl))['rows'][0]
+        await block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
+        one = (await block_rows(STAND_SITE, girl))['rows'][0]
 
-        assert await dating_block_drop(int(one['id'])) is True
-        assert await dating_block_pairs(STAND_SITE) == set() \
-            or (girl, UID) not in await dating_block_pairs(STAND_SITE)
+        assert await block_drop(int(one['id'])) is True
+        assert await block_pairs(STAND_SITE) == set() \
+            or (girl, UID) not in await block_pairs(STAND_SITE)
 
     async def test_dropping_what_is_gone_says_so(self):
-        assert await dating_block_drop(999_999_999) is False
+        assert await block_drop(999_999_999) is False
 
 
 async def _profile_card(profile_id: int, name: str, photo: str,

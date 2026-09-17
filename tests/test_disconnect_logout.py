@@ -4,12 +4,12 @@
 и `Set-Cookie: AUTH=; expires=вчера`, то есть гасит cookie **в браузере**, а
 сессию на своей стороне оставляет живой: сохранённый `AUTH` после него работает
 (проверено живьём). Настоящий выход с нашей стороны — стёртое состояние, и его
-делает `dating_disconnect_run` независимо от исхода запроса.
+делает `disconnect_run` независимо от исхода запроса.
 """
 
 import pytest
 
-from src.dating import dating_disconnect
+from src.dating import disconnect
 
 pytestmark = pytest.mark.profile
 
@@ -31,7 +31,7 @@ def quiet(monkeypatch):
     async def _log(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(dating_disconnect, 'dating_log_write', _log)
+    monkeypatch.setattr(disconnect, 'log_write', _log)
 
 
 def _config(value):
@@ -57,11 +57,11 @@ class TestPicksTheHandle:
         """⚠ Шаг ищем в **нашей** настройке присутствия: выход — её часть, он про
         то же соединение и те же cookie. Соседская остаётся запасной."""
         seen = []
-        monkeypatch.setattr('src.dating.dating_heartbeat.dating_heartbeat_config',
+        monkeypatch.setattr('src.dating.heartbeat.heartbeat_config',
                             _config(OURS))
-        monkeypatch.setattr(dating_disconnect, '_logout_http', _http(seen))
+        monkeypatch.setattr(disconnect, '_logout_http', _http(seen))
 
-        ok, error = await dating_disconnect._logout(
+        ok, error = await disconnect._logout(
             profile, {}, {'logout': {'path': '/чужой'}}, None, None, None)
 
         assert (ok, error) == (True, '')
@@ -71,11 +71,11 @@ class TestPicksTheHandle:
     async def test_neighbour_is_the_fallback(self, profile, monkeypatch):
         """У сайта без своей настройки выход всё равно должен работать."""
         seen = []
-        monkeypatch.setattr('src.dating.dating_heartbeat.dating_heartbeat_config',
+        monkeypatch.setattr('src.dating.heartbeat.heartbeat_config',
                             _config({}))
-        monkeypatch.setattr(dating_disconnect, '_logout_http', _http(seen))
+        monkeypatch.setattr(disconnect, '_logout_http', _http(seen))
 
-        ok, _ = await dating_disconnect._logout(
+        ok, _ = await disconnect._logout(
             profile, {}, {'base': 'https://neighbour.invalid',
                           'logout': {'path': '/out'}}, None, None, None)
 
@@ -84,10 +84,10 @@ class TestPicksTheHandle:
     async def test_no_handle_and_no_scenario_says_both(self, profile, monkeypatch):
         """⚠ Причина называет **оба** пути: человек, читающий её, должен понимать,
         что можно завести либо ручку, либо сценарий."""
-        monkeypatch.setattr('src.dating.dating_heartbeat.dating_heartbeat_config',
+        monkeypatch.setattr('src.dating.heartbeat.heartbeat_config',
                             _config({}))
 
-        ok, error = await dating_disconnect._logout(profile, {}, {}, None, None, None)
+        ok, error = await disconnect._logout(profile, {}, {}, None, None, None)
 
         assert not ok
         assert 'logout' in error and 'сценария' in error and 'lady' in error
@@ -97,14 +97,14 @@ class TestHandleItself:
     """Сам запрос."""
 
     async def test_without_a_session_there_is_nothing_to_log_out(self, profile):
-        ok, error = await dating_disconnect._logout_http(
+        ok, error = await disconnect._logout_http(
             {**profile, 'storage_state': None}, OURS, OURS['logout'])
 
         assert not ok and 'выходить нечем' in error
 
     async def test_without_a_base_we_do_not_guess(self, profile):
         """Некуда слать — честный отказ, а не запрос в пустоту."""
-        ok, error = await dating_disconnect._logout_http(
+        ok, error = await disconnect._logout_http(
             profile, {'logout': {'path': '/signout'}}, {'path': '/signout'})
 
         assert not ok and 'корень' in error

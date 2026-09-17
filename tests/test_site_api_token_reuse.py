@@ -19,11 +19,11 @@
 
 import pytest
 
-from src.dating import dating_site_api
-from src.dating.dating_site_api import (DATING_SITE_API_TOKEN_KEY,
-                                        dating_site_api_call,
-                                        dating_site_api_has_token)
-from src.uvicorn.routers.dating import dating_people
+from src.dating import site_api
+from src.dating.site_api import (SITE_API_TOKEN_KEY,
+                                        site_api_call,
+                                        site_api_has_token)
+from src.uvicorn.routers.dating import people
 
 pytestmark = pytest.mark.profile
 
@@ -81,7 +81,7 @@ def site(monkeypatch):
     async def _login(client, profile, base, password):
         seen['login'] += 1
         token = f'token-{seen["login"]}'
-        dating_site_api._token_put(int(profile['id']), token)
+        site_api._token_put(int(profile['id']), token)
 
         return token
 
@@ -99,10 +99,10 @@ def site(monkeypatch):
     async def _proxy(profile):
         return ''
 
-    monkeypatch.setattr(dating_site_api, '_login', _login)
-    monkeypatch.setattr(dating_site_api, '_request', _request)
-    monkeypatch.setattr(dating_site_api, 'dating_proxy_url', _proxy)
-    monkeypatch.setattr(dating_site_api, 'http_pool_transport', lambda proxy='': None)
+    monkeypatch.setattr(site_api, '_login', _login)
+    monkeypatch.setattr(site_api, '_request', _request)
+    monkeypatch.setattr(site_api, 'proxy_url', _proxy)
+    monkeypatch.setattr(site_api, 'http_pool_transport', lambda proxy='': None)
 
     return seen
 
@@ -110,7 +110,7 @@ def site(monkeypatch):
 @pytest.fixture
 def redis(monkeypatch):
     fake = _Redis()
-    monkeypatch.setattr(dating_site_api, 'redis_conn_get', lambda: fake)
+    monkeypatch.setattr(site_api, 'redis_conn_get', lambda: fake)
 
     return fake
 
@@ -121,10 +121,10 @@ class TestTokenReuse:
     @pytest.mark.asyncio
     async def test_first_call_logs_in_once(self, site, redis):
         """Первый запрос токена не имеет — входит и запоминает его."""
-        await dating_site_api_call(PROFILE, BASE, 'secret', '/users/online')
+        await site_api_call(PROFILE, BASE, 'secret', '/users/online')
 
         assert site['login'] == 1
-        assert redis.get(DATING_SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']))
+        assert redis.get(SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']))
 
     @pytest.mark.asyncio
     async def test_next_calls_reuse_token(self, site, redis):
@@ -134,7 +134,7 @@ class TestTokenReuse:
         тут стало бы десять входов, а на сайте за сутки семьсот.
         """
         for _ in range(10):
-            await dating_site_api_call(PROFILE, BASE, 'secret', '/users/online')
+            await site_api_call(PROFILE, BASE, 'secret', '/users/online')
 
         assert site['login'] == 1
         assert site['request'] == 10
@@ -144,9 +144,9 @@ class TestTokenReuse:
     @pytest.mark.asyncio
     async def test_ready_token_skips_login(self, site, redis):
         """Токен уже лежит в Redis — входа нет вовсе, даже первого."""
-        redis.set(DATING_SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']), 'ready')
+        redis.set(SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']), 'ready')
 
-        await dating_site_api_call(PROFILE, BASE, 'secret', '/users/online')
+        await site_api_call(PROFILE, BASE, 'secret', '/users/online')
 
         assert site['login'] == 0
         assert site['tokens'] == ['ready']
@@ -154,10 +154,10 @@ class TestTokenReuse:
     @pytest.mark.asyncio
     async def test_401_relogins_once(self, site, redis):
         """Сайт отверг токен — забываем его и входим заново. Ровно один раз."""
-        redis.set(DATING_SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']), 'stale')
+        redis.set(SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']), 'stale')
         site['answers'] = [_Answer(401)]
 
-        await dating_site_api_call(PROFILE, BASE, 'secret', '/users/online')
+        await site_api_call(PROFILE, BASE, 'secret', '/users/online')
 
         assert site['login'] == 1
         assert site['tokens'] == ['stale', 'token-1']
@@ -165,11 +165,11 @@ class TestTokenReuse:
     @pytest.mark.asyncio
     async def test_after_401_the_new_token_serves(self, site, redis):
         """А следующий заход идёт уже новым токеном — и снова без входа."""
-        redis.set(DATING_SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']), 'stale')
+        redis.set(SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']), 'stale')
         site['answers'] = [_Answer(401)]
 
-        await dating_site_api_call(PROFILE, BASE, 'secret', '/users/online')
-        await dating_site_api_call(PROFILE, BASE, 'secret', '/users/online')
+        await site_api_call(PROFILE, BASE, 'secret', '/users/online')
+        await site_api_call(PROFILE, BASE, 'secret', '/users/online')
 
         assert site['login'] == 1
         assert site['tokens'][-1] == 'token-1'
@@ -179,21 +179,21 @@ class TestHasToken:
     """Публичная проверка, которой пользуется выбор анкеты."""
 
     def test_says_no_without_token(self, redis):
-        assert dating_site_api_has_token(PROFILE['id']) is False
+        assert site_api_has_token(PROFILE['id']) is False
 
     def test_says_yes_with_token(self, redis):
-        redis.set(DATING_SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']), 'live')
+        redis.set(SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']), 'live')
 
-        assert dating_site_api_has_token(PROFILE['id']) is True
+        assert site_api_has_token(PROFILE['id']) is True
 
     def test_redis_failure_says_no(self, monkeypatch):
         """Сбой Redis отвечает «нет»: лишний вход дешевле молчаливой поломки."""
         def _boom():
             raise RuntimeError('redis лёг')
 
-        monkeypatch.setattr(dating_site_api, 'redis_conn_get', _boom)
+        monkeypatch.setattr(site_api, 'redis_conn_get', _boom)
 
-        assert dating_site_api_has_token(PROFILE['id']) is False
+        assert site_api_has_token(PROFILE['id']) is False
 
 
 class TestPickProfile:
@@ -219,7 +219,7 @@ class TestPickProfile:
             async def __aexit__(self, *a):
                 return False
 
-        monkeypatch.setattr(dating_people, 'mysql_get_db_async', lambda: _Conn())
+        monkeypatch.setattr(people, 'mysql_get_db_async', lambda: _Conn())
 
         return state
 
@@ -231,15 +231,15 @@ class TestPickProfile:
         """
         rows['out'] = []
 
-        assert await dating_people._site_profile(SITE) == {}
+        assert await people._site_profile(SITE) == {}
 
     @pytest.mark.asyncio
     async def test_only_online_asked_of_the_base(self, rows, monkeypatch):
         """В запрос уходит условие «в сети» — а не отбор в питоне после."""
         rows['out'] = [{'id': 1, 'site_id': SITE, 'login': 'a'}]
-        monkeypatch.setattr(dating_people, 'dating_site_api_has_token', lambda one: False)
+        monkeypatch.setattr(people, 'site_api_has_token', lambda one: False)
 
-        await dating_people._site_profile(SITE)
+        await people._site_profile(SITE)
 
         assert "status = 'online'" in rows['sql']
         assert 'enabled = 1' in rows['sql']
@@ -250,10 +250,10 @@ class TestPickProfile:
         rows['out'] = [{'id': 11, 'site_id': SITE, 'login': 'a'},
                        {'id': 22, 'site_id': SITE, 'login': 'b'},
                        {'id': 33, 'site_id': SITE, 'login': 'c'}]
-        monkeypatch.setattr(dating_people, 'dating_site_api_has_token',
+        monkeypatch.setattr(people, 'site_api_has_token',
                             lambda one: one == 22)
 
-        got = await dating_people._site_profile(SITE)
+        got = await people._site_profile(SITE)
 
         assert got['id'] == 22
 
@@ -262,9 +262,9 @@ class TestPickProfile:
         """Токена нет ни у кого — берём первую: один вход на двенадцать часов."""
         rows['out'] = [{'id': 11, 'site_id': SITE, 'login': 'a'},
                        {'id': 22, 'site_id': SITE, 'login': 'b'}]
-        monkeypatch.setattr(dating_people, 'dating_site_api_has_token', lambda one: False)
+        monkeypatch.setattr(people, 'site_api_has_token', lambda one: False)
 
-        got = await dating_people._site_profile(SITE)
+        got = await people._site_profile(SITE)
 
         assert got['id'] == 11
 
@@ -296,17 +296,17 @@ class TestRedisGivesBytes:
                 return value.encode() if isinstance(value, str) else value
 
         fake = _Bytes()
-        monkeypatch.setattr(dating_site_api, 'redis_conn_get', lambda: fake)
+        monkeypatch.setattr(site_api, 'redis_conn_get', lambda: fake)
 
         return fake
 
     @pytest.mark.asyncio
     async def test_a_cached_token_still_works(self, site, redis_bytes):
         """Токен из байтов уходит на сайт **чистым**, без `b'…'`."""
-        redis_bytes.set(DATING_SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']),
+        redis_bytes.set(SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']),
                         'eyJhbGci.payload.sig')
 
-        await dating_site_api_call(PROFILE, BASE, 'secret', '/users/online')
+        await site_api_call(PROFILE, BASE, 'secret', '/users/online')
 
         assert site['login'] == 0, 'вошли заново при живом токене'
         assert site['tokens'] == ['eyJhbGci.payload.sig'], site['tokens']
@@ -320,11 +320,11 @@ class TestRedisGivesBytes:
         круге.
         """
         for _ in range(10):
-            await dating_site_api_call(PROFILE, BASE, 'secret', '/users/online')
+            await site_api_call(PROFILE, BASE, 'secret', '/users/online')
 
         assert site['login'] == 1, f'входов {site["login"]} вместо одного'
 
     def test_has_token_reads_bytes_too(self, redis_bytes):
-        redis_bytes.set(DATING_SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']), 'live')
+        redis_bytes.set(SITE_API_TOKEN_KEY.format(profile_id=PROFILE['id']), 'live')
 
-        assert dating_site_api_has_token(PROFILE['id']) is True
+        assert site_api_has_token(PROFILE['id']) is True

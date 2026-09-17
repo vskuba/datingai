@@ -17,16 +17,16 @@ import uuid
 import pytest
 from fastapi import HTTPException
 
-from src.dating import dating_online
-from src.uvicorn.routers.dating.dating_profile import (DatingProfileSave,
-                                                       dating_profile_create,
-                                                       dating_profile_delete,
-                                                       dating_profile_list,
-                                                       dating_profile_row)
-from src.uvicorn.routers.dating.dating_profile_action import (DatingProfileAuto,
+from src.dating import online as online_module
+from src.uvicorn.routers.dating.profile_ import (DatingProfileSave,
+                                                       profile_create,
+                                                       profile_delete,
+                                                       profile_list,
+                                                       profile_row)
+from src.uvicorn.routers.dating.profile_action import (DatingProfileAuto,
                                                               DatingProfileEnabled,
-                                                              dating_profile_action_auto,
-                                                              dating_profile_action_enabled)
+                                                              profile_action_auto,
+                                                              profile_action_enabled)
 
 pytestmark = pytest.mark.profile
 
@@ -62,14 +62,14 @@ def saved(monkeypatch):
     """Перехватывает запись отправленного в переписку.
 
     ⚠ **Обязательна для любого теста, где отправка проходит успешно.** Без неё
-    `dating_send_message` пишет в живую таблицу `dating_message` — и переписка
+    `send_message` пишет в живую таблицу `dating_message` — и переписка
     настоящей анкеты обрастает тестовыми репликами. Так и вышло: десять прогонов
     сюиты — десять «привет» в живом диалоге.
 
     Заодно это делает проверку точнее: видно, **что** записалось, а не только что
     отправка вернула `ok`.
     """
-    from src.dating import dating_send
+    from src.dating import send
 
     rows = []
 
@@ -79,8 +79,8 @@ def saved(monkeypatch):
     async def _mark(profile_id, to_uid):
         return None
 
-    monkeypatch.setattr(dating_send, '_message_save', _save)
-    monkeypatch.setattr(dating_send, '_answered_mark', _mark)
+    monkeypatch.setattr(send, '_message_save', _save)
+    monkeypatch.setattr(send, '_answered_mark', _mark)
 
     return rows
 
@@ -96,7 +96,7 @@ def online(monkeypatch):
     fake = _FakeRedis()
     fake.value = json.dumps({'at': time.time(), 'when': '',
                              'people': [{'uid': UID}]})
-    monkeypatch.setattr(dating_online, 'redis_conn_get', lambda: fake)
+    monkeypatch.setattr(online_module, 'redis_conn_get', lambda: fake)
 
     return fake
 
@@ -107,7 +107,7 @@ class TestSendRefusesWhenDisabled:
     async def test_disabled_profile_does_not_send(self, monkeypatch, online):
         """⚠ Сценарий не гоняется: он стоит десятков секунд живого браузера и
         вкладки в общем пуле соседа."""
-        from src.dating import dating_send
+        from src.dating import send
 
         runs = []
 
@@ -116,9 +116,9 @@ class TestSendRefusesWhenDisabled:
 
             return {'status': 'ok'}
 
-        monkeypatch.setattr(dating_send, 'dating_scenario_run', _run)
+        monkeypatch.setattr(send, 'scenario_run', _run)
 
-        result = await dating_send.dating_send_message(
+        result = await send.send_message(
             {'id': PROFILE_ID, 'site_id': SITE, 'login': 'x', 'enabled': 0},
             {'send': {'transport': 'scenario'}}, UID, 'привет')
 
@@ -134,9 +134,9 @@ class TestSendRefusesWhenDisabled:
         не вернётся сама: её включает человек. Смешай их — и панель обещала бы
         отправку, которой не будет.
         """
-        from src.dating import dating_send
+        from src.dating import send
 
-        result = await dating_send.dating_send_message(
+        result = await send.send_message(
             {'id': PROFILE_ID, 'site_id': SITE, 'enabled': 0},
             {'send': {'transport': 'scenario'}}, UID, 'привет')
 
@@ -148,7 +148,7 @@ class TestSendRefusesWhenDisabled:
         Колонка появилась при 64 работающих анкетах. Умолчание `False` остановило
         бы разом всех, у кого строка пришла из старого снимка или чужого SELECT.
         """
-        from src.dating import dating_send
+        from src.dating import send
 
         runs = []
 
@@ -167,13 +167,13 @@ class TestSendRefusesWhenDisabled:
         async def _setting(site_id, key):
             return 'пароль' if key == 'api_password' else ''
 
-        monkeypatch.setattr(dating_send, 'dating_scenario_run', _run)
-        monkeypatch.setattr(dating_send, 'rhapsody_api_site_variable', _var)
-        monkeypatch.setattr(dating_send, 'rhapsody_api_scenario_find', _find)
-        monkeypatch.setattr(dating_send, 'dating_site_setting', _setting)
+        monkeypatch.setattr(send, 'scenario_run', _run)
+        monkeypatch.setattr(send, 'rhapsody_api_site_variable', _var)
+        monkeypatch.setattr(send, 'rhapsody_api_scenario_find', _find)
+        monkeypatch.setattr(send, 'site_setting', _setting)
 
         # Ключа `enabled` в словаре нет вовсе — как в строке до миграции.
-        result = await dating_send.dating_send_message(
+        result = await send.send_message(
             {'id': PROFILE_ID, 'site_id': SITE, 'login': 'x'},
             {'send': {'transport': 'scenario'}}, UID, 'привет')
 
@@ -196,7 +196,7 @@ class TestNoDoubleSend:
     @pytest.fixture
     def dialogue(self, monkeypatch):
         """Последняя реплика диалога. Тест ставит её через `put`."""
-        from src.dating import dating_send
+        from src.dating import send
 
         state = {'last': None}
 
@@ -221,24 +221,24 @@ class TestNoDoubleSend:
             async def __aexit__(self, *args):
                 return False
 
-        monkeypatch.setattr(dating_send, 'mysql_get_db_async', lambda: _Db())
+        monkeypatch.setattr(send, 'mysql_get_db_async', lambda: _Db())
         state['put'] = lambda text, direction='out': state.__setitem__(
             'last', {'text': text, 'direction': direction})
 
         return state
 
     async def _send(self, text='привет'):
-        from src.dating import dating_send
+        from src.dating import send
 
-        return await dating_send.dating_send_message(
+        return await send.send_message(
             {'id': PROFILE_ID, 'site_id': SITE, 'login': 'x', 'enabled': 1},
             {'send': {'transport': 'scenario'}}, UID, text)
 
     async def test_same_text_twice_is_refused(self, dialogue, online, monkeypatch):
-        from src.dating import dating_send
+        from src.dating import send
 
         runs = []
-        monkeypatch.setattr(dating_send, 'dating_scenario_run',
+        monkeypatch.setattr(send, 'scenario_run',
                             lambda *a, **k: runs.append(a))
         dialogue['put']('привет')
 
@@ -259,11 +259,11 @@ class TestNoDoubleSend:
         другим пробелом или регистром, а для собеседника это одно сообщение.
 
         ⚠ Проверяем **саму функцию**, а не путь отправки целиком. Первый вариант
-        теста шёл через `dating_send_message` и зеленел даже с побуквенным
+        теста шёл через `send_message` и зеленел даже с побуквенным
         сравнением: отказ приходил дальше по пути, по другой причине, а тест этого
         не различал. Поймано проверкой на излом.
         """
-        from src.dating.dating_send import _said_already
+        from src.dating.send import _said_already
 
         dialogue['put'](last)
 
@@ -308,12 +308,12 @@ class TestNoDoubleSend:
         Молча не отправить хуже, чем отправить второй раз: потерянный ответ человек
         не увидит вовсе, а дубль хотя бы заметен.
         """
-        from src.dating import dating_send
+        from src.dating import send
 
         def _broken():
             raise RuntimeError('база недоступна')
 
-        monkeypatch.setattr(dating_send, 'mysql_get_db_async', _broken)
+        monkeypatch.setattr(send, 'mysql_get_db_async', _broken)
         _scenario_ok(monkeypatch)
 
         assert (await self._send('привет'))['ok'] is True
@@ -325,7 +325,7 @@ def _scenario_ok(monkeypatch):
     ⚠ Наружу при этом не ходит ничего — ни к RhapsodyAi, ни на сайт. Сторож сети в
     `conftest` это и проверяет.
     """
-    from src.dating import dating_send
+    from src.dating import send
 
     async def _run(*args, **kwargs):
         return {'status': 'ok', 'extract': {}}
@@ -340,10 +340,10 @@ def _scenario_ok(monkeypatch):
     async def _setting(site_id, key):
         return 'пароль' if key == 'api_password' else ''
 
-    monkeypatch.setattr(dating_send, 'dating_scenario_run', _run)
-    monkeypatch.setattr(dating_send, 'rhapsody_api_site_variable', _var)
-    monkeypatch.setattr(dating_send, 'rhapsody_api_scenario_find', _find)
-    monkeypatch.setattr(dating_send, 'dating_site_setting', _setting)
+    monkeypatch.setattr(send, 'scenario_run', _run)
+    monkeypatch.setattr(send, 'rhapsody_api_site_variable', _var)
+    monkeypatch.setattr(send, 'rhapsody_api_scenario_find', _find)
+    monkeypatch.setattr(send, 'site_setting', _setting)
 
 
 class TestAutoRoundSkipsDisabled:
@@ -352,7 +352,7 @@ class TestAutoRoundSkipsDisabled:
     @pytest.fixture
     def spied(self, monkeypatch):
         """Круг с подменёнными дорогими шагами. Возвращает, до чего дошло."""
-        from src.dating import dating_auto
+        from src.dating import auto
 
         seen = {'agents': [], 'answers': []}
 
@@ -366,17 +366,17 @@ class TestAutoRoundSkipsDisabled:
 
             return {'asked': 1, 'sent': 1, 'silent': 0, 'offline': 0, 'errors': []}
 
-        monkeypatch.setattr(dating_auto, '_agent_id', _agent)
-        monkeypatch.setattr(dating_auto, 'dating_answer_run', _answer)
+        monkeypatch.setattr(auto, '_agent_id', _agent)
+        monkeypatch.setattr(auto, 'answer_run', _answer)
 
         return seen
 
     async def test_disabled_profile_is_skipped(self, spied):
         """⚠ Раньше `_agent_id`: поход к соседу за агентом стоит запроса, а ответ
         LLM — денег. Отправка откажет и сама, но к тому времени уже потрачено."""
-        from src.dating.dating_auto import dating_auto_round
+        from src.dating.auto import auto_round
 
-        await dating_auto_round([{'profile': {'id': 1, 'enabled': 0, 'auto_answer': 1},
+        await auto_round([{'profile': {'id': 1, 'enabled': 0, 'auto_answer': 1},
                                   'presence': {}}])
 
         assert spied['agents'] == [], 'за агентом сходили ради выключенной анкеты'
@@ -384,9 +384,9 @@ class TestAutoRoundSkipsDisabled:
 
     async def test_enabled_without_auto_answer_is_skipped(self, spied):
         """Вторая ось: анкету ведут руками. Включена, но агент за неё не отвечает."""
-        from src.dating.dating_auto import dating_auto_round
+        from src.dating.auto import auto_round
 
-        await dating_auto_round([{'profile': {'id': 2, 'enabled': 1, 'auto_answer': 0},
+        await auto_round([{'profile': {'id': 2, 'enabled': 1, 'auto_answer': 0},
                                   'presence': {}}])
 
         assert spied['answers'] == []
@@ -397,9 +397,9 @@ class TestAutoRoundSkipsDisabled:
         Без этой проверки запрет мог бы оказаться безусловным, и автоответ молча
         перестал бы работать вовсе.
         """
-        from src.dating.dating_auto import dating_auto_round
+        from src.dating.auto import auto_round
 
-        result = await dating_auto_round([
+        result = await auto_round([
             {'profile': {'id': 3, 'enabled': 1, 'auto_answer': 1}, 'presence': {}}])
 
         assert spied['answers'] == [3]
@@ -409,9 +409,9 @@ class TestAutoRoundSkipsDisabled:
         """Выключенная анкета в списке не останавливает круг: пропускаем её, а не
         выходим. Смена держателя отдаёт все анкеты сразу, и одна отставленная не
         должна лишать ответов остальных."""
-        from src.dating.dating_auto import dating_auto_round
+        from src.dating.auto import auto_round
 
-        await dating_auto_round([
+        await auto_round([
             {'profile': {'id': 1, 'enabled': 0, 'auto_answer': 1}, 'presence': {}},
             {'profile': {'id': 2, 'enabled': 1, 'auto_answer': 1}, 'presence': {}}])
 
@@ -431,7 +431,7 @@ class TestEnabledEndpoint:
     async def profile(self, rhapsody):
         """Одноразовая анкета в живой базе. Чужую трогать нельзя: выключение
         остановило бы работу."""
-        answer = await dating_profile_create(
+        answer = await profile_create(
             DatingProfileSave(site_id=SITE, login=f'enabled-{uuid.uuid4().hex[:10]}',
                               password='secret', note='тест выключателя'),
             user=None)
@@ -440,7 +440,7 @@ class TestEnabledEndpoint:
         yield profile_id
 
         try:
-            await dating_profile_delete(profile_id, user=None)
+            await profile_delete(profile_id, user=None)
         except HTTPException:
             pass
 
@@ -464,7 +464,7 @@ class TestEnabledEndpoint:
         молчит, и лезет искать поломку.
         """
         await _set(profile, False)
-        rows = (await dating_profile_list(site_id=SITE, user=None))['result']
+        rows = (await profile_list(site_id=SITE, user=None))['result']
         found = next(row for row in rows if int(row['id']) == profile)
 
         assert found['enabled'] is False
@@ -475,12 +475,12 @@ class TestEnabledEndpoint:
         Их путают, но случаи разные: анкету ведут руками — включена, автоответ
         снят. Задень один флаг другим, и это состояние стало бы недостижимым.
         """
-        await dating_profile_action_auto(
+        await profile_action_auto(
             profile, DatingProfileAuto(auto_answer=False), request=None, user=None)
         await _set(profile, False)
         await _set(profile, True)
 
-        row = await dating_profile_row(profile)
+        row = await profile_row(profile)
 
         assert bool(row['enabled']) is True
         assert bool(row['auto_answer']) is False, 'включение анкеты вернуло автоответ'
@@ -502,9 +502,9 @@ class TestEnabledEndpoint:
 
 
 async def _set(profile_id: int, enabled: bool) -> None:
-    await dating_profile_action_enabled(
+    await profile_action_enabled(
         profile_id, DatingProfileEnabled(enabled=enabled), user=None)
 
 
 async def _enabled(profile_id: int) -> bool:
-    return bool((await dating_profile_row(profile_id))['enabled'])
+    return bool((await profile_row(profile_id))['enabled'])

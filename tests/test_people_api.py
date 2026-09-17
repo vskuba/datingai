@@ -12,8 +12,8 @@
 
 import pytest
 
-from src.dating.dating_people_api import (DatingPeopleApiError, dating_people_api_kinds,
-                                          dating_people_api_rows)
+from src.dating.people_api import (DatingPeopleApiError, people_api_kinds,
+                                          people_api_rows)
 from tests.site_api_fake import SITE_API_FAKE_BASE, SITE_API_FAKE_PASSWORD
 
 pytestmark = pytest.mark.profile
@@ -78,7 +78,7 @@ class TestRows:
 
     async def test_unknown_kind_is_refused(self, site_api):
         """Вида, которого API не отдаёт, не выдумываем: `dialog` уходит к сценарию."""
-        assert 'dialog' not in dating_people_api_kinds()
+        assert 'dialog' not in people_api_kinds()
 
         with pytest.raises(DatingPeopleApiError, match='dialog'):
             await _rows('dialog')
@@ -148,7 +148,7 @@ class TestToken:
         молчаливый 400 от сайта человек прочитал бы как «сайт сломался».
         """
         with pytest.raises(DatingPeopleApiError, match='Пароль анкет для API'):
-            await dating_people_api_rows(PROFILE, 'online', SITE_API_FAKE_BASE, '')
+            await people_api_rows(PROFILE, 'online', SITE_API_FAKE_BASE, '')
 
         assert not site_api.calls, 'к сайту пошли, не имея пароля'
 
@@ -204,7 +204,7 @@ class TestRefusals:
 
 
 async def _rows(kind: str) -> list:
-    return await dating_people_api_rows(PROFILE, kind, SITE_API_FAKE_BASE,
+    return await people_api_rows(PROFILE, kind, SITE_API_FAKE_BASE,
                                         SITE_API_FAKE_PASSWORD)
 
 
@@ -314,7 +314,7 @@ class TestWhichPassword:
     пароль и работали — оттого и выглядело, будто дело в самой анкете.
 
     Остальные двери сайта (письма, звёздочки, карточка мужчины) спрашивали
-    `dating_password_pick` с самого начала; расходилась только эта.
+    `password_pick` с самого начала; расходилась только эта.
     """
 
     async def test_site_source_ignores_the_leftover_own_password(self):
@@ -346,7 +346,7 @@ async def _asked(profile: dict) -> str:
     Зовём `_api_rows` с подменённым транспортом: проверяется **выбор пароля**, а не
     разбор ответа — тем и заняты остальные тесты файла.
     """
-    from src.uvicorn.routers.dating import dating_people as router
+    from src.uvicorn.routers.dating import people as router
 
     got = {}
 
@@ -358,14 +358,14 @@ async def _asked(profile: dict) -> str:
 
         return []
 
-    real_setting = router.dating_site_setting
-    real_rows = router.dating_people_api_rows
-    router.dating_site_setting = _setting
-    router.dating_people_api_rows = _rows_spy
+    real_setting = router.site_setting
+    real_rows = router.people_api_rows
+    router.site_setting = _setting
+    router.people_api_rows = _rows_spy
     try:
         await router._api_rows(profile, 'favorite', 343)
     finally:
-        router.dating_site_setting = real_setting
-        router.dating_people_api_rows = real_rows
+        router.site_setting = real_setting
+        router.people_api_rows = real_rows
 
     return got.get('password')

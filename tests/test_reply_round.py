@@ -5,7 +5,7 @@
 он берёт в работу, когда считает, что пора, и что делает с отметкой. Сам набор
 проверяется отдельно (`test_mail_reply.py`).
 
-Отсюда приём: подменяется `dating_mail_reply_make` — единственная дорогая часть.
+Отсюда приём: подменяется `mail_reply_make` — единственная дорогая часть.
 Всё, что до неё, работает по-настоящему, с живой базой.
 
 ⚠ **Главное отличие от круга рассылки проверяется прямо**: расписание сайта здесь
@@ -16,12 +16,12 @@
 
 import pytest
 
-from src.dating import dating_reply_round as round_
-from src.dating.dating_reply_round import (DATING_REPLY_BATCH_DEFAULT,
-                                           DATING_REPLY_EVERY_DEFAULT,
-                                           DATING_REPLY_ROUND_KEY, _batch, _due,
+from src.dating import reply_round as round_
+from src.dating.reply_round import (REPLY_BATCH_DEFAULT,
+                                           REPLY_EVERY_DEFAULT,
+                                           REPLY_ROUND_KEY, _batch, _due,
                                            _every, _mark, _sites,
-                                           dating_reply_round_run)
+                                           reply_round_run)
 
 pytestmark = pytest.mark.mail
 
@@ -143,7 +143,7 @@ def made(monkeypatch):
 
         return dict(calls.result)
 
-    monkeypatch.setattr(round_, 'dating_mail_reply_make', fake)
+    monkeypatch.setattr(round_, 'mail_reply_make', fake)
 
     return calls
 
@@ -152,7 +152,7 @@ def made(monkeypatch):
 
 async def test_reply_round_takes_site_with_making_on(site, made, clean_mark):
     """Поднятый выключатель — и круг берёт сайт сам, без единого нажатия."""
-    got = await dating_reply_round_run()
+    got = await reply_round_run()
 
     assert SITE in [call['site_id'] for call in made]
     assert got['made'] >= 1
@@ -164,7 +164,7 @@ async def test_reply_round_skips_site_with_making_off(site, made, clean_mark,
     await auth_client.put(f'/api/dating/site/{SITE}/reply-make-on',
                           json={'reply_make_on': False})
 
-    await dating_reply_round_run()
+    await reply_round_run()
 
     assert SITE not in [call['site_id'] for call in made]
 
@@ -178,7 +178,7 @@ async def test_reply_round_skips_gone_site(site, made, clean_mark):
                          (SITE,))
         await db.connection.commit()
 
-    await dating_reply_round_run()
+    await reply_round_run()
 
     assert SITE not in [call['site_id'] for call in made]
 
@@ -192,10 +192,10 @@ async def test_reply_round_selects_by_flag_not_by_profiles(site):
 
 async def test_reply_round_skips_second_pass_in_a_row(site, made, clean_mark):
     """Отметка держит срок: тик раз в минуту не превращается в набор раз в минуту."""
-    await dating_reply_round_run()
+    await reply_round_run()
     before = len(made)
 
-    await dating_reply_round_run()
+    await reply_round_run()
 
     assert len(made) == before
 
@@ -208,16 +208,16 @@ async def test_reply_round_marks_before_filling(site, made, clean_mark):
     """
     made.boom = True
 
-    await dating_reply_round_run()
+    await reply_round_run()
 
-    assert clean_mark.store.get(DATING_REPLY_ROUND_KEY.format(site_id=SITE))
+    assert clean_mark.store.get(REPLY_ROUND_KEY.format(site_id=SITE))
 
 
 async def test_reply_round_survives_one_site_failure(site, made, clean_mark):
     """Круг обходит остальные сайты дальше — сбой агента это не конец смены."""
     made.boom = True
 
-    got = await dating_reply_round_run()
+    got = await reply_round_run()
 
     assert got == {'sites': 0, 'made': 0}
 
@@ -226,17 +226,17 @@ async def test_reply_round_redis_failure_means_no_work(site, made, clean_mark):
     """⚠ Цена ошибок несимметрична: лишний заход стоит вызовов LLM, пропущенный — ожидания."""
     clean_mark.broken = True
 
-    await dating_reply_round_run()
+    await reply_round_run()
 
     assert SITE not in [call['site_id'] for call in made]
 
 
 async def test_reply_round_mark_ttl_is_the_period_setting(site, made, clean_mark):
     """Redis гасит отметку сам: отдельного «когда истечёт» круг не хранит."""
-    await dating_reply_round_run()
+    await reply_round_run()
 
-    assert (clean_mark.ttl[DATING_REPLY_ROUND_KEY.format(site_id=SITE)]
-            == DATING_REPLY_EVERY_DEFAULT)
+    assert (clean_mark.ttl[REPLY_ROUND_KEY.format(site_id=SITE)]
+            == REPLY_EVERY_DEFAULT)
 
 
 def test_reply_round_mark_and_check_share_the_key(clean_mark):
@@ -252,9 +252,9 @@ def test_reply_round_mark_and_check_share_the_key(clean_mark):
 
 async def test_reply_round_writes_a_limited_batch(site, made, clean_mark):
     """⚠ Предел **захода**, а не запаса: заход на три десятка длится полчаса."""
-    await dating_reply_round_run()
+    await reply_round_run()
 
-    assert made[0]['limit'] == DATING_REPLY_BATCH_DEFAULT
+    assert made[0]['limit'] == REPLY_BATCH_DEFAULT
 
 
 async def test_reply_round_rejects_batch_out_of_range(site, setting):
@@ -266,7 +266,7 @@ async def test_reply_round_rejects_batch_out_of_range(site, setting):
     """
     await setting('reply_batch', '500')
 
-    assert await _batch(SITE) == DATING_REPLY_BATCH_DEFAULT
+    assert await _batch(SITE) == REPLY_BATCH_DEFAULT
 
 
 async def test_reply_round_batch_size_comes_from_site(site, setting):
@@ -285,7 +285,7 @@ async def test_reply_round_period_comes_from_setting(site, setting):
 
 async def test_reply_round_period_falls_back_to_default(site):
     """Не задано — пять минут: письма приходят реже, чем стоит спрашивать."""
-    assert await _every(SITE) == DATING_REPLY_EVERY_DEFAULT
+    assert await _every(SITE) == REPLY_EVERY_DEFAULT
 
 
 # ── Чем отличается от рассылки ───────────────────────────────────────────────
@@ -303,7 +303,7 @@ async def test_reply_round_ignores_site_schedule(site, made, clean_mark,
     await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule-on',
                           json={'mailing_schedule_on': False})
     try:
-        await dating_reply_round_run()
+        await reply_round_run()
 
         assert SITE in [call['site_id'] for call in made]
     finally:
@@ -318,7 +318,7 @@ async def test_reply_round_prepares_but_never_sends(site, made, clean_mark):
 
     source = inspect.getsource(round_)
 
-    assert 'dating_mail_send' not in source
+    assert 'mail_send' not in source
     assert 'reply_send_on' not in source
 
 
@@ -329,7 +329,7 @@ async def test_reply_round_empty_pass_writes_nothing(made, clean_mark, monkeypat
 
     monkeypatch.setattr(round_, '_sites', no_sites)
 
-    assert await dating_reply_round_run() == {'sites': 0, 'made': 0}
+    assert await reply_round_run() == {'sites': 0, 'made': 0}
     assert not made
 
 

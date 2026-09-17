@@ -448,7 +448,7 @@ class TestProfilePageTabs:
         Прежде это была своя страница. Искать разметку надо **в шаблоне сайта**, а
         не в самой странице: вкладки приезжают оттуда, отдельным запросом.
         """
-        from src.uvicorn.routers.dating.dating_work import dating_work_template
+        from src.uvicorn.routers.dating.work import work_template
 
         class _Request:
             def __init__(self):
@@ -461,7 +461,7 @@ class TestProfilePageTabs:
             return type('S', (), {'jinja2_template': Jinja2Templates(
                 directory='data/uvicorn/template')})()
 
-        answer = await dating_work_template(_Request(), site_id=343, user=None)
+        answer = await work_template(_Request(), site_id=343, user=None)
         html = answer.body.decode()
 
         assert 'data-mail-tab="template"' in html

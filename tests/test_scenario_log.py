@@ -14,8 +14,8 @@
 
 import pytest
 
-from src.dating import dating_scenario
-from src.dating.dating_scenario import dating_scenario_run
+from src.dating import scenario
+from src.dating.scenario import scenario_run
 from src.rhapsody.rhapsody_api import RhapsodyError
 
 pytestmark = pytest.mark.page
@@ -34,7 +34,7 @@ def written(monkeypatch):
                      'scenario_id': scenario_id, 'name': name, 'status': status,
                      'step_no': step_no, 'error': error, 'ms': ms})
 
-    monkeypatch.setattr(dating_scenario, '_write', _write)
+    monkeypatch.setattr(scenario, '_write', _write)
 
     return rows
 
@@ -61,9 +61,9 @@ class TestRunIsRecorded:
     """След остаётся от каждого прогона."""
 
     async def test_success_is_written(self, written, monkeypatch):
-        monkeypatch.setattr(dating_scenario, 'rhapsody_api_scenario_run', _run())
+        monkeypatch.setattr(scenario, 'rhapsody_api_scenario_run', _run())
 
-        await dating_scenario_run(SCENARIO, SITE, PROFILE)
+        await scenario_run(SCENARIO, SITE, PROFILE)
 
         assert [row['status'] for row in written] == ['sent', 'ok']
         assert written[-1]['site_id'] == SITE
@@ -86,18 +86,18 @@ class TestRunIsRecorded:
 
             return {'status': 'ok'}
 
-        monkeypatch.setattr(dating_scenario, 'rhapsody_api_scenario_run', _slow)
+        monkeypatch.setattr(scenario, 'rhapsody_api_scenario_run', _slow)
 
-        await dating_scenario_run(SCENARIO, SITE, PROFILE)
+        await scenario_run(SCENARIO, SITE, PROFILE)
 
         assert sent == [['sent']], 'отметка об отправке не попала в журнал до прогона'
 
     async def test_sent_has_no_duration(self, written, monkeypatch):
         """У отметки об отправке длительности нет и быть не может: она пишется
         тогда, когда мерить ещё нечего."""
-        monkeypatch.setattr(dating_scenario, 'rhapsody_api_scenario_run', _run())
+        monkeypatch.setattr(scenario, 'rhapsody_api_scenario_run', _run())
 
-        await dating_scenario_run(SCENARIO, SITE, PROFILE)
+        await scenario_run(SCENARIO, SITE, PROFILE)
 
         assert written[0]['ms'] == 0
         assert written[0]['step_no'] == 0
@@ -105,10 +105,10 @@ class TestRunIsRecorded:
     async def test_failed_scenario_keeps_the_step(self, written, monkeypatch):
         """Номер шага отвечает на «где именно встало», не открывая сценарий у
         соседа. Ради него журнал наполовину и заводится."""
-        monkeypatch.setattr(dating_scenario, 'rhapsody_api_scenario_run',
+        monkeypatch.setattr(scenario, 'rhapsody_api_scenario_run',
                             _run({'status': 'error', 'step_no': 7, 'error': 'нет кнопки'}))
 
-        await dating_scenario_run(SCENARIO, SITE, PROFILE)
+        await scenario_run(SCENARIO, SITE, PROFILE)
 
         assert written[-1]['status'] == 'error'
         assert written[-1]['step_no'] == 7
@@ -121,11 +121,11 @@ class TestRunIsRecorded:
         мы это — в журнале осталась бы дыра ровно там, где человек ищет причину
         молчания панели.
         """
-        monkeypatch.setattr(dating_scenario, 'rhapsody_api_scenario_run',
+        monkeypatch.setattr(scenario, 'rhapsody_api_scenario_run',
                             _run(fails='браузер соседа занят'))
 
         with pytest.raises(RhapsodyError):
-            await dating_scenario_run(SCENARIO, SITE, PROFILE)
+            await scenario_run(SCENARIO, SITE, PROFILE)
 
         assert [row['status'] for row in written] == ['sent', 'error']
         assert written[-1]['step_no'] == 0, 'сценарий не начинался — шага у него нет'
@@ -134,19 +134,19 @@ class TestRunIsRecorded:
     async def test_refusal_is_passed_on(self, written, monkeypatch):
         """Записали и пробросили: что делать с отказом — 502 или прежний снимок из
         кэша — решает вызывающий, а не журнал."""
-        monkeypatch.setattr(dating_scenario, 'rhapsody_api_scenario_run',
+        monkeypatch.setattr(scenario, 'rhapsody_api_scenario_run',
                             _run(fails='сосед не отвечает'))
 
         with pytest.raises(RhapsodyError, match='сосед не отвечает'):
-            await dating_scenario_run(SCENARIO, SITE, PROFILE)
+            await scenario_run(SCENARIO, SITE, PROFILE)
 
     async def test_answer_is_returned_as_is(self, written, monkeypatch):
         """Ответ соседа проходит насквозь: журнал ничего в нём не меняет, иначе
         разбор карточек получал бы не то, что прислал сайт."""
-        monkeypatch.setattr(dating_scenario, 'rhapsody_api_scenario_run',
+        monkeypatch.setattr(scenario, 'rhapsody_api_scenario_run',
                             _run({'status': 'ok', 'extract': {'избранные': [1, 2]}}))
 
-        answer = await dating_scenario_run(SCENARIO, SITE, PROFILE)
+        answer = await scenario_run(SCENARIO, SITE, PROFILE)
 
         assert answer['extract'] == {'избранные': [1, 2]}
 
@@ -157,9 +157,9 @@ class TestRunDetails:
     async def test_name_is_kept_beside_the_number(self, written, monkeypatch):
         """Имя сценария хранится рядом с номером: у соседа его могут переименовать
         или удалить, и тогда номер перестанет что-либо значить."""
-        monkeypatch.setattr(dating_scenario, 'rhapsody_api_scenario_run', _run())
+        monkeypatch.setattr(scenario, 'rhapsody_api_scenario_run', _run())
 
-        await dating_scenario_run(SCENARIO, SITE, PROFILE)
+        await scenario_run(SCENARIO, SITE, PROFILE)
 
         assert written[-1]['name'] == SCENARIO['name']
         assert written[-1]['scenario_id'] == SCENARIO['id']
@@ -170,9 +170,9 @@ class TestRunDetails:
         Приписать такой прогон одной из привезённых анкет было бы враньём, а
         потерять его — потерять единственный след импорта.
         """
-        monkeypatch.setattr(dating_scenario, 'rhapsody_api_scenario_run', _run())
+        monkeypatch.setattr(scenario, 'rhapsody_api_scenario_run', _run())
 
-        await dating_scenario_run({'id': 5, 'name': 'импорт анкет'}, SITE)
+        await scenario_run({'id': 5, 'name': 'импорт анкет'}, SITE)
 
         assert written[-1]['profile_id'] == 0
         assert written[-1]['site_id'] == SITE
@@ -180,17 +180,17 @@ class TestRunDetails:
     async def test_duration_is_measured(self, written, monkeypatch):
         """Длительность — вторая половина смысла: «вход стал идти вдвое дольше»
         видно только рядом лежащими замерами."""
-        monkeypatch.setattr(dating_scenario, 'rhapsody_api_scenario_run', _run())
+        monkeypatch.setattr(scenario, 'rhapsody_api_scenario_run', _run())
 
-        await dating_scenario_run(SCENARIO, SITE, PROFILE)
+        await scenario_run(SCENARIO, SITE, PROFILE)
 
         assert written[-1]['ms'] >= 0
 
     async def test_long_name_is_cut(self, written, monkeypatch):
         """Длиннее колонки — режем здесь: иначе длинное имя роняло бы вставку, и
         прогон пропал бы из журнала целиком."""
-        monkeypatch.setattr(dating_scenario, 'rhapsody_api_scenario_run', _run())
+        monkeypatch.setattr(scenario, 'rhapsody_api_scenario_run', _run())
 
-        await dating_scenario_run({'id': 1, 'name': 'и' * 500}, SITE)
+        await scenario_run({'id': 1, 'name': 'и' * 500}, SITE)
 
-        assert len(written[-1]['name']) == dating_scenario.DATING_SCENARIO_NAME_MAX
+        assert len(written[-1]['name']) == scenario.SCENARIO_NAME_MAX

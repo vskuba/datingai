@@ -9,9 +9,9 @@
 
 ## ⚠ Лестница отката это не поймала, и вот почему
 
-Лестница пауз (`dating_revive.py`) существовала, работала и к этому входу
+Лестница пауз (`revive.py`) существовала, работала и к этому входу
 **отношения не имела**: её спрашивает круг восстановления, а входил круг
-расписания — прямым вызовом `dating_login_run`, мимо всех правил.
+расписания — прямым вызовом `login_run`, мимо всех правил.
 
 Отсюда главное в устройстве: **правило стоит у самой двери**. Не в круге, не в
 трёх кругах, а во входе. Обойти его нельзя, не переписав вход.
@@ -19,10 +19,10 @@
 
 import pytest
 
-from src.dating.dating_login_retry import (DATING_LOGIN_RETRY_EVERY_DEFAULT,
-                                           DATING_LOGIN_RETRY_MAX_DEFAULT,
+from src.dating.login_retry import (LOGIN_RETRY_EVERY_DEFAULT,
+                                           LOGIN_RETRY_MAX_DEFAULT,
                                            DatingLoginHeld,
-                                           dating_login_retry_allowed)
+                                           login_retry_allowed)
 
 pytestmark = pytest.mark.profile
 
@@ -36,7 +36,7 @@ class TestFirstTryIsFree:
     """Первая попытка идёт без вопросов: пауза — это реакция на неудачу."""
 
     async def test_a_clean_profile_may_log_in(self):
-        allowed, why = await dating_login_retry_allowed(_profile(0))
+        allowed, why = await login_retry_allowed(_profile(0))
 
         assert allowed and why == ''
 
@@ -47,7 +47,7 @@ class TestFirstTryIsFree:
         руками. Держать вход по половине состояния значило бы запереть анкету
         молча и навсегда.
         """
-        allowed, _ = await dating_login_retry_allowed(_profile(1, last=None))
+        allowed, _ = await login_retry_allowed(_profile(1, last=None))
 
         assert allowed
 
@@ -58,7 +58,7 @@ class TestPauseBetweenTries:
     async def test_right_after_a_failure_it_holds(self):
         from datetime_.datetime_ import datetime_utc_now
 
-        allowed, why = await dating_login_retry_allowed(
+        allowed, why = await login_retry_allowed(
             _profile(1, last=datetime_utc_now()))
 
         assert not allowed
@@ -73,8 +73,8 @@ class TestPauseBetweenTries:
         from datetime_.datetime_ import datetime_utc_now
 
         long_ago = datetime_utc_now() - timedelta(
-            seconds=DATING_LOGIN_RETRY_EVERY_DEFAULT + 60)
-        allowed, _ = await dating_login_retry_allowed(_profile(1, last=long_ago))
+            seconds=LOGIN_RETRY_EVERY_DEFAULT + 60)
+        allowed, _ = await login_retry_allowed(_profile(1, last=long_ago))
 
         assert allowed
 
@@ -89,8 +89,8 @@ class TestCeiling:
 
         # Времени прошло сколько угодно — потолок это не лечит.
         long_ago = datetime_utc_now() - timedelta(days=3)
-        allowed, why = await dating_login_retry_allowed(
-            _profile(DATING_LOGIN_RETRY_MAX_DEFAULT, last=long_ago))
+        allowed, why = await login_retry_allowed(
+            _profile(LOGIN_RETRY_MAX_DEFAULT, last=long_ago))
 
         assert not allowed
         assert 'Войти' in why, 'в причине нет того, что делать человеку: ' + why
@@ -103,9 +103,9 @@ class TestCeiling:
         """
         import inspect
 
-        from src.dating import dating_login_retry
+        from src.dating import login_retry
 
-        code = inspect.getsource(dating_login_retry.dating_login_retry_fail)
+        code = inspect.getsource(login_retry.login_retry_fail)
 
         assert 'login_fail_tries + 1' in code
         assert 'SET login_fail_tries = 0' not in code
@@ -117,11 +117,11 @@ class TestTheDoorHoldsTheRule:
     def test_the_login_checks_before_running(self):
         import inspect
 
-        from src.dating import dating_login
+        from src.dating import login
 
-        code = inspect.getsource(dating_login.dating_login_run)
+        code = inspect.getsource(login.login_run)
 
-        assert 'dating_login_retry_allowed' in code, \
+        assert 'login_retry_allowed' in code, \
             'вход снова не спрашивает счётчик — круги смогут долбить сайт'
         assert 'DatingLoginHeld' in code
 
@@ -129,18 +129,18 @@ class TestTheDoorHoldsTheRule:
         """Неудачу считает сам вход: вызывающий её забудет — и уже забывал."""
         import inspect
 
-        from src.dating import dating_login
+        from src.dating import login
 
-        assert 'dating_login_retry_fail' in inspect.getsource(dating_login.dating_login_run)
+        assert 'login_retry_fail' in inspect.getsource(login.login_run)
 
     def test_success_clears_the_counter(self):
         """⚠ Гасится одним запросом с тревогой: разойдись они — анкета вошла бы,
         а автомат считал бы её исчерпавшей попытки."""
         import inspect
 
-        from src.dating import dating_login
+        from src.dating import login
 
-        code = inspect.getsource(dating_login._keep_online_set)
+        code = inspect.getsource(login._keep_online_set)
 
         assert 'login_fail_tries = 0' in code and 'login_fail_at = NULL' in code
 
@@ -153,9 +153,9 @@ class TestTheDoorHoldsTheRule:
         """
         import inspect
 
-        from src.dating import dating_schedule_round
+        from src.dating import schedule_round
 
-        code = inspect.getsource(dating_schedule_round._enter)
+        code = inspect.getsource(schedule_round._enter)
 
         assert 'except DatingLoginHeld' in code, 'круг снова считает паузу отказом'
         # ⚠ Ветка паузы обязана стоять **до** `except Exception`: `DatingLoginHeld`
@@ -168,9 +168,9 @@ class TestTheDoorHoldsTheRule:
         """⚠ Кнопка человека сильнее счётчика: он знает больше автомата."""
         import inspect
 
-        from src.uvicorn.routers.dating import dating_profile_action
+        from src.uvicorn.routers.dating import profile_action
 
-        code = inspect.getsource(dating_profile_action.dating_profile_action_login)
+        code = inspect.getsource(profile_action.profile_action_login)
 
         assert 'force=True' in code, 'кнопка «Войти» перестала работать на паузе'
 
@@ -194,8 +194,8 @@ class TestSettingsAreRegistered:
         got = (await auth_client.get('/api/dating/site')).json()['result']
         known = {row['key']: row for row in got['known']}
 
-        assert int(known['login_retry_max']['default']) == DATING_LOGIN_RETRY_MAX_DEFAULT
-        assert int(known['login_retry_every']['default']) == DATING_LOGIN_RETRY_EVERY_DEFAULT
+        assert int(known['login_retry_max']['default']) == LOGIN_RETRY_MAX_DEFAULT
+        assert int(known['login_retry_every']['default']) == LOGIN_RETRY_EVERY_DEFAULT
 
     async def test_they_live_with_presence(self, auth_client):
         """Группа «Присутствие на сайте»: вход — про то, как анкета держится в сети."""
@@ -215,7 +215,7 @@ class TestHoldIsNotAFailure:
     """
 
     def test_it_is_a_separate_exception(self):
-        from src.dating.dating_login import DatingLoginError
+        from src.dating.login import DatingLoginError
 
         assert not issubclass(DatingLoginHeld, DatingLoginError)
 
@@ -230,7 +230,7 @@ class TestSocketOnlyWhereItExists:
 
     У Ladadate сокета **нет вовсе**: чат там обычный HTTP, проверено перехватом
     сети (`heartbeat.md`, §4). А перехват запускался всё равно —
-    `dating_ws_capture` берёт `presence.chat_url`, а когда его нет, подставляет
+    `ws_capture` берёт `presence.chat_url`, а когда его нет, подставляет
     **корень сайта** и честно ждёт сокета на главной странице.
 
     Стоило это вкладки живого Chromium у соседа на каждый вход. И строка врала
@@ -241,16 +241,16 @@ class TestSocketOnlyWhereItExists:
     def test_the_login_asks_before_capturing(self):
         import inspect
 
-        from src.dating import dating_login
+        from src.dating import login
 
-        code = inspect.getsource(dating_login.dating_login_run)
+        code = inspect.getsource(login.login_run)
 
         assert '_ws_needed(' in code, \
             'вход снова снимает сокет у всех — у сайта без сокета это враньё в журнале'
 
     async def test_a_http_site_needs_no_socket(self):
         """Ladadate: транспорт `http` — сокет не нужен."""
-        from src.dating.dating_login import _ws_needed
+        from src.dating.login import _ws_needed
 
         site = {'presence': {'send': {'transport': 'http'}}}
 
@@ -258,7 +258,7 @@ class TestSocketOnlyWhereItExists:
 
     async def test_a_ws_site_still_needs_it(self):
         """⚠ Goldenbride: транспорт `ws` — сокет нужен, и правило его не трогает."""
-        from src.dating.dating_login import _ws_needed
+        from src.dating.login import _ws_needed
 
         site = {'presence': {'send': {'transport': 'ws'}}}
 
@@ -270,13 +270,13 @@ class TestSocketOnlyWhereItExists:
         Сайт, которому в «Чем отправляем сообщения» поставили `scenario`, пишет
         сценарием, даже если у соседа в описании стоит `ws`. Сокет ему не нужен.
         """
-        from src.dating import dating_login
+        from src.dating import login
 
         async def _settings(site_id):
             return {'send_transport': 'scenario'}
 
-        monkeypatch.setattr('src.uvicorn.routers.dating.dating_site.dating_site_settings',
+        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_settings',
                             _settings)
 
-        assert not await dating_login._ws_needed(
+        assert not await login._ws_needed(
             999_343, {'presence': {'send': {'transport': 'ws'}}})

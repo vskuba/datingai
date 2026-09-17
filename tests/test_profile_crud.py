@@ -3,7 +3,7 @@
 ⚠ **Ручки зовутся в процессе, а не по HTTP.** Так завелось, когда заведение и
 правка сверяли сайт у живого соседа, и по HTTP это значило бы два запроса к
 RhapsodyAi на каждую учётку — сюита краснела от его перезапусков. Ныне проверка
-переехала на наш снимок (`dating_profile_site_known`), но приём остался:
+переехала на наш снимок (`profile_site_known`), но приём остался:
 **база настоящая**, и проверяется как раз она — что строка легла, что пароль не
 уехал наружу, что удаление уносит целиком.
 
@@ -18,13 +18,13 @@ from mysql_.mysql_ import mysql_get_db_async
 import pytest
 from fastapi import HTTPException
 
-from src.uvicorn.routers.dating.dating_profile import (DatingProfileSave,
-                                                       dating_profile_create,
-                                                       dating_profile_delete,
-                                                       dating_profile_list,
-                                                       dating_profile_update)
-from src.uvicorn.routers.dating.dating_profile_action import (dating_profile_action_login,
-                                                              dating_profile_action_ping)
+from src.uvicorn.routers.dating.profile_ import (DatingProfileSave,
+                                                       profile_create,
+                                                       profile_delete,
+                                                       profile_list,
+                                                       profile_update)
+from src.uvicorn.routers.dating.profile_action import (profile_action_login,
+                                                              profile_action_ping)
 
 pytestmark = pytest.mark.profile
 
@@ -44,7 +44,7 @@ async def profile(rhapsody):
     yield {'id': profile_id, 'login': login}
 
     try:
-        await dating_profile_delete(profile_id, user=None)
+        await profile_delete(profile_id, user=None)
     except HTTPException:
         # Тест мог удалить её сам — это его право, а не повод краснеть на уборке.
         pass
@@ -90,7 +90,7 @@ class TestProfileCrud:
     async def test_unknown_site_rejected(self, rhapsody):
         """Сайта нет — 422, и проверяет это наш снимок, а не сосед.
 
-        Номера, которого никогда не лежало в `dating_site`, заведению не бывать —
+        Номера, которого никогда не лежало в `site_`, заведению не бывать —
         ровно как раньше не давал заводиться 404 соседа.
         """
         with pytest.raises(HTTPException) as refusal:
@@ -114,7 +114,7 @@ class TestProfileCrud:
         try:
             assert profile_id > 0
         finally:
-            await dating_profile_delete(profile_id, user=None)
+            await profile_delete(profile_id, user=None)
 
     async def test_update_keeps_password_when_empty(self, rhapsody, profile):
         """Пустой пароль при правке означает «не трогать», а не «стереть».
@@ -153,10 +153,10 @@ class TestProfileCrud:
         """Удаление уносит учётку целиком; повтор отвечает 404."""
         profile_id = await _create(f'test-{uuid.uuid4().hex[:10]}', password='x')
 
-        await dating_profile_delete(profile_id, user=None)
+        await profile_delete(profile_id, user=None)
 
         with pytest.raises(HTTPException) as refusal:
-            await dating_profile_delete(profile_id, user=None)
+            await profile_delete(profile_id, user=None)
 
         assert refusal.value.status_code == 404
 
@@ -167,7 +167,7 @@ class TestProfilePing:
 
     async def test_ping_missing_profile_is_404(self, rhapsody):
         with pytest.raises(HTTPException) as refusal:
-            await dating_profile_action_ping(999_999, user=None)
+            await profile_action_ping(999_999, user=None)
 
         assert refusal.value.status_code == 404
 
@@ -181,7 +181,7 @@ class TestProfilePing:
         ⚠ До живого сайта опрос при этом не доходит: без cookie он отвечает раньше
         всякой сети.
         """
-        result = (await dating_profile_action_ping(profile['id'], user=None))['result']
+        result = (await profile_action_ping(profile['id'], user=None))['result']
 
         assert result['status'] == 'offline'
         assert result['error'], 'причина обязана быть названа'
@@ -193,7 +193,7 @@ class TestProfilePing:
         стучались». Двигай его каждый опрос, и по колонке «Вход» живая анкета
         перестала бы отличаться от отвалившейся неделю назад.
         """
-        await dating_profile_action_ping(profile['id'], user=None)
+        await profile_action_ping(profile['id'], user=None)
 
         assert (await _row(profile['login']))['last_seen_at'] is None, \
             'неудачный пинг подвинул время входа'
@@ -204,7 +204,7 @@ class TestProfilePing:
         Пинговать нечем: молчаливый `offline` соврал бы, что анкета не в сети.
 
         ⚠ **Гасим оба источника настройки, и это не перестраховка.** Их два, и
-        порядок между ними важен: своя у сайта (`dating_site.settings.heartbeat`)
+        порядок между ними важен: своя у сайта (`site_.settings.heartbeat`)
         старше, соседская (`browser_site.presence`) — запасная. Пока тест чистил
         только соседскую, он падал в тот день, когда сайту завели свою: ручка
         честно отвечала «настроено», а тест ждал отказа.
@@ -213,7 +213,7 @@ class TestProfilePing:
         трогать её из сюиты нельзя. Поэтому подменяем разрешение настройки, а не
         данные.
         """
-        from src.dating import dating_presence
+        from src.dating import presence
 
         for site in rhapsody.sites:
             site['presence'] = {}
@@ -221,13 +221,13 @@ class TestProfilePing:
         async def no_setting(site_id):
             return {}
 
-        monkeypatch.setattr(dating_presence, 'dating_heartbeat_config',
+        monkeypatch.setattr(presence, 'heartbeat_config',
                             no_setting, raising=False)
-        monkeypatch.setattr('src.dating.dating_heartbeat.dating_heartbeat_config',
+        monkeypatch.setattr('src.dating.heartbeat.heartbeat_config',
                             no_setting)
 
         with pytest.raises(HTTPException) as refusal:
-            await dating_profile_action_ping(profile['id'], user=None)
+            await profile_action_ping(profile['id'], user=None)
 
         assert refusal.value.status_code == 422
         # Отказ называет **место, где чинить**, а не имя поля в чужой базе:
@@ -236,7 +236,7 @@ class TestProfilePing:
 
 
 class TestProfileLogin:
-    """Дверь входа. Сам вход живёт в `src/dating/dating_login.py` и здесь не гоняется:
+    """Дверь входа. Сам вход живёт в `src/dating/login.py` и здесь не гоняется:
     он водит браузер соседа и живой сайт знакомств, то есть стоит минуты и требует
     рабочей анкеты. Проверяется то, что ломается при переезде кода, — что ручка
     осталась на месте и доходит до модуля входа."""
@@ -255,7 +255,7 @@ class TestProfileLogin:
         Это и есть смена поведения, которую тест поймал: раньше вход брал только
         свой пароль анкеты, в отличие от отправки и списков.
         """
-        from src.uvicorn.routers.dating.dating_profile_action import DatingProfileLogin
+        from src.uvicorn.routers.dating.profile_action import DatingProfileLogin
 
         profile_id = await _create(f'test-{uuid.uuid4().hex[:10]}', password='')
         async with mysql_get_db_async() as db:
@@ -265,13 +265,13 @@ class TestProfileLogin:
 
         try:
             with pytest.raises(HTTPException) as refusal:
-                await dating_profile_action_login(profile_id, DatingProfileLogin(),
+                await profile_action_login(profile_id, DatingProfileLogin(),
                                                   user=None)
 
             assert refusal.value.status_code == 422
             assert 'пароль' in str(refusal.value.detail)
         finally:
-            await dating_profile_delete(profile_id, user=None)
+            await profile_delete(profile_id, user=None)
 
 
 class TestProfileRoutes:
@@ -298,7 +298,7 @@ class TestProfileRoutes:
 
 async def _create(login: str, site_id: int = SITE_ID, password: str = '',
                   note: str = '') -> int:
-    answer = await dating_profile_create(
+    answer = await profile_create(
         DatingProfileSave(site_id=site_id, login=login, password=password, note=note),
         user=None)
 
@@ -306,12 +306,12 @@ async def _create(login: str, site_id: int = SITE_ID, password: str = '',
 
 
 async def _update(profile_id: int, login: str, **fields) -> None:
-    await dating_profile_update(
+    await profile_update(
         profile_id, DatingProfileSave(site_id=SITE_ID, login=login, **fields), user=None)
 
 
 async def _rows(site_id: int = SITE_ID) -> list[dict]:
-    return (await dating_profile_list(site_id, user=None))['result']
+    return (await profile_list(site_id, user=None))['result']
 
 
 async def _row(login: str) -> dict:
@@ -333,7 +333,7 @@ class TestSuiteKeepsOffLiveSites:
     отдельности те же файлы зелёные.
 
     Разводит их стенд — закладка `999343` без метки `dating`: заведение её
-    примет, в селект сайтов она не попадёт, а главное — в `dating_site`, по
+    примет, в селект сайтов она не попадёт, а главное — в `site_`, по
     строкам которого круги обходят сайты, она лежит `is_gone = 1` (подсадку
     делает `site_snapshot` в `conftest.py`: заведение сверяет номер по этому
     снимку) и потому кругам не видна.

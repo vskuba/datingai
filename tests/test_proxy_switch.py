@@ -2,7 +2,7 @@
 
 ⚠⚠ **Смысл выключателя в слове «нигде».** Дверей наружу шесть — вход браузером,
 API сайта, присутствие, сокет чата, отправка, кабинет, — и каждая берёт выход
-своим способом: одни через `dating_proxy_url`, присутствие читает адрес прямо из
+своим способом: одни через `proxy_url`, присутствие читает адрес прямо из
 колонки анкеты, сценарии получают номер выхода. Выключатель, гасящий часть из
 них, хуже отсутствующего: человек видит снятую галочку, а анкета ходит каналом.
 
@@ -16,10 +16,10 @@ API сайта, присутствие, сокет чата, отправка, �
 
 import pytest
 
-from src.dating import dating_heartbeat, dating_proxy, dating_proxy_round
-from src.dating.dating_proxy import (DATING_PROXY_ENABLED_SETTING,
-                                     DatingProxyError, dating_proxy_enabled,
-                                     dating_proxy_ready, dating_proxy_url)
+from src.dating import heartbeat, proxy, proxy_round
+from src.dating.proxy import (PROXY_ENABLED_SETTING,
+                                     DatingProxyError, proxy_enabled,
+                                     proxy_ready, proxy_url)
 
 pytestmark = pytest.mark.profile
 
@@ -36,12 +36,12 @@ def setting(monkeypatch):
     async def _one(site_id, key, default=''):
         state['asked'].append((int(site_id), str(key)))
 
-        return state['value'] if str(key) == DATING_PROXY_ENABLED_SETTING else default
+        return state['value'] if str(key) == PROXY_ENABLED_SETTING else default
 
-    # ⚠ Подменяем **там, откуда берут**: `dating_proxy_enabled` импортирует
+    # ⚠ Подменяем **там, откуда берут**: `proxy_enabled` импортирует
     # функцию внутри себя, из модуля настроек сайта.
-    import src.uvicorn.routers.dating.dating_site as site_module
-    monkeypatch.setattr(site_module, 'dating_site_setting', _one)
+    import src.uvicorn.routers.dating.site_ as site_module
+    monkeypatch.setattr(site_module, 'site_setting', _one)
 
     return state
 
@@ -53,18 +53,18 @@ class TestEnabled:
         """Ничего не задано — выключено. Умолчание кода, а не пустая строка."""
         setting['value'] = ''
 
-        assert await dating_proxy_enabled(SITE) is False
+        assert await proxy_enabled(SITE) is False
 
     async def test_on_by_one(self, setting):
         setting['value'] = '1'
 
-        assert await dating_proxy_enabled(SITE) is True
+        assert await proxy_enabled(SITE) is True
 
     async def test_zero_is_off(self, setting):
         """`0` — именно выключено, а не «непустая строка, значит да»."""
         setting['value'] = '0'
 
-        assert await dating_proxy_enabled(SITE) is False
+        assert await proxy_enabled(SITE) is False
 
     async def test_unknown_site_is_off(self, setting):
         """Сайт неизвестен — выключено, и в базу за настройкой не ходим.
@@ -74,7 +74,7 @@ class TestEnabled:
         """
         setting['value'] = '1'
 
-        assert await dating_proxy_enabled(0) is False
+        assert await proxy_enabled(0) is False
         assert not setting['asked'], 'за настройкой несуществующего сайта ходили в базу'
 
 
@@ -93,15 +93,15 @@ class TestDoorsClosed:
         async def _boom(profile):
             raise AssertionError('за выходом пошли при выключенных прокси')
 
-        monkeypatch.setattr(dating_proxy, 'dating_proxy_take', _boom)
+        monkeypatch.setattr(proxy, 'proxy_take', _boom)
 
-        got = await dating_proxy_url({'id': PROFILE, 'site_id': SITE,
+        got = await proxy_url({'id': PROFILE, 'site_id': SITE,
                                       'proxy_url': 'http://live:1', 'proxy_at': None})
 
         assert got == ''
 
     async def test_take_refuses(self, setting):
-        """Захват выхода в обход `dating_proxy_url` тоже закрыт.
+        """Захват выхода в обход `proxy_url` тоже закрыт.
 
         Функция публичная, и «занять адрес при выключенных прокси» — ровно то,
         чего выключатель не должен допускать.
@@ -109,7 +109,7 @@ class TestDoorsClosed:
         setting['value'] = '0'
 
         with pytest.raises(DatingProxyError, match='выключены'):
-            await dating_proxy.dating_proxy_take({'id': PROFILE, 'site_id': SITE})
+            await proxy.proxy_take({'id': PROFILE, 'site_id': SITE})
 
     async def test_ready_says_yes_and_stays_silent(self, setting, monkeypatch):
         """Анкета к работе готова, и в журнал про выход ничего не пишется.
@@ -124,9 +124,9 @@ class TestDoorsClosed:
         async def _log(profile_id, kind, text):
             written.append((kind, text))
 
-        monkeypatch.setattr(dating_proxy, 'dating_log_write', _log)
+        monkeypatch.setattr(proxy, 'log_write', _log)
 
-        can_go, why = await dating_proxy_ready({'id': PROFILE, 'site_id': SITE})
+        can_go, why = await proxy_ready({'id': PROFILE, 'site_id': SITE})
 
         assert (can_go, why) == (True, '')
         assert not written, f'в журнал написали лишнее: {written}'
@@ -142,9 +142,9 @@ class TestDoorsClosed:
         def _boom():
             raise AssertionError('за выходами присутствия пошли в базу')
 
-        monkeypatch.setattr(dating_heartbeat, 'mysql_get_db_async', _boom)
+        monkeypatch.setattr(heartbeat, 'mysql_get_db_async', _boom)
 
-        assert await dating_heartbeat.dating_heartbeat_proxies(SITE) == {}
+        assert await heartbeat.heartbeat_proxies(SITE) == {}
 
 
 class TestDoorsOpen:
@@ -156,9 +156,9 @@ class TestDoorsOpen:
         async def _claim(profile):
             return {'id': 3, 'url': 'http://new:1', 'check_ip': '1.2.3.4'}
 
-        monkeypatch.setattr(dating_proxy, 'dating_proxy_take', _claim)
+        monkeypatch.setattr(proxy, 'proxy_take', _claim)
 
-        got = await dating_proxy_url({'id': PROFILE, 'site_id': SITE,
+        got = await proxy_url({'id': PROFILE, 'site_id': SITE,
                                       'proxy_url': '', 'proxy_at': None})
 
         assert got == 'http://new:1'
@@ -176,9 +176,9 @@ class TestPingRound:
         async def _seconds(site_id, key):
             return 300
 
-        import src.uvicorn.routers.dating.dating_site as site_module
-        monkeypatch.setattr(site_module, 'dating_site_rows', _rows)
-        monkeypatch.setattr(site_module, 'dating_site_seconds', _seconds)
+        import src.uvicorn.routers.dating.site_ as site_module
+        monkeypatch.setattr(site_module, 'site_rows', _rows)
+        monkeypatch.setattr(site_module, 'site_seconds', _seconds)
 
     async def test_disabled_site_does_not_ask_for_checks(self, sites, monkeypatch):
         """Прокси выключены у всех — круг молчит, к соседу не идёт.
@@ -190,18 +190,18 @@ class TestPingRound:
         async def _off(site_id):
             return False
 
-        monkeypatch.setattr(dating_proxy_round, 'dating_proxy_enabled', _off)
+        monkeypatch.setattr(proxy_round, 'proxy_enabled', _off)
 
-        assert await dating_proxy_round._every() == 0
+        assert await proxy_round._every() == 0
 
     async def test_one_enabled_site_is_enough(self, sites, monkeypatch):
         """Хоть у одного включено — проверка идёт: выходы общие на установку."""
         async def _one(site_id):
             return int(site_id) == 222
 
-        monkeypatch.setattr(dating_proxy_round, 'dating_proxy_enabled', _one)
+        monkeypatch.setattr(proxy_round, 'proxy_enabled', _one)
 
-        assert await dating_proxy_round._every() == 300
+        assert await proxy_round._every() == 300
 
 
 class TestForgetOnSwitchOff:
@@ -217,20 +217,20 @@ class TestForgetOnSwitchOff:
 
             return 3
 
-        import src.dating.dating_proxy as proxy_module
-        monkeypatch.setattr(proxy_module, 'dating_proxy_forget_site', _forget)
+        import src.dating.proxy as proxy_module
+        monkeypatch.setattr(proxy_module, 'proxy_forget_site', _forget)
 
         return seen
 
     async def test_switch_off_clears(self, cleared):
-        from src.uvicorn.routers.dating.dating_site import _proxy_off
+        from src.uvicorn.routers.dating.site_ import _proxy_off
 
         await _proxy_off(SITE, {'proxy_enabled': '1'}, {})
 
         assert cleared == [SITE]
 
     async def test_switch_on_keeps(self, cleared):
-        from src.uvicorn.routers.dating.dating_site import _proxy_off
+        from src.uvicorn.routers.dating.site_ import _proxy_off
 
         await _proxy_off(SITE, {}, {'proxy_enabled': '1'})
 
@@ -243,7 +243,7 @@ class TestForgetOnSwitchOff:
         текущему состоянию, каждое сохранение у сайта без прокси лезло бы в
         таблицу анкет ни за чем.
         """
-        from src.uvicorn.routers.dating.dating_site import _proxy_off
+        from src.uvicorn.routers.dating.site_ import _proxy_off
 
         await _proxy_off(SITE, {'mail_check_every': '300'}, {'mail_check_every': '120'})
 

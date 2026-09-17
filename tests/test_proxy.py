@@ -16,9 +16,9 @@ from datetime_.datetime_ import datetime_utc_now
 from http_.http_pool import http_pool_transport
 from http_.http_proxy import http_proxy_hide, http_proxy_url, http_proxy_ws_url
 
-from src.dating import dating_proxy
-from src.dating.dating_proxy import (dating_proxy_url, DatingProxyError,
-                                     DATING_PROXY_FRESH_SEC)
+from src.dating import proxy
+from src.dating.proxy import (proxy_url, DatingProxyError,
+                                     PROXY_FRESH_SEC)
 
 pytestmark = pytest.mark.profile
 
@@ -36,7 +36,7 @@ def proxy_on(monkeypatch):
     async def _on(site_id):
         return True
 
-    monkeypatch.setattr(dating_proxy, 'dating_proxy_enabled', _on)
+    monkeypatch.setattr(proxy, 'proxy_enabled', _on)
 
 
 class TestProxyUrl:
@@ -112,12 +112,12 @@ class TestProxyCache:
             asked.append(profile)
             raise AssertionError('соседа спрашивать было не нужно')
 
-        monkeypatch.setattr(dating_proxy, 'dating_proxy_take', _claim)
+        monkeypatch.setattr(proxy, 'proxy_take', _claim)
 
         from datetime import timedelta
-        fresh = datetime_utc_now().replace(tzinfo=None) - timedelta(seconds=DATING_PROXY_FRESH_SEC // 2)
+        fresh = datetime_utc_now().replace(tzinfo=None) - timedelta(seconds=PROXY_FRESH_SEC // 2)
 
-        url = await dating_proxy_url({'id': 1, 'proxy_url': 'http://a:1', 'proxy_at': fresh})
+        url = await proxy_url({'id': 1, 'proxy_url': 'http://a:1', 'proxy_at': fresh})
 
         assert url == 'http://a:1'
         assert not asked
@@ -127,12 +127,12 @@ class TestProxyCache:
         async def _claim(profile):
             return {'id': 7, 'url': 'http://new:2', 'check_ip': '1.2.3.4'}
 
-        monkeypatch.setattr(dating_proxy, 'dating_proxy_take', _claim)
+        monkeypatch.setattr(proxy, 'proxy_take', _claim)
 
         from datetime import timedelta
-        old = datetime_utc_now().replace(tzinfo=None) - timedelta(seconds=DATING_PROXY_FRESH_SEC * 2)
+        old = datetime_utc_now().replace(tzinfo=None) - timedelta(seconds=PROXY_FRESH_SEC * 2)
 
-        url = await dating_proxy_url({'id': 1, 'proxy_url': 'http://old:1', 'proxy_at': old})
+        url = await proxy_url({'id': 1, 'proxy_url': 'http://old:1', 'proxy_at': old})
 
         assert url == 'http://new:2'
 
@@ -152,9 +152,9 @@ class TestProxyCache:
         async def _claim(profile):
             raise RhapsodyError('RhapsodyAi недоступен', code=0)
 
-        monkeypatch.setattr(dating_proxy, 'dating_proxy_take', _claim)
+        monkeypatch.setattr(proxy, 'proxy_take', _claim)
 
-        url = await dating_proxy_url({'id': 1, 'proxy_url': 'http://old:1', 'proxy_at': None})
+        url = await proxy_url({'id': 1, 'proxy_url': 'http://old:1', 'proxy_at': None})
 
         assert url == 'http://old:1'
 
@@ -178,12 +178,12 @@ class TestProxyCache:
         async def _forget(profile_id):
             forgotten.append(profile_id)
 
-        monkeypatch.setattr(dating_proxy, 'dating_proxy_take', _take)
-        monkeypatch.setattr(dating_proxy, 'dating_proxy_forget', _forget)
+        monkeypatch.setattr(proxy, 'proxy_take', _take)
+        monkeypatch.setattr(proxy, 'proxy_forget', _forget)
 
         profile = {'id': 5, 'proxy_url': 'http://dead:1', 'proxy_at': None}
 
-        assert await dating_proxy_url(profile) == ''
+        assert await proxy_url(profile) == ''
         assert forgotten == [5], 'кэш мёртвого выхода не почищен'
         assert profile['proxy_url'] == '', 'строка анкеты осталась с мёртвым адресом'
 
@@ -192,9 +192,9 @@ class TestProxyCache:
         async def _claim(profile):
             raise DatingProxyError('мест нет')
 
-        monkeypatch.setattr(dating_proxy, 'dating_proxy_take', _claim)
+        monkeypatch.setattr(proxy, 'proxy_take', _claim)
 
-        assert await dating_proxy_url({'id': 1, 'proxy_url': '', 'proxy_at': None}) == ''
+        assert await proxy_url({'id': 1, 'proxy_url': '', 'proxy_at': None}) == ''
 
 
 class TestProxyPick:
@@ -222,7 +222,7 @@ class TestProxyPick:
                 {'id': 2, 'url': 'http://b:1', 'check_ip': '5.5.5.5'}]
 
         # Своих считает база: подменяем её ответ «одна анкета уже сидит на 5.5.5.5».
-        from src.dating.dating_proxy import _pick
+        from src.dating.proxy import _pick
 
         class _Db:
             async def execute(self, *args):
@@ -240,7 +240,7 @@ class TestProxyPick:
         Иначе первый выход набивался бы до предела, а остальные простаивали —
         и падение одного канала уносило бы сразу всех, кто на нём.
         """
-        from src.dating.dating_proxy import _pick
+        from src.dating.proxy import _pick
 
         rows = [{'id': 1, 'url': 'http://a:1', 'check_ip': '1.1.1.1'},
                 {'id': 2, 'url': 'http://b:1', 'check_ip': '2.2.2.2'}]
@@ -263,7 +263,7 @@ class TestProxyPick:
         предел сайта стоит единицей при десяти анкетах. Разбирать это по журналу
         — полчаса.
         """
-        from src.dating.dating_proxy import _pick
+        from src.dating.proxy import _pick
 
         class _Db:
             async def execute(self, *args):
@@ -293,7 +293,7 @@ class TestProxyKeepsOldExit:
         Сайт помнит, с какого адреса анкета входила: переезд для него
         подозрительнее паузы.
         """
-        from src.dating.dating_proxy import _fits
+        from src.dating.proxy import _fits
 
         class _Db:
             async def execute(self, sql, args=None):
@@ -308,7 +308,7 @@ class TestProxyKeepsOldExit:
 
     async def test_old_exit_dropped_when_over_the_limit(self):
         """Предел снизили либо кто-то сел раньше — уступаем и едем на новый."""
-        from src.dating.dating_proxy import _fits
+        from src.dating.proxy import _fits
 
         class _Db:
             async def execute(self, sql, args=None):
@@ -327,7 +327,7 @@ class TestProxyKeepsOldExit:
         обе увидели бы «занято 2 ≥ 1», обе пошли бы за новым выходом — и так по
         кругу. Считаем **тех, кто занял раньше**: первая остаётся, вторая едет.
         """
-        from src.dating.dating_proxy import _fits
+        from src.dating.proxy import _fits
 
         asked = []
 
@@ -346,7 +346,7 @@ class TestProxyKeepsOldExit:
 
     async def test_no_ip_never_fits(self):
         """Выход без увиденного адреса не годится: считать его не с чем."""
-        from src.dating.dating_proxy import _fits
+        from src.dating.proxy import _fits
 
         assert await _fits(None, {'check_ip': ''}, 5, 1) is False
 
@@ -368,7 +368,7 @@ class TestProxyIpMoved:
         адреса (`_fits`), и сдвиг сделал бы всех «младшими» разом — анкеты начали
         бы уступать друг другу выход по кругу.
         """
-        from src.dating.dating_proxy_round import _ip_sync
+        from src.dating.proxy_round import _ip_sync
 
         asked = []
 
@@ -383,7 +383,7 @@ class TestProxyIpMoved:
             return None
 
         # Подменяем соединение: проверяем текст запроса, а не работу базы.
-        import src.dating.dating_proxy_round as mod
+        import src.dating.proxy_round as mod
         from contextlib import asynccontextmanager
 
         @asynccontextmanager
@@ -403,8 +403,8 @@ class TestProxyIpMoved:
         У мёртвого адреса нет вовсе, и записать пустую строку значило бы стереть
         анкете тот адрес, с которого она **сейчас** ходит.
         """
-        from src.dating.dating_proxy_round import _ip_sync
-        import src.dating.dating_proxy_round as mod
+        from src.dating.proxy_round import _ip_sync
+        import src.dating.proxy_round as mod
         from contextlib import asynccontextmanager
 
         asked = []

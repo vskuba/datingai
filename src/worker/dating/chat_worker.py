@@ -4,7 +4,7 @@
 В сообщении очереди нет ничего — задание одно на всю установку. Это не «работа над
 объектом», как у конвейера задач, а смена: один job поднимает сокеты всех готовых
 учёток, держит их `CHAT_WORKER_HOLD_SEC` и завершается. Список учёток job перечитывает
-на ходу (`dating_chat_hold`), поэтому заведённая в середине смены анкета берётся в
+на ходу (`chat_hold`), поэтому заведённая в середине смены анкета берётся в
 работу через минуту, а не в следующую смену.
 
 Кто ставит: восстановление при старте uvicorn (`chat_worker_recover`) и сама смена
@@ -26,7 +26,7 @@ from mysql_.mysql_ import mysql_pool_close
 from redis_.redis_ import redis_conn_get
 from redis_queue.redis_queue import redis_queue_get
 
-from src.dating.dating_chat_hold import dating_chat_hold_run
+from src.dating.chat_hold import chat_hold_run
 
 CHAT_WORKER_QUEUE_NAME = 'dating'
 
@@ -209,7 +209,7 @@ async def _job_async() -> str:
     logging_init()
     beat = asyncio.create_task(_flight_beat())
     try:
-        result = await dating_chat_hold_run(CHAT_WORKER_HOLD_SEC)
+        result = await chat_hold_run(CHAT_WORKER_HOLD_SEC)
         done = f"смена окончена: учёток {result['profiles']}, сообщений {result['saved']}"
     finally:
         beat.cancel()

@@ -23,8 +23,8 @@
 from fastapi import APIRouter, Depends
 
 from src.auth.auth import auth_required
-from src.uvicorn.routers.dating.dating_site import dating_site_rows
-from src.uvicorn.routers.dating.dating_site_sync import dating_site_sync_start
+from src.uvicorn.routers.dating.site_ import site_rows
+from src.uvicorn.routers.dating.site_sync import site_sync_start
 
 router = APIRouter(prefix='/api/site', tags=['site'])
 
@@ -38,11 +38,11 @@ async def site_list(user=Depends(auth_required)):
         ли сверка с соседом прямо сейчас и чем кончилась прошлая.
 
     `result` остаётся **списком**, а не словарём с полями: его читает общий селект
-    (`dating_site.js`) на каждой странице раздела, и менять форму ради служебного
+    (`site_.js`) на каждой странице раздела, и менять форму ради служебного
     поля значило бы править их все.
     """
-    rows = await dating_site_rows()
-    refreshing = dating_site_sync_start()
+    rows = await site_rows()
+    refreshing = site_sync_start()
 
     return {'result': [{'id': row['id'], 'name': row['name'],
                         'url': row['url'], 'tags': row['tags']} for row in rows],

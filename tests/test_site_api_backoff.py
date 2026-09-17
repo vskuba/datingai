@@ -15,12 +15,12 @@
 
 import pytest
 
-from src.dating import dating_site_api
-from src.dating.dating_site_api import (DATING_SITE_API_FAIL_FIRST_SEC,
-                                        DATING_SITE_API_FAIL_KIND_LIMIT,
-                                        DATING_SITE_API_FAIL_KIND_OTHER,
-                                        DATING_SITE_API_FAIL_LIMIT_SEC,
-                                        DATING_SITE_API_FAIL_MAX_SEC,
+from src.dating import site_api
+from src.dating.site_api import (SITE_API_FAIL_FIRST_SEC,
+                                        SITE_API_FAIL_KIND_LIMIT,
+                                        SITE_API_FAIL_KIND_OTHER,
+                                        SITE_API_FAIL_LIMIT_SEC,
+                                        SITE_API_FAIL_MAX_SEC,
                                         _fail_clear, _fail_kind, _fail_left,
                                         _fail_mark, _fail_when, _fail_words)
 
@@ -54,7 +54,7 @@ class _Redis:
 @pytest.fixture
 def redis(monkeypatch):
     fake = _Redis()
-    monkeypatch.setattr(dating_site_api, 'redis_conn_get', lambda: fake)
+    monkeypatch.setattr(site_api, 'redis_conn_get', lambda: fake)
 
     return fake
 
@@ -69,7 +69,7 @@ class TestBackoff:
         """
         _fail_mark(1, 'Login or password invalid')
 
-        assert _fail_left(1) == DATING_SITE_API_FAIL_FIRST_SEC
+        assert _fail_left(1) == SITE_API_FAIL_FIRST_SEC
 
     def test_ladder_doubles_and_stops(self, redis):
         """Срок растёт вдвое и упирается в потолок: час, а не сутки.
@@ -80,7 +80,7 @@ class TestBackoff:
         for _ in range(10):
             _fail_mark(1, 'Login or password invalid')
 
-        assert _fail_left(1) == DATING_SITE_API_FAIL_MAX_SEC
+        assert _fail_left(1) == SITE_API_FAIL_MAX_SEC
 
     def test_daily_limit_waits_an_hour_at_once(self, redis):
         """⚠ Сайт назвал суточный лимит — ждём час сразу, минуя лестницу.
@@ -93,7 +93,7 @@ class TestBackoff:
         _fail_mark(2, 'Exceeded the daily limit registrations '
                       '(ERROR_SING_IN_BY_IP_DAILY_FAILED_LIMIT)')
 
-        assert _fail_left(2) == DATING_SITE_API_FAIL_LIMIT_SEC
+        assert _fail_left(2) == SITE_API_FAIL_LIMIT_SEC
 
     def test_the_other_wording_counts_too(self, redis):
         """Второй ответ сайта про то же — «invalid login attempts per day».
@@ -103,7 +103,7 @@ class TestBackoff:
         """
         _fail_mark(3, 'Exceeded the limit of invalid login attempts per day')
 
-        assert _fail_left(3) == DATING_SITE_API_FAIL_LIMIT_SEC
+        assert _fail_left(3) == SITE_API_FAIL_LIMIT_SEC
 
     def test_success_clears_the_ladder(self, redis):
         """Удачный вход стирает паузу: следующая неудача считается с начала."""
@@ -122,7 +122,7 @@ class TestBackoff:
         def _broken():
             raise RuntimeError('Redis лёг')
 
-        monkeypatch.setattr(dating_site_api, 'redis_conn_get', _broken)
+        monkeypatch.setattr(site_api, 'redis_conn_get', _broken)
 
         assert _fail_left(5) == 0
         _fail_mark(5, 'что угодно')  # не бросает
@@ -145,8 +145,8 @@ class TestWords:
         доходит. Второе — как раз может быть про пароль. Одинаковая строка
         заставляла бы гадать, что случилось.
         """
-        limit = _fail_words(2388, DATING_SITE_API_FAIL_KIND_LIMIT)
-        other = _fail_words(300, DATING_SITE_API_FAIL_KIND_OTHER)
+        limit = _fail_words(2388, SITE_API_FAIL_KIND_LIMIT)
+        other = _fail_words(300, SITE_API_FAIL_KIND_OTHER)
 
         assert 'закрыл вход' in limit and 'Пароль тут ни при чём' in limit
         # ⚠ И срок назван суточным: час здесь был ошибкой, из-за которой предел
@@ -168,15 +168,15 @@ class TestWords:
         _fail_mark(11, 'Exceeded the daily limit registrations')
         _fail_mark(12, 'Login or password invalid')
 
-        assert _fail_kind(11) == DATING_SITE_API_FAIL_KIND_LIMIT
-        assert _fail_kind(12) == DATING_SITE_API_FAIL_KIND_OTHER
+        assert _fail_kind(11) == SITE_API_FAIL_KIND_LIMIT
+        assert _fail_kind(12) == SITE_API_FAIL_KIND_OTHER
 
     def test_the_kind_does_not_break_the_ladder(self, redis):
         """⚠ Срок по-прежнему удваивается: вид записан рядом, а не вместо него."""
         _fail_mark(13, 'Login or password invalid')
         _fail_mark(13, 'Login or password invalid')
 
-        assert _fail_left(13) == DATING_SITE_API_FAIL_FIRST_SEC * 2
+        assert _fail_left(13) == SITE_API_FAIL_FIRST_SEC * 2
 
     def test_an_old_mark_is_still_understood(self, redis):
         """⚠ Метка прежнего вида — голое число — не должна ронять разбор.
@@ -189,11 +189,11 @@ class TestWords:
         _fail_mark(14, 'Login or password invalid')
 
         assert _fail_left(14) == 600
-        assert _fail_kind(14) == DATING_SITE_API_FAIL_KIND_OTHER
+        assert _fail_kind(14) == SITE_API_FAIL_KIND_OTHER
 
     def test_unknown_mark_reads_as_ordinary(self, redis):
         """Метки нет вовсе — объясняем обычным отказом, а не блокировкой адреса."""
-        assert _fail_kind(99) == DATING_SITE_API_FAIL_KIND_OTHER
+        assert _fail_kind(99) == SITE_API_FAIL_KIND_OTHER
 
 
 class TestSiteWideBan:
@@ -213,12 +213,12 @@ class TestSiteWideBan:
     """
 
     def test_an_ip_ban_closes_the_whole_site(self, redis):
-        from src.dating.dating_site_api import _fail_site_left, _fail_site_mark
+        from src.dating.site_api import _fail_site_left, _fail_site_mark
 
         _fail_site_mark(343, 'Exceeded the daily limit registrations '
                              '(ERROR_SING_IN_BY_IP_DAILY_FAILED_LIMIT)')
 
-        assert _fail_site_left(343) == DATING_SITE_API_FAIL_LIMIT_SEC
+        assert _fail_site_left(343) == SITE_API_FAIL_LIMIT_SEC
 
     def test_an_account_ban_does_not_close_the_site(self, redis):
         """⚠ Предел учётки — про неё одну: остальные девушки работать могут.
@@ -226,7 +226,7 @@ class TestSiteWideBan:
         Ошибиться здесь в эту сторону значит остановить двенадцать анкет из-за
         одной, у которой, может быть, просто сменили пароль.
         """
-        from src.dating.dating_site_api import _fail_site_left, _fail_site_mark
+        from src.dating.site_api import _fail_site_left, _fail_site_mark
 
         _fail_site_mark(343, 'Exceeded the limit of invalid login attempts per day '
                              '(ERROR_SING_IN_BY_ACCOUNT_DAILY_FAILED_LIMIT)')
@@ -234,7 +234,7 @@ class TestSiteWideBan:
         assert _fail_site_left(343) == 0
 
     def test_an_ordinary_refusal_does_not_close_the_site(self, redis):
-        from src.dating.dating_site_api import _fail_site_left, _fail_site_mark
+        from src.dating.site_api import _fail_site_left, _fail_site_mark
 
         _fail_site_mark(343, 'Login or password invalid')
 
@@ -247,14 +247,14 @@ class TestSiteWideBan:
         давали сайту 24 неудачи в сутки — ровно столько, чтобы суточный предел не
         опустел никогда.
         """
-        assert DATING_SITE_API_FAIL_LIMIT_SEC >= 24 * 3600
+        assert SITE_API_FAIL_LIMIT_SEC >= 24 * 3600
 
     def test_a_ban_can_be_lifted_by_hand(self, redis):
         """Сменили выход — адрес другой, и ждать нечего."""
-        from src.dating.dating_site_api import (_fail_site_left, _fail_site_mark,
-                                                dating_site_api_fail_clear)
+        from src.dating.site_api import (_fail_site_left, _fail_site_mark,
+                                                site_api_fail_clear)
 
         _fail_site_mark(343, 'ERROR_SING_IN_BY_IP_DAILY_FAILED_LIMIT')
-        dating_site_api_fail_clear(site_id=343)
+        site_api_fail_clear(site_id=343)
 
         assert _fail_site_left(343) == 0

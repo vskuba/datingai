@@ -17,7 +17,7 @@
 
 Сеть подменена фейковым сокетом: он копит отправленное и отдаёт заготовленные
 ответы. Базы здесь нет вовсе — `_send_ws` в неё не ходит, запись отправленного
-живёт уровнем выше, в `dating_send_message`.
+живёт уровнем выше, в `send_message`.
 """
 
 import json
@@ -25,8 +25,8 @@ from pathlib import Path
 
 import pytest
 
-from src.dating import dating_send
-from src.dating.dating_send import _ack_wait, _hello_wait, _open_dialog, _send_ws
+from src.dating import send as send_module
+from src.dating.send import _ack_wait, _hello_wait, _open_dialog, _send_ws
 from src.dating.site.site_base import site_base_render
 from src.dating.site.site_registry import site_registry_chat
 
@@ -281,7 +281,7 @@ class TestSendOutcome:
 
         Это **исправление**, а не фиксация: прежде `offline` клали только ветка
         «нет в чате» и `_fail`, а отказ, молчание и удача — нет. Держалось это на
-        аккуратности единственного читателя (`dating_answer.py`), который берёт
+        аккуратности единственного читателя (`answer.py`), который берёт
         ключ через `.get()`; второй читатель, спросивший `result['offline']`,
         получил бы `KeyError` на ровном месте.
 
@@ -386,7 +386,7 @@ class _WsBox:
 @pytest.fixture
 def no_pause(monkeypatch):
     """Убирает паузу между кадрами прелюдии — в тесте ждать нечего."""
-    monkeypatch.setattr(dating_send, 'DATING_SEND_BEFORE_PAUSE', 0)
+    monkeypatch.setattr(send_module, 'SEND_BEFORE_PAUSE', 0)
 
 
 @pytest.fixture
@@ -416,7 +416,7 @@ def _ws_install(monkeypatch, frames: list) -> _WsBox:
 
         return _FakeConnect(box.socket, box)
 
-    monkeypatch.setattr(dating_send.websockets, 'connect', connect)
+    monkeypatch.setattr(send_module.websockets, 'connect', connect)
 
     return box
 
@@ -474,7 +474,7 @@ class TestBodyEncode:
         assert unquote(unquote(got)) == text
 
     def test_unknown_name_leaves_value_as_is(self):
-        """⚠ Опечатка в `presence.send.encode` не должна останавливать отправку:
+        """⚠ Опечатка в `presence.send_module.encode` не должна останавливать отправку:
         `presence` правят у соседа прямо в базе. Худшее, что случится, — тело
         уйдёт незакодированным, как было до этой функции."""
         from src.dating.site.site_base import site_base_encode
@@ -506,16 +506,16 @@ class TestSourceOfSend:
     """
 
     def test_every_transport_has_its_own_source(self):
-        from src.dating.dating_send import DATING_SEND_SOURCE
+        from src.dating.send import SEND_SOURCE
 
-        assert DATING_SEND_SOURCE['http'] == 'http'
-        assert DATING_SEND_SOURCE['scenario'] == 'scenario'
-        assert DATING_SEND_SOURCE['ws'] == 'socket'
+        assert SEND_SOURCE['http'] == 'http'
+        assert SEND_SOURCE['scenario'] == 'scenario'
+        assert SEND_SOURCE['ws'] == 'socket'
 
     def test_unknown_transport_falls_back_to_socket(self):
         """Незнакомый транспорт — `socket`: умолчание столбца, а не отказ записи.
         Потерять отправленное сообщение из переписки хуже, чем ошибиться в
         подписи, чем оно ушло."""
-        from src.dating.dating_send import DATING_SEND_SOURCE
+        from src.dating.send import SEND_SOURCE
 
-        assert DATING_SEND_SOURCE.get('чего-то новое', 'socket') == 'socket'
+        assert SEND_SOURCE.get('чего-то новое', 'socket') == 'socket'

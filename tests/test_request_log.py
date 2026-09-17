@@ -17,10 +17,10 @@ import time
 
 import pytest
 
-from src.dating import dating_request, dating_site_api
-from src.dating.dating_request import (DATING_REQUEST_DOORS, DATING_REQUEST_LOGIN,
-                                       DATING_REQUEST_MAIL, DATING_REQUEST_PEOPLE,
-                                       dating_request_ms, dating_request_write)
+from src.dating import request, site_api
+from src.dating.request import (REQUEST_DOORS, REQUEST_LOGIN,
+                                       REQUEST_MAIL, REQUEST_PEOPLE,
+                                       request_ms, request_write)
 
 pytestmark = pytest.mark.core
 
@@ -49,7 +49,7 @@ def written(monkeypatch):
     async def _write(**kwargs):
         rows.append(kwargs)
 
-    monkeypatch.setattr(dating_request, 'dating_request_write', _write)
+    monkeypatch.setattr(request, 'request_write', _write)
 
     return rows
 
@@ -57,7 +57,7 @@ def written(monkeypatch):
 class TestTransportWrites:
     """⚠ Строку пишет транспорт, а не вызывающий.
 
-    Через `dating_site_api` идут все двери к сайту — вход, письма, списки,
+    Через `site_api` идут все двери к сайту — вход, письма, списки,
     избранные, отправка. Записывай каждая у себя, полдюжины копий разошлись бы в
     мелочах: одна забыла бы миллисекунды, другая выход, третья не отличила бы
     `200` с `IsSuccess: false` от удачи.
@@ -71,7 +71,7 @@ class TestTransportWrites:
         async def _note(**kwargs):
             rows.append(kwargs)
 
-        monkeypatch.setattr(dating_request, 'dating_request_write', _note)
+        monkeypatch.setattr(request, 'request_write', _note)
 
         return rows
 
@@ -81,13 +81,13 @@ class TestTransportWrites:
             async def get(self, url, headers=None):
                 return _Answer(200)
 
-        await dating_site_api._request(_Client(), 'https://x/api', '/users/online',
+        await site_api._request(_Client(), 'https://x/api', '/users/online',
                                        'token', None, 'GET', PROFILE,
-                                       DATING_REQUEST_PEOPLE)
+                                       REQUEST_PEOPLE)
 
         assert len(door) == 1, 'строка в журнал не ушла'
         got = door[0]
-        assert got['door'] == DATING_REQUEST_PEOPLE
+        assert got['door'] == REQUEST_PEOPLE
         assert got['profile_id'] == PROFILE['id'] and got['site_id'] == SITE
         assert got['method'] == 'GET' and got['path'] == '/users/online'
         assert got['status'] == 200 and got['ok'] is True
@@ -100,8 +100,8 @@ class TestTransportWrites:
             async def get(self, url, headers=None):
                 return _Answer(400, '{"Message": "Login or password invalid"}')
 
-        await dating_site_api._request(_Client(), 'https://x/api', '/auth/login',
-                                       '', None, 'GET', PROFILE, DATING_REQUEST_LOGIN)
+        await site_api._request(_Client(), 'https://x/api', '/auth/login',
+                                       '', None, 'GET', PROFILE, REQUEST_LOGIN)
 
         got = door[0]
         assert got['ok'] is False and got['status'] == 400
@@ -120,10 +120,10 @@ class TestTransportWrites:
             async def get(self, url, headers=None):
                 raise httpx.ConnectError('соединение оборвалось')
 
-        with pytest.raises(dating_site_api.DatingSiteApiError):
-            await dating_site_api._request(_Client(), 'https://x/api', '/users/online',
+        with pytest.raises(site_api.DatingSiteApiError):
+            await site_api._request(_Client(), 'https://x/api', '/users/online',
                                            't', None, 'GET', PROFILE,
-                                           DATING_REQUEST_PEOPLE)
+                                           REQUEST_PEOPLE)
 
         assert len(door) == 1
         assert door[0]['status'] == 0 and door[0]['ok'] is False
@@ -139,10 +139,10 @@ class TestTransportWrites:
             async def get(self, url, headers=None):
                 return _Answer(200)
 
-        await dating_site_api._request(_Client(), 'https://x/api', '/messages', 't',
-                                       None, 'GET', PROFILE, DATING_REQUEST_MAIL)
+        await site_api._request(_Client(), 'https://x/api', '/messages', 't',
+                                       None, 'GET', PROFILE, REQUEST_MAIL)
 
-        assert door[0]['door'] == DATING_REQUEST_MAIL
+        assert door[0]['door'] == REQUEST_MAIL
 
 
 class TestDoors:
@@ -154,13 +154,13 @@ class TestDoors:
         Два списка разошлись бы, и вкладка показывала бы `mail` там, где журнал
         пишет «письма».
         """
-        doors = [getattr(dating_request, name) for name in dir(dating_request)
+        doors = [getattr(request, name) for name in dir(request)
                  if name.startswith('DATING_REQUEST_')
-                 and isinstance(getattr(dating_request, name), str)
+                 and isinstance(getattr(request, name), str)
                  and not name.endswith(('SETTING', 'DOORS'))]
 
         for one in doors:
-            assert one in DATING_REQUEST_DOORS, f'дверь «{one}» без имени для человека'
+            assert one in REQUEST_DOORS, f'дверь «{one}» без имени для человека'
 
 
 class TestMs:
@@ -168,10 +168,10 @@ class TestMs:
 
     def test_it_never_goes_negative(self):
         """⚠ Поправка NTP посреди запроса дала бы «-4 мс» там, где всё в порядке."""
-        assert dating_request_ms(time.monotonic() + 5) == 0
+        assert request_ms(time.monotonic() + 5) == 0
 
     def test_it_measures(self):
-        assert dating_request_ms(time.monotonic() - 0.25) >= 200
+        assert request_ms(time.monotonic() - 0.25) >= 200
 
 
 class TestWriteIsSafe:
@@ -183,10 +183,10 @@ class TestWriteIsSafe:
         def _boom():
             raise RuntimeError('база легла')
 
-        monkeypatch.setattr(dating_request, 'mysql_get_db_async', _boom)
+        monkeypatch.setattr(request, 'mysql_get_db_async', _boom)
 
         # Не бросает.
-        await dating_request_write(door=DATING_REQUEST_LOGIN, profile_id=1)
+        await request_write(door=REQUEST_LOGIN, profile_id=1)
 
 
 class TestPathIsTheRealOne:
@@ -207,9 +207,9 @@ class TestPathIsTheRealOne:
         журнале стоит `/userchatmessages`, а на сайт ушло
         `/partner/agency/userchatmessages`: путь, которого на сайте нет вовсе.
         """
-        from src.dating import dating_panel_fetch
+        from src.dating import panel_fetch
 
-        await dating_panel_fetch._note(
+        await panel_fetch._note(
             SITE, 'https://ladadate.com/partner/agency', 'userchatmessages',
             {'AccountId': 0, 'DateFrom': '14.09.2026'}, 200, '', time.monotonic())
 
@@ -219,9 +219,9 @@ class TestPathIsTheRealOne:
 
     @pytest.mark.asyncio
     async def test_empty_params_do_not_leave_a_dangling_question_mark(self, written):
-        from src.dating import dating_panel_fetch
+        from src.dating import panel_fetch
 
-        await dating_panel_fetch._note(SITE, 'https://x.test/root', '/page', None,
+        await panel_fetch._note(SITE, 'https://x.test/root', '/page', None,
                                        200, '', time.monotonic())
 
         assert written[0]['path'] == '/root/page'
@@ -237,7 +237,7 @@ class TestNotEveryFailureIsARequest:
 
     @pytest.mark.asyncio
     async def test_a_profile_without_a_socket_is_not_a_request(self, written):
-        from src.dating.dating_send import _send_ws
+        from src.dating.send import _send_ws
 
         got = await _send_ws({'id': 1, 'site_id': SITE, 'ws_url': ''}, None,
                              '40317', 'привет', 'uid-1')
@@ -320,9 +320,9 @@ class TestOnlyOnlineProfilesGoOut:
         """
         import inspect
 
-        from src.dating import dating_mail_in_round
+        from src.dating import mail_in_round
 
-        code = inspect.getsource(dating_mail_in_round._profiles)
+        code = inspect.getsource(mail_in_round._profiles)
 
         assert "status = 'online'" in code, \
             'круг писем снова ходит к спящим анкетам — это вход под каждой'
@@ -330,9 +330,9 @@ class TestOnlyOnlineProfilesGoOut:
     async def test_the_favorite_round_skips_them_too(self):
         import inspect
 
-        from src.dating import dating_favorite_round
+        from src.dating import favorite_round
 
-        assert "status = 'online'" in inspect.getsource(dating_favorite_round._profiles)
+        assert "status = 'online'" in inspect.getsource(favorite_round._profiles)
 
 
 class TestSuiteWritesNothing:
@@ -356,7 +356,7 @@ class TestSuiteWritesNothing:
             await db.execute('SELECT COUNT(*) AS n FROM request')
             before = int((await db.fetchone())['n'])
 
-        await dating_request_write(door=DATING_REQUEST_LOGIN, profile_id=1,
+        await request_write(door=REQUEST_LOGIN, profile_id=1,
                                    site_id=SITE, path='/auth/login', status=400)
 
         async with mysql_get_db_async() as db:
@@ -374,12 +374,12 @@ class TestSuiteWritesNothing:
         async def _note(**kwargs):
             rows.append(kwargs)
 
-        monkeypatch.setattr(dating_request, 'mysql_get_db_async', _fake_db(rows))
-        dating_request.dating_request_off(False)
+        monkeypatch.setattr(request, 'mysql_get_db_async', _fake_db(rows))
+        request.request_off(False)
         try:
-            await dating_request_write(door=DATING_REQUEST_LOGIN, profile_id=1)
+            await request_write(door=REQUEST_LOGIN, profile_id=1)
         finally:
-            dating_request.dating_request_off(True)
+            request.request_off(True)
 
         assert rows, 'с опущенным выключателем запись не пошла'
 
@@ -428,7 +428,7 @@ class TestNeighbourIsExternalToo:
         async def _note(**kwargs):
             rows.append(kwargs)
 
-        monkeypatch.setattr(dating_request, 'dating_request_write', _note)
+        monkeypatch.setattr(request, 'request_write', _note)
 
         return rows
 
@@ -470,15 +470,15 @@ class TestNeighbourIsExternalToo:
         await rhapsody_api_site_list()
 
         # ⚠ Ключа может не быть вовсе: дверь его просто не передаёт, а умолчание
-        # у `dating_request_write` — ноль. Проверяем смысл, а не форму вызова.
+        # у `request_write` — ноль. Проверяем смысл, а не форму вызова.
         assert door[0].get('profile_id', 0) == 0
 
     @pytest.mark.asyncio
     async def test_the_door_has_a_human_name(self):
-        from src.dating.dating_request import (DATING_REQUEST_DOORS,
-                                               DATING_REQUEST_RHAPSODY)
+        from src.dating.request import (REQUEST_DOORS,
+                                               REQUEST_RHAPSODY)
 
-        assert DATING_REQUEST_DOORS[DATING_REQUEST_RHAPSODY] == 'сосед RhapsodyAi'
+        assert REQUEST_DOORS[REQUEST_RHAPSODY] == 'сосед RhapsodyAi'
 
 
 class TestSitelessRowsAreVisible:
@@ -501,9 +501,9 @@ class TestSitelessRowsAreVisible:
         """Проверяем сам отбор: поднять ленту без базы дороже, чем она стоит."""
         import inspect
 
-        from src.uvicorn.routers.dating import dating_request as handle
+        from src.uvicorn.routers.dating import request as handle
 
-        code = inspect.getsource(handle.dating_request_list)
+        code = inspect.getsource(handle.request_list)
 
         assert 'r.site_id = 0' in code, \
             'лента снова прячет походы без сайта — соседа в ней не будет'

@@ -11,7 +11,7 @@
 как уезжает токен, как код отказа превращается во фразу для журнала («403 → сайт
 просит подождать»), как протухший токен приводит к повторному входу.
 
-⚠ Подменяется `dating_site_api` — **общая дверь к сайту**. Через неё ходят и списки
+⚠ Подменяется `site_api` — **общая дверь к сайту**. Через неё ходят и списки
 собеседников, и отправка писем; заглушка на одном из двух вызывающих означала бы,
 что второй ходит на живой сайт.
 
@@ -20,7 +20,7 @@
     async def test_online_list_arrives(site_api):
         site_api.users['online'] = [{'AccountId': '1', 'Name': 'Vincent', 'Age': 49}]
 
-        rows = await dating_people_api_rows(PROFILE, 'online', SITE_API_FAKE_BASE, 'пароль')
+        rows = await people_api_rows(PROFILE, 'online', SITE_API_FAKE_BASE, 'пароль')
 
 Готовые положения сайта — методами: `refuse`, `offline`, `expire_token`,
 `forbid_send`. Что у него лежит — поля `users`, `password`. Что у него спросили —
@@ -39,7 +39,11 @@ import time
 import httpx
 import pytest
 
-from src.dating import dating_site_api
+# ⚠ Псевдоним обязателен: фикстура в этом же файле зовётся `site_api`, и
+# без него `def site_api(...)` затирает модуль — подмена транспорта уходит
+# в функцию вместо модуля. Прежде столкновения не было: модуль звался
+# `dating_site_api`, а префикс ушёл вместе с файлами.
+from src.dating import site_api as site_api_module
 
 # Адрес поддельного сайта. Настоящий не годится: тест не должен зависеть ни от
 # доступности ladadate.com, ни от того, что там сегодня в списках.
@@ -286,7 +290,7 @@ class _FakeRedis:
 
     def set(self, key, value, ex=None, nx=False):
         # ⚠ `nx` подделывается по-настоящему, а не игнорируется. На нём держится
-        # замок входа (`dating_site_api._lock_take`): «занял» отличается от «уже
+        # замок входа (`site_api._lock_take`): «занял» отличается от «уже
         # занято» именно ответом `set`. Верни заглушка успех всегда — замок
         # выдавал бы право на вход каждому, и проверка «вход один» зеленела бы,
         # ничего не проверяя. Ответ повторяет redis-py: `True` либо `None`.
@@ -318,10 +322,10 @@ def site_api(monkeypatch) -> SiteApiFake:
     fake.redis = _FakeRedis()
 
     # ⚠ Подменяем **транспортный модуль**, а не тот, что зовёт ручку: вход, токен и
-    # разбор отказов живут в `dating_site_api.py` — общие у списков собеседников и
-    # у отправки писем. Подмени мы `dating_people_api`, письма ходили бы наружу.
-    monkeypatch.setattr(dating_site_api, 'httpx', _Httpx(fake))
-    monkeypatch.setattr(dating_site_api, 'redis_conn_get', lambda: fake.redis)
+    # разбор отказов живут в `site_api.py` — общие у списков собеседников и
+    # у отправки писем. Подмени мы `people_api`, письма ходили бы наружу.
+    monkeypatch.setattr(site_api_module, 'httpx', _Httpx(fake))
+    monkeypatch.setattr(site_api_module, 'redis_conn_get', lambda: fake.redis)
 
     return fake
 

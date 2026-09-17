@@ -17,10 +17,10 @@ import time
 import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
-from src.dating import dating_online
-from src.dating.dating_online import DATING_ONLINE_FRESH_SEC
-from src.dating.dating_pool import (DATING_POOL_TABLES, dating_pool_drop,
-                                    dating_pool_sweep, dating_pool_sweep_away)
+from src.dating import online
+from src.dating.online import ONLINE_FRESH_SEC
+from src.dating.pool import (POOL_TABLES, pool_drop,
+                                    pool_sweep, pool_sweep_away)
 
 pytestmark = pytest.mark.mail
 
@@ -50,7 +50,7 @@ async def pools():
                 ' ON DUPLICATE KEY UPDATE status = VALUES(status)',
                 (profile_id, SITE, f'pool{profile_id}@test', status))
 
-        for table in DATING_POOL_TABLES:
+        for table in POOL_TABLES:
             for profile_id in (GONE, HERE):
                 await db.execute(
                     f'INSERT INTO {table} (site_id, profile_id, uid, name, body, status)'
@@ -66,7 +66,7 @@ async def pools():
     yield
 
     async with mysql_get_db_async() as db:
-        for table in DATING_POOL_TABLES:
+        for table in POOL_TABLES:
             await db.execute(f'DELETE FROM {table} WHERE site_id = %s', (SITE,))
         await db.execute('DELETE FROM profile WHERE site_id = %s', (SITE,))
         await db.connection.commit()
@@ -86,7 +86,7 @@ class _FakeRedis:
 def redis(monkeypatch):
     """Подменяет снимок «кто в сети». Список ставит сам тест — через `put`."""
     fake = _FakeRedis()
-    monkeypatch.setattr(dating_online, 'redis_conn_get', lambda: fake)
+    monkeypatch.setattr(online, 'redis_conn_get', lambda: fake)
 
     def put(uids, age_sec=5):
         fake.value = json.dumps({'at': time.time() - age_sec,
@@ -128,7 +128,7 @@ async def invites():
     yield
 
     async with mysql_get_db_async() as db:
-        for table in DATING_POOL_TABLES:
+        for table in POOL_TABLES:
             await db.execute(f'DELETE FROM {table} WHERE site_id = %s', (SITE,))
         await db.execute('DELETE FROM profile WHERE site_id = %s', (SITE,))
         await db.connection.commit()
@@ -138,9 +138,9 @@ class TestDrop:
     """Уход анкеты: её черновики стираются во всех трёх пулах."""
 
     async def test_drafts_of_the_profile_are_gone(self, pools):
-        got = await dating_pool_drop(GONE, 'смена кончилась')
+        got = await pool_drop(GONE, 'смена кончилась')
 
-        assert got['total'] == len(DATING_POOL_TABLES)
+        assert got['total'] == len(POOL_TABLES)
         assert await _drafts(GONE) == 0
 
     async def test_the_other_profile_keeps_hers(self, pools):
@@ -149,9 +149,9 @@ class TestDrop:
         Пул общий, и уход одной девушки не повод выбрасывать письма остальных: они
         уйдут, как только до них дойдёт очередь отправки.
         """
-        await dating_pool_drop(GONE)
+        await pool_drop(GONE)
 
-        assert await _drafts(HERE) == len(DATING_POOL_TABLES)
+        assert await _drafts(HERE) == len(POOL_TABLES)
 
     async def test_sent_letters_stay(self, pools):
         """⚠ Отправленное — история, и на ней держатся пределы частоты.
@@ -159,9 +159,9 @@ class TestDrop:
         `favorite_mail_per_day` и `favorite_mail_gap` считают по ушедшему: сотри
         его, и вернувшаяся анкета написала бы тому же человеку второй раз подряд.
         """
-        await dating_pool_drop(GONE)
+        await pool_drop(GONE)
 
-        assert await _sent(GONE) == len(DATING_POOL_TABLES)
+        assert await _sent(GONE) == len(POOL_TABLES)
 
 
 class TestSweep:
@@ -173,31 +173,31 @@ class TestSweep:
         Это и есть та поломка, ради которой всё написано: пул сайта был занят
         письмами тех, кому их уже некому отправить.
         """
-        total = await dating_pool_sweep(SITE)
+        total = await pool_sweep(SITE)
 
-        assert total == len(DATING_POOL_TABLES)
+        assert total == len(POOL_TABLES)
         assert await _drafts(GONE) == 0
-        assert await _drafts(HERE) == len(DATING_POOL_TABLES)
+        assert await _drafts(HERE) == len(POOL_TABLES)
 
     async def test_sweep_does_not_touch_sent(self, pools):
-        await dating_pool_sweep(SITE)
+        await pool_sweep(SITE)
 
-        assert await _sent(GONE) == len(DATING_POOL_TABLES)
+        assert await _sent(GONE) == len(POOL_TABLES)
 
     async def test_sweep_is_idempotent(self, pools):
         """Второй заход находить уже нечего — иначе круг писал бы в лог на каждый тик."""
-        await dating_pool_sweep(SITE)
+        await pool_sweep(SITE)
 
-        assert await dating_pool_sweep(SITE) == 0
+        assert await pool_sweep(SITE) == 0
 
     async def test_replies_are_not_a_pool_here(self):
-        """⚠ `dating_mail_reply` в списке нет, и это решение, а не забывчивость.
+        """⚠ `mail_reply` в списке нет, и это решение, а не забывчивость.
 
         Ответ ждёт живой человек, написавший письмо; «девушка вышла из сети» — не
         повод оставить его без ответа. Круг отправки дождётся её следующей смены, а
         потолок сайта ответы и не занимают: они набираются по входящим письмам.
         """
-        assert 'mail_reply' not in DATING_POOL_TABLES
+        assert 'mail_reply' not in POOL_TABLES
 
 
 class TestSweepAway:
@@ -211,31 +211,31 @@ class TestSweepAway:
     async def test_the_one_who_left_is_gone(self, invites, redis):
         redis.put([HERE_UID])
 
-        assert await dating_pool_sweep_away(SITE) == 1
+        assert await pool_sweep_away(SITE) == 1
         assert await _invite_uids() == [HERE_UID]
 
     async def test_the_one_still_in_the_feed_stays(self, invites, redis):
         redis.put([HERE_UID, AWAY_UID])
 
-        assert await dating_pool_sweep_away(SITE) == 0
+        assert await pool_sweep_away(SITE) == 0
         assert sorted(await _invite_uids()) == sorted([AWAY_UID, HERE_UID])
 
     async def test_no_snapshot_touches_nothing(self, invites, redis):
         """⚠ «Не знаем» — не «ушёл». Неснятая лента не повод терять готовый текст."""
-        assert await dating_pool_sweep_away(SITE) == 0
+        assert await pool_sweep_away(SITE) == 0
         assert len(await _invite_uids()) == 2
 
     async def test_a_stale_snapshot_touches_nothing(self, invites, redis):
         """Тот же довод: несвежий снимок ничего не знает про сейчас."""
-        redis.put([HERE_UID], age_sec=DATING_ONLINE_FRESH_SEC + 60)
+        redis.put([HERE_UID], age_sec=ONLINE_FRESH_SEC + 60)
 
-        assert await dating_pool_sweep_away(SITE) == 0
+        assert await pool_sweep_away(SITE) == 0
 
     async def test_sent_invites_stay(self, invites, redis):
         """Ушедшее — история, а не пул: её не чистят никогда."""
         redis.put([])
 
-        await dating_pool_sweep_away(SITE)
+        await pool_sweep_away(SITE)
 
         async with mysql_get_db_async() as db:
             await db.execute("SELECT COUNT(*) AS n FROM invite"
@@ -246,18 +246,18 @@ class TestSweepAway:
         """Иначе круг увидит пул полным — тем самым мёртвым текстом — и уйдёт."""
         import inspect
 
-        from src.dating import dating_invite_round
+        from src.dating import invite_round
 
-        code = inspect.getsource(dating_invite_round)
+        code = inspect.getsource(invite_round)
 
-        assert code.index('await dating_pool_sweep_away') \
-            < code.index('await dating_invite_pool_left')
+        assert code.index('await pool_sweep_away') \
+            < code.index('await invite_pool_left')
 
     async def test_letters_are_not_touched(self, invites, redis):
         """⚠ Только инвайты. Письмо ждёт в почте — уход адресата ему не помеха."""
         redis.put([])
 
-        await dating_pool_sweep_away(SITE)
+        await pool_sweep_away(SITE)
 
         async with mysql_get_db_async() as db:
             await db.execute('SELECT COUNT(*) AS n FROM mailing'
@@ -273,9 +273,9 @@ class TestRoundsSweepFirst:
     """
 
     @pytest.mark.parametrize('module, counter', [
-        ('src.dating.dating_mailing_round', '_pool_size'),
-        ('src.dating.dating_invite_round', 'dating_invite_pool_left'),
-        ('src.dating.dating_favorite_mail_round', 'dating_favorite_mail_pool_left'),
+        ('src.dating.mailing_round', '_pool_size'),
+        ('src.dating.invite_round', 'invite_pool_left'),
+        ('src.dating.favorite_mail_round', 'favorite_mail_pool_left'),
     ])
     def test_sweep_comes_before_the_count(self, module, counter):
         import importlib
@@ -283,8 +283,8 @@ class TestRoundsSweepFirst:
 
         code = inspect.getsource(importlib.import_module(module))
 
-        assert 'dating_pool_sweep' in code, 'круг не чистит пул вовсе'
-        assert code.index('await dating_pool_sweep') < code.index(f'await {counter}'), \
+        assert 'pool_sweep' in code, 'круг не чистит пул вовсе'
+        assert code.index('await pool_sweep') < code.index(f'await {counter}'), \
             'пул считается раньше чистки — круг увидит место занятым'
 
 
@@ -309,7 +309,7 @@ async def _sent(profile_id: int) -> int:
 async def _count(profile_id: int, status: str) -> int:
     total = 0
     async with mysql_get_db_async() as db:
-        for table in DATING_POOL_TABLES:
+        for table in POOL_TABLES:
             await db.execute(f'SELECT COUNT(*) AS n FROM {table}'
                              ' WHERE profile_id = %s AND status = %s',
                              (profile_id, status))

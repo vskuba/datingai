@@ -1,6 +1,6 @@
 """Круг отправки инвайтов: кого берёт, когда молчит и чем ограничен.
 
-⚠ **Ни одна реплика наружу не уходит.** Сама отправка (`dating_invite_send_one`)
+⚠ **Ни одна реплика наружу не уходит.** Сама отправка (`invite_send_one`)
 подменена: настоящая ушла бы живому человеку в чат. Проверяется здесь **отбор** —
 кого круг берёт и почему пропускает; что отправитель делает с ответом сайта,
 проверяет `tests/test_invite.py` на кнопке, а дорога у них одна.
@@ -16,11 +16,11 @@ import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating import dating_invite_send_round
-from src.dating.dating_invite_send_round import (DATING_INVITE_SEND_EVERY_MIN,
-                                                 DATING_INVITE_SEND_ROUND_TICK_SEC,
-                                                 dating_invite_send_why,
-                                                 dating_invite_send_round_run)
+from src.dating import invite_send_round
+from src.dating.invite_send_round import (INVITE_SEND_EVERY_MIN,
+                                                 INVITE_SEND_ROUND_TICK_SEC,
+                                                 invite_send_why,
+                                                 invite_send_round_run)
 
 pytestmark = pytest.mark.chat
 
@@ -40,12 +40,12 @@ ALWAYS = '[{"from": "00:00", "to": "24:00"}]'
 @pytest.fixture(autouse=True)
 def no_pause(monkeypatch):
     """Снимает паузу между репликами: она про живой сайт, а не про отбор."""
-    dating_invite_send_round._sent_at.clear()
-    monkeypatch.setattr(dating_invite_send_round, '_every', _answer(0))
+    invite_send_round._sent_at.clear()
+    monkeypatch.setattr(invite_send_round, '_every', _answer(0))
 
     yield
 
-    dating_invite_send_round._sent_at.clear()
+    invite_send_round._sent_at.clear()
 
 
 @pytest.fixture
@@ -68,7 +68,7 @@ def site(monkeypatch):
     async def ours():
         return [{'site_id': STAND_SITE, 'invite_schedule': ALWAYS}]
 
-    monkeypatch.setattr(dating_invite_send_round, '_sites', ours)
+    monkeypatch.setattr(invite_send_round, '_sites', ours)
 
     return STAND_SITE
 
@@ -101,7 +101,7 @@ def sent(monkeypatch):
 
         return {'ok': True, 'error': ''}
 
-    monkeypatch.setattr(dating_invite_send_round, 'dating_invite_send_one', _send)
+    monkeypatch.setattr(invite_send_round, 'invite_send_one', _send)
 
     return got
 
@@ -112,7 +112,7 @@ class TestPicks:
     async def test_draft_of_an_online_girl_goes(self, site, girl, sent):
         await _draft(girl)
 
-        got = await dating_invite_send_round_run()
+        got = await invite_send_round_run()
 
         assert got['sent'] == 1 and len(sent) == 1
 
@@ -121,7 +121,7 @@ class TestPicks:
         for _ in range(3):
             await _draft(girl)
 
-        assert (await dating_invite_send_round_run())['sent'] == 1
+        assert (await invite_send_round_run())['sent'] == 1
         assert len(sent) == 1
 
     async def test_the_priority_one_jumps_the_queue(self, site, girl, sent,
@@ -133,12 +133,12 @@ class TestPicks:
         """
         old = await _draft_uid(girl, 'Старый', '2026-09-01 10:00:00')
         vip = await _draft_uid(girl, 'Важный', '2026-09-05 10:00:00')
-        monkeypatch.setattr(dating_invite_send_round, 'dating_online_check',
+        monkeypatch.setattr(invite_send_round, 'online_check',
                             lambda site_id, uid: {'online': True, 'known': True})
 
         await _priority(vip)
         try:
-            await dating_invite_send_round_run()
+            await invite_send_round_run()
         finally:
             await _priority_drop(vip)
 
@@ -150,7 +150,7 @@ class TestPicks:
         first = await _draft(girl, when='2026-09-01 10:00:00')
         await _draft(girl, when='2026-09-02 10:00:00')
 
-        await dating_invite_send_round_run()
+        await invite_send_round_run()
 
         assert sent[0]['id'] == first
 
@@ -163,7 +163,7 @@ class TestSkips:
         await _draft(girl)
         await _status(girl, 'offline')
 
-        assert (await dating_invite_send_round_run())['sent'] == 0
+        assert (await invite_send_round_run())['sent'] == 0
         assert not sent
 
     async def test_disabled_girl_writes_nothing(self, site, girl, sent):
@@ -173,14 +173,14 @@ class TestSkips:
             await db.execute('UPDATE profile SET enabled = 0 WHERE id = %s', (girl,))
             await db.connection.commit()
 
-        assert (await dating_invite_send_round_run())['sent'] == 0
+        assert (await invite_send_round_run())['sent'] == 0
 
     async def test_row_with_an_error_waits_for_a_human(self, site, girl, sent):
         """⚠ Взявшись за неудачную строку снова, круг зациклился бы на отказе
         сайта («слишком часто») ровно тогда, когда тот просит остановиться."""
         await _draft(girl, error='собеседника нет в чате')
 
-        assert (await dating_invite_send_round_run())['sent'] == 0
+        assert (await invite_send_round_run())['sent'] == 0
         assert not sent
 
     async def test_outside_the_shift_nothing_goes(self, girl, sent, monkeypatch):
@@ -196,18 +196,18 @@ class TestSkips:
         async def dead_hours():
             return [{'site_id': STAND_SITE, 'invite_schedule': away}]
 
-        monkeypatch.setattr(dating_invite_send_round, '_sites', dead_hours)
+        monkeypatch.setattr(invite_send_round, '_sites', dead_hours)
         await _draft(girl)
 
-        assert (await dating_invite_send_round_run())['sent'] == 0
+        assert (await invite_send_round_run())['sent'] == 0
         assert not sent
 
     async def test_day_cap_stops_the_round(self, site, girl, sent, monkeypatch):
         """Потолок считается **по факту отправки**, а не по попыткам."""
-        monkeypatch.setattr(dating_invite_send_round, '_max_day', _answer(0))
+        monkeypatch.setattr(invite_send_round, '_max_day', _answer(0))
         await _draft(girl)
 
-        assert (await dating_invite_send_round_run())['sent'] == 0
+        assert (await invite_send_round_run())['sent'] == 0
         assert not sent
 
 
@@ -223,7 +223,7 @@ class TestSelection:
         await _flag(BARE_SITE, on=False)
 
         assert BARE_SITE not in [int(row['site_id'])
-                                 for row in await dating_invite_send_round._sites()]
+                                 for row in await invite_send_round._sites()]
 
     async def test_site_with_the_switch_is_taken(self):
         """⚠ Поднятый `invite_send_on` — это и есть решение «наружу писать»."""
@@ -231,7 +231,7 @@ class TestSelection:
             await _flag(BARE_SITE, on=True)
 
             assert BARE_SITE in [int(row['site_id'])
-                                 for row in await dating_invite_send_round._sites()]
+                                 for row in await invite_send_round._sites()]
         finally:
             await _flag(BARE_SITE, on=False)
 
@@ -241,7 +241,7 @@ class TestSelection:
             await _flag(BARE_SITE, on=True, gone=True)
 
             assert BARE_SITE not in [int(row['site_id'])
-                                     for row in await dating_invite_send_round._sites()]
+                                     for row in await invite_send_round._sites()]
         finally:
             await _flag(BARE_SITE, on=False)
 
@@ -250,12 +250,12 @@ class TestPause:
     """Пауза между репликами."""
 
     async def test_second_pass_in_a_row_waits(self, site, girl, sent, monkeypatch):
-        monkeypatch.setattr(dating_invite_send_round, '_every', _answer(600))
+        monkeypatch.setattr(invite_send_round, '_every', _answer(600))
         await _draft(girl)
         await _draft(girl)
 
-        assert (await dating_invite_send_round_run())['sent'] == 1
-        assert (await dating_invite_send_round_run())['sent'] == 0, \
+        assert (await invite_send_round_run())['sent'] == 1
+        assert (await invite_send_round_run())['sent'] == 0, \
             'вторая реплика ушла, не дождавшись паузы'
 
     async def test_the_floor_guards_a_typo_not_a_decision(self):
@@ -266,7 +266,7 @@ class TestPause:
         просил трёхсекундную паузу. Предел остался, чтобы ноль в базе не означал
         отправку без пауз вовсе.
         """
-        assert DATING_INVITE_SEND_EVERY_MIN >= 1
+        assert INVITE_SEND_EVERY_MIN >= 1
 
     def test_the_floor_equals_the_tick(self):
         """⚠⚠ **Тик — потолок частоты.** Пауза короче тика недостижима: круг не
@@ -275,7 +275,7 @@ class TestPause:
         Поймано на правке «добавь три секунды»: настройка добавилась бы, а тик
         остался бы пятнадцатью — то есть три означало бы пятнадцать, и молча.
         """
-        assert DATING_INVITE_SEND_EVERY_MIN == DATING_INVITE_SEND_ROUND_TICK_SEC
+        assert INVITE_SEND_EVERY_MIN == INVITE_SEND_ROUND_TICK_SEC
 
     async def test_every_option_of_the_page_is_reachable(self):
         """⚠ Каждый пункт списка на странице обязан быть достижимым.
@@ -283,14 +283,14 @@ class TestPause:
         Иначе человек выбирает «3 секунды», а круг шлёт раз в пятнадцать — и
         поломкой это не выглядит, потому что реплики-то уходят.
         """
-        from src.uvicorn.routers.dating.dating_site import DATING_SITE_KNOWN
+        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
 
-        options = DATING_SITE_KNOWN['invite_send_every']['options']
+        options = SITE_KNOWN['invite_send_every']['options']
         low = min(int(value) for value, _ in options)
 
-        assert low >= DATING_INVITE_SEND_EVERY_MIN, \
+        assert low >= INVITE_SEND_EVERY_MIN, \
             f'на странице предлагают {low} с, а круг не пойдёт чаще ' \
-            f'{DATING_INVITE_SEND_EVERY_MIN} с'
+            f'{INVITE_SEND_EVERY_MIN} с'
 
 
 # ── Вспомогательное ──────────────────────────────────────────────────────────
@@ -358,20 +358,20 @@ class TestFeed:
     """
 
     async def test_sent_invite_shows_who_wrote_whom(self, girl, monkeypatch):
-        from src.dating import dating_invite_send
-        from src.dating.dating_feed import dating_feed_read
+        from src.dating import invite_send
+        from src.dating.feed import feed_read
 
         said = []
-        monkeypatch.setattr(dating_invite_send, 'dating_feed_write',
+        monkeypatch.setattr(invite_send, 'feed_write',
                             lambda site_id, kind, text, profile_id=0: said.append(
                                 (site_id, kind, text)) or '')
-        monkeypatch.setattr(dating_invite_send, 'dating_send_message',
+        monkeypatch.setattr(invite_send, 'send_message',
                             _ok_send())
-        monkeypatch.setattr(dating_invite_send, 'dating_site_presence', _site())
+        monkeypatch.setattr(invite_send, 'site_presence', _site())
         await _name(girl, 'Diana')
         invite_id = await _draft(girl)
 
-        got = await dating_invite_send.dating_invite_send_one(
+        got = await invite_send.invite_send_one(
             await _invite_row(invite_id))
 
         assert got['ok']
@@ -382,38 +382,38 @@ class TestFeed:
 
     async def test_girl_without_a_name_shows_her_login(self, girl, monkeypatch):
         """Пустая левая половина («Инвайт:  → Frank») читалась бы как сбой."""
-        from src.dating import dating_invite_send
+        from src.dating import invite_send
 
         said = []
-        monkeypatch.setattr(dating_invite_send, 'dating_feed_write',
+        monkeypatch.setattr(invite_send, 'feed_write',
                             lambda site_id, kind, text, profile_id=0: said.append(text) or '')
-        monkeypatch.setattr(dating_invite_send, 'dating_send_message', _ok_send())
-        monkeypatch.setattr(dating_invite_send, 'dating_site_presence', _site())
+        monkeypatch.setattr(invite_send, 'send_message', _ok_send())
+        monkeypatch.setattr(invite_send, 'site_presence', _site())
         invite_id = await _draft(girl)
 
-        await dating_invite_send.dating_invite_send_one(await _invite_row(invite_id))
+        await invite_send.invite_send_one(await _invite_row(invite_id))
 
         assert said and said[0].startswith('Инвайт: inv-'), said
 
     async def test_failure_is_a_warning_in_the_feed(self, girl, monkeypatch):
         """«Пул полон, а ничего не уходит» иначе выглядит как вставший круг."""
-        from src.dating import dating_invite_send
+        from src.dating import invite_send
 
         said = []
-        monkeypatch.setattr(dating_invite_send, 'dating_feed_write',
+        monkeypatch.setattr(invite_send, 'feed_write',
                             lambda site_id, kind, text, profile_id=0: said.append(
                                 (kind, text)) or '')
-        monkeypatch.setattr(dating_invite_send, 'dating_site_presence', _site())
+        monkeypatch.setattr(invite_send, 'site_presence', _site())
 
         # ⚠ Отказ **стойкий**, а не «его нет в сети»: уход из чата состояние, оно
         # проходит само, в ленту не пишется и строку не глушит (см. `TestOffline…`).
         async def refused(profile, presence, uid, body, to_history=True):
             return {'ok': False, 'error': 'слишком часто'}
 
-        monkeypatch.setattr(dating_invite_send, 'dating_send_message', refused)
+        monkeypatch.setattr(invite_send, 'send_message', refused)
         invite_id = await _draft(girl)
 
-        got = await dating_invite_send.dating_invite_send_one(await _invite_row(invite_id))
+        got = await invite_send.invite_send_one(await _invite_row(invite_id))
 
         assert not got['ok']
         kind, text = said[0]
@@ -428,7 +428,7 @@ def _ok_send():
 
 
 def _site():
-    """Описание сайта — то, что отдаёт `dating_site_presence` из нашей базы.
+    """Описание сайта — то, что отдаёт `site_presence` из нашей базы.
 
     ⚠ Пустое описание здесь законно: транспорт стенду задаёт настройка сайта, а
     не описание. Прежде заглушка изображала карточку соседа (`{'presence': '{}'}`)
@@ -467,17 +467,17 @@ class TestOfflineIsNotAFailure:
     """
 
     async def test_away_leaves_the_row_clean(self, girl, monkeypatch):
-        from src.dating import dating_invite_send
+        from src.dating import invite_send
 
         async def away(profile, presence, uid, body, to_history=True):
             return {'ok': False, 'offline': True}
 
-        monkeypatch.setattr(dating_invite_send, 'dating_send_message', away)
-        monkeypatch.setattr(dating_invite_send, 'dating_site_presence',
+        monkeypatch.setattr(invite_send, 'send_message', away)
+        monkeypatch.setattr(invite_send, 'site_presence',
                             _site_answer())
         invite_id = await _draft(girl)
 
-        got = await dating_invite_send.dating_invite_send_one(await _one(invite_id))
+        got = await invite_send.invite_send_one(await _one(invite_id))
         row = await _one(invite_id)
 
         assert not got['ok'] and 'нет в сети' in got['error']
@@ -487,29 +487,29 @@ class TestOfflineIsNotAFailure:
     async def test_a_real_refusal_still_stops_it(self, girl, monkeypatch):
         """⚠ Обратное правило остаётся: стойкий отказ строку держит, иначе круг
         зациклится ровно тогда, когда сайт просит остановиться."""
-        from src.dating import dating_invite_send
+        from src.dating import invite_send
 
         async def refused(profile, presence, uid, body, to_history=True):
             return {'ok': False, 'error': 'слишком часто'}
 
-        monkeypatch.setattr(dating_invite_send, 'dating_send_message', refused)
-        monkeypatch.setattr(dating_invite_send, 'dating_site_presence',
+        monkeypatch.setattr(invite_send, 'send_message', refused)
+        monkeypatch.setattr(invite_send, 'site_presence',
                             _site_answer())
         invite_id = await _draft(girl)
 
-        await dating_invite_send.dating_invite_send_one(await _one(invite_id))
+        await invite_send.invite_send_one(await _one(invite_id))
         row = await _one(invite_id)
 
         assert row['status'] == 'draft' and row['error'] == 'слишком часто'
 
     async def test_round_skips_those_who_left(self, site, girl, sent, monkeypatch):
         """Круг берёт того, кто в ленте **сейчас**, а не самого старого подряд."""
-        from src.dating import dating_invite_send_round as round_
+        from src.dating import invite_send_round as round_
 
         old_uid = await _draft_uid(girl, 'ушёл', when='2026-09-01 10:00:00')
         new_uid = await _draft_uid(girl, 'на месте', when='2026-09-02 10:00:00')
 
-        monkeypatch.setattr(round_, 'dating_online_check',
+        monkeypatch.setattr(round_, 'online_check',
                             lambda site_id, uid: {'online': str(uid) == new_uid,
                                                   'known': True, 'age_sec': 1})
 
@@ -548,7 +548,7 @@ class TestWhyItStands:
 
     async def test_the_switch_off_says_so(self):
         """Отбор круга стенд не включает — значит выключатель снят."""
-        assert await dating_invite_send_why(STAND_SITE, 0) \
+        assert await invite_send_why(STAND_SITE, 0) \
             == 'отправка инвайтов выключена'
 
     async def test_outside_the_shift_says_so(self, monkeypatch):
@@ -558,50 +558,50 @@ class TestWhyItStands:
         async def dead_hours():
             return [{'site_id': STAND_SITE, 'invite_schedule': away}]
 
-        monkeypatch.setattr(dating_invite_send_round, '_sites', dead_hours)
+        monkeypatch.setattr(invite_send_round, '_sites', dead_hours)
 
-        assert 'не смена' in await dating_invite_send_why(STAND_SITE, 0)
+        assert 'не смена' in await invite_send_why(STAND_SITE, 0)
 
     async def test_the_day_cap_says_how_much(self, site, monkeypatch):
         """⚠ Числа в строке — те же, по которым круг и остановился."""
-        monkeypatch.setattr(dating_invite_send_round, '_max_day', _answer(7))
-        monkeypatch.setattr(dating_invite_send_round, '_today', _answer(7))
+        monkeypatch.setattr(invite_send_round, '_max_day', _answer(7))
+        monkeypatch.setattr(invite_send_round, '_today', _answer(7))
 
-        said = await dating_invite_send_why(STAND_SITE, 0)
+        said = await invite_send_why(STAND_SITE, 0)
 
         assert 'норма выбрана' in said and 'ушло 7 из 7' in said
 
     async def test_an_empty_pool_says_so(self, site, girl):
-        assert await dating_invite_send_why(STAND_SITE, 0) \
+        assert await invite_send_why(STAND_SITE, 0) \
             == 'пул пуст: отправлять нечего'
 
     async def test_a_sleeping_girl_says_so(self, site, girl):
         await _draft(girl)
         await _status(girl, 'offline')
 
-        assert 'не в сети' in await dating_invite_send_why(STAND_SITE, 0)
+        assert 'не в сети' in await invite_send_why(STAND_SITE, 0)
 
     async def test_drafts_with_errors_say_so(self, site, girl, monkeypatch):
         await _draft(girl, error='слишком часто')
-        monkeypatch.setattr(dating_invite_send_round, 'dating_online_check',
+        monkeypatch.setattr(invite_send_round, 'online_check',
                             lambda site_id, uid: {'online': True, 'known': True})
 
-        assert 'с ошибкой' in await dating_invite_send_why(STAND_SITE, 0)
+        assert 'с ошибкой' in await invite_send_why(STAND_SITE, 0)
 
     async def test_nobody_online_says_so(self, site, girl, monkeypatch):
         await _draft(girl)
-        monkeypatch.setattr(dating_invite_send_round, 'dating_online_check',
+        monkeypatch.setattr(invite_send_round, 'online_check',
                             lambda site_id, uid: {'online': False, 'known': True})
 
-        assert 'нет сейчас в сети' in await dating_invite_send_why(STAND_SITE, 0)
+        assert 'нет сейчас в сети' in await invite_send_why(STAND_SITE, 0)
 
     async def test_silence_when_all_is_well(self, site, girl, monkeypatch):
         """⚠ Пустая строка — не «нет данных», а «идёт»: её страница не показывает."""
         await _draft(girl)
-        monkeypatch.setattr(dating_invite_send_round, 'dating_online_check',
+        monkeypatch.setattr(invite_send_round, 'online_check',
                             lambda site_id, uid: {'online': True, 'known': True})
 
-        assert await dating_invite_send_why(STAND_SITE, 0) == ''
+        assert await invite_send_why(STAND_SITE, 0) == ''
 
 
 class TestTheDayIsLocal:
@@ -620,10 +620,10 @@ class TestTheDayIsLocal:
         ⚠ Смещение считается **от текущего часа**, а не вписано числом: тест с
         постоянными часами зеленел бы или краснел смотря по времени прогона.
         """
-        before = await dating_invite_send_round._today(STAND_SITE, _offset_to(1))
+        before = await invite_send_round._today(STAND_SITE, _offset_to(1))
         await _sent_hours_ago(girl, 2)
 
-        assert await dating_invite_send_round._today(STAND_SITE, _offset_to(1)) == before
+        assert await invite_send_round._today(STAND_SITE, _offset_to(1)) == before
 
     async def test_the_same_send_counts_when_the_local_day_covers_it(self, girl):
         """⚠ Та же самая реплика при местном часе 12:00 — сегодняшняя.
@@ -631,10 +631,10 @@ class TestTheDayIsLocal:
         Две проверки на одной строке и есть доказательство: меняется только
         часовой пояс, а ответ — на противоположный.
         """
-        before = await dating_invite_send_round._today(STAND_SITE, _offset_to(12))
+        before = await invite_send_round._today(STAND_SITE, _offset_to(12))
         await _sent_hours_ago(girl, 2)
 
-        assert await dating_invite_send_round._today(STAND_SITE,
+        assert await invite_send_round._today(STAND_SITE,
                                                      _offset_to(12)) == before + 1
 
     async def test_the_offset_reaches_the_counter(self):
@@ -642,7 +642,7 @@ class TestTheDayIsLocal:
 
         ⚠ **Путь стал длиннее на звено, и это не ослабление.** Прежде круг сам
         спрашивал `_today(site_id, offset_hours)`; теперь он спрашивает «почему
-        стоим» (`dating_invite_send_why`), а сутки считает уже тот — тем же
+        стоим» (`invite_send_why`), а сутки считает уже тот — тем же
         вызовом и тем же смещением.
 
         Сделано ради журнала простоя: причина, по которой круг не пошёл, должна
@@ -652,10 +652,10 @@ class TestTheDayIsLocal:
         """
         import inspect
 
-        run = inspect.getsource(dating_invite_send_round.dating_invite_send_round_run)
-        why = inspect.getsource(dating_invite_send_round.dating_invite_send_why)
+        run = inspect.getsource(invite_send_round.invite_send_round_run)
+        why = inspect.getsource(invite_send_round.invite_send_why)
 
-        assert 'dating_invite_send_why(site_id, offset_hours)' in run, \
+        assert 'invite_send_why(site_id, offset_hours)' in run, \
             'круг решает сам, мимо общей причины — правила разойдутся'
         assert '_today(site_id, offset_hours)' in why, \
             'причина снова считает сутки без часового пояса'
@@ -664,7 +664,7 @@ class TestTheDayIsLocal:
 class TestReasonDoesNotRepeatTheAnswer:
     """⚠ Ответ сайта в карточке — **один раз**, а не дважды.
 
-    `dating_send` собирает причину как «сайт ответил 200: <тело>», а тело мы
+    `send` собирает причину как «сайт ответил 200: <тело>», а тело мы
     храним отдельно и показываем своей строкой. Выходило так:
 
         сайт ответил 200: {"IsSuccess":false,"Reason":"ERROR_MESSAGE_USER_DENY"…}
@@ -672,21 +672,21 @@ class TestReasonDoesNotRepeatTheAnswer:
     """
 
     def test_the_body_is_cut_out_of_the_reason(self):
-        from src.dating.dating_invite_send import _why_short
+        from src.dating.invite_send import _why_short
 
         body = '{"IsSuccess":false,"Reason":"ERROR_MESSAGE_USER_DENY"}'
 
         assert _why_short(f'сайт ответил 200: {body}', body) == 'сайт ответил 200'
 
     def test_a_reason_without_the_body_is_untouched(self):
-        from src.dating.dating_invite_send import _why_short
+        from src.dating.invite_send import _why_short
 
         assert _why_short('слишком часто', '') == 'слишком часто'
         assert _why_short('слишком часто', '{"ok":1}') == 'слишком часто'
 
     def test_a_long_answer_is_still_found(self):
         """⚠ В причину тело уезжает обрезанным (200 знаков), а хранится целиком."""
-        from src.dating.dating_invite_send import _why_short
+        from src.dating.invite_send import _why_short
 
         body = '{"Message":"' + 'x' * 400 + '"}'
 
@@ -694,7 +694,7 @@ class TestReasonDoesNotRepeatTheAnswer:
 
     def test_nothing_left_means_keep_the_original(self):
         """Молчащая строка отказа хуже повторяющейся."""
-        from src.dating.dating_invite_send import _why_short
+        from src.dating.invite_send import _why_short
 
         body = '{"IsSuccess":false}'
 

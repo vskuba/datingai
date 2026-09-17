@@ -23,8 +23,8 @@ import pytest
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
-from src.uvicorn.routers.dating import dating_work
-from src.uvicorn.routers.dating.dating_work import _slug, dating_work_template
+from src.uvicorn.routers.dating import work as work_module
+from src.uvicorn.routers.dating.work import _slug, work_template
 
 pytestmark = pytest.mark.page
 # Сайты у поддельного соседа: у первого имя `Ladadate`, у второго `Goldenbride` —
@@ -48,11 +48,11 @@ def work(rhapsody, monkeypatch):
     async def _setting(site_id, key, default=''):
         return chosen['value']
 
-    monkeypatch.setattr(dating_work, 'dating_site_setting', _setting)
+    monkeypatch.setattr(work_module, 'site_setting', _setting)
 
     async def _call(site_id: int, template: str = '') -> str:
         chosen['value'] = template
-        answer = await dating_work_template(_request(), site_id=site_id, user=None)
+        answer = await work_template(_request(), site_id=site_id, user=None)
 
         return answer.body.decode()
 
@@ -89,7 +89,7 @@ class TestWorkTemplate:
         Переключение вкладки тогда — показать одну и снять остальные, без запроса к
         серверу: шаблон один на сайт, и просить его заново на каждый щелчок незачем.
 
-        ⚠ Список сверяется с полосой вкладок в `dating_profile.html`: кнопка без
+        ⚠ Список сверяется с полосой вкладок в `profile_.html`: кнопка без
         панели — пустое место вместо содержимого, панель без кнопки — мёртвая
         разметка, к которой не добраться.
         """
@@ -528,7 +528,7 @@ class TestTemplateBySetting:
 class TestTemplateNameIsSafe:
     """⚠ Имя шаблона приходит из базы — значит, ему нельзя доверять."""
 
-    @pytest.mark.parametrize('attack', ['../dating_profile', '../../login', '/etc/passwd',
+    @pytest.mark.parametrize('attack', ['../profile_', '../../login', '/etc/passwd',
                                         '..%2f..%2fbase', '_base'])
     async def test_traversal_does_not_read_other_files(self, work, attack):
         """Возьми ручка значение как путь — получили бы чтение чужих шаблонов, а
@@ -545,7 +545,7 @@ class TestTemplateNameIsSafe:
     def test_base_is_not_a_site_template(self):
         """`_base.html` — основа, а не шаблон сайта: отдать его напрямую значит
         показать разметку с неопределёнными блоками."""
-        assert '_base'.startswith(dating_work.DATING_WORK_HIDDEN)
+        assert '_base'.startswith(work_module.WORK_HIDDEN)
 
     def test_slug_of_site_name(self):
         """Имя сайта в имя файла: `Ladadate` → `ladadate`."""

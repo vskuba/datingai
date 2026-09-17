@@ -15,10 +15,10 @@ HTTP значило бы проверять маршрутизацию вмес�
 
 import pytest
 
-from src.dating.dating_mail import (DATING_MAIL_BODY_MAX, dating_mail_check,
-                                    dating_mail_missing,
-                                    dating_mail_render, dating_mail_var_check,
-                                    dating_mail_vars_found)
+from src.dating.mail import (MAIL_BODY_MAX, mail_check,
+                                    mail_missing,
+                                    mail_render, mail_var_check,
+                                    mail_vars_found)
 
 pytestmark = pytest.mark.mail
 
@@ -32,7 +32,7 @@ class TestVarsFound:
     """Какие переменные нашлись в тексте."""
 
     def test_finds_in_order_without_repeats(self):
-        found = dating_mail_vars_found(
+        found = mail_vars_found(
             'Hi [[his_name]], I am [[her_name]]. Bye, [[his_name]]!')
 
         assert found == ['his_name', 'her_name']
@@ -40,14 +40,14 @@ class TestVarsFound:
     def test_spaces_inside_braces_are_fine(self):
         """Человек ставит пробелы не думая, и `[[her_name]]` обязано работать
         так же, как `[[her_name]]`."""
-        assert dating_mail_vars_found('[[her_name]]') == ['her_name']
+        assert mail_vars_found('[[her_name]]') == ['her_name']
 
     @pytest.mark.parametrize('text', ['', None, 'без переменных вовсе',
                                       'одинарная [ скобка ]', '[[ ]]', '[[]]'])
     def test_nothing_to_find(self, text):
         """Пустые скобки переменной не считаем: имени в них нет, ругаться не на
         что, подставлять тем более нечего."""
-        assert dating_mail_vars_found(text) == []
+        assert mail_vars_found(text) == []
 
     @pytest.mark.parametrize('name', ['нет_такой', 'её_имя', 'HisName', 'a b'])
     def test_anything_between_braces_counts_as_an_attempt(self, name):
@@ -57,33 +57,33 @@ class TestVarsFound:
         Сперва регулярка была ровно по реестру (`[a-z_][a-z0-9_]*`), и выходило
         наоборот задуманному: `[[её_имя]]` переменной не считалось вовсе, проверка
         молчала, шаблон сохранялся — и скобки уезжали живому человеку в письме как
-        есть. Сверяет с реестром `dating_mail_check`, и его дело — отказать.
+        есть. Сверяет с реестром `mail_check`, и его дело — отказать.
         """
-        assert dating_mail_vars_found('Hi [[%s]]!' % name) == [name]
+        assert mail_vars_found('Hi [[%s]]!' % name) == [name]
 
 
 class TestCheck:
     """Годен ли шаблон. Причина — словами, для человека."""
 
     def test_good_template_passes(self):
-        assert dating_mail_check('Знакомство', 'Hi [[firstName]]!', KNOWN) == ''
+        assert mail_check('Знакомство', 'Hi [[firstName]]!', KNOWN) == ''
 
     def test_template_without_vars_is_fine(self):
         """Письмо без переменных законно: оно просто уйдёт всем одинаковым."""
-        assert dating_mail_check('Общее', 'Hello!', KNOWN) == ''
+        assert mail_check('Общее', 'Hello!', KNOWN) == ''
 
     @pytest.mark.parametrize('name', ['', '   ', None])
     def test_name_is_required(self, name):
-        assert 'название' in dating_mail_check(name, 'Hi!', KNOWN)
+        assert 'название' in mail_check(name, 'Hi!', KNOWN)
 
     @pytest.mark.parametrize('body', ['', '   ', None])
     def test_body_is_required(self, body):
-        assert 'пустым' in dating_mail_check('Имя', body, KNOWN)
+        assert 'пустым' in mail_check('Имя', body, KNOWN)
 
     def test_too_long_body_is_refused(self):
         """Предел смысловой, а не колонки: простыню в десять тысяч знаков не
         прочитают, зато разошлют тысяче человек."""
-        assert 'длиннее' in dating_mail_check('Имя', 'я' * (DATING_MAIL_BODY_MAX + 1),
+        assert 'длиннее' in mail_check('Имя', 'я' * (MAIL_BODY_MAX + 1),
                                               KNOWN)
 
     def test_unknown_variable_is_refused(self):
@@ -93,7 +93,7 @@ class TestCheck:
         [[frstName]]»), и заметить её можно было бы только в журнале отправок — то
         есть после рассылки.
         """
-        why = dating_mail_check('Имя', 'Меня зовут [[frstName]]', KNOWN)
+        why = mail_check('Имя', 'Меня зовут [[frstName]]', KNOWN)
 
         assert 'frstName' in why
         # Причина говорит, что поправить: перечисляет то, что есть.
@@ -102,7 +102,7 @@ class TestCheck:
     def test_all_registry_names_are_allowed(self):
         body = ' '.join('[[%s]]' % name for name in KNOWN)
 
-        assert dating_mail_check('Все', body, KNOWN) == ''
+        assert mail_check('Все', body, KNOWN) == ''
 
     @pytest.mark.parametrize('name', ['нет_такой', 'её_имя', 'FirstName'])
     def test_variable_outside_the_registry_is_refused(self, name):
@@ -112,12 +112,12 @@ class TestCheck:
         то, которое завели. Молчаливое совпадение «по смыслу» означало бы письмо,
         которое ушло не с тем, что подставили.
         """
-        assert name in dating_mail_check('Имя', 'Меня зовут [[%s]]' % name, KNOWN)
+        assert name in mail_check('Имя', 'Меня зовут [[%s]]' % name, KNOWN)
 
     def test_site_without_variables_says_where_to_go(self):
         """У сайта без единой переменной список пуст, и это само по себе ответ:
         их надо сперва завести. Причина говорит, где."""
-        why = dating_mail_check('Имя', 'Hi [[firstName]]!', set())
+        why = mail_check('Имя', 'Hi [[firstName]]!', set())
 
         assert 'Переменные' in why
 
@@ -127,7 +127,7 @@ class TestVarName:
 
     @pytest.mark.parametrize('name', ['firstName', 'last_name', 'a', 'x1', '_x'])
     def test_latin_names_are_fine(self, name):
-        assert dating_mail_var_check(name) == ''
+        assert mail_var_check(name) == ''
 
     @pytest.mark.parametrize('name', ['её_имя', 'имя', '1st', 'a-b', 'a b', 'a.b'])
     def test_anything_else_is_refused(self, name):
@@ -137,21 +137,21 @@ class TestVarName:
         один неверно угаданный кодек превращает `[[её_имя]]` в мусор, который не
         совпадёт ни с чем — молча.
         """
-        assert dating_mail_var_check(name) != ''
+        assert mail_var_check(name) != ''
 
     @pytest.mark.parametrize('name', ['', '   ', None])
     def test_name_is_required(self, name):
-        assert 'имя' in dating_mail_var_check(name)
+        assert 'имя' in mail_var_check(name)
 
 
 class TestMissing:
     """Чего не хватает, чтобы письмо ушло."""
 
     def test_nothing_missing_when_all_filled(self):
-        assert dating_mail_missing('Hi [[firstName]]!', {'firstName': 'Diana'}) == []
+        assert mail_missing('Hi [[firstName]]!', {'firstName': 'Diana'}) == []
 
     def test_absent_value_is_missing(self):
-        assert dating_mail_missing('Hi [[firstName]]!', {}) == ['firstName']
+        assert mail_missing('Hi [[firstName]]!', {}) == ['firstName']
 
     @pytest.mark.parametrize('value', ['', '   ', None])
     def test_empty_value_counts_as_missing(self, value):
@@ -160,25 +160,25 @@ class TestMissing:
         Подставлять пустоту нельзя: «Меня зовут , мне  лет» выдаёт рассылку вернее,
         чем что-либо ещё.
         """
-        assert dating_mail_missing('Hi [[firstName]]!',
+        assert mail_missing('Hi [[firstName]]!',
                                    {'firstName': value}) == ['firstName']
 
     def test_order_follows_the_letter(self):
         """Порядок — как в письме: человек читает его сверху вниз и там же ищет
         пропуск."""
-        missing = dating_mail_missing('[[lastName]] и [[firstName]]', {})
+        missing = mail_missing('[[lastName]] и [[firstName]]', {})
 
         assert missing == ['lastName', 'firstName']
 
     def test_letter_without_vars_never_misses(self):
-        assert dating_mail_missing('Hello!', {}) == []
+        assert mail_missing('Hello!', {}) == []
 
 
 class TestRender:
     """Подстановка."""
 
     def test_substitutes_known_names(self):
-        text = dating_mail_render('Hi [[firstName]], I am [[lastName]].',
+        text = mail_render('Hi [[firstName]], I am [[lastName]].',
                                   {'firstName': 'John', 'lastName': 'Smith'})
 
         assert text == 'Hi John, I am Smith.'
@@ -187,11 +187,11 @@ class TestRender:
         """⚠ Скобки остаются, а не превращаются в пустоту.
 
         Сохранить непонятное виднее, чем стереть: так пропуск виден на месте, где
-        он случится. До отправки такое и не доходит — `dating_mail_missing` не даёт
+        он случится. До отправки такое и не доходит — `mail_missing` не даёт
         отправить письмо с незаполненной переменной.
         """
-        assert dating_mail_render('[[чужое]]', {}) == '[[чужое]]'
-        assert dating_mail_render('[[firstName]]', {'firstName': ''}) == '[[firstName]]'
+        assert mail_render('[[чужое]]', {}) == '[[чужое]]'
+        assert mail_render('[[firstName]]', {'firstName': ''}) == '[[firstName]]'
 
     def test_plain_brackets_survive(self):
         """⚠ Ради этого формат и закрытый: одиночная скобка в живом тексте не
@@ -202,13 +202,13 @@ class TestRender:
         """
         text = 'Смайлик :{ и [ одна скобка ] и {{было_переменной}}'
 
-        assert dating_mail_render(text, {}) == text
+        assert mail_render(text, {}) == text
 
     def test_substitution_is_not_recursive(self):
         """⚠ Агент вернул `[[lastName]]` значением, собеседник вписал такое в имя
         на сайте — это должно остаться текстом. Иначе чужие данные управляли бы
         нашим шаблоном."""
-        text = dating_mail_render('Hi [[firstName]]!',
+        text = mail_render('Hi [[firstName]]!',
                                   {'firstName': '[[lastName]]', 'lastName': 'секрет'})
 
         assert text == 'Hi [[lastName]]!'

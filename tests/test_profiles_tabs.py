@@ -78,7 +78,7 @@ class TestTabStateIsWired:
         assert 'TAB_ROWS' in page, 'карты отборов нет — списки вкладок одинаковы'
         # ⚠ Про `mailing_on` тут больше не спрашиваем: отбор рассылки его не
         # читает вовсе — в неё идут все включённые анкеты, которые сейчас в сети
-        # (`dating_mailing._girls`). Проверка на флаг сторожила бы отменённое
+        # (`mailing._girls`). Проверка на флаг сторожила бы отменённое
         # правило и падала бы при каждом верном изменении.
         assert 'TAB_ROWS' in page
 
@@ -210,7 +210,7 @@ class TestPageScriptIsValidJs:
 
     Модуль на странице не единственный — их четыре (общие импортированные модули
     заворачиваются в свои теги, плюс собственный скрипт страницы), и нужен именно
-    **самый большой**: он и есть скрипт `dating_profile.html`, порядка 92 КБ,
+    **самый большой**: он и есть скрипт `profile_.html`, порядка 92 КБ,
     остальные — короткие обёртки.
     """
 
@@ -454,7 +454,7 @@ class TestReplyPoolWatchesSending:
         """⚠ Повод остался один — отправка, и слово одно.
 
         Прежде их было два: «пишу» над набором и «отправляю» над кругом. Набор
-        ушёл на сторону сервера (`dating_reply_round.py`), и страница больше не
+        ушёл на сторону сервера (`reply_round.py`), и страница больше не
         знает, пишется ли ответ прямо сейчас. Соврать «пишу…» хуже, чем
         промолчать: человек ждал бы карточку, которой никто не обещал.
         """
@@ -548,9 +548,9 @@ class TestListsAreSortedByStatusThenName:
         их на чужих местах между ними."""
         import inspect
 
-        from src.uvicorn.routers.dating import dating_profile
+        from src.uvicorn.routers.dating import profile_
 
-        source = inspect.getsource(dating_profile)
+        source = inspect.getsource(profile_)
 
         assert "ORDER BY g.status = 'online' DESC" in source, \
             'анкеты в сети больше не поднимаются наверх'
@@ -779,7 +779,7 @@ class TestAgeStandsByTheName:
         сайты (`test_profile_crud.py` сторожит это), а на стенде анкет может не
         быть вовсе — тест зеленел бы от пустоты.
         """
-        from src.uvicorn.routers.dating.dating_profile import DatingProfileResponse
+        from src.uvicorn.routers.dating.profile_ import DatingProfileResponse
 
         assert 'age' in DatingProfileResponse.model_fields, \
             'модель ответа съест возраст, и страница получит undefined'
@@ -809,7 +809,7 @@ class TestDeliveryFly:
         """Узел — **внутри кнопки**: стоя рядом, он ломал бы полосу при переносе.
 
         ⚠ Читаем шаблон с диска, а не по HTTP: разметку работы отдаёт сервер по
-        номеру сайта (`dating_work.py`), и живой номер в сюите означал бы, что
+        номеру сайта (`work.py`), и живой номер в сюите означал бы, что
         проверка вида зависит от того, какие сайты сегодня заведены.
         """
         import pathlib

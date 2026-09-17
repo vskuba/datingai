@@ -9,9 +9,9 @@
 
 import pytest
 
-from src.dating.dating_mailing import (dating_mailing_companion_vars,
-                                       dating_mailing_person_fields)
-from src.dating.dating_people import dating_people_name_usable
+from src.dating.mailing import (mailing_companion_vars,
+                                       mailing_person_fields)
+from src.dating.people import people_name_usable
 
 pytestmark = pytest.mark.mail
 
@@ -31,18 +31,18 @@ class TestUsable:
         'Tall_Good_Man',
     ])
     def test_latin_is_usable(self, name):
-        assert dating_people_name_usable(name) is True
+        assert people_name_usable(name) is True
 
     @pytest.mark.parametrize('name', ['許萊納', 'Амір Даш', 'محمد', 'Ναός'])
     def test_other_scripts_are_not(self, name):
         """⚠ Судим по письменности, а не по «странности»: в английском тексте
         это инородное тело, и агент его не вставляет."""
-        assert dating_people_name_usable(name) is False
+        assert people_name_usable(name) is False
 
     @pytest.mark.parametrize('name', ['', None, '   ', '12345', '***'])
     def test_no_letters_is_not_a_name(self, name):
         """Обращение по «12345» хуже, чем общее."""
-        assert dating_people_name_usable(name) is False
+        assert people_name_usable(name) is False
 
 
 class TestFields:
@@ -50,14 +50,14 @@ class TestFields:
 
     def test_alien_name_gives_nothing_to_substitute(self):
         """⚠ Ни целиком, ни по частям: `Hi 許萊納` читается как сбой подстановки."""
-        got = dating_mailing_person_fields({'uid': '1', 'name': '許萊納', 'city': 'Kyiv'})
+        got = mailing_person_fields({'uid': '1', 'name': '許萊納', 'city': 'Kyiv'})
 
         assert got.get('name', '') == ''
         assert got['firstname'] == '' and got['lastname'] == ''
         assert got['city'] == 'Kyiv', 'заодно потеряли город — это лишнее'
 
     def test_normal_name_is_untouched(self):
-        got = dating_mailing_person_fields({'uid': '2', 'name': 'Brian Ritter'})
+        got = mailing_person_fields({'uid': '2', 'name': 'Brian Ritter'})
 
         assert got['name'] == 'Brian Ritter'
         assert got['firstname'] == 'Brian' and got['lastname'] == 'Ritter'
@@ -72,7 +72,7 @@ class TestCardSaysWhy:
         known = [{'name': 'companion_name', 'source': 'companion',
                   'title': 'Имя', 'default_value': ''}]
 
-        row = dating_mailing_companion_vars({'uid': '1', 'name': '許萊納'}, known)[0]
+        row = mailing_companion_vars({'uid': '1', 'name': '許萊納'}, known)[0]
 
         assert row['filled'] is False
         assert 'латиниц' in row['why']
@@ -83,7 +83,7 @@ class TestCardSaysWhy:
         known = [{'name': 'companion_name', 'source': 'companion',
                   'title': 'Имя', 'default_value': 'there'}]
 
-        row = dating_mailing_companion_vars({'uid': '1', 'name': '許萊納'}, known)[0]
+        row = mailing_companion_vars({'uid': '1', 'name': '許萊納'}, known)[0]
 
         assert row['value'] == 'there' and row['from_default'] is True
 
@@ -91,6 +91,6 @@ class TestCardSaysWhy:
         known = [{'name': 'companion_name', 'source': 'companion',
                   'title': 'Имя', 'default_value': ''}]
 
-        row = dating_mailing_companion_vars({'uid': '2', 'name': 'Brian'}, known)[0]
+        row = mailing_companion_vars({'uid': '2', 'name': 'Brian'}, known)[0]
 
         assert row['why'] == '' and row['value'] == 'Brian'

@@ -1,7 +1,7 @@
 """Круг опроса: колонка «В сети» свежая без открытой страницы.
 
 Проверяется **отбор и запись**, а не поход на сайт: сам опрос
-(`dating_presence_probe`) подменён — настоящий постучался бы на ladadate.com.
+(`presence_probe`) подменён — настоящий постучался бы на ladadate.com.
 
 ⚠ Отбор круга подменяется, а не флаг в базе: тот же круг крутит живой воркер в
 соседнем контейнере, по той же базе (`testing.md`). Оставь мы отбор настоящим,
@@ -14,9 +14,9 @@ import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating import dating_status, dating_status_round
-from src.dating.dating_status import dating_status_probe_site
-from src.dating.dating_status_round import dating_status_round_run
+from src.dating import status, status_round
+from src.dating.status import status_probe_site
+from src.dating.status_round import status_round_run
 
 pytestmark = pytest.mark.profile
 
@@ -33,7 +33,7 @@ def ready(monkeypatch):
     async def yes(presence=None, site_id=0):
         return True
 
-    monkeypatch.setattr(dating_status, 'dating_presence_ready', yes)
+    monkeypatch.setattr(status, 'presence_ready', yes)
 
 
 @pytest.fixture
@@ -47,7 +47,7 @@ def probe(monkeypatch):
 
         return dict(answer['row'])
 
-    monkeypatch.setattr(dating_status, 'dating_presence_probe', _probe)
+    monkeypatch.setattr(status, 'presence_probe', _probe)
 
     return {'asked': asked, 'answer': answer}
 
@@ -60,7 +60,7 @@ def quiet(monkeypatch):
     async def _write(source, message, session_id='', context=None):
         said.append(message)
 
-    monkeypatch.setattr(dating_status, 'rhapsody_api_error_write', _write)
+    monkeypatch.setattr(status, 'rhapsody_api_error_write', _write)
 
     return said
 
@@ -90,7 +90,7 @@ class TestProbeSite:
     """Опрос сайта: кого спрашиваем и что пишем."""
 
     async def test_online_lands_in_the_card(self, girl, probe, quiet):
-        got = await dating_status_probe_site(STAND_SITE)
+        got = await status_probe_site(STAND_SITE)
 
         assert girl in probe['asked']
         assert got['ready'] and got['online'] >= 1
@@ -102,12 +102,12 @@ class TestProbeSite:
         Сдвинь его неудачный опрос, и по колонке «Вход» живая анкета перестанет
         отличаться от отвалившейся неделю назад.
         """
-        await dating_status_probe_site(STAND_SITE)
+        await status_probe_site(STAND_SITE)
         seen = (await _row(girl))['last_seen_at']
         assert seen is not None, 'подтверждённый вход метку не поставил'
 
         probe['answer']['row'] = OFFLINE
-        await dating_status_probe_site(STAND_SITE)
+        await status_probe_site(STAND_SITE)
 
         assert (await _row(girl))['status'] == 'offline'
         assert (await _row(girl))['last_seen_at'] == seen, 'неудача сдвинула метку'
@@ -116,7 +116,7 @@ class TestProbeSite:
         """«Не спрашивали» — это не «минус одно письмо»: колонка про количество."""
         probe['answer']['row'] = OFFLINE
 
-        await dating_status_probe_site(STAND_SITE)
+        await status_probe_site(STAND_SITE)
 
         assert (await _row(girl))['unread'] == 0
 
@@ -127,7 +127,7 @@ class TestProbeSite:
                              (girl,))
             await db.connection.commit()
 
-        await dating_status_probe_site(STAND_SITE)
+        await status_probe_site(STAND_SITE)
 
         assert girl not in probe['asked']
 
@@ -138,7 +138,7 @@ class TestProbeSite:
             await db.execute('UPDATE profile SET enabled = 0 WHERE id = %s', (girl,))
             await db.connection.commit()
 
-        await dating_status_probe_site(STAND_SITE)
+        await status_probe_site(STAND_SITE)
 
         assert girl not in probe['asked']
 
@@ -148,9 +148,9 @@ class TestProbeSite:
         async def no(presence=None, site_id=0):
             return False
 
-        monkeypatch.setattr(dating_status, 'dating_presence_ready', no)
+        monkeypatch.setattr(status, 'presence_ready', no)
 
-        got = await dating_status_probe_site(STAND_SITE)
+        got = await status_probe_site(STAND_SITE)
 
         assert got == {'ready': False, 'checked': 0, 'online': 0, 'profiles': []}
         assert not probe['asked']
@@ -162,10 +162,10 @@ class TestGoneNote:
     async def test_leaving_the_net_is_written_once(self, girl, probe, quiet):
         """⚠ Не каждый неудачный заход: круг ходит раз в минуту, и сотня анкет
         залила бы вкладку одним и тем же."""
-        await dating_status_probe_site(STAND_SITE)          # стала online
+        await status_probe_site(STAND_SITE)          # стала online
         probe['answer']['row'] = OFFLINE
-        await dating_status_probe_site(STAND_SITE)          # ушла — строка
-        await dating_status_probe_site(STAND_SITE)          # всё ещё нет — молчим
+        await status_probe_site(STAND_SITE)          # ушла — строка
+        await status_probe_site(STAND_SITE)          # всё ещё нет — молчим
 
         assert len([one for one in quiet if 'ушла из сети' in one]) == 1
 
@@ -175,9 +175,9 @@ class TestRound:
 
     async def test_round_asks_and_counts(self, girl, probe, quiet, monkeypatch):
         _only_stand(monkeypatch)
-        dating_status_round._asked.clear()
+        status_round._asked.clear()
 
-        got = await dating_status_round_run()
+        got = await status_round_run()
 
         assert got['sites'] == 1 and got['checked'] >= 1
         assert girl in probe['asked']
@@ -186,15 +186,15 @@ class TestRound:
         """Срок сайта (`probe_every`) — не пожелание: без него круг спрашивал бы
         сайт каждые пятнадцать секунд."""
         _only_stand(monkeypatch)
-        monkeypatch.setattr(dating_status_round, '_every', _answer(600))
-        dating_status_round._asked.clear()
+        monkeypatch.setattr(status_round, '_every', _answer(600))
+        status_round._asked.clear()
 
-        assert (await dating_status_round_run())['checked'] >= 1
-        assert (await dating_status_round_run())['checked'] == 0
+        assert (await status_round_run())['checked'] >= 1
+        assert (await status_round_run())['checked'] == 0
 
     async def test_site_without_probeable_profiles_is_not_visited(self, monkeypatch):
         """Отбор идёт **от анкет**: сайтов у соседа десятки, работают один-два."""
-        sites = await dating_status_round._sites()
+        sites = await status_round._sites()
 
         assert 999_781 not in sites, 'сайт без анкет попал в обход'
 
@@ -206,7 +206,7 @@ def _only_stand(monkeypatch):
     async def ours():
         return [STAND_SITE]
 
-    monkeypatch.setattr(dating_status_round, '_sites', ours)
+    monkeypatch.setattr(status_round, '_sites', ours)
 
 
 def _answer(value):

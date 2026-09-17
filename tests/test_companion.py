@@ -287,7 +287,7 @@ class TestCompanionDrop:
     async def test_letters_survive(self, auth_client, companion):
         """⚠ **Готовые письма переживают удаление карточки.**
 
-        `dating_mailing.uid` — просто строка, внешнего ключа на карточку нет: письмо
+        `mailing.uid` — просто строка, внешнего ключа на карточку нет: письмо
         помнит, кому оно, само по себе. Иначе удаление карточки уносило бы готовую
         рассылку — а это минуты работы агента.
         """
@@ -392,7 +392,7 @@ class TestCompanionVars:
         этом лучше здесь, чем по молчаливому пропуску в рассылке.
 
         ⚠ Заводим **отдельную безымянную карточку**, а не обнуляем имя у готовой:
-        пустое значение ленты прежнее не затирает (`dating_companion.py`), и такая
+        пустое значение ленты прежнее не затирает (`companion.py`), и такая
         попытка ничего бы не изменила — проверка молча одобрила бы что угодно.
         """
         uid = f'tst-{uuid.uuid4().hex[:10]}'
@@ -619,19 +619,19 @@ class TestPriorityOrders:
     """Как отметка влияет на набор пула: перестановка ленты, а не её отбор."""
 
     async def test_marked_go_first(self):
-        from src.dating.dating_mailing import _by_priority
-        from src.dating import dating_mailing
+        from src.dating.mailing import _by_priority
+        from src.dating import mailing
 
         people = [{'uid': 'a'}, {'uid': 'b'}, {'uid': 'c'}, {'uid': 'd'}]
 
         async def marked(site_id):
             return {'c', 'a'}
 
-        real, dating_mailing._marked = dating_mailing._marked, marked
+        real, mailing._marked = mailing._marked, marked
         try:
             got = await _by_priority(1, people)
         finally:
-            dating_mailing._marked = real
+            mailing._marked = real
 
         assert [one['uid'] for one in got] == ['a', 'c', 'b', 'd']
 
@@ -643,19 +643,19 @@ class TestPriorityOrders:
         спрашивал бы базу заново на каждого человека в ленте — двести запросов на
         заход.
         """
-        from src.dating.dating_mailing import _by_priority
-        from src.dating import dating_mailing
+        from src.dating.mailing import _by_priority
+        from src.dating import mailing
 
         people = [{'uid': 'a'}, {'uid': 'b'}]
 
         async def marked(site_id):
             return {'a'}
 
-        real, dating_mailing._marked = dating_mailing._marked, marked
+        real, mailing._marked = mailing._marked, marked
         try:
             got = await _by_priority(1, people)
         finally:
-            dating_mailing._marked = real
+            mailing._marked = real
 
         assert [one['priority'] for one in got] == [True, False]
         # ⚠ Лента лежит в кэше снимка: допиши мы поле на месте, изменилось бы то,
@@ -664,19 +664,19 @@ class TestPriorityOrders:
 
     async def test_nobody_is_dropped(self):
         """⚠ Главное здесь: неотмеченные остаются, и все до одного."""
-        from src.dating.dating_mailing import _by_priority
-        from src.dating import dating_mailing
+        from src.dating.mailing import _by_priority
+        from src.dating import mailing
 
         people = [{'uid': str(n)} for n in range(20)]
 
         async def marked(site_id):
             return {'7'}
 
-        real, dating_mailing._marked = dating_mailing._marked, marked
+        real, mailing._marked = mailing._marked, marked
         try:
             got = await _by_priority(1, people)
         finally:
-            dating_mailing._marked = real
+            mailing._marked = real
 
         assert len(got) == 20, 'отметка превратилась в фильтр'
         assert {one['uid'] for one in got} == {one['uid'] for one in people}
@@ -685,61 +685,61 @@ class TestPriorityOrders:
     async def test_order_inside_halves_is_kept(self):
         """⚠ Порядок внутри каждой половины — прежний. Перетасуй мы ленту сверх
         нужного, два набора подряд давали бы разных адресатов без причины."""
-        from src.dating.dating_mailing import _by_priority
-        from src.dating import dating_mailing
+        from src.dating.mailing import _by_priority
+        from src.dating import mailing
 
         people = [{'uid': one} for one in 'abcdef']
 
         async def marked(site_id):
             return {'e', 'b'}
 
-        real, dating_mailing._marked = dating_mailing._marked, marked
+        real, mailing._marked = mailing._marked, marked
         try:
             got = [one['uid'] for one in await _by_priority(1, people)]
         finally:
-            dating_mailing._marked = real
+            mailing._marked = real
 
         assert got == ['b', 'e', 'a', 'c', 'd', 'f']
 
     async def test_no_marks_changes_nothing(self):
-        from src.dating.dating_mailing import _by_priority
-        from src.dating import dating_mailing
+        from src.dating.mailing import _by_priority
+        from src.dating import mailing
 
         people = [{'uid': one} for one in 'abc']
 
         async def marked(site_id):
             return set()
 
-        real, dating_mailing._marked = dating_mailing._marked, marked
+        real, mailing._marked = mailing._marked, marked
         try:
             got = await _by_priority(1, people)
         finally:
-            dating_mailing._marked = real
+            mailing._marked = real
 
         assert got == people, 'без отметок лента переставилась'
 
     async def test_broken_database_does_not_break_the_pool(self):
         """⚠ Сбой базы возвращает ленту как есть. Приоритет — удобство, и падать
         из-за него значило бы менять письма на порядок писем."""
-        from src.dating.dating_mailing import _by_priority
-        from src.dating import dating_mailing
+        from src.dating.mailing import _by_priority
+        from src.dating import mailing
 
         people = [{'uid': one} for one in 'abc']
 
         async def broken(site_id):
             raise RuntimeError('база лежит')
 
-        real, dating_mailing._marked = dating_mailing._marked, broken
+        real, mailing._marked = mailing._marked, broken
         try:
             got = await _by_priority(1, people)
         finally:
-            dating_mailing._marked = real
+            mailing._marked = real
 
         assert [one['uid'] for one in got] == ['a', 'b', 'c']
 
     async def test_marked_are_read_by_site(self, auth_client, companion):
         """Отмеченные спрашиваются **по сайту**: чужие метки в чужой пул не идут."""
-        from src.dating.dating_mailing import _marked
+        from src.dating.mailing import _marked
 
         await auth_client.put(f"/api/dating/companion/{companion['id']}/priority",
                               json={'priority': True})

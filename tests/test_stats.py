@@ -175,9 +175,9 @@ class TestTheWindow:
         числа стоят рядом, и одно «за всё время» среди суточных врёт молча."""
         import inspect
 
-        from src.uvicorn.routers.dating import dating_stats
+        from src.uvicorn.routers.dating import stats
 
-        code = inspect.getsource(dating_stats.dating_stats_get)
+        code = inspect.getsource(stats.stats_get)
 
         for group in ('_chat', '_mail', '_favorite', '_invite'):
             assert f'{group}(site_id, profile_id, hours)' in code, group
