@@ -108,7 +108,7 @@ class TestWorkTemplate:
 
         html = await work(LADA)
         page_src = pathlib.Path(
-            'data/uvicorn/template/admin/dating_profile.html').read_text(encoding='utf-8')
+            'data/uvicorn/template/admin/dating/profile.html').read_text(encoding='utf-8')
 
         tabs = set(re.findall(r'class="page-tab[^"]*" data-tab="(\w+)"', page_src))
         panels = set(re.findall(r'class="work-panel" data-tab="(\w+)"', html))

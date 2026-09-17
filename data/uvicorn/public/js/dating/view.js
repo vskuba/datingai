@@ -9,7 +9,7 @@
 // `profile-warn`) живут в `dating_page.css`, общем для обеих страниц, и менять
 // их надо в одном месте.
 
-import {timeShift, timeToday} from './dating_time.js';
+import {timeShift, timeToday} from './time.js';
 
 export function esc(value) {
     const el = document.createElement('div');

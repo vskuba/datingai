@@ -223,10 +223,10 @@
 <script type="module">
     import {getData} from '{{ static_url('js/api.js') }}';
     import {showNotification} from '{{ static_url('js/notification.js') }}';
-    import {esc, face, pagerRender} from '{{ static_url('js/dating_view.js') }}';
-    import {DATING_SITE_KEY, datingSiteFill} from '{{ static_url('js/dating_site.js') }}';
+    import {esc, face, pagerRender} from '{{ static_url('js/dating/view.js') }}';
+    import {DATING_SITE_KEY, datingSiteFill} from '{{ static_url('js/dating/site.js') }}';
     // Метки приходят с сервера в UTC — сдвигает страница (`dashboard_frontend.md`, §3.8).
-    import {timeShift} from '{{ static_url('js/dating_time.js') }}';
+    import {timeShift} from '{{ static_url('js/dating/time.js') }}';
 
     const BASE = '{{ base }}';
 

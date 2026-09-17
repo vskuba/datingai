@@ -630,7 +630,7 @@
 
 
     /* Журнал — часть **каркаса**, под работой с анкетой: он про анкету, а не
-       про сайт, и одинаков на любом (`admin/profile/site/_base.html`).
+       про сайт, и одинаков на любом (`admin/dating/profile/site/_base.html`).
 
        Высоту тянут разделителем: сколько её нужно, зависит от работы. Разбирая
        неудачный вход, читают десяток строк журнала и переписка не нужна вовсе;
@@ -4067,7 +4067,7 @@
     <div class="split split-col" id="splitCol" title="Потяните, чтобы изменить ширину"></div>
 
     {# Правая панель — **каркас**: место под работу с анкетой и журнал под ней.
-    Что внутри `#work`, решает шаблон сайта (`admin/profile/site/…`, ручка
+    Что внутри `#work`, решает шаблон сайта (`admin/dating/profile/site/…`, ручка
     `/admin/dating/profile/work`).
 
     ⚠ Журнал стоит здесь, а не в шаблоне сайта, намеренно: он про анкету, а не
@@ -4160,10 +4160,10 @@
     // Модальное окно — общее для всех страниц панели (`modal.js`).
     import {modalClose, modalOpen} from '{{ static_url('js/modal.js') }}';
     import {esc, onlineDot, warnBadge, seenText, timeShort, timeFull, pagerRender, logRender}
-        from '{{ static_url('js/dating_view.js') }}';
+        from '{{ static_url('js/dating/view.js') }}';
     // Сдвиг времени в пояс настройки: с сервера метки приходят в UTC.
     import {timeAgo, timeAgoSec, timeNowMinutes, timeShift, timeToday}
-        from '{{ static_url('js/dating_time.js') }}';
+        from '{{ static_url('js/dating/time.js') }}';
     // Расписание сменами — общее с расписанием анкеты на «Анкетах»: вид и правила
     // ввода там те же, а вопросы разные (`schedule.js`).
     import {
@@ -4171,10 +4171,10 @@
         scheduleNowIndex,
         scheduleSort
     }
-        from '{{ static_url('js/dating_schedule.js') }}';
+        from '{{ static_url('js/dating/schedule.js') }}';
     // Загрузка селекта общая на весь раздел: ключ выбора у страниц один, и
     // разъехавшиеся копии писали бы в него разное.
-    import {DATING_SITE_KEY, datingSiteFill, datingPanelPaint} from '{{ static_url('js/dating_site.js') }}';
+    import {DATING_SITE_KEY, datingSiteFill, datingPanelPaint} from '{{ static_url('js/dating/site.js') }}';
 
     const BASE = '{{ base }}';
 

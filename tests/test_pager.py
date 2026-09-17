@@ -1,6 +1,6 @@
 """Пейджер: правило «первая, последняя, соседи, между ними многоточие».
 
-⚠ **Проверяется настоящий модуль** `data/uvicorn/public/js/dating_view.js`, а не
+⚠ **Проверяется настоящий модуль** `data/uvicorn/public/js/dating/view.js`, а не
 его пересказ на Python. Пересказ разошёлся бы с оригиналом в первую же правку и
 продолжал бы при этом проходить — то есть врал бы ровно тогда, когда нужен.
 
@@ -32,8 +32,8 @@ import tempfile
 import pytest
 
 pytestmark = pytest.mark.page
-JS_DIR = pathlib.Path(__file__).resolve().parents[1] / 'data/uvicorn/public/js'
-MODULE = JS_DIR / 'dating_view.js'
+JS_DIR = pathlib.Path(__file__).resolve().parents[1] / 'data/uvicorn/public/js/dating'
+MODULE = JS_DIR / 'view.js'
 TEST_JS = pathlib.Path(__file__).with_suffix('.js')
 
 # Единственное, что тянет модуль ради `pagerPages`, — времена. Подкладываем
@@ -53,7 +53,7 @@ def test_pager_pages_rules():
         room = pathlib.Path(tmp)
         shutil.copy(MODULE, room / MODULE.name)
         shutil.copy(TEST_JS, room / TEST_JS.name)
-        (room / 'dating_time.js').write_text(TIME_STUB, encoding='utf-8')
+        (room / 'time.js').write_text(TIME_STUB, encoding='utf-8')
 
         result = subprocess.run([node, str(room / TEST_JS.name)],
                                 capture_output=True, text=True, timeout=60)

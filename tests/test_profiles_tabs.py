@@ -815,7 +815,7 @@ class TestDeliveryFly:
         import pathlib
 
         work = pathlib.Path(
-            'data/uvicorn/template/admin/profile/site/_base.html').read_text(encoding='utf-8')
+            'data/uvicorn/template/admin/dating/profile/site/_base.html').read_text(encoding='utf-8')
         start = work.index('data-chat-tab="sent"')
 
         assert 'data-slot="inviteFly"' in work[start:start + 200]

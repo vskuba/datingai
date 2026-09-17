@@ -343,6 +343,6 @@ def test_reply_round_has_no_write_button_in_markup():
     """
     from pathlib import Path
 
-    markup = Path('data/uvicorn/template/admin/profile/site/_base.html').read_text()
+    markup = Path('data/uvicorn/template/admin/dating/profile/site/_base.html').read_text()
 
     assert 'in-reply-make' not in markup

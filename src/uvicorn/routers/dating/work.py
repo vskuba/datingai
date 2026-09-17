@@ -46,7 +46,7 @@ from src.uvicorn.uvicorn_base import uvicorn_base_path
 router = APIRouter(prefix='/admin/dating/profile', tags=['pages'])
 
 # Где лежат шаблоны сайтов. Путь от корня шаблонов — таким его ждёт Jinja.
-WORK_DIR = 'admin/profile/site'
+WORK_DIR = 'admin/dating/profile/site'
 
 # Шаблон для сайта, у которого своего нет. Не пустой на всякий случай: новый сайт
 # должен открыться и работать до того, как под него напишут свой.

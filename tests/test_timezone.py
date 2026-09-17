@@ -5,7 +5,7 @@
 готовым числом в разметке — эту цепочку и проверяем: настройка → контекст шаблона →
 `window.DATING_TZ`.
 
-Сам сдвиг делает `dating_time.js` в браузере; проверен он в живом Chrome (запись
+Сам сдвиг делает `time.js` в браузере; проверен он в живом Chrome (запись
 журнала `07:56:03` из ручки показалась как `10:56:03`), а не здесь — здесь нет
 браузера, который исполнил бы модуль.
 
@@ -120,7 +120,7 @@ class TestTimezoneStatic:
     """Модуль сдвига отдаётся страницам."""
 
     async def test_time_module_is_served(self, client):
-        response = await client.get('/static/js/dating_time.js')
+        response = await client.get('/static/js/dating/time.js')
 
         assert response.status_code == 200
         assert 'timeShift' in response.text
@@ -134,9 +134,9 @@ class TestTimezoneStatic:
         ввозимых имён растёт (так появился `timeShort`), и тест на буквальную
         строку падал бы от каждого пополнения, ничего при этом не поймав.
         """
-        text = (await client.get('/static/js/dating_view.js')).text
+        text = (await client.get('/static/js/dating/view.js')).text
 
-        assert "from './dating_time.js'" in text, 'модуль перестал брать сдвиг'
+        assert "from './time.js'" in text, 'модуль перестал брать сдвиг'
         assert 'timeShift' in text
 
 

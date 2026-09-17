@@ -320,8 +320,8 @@
 <script type="module">
     import {getData, postData, putData} from '{{ static_url('js/api.js') }}';
     import {showNotification} from '{{ static_url('js/notification.js') }}';
-    import {esc} from '{{ static_url('js/dating_view.js') }}';
-    import {DATING_SITE_KEY, datingSiteFill} from '{{ static_url('js/dating_site.js') }}';
+    import {esc} from '{{ static_url('js/dating/view.js') }}';
+    import {DATING_SITE_KEY, datingSiteFill} from '{{ static_url('js/dating/site.js') }}';
 
     const BASE = '{{ base }}';
     // Правку прячем от того, кто её не сохранит: ручка всё равно ответит 403, но

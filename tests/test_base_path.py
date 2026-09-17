@@ -28,7 +28,7 @@ class TestStaticFreshness:
         Без него Starlette отдаёт только `ETag`, а браузер решает сам и обычно
         кэширует эвристически, по возрасту файла.
         """
-        answer = await client.get('/static/js/dating_view.js')
+        answer = await client.get('/static/js/dating/view.js')
 
         assert answer.status_code == 200
         assert 'no-cache' in answer.headers.get('cache-control', '')
@@ -52,9 +52,9 @@ class TestStaticFreshness:
     async def test_version_changes_with_the_file(self, auth_client):
         """Метка — время правки, а не случайное число: одинаковые ответы должны
         давать одинаковые адреса, иначе кэш не работал бы вовсе."""
-        first = re.findall(r'/static/js/dating_view\.js\?v=(\d+)',
+        first = re.findall(r'/static/js/dating/view\.js\?v=(\d+)',
                            (await auth_client.get('/admin/dating/profile')).text)
-        second = re.findall(r'/static/js/dating_view\.js\?v=(\d+)',
+        second = re.findall(r'/static/js/dating/view\.js\?v=(\d+)',
                             (await auth_client.get('/admin/dating/profile')).text)
 
         assert first and first == second, 'метка версии скачет между показами'

@@ -19,8 +19,8 @@
 // Отдельным файлом, а не в `dating_view.js`: тот про отрисовку учётки — значки,
 // бейджи, время, — и запроса к серверу в нём нет ни одного.
 
-import {getData} from './api.js';
-import {esc} from './dating_view.js';
+import {getData} from '../api.js';
+import {esc} from './view.js';
 
 // Где лежит выбранный сайт. Одно имя на весь раздел — см. выше.
 export const DATING_SITE_KEY = 'dating_site';

@@ -21,14 +21,14 @@ router = APIRouter(tags=['pages'])
 @router.get('/', response_class=HTMLResponse, include_in_schema=False)
 async def dashboard_index(request: Request, user: AuthUser = Depends(auth_required)):
     """Корень — это и есть панель анкет: главной её в проекте нет."""
-    return await _dashboard_page(request, user, 'admin/dating.html')
+    return await _dashboard_page(request, user, 'admin/dating/index.html')
 
 
 @router.get('/admin/dating', response_class=HTMLResponse, include_in_schema=False)
 async def dashboard_dating(request: Request, user: AuthUser = Depends(auth_required)):
     """Тот же адрес, что был в RhapsodyAi. Оставлен ради закладок и ссылок в
     переписке: переезд не должен ломать то, что люди уже сохранили."""
-    return await _dashboard_page(request, user, 'admin/dating.html')
+    return await _dashboard_page(request, user, 'admin/dating/index.html')
 
 
 @router.get('/admin/dating/profile', response_class=HTMLResponse, include_in_schema=False)
@@ -38,7 +38,7 @@ async def dashboard_dating_profile(request: Request, user: AuthUser = Depends(au
     Открыта всем вошедшим, а не только админу: это работа с анкетами, ради которой
     панель и открывают, а не операция над устройством установки.
     """
-    return await _dashboard_page(request, user, 'admin/dating_profile.html')
+    return await _dashboard_page(request, user, 'admin/dating/profile.html')
 
 
 @router.get('/admin/dating/mail', include_in_schema=False)
@@ -65,7 +65,7 @@ async def dashboard_dating_log(request: Request, user: AuthUser = Depends(auth_r
     на вопрос «почему анкета не отвечает», и держать его за админской дверью
     значит звать админа на каждый разбор.
     """
-    return await _dashboard_page(request, user, 'admin/dating_log.html')
+    return await _dashboard_page(request, user, 'admin/dating/log.html')
 
 
 @router.get('/admin/dating/error', response_class=HTMLResponse, include_in_schema=False)
@@ -75,7 +75,7 @@ async def dashboard_dating_error(request: Request, user: AuthUser = Depends(auth
     Отдельно от «Журналов», а не фильтром внутри них: за отказами приходят
     прицельно, и путь до них не должен идти через переключатель.
     """
-    return await _dashboard_page(request, user, 'admin/dating_error.html')
+    return await _dashboard_page(request, user, 'admin/dating/error.html')
 
 
 @router.get('/admin/dating/site', response_class=HTMLResponse, include_in_schema=False)
@@ -90,7 +90,7 @@ async def dashboard_dating_site(request: Request, user: AuthUser = Depends(auth_
     видеть, с чем он работает. Правка при этом закрыта админом — на уровне ручки
     (`api.md`, §3.5), а страница прячет форму от того, кому её не сохранить.
     """
-    return await _dashboard_page(request, user, 'admin/dating_site.html')
+    return await _dashboard_page(request, user, 'admin/dating/site.html')
 
 
 @router.get('/admin/dating/socket', response_class=HTMLResponse, include_in_schema=False)
@@ -112,7 +112,7 @@ async def dashboard_dating_socket(request: Request, user: AuthUser = Depends(aut
     ⚠ Адрес страницы прежний (`/admin/dating/socket`): переименование заголовка
     не повод ломать закладки и ссылки в переписке.
     """
-    return await _dashboard_page(request, user, 'admin/dating_socket.html')
+    return await _dashboard_page(request, user, 'admin/dating/socket.html')
 
 
 @router.get('/admin/setting', response_class=HTMLResponse, include_in_schema=False)

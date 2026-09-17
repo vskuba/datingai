@@ -578,16 +578,16 @@
     // показывает лицо, имя и почту — точке состояния, бейджам работы и значку
     // тревоги места в ней нет; журнала на странице нет вовсе, и `logRender` с
     // `logStamp` ей больше не нужны. Всё это осталось на «Профилях».
-    import {esc, pagerRender} from '{{ static_url('js/dating_view.js') }}';
+    import {esc, pagerRender} from '{{ static_url('js/dating/view.js') }}';
     // Расписание сменами — общее с вкладкой «Письма рассылка» на «Профилях»: вид
     // и правила ввода там те же, а вопросы разные (`schedule.js`).
     import {scheduleBandBind, scheduleBodyHtml, scheduleCheck, scheduleSort}
-        from '{{ static_url('js/dating_schedule.js') }}';
+        from '{{ static_url('js/dating/schedule.js') }}';
     // Загрузка селекта сайта — тоже общая: ключ выбора один на весь раздел.
-    import {DATING_SITE_KEY, datingSiteFill, datingPanelPaint} from '{{ static_url('js/dating_site.js') }}';
+    import {DATING_SITE_KEY, datingSiteFill, datingPanelPaint} from '{{ static_url('js/dating/site.js') }}';
     // ⚠ Времена с сервера приходят в UTC, сдвигает их страница по настройке
     // `timezone` — иначе «снято в 08:21» человек прочитал бы как своё время.
-    import {timeShift} from '{{ static_url('js/dating_time.js') }}';
+    import {timeShift} from '{{ static_url('js/dating/time.js') }}';
 
     // Под каким URI живёт панель. Локально пусто (корень домена), на проде —
     // `/dating`: домен один на два проекта, и делится он по пути. Прокси префикс

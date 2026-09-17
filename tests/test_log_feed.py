@@ -310,9 +310,9 @@ class TestFaceInTheFeed:
         import pathlib
 
         page = pathlib.Path(
-            'data/uvicorn/template/admin/dating_log.html').read_text(encoding='utf-8')
+            'data/uvicorn/template/admin/dating/log.html').read_text(encoding='utf-8')
         view = pathlib.Path(
-            'data/uvicorn/public/js/dating_view.js').read_text(encoding='utf-8')
+            'data/uvicorn/public/js/dating/view.js').read_text(encoding='utf-8')
 
         assert 'export function face(' in view
         assert page.count('face(r.profile_photo') == 2, \

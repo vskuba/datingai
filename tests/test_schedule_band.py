@@ -39,22 +39,22 @@ import tempfile
 import pytest
 
 pytestmark = pytest.mark.page
-JS_DIR = pathlib.Path(__file__).resolve().parents[1] / 'data/uvicorn/public/js'
-MODULE = JS_DIR / 'dating_schedule.js'
+JS_DIR = pathlib.Path(__file__).resolve().parents[1] / 'data/uvicorn/public/js/dating'
+MODULE = JS_DIR / 'schedule.js'
 TEST_JS = pathlib.Path(__file__).with_suffix('.js')
 
-# Единственная зависимость модуля — `esc` из `dating_view.js`. Подкладываем
+# Единственная зависимость модуля — `esc` из `view.js`. Подкладываем
 # заглушку вместо настоящего файла: тот тянет за собой разметку и `document`,
 # которых в `node` нет, а от `esc` здесь нужно только не падать.
 VIEW_STUB = 'export const esc = (value) => String(value ?? "");\n'
 
-# ⚠ А вот `dating_time.js` кладём **настоящий**, а не заглушкой: из него берётся
+# ⚠ А вот `time.js` кладём **настоящий**, а не заглушкой: из него берётся
 # `timeNowMinutes` — минуты суток по часовому поясу панели, и на них держится вся
 # подсветка «идёт сейчас». Подделай мы его — проверялась бы наша выдумка о том, как
 # считается время, а не то, как оно считается на самом деле.
 #
 # Работать в `node` он умеет: `window` там нет, и пояс честно выходит нулевым.
-TIME_MODULE = JS_DIR / 'dating_time.js'
+TIME_MODULE = JS_DIR / 'time.js'
 
 
 def test_schedule_band_rules():
@@ -68,7 +68,7 @@ def test_schedule_band_rules():
         shutil.copy(MODULE, room / MODULE.name)
         shutil.copy(TIME_MODULE, room / TIME_MODULE.name)
         shutil.copy(TEST_JS, room / TEST_JS.name)
-        (room / 'dating_view.js').write_text(VIEW_STUB, encoding='utf-8')
+        (room / 'view.js').write_text(VIEW_STUB, encoding='utf-8')
 
         result = subprocess.run([node, str(room / TEST_JS.name)],
                                 capture_output=True, text=True, timeout=60)

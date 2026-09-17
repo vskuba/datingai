@@ -15,8 +15,8 @@
 // сохраняется и что стоит в шапке с подвалом блока — знает страница: у анкеты в
 // подвале кнопка «Войти», у рассылки её нет и быть не может.
 
-import {esc} from './dating_view.js';
-import {timeNowMinutes} from './dating_time.js';
+import {esc} from './view.js';
+import {timeNowMinutes} from './time.js';
 
 // Сутки в минутах — мера всей шкалы: ползунок ходит от 0 до 1440.
 export const DAY_MINUTES = 24 * 60;
