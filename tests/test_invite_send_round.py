@@ -93,11 +93,23 @@ async def girl(auth_client):
 
 @pytest.fixture
 def sent(monkeypatch):
-    """Перехваченная отправка: список ушедших вместо похода на сайт."""
+    """Перехваченная отправка: список ушедших вместо похода на сайт.
+
+    ⚠⚠ **Заглушка обязана помечать строку ушедшей.** Живая `invite_send_one`
+    занимает её условным `UPDATE` до отправки — иначе четыре щелчка послали бы
+    четыре одинаковые реплики. Заглушка, которая только запоминает вызов,
+    оставляет строку черновиком, и очередь отдаёт её снова: пачка в десять
+    «отправила» один и тот же инвайт десять раз. Поймано ровно так.
+    """
     got = []
 
     async def _send(invite):
         got.append(dict(invite))
+
+        async with mysql_get_db_async() as db:
+            await db.execute("UPDATE invite SET status = 'sent', sent_at = NOW()"
+                             ' WHERE id = %s', (int(invite['id']),))
+            await db.connection.commit()
 
         return {'ok': True, 'error': ''}
 
@@ -116,8 +128,14 @@ class TestPicks:
 
         assert got['sent'] == 1 and len(sent) == 1
 
-    async def test_one_per_pass(self, site, girl, sent):
-        """⚠ По одной за заход: пул, ушедший залпом, — это робот, чем он и является."""
+    async def test_one_per_pass_by_default(self, site, girl, sent):
+        """⚠ По одной за заход — **умолчание**, а не закон.
+
+        Пул, ушедший залпом, читается как робот, поэтому умолчание осталось
+        единицей. Но сколько уходит за заход, теперь решает сайт
+        (`invite_send_batch`): один терпит десяток подряд, другой закроет
+        учётку и на трёх, и выбирать это должен человек.
+        """
         for _ in range(3):
             await _draft(girl)
 
@@ -745,3 +763,137 @@ async def _draft_uid(profile_id: int, tag: str, when: str) -> str:
         await db.connection.commit()
 
     return uid
+
+
+class TestBatch:
+    """⚠⚠ Сколько реплик уходит за один заход круга.
+
+    Прежде — ровно одна, и полсотни инвайтов растягивались на полсотни пауз: при
+    паузе в минуту это почти час на пул.
+
+    ⚠ **Пачка не ускоряет круг, а укрупняет заход.** Пауза (`invite_send_every`)
+    осталась и держит промежутки **между** заходами; внутри пачки реплики уходят
+    подряд, без паузы — сайт видит их одним всплеском. За этим и настройка, а не
+    константа: один сайт терпит десяток, другой закроет учётку и на трёх.
+    """
+
+    @pytest.fixture
+    async def batch(self, monkeypatch):
+        """Задаёт размер пачки, минуя базу: настройки сайта делит вся сюита.
+
+        ⚠ **И чистит пул стенда перед заходом.** Пачка берёт из пула столько,
+        сколько просит, — и черновики, оставленные соседними тестами, уезжают
+        вместе с её собственными. Проверяя «ушло ровно два», такой тест ловил бы
+        не код, а порядок запуска: у меня он показал «ушло 10».
+        """
+        async with mysql_get_db_async() as db:
+            await db.execute("DELETE FROM invite WHERE site_id = %s AND status = 'draft'",
+                             (STAND_SITE,))
+            await db.connection.commit()
+
+        def _set(value):
+            async def _batch(site_id):
+                return int(value)
+
+            monkeypatch.setattr(invite_send_round, '_batch', _batch)
+
+        return _set
+
+    async def test_three_go_at_once(self, site, girl, sent, batch):
+        batch(3)
+        for _ in range(5):
+            await _draft(girl)
+
+        got = await invite_send_round_run()
+
+        assert got['sent'] == 3, f"ушло {got['sent']}, а просили три"
+        assert len(sent) == 3
+
+    async def test_a_short_pool_sends_what_it_has(self, site, girl, sent, batch):
+        """Пачка больше пула — уходит пул, и это не отказ."""
+        batch(10)
+        await _draft(girl)
+        await _draft(girl)
+
+        assert (await invite_send_round_run())['sent'] == 2
+
+    async def test_the_daily_cap_wins(self, site, girl, sent, batch, monkeypatch):
+        """⚠⚠ Пачка не перескакивает дневной потолок.
+
+        До правки за заход уходила одна реплика, и проверки нормы перед заходом
+        было довольно. Пачка шлёт несколько — а норма считается **до** захода:
+        без оглядки на остаток пачка в десять при остатке две отправила бы
+        десять, то есть восемь сверх нормы, которую поставил человек.
+        """
+        batch(10)
+        for _ in range(6):
+            await _draft(girl)
+
+        async def _today(site_id, offset_hours=0):
+            return 98
+
+        async def _cap(site_id):
+            return 100
+
+        monkeypatch.setattr(invite_send_round, '_today', _today)
+        monkeypatch.setattr(invite_send_round, '_max_day', _cap)
+
+        got = await invite_send_round_run()
+
+        assert got['sent'] == 2, f"ушло {got['sent']}, а до нормы было две"
+
+    async def test_a_failure_stops_the_batch(self, site, girl, monkeypatch, batch):
+        """⚠ Неудача обрывает пачку, а не идёт дальше.
+
+        Причина почти всегда общая для всех реплик захода — сайт отказал, сессия
+        протухла. Дослать остальные значило бы получить те же отказы, кормя
+        счётчик сайта. Круг вернётся через пятнадцать секунд.
+        """
+        batch(5)
+        for _ in range(5):
+            await _draft(girl)
+
+        tried = []
+
+        async def _send(invite):
+            tried.append(dict(invite))
+
+            return {'ok': False, 'error': 'сайт отказал'}
+
+        monkeypatch.setattr(invite_send_round, 'invite_send_one', _send)
+
+        got = await invite_send_round_run()
+
+        assert got['failed'] == 1
+        assert len(tried) == 1, f'после отказа ушло ещё {len(tried) - 1}'
+
+    async def test_zero_is_not_a_switch(self, site, girl, sent, monkeypatch):
+        """⚠ Ноль в настройке даёт единицу, а не «ничего».
+
+        «Не отправлять» — отдельный выключатель (`invite_send_on`); отменять
+        отправку размером пачки значило бы два выключателя об одном, и человек
+        искал бы, который из них главнее.
+        """
+        async def _none(site_id, key):
+            return 0
+
+        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_seconds', _none)
+        await _draft(girl)
+
+        assert (await invite_send_round_run())['sent'] == 1
+
+    async def test_the_setting_is_registered(self, auth_client):
+        got = (await auth_client.get('/api/dating/site')).json()['result']
+        known = {row['key']: row for row in got['known']}
+
+        assert 'invite_send_batch' in known
+        assert known['invite_send_batch']['default'] == '1'
+        assert [o['value'] for o in known['invite_send_batch']['options']] == \
+            ['1', '3', '5', '10']
+
+    async def test_it_lives_with_the_pause(self, auth_client):
+        """Пачка и пауза — про один и тот же заход, и стоят рядом в форме."""
+        got = (await auth_client.get('/api/dating/site')).json()['result']
+        group = {row['key']: row['group'] for row in got['known']}
+
+        assert group['invite_send_batch'] == group['invite_send_every']

@@ -106,6 +106,19 @@ INVITE_SEND_ROUND_TICK_SEC = 1
 INVITE_SEND_EVERY_SETTING = 'invite_send_every'
 INVITE_SEND_MAX_DAY_SETTING = 'invite_send_max_day'
 
+# Сколько реплик отправлять за один заход круга.
+#
+# ⚠ **Пачка — это не «быстрее», а «крупнее».** Пауза (`invite_send_every`) осталась
+# и держит промежутки **между заходами**; пачка говорит, сколько уйдёт внутри
+# одного. Раньше уходила ровно одна, и полсотни реплик растягивались на полсотни
+# пауз.
+#
+# ⚠ Внутри пачки реплики идут **подряд, без паузы**: сайт видит их одним всплеском
+# — за этим и нужна настройка, а не константа. Один сайт терпит десяток, другой
+# закроет учётку и на трёх.
+INVITE_SEND_BATCH_SETTING = 'invite_send_batch'
+INVITE_SEND_BATCH_DEFAULT = 1
+
 # Умолчания на случай сайта без настроек. Минута и сотня — с них решили начать.
 INVITE_SEND_EVERY_DEFAULT = 60
 INVITE_SEND_MAX_DAY_DEFAULT = 100
@@ -184,16 +197,48 @@ async def invite_send_round_run(offset_hours: int = 0) -> dict:
         # взять ту же строку, пока первый ждёт ответа сайта.
         _sent_at[site_id] = time.time()
 
-        if (await invite_send_one(invite))['ok']:
-            sent += 1
-        else:
-            failed += 1
+        # ⚠⚠ **Пачка не смеет перескочить дневной потолок.** До правки за заход
+        # уходила одна реплика, и проверка нормы перед ней была достаточной;
+        # пачка же шлёт несколько — а норма считается до захода. Берём меньшее:
+        # сколько просит настройка и сколько осталось до потолка.
+        today, cap = await _today(site_id, offset_hours), await _max_day(site_id)
+        batch = min(await _batch(site_id), max(0, cap - today))
+
+        for number in range(batch):
+            # Первую реплику уже взяли выше — не спрашивая пул дважды.
+            if number:
+                invite = await _next(site_id)
+                if not invite:
+                    break
+
+            if (await invite_send_one(invite))['ok']:
+                sent += 1
+            else:
+                # ⚠ **Неудача обрывает пачку.** Причина у неё почти всегда общая
+                # для всех реплик захода — сайт отказал, сессия протухла, — и
+                # дослать остальные значило бы получить те же отказы, кормя
+                # счётчик сайта. Круг вернётся через пятнадцать секунд.
+                failed += 1
+                break
 
     if sent or failed:
         logger_info(f'[dating] круг инвайтов: ушло {sent}'
                     + (f', не ушло {failed}' if failed else ''))
 
     return {'sent': sent, 'failed': failed}
+
+
+async def _batch(site_id: int) -> int:
+    """Сколько реплик отправлять за заход. Настройка сайта.
+
+    ⚠ Ноль и мусор дают единицу, а не «ничего»: «не отправлять» — это отдельный
+    выключатель (`invite_send_on`), и отменять отправку настройкой размера пачки
+    значило бы два выключателя об одном.
+    """
+    from src.uvicorn.routers.dating.site_ import site_seconds
+
+    return max(1, int(await site_seconds(site_id, INVITE_SEND_BATCH_SETTING))
+               or INVITE_SEND_BATCH_DEFAULT)
 
 
 async def invite_send_why(site_id: int, offset_hours: int = 0) -> str:
