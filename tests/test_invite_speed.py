@@ -232,3 +232,57 @@ class TestTheTooltip:
         body = body[:body.index('\n    }')]
 
         assert 's.last_5min === undefined' in body
+
+
+class TestTheNumberNextToEnvelopes:
+    """⚠⚠ Число у конвертов — настоящее, а не потолок ленты.
+
+    **Живой вопрос заказчика:** «Вкладка Доставка показывает прыгающие иконки и
+    число 30. 30 — что это такое?»
+
+    Это был потолок кольца ленты (`feed.FEED_KEEP`), а не реплики: при темпе в
+    четыре сотни за пять минут лента отдаёт тридцать строк и там стоит. Число
+    выглядело осмысленным и врало — худший вид ошибки.
+    """
+
+    def test_the_count_comes_from_the_handle(self):
+        import pathlib
+
+        page = pathlib.Path(
+            'data/uvicorn/template/admin/dating/profile.html').read_text(encoding='utf-8')
+
+        body = page[page.index('function inviteFlyPaint'):]
+        body = body[:body.index('\n    }')]
+
+        assert 'inviteSpeed.last_5min' in body, \
+            'число снова из ленты — упрётся в тридцать и будет врать'
+        assert 'tab-fly-more">${счёт}' in body
+
+    def test_the_envelopes_still_come_from_the_feed(self):
+        """⚠ Конверты остаются по ленте, и это верно.
+
+        Они отвечают на «идёт ли отправка сейчас» — тридцати строк довольно, а
+        ручка пула опрашивается реже, чем лента.
+        """
+        import pathlib
+
+        page = pathlib.Path(
+            'data/uvicorn/template/admin/dating/profile.html').read_text(encoding='utf-8')
+
+        body = page[page.index('function inviteFlyPaint'):]
+        body = body[:body.index('\n    }')]
+
+        assert 'Math.min(fresh, FLY_MAX)' in body, \
+            'конверты стали считаться по ручке — они мигают реже, чем идёт отправка'
+
+    def test_an_old_page_falls_back_to_the_feed(self):
+        """Ручка ещё не ответила — показываем счёт ленты, а не пустоту."""
+        import pathlib
+
+        page = pathlib.Path(
+            'data/uvicorn/template/admin/dating/profile.html').read_text(encoding='utf-8')
+
+        body = page[page.index('function inviteFlyPaint'):]
+        body = body[:body.index('\n    }')]
+
+        assert 'undefined ? fresh :' in body
