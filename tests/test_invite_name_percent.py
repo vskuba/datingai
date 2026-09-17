@@ -222,3 +222,112 @@ class TestTheFieldIsANumber:
             json={'settings': {'admin_mark': 'Выход из кабинета'}})
 
         assert answer.status_code == 200
+
+
+class TestTimeShare:
+    """⚠⚠ Время показываем агенту по жребию, а не всегда.
+
+    **Живой пул:** 94 инвайта из 202 за сутки поминали время — «tonight», «this
+    Wednesday», «good morning». Почти каждый второй.
+
+    Это не ошибка модели, а её свойство: дай сведение — сочтёт нужным и вставит.
+    То же было с именами («вставляй изредка» → вставляет всегда) и с приёмом
+    захода («будь разной» → три «you're trouble» подряд). Просить «поминай
+    пореже» бессмысленно: частота у неё не считается, она стилистическая.
+
+    ⚠ **Убрать время совсем нельзя.** «Доброе утро» в девять вечера выдаёт робота
+    вернее всего остального — ради этого время и заводили. Речь о доле.
+    """
+
+    @pytest.fixture
+    async def time_percent(self):
+        async def _set(value):
+            async with mysql_get_db_async() as db:
+                await db.execute(
+                    'UPDATE site SET settings = JSON_SET(COALESCE(settings, JSON_OBJECT()),'
+                    ' %s, %s) WHERE site_id = %s',
+                    ('$.invite_time_percent', str(value), STAND_SITE))
+                await db.connection.commit()
+
+        yield _set
+
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE site SET settings = JSON_REMOVE(settings, %s)'
+                             ' WHERE site_id = %s',
+                             ('$.invite_time_percent', STAND_SITE))
+            await db.connection.commit()
+
+    async def test_the_default_is_ten_percent(self, time_percent):
+        from src.dating.invite import _time_chance
+
+        assert await _time_chance(STAND_SITE) == pytest.approx(0.10)
+
+    async def test_zero_means_never(self, time_percent):
+        """Ноль — агент времени не увидит вовсе, и это законный выбор."""
+        from src.dating.invite import _time_chance
+
+        await time_percent(0)
+
+        assert await _time_chance(STAND_SITE) == 0.0
+
+    async def test_any_number_works(self, time_percent):
+        from src.dating.invite import _time_chance
+
+        await time_percent(35)
+
+        assert await _time_chance(STAND_SITE) == pytest.approx(0.35)
+
+    async def test_the_flag_reaches_the_agent(self, monkeypatch):
+        """Флаг уезжает переменной: пустая строка гасит секцию у соседа."""
+        from src.dating import mail_agent
+
+        said = {}
+
+        async def _ask(**kwargs):
+            said.update(kwargs.get('variables') or {})
+
+            return 'Привет!'
+
+        async def _agent(*args, **kwargs):
+            return 7
+
+        monkeypatch.setattr(mail_agent, 'rhapsody_api_chat_ask', _ask)
+        monkeypatch.setattr(mail_agent, '_agent_id', _agent)
+
+        await mail_agent.invite_template(STAND_SITE, 'en', with_time=False)
+        assert said['invite_time'] == '', 'время всё равно уехало'
+
+        await mail_agent.invite_template(STAND_SITE, 'en', with_time=True)
+        assert said['invite_time'] == '1'
+
+    def test_the_maker_rolls_the_dice(self):
+        import inspect
+
+        from src.dating import invite
+
+        code = inspect.getsource(invite._template)
+
+        assert 'with_time=random.random() < await _time_chance(site_id)' in code, \
+            'время снова показывается всегда — пул запестрит «tonight»'
+
+    async def test_the_setting_is_a_number(self, auth_client):
+        got = (await auth_client.get('/api/dating/site')).json()['result']
+        spec = next(r for r in got['known'] if r['key'] == 'invite_time_percent')
+
+        assert spec['kind'] == 'number'
+        assert spec['min'] == 0 and spec['max'] == 100
+
+    def test_both_shares_use_one_converter(self):
+        """⚠ Перевод процентов в долю — **один** на обе настройки.
+
+        Две копии разошлись бы: где-нибудь забыли бы поделить на сто, и доля
+        стала бы «всегда».
+        """
+        import inspect
+
+        from src.dating import invite
+
+        assert '_percent(site_id, INVITE_TIME_SETTING' in inspect.getsource(
+            invite._time_chance)
+        assert '_percent(site_id, INVITE_MAN_NAME_SETTING' in inspect.getsource(
+            invite._man_chance)

@@ -426,7 +426,10 @@ async def _asked_with(language: str, girl_slot: bool = False,
     agent._agent_id = _agent_id
     agent.rhapsody_api_chat_ask = _ask
     try:
-        await agent.invite_template(343, language, girl_slot, man_slot)
+        # ⚠ Именованно, а не по порядку: новый аргумент в середине сигнатуры
+        # сдвинул бы позиционные молча — так и вышло с `with_time`.
+        await agent.invite_template(343, language, girl_slot=girl_slot,
+                                    man_slot=man_slot)
     finally:
         agent._agent_id = real_id
         agent.rhapsody_api_chat_ask = real_ask
@@ -695,7 +698,8 @@ class TestOneCallPerPool:
         # ⚠ Подпись повторяет живую целиком, включая жребий на приём и длину:
         # заглушка, не принявшая их, ловила бы `TypeError` вместо проверяемого
         # правила.
-        async def _template(site_id, language, girl_slot=False, man_slot=False,
+        async def _template(site_id, language, with_time=True,
+                            girl_slot=False, man_slot=False,
                             angle='', length='', avoid=None, country=''):
             calls.append(site_id)
 
@@ -722,7 +726,8 @@ async def _made_with(monkeypatch, template, people=None) -> dict:
     from src.dating import invite
 
     if template is not None:
-        async def _template(site_id, language, girl_slot=False, man_slot=False,
+        async def _template(site_id, language, with_time=True,
+                            girl_slot=False, man_slot=False,
                             angle='', length='', avoid=None, country=''):
             return template
 
@@ -781,7 +786,8 @@ class TestVariety:
 
         sent = {}
 
-        async def _template(site_id, language, girl_slot=False, man_slot=False,
+        async def _template(site_id, language, with_time=True,
+                            girl_slot=False, man_slot=False,
                             angle='', length='', avoid=None, country=''):
             sent.update({'angle': angle, 'length': length, 'avoid': avoid})
 
@@ -808,7 +814,8 @@ class TestVariety:
 
         seen = set()
 
-        async def _template(site_id, language, girl_slot=False, man_slot=False,
+        async def _template(site_id, language, with_time=True,
+                            girl_slot=False, man_slot=False,
                             angle='', length='', avoid=None, country=''):
             seen.add((angle, length))
 

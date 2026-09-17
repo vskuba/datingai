@@ -152,6 +152,20 @@ INVITE_MAN_NAME_CHANCE = 0.10
 # Внутри делим на сто — один раз, в `_man_chance`.
 INVITE_MAN_NAME_SETTING = 'invite_name_percent'
 
+# Доля инвайтов, где агенту показывают текущее время, — тоже настройка сайта.
+#
+# ⚠⚠ **Заведена по живому пулу: 94 инвайта из 202 за сутки поминали время** —
+# «tonight», «this Wednesday», «good morning». Почти каждый второй, и это не
+# ошибка модели: дай ей сведение — она сочтёт его нужным и вставит. То же было с
+# именами («вставляй изредка» → вставляет всегда) и с приёмом захода («будь
+# разной» → три «you're trouble» подряд).
+#
+# ⚠ **Убрать время совсем нельзя.** «Доброе утро» в девять вечера выдаёт робота
+# вернее всего остального — ради этого время и заводили. Речь о доле, а не о
+# наличии: в одном инвайте из десяти оно уместно и живо.
+INVITE_TIME_SETTING = 'invite_time_percent'
+INVITE_TIME_CHANCE = 0.10
+
 # ⚠⚠ **Разнообразие даём мы, а не надеемся на модель.** Один и тот же промпт она
 # отвечает похоже: у неё сильные притяжения, и температура их не ломает. Живой
 # прогон показал это в первый же день — три шаблона из трёх начинались с «you're
@@ -513,7 +527,11 @@ async def _template(site_id: int, language: str):
     man_slot = random.random() < await _man_chance(site_id)
 
     return await invite_template(
-        int(site_id), language, girl_slot, man_slot,
+        int(site_id), language,
+        # ⚠ Время показываем по жребию, а не всегда: иначе им пестрит половина
+        # пула (`INVITE_TIME_SETTING`).
+        with_time=random.random() < await _time_chance(site_id),
+        girl_slot=girl_slot, man_slot=man_slot,
         angle=random.choice(INVITE_ANGLES),
         length=random.choice(INVITE_LENGTHS),
         avoid=await _avoid(site_id),
@@ -603,41 +621,53 @@ def _fill(template: str, girl: dict, person: dict) -> str:
     return invite_marks_strip(filled)
 
 
-async def _man_chance(site_id: int) -> float:
-    """Доля инвайтов с именем собеседника — настройка сайта, долей от единицы.
+async def _time_chance(site_id: int) -> float:
+    """Доля инвайтов, где агенту показывают текущее время. Настройка сайта.
 
-    ⚠ **В настройке проценты, здесь доля.** Человек в форме выбирает «10%», а
-    жребий бросается по доле; перевод живёт в одном месте, иначе где-нибудь
-    сравнят процент с `random.random()` и имя окажется в каждом инвайте.
-
-    ⚠ Сбой чтения даёт умолчание, а не ноль: «имён не будет вовсе» — это решение,
-    и принимать его молча из-за недоступной базы нельзя.
+    ⚠ Тот же перевод процентов в долю, что у имён (`_man_chance`), и та же
+    причина завести: частоту модель не считает — её задаёт панель жребием.
     """
-    from src.uvicorn.routers.dating.site_ import site_seconds
+    return await _percent(site_id, INVITE_TIME_SETTING, INVITE_TIME_CHANCE)
+
+
+async def _man_chance(site_id: int) -> float:
+    """Доля инвайтов с именем собеседника — настройка сайта, долей от единицы."""
+    return await _percent(site_id, INVITE_MAN_NAME_SETTING, INVITE_MAN_NAME_CHANCE)
+
+
+async def _percent(site_id: int, key: str, fallback: float) -> float:
+    """Настройка-процент долей от единицы. Одна на все доли инвайта.
+
+    Args:
+        site_id: сайт-закладка.
+        key: ключ настройки в `SITE_KNOWN`.
+        fallback: доля, если настройки нет или её не прочитать.
+
+    ⚠ **В настройке проценты, здесь доля.** Человек в форме пишет «10», а жребий
+    бросается по доле; перевод живёт в одном месте — иначе где-нибудь сравнят
+    процент с `random.random()`, и выпадать будет всегда.
+
+    ⚠⚠ **Ноль — законное значение, а не «настройки нет».** Человек выбрал в форме
+    «никогда»; подмени мы его умолчанием, имя или время появлялись бы там, где их
+    запретили. Отличаем по тому, задан ли ключ у сайта вообще.
+
+    ⚠ Сбой чтения даёт умолчание, а не ноль: «этого не будет вовсе» — решение, и
+    принимать его молча из-за недоступной базы нельзя.
+    """
+    from src.uvicorn.routers.dating.site_ import site_seconds, site_setting
 
     try:
-        percent = int(await site_seconds(int(site_id), INVITE_MAN_NAME_SETTING))
+        percent = int(await site_seconds(int(site_id), str(key)))
+        if not percent:
+            задано = str(await site_setting(int(site_id), str(key))).strip() != ''
+            if not задано:
+                return fallback
     except Exception as e:
-        logger_info(f'[dating] доля имён в инвайтах не спросилась: {e}')
+        logger_info(f'[dating] доля «{key}» не спросилась: {e}')
 
-        return INVITE_MAN_NAME_CHANCE
+        return fallback
 
-    # ⚠ Ноль — законная настройка («имён не надо»), и подменять его умолчанием
-    # нельзя: человек выбрал это в форме. Отличаем его от «настройки нет».
-    if percent or await _name_setting_set(int(site_id)):
-        return max(0.0, min(1.0, percent / 100))
-
-    return INVITE_MAN_NAME_CHANCE
-
-
-async def _name_setting_set(site_id: int) -> bool:
-    """Задана ли доля у сайта вообще. Нужна, чтобы отличить «0%» от «не трогали»."""
-    from src.uvicorn.routers.dating.site_ import site_setting
-
-    try:
-        return str(await site_setting(int(site_id), INVITE_MAN_NAME_SETTING)).strip() != ''
-    except Exception:
-        return False
+    return max(0.0, min(1.0, percent / 100))
 
 
 def _first_word(name: str) -> str:

@@ -452,6 +452,7 @@ async def mail_question(profile: dict, site_id: int,
 
 
 async def invite_template(site_id: int, language: str = INVITE_LANGUAGE,
+                          with_time: bool = True,
                                  girl_slot: bool = False, man_slot: bool = False,
                                  angle: str = '', length: str = '',
                                  avoid: list = None, country: str = '') -> str:
@@ -533,6 +534,14 @@ async def invite_template(site_id: int, language: str = INVITE_LANGUAGE,
                    # про вечер, не зная, который час. Перепутанное время суток
                    # выдаёт робота вернее любой другой приметы: живой человек в
                    # этом не ошибается.
+                   # ⚠⚠ **Флаг «показывать ли время» — жребий панели.** Дай
+                   # модели время всегда — она поминает его почти в каждом
+                   # инвайте: на живом пуле 94 из 202 за сутки. Это не её
+                   # ошибка, а свойство: увидела сведение — сочла нужным.
+                   #
+                   # Пустая строка гасит секцию у соседа (`%if invite_time%`), и
+                   # помянуть время модель не может — его в промпте нет.
+                   'invite_time': '1' if with_time else '',
                    'datetime_current_get_zone': await _timezone(),
                    # Та же переменная, что у автоответа и писем (`user_language`
                    # у соседа): две переменные одного смысла разошлись бы.
