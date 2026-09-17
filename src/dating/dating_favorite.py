@@ -449,7 +449,7 @@ async def dating_favorite_add(profile: dict, uid: str, site_password: str = '',
     Returns:
         dict: `state` (`done`/`already`/`fail`) и `error` словами.
 
-    Исход записывается в `dating_favorite` и в журнал анкеты — оба раза здесь, а не
+    Исход записывается в `favorite` и в журнал анкеты — оба раза здесь, а не
     у вызывающего: заходов бывает много и из разных мест (круг, кнопка), и след
     должен получаться одинаковым.
 

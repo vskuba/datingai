@@ -80,7 +80,7 @@ DATING_CHAT_PANEL_DAYS_MAX = 60
 # сообщение, пришедшее в 00:05, при узком окне потерялось бы навсегда.
 DATING_CHAT_PANEL_ROUND_DAYS = 1
 
-# Пределы столбцов `dating_message`. Режем при разборе, а не при записи: обрезанное
+# Пределы столбцов `message`. Режем при разборе, а не при записи: обрезанное
 # молча — то же враньё, только позже.
 DATING_CHAT_PANEL_UID_MAX = 32
 DATING_CHAT_PANEL_NAME_MAX = 190
@@ -107,7 +107,7 @@ DATING_CHAT_PANEL_UID_RE = re.compile(r'\d+')
 
 
 def dating_chat_panel_rows(extract: dict, profiles: dict) -> list[dict]:
-    """Строки панели — в записи `dating_message`.
+    """Строки панели — в записи `message`.
 
     Args:
         extract: `extract` прогона сценария.

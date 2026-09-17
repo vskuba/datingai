@@ -35,7 +35,7 @@ async def dating_check_run(profile: dict, presence: dict, ws_capture) -> dict:
     """Гонит полную проверку учётки, записывая каждый шаг в журнал.
 
     Args:
-        profile: строка `dating_profile`.
+        profile: строка `profile`.
         presence: настройка опроса сайта (`browser_site.presence`).
         ws_capture: как снять адрес чат-сокета — зовётся, если его нет.
 

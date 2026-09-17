@@ -70,7 +70,7 @@ DATING_MAIL_BODY_MAX = 4000
 # Предел названия шаблона. Оно живёт в списке панели и в колонку шире не влезет.
 DATING_MAIL_NAME_MAX = 190
 
-# Пределы переменной — по колонкам `dating_mail_var`.
+# Пределы переменной — по колонкам `mail_var`.
 DATING_MAIL_VAR_NAME_MAX = 64
 DATING_MAIL_VAR_TITLE_MAX = 190
 DATING_MAIL_VAR_VALUE_MAX = 500

@@ -39,7 +39,7 @@ from src.dating.dating_online import dating_online_show
 
 router = APIRouter(prefix='/api/dating/companion', tags=['dating'])
 
-# Пределы — по колонкам `dating_companion`.
+# Пределы — по колонкам `companion`.
 DATING_COMPANION_UID_MAX = 32
 DATING_COMPANION_NAME_MAX = 190
 DATING_COMPANION_PHOTO_MAX = 500

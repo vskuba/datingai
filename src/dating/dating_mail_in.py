@@ -88,7 +88,7 @@ async def dating_mail_in_fetch(profile: dict, base: str, password: str) -> dict:
     """Забирает новые входящие письма анкеты и кладёт их к нам.
 
     Args:
-        profile: строка `dating_profile`: нужны `id`, `site_id`, `login`, `password`,
+        profile: строка `profile`: нужны `id`, `site_id`, `login`, `password`,
             `password_source`.
         base: корень API сайта (настройка `api_base`).
         password: общий пароль анкет сайта (настройка `api_password`).

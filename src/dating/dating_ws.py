@@ -29,7 +29,7 @@ async def dating_ws_capture(profile: dict, presence: dict, site_url: str = '',
     """Снимает адрес чат-сокета браузером и запоминает его у учётки.
 
     Args:
-        profile: строка `dating_profile` со `storage_state`.
+        profile: строка `profile` со `storage_state`.
         presence: настройка сайта; `chat_url` — что открывать, `chat_ws_mark` —
             по какой подстроке отличить чатовый сокет от служебных.
         site_url: адрес сайта — на случай, если `chat_url` не задан.

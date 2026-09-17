@@ -98,7 +98,7 @@ async def dating_answer_run(profile: dict, presence: dict, agent_id: int,
     """Отвечает тем, чьё сообщение осталось без ответа.
 
     Args:
-        profile: строка `dating_profile`.
+        profile: строка `profile`.
         presence: настройка сайта — из неё берётся отправка.
         agent_id: агент анкеты, который сочиняет ответ.
         limit: сколько диалогов обработать за раз.

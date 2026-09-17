@@ -268,7 +268,7 @@ async def dating_mail_agent_fill(profile: dict, site_id: int,
     """Спрашивает агента и отдаёт значения переменных.
 
     Args:
-        profile: строка `dating_profile` — из неё собираются сведения об анкете.
+        profile: строка `profile` — из неё собираются сведения об анкете.
         site_id: сайт-закладка: по нему заводится агент и берётся его метка.
         variables: реестр сайта — записи `{name, title, source}`. Берутся только
             `profile`: значение `companion`-переменной зависит от адресата, и

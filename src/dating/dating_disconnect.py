@@ -39,7 +39,7 @@ async def dating_disconnect_run(profile: dict, site: dict, presence: dict,
     """Отключает учётку: выход на сайте, закрытие вкладок, снятие с мониторинга.
 
     Args:
-        profile: строка `dating_profile`.
+        profile: строка `profile`.
         site: строка `browser_site` этой учётки.
         presence: настройка сайта; `logout_scenario` — имя сценария выхода.
         runner: чем гонять сценарий. Принимает **запись сценария**, а не номер:

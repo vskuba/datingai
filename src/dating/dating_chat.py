@@ -55,7 +55,7 @@ async def dating_chat_listen(profile: dict, seconds: float = 0,
     """Подключается к чат-сокету учётки и складывает входящие сообщения.
 
     Args:
-        profile: строка `dating_profile` с непустым `ws_url`.
+        profile: строка `profile` с непустым `ws_url`.
         seconds: сколько слушать; 0 — до обрыва соединения.
         presence: настройка сайта — по ней выбирается драйвер протокола. Пусто —
             берётся драйвер по умолчанию (см. `site_registry.py`).

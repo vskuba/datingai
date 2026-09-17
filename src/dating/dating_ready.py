@@ -86,7 +86,7 @@ def dating_ready_check(profile: dict, transport: str, site_password: str = '') -
     """Может ли панель сейчас работать с анкетой.
 
     Args:
-        profile: строка `dating_profile`.
+        profile: строка `profile`.
         transport: чем сайт отправляет — `ws`, `http` или `scenario`.
         site_password: общий пароль анкет у сайта, если он задан.
 

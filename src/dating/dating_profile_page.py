@@ -42,7 +42,7 @@ async def dating_profile_page_read(profile: dict, presence: dict, session_id: st
     """Читает анкету учётки со страницы кабинета и кладёт её в `dating_profile.profile`.
 
     Args:
-        profile: строка `dating_profile`.
+        profile: строка `profile`.
         presence: настройка сайта; имя сценария берётся из `profile_scenario`.
         session_id: живая сессия браузера — та, в которой только что вошли.
         runner: чем гонять сценарий, передаётся снаружи: модуль знает про анкету,

@@ -89,7 +89,7 @@ async def dating_people_api_rows(profile: dict, kind: str, base: str,
     """Список собеседников с сайта — тем же видом, что даёт разбор сценария.
 
     Args:
-        profile: строка `dating_profile`: нужны `id` и `login`.
+        profile: строка `profile`: нужны `id` и `login`.
         kind: наш вид списка (`favorite`, `online`).
         base: корень API сайта из настройки.
         password: пароль для входа — свой у анкеты или общий у сайта.

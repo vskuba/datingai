@@ -39,7 +39,7 @@ async def dating_invite_send_one(invite: dict) -> dict:
     """Отправляет реплику живому человеку в чат и отмечает исход.
 
     Args:
-        invite: строка `dating_invite` — нужны `id`, `site_id`, `profile_id`,
+        invite: строка `invite` — нужны `id`, `site_id`, `profile_id`,
             `uid`, `body` и `name` (последнее только для журнала).
 
     Returns:

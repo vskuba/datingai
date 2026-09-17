@@ -154,7 +154,7 @@ def dating_schedule_profile_now(profile: dict, minutes: int) -> bool:
     Здесь забыть нечего — на входе вся строка целиком.
 
     Args:
-        profile: строка `dating_profile`; нужны `enabled` и `schedule`.
+        profile: строка `profile`; нужны `enabled` и `schedule`.
         minutes: минуты от начала местных суток (0–1439).
     """
     if not int(profile.get('enabled', 1) or 0):

@@ -112,7 +112,7 @@ async def dating_agent_ensure(profile: dict, card: dict) -> dict:
     его до чтения анкеты бессмысленно.
 
     Args:
-        profile: строка `dating_profile`.
+        profile: строка `profile`.
         card: прочитанная анкета с сайта — из неё берётся имя и биография.
 
     Returns:

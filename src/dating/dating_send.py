@@ -101,7 +101,7 @@ async def dating_send_message(profile: dict, presence: dict, to_uid: str, text: 
     """Шлёт сообщение собеседнику и записывает его в переписку.
 
     Args:
-        profile: строка `dating_profile`; для вебсокета нужен непустой `ws_url`.
+        profile: строка `profile`; для вебсокета нужен непустой `ws_url`.
         presence: настройка сайта, раздел `send`.
         to_uid: кому — идентификатор на сайте.
         text: что отправляем.

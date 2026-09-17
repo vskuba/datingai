@@ -177,7 +177,7 @@ async def dating_site_api_call(profile: dict, base: str, password: str, path: st
     """Один запрос к API сайта под этой анкетой. Ответ — разобранным.
 
     Args:
-        profile: строка `dating_profile`: нужны `id` и `login`.
+        profile: строка `profile`: нужны `id` и `login`.
         base: корень API сайта из настройки сайта.
         password: пароль для входа — свой у анкеты или общий у сайта.
         path: путь ручки, от корня (`/users/online`).

@@ -48,7 +48,7 @@ async def dating_presence_probe(profile: dict, presence: dict = None) -> dict:
     """Один опрос учётки: держим онлайн, снимаем статус и счётчик.
 
     Args:
-        profile: строка `dating_profile` со `storage_state` и `site_id`.
+        profile: строка `profile` со `storage_state` и `site_id`.
         presence: описание сайта у соседа — **запасное**. Своя настройка сайта
             старше, и при её наличии этот аргумент не смотрят.
 
