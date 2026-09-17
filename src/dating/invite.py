@@ -29,8 +29,10 @@
 стоил полусотни вызовов LLM и минут ожидания у нажатой кнопки. Теперь заход
 устроен иначе:
 
-1. бросаем жребий, каким быть шаблону: с именем девушки (5%), с именем мужчины
-   (30%), с обоими или вовсе без имён;
+1. бросаем жребий, каким быть шаблону: с именем мужчины (доля — настройка сайта
+   `invite_name_percent`, по умолчанию 10%) или вовсе без имён. ⚠ Имя девушки
+   сейчас не просим никогда: «я Diana, и мне скучно» в первой реплике звучит как
+   визитка бота;
 2. **один** запрос агенту — он присылает шаблон с метками `[[girl_name]]` и
    `[[companion_name]]` (теми же двойными скобками, что у писем);
 3. раскладываем шаблон по парам: девушки по очереди, каждой случайный свободный
@@ -135,8 +137,20 @@ INVITE_BATCH_MAX = 50
 # — «Я Diana, и мне скучно» в первой же реплике звучит как визитка бота; **0.30 у
 # мужчины** — обращение по имени показывает, что писали ему, но в каждой реплике
 # пула оно выдало бы рамку, прочитай человек две подряд.
+# ⚠ Умолчания, если у сайта не настроено своё: имени девушки в шаблоне нет,
+# имя собеседника — в одном инвайте из десяти.
+#
+# ⚠ **Ноль у девушки — решение, а не забывчивость.** «Я Diana, и мне скучно» в
+# первой же реплике звучит как визитка бота: живой человек имя называет, когда
+# его спросят. Вернуть — поставить сюда долю и добавить настройку, как у мужчины.
 INVITE_GIRL_NAME_CHANCE = 0.0
-INVITE_MAN_NAME_CHANCE = 0.0
+INVITE_MAN_NAME_CHANCE = 0.10
+
+# Доля инвайтов с именем собеседника — настройка сайта, **в процентах**.
+#
+# ⚠ Проценты, а не доля: человек в форме думает «каждый десятый», а не «0.1».
+# Внутри делим на сто — один раз, в `_man_chance`.
+INVITE_MAN_NAME_SETTING = 'invite_name_percent'
 
 # ⚠⚠ **Разнообразие даём мы, а не надеемся на модель.** Один и тот же промпт она
 # отвечает похоже: у неё сильные притяжения, и температура их не ломает. Живой
@@ -496,7 +510,7 @@ async def _template(site_id: int, language: str):
     понимает буквально.
     """
     girl_slot = random.random() < INVITE_GIRL_NAME_CHANCE
-    man_slot = random.random() < INVITE_MAN_NAME_CHANCE
+    man_slot = random.random() < await _man_chance(site_id)
 
     return await invite_template(
         int(site_id), language, girl_slot, man_slot,
@@ -587,6 +601,43 @@ def _fill(template: str, girl: dict, person: dict) -> str:
                                  or _first_word(person_name))})
 
     return invite_marks_strip(filled)
+
+
+async def _man_chance(site_id: int) -> float:
+    """Доля инвайтов с именем собеседника — настройка сайта, долей от единицы.
+
+    ⚠ **В настройке проценты, здесь доля.** Человек в форме выбирает «10%», а
+    жребий бросается по доле; перевод живёт в одном месте, иначе где-нибудь
+    сравнят процент с `random.random()` и имя окажется в каждом инвайте.
+
+    ⚠ Сбой чтения даёт умолчание, а не ноль: «имён не будет вовсе» — это решение,
+    и принимать его молча из-за недоступной базы нельзя.
+    """
+    from src.uvicorn.routers.dating.site_ import site_seconds
+
+    try:
+        percent = int(await site_seconds(int(site_id), INVITE_MAN_NAME_SETTING))
+    except Exception as e:
+        logger_info(f'[dating] доля имён в инвайтах не спросилась: {e}')
+
+        return INVITE_MAN_NAME_CHANCE
+
+    # ⚠ Ноль — законная настройка («имён не надо»), и подменять его умолчанием
+    # нельзя: человек выбрал это в форме. Отличаем его от «настройки нет».
+    if percent or await _name_setting_set(int(site_id)):
+        return max(0.0, min(1.0, percent / 100))
+
+    return INVITE_MAN_NAME_CHANCE
+
+
+async def _name_setting_set(site_id: int) -> bool:
+    """Задана ли доля у сайта вообще. Нужна, чтобы отличить «0%» от «не трогали»."""
+    from src.uvicorn.routers.dating.site_ import site_setting
+
+    try:
+        return str(await site_setting(int(site_id), INVITE_MAN_NAME_SETTING)).strip() != ''
+    except Exception:
+        return False
 
 
 def _first_word(name: str) -> str:
