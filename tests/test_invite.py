@@ -590,7 +590,7 @@ class TestDelivery:
                                           ('u-stuck', 'draft', 'собеседника нет в чате'),
                                           ('u-fresh', 'draft', '')):
                     await db.execute(
-                        'INSERT INTO dating_invite'
+                        'INSERT INTO invite'
                         ' (site_id, profile_id, uid, name, body, status, error)'
                         ' VALUES (%s, %s, %s, %s, %s, %s, %s)',
                         (STAND_SITE, made, uid, 'X', 'hi', state, error))

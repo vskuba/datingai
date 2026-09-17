@@ -120,7 +120,7 @@ async def dating_companion_list(site_id: int = 0, find: str = '',
 
     sql = ('SELECT id, site_id, uid, name, photo, age, city, country, email,'
            ' priority, about, about_state, about_error, about_at, created_at,'
-           ' updated_at FROM dating_companion WHERE site_id = %s')
+           ' updated_at FROM companion WHERE site_id = %s')
     args = [int(site_id)]
 
     find = str(find or '').strip()
@@ -179,7 +179,7 @@ async def dating_companion_save(payload: DatingCompanionSave,
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_companion (site_id, uid, name, photo, age, city, country)'
+            'INSERT INTO companion (site_id, uid, name, photo, age, city, country)'
             ' VALUES (%s, %s, %s, %s, %s, %s, %s)'
             ' ON DUPLICATE KEY UPDATE'
             # ⚠ `IF(%s = '', name, %s)` вместо простого присваивания: пустое
@@ -216,7 +216,7 @@ async def dating_companion_edit(companion_id: int, payload: DatingCompanionEdit,
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'UPDATE dating_companion SET email = %s, about = %s, about_state = %s,'
+            'UPDATE companion SET email = %s, about = %s, about_state = %s,'
             " about_error = '', about_at = NOW() WHERE id = %s",
             (payload.email.strip(), about, 'done' if about else 'none',
              int(companion_id)))
@@ -249,7 +249,7 @@ async def dating_companion_priority(companion_id: int,
     await _row(companion_id)
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_companion SET priority = %s WHERE id = %s',
+        await db.execute('UPDATE companion SET priority = %s WHERE id = %s',
                          (1 if payload.priority else 0, int(companion_id)))
         await db.connection.commit()
 
@@ -320,7 +320,7 @@ async def dating_companion_drop(companion_id: int,
     await _row(companion_id)
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_companion WHERE id = %s',
+        await db.execute('DELETE FROM companion WHERE id = %s',
                          (int(companion_id),))
         await db.connection.commit()
 
@@ -372,7 +372,7 @@ async def dating_companion_touch(site_id: int, uid: str, **fields) -> dict:
         args.extend([int(site_id), uid])
         async with mysql_get_db_async() as db:
             await db.execute(
-                f"UPDATE dating_companion SET {', '.join(parts)}"
+                f"UPDATE companion SET {', '.join(parts)}"
                 ' WHERE site_id = %s AND uid = %s', tuple(args))
             await db.connection.commit()
 
@@ -385,7 +385,7 @@ async def _ensure(site_id: int, uid: str) -> None:
     """Заводит пустую карточку, если её ещё нет. `INSERT IGNORE` ловит гонку."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT IGNORE INTO dating_companion (site_id, uid, name)'
+            'INSERT IGNORE INTO companion (site_id, uid, name)'
             " VALUES (%s, %s, '')", (int(site_id), str(uid)))
         await db.connection.commit()
 
@@ -396,7 +396,7 @@ async def _row(companion_id: int) -> dict:
         await db.execute(
             'SELECT id, site_id, uid, name, photo, age, city, country, email,'
             ' priority, about, about_state, about_error, about_at, created_at,'
-            ' updated_at FROM dating_companion WHERE id = %s', (int(companion_id),))
+            ' updated_at FROM companion WHERE id = %s', (int(companion_id),))
         row = await db.fetchone()
 
     if not row:
@@ -412,7 +412,7 @@ async def _row_by_uid(site_id: int, uid: str, soft: bool = False) -> dict:
         await db.execute(
             'SELECT id, site_id, uid, name, photo, age, city, country, email,'
             ' priority, about, about_state, about_error, about_at, created_at,'
-            ' updated_at FROM dating_companion WHERE site_id = %s AND uid = %s',
+            ' updated_at FROM companion WHERE site_id = %s AND uid = %s',
             (int(site_id), str(uid)))
         row = await db.fetchone()
 

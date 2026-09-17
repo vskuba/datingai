@@ -152,17 +152,17 @@ async def _to_answer(site_id: int) -> list[dict]:
         await db.execute(
             'SELECT m.id, m.site_id, m.profile_id, m.uid, m.name, m.body,'
             ' m.date_post'
-            ' FROM dating_mail_in m'
-            ' JOIN dating_profile p ON p.id = m.profile_id'
-            ' LEFT JOIN dating_mail_reply r ON r.mail_in_id = m.id'
-            ' JOIN dating_site s ON s.site_id = m.site_id'
+            ' FROM mail_in m'
+            ' JOIN profile p ON p.id = m.profile_id'
+            ' LEFT JOIN mail_reply r ON r.mail_in_id = m.id'
+            ' JOIN site s ON s.site_id = m.site_id'
             ' WHERE m.site_id = %s AND s.reply_make_on = 1 AND p.enabled = 1'
             "   AND m.body <> '' AND r.id IS NULL"
             # ⚠ Последнее письмо пары «анкета — собеседник»: `NOT EXISTS` по более
             # свежему. Так же надёжно, как оконная функция, и работает на любой
             # версии MySQL.
             '   AND NOT EXISTS ('
-            '       SELECT 1 FROM dating_mail_in n'
+            '       SELECT 1 FROM mail_in n'
             '        WHERE n.profile_id = m.profile_id AND n.uid = m.uid'
             '          AND (n.date_post > m.date_post'
             '               OR (n.date_post = m.date_post AND n.id > m.id)))'
@@ -219,7 +219,7 @@ async def dating_mail_reply_thread(profile_id: int, uid: str,
         await db.execute(
             "SELECT 'him' AS side, 'in' AS kind, body, date_post AS at, id,"
             " '' AS status, 0 AS pending"
-            ' FROM dating_mail_in WHERE profile_id = %s AND uid = %s'
+            ' FROM mail_in WHERE profile_id = %s AND uid = %s'
             ' UNION ALL'
             # ⚠ Время ответа — **отправки**, а не сочинения: между ними бывает
             # час, и по времени написания ответ вставал бы в разговор раньше, чем
@@ -228,14 +228,14 @@ async def dating_mail_reply_thread(profile_id: int, uid: str,
             " SELECT 'her' AS side, 'reply' AS kind, body,"
             ' COALESCE(sent_at, created_at) AS at, id, status,'
             " (status = 'draft') AS pending"
-            ' FROM dating_mail_reply WHERE profile_id = %s AND uid = %s'
+            ' FROM mail_reply WHERE profile_id = %s AND uid = %s'
             ' UNION ALL'
             # ⚠ **Письма рассылки — тоже часть разговора**: чаще всего именно ими он
             # и начат, и он отвечал на них, а не написал сам. Только отправленные:
             # лежащее в пуле он не видел.
             " SELECT 'her' AS side, 'mailing' AS kind, body, sent_at AS at, id,"
             ' status, 0 AS pending'
-            " FROM dating_mailing WHERE profile_id = %s AND uid = %s AND status = 'sent'"
+            " FROM mailing WHERE profile_id = %s AND uid = %s AND status = 'sent'"
             # ⚠ **Писем «Приставания» здесь нет, и это решение.** Их добавляли
             # сюда — и убрали: занятие отдельное, со своим пулом, своей
             # подвкладкой и своим кругом. В ленте «Входящих» рядом с ответом
@@ -290,12 +290,12 @@ async def _faces(profile_id: int, uid: str) -> dict:
                 'SELECT COALESCE(NULLIF(c.photo, %s), NULLIF(comp.photo, %s),'
                 '                NULLIF(m.photo, %s), %s) AS him,'
                 '       p.profile AS card'
-                '  FROM dating_profile p'
-                '  LEFT JOIN dating_contact c'
+                '  FROM profile p'
+                '  LEFT JOIN contact c'
                 '    ON c.profile_id = p.id AND c.uid = %s'
-                '  LEFT JOIN dating_companion comp'
+                '  LEFT JOIN companion comp'
                 '    ON comp.site_id = p.site_id AND comp.uid = %s'
-                '  LEFT JOIN dating_mail_in m'
+                '  LEFT JOIN mail_in m'
                 '    ON m.profile_id = p.id AND m.uid = %s'
                 " AND m.photo <> ''"
                 ' WHERE p.id = %s LIMIT 1',
@@ -335,13 +335,13 @@ async def _history(letter: dict, keep: int) -> list[dict]:
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            "SELECT 'him' AS side, body, date_post AS at, id FROM dating_mail_in"
+            "SELECT 'him' AS side, body, date_post AS at, id FROM mail_in"
             ' WHERE profile_id = %s AND uid = %s'
             ' UNION ALL'
-            " SELECT 'her' AS side, body, created_at AS at, id FROM dating_mail_reply"
+            " SELECT 'her' AS side, body, created_at AS at, id FROM mail_reply"
             ' WHERE profile_id = %s AND uid = %s'
             ' UNION ALL'
-            " SELECT 'her' AS side, body, sent_at AS at, id FROM dating_mailing"
+            " SELECT 'her' AS side, body, sent_at AS at, id FROM mailing"
             " WHERE profile_id = %s AND uid = %s AND status = 'sent'"
             # Свежие сверху — и обрезаем; порядок для промпта развернём ниже.
             ' ORDER BY at DESC, id DESC LIMIT %s',
@@ -372,7 +372,7 @@ async def _history_size(site_id: int) -> int:
 async def _profile(profile_id: int) -> dict:
     """Анкета, от имени которой отвечаем."""
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT id, site_id, login, profile FROM dating_profile'
+        await db.execute('SELECT id, site_id, login, profile FROM profile'
                          ' WHERE id = %s', (int(profile_id),))
         row = await db.fetchone()
 
@@ -395,7 +395,7 @@ async def _put(site_id: int, letter: dict, body: str) -> None:
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT IGNORE INTO dating_mail_reply'
+            'INSERT IGNORE INTO mail_reply'
             ' (site_id, profile_id, mail_in_id, uid, name, body, status)'
             " VALUES (%s, %s, %s, %s, %s, %s, 'draft')",
             (int(site_id), int(letter['profile_id']), int(letter['id']),

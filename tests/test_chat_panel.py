@@ -302,7 +302,7 @@ class TestImportedAnswerThreshold:
         """Кладёт входящее заданного возраста и источника."""
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT INTO dating_message'
+                'INSERT INTO message'
                 ' (profile_id, sender_uid, sender_name, text, message_uid,'
                 '  direction, is_read, source, created_at)'
                 " VALUES (%s, '77', 'Он', 'вопрос', %s, 'in', 1, %s,"

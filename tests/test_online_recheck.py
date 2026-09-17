@@ -44,7 +44,7 @@ async def girl(auth_client):
     yield profile_id
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_profile WHERE id = %s', (profile_id,))
+        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
         await db.connection.commit()
 
 
@@ -134,12 +134,12 @@ class TestRoundsAskBeforeGoing:
 
         code = inspect.getsource(dating_ready_online)
 
-        assert 'FROM dating_profile' in code
+        assert 'FROM profile' in code
         assert 'httpx' not in code and 'rhapsody' not in code
 
 
 async def _status(profile_id: int, status: str, enabled: int = 1) -> None:
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_profile SET status = %s, enabled = %s'
+        await db.execute('UPDATE profile SET status = %s, enabled = %s'
                          ' WHERE id = %s', (status, int(enabled), int(profile_id)))
         await db.connection.commit()

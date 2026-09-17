@@ -62,8 +62,8 @@ async def dating_mail_in_list(profile_id: int = 0, site_id: int = 0,
            ' m.photo, m.age, m.city, m.country, m.body, m.date_post,'
            ' m.is_replied, m.seen, m.created_at,'
            ' p.login AS profile_login, p.profile AS profile_card'
-           ' FROM dating_mail_in m'
-           ' LEFT JOIN dating_profile p ON p.id = m.profile_id'
+           ' FROM mail_in m'
+           ' LEFT JOIN profile p ON p.id = m.profile_id'
            ' WHERE ')
     args = []
 
@@ -85,7 +85,7 @@ async def dating_mail_in_list(profile_id: int = 0, site_id: int = 0,
     # ⚠ **По паре «анкета — человек», а не по человеку вообще.** Диалог
     # принадлежит паре: один и тот же мужчина, пишущий двум нашим девушкам, у
     # одной может быть в избранных, у другой нет — и у каждой свой разговор.
-    sql += (' AND NOT EXISTS (SELECT 1 FROM dating_favorite f'
+    sql += (' AND NOT EXISTS (SELECT 1 FROM favorite f'
             '                  WHERE f.profile_id = m.profile_id AND f.uid = m.uid'
             f'                   AND f.state IN ({DATING_FAVORITE_STATES_SQL}))')
     args.extend(DATING_FAVORITE_STATES)
@@ -102,7 +102,7 @@ async def dating_mail_in_list(profile_id: int = 0, site_id: int = 0,
     # (`dating_mail_reply._to_answer`): правило «последнее в переписке» одно на
     # проект, и второе его толкование разошлось бы с первым.
     sql += ('   AND NOT EXISTS ('
-            '       SELECT 1 FROM dating_mail_in n'
+            '       SELECT 1 FROM mail_in n'
             '        WHERE n.profile_id = m.profile_id AND n.uid = m.uid'
             '          AND (n.date_post > m.date_post'
             '               OR (n.date_post = m.date_post AND n.id > m.id)))')
@@ -116,17 +116,17 @@ async def dating_mail_in_list(profile_id: int = 0, site_id: int = 0,
     # **ушедшие** письма рассылки. Разойдись счёт с окном — человек открыл бы
     # карточку «5» и увидел три реплики.
     sql = sql.replace(
-        ' FROM dating_mail_in m',
-        ', (SELECT COUNT(*) FROM dating_mail_in t'
+        ' FROM mail_in m',
+        ', (SELECT COUNT(*) FROM mail_in t'
         '   WHERE t.profile_id = m.profile_id AND t.uid = m.uid)'
-        ' + (SELECT COUNT(*) FROM dating_mail_reply t'
+        ' + (SELECT COUNT(*) FROM mail_reply t'
         '     WHERE t.profile_id = m.profile_id AND t.uid = m.uid)'
-        " + (SELECT COUNT(*) FROM dating_mailing t"
+        " + (SELECT COUNT(*) FROM mailing t"
         "     WHERE t.profile_id = m.profile_id AND t.uid = m.uid"
         "       AND t.status = 'sent') AS thread_count,"
         # Непрочитанные — по всей переписке, а не по одному письму: строка теперь
         # одна на разговор, и метка «новое» должна гореть, если новое есть в нём.
-        ' (SELECT COUNT(*) FROM dating_mail_in t'
+        ' (SELECT COUNT(*) FROM mail_in t'
         '   WHERE t.profile_id = m.profile_id AND t.uid = m.uid'
         '     AND t.seen = 0) AS unseen_count,'
         # ⚠ **Свежесть разговора, а не письма.** Строка одна на переписку, и
@@ -139,13 +139,13 @@ async def dating_mail_in_list(profile_id: int = 0, site_id: int = 0,
         # он тоже работа) и ушедшее письмо рассылки.
         ' GREATEST(m.date_post,'
         '   COALESCE((SELECT MAX(COALESCE(r.sent_at, r.created_at))'
-        '               FROM dating_mail_reply r'
+        '               FROM mail_reply r'
         '              WHERE r.profile_id = m.profile_id AND r.uid = m.uid),'
         '            m.date_post),'
-        '   COALESCE((SELECT MAX(t.sent_at) FROM dating_mailing t'
+        '   COALESCE((SELECT MAX(t.sent_at) FROM mailing t'
         "              WHERE t.profile_id = m.profile_id AND t.uid = m.uid"
         "                AND t.status = 'sent'), m.date_post)) AS last_at"
-        ' FROM dating_mail_in m')
+        ' FROM mail_in m')
 
     sql += ' ORDER BY last_at DESC, m.id DESC LIMIT %s'
     args.append(DATING_MAIL_IN_LIMIT)
@@ -265,9 +265,9 @@ async def dating_mail_reply_list(site_id: int = 0, status_: str = 'draft',
            # отправке. Без него сайт покажет ответ отдельным письмом, и собеседник
            # не поймёт, на что ему отвечают.
            ' i.message_id AS in_message_id, i.photo AS in_photo'
-           ' FROM dating_mail_reply r'
-           ' LEFT JOIN dating_profile p ON p.id = r.profile_id'
-           ' LEFT JOIN dating_mail_in i ON i.id = r.mail_in_id'
+           ' FROM mail_reply r'
+           ' LEFT JOIN profile p ON p.id = r.profile_id'
+           ' LEFT JOIN mail_in i ON i.id = r.mail_in_id'
            ' WHERE r.site_id = %s')
     args = [int(site_id)]
 
@@ -341,7 +341,7 @@ async def dating_mail_reply_edit(reply_id: int, payload: DatingMailReplyEdit,
                             detail='ответ уже ушёл — править нечего')
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_mail_reply SET body = %s WHERE id = %s',
+        await db.execute('UPDATE mail_reply SET body = %s WHERE id = %s',
                          (payload.body.strip(), int(reply_id)))
         await db.connection.commit()
 
@@ -387,7 +387,7 @@ async def dating_mail_reply_drop(reply_id: int,
                             detail='ответ уже ушёл — из пула его не убрать')
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_mail_reply WHERE id = %s', (int(reply_id),))
+        await db.execute('DELETE FROM mail_reply WHERE id = %s', (int(reply_id),))
         await db.connection.commit()
 
     return {'result': {'dropped': 1}}
@@ -421,10 +421,10 @@ async def dating_mail_reply_send(reply_id: int,
 
     try:
         await dating_mail_send_one(letter, profile, base, password,
-                                   table='dating_mail_reply')
+                                   table='mail_reply')
     except DatingMailSendError as e:
         await dating_mail_send_mark(letter, sent=False, error=str(e),
-                                    table='dating_mail_reply')
+                                    table='mail_reply')
         logger_info(f'[dating] ответ #{reply_id} не ушёл: {e}')
 
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
@@ -447,7 +447,7 @@ async def dating_mail_in_seen(mail_in_id: int, payload: DatingMailInSeen,
     await _row(mail_in_id)
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_mail_in SET seen = %s WHERE id = %s',
+        await db.execute('UPDATE mail_in SET seen = %s WHERE id = %s',
                          (1 if payload.seen else 0, int(mail_in_id)))
         await db.connection.commit()
 
@@ -479,7 +479,7 @@ async def dating_mail_in_seen_thread(payload: DatingMailInSeenThread,
     письму» — про одно письмо, а не про разговор.
     """
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_mail_in SET seen = 1'
+        await db.execute('UPDATE mail_in SET seen = 1'
                          ' WHERE profile_id = %s AND uid = %s AND seen = 0',
                          (int(payload.profile_id), str(payload.uid)))
         seen = int(db.rowcount or 0)
@@ -494,7 +494,7 @@ async def _in_row(mail_in_id: int) -> dict:
     """Входящее письмо по номеру или 404. Нужны пара «анкета — собеседник» и фото."""
     async with mysql_get_db_async() as db:
         await db.execute('SELECT id, site_id, profile_id, uid, name, photo'
-                         ' FROM dating_mail_in WHERE id = %s', (int(mail_in_id),))
+                         ' FROM mail_in WHERE id = %s', (int(mail_in_id),))
         row = await db.fetchone()
 
     if not row:
@@ -509,7 +509,7 @@ async def _girl_photo(profile_id: int) -> str:
     from src.dating.dating_json import dating_json_load
 
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT profile FROM dating_profile WHERE id = %s',
+        await db.execute('SELECT profile FROM profile WHERE id = %s',
                          (int(profile_id),))
         row = await db.fetchone()
 
@@ -525,9 +525,9 @@ async def _reply_row(reply_id: int) -> dict:
             ' p.login AS profile_login, p.profile AS profile_card,'
             ' i.body AS in_body, i.date_post AS in_at,'
             ' i.message_id AS in_message_id, i.photo AS in_photo'
-            ' FROM dating_mail_reply r'
-            ' LEFT JOIN dating_profile p ON p.id = r.profile_id'
-            ' LEFT JOIN dating_mail_in i ON i.id = r.mail_in_id'
+            ' FROM mail_reply r'
+            ' LEFT JOIN profile p ON p.id = r.profile_id'
+            ' LEFT JOIN mail_in i ON i.id = r.mail_in_id'
             ' WHERE r.id = %s', (int(reply_id),))
         row = await db.fetchone()
 
@@ -547,7 +547,7 @@ async def _sender(profile_id: int) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, site_id, login, password, password_source, enabled'
-            ' FROM dating_profile WHERE id = %s', (int(profile_id),))
+            ' FROM profile WHERE id = %s', (int(profile_id),))
         row = await db.fetchone()
 
     if not row:
@@ -575,7 +575,7 @@ async def _profile(profile_id: int) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, site_id, login, password, password_source, enabled'
-            ' FROM dating_profile WHERE id = %s', (int(profile_id),))
+            ' FROM profile WHERE id = %s', (int(profile_id),))
         row = await db.fetchone()
 
     if not row:
@@ -591,7 +591,7 @@ async def _row(mail_in_id: int) -> dict:
         await db.execute(
             'SELECT id, site_id, profile_id, message_id, uid, name, photo, age,'
             ' city, country, body, date_post, is_replied, seen, created_at'
-            ' FROM dating_mail_in WHERE id = %s', (int(mail_in_id),))
+            ' FROM mail_in WHERE id = %s', (int(mail_in_id),))
         row = await db.fetchone()
 
     if not row:

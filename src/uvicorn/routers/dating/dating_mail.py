@@ -81,7 +81,7 @@ async def dating_mail_list(site_id: int = 0, user: AuthUser = Depends(auth_requi
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, site_id, name, body, enabled, created_at, updated_at'
-            ' FROM dating_mail WHERE site_id = %s ORDER BY id DESC',
+            ' FROM mail WHERE site_id = %s ORDER BY id DESC',
             (int(site_id),))
         rows = await db.fetchall()
 
@@ -169,7 +169,7 @@ async def dating_mail_create(payload: DatingMailSave,
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_mail (site_id, name, body, enabled)'
+            'INSERT INTO mail (site_id, name, body, enabled)'
             ' VALUES (%s, %s, %s, %s)',
             (int(payload.site_id), payload.name.strip(), payload.body,
              1 if payload.enabled else 0))
@@ -197,7 +197,7 @@ async def dating_mail_update(mail_id: int, payload: DatingMailSave,
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'UPDATE dating_mail SET name = %s, body = %s, enabled = %s WHERE id = %s',
+            'UPDATE mail SET name = %s, body = %s, enabled = %s WHERE id = %s',
             (payload.name.strip(), payload.body, 1 if payload.enabled else 0,
              int(mail_id)))
         await db.connection.commit()
@@ -224,7 +224,7 @@ async def dating_mail_delete(mail_id: int,
     await _row(mail_id)
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_mail WHERE id = %s', (int(mail_id),))
+        await db.execute('DELETE FROM mail WHERE id = %s', (int(mail_id),))
         await db.connection.commit()
 
     return {'result': {'id': int(mail_id)}}
@@ -254,7 +254,7 @@ async def _row(mail_id: int) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, site_id, name, body, enabled, created_at, updated_at'
-            ' FROM dating_mail WHERE id = %s', (int(mail_id),))
+            ' FROM mail WHERE id = %s', (int(mail_id),))
         row = await db.fetchone()
 
     if not row:

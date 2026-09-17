@@ -52,10 +52,10 @@ async def girl(auth_client):
     yield profile_id
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_block WHERE profile_id = %s', (profile_id,))
+        await db.execute('DELETE FROM block WHERE profile_id = %s', (profile_id,))
         for table in DATING_BLOCK_POOLS:
             await db.execute(f'DELETE FROM {table} WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM dating_profile WHERE id = %s', (profile_id,))
+        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
         await db.connection.commit()
 
 
@@ -120,11 +120,11 @@ class TestAdd:
 
     async def test_what_already_went_is_not_touched(self, girl):
         """Ушедшее — история, и она правдива: письмо он получил до того, как закрылся."""
-        await _draft('dating_mailing', girl, UID, status='sent')
+        await _draft('mailing', girl, UID, status='sent')
 
         await dating_block_add(STAND_SITE, girl, UID, 'Dominic', DENY)
 
-        assert await _count('dating_mailing', girl) == 1
+        assert await _count('mailing', girl) == 1
 
     async def test_replies_are_not_a_pool_here(self):
         """⚠ Ответ на его письмо уходит и после запрета: он написал сам.
@@ -132,7 +132,7 @@ class TestAdd:
         Запрет отвечает на вопрос «писать ли **первыми**», а входящее письмо этот
         вопрос снимает. Молчать в ответ на прямое обращение хуже.
         """
-        assert 'dating_mail_reply' not in DATING_BLOCK_POOLS
+        assert 'mail_reply' not in DATING_BLOCK_POOLS
 
 
 class TestTheRowHasBothFaces:
@@ -210,7 +210,7 @@ class TestFavoriteMailObeysIt:
 
         code = inspect.getsource(dating_favorite_mail._quiet)
 
-        assert 'dating_block' in code, 'затихшие разговоры не смотрят на запрет'
+        assert 'block' in code, 'затихшие разговоры не смотрят на запрет'
 
 
 class TestThePageOfTheList:
@@ -274,7 +274,7 @@ async def _profile_card(profile_id: int, name: str, photo: str,
     import json
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_profile SET profile = %s WHERE id = %s',
+        await db.execute('UPDATE profile SET profile = %s WHERE id = %s',
                          (json.dumps({'name': name, 'photo': photo,
                                       'site_uid': site_uid}, ensure_ascii=False),
                           int(profile_id)))

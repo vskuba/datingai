@@ -257,7 +257,7 @@ async def _profiles_index(site_id: int) -> tuple[dict, dict]:
     Почему сперва ищут по номеру — в шапке `dating_import.py`.
     """
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT id, login, profile FROM dating_profile WHERE site_id = %s',
+        await db.execute('SELECT id, login, profile FROM profile WHERE site_id = %s',
                          (int(site_id),))
         rows = await db.fetchall()
 
@@ -283,7 +283,7 @@ async def _profile_create(site_id: int, plan: dict) -> int:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT INTO dating_profile (site_id, login, password, note, role, profile) '
+                'INSERT INTO profile (site_id, login, password, note, role, profile) '
                 'VALUES (%s, %s, %s, %s, %s, %s)',
                 (int(site_id), plan['login'], '', 'заведена импортом', DATING_IMPORT_ROLE,
                  json.dumps(plan['card'], ensure_ascii=False)))
@@ -305,7 +305,7 @@ async def _profile_update(profile_id: int, plan: dict) -> None:
 
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile SET profile = %s WHERE id = %s',
+            await db.execute('UPDATE profile SET profile = %s WHERE id = %s',
                              (json.dumps(plan['card'], ensure_ascii=False), int(profile_id)))
             await db.connection.commit()
     except Exception as e:

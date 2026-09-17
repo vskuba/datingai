@@ -304,7 +304,7 @@ class TestCompanionDrop:
 
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT INTO dating_mailing'
+                'INSERT INTO mailing'
                 ' (site_id, profile_id, mail_id, uid, name, body, status)'
                 " VALUES (%s, %s, NULL, %s, 'Кому', 'Текст', 'draft')",
                 (SITE, profile_id, companion['uid']))
@@ -552,7 +552,7 @@ async def _drop(auth_client, site_id: int, uid: str) -> None:
     from mysql_.mysql_ import mysql_get_db_async
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_companion WHERE site_id = %s AND uid = %s',
+        await db.execute('DELETE FROM companion WHERE site_id = %s AND uid = %s',
                          (int(site_id), str(uid)))
         await db.connection.commit()
 

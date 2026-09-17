@@ -57,7 +57,7 @@ async def profile(auth_client):
                           json={'reply_make_on': True})
 
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT id, site_id, login, profile FROM dating_profile'
+        await db.execute('SELECT id, site_id, login, profile FROM profile'
                          ' WHERE id = %s', (made,))
         row = dict(await db.fetchone())
 
@@ -92,7 +92,7 @@ async def _in(profile: dict, uid: str, body: str, minutes: int = 0) -> int:
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_mail_in'
+            'INSERT INTO mail_in'
             ' (site_id, profile_id, message_id, uid, name, body, date_post)'
             ' VALUES (%s, %s, %s, %s, %s, %s, NOW() - INTERVAL %s MINUTE)',
             (SITE, int(profile['id']), int(uuid.uuid4().int % 10**9), uid,
@@ -114,7 +114,7 @@ async def _out(profile: dict, uid: str, body: str, minutes: int = 0,
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_mailing'
+            'INSERT INTO mailing'
             ' (site_id, profile_id, mail_id, uid, name, body, status, sent_at)'
             ' VALUES (%s, %s, NULL, %s, %s, %s, %s,'
             '         NOW() - INTERVAL %s MINUTE)',
@@ -130,7 +130,7 @@ async def _replies(site_id: int = SITE) -> list[dict]:
     from mysql_.mysql_ import mysql_get_db_async
 
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT mail_in_id, uid, body, status FROM dating_mail_reply'
+        await db.execute('SELECT mail_in_id, uid, body, status FROM mail_reply'
                          ' WHERE site_id = %s ORDER BY id', (int(site_id),))
 
         return [dict(row) for row in await db.fetchall() or []]
@@ -213,14 +213,14 @@ class TestWhoIsAnswered:
 
         await _in(profile, '111', 'Moto is my life')
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile SET enabled = 0 WHERE id = %s',
+            await db.execute('UPDATE profile SET enabled = 0 WHERE id = %s',
                              (profile['id'],))
             await db.connection.commit()
         try:
             assert (await dating_mail_reply_make(SITE))['made'] == 0
         finally:
             async with mysql_get_db_async() as db:
-                await db.execute('UPDATE dating_profile SET enabled = 1 WHERE id = %s',
+                await db.execute('UPDATE profile SET enabled = 1 WHERE id = %s',
                                  (profile['id'],))
                 await db.connection.commit()
 
@@ -612,7 +612,7 @@ class TestPendingReplyStandsLast:
         # Отправлен на два часа позже, чем написан.
         async with mysql_get_db_async() as db:
             await db.execute(
-                "UPDATE dating_mail_reply SET status = 'sent',"
+                "UPDATE mail_reply SET status = 'sent',"
                 ' sent_at = created_at + INTERVAL 2 HOUR'
                 ' WHERE profile_id = %s AND uid = %s', (profile['id'], '111'))
             await db.connection.commit()

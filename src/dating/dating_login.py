@@ -369,7 +369,7 @@ async def dating_login_state_clear(profile_id: int) -> None:
     """
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile SET storage_state = NULL, ws_url = %s, '
+            await db.execute('UPDATE profile SET storage_state = NULL, ws_url = %s, '
                              '       status = %s, last_error = %s WHERE id = %s',
                              ('', 'error', 'сайт не признал вход', profile_id))
             await db.connection.commit()
@@ -482,7 +482,7 @@ async def _state_save(profile_id: int, session_id: str) -> None:
     try:
         state = await rhapsody_api_session_state(session_id)
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile SET storage_state = %s, status = %s, '
+            await db.execute('UPDATE profile SET storage_state = %s, status = %s, '
                              '       last_seen_at = NOW(), last_error = %s WHERE id = %s',
                              (json.dumps(state, ensure_ascii=False), 'online', '', profile_id))
             await db.connection.commit()
@@ -500,7 +500,7 @@ async def _keep_online_set(profile_id: int) -> None:
     """
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile SET keep_online = 1, logged_in_at = NOW(), '
+            await db.execute('UPDATE profile SET keep_online = 1, logged_in_at = NOW(), '
                              '       relogin_since = NULL, relogin_tries = 0, '
                              '       login_fail_tries = 0, login_fail_at = NULL, '
                              '       relogin_next_at = NULL WHERE id = %s', (int(profile_id),))

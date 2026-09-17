@@ -145,7 +145,7 @@ async def _write(site_id: int, profile_id: int, scenario_id: int, name: str,
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT INTO dating_scenario_run '
+                'INSERT INTO scenario_run '
                 ' (site_id, profile_id, scenario_id, scenario_name, status, step_no, error, ms)'
                 ' VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
                 (int(site_id), int(profile_id) or None, scenario_id, name,

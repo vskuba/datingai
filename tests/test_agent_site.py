@@ -30,7 +30,7 @@ async def _snapshot(site_id: int, name: str) -> None:
     """Кладёт сайт в снимок — то, что в работе делает фоновая сверка с соседом."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_site (site_id, name, url, tags, is_gone)'
+            'INSERT INTO site (site_id, name, url, tags, is_gone)'
             " VALUES (%s, %s, '', 'dating', 0)"
             ' ON DUPLICATE KEY UPDATE name = VALUES(name), is_gone = 0',
             (int(site_id), name))
@@ -39,7 +39,7 @@ async def _snapshot(site_id: int, name: str) -> None:
 
 async def _snapshot_drop(site_id: int) -> None:
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_site WHERE site_id = %s', (int(site_id),))
+        await db.execute('DELETE FROM site WHERE site_id = %s', (int(site_id),))
         await db.connection.commit()
 class TestSiteSlug:
     """Имя из справочника превращается в метку, пригодную для поля `site`."""

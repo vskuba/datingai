@@ -141,7 +141,7 @@ async def _ip_sync(rows: list) -> int:
             if not row.get('ok') or not row.get('ip'):
                 continue
 
-            await db.execute('UPDATE dating_profile SET proxy_ip = %s '
+            await db.execute('UPDATE profile SET proxy_ip = %s '
                              ' WHERE proxy_id = %s AND proxy_ip <> %s',
                              (str(row['ip']), int(row['id']), str(row['ip'])))
             if db.rowcount:

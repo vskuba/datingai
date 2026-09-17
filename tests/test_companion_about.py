@@ -259,7 +259,7 @@ class TestOnceOnly:
             from mysql_.mysql_ import mysql_get_db_async
 
             async with mysql_get_db_async() as db:
-                await db.execute('DELETE FROM dating_companion WHERE uid = %s', (uid,))
+                await db.execute('DELETE FROM companion WHERE uid = %s', (uid,))
                 await db.connection.commit()
 
     async def test_touch_keeps_what_it_was_not_told(self, auth_client):
@@ -284,5 +284,5 @@ class TestOnceOnly:
             from mysql_.mysql_ import mysql_get_db_async
 
             async with mysql_get_db_async() as db:
-                await db.execute('DELETE FROM dating_companion WHERE uid = %s', (uid,))
+                await db.execute('DELETE FROM companion WHERE uid = %s', (uid,))
                 await db.connection.commit()

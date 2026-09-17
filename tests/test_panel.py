@@ -382,7 +382,7 @@ async def _panel_wipe() -> None:
     from mysql_.mysql_ import mysql_get_db_async
 
     async with mysql_get_db_async() as db:
-        await db.execute("UPDATE dating_site SET panel_state = NULL, panel_status = '',"
+        await db.execute("UPDATE site SET panel_state = NULL, panel_status = '',"
                          "       panel_checked_at = NULL, panel_login_at = NULL,"
                          "       panel_error = '' WHERE site_id = %s", (SITE,))
         await db.connection.commit()

@@ -158,10 +158,10 @@ async def dating_send_why(site_id: int, table: str, offset_hours: int = 0) -> st
     if not site_id or str(table) not in DATING_MAIL_SEND_TABLES:
         return ''
 
-    flag = {'dating_mailing': 'mailing_send_on', 'dating_mail_reply': 'reply_send_on',
-            'dating_favorite_mail': 'favorite_mail_send_on'}[str(table)]
-    said = {'dating_mailing': 'рассылки', 'dating_mail_reply': 'ответов',
-            'dating_favorite_mail': 'писем избранным'}[str(table)]
+    flag = {'mailing': 'mailing_send_on', 'mail_reply': 'reply_send_on',
+            'favorite_mail': 'favorite_mail_send_on'}[str(table)]
+    said = {'mailing': 'рассылки', 'mail_reply': 'ответов',
+            'favorite_mail': 'писем избранным'}[str(table)]
 
     try:
         site = {int(one['site_id']): one for one in await _sites()}.get(site_id)
@@ -223,7 +223,7 @@ async def _sites() -> list[dict]:
             await db.execute(
                 'SELECT site_id, mailing_schedule, mailing_send_on, reply_send_on,'
                 ' favorite_mail_send_on'
-                ' FROM dating_site'
+                ' FROM site'
                 ' WHERE is_gone = 0 AND (mailing_send_on = 1 OR reply_send_on = 1'
                 '                        OR favorite_mail_send_on = 1)'
                 ' ORDER BY site_id')
@@ -251,9 +251,9 @@ async def _next(site_id: int, reply_on: bool, mailing_on: bool,
     рассылка уходит незнакомым. При общем дневном потолке очередь решает, что
     достанется человеку, а что подождёт до завтра.
     """
-    for on, table in ((reply_on, 'dating_mail_reply'),
-                      (favorite_on, 'dating_favorite_mail'),
-                      (mailing_on, 'dating_mailing')):
+    for on, table in ((reply_on, 'mail_reply'),
+                      (favorite_on, 'favorite_mail'),
+                      (mailing_on, 'mailing')):
         if not on:
             continue
 
@@ -286,7 +286,7 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     # рассылки уходит незнакомому, ответ — тому, кто написал сам и ждёт; ни то, ни
     # другое не обещает, что девушка на сайте прямо сейчас. Здесь обещает: письмо
     # написано под сиюминутный разговор.
-    online_only = " AND p.status = 'online'" if table == 'dating_favorite_mail' else ''
+    online_only = " AND p.status = 'online'" if table == 'favorite_mail' else ''
 
     try:
         async with mysql_get_db_async() as db:
@@ -294,7 +294,7 @@ async def _oldest(site_id: int, table: str) -> dict | None:
                 f'SELECT m.id, m.site_id, m.profile_id, m.uid, m.body, m.status,'
                 f' p.login, p.password, p.password_source'
                 f'  FROM {table} m'
-                f'  JOIN dating_profile p ON p.id = m.profile_id'
+                f'  JOIN profile p ON p.id = m.profile_id'
                 f" WHERE m.site_id = %s AND m.status = 'draft' AND m.error = ''"
                 f'   AND p.enabled = 1{online_only}'
                 f' ORDER BY m.id LIMIT 1', (int(site_id),))
@@ -357,13 +357,13 @@ async def _today(site_id: int, offset_hours: int = 0) -> int:
             today = ((await db.fetchone()) or {}).get('d')
 
             await db.execute(
-                "SELECT (SELECT COUNT(*) FROM dating_mailing"
+                "SELECT (SELECT COUNT(*) FROM mailing"
                 "         WHERE site_id = %s AND status = 'sent'"
                 '           AND DATE(sent_at + INTERVAL %s HOUR) = %s)'
-                " + (SELECT COUNT(*) FROM dating_mail_reply"
+                " + (SELECT COUNT(*) FROM mail_reply"
                 "     WHERE site_id = %s AND status = 'sent'"
                 '       AND DATE(sent_at + INTERVAL %s HOUR) = %s)'
-                " + (SELECT COUNT(*) FROM dating_favorite_mail"
+                " + (SELECT COUNT(*) FROM favorite_mail"
                 "     WHERE site_id = %s AND status = 'sent'"
                 '       AND DATE(sent_at + INTERVAL %s HOUR) = %s) AS ушло',
                 (int(site_id), hours, today, int(site_id), hours, today,

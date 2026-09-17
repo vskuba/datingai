@@ -111,7 +111,7 @@ DATING_MAIL_QUESTION_NAME = 'mail_ask_{site}'
 # Workflow ответа на письмо и его агент. ⚠ Четвёртое занятие, и снова своё: вопрос
 # сочиняется **до** знакомства, по профилю, и встаёт внутрь шаблона; ответ пишется
 # **после** — на живой текст, с историей переписки перед глазами.
-DATING_MAIL_REPLY_WORKFLOW = 'dating_mail_reply'
+DATING_MAIL_REPLY_WORKFLOW = 'mail_reply'
 DATING_MAIL_REPLY_NAME = 'mail_reply_{site}'
 
 # Предел ответа. Тот же, что у шаблона: длиннее в переписку не помещается, а

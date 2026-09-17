@@ -255,7 +255,7 @@ async def dating_panel_sites() -> list[int]:
 
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT site_id FROM dating_site WHERE is_gone = 0'
+            await db.execute('SELECT site_id FROM site WHERE is_gone = 0'
                              ' ORDER BY site_id')
             rows = await db.fetchall()
     except Exception as e:
@@ -356,7 +356,7 @@ async def _row(site_id: int) -> dict:
     try:
         async with mysql_get_db_async() as db:
             await db.execute('SELECT panel_state, panel_status, panel_checked_at,'
-                             '       panel_login_at, panel_error FROM dating_site'
+                             '       panel_login_at, panel_error FROM site'
                              ' WHERE site_id = %s', (int(site_id),))
             row = await db.fetchone()
     except Exception as e:
@@ -379,7 +379,7 @@ async def _save(site_id: int, answer: dict) -> None:
 
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_site SET panel_status = %s, panel_error = %s,'
+            await db.execute('UPDATE site SET panel_status = %s, panel_error = %s,'
                              '       panel_checked_at = NOW() WHERE site_id = %s',
                              (status, '' if status == 'online' else error, int(site_id)))
             await db.connection.commit()
@@ -391,7 +391,7 @@ async def _state_save(site_id: int, state: dict) -> None:
     """Кладёт снятые cookie сайту и отмечает время входа."""
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_site SET panel_state = %s, panel_login_at = NOW(),'
+            await db.execute('UPDATE site SET panel_state = %s, panel_login_at = NOW(),'
                              '       panel_error = %s WHERE site_id = %s',
                              (json.dumps(state or {}, ensure_ascii=False), '', int(site_id)))
             await db.connection.commit()

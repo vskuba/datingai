@@ -79,7 +79,7 @@ async def dating_revive_db_profiles_kept() -> list[dict]:
             '       relogin_since, relogin_tries, relogin_next_at, '
             '       schedule, schedule_on, '
             '       TIMESTAMPDIFF(SECOND, logged_in_at, NOW()) AS login_age_sec '
-            '  FROM dating_profile WHERE keep_online = 1 ORDER BY id')
+            '  FROM profile WHERE keep_online = 1 ORDER BY id')
         rows = await db.fetchall()
 
     return [dict(row) for row in (rows or []) if await _on_duty(row)]
@@ -94,7 +94,7 @@ async def dating_revive_db_probe_save(profile_id: int, probe: dict) -> None:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                f'UPDATE dating_profile SET status = %s, unread = %s, last_error = %s, '
+                f'UPDATE profile SET status = %s, unread = %s, last_error = %s, '
                 f'       last_seen_at = {seen} WHERE id = %s',
                 (probe['status'], probe['unread'] if probe['unread'] >= 0 else 0,
                  probe['error'], int(profile_id)))
@@ -115,7 +115,7 @@ async def dating_revive_db_plan_save(profile_id: int, plan: dict) -> bool:
 
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile SET relogin_since = %s, relogin_tries = %s, '
+            await db.execute('UPDATE profile SET relogin_since = %s, relogin_tries = %s, '
                              '       relogin_next_at = %s WHERE id = %s',
                              (plan['relogin_since'], int(plan['relogin_tries']),
                               plan['relogin_next_at'], int(profile_id)))
@@ -149,7 +149,7 @@ async def dating_revive_db_site_missing(profile: dict, why: str) -> None:
     profile_id = int(profile['id'])
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile SET status = %s, last_error = %s '
+            await db.execute('UPDATE profile SET status = %s, last_error = %s '
                              ' WHERE id = %s', ('error', str(why)[:500], profile_id))
             await db.connection.commit()
     except Exception as e:

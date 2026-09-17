@@ -223,7 +223,7 @@ async def _sites() -> list[dict]:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'SELECT site_id, mailing_schedule FROM dating_site'
+                'SELECT site_id, mailing_schedule FROM site'
                 ' WHERE mailing_schedule_on = 1 AND is_gone = 0'
                 ' ORDER BY site_id')
             rows = await db.fetchall()
@@ -333,7 +333,7 @@ async def _pool_size(site_id: int) -> int:
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            "SELECT COUNT(*) AS n FROM dating_mailing"
+            "SELECT COUNT(*) AS n FROM mailing"
             " WHERE site_id = %s AND status = 'draft'", (int(site_id),))
         row = await db.fetchone()
 

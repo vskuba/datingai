@@ -37,19 +37,25 @@ class TestQueryShape:
         sql, params = _query(SITE, 0, 'all', '', '')
 
         assert 'UNION ALL' in sql
-        assert 'dating_log' in sql and 'dating_scenario_run' in sql
+        assert 'FROM log' in sql and 'FROM scenario_run' in sql
         assert params == [SITE, SITE]
 
     def test_profile_only(self):
         sql, params = _query(SITE, 0, 'profile', '', '')
 
-        assert 'dating_scenario_run' not in sql
+        assert 'FROM scenario_run' not in sql
         assert params == [SITE]
 
     def test_scenario_only(self):
+        """⚠ Ищем `FROM log`, а не голое `log`, и это не педантизм.
+
+        После того как таблицы потеряли префикс `dating_`, имя стало коротким —
+        и `log` находится внутри `p.login`, который в запросе есть всегда. Тест
+        падал, хотя код был верен: он проверял подстроку, а не таблицу.
+        """
         sql, params = _query(SITE, 0, 'scenario', '', '')
 
-        assert 'dating_log' not in sql
+        assert 'FROM log' not in sql
         assert params == [SITE]
 
     def test_both_halves_select_the_same_columns(self):

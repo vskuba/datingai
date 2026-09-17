@@ -46,7 +46,7 @@ async def talk(rhapsody):
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_message'
+            'INSERT INTO message'
             ' (profile_id, sender_uid, sender_name, text, message_uid,'
             '  direction, is_read, source)'
             " VALUES (%s, %s, 'Он', 'ты тут?', %s, 'in', 1, 'socket')",
@@ -90,7 +90,7 @@ class TestSilenceIsRemembered:
         assert result['silent'] == 1 and result['sent'] == 0
 
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT answer_silent_at, is_answered FROM dating_message'
+            await db.execute('SELECT answer_silent_at, is_answered FROM message'
                              ' WHERE profile_id = %s', (talk,))
             row = await db.fetchone()
 
@@ -110,7 +110,7 @@ class TestSilenceIsRemembered:
 
         # Отметку попытки снимаем: проверяем, что держит именно метка молчания.
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_message SET answer_tried_at = NULL'
+            await db.execute('UPDATE message SET answer_tried_at = NULL'
                              ' WHERE profile_id = %s', (talk,))
             await db.connection.commit()
 
@@ -170,7 +170,7 @@ class TestSilenceIsNotForever:
 
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT INTO dating_message'
+                'INSERT INTO message'
                 ' (profile_id, sender_uid, sender_name, text, message_uid,'
                 '  direction, is_read, source)'
                 " VALUES (%s, %s, 'Он', 'ну как?', %s, 'in', 1, 'socket')",
@@ -189,7 +189,7 @@ class TestSilenceIsNotForever:
 
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT INTO dating_message'
+                'INSERT INTO message'
                 ' (profile_id, sender_uid, sender_name, text, message_uid,'
                 '  direction, is_read, source)'
                 " VALUES (%s, %s, 'Он', 'ну как?', %s, 'in', 1, 'socket')",
@@ -229,7 +229,7 @@ class TestAnswerStillWorks:
         assert sent == ['и тебе привет'] and result['sent'] == 1
 
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT answer_silent_at FROM dating_message'
+            await db.execute('SELECT answer_silent_at FROM message'
                              ' WHERE profile_id = %s', (talk,))
             row = await db.fetchone()
 

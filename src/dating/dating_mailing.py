@@ -200,7 +200,7 @@ async def dating_mailing_templates(site_id: int, mail_ids: list = None) -> list[
             вольность: так набирает круг по расписанию, где выбирать некому.
             Человек же выбирает сам, и пустой выбор для него — отказ, а не «все».
     """
-    sql = 'SELECT id, name, body FROM dating_mail WHERE site_id = %s AND enabled = 1'
+    sql = 'SELECT id, name, body FROM mail WHERE site_id = %s AND enabled = 1'
     args = [int(site_id)]
 
     ids = [int(one) for one in (mail_ids or []) if int(one) > 0]
@@ -664,7 +664,7 @@ async def _girls(site_id: int) -> list[dict]:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, site_id, login, password, password_source, profile'
-            ' FROM dating_profile'
+            ' FROM profile'
             ' WHERE site_id = %s AND enabled = 1'
             "   AND status = 'online' ORDER BY id",
             (int(site_id),))
@@ -772,7 +772,7 @@ async def _by_priority(site_id: int, people: list[dict]) -> list[dict]:
 async def _marked(site_id: int) -> set:
     """Номера собеседников сайта, отмеченных приоритетом."""
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT uid FROM dating_companion'
+        await db.execute('SELECT uid FROM companion'
                          ' WHERE site_id = %s AND priority = 1', (int(site_id),))
         rows = await db.fetchall()
 
@@ -797,7 +797,7 @@ async def _taken(site_id: int) -> set:
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT profile_id, uid, mail_id FROM dating_mailing WHERE site_id = %s',
+            'SELECT profile_id, uid, mail_id FROM mailing WHERE site_id = %s',
             (int(site_id),))
         rows = await db.fetchall()
 
@@ -813,7 +813,7 @@ async def _put(site_id: int, girl: dict, person: dict, template: dict,
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT IGNORE INTO dating_mailing'
+            'INSERT IGNORE INTO mailing'
             ' (site_id, profile_id, mail_id, uid, name, body, status)'
             " VALUES (%s, %s, %s, %s, %s, %s, 'draft')",
             (int(site_id), int(girl['id']), int(template['id']),

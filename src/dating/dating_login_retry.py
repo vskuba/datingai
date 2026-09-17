@@ -121,7 +121,7 @@ async def dating_login_retry_fail(profile_id: int) -> None:
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'UPDATE dating_profile'
+            'UPDATE profile'
             '   SET login_fail_tries = login_fail_tries + 1, login_fail_at = NOW()'
             ' WHERE id = %s', (int(profile_id),))
         await db.connection.commit()
@@ -135,7 +135,7 @@ async def dating_login_retry_clear(profile_id: int) -> None:
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'UPDATE dating_profile SET login_fail_tries = 0, login_fail_at = NULL'
+            'UPDATE profile SET login_fail_tries = 0, login_fail_at = NULL'
             ' WHERE id = %s', (int(profile_id),))
         await db.connection.commit()
 

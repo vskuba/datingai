@@ -86,8 +86,8 @@ async def girl(auth_client):
     yield profile_id
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_invite WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM dating_profile WHERE id = %s', (profile_id,))
+        await db.execute('DELETE FROM invite WHERE profile_id = %s', (profile_id,))
+        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
         await db.connection.commit()
 
 
@@ -170,7 +170,7 @@ class TestSkips:
         """«Не ведём» значит не ведём совсем."""
         await _draft(girl)
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile SET enabled = 0 WHERE id = %s', (girl,))
+            await db.execute('UPDATE profile SET enabled = 0 WHERE id = %s', (girl,))
             await db.connection.commit()
 
         assert (await dating_invite_send_round_run())['sent'] == 0
@@ -312,7 +312,7 @@ async def _flag(site_id: int, on: bool, gone: bool = False) -> None:
     """Выключатель отправки у стендового сайта."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_site (site_id, name, invite_send_on, invite_schedule, is_gone)'
+            'INSERT INTO site (site_id, name, invite_send_on, invite_schedule, is_gone)'
             ' VALUES (%s, %s, %s, %s, %s)'
             ' ON DUPLICATE KEY UPDATE invite_send_on = VALUES(invite_send_on),'
             '                         is_gone = VALUES(is_gone)',
@@ -323,7 +323,7 @@ async def _flag(site_id: int, on: bool, gone: bool = False) -> None:
 
 async def _status(profile_id: int, status: str) -> None:
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_profile SET status = %s WHERE id = %s',
+        await db.execute('UPDATE profile SET status = %s WHERE id = %s',
                          (status, int(profile_id)))
         await db.connection.commit()
 
@@ -333,13 +333,13 @@ async def _draft(profile_id: int, error: str = '', when: str = '') -> int:
     async with mysql_get_db_async() as db:
         if when:
             await db.execute(
-                'INSERT INTO dating_invite (site_id, profile_id, uid, name, body,'
+                'INSERT INTO invite (site_id, profile_id, uid, name, body,'
                 " status, error, created_at) VALUES (%s, %s, %s, %s, %s, 'draft', %s, %s)",
                 (STAND_SITE, int(profile_id), f'u{uuid.uuid4().hex[:8]}', 'Frank',
                  'Привет!', error, when))
         else:
             await db.execute(
-                'INSERT INTO dating_invite (site_id, profile_id, uid, name, body,'
+                'INSERT INTO invite (site_id, profile_id, uid, name, body,'
                 " status, error) VALUES (%s, %s, %s, %s, %s, 'draft', %s)",
                 (STAND_SITE, int(profile_id), f'u{uuid.uuid4().hex[:8]}', 'Frank',
                  'Привет!', error))
@@ -443,7 +443,7 @@ def _site():
 
 async def _name(profile_id: int, name: str) -> None:
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_profile SET profile = %s WHERE id = %s',
+        await db.execute('UPDATE profile SET profile = %s WHERE id = %s',
                          ('{"name": "%s"}' % name, int(profile_id)))
         await db.connection.commit()
 
@@ -451,7 +451,7 @@ async def _name(profile_id: int, name: str) -> None:
 async def _invite_row(invite_id: int) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute('SELECT id, site_id, profile_id, uid, name, body'
-                         ' FROM dating_invite WHERE id = %s', (int(invite_id),))
+                         ' FROM invite WHERE id = %s', (int(invite_id),))
         row = await db.fetchone()
 
     return dict(row)
@@ -529,7 +529,7 @@ def _site_answer():
 async def _one(invite_id: int) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute('SELECT id, site_id, profile_id, uid, name, body, status,'
-                         ' error FROM dating_invite WHERE id = %s', (int(invite_id),))
+                         ' error FROM invite WHERE id = %s', (int(invite_id),))
 
         return dict(await db.fetchone())
 
@@ -712,7 +712,7 @@ async def _sent_hours_ago(profile_id: int, hours: int) -> None:
     """Ушедшая реплика столько-то часов назад — счёт суток проверяется ею."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_invite (site_id, profile_id, uid, name, body, status,'
+            'INSERT INTO invite (site_id, profile_id, uid, name, body, status,'
             ' sent_at) VALUES (%s, %s, %s, %s, %s, %s, NOW() - INTERVAL %s HOUR)',
             (STAND_SITE, int(profile_id), f'u{uuid.uuid4().hex[:8]}', 'Frank',
              'Привет!', 'sent', int(hours)))
@@ -723,14 +723,14 @@ async def _priority(uid: str) -> None:
     """Карточка собеседника с поднятой отметкой «Приоритет в рассылке»."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_companion (site_id, uid, name, priority)'
+            'INSERT INTO companion (site_id, uid, name, priority)'
             " VALUES (%s, %s, 'Важный', 1)", (STAND_SITE, uid))
         await db.connection.commit()
 
 
 async def _priority_drop(uid: str) -> None:
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_companion WHERE site_id = %s AND uid = %s',
+        await db.execute('DELETE FROM companion WHERE site_id = %s AND uid = %s',
                          (STAND_SITE, uid))
         await db.connection.commit()
 
@@ -739,7 +739,7 @@ async def _draft_uid(profile_id: int, tag: str, when: str) -> str:
     uid = f'u{uuid.uuid4().hex[:8]}'
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_invite (site_id, profile_id, uid, name, body,'
+            'INSERT INTO invite (site_id, profile_id, uid, name, body,'
             " status, error, created_at) VALUES (%s, %s, %s, %s, %s, 'draft', '', %s)",
             (STAND_SITE, int(profile_id), uid, tag, 'Привет!', when))
         await db.connection.commit()

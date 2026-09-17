@@ -97,7 +97,7 @@ async def _profile_load(client, profile: dict, presence: dict) -> bool:
     card = site_registry_profile(presence).card_parse(user, str(profile.get('login') or ''))
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_profile SET profile = %s WHERE id = %s',
+        await db.execute('UPDATE profile SET profile = %s WHERE id = %s',
                          (json.dumps(card, ensure_ascii=False), int(profile['id'])))
         await db.connection.commit()
 
@@ -135,7 +135,7 @@ async def _contacts_load(client, profile: dict, presence: dict) -> int:
             if values is None:
                 continue
             await db.execute(
-                'INSERT INTO dating_contact (profile_id, uid, name, photo, age, city, is_online) '
+                'INSERT INTO contact (profile_id, uid, name, photo, age, city, is_online) '
                 'VALUES (%s, %s, %s, %s, %s, %s, %s) '
                 'ON DUPLICATE KEY UPDATE name=VALUES(name), photo=VALUES(photo), '
                 '  age=VALUES(age), city=VALUES(city), is_online=VALUES(is_online)',

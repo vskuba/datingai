@@ -74,7 +74,7 @@ async def letter(auth_client, profile):
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_mailing'
+            'INSERT INTO mailing'
             ' (site_id, profile_id, mail_id, uid, name, body, status)'
             " VALUES (%s, %s, NULL, 'tst-uid', 'Тестовый', 'Текст письма', 'draft')",
             (SITE, profile))
@@ -87,7 +87,7 @@ async def letter(auth_client, profile):
     yield made
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_mailing WHERE id = %s', (made,))
+        await db.execute('DELETE FROM mailing WHERE id = %s', (made,))
         await db.connection.commit()
 
 
@@ -217,7 +217,7 @@ class TestPoolClear:
 
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT INTO dating_mailing'
+                'INSERT INTO mailing'
                 ' (site_id, profile_id, mail_id, uid, name, body, status, sent_at)'
                 " VALUES (%s, %s, NULL, 'tst-sent', 'Ушло', 'Текст', 'sent', NOW())",
                 (SITE, profile))
@@ -234,7 +234,7 @@ class TestPoolClear:
             assert sent in [row['id'] for row in rows], 'очистка стёрла журнал'
         finally:
             async with mysql_get_db_async() as db:
-                await db.execute('DELETE FROM dating_mailing WHERE id = %s', (sent,))
+                await db.execute('DELETE FROM mailing WHERE id = %s', (sent,))
                 await db.connection.commit()
 
     async def test_clear_without_site_is_refused(self, auth_client):
@@ -273,7 +273,7 @@ class TestGirlRowIsWhole:
             # ⚠ И статус «в сети»: набор берёт только тех, кто сейчас на сайте
             # (`_girls`). Без этого анкета в набор не попадёт, и проверка ниже
             # молча проверяла бы пустоту.
-            await db.execute("UPDATE dating_profile SET mailing_on = 1,"
+            await db.execute("UPDATE profile SET mailing_on = 1,"
                              " status = 'online' WHERE id = %s", (profile,))
             await db.connection.commit()
 
@@ -297,14 +297,14 @@ class TestGirlRowIsWhole:
         from src.dating.dating_mailing import dating_mailing_girls
 
         async with mysql_get_db_async() as db:
-            await db.execute("UPDATE dating_profile SET mailing_on = 1,"
+            await db.execute("UPDATE profile SET mailing_on = 1,"
                              " status = 'online' WHERE id = %s", (profile,))
             await db.connection.commit()
 
         assert any(one['id'] == profile for one in await dating_mailing_girls(STAND_SITE))
 
         async with mysql_get_db_async() as db:
-            await db.execute("UPDATE dating_profile SET status = 'offline'"
+            await db.execute("UPDATE profile SET status = 'offline'"
                              ' WHERE id = %s', (profile,))
             await db.connection.commit()
 
@@ -323,7 +323,7 @@ class TestGirlRowIsWhole:
             # ⚠ И статус «в сети»: набор берёт только тех, кто сейчас на сайте
             # (`_girls`). Без этого анкета в набор не попадёт, и проверка ниже
             # молча проверяла бы пустоту.
-            await db.execute("UPDATE dating_profile SET mailing_on = 1,"
+            await db.execute("UPDATE profile SET mailing_on = 1,"
                              " status = 'online' WHERE id = %s", (profile,))
             await db.connection.commit()
 
@@ -369,7 +369,7 @@ class TestCardGetsTheFeed:
             from mysql_.mysql_ import mysql_get_db_async
 
             async with mysql_get_db_async() as db:
-                await db.execute('DELETE FROM dating_companion WHERE uid = %s', (uid,))
+                await db.execute('DELETE FROM companion WHERE uid = %s', (uid,))
                 await db.connection.commit()
 
     async def test_empty_feed_does_not_erase(self, auth_client):
@@ -396,7 +396,7 @@ class TestCardGetsTheFeed:
             from mysql_.mysql_ import mysql_get_db_async
 
             async with mysql_get_db_async() as db:
-                await db.execute('DELETE FROM dating_companion WHERE uid = %s', (uid,))
+                await db.execute('DELETE FROM companion WHERE uid = %s', (uid,))
                 await db.connection.commit()
 
 
@@ -414,7 +414,7 @@ class TestPoolStatusFilter:
         async with mysql_get_db_async() as db:
             for status_, uid in (('sent', 'tst-ok'), ('failed', 'tst-bad')):
                 await db.execute(
-                    'INSERT INTO dating_mailing'
+                    'INSERT INTO mailing'
                     ' (site_id, profile_id, mail_id, uid, name, body, status)'
                     ' VALUES (%s, %s, NULL, %s, %s, %s, %s)',
                     (SITE, profile, uid, 'Кому', 'Текст', status_))
@@ -434,7 +434,7 @@ class TestPoolStatusFilter:
         finally:
             async with mysql_get_db_async() as db:
                 for one in made:
-                    await db.execute('DELETE FROM dating_mailing WHERE id = %s', (one,))
+                    await db.execute('DELETE FROM mailing WHERE id = %s', (one,))
                 await db.connection.commit()
 
     async def test_junk_status_shows_everything(self, auth_client, letter):
@@ -569,7 +569,7 @@ class TestCardForEveryone:
             assert await dating_companion_get(SITE, uid), 'пустая лента не завела карточку'
         finally:
             async with mysql_get_db_async() as db:
-                await db.execute('DELETE FROM dating_companion WHERE uid = %s', (uid,))
+                await db.execute('DELETE FROM companion WHERE uid = %s', (uid,))
                 await db.connection.commit()
 
     async def test_feed_fills_what_it_knows(self, auth_client):
@@ -590,7 +590,7 @@ class TestCardForEveryone:
             assert int(card['age']) == 58
         finally:
             async with mysql_get_db_async() as db:
-                await db.execute('DELETE FROM dating_companion WHERE uid = %s', (uid,))
+                await db.execute('DELETE FROM companion WHERE uid = %s', (uid,))
                 await db.connection.commit()
 
     async def test_empty_feed_does_not_wipe_what_is_known(self, auth_client):
@@ -611,7 +611,7 @@ class TestCardForEveryone:
                 'пустая лента затёрла имя'
         finally:
             async with mysql_get_db_async() as db:
-                await db.execute('DELETE FROM dating_companion WHERE uid = %s', (uid,))
+                await db.execute('DELETE FROM companion WHERE uid = %s', (uid,))
                 await db.connection.commit()
 
 
@@ -727,7 +727,7 @@ async def mailing_girl():
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_profile (site_id, login, password, enabled,'
+            'INSERT INTO profile (site_id, login, password, enabled,'
             " mailing_on, status) VALUES (%s, %s, %s, 1, 1, 'online')",
             (SITE, f'gap-{uuid.uuid4().hex[:8]}@example.com', 'x'))
         await db.connection.commit()
@@ -739,7 +739,7 @@ async def mailing_girl():
     yield made
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_profile WHERE id = %s', (made,))
+        await db.execute('DELETE FROM profile WHERE id = %s', (made,))
         await db.connection.commit()
 
 

@@ -238,7 +238,7 @@ async def dating_favorite_mail_pool_left(site_id: int) -> int:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'SELECT COUNT(*) AS n FROM dating_favorite_mail'
+                'SELECT COUNT(*) AS n FROM favorite_mail'
                 " WHERE site_id = %s AND status = 'draft'", (int(site_id),))
             row = await db.fetchone()
     except Exception as e:
@@ -276,7 +276,7 @@ async def _sync_stars(site_id: int, profile_id: int = 0) -> None:
         async with mysql_get_db_async() as db:
             await db.execute(
                 'SELECT id, site_id, login, password, password_source'
-                '  FROM dating_profile'
+                '  FROM profile'
                 " WHERE site_id = %s AND enabled = 1 AND status = 'online'"
                 '   AND (%s = 0 OR id = %s)',
                 (int(site_id), int(profile_id or 0), int(profile_id or 0)))
@@ -330,12 +330,12 @@ async def _quiet(site_id: int, profile_id: int = 0) -> list[dict]:
         '       COALESCE(c.name, comp.name, %s) AS name,'
         '       COALESCE(NULLIF(comp.photo, %s), c.photo, %s) AS photo,'
         '       talk.last_at, talk.last_side'
-        '  FROM dating_favorite f'
+        '  FROM favorite f'
         # ⚠ **Анкета обязана быть в сети**, а не просто включена. Письмо уходит
         # от её имени, и сайт показывает его от лица девушки, которой в этот
         # момент на сайте нет; а круг отправки такое письмо всё равно не возьмёт
         # (`dating_send_round`), и пул набивался бы тем, что не уйдёт.
-        "  JOIN dating_profile p ON p.id = f.profile_id AND p.enabled = 1"
+        "  JOIN profile p ON p.id = f.profile_id AND p.enabled = 1"
         "   AND p.status = 'online'"
         # ⚠ **`LEFT JOIN`, а не `JOIN`** — та самая правка: у избранного может не
         # быть ни одного письма в нашей базе, и это не повод его пропускать.
@@ -345,23 +345,23 @@ async def _quiet(site_id: int, profile_id: int = 0) -> list[dict]:
         '            SUBSTRING_INDEX(MAX(CONCAT(at, %s, side)), %s, -1) AS last_side'
         '       FROM ('
         "          SELECT profile_id, uid, date_post AS at, 'him' AS side"
-        '            FROM dating_mail_in'
+        '            FROM mail_in'
         '          UNION ALL'
         "          SELECT profile_id, uid, sent_at AS at, 'her' AS side"
-        "            FROM dating_mail_reply WHERE status = 'sent'"
+        "            FROM mail_reply WHERE status = 'sent'"
         '          UNION ALL'
         "          SELECT profile_id, uid, sent_at AS at, 'her' AS side"
-        "            FROM dating_mailing WHERE status = 'sent'"
+        "            FROM mailing WHERE status = 'sent'"
         '          UNION ALL'
         "          SELECT profile_id, uid, sent_at AS at, 'her' AS side"
-        "            FROM dating_favorite_mail WHERE status = 'sent'"
+        "            FROM favorite_mail WHERE status = 'sent'"
         '       ) AS all_mail'
         '      WHERE at IS NOT NULL'
         '      GROUP BY profile_id, uid) AS talk'
         '    ON talk.profile_id = f.profile_id AND talk.uid = f.uid'
-        '  LEFT JOIN dating_contact c'
+        '  LEFT JOIN contact c'
         '    ON c.profile_id = f.profile_id AND c.uid = f.uid'
-        '  LEFT JOIN dating_companion comp'
+        '  LEFT JOIN companion comp'
         '    ON comp.site_id = f.site_id AND comp.uid = f.uid'
         ' WHERE f.site_id = %s AND (%s = 0 OR f.profile_id = %s)'
         # ⚠ Тот же набор, что делит разговоры между «Фаворитами» и «Входящими»
@@ -372,14 +372,14 @@ async def _quiet(site_id: int, profile_id: int = 0) -> list[dict]:
         # случай «переписки у нас нет» — он законный, см. докстринг.
         "   AND (talk.last_side IS NULL OR talk.last_side = 'her')"
         # Черновик этому человеку уже ждёт — второй не нужен.
-        '   AND NOT EXISTS (SELECT 1 FROM dating_favorite_mail d'
+        '   AND NOT EXISTS (SELECT 1 FROM favorite_mail d'
         '                    WHERE d.profile_id = f.profile_id AND d.uid = f.uid'
         "                      AND d.status = 'draft')"
         # ⚠ И закрывшиеся от анкеты. «Ты замолчал» тому, кто просил не писать, —
         # худшее из наших писем, и сайт его всё равно не примет (`dating_block.py`).
         # Условием в этом же запросе, а не отсевом после: список уходит в потолок
         # захода, и отсеки мы их позже — запрещённые пары съедали бы места живых.
-        '   AND NOT EXISTS (SELECT 1 FROM dating_block b'
+        '   AND NOT EXISTS (SELECT 1 FROM block b'
         '                    WHERE b.profile_id = f.profile_id AND b.uid = f.uid)'
         ' ORDER BY talk.last_at')
 
@@ -411,13 +411,13 @@ async def _too_soon(profile_id: int, uid: str, per_day: int, gap: int) -> str:
     """
     sql = (
         'SELECT COUNT(*) AS сутки, MAX(sent_at) AS последнее FROM ('
-        '   SELECT sent_at FROM dating_mailing'
+        '   SELECT sent_at FROM mailing'
         "    WHERE profile_id = %s AND uid = %s AND status = 'sent'"
         '   UNION ALL'
-        '   SELECT sent_at FROM dating_mail_reply'
+        '   SELECT sent_at FROM mail_reply'
         "    WHERE profile_id = %s AND uid = %s AND status = 'sent'"
         '   UNION ALL'
-        '   SELECT sent_at FROM dating_favorite_mail'
+        '   SELECT sent_at FROM favorite_mail'
         "    WHERE profile_id = %s AND uid = %s AND status = 'sent'"
         ') AS ушло'
         ' WHERE sent_at IS NOT NULL AND sent_at > NOW() - INTERVAL 1 DAY')
@@ -434,13 +434,13 @@ async def _too_soon(profile_id: int, uid: str, per_day: int, gap: int) -> str:
             # попадает, и без второго запроса пауза считалась бы от пустоты.
             await db.execute(
                 'SELECT MAX(sent_at) AS последнее FROM ('
-                '   SELECT sent_at FROM dating_mailing'
+                '   SELECT sent_at FROM mailing'
                 "    WHERE profile_id = %s AND uid = %s AND status = 'sent'"
                 '   UNION ALL'
-                '   SELECT sent_at FROM dating_mail_reply'
+                '   SELECT sent_at FROM mail_reply'
                 "    WHERE profile_id = %s AND uid = %s AND status = 'sent'"
                 '   UNION ALL'
-                '   SELECT sent_at FROM dating_favorite_mail'
+                '   SELECT sent_at FROM favorite_mail'
                 "    WHERE profile_id = %s AND uid = %s AND status = 'sent'"
                 ') AS ушло',
                 (int(profile_id), str(uid), int(profile_id), str(uid),
@@ -549,17 +549,17 @@ async def _history(profile_id: int, uid: str) -> list[dict]:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                "SELECT 'him' AS side, body, date_post AS at, id FROM dating_mail_in"
+                "SELECT 'him' AS side, body, date_post AS at, id FROM mail_in"
                 ' WHERE profile_id = %s AND uid = %s'
                 ' UNION ALL'
-                " SELECT 'her' AS side, body, sent_at AS at, id FROM dating_mail_reply"
+                " SELECT 'her' AS side, body, sent_at AS at, id FROM mail_reply"
                 " WHERE profile_id = %s AND uid = %s AND status = 'sent'"
                 ' UNION ALL'
-                " SELECT 'her' AS side, body, sent_at AS at, id FROM dating_mailing"
+                " SELECT 'her' AS side, body, sent_at AS at, id FROM mailing"
                 " WHERE profile_id = %s AND uid = %s AND status = 'sent'"
                 ' UNION ALL'
                 " SELECT 'her' AS side, body, sent_at AS at, id"
-                ' FROM dating_favorite_mail'
+                ' FROM favorite_mail'
                 " WHERE profile_id = %s AND uid = %s AND status = 'sent'"
                 ' ORDER BY at DESC, id DESC LIMIT %s',
                 (int(profile_id), str(uid), int(profile_id), str(uid),
@@ -583,7 +583,7 @@ async def _history(profile_id: int, uid: str) -> list[dict]:
 async def _girl(profile_id: int) -> dict:
     """Анкета, от имени которой пишем."""
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT id, site_id, login, profile FROM dating_profile'
+        await db.execute('SELECT id, site_id, login, profile FROM profile'
                          ' WHERE id = %s', (int(profile_id),))
         row = await db.fetchone()
 
@@ -614,7 +614,7 @@ async def _put(site_id: int, profile_id: int, pair: dict, body: str) -> None:
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_favorite_mail'
+            'INSERT INTO favorite_mail'
             ' (site_id, profile_id, uid, name, photo, body, status)'
             " VALUES (%s, %s, %s, %s, %s, %s, 'draft')",
             (int(site_id), int(profile_id), str(pair['uid']),

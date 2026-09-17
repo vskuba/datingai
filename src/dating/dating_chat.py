@@ -163,12 +163,12 @@ async def _contacts_of(profile_id: int) -> str:
     uids: list[str] = []
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT DISTINCT sender_uid AS uid FROM dating_message '
+            await db.execute('SELECT DISTINCT sender_uid AS uid FROM message '
                              ' WHERE profile_id = %s ORDER BY sender_uid DESC LIMIT %s',
                              (int(profile_id), DATING_CHAT_ASK_CONTACTS_MAX))
             uids += [str(row['uid']) for row in (await db.fetchall() or [])]
 
-            await db.execute('SELECT uid FROM dating_contact WHERE profile_id = %s '
+            await db.execute('SELECT uid FROM contact WHERE profile_id = %s '
                              ' ORDER BY is_online DESC, id DESC LIMIT %s',
                              (int(profile_id), DATING_CHAT_ASK_CONTACTS_MAX))
             uids += [str(row['uid']) for row in (await db.fetchall() or [])]
@@ -216,13 +216,13 @@ async def _message_save(profile_id: int, message: dict) -> bool:
             # Существование, а не счёт: у разговора бывают сотни реплик, а вопрос
             # тут двоичный. Индекс тот же — `idx_dating_message_dialog`.
             await db.execute(
-                'SELECT 1 FROM dating_message'
+                'SELECT 1 FROM message'
                 " WHERE profile_id = %s AND sender_uid = %s AND direction = 'in'"
                 ' LIMIT 1', (profile_id, message['sender_uid']))
             first = not await db.fetchone()
 
             await db.execute(
-                'INSERT IGNORE INTO dating_message '
+                'INSERT IGNORE INTO message '
                 '(profile_id, sender_uid, sender_name, text, message_uid) VALUES (%s, %s, %s, %s, %s)',
                 (profile_id, message['sender_uid'], message['sender_name'],
                  message['text'], message['message_uid']))
@@ -251,7 +251,7 @@ async def _talk_new(profile_id: int, message: dict) -> None:
     """
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT site_id FROM dating_profile WHERE id = %s',
+            await db.execute('SELECT site_id FROM profile WHERE id = %s',
                              (profile_id,))
             row = await db.fetchone()
 

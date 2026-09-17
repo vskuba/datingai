@@ -99,7 +99,7 @@ async def dating_request_list(site_id: int = 0, profile_id: int = 0, door: str =
     clause = ' AND '.join(where)
 
     async with mysql_get_db_async() as db:
-        await db.execute(f'SELECT COUNT(*) AS n FROM dating_request r WHERE {clause}',
+        await db.execute(f'SELECT COUNT(*) AS n FROM request r WHERE {clause}',
                          tuple(args))
         total = int(((await db.fetchone()) or {}).get('n') or 0)
 
@@ -115,8 +115,8 @@ async def dating_request_list(site_id: int = 0, profile_id: int = 0, door: str =
             # две Дианы, и в ленте они различались только памятью читающего.
             "       COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(p.profile, '$.photo')), 'null'),"
             "                '') AS profile_photo"
-            '  FROM dating_request r'
-            '  LEFT JOIN dating_profile p ON p.id = r.profile_id'
+            '  FROM request r'
+            '  LEFT JOIN profile p ON p.id = r.profile_id'
             f' WHERE {clause}'
             ' ORDER BY r.id DESC LIMIT %s OFFSET %s',
             tuple(args + [per_page, (page - 1) * per_page]))

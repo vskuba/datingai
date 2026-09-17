@@ -114,7 +114,7 @@ async def dating_schedule_round_drop(profile_id: int) -> bool:
     """
     try:
         async with mysql_get_db_async() as db:
-            await db.execute("SELECT status, ws_url FROM dating_profile WHERE id = %s",
+            await db.execute("SELECT status, ws_url FROM profile WHERE id = %s",
                              (int(profile_id),))
             row = await db.fetchone()
     except Exception as e:
@@ -152,7 +152,7 @@ async def _rows() -> list[dict]:
             await db.execute(
                 'SELECT id, login, schedule, schedule_on, enabled, status, ws_url,'
                 '       storage_state IS NOT NULL AS storage_state'
-                '  FROM dating_profile WHERE schedule_on = 1 ORDER BY id')
+                '  FROM profile WHERE schedule_on = 1 ORDER BY id')
             rows = await db.fetchall()
     except Exception as e:
         logger_info(f'[dating] анкеты для круга расписания не спросились: {e}')
@@ -243,7 +243,7 @@ async def _state_clear(profile_id: int) -> bool:
     """
     try:
         async with mysql_get_db_async() as db:
-            await db.execute("UPDATE dating_profile SET ws_url = '', storage_state = NULL, "
+            await db.execute("UPDATE profile SET ws_url = '', storage_state = NULL, "
                              "       status = 'offline' WHERE id = %s",
                              (int(profile_id),))
             await db.connection.commit()

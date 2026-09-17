@@ -123,8 +123,8 @@ async def dating_invite_list(site_id: int = 0, status_: str = 'draft',
            ' i.body, i.status, i.error, i.answer, i.sent_at, i.created_at,'
            ' i.updated_at,'
            ' p.login AS profile_login, p.profile AS profile_card'
-           ' FROM dating_invite i'
-           ' LEFT JOIN dating_profile p ON p.id = i.profile_id'
+           ' FROM invite i'
+           ' LEFT JOIN profile p ON p.id = i.profile_id'
            ' WHERE i.site_id = %s')
     args = [int(site_id)]
 
@@ -243,7 +243,7 @@ async def dating_invite_edit(invite_id: int, payload: DatingInviteEdit,
                             detail='инвайт уже ушёл — его текст не меняется')
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_invite SET body = %s WHERE id = %s',
+        await db.execute('UPDATE invite SET body = %s WHERE id = %s',
                          (payload.body, int(invite_id)))
         await db.connection.commit()
 
@@ -319,7 +319,7 @@ async def dating_invite_clear(site_id: int = 0,
                             detail='не назван сайт — очищать нечего')
 
     async with mysql_get_db_async() as db:
-        await db.execute("DELETE FROM dating_invite"
+        await db.execute("DELETE FROM invite"
                          " WHERE site_id = %s AND status = 'draft'",
                          (int(site_id),))
         # ⚠ `db.rowcount`, а не `db.cursor.rowcount`: у обёртки курсора своего
@@ -348,7 +348,7 @@ async def dating_invite_drop(invite_id: int,
                             detail='инвайт уже ушёл — его не убрать')
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_invite WHERE id = %s', (int(invite_id),))
+        await db.execute('DELETE FROM invite WHERE id = %s', (int(invite_id),))
         await db.connection.commit()
 
     return {'result': {'dropped': 1}}
@@ -365,7 +365,7 @@ async def _send_on(site_id: int) -> bool:
     """
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT invite_send_on FROM dating_site'
+            await db.execute('SELECT invite_send_on FROM site'
                              ' WHERE site_id = %s', (int(site_id),))
             row = await db.fetchone()
     except Exception as e:
@@ -387,8 +387,8 @@ async def _row(invite_id: int) -> dict:
             ' i.body, i.status, i.error, i.answer, i.sent_at, i.created_at,'
            ' i.updated_at,'
             ' p.login AS profile_login, p.profile AS profile_card'
-            ' FROM dating_invite i'
-            ' LEFT JOIN dating_profile p ON p.id = i.profile_id'
+            ' FROM invite i'
+            ' LEFT JOIN profile p ON p.id = i.profile_id'
             ' WHERE i.id = %s', (int(invite_id),))
         row = await db.fetchone()
 

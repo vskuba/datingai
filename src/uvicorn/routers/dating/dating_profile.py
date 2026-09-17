@@ -153,11 +153,11 @@ async def dating_profile_list(site_id: int = 0,
             '       g.proxy_id, g.proxy_ip, '
             '       g.password <> %s AS has_password, '
             '       g.storage_state IS NOT NULL AS has_state, '
-            '       (SELECT COUNT(DISTINCT m.sender_uid) FROM dating_message m '
+            '       (SELECT COUNT(DISTINCT m.sender_uid) FROM message m '
             '         WHERE m.profile_id = g.id) AS contacts, '
-            '       (SELECT COUNT(*) FROM dating_message m '
+            '       (SELECT COUNT(*) FROM message m '
             "         WHERE m.profile_id = g.id AND m.direction = 'in' AND m.is_read = 0) AS unread_chat "
-            f'  FROM dating_profile g{where.replace(" site_id", " g.site_id")}'
+            f'  FROM profile g{where.replace(" site_id", " g.site_id")}'
             # ⚠ **Сперва те, кто в сети, потом по алфавиту.** Список читают,
             # чтобы найти работу, а работа есть у тех, кто на сайте: круги
             # рассылки, инвайтов и переписки с избранными берут только их. При
@@ -358,7 +358,7 @@ async def dating_profile_site_known(site_id: int) -> dict:
     человеком руками, строгую соседскую проверку придётся вернуть.
     """
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT site_id, name FROM dating_site WHERE site_id = %s',
+        await db.execute('SELECT site_id, name FROM site WHERE site_id = %s',
                          (int(site_id),))
         row = await db.fetchone()
 

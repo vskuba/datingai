@@ -35,7 +35,7 @@ async def _say(profile_id: int, uid: str, direction: str, text: str) -> None:
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_message'
+            'INSERT INTO message'
             ' (profile_id, sender_uid, sender_name, message_uid, text, direction,'
             '  is_answered)'
             ' VALUES (%s, %s, %s, %s, %s, %s, 1)',
@@ -66,7 +66,7 @@ async def talk(auth_client):
     yield {'profile_id': int(made), 'uid': uid}
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_companion WHERE site_id = %s AND uid = %s',
+        await db.execute('DELETE FROM companion WHERE site_id = %s AND uid = %s',
                          (STAND_SITE, uid))
         await db.connection.commit()
 
@@ -84,7 +84,7 @@ async def _companion(uid: str, name: str, photo: str) -> None:
     """Карточка собеседника по сайту — то, что знает панель о человеке."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_companion (site_id, uid, name, photo)'
+            'INSERT INTO companion (site_id, uid, name, photo)'
             ' VALUES (%s, %s, %s, %s)'
             ' ON DUPLICATE KEY UPDATE name = VALUES(name), photo = VALUES(photo)',
             (STAND_SITE, uid, name, photo))
@@ -138,7 +138,7 @@ class TestCompanionCard:
 
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT INTO dating_contact (profile_id, uid, name, photo)'
+                'INSERT INTO contact (profile_id, uid, name, photo)'
                 ' VALUES (%s, %s, %s, %s)',
                 (talk['profile_id'], talk['uid'], 'Новое имя',
                  'https://site/new.jpg'))
@@ -160,7 +160,7 @@ class TestCompanionCard:
 
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT INTO dating_contact (profile_id, uid, name, photo)'
+                'INSERT INTO contact (profile_id, uid, name, photo)'
                 " VALUES (%s, %s, 'Semen', '')",
                 (talk['profile_id'], talk['uid']))
             await db.connection.commit()

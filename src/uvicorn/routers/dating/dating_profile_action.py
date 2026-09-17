@@ -113,10 +113,10 @@ async def dating_profile_action_password(profile_id: int, data: DatingProfilePas
 
     async with mysql_get_db_async() as db:
         if password:
-            await db.execute('UPDATE dating_profile SET password_source = %s, password = %s '
+            await db.execute('UPDATE profile SET password_source = %s, password = %s '
                              ' WHERE id = %s', (source, password, profile_id))
         else:
-            await db.execute('UPDATE dating_profile SET password_source = %s WHERE id = %s',
+            await db.execute('UPDATE profile SET password_source = %s WHERE id = %s',
                              (source, profile_id))
         await db.connection.commit()
 
@@ -195,7 +195,7 @@ async def dating_profile_action_proxy(profile_id: int, data: DatingProfileProxy,
     await dating_proxy_set(profile_id, got)
 
     async with mysql_get_db_async() as db:
-        await db.execute("SELECT COUNT(*) AS n FROM dating_profile "
+        await db.execute("SELECT COUNT(*) AS n FROM profile "
                          " WHERE proxy_ip = %s AND id <> %s",
                          (str(got['check_ip']), profile_id))
         neighbours = int(((await db.fetchone()) or {}).get('n') or 0)
@@ -245,7 +245,7 @@ async def dating_profile_action_proxy_list(profile_id: int, user=Depends(auth_re
         raise HTTPException(status_code=502, detail=f'реестр выходов не ответил: {e}')
 
     async with mysql_get_db_async() as db:
-        await db.execute("SELECT proxy_ip, COUNT(*) AS n FROM dating_profile "
+        await db.execute("SELECT proxy_ip, COUNT(*) AS n FROM profile "
                          " WHERE proxy_ip <> '' AND id <> %s GROUP BY proxy_ip",
                          (profile_id,))
         busy = {str(row['proxy_ip']): int(row['n']) for row in await db.fetchall() or []}
@@ -310,7 +310,7 @@ async def dating_profile_action_schedule(profile_id: int, data: DatingProfileSch
     rows = dating_schedule_load(data.schedule)
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_profile SET schedule = %s WHERE id = %s',
+        await db.execute('UPDATE profile SET schedule = %s WHERE id = %s',
                          (dating_schedule_dump(rows), profile_id))
         await db.connection.commit()
 
@@ -357,7 +357,7 @@ async def dating_profile_action_schedule_on(profile_id: int, data: DatingProfile
     await dating_profile_row(profile_id)
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_profile SET schedule_on = %s WHERE id = %s',
+        await db.execute('UPDATE profile SET schedule_on = %s WHERE id = %s',
                          (1 if data.schedule_on else 0, profile_id))
         await db.connection.commit()
 
@@ -390,7 +390,7 @@ async def _keep_online_clear(profile_id: int) -> None:
     """
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile SET keep_online = 0 WHERE id = %s',
+            await db.execute('UPDATE profile SET keep_online = 0 WHERE id = %s',
                              (int(profile_id),))
             await db.connection.commit()
     except Exception as e:
@@ -422,7 +422,7 @@ async def dating_profile_action_enabled(profile_id: int, data: DatingProfileEnab
     await dating_profile_row(profile_id)
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_profile SET enabled = %s WHERE id = %s',
+        await db.execute('UPDATE profile SET enabled = %s WHERE id = %s',
                          (1 if data.enabled else 0, profile_id))
         await db.connection.commit()
 
@@ -466,7 +466,7 @@ async def dating_profile_action_reply(profile_id: int, data: DatingProfileReply,
     await dating_profile_row(profile_id)
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_profile SET reply_on = %s WHERE id = %s',
+        await db.execute('UPDATE profile SET reply_on = %s WHERE id = %s',
                          (1 if data.reply_on else 0, profile_id))
         await db.connection.commit()
 
@@ -497,7 +497,7 @@ async def dating_profile_action_mailing(profile_id: int, data: DatingProfileMail
     await dating_profile_row(profile_id)
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_profile SET mailing_on = %s WHERE id = %s',
+        await db.execute('UPDATE profile SET mailing_on = %s WHERE id = %s',
                          (1 if data.mailing_on else 0, profile_id))
         await db.connection.commit()
 
@@ -591,7 +591,7 @@ async def _contact_name(profile_id: int, uid: str) -> str:
     """
     try:
         async with mysql_get_db_async() as db:
-            await db.execute("SELECT sender_name FROM dating_message "
+            await db.execute("SELECT sender_name FROM message "
                              " WHERE profile_id = %s AND sender_uid = %s "
                              "   AND sender_name <> '' "
                              " ORDER BY created_at DESC, id DESC LIMIT 1",
@@ -634,10 +634,10 @@ async def dating_profile_action_auto(profile_id: int, data: DatingProfileAuto, r
 
     async with mysql_get_db_async() as db:
         if data.auto_answer_only is None:
-            await db.execute('UPDATE dating_profile SET auto_answer = %s WHERE id = %s',
+            await db.execute('UPDATE profile SET auto_answer = %s WHERE id = %s',
                              (1 if data.auto_answer else 0, profile_id))
         else:
-            await db.execute('UPDATE dating_profile SET auto_answer = %s, auto_answer_only = %s '
+            await db.execute('UPDATE profile SET auto_answer = %s, auto_answer_only = %s '
                              ' WHERE id = %s',
                              (1 if data.auto_answer else 0, data.auto_answer_only.strip(), profile_id))
         await db.connection.commit()
@@ -918,7 +918,7 @@ async def dating_profile_action_check(profile_id: int, request: Request,
     result['agent'] = agent
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_profile SET status = %s, last_error = %s WHERE id = %s',
+        await db.execute('UPDATE profile SET status = %s, last_error = %s WHERE id = %s',
                          ('online' if result['ok'] else 'error', result['error'], profile_id))
         await db.connection.commit()
 

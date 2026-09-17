@@ -363,7 +363,7 @@ async def dating_invite_pool_left(site_id: int, ready_only: bool = False) -> int
 
     try:
         async with mysql_get_db_async() as db:
-            await db.execute("SELECT COUNT(*) AS n FROM dating_invite"
+            await db.execute("SELECT COUNT(*) AS n FROM invite"
                              " WHERE site_id = %s AND status = 'draft'" + where,
                              (int(site_id),))
             row = await db.fetchone()
@@ -543,7 +543,7 @@ async def _avoid(site_id: int) -> list[str]:
                 # а порядок по `MAX(id)` требует группы. `DISTINCT` с `ORDER BY
                 # MAX(id)` — синтаксическая ошибка, и она бы вылезла только на
                 # живом запросе.
-                'SELECT body FROM dating_invite'
+                'SELECT body FROM invite'
                 ' WHERE site_id = %s AND body <> %s'
                 ' GROUP BY body ORDER BY MAX(id) DESC LIMIT %s',
                 (int(site_id), '', DATING_INVITE_AVOID_MAX))
@@ -608,7 +608,7 @@ async def _pool_uids(site_id: int) -> set:
     """
     try:
         async with mysql_get_db_async() as db:
-            await db.execute("SELECT DISTINCT uid FROM dating_invite"
+            await db.execute("SELECT DISTINCT uid FROM invite"
                              " WHERE site_id = %s AND status = 'draft'",
                              (int(site_id),))
             rows = await db.fetchall()
@@ -656,7 +656,7 @@ async def _girls(site_id: int) -> list[dict]:
         async with mysql_get_db_async() as db:
             await db.execute(
                 'SELECT id, site_id, login, password, password_source, profile'
-                ' FROM dating_profile'
+                ' FROM profile'
                 ' WHERE site_id = %s AND enabled = 1 AND role = %s'
                 "   AND status = 'online'"
                 ' ORDER BY id', (int(site_id), 'lady'))
@@ -741,7 +741,7 @@ async def _invited(site_id: int) -> set:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'SELECT profile_id, uid FROM dating_invite WHERE site_id = %s'
+                'SELECT profile_id, uid FROM invite WHERE site_id = %s'
                 ' GROUP BY profile_id, uid'
                 "  HAVING SUM(status <> 'sent') > 0"
                 '      OR MAX(sent_at) > NOW() - INTERVAL %s SECOND'
@@ -792,8 +792,8 @@ async def _talked(site_id: int) -> set:
         async with mysql_get_db_async() as db:
             await db.execute(
                 'SELECT DISTINCT m.profile_id, m.sender_uid AS uid'
-                '  FROM dating_message m'
-                '  JOIN dating_profile p ON p.id = m.profile_id'
+                '  FROM message m'
+                '  JOIN profile p ON p.id = m.profile_id'
                 " WHERE p.site_id = %s AND m.sender_uid <> %s AND m.direction = 'in'",
                 (int(site_id), ''))
             rows = await db.fetchall()
@@ -861,7 +861,7 @@ async def _keep_last(profile_id: int, uid: str, keep: int) -> int:
             # именно удаляется, и план предсказуем — обе части идут по индексу
             # пары. `OFFSET keep - 1` даёт id самой старой из оставляемых строк.
             await db.execute(
-                'SELECT id FROM dating_invite WHERE profile_id = %s AND uid = %s'
+                'SELECT id FROM invite WHERE profile_id = %s AND uid = %s'
                 ' ORDER BY id DESC LIMIT 1 OFFSET %s',
                 (int(profile_id), uid, keep - 1))
             edge = await db.fetchone()
@@ -869,7 +869,7 @@ async def _keep_last(profile_id: int, uid: str, keep: int) -> int:
                 return 0
 
             await db.execute(
-                'DELETE FROM dating_invite'
+                'DELETE FROM invite'
                 ' WHERE profile_id = %s AND uid = %s AND id < %s'
                 '   AND created_at < NOW() - INTERVAL 1 DAY',
                 (int(profile_id), uid, int(edge['id'])))
@@ -900,7 +900,7 @@ async def _put(site_id: int, girl: dict, person: dict, text: str,
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT IGNORE INTO dating_invite'
+            'INSERT IGNORE INTO invite'
             ' (site_id, profile_id, uid, name, photo, body)'
             ' VALUES (%s, %s, %s, %s, %s, %s)',
             (int(site_id), int(girl['id']),

@@ -114,7 +114,7 @@ async def _sites() -> list[dict]:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'SELECT site_id FROM dating_site'
+                'SELECT site_id FROM site'
                 ' WHERE is_gone = 0 AND favorite_mail_make_on = 1 ORDER BY site_id')
             rows = await db.fetchall()
     except Exception as e:

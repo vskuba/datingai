@@ -53,7 +53,7 @@ async def talks(auth_client):
                                  (girls[1], 'zz-mute2', ('out',))):
             for side in sides:
                 await db.execute(
-                    'INSERT INTO dating_message (profile_id, sender_uid, sender_name,'
+                    'INSERT INTO message (profile_id, sender_uid, sender_name,'
                     ' direction, text, source, message_uid)'
                     " VALUES (%s, %s, 'Кто-то', %s, 'привет', 'scenario', %s)",
                     (girl, uid, side, f'zz-{uuid.uuid4().hex[:12]}'))
@@ -63,11 +63,11 @@ async def talks(auth_client):
 
     async with mysql_get_db_async() as db:
         for girl in girls:
-            await db.execute('DELETE FROM dating_invite WHERE profile_id = %s', (girl,))
-            for table in ('dating_mailing', 'dating_favorite_mail'):
+            await db.execute('DELETE FROM invite WHERE profile_id = %s', (girl,))
+            for table in ('mailing', 'favorite_mail'):
                 await db.execute(f'DELETE FROM {table} WHERE profile_id = %s', (girl,))
-            await db.execute('DELETE FROM dating_message WHERE profile_id = %s', (girl,))
-            await db.execute('DELETE FROM dating_profile WHERE id = %s', (girl,))
+            await db.execute('DELETE FROM message WHERE profile_id = %s', (girl,))
+            await db.execute('DELETE FROM profile WHERE id = %s', (girl,))
         await db.connection.commit()
 
 
@@ -220,9 +220,9 @@ class TestByProfiles:
         рассылку. Одни инвайты отвечали бы только про чат."""
         girl = talks['girls'][0]
         await _invite(girl, 'sent')
-        await _letter('dating_favorite_mail', girl, 'sent')
-        await _letter('dating_mailing', girl, 'sent')
-        await _letter('dating_mailing', girl, 'draft', error='слишком часто')
+        await _letter('favorite_mail', girl, 'sent')
+        await _letter('mailing', girl, 'sent')
+        await _letter('mailing', girl, 'draft', error='слишком часто')
 
         row = next(one for one in await _profiles(auth_client)
                    if one['profile_id'] == girl)
@@ -242,7 +242,7 @@ class TestByProfiles:
         for _ in range(3):
             await _invite(girl, 'sent')
         for _ in range(2):
-            await _letter('dating_mailing', girl, 'sent')
+            await _letter('mailing', girl, 'sent')
 
         row = next(one for one in await _profiles(auth_client)
                    if one['profile_id'] == girl)
@@ -316,7 +316,7 @@ async def _message_at(profile_id: int, side: str, hours: int) -> None:
     """Реплика такой-то давности: окно проверяется ею."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_message (profile_id, sender_uid, sender_name,'
+            'INSERT INTO message (profile_id, sender_uid, sender_name,'
             ' direction, text, source, message_uid, created_at)'
             " VALUES (%s, 'zz-win', 'Кто-то', %s, 'привет', 'scenario', %s,"
             '         NOW() - INTERVAL %s HOUR)',
@@ -339,7 +339,7 @@ async def _invite_at(profile_id: int, status: str, hours: int,
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_invite (site_id, profile_id, uid, name, body, status,'
+            'INSERT INTO invite (site_id, profile_id, uid, name, body, status,'
             ' error, sent_at, created_at)'
             " VALUES (%s, %s, %s, 'Кто-то', 'привет', %s, %s,"
             "         IF(%s = 'sent', NOW() - INTERVAL %s HOUR, NULL),"
@@ -353,7 +353,7 @@ async def _invite(profile_id: int, status: str, error: str = '') -> None:
     """Инвайт в нужном состоянии. ⚠ `uid` свой у каждого: ключ пула — пара."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_invite (site_id, profile_id, uid, name, body, status,'
+            'INSERT INTO invite (site_id, profile_id, uid, name, body, status,'
             ' error, sent_at) VALUES (%s, %s, %s, %s, %s, %s, %s,'
             "                         IF(%s = 'sent', NOW(), NULL))",
             (STAND_SITE, int(profile_id), f'zz-{uuid.uuid4().hex[:8]}', 'Кто-то',

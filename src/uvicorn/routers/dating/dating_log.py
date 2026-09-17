@@ -248,8 +248,8 @@ def _query(site_id: int, profile_id: int, kind: str, level: str, q: str) -> tupl
             f'       p.id AS profile_id, {_NAME} AS profile_name,'
             f'       {_PHOTO} AS profile_photo,'
             "       '' AS scenario_name, 0 AS step_no, 0 AS ms"
-            '  FROM dating_log l'
-            '  JOIN dating_profile p ON p.id = l.profile_id'
+            '  FROM log l'
+            '  JOIN profile p ON p.id = l.profile_id'
             f' WHERE {" AND ".join(where)}')
         params += args
 
@@ -287,8 +287,8 @@ def _query(site_id: int, profile_id: int, kind: str, level: str, q: str) -> tupl
             f'       r.profile_id, {_NAME} AS profile_name,'
             f'       {_PHOTO} AS profile_photo,'
             '       r.scenario_name, r.step_no, r.ms'
-            '  FROM dating_scenario_run r'
-            '  LEFT JOIN dating_profile p ON p.id = r.profile_id'
+            '  FROM scenario_run r'
+            '  LEFT JOIN profile p ON p.id = r.profile_id'
             f' WHERE {" AND ".join(where)}')
         params += args
 

@@ -139,7 +139,7 @@ async def _profile_save(profile_id: int, profile: dict) -> None:
     """Кладёт анкету. Не роняет вход: сессия уже открыта, и терять её незачем."""
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile SET profile = %s WHERE id = %s',
+            await db.execute('UPDATE profile SET profile = %s WHERE id = %s',
                              (json.dumps(profile, ensure_ascii=False), int(profile_id)))
             await db.connection.commit()
     except Exception as e:

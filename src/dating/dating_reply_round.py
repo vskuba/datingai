@@ -100,7 +100,7 @@ async def _sites() -> list[int]:
     """Сайты с включённой генерацией ответов."""
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT site_id FROM dating_site'
+            await db.execute('SELECT site_id FROM site'
                              ' WHERE is_gone = 0 AND reply_make_on = 1'
                              ' ORDER BY site_id')
             rows = await db.fetchall()

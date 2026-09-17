@@ -448,8 +448,8 @@ async def _profiles_ready() -> list[dict]:
             '       p.work_reason, p.role, p.profile, '
             '       p.password <> %s AS has_password, '
             '       COALESCE(s.url, %s) AS site_url '
-            '  FROM dating_profile p '
-            '  LEFT JOIN dating_site s ON s.site_id = p.site_id '
+            '  FROM profile p '
+            '  LEFT JOIN site s ON s.site_id = p.site_id '
             ' WHERE p.enabled = 1 ORDER BY p.id', ('', ''))
         rows = await db.fetchall()
 
@@ -844,7 +844,7 @@ async def _chat_sites() -> list[int]:
     """
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT DISTINCT site_id FROM dating_profile '
+            await db.execute('SELECT DISTINCT site_id FROM profile '
                              ' WHERE site_id > 0 ORDER BY site_id')
             rows = await db.fetchall()
     except Exception as e:
@@ -917,7 +917,7 @@ async def _error_write(profile_id: int, login: str, what: str, detail: str) -> N
 async def _profile_row(profile_id: int) -> dict | None:
     async with mysql_get_db_async() as db:
         await db.execute('SELECT id, login, site_id, storage_state, ws_url '
-                         '  FROM dating_profile WHERE id = %s', (int(profile_id),))
+                         '  FROM profile WHERE id = %s', (int(profile_id),))
         row = await db.fetchone()
 
     return dict(row) if row else None

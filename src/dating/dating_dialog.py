@@ -150,7 +150,7 @@ async def _contact_save(profile_id: int, uid: str, name: str) -> None:
     """Собеседник в списке карточки. Уже есть — обновляем имя, а не плодим строку."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_contact (profile_id, uid, name) VALUES (%s, %s, %s) '
+            'INSERT INTO contact (profile_id, uid, name) VALUES (%s, %s, %s) '
             'ON DUPLICATE KEY UPDATE name = VALUES(name)',
             (profile_id, str(uid)[:32], str(name)[:190]))
         await db.connection.commit()
@@ -205,7 +205,7 @@ async def _messages_save(profile_id: int, uid: str, who: str, flow: list) -> int
             for no, (side, text) in enumerate(flow):
                 answered = 1 if (side == 'out' or no < last_out) else 0
                 await db.execute(
-                    'INSERT INTO dating_message '
+                    'INSERT INTO message '
                     '(profile_id, sender_uid, sender_name, text, message_uid, direction, is_answered) '
                     'VALUES (%s, %s, %s, %s, %s, %s, %s) '
                     'ON DUPLICATE KEY UPDATE is_answered = VALUES(is_answered)',

@@ -100,7 +100,7 @@ async def _answer_on(site_id: int) -> bool:
 
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT chat_answer_on FROM dating_site'
+            await db.execute('SELECT chat_answer_on FROM site'
                              ' WHERE site_id = %s', (int(site_id),))
             row = await db.fetchone()
     except Exception as e:

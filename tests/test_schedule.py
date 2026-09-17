@@ -341,7 +341,7 @@ class TestSwitchingOffStopsTheWatch:
         profile_id = int(answer['result'])
 
         async with mysql_get_db_async() as db:
-            await db.execute("UPDATE dating_profile SET keep_online = 1,"
+            await db.execute("UPDATE profile SET keep_online = 1,"
                              "       schedule_on = 1, status = 'online'"
                              ' WHERE id = %s', (profile_id,))
             await db.connection.commit()
@@ -362,7 +362,7 @@ class TestSwitchingOffStopsTheWatch:
             kept, DatingProfileScheduleOn(schedule_on=False), user=None)
 
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT keep_online FROM dating_profile WHERE id = %s',
+            await db.execute('SELECT keep_online FROM profile WHERE id = %s',
                              (kept,))
             row = await db.fetchone()
 
@@ -386,7 +386,7 @@ class TestSwitchingOffStopsTheWatch:
             kept, DatingProfileScheduleOn(schedule_on=True), user=None)
 
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT keep_online FROM dating_profile WHERE id = %s',
+            await db.execute('SELECT keep_online FROM profile WHERE id = %s',
                              (kept,))
             row = await db.fetchone()
 

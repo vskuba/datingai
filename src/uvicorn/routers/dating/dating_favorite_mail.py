@@ -44,7 +44,7 @@ router = APIRouter(prefix='/api/dating/favorite-mail', tags=['dating'])
 
 # Куда пишется исход отправки. ⚠ Имя таблицы уезжает в `dating_mail_send_one`, а
 # там оно сверяется с белым списком: в SQL оно не параметризуется.
-DATING_FAVORITE_MAIL_TABLE = 'dating_favorite_mail'
+DATING_FAVORITE_MAIL_TABLE = 'favorite_mail'
 
 # Сколько карточек отдаём странице. Тот же предел, что у пула писем.
 DATING_FAVORITE_MAIL_LIMIT = 300
@@ -104,11 +104,11 @@ async def dating_favorite_mail_list(site_id: int = 0, status_: str = 'draft',
            '                NULLIF(m.photo, %s), %s) AS photo,'
            ' m.body, m.status, m.error, m.answer, m.sent_at, m.created_at,'
            ' p.login AS profile_login, p.profile AS profile_card'
-           ' FROM dating_favorite_mail m'
-           ' LEFT JOIN dating_profile p ON p.id = m.profile_id'
-           ' LEFT JOIN dating_contact c'
+           ' FROM favorite_mail m'
+           ' LEFT JOIN profile p ON p.id = m.profile_id'
+           ' LEFT JOIN contact c'
            '   ON c.profile_id = m.profile_id AND c.uid = m.uid'
-           ' LEFT JOIN dating_companion comp'
+           ' LEFT JOIN companion comp'
            '   ON comp.site_id = m.site_id AND comp.uid = m.uid'
            ' WHERE m.site_id = %s')
     args = ['', '', '', '', '', '', '', '', int(site_id)]
@@ -194,33 +194,33 @@ async def dating_favorite_mail_threads(site_id: int = 0, profile_id: int = 0,
         '       COALESCE(NULLIF(comp.photo, %s), NULLIF(c.photo, %s), %s) AS photo,'
         '       p.login AS profile_login, p.profile AS profile_card,'
         '       talk.letters, talk.last_at, talk.last_side,'
-        '       EXISTS (SELECT 1 FROM dating_favorite_mail d'
+        '       EXISTS (SELECT 1 FROM favorite_mail d'
         '                WHERE d.profile_id = f.profile_id AND d.uid = f.uid'
         "                  AND d.status = 'draft') AS in_pool"
-        '  FROM dating_favorite f'
-        '  JOIN dating_profile p ON p.id = f.profile_id'
+        '  FROM favorite f'
+        '  JOIN profile p ON p.id = f.profile_id'
         '  JOIN ('
         '     SELECT profile_id, uid, COUNT(*) AS letters, MAX(at) AS last_at,'
         '            SUBSTRING_INDEX(MAX(CONCAT(at, %s, side)), %s, -1) AS last_side'
         '       FROM ('
         "          SELECT profile_id, uid, date_post AS at, 'him' AS side"
-        '            FROM dating_mail_in'
+        '            FROM mail_in'
         '          UNION ALL'
         "          SELECT profile_id, uid, sent_at AS at, 'her' AS side"
-        "            FROM dating_mail_reply WHERE status = 'sent'"
+        "            FROM mail_reply WHERE status = 'sent'"
         '          UNION ALL'
         "          SELECT profile_id, uid, sent_at AS at, 'her' AS side"
-        "            FROM dating_mailing WHERE status = 'sent'"
+        "            FROM mailing WHERE status = 'sent'"
         '          UNION ALL'
         "          SELECT profile_id, uid, sent_at AS at, 'her' AS side"
-        "            FROM dating_favorite_mail WHERE status = 'sent'"
+        "            FROM favorite_mail WHERE status = 'sent'"
         '       ) AS all_mail'
         '      WHERE at IS NOT NULL'
         '      GROUP BY profile_id, uid) AS talk'
         '    ON talk.profile_id = f.profile_id AND talk.uid = f.uid'
-        '  LEFT JOIN dating_contact c'
+        '  LEFT JOIN contact c'
         '    ON c.profile_id = f.profile_id AND c.uid = f.uid'
-        '  LEFT JOIN dating_companion comp'
+        '  LEFT JOIN companion comp'
         '    ON comp.site_id = f.site_id AND comp.uid = f.uid'
         ' WHERE f.site_id = %s AND (%s = 0 OR f.profile_id = %s)'
         # ⚠ Тем же набором состояний, что отсекает их у «Входящих»: разойдись
@@ -314,7 +314,7 @@ async def dating_favorite_mail_edit(mail_id: int, payload: DatingFavoriteMailEdi
                             detail='письмо уже ушло — его текст не меняется')
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_favorite_mail SET body = %s WHERE id = %s',
+        await db.execute('UPDATE favorite_mail SET body = %s WHERE id = %s',
                          (payload.body, int(mail_id)))
         await db.connection.commit()
 
@@ -380,7 +380,7 @@ async def dating_favorite_mail_clear(site_id: int = 0,
                             detail='не назван сайт — очищать нечего')
 
     async with mysql_get_db_async() as db:
-        await db.execute("DELETE FROM dating_favorite_mail"
+        await db.execute("DELETE FROM favorite_mail"
                          " WHERE site_id = %s AND status = 'draft'", (int(site_id),))
         dropped = int(db.rowcount or 0)
         await db.connection.commit()
@@ -406,7 +406,7 @@ async def dating_favorite_mail_drop(mail_id: int,
                             detail='письмо уже ушло — из журнала оно не убирается')
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_favorite_mail WHERE id = %s',
+        await db.execute('DELETE FROM favorite_mail WHERE id = %s',
                          (int(mail_id),))
         await db.connection.commit()
 
@@ -423,7 +423,7 @@ async def _send_on(site_id: int) -> bool:
     """
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT favorite_mail_send_on FROM dating_site'
+            await db.execute('SELECT favorite_mail_send_on FROM site'
                              ' WHERE site_id = %s', (int(site_id),))
             row = await db.fetchone()
     except Exception as e:
@@ -444,7 +444,7 @@ async def _sender(profile_id: int) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, site_id, login, password, password_source, enabled'
-            ' FROM dating_profile WHERE id = %s', (int(profile_id),))
+            ' FROM profile WHERE id = %s', (int(profile_id),))
         row = await db.fetchone()
 
     if not row:
@@ -465,8 +465,8 @@ async def _row(mail_id: int) -> dict:
             'SELECT m.id, m.site_id, m.profile_id, m.uid, m.name, m.photo,'
             ' m.body, m.status, m.error, m.sent_at, m.created_at,'
             ' p.login AS profile_login, p.profile AS profile_card'
-            ' FROM dating_favorite_mail m'
-            ' LEFT JOIN dating_profile p ON p.id = m.profile_id'
+            ' FROM favorite_mail m'
+            ' LEFT JOIN profile p ON p.id = m.profile_id'
             ' WHERE m.id = %s', (int(mail_id),))
         row = await db.fetchone()
 

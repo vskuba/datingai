@@ -267,8 +267,8 @@ async def _nothing_to_send(site_id: int) -> str:
             await db.execute(
                 "SELECT SUM(p.status = 'online' AND p.enabled = 1) AS от_живых,"
                 "       SUM(i.error <> '') AS с_ошибкой, COUNT(*) AS всего"
-                '  FROM dating_invite i'
-                '  JOIN dating_profile p ON p.id = i.profile_id'
+                '  FROM invite i'
+                '  JOIN profile p ON p.id = i.profile_id'
                 " WHERE i.site_id = %s AND i.status = 'draft'", (int(site_id),))
             row = dict((await db.fetchone()) or {})
     except Exception as e:
@@ -294,7 +294,7 @@ async def _sites() -> list[dict]:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'SELECT site_id, invite_schedule FROM dating_site'
+                'SELECT site_id, invite_schedule FROM site'
                 ' WHERE is_gone = 0 AND invite_send_on = 1 ORDER BY site_id')
             rows = await db.fetchall()
     except Exception as e:
@@ -345,9 +345,9 @@ async def _next(site_id: int) -> dict:
             # очереди только тех, кому её однажды открывали.
             await db.execute(
                 'SELECT i.id, i.site_id, i.profile_id, i.uid, i.name, i.body'
-                '  FROM dating_invite i'
-                '  JOIN dating_profile p ON p.id = i.profile_id'
-                '  LEFT JOIN dating_companion c'
+                '  FROM invite i'
+                '  JOIN profile p ON p.id = i.profile_id'
+                '  LEFT JOIN companion c'
                 '         ON c.site_id = i.site_id AND c.uid = i.uid'
                 " WHERE i.site_id = %s AND i.status = 'draft' AND i.error = %s"
                 "   AND p.enabled = 1 AND p.status = 'online'"
@@ -387,7 +387,7 @@ async def _today(site_id: int, offset_hours: int = 0) -> int:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'SELECT COUNT(*) AS n FROM dating_invite'
+                'SELECT COUNT(*) AS n FROM invite'
                 " WHERE site_id = %s AND status = 'sent'"
                 '   AND DATE(sent_at + INTERVAL %s HOUR)'
                 '     = DATE(NOW() + INTERVAL %s HOUR)',

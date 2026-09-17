@@ -50,12 +50,12 @@ async def probe(monkeypatch):
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_profile (site_id, login, password, password_source,'
+            'INSERT INTO profile (site_id, login, password, password_source,'
             ' role, schedule, schedule_on, enabled, status)'
             " VALUES (343, %s, 'x', 'own', 'lady', %s, 1, 1, 'offline')",
             (login, SHIFT))
         await db.connection.commit()
-        await db.execute('SELECT id FROM dating_profile WHERE login = %s', (login,))
+        await db.execute('SELECT id FROM profile WHERE login = %s', (login,))
         profile_id = int((await db.fetchone())['id'])
 
     original = rnd._rows
@@ -68,7 +68,7 @@ async def probe(monkeypatch):
     yield profile_id
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_profile WHERE id = %s', (profile_id,))
+        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
         await db.connection.commit()
 
 
@@ -89,7 +89,7 @@ def door(monkeypatch):
     async def _enter(profile_id):
         seen['entered'].append(int(profile_id))
         async with mysql_get_db_async() as db:
-            await db.execute("UPDATE dating_profile SET status = 'online',"
+            await db.execute("UPDATE profile SET status = 'online',"
                              " storage_state = '{}', ws_url = 'wss://x?t=1'"
                              ' WHERE id = %s', (int(profile_id),))
             await db.connection.commit()
@@ -159,7 +159,7 @@ class TestRoundFollowsTheSchedule:
         await dating_schedule_round_run(0)
 
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT ws_url, status, storage_state FROM dating_profile'
+            await db.execute('SELECT ws_url, status, storage_state FROM profile'
                              ' WHERE id = %s', (probe,))
             row = await db.fetchone()
 
@@ -180,7 +180,7 @@ class TestRoundDoesNotTouchManualLogins:
         """
         clock['hour'] = 9
         async with mysql_get_db_async() as db:
-            await db.execute("UPDATE dating_profile SET schedule_on = 0,"
+            await db.execute("UPDATE profile SET schedule_on = 0,"
                              " status = 'online', storage_state = '{}',"
                              " ws_url = 'wss://x?t=1' WHERE id = %s", (probe,))
             await db.connection.commit()
@@ -191,7 +191,7 @@ class TestRoundDoesNotTouchManualLogins:
         assert door['left'] == [], 'ручной вход сброшен кругом'
 
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT status, ws_url FROM dating_profile WHERE id = %s',
+            await db.execute('SELECT status, ws_url FROM profile WHERE id = %s',
                              (probe,))
             row = await db.fetchone()
 
@@ -204,7 +204,7 @@ class TestRoundDoesNotTouchManualLogins:
         await dating_schedule_round_run(0)
 
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile SET enabled = 0 WHERE id = %s',
+            await db.execute('UPDATE profile SET enabled = 0 WHERE id = %s',
                              (probe,))
             await db.connection.commit()
 
@@ -219,7 +219,7 @@ class TestDropIsImmediate:
 
     async def test_drop_clears_the_socket(self, probe, door):
         async with mysql_get_db_async() as db:
-            await db.execute("UPDATE dating_profile SET status = 'online',"
+            await db.execute("UPDATE profile SET status = 'online',"
                              " storage_state = '{}', ws_url = 'wss://x?t=1'"
                              ' WHERE id = %s', (probe,))
             await db.connection.commit()
@@ -227,7 +227,7 @@ class TestDropIsImmediate:
         assert await dating_schedule_round_drop(probe) is True
 
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT status, ws_url FROM dating_profile WHERE id = %s',
+            await db.execute('SELECT status, ws_url FROM profile WHERE id = %s',
                              (probe,))
             row = await db.fetchone()
 
@@ -275,7 +275,7 @@ class TestSessionIsReleasedToo:
         clock['hour'] = 12          # вне смены 07:00–11:00
 
         async with mysql_get_db_async() as db:
-            await db.execute("UPDATE dating_profile SET status = 'error', ws_url = '',"
+            await db.execute("UPDATE profile SET status = 'error', ws_url = '',"
                              " storage_state = '{}' WHERE id = %s", (probe,))
             await db.connection.commit()
 
@@ -284,7 +284,7 @@ class TestSessionIsReleasedToo:
         assert result['left'] == 1, 'выход не сработал при живой сессии'
 
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT status, storage_state FROM dating_profile'
+            await db.execute('SELECT status, storage_state FROM profile'
                              ' WHERE id = %s', (probe,))
             row = await db.fetchone()
 
@@ -296,7 +296,7 @@ class TestSessionIsReleasedToo:
         clock['hour'] = 9           # внутри смены — и всё равно отпускаем
 
         async with mysql_get_db_async() as db:
-            await db.execute("UPDATE dating_profile SET enabled = 0, status = 'error',"
+            await db.execute("UPDATE profile SET enabled = 0, status = 'error',"
                              " ws_url = '', storage_state = '{}' WHERE id = %s", (probe,))
             await db.connection.commit()
 
@@ -311,7 +311,7 @@ class TestSessionIsReleasedToo:
         clock['hour'] = 12
 
         async with mysql_get_db_async() as db:
-            await db.execute("UPDATE dating_profile SET status = 'offline', ws_url = '',"
+            await db.execute("UPDATE profile SET status = 'offline', ws_url = '',"
                              ' storage_state = NULL WHERE id = %s', (probe,))
             await db.connection.commit()
 

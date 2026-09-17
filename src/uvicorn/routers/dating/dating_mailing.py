@@ -100,9 +100,9 @@ async def dating_mailing_list(site_id: int = 0, status_: str = 'draft',
            ' m.body, m.status, m.error, m.sent_at, m.created_at,'
            ' p.login AS profile_login, p.profile AS profile_card,'
            ' t.name AS mail_name'
-           ' FROM dating_mailing m'
-           ' LEFT JOIN dating_profile p ON p.id = m.profile_id'
-           ' LEFT JOIN dating_mail t ON t.id = m.mail_id'
+           ' FROM mailing m'
+           ' LEFT JOIN profile p ON p.id = m.profile_id'
+           ' LEFT JOIN mail t ON t.id = m.mail_id'
            ' WHERE m.site_id = %s')
     args = [int(site_id)]
 
@@ -134,7 +134,7 @@ async def dating_mailing_list(site_id: int = 0, status_: str = 'draft',
     return {'result': [_answer(row) for row in rows],
             # ⚠ Почему полный пул не уходит — вместе со списком: «50 из 50» без
             # объяснения читается как поломка (`dating_send_round.py`).
-            'send_why': await dating_send_why(int(site_id), 'dating_mailing',
+            'send_why': await dating_send_why(int(site_id), 'mailing',
                                               await setting_timezone_hours())}
 
 
@@ -270,7 +270,7 @@ async def dating_mailing_edit(mailing_id: int, payload: DatingMailingEdit,
                             detail='письмо уже ушло — его текст не меняется')
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_mailing SET body = %s WHERE id = %s',
+        await db.execute('UPDATE mailing SET body = %s WHERE id = %s',
                          (payload.body, int(mailing_id)))
         await db.connection.commit()
 
@@ -354,7 +354,7 @@ async def dating_mailing_clear(site_id: int = 0,
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            "DELETE FROM dating_mailing WHERE site_id = %s AND status = 'draft'",
+            "DELETE FROM mailing WHERE site_id = %s AND status = 'draft'",
             (int(site_id),))
         dropped = int(db.rowcount or 0)
         await db.connection.commit()
@@ -382,7 +382,7 @@ async def dating_mailing_drop(mailing_id: int,
                             detail='письмо уже ушло — из журнала оно не убирается')
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_mailing WHERE id = %s', (int(mailing_id),))
+        await db.execute('DELETE FROM mailing WHERE id = %s', (int(mailing_id),))
         await db.connection.commit()
 
     return {'result': {'id': int(mailing_id)}}
@@ -405,7 +405,7 @@ async def _sender(profile_id: int) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, site_id, login, password, password_source, enabled'
-            ' FROM dating_profile WHERE id = %s', (int(profile_id),))
+            ' FROM profile WHERE id = %s', (int(profile_id),))
         row = await db.fetchone()
 
     if not row:
@@ -429,9 +429,9 @@ async def _row(mailing_id: int) -> dict:
             ' m.body, m.status, m.error, m.sent_at, m.created_at,'
             ' p.login AS profile_login, p.profile AS profile_card,'
             ' t.name AS mail_name'
-            ' FROM dating_mailing m'
-            ' LEFT JOIN dating_profile p ON p.id = m.profile_id'
-            ' LEFT JOIN dating_mail t ON t.id = m.mail_id'
+            ' FROM mailing m'
+            ' LEFT JOIN profile p ON p.id = m.profile_id'
+            ' LEFT JOIN mail t ON t.id = m.mail_id'
             ' WHERE m.id = %s', (int(mailing_id),))
         row = await db.fetchone()
 

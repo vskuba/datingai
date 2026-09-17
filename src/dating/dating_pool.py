@@ -53,7 +53,7 @@ from mysql_.mysql_ import mysql_get_db_async
 # означал бы склейку строки из того, что пришло снаружи.
 #
 # ⚠ `dating_mail_reply` здесь нет намеренно — см. заголовок модуля.
-DATING_POOL_TABLES = ('dating_mailing', 'dating_favorite_mail', 'dating_invite')
+DATING_POOL_TABLES = ('mailing', 'favorite_mail', 'invite')
 
 
 async def dating_pool_drop(profile_id: int, why: str = '') -> dict:
@@ -134,7 +134,7 @@ async def dating_pool_sweep_away(site_id: int) -> int:
 
     try:
         async with mysql_get_db_async() as db:
-            await db.execute("SELECT id, uid FROM dating_invite"
+            await db.execute("SELECT id, uid FROM invite"
                              " WHERE site_id = %s AND status = 'draft'", (site_id,))
             rows = [dict(one) for one in (await db.fetchall() or [])]
 
@@ -144,7 +144,7 @@ async def dating_pool_sweep_away(site_id: int) -> int:
                 return 0
 
             marks = ', '.join(['%s'] * len(gone))
-            await db.execute(f'DELETE FROM dating_invite WHERE id IN ({marks})', gone)
+            await db.execute(f'DELETE FROM invite WHERE id IN ({marks})', gone)
             await db.connection.commit()
     except Exception as e:
         logger_info(f'[dating] черновики ушедших собеседников не убрались: {e}')
@@ -193,7 +193,7 @@ async def dating_pool_sweep(site_id: int) -> int:
                 # а теперь нет» — что бы её ни увело.
                 await db.execute(
                     f"DELETE p FROM {table} p"
-                    '  JOIN dating_profile g ON g.id = p.profile_id'
+                    '  JOIN profile g ON g.id = p.profile_id'
                     "  WHERE p.site_id = %s AND p.status = 'draft'"
                     "    AND g.status <> 'online'", (site_id,))
                 total += int(db.rowcount or 0)

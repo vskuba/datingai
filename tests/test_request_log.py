@@ -353,14 +353,14 @@ class TestSuiteWritesNothing:
         from mysql_.mysql_ import mysql_get_db_async
 
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT COUNT(*) AS n FROM dating_request')
+            await db.execute('SELECT COUNT(*) AS n FROM request')
             before = int((await db.fetchone())['n'])
 
         await dating_request_write(door=DATING_REQUEST_LOGIN, profile_id=1,
                                    site_id=SITE, path='/auth/login', status=400)
 
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT COUNT(*) AS n FROM dating_request')
+            await db.execute('SELECT COUNT(*) AS n FROM request')
             after = int((await db.fetchone())['n'])
 
         assert after == before, 'сюита написала в журнал внешних запросов'

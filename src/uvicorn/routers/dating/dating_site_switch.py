@@ -179,7 +179,7 @@ async def dating_site_mailing_schedule_save(
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_site (site_id, mailing_schedule) VALUES (%s, %s)'
+            'INSERT INTO site (site_id, mailing_schedule) VALUES (%s, %s)'
             ' ON DUPLICATE KEY UPDATE mailing_schedule = VALUES(mailing_schedule)',
             (int(site_id), dating_schedule_dump(rows)))
         await db.connection.commit()
@@ -202,7 +202,7 @@ async def dating_site_mailing_schedule_on(
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_site (site_id, mailing_schedule_on) VALUES (%s, %s)'
+            'INSERT INTO site (site_id, mailing_schedule_on) VALUES (%s, %s)'
             ' ON DUPLICATE KEY UPDATE mailing_schedule_on = VALUES(mailing_schedule_on)',
             (int(site_id), 1 if payload.mailing_schedule_on else 0))
         await db.connection.commit()
@@ -228,7 +228,7 @@ async def dating_site_mailing_send_on(site_id: int, payload: DatingSiteMailingSe
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_site (site_id, mailing_send_on) VALUES (%s, %s)'
+            'INSERT INTO site (site_id, mailing_send_on) VALUES (%s, %s)'
             ' ON DUPLICATE KEY UPDATE mailing_send_on = VALUES(mailing_send_on)',
             (int(site_id), 1 if payload.mailing_send_on else 0))
         await db.connection.commit()
@@ -281,7 +281,7 @@ async def dating_site_invite_schedule_save(
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_site (site_id, invite_schedule) VALUES (%s, %s)'
+            'INSERT INTO site (site_id, invite_schedule) VALUES (%s, %s)'
             ' ON DUPLICATE KEY UPDATE invite_schedule = VALUES(invite_schedule)',
             (int(site_id), dating_schedule_dump(rows)))
         await db.connection.commit()
@@ -303,7 +303,7 @@ async def dating_site_invite_schedule_on(
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_site (site_id, invite_schedule_on) VALUES (%s, %s)'
+            'INSERT INTO site (site_id, invite_schedule_on) VALUES (%s, %s)'
             ' ON DUPLICATE KEY UPDATE invite_schedule_on = VALUES(invite_schedule_on)',
             (int(site_id), 1 if payload.invite_schedule_on else 0))
         await db.connection.commit()
@@ -330,7 +330,7 @@ async def dating_site_invite_send_on(site_id: int, payload: DatingSiteInviteSend
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_site (site_id, invite_send_on) VALUES (%s, %s)'
+            'INSERT INTO site (site_id, invite_send_on) VALUES (%s, %s)'
             ' ON DUPLICATE KEY UPDATE invite_send_on = VALUES(invite_send_on)',
             (int(site_id), 1 if payload.invite_send_on else 0))
         await db.connection.commit()
@@ -346,7 +346,7 @@ async def dating_site_chat_answer_get(site_id: int,
                                       user: AuthUser = Depends(auth_required)):
     """Отвечает ли агент в чате этого сайта. Нет строки — выключено, а не 404."""
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT chat_answer_on FROM dating_site WHERE site_id = %s',
+        await db.execute('SELECT chat_answer_on FROM site WHERE site_id = %s',
                          (int(site_id),))
         row = await db.fetchone()
 
@@ -373,7 +373,7 @@ async def dating_site_chat_answer_on(site_id: int, payload: DatingSiteChatAnswer
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_site (site_id, chat_answer_on) VALUES (%s, %s)'
+            'INSERT INTO site (site_id, chat_answer_on) VALUES (%s, %s)'
             ' ON DUPLICATE KEY UPDATE chat_answer_on = VALUES(chat_answer_on)',
             (int(site_id), 1 if payload.chat_answer_on else 0))
         await db.connection.commit()
@@ -445,7 +445,7 @@ async def dating_site_favorite_mail_get(site_id: int,
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT favorite_mail_make_on, favorite_mail_send_on FROM dating_site'
+            'SELECT favorite_mail_make_on, favorite_mail_send_on FROM site'
             ' WHERE site_id = %s', (int(site_id),))
         row = await db.fetchone()
 
@@ -479,7 +479,7 @@ async def dating_site_favorite_mail_make_on(
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_site (site_id, favorite_mail_make_on)'
+            'INSERT INTO site (site_id, favorite_mail_make_on)'
             ' VALUES (%s, %s) ON DUPLICATE KEY UPDATE'
             ' favorite_mail_make_on = VALUES(favorite_mail_make_on)',
             (int(site_id), 1 if payload.favorite_mail_make_on else 0))
@@ -504,7 +504,7 @@ async def dating_site_favorite_mail_send_on(
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_site (site_id, favorite_mail_send_on)'
+            'INSERT INTO site (site_id, favorite_mail_send_on)'
             ' VALUES (%s, %s) ON DUPLICATE KEY UPDATE'
             ' favorite_mail_send_on = VALUES(favorite_mail_send_on)',
             (int(site_id), 1 if payload.favorite_mail_send_on else 0))
@@ -549,7 +549,7 @@ async def dating_site_template_schedule_save(
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_site (site_id, template_schedule) VALUES (%s, %s)'
+            'INSERT INTO site (site_id, template_schedule) VALUES (%s, %s)'
             ' ON DUPLICATE KEY UPDATE template_schedule = VALUES(template_schedule)',
             (int(site_id), dating_schedule_dump(rows)))
         await db.connection.commit()
@@ -571,7 +571,7 @@ async def dating_site_template_schedule_on(
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_site (site_id, template_schedule_on) VALUES (%s, %s)'
+            'INSERT INTO site (site_id, template_schedule_on) VALUES (%s, %s)'
             ' ON DUPLICATE KEY UPDATE'
             ' template_schedule_on = VALUES(template_schedule_on)',
             (int(site_id), 1 if payload.template_schedule_on else 0))
@@ -593,7 +593,7 @@ async def dating_site_reply_get(site_id: int,
     ручки перестало бы говорить, что в ней лежит.
     """
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT reply_send_on, reply_make_on FROM dating_site'
+        await db.execute('SELECT reply_send_on, reply_make_on FROM site'
                          ' WHERE site_id = %s', (int(site_id),))
         row = await db.fetchone()
 
@@ -617,7 +617,7 @@ async def dating_site_mail_in_get(site_id: int,
     ответ ради экономии запроса, имя ручки перестало бы говорить, что в ней лежит.
     """
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT mail_check_on FROM dating_site'
+        await db.execute('SELECT mail_check_on FROM site'
                          ' WHERE site_id = %s', (int(site_id),))
         row = await db.fetchone()
 
@@ -648,7 +648,7 @@ async def dating_site_mail_check_on(site_id: int, payload: DatingSiteMailCheckOn
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_site (site_id, mail_check_on) VALUES (%s, %s)'
+            'INSERT INTO site (site_id, mail_check_on) VALUES (%s, %s)'
             ' ON DUPLICATE KEY UPDATE mail_check_on = VALUES(mail_check_on)',
             (int(site_id), 1 if payload.mail_check_on else 0))
         await db.connection.commit()
@@ -676,7 +676,7 @@ async def dating_site_reply_make_on(site_id: int, payload: DatingSiteReplyMakeOn
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_site (site_id, reply_make_on) VALUES (%s, %s)'
+            'INSERT INTO site (site_id, reply_make_on) VALUES (%s, %s)'
             ' ON DUPLICATE KEY UPDATE reply_make_on = VALUES(reply_make_on)',
             (int(site_id), 1 if payload.reply_make_on else 0))
         await db.connection.commit()
@@ -702,7 +702,7 @@ async def dating_site_reply_send_on(site_id: int, payload: DatingSiteReplySendOn
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_site (site_id, reply_send_on) VALUES (%s, %s)'
+            'INSERT INTO site (site_id, reply_send_on) VALUES (%s, %s)'
             ' ON DUPLICATE KEY UPDATE reply_send_on = VALUES(reply_send_on)',
             (int(site_id), 1 if payload.reply_send_on else 0))
         await db.connection.commit()
@@ -720,7 +720,7 @@ async def dating_site_template_schedule(site_id: int) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT template_schedule, template_schedule_on'
-            ' FROM dating_site WHERE site_id = %s', (int(site_id),))
+            ' FROM site WHERE site_id = %s', (int(site_id),))
         row = await db.fetchone()
 
     per_day = await dating_site_seconds(site_id, 'template_per_day')
@@ -755,7 +755,7 @@ async def dating_site_mailing_schedule(site_id: int) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT mailing_schedule, mailing_schedule_on, mailing_send_on'
-            ' FROM dating_site WHERE site_id = %s', (int(site_id),))
+            ' FROM site WHERE site_id = %s', (int(site_id),))
         row = await db.fetchone()
 
     if not row:
@@ -787,7 +787,7 @@ async def dating_site_invite_schedule(site_id: int) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT invite_schedule, invite_schedule_on, invite_send_on'
-            ' FROM dating_site WHERE site_id = %s', (int(site_id),))
+            ' FROM site WHERE site_id = %s', (int(site_id),))
         row = await db.fetchone()
 
     pool_max = await dating_site_seconds(site_id, 'invite_pool_max')

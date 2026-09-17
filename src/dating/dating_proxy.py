@@ -350,7 +350,7 @@ async def dating_proxy_pool(site_id: int = 0) -> list[dict]:
     direct = (await http_proxy_direct_ip()).get('ip') or ''
 
     async with mysql_get_db_async() as db:
-        await db.execute("SELECT proxy_ip, COUNT(*) AS n FROM dating_profile "
+        await db.execute("SELECT proxy_ip, COUNT(*) AS n FROM profile "
                          " WHERE proxy_ip <> '' GROUP BY proxy_ip")
         busy = {str(row['proxy_ip']): int(row['n']) for row in await db.fetchall() or []}
 
@@ -423,7 +423,7 @@ async def dating_proxy_release(profile_id: int) -> None:
 async def dating_proxy_forget(profile_id: int) -> None:
     """Забывает выход анкеты: чистит кэш."""
     async with mysql_get_db_async() as db:
-        await db.execute("UPDATE dating_profile SET proxy_id = 0, proxy_url = '', "
+        await db.execute("UPDATE profile SET proxy_id = 0, proxy_url = '', "
                          "       proxy_ip = '', proxy_at = NULL WHERE id = %s",
                          (int(profile_id),))
         await db.connection.commit()
@@ -483,7 +483,7 @@ async def dating_proxy_forget_site(site_id: int) -> int:
     выглядит угоном.
     """
     async with mysql_get_db_async() as db:
-        await db.execute("UPDATE dating_profile SET proxy_id = 0, proxy_url = '', "
+        await db.execute("UPDATE profile SET proxy_id = 0, proxy_url = '', "
                          "       proxy_ip = '', proxy_at = NULL "
                          " WHERE site_id = %s AND (proxy_id <> 0 OR proxy_url <> '')",
                          (int(site_id),))
@@ -566,7 +566,7 @@ async def _site_of(profile: dict) -> int:
 
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT site_id FROM dating_profile WHERE id = %s',
+            await db.execute('SELECT site_id FROM profile WHERE id = %s',
                              (profile_id,))
             row = await db.fetchone()
     except Exception as e:
@@ -596,16 +596,16 @@ async def _fits(db, row: dict, seats: int, profile_id: int) -> bool:
     if not ip:
         return False
 
-    await db.execute('SELECT proxy_at FROM dating_profile WHERE id = %s', (int(profile_id),))
+    await db.execute('SELECT proxy_at FROM profile WHERE id = %s', (int(profile_id),))
     mine = (await db.fetchone() or {}).get('proxy_at')
 
     if mine is None:
         # Времени нет — значит выход достался не через нас (правка руками в базе).
         # Считаем анкету младшей: это осторожная сторона, она переедет.
-        await db.execute("SELECT COUNT(*) AS n FROM dating_profile "
+        await db.execute("SELECT COUNT(*) AS n FROM profile "
                          " WHERE proxy_ip = %s AND id <> %s", (ip, int(profile_id)))
     else:
-        await db.execute("SELECT COUNT(*) AS n FROM dating_profile "
+        await db.execute("SELECT COUNT(*) AS n FROM profile "
                          " WHERE proxy_ip = %s AND id <> %s "
                          "   AND proxy_at IS NOT NULL AND proxy_at <= %s",
                          (ip, int(profile_id), mine))
@@ -625,7 +625,7 @@ async def _pick(db, rows: list, seats: int, profile_id: int) -> dict:
     Из годных берём тот, за чьим адресом сидит меньше всех: анкеты расходятся по
     адресам ровным слоем, а не набиваются в первый попавшийся до предела.
     """
-    await db.execute('SELECT proxy_ip, COUNT(*) AS n FROM dating_profile '
+    await db.execute('SELECT proxy_ip, COUNT(*) AS n FROM profile '
                      " WHERE proxy_ip <> '' AND id <> %s GROUP BY proxy_ip",
                      (int(profile_id),))
     busy = {str(row['proxy_ip']): int(row['n']) for row in await db.fetchall() or []}
@@ -670,7 +670,7 @@ def _stale(profile: dict) -> bool:
 
 async def _remember(db, profile_id: int, got: dict) -> None:
     """Кладёт выход в кэш анкеты."""
-    await db.execute('UPDATE dating_profile SET proxy_id = %s, proxy_url = %s, '
+    await db.execute('UPDATE profile SET proxy_id = %s, proxy_url = %s, '
                      '       proxy_ip = %s, proxy_at = UTC_TIMESTAMP() WHERE id = %s',
                      (int(got.get('id') or 0), str(got.get('url') or ''),
                       str(got.get('check_ip') or ''), int(profile_id)))

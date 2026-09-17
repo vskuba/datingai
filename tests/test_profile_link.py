@@ -42,7 +42,7 @@ async def girl(auth_client):
 
     # Номер кладёт импорт с сайта; здесь пишем его сами — ради него всё и затеяно.
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_profile SET profile = %s WHERE id = %s',
+        await db.execute('UPDATE profile SET profile = %s WHERE id = %s',
                          ('{"name": "Diana", "site_uid": "%s"}' % uid, profile_id))
         await db.connection.commit()
 

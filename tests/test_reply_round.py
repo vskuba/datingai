@@ -83,10 +83,10 @@ async def site(auth_client):
     before = (await auth_client.get(f'/api/dating/site/{SITE}/reply')).json()['result']
 
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT is_gone FROM dating_site WHERE site_id = %s', (SITE,))
+        await db.execute('SELECT is_gone FROM site WHERE site_id = %s', (SITE,))
         row = await db.fetchone()
         gone = int((row or {}).get('is_gone') or 0)
-        await db.execute('UPDATE dating_site SET is_gone = 0 WHERE site_id = %s',
+        await db.execute('UPDATE site SET is_gone = 0 WHERE site_id = %s',
                          (SITE,))
         await db.connection.commit()
 
@@ -99,7 +99,7 @@ async def site(auth_client):
                           json={'reply_make_on': bool(before.get('reply_make_on'))})
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_site SET is_gone = %s WHERE site_id = %s',
+        await db.execute('UPDATE site SET is_gone = %s WHERE site_id = %s',
                          (gone, SITE))
         await db.connection.commit()
 
@@ -174,7 +174,7 @@ async def test_reply_round_skips_gone_site(site, made, clean_mark):
     from mysql_.mysql_ import mysql_get_db_async
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_site SET is_gone = 1 WHERE site_id = %s',
+        await db.execute('UPDATE site SET is_gone = 1 WHERE site_id = %s',
                          (SITE,))
         await db.connection.commit()
 

@@ -199,7 +199,7 @@ async def _proxy_ips(profile_ids: list) -> dict:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'SELECT id, proxy_ip FROM dating_profile WHERE id IN (%s)'
+                'SELECT id, proxy_ip FROM profile WHERE id IN (%s)'
                 % ', '.join(['%s'] * len(profile_ids)),
                 tuple(int(one) for one in profile_ids))
             rows = await db.fetchall()
@@ -218,7 +218,7 @@ async def _sites() -> list[int]:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'SELECT DISTINCT site_id FROM dating_profile'
+                'SELECT DISTINCT site_id FROM profile'
                 ' WHERE enabled = 1 AND schedule_on = 1 AND storage_state IS NOT NULL'
                 ' ORDER BY site_id')
             rows = await db.fetchall()
@@ -240,7 +240,7 @@ async def _on_shift(site_id: int, minutes: int) -> list[int]:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'SELECT id, schedule FROM dating_profile'
+                'SELECT id, schedule FROM profile'
                 ' WHERE site_id = %s AND enabled = 1 AND schedule_on = 1'
                 '   AND storage_state IS NOT NULL ORDER BY id',
                 (int(site_id),))

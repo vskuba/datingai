@@ -175,7 +175,7 @@ class TestLoopsDoNotAskTheNeighbour:
         code = inspect.getsource(
             __import__('src.dating.dating_chat_hold', fromlist=['x'])._profiles_ready)
 
-        assert 'LEFT JOIN dating_site' in code
+        assert 'LEFT JOIN site' in code
 
 
 class TestSettingIsRegistered:
@@ -231,7 +231,7 @@ class TestStoredValueIsValidJson:
         async with mysql_get_db_async() as db:
             await db.execute(
                 'SELECT site_id, JSON_UNQUOTE(JSON_EXTRACT(settings, %s)) AS raw'
-                '  FROM dating_site'
+                '  FROM site'
                 ' WHERE JSON_EXTRACT(settings, %s) IS NOT NULL', ('$.presence',) * 2)
             rows = await db.fetchall()
 

@@ -494,7 +494,7 @@ async def _said_already(profile_id: int, to_uid: str, text: str) -> bool:
     """
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT text, direction FROM dating_message '
+            await db.execute('SELECT text, direction FROM message '
                              ' WHERE profile_id = %s AND sender_uid = %s '
                              ' ORDER BY created_at DESC, id DESC LIMIT 1',
                              (profile_id, str(to_uid)[:32]))
@@ -524,7 +524,7 @@ async def _message_save(profile_id: int, to_uid: str, text: str, message_uid: st
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT IGNORE INTO dating_message '
+                'INSERT IGNORE INTO message '
                 '(profile_id, sender_uid, sender_name, text, message_uid, direction,'
                 ' is_answered, source) '
                 "VALUES (%s, %s, %s, %s, %s, 'out', 1, %s)",
@@ -540,7 +540,7 @@ async def _answered_mark(profile_id: int, to_uid: str) -> None:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'UPDATE dating_message SET is_answered = 1 '
+                'UPDATE message SET is_answered = 1 '
                 " WHERE profile_id = %s AND sender_uid = %s AND direction = 'in' AND is_answered = 0",
                 (profile_id, str(to_uid)[:32]))
             await db.connection.commit()

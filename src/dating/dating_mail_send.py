@@ -69,8 +69,8 @@ DATING_MAIL_SEND_ERROR_MAX = 500
 
 # Куда можно писать исход. ⚠ **Белый список, а не доверие вызывающему**: имя таблицы
 # в SQL не параметризуется, и строка «откуда придётся» была бы дырой.
-DATING_MAIL_SEND_TABLES = ('dating_mailing', 'dating_mail_reply',
-                           'dating_favorite_mail')
+DATING_MAIL_SEND_TABLES = ('mailing', 'mail_reply',
+                           'favorite_mail')
 
 
 class DatingMailSendError(RuntimeError):
@@ -79,7 +79,7 @@ class DatingMailSendError(RuntimeError):
 
 async def dating_mail_send_one(letter: dict, profile: dict, base: str,
                                password: str,
-                               table: str = 'dating_mailing') -> dict:
+                               table: str = 'mailing') -> dict:
     """Отправляет одно письмо из пула. Пишет исход в его строку.
 
     Args:
@@ -189,7 +189,7 @@ async def dating_mail_send_one(letter: dict, profile: dict, base: str,
 
 
 async def dating_mail_send_mark(letter: dict, sent: bool, error: str = '',
-                                table: str = 'dating_mailing',
+                                table: str = 'mailing',
                                 final: bool = False, answer: str = '') -> None:
     """Записывает исход отправки: в строку письма и в журнал анкеты.
 

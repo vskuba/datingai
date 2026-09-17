@@ -42,18 +42,18 @@ async def journal(auth_client):
         for girl in girls:
             for uid, name in (('zz-a', 'Adrian'), ('zz-b', 'Brian'), ('zz-c', 'Carl')):
                 await db.execute(
-                    'INSERT INTO dating_invite (site_id, profile_id, uid, name, body,'
+                    'INSERT INTO invite (site_id, profile_id, uid, name, body,'
                     " status, sent_at) VALUES (%s, %s, %s, %s, 'привет', 'sent', NOW())",
                     (STAND_SITE, girl, uid, name))
 
         # Неудачная: осталась в пуле с причиной.
         await db.execute(
-            'INSERT INTO dating_invite (site_id, profile_id, uid, name, body, status,'
+            'INSERT INTO invite (site_id, profile_id, uid, name, body, status,'
             " error) VALUES (%s, %s, 'zz-d', 'Dominic', 'привет', 'draft', 'сайт молчит')",
             (STAND_SITE, girls[0]))
         # И нетронутый черновик: его в журнале доставки быть не должно.
         await db.execute(
-            'INSERT INTO dating_invite (site_id, profile_id, uid, name, body, status)'
+            'INSERT INTO invite (site_id, profile_id, uid, name, body, status)'
             " VALUES (%s, %s, 'zz-e', 'Erik', 'привет', 'draft')",
             (STAND_SITE, girls[1]))
         await db.connection.commit()
@@ -62,8 +62,8 @@ async def journal(auth_client):
 
     async with mysql_get_db_async() as db:
         for girl in girls:
-            await db.execute('DELETE FROM dating_invite WHERE profile_id = %s', (girl,))
-            await db.execute('DELETE FROM dating_profile WHERE id = %s', (girl,))
+            await db.execute('DELETE FROM invite WHERE profile_id = %s', (girl,))
+            await db.execute('DELETE FROM profile WHERE id = %s', (girl,))
         await db.connection.commit()
 
 
@@ -213,7 +213,7 @@ class TestPoolIsNotBroken:
 async def _sent_at(profile_id: int, uid: str, when: str) -> None:
     """Двигает время отправки строки: порядок журнала проверяется им."""
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_invite SET sent_at = %s'
+        await db.execute('UPDATE invite SET sent_at = %s'
                          ' WHERE profile_id = %s AND uid = %s', (when, profile_id, uid))
         await db.connection.commit()
 

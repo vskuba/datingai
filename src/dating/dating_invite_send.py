@@ -199,7 +199,7 @@ async def dating_invite_send_mark(invite_id: int, sent: bool, error: str,
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'UPDATE dating_invite'
+            'UPDATE invite'
             ' SET status = %s, error = %s, answer = %s, sent_at = IF(%s, NOW(), NULL)'
             ' WHERE id = %s',
             ('sent' if sent else ('failed' if final else 'draft'),
@@ -260,7 +260,7 @@ async def _claim(invite_id: int) -> bool:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                "UPDATE dating_invite SET status = 'sent', sent_at = NOW()"
+                "UPDATE invite SET status = 'sent', sent_at = NOW()"
                 " WHERE id = %s AND status = 'draft'", (int(invite_id),))
             taken = int(db.rowcount or 0)
             await db.connection.commit()
@@ -276,7 +276,7 @@ async def _profile(profile_id: int) -> dict:
     """Анкета, от имени которой пишем. Пусто — её удалили, пока реплика лежала."""
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT * FROM dating_profile WHERE id = %s',
+            await db.execute('SELECT * FROM profile WHERE id = %s',
                              (int(profile_id),))
             row = await db.fetchone()
     except Exception as e:

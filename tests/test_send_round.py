@@ -65,13 +65,13 @@ async def site(auth_client, monkeypatch):
                           json={'schedule': ALWAYS})
 
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT is_gone FROM dating_site WHERE site_id = %s', (SITE,))
+        await db.execute('SELECT is_gone FROM site WHERE site_id = %s', (SITE,))
         row = await db.fetchone()
         gone = int((row or {}).get('is_gone') or 0)
         # ⚠ Метку «ушёл» снимаем: сайта с выдуманным номером у соседа нет, фоновая
         # сверка честно её ставит, а круг такие пропускает — писать некому.
         await db.execute(
-            'INSERT INTO dating_site (site_id, is_gone, mailing_send_on, reply_send_on)'
+            'INSERT INTO site (site_id, is_gone, mailing_send_on, reply_send_on)'
             ' VALUES (%s, 0, 1, 1) ON DUPLICATE KEY UPDATE is_gone = 0,'
             ' mailing_send_on = 1, reply_send_on = 1', (SITE,))
         await db.connection.commit()
@@ -81,7 +81,7 @@ async def site(auth_client, monkeypatch):
     await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
                           json={'schedule': before['schedule']})
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_site SET is_gone = %s, mailing_send_on = 0,'
+        await db.execute('UPDATE site SET is_gone = %s, mailing_send_on = 0,'
                          ' reply_send_on = 0 WHERE site_id = %s', (gone, SITE))
         await db.connection.commit()
 
@@ -107,7 +107,7 @@ def post(monkeypatch):
     """
     sent = []
 
-    async def fake(letter, profile, base, password, table='dating_mailing'):
+    async def fake(letter, profile, base, password, table='mailing'):
         sent.append({'id': int(letter['id']), 'table': table})
 
         from src.dating.dating_mail_send import dating_mail_send_mark
@@ -120,7 +120,7 @@ def post(monkeypatch):
     return sent
 
 
-async def _letter(profile_id: int, table: str = 'dating_mailing', **kw) -> int:
+async def _letter(profile_id: int, table: str = 'mailing', **kw) -> int:
     """Кладёт письмо в пул напрямую: набор требует адресатов в сети.
 
     ⚠ У ответа обязателен `mail_in_id` — внешний ключ на входящее письмо. Ответ
@@ -136,9 +136,9 @@ async def _letter(profile_id: int, table: str = 'dating_mailing', **kw) -> int:
         field, value = '', ''
         args = [SITE, profile_id, uid, error]
 
-        if table == 'dating_mail_reply':
+        if table == 'mail_reply':
             await db.execute(
-                'INSERT INTO dating_mail_in (site_id, profile_id, message_id, uid,'
+                'INSERT INTO mail_in (site_id, profile_id, message_id, uid,'
                 " name, body, date_post) VALUES (%s, %s, %s, %s, 'Тест', 'Письмо',"
                 ' NOW())',
                 (SITE, profile_id, int(uuid.uuid4().int % 1_000_000_000), uid))
@@ -173,7 +173,7 @@ class TestSwitchesRule:
 
         await _letter(profile)
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_site SET mailing_send_on = 0,'
+            await db.execute('UPDATE site SET mailing_send_on = 0,'
                              ' reply_send_on = 0 WHERE site_id = %s', (SITE,))
             await db.connection.commit()
 
@@ -189,9 +189,9 @@ class TestSwitchesRule:
         """
         from mysql_.mysql_ import mysql_get_db_async
 
-        await _letter(profile, 'dating_mail_reply')
+        await _letter(profile, 'mail_reply')
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_site SET reply_send_on = 0'
+            await db.execute('UPDATE site SET reply_send_on = 0'
                              ' WHERE site_id = %s', (SITE,))
             await db.connection.commit()
 
@@ -237,12 +237,12 @@ class TestRepliesGoFirst:
     """⚠ Ответы вперёд писем: их ждёт живой человек, написавший первым."""
 
     async def test_reply_wins_over_mailing(self, site, profile, post):
-        await _letter(profile, 'dating_mailing')
-        await _letter(profile, 'dating_mail_reply')
+        await _letter(profile, 'mailing')
+        await _letter(profile, 'mail_reply')
 
         await dating_send_round_run(0)
 
-        assert post and post[0]['table'] == 'dating_mail_reply'
+        assert post and post[0]['table'] == 'mail_reply'
 
 
 class TestFailedLetterIsLeftAlone:
@@ -265,7 +265,7 @@ class TestFailedLetterIsLeftAlone:
         from mysql_.mysql_ import mysql_get_db_async
         from src.dating.dating_mail_send import DatingMailSendError
 
-        async def broken(letter, profile, base, password, table='dating_mailing'):
+        async def broken(letter, profile, base, password, table='mailing'):
             raise DatingMailSendError('сайт просит подождать')
 
         monkeypatch.setattr(round_, 'dating_mail_send_one', broken)
@@ -274,7 +274,7 @@ class TestFailedLetterIsLeftAlone:
         assert (await dating_send_round_run(0))['failed'] == 1
 
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT status, error FROM dating_mailing WHERE id = %s',
+            await db.execute('SELECT status, error FROM mailing WHERE id = %s',
                              (letter_id,))
             row = await db.fetchone()
 
@@ -306,7 +306,7 @@ class TestDailyCap:
             async with mysql_get_db_async() as db:
                 for _ in range(10):
                     await db.execute(
-                        'INSERT INTO dating_mailing (site_id, profile_id, uid, name,'
+                        'INSERT INTO mailing (site_id, profile_id, uid, name,'
                         " body, status, sent_at) VALUES (%s, %s, 'cap', 'Тест',"
                         " 'ушло', 'sent', NOW())", (SITE, profile))
                 await db.connection.commit()
@@ -373,22 +373,22 @@ class TestWhyItStands:
 
     async def test_the_switch_off_says_so(self):
         """Выключатели стенда сняты, пока фикстура `site` их не подняла."""
-        said = await dating_send_why(SITE, 'dating_mailing', 0)
+        said = await dating_send_why(SITE, 'mailing', 0)
 
         assert said == 'отправка рассылки выключена'
 
     async def test_each_pool_names_itself(self):
         """⚠ Три пула — три выключателя, и путать их нельзя: человек пойдёт снимать
         не тот."""
-        assert 'ответов' in await dating_send_why(SITE, 'dating_mail_reply', 0)
-        assert 'избранным' in await dating_send_why(SITE, 'dating_favorite_mail', 0)
+        assert 'ответов' in await dating_send_why(SITE, 'mail_reply', 0)
+        assert 'избранным' in await dating_send_why(SITE, 'favorite_mail', 0)
 
     async def test_outside_the_shift_says_so(self, site, auth_client):
         await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
                               json={'schedule': [{'from': '00:00', 'to': '00:15'}]})
 
         # Полдень по местному — заведомо вне смены 00:00–00:15.
-        said = await dating_send_why(SITE, 'dating_mailing', 12 - _utc_hour())
+        said = await dating_send_why(SITE, 'mailing', 12 - _utc_hour())
 
         assert 'не смена' in said
 
@@ -400,19 +400,19 @@ class TestWhyItStands:
         monkeypatch.setattr(round_, '_max_day', _fixed(5))
         monkeypatch.setattr(round_, '_today', _fixed(5))
 
-        said = await dating_send_why(SITE, 'dating_mailing', 0)
+        said = await dating_send_why(SITE, 'mailing', 0)
 
         assert 'ушло 5 из 5' in said and 'общая' in said
 
     async def test_an_empty_pool_says_so(self, site):
-        assert await dating_send_why(SITE, 'dating_mailing', 0) \
+        assert await dating_send_why(SITE, 'mailing', 0) \
             == 'пул пуст: отправлять нечего'
 
     async def test_silence_when_there_is_a_letter(self, site, profile):
         """Есть что отправить — сказать нечего."""
         await _letter(profile)
 
-        assert await dating_send_why(SITE, 'dating_mailing', 0) == ''
+        assert await dating_send_why(SITE, 'mailing', 0) == ''
 
     async def test_an_unknown_pool_is_silent(self, site):
         """Чужое имя таблицы — не повод объяснять: в SQL оно и не поедет."""

@@ -168,8 +168,8 @@ async def dating_chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int =
         # бы пустой.
         await db.execute(
             'SELECT COUNT(*) AS n FROM ('
-            '  SELECT m.profile_id, m.sender_uid FROM dating_message m'
-            '    JOIN dating_profile p ON p.id = m.profile_id'
+            '  SELECT m.profile_id, m.sender_uid FROM message m'
+            '    JOIN profile p ON p.id = m.profile_id'
             '   WHERE p.site_id = %s AND (%s = 0 OR m.profile_id = %s)'
             '   GROUP BY m.profile_id, m.sender_uid'
             "  HAVING SUM(m.direction = 'in') > 0) AS d",
@@ -214,22 +214,22 @@ async def dating_chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int =
             '        AND last.answer_silent_at IS NULL) AS needs_answer'
             '  FROM (SELECT m.profile_id, m.sender_uid AS uid, COUNT(*) AS messages,'
             '               MAX(m.created_at) AS last_at'
-            '          FROM dating_message m'
-            '          JOIN dating_profile p2 ON p2.id = m.profile_id'
+            '          FROM message m'
+            '          JOIN profile p2 ON p2.id = m.profile_id'
             '         WHERE p2.site_id = %s AND (%s = 0 OR m.profile_id = %s)'
             '         GROUP BY m.profile_id, m.sender_uid'
             # ⚠ Пары без единой входящей реплики — не диалоги (см. выше).
             "        HAVING SUM(m.direction = 'in') > 0) d"
-            '  JOIN dating_message last'
+            '  JOIN message last'
             '    ON last.profile_id = d.profile_id AND last.sender_uid = d.uid'
-            '   AND last.id = (SELECT MAX(m2.id) FROM dating_message m2'
+            '   AND last.id = (SELECT MAX(m2.id) FROM message m2'
             '                   WHERE m2.profile_id = d.profile_id'
             '                     AND m2.sender_uid = d.uid'
             '                     AND m2.created_at = d.last_at)'
-            '  JOIN dating_profile p ON p.id = d.profile_id'
-            '  LEFT JOIN dating_contact c'
+            '  JOIN profile p ON p.id = d.profile_id'
+            '  LEFT JOIN contact c'
             '    ON c.profile_id = d.profile_id AND c.uid = d.uid'
-            '  LEFT JOIN dating_companion comp'
+            '  LEFT JOIN companion comp'
             '    ON comp.site_id = p.site_id AND comp.uid = d.uid'
             # ⚠ **По свежести, и только по ней.** Прежде первым ключом шёл
             # `needs_answer` — «неотвеченные наверх», — и это разумно, пока
@@ -263,7 +263,7 @@ async def dating_chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int =
 
             await db.execute(
                 'SELECT text, direction, is_answered, answer_silent_at, created_at'
-                '  FROM dating_message'
+                '  FROM message'
                 ' WHERE profile_id = %s AND sender_uid = %s'
                 ' ORDER BY created_at DESC, id DESC LIMIT 10',
                 (int(contact['profile_id']), contact['uid']))
@@ -275,7 +275,7 @@ async def dating_chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int =
             # отдаёт список собеседниц не целиком, а подпись строке нужна всё равно.
             if not contact['name']:
                 await db.execute(
-                    'SELECT MAX(sender_name) AS name FROM dating_message'
+                    'SELECT MAX(sender_name) AS name FROM message'
                     ' WHERE profile_id = %s AND sender_uid = %s AND sender_name <> %s',
                     (int(contact['profile_id']), contact['uid'], ''))
                 contact['name'] = ((await db.fetchone()) or {}).get('name') or ''

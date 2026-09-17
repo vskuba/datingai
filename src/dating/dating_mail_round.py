@@ -187,7 +187,7 @@ async def _sites() -> list[dict]:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'SELECT site_id, template_schedule FROM dating_site'
+                'SELECT site_id, template_schedule FROM site'
                 ' WHERE template_schedule_on = 1 AND is_gone = 0'
                 ' ORDER BY site_id')
             rows = await db.fetchall()
@@ -248,7 +248,7 @@ async def _write(site_id: int, offset_hours: int) -> int:
 
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT INTO dating_mail (site_id, name, body, enabled)'
+                'INSERT INTO mail (site_id, name, body, enabled)'
                 ' VALUES (%s, %s, %s, 1)', (int(site_id), name, body))
             await db.connection.commit()
 
@@ -297,11 +297,11 @@ async def _sweep(site_id: int) -> int:
         # запросом, потому что MySQL не даёт вычитать из `DELETE` подзапрос по той
         # же таблице.
         await db.execute(
-            'SELECT id FROM dating_mail WHERE site_id = %s'
+            'SELECT id FROM mail WHERE site_id = %s'
             ' ORDER BY created_at DESC, id DESC LIMIT %s', (int(site_id), keep))
         safe = [int(row['id']) for row in await db.fetchall() or []]
 
-        sql = ('DELETE FROM dating_mail WHERE site_id = %s'
+        sql = ('DELETE FROM mail WHERE site_id = %s'
                ' AND created_at < NOW() - INTERVAL %s DAY')
         args = [int(site_id), days]
         if safe:
@@ -332,7 +332,7 @@ async def _made_today(site_id: int, day: str) -> int:
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT COUNT(*) AS n FROM dating_mail'
+            'SELECT COUNT(*) AS n FROM mail'
             ' WHERE site_id = %s AND DATE(created_at) = %s', (int(site_id), day))
         row = await db.fetchone()
 

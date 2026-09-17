@@ -196,10 +196,10 @@ async def dating_mail_in_unread(site_id: int) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT m.profile_id, COUNT(*) AS n,'
-            '       SUM(EXISTS (SELECT 1 FROM dating_favorite f'
+            '       SUM(EXISTS (SELECT 1 FROM favorite f'
             '                    WHERE f.profile_id = m.profile_id AND f.uid = m.uid'
             f'                     AND f.state IN ({DATING_FAVORITE_STATES_SQL}))) AS fav'
-            '  FROM dating_mail_in m'
+            '  FROM mail_in m'
             ' WHERE m.site_id = %s AND m.seen = 0 GROUP BY m.profile_id',
             (*DATING_FAVORITE_STATES, int(site_id)))
         rows = await db.fetchall()
@@ -219,7 +219,7 @@ async def _since(profile_id: int) -> str:
     вовсе. Запас нужен на письмо, пришедшее в ту же секунду, что и прошлый заход.
     """
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT MAX(date_post) AS last FROM dating_mail_in'
+        await db.execute('SELECT MAX(date_post) AS last FROM mail_in'
                          ' WHERE profile_id = %s', (int(profile_id),))
         row = await db.fetchone()
 
@@ -233,7 +233,7 @@ async def _since(profile_id: int) -> str:
 async def _known(profile_id: int) -> set:
     """Номера писем, которые уже лежат у нас."""
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT message_id FROM dating_mail_in'
+        await db.execute('SELECT message_id FROM mail_in'
                          ' WHERE profile_id = %s', (int(profile_id),))
         rows = await db.fetchall()
 
@@ -269,7 +269,7 @@ async def _put(site_id: int, profile_id: int, message_id: int, row: dict,
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT IGNORE INTO dating_mail_in'
+            'INSERT IGNORE INTO mail_in'
             ' (site_id, profile_id, message_id, uid, name, photo, age, city,'
             '  country, body, date_post, is_replied)'
             ' VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
@@ -309,7 +309,7 @@ async def _talk_new(site_id: int, profile_id: int, row: dict) -> None:
 
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT COUNT(*) AS n FROM dating_mail_in'
+            await db.execute('SELECT COUNT(*) AS n FROM mail_in'
                              ' WHERE profile_id = %s AND uid = %s',
                              (int(profile_id), uid))
             if int(((await db.fetchone()) or {}).get('n') or 0) != 1:
@@ -318,7 +318,7 @@ async def _talk_new(site_id: int, profile_id: int, row: dict) -> None:
             # ⚠ Тем же набором состояний, каким их отбирает сама вкладка: возьми
             # мы шире, счётчик считал бы разговор, которого в списке нет.
             await db.execute(
-                'SELECT 1 FROM dating_favorite WHERE profile_id = %s AND uid = %s'
+                'SELECT 1 FROM favorite WHERE profile_id = %s AND uid = %s'
                 f'   AND state IN ({DATING_FAVORITE_STATES_SQL}) LIMIT 1',
                 (int(profile_id), uid, *DATING_FAVORITE_STATES))
             if not await db.fetchone():
@@ -340,7 +340,7 @@ async def _touch_replied(profile_id: int, message_id: int, replied: bool) -> Non
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'UPDATE dating_mail_in SET is_replied = %s'
+            'UPDATE mail_in SET is_replied = %s'
             ' WHERE profile_id = %s AND message_id = %s AND is_replied <> %s',
             (1 if replied else 0, int(profile_id), int(message_id),
              1 if replied else 0))

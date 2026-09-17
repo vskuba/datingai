@@ -44,7 +44,7 @@ async def pools():
     async with mysql_get_db_async() as db:
         for profile_id, status in ((GONE, 'offline'), (HERE, 'online')):
             await db.execute(
-                'INSERT INTO dating_profile (id, site_id, login, password, role, status,'
+                'INSERT INTO profile (id, site_id, login, password, role, status,'
                 '                            enabled)'
                 " VALUES (%s, %s, %s, 'x', 'lady', %s, 1)"
                 ' ON DUPLICATE KEY UPDATE status = VALUES(status)',
@@ -68,7 +68,7 @@ async def pools():
     async with mysql_get_db_async() as db:
         for table in DATING_POOL_TABLES:
             await db.execute(f'DELETE FROM {table} WHERE site_id = %s', (SITE,))
-        await db.execute('DELETE FROM dating_profile WHERE site_id = %s', (SITE,))
+        await db.execute('DELETE FROM profile WHERE site_id = %s', (SITE,))
         await db.connection.commit()
 
 
@@ -106,7 +106,7 @@ async def invites():
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_profile (id, site_id, login, password, role, status,'
+            'INSERT INTO profile (id, site_id, login, password, role, status,'
             '                            enabled)'
             " VALUES (%s, %s, %s, 'x', 'lady', 'online', 1)"
             ' ON DUPLICATE KEY UPDATE status = VALUES(status)',
@@ -114,14 +114,14 @@ async def invites():
 
         for uid in (HERE_UID, AWAY_UID):
             await db.execute(
-                'INSERT INTO dating_invite (site_id, profile_id, uid, name, body, status)'
+                'INSERT INTO invite (site_id, profile_id, uid, name, body, status)'
                 " VALUES (%s, %s, %s, 'Кто-то', 'привет', 'draft')", (SITE, HERE, uid))
 
         await db.execute(
-            'INSERT INTO dating_invite (site_id, profile_id, uid, name, body, status)'
+            'INSERT INTO invite (site_id, profile_id, uid, name, body, status)'
             " VALUES (%s, %s, %s, 'Кто-то', 'ушло', 'sent')", (SITE, HERE, SENT_UID))
         await db.execute(
-            'INSERT INTO dating_mailing (site_id, profile_id, uid, name, body, status)'
+            'INSERT INTO mailing (site_id, profile_id, uid, name, body, status)'
             " VALUES (%s, %s, %s, 'Кто-то', 'письмо', 'draft')", (SITE, HERE, AWAY_UID))
         await db.connection.commit()
 
@@ -130,7 +130,7 @@ async def invites():
     async with mysql_get_db_async() as db:
         for table in DATING_POOL_TABLES:
             await db.execute(f'DELETE FROM {table} WHERE site_id = %s', (SITE,))
-        await db.execute('DELETE FROM dating_profile WHERE site_id = %s', (SITE,))
+        await db.execute('DELETE FROM profile WHERE site_id = %s', (SITE,))
         await db.connection.commit()
 
 
@@ -197,7 +197,7 @@ class TestSweep:
         повод оставить его без ответа. Круг отправки дождётся её следующей смены, а
         потолок сайта ответы и не занимают: они набираются по входящим письмам.
         """
-        assert 'dating_mail_reply' not in DATING_POOL_TABLES
+        assert 'mail_reply' not in DATING_POOL_TABLES
 
 
 class TestSweepAway:
@@ -238,7 +238,7 @@ class TestSweepAway:
         await dating_pool_sweep_away(SITE)
 
         async with mysql_get_db_async() as db:
-            await db.execute("SELECT COUNT(*) AS n FROM dating_invite"
+            await db.execute("SELECT COUNT(*) AS n FROM invite"
                              " WHERE site_id = %s AND status = 'sent'", (SITE,))
             assert int((await db.fetchone())['n']) == 1
 
@@ -260,7 +260,7 @@ class TestSweepAway:
         await dating_pool_sweep_away(SITE)
 
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT COUNT(*) AS n FROM dating_mailing'
+            await db.execute('SELECT COUNT(*) AS n FROM mailing'
                              ' WHERE site_id = %s', (SITE,))
             assert int((await db.fetchone())['n']) == 1
 
@@ -291,7 +291,7 @@ class TestRoundsSweepFirst:
 async def _invite_uids() -> list[str]:
     """Кому остались черновики инвайтов на выдуманном сайте."""
     async with mysql_get_db_async() as db:
-        await db.execute("SELECT uid FROM dating_invite"
+        await db.execute("SELECT uid FROM invite"
                          " WHERE site_id = %s AND status = 'draft'", (SITE,))
 
         return [str(row['uid']) for row in await db.fetchall() or []]

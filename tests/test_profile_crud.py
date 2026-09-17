@@ -259,7 +259,7 @@ class TestProfileLogin:
 
         profile_id = await _create(f'test-{uuid.uuid4().hex[:10]}', password='')
         async with mysql_get_db_async() as db:
-            await db.execute("UPDATE dating_profile SET password_source = 'own'"
+            await db.execute("UPDATE profile SET password_source = 'own'"
                              ' WHERE id = %s', (profile_id,))
             await db.connection.commit()
 

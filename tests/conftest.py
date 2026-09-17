@@ -258,13 +258,13 @@ async def _live_messages() -> int:
     """Сколько сообщений у анкет, которые были в базе до прогона."""
     async with mysql_get_db_async() as db:
         if not _PROFILES_LIVE:
-            await db.execute('SELECT id FROM dating_profile')
+            await db.execute('SELECT id FROM profile')
             _PROFILES_LIVE.update(int(row['id']) for row in await db.fetchall() or [])
 
         if not _PROFILES_LIVE:
             return 0
 
-        await db.execute('SELECT COUNT(*) AS n FROM dating_message '
+        await db.execute('SELECT COUNT(*) AS n FROM message '
                          f"WHERE profile_id IN ({','.join(['%s'] * len(_PROFILES_LIVE))})",
                          tuple(_PROFILES_LIVE))
 
@@ -349,7 +349,7 @@ async def site_snapshot():
             # `IGNORE`, а не upsert: живые сайты трогать нечем и незачем, а
             # стендовая строка либо есть, либо её не было ни разу.
             await db.execute(
-                'INSERT IGNORE INTO dating_site (site_id, name, url, is_gone, synced_at)'
+                'INSERT IGNORE INTO site (site_id, name, url, is_gone, synced_at)'
                 ' VALUES (%s, %s, %s, 1, %s)',
                 (site_id, name, 'http://stand.invalid', now))
         await db.connection.commit()

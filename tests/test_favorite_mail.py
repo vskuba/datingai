@@ -68,7 +68,7 @@ async def _star(profile_id: int, uid: str, state: str = 'done') -> None:
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_favorite (site_id, profile_id, uid, state)'
+            'INSERT INTO favorite (site_id, profile_id, uid, state)'
             ' VALUES (%s, %s, %s, %s)'
             ' ON DUPLICATE KEY UPDATE state = VALUES(state)',
             (STAND_SITE, int(profile_id), str(uid), state))
@@ -79,7 +79,7 @@ async def _his(profile_id: int, uid: str, when: str) -> None:
     """Его письмо: последнее слово за ним."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_mail_in'
+            'INSERT INTO mail_in'
             ' (site_id, profile_id, message_id, uid, name, body, date_post)'
             " VALUES (%s, %s, %s, %s, 'X', 'hi', %s)",
             (STAND_SITE, int(profile_id), int(uuid.uuid4().int % 10 ** 9), str(uid),
@@ -88,18 +88,18 @@ async def _his(profile_id: int, uid: str, when: str) -> None:
 
 
 async def _hers(profile_id: int, uid: str, when: str,
-                table: str = 'dating_mailing') -> None:
+                table: str = 'mailing') -> None:
     """Наше ушедшее письмо. Таблица — чтобы проверить, что считаются все три."""
     async with mysql_get_db_async() as db:
-        if table == 'dating_mailing':
+        if table == 'mailing':
             await db.execute(
-                'INSERT INTO dating_mailing'
+                'INSERT INTO mailing'
                 ' (site_id, profile_id, mail_id, uid, name, body, status, sent_at)'
                 " VALUES (%s, %s, NULL, %s, 'X', 'hi', 'sent', %s)",
                 (STAND_SITE, int(profile_id), str(uid), when))
-        elif table == 'dating_favorite_mail':
+        elif table == 'favorite_mail':
             await db.execute(
-                'INSERT INTO dating_favorite_mail'
+                'INSERT INTO favorite_mail'
                 ' (site_id, profile_id, uid, name, body, status, sent_at)'
                 " VALUES (%s, %s, %s, 'X', 'hi', 'sent', %s)",
                 (STAND_SITE, int(profile_id), str(uid), when))
@@ -113,7 +113,7 @@ async def _draft(profile_id: int, uid: str) -> None:
     """Черновик в пуле: такому человеку второй не готовим."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_favorite_mail'
+            'INSERT INTO favorite_mail'
             ' (site_id, profile_id, uid, name, body, status)'
             " VALUES (%s, %s, %s, 'X', 'hi', 'draft')",
             (STAND_SITE, int(profile_id), str(uid)))
@@ -167,14 +167,14 @@ async def girl(auth_client):
     made = await _profile(auth_client, 'fav')
 
     async with mysql_get_db_async() as db:
-        await db.execute("UPDATE dating_profile SET status = 'online' WHERE id = %s",
+        await db.execute("UPDATE profile SET status = 'online' WHERE id = %s",
                          (made,))
         await db.connection.commit()
 
     yield made
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_favorite WHERE profile_id = %s', (made,))
+        await db.execute('DELETE FROM favorite WHERE profile_id = %s', (made,))
         await db.connection.commit()
 
     await auth_client.delete(f'/api/dating/profile/{made}')
@@ -385,7 +385,7 @@ class TestBothMustBeOnline:
         assert [r for r in await _quiet(STAND_SITE) if r['uid'] == uid]
 
         async with mysql_get_db_async() as db:
-            await db.execute("UPDATE dating_profile SET status = 'offline'"
+            await db.execute("UPDATE profile SET status = 'offline'"
                              ' WHERE id = %s', (girl,))
             await db.connection.commit()
 
@@ -450,7 +450,7 @@ class TestHowOften:
         и разделять их стал бы только тот, кто смотрит в наши таблицы."""
         uid = f'u{uuid.uuid4().hex[:8]}'
         await _hers(girl, uid, _now_minus_hours(5))
-        await _hers(girl, uid, _now_minus_hours(6), 'dating_favorite_mail')
+        await _hers(girl, uid, _now_minus_hours(6), 'favorite_mail')
 
         why = await _too_soon(girl, uid, per_day=2, gap=3600)
 
@@ -516,10 +516,10 @@ class TestReasonNamesTheRecipient:
 
         async with mysql_get_db_async() as db:
             await db.execute(
-                'UPDATE dating_companion SET name = %s'
+                'UPDATE companion SET name = %s'
                 ' WHERE site_id = %s AND uid = %s', ('Semen', STAND_SITE, uid))
             await db.execute(
-                'INSERT INTO dating_contact (profile_id, uid, name, photo)'
+                'INSERT INTO contact (profile_id, uid, name, photo)'
                 " VALUES (%s, %s, 'Semen', '')", (girl, uid))
             await db.connection.commit()
 

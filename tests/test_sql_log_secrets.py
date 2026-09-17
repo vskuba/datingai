@@ -32,7 +32,7 @@ class TestByColumn:
         только по столбцу.
         """
         line = mysql_log_line(
-            'INSERT INTO `dating_profile` (`site_id`, `login`, `password`, `note`) '
+            'INSERT INTO profile` (`site_id`, `login`, `password`, `note`) '
             'VALUES (%s, %s, %s, %s)',
             (19, 'girl@example.invalid', 'SekretnyParol123', 'пометка'))
 
@@ -44,7 +44,7 @@ class TestByColumn:
     def test_storage_state_on_update(self):
         """Набор cookie после входа — это доступ к учётке, и он не печатается."""
         line = mysql_log_line(
-            'UPDATE dating_profile SET storage_state = %s, status = %s WHERE id = %s',
+            'UPDATE profile SET storage_state = %s, status = %s WHERE id = %s',
             ('{"cookies":[{"name":"PHPSESSID","value":"abc123deadbeef"}]}', 'online', 40))
 
         assert 'abc123deadbeef' not in line
@@ -53,7 +53,7 @@ class TestByColumn:
     def test_proxy_url_with_channel_password(self):
         """Строка подключения к прокси несёт пароль канала."""
         line = mysql_log_line(
-            'UPDATE dating_profile SET proxy_url = %s WHERE id = %s',
+            'UPDATE profile SET proxy_url = %s WHERE id = %s',
             ('socks5://user:kanalny@10.0.0.1:1080', 7))
 
         assert 'kanalny' not in line
@@ -71,7 +71,7 @@ class TestByColumn:
         «Пароль не доехал» — самая частая беда в этих местах, и отличать её надо
         с одного взгляда. Метка вместо пустоты стёрла бы эту разницу.
         """
-        line = mysql_log_line("SELECT id FROM dating_profile WHERE password <> %s", ('',))
+        line = mysql_log_line("SELECT id FROM profile WHERE password <> %s", ('',))
 
         assert "''" in line and MYSQL_LOG_MARK not in line
 
@@ -92,7 +92,7 @@ class TestByContent:
         а пароли внутри есть. Поэтому вторая проверка, по ключам JSON.
         """
         line = mysql_log_line(
-            'INSERT INTO dating_site (site_id, settings) VALUES (%s, %s) '
+            'INSERT INTO site (site_id, settings) VALUES (%s, %s) '
             'ON DUPLICATE KEY UPDATE settings = VALUES(settings)',
             (343, '{"api_base": "https://site/api", "api_password": "vasya1212", '
                   '"companion_password": "14Sem14en_", "send_every": "60"}'))
@@ -104,7 +104,7 @@ class TestByContent:
     def test_escaped_json_inside_json(self):
         """JSON, лежащий строкой внутри JSON: кавычки экранированы, ключ тот же."""
         line = mysql_log_line(
-            'UPDATE dating_site SET settings = %s WHERE site_id = %s',
+            'UPDATE site SET settings = %s WHERE site_id = %s',
             ('{"heartbeat": "{\\"token\\": \\"deadbeef\\", \\"base\\": \\"https://x\\"}"}', 343))
 
         assert 'deadbeef' not in line
@@ -124,7 +124,7 @@ class TestKeepsWorking:
 
     def test_ordinary_query_is_untouched(self):
         args = ('обычная пометка', 5)
-        line = mysql_log_line('UPDATE dating_profile SET note = %s WHERE id = %s', args)
+        line = mysql_log_line('UPDATE profile SET note = %s WHERE id = %s', args)
 
         assert line.endswith(f'| Args: {args}')
 

@@ -717,7 +717,7 @@ async def _site_profile(site_id: int) -> dict:
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT id, site_id, login FROM dating_profile '
+            'SELECT id, site_id, login FROM profile '
             ' WHERE site_id = %s AND login <> %s'
             "   AND enabled = 1 AND status = 'online'"
             ' ORDER BY storage_state IS NULL, id LIMIT %s',

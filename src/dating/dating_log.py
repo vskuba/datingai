@@ -35,14 +35,14 @@ async def dating_log_write(profile_id: int, level: str, text: str) -> None:
 
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT id, text FROM dating_log WHERE profile_id = %s '
+            await db.execute('SELECT id, text FROM log WHERE profile_id = %s '
                              ' ORDER BY id DESC LIMIT 1', (profile_id,))
             last = await db.fetchone()
 
             if last and str(last['text']) == text:
-                await db.execute('DELETE FROM dating_log WHERE id = %s', (int(last['id']),))
+                await db.execute('DELETE FROM log WHERE id = %s', (int(last['id']),))
 
-            await db.execute('INSERT INTO dating_log (profile_id, level, text) VALUES (%s, %s, %s)',
+            await db.execute('INSERT INTO log (profile_id, level, text) VALUES (%s, %s, %s)',
                              (profile_id, level, text))
             await db.connection.commit()
     except Exception as e:

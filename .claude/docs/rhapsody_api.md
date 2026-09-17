@@ -71,7 +71,7 @@
 | `rhapsody_api_scenario_forget` | — | забыть номер сценария после `→ 404`: его переименовали или удалили |
 | `rhapsody_api_llm_usage` | `GET /llm/usage/stats?node=…` | сколько запросов к LLM и токенов: вкладка «Статистика» (⚠ путь **без** `/api`, узел — **именем**, журнал живёт 7 дней) |
 | `rhapsody_api_scenario_find_by_id` | `GET /api/browser/scenario/{id}` | подстановки известного сценария перед прогоном |
-| `rhapsody_api_scenario_run` | `POST /api/browser/scenario/{id}/run` | сам прогон в браузере. ⚠ Напрямую **не зовётся**: только через `dating_scenario_run` (§4) |
+| `rhapsody_api_scenario_run` | `POST /api/browser/scenario/{id}/run` | сам прогон в браузере. ⚠ Напрямую **не зовётся**: только через `scenario_run` (§4) |
 | `rhapsody_api_session_open/close/list/state` | `/api/browser/session…` | жизнь вкладки |
 | `rhapsody_api_session_goto` | `POST /api/browser/session/{id}/goto` | увести вкладку на адрес. ⚠ **В коде проекта не зовётся** — оставлена под ручную отладку |
 | `rhapsody_api_ws_capture` | `POST /api/browser/ws/capture` | снять адрес чат-сокета |
@@ -143,7 +143,7 @@
 
 ⚠ **Прогон зовут не отсюда, а через `src/dating/dating_scenario.py`.** Эта дверь
 отвечает за разговор с соседом, та — за след, который прогон оставляет: строку в
-`dating_scenario_run` с исходом, шагом и длительностью. Позови кто-то
+`scenario_run` с исходом, шагом и длительностью. Позови кто-то
 `rhapsody_api_scenario_run` напрямую — прогон случится, а в журнале его не будет,
 и «что вообще запускалось» останется без ответа ровно в тот раз, когда это нужно.
 

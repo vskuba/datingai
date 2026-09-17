@@ -159,7 +159,7 @@ async def dating_ready_online(profile_id: int) -> bool:
         async with mysql_get_db_async() as db:
             await db.execute(
                 "SELECT status = 'online' AND enabled = 1 AS живая"
-                '  FROM dating_profile WHERE id = %s', (int(profile_id),))
+                '  FROM profile WHERE id = %s', (int(profile_id),))
             row = await db.fetchone()
     except Exception as e:
         from logging_.logging_ import logger_info
@@ -179,7 +179,7 @@ async def dating_ready_write(profile_id: int, state: dict) -> None:
     """
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile '
+            await db.execute('UPDATE profile '
                              '   SET can_work = %s, work_reason = %s '
                              ' WHERE id = %s AND (can_work <> %s OR work_reason <> %s)',
                              (1 if state['can'] else 0, str(state['why'])[:200],

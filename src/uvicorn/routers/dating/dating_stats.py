@@ -174,7 +174,7 @@ async def dating_stats_profiles(site_id: int = 0, hours: int = 0,
             await db.execute(
                 'SELECT p.id AS profile_id, p.status, p.enabled,'
                 '       p.login AS profile_login, p.profile AS profile_card'
-                '  FROM dating_profile p WHERE p.site_id = %s'
+                '  FROM profile p WHERE p.site_id = %s'
                 ' ORDER BY p.id', (int(site_id),))
             girls = [dict(row) for row in await db.fetchall() or []]
 
@@ -183,9 +183,9 @@ async def dating_stats_profiles(site_id: int = 0, hours: int = 0,
             # строки друг на друга — классическая ошибка, которую видно только на
             # живых данных, когда числа втрое больше правды.
             work = {}
-            for table, kind in (('dating_invite', 'invite'),
-                                ('dating_favorite_mail', 'favorite'),
-                                ('dating_mailing', 'mailing')):
+            for table, kind in (('invite', 'invite'),
+                                ('favorite_mail', 'favorite'),
+                                ('mailing', 'mailing')):
                 await db.execute(
                     f"SELECT profile_id,"
                     f"       SUM(status = 'sent'{_window('sent_at', hours)}) AS sent,"
@@ -252,8 +252,8 @@ async def _chat(site_id: int, profile_id: int, hours: int = 0) -> dict:
 
     sql = ("SELECT SUM(m.direction = 'in') AS `in`,"
            "       SUM(m.direction = 'out') AS `out`"
-           '  FROM dating_message m'
-           '  JOIN dating_profile p ON p.id = m.profile_id'
+           '  FROM message m'
+           '  JOIN profile p ON p.id = m.profile_id'
            ' WHERE p.site_id = %s AND (%s = 0 OR m.profile_id = %s)' + since)
 
     # ⚠⚠ **Разговор — это пара, которой ответили**, слово в слово как на вкладке
@@ -272,8 +272,8 @@ async def _chat(site_id: int, profile_id: int, hours: int = 0) -> dict:
     # промолчал.
     dialogs_sql = (
         'SELECT COUNT(*) AS n FROM ('
-        '  SELECT m.profile_id, m.sender_uid FROM dating_message m'
-        '    JOIN dating_profile p ON p.id = m.profile_id'
+        '  SELECT m.profile_id, m.sender_uid FROM message m'
+        '    JOIN profile p ON p.id = m.profile_id'
         '   WHERE p.site_id = %s AND (%s = 0 OR m.profile_id = %s)' + since +
         '   GROUP BY m.profile_id, m.sender_uid'
         "  HAVING SUM(m.direction = 'in') > 0) AS d")
@@ -281,11 +281,11 @@ async def _chat(site_id: int, profile_id: int, hours: int = 0) -> dict:
     waiting_sql = (
         '  SELECT COUNT(*) AS n FROM ('
         '    SELECT m.profile_id, m.sender_uid, MAX(m.created_at) AS last_at'
-        '      FROM dating_message m'
-        '      JOIN dating_profile p ON p.id = m.profile_id'
+        '      FROM message m'
+        '      JOIN profile p ON p.id = m.profile_id'
         '     WHERE p.site_id = %s AND (%s = 0 OR m.profile_id = %s)' + since +
         '     GROUP BY m.profile_id, m.sender_uid) d'
-        '  JOIN dating_message last'
+        '  JOIN message last'
         '    ON last.profile_id = d.profile_id AND last.sender_uid = d.sender_uid'
         '   AND last.created_at = d.last_at'
         "  WHERE last.direction = 'in' AND last.is_answered = 0"
@@ -329,7 +329,7 @@ async def _mail(site_id: int, profile_id: int, hours: int = 0) -> dict:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'SELECT COUNT(*) AS n, SUM(seen = 0) AS unseen FROM dating_mail_in'
+                'SELECT COUNT(*) AS n, SUM(seen = 0) AS unseen FROM mail_in'
                 ' WHERE site_id = %s AND (%s = 0 OR profile_id = %s)'
                 # Время события у входящего письма — когда его написали на сайте.
                 + _window('date_post', hours), args)
@@ -339,7 +339,7 @@ async def _mail(site_id: int, profile_id: int, hours: int = 0) -> dict:
 
             # Два пула одним запросом: строки у них одинаковой формы, а вопрос
             # общий — «сколько ушло и сколько ждёт».
-            for table in ('dating_mailing', 'dating_mail_reply'):
+            for table in ('mailing', 'mail_reply'):
                 await db.execute(
                     # ⚠ Два числа — два времени: ушедшее меряется отправкой,
                     # лежащее в пуле — заведением. Одна колонка на оба считала бы
@@ -370,7 +370,7 @@ async def _favorite(site_id: int, profile_id: int, hours: int = 0) -> dict:
             await db.execute(
                 "SELECT SUM(state = 'done') AS added,"
                 "       SUM(state = 'already') AS already,"
-                "       SUM(state = 'fail') AS failed FROM dating_favorite"
+                "       SUM(state = 'fail') AS failed FROM favorite"
                 ' WHERE site_id = %s AND (%s = 0 OR profile_id = %s)'
                 # Время события у звезды — когда её поставили (или переписали с
                 # сайта): `updated_at` двигался бы на каждой сверке.
@@ -400,7 +400,7 @@ async def _invite(site_id: int, profile_id: int, hours: int = 0) -> dict:
                 # лежащее в пуле — заведением.
                 f"SELECT SUM(status = 'sent'{_window('sent_at', hours)}) AS sent,"
                 f"       SUM(status = 'draft'{_window('created_at', hours)})"
-                '         AS draft FROM dating_invite'
+                '         AS draft FROM invite'
                 ' WHERE site_id = %s AND (%s = 0 OR profile_id = %s)',
                 (site_id, profile_id, profile_id))
             row = dict((await db.fetchone()) or {})

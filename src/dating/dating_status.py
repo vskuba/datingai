@@ -63,7 +63,7 @@ async def dating_status_probe_site(site_id: int, presence: dict = None) -> dict:
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT id, login, site_id, status, storage_state FROM dating_profile'
+            'SELECT id, login, site_id, status, storage_state FROM profile'
             ' WHERE site_id = %s AND enabled = 1 AND storage_state IS NOT NULL',
             (site_id,))
         profiles = [dict(row) for row in (await db.fetchall() or [])]
@@ -109,7 +109,7 @@ async def dating_status_write(db, profile_id: int, result: dict) -> None:
     """
     seen = 'NOW()' if result['status'] == 'online' else 'last_seen_at'
     await db.execute(
-        f'UPDATE dating_profile SET status = %s, unread = %s, last_error = %s, '
+        f'UPDATE profile SET status = %s, unread = %s, last_error = %s, '
         f'       last_seen_at = {seen} WHERE id = %s',
         (result['status'],
          result['unread'] if result['unread'] >= 0 else 0,

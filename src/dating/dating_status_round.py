@@ -116,7 +116,7 @@ async def _sites() -> list[int]:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'SELECT DISTINCT site_id FROM dating_profile'
+                'SELECT DISTINCT site_id FROM profile'
                 ' WHERE enabled = 1 AND storage_state IS NOT NULL ORDER BY site_id')
             rows = await db.fetchall()
     except Exception as e:

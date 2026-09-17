@@ -59,7 +59,7 @@ async def clean():
 
     async def wipe():
         async with mysql_get_db_async() as db:
-            await db.execute('DELETE FROM dating_mail WHERE site_id = %s', (SITE,))
+            await db.execute('DELETE FROM mail WHERE site_id = %s', (SITE,))
             await db.connection.commit()
 
     await wipe()
@@ -96,7 +96,7 @@ async def _put(name: str, days_ago: int = 0, enabled: int = 1) -> int:
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_mail (site_id, name, body, enabled, created_at)'
+            'INSERT INTO mail (site_id, name, body, enabled, created_at)'
             ' VALUES (%s, %s, %s, %s, NOW() - INTERVAL %s DAY)',
             (SITE, f'{name}-{uuid.uuid4().hex[:6]}', 'Текст', int(enabled),
              int(days_ago)))
@@ -111,7 +111,7 @@ async def _names() -> list[str]:
     from mysql_.mysql_ import mysql_get_db_async
 
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT name FROM dating_mail WHERE site_id = %s'
+        await db.execute('SELECT name FROM mail WHERE site_id = %s'
                          ' ORDER BY created_at DESC, id DESC', (SITE,))
 
         return [str(row['name']) for row in await db.fetchall() or []]
@@ -123,7 +123,7 @@ async def _revive():
     from mysql_.mysql_ import mysql_get_db_async
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_site SET is_gone = 0 WHERE site_id = %s',
+        await db.execute('UPDATE site SET is_gone = 0 WHERE site_id = %s',
                          (SITE,))
         await db.connection.commit()
 
@@ -250,7 +250,7 @@ class TestSweep:
 
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT INTO dating_mailing'
+                'INSERT INTO mailing'
                 ' (site_id, profile_id, mail_id, uid, name, body, status)'
                 " VALUES (%s, %s, %s, 'tst-keep', 'Кому', 'Текст', 'draft')",
                 (SITE, profile, mail_id))
@@ -326,7 +326,7 @@ class TestWrite:
             await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
 
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT enabled FROM dating_mail WHERE site_id = %s',
+            await db.execute('SELECT enabled FROM mail WHERE site_id = %s',
                              (SITE,))
             rows = await db.fetchall()
 

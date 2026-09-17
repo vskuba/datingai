@@ -41,8 +41,8 @@ async def girl(auth_client):
     yield profile_id
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_invite WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM dating_profile WHERE id = %s', (profile_id,))
+        await db.execute('DELETE FROM invite WHERE profile_id = %s', (profile_id,))
+        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
         await db.connection.commit()
 
 
@@ -172,7 +172,7 @@ async def _rows(profile_id: int, old: int = 0, fresh: int = 0) -> list[int]:
     async with mysql_get_db_async() as db:
         for number in range(old + fresh):
             await db.execute(
-                'INSERT INTO dating_invite'
+                'INSERT INTO invite'
                 ' (site_id, profile_id, uid, name, body, status, created_at)'
                 " VALUES (%s, %s, %s, 'Кто-то', 'Hi!', 'sent',"
                 '         NOW() - INTERVAL %s DAY)',
@@ -185,7 +185,7 @@ async def _rows(profile_id: int, old: int = 0, fresh: int = 0) -> list[int]:
 
 async def _count(profile_id: int) -> int:
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT COUNT(*) AS n FROM dating_invite'
+        await db.execute('SELECT COUNT(*) AS n FROM invite'
                          ' WHERE profile_id = %s AND uid = %s', (int(profile_id), UID))
 
         return int(((await db.fetchone()) or {}).get('n') or 0)
@@ -193,7 +193,7 @@ async def _count(profile_id: int) -> int:
 
 async def _fresh_count(profile_id: int) -> int:
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT COUNT(*) AS n FROM dating_invite'
+        await db.execute('SELECT COUNT(*) AS n FROM invite'
                          ' WHERE profile_id = %s AND uid = %s'
                          '   AND created_at > NOW() - INTERVAL 1 DAY',
                          (int(profile_id), UID))
@@ -203,7 +203,7 @@ async def _fresh_count(profile_id: int) -> int:
 
 async def _ids(profile_id: int) -> list[int]:
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT id FROM dating_invite'
+        await db.execute('SELECT id FROM invite'
                          ' WHERE profile_id = %s AND uid = %s ORDER BY id',
                          (int(profile_id), UID))
 

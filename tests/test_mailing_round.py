@@ -67,10 +67,10 @@ async def site(auth_client):
                           json={'mailing_schedule_on': True})
 
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT is_gone FROM dating_site WHERE site_id = %s', (SITE,))
+        await db.execute('SELECT is_gone FROM site WHERE site_id = %s', (SITE,))
         row = await db.fetchone()
         gone = int((row or {}).get('is_gone') or 0)
-        await db.execute('UPDATE dating_site SET is_gone = 0 WHERE site_id = %s', (SITE,))
+        await db.execute('UPDATE site SET is_gone = 0 WHERE site_id = %s', (SITE,))
         await db.connection.commit()
 
     yield SITE
@@ -81,7 +81,7 @@ async def site(auth_client):
                           json={'mailing_schedule_on': before['mailing_schedule_on']})
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_site SET is_gone = %s WHERE site_id = %s',
+        await db.execute('UPDATE site SET is_gone = %s WHERE site_id = %s',
                          (gone, SITE))
         await db.connection.commit()
 
@@ -212,11 +212,11 @@ async def pool(profile):
 
     async def put(count: int, status: str = 'draft') -> None:
         async with mysql_get_db_async() as db:
-            await db.execute("UPDATE dating_profile SET status = 'online' WHERE id = %s",
+            await db.execute("UPDATE profile SET status = 'online' WHERE id = %s",
                              (profile,))
             for n in range(count):
                 await db.execute(
-                    'INSERT INTO dating_mailing'
+                    'INSERT INTO mailing'
                     ' (site_id, profile_id, mail_id, uid, name, body, status)'
                     ' VALUES (%s, %s, NULL, %s, %s, %s, %s)',
                     (SITE, profile, f'tst-{status}-{n}', 'Тестовый', 'Текст', status))
@@ -227,7 +227,7 @@ async def pool(profile):
     # Каскад по анкете уберёт всё сам, но ждать её удаления незачем: следующий
     # тест считает письма этого же сайта.
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_mailing WHERE profile_id = %s', (profile,))
+        await db.execute('DELETE FROM mailing WHERE profile_id = %s', (profile,))
         await db.connection.commit()
 
 
@@ -290,7 +290,7 @@ class TestWhoIsTaken:
         from mysql_.mysql_ import mysql_get_db_async
 
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_site SET is_gone = 1 WHERE site_id = %s',
+            await db.execute('UPDATE site SET is_gone = 1 WHERE site_id = %s',
                              (SITE,))
             await db.connection.commit()
 

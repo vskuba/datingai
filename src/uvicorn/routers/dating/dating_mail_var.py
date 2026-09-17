@@ -184,7 +184,7 @@ async def dating_mail_var_create(payload: DatingMailVarSave,
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT id FROM dating_mail_var WHERE site_id = %s AND name = %s',
+            'SELECT id FROM mail_var WHERE site_id = %s AND name = %s',
             (int(payload.site_id), payload.name.strip()))
         if await db.fetchone():
             raise HTTPException(
@@ -192,7 +192,7 @@ async def dating_mail_var_create(payload: DatingMailVarSave,
                 detail=f'переменная «{payload.name.strip()}» на этом сайте уже есть')
 
         await db.execute(
-            'INSERT INTO dating_mail_var'
+            'INSERT INTO mail_var'
             ' (site_id, name, source, title, default_value, uses)'
             ' VALUES (%s, %s, %s, %s, %s, %s)',
             (int(payload.site_id), payload.name.strip(), payload.source,
@@ -229,7 +229,7 @@ async def dating_mail_var_update(var_id: int, payload: DatingMailVarSave,
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'UPDATE dating_mail_var SET title = %s, default_value = %s, uses = %s'
+            'UPDATE mail_var SET title = %s, default_value = %s, uses = %s'
             ' WHERE id = %s',
             (payload.title.strip(), payload.default_value,
              _uses_dump(payload.uses), int(var_id)))
@@ -263,11 +263,11 @@ async def dating_mail_var_delete(var_id: int,
         # Сперва значения, потом сама переменная: обратный порядок оставил бы
         # значения сиротами, оборвись выполнение между запросами.
         await db.execute(
-            'DELETE v FROM dating_profile_var v'
-            ' JOIN dating_profile p ON p.id = v.profile_id'
+            'DELETE v FROM profile_var v'
+            ' JOIN profile p ON p.id = v.profile_id'
             ' WHERE p.site_id = %s AND v.name = %s',
             (int(row['site_id']), row['name']))
-        await db.execute('DELETE FROM dating_mail_var WHERE id = %s', (int(var_id),))
+        await db.execute('DELETE FROM mail_var WHERE id = %s', (int(var_id),))
         await db.connection.commit()
 
     return {'result': {'id': int(var_id), 'name': row['name']}}
@@ -297,7 +297,7 @@ async def dating_profile_var_list(profile_id: int,
     поле для правки — предложить вписать неправду.
     """
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT id, site_id FROM dating_profile WHERE id = %s',
+        await db.execute('SELECT id, site_id FROM profile WHERE id = %s',
                          (int(profile_id),))
         profile = await db.fetchone()
         if not profile:
@@ -305,7 +305,7 @@ async def dating_profile_var_list(profile_id: int,
                                 detail=f'анкеты #{profile_id} нет')
 
         await db.execute(
-            'SELECT name, value, filled_by FROM dating_profile_var'
+            'SELECT name, value, filled_by FROM profile_var'
             ' WHERE profile_id = %s', (int(profile_id),))
         mine = {row['name']: row for row in await db.fetchall()}
 
@@ -347,7 +347,7 @@ async def dating_profile_var_save(profile_id: int, payload: DatingProfileVarSave
     считает нехваткой оба), а две записи одного состояния однажды разойдутся.
     """
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT id, site_id FROM dating_profile WHERE id = %s',
+        await db.execute('SELECT id, site_id FROM profile WHERE id = %s',
                          (int(profile_id),))
         profile = await db.fetchone()
         if not profile:
@@ -369,12 +369,12 @@ async def dating_profile_var_save(profile_id: int, payload: DatingProfileVarSave
             value = str(value or '').strip()[:DATING_MAIL_VAR_VALUE_MAX]
             if not value:
                 await db.execute(
-                    'DELETE FROM dating_profile_var WHERE profile_id = %s AND name = %s',
+                    'DELETE FROM profile_var WHERE profile_id = %s AND name = %s',
                     (int(profile_id), name))
                 continue
 
             await db.execute(
-                'INSERT INTO dating_profile_var (profile_id, name, value, filled_by)'
+                'INSERT INTO profile_var (profile_id, name, value, filled_by)'
                 ' VALUES (%s, %s, %s, %s)'
                 ' ON DUPLICATE KEY UPDATE value = VALUES(value),'
                 ' filled_by = VALUES(filled_by)',
@@ -412,7 +412,7 @@ async def dating_profile_var_agent(profile_id: int,
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT id, site_id, login, profile FROM dating_profile WHERE id = %s',
+            'SELECT id, site_id, login, profile FROM profile WHERE id = %s',
             (int(profile_id),))
         profile = await db.fetchone()
 
@@ -463,7 +463,7 @@ async def dating_mail_var_rows(site_id: int) -> list[dict]:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, site_id, name, source, title, default_value, uses'
-            ' FROM dating_mail_var WHERE site_id = %s ORDER BY id', (int(site_id),))
+            ' FROM mail_var WHERE site_id = %s ORDER BY id', (int(site_id),))
         rows = await db.fetchall()
 
     return [{'id': int(row['id']),
@@ -496,14 +496,14 @@ async def dating_profile_var_values(profile_id: int) -> dict[str, str]:
     Для отправки: сюда ходит круг рассылки, когда он появится.
     """
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT site_id FROM dating_profile WHERE id = %s',
+        await db.execute('SELECT site_id FROM profile WHERE id = %s',
                          (int(profile_id),))
         profile = await db.fetchone()
         if not profile:
             return {}
 
         await db.execute(
-            'SELECT name, value FROM dating_profile_var WHERE profile_id = %s',
+            'SELECT name, value FROM profile_var WHERE profile_id = %s',
             (int(profile_id),))
         mine = {row['name']: str(row['value'] or '') for row in await db.fetchall()}
 
@@ -559,7 +559,7 @@ async def _var_row(var_id: int) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, site_id, name, source, title, default_value, uses'
-            ' FROM dating_mail_var WHERE id = %s', (int(var_id),))
+            ' FROM mail_var WHERE id = %s', (int(var_id),))
         row = await db.fetchone()
 
     if not row:

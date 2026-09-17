@@ -185,7 +185,7 @@ async def dating_request_write(door: str, profile_id: int = 0, site_id: int = 0,
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT INTO dating_request'
+                'INSERT INTO request'
                 ' (profile_id, site_id, door, method, path, status, ok, error, ms,'
                 '  proxy_ip, bytes, body)'
                 ' VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
@@ -319,7 +319,7 @@ async def dating_request_sweep() -> int:
         async with mysql_get_db_async() as db:
             for _ in range(100):
                 await db.execute(
-                    'DELETE FROM dating_request'
+                    'DELETE FROM request'
                     ' WHERE created_at < NOW() - INTERVAL %s DAY LIMIT 10000', (days,))
                 cut = int(db.rowcount or 0)
                 await db.connection.commit()

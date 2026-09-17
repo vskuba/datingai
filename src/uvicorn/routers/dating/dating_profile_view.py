@@ -65,7 +65,7 @@ async def dating_profile_view_messages(profile_id: int, uid: str = '', limit: in
             # иначе тишина после чужой реплики читается как поломка.
             'SELECT id, sender_uid, sender_name, text, direction, is_read, '
             '       answer_silent_at, created_at '
-            f'FROM dating_message WHERE profile_id = %s{where} '
+            f'FROM message WHERE profile_id = %s{where} '
             f'ORDER BY created_at DESC, id DESC LIMIT {limit}', tuple(params))
         rows = await db.fetchall()
 
@@ -109,7 +109,7 @@ async def dating_profile_view_read(profile_id: int,
     await dating_profile_row(profile_id)
 
     async with mysql_get_db_async() as db:
-        await db.execute("UPDATE dating_message SET is_read = 1 "
+        await db.execute("UPDATE message SET is_read = 1 "
                          " WHERE profile_id = %s AND direction = 'in' AND is_read = 0", (profile_id,))
         read = db.rowcount
         await db.connection.commit()
@@ -175,7 +175,7 @@ async def dating_profile_view_card(profile_id: int, page: int = 1,
         # группировка идёт по индексу подряд, а `COUNT(DISTINCT)` держит своё дерево
         # уникальных значений — на 22 тысячах реплик это 9 мс против 39.
         await db.execute('SELECT COUNT(*) AS total FROM '
-                         '  (SELECT 1 FROM dating_message WHERE profile_id = %s '
+                         '  (SELECT 1 FROM message WHERE profile_id = %s '
                          '    GROUP BY sender_uid) d', (profile_id,))
         total = int(((await db.fetchone()) or {}).get('total') or 0)
 
@@ -226,13 +226,13 @@ async def dating_profile_view_card(profile_id: int, page: int = 1,
             "        AND last.answer_silent_at IS NULL) AS needs_answer "
             '  FROM (SELECT sender_uid AS uid, COUNT(*) AS messages, '
             '               MAX(created_at) AS last_at '
-            '          FROM dating_message WHERE profile_id = %s GROUP BY sender_uid) d '
-            '  JOIN dating_message last '
+            '          FROM message WHERE profile_id = %s GROUP BY sender_uid) d '
+            '  JOIN message last '
             '    ON last.profile_id = %s AND last.sender_uid = d.uid '
-            '   AND last.id = (SELECT MAX(m.id) FROM dating_message m '
+            '   AND last.id = (SELECT MAX(m.id) FROM message m '
             '                   WHERE m.profile_id = %s AND m.sender_uid = d.uid '
             '                     AND m.created_at = d.last_at) '
-            '  LEFT JOIN dating_contact c ON c.profile_id = %s AND c.uid = d.uid '
+            '  LEFT JOIN contact c ON c.profile_id = %s AND c.uid = d.uid '
             ' ORDER BY needs_answer DESC, d.last_at DESC, last.id DESC '
             ' LIMIT %s OFFSET %s',
             ('', profile_id, profile_id, profile_id, profile_id,
@@ -248,7 +248,7 @@ async def dating_profile_view_card(profile_id: int, page: int = 1,
             await db.execute(
                 # По времени, а не по `id`: см. оговорку выше.
                 'SELECT text, direction, is_answered, answer_silent_at, created_at '
-                '  FROM dating_message '
+                '  FROM message '
                 ' WHERE profile_id = %s AND sender_uid = %s '
                 ' ORDER BY created_at DESC, id DESC LIMIT 10',
                 (profile_id, contact['uid']))
@@ -262,7 +262,7 @@ async def dating_profile_view_card(profile_id: int, page: int = 1,
             # и лишний запрос дешевле, чем чтение строк в общей группировке.
             if not contact['name']:
                 await db.execute(
-                    'SELECT MAX(sender_name) AS name FROM dating_message '
+                    'SELECT MAX(sender_name) AS name FROM message '
                     ' WHERE profile_id = %s AND sender_uid = %s AND sender_name <> %s',
                     (profile_id, contact['uid'], ''))
                 contact['name'] = ((await db.fetchone()) or {}).get('name') or ''

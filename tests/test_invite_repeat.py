@@ -37,9 +37,9 @@ async def girl(auth_client):
     yield profile_id
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_message WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM dating_invite WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM dating_profile WHERE id = %s', (profile_id,))
+        await db.execute('DELETE FROM message WHERE profile_id = %s', (profile_id,))
+        await db.execute('DELETE FROM invite WHERE profile_id = %s', (profile_id,))
+        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
         await db.connection.commit()
 
 
@@ -48,7 +48,7 @@ async def _message(profile_id: int, direction: str) -> None:
     сообщения» уникальна в базе, и две реплики с пустым номером не лягут."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_message (profile_id, sender_uid, sender_name,'
+            'INSERT INTO message (profile_id, sender_uid, sender_name,'
             ' direction, text, source, message_uid) VALUES (%s, %s, %s, %s, %s, %s, %s)',
             (int(profile_id), UID, 'Кто-то', direction, 'привет', 'scenario',
              f'zz-{uuid.uuid4().hex[:12]}'))
@@ -58,7 +58,7 @@ async def _message(profile_id: int, direction: str) -> None:
 async def _invite(profile_id: int, status: str, ago_sec: int = 0) -> None:
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_invite (site_id, profile_id, uid, name, body, status,'
+            'INSERT INTO invite (site_id, profile_id, uid, name, body, status,'
             ' sent_at) VALUES (%s, %s, %s, %s, %s, %s,'
             '                  IF(%s = 0, NULL, NOW() - INTERVAL %s SECOND))',
             (STAND_SITE, int(profile_id), UID, 'Кто-то', 'Hi!', status,
@@ -74,7 +74,7 @@ async def _put_one(profile_id: int) -> bool:
 
 async def _drafts(profile_id: int) -> int:
     async with mysql_get_db_async() as db:
-        await db.execute("SELECT COUNT(*) AS n FROM dating_invite"
+        await db.execute("SELECT COUNT(*) AS n FROM invite"
                          " WHERE profile_id = %s AND status = 'draft'", (int(profile_id),))
 
         return int((await db.fetchone())['n'])
@@ -112,8 +112,8 @@ class TestTalked:
             assert (other, UID) not in talked, 'чужой разговор закрыл вторую анкету'
         finally:
             async with mysql_get_db_async() as db:
-                await db.execute('DELETE FROM dating_message WHERE profile_id = %s', (other,))
-                await db.execute('DELETE FROM dating_profile WHERE id = %s', (other,))
+                await db.execute('DELETE FROM message WHERE profile_id = %s', (other,))
+                await db.execute('DELETE FROM profile WHERE id = %s', (other,))
                 await db.connection.commit()
 
 
@@ -153,7 +153,7 @@ class TestRepeat:
             assert (other, UID) not in held, 'чужая пауза закрыла вторую анкету'
         finally:
             async with mysql_get_db_async() as db:
-                await db.execute('DELETE FROM dating_profile WHERE id = %s', (other,))
+                await db.execute('DELETE FROM profile WHERE id = %s', (other,))
                 await db.connection.commit()
 
     async def test_old_send_lets_the_pair_back(self, girl):
@@ -202,7 +202,7 @@ class TestKeyHoldsThePoolNotTheHistory:
         await _put_one(girl)
 
         async with mysql_get_db_async() as db:
-            await db.execute("UPDATE dating_invite SET status = 'sent', sent_at = NOW()"
+            await db.execute("UPDATE invite SET status = 'sent', sent_at = NOW()"
                              ' WHERE profile_id = %s', (girl,))
             await db.connection.commit()
 
@@ -287,7 +287,7 @@ def _site():
 async def _invite_row(profile_id: int) -> int:
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_invite (site_id, profile_id, uid, name, body, status)'
+            'INSERT INTO invite (site_id, profile_id, uid, name, body, status)'
             " VALUES (%s, %s, %s, %s, %s, 'draft')",
             (STAND_SITE, int(profile_id), UID, 'Кто-то', 'Hi there!'))
         made = db.lastrowid
@@ -299,6 +299,6 @@ async def _invite_row(profile_id: int) -> int:
 async def _row(invite_id: int) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute('SELECT id, site_id, profile_id, uid, name, body, status,'
-                         ' error, sent_at FROM dating_invite WHERE id = %s', (invite_id,))
+                         ' error, sent_at FROM invite WHERE id = %s', (invite_id,))
 
         return dict(await db.fetchone())

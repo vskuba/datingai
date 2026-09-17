@@ -374,7 +374,7 @@ async def _cards_put(site_id: int, rows: list[dict]) -> None:
         async with mysql_get_db_async() as db:
             for one in rows:
                 await db.execute(
-                    'INSERT INTO dating_companion'
+                    'INSERT INTO companion'
                     ' (site_id, uid, name, photo, age, city, country)'
                     ' VALUES (%s, %s, %s, %s, %s, %s, %s)'
                     ' ON DUPLICATE KEY UPDATE'
@@ -395,7 +395,7 @@ async def dating_favorite_settled(profile_id: int) -> dict:
     """Что мы уже пробовали по этой анкете: `{uid: {'state': …, 'tries': …}}`."""
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT uid, state, tries FROM dating_favorite'
+            await db.execute('SELECT uid, state, tries FROM favorite'
                              ' WHERE profile_id = %s', (int(profile_id),))
             rows = await db.fetchall()
     except Exception as e:
@@ -421,7 +421,7 @@ async def dating_favorite_mark(site_id: int, profile_id: int, uid: str, state: s
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT INTO dating_favorite'
+                'INSERT INTO favorite'
                 ' (site_id, profile_id, uid, state, error, tries, reason)'
                 ' VALUES (%s, %s, %s, %s, %s, %s, %s)'
                 ' ON DUPLICATE KEY UPDATE state = VALUES(state),'

@@ -154,7 +154,7 @@ async def _profile(profile_id: int) -> dict:
     """Анкета со всем, что нужно для удара. 404 — если её нет."""
     async with mysql_get_db_async() as db:
         await db.execute('SELECT id, site_id, login, storage_state'
-                         ' FROM dating_profile WHERE id = %s', (int(profile_id),))
+                         ' FROM profile WHERE id = %s', (int(profile_id),))
         row = await db.fetchone()
 
     if not row:

@@ -121,12 +121,12 @@ async def site(auth_client):
         f'/api/dating/site/{SITE}')).json()['result']['settings']
 
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT is_gone, mail_check_on FROM dating_site'
+        await db.execute('SELECT is_gone, mail_check_on FROM site'
                          ' WHERE site_id = %s', (SITE,))
         row = await db.fetchone()
         gone = int((row or {}).get('is_gone') or 0)
         await db.execute(
-            'INSERT INTO dating_site (site_id, is_gone, mail_check_on)'
+            'INSERT INTO site (site_id, is_gone, mail_check_on)'
             ' VALUES (%s, 0, 1)'
             ' ON DUPLICATE KEY UPDATE is_gone = 0, mail_check_on = 1', (SITE,))
         await db.connection.commit()
@@ -152,7 +152,7 @@ async def site(auth_client):
     await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_site SET is_gone = %s WHERE site_id = %s',
+        await db.execute('UPDATE site SET is_gone = %s WHERE site_id = %s',
                          (gone, SITE))
         await db.connection.commit()
 
@@ -209,7 +209,7 @@ async def profile(auth_client):
     # новый вход на каждый заход — тринадцать неудач каждые две минуты, которыми
     # мы сами и держали блокировку сайта.
     async with mysql_get_db_async() as db:
-        await db.execute("UPDATE dating_profile SET site_id = %s, status = 'online'"
+        await db.execute("UPDATE profile SET site_id = %s, status = 'online'"
                          ' WHERE id = %s', (SITE, made))
         await db.connection.commit()
 
@@ -247,7 +247,7 @@ async def test_mail_in_round_skips_gone_site(site):
     from mysql_.mysql_ import mysql_get_db_async
 
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE dating_site SET is_gone = 1 WHERE site_id = %s',
+        await db.execute('UPDATE site SET is_gone = 1 WHERE site_id = %s',
                          (SITE,))
         await db.connection.commit()
 
@@ -414,7 +414,7 @@ async def test_mail_in_round_check_is_on_by_default(auth_client):
         await db.execute("SELECT COLUMN_DEFAULT AS умолчание"
                          ' FROM INFORMATION_SCHEMA.COLUMNS'
                          " WHERE TABLE_SCHEMA = DATABASE()"
-                         "   AND TABLE_NAME = 'dating_site'"
+                         "   AND TABLE_NAME = 'site'"
                          "   AND COLUMN_NAME = 'mail_check_on'")
         row = await db.fetchone()
 

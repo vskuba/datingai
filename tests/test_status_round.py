@@ -74,7 +74,7 @@ async def girl(auth_client):
         'password': 'x'})).json()['result'])
 
     async with mysql_get_db_async() as db:
-        await db.execute("UPDATE dating_profile SET storage_state = %s,"
+        await db.execute("UPDATE profile SET storage_state = %s,"
                          " status = 'offline' WHERE id = %s",
                          ('{"cookies": []}', profile_id))
         await db.connection.commit()
@@ -82,7 +82,7 @@ async def girl(auth_client):
     yield profile_id
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_profile WHERE id = %s', (profile_id,))
+        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
         await db.connection.commit()
 
 
@@ -123,7 +123,7 @@ class TestProbeSite:
     async def test_profile_without_a_session_is_not_asked(self, girl, probe, quiet):
         """Без `storage_state` удар слать некуда."""
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile SET storage_state = NULL WHERE id = %s',
+            await db.execute('UPDATE profile SET storage_state = NULL WHERE id = %s',
                              (girl,))
             await db.connection.commit()
 
@@ -135,7 +135,7 @@ class TestProbeSite:
         """«Не ведём» значит не ведём совсем: ходить на сайт под снятой с ведения
         учёткой панель права не имеет."""
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile SET enabled = 0 WHERE id = %s', (girl,))
+            await db.execute('UPDATE profile SET enabled = 0 WHERE id = %s', (girl,))
             await db.connection.commit()
 
         await dating_status_probe_site(STAND_SITE)
@@ -218,7 +218,7 @@ def _answer(value):
 
 async def _row(profile_id: int) -> dict:
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT status, unread, last_seen_at FROM dating_profile'
+        await db.execute('SELECT status, unread, last_seen_at FROM profile'
                          ' WHERE id = %s', (int(profile_id),))
         row = await db.fetchone()
 

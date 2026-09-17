@@ -360,11 +360,11 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool) -> 
     # различаем по `id` — внутри одного времени он снова означает порядок.
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT m.sender_uid, m.sender_name, m.text, m.direction FROM dating_message m '
-            '  JOIN (SELECT sender_uid, MAX(created_at) AS last_at FROM dating_message '
+            'SELECT m.sender_uid, m.sender_name, m.text, m.direction FROM message m '
+            '  JOIN (SELECT sender_uid, MAX(created_at) AS last_at FROM message '
             '         WHERE profile_id = %s GROUP BY sender_uid) t '
             '    ON t.sender_uid = m.sender_uid AND t.last_at = m.created_at '
-            '   AND m.id = (SELECT MAX(x.id) FROM dating_message x '
+            '   AND m.id = (SELECT MAX(x.id) FROM message x '
             '                WHERE x.profile_id = %s AND x.sender_uid = m.sender_uid '
             '                  AND x.created_at = t.last_at) '
             f' WHERE {reason}' + where +
@@ -387,7 +387,7 @@ async def _silent_mark(profile_id: int, uid: str) -> None:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'UPDATE dating_message SET answer_silent_at = NOW() '
+                'UPDATE message SET answer_silent_at = NOW() '
                 " WHERE profile_id = %s AND sender_uid = %s AND direction = 'in' "
                 '   AND is_answered = 0 AND answer_silent_at IS NULL',
                 (int(profile_id), str(uid)))
@@ -405,7 +405,7 @@ async def _tried_mark(profile_id: int, uid: str) -> None:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'UPDATE dating_message SET answer_tried_at = NOW() '
+                'UPDATE message SET answer_tried_at = NOW() '
                 " WHERE profile_id = %s AND sender_uid = %s AND direction = 'in' AND is_answered = 0",
                 (int(profile_id), str(uid)))
             await db.connection.commit()

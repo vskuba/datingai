@@ -201,7 +201,7 @@ async def _sites() -> list[dict]:
     """Сайты с включённым расписанием инвайтов."""
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT site_id, invite_schedule FROM dating_site'
+            await db.execute('SELECT site_id, invite_schedule FROM site'
                              ' WHERE is_gone = 0 AND invite_schedule_on = 1'
                              ' ORDER BY site_id')
             rows = await db.fetchall()

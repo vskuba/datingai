@@ -57,7 +57,7 @@ DATING_BLOCK_DENY_DEFAULT = 'ERROR_MESSAGE_USER_DENY'
 
 # Пулы, из которых запрет выметает готовое. ⚠ `dating_mail_reply` здесь нет: ответ
 # на его же письмо уходит и после запрета (см. заголовок модуля).
-DATING_BLOCK_POOLS = ('dating_invite', 'dating_mailing', 'dating_favorite_mail')
+DATING_BLOCK_POOLS = ('invite', 'mailing', 'favorite_mail')
 
 
 async def dating_block_deny(site_id: int, answer: str) -> bool:
@@ -118,7 +118,7 @@ async def dating_block_add(site_id: int, profile_id: int, uid: str, name: str = 
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT IGNORE INTO dating_block'
+                'INSERT IGNORE INTO block'
                 ' (site_id, profile_id, uid, name, reason, source)'
                 ' VALUES (%s, %s, %s, %s, %s, %s)',
                 (site_id, profile_id, uid, who[:190], str(reason or '')[:500],
@@ -172,7 +172,7 @@ async def dating_block_pairs(site_id: int) -> set:
 
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT profile_id, uid FROM dating_block'
+            await db.execute('SELECT profile_id, uid FROM block'
                              ' WHERE site_id = %s', (site_id,))
             rows = await db.fetchall()
     except Exception as e:
@@ -224,7 +224,7 @@ async def dating_block_rows(site_id: int, profile_id: int = 0, page: int = 1,
 
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('SELECT COUNT(*) AS n FROM dating_block b' + where, args)
+            await db.execute('SELECT COUNT(*) AS n FROM block b' + where, args)
             total = int(((await db.fetchone()) or {}).get('n') or 0)
 
             pages = max(1, -(-total // per))
@@ -234,9 +234,9 @@ async def dating_block_rows(site_id: int, profile_id: int = 0, page: int = 1,
                 'SELECT b.id, b.profile_id, b.uid, b.reason, b.source, b.created_at,'
                 '       COALESCE(NULLIF(b.name, %s), comp.name, %s) AS name,'
                 '       comp.photo, p.profile AS profile_card, p.login AS profile_login'
-                '  FROM dating_block b'
-                '  JOIN dating_profile p ON p.id = b.profile_id'
-                '  LEFT JOIN dating_companion comp'
+                '  FROM block b'
+                '  JOIN profile p ON p.id = b.profile_id'
+                '  LEFT JOIN companion comp'
                 '    ON comp.site_id = b.site_id AND comp.uid = b.uid'
                 + where +
                 ' ORDER BY b.created_at DESC, b.id DESC LIMIT %s OFFSET %s',
@@ -278,7 +278,7 @@ async def dating_block_drop(block_id: int) -> bool:
     """
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('DELETE FROM dating_block WHERE id = %s', (int(block_id),))
+            await db.execute('DELETE FROM block WHERE id = %s', (int(block_id),))
             gone = int(db.rowcount or 0) > 0
             await db.connection.commit()
     except Exception as e:

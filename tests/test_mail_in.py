@@ -58,11 +58,11 @@ async def profile(auth_client):
         'password': SITE_API_FAKE_PASSWORD})).json()['result']
 
     async with mysql_get_db_async() as db:
-        await db.execute("UPDATE dating_profile SET password_source = 'own'"
+        await db.execute("UPDATE profile SET password_source = 'own'"
                          ' WHERE id = %s', (made,))
         await db.connection.commit()
         await db.execute('SELECT id, site_id, login, password, password_source'
-                         ' FROM dating_profile WHERE id = %s', (made,))
+                         ' FROM profile WHERE id = %s', (made,))
         row = dict(await db.fetchone())
 
     # ⚠ Письма кладём на **выдуманный** сайт, а анкета живёт на стенде: их ничто
@@ -86,7 +86,7 @@ async def _rows(profile_id: int) -> list[dict]:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT message_id, uid, name, body, seen, is_replied, date_post'
-            ' FROM dating_mail_in WHERE profile_id = %s ORDER BY message_id',
+            ' FROM mail_in WHERE profile_id = %s ORDER BY message_id',
             (int(profile_id),))
 
         return [dict(row) for row in await db.fetchall() or []]
@@ -241,7 +241,7 @@ class TestSeen:
 
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT INTO dating_favorite (site_id, profile_id, uid, state)'
+                'INSERT INTO favorite (site_id, profile_id, uid, state)'
                 ' VALUES (%s, %s, %s, %s)'
                 ' ON DUPLICATE KEY UPDATE state = VALUES(state)',
                 (SITE, profile['id'], uid, DATING_FAVORITE_STATES[0]))
@@ -254,7 +254,7 @@ class TestSeen:
             assert count['fav'] == 1, 'письмо избранного не отличили от прочих'
         finally:
             async with mysql_get_db_async() as db:
-                await db.execute('DELETE FROM dating_favorite WHERE profile_id = %s',
+                await db.execute('DELETE FROM favorite WHERE profile_id = %s',
                                  (profile['id'],))
                 await db.connection.commit()
 

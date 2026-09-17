@@ -37,8 +37,8 @@ async def girl(auth_client):
     yield profile_id
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_message WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM dating_profile WHERE id = %s', (profile_id,))
+        await db.execute('DELETE FROM message WHERE profile_id = %s', (profile_id,))
+        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
         await db.connection.commit()
 
 
@@ -122,7 +122,7 @@ async def _out(profile_id: int) -> None:
     """Наша реплика тому же человеку — исходящая."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_message (profile_id, sender_uid, sender_name,'
+            'INSERT INTO message (profile_id, sender_uid, sender_name,'
             " direction, text, source, message_uid) VALUES (%s, %s, %s, 'out', %s,"
             " 'scenario', %s)",
             (int(profile_id), UID, 'Frank', 'Привет!', f'zz-{uuid.uuid4().hex[:12]}'))

@@ -100,7 +100,7 @@ async def dating_heartbeat_sessions(site_id: int, profile_ids: list = None) -> d
     if not http_heartbeat_ready(config):
         return {}
 
-    sql = ('SELECT id, storage_state, proxy_url FROM dating_profile'
+    sql = ('SELECT id, storage_state, proxy_url FROM profile'
            ' WHERE site_id = %s AND enabled = 1 AND storage_state IS NOT NULL')
     args = [int(site_id)]
 
@@ -151,7 +151,7 @@ async def dating_heartbeat_proxies(site_id: int, profile_ids: list = None) -> di
     if not await dating_proxy_enabled(int(site_id)):
         return {}
 
-    sql = 'SELECT id, proxy_url FROM dating_profile WHERE site_id = %s'
+    sql = 'SELECT id, proxy_url FROM profile WHERE site_id = %s'
     args = [int(site_id)]
 
     if profile_ids:

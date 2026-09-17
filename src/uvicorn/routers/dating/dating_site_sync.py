@@ -126,7 +126,7 @@ async def _snapshot_write(sites: list) -> None:
             seen.append(site_id)
 
             await db.execute(
-                'INSERT INTO dating_site (site_id, name, url, tags, is_gone, synced_at)'
+                'INSERT INTO site (site_id, name, url, tags, is_gone, synced_at)'
                 ' VALUES (%s, %s, %s, %s, 0, %s)'
                 ' ON DUPLICATE KEY UPDATE name = VALUES(name), url = VALUES(url),'
                 ' tags = VALUES(tags), is_gone = 0, synced_at = VALUES(synced_at)',
@@ -138,7 +138,7 @@ async def _snapshot_write(sites: list) -> None:
         if seen:
             marks = ', '.join(['%s'] * len(seen))
             await db.execute(
-                f'UPDATE dating_site SET is_gone = 1 WHERE site_id NOT IN ({marks})', seen)
+                f'UPDATE site SET is_gone = 1 WHERE site_id NOT IN ({marks})', seen)
 
         await db.connection.commit()
 

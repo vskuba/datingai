@@ -339,7 +339,7 @@ async def dating_chat_panel_profiles(site_id: int) -> dict:
     участвуют — сопоставить их строкам панели нечем.
     """
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT id, profile FROM dating_profile WHERE site_id = %s',
+        await db.execute('SELECT id, profile FROM profile WHERE site_id = %s',
                          (int(site_id),))
         rows = await db.fetchall()
 
@@ -384,7 +384,7 @@ async def dating_chat_panel_save(rows: list) -> dict:
         for row in rows:
             if row['sender_uid']:
                 await db.execute(
-                    'INSERT INTO dating_contact (profile_id, uid, name) VALUES (%s, %s, %s)'
+                    'INSERT INTO contact (profile_id, uid, name) VALUES (%s, %s, %s)'
                     ' ON DUPLICATE KEY UPDATE name = IF(name = %s, VALUES(name), name)',
                     (row['profile_id'], row['sender_uid'], row['sender_name'], ''))
                 # `rowcount` у вставки — 1, у обновления — 2, у «ничего не
@@ -392,7 +392,7 @@ async def dating_chat_panel_save(rows: list) -> dict:
                 contacts += 1 if db.rowcount == 1 else 0
 
             await db.execute(
-                'INSERT IGNORE INTO dating_message'
+                'INSERT IGNORE INTO message'
                 ' (profile_id, sender_uid, sender_name, text, message_uid, direction,'
                 '  is_read, source, created_at)'
                 # Не разобралось время — ставим время импорта: потерять сообщение

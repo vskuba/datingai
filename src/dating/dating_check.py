@@ -110,7 +110,7 @@ async def _test_send(profile_id: int, presence: dict, profile: dict) -> dict:
     async with mysql_get_db_async() as db:
         # Только входящие: в этой же таблице лежит отправленное нами, и ответ
         # самому себе — не проверка отправки.
-        await db.execute("SELECT sender_uid FROM dating_message WHERE profile_id = %s "
+        await db.execute("SELECT sender_uid FROM message WHERE profile_id = %s "
                          "  AND direction = 'in' ORDER BY id DESC LIMIT 1", (profile_id,))
         row = await db.fetchone()
 

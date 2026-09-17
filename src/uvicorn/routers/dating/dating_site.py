@@ -1066,7 +1066,7 @@ async def dating_site_save(site_id: int, payload: DatingSiteSave,
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_site (site_id, settings) VALUES (%s, %s)'
+            'INSERT INTO site (site_id, settings) VALUES (%s, %s)'
             ' ON DUPLICATE KEY UPDATE settings = VALUES(settings)',
             (int(site_id), json.dumps(clean, ensure_ascii=False)))
         await db.connection.commit()
@@ -1135,7 +1135,7 @@ async def dating_site_rows() -> list[dict]:
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT site_id, name, url, tags, synced_at FROM dating_site'
+            'SELECT site_id, name, url, tags, synced_at FROM site'
             ' WHERE is_gone = 0 AND name <> %s ORDER BY name, site_id', ('',))
         rows = await db.fetchall()
 
@@ -1222,7 +1222,7 @@ async def _settings_all() -> dict[int, dict]:
     десятка строк.
     """
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT site_id, settings FROM dating_site')
+        await db.execute('SELECT site_id, settings FROM site')
         rows = await db.fetchall()
 
     found = {}

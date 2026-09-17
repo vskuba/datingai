@@ -56,11 +56,11 @@ async def profile(auth_client):
     from mysql_.mysql_ import mysql_get_db_async
 
     async with mysql_get_db_async() as db:
-        await db.execute("UPDATE dating_profile SET password_source = 'own'"
+        await db.execute("UPDATE profile SET password_source = 'own'"
                          ' WHERE id = %s', (made,))
         await db.connection.commit()
         await db.execute('SELECT id, site_id, login, password, password_source'
-                         ' FROM dating_profile WHERE id = %s', (made,))
+                         ' FROM profile WHERE id = %s', (made,))
         row = dict(await db.fetchone())
 
     yield row
@@ -75,7 +75,7 @@ async def letter(profile):
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO dating_mailing'
+            'INSERT INTO mailing'
             ' (site_id, profile_id, mail_id, uid, name, body, status)'
             " VALUES (%s, %s, NULL, '812886', 'Vincent', 'Привет, Vincent!', 'draft')",
             (SITE, profile['id']))
@@ -86,7 +86,7 @@ async def letter(profile):
     yield await _row(made)
 
     async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM dating_mailing WHERE id = %s', (made,))
+        await db.execute('DELETE FROM mailing WHERE id = %s', (made,))
         await db.connection.commit()
 
 
@@ -102,7 +102,7 @@ async def _row(letter_id: int) -> dict:
 
     async with mysql_get_db_async() as db:
         await db.execute('SELECT id, site_id, profile_id, mail_id, uid, name, body,'
-                         ' status, error, sent_at FROM dating_mailing WHERE id = %s',
+                         ' status, error, sent_at FROM mailing WHERE id = %s',
                          (int(letter_id),))
 
         return dict(await db.fetchone())
@@ -398,7 +398,7 @@ class TestSendEndpoint:
         from mysql_.mysql_ import mysql_get_db_async
 
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile SET enabled = 0 WHERE id = %s',
+            await db.execute('UPDATE profile SET enabled = 0 WHERE id = %s',
                              (profile['id'],))
             await db.connection.commit()
         try:
@@ -408,7 +408,7 @@ class TestSendEndpoint:
             assert 'выключена' in answer.json()['detail']
         finally:
             async with mysql_get_db_async() as db:
-                await db.execute('UPDATE dating_profile SET enabled = 1 WHERE id = %s',
+                await db.execute('UPDATE profile SET enabled = 1 WHERE id = %s',
                                  (profile['id'],))
                 await db.connection.commit()
 
@@ -483,7 +483,7 @@ class TestDeliveryIsRecorded:
 
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT INTO dating_mailing'
+                'INSERT INTO mailing'
                 ' (site_id, profile_id, mail_id, uid, name, body, status)'
                 " VALUES (%s, %s, NULL, '999001', '', 'Текст', 'draft')",
                 (SITE, profile['id']))
@@ -499,7 +499,7 @@ class TestDeliveryIsRecorded:
                 'безымянный адресат потерялся в журнале'
         finally:
             async with mysql_get_db_async() as db:
-                await db.execute('DELETE FROM dating_mailing WHERE id = %s', (made,))
+                await db.execute('DELETE FROM mailing WHERE id = %s', (made,))
                 await db.connection.commit()
 
 
@@ -578,7 +578,7 @@ async def _log(profile_id: int) -> list[dict]:
     from mysql_.mysql_ import mysql_get_db_async
 
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT level, text FROM dating_log WHERE profile_id = %s'
+        await db.execute('SELECT level, text FROM log WHERE profile_id = %s'
                          ' ORDER BY id DESC LIMIT 20', (int(profile_id),))
 
         return [dict(row) for row in await db.fetchall() or []]

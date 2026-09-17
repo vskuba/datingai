@@ -261,7 +261,7 @@ async def _last(path: str) -> dict:
     from mysql_.mysql_ import mysql_get_db_async
 
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT bytes, body FROM dating_request'
+        await db.execute('SELECT bytes, body FROM request'
                          ' WHERE path = %s ORDER BY id DESC LIMIT 1', (path,))
 
         return dict((await db.fetchone()) or {})

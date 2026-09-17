@@ -61,7 +61,7 @@ async def dating_error_write(source: str, message: str, site_id: int = 0) -> Non
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT INTO dating_error (source, site_id, message)'
+                'INSERT INTO error (source, site_id, message)'
                 ' VALUES (%s, %s, %s)'
                 ' ON DUPLICATE KEY UPDATE message = VALUES(message), hits = hits + 1',
                 (str(source)[:64], int(site_id), str(message)[:DATING_ERROR_MESSAGE_MAX]))
@@ -79,7 +79,7 @@ async def dating_error_clear(source: str, site_id: int = 0) -> None:
     """
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('DELETE FROM dating_error WHERE source = %s AND site_id = %s',
+            await db.execute('DELETE FROM error WHERE source = %s AND site_id = %s',
                              (str(source)[:64], int(site_id)))
             await db.connection.commit()
     except Exception as e:
@@ -105,7 +105,7 @@ async def dating_error_rows(site_id: int = 0, limit: int = DATING_ERROR_LIMIT) -
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, source, site_id, message, hits, first_at, last_at'
-            f' FROM dating_error{where} ORDER BY last_at DESC LIMIT {int(limit)}', params)
+            f' FROM error{where} ORDER BY last_at DESC LIMIT {int(limit)}', params)
         rows = await db.fetchall()
 
     return [{'id': int(row['id']),

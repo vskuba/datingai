@@ -75,7 +75,7 @@ async def dating_ws_save(profile_id: int, url: str) -> None:
     """Запоминает адрес сокета. Не бросает: адрес — кэш, а не источник истины."""
     try:
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE dating_profile SET ws_url = %s WHERE id = %s',
+            await db.execute('UPDATE profile SET ws_url = %s WHERE id = %s',
                              (str(url), int(profile_id)))
             await db.connection.commit()
     except Exception as e:

@@ -50,7 +50,7 @@ async def dating_socket_list(site_id: int = 0, user=Depends(auth_required)):
         await db.execute(
             'SELECT id, login, site_id, ws_url, status, last_error, enabled, '
             '       storage_state IS NOT NULL AS has_state '
-            f'  FROM dating_profile{where} ORDER BY id', tuple(params))
+            f'  FROM profile{where} ORDER BY id', tuple(params))
         rows = await db.fetchall()
 
     sockets = []
