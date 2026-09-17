@@ -72,31 +72,32 @@ class TestTheShare:
 
         assert await _man_chance(STAND_SITE) == 0.0
 
-    async def test_a_value_outside_the_list_falls_back(self, percent):
-        """⚠ Значение вне набора формы отвергается — это делает `site_seconds`.
+    @pytest.mark.parametrize('value, share', [(7, 0.07), (23, 0.23), (100, 1.0)])
+    async def test_any_number_works(self, percent, value, share):
+        """⚠⚠ Любое число, а не выбор из набора.
 
-        Страница таких не предлагает, а в базу их вписывают руками. Реестр
-        сверяет значение со списком и отдаёт умолчание, не доводя до жребия:
-        «250%» иначе значило бы то же, что 100, но молча.
+        Набор отвечает на вопрос «какие значения осмысленны», и для сроков это
+        верно: «15 секунд или 5 минут» — разные решения, а «17 секунд» не значит
+        ничего. Здесь же осмысленна **любая** доля: 7% так же законны, как 10%.
         """
         from src.dating.invite import _man_chance
 
-        await percent(250)
+        await percent(value)
 
-        assert await _man_chance(STAND_SITE) == pytest.approx(0.10)
+        assert await _man_chance(STAND_SITE) == pytest.approx(share)
 
-    async def test_the_biggest_offered_share_works(self, percent):
-        """Половина — самая большая доля, которую предлагает форма.
+    async def test_the_share_never_exceeds_one(self, percent):
+        """⚠ И вторая страховка — в самом переводе процентов в долю.
 
-        ⚠ Больше не предлагаем намеренно: текст пула один на всех, и обращение
-        по имени чаще чем в половине реплик выдаёт рамку тому, кто прочитает две
-        подряд.
+        `random.random()` не превысит единицы, так что доля больше неё значила бы
+        «всегда». До жребия такое не доходит (сервер отвергает >100), но код
+        считает сам и на чужую проверку не опирается.
         """
         from src.dating.invite import _man_chance
 
-        await percent(50)
+        await percent(100)
 
-        assert await _man_chance(STAND_SITE) == pytest.approx(0.50)
+        assert await _man_chance(STAND_SITE) == 1.0
 
     async def test_a_broken_database_gives_the_default(self, monkeypatch):
         """⚠ «Имён не будет вовсе» — решение, и принимать его из-за недоступной
@@ -168,3 +169,56 @@ class TestTheSetting:
         from src.dating import invite
 
         assert 'await _man_chance(site_id)' in inspect.getsource(invite._template)
+
+
+class TestTheFieldIsANumber:
+    """⚠⚠ Поле числовое, с границами, и границы держит сервер.
+
+    У поля стоят `min` и `max` — браузер не пустит «-5» и «101». Но браузер не
+    единственный источник запроса: ручка открыта тому, у кого есть токен, и без
+    серверной проверки «-500» прошло бы молча. Для доли это не мелочь:
+    отрицательная сравнится с `random.random()` как «никогда», то есть человек
+    получил бы тихо выключенную настройку вместо отказа.
+    """
+
+    async def test_the_field_says_number(self, auth_client):
+        got = (await auth_client.get('/api/dating/site')).json()['result']
+        spec = next(r for r in got['known'] if r['key'] == 'invite_name_percent')
+
+        assert spec['kind'] == 'number'
+        assert spec['min'] == 0 and spec['max'] == 100
+        assert spec['options'] == [], 'набор остался — поле нарисуется списком'
+
+    async def test_a_number_is_saved(self, auth_client):
+        answer = await auth_client.put(f'/api/dating/site/{STAND_SITE}',
+                                        json={'settings': {'invite_name_percent': '7'}})
+
+        assert answer.status_code == 200
+        assert answer.json()['result']['settings']['invite_name_percent'] == '7'
+
+    @pytest.mark.parametrize('bad', ['-5', '101', 'много', '3.5'])
+    async def test_nonsense_is_refused(self, auth_client, bad):
+        """Отказ, а не тихое умолчание: человек должен узнать, что не сохранилось."""
+        answer = await auth_client.put(f'/api/dating/site/{STAND_SITE}',
+                                        json={'settings': {'invite_name_percent': bad}})
+
+        assert answer.status_code == 422, f'«{bad}» приняли'
+
+    async def test_the_refusal_names_the_setting(self, auth_client):
+        """⚠ В отказе — название настройки и границы: без них человек ищет глазами,
+        какое из полей формы он испортил."""
+        answer = await auth_client.put(f'/api/dating/site/{STAND_SITE}',
+                                        json={'settings': {'invite_name_percent': '900'}})
+
+        detail = answer.json()['detail']
+
+        assert 'имени' in detail and '100' in detail, detail
+
+    async def test_other_settings_are_not_touched(self, auth_client):
+        """⚠ Проверка только для числовых: остальные бывают строками, JSON и
+        расписанием, и «не число» для них — обычное дело."""
+        answer = await auth_client.put(
+            f'/api/dating/site/{STAND_SITE}',
+            json={'settings': {'admin_mark': 'Выход из кабинета'}})
+
+        assert answer.status_code == 200

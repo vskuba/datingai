@@ -475,13 +475,18 @@ SITE_KNOWN = {
         'group': 'invite',
         'title': 'В скольких инвайтах называть собеседника по имени, %',
         'note': 'доля инвайтов, где в шаблон просится имя — только **первое '
-                'слово**, как зовут в чате. ⚠ Не больше трети: текст пула один '
-                'на всех, и обращение по имени в каждой реплике выдаёт рамку '
+                'слово**, как зовут в чате. ⚠ Большая доля выдаёт рамку: текст '
+                'пула один на всех, и обращение по имени в каждой реплике видно '
                 'тому, кто прочитает две подряд. ⚠ Ноль — законное значение: '
                 'имён не будет вовсе',
         'default': '10',
-        'options': [('0', '0 — без имён'), ('10', '10% — обычно'),
-                    ('30', '30%'), ('50', '50%')],
+        # ⚠ **Число, а не набор.** Набор отвечает на вопрос «какие значения
+        # осмысленны», и для сроков это верно: «15 секунд или 5 минут» — разные
+        # решения, а «17 секунд» не значит ничего. Здесь же осмысленно **любое**
+        # число: доля 7% так же законна, как 10%, и запрещать её незачем.
+        'kind': 'number',
+        'min': 0,
+        'max': 100,
     },
     'invite_pool_max': {
         'group': 'invite',
@@ -1118,7 +1123,7 @@ async def site_save(site_id: int, payload: DatingSiteSave,
         # необъяснимое поведение там, где умолчание кода было осмысленным. То же
         # правило, что у настроек панели (`api.md`, §6.2).
         if str(value) != '':
-            clean[key] = str(value)
+            clean[key] = _number_check(key, str(value))
 
     async with mysql_get_db_async() as db:
         await db.execute(
@@ -1130,6 +1135,50 @@ async def site_save(site_id: int, payload: DatingSiteSave,
     await _proxy_off(int(site_id), before, clean)
 
     return {'result': {'site_id': site_id, 'settings': _masked(clean)}}
+
+
+def _number_check(key: str, value: str) -> str:
+    """Числовая настройка — целое в своих границах. Иначе `422`.
+
+    Args:
+        key: ключ настройки.
+        value: что прислали.
+
+    Returns:
+        str: то же значение, приведённое к целому без хвостов («07» → «7»).
+
+    Raises:
+        HTTPException: 422 — не число или вне границ, с указанием, каких.
+
+    ⚠⚠ **Проверять обязательно здесь, а не только в форме.** У поля стоят `min` и
+    `max`, но браузер — не единственный источник запроса: ручка открыта тому, у
+    кого есть токен, и «-500» прошло бы молча. Для доли это не мелочь:
+    отрицательная сравнится с `random.random()` как «никогда», и человек получил
+    бы тихо выключённую настройку вместо отказа.
+
+    ⚠ **Не числовые настройки не трогаем.** Здесь только те, у кого в реестре
+    стоит `kind: 'number'`: остальные бывают строками, JSON и расписанием.
+    """
+    spec = SITE_KNOWN.get(str(key), {})
+    if str(spec.get('kind') or '') != 'number':
+        return str(value)
+
+    try:
+        number = int(str(value).strip())
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f'«{spec.get("title") or key}»: нужно целое число, '
+                   f'а пришло «{str(value)[:40]}»')
+
+    low, high = spec.get('min'), spec.get('max')
+    if (low is not None and number < int(low)) or (high is not None and number > int(high)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f'«{spec.get("title") or key}»: значение {number} вне границ '
+                   f'от {low} до {high}')
+
+    return str(number)
 
 
 async def site_setting(site_id: int, key: str, default: str = '') -> str:
@@ -1223,6 +1272,11 @@ def _known() -> list[dict]:
              # один — отбор выходов: его список приходит не из реестра, а от
              # соседа, и рисуется он мультивыбором.
              'kind': str(spec.get('kind') or ''),
+             # Границы числового поля. ⚠ Уезжают странице **и** проверяются на
+             # сервере (`_number_check`): форма подсказывает, а решает сервер —
+             # запрос приходит и мимо формы.
+             'min': spec.get('min'),
+             'max': spec.get('max'),
              'options': [{'value': value, 'title': title}
                          for value, title in spec.get('options') or ()]}
             for key, spec in SITE_KNOWN.items()]

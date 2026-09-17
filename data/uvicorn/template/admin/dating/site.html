@@ -35,6 +35,13 @@
         }
         .set-value:focus { outline: none; border-color: #6366f1; }
         .set-value:disabled { opacity: .6; }
+        /* Числовое поле уже строки: в нём два-три знака, а растянутое на всю
+           ширину оно обещает длинный ввод, которого не будет. Стрелки браузера
+           остаются — ими подбирают долю, не набирая.
+
+           ⚠ `min-width` перебиваем явно: у `.set-value` он 400 пикселей, и один
+           `max-width` проиграл бы ему — поле осталось бы широким. */
+        .set-number { min-width: 0; max-width: 120px; }
         /* Несохранённая правка видна: без этого набранное и сохранённое выглядят
            одинаково, и человек уходит со страницы в уверенности, что сохранил. */
         .set-value.dirty { border-color: #f59e0b; background: #fffbeb; }
@@ -1010,7 +1017,19 @@
     // Пустое поле без подписи читалось бы как «здесь то же, что у соседнего», и
     // так и прочли: страницу Goldenbride приняли за копию страницы Ladadate.
     function knownInput(spec, chosen) {
-        const field = `<input type="${spec.secret ? 'password' : 'text'}" class="set-value"`
+        // ⚠ Числовая настройка — своё поле с границами: браузер сам не пустит
+        // «-5» и «101», а стрелки и колесо мыши делают подбор доли делом одного
+        // движения. Сервер их всё равно проверяет (`_number_check`): запрос
+        // приходит и мимо формы.
+        const число = spec.kind === 'number';
+        const границы = число
+            ? (spec.min === null || spec.min === undefined ? '' : ` min="${spec.min}"`)
+              + (spec.max === null || spec.max === undefined ? '' : ` max="${spec.max}"`)
+              + ' step="1" inputmode="numeric"'
+            : '';
+
+        const field = `<input type="${число ? 'number' : (spec.secret ? 'password' : 'text')}"`
+            + ` class="set-value${число ? ' set-number' : ''}"${границы}`
             + ` autocomplete="off"${CAN_EDIT ? '' : ' disabled'}`
             + ` placeholder="${esc(spec.default || 'не задано у этого сайта')}"`
             + ` value="${esc(chosen)}">`;
