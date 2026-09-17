@@ -163,7 +163,8 @@ class TestGuardStandsInBothPaths:
             return [{'sender_uid': UID, 'sender_name': 'Semen',
                      'text': 'вопрос', 'direction': 'in'}]
 
-        async def _ask(agent_id, question, language, profile=None):
+        async def _ask(agent_id, question, language, profile=None,
+                   history='', uid=''):
             asked.append(question)
 
             return ('ответ', '')
@@ -205,7 +206,8 @@ class TestGuardStandsInBothPaths:
             return [{'sender_uid': UID, 'sender_name': 'Semen',
                      'text': 'вопрос', 'direction': 'in'}]
 
-        async def _ask(agent_id, question, language, profile=None):
+        async def _ask(agent_id, question, language, profile=None,
+                   history='', uid=''):
             asked.append(question)
 
             return ('ответ', '')

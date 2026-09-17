@@ -47,6 +47,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_chat_ask
 from src.dating.log import log_write
+from src.dating.talk_history import talk_history_text
 from src.dating.online import online_check
 from src.dating.send import send_message
 
@@ -161,7 +162,19 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
         # успел бы начаться заново, спросив агента о том же во второй раз.
         await _tried_mark(profile_id, uid)
 
-        answer, error = await _agent_ask(agent_id, question, language, profile)
+        # ⚠⚠ **История уезжает агенту переменной, а не живёт сессией у соседа.**
+        # Прежде он видел одну строку — эту самую реплику: шаг `session_messages`
+        # берёт историю по `session_uuid`, которого мы не передавали, и в его
+        # базе на каждый вызов рождалась пустая сессия.
+        #
+        # Держать сессию у него и не нужно: запрос к LLM прошлого не помнит, а
+        # история у нас уже есть — в `message`, вместе с перенесёнными инвайтами.
+        # Отсюда агент видит разговор целиком: чем он начался и что человек
+        # отвечал вчера (`talk_history.py`).
+        history = await talk_history_text(profile_id, uid)
+
+        answer, error = await _agent_ask(agent_id, question, language, profile,
+                                         history=history, uid=uid)
         asked += 1
         if error:
             errors.append(f'{who}: {error}')
@@ -212,7 +225,8 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
 
 
 async def _agent_ask(agent_id: int, question: str, language: str,
-                     profile: dict) -> tuple[str, str]:
+                     profile: dict, history: str = '',
+                     uid: str = '') -> tuple[str, str]:
     """Спрашивает агента в RhapsodyAi. Возвращает (ответ, ошибка).
 
     Пустой ответ ошибкой не считается — он значим сам по себе и разбирается выше:
@@ -240,6 +254,11 @@ async def _agent_ask(agent_id: int, question: str, language: str,
         answer = await rhapsody_api_chat_ask(
             agent_id, question, companion_id=ANSWER_COMPANION_ID,
             variables={'user_language': language,
+                       # ⚠ История **и** ключ собеседника: без ключа у соседа
+                       # факты обо всех мужчинах слились бы в один документ —
+                       # та же беда, от которой у девушек стоит `girl_id`.
+                       'talk_history': str(history or ''),
+                       'companion_uid': str(uid or ''),
                        **agent_vars(profile, card or {})})
     except RhapsodyError as e:
         return '', str(e)
