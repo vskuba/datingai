@@ -201,7 +201,69 @@ async def invite_list(site_id: int = 0, status_: str = 'draft',
             # два запроса дали бы два разных момента времени.
             'send_why': await invite_send_why(
                 int(site_id), await setting_timezone_hours()),
-            'send_on': await _send_on(int(site_id))}
+            'send_on': await _send_on(int(site_id)),
+            'speed': await _speed(int(site_id))}
+
+
+async def _speed(site_id: int) -> dict:
+    """Скорость отправки: сколько ушло за пять минут и что будет за двенадцать
+    часов при таком темпе.
+
+    Returns:
+        dict: `last_5min` — реплик за последние пять минут, `per_hour` — темп в
+        час, `forecast_12h` — прогноз, `cap_left` — сколько осталось до дневной
+        нормы, `capped` — упрётся ли прогноз в неё.
+
+    ## ⚠⚠ Считаем по своей таблице, а не по ленте событий
+
+    Прежде число «ушло за 5 минут» бралось из ленты — и занижало в разы. Лента
+    это **кольцо на тридцать строк** (`feed.FEED_KEEP`), общее для всех видов
+    событий; на проде за минуту уходит до 98 реплик, то есть в пятиминутное окно
+    не помещается и десятая часть.
+
+    Лента для мигания конвертов годится (важно «идёт ли отправка сейчас»), а для
+    счёта — нет.
+
+    ## ⚠ Прогноз считается от текущего темпа и **упирается в дневную норму**
+
+    Линейное «×144» обещало бы тысячи там, где норма сотня: круг остановится,
+    дойдя до неё, и человек, поверивший прогнозу, ждал бы отправки, которой не
+    будет. Поэтому отдаём и остаток нормы, и признак «прогноз упёрся».
+
+    ⚠ **Сутки скользящие**, как и у самого потолка (`invite_send_round._today`):
+    полночь для человека, который читает реплики, ничего не значит.
+    """
+    from src.dating.invite_send_round import INVITE_SEND_MAX_DAY_SETTING
+    from src.uvicorn.routers.dating.site_ import site_seconds
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                "SELECT SUM(sent_at > NOW() - INTERVAL 5 MINUTE) AS за_пять,"
+                '       SUM(sent_at > NOW() - INTERVAL 1 DAY) AS за_сутки'
+                "  FROM invite WHERE site_id = %s AND status = 'sent'"
+                '   AND sent_at > NOW() - INTERVAL 1 DAY', (int(site_id),))
+            row = await db.fetchone() or {}
+    except Exception as e:
+        logger_info(f'[dating] скорость отправки сайта #{site_id} не спросилась: {e}')
+
+        return {}
+
+    за_пять = int(row.get('за_пять') or 0)
+    за_сутки = int(row.get('за_сутки') or 0)
+
+    per_hour = за_пять * 12
+    cap = await site_seconds(int(site_id), INVITE_SEND_MAX_DAY_SETTING)
+    cap_left = max(0, int(cap or 0) - за_сутки) if cap else 0
+
+    forecast = per_hour * 12
+    capped = bool(cap) and forecast > cap_left
+
+    return {'last_5min': за_пять,
+            'per_hour': per_hour,
+            'forecast_12h': min(forecast, cap_left) if capped else forecast,
+            'cap_left': cap_left,
+            'capped': capped}
 
 
 @router.post('/generate', include_in_schema=False)
