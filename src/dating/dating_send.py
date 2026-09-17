@@ -97,7 +97,8 @@ DATING_SEND_TRANSPORT_SETTING = 'send_transport'
 DATING_SEND_SOURCE = {'scenario': 'scenario', 'http': 'http', 'ws': 'socket'}
 
 
-async def dating_send_message(profile: dict, presence: dict, to_uid: str, text: str) -> dict:
+async def dating_send_message(profile: dict, presence: dict, to_uid: str, text: str,
+                              to_history: bool = True) -> dict:
     """Шлёт сообщение собеседнику и записывает его в переписку.
 
     Args:
@@ -105,6 +106,9 @@ async def dating_send_message(profile: dict, presence: dict, to_uid: str, text: 
         presence: настройка сайта, раздел `send`.
         to_uid: кому — идентификатор на сайте.
         text: что отправляем.
+        to_history: писать ли ушедшее в переписку. ⚠ `False` у инвайтов:
+            приглашение не разговор, и до первого ответа человека его в
+            диалоге быть не должно.
 
     Returns:
         dict: `ok` — **принял ли сайт кадр**, а не «дошло до адресата»: это разные
@@ -204,8 +208,18 @@ async def dating_send_message(profile: dict, presence: dict, to_uid: str, text: 
     # Записываем только принятое: строка в переписке означает «это мы сказали», и
     # непринятый сайтом текст показывать в диалоге нельзя.
     if result['ok']:
-        await _message_save(int(profile['id']), to_uid, text, message_uid,
-                            DATING_SEND_SOURCE.get(transport, 'socket'))
+        # ⚠⚠ **Инвайт в переписку не идёт** (`to_history=False`), и это не мелочь.
+        # Приглашение — не разговор: пока человек не ответил, разговора нет
+        # вовсе, а приглашений ему уходит до двадцати за разные дни. Записанные
+        # сразу, они давали диалог из двадцати наших реплик и ни одной его — и
+        # портили ровно то, ради чего их хранят: понять, **на что** он ответил.
+        #
+        # Историю держит своя таблица (`invite`), а в переписку последние из
+        # приглашений переносятся в момент **первого ответа** (`dating_chat.py`).
+        if to_history:
+            await _message_save(int(profile['id']), to_uid, text, message_uid,
+                                DATING_SEND_SOURCE.get(transport, 'socket'))
+
         await _answered_mark(int(profile['id']), to_uid)
 
     return result

@@ -204,6 +204,92 @@ async def _pending_take(socket, profile_id: int, raw, site) -> int:
     return saved
 
 
+async def _invites_to_history(db, profile_id: int, uid: str) -> int:
+    """Кладёт в переписку последние инвайты этой пары — их столько, сколько
+    просит настройка сайта `invite_keep`.
+
+    Args:
+        db: открытая сделка вызывающего. ⚠ **Своей не заводим**: перенос и запись
+            ответа обязаны случиться вместе, иначе сбой между ними оставил бы
+            диалог без повода или повод без диалога.
+        profile_id: девушка.
+        uid: собеседник на сайте.
+
+    Returns:
+        int: сколько приглашений перенесено. Ноль — обычный случай: ответ пришёл
+        человеку, которому мы не писали (он сам начал разговор).
+
+    ## ⚠⚠ Время берём от инвайта, а не текущее
+
+    `created_at` ставится равным `sent_at` приглашения. Поставь мы `NOW()` —
+    приглашение оказалось бы **новее** ответа на него, и диалог читался бы задом
+    наперёд: сначала «привет, как ты?», потом наше «спорим, ты улыбнулся».
+    Разбор истории у нас идёт по времени, а не по `id` (`dating_send._said_already`),
+    так что это не косметика.
+
+    ## ⚠ Берём только отправленные
+
+    Черновик в пуле человеку не уходил — в переписке ему места нет. `status` у
+    инвайта как раз это и различает: `sent` — ушло, `draft` — лежит, `failed` —
+    не дошло.
+    """
+    from src.dating.dating_invite import DATING_INVITE_KEEP_DEFAULT
+
+    keep = await _invite_keep(profile_id)
+
+    await db.execute(
+        'SELECT uid, body, sent_at FROM invite'
+        "  WHERE profile_id = %s AND uid = %s AND status = 'sent'"
+        '    AND sent_at IS NOT NULL'
+        '  ORDER BY sent_at DESC LIMIT %s',
+        (int(profile_id), str(uid), max(1, int(keep or DATING_INVITE_KEEP_DEFAULT))))
+    invites = await db.fetchall() or []
+
+    for one in reversed(invites):
+        # ⚠ `message_uid` собираем из номера строки инвайта: у приглашения нет
+        # номера сообщения на сайте (его даёт сокет, а инвайт уходит ручкой), а
+        # `INSERT IGNORE` без уникального ключа пустит одно и то же дважды.
+        await db.execute(
+            'INSERT IGNORE INTO message'
+            ' (profile_id, sender_uid, sender_name, text, message_uid, direction,'
+            "  is_answered, source, created_at)"
+            " VALUES (%s, %s, '', %s, %s, 'out', 1, 'invite', %s)",
+            (int(profile_id), str(uid), str(one['body'] or ''),
+             f"invite-{profile_id}-{uid}-{one['sent_at']:%Y%m%d%H%M%S}",
+             one['sent_at']))
+
+    return len(invites)
+
+
+async def _invite_keep(profile_id: int) -> int:
+    """Сколько приглашений переносить — настройка **сайта** этой анкеты.
+
+    Сайт спрашиваем по анкете: у пары его в руках нет, а настройка живёт у сайта.
+    Сбой чтения даёт умолчание — перенести два приглашения безопаснее, чем не
+    перенести ни одного и оставить автоответ без повода.
+    """
+    from src.dating.dating_invite import (DATING_INVITE_KEEP_DEFAULT,
+                                          DATING_INVITE_KEEP_SETTING)
+    from src.uvicorn.routers.dating.dating_site import dating_site_seconds
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT site_id FROM profile WHERE id = %s',
+                             (int(profile_id),))
+            row = await db.fetchone()
+
+        site_id = int((row or {}).get('site_id') or 0)
+        if not site_id:
+            return DATING_INVITE_KEEP_DEFAULT
+
+        return int(await dating_site_seconds(site_id, DATING_INVITE_KEEP_SETTING)
+                   or DATING_INVITE_KEEP_DEFAULT)
+    except Exception as e:
+        logger_info(f'[dating] сколько инвайтов переносить не спросилось: {e}')
+
+        return DATING_INVITE_KEEP_DEFAULT
+
+
 async def _message_save(profile_id: int, message: dict) -> bool:
     """Кладёт сообщение. Повтор (тот же `message_uid`) молча пропускается.
 
@@ -220,6 +306,19 @@ async def _message_save(profile_id: int, message: dict) -> bool:
                 " WHERE profile_id = %s AND sender_uid = %s AND direction = 'in'"
                 ' LIMIT 1', (profile_id, message['sender_uid']))
             first = not await db.fetchone()
+
+            # ⚠⚠ **Первый ответ — момент, когда приглашения становятся диалогом.**
+            # Инвайты в переписку не пишутся: пока человек молчит, разговора нет,
+            # а приглашений ему уходит до двадцати за разные дни
+            # (`dating_send.to_history`). Ответил — и последние из них нужны, чтобы
+            # понять, **на что** он ответил: без них автоответ видит одну реплику
+            # без повода.
+            #
+            # ⚠ Переносим **до** вставки его слов, в той же сделке: инвайт с
+            # временем отправки обязан лечь раньше ответа, иначе диалог читается
+            # задом наперёд.
+            if first:
+                await _invites_to_history(db, profile_id, message['sender_uid'])
 
             await db.execute(
                 'INSERT IGNORE INTO message '

@@ -100,7 +100,12 @@ async def dating_invite_send_one(invite: dict) -> dict:
     body = dating_invite_marks_strip(str(invite['body']))
 
     try:
-        got = await dating_send_message(profile, presence, str(invite['uid']), body)
+        # ⚠ `to_history=False`: инвайт в переписку не пишется. Пока человек не
+        # ответил, разговора нет, а приглашений ему уходит до двадцати за разные
+        # дни — в диалоге они выглядели бы монологом. Последние из них ложатся в
+        # переписку в момент его первого ответа (`dating_chat.py`).
+        got = await dating_send_message(profile, presence, str(invite['uid']), body,
+                                        to_history=False)
     except RhapsodyError as e:
         return await _fail(site_id, invite_id, profile_id, who, str(e))
     except Exception as e:
