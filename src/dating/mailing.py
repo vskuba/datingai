@@ -33,8 +33,10 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.block import block_pairs
 from src.dating.json_column import json_column_load
-from src.dating.mail import (mail_missing, mail_render,
-                                    mail_vars_found)
+from src.dating.mail import (MAILING_QUESTION_CHANCE,
+                                   MAILING_QUESTION_SETTING,
+                                   mail_mark_drop, mail_missing,
+                                   mail_render, mail_vars_found)
 from src.dating.mail_agent import DatingMailAgentError, mail_question
 from src.dating.people import (PEOPLE_NAME_ALIEN,
                                       people_name_parts,
@@ -462,6 +464,22 @@ async def _body(template: dict, girl: dict, person: dict, known: list,
 
     ⚠ **`live` спрашивается только если шаблон на него ссылается** — по той же
     причине: вызов ради переменной, которой в тексте нет, это плата за воздух.
+
+    ## ⚠⚠ Живой вопрос спрашивается не в каждом письме, и жребий здесь, а не в шаблоне
+
+    Персональный вопрос стоит **вызова LLM на каждого адресата**: замер на проде —
+    ноль секунд на письмо без него и одиннадцать с ним. Доля задана настройкой
+    `mailing_question_percent`.
+
+    ⚠ **Бросать жребий при написании шаблона было ошибкой.** Сперва так и было:
+    выпало — шаблон получал метку, и дальше **каждое** письмо по нему платило за
+    вызов; не выпало — не платило ни одно. Доля означала «в скольких шаблонах»,
+    а человек читал её как «в скольких письмах», и читал правильно: настройка
+    про деньги, а деньги тратятся на письмо.
+
+    Теперь шаблон несёт метку всегда, а решение принимается здесь, по каждому
+    письму: выпало — спрашиваем агента; не выпало — **вырезаем абзац с меткой**
+    (`mail_mark_drop`) и не платим ничего.
     """
     used = set(mail_vars_found(template['body']))
     values = dict(girl_values)
@@ -487,6 +505,21 @@ async def _body(template: dict, girl: dict, person: dict, known: list,
     if not live:
         return mail_render(template['body'], values), ''
 
+    # ⚠ Жребий на каждую живую переменную отдельно: их бывает несколько, и «одна
+    # монета на все» означала бы, что доля считается не по вопросам, а по письмам
+    # с вопросами — то есть опять не то, что написано в настройке.
+    body, ask = template['body'], []
+    chance = await _question_chance(site_id)
+    for name in live:
+        if random.random() < chance:
+            ask.append(name)
+        else:
+            body = mail_mark_drop(body, name)
+
+    if not ask:
+        # Платного не осталось: ни похода на сайт за карточкой, ни вызова агента.
+        return mail_render(body, values), ''
+
     # ── Дальше платное: сначала сайт, потом агент ────────────────────────────
     #
     # ⚠ **Агенту нужна карточка, а не запись ленты.** Лента даёт имя, фото и
@@ -496,14 +529,31 @@ async def _body(template: dict, girl: dict, person: dict, known: list,
     # Собранные описания при этом лежали в базе и никуда не шли.
     card = await _card(site_id, person, girl)
 
-    for name in live:
+    for name in ask:
         values[name] = await mail_question(girl, site_id, card)
 
-    missing = mail_missing(template['body'], values)
+    missing = mail_missing(body, values)
     if missing:
         return '', f"агент не ответил: {', '.join(missing)}"
 
-    return mail_render(template['body'], values), ''
+    # ⚠ Собираем из `body`, а не из `template['body']`: в нём уже вырезаны абзацы
+    # тех живых переменных, которые в этот раз не спрашивали.
+    return mail_render(body, values), ''
+
+
+async def _question_chance(site_id: int) -> float:
+    """Доля писем, в которых спрашиваем персональный вопрос у агента.
+
+    ⚠ **Настройка про деньги, и читается она здесь — при сборке письма.** Каждое
+    «да» это вызов LLM на адресата: одиннадцать секунд против нуля.
+
+    ⚠ Ноль — законное значение и отличается от «настройки нет»: пустая строка даёт
+    умолчание, «0» означает «никогда не спрашивать».
+    """
+    from src.dating.mail_agent import _percent
+
+    return await _percent(int(site_id), MAILING_QUESTION_SETTING,
+                          MAILING_QUESTION_CHANCE)
 
 
 async def _card(site_id: int, person: dict, girl: dict) -> dict:

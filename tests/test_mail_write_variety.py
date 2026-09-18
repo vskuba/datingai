@@ -104,60 +104,32 @@ class TestTheLotIsOurs:
         assert agent['mail_story'] == ''
 
 
-class TestTheQuestionIsALot:
-    """⚠⚠ Вопрос выключается и данными, и прямым запретом — нужно и то и другое.
+class TestTheQuestionLivesInTheRegistry:
+    """⚠⚠ Живой вопрос шаблон несёт **всегда** — жребий стоит не здесь.
 
-    Первая версия обходилась данными: живые переменные уходили из списка, и
-    только. Живой прогон показал, что этого мало — модель дописала вопрос своими
-    словами. Теперь уезжает ещё и флаг, по которому промпт ветвится.
+    Сперва бросали его тут: выпало — шаблон получал метку, и дальше каждое письмо
+    по нему платило вызовом LLM на адресата; не выпало — не платило ни одно. Доля
+    означала «в скольких шаблонах», а человек читал её как «в скольких письмах» —
+    и читал правильно: настройка про деньги, а деньги тратятся на письмо.
+
+    Решение переехало в сборку письма (`test_mailing_question_chance.py`), а здесь
+    реестр снова решает всё сам.
     """
 
-    async def test_without_the_lot_live_variables_are_gone(self, agent, share):
-        """Выпало «без вопроса» — живой переменной в списке нет вовсе.
+    async def test_the_live_variable_is_always_asked_for(self, agent, share):
+        for percent in (0, 100):
+            await share('mailing_question_percent', percent)
+            await mail_write(STAND_SITE, VARS)
 
-        ⚠ Не «можно не ставить»: разрешение модель читает как приглашение. Нет в
-        списке — нечего ставить. Это половина дела; вторая — прямой запрет,
-        см. `test_the_flag_travels_too`.
+            assert 'question_to_companion' in agent['mail_var_must'], percent
+            assert agent['mail_var_live'] == 'question_to_companion', percent
 
-        ⚠ Заодно это дешевле: `question_to_companion` считается у соседа
-        **отдельным вызовом LLM на каждого адресата**, а не один раз на шаблон.
-        """
-        await share('mailing_question_percent', 0)
+    async def test_no_flag_travels(self, agent, share):
+        """⚠ Флага у соседа больше нет: промпт не ветвится, правило прямое."""
         await mail_write(STAND_SITE, VARS)
 
-        assert 'question_to_companion' not in agent['mail_var_names']
-        assert 'question_to_companion' not in agent['mail_var_must']
-        assert agent['mail_var_live'] == ''
-        assert 'companion_name' in agent['mail_var_must'], \
-            'вместе с живой пропали и обычные переменные'
-
-    async def test_with_the_lot_the_live_variable_is_required(self, agent, share):
-        await share('mailing_question_percent', 100)
-        await mail_write(STAND_SITE, VARS)
-
-        assert 'question_to_companion' in agent['mail_var_must']
-        assert agent['mail_var_live'] == 'question_to_companion'
-
-    async def test_the_flag_travels_too(self, agent, share):
-        """⚠⚠ Молчания данными мало — нужен и прямой запрет.
-
-        Первая версия выключала вопрос **молча**: живые переменные уходили из
-        списка, и только. Расчёт был — нет в списке, нечего ставить. Сработало
-        наполовину: переменной в письме нет, дорогой вызов на адресата не идёт, но
-        вопрос модель дописала **сама, обычным текстом**, в трёх шаблонах из пяти.
-        Поймано на живом прогоне прода.
-
-        Теперь промпт ветвится по флагу и запрещает вопрос прямо.
-        """
-        await share('mailing_question_percent', 0)
-        await mail_write(STAND_SITE, VARS)
-
-        assert agent['mail_question'] == '', 'флаг не уехал — запрет не включится'
-
-        await share('mailing_question_percent', 100)
-        await mail_write(STAND_SITE, VARS)
-
-        assert agent['mail_question'] == '1'
+        assert 'mail_question' not in agent, \
+            'флаг снова уезжает — значит жребий вернулся в шаблон'
 
 
 class TestTheGreetingIsALotToo:
@@ -220,11 +192,9 @@ class TestTheNameStaysMandatory:
     """
 
     async def test_companion_name_is_always_required(self, agent, share):
-        for percent in (0, 100):
-            await share('mailing_question_percent', percent)
-            await mail_write(STAND_SITE, VARS)
+        await mail_write(STAND_SITE, VARS)
 
-            assert 'companion_name' in agent['mail_var_must'], percent
+        assert 'companion_name' in agent['mail_var_must']
 
 
 class TestTheCeilingBecameARange:
