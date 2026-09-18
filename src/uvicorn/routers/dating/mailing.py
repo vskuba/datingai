@@ -236,16 +236,14 @@ async def mailing_generate(payload: DatingMailingGenerate,
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail='в сети сейчас никого нет — некому писать')
 
-    # ⚠ **Число с кнопки старше настройки сайта.** Настройка отвечает на вопрос
-    # «сколько брать, когда решает круг»; здесь у экрана человек, и он только что
-    # сказал, сколько хочет сейчас — спорить с ним значило бы сделать выбор
-    # украшением.
+    # ⚠ **Сколько готовить, говорит кнопка.** Настройки сайта здесь больше нет:
+    # порция (`mailing_batch`) отвечала на тот же вопрос, что и потолок пула,
+    # вторым голосом, а круг теперь добирает пул целиком (`mailing_round.py`).
     #
-    # Настройка остаётся умолчанием: страница может и не назвать числа (старая
-    # вкладка, другой клиент), и тогда порядок работы прежний.
-    limit = int(payload.limit or 0) or min(
-        await site_seconds(site_id, 'mailing_batch')
-        or MAILING_BATCH_DEFAULT, MAILING_BATCH_MAX)
+    # Числа с кнопки нет (старая вкладка, другой клиент) — берём умолчание:
+    # столько, сколько прежде брала настройка по умолчанию.
+    limit = min(int(payload.limit or 0) or MAILING_BATCH_DEFAULT,
+                MAILING_BATCH_MAX)
 
     result = await mailing_make(site_id, templates, limit, profile_id,
                                        first_uid)

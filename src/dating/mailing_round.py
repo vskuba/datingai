@@ -31,8 +31,11 @@
 тысячами незачем: устареют раньше, чем дойдёт очередь — адресаты уйдут с сайта, а
 вопрос про их интересы останется.
 
-За один заход при этом берётся не больше порции (`mailing_batch`): даже когда до
-потолка далеко, заход не должен длиться часами — круг вернётся через свой срок.
+⚠⚠ **До потолка добираем за один заход, а не порциями.** Порция здесь была
+(`mailing_batch`) и убрана: её завели, когда личный вопрос стоил вызова LLM на
+каждое письмо и полный проход длился десятки минут. Теперь вопрос — жребий на
+письмо, а письмо без него собирается подстановкой; порция же отвечала на тот же
+вопрос, что и потолок пула, вторым голосом.
 
 ⚠ **Когда набирали — помним в Redis, а не в памяти процесса.** Смена держателя
 перезапускается (свой срок, деплой, падение), и память сбрасывалась бы вместе с
@@ -54,8 +57,7 @@ from redis_.redis_ import redis_conn_get
 
 from src.dating.pool import pool_sweep
 from src.dating.json_column import json_column_load
-from src.dating.mailing import (MAILING_BATCH_DEFAULT,
-                                       MAILING_BATCH_MAX,
+from src.dating.mailing import (MAILING_BATCH_MAX,
                                        mailing_make,
                                        mailing_templates)
 from src.dating.schedule import schedule_now
@@ -280,10 +282,21 @@ async def _make(site_id: int) -> tuple[dict | None, bool]:
     if need <= 0:
         return None, True
 
-    # ⚠ За один заход берём не больше порции (`mailing_batch`): даже когда до
-    # потолка далеко, заход не должен длиться часами — круг вернётся через свой
-    # срок и доберёт остальное.
-    limit = min(need, await _limit(site_id))
+    # ⚠⚠ **Добираем до потолка за один заход, а не порциями.**
+    #
+    # Порция (`mailing_batch`) была заведена, когда личный вопрос требовал вызова
+    # LLM на **каждое** письмо: полный проход по всем, кто онлайн, длился десятки
+    # минут и вылезал за смену. С тех пор вопрос стал жребием на письмо
+    # (`mailing._body`), и письмо без него собирается подстановкой — нисколько.
+    # Замер на проде: полсотни писем одним заходом за считанные секунды.
+    #
+    # Порция при этом отвечала на тот же вопрос, что и `mailing_pool_max`, вторым
+    # голосом: человеку приходилось держать в голове, какое из двух чисел
+    # сработает первым. Осталось одно правило — **пул набирается до потолка**.
+    #
+    # ⚠ Жёсткий предел в коде остаётся (`MAILING_BATCH_MAX`): он не настройка, а
+    # страховка от потолка пула, выставленного руками в «5000».
+    limit = min(need, MAILING_BATCH_MAX)
 
     try:
         result = await mailing_make(site_id, templates, limit)
@@ -307,14 +320,6 @@ async def _make(site_id: int) -> tuple[dict | None, bool]:
                     + (f' — {why}' if why else ''))
 
     return result, False
-
-
-async def _limit(site_id: int) -> int:
-    """Сколько пар пробуем за один заход — та же настройка, что у кнопки."""
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
-    return min(await site_seconds(site_id, 'mailing_batch')
-               or MAILING_BATCH_DEFAULT, MAILING_BATCH_MAX)
 
 
 async def _pool_max(site_id: int) -> int:

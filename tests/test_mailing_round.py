@@ -351,21 +351,32 @@ class TestHowOften:
         assert MAILING_EVERY_DEFAULT == 1800
 
 
-class TestBatch:
-    """Сколько берём за заход — та же настройка, что у кнопки."""
+class TestNoBatchSetting:
+    """⚠⚠ Порции больше нет: пул набирается **до потолка** за один заход.
 
-    async def test_limit_comes_from_the_setting(self, auth_client, site, template,
-                                                made, clean_mark):
-        before = (await auth_client.get(
-            f'/api/dating/site/{SITE}')).json()['result']['settings']
-        try:
-            await auth_client.put(f'/api/dating/site/{SITE}',
-                                  json={'settings': {**before, 'mailing_batch': '10'}})
-            await mailing_round_run(0)
-        finally:
-            await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': before})
+    `mailing_batch` была заведена, когда личный вопрос требовал вызова LLM на
+    каждое письмо: полный проход по всем, кто онлайн, длился десятки минут. С тех
+    пор вопрос стал жребием на письмо, и письмо без него собирается подстановкой —
+    нисколько. Настройка при этом отвечала на тот же вопрос, что и
+    `mailing_pool_max`, вторым голосом.
 
-        assert [call['limit'] for call in made if call['site_id'] == SITE] == [10]
+    Осталось одно правило: **добираем недостающее до потолка**, а в коде — жёсткий
+    предел (`MAILING_BATCH_MAX`) на случай потолка, выставленного руками в «5000».
+    """
+
+    def test_the_setting_is_gone_from_the_registry(self):
+        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
+
+        assert 'mailing_batch' not in SITE_KNOWN
+
+    def test_the_round_does_not_ask_for_it(self):
+        import inspect
+
+        from src.dating import mailing_round
+
+        assert "'mailing_batch'" not in inspect.getsource(mailing_round), \
+            'круг снова спрашивает порцию — правило раздвоилось'
+
 
     async def test_all_enabled_templates_are_taken(self, auth_client, site,
                                                    template, made, clean_mark):
@@ -412,8 +423,7 @@ class TestPoolCeiling:
             f'/api/dating/site/{SITE}')).json()['result']['settings']
         try:
             await auth_client.put(f'/api/dating/site/{SITE}', json={
-                'settings': {**before, 'mailing_pool_max': '20',
-                             'mailing_batch': '50'}})
+                'settings': {**before, 'mailing_pool_max': '20'}})
             await mailing_round_run(0)
         finally:
             await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': before})
@@ -437,21 +447,24 @@ class TestPoolCeiling:
 
         assert [call for call in made if call['site_id'] == SITE] == []
 
-    async def test_batch_still_caps_one_pass(self, auth_client, site, template,
-                                             made, clean_mark, pool):
-        """⚠ Порция остаётся пределом захода. До потолка сотня писем — но заход,
-        готовящий сотню, длится часами: круг вернётся через свой срок и доберёт."""
+    async def test_the_hard_limit_still_caps_one_pass(self, auth_client, site,
+                                                      template, made, clean_mark, pool):
+        """⚠ Жёсткий предел в коде остаётся — он не настройка, а страховка.
+
+        Потолок пула правят руками, и «5000» превратило бы один заход в часы
+        работы.
+        """
         before = (await auth_client.get(
             f'/api/dating/site/{SITE}')).json()['result']['settings']
         try:
             await auth_client.put(f'/api/dating/site/{SITE}', json={
-                'settings': {**before, 'mailing_pool_max': '100',
-                             'mailing_batch': '10'}})
+                'settings': {**before, 'mailing_pool_max': '100'}})
             await mailing_round_run(0)
         finally:
             await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': before})
 
-        assert [call['limit'] for call in made if call['site_id'] == SITE] == [10]
+        # Потолок сотня, пул пуст — берём сотню: она меньше жёсткого предела.
+        assert [call['limit'] for call in made if call['site_id'] == SITE] == [100]
 
     async def test_sent_letters_do_not_hold_a_place(self, auth_client, site, pool):
         """⚠ Считаем только черновики. Ушедшие своё дело сделали, неудавшиеся
