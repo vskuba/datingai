@@ -90,6 +90,16 @@ INVITE_EVERY_SETTING = 'invite_every'
 # Отметка «этому сайту только что набирали». В Redis — переживает смену держателя.
 INVITE_ROUND_KEY = 'dating:invite:round:{site_id}'
 
+# Сколько держать строки инвайтов. Часами; ноль — не удалять.
+INVITE_CLEAN_SETTING = 'invite_clean_hours'
+
+# Как часто чистить. ⚠ **Свой срок, а не срок набора**: уборка не зависит ни от
+# смен, ни от `invite_every` — таблица растёт круглые сутки, в том числе когда
+# набор молчит. Десять минут: удаление стоит одного запроса, а держать таблицу
+# точнее незачем.
+INVITE_ROUND_CLEAN_EVERY = 600
+INVITE_ROUND_CLEAN_KEY = 'dating:invite:clean:{site_id}'
+
 
 async def invite_round_run(offset: int = 0) -> dict:
     """Один круг: добрать пул тем сайтам, у которых идёт смена и подошёл срок.
@@ -119,6 +129,12 @@ async def invite_round_run(offset: int = 0) -> dict:
 
     for site in await _sites():
         site_id = int(site['site_id'])
+
+        # ⚠ **Уборка идёт до проверки смен, и это не оплошность.** Строки копятся
+        # круглые сутки — отправкой, кнопками, прошлыми заходами, — а смены
+        # говорят только о том, когда набирать. Чисти мы внутри смены, у сайта с
+        # ночным расписанием таблица росла бы весь день.
+        await _clean(site_id)
 
         # Смены пусты — расписания нет, и круг молчит: готовят такие сайты руками.
         shifts = json_column_load(site.get('invite_schedule')) or []
@@ -256,6 +272,87 @@ def invite_round_next(site_id: int) -> int:
     # `-2` — ключа нет, `-1` — есть без срока. Первое значит «пора», второе у нас
     # невозможно (ставим только `setex`), но отвечать на него сроком нельзя.
     return 0 if int(left) == -2 else max(0, int(left))
+
+
+async def _clean(site_id: int) -> int:
+    """Убирает старые строки инвайтов. Возвращает, сколько удалено.
+
+    ⚠⚠ **Срок короче суток укорачивает паузу повтора и дневной потолок.**
+    Оба считаются по этой же таблице (`invite._invited`): пауза смотрит
+    `MAX(sent_at)`, потолок — сколько ушло за скользящие сутки. Стёртая строка
+    поднимает их молча — поставив «старше 2 часов» при паузе «раз в сутки»,
+    человек получит паузу в два часа.
+
+    Это названо в самой настройке, и выбор остаётся за ним: таблица на восемь
+    тысяч строк — тоже настоящая беда. Наше дело — не решать за него тихо.
+
+    ⚠ **Ответы собеседников не теряются.** Реплика, на которую ответили, уезжает
+    в переписку (`message`) тем же кругом, который ответ принимает; здесь
+    удаляется учётная строка, а не разговор.
+
+    ⚠ **Черновики удаляются наравне с отправленным.** Черновик старше срока —
+    это реплика тому, кто был в сети полсуток назад: отправлять её уже некому,
+    а место в пуле она держит.
+
+    ⚠ Сбой чистки не роняет круг: набор пула важнее размера таблицы.
+    """
+    from src.uvicorn.routers.dating.site_ import site_seconds
+
+    if not _clean_due(site_id):
+        return 0
+
+    try:
+        hours = int(await site_seconds(int(site_id), INVITE_CLEAN_SETTING) or 0)
+    except Exception as e:
+        logger_info(f'[dating] срок чистки инвайтов сайта #{site_id} не прочитался: {e}')
+
+        return 0
+
+    # ⚠ Отметку ставим и при выключенной настройке: иначе чтение настройки
+    # повторялось бы каждый тик, то есть шестьдесят раз за те же десять минут.
+    _clean_mark(site_id)
+    if hours <= 0:
+        return 0
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'DELETE FROM invite WHERE site_id = %s'
+                ' AND created_at < NOW() - INTERVAL %s HOUR',
+                (int(site_id), hours))
+            gone = int(db.rowcount or 0)
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] чистка инвайтов сайта #{site_id} не прошла: {e}')
+
+        return 0
+
+    if gone:
+        logger_info(f'[dating] инвайты сайта #{site_id}: убрано {gone} строк '
+                    f'старше {hours} ч')
+
+    return gone
+
+
+def _clean_due(site_id: int) -> bool:
+    """Пора ли чистить. ⚠ Сбой Redis решается в сторону бездействия, как и набор."""
+    try:
+        return not redis_conn_get().get(
+            INVITE_ROUND_CLEAN_KEY.format(site_id=int(site_id)))
+    except Exception as e:
+        logger_info(f'[dating] отметка чистки инвайтов не прочиталась: {e}')
+
+        return False
+
+
+def _clean_mark(site_id: int) -> None:
+    """Отмечает уборку: срок отметки и есть её частота."""
+    try:
+        redis_conn_get().setex(
+            INVITE_ROUND_CLEAN_KEY.format(site_id=int(site_id)),
+            INVITE_ROUND_CLEAN_EVERY, '1')
+    except Exception as e:
+        logger_info(f'[dating] отметка чистки инвайтов не поставилась: {e}')
 
 
 def _due(site_id: int) -> bool:
