@@ -288,7 +288,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: 1 анкета — безопасно, с этого начинают, 3 анкеты, 5 анкет
         'kind': 'number',
         'min': 1,
-        'max': 50,
     },
     'mail_check_every': {
         'group': 'letter',
@@ -325,7 +324,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: 3, 5, 10, 30
         'kind': 'number',
         'min': 1,
-        'max': 100,
     },
     # ── Инвайты: первая реплика в чат ────────────────────────────────────────
     #
@@ -423,7 +421,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: 1 — по одной, 3, 5, 10 — крупно
         'kind': 'number',
         'min': 1,
-        'max': 100,
     },
     'invite_send_max_day': {
         'group': 'invite',
@@ -444,7 +441,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: 20 — осторожно, 50 — как у писем, 100 — обычно, 300 — много, 10 тысяч, 100 тысяч, 200 тысяч, 500 тысяч — предел снят
         'kind': 'number',
         'min': 1,
-        'max': 1000000,
     },
     'invite_repeat_after': {
         'group': 'invite',
@@ -477,7 +473,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: 1 — один раз, 3, 5, 10 — обычно, 20 — настойчиво, 50, 100
         'kind': 'number',
         'min': 1,
-        'max': 1000,
     },
     # ⚠ **Настройки «инвайтов за заход» нет, и заводить её не надо.** Она
     # отвечала на вопрос «сколько вызовов LLM мы готовы ждать»: текст сочинялся
@@ -523,7 +518,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: не удалять, старше 2 часов, старше 12 часов
         'kind': 'number',
         'min': 0,
-        'max': 8760,
     },
     'invite_keep': {
         'group': 'invite',
@@ -542,7 +536,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: 1 — только последний, 2 — обычно, 5, 20 — длинная история
         'kind': 'number',
         'min': 1,
-        'max': 100,
     },
     # ⚠⚠ **Имя собеседника в шаблоне — жребием, и бросаем его мы.** «Вставляй имя
     # изредка» LLM понимает как «вставляй всегда»: вероятность у неё не
@@ -566,7 +559,6 @@ SITE_KNOWN = {
         # число: доля 7% так же законна, как 10%, и запрещать её незачем.
         'kind': 'number',
         'min': 0,
-        'max': 100,
     },
     # ⚠⚠ **Доля инвайтов, где агент видит текущее время.** Заведена по живому
     # пулу: 94 инвайта из 202 за сутки поминали время — «tonight», «this
@@ -586,7 +578,6 @@ SITE_KNOWN = {
         'default': '10',
         'kind': 'number',
         'min': 0,
-        'max': 100,
     },
     'invite_pool_max': {
         'group': 'invite',
@@ -605,7 +596,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: 10 — небольшой запас, 20 — обычно, 50 — большой запас, 75, 100 — весь онлайн разом, 150, 250, 400
         'kind': 'number',
         'min': 1,
-        'max': 1000,
     },
     # ── Избранные: звёздочка тому, кто написал ───────────────────────────────
     #
@@ -651,7 +641,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: 1 — по одной, 3 — обычно, 5, 10 — если ждать не жалко
         'kind': 'number',
         'min': 1,
-        'max': 100,
     },
     # ── Переписка с избранными: возобновление затихшего разговора ────────────
     #
@@ -677,7 +666,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: 1 — раз в день, 2 — обычно, 3, 5 — если разговор живой
         'kind': 'number',
         'min': 1,
-        'max': 50,
     },
     'favorite_mail_gap': {
         'group': 'favorite',
@@ -720,7 +708,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: 10 — небольшой запас, 20 — обычно, 50 — большой запас
         'kind': 'number',
         'min': 1,
-        'max': 500,
     },
     # ── Каким выходит письмо избранному ──────────────────────────────────────
     #
@@ -741,7 +728,6 @@ SITE_KNOWN = {
         'default': '10',
         'kind': 'number',
         'min': 0,
-        'max': 100,
     },
     'favorite_mail_question_percent': {
         'group': 'favorite',
@@ -753,7 +739,6 @@ SITE_KNOWN = {
         'default': '25',
         'kind': 'number',
         'min': 0,
-        'max': 100,
     },
     'favorite_mail_story_percent': {
         'group': 'favorite',
@@ -766,7 +751,6 @@ SITE_KNOWN = {
         'default': '40',
         'kind': 'number',
         'min': 0,
-        'max': 100,
     },
     'send_every': {
         'group': 'letter',
@@ -791,7 +775,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: 10, 20, 40, 100
         'kind': 'number',
         'min': 1,
-        'max': 10000,
     },
     # ⚠⚠ **Описание сайта целиком, и живёт оно здесь, а не у соседа.** Прежде
     # лежало только в его `browser_site.presence` и спрашивалось ручкой на каждый
@@ -854,7 +837,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: 1 — не повторять, 3 — обычно, 5, 10 — настойчиво
         'kind': 'number',
         'min': 1,
-        'max': 50,
     },
     'login_retry_every': {
         'group': 'live',
@@ -937,7 +919,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: 10 — коротко, 20 — обычно, 40, 100 — длинная память
         'kind': 'number',
         'min': 1,
-        'max': 200,
     },
     'chat_check_every': {
         'group': 'invite',
@@ -991,7 +972,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: 20 — небольшой запас, 50 — обычно, 100 — большой запас, 200 — максимум
         'kind': 'number',
         'min': 1,
-        'max': 1000,
     },
     'companion_about_every': {
         'group': 'mail',
@@ -1028,7 +1008,6 @@ SITE_KNOWN = {
         'default': '40',
         'kind': 'number',
         'min': 0,
-        'max': 100,
     },
     'mailing_no_greeting_percent': {
         'group': 'mail',
@@ -1041,7 +1020,6 @@ SITE_KNOWN = {
         'default': '15',
         'kind': 'number',
         'min': 0,
-        'max': 100,
     },
     'mailing_question_percent': {
         'group': 'mail',
@@ -1056,7 +1034,6 @@ SITE_KNOWN = {
         'default': '25',
         'kind': 'number',
         'min': 0,
-        'max': 100,
     },
     'template_per_day': {
         'group': 'mail',
@@ -1074,7 +1051,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: 3 — понемногу, 5 — обычно, 7 — по одному на каждый день недели
         'kind': 'number',
         'min': 1,
-        'max': 50,
     },
     'reply_history': {
         'group': 'letter',
@@ -1094,7 +1070,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: 5 — только свежее, 10 — обычно, 20 — длинная память
         'kind': 'number',
         'min': 1,
-        'max': 100,
     },
     'template_keep': {
         'group': 'mail',
@@ -1115,7 +1090,6 @@ SITE_KNOWN = {
         # Прежние подсказки набора: не удалять, старше 2 дней, старше 3 дней, старше 7 дней
         'kind': 'number',
         'min': 0,
-        'max': 365,
     },
     'mailing_every': {
         'group': 'mail',
@@ -1426,12 +1400,26 @@ def _number_check(key: str, value: str) -> str:
             detail=f'«{spec.get("title") or key}»: нужно целое число, '
                    f'а пришло «{str(value)[:40]}»')
 
+    # ⚠⚠ **Потолка у счётчиков нет, и это решение заказчика.**
+    #
+    # Он стоял и мешал: «тысяча» казалась щедрой для пула инвайтов, а на проде
+    # десяток анкет и почти две сотни людей дают под две тысячи пар — запрет
+    # пришёлся ровно по живой работе. Всякое число «по здравому смыслу» однажды
+    # окажется меньше настоящей: сколько людей на сайте, знает тот, кто его ведёт.
+    #
+    # ⚠ **Нижняя граница остаётся.** Отрицательное количество — не выбор, а
+    # поломка: `-5` сравнится с чем угодно как «никогда» и тихо выключит занятие
+    # вместо того, чтобы отказать вслух.
     low, high = spec.get('min'), spec.get('max')
-    if (low is not None and number < int(low)) or (high is not None and number > int(high)):
+
+    if (low is not None and number < int(low)) \
+            or (high is not None and number > int(high)):
+        границы = f'от {low} до {high}' if high is not None else f'не меньше {low}'
+
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f'«{spec.get("title") or key}»: значение {number} вне границ '
-                   f'от {low} до {high}')
+                   f'({границы})')
 
     return str(number)
 
@@ -1489,7 +1477,13 @@ async def site_seconds(site_id: int, key: str) -> int:
     raw = str(await site_setting(site_id, key)).strip()
 
     if known.get('kind') == 'number':
-        low, high = int(known.get('min', 0)), int(known.get('max', 0))
+        # ⚠⚠ **Потолка у счётчика нет, и `int(known.get('max', 0))` был бы
+        # ловушкой**: без ключа он даёт ноль, и ноль становится потолком —
+        # любое число отвергается, настройка тихо работает умолчанием.
+        #
+        # Поймано тестом чистки инвайтов в тот же час, когда потолки
+        # снимали: «старше 2 часов» перестало удалять что-либо вовсе.
+        low, high = int(known.get('min', 0)), known.get('max')
 
         try:
             value = int(raw)
@@ -1499,9 +1493,8 @@ async def site_seconds(site_id: int, key: str) -> int:
 
             return fallback
 
-        if not low <= value <= high:
-            logger_info(f'[dating] «{key}» у сайта #{site_id} вне границ '
-                        f'[{low}…{high}]: {value}')
+        if value < low or (high is not None and value > int(high)):
+            logger_info(f'[dating] «{key}» у сайта #{site_id} вне границ: {value}')
 
             return fallback
 

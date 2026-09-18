@@ -6098,7 +6098,17 @@
     //
     // ⚠ **Шаблонов здесь нет** — главное отличие. Текст сочиняет агент под
     // конкретного человека, и выбирать перед нажатием нечего, кроме числа.
+    // Сколько разговоров ждут ответа — число от сервера (`/chat/dialogs`).
+    //
+    // ⚠ `-1` значит «ещё не спрашивали»: до первого ответа ручки значок рисуется
+    // по ленте, как прежде. Объявлено здесь, а не рядом с отрисовкой: `let`
+    // не поднимается, и обращение раньше объявления уронило бы весь скрипт.
+    let talkUnanswered = -1;
+
     let invitePool = [];
+    // Сколько черновиков в пуле **целиком**: ручка отдаёт страницу, и длина
+    // `invitePool` это длина страницы, а не пула.
+    let invitePoolSize = 0;
     let invitePoolFor = 0;
     // Через сколько секунд круг вернётся к сайту. `-1` — спросить не вышло.
     let inviteNext = -1;
@@ -6128,6 +6138,7 @@
         const site = siteId();
         if (!site) {
             invitePool = [];
+            invitePoolSize = 0;
             inviteSendWhy = '';
 
             return;
@@ -6154,6 +6165,16 @@
         // один взгляд дали бы ответы из разных моментов времени.
         inviteNext = answer.next_sec === undefined ? -1 : Number(answer.next_sec);
         inviteSendWhy = String(answer.send_why || '');
+        // ⚠⚠ **Сколько в пуле — из ответа, а не длина показанного.**
+        //
+        // Ручка отдаёт страницу, а не пул целиком: список читают глазами, и
+        // тысяча карточек в нём не нужна никому (`INVITE_LIMIT`, 300). Счётчик же
+        // считал `invitePool.length` — то есть длину **страницы**, — и застревал
+        // на «300 / 1000», сколько бы в пуле ни лежало.
+        //
+        // Живо и надолго: человек видел неподвижное 300 и справедливо решал, что
+        // набор упёрся в невидимый предел.
+        invitePoolSize = Number(answer.pool);
         invitePoolFor = site;
         invitePaint();
     }
@@ -6368,7 +6389,7 @@
         const drafts = inviteDrafts();
 
         fillSlot('invite-pool-count',
-            poolCount(invitePool.length, saved.invite_pool_max));
+            poolCount(invitePoolSize, saved.invite_pool_max));
         // ⚠ Причина простоя — из ответа ручки, а не собранная страницей: её
         // считает тот же код, что решает за круг (`invite_send_round.py`).
         // Своя копия правила разошлась бы с ним на первой же правке.
@@ -6377,7 +6398,9 @@
         // ⚠ Полный пул загрузчика не получает: круг его не трогает, и крутилка
         // обещала бы работу, которой нет.
         const потолок = Number(saved.invite_pool_max || 0);
-        const полон = потолок && drafts.length >= потолок;
+        // ⚠ «Полон» считаем по **всему пулу**, а не по показанной странице: та
+        // обрывается на трёхстах (`INVITE_LIMIT`), и крутилка гасла бы на них.
+        const полон = потолок && invitePoolSize >= потолок;
         const busy = slot('invite-pool-busy');
         if (busy) {
             // ⚠ Крутилка осталась про **круг**: кнопки генерации больше нет,
@@ -6584,6 +6607,10 @@
         }
 
         invitePool = invitePool.filter(row => row.id !== one.id);
+        // Карточку убрали — пул стал меньше на одну. ⚠ Считаем сами, а не ждём
+        // перезагрузки списка: счётчик стоит рядом с кнопкой, и застывшее число
+        // читается как «не сработало».
+        invitePoolSize = Math.max(0, invitePoolSize - 1);
         invitePaint();
         if (modal) modalClose();
     }
@@ -10121,6 +10148,12 @@
             data = (await getData(`${BASE}/api/dating/chat/dialogs`
                 + `?site_id=${requestSite}&profile_id=${requestId || 0}`
                 + `&page=${contactsPage + 1}`)).result || {};
+
+            // ⚠ Число ждущих ответа приходит **вместе со списком**: второй запрос
+            // ради значка дал бы два разных момента времени в одном взгляде.
+            if (data.unanswered !== undefined) {
+                talkUnanswered = Number(data.unanswered);
+            }
         } catch (e) {
             if (openId !== requestId || siteId() !== requestSite
                 || workTab !== 'chat') return;
@@ -12196,8 +12229,20 @@
             const el = slot(name);
             if (!el) continue;
 
-            const fresh = (rows || []).filter(
-                row => row.kind === kind && Number(row.age_sec) <= TALK_WINDOW_SEC).length;
+            // ⚠⚠ **У чата число берём от сервера, а не из ленты.**
+            //
+            // Лента это кольцо на тридцать строк **на все виды событий**, и при
+            // живом темпе инвайтов (по пять сотен за заход) в ней лежат одни
+            // инвайты: `talk` вытесняется за секунды. Значок молчал при двух
+            // непрочитанных разговорах в базе — поймано глазами.
+            //
+            // Ручка диалогов считает их запросом (`unanswered`), и это точно.
+            // Лента же по-прежнему годится, чтобы **вспыхнуть** на событие.
+            const fresh = kind === 'talk' && talkUnanswered >= 0
+                ? talkUnanswered
+                : (rows || []).filter(
+                    row => row.kind === kind
+                        && Number(row.age_sec) <= TALK_WINDOW_SEC).length;
 
             el.innerHTML = fresh
                 ? `<span class="tab-fly-one">💬</span>`
@@ -12207,7 +12252,11 @@
             // реплику (разговор начался), и на свежий ответ в давнем разговоре —
             // импорт из панели первое от второго не отличает, а человеку важно
             // одно: там появилось новое.
-            el.title = fresh ? `Разговоров с новым за полчаса: ${fresh}` : '';
+            el.title = fresh
+                ? (kind === 'talk' && talkUnanswered >= 0
+                    ? `Разговоров ждут ответа: ${fresh}`
+                    : `Разговоров с новым за полчаса: ${fresh}`)
+                : '';
         }
     }
 

@@ -11,6 +11,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
@@ -103,6 +104,37 @@ async def chat_import(site_id: int = 0, days: int = CHAT_PANEL_DAYS,
                             detail=error)
 
     return {'result': result}
+
+
+async def _unanswered(site_id: int, profile_id: int = 0) -> int:
+    """Сколько разговоров ждут нашего ответа.
+
+    ⚠ **Считаем пары, а не реплики**: человек мог написать трижды подряд, и это
+    один разговор, требующий одного ответа.
+
+    ⚠ **Только входящие без ответа** (`is_answered = 0`): флаг ставит тот же код,
+    что отвечает, и второй способ «понять, отвечали ли» разошёлся бы с ним.
+
+    Сбой чтения отвечает нулём: значок — подсказка, а не работа, и ронять из-за
+    него список диалогов незачем.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT COUNT(*) AS n FROM ('
+                '  SELECT m.profile_id, m.sender_uid FROM message m'
+                '    JOIN profile p ON p.id = m.profile_id'
+                '   WHERE p.site_id = %s AND (%s = 0 OR m.profile_id = %s)'
+                "     AND m.direction = 'in' AND m.is_answered = 0"
+                '   GROUP BY m.profile_id, m.sender_uid) AS d',
+                (int(site_id), int(profile_id), int(profile_id)))
+            row = await db.fetchone()
+
+        return int((row or {}).get('n') or 0)
+    except Exception as e:
+        logger_info(f'[dating] неотвеченные диалоги сайта #{site_id} не спросились: {e}')
+
+        return 0
 
 
 @router.get('/dialogs', include_in_schema=False)
@@ -281,4 +313,15 @@ async def chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int = 1,
                 contact['name'] = ((await db.fetchone()) or {}).get('name') or ''
 
     return {'result': {'contacts': contacts, 'contacts_total': total,
-                       'page': page, 'pages': pages}}
+                       'page': page, 'pages': pages,
+                       # ⚠⚠ **Сколько разговоров ждут ответа — числом от сервера.**
+                       #
+                       # Значок у вкладки «Диалоги» считал события ленты, а лента
+                       # это кольцо на тридцать строк **на все виды событий**: при
+                       # живом темпе инвайтов (по пять сотен за заход) в ней
+                       # лежат одни инвайты, и `talk` вытесняется за секунды.
+                       #
+                       # Поймано глазами: два непрочитанных разговора в базе,
+                       # полоса вкладок молчит. Лента годится, чтобы показать
+                       # «что-то происходит», но не чтобы считать.
+                       'unanswered': await _unanswered(int(site_id), int(profile_id))}}
