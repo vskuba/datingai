@@ -33,6 +33,8 @@ from pydantic import BaseModel, Field
 
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.people import people_name_case
+
 from src.auth.auth import AuthUser, auth_required
 from src.dating.mailing import mailing_companion_vars
 from src.dating.online import online_show
@@ -189,7 +191,10 @@ async def companion_save(payload: DatingCompanionSave,
             '  age = IF(VALUES(age) = 0, age, VALUES(age)),'
             "  city = IF(VALUES(city) = '', city, VALUES(city)),"
             "  country = IF(VALUES(country) = '', country, VALUES(country))",
-            (int(payload.site_id), payload.uid.strip(), payload.name.strip(),
+            # ⚠ Регистр правим и здесь: карточку заводит не только лента, но и
+            # кнопка из журнала — имя приходит от сайта тем же «VINCENT».
+            (int(payload.site_id), payload.uid.strip(),
+             people_name_case(payload.name),
              payload.photo.strip(), int(payload.age), payload.city.strip(),
              payload.country.strip()))
         await db.connection.commit()

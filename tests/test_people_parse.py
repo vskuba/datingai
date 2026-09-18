@@ -38,7 +38,7 @@ class TestPeopleRows:
         rows = people_rows(ROWS, 'избранные')
 
         assert [row['uid'] for row in rows] == ['812886', '102348']
-        assert rows[0]['name'] == 'Vincent pitchen'
+        assert rows[0]['name'] == 'Vincent Pitchen'
         assert rows[0]['age'] == 49
 
     def test_uid_comes_from_link(self):
@@ -152,8 +152,12 @@ class TestNameAge:
 
     def test_name_with_space_survives(self):
         """Делим по **запятой**, а не по пробелу: у имён бывает пробел
-        («Vincent pitchen»), и по нему фамилия ушла бы в возраст."""
-        assert self._one('Vincent pitchen\n,\xa0\n49')['name'] == 'Vincent pitchen'
+        («Vincent pitchen»), и по нему фамилия ушла бы в возраст.
+
+        ⚠ Фамилия возвращается **с большой буквы**: регистр имени правится тут же,
+        в `people_rows` (`people_name_case`). Проверяется здесь именно деление —
+        то, что в имени два слова, а не одно."""
+        assert self._one('Vincent pitchen\n,\xa0\n49')['name'] == 'Vincent Pitchen'
 
     def test_age_parsed(self):
         assert self._one('Zahir\n,\xa0\n51')['age'] == 51

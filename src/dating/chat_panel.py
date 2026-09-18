@@ -44,6 +44,7 @@ from datetime import datetime, timedelta
 from datetime_.datetime_ import datetime_utc_now
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
+from src.dating.people import people_name_case
 
 from src.dating.json_column import json_column_load
 from src.dating.scenario import scenario_run
@@ -162,7 +163,8 @@ def chat_panel_rows(extract: dict, profiles: dict) -> list[dict]:
         found.append({
             'profile_id': profile_id,
             'sender_uid': str(partner_uid)[:CHAT_PANEL_UID_MAX],
-            'sender_name': _name(partner_cell, partner_uid)[:CHAT_PANEL_NAME_MAX],
+            'sender_name': people_name_case(
+                _name(partner_cell, partner_uid))[:CHAT_PANEL_NAME_MAX],
             'text': text,
             'message_uid': (CHAT_PANEL_PREFIX
                             + message_uid)[:CHAT_PANEL_MSG_UID_MAX],

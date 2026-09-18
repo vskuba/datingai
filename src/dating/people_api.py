@@ -54,7 +54,7 @@ JWT, а `GET /users/{state}` — списки людей. Всё, ради че�
 """
 
 from src.dating.people import (PEOPLE_NAME_MAX, PEOPLE_UID_MAX,
-                                      people_photo_uid)
+                               people_name_case, people_photo_uid)
 from src.dating.request import REQUEST_PEOPLE
 from src.dating.site_api import DatingSiteApiError, site_api_call
 
@@ -146,8 +146,11 @@ def _rows(users, online: bool) -> list[dict]:
         age = user.get(PEOPLE_API_FIELDS['age'])
 
         found.append({'uid': uid[:PEOPLE_UID_MAX],
-                      'name': str(user.get(PEOPLE_API_FIELDS['name'])
-                                  or '')[:PEOPLE_NAME_MAX],
+                      # ⚠ Регистр правим на входе, а не при показе: имя уходит
+                      # живому человеку в реплику инвайта, и «Привет, VINCENT!»
+                      # читается как крик (`people_name_case`).
+                      'name': people_name_case(
+                          str(user.get(PEOPLE_API_FIELDS['name']) or ''))[:PEOPLE_NAME_MAX],
                       'age': int(age) if isinstance(age, int) else 0,
                       'photo': photo,
                       # Ключ по фотографии — тот же, что у сценария: имя файла у

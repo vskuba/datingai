@@ -28,6 +28,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.dating.presence import DATING_PRESENCE_TIMEOUT, DATING_PRESENCE_UA
 from src.dating.proxy import proxy_url
 from src.dating.site.site_registry import site_registry_profile
+from src.dating.people import people_name_case
 
 # Сколько собеседниц держим: список сайта отдаёт сотни, а на странице читаются
 # те, с кем есть переписка.
@@ -157,7 +158,7 @@ def _contact_values(item: dict, profile_id: int, site) -> tuple | None:
     if row is None:
         return None
 
-    return (profile_id, row['uid'], row['name'], row['photo'],
+    return (profile_id, row['uid'], people_name_case(row['name']), row['photo'],
             row['age'], row['city'], row['online'])
 
 

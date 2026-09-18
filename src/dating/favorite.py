@@ -238,6 +238,7 @@ async def favorite_rows(profile: dict, base: str, password: str) -> list[dict]:
     ⚠ **Имена полей — общие с `people_api`**: это один и тот же движок и
     одна и та же запись пользователя. Второй словарь имён разошёлся бы с первым.
     """
+    from src.dating.people import people_name_case
     from src.dating.people_api import PEOPLE_API_FIELDS
 
     try:
@@ -263,8 +264,8 @@ async def favorite_rows(profile: dict, base: str, password: str) -> list[dict]:
         age = row.get(PEOPLE_API_FIELDS['age'])
         out.append({
             'uid': uid[:PEOPLE_UID_MAX],
-            'name': str(row.get(PEOPLE_API_FIELDS['name'])
-                        or '').strip()[:PEOPLE_NAME_MAX],
+            'name': people_name_case(
+                str(row.get(PEOPLE_API_FIELDS['name']) or ''))[:PEOPLE_NAME_MAX],
             'photo': str(row.get(PEOPLE_API_FIELDS['photo'])
                          or '').strip()[:500],
             'age': int(age) if isinstance(age, int) else 0,

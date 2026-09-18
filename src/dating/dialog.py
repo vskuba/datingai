@@ -24,6 +24,7 @@
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
+from src.dating.people import people_name_case
 
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_find
 
@@ -96,7 +97,8 @@ async def dialog_read(profile: dict, presence: dict, session_id: str, runner,
     if not uid:
         return {'saved': 0, 'error': 'номер собеседника со страницы не снялся'}
 
-    who = (str(extract.get('name') or '').split('\n')[0].strip() or str(companion))
+    who = people_name_case(
+        str(extract.get('name') or '').split('\n')[0]) or str(companion)
     await _contact_save(profile_id, uid, who)
 
     flow = _flow_build(extract)

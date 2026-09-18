@@ -32,7 +32,7 @@ class TestRows:
         rows = await _rows('online')
 
         assert [row['uid'] for row in rows] == ['812886', '169410']
-        assert rows[0]['name'] == 'Vincent pitchen' and rows[0]['age'] == 49
+        assert rows[0]['name'] == 'Vincent Pitchen' and rows[0]['age'] == 49
         assert set(rows[0]) == {'uid', 'name', 'age', 'photo', 'photo_uid',
                                 'online', 'is_new', 'link'}
 
