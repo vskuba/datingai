@@ -216,27 +216,36 @@ class TestPlace:
 
 
 class TestOnceOnly:
-    """⚠ Правило «ходим ровно один раз на человека» — самое дорогое здесь.
+    """⚠⚠ «Ходим один раз, дальше по сроку» — и решает это одно место.
 
-    Поход стоит входа браузером и ~50 секунд. Что известно — то известно: описание
-    в карточке не устаревает так, чтобы платить за него второй раз. Когда взяли,
-    помнит `about_at`; чем кончилось — `about_state`.
+    Прежде правило жило в наборе пула: `_card` смотрела `about_state == 'none'` и
+    предел походов `_probe_left`. Оба ушли — вместе с браузером.
+
+    Теперь поход стоит долей секунды (обычный GET), предел не нужен вовсе, а «пора
+    ли» считает `companion_about_due`: нового снимаем всегда, снятого — когда
+    выйдет срок сайта (`companion_about_every`, две недели по умолчанию).
     """
 
-    async def test_states_that_stop_us(self):
-        """Идём только при `none`. Прочие состояния — уже ответ:
-
-        `done` — описание есть; `empty` — сходили, рассказывать нечего; `fail` —
-        не вышло, и причина обычно не рассосётся к следующему заходу.
-        """
+    def test_the_rule_lives_in_one_place(self):
+        """⚠ Условие в наборе пула больше не повторяется: вторая копия разошлась бы
+        с первой на первой же правке срока."""
         import inspect
 
         from src.dating import mailing
 
         code = inspect.getsource(mailing._card)
 
-        assert "== 'none'" in code, 'условие «не спрашивали» исчезло'
-        assert '_probe_left' in code, 'предел походов не проверяется'
+        assert '_probe_left' not in code, 'предел походов вернулся — он больше не нужен'
+        assert "== 'none'" not in code, \
+            'условие похода снова в наборе пула — оно живёт в companion_about_due'
+
+    def test_the_maker_asks_the_rule(self):
+        """А спрашивается оно там, где карточку заводят."""
+        import inspect
+
+        from src.dating import mailing
+
+        assert 'companion_about_due' in inspect.getsource(mailing._about_fresh)
 
     async def test_date_is_stored(self, auth_client):
         """⚠ Дата съёма пишется вместе с состоянием: по ней видно, насколько

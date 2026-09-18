@@ -31,8 +31,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from datetime_.datetime_ import datetime_utc_now
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.companion_about import (COMPANION_ABOUT_EVERY_DEFAULT,
+                                        COMPANION_ABOUT_EVERY_SETTING)
+from src.uvicorn.routers.dating.site_ import site_seconds
 from src.dating.people import people_name_case
 
 from src.auth.auth import AuthUser, auth_required
@@ -152,7 +156,12 @@ async def companion_list(site_id: int = 0, find: str = '',
     # Отсюда и три состояния вместо двух: `known: False` значит «снимка нет или он
     # протух» — и это не то же самое, что «не в сети». Точку в таком случае страница
     # не рисует вовсе: серая точка читается как «оффлайн», а мы не знаем.
-    return {'result': [_answer(row, online_show(int(site_id), row['uid']))
+    # ⚠ Срок — **один раз на ответ**, а не на строку: собеседников бывает триста,
+    # и запрос к настройкам на каждого стоил бы трёхсот запросов ради одного числа.
+    every = int(await site_seconds(int(site_id), COMPANION_ABOUT_EVERY_SETTING)
+                or COMPANION_ABOUT_EVERY_DEFAULT) if site_id else 0
+
+    return {'result': [_answer(row, online_show(int(site_id), row['uid']), every)
                        for row in rows],
             'total': total,
             'page': page_no,
@@ -408,7 +417,8 @@ async def _row(companion_id: int) -> dict:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail=f'карточки #{companion_id} нет')
 
-    return _answer(row, online_show(int(row['site_id']), row['uid']))
+    return _answer(row, online_show(int(row['site_id']), row['uid']),
+                   await _about_every(int(row['site_id'])))
 
 
 async def _row_by_uid(site_id: int, uid: str, soft: bool = False) -> dict:
@@ -428,11 +438,47 @@ async def _row_by_uid(site_id: int, uid: str, soft: bool = False) -> dict:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail=f'карточки {uid} на сайте #{site_id} нет')
 
-    return _answer(row, online_show(int(site_id), uid))
+    return _answer(row, online_show(int(site_id), uid),
+                   await _about_every(int(site_id)))
 
 
-def _answer(row: dict, online: dict = None) -> dict:
-    """Строка базы в ответ странице."""
+async def _about_every(site_id: int) -> int:
+    """Срок обновления анкеты у сайта. Сбой — умолчание: подпись важнее точности."""
+    try:
+        return int(await site_seconds(int(site_id), COMPANION_ABOUT_EVERY_SETTING)
+                   or COMPANION_ABOUT_EVERY_DEFAULT)
+    except Exception:
+        return COMPANION_ABOUT_EVERY_DEFAULT
+
+
+def _stale(row: dict, every: int) -> bool:
+    """Устарела ли снятая анкета — то же правило, что у сбора.
+
+    ⚠ **Только для показа.** Ходить или нет, решает `companion_about_due`; здесь
+    страница красит подпись «снято …», чтобы человек видел, что сведения старые, не
+    дожидаясь следующего письма.
+
+    ⚠ Не снимали вовсе (`none`) — не «устарело», а «ещё не было»: у такой карточки
+    и даты нет, и подпись не рисуется.
+    """
+    when = row.get('about_at')
+    if not when or int(every) <= 0:
+        return False
+
+    return (datetime_utc_now() - when).total_seconds() >= int(every)
+
+
+def _answer(row: dict, online: dict = None, every: int = 0) -> dict:
+    """Строка базы в ответ странице.
+
+    Args:
+        every: срок обновления анкеты у сайта, секундами. Ноль — не показывать
+            устаревание вовсе.
+
+    ⚠ **Срок приходит снаружи, а не спрашивается здесь.** Функция синхронная и
+    зовётся на каждую строку списка: поход в настройки означал бы запрос к базе на
+    каждого из трёхсот собеседников. Спрашивает вызывающий — один раз на ответ.
+    """
     about = str(row['about'] or '')
 
     return {'id': int(row['id']),
@@ -449,6 +495,13 @@ def _answer(row: dict, online: dict = None) -> dict:
             'about_state': str(row['about_state']),
             'about_error': str(row['about_error']),
             'about_at': row['about_at'],
+            # Пора ли освежить анкету: срок задан сайтом
+            # (`companion_about_every`), и считает его **сервер**.
+            #
+            # ⚠ Страница сроков не знает и знать не должна: правило одно —
+            # `companion_about_due`, — и второй его вид на клиенте разошёлся бы с
+            # первым молча, показывая «свежо» тому, за кем мы уже сходили.
+            'about_stale': _stale(row, every),
             # Готов ли человек к письму, которое спрашивает про интересы. Считает
             # сервер, а не страница: правило одно, и вторая копия разошлась бы.
             'has_about': bool(about),

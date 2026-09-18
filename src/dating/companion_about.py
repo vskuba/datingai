@@ -35,12 +35,58 @@
 
 import re
 
+import httpx
+
+from http_.http_heartbeat import http_heartbeat_cookies
+from http_.http_pool import http_pool_transport
+from datetime_.datetime_ import datetime_utc_now
 from logging_.logging_ import logger_info
 
+from src.dating.json_column import json_column_load
 from src.dating.ready import password_pick
 from src.dating.scenario import scenario_run
+from src.dating.site.site_registry import site_registry_about
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
                                        rhapsody_api_site_get)
+
+# ── Ход по HTTP: то же самое, но без браузера ────────────────────────────────
+#
+# ⚠⚠ **Страница анкеты отдаётся обычным GET, и это проверено живьём.** Сайт
+# присылает готовый HTML: блок `.user__profile-info` с полями и `.top__profle-wr` с
+# шапкой — те же селекторы, по которым сценарий делал `extract`. Кнопка «More» в
+# разметке есть, но текст под ней **уже в ответе** — она только раскрывает, никакой
+# подгрузки скриптом.
+#
+# ⚠⚠ **Чем это лучше сценария, и цифры не наши, а с прода.** Сценарий 16 шагов, из
+# них девять — вход заново: открыть сайт, закрыть баннер, форма, логин, пароль,
+# кнопка и `wait_ms 12000` после неё. Отсюда 12,4 секунды в среднем и **143 неудачи
+# из 286** — половина прогонов сгорала впустую.
+#
+# Сессия же у анкеты **уже есть**: cookie лежат в `storage_state`, присутствие
+# ходит с ними каждую минуту. Один GET с ними — доли секунды.
+#
+# ⚠ **Сценарий остаётся запасным.** Сессия протухает, разметка у сайта меняется, и
+# путь через браузер умеет то, чего не умеет GET: войти заново. Потерять сбор
+# описаний из-за одной смены класса в вёрстке было бы дорого.
+# ⚠ Путь и классы блоков живут **у драйвера сайта** (`site/site_about.py`):
+# вёрстка у каждого своя, и лестница условий здесь превратилась бы в место, где
+# правка под один сайт молча ломает другой.
+
+# Сколько ждём ответа. ⚠ Тридцать секунд, а не пять: страница тяжёлая (37 КБ), и
+# сайт под нагрузкой отвечает не сразу. Дороже подождать, чем считать живого
+# человека недоступным.
+COMPANION_HTTP_TIMEOUT = 30.0
+
+# ⚠ Представляемся браузером: сайт отдаёт страницу и без этого, но «python-httpx» в
+# заголовке — примета, по которой нас отличают от людей первым же правилом.
+COMPANION_HTTP_UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                     'AppleWebKit/537.36 (KHTML, like Gecko) '
+                     'Chrome/125.0.0.0 Safari/537.36')
+
+# Как часто освежать анкету собеседника. Настройка сайта; ноль — снять один раз и
+# больше не возвращаться.
+COMPANION_ABOUT_EVERY_SETTING = 'companion_about_every'
+COMPANION_ABOUT_EVERY_DEFAULT = 1209600
 
 # Имя сценария у соседа. ⚠ Чужое имя: так он записан в его базе, и переименование
 # здесь ничего не изменит — менять надо вместе с ним.
@@ -205,8 +251,16 @@ def companion_about_head(head: str) -> tuple:
     if not flat:
         return '', 0
 
-    # Всё до первой кнопки: их подписи сайт пишет заглавными и не переводит.
-    cut = re.split(r'\s(?=SEND\b|START\b|ADD TO\b|Id:)', flat, maxsplit=1)[0].strip()
+    # ⚠⚠ **Регистр любой, и это не придирка.** Браузер отдаёт подписи кнопок
+    # заглавными — «SEND MESSAGE», — потому что их так рисует CSS
+    # (`text-transform`). В самом HTML они написаны как есть: «Send message». Пока
+    # резали только по заглавным, имя со страницы приходило с хвостом
+    # «, 59 new Live 3 Send message Start live chat Add to Favorites».
+    #
+    # ⚠ `new` и `Live` — тоже не часть имени: это значки «новенький» и «в эфире»,
+    # они стоят между именем и кнопками.
+    cut = re.split(r'\s(?=send\b|start\b|add to\b|new\b|live\b|Id:)',
+                   flat, maxsplit=1, flags=re.IGNORECASE)[0].strip()
 
     # ⚠ Шапка без имени — не повод класть в карточку что попало. Если резать было
     # нечего и остался текст анкеты, имени на странице нет: лучше пусто, чем
@@ -238,6 +292,116 @@ def companion_about_place(fields: dict) -> tuple:
 
     # Одно слово — это страна: сайт пишет «Location Germany», когда города нет.
     return '', parts[0] if parts else ''
+
+
+async def companion_about_http(profile: dict, uid: str) -> dict:
+    """Снимает анкету собеседника **обычным GET**, под cookie анкеты.
+
+    Args:
+        profile: анкета девушки — её cookie и её выход наружу.
+        uid: номер собеседника на сайте.
+
+    Returns:
+        dict: то же, что у сценария — `fields`, `about`, `city`, `country`,
+        `name`, `age`.
+
+    Raises:
+        DatingCompanionAboutError: нет cookie, сайт ответил не тем, страница не
+            разобралась. Причину видно в журнале анкеты.
+
+    ⚠⚠ **Быстрее сценария на два порядка.** Тот тратил 12,4 секунды в среднем, из
+    них двенадцать — ожидание после входа, который делался заново на каждого
+    человека. Здесь сессия уже есть: cookie лежат в `storage_state`, и присутствие
+    ходит с ними каждую минуту.
+
+    ⚠ **Выход наружу — тот же, что у всех дверей анкеты** (`proxy.py`): сайт
+    считает адреса, и поход за анкетой с чужого IP выдал бы нас вернее любого
+    другого признака.
+
+    ⚠ **Чужая анкета — отказ, а не тихая подмена.** Сайт уводит переадресацией на
+    форму входа, когда сессия протухла; без проверки номера мы записали бы человеку
+    чужое описание. Тот же довод, что у сценария.
+    """
+    from src.dating.proxy import proxy_url
+
+    site_id = int(profile['site_id'])
+    uid = str(uid or '').strip()
+    if not uid:
+        raise DatingCompanionAboutError('не назван номер собеседника')
+
+    # ⚠ Адрес берём **из снимка сайта**, а не из настройки: сценарий берёт его
+    # оттуда же (`login_url` в его переменных), и второй источник разошёлся бы с
+    # первым. Настройки `login_url` у сайта нет вовсе — на этом уже спотыкались.
+    try:
+        site = await rhapsody_api_site_get(site_id)
+    except RhapsodyError as e:
+        raise DatingCompanionAboutError(f'адрес сайта не спросился: {e}') from e
+
+    base = str((site or {}).get('url') or '').rstrip('/')
+    if not base:
+        raise DatingCompanionAboutError('у сайта не записан адрес')
+
+    cookies = http_heartbeat_cookies(
+        json_column_load(profile.get('storage_state')), base)
+    if not cookies:
+        raise DatingCompanionAboutError(
+            'у анкеты нет живой сессии — войдите под ней')
+
+    # ⚠ Чем разбирать эту страницу, знает драйвер сайта: путь, классы блоков и
+    # способ достать из них текст. Настройка та же, что у чата и присутствия —
+    # `presence` сайта (`site_about.py`).
+    from src.uvicorn.routers.dating.site_ import site_setting
+
+    driver = site_registry_about(
+        json_column_load(await site_setting(site_id, 'presence')))
+    url = driver.url(base, uid)
+
+    # ⚠ Клиент разовый, транспорт общий: cookie у каждой анкеты свои, а пул
+    # соединений один на всех (`http_pool.py`). Закрывать клиент нельзя — унесёт
+    # транспорт у всех.
+    client = httpx.AsyncClient(transport=http_pool_transport(), cookies=cookies,
+                               follow_redirects=True,
+                               timeout=COMPANION_HTTP_TIMEOUT,
+                               proxy=await proxy_url(profile) or None)
+
+    try:
+        answer = await client.get(url, headers={'user-agent': COMPANION_HTTP_UA})
+    except Exception as e:
+        raise DatingCompanionAboutError(f'страница не открылась: {e}') from e
+
+    if answer.status_code != 200:
+        raise DatingCompanionAboutError(
+            f'сайт ответил {answer.status_code} на анкету {uid}')
+
+    blocks = driver.parse(answer.text)
+
+    if not blocks.get('анкета'):
+        # ⚠ Пустой блок — это не «у человека ничего не написано», а «страница не
+        # та»: сессия протухла и нас увели на вход, либо сайт поменял вёрстку.
+        # Отличить важно: первое лечится входом, второе — правкой класса.
+        raise DatingCompanionAboutError(
+            'на странице нет блока анкеты — сессия протухла или сайт сменил вёрстку')
+
+    return _from_blocks(blocks, uid)
+
+
+def _from_blocks(blocks: dict, uid: str) -> dict:
+    """Разбирает снятые блоки в поля. ⚠ Общий для GET и сценария.
+
+    Разбор один на оба пути намеренно: страница одна и та же, и второй его вид
+    разошёлся бы с первым на первой же правке подписей.
+    """
+    fields = companion_about_parse(blocks.get('анкета'))
+    city, country = companion_about_place(fields)
+    name, age = companion_about_head(blocks.get('шапка'))
+
+    got_uid = str(fields.get('Id:') or '').strip()
+    if got_uid and got_uid != str(uid):
+        raise DatingCompanionAboutError(
+            f'открылась чужая анкета: просили {uid}, а на странице {got_uid}')
+
+    return {'fields': fields, 'about': companion_about_text(fields),
+            'city': city, 'country': country, 'name': name, 'age': age}
 
 
 async def companion_about_fetch(profile: dict, uid: str) -> dict:
@@ -339,6 +503,69 @@ async def companion_about_fetch(profile: dict, uid: str) -> dict:
             'age': age}
 
 
+async def companion_about_due(site_id: int, card: dict) -> bool:
+    """Пора ли снимать анкету этого человека.
+
+    Args:
+        site_id: сайт-закладка — по нему берётся срок.
+        card: карточка собеседника из базы (или пустая, если её ещё нет).
+
+    Returns:
+        bool: `True` — идти на сайт.
+
+    ## ⚠⚠ Здесь и решается, когда мы ходим
+
+    Отдельного круга обновления нет и не заводится. Вопрос задаётся там, где
+    карточку **и так** заводят или подтверждают, — то есть ровно тогда, когда
+    человек попал в работу. Не попал никто — и ходить незачем.
+
+    | Что в карточке | Идём? |
+    |----------------|-------|
+    | карточки нет вовсе | да — это новый человек |
+    | `about_state = none` | да — анкету ещё не снимали |
+    | снято, и срок вышел | да — освежаем |
+    | снято недавно | нет |
+    | `fail` | нет: причина обычно не рассосётся сама |
+
+    ⚠ **`empty` освежаем наравне с `done`.** «Мужчина ничего о себе не написал» —
+    состояние сегодняшнего дня, а не приговор: через две недели он заполнит анкету,
+    и это ровно тот случай, ради которого срок и заведён.
+
+    ⚠ **Ноль в настройке значит «снять один раз и не возвращаться»**, а не «не
+    ходить вовсе»: новый человек всё равно будет снят — иначе описаний не появится
+    ни у кого.
+
+    ⚠ Сбой чтения настройки отвечает «не пора»: лишний поход дешевле
+    пропущенного, но не настолько, чтобы ходить на каждой ошибке.
+    """
+    from src.uvicorn.routers.dating.site_ import site_seconds
+
+    state = str((card or {}).get('about_state') or 'none')
+
+    if not card or state == 'none':
+        return True
+
+    if state == 'fail':
+        return False
+
+    when = (card or {}).get('about_at')
+    if not when:
+        return True
+
+    try:
+        every = int(await site_seconds(int(site_id), COMPANION_ABOUT_EVERY_SETTING)
+                    or COMPANION_ABOUT_EVERY_DEFAULT)
+    except Exception as e:
+        logger_info(f'[dating] срок обновления анкет сайта #{site_id} не прочитался: {e}')
+
+        return False
+
+    if every <= 0:
+        return False
+
+    return (datetime_utc_now() - when).total_seconds() >= every
+
+
 async def companion_about_collect(profile: dict, uid: str) -> dict:
     """Собирает анкету и кладёт описание в карточку собеседника.
 
@@ -351,14 +578,27 @@ async def companion_about_collect(profile: dict, uid: str) -> dict:
     """
     from src.uvicorn.routers.dating.companion import companion_touch
 
+    # ⚠⚠ **Сперва GET, сценарий — запасным.** Страница отдаётся обычным запросом
+    # под cookie анкеты: доли секунды против 12,4 секунды у браузера, и без
+    # половины неудач, которые давал вход заново (143 из 286 на проде).
+    #
+    # ⚠ Запасной путь нужен по-настоящему: сессия протухает, и войти заново умеет
+    # только браузер. Потерять сбор описаний из-за этого дороже минуты, которую он
+    # стоит.
     try:
-        got = await companion_about_fetch(profile, uid)
-    except DatingCompanionAboutError as e:
-        logger_info(f'[dating] анкета собеседника {uid}: {e}')
-        await companion_touch(int(profile['site_id']), uid,
-                                     about_state='fail', about_error=str(e))
+        got = await companion_about_http(profile, uid)
+    except DatingCompanionAboutError as first:
+        logger_info(f'[dating] анкета {uid} по HTTP не снялась ({first}) — '
+                    f'идём сценарием')
 
-        return {'ok': False, 'about': '', 'error': str(e)}
+        try:
+            got = await companion_about_fetch(profile, uid)
+        except DatingCompanionAboutError as e:
+            logger_info(f'[dating] анкета собеседника {uid}: {e}')
+            await companion_touch(int(profile['site_id']), uid,
+                                  about_state='fail', about_error=str(e))
+
+            return {'ok': False, 'about': '', 'error': str(e)}
 
     about = str(got.get('about') or '')
 

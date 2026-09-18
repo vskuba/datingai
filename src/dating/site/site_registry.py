@@ -10,6 +10,8 @@
 файла — хватит разделов `chat` и `send` в `presence` (см. `site_base.py`).
 """
 
+from src.dating.site.site_about import (DatingSiteAbout,
+                                        DatingSiteAboutLadadate)
 from src.dating.site.site_base import DatingSiteChat
 from src.dating.site.site_goldenbride import (DatingSiteChatGoldenbride,
                                               DatingSiteProfileGoldenbride)
@@ -27,6 +29,17 @@ DATING_SITE_DRIVERS = {
 DATING_SITE_PROFILE_DRIVERS = {
     DatingSiteProfileGoldenbride.name: DatingSiteProfileGoldenbride,
     DatingSiteProfile.name: DatingSiteProfile,
+}
+
+# Драйверы разбора страницы собеседника — по тем же именам, третья таблица.
+#
+# ⚠ **Своя таблица, а не поле в прежних.** Разбор HTML отвечает на третий вопрос:
+# чат — про кадры сокета, анкета девушки — про имена полей JSON, этот — про классы
+# в вёрстке. Сайт может совпасть с соседом в двух и разойтись в третьем, и общая
+# таблица заставляла бы заводить класс ради того, что не менялось.
+DATING_SITE_ABOUT_DRIVERS = {
+    DatingSiteAboutLadadate.name: DatingSiteAboutLadadate,
+    DatingSiteAbout.name: DatingSiteAbout,
 }
 
 # Чем разговаривать, когда сайт не назвал драйвер.
@@ -64,6 +77,26 @@ def site_registry_profile(presence: dict | None = None) -> DatingSiteProfile:
     вторую половину закрывает базовый драйвер.
     """
     return _driver_of(DATING_SITE_PROFILE_DRIVERS, presence)
+
+
+def site_registry_about(presence: dict | None = None) -> DatingSiteAbout:
+    """Чем разбирать страницу собеседника у этого сайта.
+
+    Третья половина драйвера: чат — кадрами, анкета девушки — именами полей, эта —
+    классами в вёрстке. Сайту, чья разметка укладывается в базовую, класса не нужно
+    вовсе: хватит раздела `about` в `presence` (см. `site_about.py`).
+
+    ⚠ **Умолчание здесь — базовый драйвер, а не первый попавшийся.** У чата
+    умолчанием стоит Goldenbride, и это переходная мера: его протокол жил
+    константами раньше, чем появилась настройка. У разбора страницы такой истории
+    нет — базовый работает у всякого сайта с постоянными классами.
+    """
+    if not isinstance(presence, dict):
+        return DatingSiteAbout()
+
+    name = str(presence.get('driver') or '').strip()
+
+    return DATING_SITE_ABOUT_DRIVERS.get(name, DatingSiteAbout)(presence)
 
 
 def _driver_of(drivers: dict, presence: dict | None):

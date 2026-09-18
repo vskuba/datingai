@@ -256,6 +256,10 @@
            описанию, а не отдельная мысль. */
         .comp-when { font-weight: 400; color: #94a3b8; text-transform: none;
                      letter-spacing: 0; }
+        /* Срок обновления вышел. ⚠ Цветом предупреждения, а не красным: анкета
+           старая — это повод обновить, а не поломка. */
+        .comp-when-old { color: #b26b00; }
+
         .comp-field input, .comp-field textarea {
             width: 100%; box-sizing: border-box; padding: 6px 9px;
             border: 1px solid #d1d5db; border-radius: 6px;
@@ -2519,7 +2523,12 @@
             // читая текст, человек первым делом спрашивает «насколько это свежо».
             // Показываем только когда ходили: у вписанного руками даты нет.
             + (row.about_at
-                ? `<span class="comp-when"> · снято ${esc(timeShift(row.about_at))}</span>`
+                ? `<span class="comp-when${row.about_stale ? ' comp-when-old' : ''}">`
+                  + ` · снято ${esc(timeShift(row.about_at))}`
+                  // ⚠ Устаревание считает **сервер** (`about_stale`): срок задан
+                  // сайтом, и вторая его копия на странице разошлась бы молча.
+                  + (row.about_stale ? ' · пора обновить' : '')
+                  + '</span>'
                 : '')
             + '</span>'
             + '<textarea data-field="about" rows="8"'
