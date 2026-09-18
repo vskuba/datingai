@@ -139,6 +139,9 @@ async def mailing_make(site_id: int, templates: list, limit: int,
 
     known = await mail_var_rows(site_id)
     taken = await _taken(site_id)
+    # Пары «адресат — шаблон», потраченные любой анкетой: один текст уходит
+    # человеку ровно раз (`_pairs`).
+    spent = {(uid, mail_id) for _, uid, mail_id in taken if mail_id}
     # Закрывшиеся от анкеты: письмо им не уйдёт — сайт откажет тем же отказом, что
     # и в чате (`block.py`). Отдельным набором, потому что и вопрос свой.
     blocked = await block_pairs(site_id)
@@ -160,7 +163,8 @@ async def mailing_make(site_id: int, templates: list, limit: int,
     # полсотни лишних походов в базу.
     values_by_girl = {}
 
-    for girl, template, person in _pairs(girls, people, templates, taken, blocked):
+    for girl, template, person in _pairs(girls, people, templates, taken, blocked,
+                                         spent):
         if tried >= limit:
             left += 1
             continue
@@ -407,7 +411,7 @@ def mailing_companion_vars(person: dict, known: list) -> list[dict]:
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 def _pairs(girls: list, people: list, templates: list, taken: set,
-           blocked: set = None):
+           blocked: set = None, spent: set = None):
     """Тройки «анкета — адресат — шаблон»: кому, от кого и чем писать.
 
     ⚠ **По адресатам, а не перебором всех сочетаний.** Анкет два десятка, людей в
@@ -432,12 +436,33 @@ def _pairs(girls: list, people: list, templates: list, taken: set,
         blocked: пары «анкета — адресат», где человек закрылся от девушки
             (`block`). ⚠ Пара, а не тройка: он закрылся от неё целиком, и
             шаблон тут ничего не меняет.
+        spent: пары «адресат — шаблон», уже потраченные **любой** анкетой.
+
+    ## ⚠⚠ Один шаблон уходит человеку ровно раз, кем бы ни была девушка
+
+    Прежде ключом была тройка «анкета — адресат — шаблон», и одно это правило
+    держало всё: «не больше письма от анкеты адресату одним шаблоном». Разным
+    девушкам оно не мешало — тройки-то разные, — и один и тот же текст мог прийти
+    человеку дважды, от Дианы и от Екатерины.
+
+    Внутри одного захода этого не случалось: каждый адресат получает одно письмо
+    за проход. Но заходов много — круг добирает пул по расписанию, — и на втором
+    человек снова оказывался свободен, только уже для другой анкеты.
+
+    Со стороны получателя это и есть **выданное агентство**: два одинаковых письма
+    от двух незнакомок. Тот же довод, по которому собеседники уникальны в пуле
+    инвайтов (`invite.py`).
+
+    ⚠ **Разные шаблоны от разных девушек — по-прежнему можно.** У них разный
+    текст, и второе письмо читается как ещё одно знакомство, а не как копия.
     """
     blocked = blocked or set()
+    spent = spent or set()
 
     for person in people:
         free = [(girl, template) for girl in girls for template in templates
                 if (girl['id'], person['uid'], template['id']) not in taken
+                and (person['uid'], template['id']) not in spent
                 and (girl['id'], person['uid']) not in blocked]
         if not free:
             continue
