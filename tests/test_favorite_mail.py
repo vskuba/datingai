@@ -301,23 +301,27 @@ class TestAStarIsEnough:
 
         assert order == [never, talked], order
 
-    def test_an_empty_history_is_not_a_refusal(self):
-        """⚠ Пустая история — законный случай: звезда означает, что разговор был.
+    def test_the_history_does_not_travel_to_the_agent_at_all(self):
+        """⚠⚠ Истории агент больше не видит **никогда** — шаблон один на весь пул.
 
-        Разбирает её **промпт у соседа** (`%if mail_history%`), а не мы: инструкция
-        в переменной данных стояла не на своём месте и не работала — модель всё
-        равно сочиняла общее прошлое, «ту кофейню, о которой мы говорили».
+        Прежде она уезжала переменной, и пустая была особым случаем: промпт у
+        соседа ветвился `%if mail_history%` и в этом случае запрещал ссылаться на
+        прошлые слова. Теперь история пуста всегда — запрет стал безусловным, а
+        переменная отвязана от workflow.
+
+        Проверяется здесь именно это: письмо не притворяется продолжением
+        разговора, которого агент не видел.
         """
         import inspect
 
         from src.dating import mail_agent
 
-        code = inspect.getsource(mail_agent.favorite_mail_write)
+        code = inspect.getsource(mail_agent.favorite_mail_template)
 
-        assert 'нечего возобновлять' not in code, \
-            'пустая история снова считается отказом'
-        assert 'DATING_FAVORITE_MAIL_NO_HISTORY' not in code, \
-            'указание снова уезжает вместо данных — промпт не ветвится'
+        assert 'mail_history' not in code, \
+            'переписка снова уезжает агенту — шаблон общий, ей там не место'
+        assert 'girl_card' not in code and 'companion_card' not in code, \
+            'карточки снова уезжают агенту: подстраиваться шаблону не подо что'
 
 
 class TestTheBatchCountsLetters:
@@ -358,7 +362,7 @@ class TestTheBatchCountsLetters:
         monkeypatch.setattr(mod, 'online_show',
                             lambda site_id, uid: {'online': str(uid) == near,
                                                   'known': True})
-        monkeypatch.setattr(mod, 'favorite_mail_write',
+        monkeypatch.setattr(mod, '_template',
                             _answer('Давно не общались, как ты?'))
         monkeypatch.setattr(mod, '_sync_stars', _nothing())
 
@@ -426,8 +430,7 @@ class TestBothMustBeOnline:
 
             return 'письмо'
 
-        monkeypatch.setattr(favorite_mail, 'favorite_mail_write',
-                            _agent)
+        monkeypatch.setattr(favorite_mail, '_template', _agent)
 
         uid = f'u{uuid.uuid4().hex[:8]}'
         await _star(girl, uid)

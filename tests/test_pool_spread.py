@@ -124,15 +124,28 @@ class TestFavoriteMailKeepsItsGirl:
     """
 
     def test_the_pair_comes_from_the_conversation(self):
+        """⚠ Жребий в модуле есть, но **не про анкету**.
+
+        Прежде проверялось «слова `random` в модуле нет вовсе». Проверка была
+        верной ровно до того дня, когда письмо стало собираться шаблоном: жребий
+        появился — на приём, длину, рассказ и метку имени, — и все они живут в
+        `_template`, где анкеты нет и в помине.
+
+        Стеречь надо не слово, а **место**: в наборе пула выбора анкеты быть не
+        должно. Пара задана разговором — «ты замолчал» пишет та девушка, с которой
+        он говорил, — а случайная написала бы незнакомому про переписку, которой у
+        них не было.
+        """
         import inspect
 
         from src.dating import favorite_mail
 
-        code = inspect.getsource(favorite_mail)
+        maker = inspect.getsource(favorite_mail.favorite_mail_make)
 
-        assert 'random' not in code, \
+        assert 'random' not in maker, \
             'у писем избранным появился случайный выбор анкеты'
-        assert 'f.profile_id' in code, 'пара берётся не из самой переписки'
+        assert 'f.profile_id' in inspect.getsource(favorite_mail._quiet), \
+            'пара берётся не из самой переписки'
 
 
 def _watch(monkeypatch) -> list:
