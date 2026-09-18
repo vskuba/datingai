@@ -204,7 +204,7 @@ async def _pending_take(socket, profile_id: int, raw, site) -> int:
     return saved
 
 
-async def _invites_to_history(db, profile_id: int, uid: str) -> int:
+async def chat_invites_to_history(db, profile_id: int, uid: str) -> int:
     """Кладёт в переписку последние инвайты этой пары — их столько, сколько
     просит настройка сайта `invite_keep`.
 
@@ -318,7 +318,7 @@ async def _message_save(profile_id: int, message: dict) -> bool:
             # временем отправки обязан лечь раньше ответа, иначе диалог читается
             # задом наперёд.
             if first:
-                await _invites_to_history(db, profile_id, message['sender_uid'])
+                await chat_invites_to_history(db, profile_id, message['sender_uid'])
 
             await db.execute(
                 'INSERT IGNORE INTO message '

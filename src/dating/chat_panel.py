@@ -44,6 +44,8 @@ from datetime import datetime, timedelta
 from datetime_.datetime_ import datetime_utc_now
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
+from src.dating.chat import chat_invites_to_history
+from src.dating.feed import feed_write
 from src.dating.people import people_name_case
 
 from src.dating.json_column import json_column_load
@@ -100,6 +102,11 @@ CHAT_PANEL_CELLS = ('номер', 'когда', 'от', 'кому', 'текст'
 # последний час — это то, что человек и правда мог пропустить, пока не смотрел.
 # Всё, что старше, — догон истории, а не событие.
 CHAT_PANEL_FRESH_SEC = 3600
+
+# Сколько разговоров отмечаем в ленте за один заход импорта. ⚠ Кольцо ленты
+# тридцать строк **на все виды событий**: без потолка один заход вытеснил бы из
+# неё и отправку, и ошибки.
+CHAT_PANEL_TALKS_MAX = 5
 
 # Номер собеседника из ячейки. Панель кладёт в неё ссылку с номером и имя рядом:
 # «181685 Semen Gorbunkov». Номер берётся из отдельного поля сценария, а это —
@@ -382,6 +389,16 @@ async def chat_panel_save(rows: list) -> dict:
     # идёт туда же, куда время: у панели время с точностью до секунды.
     rows = sorted(rows, key=lambda row: row['sent_at'] or '')
 
+    # Пары «анкета — человек», у которых появилась свежая входящая реплика:
+    # по ним поднимется значок у вкладки «Диалоги» (`_talks_feed`).
+    talks: dict[tuple, str] = {}
+
+    # ⚠⚠ **Пары, у которых разговора ещё не было** — им перенесём инвайты.
+    #
+    # Спрашиваем **до** вставки: после неё все пары выглядят говорившими, и
+    # отличить начало разговора от продолжения будет нечем.
+    fresh_pairs = await _talks_new(rows)
+
     async with mysql_get_db_async() as db:
         for row in rows:
             if row['sender_uid']:
@@ -405,6 +422,20 @@ async def chat_panel_save(rows: list) -> dict:
                  row['message_uid'], row['direction'], row['sent_at']))
             if db.rowcount:
                 added += 1
+                # ⚠⚠ **Первый ответ — момент, когда приглашения становятся
+                # диалогом.** Инвайты в переписку не пишутся при отправке: пока
+                # человек молчит, разговора нет. Ответил — и последние из них
+                # нужны, чтобы понять, **на что** он ответил.
+                #
+                # То же правило и тот же код, что у сокета (`chat.py`), и сюда его
+                # пришлось добавить отдельно: у сайта без сокета — а это LadaDate,
+                # весь наш прод — реплики приходят только этой дорогой, и перенос
+                # не срабатывал никогда. На проде не нашлось **ни одного**
+                # сообщения с `source = 'invite'`.
+                pair = (int(row['profile_id']), str(row['sender_uid']))
+                if row['direction'] == 'in' and pair in fresh_pairs:
+                    fresh_pairs.discard(pair)
+                    await chat_invites_to_history(db, pair[0], pair[1])
                 # ⚠ Считаем **свежие отдельно**, и это не украшение отчёта.
                 # «Привезено 5» значит «пять строк, каких у нас не было», а импорт
                 # берёт сутки назад: почти всегда это старая переписка, которую мы
@@ -413,11 +444,102 @@ async def chat_panel_save(rows: list) -> dict:
                 # открыв «Чат → Диалоги» и увидев реплики недельной давности.
                 if _fresh(row.get('sent_at')):
                     fresh += 1
+                    # ⚠ Пары копим **по свежим входящим**: по ним поднимется
+                    # значок у вкладки «Диалоги» (см. ниже).
+                    if row['direction'] == 'in' and row['sender_uid']:
+                        talks[(int(row['profile_id']), str(row['sender_uid']))] = \
+                            str(row['sender_name'] or row['sender_uid'])
 
         await db.connection.commit()
 
+    await _talks_feed(talks)
+
     return {'added': added, 'fresh': fresh, 'same': len(rows) - added,
             'contacts': contacts}
+
+
+async def _talks_new(rows: list) -> set:
+    """Пары, у которых входящих реплик у нас ещё нет: им переносятся инвайты.
+
+    ⚠ **Спрашиваем одним запросом на весь заход**, а не по паре: импорт привозит
+    сотни строк, и вопрос «говорили ли уже» у них общий.
+
+    ⚠ Сбой чтения отвечает пустым множеством — то есть «все пары уже говорили», и
+    перенос не делается. Лишний перенос вклинил бы приглашения в середину давнего
+    разговора; пропущенный стоит того, что автоответ увидит реплику без повода, и
+    следующий импорт это исправит.
+    """
+    pairs = {(int(row['profile_id']), str(row['sender_uid']))
+             for row in rows
+             if row.get('direction') == 'in' and row.get('sender_uid')}
+    if not pairs:
+        return set()
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT DISTINCT profile_id, sender_uid FROM message'
+                " WHERE direction = 'in' AND (%s)"
+                % ' OR '.join(['(profile_id = %s AND sender_uid = %s)'] * len(pairs)),
+                tuple(one for pair in pairs for one in pair))
+            talked = {(int(row['profile_id']), str(row['sender_uid']))
+                      for row in await db.fetchall() or []}
+    except Exception as e:
+        logger_info(f'[dating] начатые разговоры не спросились: {e}')
+
+        return set()
+
+    return pairs - talked
+
+
+async def _talks_feed(talks: dict) -> None:
+    """Отмечает в ленте разговоры, где только что появилась реплика.
+
+    ## ⚠⚠ Зачем это здесь, а не только у сокета
+
+    Значок у вкладки «Диалоги» поднимает событие `talk`, а писал его один лишь
+    держатель сокетов (`chat._talk_new`). Сайтам без сокета — а это LadaDate,
+    весь наш прод — реплики привозит **импорт из панели**, и значок у них не
+    поднимался никогда: механизм был, кормить его было некому.
+
+    Поймано глазами: в «Чат → Диалоги» появился ответ Семёна Горбункова, а полоса
+    вкладок молчала.
+
+    ## ⚠⚠ Почему не на всё привезённое
+
+    Импорт берёт сутки назад и привозит сотни строк разом, включая переписку
+    месячной давности: отметь мы каждую — лента заполнилась бы «новыми диалогами»
+    годичной давности, а кольцо у неё тридцать строк на все виды событий.
+
+    Поэтому отмечаются только **свежие** реплики (`_fresh`, час по времени сайта)
+    и **по одной на пару**: пять реплик подряд от одного человека — это один
+    разговор, о котором стоит сказать один раз.
+
+    ⚠ **Потолок на заход.** Даже свежих пар бывает много (панель молчала час,
+    потом отдала всё разом), а кольцо одно на все события: полтора десятка
+    разговоров вытеснили бы из него отправку и ошибки.
+
+    ⚠ Сбой ленты молчит: она подсказка, а не работа. Не записалось — реплики всё
+    равно легли, и разговор виден на своей вкладке.
+    """
+    if not talks:
+        return
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT id, site_id FROM profile WHERE id IN (%s)'
+                % ', '.join(['%s'] * len({one[0] for one in talks})),
+                tuple({one[0] for one in talks}))
+            sites = {int(row['id']): int(row['site_id'])
+                     for row in await db.fetchall() or []}
+
+        for (profile_id, _), who in list(talks.items())[:CHAT_PANEL_TALKS_MAX]:
+            site_id = sites.get(int(profile_id)) or 0
+            if site_id:
+                feed_write(site_id, 'talk', f'Новое в диалоге: {who}', profile_id)
+    except Exception as e:
+        logger_info(f'[dating] разговоры из панели не отметились: {e}')
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
