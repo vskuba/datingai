@@ -86,7 +86,11 @@ class TestManyTemplates:
         monkeypatch.setattr(invite, '_people', _answer(
             [{'uid': f'u{one}', 'name': f'M{one}'} for one in range(1, 9)]))
 
-        await invite.invite_make(STAND_SITE, 8)
+        # ⚠ Потолок берём с запасом — по числу **пар**, а не людей: карточек
+        # теперь четыре девушки × восемь человек, и они перемешаны. Возьми мы
+        # восемь из тридцати двух, тест краснел бы раз в сотню прогонов на ровном
+        # месте: в выборку могла не попасть одна из анкет.
+        await invite.invite_make(STAND_SITE, 4 * 8)
 
         assert {text for _, text in put} == {'один', 'два'}
         assert len({girl for girl, _ in put}) == 4, 'кто-то остался без инвайтов'

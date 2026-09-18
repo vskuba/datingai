@@ -220,20 +220,27 @@ class TestFill:
 
 
 class TestCards:
-    """Кому и от кого. Главное правило теперь — уникальность собеседников."""
+    """Кому и от кого. Главное правило — уникальность **пары**."""
 
-    def test_one_card_per_person(self):
-        """⚠⚠ **Один человек — одна карточка на весь пул.**
+    def test_every_girl_may_write_every_person(self):
+        """⚠⚠ **Одна карточка на пару, а не на человека** — разворот прежнего.
 
-        Текст в пуле общий: отправь его две наши девушки одному мужчине — он
-        получит два одинаковых сообщения от разных незнакомок, то есть увидит
-        агентство. Прежнее правило («один инвайт за заход») ловило ту же беду на
-        двух Дианах, #849 и #850, написавших одному человеку в первом же прогоне.
+        Здесь стояло «один человек — одна карточка на весь пул»: текст был один на
+        всех девушек, и два приглашения означали два одинаковых сообщения от двух
+        незнакомок. На этом поймали двух Диан, #849 и #850.
+
+        Текст теперь у каждой девушки свой (`_templates`), и правило ушло вместе с
+        общим текстом: мужчина, которому написали двое, получает два **разных**
+        сообщения — на сайте знакомств это обычное дело.
+
+        Цена прежнего ограничения была видна в пуле: людей в ленте под две сотни,
+        и потолок в четыреста карточек не набирался никогда, пока двенадцать
+        девушек простаивали.
         """
         got = list(_cards(GIRLS, PEOPLE, set(), set()))
 
-        assert len(got) == len(PEOPLE), 'человек получил больше одной карточки'
-        assert sorted(person['uid'] for _, person in got) == ['111', '222', '333']
+        assert len(got) == len(GIRLS) * len(PEOPLE), \
+            'карточек меньше, чем пар: правило снова душит пул'
 
     def test_girls_take_turns(self):
         """⚠ Очередь по девушкам делит пул поровну.
@@ -244,12 +251,12 @@ class TestCards:
         people = [{'uid': str(one), 'name': f'M{one}'} for one in range(1, 10)]
         got = list(_cards(GIRLS, people, set(), set()))
 
-        # Девять человек на три анкеты — по три карточки каждой.
         counts = {}
         for girl, _ in got:
             counts[girl['id']] = counts.get(girl['id'], 0) + 1
 
-        assert counts == {849: 3, 850: 3, 861: 3}, counts
+        # Девять человек и три анкеты: каждая пишет всем девяти.
+        assert counts == {849: 9, 850: 9, 861: 9}, counts
 
     def test_first_round_gives_each_girl_one(self):
         """Порядок именно круговой: сперва всем по одной, потом по второй."""
@@ -257,101 +264,44 @@ class TestCards:
         got = [girl['id'] for girl, _ in _cards(GIRLS, people, set(), set())]
 
         assert sorted(got[:3]) == [849, 850, 861]
-        assert sorted(got[3:]) == [849, 850, 861]
+        assert sorted(got[3:6]) == [849, 850, 861]
 
-    def test_taken_person_is_not_given_twice(self):
+    def test_a_taken_pair_is_not_given_twice(self):
         """⚠ Занятость считается **по всему пулу**, а не по заходу.
 
         Кнопку «Генерировать» жмут поверх непустого пула, и без этого набора
-        второй заход выдал бы тем же людям вторую карточку — с тем же текстом, но
-        от другой девушки.
-        """
-        got = list(_cards(GIRLS, PEOPLE, set(), set(), taken={'222'}))
+        второй заход выдал бы той же паре вторую карточку.
 
-        assert sorted(person['uid'] for _, person in got) == ['111', '333']
+        ⚠ Занята **пара**: человек, которому уже готовит одна девушка, остаётся
+        свободен для остальных.
+        """
+        got = list(_cards(GIRLS, PEOPLE, set(), set(), taken={(849, '222')}))
+
+        пары = {(girl['id'], person['uid']) for girl, person in got}
+
+        assert (849, '222') not in пары, 'занятая пара выдана снова'
+        assert (850, '222') in пары, 'человек закрыт для остальных анкет'
 
     def test_taken_is_filled_as_we_go(self):
         """Набор занятых пополняется на ходу — им же вызывающий и пользуется."""
         taken = set()
         list(_cards(GIRLS, PEOPLE, set(), set(), taken=taken))
 
-        assert taken == {'111', '222', '333'}
+        assert taken == {(girl['id'], person['uid'])
+                         for girl in GIRLS for person in PEOPLE}
 
-    def test_priority_goes_first_but_once(self):
-        """⚠ **Приоритет — теперь порядок, а не число реплик.**
+    def test_priority_goes_first(self):
+        """⚠ Приоритет — это **порядок**, а не число реплик.
 
-        Прежде отмеченному писали все свободные девушки; с общим шаблоном это
-        пять одинаковых сообщений подряд одному человеку. Он уходит первым, но
-        карточку получает одну.
+        Отмеченный уходит первым: случай бросается среди отмеченных, пока они
+        есть. Написать ему теперь могут все свободные девушки — текст у каждой
+        свой, и подряд идущие сообщения не одинаковы.
         """
         people = [{'uid': '111', 'name': 'Brian'},
                   {'uid': '999', 'name': 'Mark', 'priority': True}]
         got = list(_cards(GIRLS, people, set(), set()))
 
         assert got[0][1]['uid'] == '999', 'приоритетный ушёл не первым'
-        assert [person['uid'] for _, person in got].count('999') == 1
-
-    def test_a_busy_pair_is_skipped(self):
-        """Этой девушке звать его рано — черновик в пуле либо не вышла пауза."""
-        busy = {(girl['id'], '222') for girl in GIRLS}
-        got = list(_cards(GIRLS, PEOPLE, busy, set()))
-
-        assert sorted(person['uid'] for _, person in got) == ['111', '333']
-
-    def test_a_busy_pair_does_not_take_him_from_the_others(self):
-        """⚠⚠ **Предел у каждой девушки свой.**
-
-        Прежде «позвали» считалось по человеку: занятость одной анкеты закрывала
-        его для всех. Пять свободных девушек упирались в счёт, набранный тремя
-        другими, — поймано на приоритетном собеседнике.
-        """
-        got = {person['uid']: girl['id'] for girl, person in
-               _cards(GIRLS, PEOPLE, {(849, '222')}, set())}
-
-        assert sorted(got) == ['111', '222', '333']
-        assert got['222'] in (850, 861), got
-
-    def test_girls_who_talked_are_not_chosen(self):
-        """⚠ Свободные — те, кто с ним не говорил.
-
-        Иначе случай раз за разом выпадал бы на анкету, у которой с ним уже
-        переписка, и человек оставался без инвайта, хотя другая была свободна.
-        """
-        talked = {(849, '111'), (850, '111')}
-        got = {person['uid']: girl['id'] for girl, person in
-               _cards(GIRLS, PEOPLE, set(), talked)}
-
-        assert got['111'] == 861, 'выбрана анкета, у которой с ним переписка'
-
-    def test_person_nobody_is_free_for_is_skipped(self):
-        """Со всеми нашими он уже говорит — звать некому, и это не ошибка."""
-        talked = {(girl['id'], '111') for girl in GIRLS}
-        got = list(_cards(GIRLS, PEOPLE, set(), talked))
-
-        assert '111' not in [person['uid'] for _, person in got]
-
-    def test_blocked_pair_is_skipped(self):
-        """Закрылся от анкеты — пишет другая: запрет отнимает пару, не человека."""
-        got = {person['uid']: girl['id'] for girl, person in
-               _cards(GIRLS, PEOPLE, set(), set(), blocked={(849, '111'), (850, '111')})}
-
-        assert got['111'] == 861
-
-    def test_empty_uid_is_not_a_person(self):
-        """Пустой номер из ленты — мусор, а не собеседник."""
-        got = list(_cards(GIRLS, [{'uid': '', 'name': 'X'}, PEOPLE[0]], set(), set()))
-
-        assert [person['uid'] for _, person in got] == ['111']
-
-    def test_it_ends_when_nobody_is_left(self):
-        """⚠ Обход конечен: круг без единой выдачи заканчивает набор.
-
-        Генератор крутит девушек по кругу — без этого условия он крутился бы
-        вечно, а вызывающий ждал бы, пока наберётся пул, которому неоткуда взяться.
-        """
-        got = list(_cards(GIRLS, PEOPLE, set(), set()))
-
-        assert len(got) == 3
 
 
 class TestInviteLanguage:

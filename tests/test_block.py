@@ -194,8 +194,15 @@ class TestPairsObeyIt:
                                   blocked)) == []
 
     def test_no_blocks_changes_nothing(self):
-        """Умолчание — пустой набор: старые вызовы работают как работали."""
-        assert len(list(invite_cards(self.GIRLS, self.PEOPLE, set(), set()))) == 1
+        """Умолчание — пустой набор: старые вызовы работают как прежде.
+
+        ⚠ У инвайтов карточек столько, сколько девушек: правило «одна карточка на
+        пару» пустило к одному человеку всех — текст у каждой свой
+        (`invite._cards`). У рассылки по-прежнему одна: там письмо одному человеку
+        уходит от одной анкеты.
+        """
+        assert len(list(invite_cards(self.GIRLS, self.PEOPLE, set(), set()))) \
+            == len(self.GIRLS)
         assert len(list(mailing_pairs(self.GIRLS, self.PEOPLE, self.TEMPLATES,
                                       set()))) == 1
 

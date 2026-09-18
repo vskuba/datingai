@@ -46,23 +46,28 @@ class TestEveryCardPicksAnew:
 
         got = list(invite_cards(GIRLS, PEOPLE, set(), set()))
 
-        assert len(got) == len(PEOPLE), 'не всем нашлась пара'
-        assert len(seen) == len(PEOPLE), \
-            'выбор сделан не на каждую карточку'
+        # ⚠ Карточек теперь пара на каждую пару «девушка — человек»:
+        # одна карточка на человека была правилом общего текста, а
+        # тексты у девушек свои (`invite._cards`).
+        assert len(got) == len(GIRLS) * len(PEOPLE), 'не все пары разобраны'
+        assert len(seen) == len(got), 'выбор сделан не на каждую карточку'
 
     def test_invites_choose_among_all_free_people(self, monkeypatch):
-        """⚠ Из **всех** свободных, а не из первых двух: суженный набор — тот же
+        """⚠ Из **всех** свободных, а не из первых двух: сужение набора — тот же
         перекос, только незаметнее.
 
-        Набор тает на глазах: каждый выданный человек занят до конца пула
-        (одинаковый текст двоим — провал), поэтому кандидатов на карточку ровно
-        столько, сколько осталось.
+        Набор тает кругами: занятой считается **пара**, и у каждой девушки свой
+        счёт. В первом круге все три видят по N кандидатов, во втором — по N-1, и
+        так далее.
         """
         seen = _watch(monkeypatch)
 
         list(invite_cards(GIRLS, PEOPLE, set(), set()))
 
-        assert [len(one) for one in seen] == list(range(len(PEOPLE), 0, -1))
+        ожидаем = [n for n in range(len(PEOPLE), 0, -1) for _ in GIRLS]
+
+        assert [len(one) for one in seen] == ожидаем
+
 
     def test_mailing_chooses_for_every_person(self, monkeypatch):
         seen = _watch(monkeypatch)
@@ -103,7 +108,10 @@ class TestItActuallySpreads:
         used = [girl['id'] for girl, _ in invite_cards(GIRLS, PEOPLE, set(), set())]
 
         assert set(used) == {1, 2, 3}, used
-        assert [used.count(one) for one in (1, 2, 3)] == [10, 10, 10], used
+        # ⚠ Каждая пишет **всем**, кто ей свободен: тридцать человек — тридцать
+        # карточек у каждой из трёх. Прежде было по десять: человек доставался
+        # одной анкете, потому что текст был общий.
+        assert [used.count(one) for one in (1, 2, 3)] == [len(PEOPLE)] * 3, used
 
     def test_mailing_spreads_over_the_girls(self):
         random.seed(20260913)

@@ -503,14 +503,27 @@ def _cards(girls: list, people: list, invited: set, talked: set,
             людей**: предел у каждой девушки свой.
         talked: пары, у которых переписка уже есть.
         blocked: пары, где человек закрылся от анкеты (`block`).
-        taken: собеседники, уже занятые карточками пула. **Мутируется**: каждый
-            выданный человек добавляется сюда сразу.
+        taken: **пары** «анкета — собеседник», уже занятые карточками пула.
+            **Мутируется**: каждая выданная пара добавляется сюда сразу.
 
-    ⚠⚠ **Один человек — одна карточка на весь пул.** Текст в пуле общий (шаблон
-    один), и два одинаковых сообщения от двух наших девушек читаются как
-    агентство, а не как два знакомства. Прежде правило звучало «один инвайт на
-    человека **за заход**» и держалось им же — двух Диан (#849 и #850), написавших
-    одному мужчине в первом же прогоне, поймали именно на этом.
+    ## ⚠⚠ Одна карточка на пару, а не на человека
+
+    Здесь стоял набор **номеров людей**: один человек — одна карточка на весь пул,
+    от кого бы она ни была. Довод был верный для своего времени: текст в пуле был
+    **один на всех девушек**, и два приглашения означали два одинаковых сообщения
+    от двух незнакомок. Двух Диан (#849 и #850), написавших одному мужчине в первом
+    же прогоне, поймали именно на этом.
+
+    Текст теперь у каждой девушки свой (`_templates`), и правило ушло вместе с
+    общим текстом: мужчина, которому написали двое, получает два **разных**
+    сообщения — на сайте знакомств это обычное дело.
+
+    ⚠ Цена прежнего ограничения была видна в пуле: людей в ленте под две сотни, и
+    потолок в четыреста карточек не набирался никогда — пул упирался не в
+    настройку, а в число людей, пока двенадцать девушек простаивали.
+
+    Частоту держат пределы **по паре** (`invited`): пауза `invite_repeat_after` и
+    дневной потолок `invite_repeat_max_day`.
 
     ⚠ **Приоритет теперь только порядок, а не число реплик.** Раньше отмеченному
     писали **все** свободные девушки; с общим шаблоном это означало бы пять
@@ -530,7 +543,7 @@ def _cards(girls: list, people: list, invited: set, talked: set,
     def free_for(girl):
         return [person for person in people
                 if str(person.get('uid') or '')
-                and str(person['uid']) not in taken
+                and (girl['id'], str(person['uid'])) not in taken
                 and (girl['id'], str(person['uid'])) not in talked
                 and (girl['id'], str(person['uid'])) not in blocked
                 and (girl['id'], str(person['uid'])) not in invited]
@@ -548,7 +561,7 @@ def _cards(girls: list, people: list, invited: set, talked: set,
             first = [person for person in free if person.get('priority')]
             person = random.choice(first or free)
 
-            taken.add(str(person['uid']))
+            taken.add((girl['id'], str(person['uid'])))
             gave = True
 
             yield girl, person
@@ -754,9 +767,10 @@ async def _pool_uids(site_id: int) -> set:
     """
     try:
         async with mysql_get_db_async() as db:
-            await db.execute("SELECT DISTINCT uid FROM invite"
-                             " WHERE site_id = %s AND status = 'draft'",
-                             (int(site_id),))
+            await db.execute(
+                'SELECT DISTINCT profile_id, uid FROM invite'
+                " WHERE site_id = %s AND status = 'draft'",
+                (int(site_id),))
             rows = await db.fetchall()
     except Exception as e:
         logger_info(f'[dating] занятые собеседники сайта #{site_id} не спросились: {e}')
@@ -766,7 +780,7 @@ async def _pool_uids(site_id: int) -> set:
         # «пул пуст», то есть худшую из догадок.
         raise DatingInviteError(f'не спросить, кому уже готовы инвайты: {e}') from e
 
-    return {str(row['uid']) for row in rows or []}
+    return {(int(row['profile_id']), str(row['uid'])) for row in rows or []}
 
 
 async def _language(site_id: int) -> str:
