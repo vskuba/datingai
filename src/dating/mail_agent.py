@@ -60,12 +60,21 @@
 """
 
 import json
+import random
 import re
 
 from logging_.logging_ import logger_info
+from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.agent import (AGENT_NODE, agent_site)
-from src.dating.mail import MAIL_VAR_RE
+from src.dating.mail import (MAIL_VAR_RE,
+                                   MAILING_ANGLES, MAILING_AVOID_MAX,
+                                   MAILING_LENGTHS,
+                                   MAILING_QUESTION_CHANCE,
+                                   MAILING_QUESTION_SETTING,
+                                   MAILING_STORIES,
+                                   MAILING_STORY_CHANCE,
+                                   MAILING_STORY_SETTING)
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_agent_create,
                                        rhapsody_api_agent_find, rhapsody_api_chat_ask)
 
@@ -378,6 +387,26 @@ async def mail_write(site_id: int, variables: list[dict],
     known = [row for row in (variables or [])
              if mail_var_used(row, MAIL_VAR_USE_WRITE)]
 
+    # ⚠⚠ **Вопрос — по жребию, и он выключает живые переменные.**
+    #
+    # `question_to_companion` заведена как `live`: её значение считает сосед
+    # **отдельным вызовом LLM на каждого адресата**, и стоит она дороже самого
+    # шаблона. Прежде она была обязательной, то есть вопросом кончалось каждое
+    # письмо рассылки — а вопрос в каждом письме превращает знакомство в опрос.
+    #
+    # Выпал «без вопроса» — живые переменные уходят из списка целиком: и из того,
+    # что показываем модели, и из обязательных. Не «можно не ставить», а «нечего
+    # ставить»: разрешение модель читает как приглашение.
+    question = random.random() < await _percent(
+        int(site_id), MAILING_QUESTION_SETTING, MAILING_QUESTION_CHANCE)
+    if not question:
+        known = [row for row in known if row.get('source') != 'live']
+
+    story = (random.choice(MAILING_STORIES)
+             if random.random() < await _percent(
+                 int(site_id), MAILING_STORY_SETTING, MAILING_STORY_CHANCE)
+             else '')
+
     answer = await _chat_ask(
         int(site_id),
         agent_id=agent_id,
@@ -411,6 +440,16 @@ async def mail_write(site_id: int, variables: list[dict],
                    'mail_var_live': ','.join(row['name'] for row in known
                                              if row.get('source') == 'live'),
                    'mail_hint': str(hint or '').strip() or 'обычное первое письмо',
+                   # ⚠⚠ Приём и длина — **жребий панели**, а не просьба «будь
+                   # разной»: у модели сильные притяжения, и одинаковый вход даёт
+                   # похожий выход. Шаблон рассылки живёт сутками и уходит сотням
+                   # людей — три похожих текста в день и есть рассылка робота.
+                   'mail_angle': random.choice(MAILING_ANGLES),
+                   'mail_length': random.choice(MAILING_LENGTHS),
+                   # ⚠ Пустая строка гасит секцию у соседа (`%if mail_story%`):
+                   # «рассказа не нужно» промптом не говорят, его просто не просят.
+                   'mail_story': story,
+                   'mail_avoid': _avoid_text(await _mail_avoid(int(site_id))),
                    # ⚠ Язык — на каждом вызове: без него сосед возьмёт первый
                    # язык узла, а он свой у каждой установки (см. константу).
                    'user_language': language})
@@ -969,6 +1008,58 @@ def _slots(girl_slot: bool, man_slot: bool) -> str:
 
     return ('Меток в тексте быть не должно вовсе: ни своего имени, ни обращения по '
             'имени. Реплика обращена к нему и без этого.')
+
+
+async def _percent(site_id: int, key: str, fallback: float) -> float:
+    """Настройка-процент долей от единицы. Общая на все доли шаблона рассылки.
+
+    ⚠ **Ноль — законное значение**, и отличать его от «настройки нет» обязательно:
+    пустая строка даёт умолчание, а «0» означает «никогда». Поэтому проверяется
+    пустота, а не истинность.
+
+    ⚠ **Сбой чтения даёт умолчание, а не ноль**: шаблон без рассказа хуже, чем с
+    рассказом, но пустой пул хуже и того.
+    """
+    from src.uvicorn.routers.dating.site_ import site_setting
+
+    try:
+        raw = str(await site_setting(int(site_id), key) or '').strip()
+        if raw == '':
+            return float(fallback)
+
+        return min(max(float(raw), 0.0), 100.0) / 100.0
+    except Exception as e:
+        logger_info(f'[dating] доля «{key}» сайта #{site_id} не прочиталась: {e}')
+
+        return float(fallback)
+
+
+async def _mail_avoid(site_id: int) -> list[str]:
+    """Прошлые шаблоны рассылки этого сайта — чтобы не повторяться.
+
+    ⚠ **Берём включённые и выключенные вместе.** Выключенный шаблон уже уходил
+    людям: то, что мы его сняли, не отменяет прочитанного.
+
+    ⚠ **Свежий десяток, а не весь список.** Круг пишет по три в сутки, и десяток
+    перекрывает трое суток работы — ровно тот срок, за который человек может
+    получить два письма и сравнить их.
+
+    Сбой базы отвечает пустым списком: шаблон выйдет чуть более похожим на
+    прошлые, и это несравнимо лучше, чем ни одного шаблона.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT body FROM mail WHERE site_id = %s AND body <> %s'
+                ' GROUP BY body ORDER BY MAX(id) DESC LIMIT %s',
+                (int(site_id), '', MAILING_AVOID_MAX))
+            rows = await db.fetchall()
+    except Exception as e:
+        logger_info(f'[dating] прошлые шаблоны рассылки не спросились: {e}')
+
+        return []
+
+    return [str(row['body']) for row in rows or []]
 
 
 def _avoid_text(avoid) -> str:
