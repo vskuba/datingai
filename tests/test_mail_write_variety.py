@@ -16,7 +16,8 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating import mail_agent
-from src.dating.mail import (MAILING_ANGLES, MAILING_LENGTHS, MAILING_STORIES)
+from src.dating.mail import (MAILING_ANGLES, MAILING_GREETINGS,
+                             MAILING_LENGTHS, MAILING_STORIES)
 from src.dating.mail_agent import _percent, mail_write
 
 pytestmark = pytest.mark.mail
@@ -157,6 +158,42 @@ class TestTheQuestionIsALot:
         await mail_write(STAND_SITE, VARS)
 
         assert agent['mail_question'] == '1'
+
+
+class TestTheGreetingIsALotToo:
+    """⚠⚠ Зачин — третья ось, и заведена по живому пулу.
+
+    Восемь шаблонов подряд начинались словом «Hi» с новой строки: приём разный,
+    длина разная, рассказ разный — а первое, что видит человек, одно и то же во
+    всех письмах сайта. Модель зачин не выбирает: берёт первый попавшийся и
+    повторяет, пока её не попросят иначе.
+    """
+
+    async def test_the_opening_is_drawn(self, agent, share):
+        await share('mailing_no_greeting_percent', 0)
+        await mail_write(STAND_SITE, VARS)
+
+        assert agent['mail_greeting'] in MAILING_GREETINGS
+
+    async def test_no_greeting_is_an_empty_section(self, agent, share):
+        """Пусто — промпт гасит секцию и запрещает приветствие прямо.
+
+        ⚠ Запрет формулируется **прямо**, а не молчанием: на вопросе мы уже
+        обожглись — секция исчезла, а модель дописала вопрос сама.
+        """
+        await share('mailing_no_greeting_percent', 100)
+        await mail_write(STAND_SITE, VARS)
+
+        assert agent['mail_greeting'] == ''
+
+    def test_the_openings_describe_a_way_not_a_word(self):
+        """⚠ Описываем **приём**, а не текст.
+
+        Дай образец («начни с Hey») — получишь «Hey» во всех письмах, где выпал
+        этот пункт, то есть ту же беду в профиль.
+        """
+        for one in MAILING_GREETINGS:
+            assert 'Hi' not in one and 'Hey' not in one and 'Hello' not in one, one
 
 
 class TestPercent:

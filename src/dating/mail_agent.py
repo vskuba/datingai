@@ -69,7 +69,10 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.dating.agent import (AGENT_NODE, agent_site)
 from src.dating.mail import (MAIL_VAR_RE,
                                    MAILING_ANGLES, MAILING_AVOID_MAX,
+                                   MAILING_GREETINGS,
                                    MAILING_LENGTHS,
+                                   MAILING_NO_GREETING_CHANCE,
+                                   MAILING_NO_GREETING_SETTING,
                                    MAILING_QUESTION_CHANCE,
                                    MAILING_QUESTION_SETTING,
                                    MAILING_STORIES,
@@ -402,6 +405,17 @@ async def mail_write(site_id: int, variables: list[dict],
     if not question:
         known = [row for row in known if row.get('source') != 'live']
 
+    # ⚠⚠ **Зачин — тоже жребий, и заведён по живому пулу**: восемь шаблонов
+    # подряд начинались словом «Hi» с новой строки. Модель зачин не выбирает —
+    # берёт первый попавшийся и повторяет.
+    #
+    # ⚠ «Без приветствия» — отдельная доля, а не седьмой пункт списка: это не
+    # приём зачина, а его отсутствие, и настраивают именно его частоту.
+    greeting = ('' if random.random() < await _percent(
+                    int(site_id), MAILING_NO_GREETING_SETTING,
+                    MAILING_NO_GREETING_CHANCE)
+                else random.choice(MAILING_GREETINGS))
+
     story = (random.choice(MAILING_STORIES)
              if random.random() < await _percent(
                  int(site_id), MAILING_STORY_SETTING, MAILING_STORY_CHANCE)
@@ -445,6 +459,9 @@ async def mail_write(site_id: int, variables: list[dict],
                    # похожий выход. Шаблон рассылки живёт сутками и уходит сотням
                    # людей — три похожих текста в день и есть рассылка робота.
                    'mail_angle': random.choice(MAILING_ANGLES),
+                   # Пусто — письмо начинается сразу с мысли; промпт гасит секцию
+                   # и запрещает приветствие прямо (`%if mail_greeting%`).
+                   'mail_greeting': greeting,
                    'mail_length': random.choice(MAILING_LENGTHS),
                    # ⚠ Пустая строка гасит секцию у соседа (`%if mail_story%`):
                    # «рассказа не нужно» промптом не говорят, его просто не просят.
