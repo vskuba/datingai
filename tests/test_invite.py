@@ -700,10 +700,13 @@ class TestOneCallPerPool:
         # правила.
         async def _template(site_id, language, with_time=True,
                             girl_slot=False, man_slot=False,
-                            angle='', length='', avoid=None, country=''):
+                            angle='', length='', avoid=None, country='',
+                            how_many=1):
             calls.append(site_id)
 
-            return 'Спорим, ты сейчас улыбнулся?'
+            # ⚠ Список, а не строка: агент теперь присылает столько текстов,
+            # сколько девушек в сети (`invite._templates`).
+            return ['Спорим, ты сейчас улыбнулся?'] * max(1, int(how_many))
 
         monkeypatch.setattr('src.dating.invite.invite_template', _template)
         got = await _made_with(monkeypatch, None, people=[
@@ -728,8 +731,15 @@ async def _made_with(monkeypatch, template, people=None) -> dict:
     if template is not None:
         async def _template(site_id, language, with_time=True,
                             girl_slot=False, man_slot=False,
-                            angle='', length='', avoid=None, country=''):
-            return template
+                            angle='', length='', avoid=None, country='',
+                            how_many=1):
+            # Заглушке дают строку — превращаем в список, как отвечает живой
+            # агент. ⚠ Пустая строка значит «агент промолчал»: у живого это
+            # пустой список, а не список с пустым текстом.
+            if not isinstance(template, str):
+                return template
+
+            return [template] * max(1, int(how_many)) if template else []
 
         monkeypatch.setattr(invite, 'invite_template', _template)
 
@@ -788,7 +798,7 @@ class TestVariety:
 
         async def _template(site_id, language, with_time=True,
                             girl_slot=False, man_slot=False,
-                            angle='', length='', avoid=None, country=''):
+                            angle='', length='', avoid=None, country='', how_many=1):
             sent.update({'angle': angle, 'length': length, 'avoid': avoid})
 
             return 'текст'
@@ -799,7 +809,7 @@ class TestVariety:
         monkeypatch.setattr(invite, 'invite_template', _template)
         monkeypatch.setattr(invite, '_avoid', _avoid)
 
-        await invite._template(STAND_SITE, 'en')
+        await invite._templates(STAND_SITE, 'en', 1)
 
         assert sent['angle'] in invite.INVITE_ANGLES
         assert sent['length'] in invite.INVITE_LENGTHS
@@ -816,7 +826,7 @@ class TestVariety:
 
         async def _template(site_id, language, with_time=True,
                             girl_slot=False, man_slot=False,
-                            angle='', length='', avoid=None, country=''):
+                            angle='', length='', avoid=None, country='', how_many=1):
             seen.add((angle, length))
 
             return 'текст'
@@ -828,7 +838,7 @@ class TestVariety:
         monkeypatch.setattr(invite, '_avoid', _avoid)
 
         for _ in range(30):
-            await invite._template(STAND_SITE, 'en')
+            await invite._templates(STAND_SITE, 'en', 1)
 
         # Восемь приёмов на четыре длины: за тридцать бросков сочетаний обязано
         # набраться заметно больше одного. Точного числа не требуем — это жребий.
@@ -1132,7 +1142,7 @@ class TestNowAndPlace:
         from src.dating import invite
 
         assert 'country=await _country(site_id)' in inspect.getsource(
-            invite._template)
+            invite._templates)
 
 
 def _async(value):

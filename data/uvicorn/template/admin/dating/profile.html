@@ -4947,10 +4947,11 @@
         workEl.querySelectorAll('[data-form="fav-mail-make"]')
             .forEach(form => form.addEventListener('submit', (e) => e.preventDefault()));
 
-        // Кнопка «Генерировать инвайты» и очистка пула — узлы шаблона, живут до
-        // смены сайта, и вешать на них надо здесь.
-        const inviteMake = workEl.querySelector('[data-slot="invite-make-btn"]');
-        if (inviteMake) inviteMake.addEventListener('click', inviteMakeRun);
+        // Очистка пула — тоже внутри шаблона смены сайта, и вешать на неё
+        // надо здесь.
+        //
+        // ⚠ Кнопки «Генерировать инвайты» больше нет: пул набирает круг по
+        // сменам сайта, а человеку остаётся вычитать готовое.
 
         const inviteClearBtn = workEl.querySelector('[data-slot="invite-pool-clear"]');
         if (inviteClearBtn) inviteClearBtn.addEventListener('click', inviteClear);
@@ -4984,7 +4985,7 @@
         if (inviteBlockReload) inviteBlockReload.addEventListener('click', inviteBlockLoad);
 
         // Форму не отправляют — Enter в ней не должен перезагружать страницу.
-        workEl.querySelectorAll('[data-form="invite-schedule"], [data-form="invite-make"]')
+        workEl.querySelectorAll('[data-form="invite-schedule"]')
             .forEach(form => form.addEventListener('submit', (e) => e.preventDefault()));
 
         const mailTabs = workEl.querySelector('[data-slot="mail-tabs"]');
@@ -6103,8 +6104,6 @@
     let inviteNext = -1;
     // Почему из пула ничего не уходит — строкой от ручки. Пусто значит «уходит».
     let inviteSendWhy = '';
-    let inviteMakeBusy = false;
-    let inviteMakeFrom = 0;
 
     // Пришедшее с сервера: смены и оба выключателя, по сайтам. Тем же приёмом, что
     // у рассылки, — черновик отдельно от сохранённого.
@@ -6375,27 +6374,17 @@
         // Своя копия правила разошлась бы с ним на первой же правке.
         fillSlot('invite-pool-why', inviteSendWhy);
 
-        // От кого пойдут реплики — словами: выбор анкеты в списке слева иначе
-        // влиял бы на генерацию молча.
-        const row = openRow();
-        fillSlot('invite-make-who', row
-            ? `Только от ${row.name || row.login}: выбрана в списке слева.`
-            : 'От всех включённых анкет сайта — анкета в списке слева не выбрана.');
-
-        // ⚠ Ход генерации — **в шапке пула**: она видна всегда, даже когда список
-        // прокручен. Полный пул загрузчика не получает: круг такие сайты не
-        // трогает, и крутилка обещала бы работу, которой нет.
+        // ⚠ Полный пул загрузчика не получает: круг его не трогает, и крутилка
+        // обещала бы работу, которой нет.
         const потолок = Number(saved.invite_pool_max || 0);
         const полон = потолок && drafts.length >= потолок;
         const busy = slot('invite-pool-busy');
         if (busy) {
-            busy.hidden = !(inviteMakeBusy || (!полон && inviteScheduleLive()));
+            // ⚠ Крутилка осталась про **круг**: кнопки генерации больше нет,
+            // и поднимать флаг руками стало некому.
+            busy.hidden = полон || !inviteScheduleLive();
 
-            if (inviteMakeBusy) {
-                const сделано = Math.max(0, invitePool.length - inviteMakeFrom);
-                fillSlot('invite-pool-busy-text',
-                    сделано ? `готово ${сделано}…` : 'готовлю…');
-            } else {
+            {
                 // ⚠ **Со сроком, а не «по расписанию».** Круг работает вспышками
                 // раз в полчаса, и обещание без срока человек, включивший
                 // генерацию, читал как «включил, а оно не работает»: ждать минуту
@@ -6413,7 +6402,7 @@
         // посреди неё унесла бы только что появившееся, а генерация продолжила бы
         // класть новое — человек получил бы пул, который он «очистил».
         const clear = slot('invite-pool-clear');
-        if (clear) clear.disabled = inviteMakeBusy || !drafts.length;
+        if (clear) clear.disabled = !drafts.length;
 
         const send = slot('invite-send-on');
         if (send) {
@@ -6421,11 +6410,8 @@
             send.disabled = !CAN_EDIT_SITE;
         }
 
-        const make = slot('invite-make-btn');
-        if (make) make.disabled = inviteMakeBusy || !siteId();
-
         if (!invitePool.length) {
-            box.innerHTML = inviteMakeBusy
+            box.innerHTML = inviteScheduleLive()
                 ? '<div class="mail-pool-empty"><span class="dating-spin"></span>'
                 + ' готовлю первые реплики…</div>'
                 : '<div class="mail-pool-empty">Пул пуст. Нажмите «Генерировать '
@@ -6641,59 +6627,6 @@
         }
 
         invitePaint();
-    }
-
-    async function inviteMakeRun() {
-        const site = siteId();
-        if (!site || inviteMakeBusy) return;
-
-        const size = slot('invite-make-size');
-        const limit = Number((size && size.value) || 10);
-        const note = slot('invite-make-note');
-
-        inviteMakeBusy = true;
-        inviteMakeFrom = invitePool.length;
-        invitePaint();
-        if (note) {
-            note.textContent = 'готовлю…';
-            note.classList.remove('bad', 'good');
-        }
-
-        try {
-            // ⚠ **Выбранный в ленте уходит первым в очереди набора.** Человек
-            // выбрал карточку и жмёт «Генерировать» — он ждёт реплику именно
-            // этому, а набор берёт людей лентой и мог бы не дойти до него вовсе.
-            // Это перестановка, а не отбор: остальные в очереди остаются, а уже
-            // позванного сервер пропустит, как и прежде.
-            const got = (await postData(`${BASE}/api/dating/invite/generate`,
-                {site_id: site, limit, profile_id: openId || 0,
-                 first_uid: openUid || ''})).result || {};
-
-            if (note) {
-                note.textContent = got.stopped
-                    ? `остановлено: ${got.stopped}`
-                    : `готово ${got.made || 0}`
-                    + (got.skipped ? `, пропущено ${got.skipped}` : '')
-                    + (got.left ? `, осталось ${got.left}` : '');
-                note.classList.toggle('bad', !!got.stopped);
-                note.classList.toggle('good', !got.stopped && !!got.made);
-            }
-
-            // Причины пропуска — уведомлением: их читают один раз и решают, что
-            // делать (подождать агента или смотреть промпт у соседа).
-            if ((got.reasons || []).length) {
-                showNotification('Пропущено: ' + got.reasons.join('; '), 'info');
-            }
-        } catch (e) {
-            if (note) {
-                note.textContent = 'не вышло: ' + e.message;
-                note.classList.add('bad');
-            }
-        } finally {
-            inviteMakeBusy = false;
-        }
-
-        await inviteLoad();
     }
 
     async function inviteClear() {

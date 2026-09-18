@@ -909,11 +909,17 @@ class TestPoolHitScroll:
 class TestPoolFirstUid:
     """Выбранный в ленте уходит первым в очереди набора — обоими кнопками."""
 
-    async def test_invite_button_sends_the_choice(self, auth_client):
-        page = (await auth_client.get(PAGE)).text
-        start = page.index('/api/dating/invite/generate')
+    async def test_the_invite_button_is_gone(self, auth_client):
+        """⚠ У инвайтов кнопки генерации больше нет: пул набирает круг.
 
-        assert 'first_uid: openUid' in page[start:start + 400]
+        Выбранный в ленте уходит первым и у него — но решает это уже сервер, по
+        приоритету карточки (`companion.priority`), а не выбор в браузере: круг о
+        нём не знает вовсе.
+        """
+        page = (await auth_client.get(PAGE)).text
+
+        assert '/api/dating/invite/generate' not in page, \
+            'кнопка генерации инвайтов вернулась на страницу'
 
     async def test_mailing_button_sends_the_choice(self, auth_client):
         page = (await auth_client.get(PAGE)).text

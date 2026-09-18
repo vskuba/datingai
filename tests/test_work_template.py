@@ -353,8 +353,14 @@ class TestWorkTemplate:
         assert 'data-form="invite-schedule"' in block, 'нет расписания инвайтов'
         assert 'data-slot="invite-schedule"' in block, 'нет слота под ленту смен'
         assert 'data-slot="invite-pool"' in block, 'нет слота под пул'
-        assert 'data-slot="invite-make-btn"' in block, 'нет кнопки генерации'
         assert 'data-slot="invite-pool-clear"' in block, 'нет очистки пула'
+
+        # ⚠⚠ **Кнопки генерации здесь нет, и это решение заказчика.** Ею набирали
+        # пул руками при отладке; в работе его набирает круг по сменам сайта, а
+        # человеку остаётся вычитать готовое и отправить. Ручка
+        # (`POST /api/dating/invite/generate`) при этом жива — ею ходят тесты.
+        assert 'data-slot="invite-make-btn"' not in block, \
+            'кнопка генерации вернулась — пул набирает круг'
 
         assert 'invite-make-pick' not in block and 'mail-make-field' not in block, \
             'у инвайтов завёлся выбор шаблонов — у них шаблонов не бывает'

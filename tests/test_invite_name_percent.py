@@ -168,7 +168,7 @@ class TestTheSetting:
 
         from src.dating import invite
 
-        assert 'await _man_chance(site_id)' in inspect.getsource(invite._template)
+        assert 'await _man_chance(site_id)' in inspect.getsource(invite._templates)
 
 
 class TestTheFieldIsANumber:
@@ -305,7 +305,7 @@ class TestTimeShare:
 
         from src.dating import invite
 
-        code = inspect.getsource(invite._template)
+        code = inspect.getsource(invite._templates)
 
         assert 'with_time=random.random() < await _time_chance(site_id)' in code, \
             'время снова показывается всегда — пул запестрит «tonight»'
