@@ -7405,7 +7405,12 @@
                 + ' title="Убрать из пула">×</button>')
             + '</span>'
             + `<span class="mail-card-who">${esc(one.girl || '—')} `
-            + `<span class="to">→ ${esc(one.name || one.uid)}</span></span>`
+            // ⚠ Та же `liveDot`, что у пула рассылки и у пула инвайтов: поля
+            // (`online`, `online_known`) ручка считала и раньше, не хватало одной
+            // только отрисовки — и три пула, стоящие рядом в одной полосе вкладок,
+            // отвечали на один вопрос по-разному.
+            + `<span class="to">→ ${esc(one.name || one.uid)}${liveDot(one)}`
+            + '</span></span>'
             + `<span class="mail-card-body">${esc(one.body)}</span>`
             + (one.status === 'sent'
                 ? '<span class="mail-card-sent">отправлено</span>' : '')
