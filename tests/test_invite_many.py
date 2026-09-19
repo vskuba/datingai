@@ -58,7 +58,14 @@ class TestManyTemplates:
         monkeypatch.setattr(invite, '_people', _answer(
             [{'uid': f'u{one}', 'name': f'M{one}'} for one in range(1, 7)]))
 
-        await invite.invite_make(STAND_SITE, 6)
+        # ⚠ Потолок — по числу **пар**, а не людей: карточек три девушки × шесть
+        # человек, и перед укладкой они перемешиваются. Возьми мы шесть из
+        # восемнадцати, тест краснел бы сам по себе — в выборку могла не попасть
+        # целая анкета. Измерено: 3 падения из 40 прогонов.
+        #
+        # Проверяем здесь «каждой свой текст», а не обрезку пула потолком — её
+        # держит `TestShuffle`, и там запас взят по той же причине.
+        await invite.invite_make(STAND_SITE, 3 * 6)
 
         by_girl = {}
         for girl_id, text in put:
