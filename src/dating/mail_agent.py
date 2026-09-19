@@ -67,6 +67,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.agent import (AGENT_NODE, agent_site)
+from src.dating.companion_ref import COMPANION_REF_ID
 from src.dating.mail import (MAIL_VAR_RE,
                                    MAILING_ANGLES, MAILING_AVOID_MAX,
                                    MAILING_GREETINGS,
@@ -270,14 +271,18 @@ MAIL_COMPANION_ABOUT_MAX = 400
 # обрезанный город полезнее пустого.
 MAIL_AGENT_VALUE_MAX = 500
 
-# Тип собеседника для движка соседа. ⚠ **Поле обязательное** — без него `/chat/ask`
-# отвечает 422, и разговора не выйдет; проверено живьём.
+# Запись справочника собеседников у соседа, заведённая под нас
+# (`companion_ref.py`). ⚠ **Поле обязательное** — без него `/chat/ask` отвечает
+# отказом, и разговора не выйдет; проверено живьём.
 #
-# Здесь собеседника нет вовсе: разговор про анкету, а не с человеком. Берём тот же
-# номер, что автоответ (`ANSWER_COMPANION_ID`), — у соседа это «человек в
-# чате», и заводить под наш случай второй тип значило бы плодить сущность ради
-# поля, которое мы не используем.
-MAIL_AGENT_COMPANION_ID = 1
+# ⚠⚠ **Это не «тип собеседника»**, как здесь было написано. Справочник хранит
+# конкретных персон, и единица в нём — «Vadim»: пока мы слали её, агент звал живых
+# людей чужим именем, а факты обо всех мужчинах складывал в один документ Qdrant.
+#
+# Здесь, в отличие от чата, собеседника и вправду нет: эти вызовы — про анкету и
+# про текст письма, а не разговор с человеком. Номер нужен только затем, чтобы
+# `agent_session` сослался на честную строку.
+MAIL_AGENT_COMPANION_ID = COMPANION_REF_ID
 
 
 class DatingMailAgentError(Exception):

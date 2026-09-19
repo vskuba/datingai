@@ -50,11 +50,17 @@ from src.dating.log import log_write
 from src.dating.talk_history import talk_history_text
 from src.dating.chat_reply import (chat_reply_failed, chat_reply_put,
                                    chat_reply_sent, chat_reply_waiting)
+from src.dating.companion_ref import (COMPANION_REF_ID, companion_ref_foreign,
+                                      companion_title, companion_vars)
 from src.dating.online import online_check
 from src.dating.send import send_message
 
-# Тип собеседника для движка. У анкет он один — человек в чате.
-ANSWER_COMPANION_ID = 1
+# Запись справочника собеседников у соседа, заведённая под нас
+# (`companion_ref.py`). ⚠ Это **не «тип собеседника»**, как здесь было
+# написано: справочник хранит конкретных персон, и единица в нём — «Vadim».
+# Агент полгода звал живых людей чужим именем, а факты обо всех мужчинах
+# складывал в один документ. Кто именно пишет — теперь в переменных вызова.
+ANSWER_COMPANION_ID = COMPANION_REF_ID
 
 # Сколько диалогов отвечаем за раз. Каждый — прогон workflow, и полсотни разом
 # превратили бы кнопку в получасовое ожидание.
@@ -196,7 +202,7 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
             anyway = await _anyway_here(profile_id, uid, anyway_first)
             answer, error = await _agent_ask(agent_id, question, language, profile,
                                              history=history, uid=uid,
-                                             anyway=anyway)
+                                             anyway=anyway, name=name)
             asked += 1
             if error:
                 errors.append(f'{who}: {error}')
@@ -219,6 +225,27 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
                 await _silent_mark(profile_id, uid)
                 await log_write(profile_id, 'info',
                                 f'{me} → {who}: агент решил не отвечать')
+                continue
+
+            # ⚠⚠ **Сторож чужого имени, и стоит он до укладки в пул.**
+            #
+            # Беда, ради которой он заведён, была тихой: ответ грамотный, к месту,
+            # по-английски — и с обращением «ok vadim» к человеку по имени Gerard.
+            # Ни код ответа, ни журнал о ней не сказали; заметил её человек,
+            # прочитав текст. Имя приходило из справочника соседа, потому что
+            # своего мы не передавали.
+            #
+            # Передача имени дыру закрыла, но следующая правка промптов или
+            # справочника на той стороне откроет её снова — и узнаем мы тем же
+            # способом, случайно. Поэтому текст с чужим именем не уходит вовсе:
+            # лучше промолчать, чем написать живому человеку не его именем.
+            чужое = companion_ref_foreign(answer, companion_title(name, uid))
+            if чужое:
+                errors.append(f'{who}: в ответе чужое имя «{чужое}»')
+                await log_write(
+                    profile_id, 'fail',
+                    f'Не отправлено {me} → {who}: в ответе чужое имя «{чужое}» — '
+                    f'«{answer[:120]}»')
                 continue
 
             reply_id = await chat_reply_put(int(profile.get('site_id') or 0),
@@ -275,7 +302,8 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
 
 async def _agent_ask(agent_id: int, question: str, language: str,
                      profile: dict, history: str = '',
-                     uid: str = '', anyway: bool = False) -> tuple[str, str]:
+                     uid: str = '', anyway: bool = False,
+                     name: str = '') -> tuple[str, str]:
     """Спрашивает агента в RhapsodyAi. Возвращает (ответ, ошибка).
 
     Пустой ответ ошибкой не считается — он значим сам по себе и разбирается выше:
@@ -308,6 +336,11 @@ async def _agent_ask(agent_id: int, question: str, language: str,
                        # та же беда, от которой у девушек стоит `girl_id`.
                        'talk_history': str(history or ''),
                        'companion_uid': str(uid or ''),
+                       # ⚠⚠ Кто именно пишет. Без этого сосед берёт имя из
+                       # своего справочника по `companion_id` — одно на всех, —
+                       # и агент зовёт человека чужим именем, а факты о нём
+                       # ложатся в общий документ (`companion_ref.py`).
+                       **companion_vars(profile.get('site_id'), uid, name),
                        # ⚠ Строкой '1'/'0': у соседа `%if%` считает ложными
                        # пустое, '0' и отсутствие (`ai_workflow_variable_truthy`),
                        # а `False` превратился бы в 'False' — то есть в истину.

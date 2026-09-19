@@ -169,3 +169,85 @@ class TestTheSetting:
         got = await answer_mod._anyway_first(STAND_SITE)
 
         assert got == answer_mod.ANSWER_ANYWAY_FIRST_DEFAULT
+
+
+class TestTheCompanionIsNamed:
+    """⚠⚠ Агент узнаёт, кому пишет: ключ и имя уезжают вызовом.
+
+    До этого сосед подставлял имя из своего справочника по `companion_id` — одно
+    на всех, — и агент написал живому Gerard'у «ok vadim». Тем же путём факты обо
+    всех мужчинах сайта ложились в один документ Qdrant.
+    """
+
+    @pytest.fixture
+    def asked(self, monkeypatch):
+        got = {}
+
+        async def _chat_ask(agent_id, question, companion_id=0, variables=None):
+            got.update(variables or {})
+            got['_companion_id'] = companion_id
+
+            return 'ответ'
+
+        monkeypatch.setattr(answer_mod, 'rhapsody_api_chat_ask', _chat_ask)
+
+        return got
+
+    async def test_the_name_and_key_are_sent(self, asked, girl):
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT * FROM profile WHERE id = %s', (girl,))
+            profile = dict(await db.fetchone())
+
+        await answer_mod._agent_ask(7, 'вопрос', 'en', profile,
+                                    uid='128282', name='Gerard')
+
+        assert asked['companion_title'] == 'Gerard', 'агент не знает имени адресата'
+        assert asked['companion_name'] == f'dating_{STAND_SITE}_128282', \
+            'ключ фактов не уехал — факты всех мужчин сольются в один документ'
+
+    async def test_the_record_is_ours(self, asked, girl):
+        """⚠ `companion_id` больше не единица: единица — «Vadim» из справочника."""
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT * FROM profile WHERE id = %s', (girl,))
+            profile = dict(await db.fetchone())
+
+        await answer_mod._agent_ask(7, 'вопрос', 'en', profile, uid='1', name='X')
+
+        assert asked['_companion_id'] == answer_mod.ANSWER_COMPANION_ID
+        assert asked['_companion_id'] != 1
+
+
+class TestForeignNameIsNotSent:
+    """⚠⚠ Ответ с чужим именем не уходит и в пул не ложится."""
+
+    async def test_the_round_refuses_it(self, monkeypatch, girl):
+        from src.dating.chat_reply import chat_reply_waiting
+
+        async def _ask(agent_id, question, language, profile, history='', uid='',
+                       anyway=False, name=''):
+            # Ровно тот ответ, что ушёл с прода.
+            return "ok vadim, let's go. what's on your mind today?", ''
+
+        sent = []
+
+        async def _send(profile, presence, uid, text):
+            sent.append(text)
+
+            return {'ok': True, 'error': ''}
+
+        monkeypatch.setattr(answer_mod, '_agent_ask', _ask)
+        monkeypatch.setattr(answer_mod, 'send_message', _send)
+        monkeypatch.setattr(answer_mod, 'online_check',
+                            lambda site_id, uid: {'online': True, 'known': True})
+
+        message_id = await _said(girl, 'u-1')
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT * FROM profile WHERE id = %s', (girl,))
+            profile = dict(await db.fetchone())
+
+        got = await answer_mod.answer_run(profile, {}, 7)
+
+        assert sent == [], 'ответ с чужим именем ушёл живому человеку'
+        assert got['drafted'] == 0, 'брак лёг в пул и ушёл бы следующим кругом'
+        assert await chat_reply_waiting(girl, message_id) == {}
+        assert any('чужое имя' in one for one in got['errors']), got['errors']

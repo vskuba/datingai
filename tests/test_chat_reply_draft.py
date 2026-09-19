@@ -198,7 +198,7 @@ class TestTheRoundWritesAhead:
         # ⚠ Подпись повторяет живую целиком, включая `anyway`: заглушка без него
         # ловила бы `TypeError` вместо проверки правила.
         async def _ask(agent_id, question, language, profile, history='', uid='',
-                       anyway=False):
+                       anyway=False, name=''):
             return 'готовый ответ', ''
 
         async def _send(profile, presence, uid, text):
