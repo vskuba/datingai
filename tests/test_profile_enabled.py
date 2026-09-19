@@ -382,14 +382,36 @@ class TestAutoRoundSkipsDisabled:
         assert spied['agents'] == [], 'за агентом сходили ради выключенной анкеты'
         assert spied['answers'] == []
 
-    async def test_enabled_without_auto_answer_is_skipped(self, spied):
-        """Вторая ось: анкету ведут руками. Включена, но агент за неё не отвечает."""
+    async def test_the_profile_flag_is_not_read_anymore(self):
+        """⚠⚠ Флаг анкеты `auto_answer` больше не читается — выключатель один.
+
+        Он был вторым: галочку из интерфейса убрали при переезде выключателя на
+        сайт (`site_.chat_answer_on`, «отправка ответов» на вкладке «Диалоги»), а
+        проверка в круге осталась — и в комментариях страниц при этом было
+        записано «круг его больше не читает».
+
+        Стоило это живого молчания: на проде у двенадцати анкет из тринадцати
+        столбец остался в нуле, и агент не отвечал никому при поднятом
+        выключателе сайта — а поправить нечем, галочки в панели нет.
+        """
+        import inspect
+
+        from src.dating.auto import auto_round
+
+        code = inspect.getsource(auto_round)
+
+        assert "profile.get('auto_answer')" not in code, \
+            'флаг анкеты снова читается — выключателей опять два'
+
+    async def test_a_profile_without_the_flag_still_answers(self, spied):
+        """И работает это на деле: анкета с нулём в столбце отвечает."""
         from src.dating.auto import auto_round
 
         await auto_round([{'profile': {'id': 2, 'enabled': 1, 'auto_answer': 0},
-                                  'presence': {}}])
+                           'presence': {}}])
 
-        assert spied['answers'] == []
+        assert spied['answers'], 'анкету снова режет флаг, которого нет в панели'
+
 
     async def test_both_on_works(self, spied):
         """Обратная сторона: включена и отвечает — круг идёт.
