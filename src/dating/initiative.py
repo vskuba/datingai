@@ -218,9 +218,23 @@ async def _quiet(profile_id: int, after_sec: int, repeat_max: int) -> list[dict]
 
     ## ⚠⚠ Что считается затихшим
 
-    Последняя реплика разговора — **наша**, и ей больше `after_sec`. Если последним
-    говорил он, это не тишина, а неотвеченное: им занимается автоответ, и лезть
-    туда инициативе нельзя — вышли бы два наших сообщения подряд на одну реплику.
+    Два случая, и второй неочевиден.
+
+    **Последняя реплика наша**, и ей больше `after_sec`. Он не ответил — тишина.
+
+    **Последняя реплика его, но агент решил промолчать** (`answer_silent_at`). Со
+    стороны это тоже тишина: мы намеренно не ответили, он больше не писал.
+
+    ⚠⚠ **Второй случай пришлось дописывать по живой паре.** Без него разговор
+    выпадал из обоих занятий сразу: автоответ такую реплику не берёт — решение
+    молчать записано и держит его отбор (`answer_silent_at IS NULL`), — а
+    инициатива не брала, потому что последним говорил он. Пара оставалась мёртвой
+    навсегда. Поймано на проде: Nadezhda ↔ Semen, тридцать три часа тишины после
+    намеренного молчания.
+
+    ⚠ **Реплика, ждущая ответа, сюда не попадает.** Пока `answer_silent_at` пуст,
+    автоответ ещё придёт, и лезть туда инициативе нельзя — вышли бы два наших
+    сообщения подряд на одну реплику.
 
     ## ⚠ Сколько заходов уже было
 
@@ -245,7 +259,13 @@ async def _quiet(profile_id: int, after_sec: int, repeat_max: int) -> list[dict]
             "           AND x.direction = 'in') AS his_last,"
             '       (SELECT m2.direction FROM message m2'
             '         WHERE m2.profile_id = %s AND m2.sender_uid = t.sender_uid'
-            '         ORDER BY m2.created_at DESC, m2.id DESC LIMIT 1) AS last_side'
+            '         ORDER BY m2.created_at DESC, m2.id DESC LIMIT 1) AS last_side,'
+            # ⚠ Решение молчать по **последней** реплике: оно и превращает
+            # «неотвеченное» в «затихшее». Берём тем же порядком, что и сторону, —
+            # иначе можно поймать метку от позапрошлой.
+            '       (SELECT m3.answer_silent_at FROM message m3'
+            '         WHERE m3.profile_id = %s AND m3.sender_uid = t.sender_uid'
+            '         ORDER BY m3.created_at DESC, m3.id DESC LIMIT 1) AS last_silent'
             '  FROM (SELECT m.sender_uid, MAX(m.created_at) AS last_at'
             '          FROM message m WHERE m.profile_id = %s'
             '         GROUP BY m.sender_uid) t'
@@ -253,13 +273,14 @@ async def _quiet(profile_id: int, after_sec: int, repeat_max: int) -> list[dict]
             ' WHERE t.last_at < NOW() - INTERVAL %s SECOND'
             ' ORDER BY t.last_at DESC LIMIT %s',
             (int(profile_id), int(profile_id), int(profile_id), int(profile_id),
-             int(after_sec), INITIATIVE_PER_PROFILE * 5))
+             int(profile_id), int(after_sec), INITIATIVE_PER_PROFILE * 5))
         rows = await db.fetchall() or []
 
         got = []
         for row in rows:
-            # ⚠ Последним говорил он — это не тишина, а неотвеченное.
-            if str(row.get('last_side') or '') != 'out':
+            # ⚠ Последним говорил он — берём, **только если решено молчать**.
+            # Пока решения нет, реплику ждёт автоответ, и это его работа.
+            if str(row.get('last_side') or '') != 'out' and not row.get('last_silent'):
                 continue
 
             # ⚠ Он не сказал ни слова — это неотвеченный инвайт, не наша работа.

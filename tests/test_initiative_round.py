@@ -83,13 +83,52 @@ class TestWhoIsQuiet:
 
         assert [one['uid'] for one in got] == ['u-1']
 
-    async def test_his_last_word_is_not_silence(self, girl):
-        """⚠⚠ Последним говорил он — это **неотвеченное**, а не тишина.
+    async def test_his_word_waiting_for_an_answer_is_not_ours(self, girl):
+        """⚠ Последним говорил он и ответа ещё ждёт — это работа автоответа.
 
-        Там работает автоответ, и лезть туда инициативе нельзя: вышли бы два наших
-        сообщения подряд на одну его реплику.
+        Влезь сюда инициатива, вышли бы два наших сообщения подряд на одну реплику.
         """
         await _said(girl, 'u-1', direction='out', minutes_ago=200)
+        await _said(girl, 'u-1', direction='in', minutes_ago=180)
+
+        assert await initiative_mod._quiet(girl, 3600, 2) == []
+
+    async def test_deliberate_silence_is_silence(self, girl):
+        """⚠⚠ Последним говорил он, но агент **решил промолчать** — это тишина.
+
+        Без этого случая пара выпадала из обоих занятий сразу: автоответ такую
+        реплику не берёт (решение молчать держит его отбор), а инициатива не брала,
+        потому что последним говорил он. Разговор оставался мёртвым навсегда.
+
+        Поймано на проде: Nadezhda ↔ Semen, тридцать три часа тишины после
+        намеренного молчания.
+        """
+        await _said(girl, 'u-1', direction='out', minutes_ago=200)
+        message_id = await _said(girl, 'u-1', direction='in', minutes_ago=180)
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'UPDATE message SET answer_silent_at = NOW() - INTERVAL 179 MINUTE'
+                ' WHERE id = %s', (message_id,))
+            await db.connection.commit()
+
+        got = await initiative_mod._quiet(girl, 3600, 2)
+
+        assert [one['uid'] for one in got] == ['u-1'], \
+            'пара после намеренного молчания осталась мёртвой'
+
+    async def test_the_silence_must_be_on_the_last_word(self, girl):
+        """⚠ Метка смотрится у **последней** реплики, а не у любой.
+
+        Он промолчал вчера, а сегодня написал снова — сегодняшнее ждёт ответа, и
+        это снова работа автоответа.
+        """
+        старое = await _said(girl, 'u-1', direction='in', minutes_ago=400)
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE message SET answer_silent_at = NOW()'
+                             ' WHERE id = %s', (старое,))
+            await db.connection.commit()
+
         await _said(girl, 'u-1', direction='in', minutes_ago=180)
 
         assert await initiative_mod._quiet(girl, 3600, 2) == []
