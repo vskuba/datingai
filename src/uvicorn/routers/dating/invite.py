@@ -41,6 +41,7 @@ from src.dating.invite_send import invite_send_one
 from src.dating.invite_send_round import invite_send_why
 from src.dating.json_column import json_column_load
 from src.dating.mail_agent import INVITE_MAX
+from src.dating.online import online_show
 from src.uvicorn.routers.setting import setting_timezone_hours
 
 router = APIRouter(prefix='/api/dating/invite', tags=['dating'])
@@ -480,5 +481,17 @@ def _answer(row) -> dict:
     # поля карточка показывала бы пустое место там, где стоит время отправки.
     got['updated_at'] = str(got['updated_at']) if got.get('updated_at') else ''
     got['created_at'] = str(got.get('created_at') or '')
+
+    # В сети ли собеседник — **из снимка ленты**, тем же `online_show`, что у пула
+    # рассылки и у карточек собеседников. Правило одно на все три места, и
+    # собственная копия разошлась бы с ним на первой же правке срока годности.
+    #
+    # ⚠ Полей два, а не одно: «не в сети» и «не знаем» подписываются по-разному.
+    # Слить их в `online: False` значило бы соврать про каждого, кого не было в
+    # последнем снимке, — а инвайт **уходит только человеку в сети**, и по серой
+    # точке человек решает, ждать круга или досылать руками.
+    online = online_show(int(got.get('site_id') or 0), str(got.get('uid') or ''))
+    got['online'] = bool(online.get('online'))
+    got['online_known'] = bool(online.get('known'))
 
     return got

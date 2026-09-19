@@ -82,6 +82,11 @@ ANSWER_RETRY_SEC = 300
 # повторный импорт делал бы недельное сообщение «свежим».
 ANSWER_PANEL_FRESH_SEC = 24 * 3600
 
+# Настройка сайта, задающая этот срок **в часах**. ⚠ В часах, а не в секундах:
+# «86400» человек не прочитает, а «24» прочитает — и здесь это важнее обычного,
+# потому что число правят, когда ответы перестали приходить.
+ANSWER_PANEL_FRESH_SETTING = 'chat_answer_panel_fresh'
+
 # Что сказать агенту, когда собеседник молчит. Это не текст сообщения — это
 # вопрос агенту, а сочиняет он сам.
 ANSWER_NUDGE_PROMPT = ('Собеседница не ответила на последнее сообщение. '
@@ -116,7 +121,8 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
     language = str(presence.get('answer_language') or ANSWER_LANGUAGE)
     only = _only_parse(profile.get('auto_answer_only'))
     lead = str(profile.get('role') or '') == ANSWER_ROLE_LEAD
-    waiting = await _waiting_find(profile_id, limit, only, lead)
+    waiting = await _waiting_find(profile_id, limit, only, lead,
+                                  await _panel_fresh(profile))
 
     if not waiting:
         await log_write(profile_id, 'info',
@@ -296,7 +302,45 @@ def _only_parse(value) -> list:
     return [part.strip() for part in str(value or '').replace(';', ',').split(',') if part.strip()]
 
 
-async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool) -> list:
+async def _panel_fresh(profile: dict) -> int:
+    """Сколько секунд привезённое из панели считается свежим. Настройка сайта.
+
+    ## ⚠⚠ Зачем порог вообще
+
+    У сайта без сокета входящие приходят импортом из панели, а он привозит
+    переписку **за большой срок разом**. Без порога первый же такой заход разослал
+    бы ответы на всё подряд — живым людям, пачкой, по письмам месячной давности.
+
+    ## ⚠ И зачем его вынесли в настройку
+
+    Сутки — хорошее умолчание, но не закон: человек, заходящий на сайт раз в двое
+    суток, ответа не получал вовсе, а понять это по панели было нечем. Теперь
+    решает тот, кто ведёт сайт.
+
+    ⚠ **Ноль означает «отвечать независимо от возраста».** Это законный выбор для
+    сайта, где импорт уже разобран и хвоста нет; для нового сайта — верный способ
+    разослать полсотни ответов на давнюю переписку.
+
+    ⚠ Настройка **в часах**, а внутри секунды: «86400» человек не прочитает.
+
+    Сбой чтения даёт умолчание, а не ноль: сутки — тот ответ, который был верен
+    до настройки, и ошибка не должна превращаться в рассылку по всему архиву.
+    """
+    from src.uvicorn.routers.dating.site_ import site_seconds
+
+    try:
+        hours = int(await site_seconds(int(profile.get('site_id') or 0),
+                                       ANSWER_PANEL_FRESH_SETTING))
+    except Exception as e:
+        logger_info(f'[dating] срок свежести панели не прочитался: {e}')
+
+        return ANSWER_PANEL_FRESH_SEC
+
+    return max(0, hours) * 3600
+
+
+async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool,
+                        panel_fresh: int = ANSWER_PANEL_FRESH_SEC) -> list:
     """Поводы написать: по одному на диалог.
 
     Смотрим последнюю реплику диалога, а не каждое сообщение: ответ на неё
@@ -340,19 +384,36 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool) -> 
     # Метка стоит на конкретных строках, а не на собеседнике: напишет он снова — у
     # новой строки она пуста, и агента спросят опять. Молчание относится к
     # сказанному, а не к человеку навсегда.
+    # ⚠⚠ **Ноль означает «без порога», а не «ничего не свежее».**
+    #
+    # Подставь мы ноль в `INTERVAL %s SECOND`, условие стало бы «создано в
+    # будущем» — то есть панельное не отвечалось бы никогда, ровно наоборот
+    # написанному в подсказке настройки. Поэтому при нуле кусок про возраст в
+    # запрос не попадает вовсе.
+    panel_fresh = int(panel_fresh)
+    age = ('' if panel_fresh <= 0 else
+           " AND (m.source <> 'panel' "
+           "      OR m.created_at > NOW() - INTERVAL %s SECOND) ")
+
     fresh = ("m.direction = 'in' AND m.is_answered = 0 AND m.answer_silent_at IS NULL "
-             " AND (m.source <> 'panel' "
-             "      OR m.created_at > NOW() - INTERVAL %s SECOND) "
+             + age +
              " AND (m.answer_tried_at IS NULL "
              "      OR m.answer_tried_at < NOW() - INTERVAL %s SECOND)")
 
     reason = f'({fresh})' if not lead else \
         f'({fresh} OR m.created_at < NOW() - INTERVAL %s SECOND)'
 
-    # Номер анкеты дважды: во внешний подзапрос («последняя реплика диалога») и во
+    # Номер анкеты дважды: во внешний подзапрос («последняя реплика пары») и во
     # внутренний («какая именно, если время совпало»).
-    params = [int(profile_id), int(profile_id), int(ANSWER_PANEL_FRESH_SEC),
-              int(ANSWER_RETRY_SEC)]
+    #
+    # ⚠ Срок свежести кладём в список, **только когда он есть в запросе**: порядок
+    # `%s` обязан совпадать с текстом, и лишний параметр сдвинул бы все остальные.
+    params = [int(profile_id), int(profile_id)]
+
+    if panel_fresh > 0:
+        params.append(panel_fresh)
+
+    params.append(int(ANSWER_RETRY_SEC))
     if lead:
         params.append(int(ANSWER_NUDGE_SEC))
 

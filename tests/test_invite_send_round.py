@@ -886,10 +886,17 @@ class TestBatch:
         got = (await auth_client.get('/api/dating/site')).json()['result']
         known = {row['key']: row for row in got['known']}
 
-        assert 'invite_send_batch' in known
-        assert known['invite_send_batch']['default'] == '1'
-        assert [o['value'] for o in known['invite_send_batch']['options']] == \
-            ['1', '3', '5', '10']
+        one = known['invite_send_batch']
+
+        assert one['default'] == '1'
+        # ⚠ Не набор, а число: пачку задаёт тот, кто ведёт сайт, а подобранная
+        # нами четвёрка значений однажды оказалась бы уже настоящей нужды.
+        assert one['kind'] == 'number'
+        assert not one.get('options')
+        assert one['min'] == 1, 'нулевая пачка — это выключенная отправка втихую'
+        # ⚠ Ключ в ответе есть всегда — смотрим на **значение**: потолка нет.
+        # Сколько реплик подряд терпит сайт, знает тот, кто его ведёт, а не код.
+        assert one.get('max') is None, 'потолок вернулся'
 
     async def test_it_lives_with_the_pause(self, auth_client):
         """Пачка и пауза — про один и тот же заход, и стоят рядом в форме."""

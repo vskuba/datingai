@@ -137,6 +137,38 @@ async def _unanswered(site_id: int, profile_id: int = 0) -> int:
         return 0
 
 
+@router.post('/dialogs/{profile_id}/{uid}/read', include_in_schema=False)
+async def chat_dialog_read(profile_id: int, uid: str,
+                           user=Depends(auth_required)):
+    """Помечает разговор прочитанным: человек его открыл и увидел.
+
+    ## ⚠⚠ Прочитано и «нужен ответ» — разное, и снимается разным
+
+    `is_read` снимает **взгляд**: человек открыл разговор и увидел реплики.
+    `is_answered` снимает **ответ**: пока последнее слово за собеседником, строка
+    остаётся в работе, сколько на неё ни смотри.
+
+    Пока пометки не было вовсе, список показывал разговор новым и после того, как
+    его прочли: снять выделение было нечем, кроме ответа.
+
+    ⚠ **По паре, а не по анкете.** Ручка `/profile/{id}/read` помечает всё разом —
+    она для карточки анкеты, где человек видит весь список. Здесь он открыл один
+    разговор и увидел один; чужие пометить за него значило бы соврать.
+
+    Право — на просмотр: пометка «я это видел» не меняет ни текста, ни работы.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            "UPDATE message SET is_read = 1"
+            " WHERE profile_id = %s AND sender_uid = %s"
+            "   AND direction = 'in' AND is_read = 0",
+            (int(profile_id), str(uid)))
+        read = int(db.rowcount or 0)
+        await db.connection.commit()
+
+    return {'result': {'read': read}}
+
+
 @router.get('/dialogs', include_in_schema=False)
 async def chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int = 1,
                               user=Depends(auth_required)):
@@ -243,7 +275,13 @@ async def chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int = 1,
             '       c.is_online,'
             '       p.login AS profile_login, p.profile AS profile_card,'
             "       (last.direction = 'in' AND last.is_answered = 0"
-            '        AND last.answer_silent_at IS NULL) AS needs_answer'
+            '        AND last.answer_silent_at IS NULL) AS needs_answer,'
+            # ⚠ Непрочитанные — **отдельно от «нужен ответ»**: первое снимает
+            # взгляд, второе ответ. Слей их в одно поле, и разговор оставался бы
+            # новым после прочтения либо гас до ответа.
+            '       (SELECT COUNT(*) FROM message u'
+            '         WHERE u.profile_id = d.profile_id AND u.sender_uid = d.uid'
+            "           AND u.direction = 'in' AND u.is_read = 0) AS unread"
             '  FROM (SELECT m.profile_id, m.sender_uid AS uid, COUNT(*) AS messages,'
             '               MAX(m.created_at) AS last_at'
             '          FROM message m'
@@ -280,6 +318,7 @@ async def chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int = 1,
 
         for contact in contacts:
             contact['needs_answer'] = bool(contact['needs_answer'])
+            contact['unread'] = int(contact.get('unread') or 0)
 
             card = json_column_load(contact.pop('profile_card', None)) or {}
             contact['profile_name'] = str(card.get('name')
