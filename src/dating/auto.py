@@ -67,13 +67,27 @@ async def auto_round(profiles: list) -> dict:
         if not int(profile.get('enabled', 1) or 0):
             continue
 
-        if not agent_id:
+        # ⚠⚠ **Переменная зовётся `agent`, а не `agent_id`, и это защита.**
+        #
+        # В модуле уже есть имя `agent_id` — **функция**, импортированная строкой
+        # выше ради `_agent_id`. Когда отсюда однажды пропала эта самая строка
+        # присваивания, `NameError` не случился: имя осталось видимым, функция
+        # истинна, и проверка ниже её пропустила. Дальше она доехала до
+        # `int(agent_id)` у соседа и падала там — `int() argument … not
+        # 'function'`, по одной строке в журнал на анкету.
+        #
+        # Стоило это суток молчания автоответа на проде при поднятом выключателе
+        # сайта: круг честно находил повод написать, отмечал попытку и умирал на
+        # походе к агенту. Разные имена делают такую пропажу шумной.
+        agent = await _agent_id(profile)
+
+        if not agent:
             # Агента нет — значит анкету ещё не проверяли. Молчим: заводить его
             # здесь означало бы делать это без ведома человека.
             continue
 
         try:
-            result = await answer_run(profile, item['presence'], agent_id,
+            result = await answer_run(profile, item['presence'], agent,
                                              limit=AUTO_PER_PROFILE)
         except Exception as e:
             logger_info(f"[dating] автоответ #{profile['id']}: {e}")
