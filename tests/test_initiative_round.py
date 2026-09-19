@@ -291,3 +291,136 @@ class TestStaleCards:
         await round_mod._stale_clean(STAND_SITE)
 
         assert await chat_initiative_waiting(girl, 'u-1'), 'карточку сняли зря'
+
+
+class TestOfflineGirlLosesHerCards:
+    """⚠⚠ Девушка ушла из сети — её карточки уходят из пула.
+
+    То же правило, что у рассылки, инвайтов и приставаний (`pool.py`): черновик от
+    анкеты не в сети отправить некому, а место в пуле он занимает.
+
+    ⚠ Инициативе это нужнее прочих: её тексты привязаны ко времени сильнее всего —
+    «расскажи про свой день», «спроси про планы на вечер», «у нас третий день
+    дождь». Пролежав до завтра, такая карточка врёт не тоном, а содержанием.
+    """
+
+    def test_the_pool_is_in_the_cleaner_list(self):
+        from src.dating.pool import POOL_TABLES
+
+        assert 'chat_initiative' in POOL_TABLES, \
+            'карточки инициативы переживут уход анкеты'
+
+    def test_chat_reply_is_not(self):
+        """⚠ А черновик ответа — нет, и это не забывчивость.
+
+        Он отвечает **конкретной реплике** и ждёт собеседника, а не свежести:
+        вопрос, заданный вчера, ответа не теряет.
+        """
+        from src.dating.pool import POOL_TABLES
+
+        assert 'chat_reply' not in POOL_TABLES
+
+    async def test_leaving_drops_the_card(self, girl):
+        """Уход по концу смены (`pool_drop`) уносит карточку."""
+        from src.dating.pool import pool_drop
+
+        await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'как выходные?')
+        got = await pool_drop(girl, 'смена кончилась')
+
+        assert got.get('chat_initiative') == 1
+        assert await chat_initiative_waiting(girl, 'u-1') == {}
+
+    async def test_the_sweeper_catches_the_rest(self, girl):
+        """⚠ Страховка на выходы, о которых мы не узнали: сайт выбросил сессию,
+        вход не признали, статус сбился в `error`."""
+        from src.dating.pool import pool_sweep
+
+        await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'как выходные?')
+
+        async with mysql_get_db_async() as db:
+            await db.execute("UPDATE profile SET status = 'error' WHERE id = %s",
+                             (girl,))
+            await db.connection.commit()
+
+        await pool_sweep(STAND_SITE)
+
+        assert await chat_initiative_waiting(girl, 'u-1') == {}
+
+    async def test_sent_cards_survive(self, girl):
+        """⚠ Ушедшее — история: по ней считаются заходы. Сотри мы её, вернувшаяся
+        анкета начала бы счёт заново и написала бы третий раз при пределе два."""
+        from src.dating.pool import pool_drop
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO chat_initiative (site_id, profile_id, uid, name, body,'
+                " try_no, status, sent_at) VALUES (%s, %s, 'u-1', 'Brian', 'ушло',"
+                " 1, 'sent', NOW())", (STAND_SITE, girl))
+            await db.connection.commit()
+
+        await pool_drop(girl, 'смена кончилась')
+
+        async with mysql_get_db_async() as db:
+            await db.execute("SELECT COUNT(*) AS n FROM chat_initiative"
+                             " WHERE profile_id = %s AND status = 'sent'", (girl,))
+            row = await db.fetchone()
+
+        assert int(row['n']) == 1, 'чистка унесла историю заходов'
+
+
+class TestBothMustBeOnline:
+    """⚠⚠ Отправка идёт, только когда в сети **оба**."""
+
+    async def test_a_sleeping_girl_sends_nothing(self, girl):
+        """Девушка не в сети — карточку даже не берут в работу.
+
+        Проверка стоит **в запросе** (`chat_initiative_ready`), а не после: иначе
+        круг набирал бы карточки спящих и каждый раз откладывал их, не доходя до
+        тех, что можно отправить.
+        """
+        from src.dating.chat_initiative import chat_initiative_ready
+
+        await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'текст')
+
+        async with mysql_get_db_async() as db:
+            await db.execute("UPDATE profile SET status = 'offline' WHERE id = %s",
+                             (girl,))
+            await db.connection.commit()
+
+        готовые = await chat_initiative_ready(STAND_SITE)
+
+        assert not [one for one in готовые if int(one['profile_id']) == girl]
+
+    async def test_a_sleeping_companion_keeps_the_card(self, monkeypatch, girl):
+        """⚠ Собеседник не в сети — карточка **ждёт**, а не гибнет.
+
+        Он вернётся, и она уйдёт: ровно как черновик ответа. Пометки о неудаче
+        тоже не ставим — неудачи не было.
+        """
+        await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'текст')
+        monkeypatch.setattr(round_mod, 'online_check',
+                            lambda site_id, uid: {'online': False, 'known': True})
+
+        sent = await round_mod._send(STAND_SITE)
+
+        assert sent == 0
+        assert await chat_initiative_waiting(girl, 'u-1'), 'карточку потеряли'
+
+    async def test_both_online_sends(self, monkeypatch, girl):
+        """Оба в сети — реплика уходит."""
+        ушло = []
+
+        async def _send(profile, presence, uid, text):
+            ушло.append(text)
+
+            return {'ok': True, 'error': ''}
+
+        await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'текст')
+        monkeypatch.setattr(round_mod, 'online_check',
+                            lambda site_id, uid: {'online': True, 'known': True})
+        monkeypatch.setattr(round_mod, 'send_message', _send)
+
+        sent = await round_mod._send(STAND_SITE)
+
+        assert sent == 1 and ушло == ['текст']
+        assert await chat_initiative_waiting(girl, 'u-1') == {}, 'карточка не ушла'

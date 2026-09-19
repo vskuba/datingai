@@ -44,6 +44,7 @@ from src.dating.chat_initiative import (chat_initiative_failed,
                                         chat_initiative_sent,
                                         chat_initiative_stale)
 from src.dating.initiative import initiative_make
+from src.dating.pool import pool_sweep
 from src.dating.log import log_write
 from src.dating.online import online_check
 from src.dating.send import send_message
@@ -77,6 +78,18 @@ async def initiative_round_run() -> dict:
             # и не поймёт, почему панель собралась писать тому, кто только что
             # ответил сам.
             stale += await _stale_clean(site_id)
+
+            # ⚠⚠ И карточки ушедших анкет — тем же общим сметальщиком, что у
+            # рассылки и фаворитов (`pool.py`). Зовём его **здесь**, а не
+            # полагаемся на соседние круги: те ходят по своим выключателям, и при
+            # снятой рассылке карточки инициативы от спящих девушек лежали бы в
+            # пуле, пока их кто-нибудь не увидит.
+            #
+            # ⚠ Тексты инициативы протухают быстрее прочих: приём жребия бывает
+            # «расскажи про свой день» или «спроси про планы на вечер». Пролежав
+            # до завтра, такая карточка врёт не тоном, а содержанием — и лучше
+            # сочинить заново, когда девушка вернётся.
+            stale += await pool_sweep(site_id)
 
             if набор:
                 got = await initiative_make(site_id, limit=INITIATIVE_ROUND_MAKE)
