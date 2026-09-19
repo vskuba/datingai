@@ -1,34 +1,32 @@
-"""История инвайтов пары подрезается: остаются последние `invite_keep`.
+"""`invite_keep` — сколько инвайтов пары показывать в диалоге.
 
-## ⚠⚠ Зачем
+## ⚠⚠ Настройка больше ничего не удаляет
 
-Инвайты хранятся, чтобы в диалоге понимать, **на что** ответил человек. Но одному
-человеку пишут в разные дни, и за месяц у пары «девушка — собеседник» набегает
-под сотню строк, а отвечает он на одну-две последние. Остальные — мёртвый груз,
-который и мешает ответить на тот самый вопрос: по сотне приглашений не понять,
-какое из них он прочитал.
+Прежде она подрезала историю пары: лишние строки стирались, как только в пул
+ложился новый инвайт. Файл целиком описывал ту подрезку — теперь описывает показ.
 
-## ⚠⚠ Строки за последние сутки не трогаются никогда
+Правило переменилось по существу дела. **Инвайт живёт у собеседника около часа**:
+ответить на вчерашний он не может физически, и хранить историю «на случай ответа»
+незачем. Удаление в таблице поэтому осталось ровно одно — по сроку
+(`invite_clean_hours`), и два правила на «сколько строк живёт» больше не спорят
+друг с другом.
 
-По ним считается дневной потолок повторов — «не звать одного чаще N раз в сутки»
-(`invite_repeat_max_day`, по умолчанию 10). Счётчик устроен как
-`SUM(sent_at > NOW() - INTERVAL 1 DAY)`, то есть **по самим строкам**: сотри их —
-и потолок поднимется молча. Человек получал бы приглашения без счёта, а в
-настройке по-прежнему стояло бы «не чаще десяти».
-
-Это и есть цена, которую нельзя платить за опрятность, и потому чистка трогает
-только то, что старше суток.
+⚠ Показ при этом никуда не делся: собеседник ответил — в диалог уезжают последние
+`invite_keep` **отправленных** приглашений, чтобы автоответ видел, на что он
+отвечает (`test_invite_to_history.py`).
 """
 
+import inspect
+import pathlib
 import uuid
 
 import pytest
+
 from mysql_.mysql_ import mysql_get_db_async
 
-pytestmark = pytest.mark.profile
+pytestmark = pytest.mark.chat
 
 STAND_SITE = 999_343
-UID = 'keep-777'
 
 
 @pytest.fixture
@@ -42,169 +40,150 @@ async def girl(auth_client):
 
     async with mysql_get_db_async() as db:
         await db.execute('DELETE FROM invite WHERE profile_id = %s', (profile_id,))
+        await db.execute('DELETE FROM message WHERE profile_id = %s', (profile_id,))
         await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
         await db.connection.commit()
 
 
-class TestTrim:
-    """Сколько строк остаётся у пары после подрезки."""
+async def _invite(profile_id: int, uid: str, body: str,
+                  hours_ago: int = 0) -> int:
+    """Ушедший инвайт. Время считает база: MySQL живёт по UTC."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO invite (site_id, profile_id, uid, name, body, status,'
+            '  sent_at, created_at)'
+            " VALUES (%s, %s, %s, 'Brian', %s, 'sent',"
+            '  NOW() - INTERVAL %s HOUR, NOW() - INTERVAL %s HOUR)',
+            (STAND_SITE, int(profile_id), uid, body, int(hours_ago),
+             int(hours_ago)))
+        await db.connection.commit()
 
-    async def test_old_rows_are_cut_to_the_limit(self, girl):
-        from src.dating.invite import _keep_last
-
-        await _rows(girl, old=5)
-
-        gone = await _keep_last(girl, UID, 2)
-
-        assert gone == 3, f'убрано {gone}, а лишних было три'
-        assert await _count(girl) == 2
-
-    async def test_the_newest_survive(self, girl):
-        """⚠ Остаются **последние**, а не первые попавшиеся."""
-        from src.dating.invite import _keep_last
-
-        made = await _rows(girl, old=4)
-        await _keep_last(girl, UID, 2)
-
-        assert await _ids(girl) == sorted(made)[-2:]
-
-    async def test_one_is_a_legal_setting(self, girl):
-        from src.dating.invite import _keep_last
-
-        await _rows(girl, old=3)
-        await _keep_last(girl, UID, 1)
-
-        assert await _count(girl) == 1
-
-    async def test_nothing_to_cut_is_not_an_error(self, girl):
-        from src.dating.invite import _keep_last
-
-        await _rows(girl, old=1)
-
-        assert await _keep_last(girl, UID, 2) == 0
-        assert await _count(girl) == 1
+        return int(db.lastrowid)
 
 
-class TestTodayIsUntouchable:
-    """⚠⚠ Сутки неприкосновенны: на них стоит дневной потолок повторов."""
+class TestNothingIsDeletedByCount:
+    """⚠⚠ Главное: укладка нового инвайта больше не стирает старые."""
 
-    async def test_todays_rows_survive_even_above_the_limit(self, girl):
-        from src.dating.invite import _keep_last
+    def test_the_trimmer_is_gone(self):
+        """Функции подрезки нет вовсе — не просто не зовётся."""
+        from src.dating import invite
 
-        await _rows(girl, fresh=6)
+        assert not hasattr(invite, '_keep_last'), \
+            'подрезка вернулась — теперь правил удаления снова два'
 
-        assert await _keep_last(girl, UID, 2) == 0, \
-            'подрезаны свежие строки — дневной потолок повторов поднимется молча'
-        assert await _count(girl) == 6
-
-    async def test_old_are_cut_while_fresh_stay(self, girl):
-        """Смешанный случай: старое уходит, сегодняшнее остаётся целиком."""
-        from src.dating.invite import _keep_last
-
-        await _rows(girl, old=5, fresh=3)
-        await _keep_last(girl, UID, 2)
-
-        assert await _count(girl) == 3, 'осталось не только сегодняшнее'
-        assert await _fresh_count(girl) == 3
-
-    def test_the_query_names_the_day(self):
-        """Условие суток — в самом запросе, а не в вызывающем коде."""
-        import inspect
-
-        from src.dating.invite import _keep_last
-
-        code = inspect.getsource(_keep_last)
-
-        assert 'INTERVAL 1 DAY' in code, \
-            'из чистки пропало правило «сутки не трогаем»'
-
-
-class TestItRunsOnInsert:
-    """Подрезка идёт сразу после вставки — так и просил заказчик."""
-
-    def test_the_insert_trims(self):
-        import inspect
-
+    def test_the_insert_does_not_trim(self):
+        """⚠ Укладка в пул делает ровно одно: кладёт строку."""
         from src.dating.invite import _put
 
-        assert '_keep_last(' in inspect.getsource(_put)
+        code = inspect.getsource(_put)
 
-    def test_the_setting_is_read_once_per_pass(self):
-        """⚠ Настройка читается раз на заход, а не на карточку.
+        assert 'keep' not in code, 'в укладку вернулось число строк'
+        assert 'DELETE' not in code.upper()
 
-        Пул набирается десятками; полсотни одинаковых чтений — работа впустую.
+    async def test_five_invites_stay_five(self, girl):
+        """Пять приглашений паре — и все пять в базе, сколько бы ни просил показ."""
+        for n in range(5):
+            await _invite(girl, 'u-1', f'реплика {n}', hours_ago=n)
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT COUNT(*) AS n FROM invite'
+                             ' WHERE profile_id = %s AND uid = %s', (girl, 'u-1'))
+            row = await db.fetchone()
+
+        assert int(row['n']) == 5
+
+
+class TestOnlyAgeDeletes:
+    """⚠ Удаление в таблице ровно одно — по сроку."""
+
+    def test_the_round_deletes_by_age(self):
+        from src.dating.invite_round import _clean
+
+        code = inspect.getsource(_clean)
+
+        assert 'INTERVAL %s HOUR' in code
+        assert 'invite_clean_hours' in code or 'INVITE_CLEAN_SETTING' in code
+
+    def test_no_other_deletes_in_the_maker(self):
+        """⚠⚠ В наборе пула удалений нет вовсе.
+
+        Два правила на «сколько строк живёт» спорили бы друг с другом, а человек
+        не знал бы, какое сработало.
         """
-        import inspect
+        source = (pathlib.Path(__file__).resolve().parents[1]
+                  / 'src/dating/invite.py').read_text(encoding='utf-8')
 
-        from src.dating.invite import invite_make
+        # `DELETE` в модуле набора остаться не должно: чистку пула по кнопке ведёт
+        # роутер, а по сроку — круг.
+        assert 'DELETE FROM invite' not in source
 
-        code = inspect.getsource(invite_make)
 
-        assert 'keep = await _keep(site_id)' in code
-        assert code.index('keep = await _keep') < code.index('for girl, person in')
+class TestItStillFeedsTheDialog:
+    """Показ работает: ответил — увидел столько, сколько просит настройка."""
 
-    async def test_the_setting_is_registered(self, auth_client):
+    async def test_the_last_ones_go_to_the_dialog(self, girl):
+        from src.dating.chat import chat_invites_to_history
+
+        for n in range(5):
+            await _invite(girl, 'u-1', f'реплика {n}', hours_ago=5 - n)
+
+        async with mysql_get_db_async() as db:
+            got = await chat_invites_to_history(db, girl, 'u-1')
+            await db.connection.commit()
+
+        # Настройки у стенда нет — берём умолчание реестра, два приглашения.
+        assert got == 2
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                "SELECT text FROM message WHERE profile_id = %s AND source = 'invite'"
+                ' ORDER BY created_at', (girl,))
+            rows = await db.fetchall() or []
+
+        assert [row['text'] for row in rows] == ['реплика 3', 'реплика 4'], \
+            'в диалог уехали не последние приглашения'
+
+    async def test_an_empty_history_shows_nothing(self, girl):
+        """⚠ Ноль строк — ноль показа, и это обычный случай: он сам начал разговор."""
+        from src.dating.chat import chat_invites_to_history
+
+        async with mysql_get_db_async() as db:
+            got = await chat_invites_to_history(db, girl, 'u-new')
+
+        assert got == 0
+
+    async def test_drafts_are_not_shown(self, girl):
+        """⚠ Черновик человеку не уходил — в переписке ему места нет."""
+        from src.dating.chat import chat_invites_to_history
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO invite (site_id, profile_id, uid, name, body, status)'
+                " VALUES (%s, %s, 'u-1', 'Brian', 'лежит в пуле', 'draft')",
+                (STAND_SITE, girl))
+            await db.connection.commit()
+
+            got = await chat_invites_to_history(db, girl, 'u-1')
+
+        assert got == 0
+
+
+class TestTheSetting:
+    """Реестр настроек."""
+
+    async def test_it_is_registered(self, auth_client):
+        got = (await auth_client.get('/api/dating/site')).json()['result']
+        known = {row['key']: row for row in got['known']}
+        one = known['invite_keep']
+
+        assert one['default'] == '2'
+        assert one['title'] == 'Сколько последних инвайтов показывать в диалоге'
+
+    async def test_the_note_says_it_does_not_hide(self, auth_client):
+        """⚠⚠ Название говорит «показывать», и подсказка обязана уточнить, что
+        лишние **не прячутся**: они просто не попадают в диалог, а живут в базе до
+        своего срока."""
         got = (await auth_client.get('/api/dating/site')).json()['result']
         known = {row['key']: row for row in got['known']}
 
-        assert 'invite_keep' in known
-        assert known['invite_keep']['default'] == '2'
-
-    async def test_a_broken_database_does_not_stop_the_pool(self, girl, monkeypatch):
-        """⚠ Уборка не имеет права сорвать набор: инвайт уже лёг.
-
-        Падать из-за необрезанного хвоста значило бы терять работу ради
-        опрятности.
-        """
-        from src.dating import invite
-
-        def _broken():
-            raise RuntimeError('база отвалилась')
-
-        monkeypatch.setattr('mysql_.mysql_.mysql_get_db_async', _broken)
-
-        assert await invite._keep_last(girl, UID, 2) == 0
-
-
-async def _rows(profile_id: int, old: int = 0, fresh: int = 0) -> list[int]:
-    """Кладёт истории пары `old` строк старше суток и `fresh` сегодняшних."""
-    made = []
-    async with mysql_get_db_async() as db:
-        for number in range(old + fresh):
-            await db.execute(
-                'INSERT INTO invite'
-                ' (site_id, profile_id, uid, name, body, status, created_at)'
-                " VALUES (%s, %s, %s, 'Кто-то', 'Hi!', 'sent',"
-                '         NOW() - INTERVAL %s DAY)',
-                (STAND_SITE, int(profile_id), UID, 3 if number < old else 0))
-            made.append(int(db.lastrowid))
-        await db.connection.commit()
-
-    return made
-
-
-async def _count(profile_id: int) -> int:
-    async with mysql_get_db_async() as db:
-        await db.execute('SELECT COUNT(*) AS n FROM invite'
-                         ' WHERE profile_id = %s AND uid = %s', (int(profile_id), UID))
-
-        return int(((await db.fetchone()) or {}).get('n') or 0)
-
-
-async def _fresh_count(profile_id: int) -> int:
-    async with mysql_get_db_async() as db:
-        await db.execute('SELECT COUNT(*) AS n FROM invite'
-                         ' WHERE profile_id = %s AND uid = %s'
-                         '   AND created_at > NOW() - INTERVAL 1 DAY',
-                         (int(profile_id), UID))
-
-        return int(((await db.fetchone()) or {}).get('n') or 0)
-
-
-async def _ids(profile_id: int) -> list[int]:
-    async with mysql_get_db_async() as db:
-        await db.execute('SELECT id FROM invite'
-                         ' WHERE profile_id = %s AND uid = %s ORDER BY id',
-                         (int(profile_id), UID))
-
-        return [int(row['id']) for row in await db.fetchall() or []]
+        assert 'удал' in known['invite_keep']['note'].lower()

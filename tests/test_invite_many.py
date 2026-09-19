@@ -186,7 +186,7 @@ def _quiet(monkeypatch, agent) -> list:
     """
     put = []
 
-    async def _put(site_id, girl, person, text, keep):
+    async def _put(site_id, girl, person, text):
         put.append((int(girl['id']), text))
 
         return True
@@ -203,7 +203,6 @@ def _quiet(monkeypatch, agent) -> list:
     monkeypatch.setattr(invite, '_language', _answer('en'))
     monkeypatch.setattr(invite, '_avoid', _answer([]))
     monkeypatch.setattr(invite, '_country', _answer(''))
-    monkeypatch.setattr(invite, '_keep', _answer(2))
     monkeypatch.setattr(invite, '_man_chance', _answer(0.0))
     monkeypatch.setattr(invite, '_time_chance', _answer(0.0))
 

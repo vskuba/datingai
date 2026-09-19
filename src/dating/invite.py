@@ -244,8 +244,17 @@ INVITE_POOL_SETTING = 'invite_pool_max'
 # вечер.
 INVITE_COUNTRY_SETTING = 'girl_country'
 
-# Сколько последних инвайтов пары «девушка — собеседник» держим в истории.
-# Остальные удаляются сразу после того, как в пул лёг новый.
+# Сколько последних инвайтов пары **показываем в диалоге**, когда собеседник
+# ответил (`chat.chat_invites_to_history`).
+#
+# ⚠⚠ **Ничего не удаляет.** Прежде эта же настройка подрезала историю пары:
+# лишние строки стирались, как только в пул ложился новый инвайт. Оказалось
+# лишним — удаление в таблице ровно одно, по сроку (`invite_clean_hours`), и
+# двух правил на «сколько строк живёт» быть не должно: они спорили бы друг с
+# другом, а человек не знал бы, какое сработало.
+#
+# ⚠ Настройка читается **не здесь**, а в `chat.py`, где показ и происходит:
+# набору пула она больше ни к чему.
 INVITE_KEEP_SETTING = 'invite_keep'
 INVITE_KEEP_DEFAULT = 2
 
@@ -376,7 +385,6 @@ async def invite_make(site_id: int, limit: int, profile_id: int = 0,
     made, skipped, reasons, left = 0, 0, [], 0
     # ⚠ Настройку читаем **один раз на заход**, а не на карточку: пул набирается
     # десятками, и полсотни одинаковых чтений — работа впустую.
-    keep = await _keep(site_id)
 
     # ⚠⚠ **Карточки перемешиваем, и это не косметика.**
     #
@@ -412,7 +420,7 @@ async def invite_make(site_id: int, limit: int, profile_id: int = 0,
             continue
 
         text = _fill(template, girl, person)
-        if not await _put(site_id, girl, person, text, keep):
+        if not await _put(site_id, girl, person, text):
             # Ключ не пустил: черновик этой паре уже лежит. Не наша строка и не
             # ошибка — просто считать её сделанной нельзя.
             skipped += 1
@@ -968,84 +976,7 @@ async def _talked(site_id: int) -> set:
     return {(int(row['profile_id']), str(row['uid'])) for row in rows or []}
 
 
-async def _keep(site_id: int) -> int:
-    """Сколько последних инвайтов пары держать в истории. Настройка сайта."""
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
-    return int(await site_seconds(site_id, INVITE_KEEP_SETTING)
-               or INVITE_KEEP_DEFAULT)
-
-
-async def _keep_last(profile_id: int, uid: str, keep: int) -> int:
-    """Оставляет паре последние `keep` инвайтов, остальные удаляет.
-
-    Args:
-        profile_id: девушка.
-        uid: собеседник на сайте.
-        keep: сколько последних строк оставить.
-
-    Returns:
-        int: сколько строк убрано. Ноль — убирать было нечего, обычный случай.
-
-    ## ⚠⚠ Зачем: история пары копится, а читают из неё две строки
-
-    Одному человеку пишут в разные дни, и за месяц у пары набегает под сотню
-    строк. Отвечает он на одну-две последние — остальные лежат мёртвым грузом и
-    засоряют диалог, из-за которого их и хранили: понять, **на что** он ответил,
-    по сотне приглашений нельзя.
-
-    ## ⚠⚠ Строки за сутки не трогаются никогда
-
-    По ним считается дневной потолок повторов — «не звать одного чаще N раз в
-    сутки» (`invite_repeat_max_day`, по умолчанию 10). Счётчик там устроен как
-    `SUM(sent_at > NOW() - INTERVAL 1 DAY)`, то есть **по самим строкам**: сотри
-    мы их, и потолок поднялся бы молча — человек получал бы приглашения без
-    счёта, а в настройке по-прежнему стояло бы «не чаще десяти».
-
-    Отсюда правило: чистим только то, что старше суток, сколько бы там ни
-    накопилось. За сутки пара физически не наберёт много — её держит тот самый
-    потолок.
-
-    ⚠ **Не бросает.** Уборка истории не имеет права сорвать набор пула: инвайт
-    уже лёг, и падать из-за необрезанного хвоста значило бы терять работу ради
-    опрятности.
-    """
-    keep = max(1, int(keep or INVITE_KEEP_DEFAULT))
-    uid = str(uid or '')
-    if not uid:
-        return 0
-
-    try:
-        async with mysql_get_db_async() as db:
-            # Порог отдельным запросом, а не `NOT IN (… LIMIT …)`: так видно, что
-            # именно удаляется, и план предсказуем — обе части идут по индексу
-            # пары. `OFFSET keep - 1` даёт id самой старой из оставляемых строк.
-            await db.execute(
-                'SELECT id FROM invite WHERE profile_id = %s AND uid = %s'
-                ' ORDER BY id DESC LIMIT 1 OFFSET %s',
-                (int(profile_id), uid, keep - 1))
-            edge = await db.fetchone()
-            if not edge:
-                return 0
-
-            await db.execute(
-                'DELETE FROM invite'
-                ' WHERE profile_id = %s AND uid = %s AND id < %s'
-                '   AND created_at < NOW() - INTERVAL 1 DAY',
-                (int(profile_id), uid, int(edge['id'])))
-            gone = int(db.rowcount or 0)
-            await db.connection.commit()
-    except Exception as e:
-        logger_info(f'[dating] история инвайтов пары #{profile_id}/{uid} '
-                    f'не подрезалась: {e}')
-
-        return 0
-
-    return gone
-
-
-async def _put(site_id: int, girl: dict, person: dict, text: str,
-               keep: int = INVITE_KEEP_DEFAULT) -> bool:
+async def _put(site_id: int, girl: dict, person: dict, text: str) -> bool:
     """Кладёт инвайт в пул. `INSERT IGNORE` ловит гонку двух заходов разом.
 
     Returns:
@@ -1070,8 +1001,5 @@ async def _put(site_id: int, girl: dict, person: dict, text: str,
              str(text or '')))
         put = int(db.rowcount or 0) > 0
         await db.connection.commit()
-
-    if put:
-        await _keep_last(int(girl['id']), str(person.get('uid') or ''), keep)
 
     return put
