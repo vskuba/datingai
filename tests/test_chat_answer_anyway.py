@@ -251,3 +251,48 @@ class TestForeignNameIsNotSent:
         assert got['drafted'] == 0, 'брак лёг в пул и ушёл бы следующим кругом'
         assert await chat_reply_waiting(girl, message_id) == {}
         assert any('чужое имя' in one for one in got['errors']), got['errors']
+
+
+class TestInitiativeSetting:
+    """⚠ Настройка «через сколько проявлять инициативу» — заведена впрок.
+
+    Работы за ней пока нет, и подсказка говорит об этом прямо: настройка без
+    объяснения читается как рабочая, человек ставит число и ждёт, что девушка
+    начнёт писать сама.
+    """
+
+    def test_it_is_registered(self):
+        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
+
+        one = SITE_KNOWN['chat_initiative_after']
+
+        assert one['kind'] == 'number'
+        assert one['default'] == '60'
+        assert one['min'] == 0, 'ноль обязан быть допустим — это «выключено»'
+        assert one['group'] == 'invite', 'место ей на вкладке «Инвайты и чат»'
+
+    def test_the_note_admits_it_does_nothing_yet(self):
+        """⚠⚠ Пока работы нет, об этом должно быть написано.
+
+        Убери оговорку вместе с заведением работы — тест напомнит.
+        """
+        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
+
+        note = SITE_KNOWN['chat_initiative_after']['note']
+
+        assert 'работа не сделана' in note, \
+            'настройка молча притворяется рабочей'
+
+    def test_nothing_reads_it_yet(self):
+        """⚠ И правда не читается: иначе оговорка врала бы.
+
+        Когда работу сделают, тест упадёт — и вместе с ним снимут оговорку выше.
+        """
+        import pathlib
+
+        корень = pathlib.Path(__file__).resolve().parents[1]
+        читают = [one for one in (корень / 'src').rglob('*.py')
+                  if 'chat_initiative_after' in one.read_text(encoding='utf-8')
+                  and one.name != 'site_.py']
+
+        assert not читают, f'настройку уже читают: {[str(one) for one in читают]}'
