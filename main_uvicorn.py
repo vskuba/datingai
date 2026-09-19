@@ -43,6 +43,7 @@ from src.uvicorn.routers import users as users_router
 from src.uvicorn.routers.dating import export
 from src.uvicorn.routers.dating import import_
 from src.uvicorn.routers.dating import chat as dating_chat_router
+from src.uvicorn.routers.dating import chat_initiative as dating_chat_initiative_router
 from src.uvicorn.routers.dating import companion as dating_companion_router
 from src.uvicorn.routers.dating import error as dating_error_router
 from src.uvicorn.routers.dating import feed as dating_feed_router
@@ -334,6 +335,7 @@ app.include_router(dating_site_switch_router.router)
 app.include_router(dating_socket_router.router)
 app.include_router(dating_error_router.router)
 app.include_router(dating_chat_router.router)
+app.include_router(dating_chat_initiative_router.router)
 app.include_router(dating_work_router.router)
 app.include_router(people.router)
 app.include_router(seed_router.router)

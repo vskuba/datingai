@@ -291,8 +291,17 @@ class TestInitiativeSetting:
         import pathlib
 
         корень = pathlib.Path(__file__).resolve().parents[1]
-        читают = [one for one in (корень / 'src').rglob('*.py')
-                  if 'chat_initiative_after' in one.read_text(encoding='utf-8')
-                  and one.name != 'site_.py']
+        # ⚠ Ищем **чтение**, а не имя: упомянуть ключ в документации модуля
+        # законно — иначе следующий читатель не найдёт, откуда берётся срок.
+        # Читается настройка одним способом на весь проект — `site_seconds`.
+        читают = []
+        for one in (корень / 'src').rglob('*.py'):
+            if one.name == 'site_.py':
+                continue
 
-        assert not читают, f'настройку уже читают: {[str(one) for one in читают]}'
+            текст = one.read_text(encoding='utf-8')
+            for строка in текст.split('\n'):
+                if 'chat_initiative_after' in строка and 'site_seconds' in строка:
+                    читают.append(str(one))
+
+        assert not читают, f'настройку уже читают: {читают}'

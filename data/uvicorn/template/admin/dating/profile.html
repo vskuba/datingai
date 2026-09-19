@@ -1020,18 +1020,36 @@
         flex: 1 1 auto;
     }
 
+    /* Три колонки «Диалогов» чата: список пар, разговор, пул инициативы.
+       Порядок — порядок работы: с кем говорим → что сказано → чем продолжить.
+
+       ⚠ Крайние по содержимому, середина забирает остаток: разговор читают
+       целиком, и ширина нужна именно ему. Списку пар хватает карточки, пулу —
+       короткого текста.
+
+       ⚠ Своя раскладка, а не правка `.in-cols`: у соседних вкладок колонки две,
+       и расширь мы общий класс, у них появилась бы пустая третья. */
+    .in-cols-3 {
+        grid-template-columns:
+            minmax(0, var(--reply-col, 420px)) 7px
+            minmax(0, 1fr) 7px
+            minmax(0, var(--initiative-col, 340px));
+    }
+
     /* Разделитель колонок «Ответов». ⚠ Виден **всегда**: два блока стоят
        вплотную в одной панели, и без линии расписание и пул читаются как одно.
        На «Анкетах» иначе — там колонки разделены пустотой страницы, и полоса
        проступает лишь под курсором. */
-    .split-reply {
+    .split-reply,
+    .split-initiative {
         background: #eef2f7;
         border-radius: 3px;
         cursor: col-resize;
         transition: background .12s ease;
     }
 
-    .split-reply:hover, .split-reply.drag {
+    .split-reply:hover, .split-reply.drag,
+    .split-initiative:hover, .split-initiative.drag {
         background: #c7d2fe;
     }
 
@@ -4730,6 +4748,20 @@
                 (e) => e.clientX - cols.getBoundingClientRect().left);
         });
 
+        // Разделитель пула инициативы: правая колонка растёт **влево**, поэтому
+        // ширину считаем от правого края сетки, а не от левого.
+        //
+        // ⚠ Знак здесь легко перепутать, и ошибка выглядит дико: колонка уезжает
+        // в противоположную сторону от курсора. У левого разделителя отсчёт
+        // прямой — он двигает свою колонку по ходу мыши.
+        workEl.querySelectorAll('.split-initiative').forEach(split => {
+            const cols = split.closest('.in-cols');
+            if (!cols) return;
+
+            splitDrag(split, '--initiative-col', 240, Math.round(innerWidth * 0.45),
+                (e) => cols.getBoundingClientRect().right - e.clientX);
+        });
+
         // Разделитель подвкладок «Шаблоны» и «Переменные»: список слева растёт
         // вправо. ⚠ Отсчёт от левого края панели, а не окна: слева стоит список
         // анкет, и его ширина уехала бы в размер колонки.
@@ -4918,6 +4950,12 @@
                 favSubShow();
             });
         }
+
+        // Обновить пул инициативы. ⚠ Кнопка нужна по той же причине, что у
+        // журнала доставки ниже: колонка не перечитывается сама, а карточки в неё
+        // будет класть круг — человек вернётся на вкладку, ничего не нажимая.
+        const initiativeReload = workEl.querySelector('[data-slot="initiative-reload"]');
+        if (initiativeReload) initiativeReload.addEventListener('click', initiativeLoad);
 
         // Обновить список переписок.
         const favTalksReload = workEl.querySelector('[data-slot="fav-talks-reload"]');
@@ -10258,6 +10296,100 @@
 
         chatBind();
         peopleShow(refresh);
+        // Пул инициативы — третья колонка той же вкладки. ⚠ Грузим **вместе с
+        // диалогами**, а не по щелчку: колонка видна всегда, и пустая до первого
+        // нажатия она читалась бы как «пул пуст».
+        initiativeLoad();
+    }
+
+    // ── Пул инициативы: чем вернуться к затихшему разговору ──────────────────
+    //
+    // ⚠⚠ **Набирать карточки пока некому** — круга инициативы ещё нет. Колонка и
+    // ручки заведены заранее, и пустоту объясняет **сервер** (`_why`): своя копия
+    // объяснения на странице разошлась бы с ним в день, когда круг появится.
+    let initiativePool = [];
+
+    async function initiativeLoad() {
+        const box = slot('initiative-list');
+        if (!box || !siteId()) return;
+
+        let answer;
+        try {
+            answer = await getData(`${BASE}/api/dating/chat-initiative`
+                + `?site_id=${siteId()}`
+                + `&profile_id=${openId || 0}`);
+        } catch (e) {
+            box.innerHTML = `<div class="talk-load bad">Пул не пришёл: ${esc(e.message)}</div>`;
+
+            return;
+        }
+
+        initiativePool = answer.result || [];
+        const пул = Number((answer.answer || {}).pool || 0);
+
+        const count = slot('initiative-count');
+        if (count) count.textContent = `в пуле: ${пул}`;
+
+        // ⚠ Причина пустоты — **текстом от сервера**, а не «пусто». Молчащая
+        // колонка без объяснения читается как поломка: человек не знает, набор
+        // молчит, настройка снята или сломалось.
+        if (!initiativePool.length) {
+            const почему = String((answer.answer || {}).why || '');
+            box.innerHTML = `<div class="talk-load">${esc(почему || 'Пул пуст.')}</div>`;
+
+            return;
+        }
+
+        box.innerHTML = initiativePool.map((one, index) =>
+            initiativeCard(one, index)).join('');
+        initiativeBind(box);
+    }
+
+    // Карточка пула. ⚠ Тем же видом, что карточки инвайтов и писем
+    // (`mail-card`): три пула стоят на соседних вкладках, и три разных вида одной
+    // по сути вещи человеку пришлось бы разгадывать заново.
+    function initiativeCard(one, index) {
+        const sent = one.status !== 'draft';
+
+        return `<div class="mail-card${sent ? ' sent' : ''}" data-index="${index}"`
+            + ` data-uid="${esc(one.uid || '')}">`
+            + '<span class="mail-card-acts">'
+            + (sent ? ''
+                : `<button type="button" class="mail-card-drop" data-index="${index}"`
+                + ' title="Убрать из пула">×</button>')
+            + '</span>'
+            + `<span class="mail-card-who">${esc(one.profile_name || '—')} `
+            + `<span class="to">→ ${esc(one.name || one.uid)}${liveDot(one)}`
+            + '</span></span>'
+            + `<span class="mail-card-body">${esc(one.body)}</span>`
+            // ⚠ Который это заход к молчащему — на карточке: предел задан
+            // настройкой сайта, и без номера непонятно, близко ли он.
+            + (Number(one.try_no) > 1
+                ? `<span class="mail-card-sent">заход ${esc(one.try_no)}</span>` : '')
+            + (one.status === 'draft' && one.error
+                ? `<span class="mail-card-fail" title="${esc(one.error)}">`
+                + `не ушло: ${esc(one.error)}</span>`
+                : '')
+            + '</div>';
+    }
+
+    function initiativeBind(box) {
+        box.querySelectorAll('.mail-card-drop').forEach(el =>
+            el.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const one = initiativePool[Number(el.dataset.index)];
+                if (!one) return;
+
+                try {
+                    await deleteData(`${BASE}/api/dating/chat-initiative/${one.id}`);
+                } catch (err) {
+                    showNotification(err.message, 'error');
+
+                    return;
+                }
+
+                initiativeLoad();
+            }));
     }
 
     // Одна сторона разговора: лицо, имя, номер на сайте.
