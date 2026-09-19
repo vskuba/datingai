@@ -260,3 +260,66 @@ class TestTheColumn:
         общая = общая[:общая.index('}')]
 
         assert общая.count('minmax') == 2, 'общую раскладку тронули — сломает соседей'
+
+
+class TestTheColumnKeepsUp:
+    """⚠⚠ Пул живёт своей жизнью, и колонка обязана за ним поспевать.
+
+    Карточку уносит отправка или чистка пулов, когда у анкеты кончается смена
+    (`pool.py`). Человек в этот момент смотрит на список, набранный минуту назад.
+
+    Поймано на проде: у Oksana кончилась смена в 21:01, чистка убрала 105
+    черновиков вместе с карточкой #3, а колонка её показывала — и «×» отвечал
+    «карточки #3 нет» про то, что человек видит на экране.
+    """
+
+    def _page(self) -> str:
+        import pathlib
+
+        корень = pathlib.Path(__file__).resolve().parents[1]
+
+        return (корень / 'data/uvicorn/template/admin/dating/profile.html'
+                ).read_text(encoding='utf-8')
+
+    def test_the_pool_is_reread_on_a_timer(self):
+        """⚠ Тем же кругом, что пулы инвайтов и писем: их наполняет воркер."""
+        page = self._page()
+        круг = page[page.index('const POOL_IDLE_MS'):]
+        круг = круг[:круг.index('}, POOL_IDLE_MS);')]
+
+        assert 'initiativeLoad()' in круг, 'колонка не перечитывается сама'
+
+    def test_the_chat_timer_is_not_enough(self):
+        """⚠ Круг чата сюда не годится: он стоит при невыбранной анкете, а диалоги
+        сайта смотрят как раз без выбора."""
+        page = self._page()
+        чат = page[page.index("if (workTab === 'chat') chatLoad();") - 200:]
+        чат = чат[:чат.index('}, LOG_MS);')]
+
+        assert '!openId' in чат, 'условие круга чата изменилось — проверьте вывод'
+
+    def test_a_vanished_card_is_not_an_error(self):
+        """⚠⚠ «Карточки нет» — рассинхрон, а не отказ: цель человека достигнута."""
+        page = self._page()
+        # ⚠ Ищем **обработчик пула инициативы**, а не первое вхождение `mail-card-drop`:
+        # тем же классом подписана кнопка у трёх соседних пулов, и первое совпадение
+        # приходится на общее правило CSS.
+        блок = page[page.index('function initiativeBind('):]
+        блок = блок[:блок.index('\n    }')]
+
+        assert 'err.status === 404' in блок, \
+            'исчезнувшая карточка всё ещё показывается красной ошибкой'
+        assert 'initiativeLoad();' in блок, 'список после отказа не перечитывается'
+
+    def test_the_status_code_reaches_the_page(self):
+        """⚠ Код ответа — полем ошибки, а не только в тексте.
+
+        Разбирать текст вместо кода — примета, которая рассыплется от первой же
+        правки формулировки в роутере.
+        """
+        import pathlib
+
+        корень = pathlib.Path(__file__).resolve().parents[1]
+        api = (корень / 'data/uvicorn/public/js/api.js').read_text(encoding='utf-8')
+
+        assert 'error.status = response.status' in api
