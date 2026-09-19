@@ -147,12 +147,23 @@ class TestGuardStandsInBothPaths:
         assert result['offline'] is True, 'отказ выдан за ошибку, а это состояние'
         assert not runs, 'сценарий погнали ради сообщения, которое некому доставить'
 
-    async def test_answer_does_not_ask_the_agent_when_offline(self, monkeypatch, redis):
-        """Автоответ не спрашивает агента, если собеседника нет в сети.
+    async def test_answer_writes_but_does_not_send_when_offline(self, monkeypatch, redis):
+        """Нет в сети — ответ **пишется**, но не уходит.
 
-        ⚠ Проверка стоит до `_agent_ask`: ответ LLM стоит денег, а отправить его
-        будет некому. Прежде порядок был обратный — спрашивали, получали ответ и
-        только потом узнавали от сайта, что собеседник вышел.
+        ## ⚠⚠ Правило переменилось, и нарочно
+
+        Прежде проверка стояла **до** `_agent_ask`: нет собеседника — не платим за
+        LLM. Экономно, но у этого была цена. В панели пусто: «ответ готовится» не
+        отличалось от «ничего не происходит». А вернувшийся собеседник ждал ещё
+        круг и десяток секунд на сочинение.
+
+        Теперь текст пишется сразу и лежит черновиком (`chat_reply`), а наружу не
+        уходит ничего. Деньги на LLM тратятся ровно раз — при следующем заходе
+        готовый текст берут из пула, а не сочиняют снова
+        (`test_chat_reply_draft.py`).
+
+        ⚠ Что осталось прежним и проверяется здесь же: **отправки нет**. Сайт либо
+        отклонит сообщение, либо примет его в пустоту.
         """
         from src.dating import answer
 
@@ -163,11 +174,13 @@ class TestGuardStandsInBothPaths:
         # сайта (`answer._panel_fresh`), и заглушка без него ловила бы `TypeError`
         # вместо проверки правила.
         async def _waiting(profile_id, limit, only, lead, panel_fresh=0):
-            return [{'sender_uid': UID, 'sender_name': 'Semen',
+            # ⚠ `id` — повод написать: по нему ищется и кладётся черновик
+            # ответа (`chat_reply.message_id`).
+            return [{'id': 1, 'sender_uid': UID, 'sender_name': 'Semen',
                      'text': 'вопрос', 'direction': 'in'}]
 
         async def _ask(agent_id, question, language, profile=None,
-                   history='', uid=''):
+                   history='', uid='', anyway=False):
             asked.append(question)
 
             return ('ответ', '')
@@ -190,9 +203,10 @@ class TestGuardStandsInBothPaths:
         result = await answer.answer_run(
             {'id': PROFILE_ID, 'site_id': SITE, 'role': 'lady'}, {}, agent_id=1, limit=5)
 
-        assert not asked, 'агента спросили ради ответа, который некому отправить'
-        assert not sent
-        assert result['offline'] == 1, 'пропуск не посчитан'
+        assert asked, 'агента не спросили — черновику взяться неоткуда'
+        assert not sent, 'ответ ушёл человеку, которого нет в сети'
+        assert result['drafted'] == 1, 'ответ не лёг в пул'
+        assert result['offline'] == 1, 'пропуск отправки не посчитан'
 
     async def test_answer_works_when_online(self, monkeypatch, redis):
         """Обратная сторона: в сети — спрашиваем и отправляем.
@@ -209,11 +223,13 @@ class TestGuardStandsInBothPaths:
         # сайта (`answer._panel_fresh`), и заглушка без него ловила бы `TypeError`
         # вместо проверки правила.
         async def _waiting(profile_id, limit, only, lead, panel_fresh=0):
-            return [{'sender_uid': UID, 'sender_name': 'Semen',
+            # ⚠ `id` — повод написать: по нему ищется и кладётся черновик
+            # ответа (`chat_reply.message_id`).
+            return [{'id': 1, 'sender_uid': UID, 'sender_name': 'Semen',
                      'text': 'вопрос', 'direction': 'in'}]
 
         async def _ask(agent_id, question, language, profile=None,
-                   history='', uid=''):
+                   history='', uid='', anyway=False):
             asked.append(question)
 
             return ('ответ', '')

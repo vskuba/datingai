@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
+from src.dating.chat_reply import chat_reply_pending
 from src.dating.json_column import json_column_load
 from src.dating.online import online_check
 from src.dating.profile_link import profile_link
@@ -68,6 +69,31 @@ async def profile_view_messages(profile_id: int, uid: str = '', limit: int = 30,
             f'FROM message WHERE profile_id = %s{where} '
             f'ORDER BY created_at DESC, id DESC LIMIT {limit}', tuple(params))
         rows = await db.fetchall()
+
+    rows = [dict(row) for row in (rows or [])]
+
+    # ⚠⚠ **Ждущий черновик — в конце, и только при открытом диалоге.**
+    #
+    # Ответ уже написан, но собеседника нет в сети, и круг держит текст до его
+    # возвращения. Не показать его значит показать пустоту там, где идёт работа —
+    # ровно тот вопрос, с которого черновики и начались: «почему ответа не видно?».
+    #
+    # ⚠ **Время ему не ставим, и место — конец.** Поставь мы `created_at`, строка
+    # встала бы **между** репликами и читалась бы как отправленная: будто ответ
+    # ушёл, а собеседник продолжил, не заметив. У писем на этом уже обожглись
+    # (`mail_reply_thread`), и правило здесь то же — разговор это сказанное, а
+    # черновика никто не слышал.
+    #
+    # ⚠ Без `uid` — не показываем: там вся переписка учётки вперемешку, и место
+    # «в конце» ничего не значит.
+    if str(uid or '').strip():
+        # Список уходит свежими сверху, поэтому ждущее кладём **в начало**:
+        # страница переворачивает его перед показом.
+        rows[:0] = [{'id': 0, 'sender_uid': str(uid).strip(), 'sender_name': '',
+                     'text': str(one['body']), 'direction': 'out', 'is_read': 1,
+                     'answer_silent_at': None, 'created_at': None,
+                     'pending': True, 'error': str(one.get('error') or '')}
+                    for one in await chat_reply_pending(int(profile_id), str(uid).strip())]
 
     return {'result': rows}
 

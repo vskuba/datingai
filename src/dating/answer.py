@@ -48,6 +48,8 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_chat_ask
 from src.dating.log import log_write
 from src.dating.talk_history import talk_history_text
+from src.dating.chat_reply import (chat_reply_failed, chat_reply_put,
+                                   chat_reply_sent, chat_reply_waiting)
 from src.dating.online import online_check
 from src.dating.send import send_message
 
@@ -87,6 +89,12 @@ ANSWER_PANEL_FRESH_SEC = 24 * 3600
 # потому что число правят, когда ответы перестали приходить.
 ANSWER_PANEL_FRESH_SETTING = 'chat_answer_panel_fresh'
 
+# Сколько первых реплик пары обязаны получить ответ — настройка сайта и её
+# умолчание. ⚠ Судья у соседа вправе промолчать, и обычно это верно; но в
+# начале разговора молчание обрывает то, что мы сами и начали инвайтом.
+ANSWER_ANYWAY_FIRST_SETTING = 'chat_answer_anyway_first'
+ANSWER_ANYWAY_FIRST_DEFAULT = 5
+
 # Что сказать агенту, когда собеседник молчит. Это не текст сообщения — это
 # вопрос агенту, а сочиняет он сам.
 ANSWER_NUDGE_PROMPT = ('Собеседница не ответила на последнее сообщение. '
@@ -112,7 +120,11 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
     Returns:
         dict: `asked` — сколько раз спросили агента, `sent` — сколько ответов
         ушло, `silent` — сколько раз агент промолчал, `offline` — сколько
-        собеседников вышли из чата, `errors` — что не вышло.
+        собеседников вышли из чата, `drafted` — сколько ответов написано
+        впрок, `errors` — что не вышло.
+
+    ⚠ `asked` и `sent` больше не равны даже в удачном заходе: ответ пишется
+    одним кругом, а уходит другим — тем, что застал собеседника в сети.
     """
     profile_id = int(profile['id'])
     # Имя анкеты для журнала: строки всех анкет там вперемешку, и «→ Semen» без
@@ -123,16 +135,21 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
     lead = str(profile.get('role') or '') == ANSWER_ROLE_LEAD
     waiting = await _waiting_find(profile_id, limit, only, lead,
                                   await _panel_fresh(profile))
-
     if not waiting:
         await log_write(profile_id, 'info',
                                'Продолжать разговор пока не нужно' if lead
                                else 'Неотвеченных сообщений нет')
-        return {'asked': 0, 'sent': 0, 'silent': 0, 'offline': 0, 'errors': []}
+        return {'asked': 0, 'sent': 0, 'silent': 0, 'offline': 0,
+                'drafted': 0, 'errors': []}
 
     await log_write(profile_id, 'info', f'Поводов написать: {len(waiting)}')
 
-    asked = sent = silent = offline = 0
+    # ⚠ Настройка сайта одна на все пары захода — спрашиваем её раз, и **после**
+    # проверки на пустоту: круг обходит все анкеты раз в минуту, и почти всякий
+    # заход пустой. Лишний запрос в базу на каждую из них ни за чем.
+    anyway_first = await _anyway_first(int(profile.get('site_id') or 0))
+
+    asked = sent = silent = offline = drafted = 0
     errors = []
 
     for row in waiting:
@@ -143,79 +160,104 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
         name = str(row['sender_name'] or '').strip()
         who = f'{name} {uid}' if name else f'#{uid}'
 
-        # ⚠ **Собеседника нет в сети — не спрашиваем агента вовсе.**
+        # ⚠⚠ **Черновик уже есть — значит текст написан, и платить снова не за
+        # что.** В этом вся затея: собеседник появился, а ответ ему уже лежит.
+        # Прежде он ждал ещё круг и десяток секунд на LLM.
         #
-        # Проверка стоит **до** `_agent_ask`, и это главное: ответ LLM стоит денег,
-        # а отправить его будет некому — сайт либо отклонит сообщение, либо примет
-        # в пустоту. Прежде порядок был обратный: спрашивали, получали ответ и
-        # только потом узнавали от сайта, что собеседник вышел.
+        # Спрашиваем **по поводу** (`row['id']`), а не по паре: написал он снова —
+        # повод другой, черновика по нему нет, и мы сочиним свежий ответ, а не
+        # отправим заготовленный на позавчерашнее.
+        ready = await chat_reply_waiting(profile_id, int(row['id']))
+
+        if not ready:
+            # Тишина — это не реплика: агенту про неё говорим прямо, иначе он
+            # ответит на давнее сообщение, как будто оно только что пришло.
+            question = (str(row['text']) if row.get('direction') == 'in'
+                        else ANSWER_NUDGE_PROMPT)
+
+            # Попытку отмечаем до вопроса, а не после: прогон длится минуты, и
+            # круг успел бы начаться заново, спросив агента о том же во второй раз.
+            await _tried_mark(profile_id, uid)
+
+            # ⚠⚠ **История уезжает агенту переменной, а не живёт сессией у
+            # соседа.** Прежде он видел одну строку — эту самую реплику: шаг
+            # `session_messages` берёт историю по `session_uuid`, которого мы не
+            # передавали, и в его базе на каждый вызов рождалась пустая сессия.
+            #
+            # Держать сессию у него и не нужно: запрос к LLM прошлого не помнит, а
+            # история у нас уже есть — в `message`, вместе с перенесёнными
+            # инвайтами. Отсюда агент видит разговор целиком: чем он начался и что
+            # человек отвечал вчера (`talk_history.py`).
+            history = await talk_history_text(profile_id, uid)
+
+            # ⚠⚠ «Здесь молчать нельзя» — решаем мы, а не агент. У соседа это
+            # переменная `answer_anyway`: она не отменяет проверку ответа, а
+            # закрывает судье путь молчания (`wf_dating_talk_answer_anyway`).
+            anyway = await _anyway_here(profile_id, uid, anyway_first)
+            answer, error = await _agent_ask(agent_id, question, language, profile,
+                                             history=history, uid=uid,
+                                             anyway=anyway)
+            asked += 1
+            if error:
+                errors.append(f'{who}: {error}')
+                await log_write(profile_id, 'fail',
+                                f'Агент не ответил для {who}: {error}')
+                continue
+
+            if not answer:
+                # ⚠ **Молчание — решение, и его надо запомнить.**
+                #
+                # Прежде ставилась только отметка попытки, а `is_answered`
+                # оставался нулём: значок «нужен ответ» мигал вечно, а круг
+                # спрашивал агента снова каждые пять минут — тот снова молчал, и
+                # молчание стоило денег на LLM в цикле.
+                #
+                # `is_answered` для этого не годится: он означает «мы отправили
+                # ответ», и диалог выглядел бы закрытым без единого нашего слова.
+                # Поэтому своя метка — она же и время, для показа в переписке.
+                silent += 1
+                await _silent_mark(profile_id, uid)
+                await log_write(profile_id, 'info',
+                                f'{me} → {who}: агент решил не отвечать')
+                continue
+
+            reply_id = await chat_reply_put(int(profile.get('site_id') or 0),
+                                            profile_id, int(row['id']), uid,
+                                            name, answer)
+            drafted += 1
+            ready = {'id': reply_id, 'body': answer}
+
+        # ⚠ **Отправляем только тому, кто в сети.** Сайт либо отклонит сообщение,
+        # либо примет его в пустоту, а повод написать никуда не денется: черновик
+        # лежит и уйдёт, как только человек вернётся.
         #
-        # Пометки попытки тоже нет: он вернётся, и тогда ответ уйдёт. Сообщение
-        # остаётся неотвеченным, а не теряется.
-        away = online_check(int(profile.get('site_id') or 0), uid)
-        if not away['online']:
+        # Проверка стоит **после** сочинения, а не до, и это перемена: прежде
+        # офлайн означал «даже не спрашиваем агента». Текст теперь готовится
+        # заранее — ради этого всё и делалось.
+        if not online_check(int(profile.get('site_id') or 0), uid)['online']:
+            # ⚠ В журнал — молча. Повод тот же, текст тот же, круг ходит раз в
+            # минуту: за ночь это тысяча одинаковых строк, в которых утонуло бы
+            # всё остальное. Ждущий черновик и так виден в разговоре.
             offline += 1
-            await log_write(profile_id, 'info',
-                                   f'{who}: нет в сети, отвечу когда вернётся')
             continue
 
-        # Тишина — это не реплика: агенту про неё говорим прямо, иначе он ответит
-        # на давнее сообщение, как будто оно только что пришло.
-        question = (str(row['text']) if row.get('direction') == 'in'
-                    else ANSWER_NUDGE_PROMPT)
-
-        # Попытку отмечаем до вопроса, а не после: прогон длится минуты, и круг
-        # успел бы начаться заново, спросив агента о том же во второй раз.
-        await _tried_mark(profile_id, uid)
-
-        # ⚠⚠ **История уезжает агенту переменной, а не живёт сессией у соседа.**
-        # Прежде он видел одну строку — эту самую реплику: шаг `session_messages`
-        # берёт историю по `session_uuid`, которого мы не передавали, и в его
-        # базе на каждый вызов рождалась пустая сессия.
-        #
-        # Держать сессию у него и не нужно: запрос к LLM прошлого не помнит, а
-        # история у нас уже есть — в `message`, вместе с перенесёнными инвайтами.
-        # Отсюда агент видит разговор целиком: чем он начался и что человек
-        # отвечал вчера (`talk_history.py`).
-        history = await talk_history_text(profile_id, uid)
-
-        answer, error = await _agent_ask(agent_id, question, language, profile,
-                                         history=history, uid=uid)
-        asked += 1
-        if error:
-            errors.append(f'{who}: {error}')
-            await log_write(profile_id, 'fail', f'Агент не ответил для {who}: {error}')
-            continue
-
-        if not answer:
-            # ⚠ **Молчание — решение, и его надо запомнить.**
-            #
-            # Прежде ставилась только отметка попытки, а `is_answered` оставался
-            # нулём: значок «нужен ответ» мигал вечно, а круг спрашивал агента
-            # снова каждые пять минут — тот снова молчал, и молчание стоило денег
-            # на LLM в цикле.
-            #
-            # `is_answered` для этого не годится: он означает «мы отправили ответ»,
-            # и диалог выглядел бы закрытым без единого нашего слова. Поэтому своя
-            # метка — она же и время, для показа в окне переписки.
-            silent += 1
-            await _silent_mark(profile_id, uid)
-            await log_write(profile_id, 'info',
-                                   f'{me} → {who}: агент решил не отвечать')
-            continue
-
+        answer = str(ready['body'])
         result = await send_message(profile, presence, uid, answer)
         if result['ok']:
             sent += 1
+            await chat_reply_sent(int(ready['id']))
             await log_write(profile_id, 'out', f'{me} → {who}: «{answer[:300]}»')
         elif result.get('offline'):
-            # Собеседник вышел из чата. Ошибкой это не считаем и пометку не
-            # ставим: он вернётся, и тогда ответ уйдёт — сообщение остаётся
-            # неотвеченным, а не теряется.
+            # Собеседник вышел из чата между проверкой и отправкой. Ошибкой это не
+            # считаем: он вернётся, и черновик уйдёт — теперь уже без нового
+            # вызова LLM.
             offline += 1
             await log_write(profile_id, 'info', f'{who}: нет в чате, отвечу когда вернётся')
         else:
             errors.append(f"{who}: {result['error']}")
+            # ⚠ Черновик остаётся в пуле с причиной, а не хоронится: повод написать
+            # жив, и следующий круг повторит попытку тем же текстом.
+            await chat_reply_failed(int(ready['id']), result['error'])
             # ⚠ Текст и при отказе: без него не видно, что именно не ушло, и
             # нельзя решить — повторять или сообщение всё-таки дошло.
             await log_write(
@@ -224,15 +266,16 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
 
     await log_write(
         profile_id, 'ok',
-        f'Ответы: спрошено {asked}, отправлено {sent}, промолчал {silent}, '
-        f'нет в чате {offline}, ошибок {len(errors)}')
+        f'Ответы: спрошено {asked}, написано {drafted}, отправлено {sent}, '
+        f'промолчал {silent}, нет в чате {offline}, ошибок {len(errors)}')
 
-    return {'asked': asked, 'sent': sent, 'silent': silent, 'offline': offline, 'errors': errors}
+    return {'asked': asked, 'sent': sent, 'silent': silent, 'offline': offline,
+            'drafted': drafted, 'errors': errors}
 
 
 async def _agent_ask(agent_id: int, question: str, language: str,
                      profile: dict, history: str = '',
-                     uid: str = '') -> tuple[str, str]:
+                     uid: str = '', anyway: bool = False) -> tuple[str, str]:
     """Спрашивает агента в RhapsodyAi. Возвращает (ответ, ошибка).
 
     Пустой ответ ошибкой не считается — он значим сам по себе и разбирается выше:
@@ -265,6 +308,10 @@ async def _agent_ask(agent_id: int, question: str, language: str,
                        # та же беда, от которой у девушек стоит `girl_id`.
                        'talk_history': str(history or ''),
                        'companion_uid': str(uid or ''),
+                       # ⚠ Строкой '1'/'0': у соседа `%if%` считает ложными
+                       # пустое, '0' и отсутствие (`ai_workflow_variable_truthy`),
+                       # а `False` превратился бы в 'False' — то есть в истину.
+                       'answer_anyway': '1' if anyway else '0',
                        **agent_vars(profile, card or {})})
     except RhapsodyError as e:
         return '', str(e)
@@ -300,6 +347,58 @@ def _me_name(profile: dict) -> str:
 def _only_parse(value) -> list:
     """Список тех, кому разрешено отвечать. Пусто — ограничения нет."""
     return [part.strip() for part in str(value or '').replace(';', ',').split(',') if part.strip()]
+
+
+async def _anyway_first(site_id: int) -> int:
+    """Сколько первых реплик пары обязаны получить ответ. Настройка сайта.
+
+    Ноль — выключено. Сбой чтения даёт умолчание: обязательный ответ в начале
+    разговора — то поведение, ради которого настройку и заводили, и тихо терять
+    его из-за сбоя чтения хуже, чем лишний раз ответить.
+    """
+    from src.uvicorn.routers.dating.site_ import site_seconds
+
+    try:
+        return max(0, int(await site_seconds(int(site_id or 0),
+                                             ANSWER_ANYWAY_FIRST_SETTING)))
+    except Exception as e:
+        logger_info(f'[dating] порог обязательного ответа не прочитался: {e}')
+
+        return ANSWER_ANYWAY_FIRST_DEFAULT
+
+
+async def _anyway_here(profile_id: int, uid: str, first: int) -> bool:
+    """Обязателен ли ответ этому человеку прямо сейчас.
+
+    ## ⚠⚠ Считаем **его** реплики, а не наши
+
+    Вопрос настройки — «сколько первых реплик разговора держим обязательными», и
+    мерить его надо тем, что делает он: наших сообщений в паре может быть сколько
+    угодно (инвайт, потом ещё инвайт), а разговором это станет с первого его слова.
+
+    ⚠ Считается **по паре**. Один и тот же мужчина, отвечающий двум нашим девушкам,
+    начинает два разговора, и каждому свой счёт: у второй девушки его первая
+    реплика — тоже первая.
+
+    ⚠ Сбой чтения отвечает «не обязателен»: обязательность — усиление, и включать
+    её вслепую значило бы слать ответ там, где судья счёл бы его лишним.
+    """
+    if int(first or 0) <= 0:
+        return False
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT COUNT(*) AS n FROM message'
+                " WHERE profile_id = %s AND sender_uid = %s AND direction = 'in'",
+                (int(profile_id), str(uid or '')))
+            row = await db.fetchone()
+    except Exception as e:
+        logger_info(f'[dating] счёт первых реплик не сложился: {e}')
+
+        return False
+
+    return int((row or {}).get('n') or 0) <= int(first)
 
 
 async def _panel_fresh(profile: dict) -> int:
@@ -395,10 +494,24 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool,
            " AND (m.source <> 'panel' "
            "      OR m.created_at > NOW() - INTERVAL %s SECOND) ")
 
+    # ⚠⚠ **Лежащий черновик снимает выдержку повтора, и без этого он бы залёживался.**
+    #
+    # Выдержка (`answer_tried_at`) сторожит **вызовы LLM**: агента про то же
+    # сообщение не спрашивают чаще, чем раз в `ANSWER_RETRY_SEC`. Но у пары с
+    # готовым черновиком спрашивать уже нечего — там осталась одна отправка, и она
+    # бесплатна.
+    #
+    # Оставь мы выдержку общей, вышло бы обидно: текст написан, собеседник в сети,
+    # а круг не берёт пару в работу ещё пять минут — ровно та задержка, ради
+    # устранения которой черновики и заводились.
+    draft_ready = (" OR EXISTS (SELECT 1 FROM chat_reply r"
+                   "             WHERE r.message_id = m.id AND r.status = 'draft')")
+
     fresh = ("m.direction = 'in' AND m.is_answered = 0 AND m.answer_silent_at IS NULL "
              + age +
              " AND (m.answer_tried_at IS NULL "
-             "      OR m.answer_tried_at < NOW() - INTERVAL %s SECOND)")
+             "      OR m.answer_tried_at < NOW() - INTERVAL %s SECOND"
+             + draft_ready + ')')
 
     reason = f'({fresh})' if not lead else \
         f'({fresh} OR m.created_at < NOW() - INTERVAL %s SECOND)'
@@ -440,7 +553,11 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool,
     # различаем по `id` — внутри одного времени он снова означает порядок.
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT m.sender_uid, m.sender_name, m.text, m.direction FROM message m '
+            # ⚠ `m.id` — **повод написать**, и он уезжает в черновик ответа
+            # (`chat_reply.message_id`). Ключ черновика стоит на нём: написал
+            # собеседник снова — повод новый, и прежний черновик в разговор уже не
+            # идёт. Без номера протухание пришлось бы сверять по времени руками.
+            'SELECT m.id, m.sender_uid, m.sender_name, m.text, m.direction FROM message m '
             '  JOIN (SELECT sender_uid, MAX(created_at) AS last_at FROM message '
             '         WHERE profile_id = %s GROUP BY sender_uid) t '
             '    ON t.sender_uid = m.sender_uid AND t.last_at = m.created_at '
