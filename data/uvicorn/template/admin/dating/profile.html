@@ -5022,6 +5022,15 @@
         }
 
         // Выключатель автоответа — тоже узел шаблона.
+        const chatInitiative = workEl.querySelector('[data-slot="chat-initiative-on"]');
+        if (chatInitiative) chatInitiative.addEventListener('change',
+            () => chatInitiativeSet(chatInitiative));
+
+        const chatInitiativeSend = workEl.querySelector(
+            '[data-slot="chat-initiative-send-on"]');
+        if (chatInitiativeSend) chatInitiativeSend.addEventListener('change',
+            () => chatInitiativeSet(chatInitiativeSend, true));
+
         const chatAnswer = workEl.querySelector('[data-slot="chat-answer-on"]');
         if (chatAnswer && CAN_EDIT_SITE) {
             chatAnswer.addEventListener('change', () => chatAnswerSet(chatAnswer));
@@ -5657,7 +5666,10 @@
         if (chatTab === 'sent') inviteSentShow();
         // ⚠ Выключатель автоответа живёт в полосе подвкладок и виден только на
         // «Диалогах» — грузим его там же, где показываем.
-        if (chatTab === 'talk') chatAnswerLoad();
+        if (chatTab === 'talk') {
+            chatAnswerLoad();
+            chatInitiativeLoad();
+        }
         if (chatTab === 'block') inviteBlockShow();
     }
 
@@ -5695,6 +5707,87 @@
 
         chatAnswerOn.set(site, on);
         chatAnswerPaint();
+    }
+
+    // ── Инициатива: девушка пишет первой ─────────────────────────────────────
+    //
+    // ⚠ Устроено тем же видом, что автоответ рядом: занятия соседние, стоят в
+    // одной полосе, и два разных устройства человеку пришлось бы разгадывать.
+    // ⚠ Два флага в одной карте: ручка отдаёт оба разом, и хранить их врозь
+    // значило бы два запроса за одним ответом.
+    const chatInitiativeOn = new Map();
+
+    async function chatInitiativeLoad() {
+        const site = siteId();
+        if (!site) return;
+
+        if (chatInitiativeOn.has(site)) {
+            chatInitiativePaint();
+
+            return;
+        }
+
+        let got = {make: false, send: false};
+        try {
+            const answer = (await getData(
+                `${BASE}/api/dating/site/${site}/chat-initiative`)).result;
+            got = {make: !!answer.chat_initiative_on,
+                   send: !!answer.chat_initiative_send_on};
+        } catch (e) {
+            // Молча и снятыми: круг пишет живым людям первым, и снятая галочка —
+            // верная сторона ошибки.
+            got = {make: false, send: false};
+        }
+
+        if (siteId() !== site) return;
+
+        chatInitiativeOn.set(site, got);
+        chatInitiativePaint();
+    }
+
+    function chatInitiativePaint() {
+        const got = chatInitiativeOn.get(siteId()) || {make: false, send: false};
+
+        const make = slot('chat-initiative-on');
+        if (make) {
+            make.checked = !!got.make;
+            make.disabled = !CAN_EDIT_SITE;
+        }
+
+        const send = slot('chat-initiative-send-on');
+        if (send) {
+            send.checked = !!got.send;
+            send.disabled = !CAN_EDIT_SITE;
+        }
+    }
+
+    // ⚠ Один обработчик на оба выключателя: различает их `send`. Две почти
+    // одинаковые функции разошлись бы в первой же правке — так уже было с лентами.
+    async function chatInitiativeSet(box, send = false) {
+        const site = siteId();
+        const on = box.checked;
+        const было = chatInitiativeOn.get(site) || {make: false, send: false};
+        box.disabled = true;
+        try {
+            await putData(
+                `${BASE}/api/dating/site/${site}/`
+                + (send ? 'chat-initiative-send-on' : 'chat-initiative-on'),
+                send ? {chat_initiative_send_on: on} : {chat_initiative_on: on});
+            chatInitiativeOn.set(site, send ? {...было, send: on}
+                                            : {...было, make: on});
+            showNotification(
+                send
+                    ? (on ? 'Карточки инициативы будут уходить живым людям'
+                          : 'Отправка инициативы выключена')
+                    : (on ? 'Круг начнёт набирать пул инициативы'
+                          : 'Набор инициативы выключен'),
+                on ? 'success' : 'info');
+        } catch (e) {
+            box.checked = !on;
+            showNotification('Не переключилось: ' + e.message, 'error');
+        } finally {
+            box.disabled = !CAN_EDIT_SITE;
+        }
     }
 
     function chatAnswerPaint() {

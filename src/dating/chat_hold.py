@@ -55,6 +55,8 @@ from src.dating.favorite_round import (FAVORITE_ROUND_TICK_SEC,
                                               favorite_round_run)
 from src.dating.invite_round import (INVITE_ROUND_TICK_SEC,
                                             invite_round_run)
+from src.dating.initiative_round import (INITIATIVE_ROUND_TICK_SEC,
+                                         initiative_round_run)
 from src.dating.invite_send_round import (INVITE_SEND_ROUND_TICK_SEC,
                                                  invite_send_round_run)
 from src.dating.proxy_round import (PROXY_ROUND_TICK_SEC,
@@ -219,6 +221,12 @@ async def chat_hold_run(seconds: float) -> dict:
     # чате) и свои пауза с потолком (`invite_send_round.py`).
     invites_out = asyncio.create_task(_invite_send_loop(deadline))
 
+    # Инициатива: девушка пишет первой, когда разговор затих. ⚠ **Один круг на
+    # набор и отправку**, в отличие от инвайтов: там пул читают глазами перед
+    # отправкой — полсотни реплик незнакомым, — а здесь по карточке на пару в
+    # уже начатый разговор (`initiative_round.py`).
+    first_word = asyncio.create_task(_initiative_loop(deadline))
+
     # Опрос: жив ли вход у анкеты. ⚠ **Не присутствие и не восстановление.** Тот
     # бьёт, чтобы держать в сети, второй чинит упавший вход; этот только
     # спрашивает и записывает — иначе колонка «В сети» показывает то, что записала
@@ -279,6 +287,7 @@ async def chat_hold_run(seconds: float) -> dict:
         revive_talk.cancel()
         invites.cancel()
         invites_out.cancel()
+        first_word.cancel()
         asking.cancel()
         panel.cancel()
         proxies.cancel()
@@ -292,8 +301,14 @@ async def chat_hold_run(seconds: float) -> dict:
         # ⚠ Ждать надо **все** отменённые задачи, а не часть: не дождавшаяся
         # закрывается уже после выхода, и в логе остаётся хвост из «Task was
         # destroyed but it is pending». `revive_talk` сюда прежде не попадал.
+        #
+        # ⚠⚠ И не попадали ещё четыре — `invites_out`, `asking`, `proxies`,
+        # `swept`: их отменяли, но не дожидались. Список выше и список здесь
+        # расходились молча, потому что ничего, кроме хвоста в журнале, это не
+        # ломает. Теперь они совпадают, и новую задачу надо дописывать в оба.
         await _service_wait(beat, answer, revive, chat, sched, mailing, online,
                             tmpl, live, post, answers, letters, stars, invites,
+                            invites_out, first_word, asking, proxies, swept,
                             revive_talk, panel)
 
     saved = sum(counters.values())
@@ -606,6 +621,21 @@ async def _invite_send_loop(deadline: float) -> None:
     """
     await round_offset_loop(deadline, INVITE_SEND_ROUND_TICK_SEC,
                                    'отправки инвайтов', invite_send_round_run)
+
+
+async def _initiative_loop(deadline: float) -> None:
+    """Круг инициативы: девушка пишет первой, когда разговор затих.
+
+    Тик — минута, как у автоответа: сроки инициативы считаются десятками минут, и
+    чаще смотреть нечего.
+
+    ⚠ **Расписания не спрашивает, а смещение пояса ему не нужно.** Занятие идёт
+    по анкетам **в сети**, а в сеть их водит расписание (`schedule_round`): спящая
+    девушка сюда не попадёт, потому что её `status` не `online`. Второе расписание
+    поверх первого означало бы два ответа на один вопрос.
+    """
+    await round_loop(deadline, INITIATIVE_ROUND_TICK_SEC,
+                     'инициативы', initiative_round_run)
 
 
 async def _status_loop(deadline: float) -> None:

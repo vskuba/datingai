@@ -82,6 +82,19 @@ class DatingSiteChatAnswerOn(BaseModel):
                                                   'живым людям')
 
 
+class DatingSiteChatInitiativeOn(BaseModel):
+    """Пишет ли девушка первой, когда разговор затих."""
+
+    chat_initiative_on: bool = Field(..., description='Инициатива: круг пишет '
+                                                      'живым людям после молчания')
+
+
+class DatingSiteChatInitiativeSendOn(BaseModel):
+    """Уходят ли карточки инициативы живым людям."""
+
+    chat_initiative_send_on: bool = Field(..., description='Отправка инициативы')
+
+
 class DatingSiteTemplateSchedule(BaseModel):
     """Смены, в которые агент пишет новые шаблоны."""
 
@@ -337,6 +350,84 @@ async def site_invite_send_on(site_id: int, payload: DatingSiteInviteSendOn,
 
     return {'result': {'site_id': int(site_id),
                        'invite_send_on': payload.invite_send_on}}
+
+
+@router.get('/{site_id}/chat-initiative', include_in_schema=False)
+async def site_chat_initiative_get(site_id: int,
+                                   user: AuthUser = Depends(auth_required)):
+    """Включена ли инициатива у сайта. Нет строки — выключено, а не 404."""
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT chat_initiative_on, chat_initiative_send_on'
+                         '  FROM site WHERE site_id = %s',
+                         (int(site_id),))
+        row = await db.fetchone()
+
+    return {'result': {
+        'site_id': int(site_id),
+        'chat_initiative_on': bool((row or {}).get('chat_initiative_on')),
+        'chat_initiative_send_on':
+            bool((row or {}).get('chat_initiative_send_on'))}}
+
+
+@router.put('/{site_id}/chat-initiative-on', include_in_schema=False)
+async def site_chat_initiative_on(site_id: int,
+                                  payload: DatingSiteChatInitiativeOn,
+                                  user: AuthUser = Depends(auth_required)):
+    """Включает и выключает круг инициативы.
+
+    ## ⚠⚠ Это не то же, что автоответ
+
+    Тот разрешает **отвечать** — говорить, когда с нами заговорили. Этот разрешает
+    заговорить **первыми**, после молчания, и решение тут другое: ответ человек
+    ждёт, а неожиданный вопрос через час тишины он не ждал.
+
+    ⚠ **Флаг включает круг целиком** — и набор пула, и отправку. У инвайтов их
+    два, потому что там пул читают глазами: полсотни первых реплик незнакомым
+    людям. Здесь по карточке на пару в уже начатый разговор, и делить занятие
+    надвое значило бы просить разрешения дважды.
+
+    ⚠ **Умолчание — снято.** Круг пишет живым людям сам; накат миграции,
+    разрешивший это, был бы худшим из сюрпризов.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO site (site_id, chat_initiative_on) VALUES (%s, %s)'
+            ' ON DUPLICATE KEY UPDATE'
+            ' chat_initiative_on = VALUES(chat_initiative_on)',
+            (int(site_id), 1 if payload.chat_initiative_on else 0))
+        await db.connection.commit()
+
+    return {'result': {'site_id': int(site_id),
+                       'chat_initiative_on': payload.chat_initiative_on}}
+
+
+@router.put('/{site_id}/chat-initiative-send-on', include_in_schema=False)
+async def site_chat_initiative_send_on(
+        site_id: int, payload: DatingSiteChatInitiativeSendOn,
+        user: AuthUser = Depends(auth_required)):
+    """Разрешает и запрещает отправку карточек инициативы.
+
+    ⚠⚠ **Отдельно от набора, и это главное.** Тот копит карточки, этот их
+    отправляет. Порядок работы: поднять набор, прочитать пул глазами, и только
+    потом поднять отправку.
+
+    Инициатива требует такого разделения сильнее прочих занятий: текст сочиняется
+    под тишину, приёмом из жребия — флирт, подколка, чёрный юмор, — и увидеть, что
+    именно агент понял под «подколи по-доброму», надо **до** того, как оно ушло
+    живому человеку.
+
+    ⚠ **Умолчание — снято.**
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO site (site_id, chat_initiative_send_on) VALUES (%s, %s)'
+            ' ON DUPLICATE KEY UPDATE'
+            ' chat_initiative_send_on = VALUES(chat_initiative_send_on)',
+            (int(site_id), 1 if payload.chat_initiative_send_on else 0))
+        await db.connection.commit()
+
+    return {'result': {'site_id': int(site_id),
+                       'chat_initiative_send_on': payload.chat_initiative_send_on}}
 
 
 @router.get('/{site_id}/chat-answer', include_in_schema=False)

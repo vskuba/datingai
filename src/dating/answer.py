@@ -303,7 +303,7 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
 async def _agent_ask(agent_id: int, question: str, language: str,
                      profile: dict, history: str = '',
                      uid: str = '', anyway: bool = False,
-                     name: str = '') -> tuple[str, str]:
+                     name: str = '', initiative: str = '') -> tuple[str, str]:
     """Спрашивает агента в RhapsodyAi. Возвращает (ответ, ошибка).
 
     Пустой ответ ошибкой не считается — он значим сам по себе и разбирается выше:
@@ -345,6 +345,13 @@ async def _agent_ask(agent_id: int, question: str, language: str,
                        # пустое, '0' и отсутствие (`ai_workflow_variable_truthy`),
                        # а `False` превратился бы в 'False' — то есть в истину.
                        'answer_anyway': '1' if anyway else '0',
+                       # ⚠⚠ Инициатива: шаг сочинения меняет задачу с
+                       # «ответь» на «заговори» (`wf_dating_talk_initiative`).
+                       # Приём приходит **готовым** — жребий бросает панель
+                       # (`initiative.py`): «будь разной» модель не понимает,
+                       # и три текста из трёх выходят на один лад.
+                       'make_initiative': '1' if initiative else '0',
+                       'initiative_kind': str(initiative or ''),
                        **agent_vars(profile, card or {})})
     except RhapsodyError as e:
         return '', str(e)
