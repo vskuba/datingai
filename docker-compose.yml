@@ -61,6 +61,22 @@ services:
         condition: service_started
     networks:
       - dating-net
+
+    # ⚠⚠ **Предел на журнал контейнера: без него он растёт без границ.**
+    # На сервере логи Docker занимали 12 ГБ — больше всей базы, — и наш
+    # воркер был самым громким: полтора гигабайта в сутки.
+    #
+    # ⚠ Здесь, а не только в `daemon.json`. Умолчание демона применяется
+    # к новым контейнерам и требует **полного рестарта Docker**, то есть
+    # даунтайма всех контейнеров сервера, включая чужие проекты.
+    # `systemctl reload` (SIGHUP) перечитывает лишь часть опций, и
+    # `log-opts` в неё не входит — проверено пробным контейнером: он
+    # написал 137 МБ в один файл. Своя секция действует сразу.
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
     restart: always
     # Порт слушает **шлюз docker0**, а не петлю и не все адреса.
     #
@@ -99,6 +115,22 @@ services:
         condition: service_started
     networks:
       - dating-net
+
+    # ⚠⚠ **Предел на журнал контейнера: без него он растёт без границ.**
+    # На сервере логи Docker занимали 12 ГБ — больше всей базы, — и наш
+    # воркер был самым громким: полтора гигабайта в сутки.
+    #
+    # ⚠ Здесь, а не только в `daemon.json`. Умолчание демона применяется
+    # к новым контейнерам и требует **полного рестарта Docker**, то есть
+    # даунтайма всех контейнеров сервера, включая чужие проекты.
+    # `systemctl reload` (SIGHUP) перечитывает лишь часть опций, и
+    # `log-opts` в неё не входит — проверено пробным контейнером: он
+    # написал 137 МБ в один файл. Своя секция действует сразу.
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
     restart: always
 
   # ── Свои движки ──────────────────────────────────────────────────────────
@@ -130,6 +162,12 @@ services:
       retries: 20
     networks:
       - dating-net
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     restart: always
 
   dating_redis:
@@ -139,6 +177,12 @@ services:
       - dating_redis_data:/data
     networks:
       - dating-net
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     restart: always
 
   # Веб-морда к своей базе — пункт «Инструменты → phpMyAdmin» в шапке панели.
@@ -155,6 +199,12 @@ services:
         condition: service_healthy
     networks:
       - dating-net
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     restart: always
 
 volumes:
