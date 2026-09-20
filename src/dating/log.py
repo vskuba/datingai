@@ -19,6 +19,17 @@ LOG_TEXT_MAX = 2000
 # а не заменяет переписку.
 LOG_MESSAGE_MAX = 300
 
+# Сколько часов держим журнал. Настройка **сайта**: таблица общая, а срок
+# решает тот, кто ведёт сайт. Трое суток — «что было в пятницу» ещё живой
+# вопрос в понедельник.
+LOG_KEEP_SETTING = 'log_keep_hours'
+LOG_KEEP_DEFAULT = 72
+
+# Пачка удаления и сколько их за заход. ⚠ Десять тысяч проходят за доли
+# секунды; сотня пачек — миллион строк, с запасом на любой затор.
+LOG_SWEEP_BATCH = 10000
+LOG_SWEEP_PASSES = 100
+
 
 async def log_write(profile_id: int, level: str, text: str) -> None:
     """Строка журнала. Не бросает: сбой журнала не должен ронять работу.
@@ -61,3 +72,98 @@ async def log_message_in(profile_id: int, sender: str, name: str, text: str) -> 
         body = body[:LOG_MESSAGE_MAX].rstrip() + '…'
 
     await log_write(profile_id, 'in', f'{who}: {body}')
+
+
+async def log_sweep() -> int:
+    """Убирает записи журнала старше срока сайта. Возвращает, сколько убрано.
+
+    ## ⚠⚠ Зачем
+
+    Журнал растёт **вслед за инвайтами**: каждая отправка пишет строку, и при
+    девяноста тысячах инвайтов в сутки выходит около ста двенадцати тысяч строк —
+    три миллиона в месяц, под три гигабайта в год. Ротации у него не было вовсе:
+    единственное удаление здесь схлопывает подряд идущие повторы.
+
+    ## ⚠ Срок — у сайта, а таблица общая
+
+    В `log` сайта нет, есть анкета; сайт узнаётся через неё. Поэтому чистим
+    посайтно: у каждого свой срок, и строки его анкет живут по нему.
+
+    Осиротевших строк не бывает — внешний ключ с каскадом уносит журнал вместе с
+    анкетой.
+
+    ## ⚠ Режем пачками, а не одним `DELETE`
+
+    Миллион строк одним запросом держит блокировку минутами, а в журнал пишут все
+    круги разом: запись встала бы в очередь за уборкой. Пачка в десять тысяч
+    проходит за доли секунды, и между пачками писатели успевают вклиниться. То же
+    решение и та же причина, что у журнала запросов (`request_sweep`).
+    """
+    from src.uvicorn.routers.dating.site_ import site_seconds
+
+    gone = 0
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT DISTINCT site_id FROM profile')
+            sites = [int(row['site_id']) for row in (await db.fetchall() or [])
+                     if int(row['site_id'] or 0)]
+    except Exception as e:
+        logger_info(f'[dating] сайты для чистки журнала не спросились: {e}')
+
+        return 0
+
+    for site_id in sites:
+        try:
+            # ⚠⚠ **Без `or`**, и это не мелочь. `site_seconds` сама подставляет
+            # умолчание реестра, когда значения нет или оно мусор; `or` поверх неё
+            # превращал бы в умолчание **законный ноль** — то есть «не чистить»
+            # молча становилось бы «чистить через трое суток».
+            #
+            # Поймано тестом на нуле в тот же час, когда уборку писали.
+            hours = int(await site_seconds(site_id, LOG_KEEP_SETTING))
+        except Exception as e:
+            logger_info(f'[dating] срок журнала сайта #{site_id}: {e}')
+
+            continue
+
+        # ⚠ Ноль — законное «не чистить». Подставь мы его в `INTERVAL`, условие
+        # стало бы «создано в будущем», то есть уборка стёрла бы **всё**.
+        if hours <= 0:
+            continue
+
+        try:
+            async with mysql_get_db_async() as db:
+                for _ in range(LOG_SWEEP_PASSES):
+                    # ⚠⚠ **Сначала номера, потом удаление по ним.** MySQL не
+                    # принимает `LIMIT` в многотабличном `DELETE` (ошибка 1064), а
+                    # без `LIMIT` пачки не выйдет: удаление миллиона строк одним
+                    # запросом держит блокировку минутами, пока в журнал пишут все
+                    # круги разом.
+                    #
+                    # Отбор идёт по своему индексу (`idx_log_when`), а удаление —
+                    # по первичному ключу: оба шага дёшевы.
+                    await db.execute(
+                        'SELECT l.id FROM log l JOIN profile p ON p.id = l.profile_id'
+                        ' WHERE p.site_id = %s'
+                        '   AND l.created_at < NOW() - INTERVAL %s HOUR'
+                        f' LIMIT {LOG_SWEEP_BATCH}', (site_id, hours))
+                    ids = [int(row['id']) for row in (await db.fetchall() or [])]
+
+                    if not ids:
+                        break
+
+                    marks = ', '.join(['%s'] * len(ids))
+                    await db.execute(f'DELETE FROM log WHERE id IN ({marks})', ids)
+                    cut = int(db.rowcount or 0)
+                    await db.connection.commit()
+                    gone += cut
+
+                    if len(ids) < LOG_SWEEP_BATCH:
+                        break
+        except Exception as e:
+            logger_info(f'[dating] чистка журнала сайта #{site_id}: {e}')
+
+    if gone:
+        logger_info(f'[dating] журнал анкет: убрано {gone} строк')
+
+    return gone
