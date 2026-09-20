@@ -30,6 +30,7 @@ from src.dating.feed import feed_write
 from src.dating.invite import invite_marks_strip
 from src.dating.json_column import json_column_load
 from src.dating.log import log_write
+from src.dating.stat import STAT_INVITE_SENT, stat_add
 from src.dating.send import send_message
 from src.rhapsody.rhapsody_api import RhapsodyError
 from src.dating.site_presence import site_presence
@@ -167,6 +168,11 @@ async def invite_send_one(invite: dict) -> dict:
     await invite_send_mark(invite_id, sent=True, error='',
                                   answer=str(got.get('response') or ''))
     await log_write(profile_id, 'ok', f'Инвайт ушёл: {who}')
+    # ⚠⚠ **И в счётчик статистики, а не только в журнал.** Страница считала
+    # ушедшие инвайты прямо по таблице `invite`, а у той теперь чистка по сроку:
+    # счёт обвалился до окна последних часов. Счётчик чистку переживает
+    # (`stat.py`).
+    await stat_add(site_id, profile_id, STAT_INVITE_SENT)
     # ⚠ **И в ленту событий, а не только в журнал анкеты.** Журнал открывают у
     # конкретной девушки и постфактум, а вопрос «панель сейчас пишет живым людям?»
     # задают о сайте целиком и в тот же момент. Отправку видно с любой страницы

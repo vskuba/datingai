@@ -37,10 +37,12 @@
 подпись на странице об этом говорит.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
+
+from src.dating.stat import STAT_INVITE_SENT, stat_reset, stat_sum
 
 from src.auth.auth import AuthUser, auth_required
 from src.dating.agent import AGENT_NODE
@@ -124,6 +126,41 @@ def _empty(site_id: int, profile_id: int) -> dict:
             'invite': {'out': 0, 'draft': 0},
             'llm': {'days': 0, 'requests': 0, 'errors': 0, 'tokens_input': 0,
                     'tokens_output': 0, 'rows': [], 'error': ''}}
+
+
+@router.post('/reset', include_in_schema=False)
+async def stats_reset(site_id: int = 0, kind: str = '', profile_id: int = 0,
+                      user: AuthUser = Depends(auth_required)):
+    """Обнуляет счётчик событий: считаем заново с этого мгновения.
+
+    Args:
+        site_id: сайт-закладка.
+        kind: вид события. Пусто — все виды сайта.
+        profile_id: анкета. Ноль — весь сайт.
+
+    Returns:
+        dict: `deleted` — сколько строк счётчика убрано.
+
+    ## ⚠⚠ Что именно обнуляется
+
+    Только **счётчик** (`stat_day`) — история «сколько сделано». Рабочие таблицы
+    не трогаются: ни инвайты, ни переписка, ни пулы. Сброс отвечает на вопрос
+    «хочу считать с этого момента», а не «удали сделанное».
+
+    ⚠ Поэтому «в пуле» после сброса не изменится: оно считается по таблице, а не
+    по счётчику, — это текущее состояние, а не накопленное.
+
+    ⚠ **Строки удаляются, а не обнуляются.** Нулевая строка означала бы «в этот
+    день ничего не было», и отчёт за месяц честно показал бы её в ряду суток.
+    Отсутствие строки означает «не считали», и это правда.
+    """
+    if not int(site_id or 0):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail='сайт не выбран')
+
+    gone = await stat_reset(int(site_id), str(kind or ''), int(profile_id or 0))
+
+    return {'result': {'deleted': gone}}
 
 
 @router.get('/profiles', include_in_schema=False)
@@ -390,16 +427,30 @@ async def _favorite(site_id: int, profile_id: int, hours: int = 0) -> dict:
 async def _invite(site_id: int, profile_id: int, hours: int = 0) -> dict:
     """Инвайты: ушло и лежит в пуле.
 
+    ## ⚠⚠ Ушедшее берётся из счётчика, а не из таблицы
+
+    Считалось `SUM(status = 'sent')` прямо по `invite`. Пока та хранила всё, это
+    работало; как только у неё появилась чистка по сроку (шесть часов), счёт
+    обвалился — страница показывала 38 889 ушедших там, где за трое суток ушло
+    280 тысяч.
+
+    **Рабочая таблица вправе забывать старое** — иначе растёт без предела.
+    **Статистика забывать не вправе.** Поэтому ушедшее пишется в свой счётчик при
+    отправке (`stat.py`) и оттуда же читается.
+
+    ⚠ **Лежащее в пуле — по-прежнему из таблицы, и это верно.** «Сколько сейчас
+    ждёт отправки» — вопрос о текущем состоянии, а не о сделанном: счётчик тут
+    соврал бы, потому что карточки уходят и из пула, и в отправку.
+
     ⚠ **Входящего у инвайта не бывает по определению**: это первая реплика тому, с
     кем разговора не было. Ответ на неё — уже чат, и считается там.
     """
+    out = await stat_sum(site_id, STAT_INVITE_SENT, profile_id, hours)
+
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                # Те же два времени, что у писем: ушедшее меряется отправкой,
-                # лежащее в пуле — заведением.
-                f"SELECT SUM(status = 'sent'{_window('sent_at', hours)}) AS sent,"
-                f"       SUM(status = 'draft'{_window('created_at', hours)})"
+                f"SELECT SUM(status = 'draft'{_window('created_at', hours)})"
                 '         AS draft FROM invite'
                 ' WHERE site_id = %s AND (%s = 0 OR profile_id = %s)',
                 (site_id, profile_id, profile_id))
@@ -407,9 +458,9 @@ async def _invite(site_id: int, profile_id: int, hours: int = 0) -> dict:
     except Exception as e:
         logger_info(f'[dating] статистика инвайтов не сосчиталась: {e}')
 
-        return {'out': 0, 'draft': 0}
+        return {'out': out, 'draft': 0}
 
-    return {'out': int(row.get('sent') or 0), 'draft': int(row.get('draft') or 0)}
+    return {'out': out, 'draft': int(row.get('draft') or 0)}
 
 
 async def _llm() -> dict:
