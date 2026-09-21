@@ -266,3 +266,62 @@ class TestTheChannelsAreApart:
             await db.connection.commit()
 
         assert left == 1, 'почтовый запрет вымел готовый инвайт'
+
+
+class TestTheOldRefusalsAreCaughtUp:
+    """⚠⚠ Отказы, случившиеся **до** появления приметы, подбираются миграцией.
+
+    Примета заведена сегодня, а отказы сайт давал и раньше. Для тех писем код ещё
+    не знал этого слова: письмо осталось черновиком, запрет не завёлся — и вкладка
+    «Не пишем» стояла пустой при живом отказе в «Доставке».
+
+    ⚠ Хуже того, черновик оставался рабочим: круг отправки брал его каждый заход,
+    получал тот же отказ и клал обратно. Письмо, которое сайт не примет никогда,
+    стоило вызова LLM при каждом наборе пула.
+    """
+
+    MIGRATION = 'migrations/20260921200000_block_age_backfill.sql'
+
+    def test_the_migration_buries_the_letter_first(self):
+        """⚠⚠ Порядок в миграции значащий: сперва `failed`, потом запрет.
+
+        Заведи запрет первым — чистка пулов снесла бы черновик, и отказ исчез бы
+        из «Доставки» вместе с ним. Тот же довод, что в `mail_send._deny_check`.
+        """
+        sql = open(self.MIGRATION, encoding='utf-8').read()
+
+        assert sql.index("SET `status` = 'failed'") < sql.index('INSERT INTO `block`')
+
+    def test_it_takes_only_the_age_refusal(self):
+        """⚠⚠ Часовой лимит — **временный**, и запрет по нему был бы потерей.
+
+        Пять входящих в час считаются вместе с письмами чужих агентств: занеси мы
+        такую пару в «не пишем», человек пропал бы навсегда из-за чужой
+        активности. Черновики таких писем намеренно остаются в пуле.
+        """
+        sql = open(self.MIGRATION, encoding='utf-8').read()
+
+        assert 'ERROR_MESSAGE_AGE_CRITERIA' in sql
+        assert 'HOUR_IN_LIMIT' not in sql.split('-- ─')[-1], \
+            'миграция трогает часовой лимит — он временный'
+
+    def test_the_block_is_mail_only(self):
+        """Канал `mail`: отказ про письма, чат он не трогает."""
+        sql = open(self.MIGRATION, encoding='utf-8').read()
+
+        assert "'mail', 'mail'" in sql, 'запрет заводится не почтовым'
+
+    def test_all_three_pools_are_swept(self):
+        """⚠ Отказ приходит на любой из трёх пулов, а запрет один."""
+        sql = open(self.MIGRATION, encoding='utf-8').read()
+
+        for table in ('favorite_mail', 'mailing', 'mail_reply'):
+            assert f'`{table}`' in sql, f'{table} пропущен'
+
+    def test_it_can_run_twice(self):
+        """⚠ Повторный прогон не должен двоить запреты: yoyo накатит миграцию на
+        проде, и рестарт не обязан ничего ломать."""
+        sql = open(self.MIGRATION, encoding='utf-8').read()
+
+        assert 'NOT EXISTS' in sql
+        assert "`status` = 'draft'" in sql
