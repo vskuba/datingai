@@ -296,61 +296,44 @@ class TestTheRoundWritesAhead:
         assert got['sent'] == 1, 'готовый ответ ждал выдержки повтора'
 
 
-class TestAReadyDraftOverridesTheGates:
-    """⚠⚠ Готовый черновик снимает **оба** сторожевых запрета отбора.
+class TestAReadyDraftOverridesTheRetryGate:
+    """⚠ Готовый черновик снимает выдержку повтора.
 
-    Выдержка повтора и порог свежести панельного сторожат **вызовы LLM**: «не
-    спрашивай агента про то же» и «не отвечай на древнее». У пары с написанным
-    текстом спрашивать уже нечего — осталась одна отправка, и она бесплатна.
+    Выдержка (`answer_tried_at`) сторожит **вызовы LLM**: агента про то же
+    сообщение не спрашивают чаще, чем раз в `ANSWER_RETRY_SEC`. У пары с готовым
+    текстом спрашивать нечего — осталась отправка, и она бесплатна.
 
-    Поймано на проде: Yulia ↔ Brian. Реплика пришла из панели, ей стало сорок
-    девять часов при пороге в сутки — круг перестал брать пару, и готовый ответ
-    пролежал двое суток при собеседнике в сети. Мы заплатили за текст и не
-    отправили его.
+    ⚠ Порога свежести здесь больше нет: его убрали целиком, и вместе с ним отпало
+    послабление, которое его обходило.
     """
 
-    async def _panel_said(self, profile_id: int, uid: str, hours_ago: int) -> int:
-        """Входящее **из панели** заданной давности."""
+    async def test_a_draft_beats_the_retry_pause(self, girl):
+        """Попытка отмечена только что, но текст уже есть — пара в работе."""
+        message_id = await _said(girl, 'u-1')
+        await chat_reply_put(STAND_SITE, girl, message_id, 'u-1', 'Brian', 'ответ')
+
         async with mysql_get_db_async() as db:
-            await db.execute(
-                'INSERT INTO message (profile_id, sender_uid, sender_name, text,'
-                "  message_uid, direction, source, created_at)"
-                " VALUES (%s, %s, 'Brian', 'вопрос', %s, 'in', 'panel',"
-                '  NOW() - INTERVAL %s HOUR)',
-                (int(profile_id), uid, f'zz-{uuid.uuid4().hex[:12]}',
-                 int(hours_ago)))
+            await db.execute('UPDATE message SET answer_tried_at = NOW()'
+                             ' WHERE id = %s', (message_id,))
             await db.connection.commit()
 
-            return int(db.lastrowid)
+        got = await answer_mod._waiting_find(girl, 10, [], False)
 
-    async def test_stale_panel_reply_is_skipped_without_a_draft(self, girl):
-        """Без черновика древнее панельное не берётся — порог на месте."""
-        await self._panel_said(girl, 'u-1', hours_ago=49)
+        assert [one['id'] for one in got if one['sender_uid'] == 'u-1'] \
+            == [message_id]
 
-        got = await answer_mod._waiting_find(girl, 5, [], False, 24 * 3600)
+    async def test_without_a_draft_the_pause_holds(self, girl):
+        """⚠ Без черновика выдержка работает: агента не спрашивают дважды подряд."""
+        message_id = await _said(girl, 'u-1')
+
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE message SET answer_tried_at = NOW()'
+                             ' WHERE id = %s', (message_id,))
+            await db.connection.commit()
+
+        got = await answer_mod._waiting_find(girl, 10, [], False)
 
         assert [one for one in got if one['sender_uid'] == 'u-1'] == []
-
-    async def test_a_draft_brings_it_back(self, girl):
-        """⚠⚠ А с черновиком — берётся: осталась отправка, и она бесплатна."""
-        message_id = await self._panel_said(girl, 'u-1', hours_ago=49)
-        await chat_reply_put(STAND_SITE, girl, message_id, 'u-1', 'Brian', 'ответ')
-
-        got = await answer_mod._waiting_find(girl, 5, [], False, 24 * 3600)
-
-        assert [one['id'] for one in got if one['sender_uid'] == 'u-1'] == [message_id]
-
-    async def test_a_sent_draft_does_not_bring_it_back(self, girl):
-        """⚠ Послабление даёт только **ждущий** черновик. Ушедший — это уже
-        сказанное, и оживлять им древнюю реплику незачем."""
-        message_id = await self._panel_said(girl, 'u-1', hours_ago=49)
-        await chat_reply_put(STAND_SITE, girl, message_id, 'u-1', 'Brian', 'ответ')
-        got = await chat_reply_waiting(girl, message_id)
-        await chat_reply_sent(int(got['id']))
-
-        again = await answer_mod._waiting_find(girl, 5, [], False, 24 * 3600)
-
-        assert [one for one in again if one['sender_uid'] == 'u-1'] == []
 
 
 class TestDraftsWaitAsLongAsNeeded:

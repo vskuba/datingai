@@ -305,3 +305,61 @@ class TestInitiativeSetting:
                     читают.append(str(one))
 
         assert not читают, f'настройку уже читают: {читают}'
+
+
+class TestAlwaysMeansAlways:
+    """⚠⚠ «Отвечать всегда» значит всегда — без оговорок про возраст.
+
+    Обещание не исполнялось: порог свежести отсекал пару **до** того, как
+    считалась обязательность. На проде первая и единственная реплика Брайана
+    значилась обязательной, а отбор её не брал.
+
+    Сперва я завёл послабление — «обязательному ответу порог не помеха». Потом
+    убрали сам порог, и послабление отпало вместе с ним: сущность, заведённая ради
+    обхода другой сущности, исчезает вместе с ней.
+    """
+
+    async def _panel_said(self, profile_id: int, uid: str, hours_ago: int) -> int:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO message (profile_id, sender_uid, sender_name, text,'
+                "  message_uid, direction, source, created_at)"
+                " VALUES (%s, %s, 'Brian', 'вопрос', %s, 'in', 'panel',"
+                '  NOW() - INTERVAL %s HOUR)',
+                (int(profile_id), uid, f'zz-{uuid.uuid4().hex[:12]}',
+                 int(hours_ago)))
+            await db.connection.commit()
+
+            return int(db.lastrowid)
+
+    async def test_a_stale_first_reply_is_taken(self, girl):
+        """Двухдневная реплика берётся в работу — возраст больше не помеха."""
+        message_id = await self._panel_said(girl, 'u-1', hours_ago=49)
+
+        got = await answer_mod._waiting_find(girl, 10, [], False)
+
+        assert [one['id'] for one in got if one['sender_uid'] == 'u-1'] \
+            == [message_id]
+
+    async def test_and_it_is_mandatory(self, girl):
+        """⚠ И она же обязательна: первая из пяти. Оба правила наконец сходятся."""
+        await self._panel_said(girl, 'u-1', hours_ago=49)
+
+        assert await answer_mod._anyway_here(girl, 'u-1', 5) is True
+
+    async def test_an_answered_pair_is_not_taken_twice(self, girl):
+        """⚠⚠ Возраст не нужен как сторож, потому что **ответ один**.
+
+        `is_answered` закрывает пару: десять раз одному человеку не ответишь,
+        сколько бы ни лежала его реплика.
+        """
+        message_id = await self._panel_said(girl, 'u-1', hours_ago=49)
+
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE message SET is_answered = 1 WHERE id = %s',
+                             (message_id,))
+            await db.connection.commit()
+
+        got = await answer_mod._waiting_find(girl, 10, [], False)
+
+        assert [one for one in got if one['sender_uid'] == 'u-1'] == []

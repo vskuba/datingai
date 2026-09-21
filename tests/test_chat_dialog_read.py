@@ -144,35 +144,38 @@ class TestDialogsTellUnread:
         assert row['needs_answer'] is True, 'взгляд снял «нужен ответ» — рано'
 
 
-class TestPanelFreshSetting:
-    """⚠ Порог свежести привезённого из панели — настройка сайта."""
+class TestNoFreshnessGate:
+    """⚠⚠ Возраст реплики отбору больше не важен.
 
-    def test_it_is_in_the_registry(self):
+    Здесь стоял порог: на привезённое из панели старше суток агент не отвечал.
+    Довод — «импорт за 60 дней даст пачку ответов по старым письмам» — не выдержал
+    трёх возражений.
+
+    **Это чат, а не письма**: реплика адресная, пачкой не рассылается. **Ответ
+    один**: `is_answered` закрывает пару, десять раз одному не ответишь. А замер на
+    проде показал цену порога — он закрывал одну пару из одной.
+
+    Вреда при этом было больше: настройка «отвечать всегда на первые пять» не
+    исполнялась (порог отсекал пару раньше), а оплаченный черновик не мог уйти,
+    потому что его повод состарился, пока адресат отсутствовал.
+    """
+
+    def test_the_setting_is_gone(self):
         from src.uvicorn.routers.dating.site_ import SITE_KNOWN
 
-        one = SITE_KNOWN['chat_answer_panel_fresh']
+        assert 'chat_answer_panel_fresh' not in SITE_KNOWN
 
-        assert one['kind'] == 'number'
-        assert one['default'] == '24', 'умолчание разошлось с прежней константой'
-        assert 'max' not in one, 'потолок вернулся — срок задаёт тот, кто ведёт сайт'
-
-    def test_zero_means_no_threshold(self):
-        """⚠⚠ Ноль — «отвечать независимо от возраста», а не «никогда».
-
-        Подставь мы ноль в `INTERVAL %s SECOND`, условие стало бы «создано в
-        будущем», и панельное не отвечалось бы вовсе — ровно наоборот написанному
-        в подсказке настройки.
-        """
+    def test_the_selection_has_no_age_clause(self):
         import inspect
 
         from src.dating.answer import _waiting_find
 
         code = inspect.getsource(_waiting_find)
 
-        assert 'panel_fresh <= 0' in code, 'ноль снова попадёт в запрос сроком'
+        assert "m.source <> 'panel'" not in code, 'порог вернулся в отбор'
 
-    async def test_the_default_matches_the_constant(self):
-        from src.dating.answer import ANSWER_PANEL_FRESH_SEC, _panel_fresh
+    def test_no_reader_is_left(self):
+        import src.dating.answer as mod
 
-        # Настройки у стенда нет — берём умолчание реестра, те же сутки.
-        assert await _panel_fresh({'site_id': STAND_SITE}) == ANSWER_PANEL_FRESH_SEC
+        assert not hasattr(mod, '_panel_fresh')
+        assert not hasattr(mod, 'ANSWER_PANEL_FRESH_SEC')

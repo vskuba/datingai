@@ -170,10 +170,8 @@ class TestGuardStandsInBothPaths:
         redis.put(['999'])
         asked, sent = [], []
 
-        # ⚠ Подпись повторяет живую: срок свежести панельного пришёл настройкой
-        # сайта (`answer._panel_fresh`), и заглушка без него ловила бы `TypeError`
-        # вместо проверки правила.
-        async def _waiting(profile_id, limit, only, lead, panel_fresh=0):
+        # ⚠ Подпись повторяет живую: порога свежести в отборе больше нет.
+        async def _waiting(profile_id, limit, only, lead):
             # ⚠ `id` — повод написать: по нему ищется и кладётся черновик
             # ответа (`chat_reply.message_id`).
             return [{'id': 1, 'sender_uid': UID, 'sender_name': 'Semen',
@@ -219,10 +217,8 @@ class TestGuardStandsInBothPaths:
         redis.put([UID])
         asked, sent = [], []
 
-        # ⚠ Подпись повторяет живую: срок свежести панельного пришёл настройкой
-        # сайта (`answer._panel_fresh`), и заглушка без него ловила бы `TypeError`
-        # вместо проверки правила.
-        async def _waiting(profile_id, limit, only, lead, panel_fresh=0):
+        # ⚠ Подпись повторяет живую: порога свежести в отборе больше нет.
+        async def _waiting(profile_id, limit, only, lead):
             # ⚠ `id` — повод написать: по нему ищется и кладётся черновик
             # ответа (`chat_reply.message_id`).
             return [{'id': 1, 'sender_uid': UID, 'sender_name': 'Semen',
