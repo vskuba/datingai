@@ -23,6 +23,7 @@ import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.chat_panel import chat_panel_save
 from src.dating.message_twin import message_twin_skip
 
 pytestmark = pytest.mark.chat
@@ -189,3 +190,116 @@ class TestBothPagesUseIt:
 
         assert 'message_twin_skip' in inspect.getsource(mod), \
             'предпросмотр в списке диалогов показывает близнецов'
+
+
+def _row(profile_id, uid, text, uid_key, at, direction='out', name='Henry'):
+    """Запись в том виде, в каком её отдаёт разбор панели."""
+    return {'profile_id': profile_id, 'sender_uid': uid, 'sender_name': name,
+            'text': text, 'message_uid': uid_key, 'direction': direction,
+            'sent_at': at}
+
+
+async def _all(profile_id, uid):
+    """Что реально лежит в таблице — без отсева показа."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT id, text, source, message_uid FROM message'
+            ' WHERE profile_id = %s AND sender_uid = %s ORDER BY id',
+            (profile_id, uid))
+
+        return [dict(row) for row in (await db.fetchall() or [])]
+
+
+class TestTheImportDoesNotCreateTwins:
+    """⚠⚠ Чиним причину, а не только показ: таблица не должна расти мусором."""
+
+    async def test_our_sent_message_is_not_imported_again(self, pair):
+        """Главный случай: панель возвращает реплику, которую мы сами отправили."""
+        profile_id, uid = pair
+        at = '2026-09-21 14:30:30'
+
+        await _put(profile_id, uid, 'glitch lol', '01M32609Q1K2A0MXW21PWYQ58Q',
+                   'http', at)
+
+        got = await chat_panel_save([_row(profile_id, uid, 'glitch lol',
+                                          'panel:52447706', at)])
+
+        assert got['added'] == 0, 'импорт снова завёл близнеца'
+        assert len(await _all(profile_id, uid)) == 1
+
+    async def test_a_message_we_never_saw_is_imported(self, pair):
+        """⚠ Обратная сторона: привезённая история обязана доехать целиком."""
+        profile_id, uid = pair
+
+        got = await chat_panel_save([
+            _row(profile_id, uid, 'старое письмо', 'panel:100',
+                 '2026-09-01 10:00:00', direction='in'),
+            _row(profile_id, uid, 'и ещё одно', 'panel:101',
+                 '2026-09-01 10:00:05', direction='in')])
+
+        assert got['added'] == 2
+        assert len(await _all(profile_id, uid)) == 2
+
+    async def test_the_same_panel_row_twice_is_still_ignored(self, pair):
+        """⚠ Прежняя защита цела: тот же номер панели из пересекающихся
+        диапазонов по-прежнему пропускается молча."""
+        profile_id, uid = pair
+        row = _row(profile_id, uid, 'привет', 'panel:7', '2026-09-10 12:00:00',
+                   direction='in')
+
+        first = await chat_panel_save([row])
+        second = await chat_panel_save([row])
+
+        assert first['added'] == 1
+        assert second['added'] == 0
+        assert len(await _all(profile_id, uid)) == 1
+
+    async def test_the_same_words_at_another_time_are_imported(self, pair):
+        """⚠ Он написал «ok» вчера и «ok» сегодня — это две реплики."""
+        profile_id, uid = pair
+
+        got = await chat_panel_save([
+            _row(profile_id, uid, 'ok', 'panel:1', '2026-09-20 10:00:00',
+                 direction='in'),
+            _row(profile_id, uid, 'ok', 'panel:2', '2026-09-21 10:00:00',
+                 direction='in')])
+
+        assert got['added'] == 2
+
+    async def test_his_reply_is_not_eaten_by_our_message(self, pair):
+        """⚠⚠ Наше «ok» не должно съедать его «ok» той же секунды: направление
+        входит в ключ."""
+        profile_id, uid = pair
+        at = '2026-09-21 13:00:00'
+
+        await _put(profile_id, uid, 'ok', 'ulid-out', 'http', at, direction='out')
+
+        got = await chat_panel_save([_row(profile_id, uid, 'ok', 'panel:9', at,
+                                          direction='in')])
+
+        assert got['added'] == 1, 'входящую приняли за нашу'
+        assert len(await _all(profile_id, uid)) == 2
+
+
+class TestBothSidesShareOneRule:
+    """⚠⚠ Показ и импорт понимают близнеца одинаково.
+
+    Разойдись эти правила — импорт считал бы строку новой, а страница прятала бы
+    её как двойника, и реплика пропала бы с экрана совсем.
+    """
+
+    def test_the_import_uses_the_shared_condition(self):
+        import inspect
+
+        import src.dating.chat_panel as mod
+
+        assert 'message_twin_absent' in inspect.getsource(mod), \
+            'импорт снова судит о дублях по-своему'
+
+    def test_both_conditions_name_the_same_fields(self):
+        from src.dating.message_twin import (MESSAGE_TWIN_ABSENT,
+                                             MESSAGE_TWIN_SKIP)
+
+        for field in ('profile_id', 'sender_uid', 'direction', 'text', 'created_at'):
+            assert f'twin.{field}' in MESSAGE_TWIN_SKIP, field
+            assert f'twin.{field}' in MESSAGE_TWIN_ABSENT, field

@@ -48,6 +48,7 @@ from src.dating.chat import chat_invites_to_history
 from src.dating.feed import feed_write
 from src.dating.people import people_name_case
 
+from src.dating.message_twin import message_twin_absent
 from src.dating.json_column import json_column_load
 from src.dating.scenario import scenario_run
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_find
@@ -410,16 +411,38 @@ async def chat_panel_save(rows: list) -> dict:
                 # изменилось» — 0. Считаем только заведённых.
                 contacts += 1 if db.rowcount == 1 else 0
 
+            # ⚠⚠ **`SELECT … WHERE NOT EXISTS`, а не `VALUES`** — и вот зачем.
+            #
+            # Наше исходящее уже лежит в таблице: его записала отправка
+            # (`send.py`), своей строкой с ULID. Журнал сайта возвращает ту же
+            # реплику со своим номером — `panel:52447706`, — и `INSERT IGNORE`
+            # повтором её не считает: ключ `анкета + message_uid` у них разный.
+            # Так в переписке появлялась вторая строка того же сообщения.
+            #
+            # ⚠ Собеседнику при этом уходило **одно** сообщение: у журнала сайта
+            # двойников нет, двоилась только наша таблица.
+            #
+            # Проверка стоит **внутри вставки**, а не отдельным запросом: между
+            # ними успевает пройти другой заход импорта, и дубль появился бы ровно
+            # в ту щель, которую мы закрываем.
+            #
+            # `INSERT IGNORE` остаётся: он ловит **свой** повтор — тот же номер
+            # панели из пересекающихся диапазонов, — а это другой случай.
             await db.execute(
                 'INSERT IGNORE INTO message'
                 ' (profile_id, sender_uid, sender_name, text, message_uid, direction,'
                 '  is_read, source, created_at)'
                 # Не разобралось время — ставим время импорта: потерять сообщение
                 # из-за неожиданного формата даты хуже, чем показать его не тем часом.
-                " VALUES (%s, %s, %s, %s, %s, %s, 1, 'panel',"
-                " COALESCE(NULLIF(%s, ''), NOW()))",
+                " SELECT %s, %s, %s, %s, %s, %s, 1, 'panel',"
+                " COALESCE(NULLIF(%s, ''), NOW())"
+                ' FROM DUAL WHERE 1 = 1' + message_twin_absent(),
                 (row['profile_id'], row['sender_uid'], row['sender_name'], row['text'],
-                 row['message_uid'], row['direction'], row['sent_at']))
+                 row['message_uid'], row['direction'], row['sent_at'],
+                 # Значения условия: те же поля, что у вставки, — близнец ищется
+                 # по ним же.
+                 row['profile_id'], row['sender_uid'], row['direction'], row['text'],
+                 row['sent_at']))
             if db.rowcount:
                 added += 1
                 # ⚠⚠ **Первый ответ — момент, когда приглашения становятся
