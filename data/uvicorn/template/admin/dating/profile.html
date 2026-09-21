@@ -5043,8 +5043,11 @@
         if (inviteSentReload) inviteSentReload.addEventListener('click', inviteSentLoad);
 
         // То же у чёрного списка: пополняет его отправка, а не страница.
-        const inviteBlockReload = workEl.querySelector('[data-slot="invite-block-reload"]');
-        if (inviteBlockReload) inviteBlockReload.addEventListener('click', inviteBlockLoad);
+        // ⚠ Кнопок две — по одной у каждой панели «Не пишем» (чат и фавориты).
+        // Обе зовут одну загрузку: список один.
+        workEl.querySelectorAll('[data-slot="invite-block-reload"],'
+                                + ' [data-slot="fav-block-reload"]')
+            .forEach(btn => btn.addEventListener('click', inviteBlockLoad));
 
         // Форму не отправляют — Enter в ней не должен перезагружать страницу.
         workEl.querySelectorAll('[data-form="invite-schedule"]')
@@ -6102,7 +6105,10 @@
     let inviteBlockTotal = 0;
 
     function inviteBlockShow() {
-        if (!workEl.querySelector('[data-chat-pane="block"]')) return;
+        // ⚠ Узел любой из двух: панель есть и на «Чате», и на «Фаворитах», а
+        // разметка сайта может нести только одну из них.
+        if (!workEl.querySelector('[data-chat-pane="block"], [data-fav-pane="block"]'))
+            return;
 
         inviteBlockPaint();
         inviteBlockLoad();
@@ -6140,21 +6146,36 @@
         inviteBlockPaint();
     }
 
+    // ⚠⚠ **Два места показа, один список.** «Не пишем» стоит и на «Чате», и на
+    // «Фаворитах»: запрет ложится на **пару**, а не на канал — закрывшийся от
+    // девушки не получит ни инвайта, ни письма. Своей копии данных у вкладки
+    // фаворитов нет нарочно: две разошлись бы в первый же день, и человек видел
+    // бы на одной вкладке пару, которой на другой нет.
+    const BLOCK_SLOTS = ['invite-block', 'fav-block'];
+
     function inviteBlockPaint() {
-        const box = slot('invite-block');
+        BLOCK_SLOTS.forEach(inviteBlockPaintInto);
+    }
+
+    function inviteBlockPaintInto(name) {
+        const box = slot(name);
         if (!box) return;
 
         // ⚠ Счёт — по всему списку, а не по странице: «пар: 25» при семидесяти
         // запретах читалось бы как полный ответ.
-        fillSlot('invite-block-count',
+        fillSlot(`${name}-count`,
                  inviteBlockTotal ? `пар: ${inviteBlockTotal}` : '');
 
         if (!inviteBlock.length) {
-            inviteBlockPagerPaint();
+            inviteBlockPagerPaint(name);
+            // ⚠ Названы обе приметы: вторая («не подходите по возрасту») —
+            // единственная причина, по которой пара попадает сюда из писем, и
+            // человек, открывший список с «Фаворитов», ищет именно её.
             box.innerHTML = '<div class="mail-sent-empty">Никто от анкет этого '
                 + 'сайта не закрывался.<br>Сюда попадают пары, которым сайт '
-                + 'отказал словами «вас закрыли»: таким мы больше не пишем — '
-                + 'ни инвайтов, ни писем.</div>';
+                + 'отказал словами «вас закрыли» или «вы не подходите ему по '
+                + 'возрасту»: таким мы больше не пишем — ни инвайтов, ни писем.'
+                + '</div>';
 
             return;
         }
@@ -6192,7 +6213,7 @@
             // записи и оттеснял то, ради чего список открывают, — кто и когда.
             // Нужен он редко, и тогда его читают наведением.
             + `<span class="mail-sent-state bad" title="${esc(row.reason || '')}">`
-            + `${esc(BLOCK_SOURCE[row.source] || '')}</span>`
+            + `${esc(blockWhy(row))}</span>`
             // ⚠ Кнопка — **после** слов «закрылся в чате»: сперва человек читает,
             // что случилось, и только потом решает, отменять ли.
             + `<button type="button" class="block-undo" data-block="${row.id}"`
@@ -6205,11 +6226,11 @@
         box.querySelectorAll('.block-undo').forEach(btn =>
             btn.addEventListener('click', () => inviteBlockDrop(btn.dataset.block)));
 
-        inviteBlockPagerPaint();
+        inviteBlockPagerPaint(name);
     }
 
-    function inviteBlockPagerPaint() {
-        const foot = slot('invite-block-pager');
+    function inviteBlockPagerPaint(name = 'invite-block') {
+        const foot = slot(`${name}-pager`);
         if (!foot) return;
 
         pagerRender(foot, inviteBlockPages, inviteBlockPage, (pick) => {
@@ -6222,6 +6243,21 @@
     // ничего не говорят тому, кто не читал таблицу.
     const BLOCK_SOURCE = {chat: 'закрылся в чате', mail: 'закрылся в почте',
                           hand: 'решение оператора'};
+
+    // ⚠⚠ **Подпись по ответу сайта, а не только по источнику.** В столбце
+    // `source` лежит канал — «чат» или «почта», — и на нём одном строка про
+    // возраст читалась бы как «закрылся в почте». А он не закрывался: он выставил,
+    // от женщин какого возраста готов получать письма, и эта девушка в рамки не
+    // попала. Разница видна человеку сразу: первое он может отменить кнопкой и
+    // ждать другого исхода, второе не изменится, пока анкете не поправят возраст.
+    function blockWhy(row) {
+        const reason = String((row && row.reason) || '');
+
+        if (reason.includes('ERROR_MESSAGE_AGE_CRITERIA'))
+            return 'не подходим по возрасту';
+
+        return BLOCK_SOURCE[row && row.source] || '';
+    }
 
     async function inviteBlockDrop(blockId) {
         try {
@@ -6836,7 +6872,7 @@
     // на всех означало бы, что переход по «Письмам» меняет открытую панель
     // «Фаворитов».
     const FAV_TAB_KEY = 'dating.profile.favtab';
-    const FAV_TABS = ['talk', 'sent', 'talks'];
+    const FAV_TABS = ['talk', 'sent', 'talks', 'block'];
 
     let favTab = FAV_TABS.includes(localStorage.getItem(FAV_TAB_KEY))
         ? localStorage.getItem(FAV_TAB_KEY) : 'talk';
@@ -6866,6 +6902,9 @@
     function favSubShow() {
         if (favTab === 'talk') favMailShow();
         if (favTab === 'sent') favSentShow();
+        // ⚠ Список общий с «Чатом», и функция та же: своей копии данных у этой
+        // вкладки нет — запрет ложится на пару, а не на канал (`block.py`).
+        if (favTab === 'block') inviteBlockShow();
         if (favTab === 'talks') {
             favTalksShow();
             // ⚠ Пул **ответов** грузим и здесь: правка под разговором берётся из

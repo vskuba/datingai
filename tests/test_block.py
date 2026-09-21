@@ -90,8 +90,16 @@ class TestDeny:
         assert await block_deny(STAND_SITE, DENY) is False
         assert await block_deny(STAND_SITE, 'oops HE_IS_DONE_WITH_YOU') is True
 
-    def test_the_default_is_the_code_we_saw_live(self):
-        assert BLOCK_DENY_DEFAULT == 'ERROR_MESSAGE_USER_DENY'
+    def test_the_defaults_are_the_codes_we_saw_live(self):
+        """⚠ Оба кода — те самые, что приезжали от движка наших сайтов.
+
+        Второй добавлен позже: «вы не подходите ему по возрасту». Отказ того же
+        свойства — пробовать снова бессмысленно, возраст девушки не изменится, —
+        и круг избранных возвращался к такому человеку каждый заход, каждый раз
+        платя вызовом LLM. Подробности — `tests/test_block_age.py`.
+        """
+        assert BLOCK_DENY_DEFAULT.split(',') == ['ERROR_MESSAGE_USER_DENY',
+                                                 'ERROR_MESSAGE_AGE_CRITERIA']
 
 
 class TestAdd:
