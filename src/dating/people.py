@@ -31,6 +31,7 @@
 сайта — сломанной картинкой.
 """
 
+from text_.text_emoji import text_emoji_same
 import re
 
 # Номер анкеты в ссылке. Два вида, потому что списки сняты с разных страниц:
@@ -99,9 +100,12 @@ def people_name_case(name: str) -> str:
     """
     # Каждая часть — от границы слова до следующей; разделители (пробел, дефис,
     # апостроф) остаются на месте.
+    # ⚠ Эмодзи к одному виду: имя приходит снаружи, и люди ставят их прямо в
+    # имя анкеты. Здесь же, потому что через эту воронку имя идёт со всех семи
+    # дверей, которыми оно к нам попадает.
     return re.sub(r"[^\s\-']+",
                   lambda m: m.group(0)[:1].upper() + m.group(0)[1:].lower(),
-                  ' '.join(str(name or '').split()))
+                  ' '.join(text_emoji_same(str(name or '')).split()))
 
 
 def people_rows(extract: dict, field: str) -> list[dict]:

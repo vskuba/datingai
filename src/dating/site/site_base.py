@@ -56,6 +56,7 @@ JSON не опишешь.
 import json
 import secrets
 import time
+from text_.text_emoji import text_emoji_same
 from urllib.parse import quote_plus
 
 # Длины колонок `dating_message`, под которые режется разобранное. Здесь, а не в
@@ -328,9 +329,13 @@ class DatingSiteChat:
         Режем здесь, а не при вставке: длинный текст ронял бы вставку, и
         сообщение пропадало бы целиком — вместе с пришедшими в том же кадре.
         """
+        # ⚠ Эмодзи — к одному виду **здесь**, на общей сборке: через неё проходят
+        # и живые кадры, и накопившееся, и каждый новый драйвер сайта. Починка в
+        # отдельном пути означала бы, что второй путь про неё не знает.
         return {'sender_uid': str(sender)[:DATING_SITE_UID_MAX],
-                'sender_name': str(name or '')[:DATING_SITE_NAME_MAX],
-                'text': str(text)[:DATING_SITE_TEXT_MAX],
+                'sender_name': text_emoji_same(
+                    str(name or ''))[:DATING_SITE_NAME_MAX],
+                'text': text_emoji_same(str(text))[:DATING_SITE_TEXT_MAX],
                 'message_uid': str(message_uid or '')[:DATING_SITE_MESSAGE_UID_MAX]}
 
     def _step_frame(self, step, value: str) -> dict:

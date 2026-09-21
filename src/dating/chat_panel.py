@@ -42,6 +42,7 @@ import re
 from datetime import datetime, timedelta
 
 from datetime_.datetime_ import datetime_utc_now
+from text_.text_emoji import text_emoji_same
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 from src.dating.chat import chat_invites_to_history
@@ -624,7 +625,11 @@ def _text(body, title) -> str:
     """
     body, title = str(body or '').strip(), str(title or '').strip()
 
-    return title if len(title) > len(body) else body
+    # ⚠⚠ Эмодзи к одному виду. Панель отдаёт их номером в пять шестнадцатеричных
+    # цифр, а её разборщик читает четыре: 😉 приезжает парой «ὠ9». Текст при этом
+    # не ломается — он просто становится другим, и наша же реплика, вернувшаяся
+    # из журнала сайта, перестаёт совпадать с той, что мы отправили.
+    return text_emoji_same(title if len(title) > len(body) else body)
 
 
 def _when(value) -> str:

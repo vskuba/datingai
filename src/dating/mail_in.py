@@ -31,6 +31,7 @@
 from datetime import datetime, timedelta
 
 from datetime_.datetime_ import datetime_utc_now
+from text_.text_emoji import text_emoji_same
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
@@ -257,7 +258,9 @@ async def _body(profile: dict, base: str, secret: str, message_id: int) -> str:
 
         return ''
 
-    return str(answer.get(MAIL_IN_BODY) or '')[:MAIL_IN_BODY_MAX]
+    # ⚠ Эмодзи к одному виду: письмо приходит тем же путём, что и всё снаружи.
+    return text_emoji_same(
+        str(answer.get(MAIL_IN_BODY) or ''))[:MAIL_IN_BODY_MAX]
 
 
 async def _put(site_id: int, profile_id: int, message_id: int, row: dict,
