@@ -18,6 +18,7 @@ from src.auth.auth import auth_required
 from src.dating.chat_panel import (CHAT_PANEL_DAYS,
                                           CHAT_PANEL_SCENARIO,
                                           chat_panel_import)
+from src.dating.message_twin import message_twin_skip
 from src.dating.json_column import json_column_load
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_find
 
@@ -336,6 +337,11 @@ async def chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int = 1,
                 'SELECT text, direction, is_answered, answer_silent_at, created_at'
                 '  FROM message'
                 ' WHERE profile_id = %s AND sender_uid = %s'
+                # ⚠ Тот же отсев близнецов, что и в окне переписки. Здесь
+                # он особенно нужен из-за `LIMIT 10`: отсей мы после
+                # выборки, предпросмотр показывал бы восемь реплик вместо
+                # десяти (`message_twin.py`).
+                + message_twin_skip() +
                 ' ORDER BY created_at DESC, id DESC LIMIT 10',
                 (int(contact['profile_id']), contact['uid']))
             last = [dict(row) for row in (await db.fetchall() or [])]

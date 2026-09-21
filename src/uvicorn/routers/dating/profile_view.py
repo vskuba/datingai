@@ -20,6 +20,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
 from src.dating.chat_reply import chat_reply_pending
+from src.dating.message_twin import message_twin_skip
 from src.dating.json_column import json_column_load
 from src.dating.online import online_check
 from src.dating.profile_link import profile_link
@@ -66,7 +67,12 @@ async def profile_view_messages(profile_id: int, uid: str = '', limit: int = 30,
             # иначе тишина после чужой реплики читается как поломка.
             'SELECT id, sender_uid, sender_name, text, direction, is_read, '
             '       answer_silent_at, created_at '
-            f'FROM message WHERE profile_id = %s{where} '
+            f'FROM message WHERE profile_id = %s{where}'
+            # ⚠ Наше исходящее лежит в таблице дважды: своей строкой от
+            # отправки и строкой из панели агентства. Ключи у них разные
+            # (ULID против `panel:NNN`), и `INSERT IGNORE` импорта их не
+            # сводит — прячем второго при чтении (`message_twin.py`).
+            f'{message_twin_skip()} '
             f'ORDER BY created_at DESC, id DESC LIMIT {limit}', tuple(params))
         rows = await db.fetchall()
 

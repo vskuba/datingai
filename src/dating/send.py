@@ -198,12 +198,23 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
     site = site_registry_chat(presence)
     message_uid = site.message_uid()
 
+    # ⚠⚠ **Засекаем время до развилки, а строку журнала пишем после.**
+    #
+    # Здесь, а не внутри каждого пути: иначе занятие «отправка» оставалось бы
+    # без журнала ровно там, где его забыли дописать. Так и было — до этой
+    # правки в журнал попадала только отправка сокетом, а ручкой
+    # и сценарием не попадала вовсе. Человек смотрел вкладку «Запросы», видел
+    # присутствие, письма и списки — и ни одной реплики чата.
+    started = time.monotonic()
+
     if transport == 'scenario':
         result = await _send_scenario(profile, to_uid, text, message_uid)
     elif transport == 'ws':
         result = await _send_ws(profile, site, to_uid, text, message_uid)
     else:
         result = await _send_http(profile, presence, send, to_uid, text, message_uid)
+
+    await _note_send(profile, presence, send, transport, to_uid, text, result, started)
 
     # Записываем только принятое: строка в переписке означает «это мы сказали», и
     # непринятый сайтом текст показывать в диалоге нельзя.
@@ -316,7 +327,6 @@ async def _send_ws(profile: dict, site, to_uid: str, text: str, message_uid: str
 
     started = time.monotonic()
     got = await _send_ws_run(profile, site, to_uid, text, message_uid)
-    await _note_socket(profile, to_uid, got, started)
 
     return got
 
@@ -403,7 +413,10 @@ async def _send_http(profile: dict, presence: dict, send: dict, to_uid: str, tex
     # `offline` здесь всегда `False`: «нет в чате» — понятие живого сокета, а по
     # HTTP такого ответа не бывает. Ключ всё равно на месте — форма ответа у всех
     # путей отправки одна, и читателю не надо помнить, каким она пришла.
+    # `status` — для журнала запросов: по коду отличают «сайт лёг» от «сайт
+    # ответил отказом», и без него во вкладке «Запросы» стоял бы ноль.
     return {'ok': ok, 'offline': False, 'response': answer, 'message_uid': message_uid,
+            'status': response.status_code,
             'error': '' if ok else f'сайт ответил {response.status_code}: {answer[:200]}'}
 
 
@@ -567,19 +580,44 @@ def _fail(error: str) -> dict:
             'response': '', 'message_uid': ''}
 
 
-async def _note_socket(profile: dict, to_uid: str, got: dict, started: float) -> None:
-    """Строка журнала об отправке кадром. Путь — адрес сокета без параметров.
+async def _note_send(profile: dict, presence: dict, send: dict, transport: str,
+                     to_uid: str, text: str, got: dict, started: float) -> None:
+    """Строка журнала об отправке реплики — любым путём.
 
-    ⚠ Адрес режем до вопросительного знака: в строке сокета у некоторых сайтов
-    едет токен сессии, а журнал читают в консоли и копируют в переписку.
+    ⚠ **Одна строка на одну отправку, включая неудачную.** Журнал отвечает на
+    вопрос «сколько раз мы постучались к сайту», и отказ — такой же стук, как
+    удача. Неотправленное сообщение в переписку не ложится (`result['ok']`), и
+    без этой строки его след пропадал бы совсем.
+
+    ⚠ **Текста реплики здесь нет, только длина.** Журнал читают в консоли и
+    копируют в переписку; сам разговор живёт в `message`, и второй его копии в
+    таблице на 52 тысячи строк в сутки не нужно. Длина же отвечает на живой
+    вопрос «не обрезал ли сайт сообщение».
+
+    ⚠ `ok` берётся из разбора ответа, **а не из кода HTTP**: у LadaDate признак
+    удачи это поле `IsSuccess` в теле, и `200` с отказом внутри — обычное дело.
     """
-    from src.dating.request import (REQUEST_SOCKET, request_ms,
-                                           request_write)
+    from src.dating.request import (REQUEST_SEND, request_ms, request_write)
 
-    url = str(profile.get('ws_url') or '').split('?')[0]
+    if transport == 'ws':
+        # Адрес сокета без параметров: в строке у некоторых сайтов едет токен
+        # сессии, а журнал читают глазами и копируют в переписку.
+        where = str(profile.get('ws_url') or '').split('?')[0]
+        method = 'WS'
+    elif transport == 'scenario':
+        where = 'сценарий у соседа'
+        method = 'RUN'
+    else:
+        where = str(send.get('path') or '')
+        method = 'POST'
+
     await request_write(
-        door=REQUEST_SOCKET, profile_id=int(profile.get('id') or 0),
-        site_id=int(profile.get('site_id') or 0), method='WS',
-        path=f'{url} → {to_uid}', status=0, ok=bool(got.get('ok')),
+        door=REQUEST_SEND, profile_id=int(profile.get('id') or 0),
+        site_id=int(profile.get('site_id') or 0), method=method,
+        path=f'{where} → {to_uid} ({len(str(text or ""))} зн.)',
+        status=int(got.get('status') or 0), ok=bool(got.get('ok')),
         error=str(got.get('error') or ''), ms=request_ms(started),
-        proxy_ip=str(profile.get('proxy_ip') or ''))
+        proxy_ip=str(profile.get('proxy_ip') or ''),
+        body=str(got.get('response') or ''))
+
+
