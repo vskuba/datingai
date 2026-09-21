@@ -353,108 +353,63 @@ class TestAReadyDraftOverridesTheGates:
         assert [one for one in again if one['sender_uid'] == 'u-1'] == []
 
 
-class TestDraftsExpire:
-    """⚠⚠ Обратная сторона послабления: черновик не живёт вечно."""
+class TestDraftsWaitAsLongAsNeeded:
+    """⚠⚠ Срока жизни у черновика нет: он висит, пока адресат не появится.
 
-    async def test_an_old_draft_is_removed(self, girl):
-        """Без срока пара с текстом бралась бы **вечно**, и однажды ушёл бы ответ
-        недельной давности."""
-        from src.dating.chat_reply import chat_reply_expire
+    Сперва я завёл такой срок — и сущность оказалась лишней. Порог свежести
+    сторожит **не опоздание, а массовый импорт**: панель приносит переписку за
+    большой срок разом, и без порога первый же заход разослал бы ответы на всё
+    подряд. Черновик эту проверку уже прошёл — в тот момент, когда его писали,
+    повод был свежим.
 
-        message_id = await _said(girl, 'u-1')
+    Раз текст сочинён законно, он имеет право дойти. Второй срок понадобился бы
+    только затем, чтобы ограничить это право: число ради ограничения числа.
+    """
+
+    async def test_an_old_draft_still_goes_out(self, monkeypatch, girl):
+        """Черновику двое суток, адресат появился — ответ уходит."""
+        ушло = []
+
+        async def _ask(agent_id, question, language, profile, history='', uid='',
+                       anyway=False, name='', initiative=''):
+            return 'не должны спрашивать', ''
+
+        async def _send(profile, presence, uid, text):
+            ушло.append(text)
+
+            return {'ok': True, 'error': ''}
+
+        message_id = await _said(girl, 'u-1', 'вопрос')
         await chat_reply_put(STAND_SITE, girl, message_id, 'u-1', 'Brian', 'ответ')
 
         async with mysql_get_db_async() as db:
             await db.execute(
-                'UPDATE chat_reply SET created_at = NOW() - INTERVAL 30 HOUR'
+                'UPDATE chat_reply SET created_at = NOW() - INTERVAL 48 HOUR'
                 ' WHERE message_id = %s', (message_id,))
             await db.connection.commit()
 
-        gone = await chat_reply_expire()
-
-        assert gone >= 1
-        assert await chat_reply_waiting(girl, message_id) == {}
-
-    async def test_a_fresh_draft_survives(self, girl):
-        from src.dating.chat_reply import chat_reply_expire
-
-        message_id = await _said(girl, 'u-1')
-        await chat_reply_put(STAND_SITE, girl, message_id, 'u-1', 'Brian', 'ответ')
-
-        await chat_reply_expire()
-
-        assert await chat_reply_waiting(girl, message_id), 'свежий черновик сняли'
-
-    async def test_sent_ones_are_untouched(self, girl):
-        """⚠ Ушедшее — часть переписки, а не пул."""
-        from src.dating.chat_reply import chat_reply_expire
-
-        message_id = await _said(girl, 'u-1')
-        await chat_reply_put(STAND_SITE, girl, message_id, 'u-1', 'Brian', 'ответ')
-        got = await chat_reply_waiting(girl, message_id)
-        await chat_reply_sent(int(got['id']))
+        monkeypatch.setattr(answer_mod, '_agent_ask', _ask)
+        monkeypatch.setattr(answer_mod, 'send_message', _send)
+        monkeypatch.setattr(answer_mod, 'online_check',
+                            lambda site_id, uid: {'online': True, 'known': True})
 
         async with mysql_get_db_async() as db:
-            await db.execute(
-                'UPDATE chat_reply SET created_at = NOW() - INTERVAL 99 HOUR'
-                ' WHERE message_id = %s', (message_id,))
-            await db.connection.commit()
+            await db.execute('SELECT * FROM profile WHERE id = %s', (girl,))
+            profile = dict(await db.fetchone())
 
-        await chat_reply_expire()
+        got = await answer_mod.answer_run(profile, {}, 7)
 
-        async with mysql_get_db_async() as db:
-            await db.execute("SELECT COUNT(*) AS n FROM chat_reply"
-                             " WHERE message_id = %s AND status = 'sent'",
-                             (message_id,))
-            row = await db.fetchone()
+        assert ушло == ['ответ'], 'двухдневный черновик не ушёл'
+        assert got['asked'] == 0, 'за готовый текст заплатили второй раз'
 
-        assert int(row['n']) == 1, 'уборка унесла отправленное'
+    def test_there_is_no_lifetime_setting(self):
+        """⚠ Настройки срока нет — её убрали как лишнюю сущность."""
+        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
 
-    def test_the_sweep_round_runs_it(self):
-        import inspect
+        assert 'chat_reply_stale_hours' not in SITE_KNOWN
 
-        from src.dating.request_round import request_round_run
+    def test_there_is_no_sweeper(self):
+        import src.dating.chat_reply as mod
 
-        assert 'chat_reply_expire()' in inspect.getsource(request_round_run)
-
-    async def test_the_lifetime_is_a_setting(self, auth_client):
-        """⚠ Срок виден на вкладке, а не зашит в код.
-
-        Искать его человек станет именно тогда, когда ответ ушёл не вовремя или не
-        ушёл вовсе, — и зашитое число он бы не нашёл.
-        """
-        from src.dating.chat_reply import CHAT_REPLY_STALE_DEFAULT
-
-        got = (await auth_client.get('/api/dating/site')).json()['result']
-        known = {row['key']: row for row in got['known']}
-        one = known['chat_reply_stale_hours']
-
-        assert one['default'] == str(CHAT_REPLY_STALE_DEFAULT)
-        assert one['min'] == 0, 'ноль обязан быть допустим — «не снимать вовсе»'
-
-    async def test_zero_keeps_drafts_forever(self, girl, monkeypatch):
-        """⚠⚠ Ноль — «пусть ждёт», а не «снести всё».
-
-        `site_seconds` сама подставляет умолчание; `or` поверх неё превратил бы
-        законный ноль в сутки — то же место, на котором уже обожглись с журналом.
-        """
-        from src.dating.chat_reply import chat_reply_expire
-
-        async def _zero(site_id, key):
-            return 0
-
-        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_seconds', _zero)
-
-        message_id = await _said(girl, 'u-1')
-        await chat_reply_put(STAND_SITE, girl, message_id, 'u-1', 'Brian', 'ответ')
-
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                'UPDATE chat_reply SET created_at = NOW() - INTERVAL 99 HOUR'
-                ' WHERE message_id = %s', (message_id,))
-            await db.connection.commit()
-
-        await chat_reply_expire()
-
-        assert await chat_reply_waiting(girl, message_id), \
-            'ноль снёс черновик вместо того, чтобы дать ему ждать'
+        assert not hasattr(mod, 'chat_reply_expire'), \
+            'уборка вернулась — вместе с ней вернулось и второе число'
