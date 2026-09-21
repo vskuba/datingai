@@ -348,7 +348,7 @@ async def favorite_mail_make(site_id: int, limit: int = 0,
         # письма» — правда, но про кого? В заходе десятки пар, причины копятся
         # списком, и безымянная строка читается как отказ неизвестно по кому:
         # человек видит её и не знает, ждать ли и кого проверять.
-        why = await _too_soon(profile_id_, uid, per_day, gap)
+        why = await _too_soon(site_id, uid, per_day, gap)
         if why:
             skipped += 1
             _reason(reasons, f'{_addressee(pair)}: {why}')
@@ -609,35 +609,57 @@ async def _quiet(site_id: int, profile_id: int = 0) -> list[dict]:
     return [dict(row) for row in rows or []]
 
 
-async def _too_soon(profile_id: int, uid: str, per_day: int, gap: int) -> str:
+async def _too_soon(site_id: int, uid: str, per_day: int, gap: int) -> str:
     """Рано ли писать этому человеку. Пустая строка — можно.
 
-    ⚠ **Считается всё ушедшее ему от этой анкеты**: рассылка, ответ и
-    возобновление. Письма считает получатель, а не наши таблицы — разделяй мы их,
-    «два письма в сутки» означало бы шесть.
+    ⚠ **Считается всё ушедшее ему от любой нашей анкеты**: рассылка, ответ и
+    возобновление, по всему сайту. Письма считает получатель, а не наши таблицы
+    и не наши девушки.
+
+    ## ⚠⚠ Считалось по паре, и от этого обе настройки не работали
+
+    Здесь стояло `profile_id = %s AND uid = %s` — счёт вёлся по паре «анкета +
+    человек». Каждая девушка честно выдерживала свои два письма в сутки и свои
+    четыре часа паузы, но про других не знала, а избранным один мужчина бывает
+    у многих.
+
+    Поймано на живых данных: собеседник получил **четыре письма от четырёх разных
+    девушек за одиннадцать минут** — 18:28, 18:31, 18:34, 18:39. Ни одна пара
+    предела не превысила: у каждой было по одному письму при разрешённых двух.
+
+    Чинится сменой ключа на `site_id`: названия настроек — «писем **избранному** в
+    сутки» и «пауза между письмами **одному человеку**» — говорят про человека, и
+    теперь код говорит о том же.
+
+    ⚠ **Цена размена честная.** При тринадцати анкетах в сети «два письма в сутки»
+    означало до двадцати шести; теперь означает два. Это и есть смысл настройки, но
+    писем станет заметно меньше — если их нужно больше, поднимают саму настройку, а
+    не обходят её числом девушек.
 
     ⚠ **Сбой базы — не пишем.** Непрочитанный счёт означает неизвестный предел, а
     лишнее письмо живому человеку отменить нельзя. Та же сторона ошибки, что у
     дневного потолка отправки.
     """
+    # ⚠ `site_id`, а не `profile_id`: предел на человека, и неважно, которая из
+    # наших девушек ему написала. Все три таблицы этот столбец несут.
     sql = (
         'SELECT COUNT(*) AS сутки, MAX(sent_at) AS последнее FROM ('
         '   SELECT sent_at FROM mailing'
-        "    WHERE profile_id = %s AND uid = %s AND status = 'sent'"
+        "    WHERE site_id = %s AND uid = %s AND status = 'sent'"
         '   UNION ALL'
         '   SELECT sent_at FROM mail_reply'
-        "    WHERE profile_id = %s AND uid = %s AND status = 'sent'"
+        "    WHERE site_id = %s AND uid = %s AND status = 'sent'"
         '   UNION ALL'
         '   SELECT sent_at FROM favorite_mail'
-        "    WHERE profile_id = %s AND uid = %s AND status = 'sent'"
+        "    WHERE site_id = %s AND uid = %s AND status = 'sent'"
         ') AS ушло'
         ' WHERE sent_at IS NOT NULL AND sent_at > NOW() - INTERVAL 1 DAY')
 
     try:
         async with mysql_get_db_async() as db:
-            await db.execute(sql, (int(profile_id), str(uid),
-                                   int(profile_id), str(uid),
-                                   int(profile_id), str(uid)))
+            await db.execute(sql, (int(site_id), str(uid),
+                                   int(site_id), str(uid),
+                                   int(site_id), str(uid)))
             row = await db.fetchone()
 
             # Пауза считается от последнего ушедшего письма **за любой срок**, а
@@ -646,19 +668,19 @@ async def _too_soon(profile_id: int, uid: str, per_day: int, gap: int) -> str:
             await db.execute(
                 'SELECT MAX(sent_at) AS последнее FROM ('
                 '   SELECT sent_at FROM mailing'
-                "    WHERE profile_id = %s AND uid = %s AND status = 'sent'"
+                "    WHERE site_id = %s AND uid = %s AND status = 'sent'"
                 '   UNION ALL'
                 '   SELECT sent_at FROM mail_reply'
-                "    WHERE profile_id = %s AND uid = %s AND status = 'sent'"
+                "    WHERE site_id = %s AND uid = %s AND status = 'sent'"
                 '   UNION ALL'
                 '   SELECT sent_at FROM favorite_mail'
-                "    WHERE profile_id = %s AND uid = %s AND status = 'sent'"
+                "    WHERE site_id = %s AND uid = %s AND status = 'sent'"
                 ') AS ушло',
-                (int(profile_id), str(uid), int(profile_id), str(uid),
-                 int(profile_id), str(uid)))
+                (int(site_id), str(uid), int(site_id), str(uid),
+                 int(site_id), str(uid)))
             last = await db.fetchone()
     except Exception as e:
-        logger_info(f'[dating] счёт писем {uid} у анкеты #{profile_id} '
+        logger_info(f'[dating] счёт писем {uid} на сайте #{site_id} '
                     f'не спросился: {e}')
 
         return 'не удалось посчитать, сколько ему уже написали'
@@ -988,7 +1010,7 @@ async def favorite_mail_why(site_id: int) -> str:
 
     reasons = []
     for pair in pairs:
-        why = await _too_soon(int(pair['profile_id']), str(pair['uid']), per_day, gap)
+        why = await _too_soon(site_id, str(pair['uid']), per_day, gap)
         # Есть хоть одна пара, которой можно писать, — повода объясняться нет:
         # круг наберёт её на ближайшем заходе.
         if not why:

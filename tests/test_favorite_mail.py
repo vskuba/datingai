@@ -7,8 +7,9 @@
 * `_quiet` — кого берём. Цена ошибки высока в обе стороны: пропустим — разговор
   так и останется затихшим, возьмём лишнего — напишем тому, кто ждёт ответа на
   своё письмо, и наше «а расскажи ещё» придёт вместо ответа.
-* `_too_soon` — как часто пишем. Оба предела **про человека**, а не про сайт, и
-  считают они **всё ушедшее ему**: письма считает получатель, а не наши таблицы.
+* `_too_soon` — как часто пишем. Оба предела **про человека**: считается всё
+  ушедшее ему **от любой нашей анкеты** и из любого пула. Письма считает
+  получатель, а не наши таблицы и не наши девушки.
 
 Анкеты заводятся на стенде (`STAND_SITE`), а не на рабочем сайте — иначе их
 подхватили бы круги воркера.
@@ -455,7 +456,7 @@ class TestHowOften:
         await _hers(girl, uid, _now_minus_hours(5))
         await _hers(girl, uid, _now_minus_hours(6), 'favorite_mail')
 
-        why = await _too_soon(girl, uid, per_day=2, gap=3600)
+        why = await _too_soon(STAND_SITE, uid, per_day=2, gap=3600)
 
         assert 'за сутки' in why, why
         # ⚠ Склонение — не украшение: «ушло 2 писем» читается как сбой
@@ -468,7 +469,7 @@ class TestHowOften:
         uid = f'u{uuid.uuid4().hex[:8]}'
         await _hers(girl, uid, _now_minus_hours(1))
 
-        why = await _too_soon(girl, uid, per_day=5, gap=4 * 3600)
+        why = await _too_soon(STAND_SITE, uid, per_day=5, gap=4 * 3600)
 
         # ⚠ Проверяем **суть, а не слова**: причина идёт человеку на экран, её
         # переписывают, и тест, приколоченный к формулировке, падал бы на каждой
@@ -480,7 +481,7 @@ class TestHowOften:
         uid = f'u{uuid.uuid4().hex[:8]}'
         await _hers(girl, uid, _now_minus_hours(30))
 
-        assert await _too_soon(girl, uid, per_day=2, gap=4 * 3600) == ''
+        assert await _too_soon(STAND_SITE, uid, per_day=2, gap=4 * 3600) == ''
 
     async def test_yesterdays_letter_still_counts_for_the_gap(self, girl):
         """⚠ Пауза считается от последнего ушедшего **за любой срок**, а не за
@@ -491,10 +492,82 @@ class TestHowOften:
         await _hers(girl, uid, _now_minus_hours(25))
 
         # Дневной предел свободен, а пауза в двое суток — нет.
-        why = await _too_soon(girl, uid, per_day=2, gap=48 * 3600)
+        why = await _too_soon(STAND_SITE, uid, per_day=2, gap=48 * 3600)
 
         assert why, 'вчерашнее письмо не попало в счёт паузы'
         assert 'можно через' in why, why
+
+
+class TestTheLimitIsPerPersonNotPerPair:
+    """⚠⚠ Предел считается по человеку, а не по паре «анкета + человек».
+
+    Здесь стояло `profile_id = %s AND uid = %s`, и обе настройки из-за этого не
+    работали: каждая девушка честно выдерживала свои два письма в сутки и свои
+    четыре часа, но про других не знала.
+
+    Поймано на живых данных: собеседник получил **четыре письма от четырёх разных
+    девушек за одиннадцать минут** — 18:28, 18:31, 18:34, 18:39. Ни одна пара
+    предела не превысила: у каждой было по одному письму при разрешённых двух.
+    """
+
+    async def test_another_girls_letter_counts_for_the_daily_cap(self, girl,
+                                                                 auth_client):
+        """Второй девушке нельзя, если первая уже исчерпала предел человека."""
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        other = await _profile(auth_client, 'fav2')
+
+        await _hers(girl, uid, _now_minus_hours(5))
+        await _hers(girl, uid, _now_minus_hours(6), 'favorite_mail')
+
+        try:
+            why = await _too_soon(STAND_SITE, uid, per_day=2, gap=3600)
+
+            assert 'за сутки' in why, \
+                f'письма другой девушки в счёт не попали: {why!r}'
+        finally:
+            await auth_client.delete(f'/api/dating/profile/{other}')
+
+    async def test_another_girls_letter_holds_the_gap(self, girl, auth_client):
+        """⚠⚠ Тот самый случай: четыре письма за одиннадцать минут.
+
+        Первая девушка написала минуту назад — второй писать рано, хотя сама она
+        этому человеку не писала ни разу.
+        """
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        other = await _profile(auth_client, 'fav2')
+
+        await _hers(girl, uid, _now_minus_hours(0))
+
+        try:
+            why = await _too_soon(STAND_SITE, uid, per_day=5, gap=4 * 3600)
+
+            assert why, 'пауза не удержала письмо второй девушки'
+            assert 'можно через' in why, why
+        finally:
+            await auth_client.delete(f'/api/dating/profile/{other}')
+
+    async def test_other_people_are_not_affected(self, girl):
+        """⚠ Обратная сторона: предел на **этого** человека, а не на сайт целиком.
+
+        Письма одному не должны закрывать дорогу к другому — иначе одна активная
+        пара застопорила бы всю переписку сайта.
+        """
+        busy, free = f'u{uuid.uuid4().hex[:8]}', f'u{uuid.uuid4().hex[:8]}'
+        await _hers(girl, busy, _now_minus_hours(0))
+        await _hers(girl, busy, _now_minus_hours(1))
+
+        assert await _too_soon(STAND_SITE, free, per_day=2, gap=4 * 3600) == '', \
+            'предел одного человека закрыл дорогу к другому'
+
+    def test_the_query_keys_on_the_site_not_the_profile(self):
+        """⚠ Сторож от возврата: `profile_id` в условии означал бы счёт по паре."""
+        import inspect
+
+        code = inspect.getsource(_too_soon)
+
+        assert "WHERE site_id = %s AND uid = %s" in code
+        assert "WHERE profile_id = %s AND uid = %s" not in code, \
+            'счёт снова ведётся по паре — оба предела перестанут работать'
 
 
 class TestReasonNamesTheRecipient:
