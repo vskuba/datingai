@@ -35,6 +35,28 @@ from mysql_.mysql_ import mysql_get_db_async
 # живёт дольше повода, и старые могли остаться при своих репликах.
 CHAT_REPLY_SHOW = 1
 
+# Сколько живёт ждущий черновик — **настройка сайта** и её умолчание.
+#
+# ⚠ Настройкой, а не константой: срок видно на вкладке «Настройки сайтов», и
+# правит его тот, кто ведёт сайт. Зашитое в код число он бы не нашёл — а искать
+# стал бы именно тогда, когда ответ ушёл не вовремя или не ушёл вовсе.
+CHAT_REPLY_STALE_SETTING = 'chat_reply_stale_hours'
+#
+# ## ⚠⚠ Зачем срок вообще
+#
+# Черновик снимает обе сторожевые проверки отбора — выдержку повтора и порог
+# свежести панельного (`answer._waiting_find`), — потому что платить за него уже
+# не надо. Без своего срока это открыло бы дыру в обратную сторону: пара с
+# написанным текстом бралась бы в работу **вечно**, и однажды ушёл бы ответ
+# недельной давности.
+#
+# ## ⚠ Сутки, а не больше
+#
+# Текст сочинялся под разговор «сейчас». Человек, не заходивший сутки, вернётся к
+# другому: ответ на позавчерашнюю реплику он прочтёт как обращение не по адресу.
+# Дешевле сочинить заново — это один вызов LLM, а не испорченный разговор.
+CHAT_REPLY_STALE_DEFAULT = 24
+
 
 async def chat_reply_put(site_id: int, profile_id: int, message_id: int,
                          uid: str, name: str, body: str) -> int:
@@ -174,3 +196,63 @@ async def chat_reply_pending(profile_id: int, uid: str) -> list[dict]:
         return []
 
     return [dict(row) for row in (rows or [])]
+
+
+async def chat_reply_expire() -> int:
+    """Снимает черновики, которых никто не дождался. Возвращает, сколько сняли.
+
+    ## ⚠⚠ Пара к сторожевому послаблению
+
+    Готовый черновик снимает у отбора выдержку повтора и порог свежести
+    панельного: платить за него уже не надо (`answer._waiting_find`). Без этой
+    уборки послабление работало бы вечно, и однажды ушёл бы ответ недельной
+    давности.
+
+    ⚠ **Ушедшие не трогаем** — они часть переписки. Снимаем только ждущие.
+
+    ⚠ **Срок у каждого сайта свой** (`chat_reply_stale_hours`), поэтому идём
+    посайтно: в `chat_reply` сайт есть своей колонкой, лишнего join не надо.
+    """
+    from src.uvicorn.routers.dating.site_ import site_seconds
+
+    gone = 0
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute("SELECT DISTINCT site_id FROM chat_reply"
+                             " WHERE status = 'draft'")
+            sites = [int(row['site_id']) for row in (await db.fetchall() or [])]
+    except Exception as e:
+        logger_info(f'[dating] сайты для уборки черновиков не спросились: {e}')
+
+        return 0
+
+    for site_id in sites:
+        try:
+            # ⚠ Без `or`: `site_seconds` сама подставляет умолчание реестра, а
+            # `or` поверх неё превратил бы в умолчание законный ноль — «не
+            # снимать» молча стало бы «снимать через сутки».
+            hours = int(await site_seconds(site_id, CHAT_REPLY_STALE_SETTING))
+        except Exception as e:
+            logger_info(f'[dating] срок черновика сайта #{site_id}: {e}')
+
+            continue
+
+        # Ноль — черновик ждёт, пока адресат не вернётся.
+        if hours <= 0:
+            continue
+
+        try:
+            async with mysql_get_db_async() as db:
+                await db.execute(
+                    "DELETE FROM chat_reply WHERE site_id = %s AND status = 'draft'"
+                    ' AND created_at < NOW() - INTERVAL %s HOUR',
+                    (site_id, hours))
+                gone += int(db.rowcount or 0)
+                await db.connection.commit()
+        except Exception as e:
+            logger_info(f'[dating] черновики сайта #{site_id} не убрались: {e}')
+
+    if gone:
+        logger_info(f'[dating] черновики ответа: снято {gone} протухших')
+
+    return gone

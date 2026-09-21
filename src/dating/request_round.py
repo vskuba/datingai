@@ -30,6 +30,7 @@
 
 import time
 
+from src.dating.chat_reply import chat_reply_expire
 from src.dating.log import log_sweep
 from src.dating.request import request_sweep
 
@@ -67,6 +68,10 @@ async def request_round_run() -> dict:
     # ⚠ Журнал анкет — вторым, а не вместо: сроки у них разные и заданы в
     # разных местах (панель против сайта), а занятие одно.
     logs = await log_sweep()
+    # ⚠ И черновики ответа, которых никто не дождался. Они снимают у отбора
+    # сторожевые проверки (`answer._waiting_find`), и без уборки послабление
+    # работало бы вечно — однажды ушёл бы ответ недельной давности.
+    stale = await chat_reply_expire()
 
-    return {'ran': True, 'gone': requests + logs,
-            'requests': requests, 'logs': logs}
+    return {'ran': True, 'gone': requests + logs + stale,
+            'requests': requests, 'logs': logs, 'drafts': stale}
