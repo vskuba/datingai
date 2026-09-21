@@ -34,7 +34,7 @@ class DatingBlockAdd(BaseModel):
 
 @router.get('', include_in_schema=False)
 async def block_list(site_id: int = 0, profile_id: int = 0, page: int = 1,
-                            per: int = 0,
+                            per: int = 0, channel: str = '',
                             user: AuthUser = Depends(auth_required)):
     """Чёрный список сайта, свежие сверху, страницами.
 
@@ -43,6 +43,11 @@ async def block_list(site_id: int = 0, profile_id: int = 0, page: int = 1,
         profile_id: сузить до одной анкеты. Ноль — все анкеты сайта.
         page: страница, с единицы. За концом — поправится сама.
         per: строк на странице. Ноль — предел по умолчанию.
+        channel: `mail` — только отказы почты, для вкладки «Фавориты → Не пишем».
+            Пусто — весь список, как на «Чате».
+
+            ⚠ Это про **показ**: работу определяет `block_pairs`, и она шире —
+            закрывшийся в чате писем тоже не получит.
 
     Returns:
         dict: `result` — записи страницы, рядом `page`, `pages`, `total`.
@@ -51,7 +56,8 @@ async def block_list(site_id: int = 0, profile_id: int = 0, page: int = 1,
     и каждый отказ сайта добавляет строку.
     """
     got = await block_rows(int(site_id or 0), int(profile_id or 0),
-                                  int(page or 1), int(per or 0))
+                                  int(page or 1), int(per or 0),
+                                  str(channel or ''))
 
     return {'result': got['rows'], 'page': got['page'], 'pages': got['pages'],
             'total': got['total']}

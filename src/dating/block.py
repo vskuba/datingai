@@ -51,57 +51,84 @@ from src.dating.log import log_write
 # Настройка сайта: по каким словам в ответе узнаём «он закрылся».
 BLOCK_DENY_SETTING = 'block_deny_mark'
 
-# Умолчания — коды движка, на котором работают оба наших сайта. ⚠ Это умолчания, а
-# не правило: другой движок скажет то же самое иначе, и приметы правятся настройкой.
-#
-# ⚠⚠ **Второй код — про возраст, и отказ у него того же свойства.**
+# Умолчание — код движка, на котором работают оба наших сайта. ⚠ Это умолчание, а
+# не правило: другой движок скажет то же самое иначе, и примета правится настройкой.
+BLOCK_DENY_DEFAULT = 'ERROR_MESSAGE_USER_DENY'
+
+# ⚠⚠ **Вторая настройка — приметы, которые касаются ТОЛЬКО ПИСЕМ.**
 #
 #     403 "You do not match the criteria of age to send messages to this user
 #          (ERROR_MESSAGE_AGE_CRITERIA)"
 #
-# Человек выставил, от женщин какого возраста готов получать письма, и эта девушка
-# в рамки не попадает. Пробовать снова бессмысленно: возраст её не изменится, а
-# круг избранных возвращался к нему каждый заход и каждый раз платил вызовом LLM.
+# Человек выставил, от женщин какого возраста готов получать **письма**. Пробовать
+# снова бессмысленно — возраст девушки не изменится, — но к чату это отношения не
+# имеет, и гасить им инвайты значило бы запрещать разговор, которого никто не
+# запрещал.
 #
-# ⚠ **Это тоже про пару, а не про человека** — как и «он закрылся». Отказ говорит
-# «**ты** не подходишь»: другая наша девушка, чей возраст в рамки попадает, ему
-# напишет. Поэтому код ложится в ту же таблицу пар и ничего в ней не меняет.
-BLOCK_DENY_DEFAULT = 'ERROR_MESSAGE_USER_DENY,ERROR_MESSAGE_AGE_CRITERIA'
+# ⚠ **Разделение подтверждено журналом, а не выведено из смысла слов.** За всё
+# время отказы ни разу не пересеклись по каналам: «по возрасту» приходил только из
+# почты, «он закрылся» — только из чата.
+BLOCK_DENY_MAIL_SETTING = 'block_deny_mail_mark'
+BLOCK_DENY_MAIL_DEFAULT = 'ERROR_MESSAGE_AGE_CRITERIA'
+
+# Чего касается запрет. ⚠ Значения те же, что в столбце `block.channel`.
+BLOCK_CHANNEL_ALL = 'all'
+BLOCK_CHANNEL_MAIL = 'mail'
 
 # Пулы, из которых запрет выметает готовое. ⚠ `mail_reply` здесь нет: ответ
 # на его же письмо уходит и после запрета (см. заголовок модуля).
 BLOCK_POOLS = ('invite', 'mailing', 'favorite_mail')
 
+# ⚠ Те же пулы без инвайтов: запрет, который касается только писем, чат не трогает.
+BLOCK_POOLS_MAIL = ('mailing', 'favorite_mail')
 
-async def block_deny(site_id: int, answer: str) -> bool:
-    """Значит ли ответ сайта «он закрылся от этой девушки».
+
+async def block_deny(site_id: int, answer: str) -> str:
+    """Стойкий ли это отказ и какого канала он касается.
 
     Args:
-        site_id: сайт — у него и спрашиваем примету.
+        site_id: сайт — у него и спрашиваем приметы.
         answer: что ответил сайт. Годится и тело JSON, и собранная причина
             словами: ищем вхождение, а не разбираем ответ.
 
     Returns:
-        bool: `True` — это стойкий отказ, писать больше нельзя.
+        str: `'all'` — писать нельзя ни в чат, ни письмом; `'mail'` — нельзя
+        только письмом; **пустая строка** — обычный отказ, пробовать можно.
+
+    ⚠ **Пустая строка вместо `False`, и вызывающим это ничего не ломает:**
+    `if not await block_deny(...)` читает её так же. Зато появился третий ответ —
+    «нельзя, но не везде», которого у `bool` быть не могло.
 
     ⚠ **Вхождение подстроки, а не разбор JSON.** Один канал отдаёт нам тело ответа,
     другой — уже собранную фразу с кодом в скобках; разбирать пришлось бы оба, и
     каждый по-своему. Код отказа — слово, которого в обычном ответе нет.
+
+    ⚠ **Сперва спрашиваем про «всё», потом про «только письма».** Совпади ответ с
+    обеими приметами разом, шире тот запрет, что гасит оба канала: ошибиться в
+    сторону молчания дешевле, чем писать тому, кто просил не писать.
     """
     from src.uvicorn.routers.dating.site_ import site_setting
 
     answer = str(answer or '')
     if not answer:
-        return False
+        return ''
 
-    marks = await site_setting(int(site_id or 0), BLOCK_DENY_SETTING,
-                                      BLOCK_DENY_DEFAULT)
+    for setting, fallback, channel in (
+            (BLOCK_DENY_SETTING, BLOCK_DENY_DEFAULT, BLOCK_CHANNEL_ALL),
+            (BLOCK_DENY_MAIL_SETTING, BLOCK_DENY_MAIL_DEFAULT,
+             BLOCK_CHANNEL_MAIL)):
+        marks = await site_setting(int(site_id or 0), setting, fallback)
 
-    return any(one.strip() and one.strip() in answer for one in str(marks).split(','))
+        if any(one.strip() and one.strip() in answer
+               for one in str(marks).split(',')):
+            return channel
+
+    return ''
 
 
 async def block_add(site_id: int, profile_id: int, uid: str, name: str = '',
-                           reason: str = '', source: str = 'chat') -> bool:
+                           reason: str = '', source: str = 'chat',
+                           channel: str = BLOCK_CHANNEL_ALL) -> bool:
     """Заносит пару в чёрный список и выметает всё готовое для неё из пулов.
 
     Args:
@@ -111,6 +138,10 @@ async def block_add(site_id: int, profile_id: int, uid: str, name: str = '',
         name: как его зовут — для списка, который читает человек.
         reason: что ответил сайт, целиком.
         source: откуда узнали — `chat`, `mail` или `hand`.
+        channel: чего касается — `all` (оба канала) или `mail` (только письма).
+            ⚠ Это **не то же, что `source`**: `source` говорит, где мы услышали
+            отказ, а `channel` — на что он распространяется. «Он закрылся»,
+            услышанное в почте, гасит и чат тоже.
 
     Returns:
         bool: `True` — запись новая. `False` — такая уже была либо база отказала.
@@ -132,13 +163,21 @@ async def block_add(site_id: int, profile_id: int, uid: str, name: str = '',
         async with mysql_get_db_async() as db:
             await db.execute(
                 'INSERT IGNORE INTO block'
-                ' (site_id, profile_id, uid, name, reason, source)'
-                ' VALUES (%s, %s, %s, %s, %s, %s)',
+                ' (site_id, profile_id, uid, name, reason, source, channel)'
+                ' VALUES (%s, %s, %s, %s, %s, %s, %s)',
                 (site_id, profile_id, uid, who[:190], str(reason or '')[:500],
-                 source if source in ('chat', 'mail', 'hand') else 'chat'))
+                 source if source in ('chat', 'mail', 'hand') else 'chat',
+                 channel if channel in (BLOCK_CHANNEL_ALL, BLOCK_CHANNEL_MAIL)
+                 else BLOCK_CHANNEL_ALL))
             new = int(db.rowcount or 0) > 0
 
-            for table in BLOCK_POOLS:
+            # ⚠ Выметаем черновики **только тех пулов, которых запрет
+            # касается**. Отказ по возрасту — про письма: снеси он заодно готовый
+            # инвайт, мы потеряли бы реплику, которую сайт принял бы.
+            pools = (BLOCK_POOLS if channel == BLOCK_CHANNEL_ALL
+                     else BLOCK_POOLS_MAIL)
+
+            for table in pools:
                 await db.execute(
                     f"DELETE FROM {table} WHERE profile_id = %s AND uid = %s"
                     "   AND status = 'draft'", (profile_id, uid))
@@ -163,8 +202,18 @@ async def block_add(site_id: int, profile_id: int, uid: str, name: str = '',
     return True
 
 
-async def block_pairs(site_id: int) -> set:
+async def block_pairs(site_id: int, channel: str = '') -> set:
     """Пары «анкета — собеседник», которым на этом сайте писать нельзя.
+
+    Args:
+        site_id: сайт-закладка.
+        channel: чей набор спрашиваем. `chat` — только запреты, которые касаются
+            обоих каналов; пусто или `mail` — все, включая почтовые.
+
+            ⚠⚠ **Чату нужен не весь список.** Отказ «вы не подходите ему по
+            возрасту» — про письма: погаси он инвайты, мы запретили бы разговор,
+            которого никто не запрещал. Подтверждено журналом: этот отказ ни разу
+            не приходил из чата.
 
     Returns:
         set: `{(profile_id, uid)}`. Пусто — запретов нет.
@@ -185,8 +234,13 @@ async def block_pairs(site_id: int) -> set:
 
     try:
         async with mysql_get_db_async() as db:
+            # ⚠ Чату отдаём только запреты «про оба канала»: почтовые его не
+            # касаются (довод — у параметра `channel` выше).
             await db.execute('SELECT profile_id, uid FROM block'
-                             ' WHERE site_id = %s', (site_id,))
+                             ' WHERE site_id = %s'
+                             + (" AND channel = 'all'"
+                                if str(channel) == 'chat' else ''),
+                             (site_id,))
             rows = await db.fetchall()
     except Exception as e:
         logger_info(f'[dating] чёрный список сайта #{site_id} не спросился: {e}')
@@ -203,7 +257,7 @@ BLOCK_PAGE = 25
 
 
 async def block_rows(site_id: int, profile_id: int = 0, page: int = 1,
-                            per: int = 0) -> dict:
+                            per: int = 0, channel: str = '') -> dict:
     """Чёрный список сайта для страницы, свежие сверху.
 
     Args:
@@ -214,6 +268,14 @@ async def block_rows(site_id: int, profile_id: int = 0, page: int = 1,
             выбора список полон и отвечает на «от кого вообще закрылись».
         page: страница, с единицы.
         per: строк на странице. Ноль — `BLOCK_PAGE`.
+        channel: чей список показываем. `mail` — только те запреты, что касаются
+            писем и пришли из почты; пусто — все.
+
+            ⚠⚠ **Это про показ, а не про работу.** «Фавориты → Не пишем» отвечает
+            на вопрос «кому не уходят письма избранным», и шесть сотен пар,
+            закрывшихся в чате, там только мешают: человек пришёл разбираться с
+            почтой. Работу же по-прежнему определяет `block_pairs`, и она шире —
+            закрывшийся в чате писем тоже не получит.
 
     Returns:
         dict: `rows` — записи страницы, `page`, `pages`, `total`.
@@ -232,6 +294,13 @@ async def block_rows(site_id: int, profile_id: int = 0, page: int = 1,
 
     where = ' WHERE b.site_id = %s AND (%s = 0 OR b.profile_id = %s)'
     args = (site_id, int(profile_id or 0), int(profile_id or 0))
+
+    # ⚠ Отбор по **источнику**, а не по `channel`: вкладка показывает то, что
+    # случилось в почте, — и «он закрылся», услышанное при отправке письма, сюда
+    # входит, хотя касается обоих каналов. Человек, пришедший на «Фавориты»,
+    # ищет именно отказы своих писем.
+    if str(channel) == BLOCK_CHANNEL_MAIL:
+        where += " AND b.source = 'mail'"
 
     per = max(1, int(per or 0) or BLOCK_PAGE)
 

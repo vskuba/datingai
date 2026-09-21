@@ -288,7 +288,8 @@ async def _deny_check(profile: dict, letter: dict, table: str, uid: str,
         return
 
     try:
-        if not await block_deny(site_id, said):
+        channel = await block_deny(site_id, said)
+        if not channel:
             return
 
         # ⚠ Сперва хороним это письмо, потом заносим запрет: тот выметает из пулов
@@ -296,9 +297,11 @@ async def _deny_check(profile: dict, letter: dict, table: str, uid: str,
         # «Доставки», хотя ради него всё и затевалось.
         await mail_send_mark(letter, sent=False, error=said, table=table,
                                     final=True)
+        # ⚠ Канал — из разбора, а не «почта раз пришли из почты»: «он закрылся»,
+        # услышанное здесь, гасит и чат тоже, а «не подходите по возрасту» — нет.
         await block_add(site_id, profile_id, uid,
                                str(letter.get('name') or ''), reason=said,
-                               source='mail')
+                               source='mail', channel=channel)
     except Exception as e:
         logger_info(f'[dating] отказ письма не разобрался: {e}')
 

@@ -60,46 +60,55 @@ async def girl(auth_client):
 
 
 class TestDeny:
-    """Что считается отказом «он закрылся»."""
+    """Что считается отказом «он закрылся» и какого канала он касается.
+
+    ⚠ Ответ — **строка**, а не `bool`: у отказа три исхода, а не два. Пусто —
+    пробовать можно; `all` — нельзя нигде; `mail` — нельзя только письмом.
+    Вызывающие читают её через `if not …`, как читали `False`.
+    """
 
     async def test_the_site_code_is_recognised(self):
-        assert await block_deny(STAND_SITE, DENY) is True
+        assert await block_deny(STAND_SITE, DENY) == 'all'
 
     async def test_an_ordinary_refusal_is_not(self):
         """⚠ Обычный отказ — временный, и запрет по нему был бы потерей человека."""
         assert await block_deny(
             STAND_SITE, 'сайт ответил 200: {"IsSuccess":false,'
-                        '"Reason":"ERROR_TOO_MANY_REQUESTS"}') is False
+                        '"Reason":"ERROR_TOO_MANY_REQUESTS"}') == ''
 
     async def test_an_empty_answer_is_not(self):
-        assert await block_deny(STAND_SITE, '') is False
+        assert await block_deny(STAND_SITE, '') == ''
 
     async def test_the_mark_comes_from_the_site_setting(self, monkeypatch):
         """⚠ Примету придумывает сайт: коды отказа — его словарь, не наш.
 
         Умолчание тут лишь потому, что оба наших сайта на одном движке.
         """
-        async def _said(site_id, key, default=''):
-            assert key == block.BLOCK_DENY_SETTING
+        asked = []
 
-            return 'HE_IS_DONE_WITH_YOU'
+        async def _said(site_id, key, default=''):
+            asked.append(key)
+
+            # ⚠ Своё слово — только «про оба канала»; почтовая примета остаётся
+            # пустой, иначе `DENY` попал бы под неё и проверка ничего не значила.
+            return ('HE_IS_DONE_WITH_YOU' if key == block.BLOCK_DENY_SETTING
+                    else '')
 
         import src.uvicorn.routers.dating.site_ as site_router
         monkeypatch.setattr(site_router, 'site_setting', _said)
 
-        assert await block_deny(STAND_SITE, DENY) is False
-        assert await block_deny(STAND_SITE, 'oops HE_IS_DONE_WITH_YOU') is True
+        assert await block_deny(STAND_SITE, DENY) == ''
+        assert await block_deny(STAND_SITE, 'oops HE_IS_DONE_WITH_YOU') == 'all'
+        assert block.BLOCK_DENY_SETTING in asked
 
-    def test_the_defaults_are_the_codes_we_saw_live(self):
-        """⚠ Оба кода — те самые, что приезжали от движка наших сайтов.
+    def test_the_default_is_the_code_we_saw_live(self):
+        """⚠ Здесь только код «он закрылся».
 
-        Второй добавлен позже: «вы не подходите ему по возрасту». Отказ того же
-        свойства — пробовать снова бессмысленно, возраст девушки не изменится, —
-        и круг избранных возвращался к такому человеку каждый заход, каждый раз
-        платя вызовом LLM. Подробности — `tests/test_block_age.py`.
+        Отказ по возрасту живёт **второй настройкой** и касается одних писем:
+        держи мы их в одном списке, он гасил бы и инвайты. Подробности —
+        `tests/test_block_age.py`.
         """
-        assert BLOCK_DENY_DEFAULT.split(',') == ['ERROR_MESSAGE_USER_DENY',
-                                                 'ERROR_MESSAGE_AGE_CRITERIA']
+        assert BLOCK_DENY_DEFAULT == 'ERROR_MESSAGE_USER_DENY'
 
 
 class TestAdd:

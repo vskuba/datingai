@@ -160,8 +160,11 @@ async def invite_send_one(invite: dict) -> dict:
         # него занята как `sent` (`_claim`): прочие черновики пары она бы убрала,
         # а эту — нет, и порядок читался бы наоборот.
         if forever:
+            # ⚠ Канал — из разбора. Отказ, пришедший из чата, почти всегда «он
+            # закрылся» (то есть про оба канала), но приметы правятся настройкой,
+            # и зашивать канал числом значило бы решать за сайт.
             await block_add(site_id, profile_id, str(invite['uid']), who,
-                                   reason=why, source='chat')
+                                   reason=why, source='chat', channel=forever)
 
         return out
 
