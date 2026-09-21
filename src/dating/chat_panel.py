@@ -437,13 +437,15 @@ async def chat_panel_save(rows: list) -> dict:
                 # из-за неожиданного формата даты хуже, чем показать его не тем часом.
                 " SELECT %s, %s, %s, %s, %s, %s, 1, 'panel',"
                 " COALESCE(NULLIF(%s, ''), NOW())"
-                ' FROM DUAL WHERE 1 = 1' + message_twin_absent(),
+                ' FROM DUAL WHERE 1 = 1'
+                + message_twin_absent(row['direction']),
                 (row['profile_id'], row['sender_uid'], row['sender_name'], row['text'],
                  row['message_uid'], row['direction'], row['sent_at'],
-                 # Значения условия: те же поля, что у вставки, — близнец ищется
-                 # по ним же.
-                 row['profile_id'], row['sender_uid'], row['direction'], row['text'],
-                 row['sent_at']))
+                 # Значения условия: анкета, собеседник, текст и время — дважды,
+                 # на обе границы допуска. Направление в условие не идёт: от него
+                 # зависит сам допуск, и оно вшито в текст запроса.
+                 row['profile_id'], row['sender_uid'], row['text'],
+                 row['sent_at'], row['sent_at']))
             if db.rowcount:
                 added += 1
                 # ⚠⚠ **Первый ответ — момент, когда приглашения становятся

@@ -297,9 +297,103 @@ class TestBothSidesShareOneRule:
             'импорт снова судит о дублях по-своему'
 
     def test_both_conditions_name_the_same_fields(self):
-        from src.dating.message_twin import (MESSAGE_TWIN_ABSENT,
-                                             MESSAGE_TWIN_SKIP)
+        from src.dating.message_twin import (message_twin_absent,
+                                             message_twin_skip)
 
-        for field in ('profile_id', 'sender_uid', 'direction', 'text', 'created_at'):
-            assert f'twin.{field}' in MESSAGE_TWIN_SKIP, field
-            assert f'twin.{field}' in MESSAGE_TWIN_ABSENT, field
+        show, put = message_twin_skip(), message_twin_absent('out')
+
+        for field in ('profile_id', 'sender_uid', 'text', 'created_at'):
+            assert f'twin.{field}' in show, field
+            assert f'twin.{field}' in put, field
+
+    def test_both_keep_our_row_not_the_panel_one(self):
+        """⚠⚠ Источник в правиле у обеих сторон: прячется отражение, а не
+        «строка с бо́льшим номером»."""
+        from src.dating.message_twin import (message_twin_absent,
+                                             message_twin_skip)
+
+        for one in (message_twin_skip(), message_twin_absent('out')):
+            assert "twin.source <> 'panel'" in one
+
+    def test_the_window_matches_on_both_sides(self):
+        """⚠ Допуск по времени одинаков у показа и у импорта."""
+        from src.dating.message_twin import (MESSAGE_TWIN_WINDOW_OUT,
+                                             message_twin_absent,
+                                             message_twin_skip)
+
+        assert f'{MESSAGE_TWIN_WINDOW_OUT}' in message_twin_skip()
+        assert (f'INTERVAL {MESSAGE_TWIN_WINDOW_OUT} SECOND'
+                in message_twin_absent('out'))
+
+
+class TestTheClocksMayDisagree:
+    """⚠⚠ Время у строк разное по природе, и точная секунда как ключ не годится.
+
+    Своё мы ставим по нашим часам в момент отправки, панель отдаёт отметку сайта.
+    Замерено на проде: расхождение 0 секунд у одиннадцати пар, 1 секунда у одной
+    и **7 секунд** у одной. Первая редакция требовала совпадения секунда в
+    секунду, и дубли Diana → Henry пережили починку именно поэтому.
+    """
+
+    async def test_a_seven_second_gap_is_still_a_twin(self, pair):
+        profile_id, uid = pair
+
+        ours = await _put(profile_id, uid, 'sounds tempting', 'ulid-1', 'http',
+                          '2026-09-21 14:00:08')
+        await _put(profile_id, uid, 'sounds tempting', 'panel:9', 'panel',
+                   '2026-09-21 14:00:01')
+
+        seen = await _seen(profile_id, uid)
+
+        assert len(seen) == 1, f'пара с расхождением в 7 секунд не узналась: {seen}'
+        assert seen[0]['id'] == ours, 'спрятали свою строку вместо панельной'
+
+    async def test_a_far_apart_repeat_stays(self, pair):
+        """⚠ Допуск не бесконечен: тот же текст через час — другая реплика."""
+        profile_id, uid = pair
+
+        await _put(profile_id, uid, 'ok', 'ulid-1', 'http', '2026-09-21 10:00:00')
+        await _put(profile_id, uid, 'ok', 'panel:1', 'panel', '2026-09-21 11:00:00')
+
+        assert len(await _seen(profile_id, uid)) == 2
+
+    async def test_incoming_keeps_the_strict_key(self, pair):
+        """⚠⚠ У входящих допуска нет: человек пишет очередью, и реплики в
+        соседние секунды — настоящие разные. Съесть чужую реплику хуже, чем
+        показать лишнюю строку."""
+        profile_id, uid = pair
+
+        await _put(profile_id, uid, 'ok', 'sock-1', 'socket', '2026-09-21 12:00:00',
+                   direction='in')
+        await _put(profile_id, uid, 'ok', 'panel:1', 'panel', '2026-09-21 12:00:03',
+                   direction='in')
+
+        assert len(await _seen(profile_id, uid)) == 2, 'съели входящую реплику'
+
+
+class TestTwoPanelRowsDoNotEatEachOther:
+    """⚠⚠ Прячется отражение, а не «строка с бо́льшим номером».
+
+    Первая редакция оставляла наименьший `id`, и человек, написавший одно и то же
+    дважды через сайт агентства, увидел бы одну реплику вместо двух: обе строки
+    панельные, своей записи у них нет.
+    """
+
+    async def test_a_human_double_send_survives(self, pair):
+        profile_id, uid = pair
+
+        await _put(profile_id, uid, 'hello', 'panel:1', 'panel',
+                   '2026-09-21 12:00:00')
+        await _put(profile_id, uid, 'hello', 'panel:2', 'panel',
+                   '2026-09-21 12:00:01')
+
+        assert len(await _seen(profile_id, uid)) == 2, 'съели вторую реплику человека'
+
+    async def test_our_own_two_rows_survive(self, pair):
+        """Две наши записи подряд друг друга не прячут: панельной среди них нет."""
+        profile_id, uid = pair
+
+        await _put(profile_id, uid, 'hi', 'ulid-1', 'http', '2026-09-21 12:00:00')
+        await _put(profile_id, uid, 'hi', 'ulid-2', 'http', '2026-09-21 12:00:02')
+
+        assert len(await _seen(profile_id, uid)) == 2
