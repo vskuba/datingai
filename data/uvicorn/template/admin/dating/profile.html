@@ -4824,7 +4824,11 @@
             if (!btn) return;
 
             const kind = row.dataset.strip;
-            btn.addEventListener('click', () => kind === 'online'
+            // ⚠⚠ **«Избранные онлайн» освежаются той же лентой**, а не своим
+            // запросом: списка `favonline` у сервера нет вовсе — это отбор по
+            // отметке. Отправь мы его в `peopleLoad`, кнопка звала бы
+            // `/people/{id}/favonline` и получала 422.
+            btn.addEventListener('click', () => ONLINE_STRIPS.includes(kind)
                 ? peopleOnlineLoad(true)
                 : peopleLoad(kind, true));
         });
@@ -7367,16 +7371,30 @@
     //
     // ⚠ Ленты онлайна это не касается: она про **сайт** и живёт без выбранной
     // анкеты.
+    //
+    // ⚠⚠ **Две ленты избранных стоят по очереди, а не рядом.** «My favorites» —
+    // про открытую девушку, «Избранные онлайн» — про весь сайт, и вместе они
+    // отвечают на один вопрос дважды. Выбрана анкета — говорит её список; не
+    // выбрана — общий. Показав оба разом, мы заставили бы человека гадать, чем
+    // они отличаются, и отдали бы две с половиной сотни пикселей высоты за ответ,
+    // который нужен один.
     function favStripShow() {
         const пусто = !openId;
 
         workEl.querySelectorAll('.strip-row[data-strip="favorite"]').forEach(
             row => row.classList.toggle('off', пусто));
 
+        // ⚠ Наоборот: общая лента живёт ровно тогда, когда своей нет.
+        workEl.querySelectorAll('.strip-row[data-strip="favonline"]').forEach(
+            row => row.classList.toggle('off', !пусто));
+
         // Разделитель под лентой — вместе с ней: полоса, которую не за что
         // тянуть, читается как край панели, а панель на этом не кончается.
+        //
+        // ⚠ Он тут один на обе ленты и виден всегда: какая бы из них ни стояла,
+        // под ней начинается переписка, и черта между занятиями нужна.
         workEl.querySelectorAll('.split-fav').forEach(
-            split => split.classList.toggle('off', пусто));
+            split => split.classList.remove('off'));
     }
 
     async function favMailLoad() {
@@ -10816,6 +10834,10 @@
     // «избранных нет» — это факты, и они разные.
     const PEOPLE_EMPTY = {
         online: 'никого нет в сети',
+        // ⚠ Своя строка, а не «никого нет в сети»: пусто здесь означает другое —
+        // лента снята и полна, просто избранных среди них нет. Общий текст
+        // отправил бы человека проверять, снимается ли лента вообще.
+        favonline: 'избранных нет в сети',
         favorite: 'избранных нет',
         dialog: 'переписки нет',
     };
@@ -11163,6 +11185,11 @@
     // на сайт, и переключение анкеты его не сбрасывает.
     const ONLINE_KEY = 'site|online';
 
+    // Ряды, которые живут одной лентой онлайна: сама лента и отбор избранных из
+    // неё. ⚠ Списком, а не сравнением с `'online'` по месту: рядов стало три, и
+    // забытое место повело бы кнопку «обновить» за несуществующим списком.
+    const ONLINE_STRIPS = ['online', 'favonline'];
+
     // Грузит ряд «Все онлайн» — по сайту, а не по анкете.
     async function peopleOnlineLoad(fresh = false) {
         const site = Number(siteEl.value) || 0;
@@ -11267,7 +11294,9 @@
     // ⚠ Ленту онлайна не трогаем: принадлежность ей и означает «в сети».
     function stripDotsPaint() {
         workEl.querySelectorAll('.strip-row').forEach(row => {
-            if (row.dataset.strip === 'online') return;
+            // ⚠ Ленту онлайна не трогаем: принадлежность ей и означает «в
+            // сети». То же и у отбора избранных из неё — карточки там те же.
+            if (ONLINE_STRIPS.includes(row.dataset.strip)) return;
 
             row.querySelectorAll('.person-card[data-uid], .person[data-uid]')
                 .forEach(card => {
@@ -11288,11 +11317,34 @@
     function peopleOnlinePaint() {
         // Рядов нет — сайт ленту не завёл (у Goldenbride её нет вовсе). Это не
         // сбой: наполнять нечего, и молча выходим.
-        if (!stripPaint('online', ONLINE_KEY, peopleCache.get(ONLINE_KEY),
-                        PEOPLE_EMPTY.online)) return;
+        const feed = peopleCache.get(ONLINE_KEY);
+
+        // ⚠⚠ **«Избранные онлайн» — та же лента, из которой выброшены чужие.**
+        // Своего запроса и своего кэша у неё нет нарочно: два списка «кто сейчас
+        // в сети» разъезжаются во времени, и человек видел бы в одном виджете
+        // зелёного, а в другом того же серым. Этим уже болели избранные с
+        // онлайном, и лечили сведе́нием к одному источнику.
+        //
+        // ⚠ Кто избранный — решает **сервер** (`favorite.favorite_site_uids`): у
+        // страницы в руках только избранные открытой девушки, а вопрос ленты про
+        // весь сайт. Здесь лишь отбор по готовой отметке.
+        stripPaint('favonline', ONLINE_KEY, _favOnly(feed), PEOPLE_EMPTY.favonline);
+
+        // Порядок важен: сперва отбор, потом общая лента — `stripPaint` рисует
+        // **все** ряды со своим `data-strip`, и обе ленты стоят на разных вкладках.
+        if (!stripPaint('online', ONLINE_KEY, feed, PEOPLE_EMPTY.online)) return;
 
         chatDotsPaint();
         stripDotsPaint();
+    }
+
+    // Снимок ленты, суженный до избранных. ⚠ Поля снимка (возраст, время съёмки,
+    // «обновляется») оставляем как есть: они про саму ленту, а не про отбор, и
+    // подменять их значило бы врать о свежести.
+    function _favOnly(state) {
+        if (!state) return state;
+
+        return {...state, people: (state.people || []).filter(one => one.favorite)};
     }
 
     async function peopleLoad(kind, fresh = false) {

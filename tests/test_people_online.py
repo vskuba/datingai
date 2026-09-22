@@ -99,12 +99,21 @@ class TestThePageKeepsUpWithTheFeed:
             'у точки пропала своя подпись — она разойдётся с цветом'
 
     async def test_the_feed_strip_is_left_alone(self, auth_client):
-        """Лента онлайна сама и есть ответ: перекрашивать её по себе незачем."""
+        """Лента онлайна сама и есть ответ: перекрашивать её по себе незачем.
+
+        ⚠ Лент, живущих этой лентой, стало **две** — сама она и отбор избранных
+        из неё («Избранные онлайн»). Карточки там те же, и точку у них трогать
+        так же незачем. Проверка смотрит на общий список `ONLINE_STRIPS`, а не на
+        сравнение с одним именем: третья такая лента иначе прошла бы молча.
+        """
         page = (await auth_client.get('/admin/dating/profile')).text
         start = page.index('function stripDotsPaint')
         block = page[start:start + 900]
 
-        assert "dataset.strip === 'online'" in block
+        assert 'ONLINE_STRIPS.includes(row.dataset.strip)' in block, \
+            'точки снова красят ленту онлайна по ней же самой'
+        assert "ONLINE_STRIPS = ['online', 'favonline']" in page, \
+            'отбор избранных выпал из списка лент онлайна'
 
 
 class TestWhenWeDoNotKnow:
