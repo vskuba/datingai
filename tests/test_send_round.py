@@ -455,7 +455,20 @@ class TestThePauseBelongsToTheGirl:
     """
 
     async def _favorites_on(self, gap: int, monkeypatch) -> None:
-        """Включает пул избранных у сайта и задаёт паузу."""
+        """Включает пул избранных у сайта и задаёт паузу.
+
+        ⚠⚠ **И заново снимает `is_gone`, хотя фикстура его уже снимала.**
+
+        Сайта с выдуманным номером у соседа нет, и фоновая сверка честно метит
+        его «ушёл» — а `send_round._sites()` таких пропускает. Сверка заводится
+        открытием любой страницы раздела и ходит по своему сроку, то есть
+        случается **посреди** прогона и бьёт по случайному тесту: за шесть
+        прогонов покраснели три разных, и каждый файл поодиночке был зелёным.
+
+        Снимаем метку **здесь**, в общей точке всех тестов класса, а не в каждом:
+        порознь о ней забывают, и забытый тест краснел бы раз в несколько
+        прогонов — то есть выглядел бы плавающим, а не сломанным.
+        """
         from mysql_.mysql_ import mysql_get_db_async
         from src.dating import favorite_mail
 
@@ -463,8 +476,8 @@ class TestThePauseBelongsToTheGirl:
                             _fixed(int(gap)))
 
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE site SET favorite_mail_send_on = 1'
-                             ' WHERE site_id = %s', (SITE,))
+            await db.execute('UPDATE site SET favorite_mail_send_on = 1,'
+                             ' is_gone = 0 WHERE site_id = %s', (SITE,))
             await db.connection.commit()
 
     async def _online(self, profile_id: int) -> None:

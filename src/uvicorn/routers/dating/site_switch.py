@@ -30,6 +30,103 @@ from src.uvicorn.routers.dating.site_ import site_seconds
 
 router = APIRouter(prefix='/api/dating/site', tags=['dating'])
 
+# ── Две записи на весь файл ──────────────────────────────────────────────────
+#
+# ⚠⚠ **Здесь было шестнадцать одинаковых `INSERT … ON DUPLICATE KEY UPDATE`** —
+# по одному на каждый выключатель и каждое расписание. Различались они именем
+# столбца, и больше ничем: тот же запрос, та же обёртка, тот же ответ.
+#
+# Шестнадцать копий — это шестнадцать мест, где правка доедет до пятнадцати.
+# Довод не гипотетический: `favorite_mail_gap` уже жил тремя разошедшимися
+# копиями (`percent.py`), и разошлись они молча.
+#
+# Имя столбца подставляется в SQL текстом — параметром оно не бывает, — поэтому
+# берётся **только из белого списка** ниже. Список закрытый, и в нём ровно то,
+# что этот файл вправе трогать.
+
+# Столбцы-выключатели: `tinyint(1)`, значение приходит булевым.
+SITE_FLAGS = (
+    'mailing_schedule_on', 'mailing_send_on',
+    'invite_schedule_on', 'invite_send_on',
+    'template_schedule_on',
+    'favorite_mail_make_on', 'favorite_mail_send_on',
+    'reply_make_on', 'reply_send_on', 'mail_check_on',
+    'chat_answer_on', 'chat_initiative_on', 'chat_initiative_send_on',
+)
+
+# Столбцы-расписания: `json`, значение — список смен.
+#
+# ⚠ Четвёртое здесь — `favorite_mail_schedule`, и **своего выключателя у него
+# нет**: роль «работает ли занятие» играет `favorite_mail_make_on`, галочка
+# «генерация писем» в полосе подвкладок. У рассылки её зовут
+# `mailing_schedule_on`, у инвайтов `invite_schedule_on` — имя другое, смысл тот
+# же. Вторая галочка рядом отвечала бы на тот же вопрос.
+SITE_SCHEDULE_COLUMNS = (
+    'mailing_schedule', 'invite_schedule', 'template_schedule',
+    'favorite_mail_schedule',
+)
+
+
+async def site_flag_put(site_id: int, column: str, value: bool) -> dict:
+    """Пишет один выключатель сайта. Ответ — готовое тело ручки.
+
+    Args:
+        site_id: сайт-закладка. Строки может не быть — заводится вставкой.
+        column: имя столбца **из `SITE_FLAGS`**.
+        value: поднят или снят.
+
+    Raises:
+        AssertionError: столбца нет в белом списке. Не `HTTPException`: сюда
+            попадает только имя, записанное в коде, и это ошибка кода, а не
+            запроса — отвечать на неё 4xx значило бы прятать её от себя.
+            Имя столбца сюда приходит только из кода этого файла.
+    """
+    assert column in SITE_FLAGS, f'столбец не в белом списке: {column}'
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            f'INSERT INTO site (site_id, {column}) VALUES (%s, %s)'
+            f' ON DUPLICATE KEY UPDATE {column} = VALUES({column})',
+            (int(site_id), 1 if value else 0))
+        await db.connection.commit()
+
+    return {'result': {'site_id': int(site_id), column: bool(value)}}
+
+
+async def site_schedule_put(site_id: int, column: str, shifts) -> dict:
+    """Переписывает смены сайта. Ответ — готовое тело ручки.
+
+    Args:
+        site_id: сайт-закладка.
+        column: имя столбца **из `SITE_SCHEDULE_COLUMNS`**.
+        shifts: список смен, как прислала страница.
+
+    Raises:
+        HTTPException: 422 — расписание негодное; причина словами, как её вернул
+            `schedule_check`. Это уже про запрос, а не про код.
+
+    ⚠ Проверка и разбор — общие с расписанием анкеты (`schedule.py`): смена там
+    и здесь одно и то же, и второй набор правил разошёлся бы с первым.
+    """
+    assert column in SITE_SCHEDULE_COLUMNS, \
+        f'столбец не в белом списке: {column}'
+
+    why = schedule_check(shifts)
+    if why:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail=why)
+
+    rows = schedule_load(shifts)
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            f'INSERT INTO site (site_id, {column}) VALUES (%s, %s)'
+            f' ON DUPLICATE KEY UPDATE {column} = VALUES({column})',
+            (int(site_id), schedule_dump(rows)))
+        await db.connection.commit()
+
+    return {'result': {'site_id': int(site_id), 'schedule': rows}}
+
 
 class DatingSiteMailingSchedule(BaseModel):
     """Смены массовой рассылки: когда с сайта уходят письма."""
@@ -183,21 +280,7 @@ async def site_mailing_schedule_save(
     не устройство установки: их ставит тот, кто ведёт анкеты. Что рассылка уходит
     от всех анкет сайта разом, а не от открытой, говорит подпись над лентой.
     """
-    why = schedule_check(payload.schedule)
-    if why:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail=why)
-
-    rows = schedule_load(payload.schedule)
-
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT INTO site (site_id, mailing_schedule) VALUES (%s, %s)'
-            ' ON DUPLICATE KEY UPDATE mailing_schedule = VALUES(mailing_schedule)',
-            (int(site_id), schedule_dump(rows)))
-        await db.connection.commit()
-
-    return {'result': {'site_id': int(site_id), 'schedule': rows}}
+    return await site_schedule_put(site_id, 'mailing_schedule', payload.schedule)
 
 
 @router.put('/{site_id}/mailing-schedule-on', include_in_schema=False)
@@ -213,15 +296,7 @@ async def site_mailing_schedule_on(
     секунду налезают, потом расходятся. Исполняй мы «по факту наличия», рассылка
     уходила бы на каждое движение.
     """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT INTO site (site_id, mailing_schedule_on) VALUES (%s, %s)'
-            ' ON DUPLICATE KEY UPDATE mailing_schedule_on = VALUES(mailing_schedule_on)',
-            (int(site_id), 1 if payload.mailing_schedule_on else 0))
-        await db.connection.commit()
-
-    return {'result': {'site_id': int(site_id),
-                       'mailing_schedule_on': payload.mailing_schedule_on}}
+    return await site_flag_put(site_id, 'mailing_schedule_on', payload.mailing_schedule_on)
 
 
 @router.put('/{site_id}/mailing-send-on', include_in_schema=False)
@@ -239,15 +314,7 @@ async def site_mailing_send_on(site_id: int, payload: DatingSiteMailingSendOn,
     людям; накат миграции, включивший рассылку, был бы худшим из возможных
     сюрпризов.
     """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT INTO site (site_id, mailing_send_on) VALUES (%s, %s)'
-            ' ON DUPLICATE KEY UPDATE mailing_send_on = VALUES(mailing_send_on)',
-            (int(site_id), 1 if payload.mailing_send_on else 0))
-        await db.connection.commit()
-
-    return {'result': {'site_id': int(site_id),
-                       'mailing_send_on': payload.mailing_send_on}}
+    return await site_flag_put(site_id, 'mailing_send_on', payload.mailing_send_on)
 
 
 @router.get('/{site_id}/invite-schedule', include_in_schema=False)
@@ -285,21 +352,7 @@ async def site_invite_schedule_save(
     ⚠ **Всем вошедшим, а не только админу**: смены инвайтов — тот же распорядок
     работы, что и смены рассылки.
     """
-    why = schedule_check(payload.schedule)
-    if why:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail=why)
-
-    rows = schedule_load(payload.schedule)
-
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT INTO site (site_id, invite_schedule) VALUES (%s, %s)'
-            ' ON DUPLICATE KEY UPDATE invite_schedule = VALUES(invite_schedule)',
-            (int(site_id), schedule_dump(rows)))
-        await db.connection.commit()
-
-    return {'result': {'site_id': int(site_id), 'schedule': rows}}
+    return await site_schedule_put(site_id, 'invite_schedule', payload.schedule)
 
 
 @router.put('/{site_id}/invite-schedule-on', include_in_schema=False)
@@ -314,15 +367,7 @@ async def site_invite_schedule_on(
     ползунком, промежуточные состояния законны, и «исполняй по факту наличия»
     означало бы набор пула на каждое движение ручки.
     """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT INTO site (site_id, invite_schedule_on) VALUES (%s, %s)'
-            ' ON DUPLICATE KEY UPDATE invite_schedule_on = VALUES(invite_schedule_on)',
-            (int(site_id), 1 if payload.invite_schedule_on else 0))
-        await db.connection.commit()
-
-    return {'result': {'site_id': int(site_id),
-                       'invite_schedule_on': payload.invite_schedule_on}}
+    return await site_flag_put(site_id, 'invite_schedule_on', payload.invite_schedule_on)
 
 
 @router.put('/{site_id}/invite-send-on', include_in_schema=False)
@@ -341,15 +386,7 @@ async def site_invite_send_on(site_id: int, payload: DatingSiteInviteSendOn,
     ⚠ **Умолчание — снято.** Реплика уходит живому человеку в чат; накат миграции,
     разрешивший это сам, был бы худшим из сюрпризов.
     """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT INTO site (site_id, invite_send_on) VALUES (%s, %s)'
-            ' ON DUPLICATE KEY UPDATE invite_send_on = VALUES(invite_send_on)',
-            (int(site_id), 1 if payload.invite_send_on else 0))
-        await db.connection.commit()
-
-    return {'result': {'site_id': int(site_id),
-                       'invite_send_on': payload.invite_send_on}}
+    return await site_flag_put(site_id, 'invite_send_on', payload.invite_send_on)
 
 
 @router.get('/{site_id}/chat-initiative', include_in_schema=False)
@@ -389,16 +426,7 @@ async def site_chat_initiative_on(site_id: int,
     ⚠ **Умолчание — снято.** Круг пишет живым людям сам; накат миграции,
     разрешивший это, был бы худшим из сюрпризов.
     """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT INTO site (site_id, chat_initiative_on) VALUES (%s, %s)'
-            ' ON DUPLICATE KEY UPDATE'
-            ' chat_initiative_on = VALUES(chat_initiative_on)',
-            (int(site_id), 1 if payload.chat_initiative_on else 0))
-        await db.connection.commit()
-
-    return {'result': {'site_id': int(site_id),
-                       'chat_initiative_on': payload.chat_initiative_on}}
+    return await site_flag_put(site_id, 'chat_initiative_on', payload.chat_initiative_on)
 
 
 @router.put('/{site_id}/chat-initiative-send-on', include_in_schema=False)
@@ -418,16 +446,7 @@ async def site_chat_initiative_send_on(
 
     ⚠ **Умолчание — снято.**
     """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT INTO site (site_id, chat_initiative_send_on) VALUES (%s, %s)'
-            ' ON DUPLICATE KEY UPDATE'
-            ' chat_initiative_send_on = VALUES(chat_initiative_send_on)',
-            (int(site_id), 1 if payload.chat_initiative_send_on else 0))
-        await db.connection.commit()
-
-    return {'result': {'site_id': int(site_id),
-                       'chat_initiative_send_on': payload.chat_initiative_send_on}}
+    return await site_flag_put(site_id, 'chat_initiative_send_on', payload.chat_initiative_send_on)
 
 
 @router.get('/{site_id}/chat-answer', include_in_schema=False)
@@ -462,15 +481,7 @@ async def site_chat_answer_on(site_id: int, payload: DatingSiteChatAnswerOn,
     этом перенесены: сайт, где автоответ хоть одной анкете включали, остался
     включённым.
     """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT INTO site (site_id, chat_answer_on) VALUES (%s, %s)'
-            ' ON DUPLICATE KEY UPDATE chat_answer_on = VALUES(chat_answer_on)',
-            (int(site_id), 1 if payload.chat_answer_on else 0))
-        await db.connection.commit()
-
-    return {'result': {'site_id': int(site_id),
-                       'chat_answer_on': payload.chat_answer_on}}
+    return await site_flag_put(site_id, 'chat_answer_on', payload.chat_answer_on)
 
 
 @router.get('/{site_id}/panel', include_in_schema=False)
@@ -568,16 +579,7 @@ async def site_favorite_mail_make_on(
     (`favorite_mail_per_day`, `favorite_mail_gap`), и второе расписание отвечало
     бы на тот же вопрос вторым голосом.
     """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT INTO site (site_id, favorite_mail_make_on)'
-            ' VALUES (%s, %s) ON DUPLICATE KEY UPDATE'
-            ' favorite_mail_make_on = VALUES(favorite_mail_make_on)',
-            (int(site_id), 1 if payload.favorite_mail_make_on else 0))
-        await db.connection.commit()
-
-    return {'result': {'site_id': int(site_id),
-                       'favorite_mail_make_on': payload.favorite_mail_make_on}}
+    return await site_flag_put(site_id, 'favorite_mail_make_on', payload.favorite_mail_make_on)
 
 
 @router.put('/{site_id}/favorite-mail-send-on', include_in_schema=False)
@@ -593,16 +595,7 @@ async def site_favorite_mail_send_on(
     Тем важнее его умолчание — снят: письмо уходит живому человеку от имени
     девушки, и накат миграции, разрешивший это сам, был бы худшим из сюрпризов.
     """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT INTO site (site_id, favorite_mail_send_on)'
-            ' VALUES (%s, %s) ON DUPLICATE KEY UPDATE'
-            ' favorite_mail_send_on = VALUES(favorite_mail_send_on)',
-            (int(site_id), 1 if payload.favorite_mail_send_on else 0))
-        await db.connection.commit()
-
-    return {'result': {'site_id': int(site_id),
-                       'favorite_mail_send_on': payload.favorite_mail_send_on}}
+    return await site_flag_put(site_id, 'favorite_mail_send_on', payload.favorite_mail_send_on)
 
 
 @router.get('/{site_id}/template-schedule', include_in_schema=False)
@@ -635,17 +628,21 @@ async def site_template_schedule_save(
     ⚠ Разбор и проверка смен — **общие** с расписанием анкеты и рассылки
     (`schedule.py`): «смена» здесь и там одно и то же, и третий набор правил
     разошёлся бы с первыми двумя.
+
+    ## ⚠⚠ И расходился: проверки здесь не было
+
+    Докстринг обещал общие правила, а код звал только разбор — `schedule_check`
+    стоял у рассылки и инвайтов, но не здесь. Негодные смены этот путь принимал
+    молча: `schedule_load` выбрасывает непонятое и возвращает, что разобрал, —
+    то есть человек сохранял расписание и получал «сохранено», а уезжала его
+    половина.
+
+    Расхождение нашлось само, когда три одинаковые записи свелись к одной.
+    Это и есть довод против копий: разницу между ними никто не замечает, пока
+    они лежат порознь.
     """
-    rows = schedule_load(payload.schedule)
-
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT INTO site (site_id, template_schedule) VALUES (%s, %s)'
-            ' ON DUPLICATE KEY UPDATE template_schedule = VALUES(template_schedule)',
-            (int(site_id), schedule_dump(rows)))
-        await db.connection.commit()
-
-    return {'result': {'site_id': int(site_id), 'schedule': rows}}
+    return await site_schedule_put(site_id, 'template_schedule',
+                                   payload.schedule)
 
 
 @router.put('/{site_id}/template-schedule-on', include_in_schema=False)
@@ -660,16 +657,7 @@ async def site_template_schedule_on(
     ползунком, промежуточные состояния законны, и «по факту наличия» агент
     запускался бы на каждое движение ручки.
     """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT INTO site (site_id, template_schedule_on) VALUES (%s, %s)'
-            ' ON DUPLICATE KEY UPDATE'
-            ' template_schedule_on = VALUES(template_schedule_on)',
-            (int(site_id), 1 if payload.template_schedule_on else 0))
-        await db.connection.commit()
-
-    return {'result': {'site_id': int(site_id),
-                       'template_schedule_on': payload.template_schedule_on}}
+    return await site_flag_put(site_id, 'template_schedule_on', payload.template_schedule_on)
 
 
 @router.get('/{site_id}/reply', include_in_schema=False)
@@ -737,15 +725,7 @@ async def site_mail_check_on(site_id: int, payload: DatingSiteMailCheckOn,
     отвечать станет не на что. Поэтому подпись на странице говорит о круге, а не о
     галочке.
     """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT INTO site (site_id, mail_check_on) VALUES (%s, %s)'
-            ' ON DUPLICATE KEY UPDATE mail_check_on = VALUES(mail_check_on)',
-            (int(site_id), 1 if payload.mail_check_on else 0))
-        await db.connection.commit()
-
-    return {'result': {'site_id': int(site_id),
-                       'mail_check_on': payload.mail_check_on}}
+    return await site_flag_put(site_id, 'mail_check_on', payload.mail_check_on)
 
 
 @router.put('/{site_id}/reply-make-on', include_in_schema=False)
@@ -765,15 +745,7 @@ async def site_reply_make_on(site_id: int, payload: DatingSiteReplyMakeOn,
     искали в поломке. Пул ответов один на сайт, и вопрос «отвечаем ли вообще»
     задаётся один раз.
     """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT INTO site (site_id, reply_make_on) VALUES (%s, %s)'
-            ' ON DUPLICATE KEY UPDATE reply_make_on = VALUES(reply_make_on)',
-            (int(site_id), 1 if payload.reply_make_on else 0))
-        await db.connection.commit()
-
-    return {'result': {'site_id': int(site_id),
-                       'reply_make_on': payload.reply_make_on}}
+    return await site_flag_put(site_id, 'reply_make_on', payload.reply_make_on)
 
 
 @router.put('/{site_id}/reply-send-on', include_in_schema=False)
@@ -791,15 +763,7 @@ async def site_reply_send_on(site_id: int, payload: DatingSiteReplySendOn,
     его по анкетам — включать пришлось бы сорок раз, а забытая молчала бы, и причину
     искали бы в поломке.
     """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT INTO site (site_id, reply_send_on) VALUES (%s, %s)'
-            ' ON DUPLICATE KEY UPDATE reply_send_on = VALUES(reply_send_on)',
-            (int(site_id), 1 if payload.reply_send_on else 0))
-        await db.connection.commit()
-
-    return {'result': {'site_id': int(site_id),
-                       'reply_send_on': payload.reply_send_on}}
+    return await site_flag_put(site_id, 'reply_send_on', payload.reply_send_on)
 
 
 async def site_template_schedule(site_id: int) -> dict:

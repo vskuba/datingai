@@ -35,6 +35,27 @@ pytestmark = pytest.mark.mail
 STAND_SITE = 999_343
 
 
+def _source_without_doc(func) -> str:
+    """Исходник функции без докстринга.
+
+    ⚠ Нужен сторожам, которые ищут в коде запрещённую строку: в описании та же
+    строка часто стоит нарочно — «здесь было так, и вот почему это неверно».
+    Проверка по всему исходнику приняла бы объяснение за нарушение.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+    body = tree.body[0].body
+    if (body and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)):
+        body.pop(0)
+
+    return ast.unparse(tree)
+
+
 async def _profile(auth_client, tag: str) -> int:
     made = (await auth_client.post('/api/dating/profile', json={
         'site_id': STAND_SITE,
@@ -656,14 +677,42 @@ class TestTheLimitIsPerPersonNotPerPair:
             'предел одного человека закрыл дорогу к другому'
 
     def test_the_query_keys_on_the_site_not_the_profile(self):
-        """⚠ Сторож от возврата: `profile_id` в условии означал бы счёт по паре."""
-        import inspect
+        """⚠ Сторож от возврата: `profile_id` в условии означал бы счёт по паре.
 
-        code = inspect.getsource(_too_soon)
+        ⚠ Смотрим на **условие отбора**, а не на весь текст запроса: таблицы
+        теперь перечисляет общий сборщик (`mail_sent_union`), и запрос целиком
+        в исходнике больше не лежит. Приколоти проверку к буквам SQL — она
+        краснела бы на каждой перестановке строк, ничего не защищая.
 
-        assert "WHERE site_id = %s AND uid = %s" in code
-        assert "WHERE profile_id = %s AND uid = %s" not in code, \
-            'счёт снова ведётся по паре — оба предела перестанут работать'
+        ⚠⚠ И **без докстринга**: в нём разобрана та самая прежняя ошибка, со
+        строкой `profile_id = %s AND uid = %s` в тексте. Проверка по всему
+        исходнику нашла бы её там и объявила поломкой — то есть запрещала бы
+        объяснять, почему так делать нельзя.
+        """
+        code = _source_without_doc(_too_soon)
+
+        assert "site_id = %s AND uid = %s" in code, \
+            'дневной предел больше не считает по человеку'
+        assert "profile_id = %s AND uid = %s" not in code, \
+            'счёт снова ведётся по паре — предел перестанет работать'
+
+    def test_the_daily_cap_counts_every_pool(self):
+        """⚠⚠ И считает **все** пулы, а не те, что кто-то вспомнил.
+
+        Список таблиц один на проект (`MAIL_SEND_TABLES`), и счёт обязан брать
+        его целиком: посчитай он два пула из трёх, предел молча отпускал бы
+        лишнее письмо — запрос от недостающей таблицы не падает.
+        """
+        from src.dating.mail_send import MAIL_SEND_TABLES, mail_sent_union
+
+        code = _source_without_doc(_too_soon)
+
+        assert 'mail_sent_union' in code, \
+            'дневной предел снова перечисляет таблицы сам'
+
+        built = mail_sent_union("site_id = %s AND uid = %s AND status = 'sent'")
+        for table in MAIL_SEND_TABLES:
+            assert f'FROM {table} ' in built, f'{table} выпал из счёта'
 
 
 class TestReasonNamesTheRecipient:

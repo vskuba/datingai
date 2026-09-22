@@ -422,18 +422,20 @@ async def _today(site_id: int, offset_hours: int = 0) -> int:
             await db.execute('SELECT DATE(NOW() + INTERVAL %s HOUR) AS d', (hours,))
             today = ((await db.fetchone()) or {}).get('d')
 
+            # ⚠ Таблицы перечисляет `mail_sent_union`, а не этот запрос:
+            # потолок обязан считать ровно те пулы, из которых круг отправляет.
+            # Прежде здесь стояли три `SELECT COUNT(*)` подряд, записанные
+            # руками, — четвёртый пул до них бы не доехал.
+            from src.dating.mail_send import (MAIL_SEND_TABLES,
+                                              mail_sent_union)
+
             await db.execute(
-                "SELECT (SELECT COUNT(*) FROM mailing"
-                "         WHERE site_id = %s AND status = 'sent'"
-                '           AND DATE(sent_at + INTERVAL %s HOUR) = %s)'
-                " + (SELECT COUNT(*) FROM mail_reply"
-                "     WHERE site_id = %s AND status = 'sent'"
-                '       AND DATE(sent_at + INTERVAL %s HOUR) = %s)'
-                " + (SELECT COUNT(*) FROM favorite_mail"
-                "     WHERE site_id = %s AND status = 'sent'"
-                '       AND DATE(sent_at + INTERVAL %s HOUR) = %s) AS ушло',
-                (int(site_id), hours, today, int(site_id), hours, today,
-                 int(site_id), hours, today))
+                'SELECT COUNT(*) AS ушло FROM ('
+                + mail_sent_union(
+                    "site_id = %s AND status = 'sent'"
+                    ' AND DATE(sent_at + INTERVAL %s HOUR) = %s')
+                + ') AS ушло',
+                (int(site_id), hours, today) * len(MAIL_SEND_TABLES))
             row = await db.fetchone()
     except Exception as e:
         logger_info(f'[dating] дневной счёт отправки не спросился: {e}')

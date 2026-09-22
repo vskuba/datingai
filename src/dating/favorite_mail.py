@@ -162,9 +162,9 @@ FAVORITE_MAIL_GAP_DEFAULT = 14400
 # молчать после него надо ровно так же. Но сама пауза — настройка избранных, и
 # распоряжаться чужими пулами ей не по чину: у рассылки и ответов свои правила.
 #
-# Признак пересмотреть: у рассылки появится заметный поток. Тогда её письма будут
-# съедать паузу избранных, и часам понадобится свой список пулов.
-FAVORITE_MAIL_GIRL_POOLS = ('mailing', 'mail_reply', 'favorite_mail')
+# ⚠ Список пулов свой здесь **не заводится**: он один на проект и лежит там, где
+# отправка (`MAIL_SEND_TABLES`). Вторая копия того же списка разошлась бы с
+# первой ровно тогда, когда появится четвёртый пул, — и молча.
 
 # ── Каким выходит письмо: три доли и две оси жребия ──────────────────────────
 #
@@ -581,6 +581,8 @@ async def _quiet(site_id: int, profile_id: int = 0) -> list[dict]:
     Порядок — по давности разговора, и пары без переписки идут первыми (`NULL`
     вперёд): у них повод старше всех — им не писали никогда.
     """
+    from src.dating.mail_send import mail_sent_union
+
     # ⚠ «Последняя реплика» считается **по всей почте**, а не по одному источнику:
     # входящие письма (он), наши ответы и оба пула ушедшего (мы). Смотри мы только
     # входящие, затихшим выглядел бы всякий, кому мы писали последним, — включая
@@ -604,17 +606,15 @@ async def _quiet(site_id: int, profile_id: int = 0) -> list[dict]:
         '            MAX(at) AS last_at,'
         '            SUBSTRING_INDEX(MAX(CONCAT(at, %s, side)), %s, -1) AS last_side'
         '       FROM ('
+        # Его письма — отдельной веткой: `mail_in` не пул отправки, и в общем
+        # списке ему места нет. Наши три — тем же перечислением, что у всех
+        # прочих счётчиков почты.
         "          SELECT profile_id, uid, date_post AS at, 'him' AS side"
         '            FROM mail_in'
-        '          UNION ALL'
-        "          SELECT profile_id, uid, sent_at AS at, 'her' AS side"
-        "            FROM mail_reply WHERE status = 'sent'"
-        '          UNION ALL'
-        "          SELECT profile_id, uid, sent_at AS at, 'her' AS side"
-        "            FROM mailing WHERE status = 'sent'"
-        '          UNION ALL'
-        "          SELECT profile_id, uid, sent_at AS at, 'her' AS side"
-        "            FROM favorite_mail WHERE status = 'sent'"
+        '          UNION ALL '
+        + mail_sent_union(
+            "status = 'sent'",
+            select="profile_id, uid, sent_at AS at, 'her' AS side") +
         '       ) AS all_mail'
         '      WHERE at IS NOT NULL'
         '      GROUP BY profile_id, uid) AS talk'
@@ -678,11 +678,14 @@ def _girl_sent_union(key: str) -> str:
     ли ей писать» и получает словами, круг отправки отбирает письма запросом и
     получает условием. Разойдись они — пул набирал бы то, чего отправка не
     берёт, либо отправка уносила бы то, чего набор не считает готовым.
+
+    ⚠ Перечисляет таблицы `mail_sent_union`, а не эта функция: список пулов один
+    на проект.
     """
-    return ' UNION ALL '.join(
-        f"SELECT sent_at FROM {table}"
-        f" WHERE profile_id = {key} AND status = 'sent' AND sent_at IS NOT NULL"
-        for table in FAVORITE_MAIL_GIRL_POOLS)
+    from src.dating.mail_send import mail_sent_union
+
+    return mail_sent_union(
+        f"profile_id = {key} AND status = 'sent' AND sent_at IS NOT NULL")
 
 
 def favorite_mail_girl_free_sql(gap: int, key: str = 'm.profile_id') -> str:
@@ -723,6 +726,8 @@ async def favorite_mail_girl_soon(profile_id: int, gap: int) -> str:
     лишнее письмо живому человеку отменить нельзя. Та же сторона ошибки, что у
     дневного потолка.
     """
+    from src.dating.mail_send import MAIL_SEND_TABLES
+
     profile_id, gap = int(profile_id or 0), int(gap or 0)
     if not profile_id or gap <= 0:
         return ''
@@ -732,7 +737,7 @@ async def favorite_mail_girl_soon(profile_id: int, gap: int) -> str:
             await db.execute(
                 f'SELECT MAX(sent_at) AS последнее'
                 f'  FROM ({_girl_sent_union("%s")}) AS ушло',
-                (profile_id,) * len(FAVORITE_MAIL_GIRL_POOLS))
+                (profile_id,) * len(MAIL_SEND_TABLES))
             row = await db.fetchone()
     except Exception as e:
         logger_info(f'[dating] когда анкета #{profile_id} писала в последний раз '
@@ -810,24 +815,16 @@ async def _too_soon(site_id: int, uid: str, per_day: int) -> str:
     """
     # ⚠ `site_id`, а не `profile_id`: предел на человека, и неважно, которая из
     # наших девушек ему написала. Все три таблицы этот столбец несут.
-    sql = (
-        'SELECT COUNT(*) AS сутки, MAX(sent_at) AS последнее FROM ('
-        '   SELECT sent_at FROM mailing'
-        "    WHERE site_id = %s AND uid = %s AND status = 'sent'"
-        '   UNION ALL'
-        '   SELECT sent_at FROM mail_reply'
-        "    WHERE site_id = %s AND uid = %s AND status = 'sent'"
-        '   UNION ALL'
-        '   SELECT sent_at FROM favorite_mail'
-        "    WHERE site_id = %s AND uid = %s AND status = 'sent'"
-        ') AS ушло'
-        ' WHERE sent_at IS NOT NULL AND sent_at > NOW() - INTERVAL 1 DAY')
+    from src.dating.mail_send import MAIL_SEND_TABLES, mail_sent_union
+
+    sql = ('SELECT COUNT(*) AS сутки, MAX(sent_at) AS последнее FROM ('
+           + mail_sent_union("site_id = %s AND uid = %s AND status = 'sent'")
+           + ') AS ушло'
+             ' WHERE sent_at IS NOT NULL AND sent_at > NOW() - INTERVAL 1 DAY')
 
     try:
         async with mysql_get_db_async() as db:
-            await db.execute(sql, (int(site_id), str(uid),
-                                   int(site_id), str(uid),
-                                   int(site_id), str(uid)))
+            await db.execute(sql, (int(site_id), str(uid)) * len(MAIL_SEND_TABLES))
             row = await db.fetchone()
     except Exception as e:
         logger_info(f'[dating] счёт писем {uid} на сайте #{site_id} '
