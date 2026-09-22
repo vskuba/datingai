@@ -17,6 +17,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating import mail_agent
 from src.dating.mail import (MAILING_ANGLES, MAILING_GREETINGS,
+                             MAILING_GREETINGS_NAME,
                              MAILING_LENGTHS, MAILING_STORIES)
 from src.dating.mail_agent import _percent, mail_write
 
@@ -142,10 +143,31 @@ class TestTheGreetingIsALotToo:
     """
 
     async def test_the_opening_is_drawn(self, agent, share):
+        """⚠ Списков зачинов **два**, и выбирает между ними жребий имени.
+
+        Приёмы с именем («приветствие с именем», «имя в первой фразе») годятся
+        только когда метка в шаблоне есть. Достанься такой приём безымянному
+        шаблону — модель выбрала бы между просьбой панели и отсутствием метки, а
+        она, как показала живая работа, выбирает просьбу и пишет имя словами.
+        """
         await share('mailing_no_greeting_percent', 0)
         await mail_write(STAND_SITE, VARS)
 
-        assert agent['mail_greeting'] in MAILING_GREETINGS
+        assert agent['mail_greeting'] in MAILING_GREETINGS + MAILING_GREETINGS_NAME
+
+    async def test_the_opening_matches_the_name_dice(self, agent, share):
+        """⚠⚠ Приём обязан соответствовать жребию, а не просто быть из списка."""
+        await share('mailing_no_greeting_percent', 0)
+
+        await share('mailing_name_percent', 100)
+        await mail_write(STAND_SITE, VARS)
+        assert agent['mail_greeting'] in MAILING_GREETINGS_NAME, \
+            'имя в шаблоне есть, а зачин его не зовёт'
+
+        await share('mailing_name_percent', 0)
+        await mail_write(STAND_SITE, VARS)
+        assert agent['mail_greeting'] in MAILING_GREETINGS, \
+            'зачин просит имя, которого в шаблоне нет'
 
     async def test_no_greeting_is_an_empty_section(self, agent, share):
         """Пусто — промпт гасит секцию и запрещает приветствие прямо.
@@ -181,17 +203,25 @@ class TestPercent:
         assert await _percent(STAND_SITE, 'mailing_question_percent', 0.25) == 0.25
 
 
-class TestTheNameStaysMandatory:
-    """⚠⚠ Имя получателя жребием **не** делали, и это решение, а не пропуск.
+class TestTheNameIsMandatoryUntilAskedOtherwise:
+    """⚠⚠ Имя получателя требуется от шаблона — пока долю не опустили.
 
-    У инвайтов и у писем избранным имя — доля: там шаблон несёт готовый текст, и
-    обращение по имени в каждом выдаёт рамку. Здесь иначе: обращение приходит
-    переменной реестра, и «шаблон обязан нести все переменные» — договор, на
-    котором стоит вся рассылка (`mail_var_must`). Сделай имя жребием — половина
-    писем перестала бы обращаться к человеку вовсе.
+    Здесь стояло «имя жребием не делали, и это решение»: обращение приходит
+    переменной реестра, а «шаблон обязан нести все переменные» — договор, на
+    котором стоит вся рассылка (`mail_var_must`). Довод верен и никуда не делся:
+    сделай имя жребием без спроса — половина писем перестала бы обращаться к
+    человеку вовсе.
+
+    Теперь долей **можно** управлять (`mailing_name_percent`), но умолчание —
+    сто процентов, то есть ровно прежнее поведение. Опускает её человек, а не мы
+    за него; прежний довод и есть причина, по которой умолчание такое.
+
+    ⚠ Проверка ниже не изменилась: при умолчании имя обязано быть обязательным.
+    Стань она когда-нибудь красной без правки настройки — значит доля поехала
+    сама, и это беда, а не новая возможность.
     """
 
-    async def test_companion_name_is_always_required(self, agent, share):
+    async def test_companion_name_is_required_by_default(self, agent, share):
         await mail_write(STAND_SITE, VARS)
 
         assert 'companion_name' in agent['mail_var_must']

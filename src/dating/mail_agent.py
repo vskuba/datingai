@@ -71,7 +71,10 @@ from src.dating.companion_ref import COMPANION_REF_ID
 from src.dating.mail import (MAIL_VAR_RE,
                                    MAILING_ANGLES, MAILING_AVOID_MAX,
                                    MAILING_GREETINGS,
+                                   MAILING_GREETINGS_NAME,
                                    MAILING_LENGTHS,
+                                   MAILING_NAME_CHANCE,
+                                   MAILING_NAME_SETTING,
                                    MAILING_NO_GREETING_CHANCE,
                                    MAILING_NO_GREETING_SETTING,
                                    MAILING_STORIES,
@@ -416,10 +419,32 @@ async def mail_write(site_id: int, variables: list[dict],
     #
     # ⚠ «Без приветствия» — отдельная доля, а не седьмой пункт списка: это не
     # приём зачина, а его отсутствие, и настраивают именно его частоту.
+    # ⚠⚠ **Имя собеседника — тоже жребий.** Прежде им не управляли: имя
+    # появлялось случайно, через зачин («приветствие с именем», «имя в первой
+    # фразе»), то есть примерно в трети шаблонов и только когда приветствие
+    # выпало. Теперь доля задаётся настройкой сайта.
+    #
+    # ⚠ **Не выпало — метку требовать нельзя.** `mail_var_must` перечисляет
+    # обязательные переменные, и останься там `companion_name`, судья у соседа
+    # завернул бы шаблон без имени как неполный. Поэтому имя убирается из
+    # обязательных, а зачин выбирается из тех приёмов, где имени нет.
+    man_name = random.random() < await _percent(
+        int(site_id), MAILING_NAME_SETTING, MAILING_NAME_CHANCE)
+
+    # ⚠ Отбираем **до** запроса: дальше этот список уходит агенту сразу четырьмя
+    # переменными, и разойдись они между собой — шаблон просили бы с именем, а
+    # проверяли без него.
+    must = ([row for row in known if row['name'] != INVITE_SLOT_MAN]
+            if not man_name else known)
+
+    # ⚠ Зачин выбирается **после** жребия имени и из своего списка: приёмы с
+    # именем и без него разведены, иначе панель просила бы имя там, где метки
+    # нет (`MAILING_GREETINGS_NAME`).
     greeting = ('' if random.random() < await _percent(
                     int(site_id), MAILING_NO_GREETING_SETTING,
                     MAILING_NO_GREETING_CHANCE)
-                else random.choice(MAILING_GREETINGS))
+                else random.choice(MAILING_GREETINGS_NAME if man_name
+                                   else MAILING_GREETINGS))
 
     story = (random.choice(MAILING_STORIES)
              if random.random() < await _percent(
@@ -439,24 +464,31 @@ async def mail_write(site_id: int, variables: list[dict],
         # Требовать «имена только переменной», отдав при этом сами имена, — это
         # борьба с данными, в которой данные побеждают. Нет данных — нечего
         # вписать.
-        variables={'mail_vars': _wanted_text(known),
+        variables={'mail_vars': _wanted_text(must),
                    # ⚠ Голые имена через запятую — **отдельно** от `mail_vars`.
                    # Тот список читает модель, и подписи в нём к месту; этот
                    # сверяет регулярка у соседа (`text_regex_unknown`), и подпись
                    # она приняла бы за часть имени.
-                   'mail_var_names': ','.join(row['name'] for row in known),
+                   'mail_var_names': ','.join(row['name'] for row in must),
                    # ⚠ Обязательные — **все переменные реестра**, и решает это
                    # здесь, а не workflow. Шаблон, где половина имён написана
                    # словами, проходил все прежние проверки: лишнего в нём нет,
                    # язык верен, живой метки нет — а значит она и «не встроена».
                    # Полнота оказалась четвёртым вопросом, и задать его может
                    # только тот, кто знает, ради чего переменные заведены.
-                   'mail_var_must': ','.join(row['name'] for row in known),
+                   #
+                   # ⚠⚠ **Кроме имени собеседника, когда жребий не выпал.**
+                   # Останься оно в списке — судья завернул бы безымянный шаблон
+                   # как неполный, и доля `mailing_name_percent` не работала бы
+                   # вовсе: панель просит имя, судья требует имя, жребий не при
+                   # чём. Имя убирается из обязательных **и из разрешённых**:
+                   # первое снимает требование, второе — соблазн.
+                   'mail_var_must': ','.join(row['name'] for row in must),
                    # Переменные, чьё значение — целая фраза. Они обязаны стоять
                    # отдельным абзацем: встроенная в текст, такая даёт
                    # «What are What do you enjoy??». Проверяет это
                    # `text_marks_inline` у соседа.
-                   'mail_var_live': ','.join(row['name'] for row in known
+                   'mail_var_live': ','.join(row['name'] for row in must
                                              if row.get('source') == 'live'),
                    'mail_hint': str(hint or '').strip() or 'обычное первое письмо',
                    # ⚠⚠ Приём и длина — **жребий панели**, а не просьба «будь

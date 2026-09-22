@@ -147,9 +147,21 @@ class TestTheRoundRunsIt:
 
     async def test_it_reports_both(self, girl):
         """Ответ круга различает журналы: по нему видно, что именно убрано."""
+        import time
+
         import src.dating.request_round as round_mod
 
-        round_mod._swept_at = 0.0
+        # ⚠⚠ **Не ноль, а «час назад по монотонным часам».**
+        #
+        # Здесь стояло `_swept_at = 0.0` — в расчёте, что это значит «никогда не
+        # убирали». Но `time.monotonic()` отсчитывается **от загрузки машины**, и
+        # ноль означает «в момент загрузки»: на машине, поднятой меньше часа
+        # назад, круг честно отвечал «ещё рано», и тест краснел.
+        #
+        # Зависимость от аптайма — худший вид плавающего теста: он зелен на
+        # рабочей машине и красен на свежей, то есть у того, кто пришёл первым.
+        round_mod._swept_at = (time.monotonic()
+                               - round_mod.REQUEST_ROUND_EVERY_SEC - 1)
         await _line(girl, 'древняя', hours_ago=5000)
 
         got = await round_mod.request_round_run()
