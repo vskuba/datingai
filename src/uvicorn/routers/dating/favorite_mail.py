@@ -103,6 +103,10 @@ async def favorite_mail_list(site_id: int = 0, status_: str = 'draft',
            '       COALESCE(NULLIF(comp.photo, %s), NULLIF(c.photo, %s),'
            '                NULLIF(m.photo, %s), %s) AS photo,'
            ' m.body, m.status, m.error, m.answer, m.sent_at, m.created_at,'
+           # ⚠ Время исхода: у ушедшего письма это `sent_at`, у неудачного
+           # его нет вовсе — отметку снимает сама неудача, — и остаётся
+           # `updated_at`. Без него красные строки журнала стояли без даты.
+           ' m.updated_at,'
            ' p.login AS profile_login, p.profile AS profile_card'
            ' FROM favorite_mail m'
            ' LEFT JOIN profile p ON p.id = m.profile_id'
@@ -127,7 +131,11 @@ async def favorite_mail_list(site_id: int = 0, status_: str = 'draft',
         sql += ' AND m.profile_id = %s'
         args.append(int(profile_id))
 
-    sql += ' ORDER BY m.id DESC LIMIT %s'
+    # ⚠ По времени исхода, а не по номеру: журнал читают как ленту
+    # «что происходило», и неудача, случившаяся позже удачи, обязана
+    # стоять выше. Тот же порядок, что у журнала инвайтов.
+    sql += (' ORDER BY COALESCE(m.sent_at, m.updated_at, m.created_at) DESC,'
+            ' m.id DESC LIMIT %s')
     args.append(FAVORITE_MAIL_LIMIT)
 
     async with mysql_get_db_async() as db:
@@ -508,5 +516,7 @@ def _answer(row) -> dict:
     got['profile_uid'] = str(card.get('site_uid') or '')
     got['sent_at'] = str(got['sent_at']) if got.get('sent_at') else ''
     got['created_at'] = str(got.get('created_at') or '')
+    got['updated_at'] = str(got['updated_at']) if got.get('updated_at') \
+        else ''
 
     return got
