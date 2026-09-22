@@ -19,7 +19,8 @@ from src.dating import mail_agent
 from src.dating.mail import (MAILING_ANGLES, MAILING_GREETINGS,
                              MAILING_GREETINGS_NAME,
                              MAILING_LENGTHS, MAILING_STORIES)
-from src.dating.mail_agent import _percent, mail_write
+from src.dating.mail_agent import mail_write
+from src.dating.percent import percent_share
 
 pytestmark = pytest.mark.mail
 
@@ -197,10 +198,10 @@ class TestPercent:
         """⚠⚠ Ноль означает «никогда», а не «настройки нет»."""
         await share('mailing_story_percent', 0)
 
-        assert await _percent(STAND_SITE, 'mailing_story_percent', 0.4) == 0.0
+        assert await percent_share(STAND_SITE, 'mailing_story_percent', 0.4) == 0.0
 
     async def test_an_absent_setting_gives_the_default(self, share):
-        assert await _percent(STAND_SITE, 'mailing_question_percent', 0.25) == 0.25
+        assert await percent_share(STAND_SITE, 'mailing_question_percent', 0.25) == 0.25
 
 
 class TestTheNameIsMandatoryUntilAskedOtherwise:

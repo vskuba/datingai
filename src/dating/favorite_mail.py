@@ -100,6 +100,7 @@ from src.dating.favorite import (FAVORITE_STATES,
                                         favorite_sync)
 from src.dating.ready import password_pick
 from src.uvicorn.routers.dating.site_ import site_setting
+from src.dating.percent import percent_share
 from src.dating.mail_agent import (INVITE_SLOT_MAN,
                                           DatingMailAgentError,
                                           favorite_mail_template)
@@ -793,13 +794,13 @@ async def _template(site_id: int, language: str) -> str:
     день», написанное без часа, выходит про несуществующий день — поэтому время
     едет ровно тогда, когда выпала история о себе, и молчит в остальных случаях.
     """
-    man_slot = random.random() < await _percent(
+    man_slot = random.random() < await percent_share(
         site_id, FAVORITE_MAIL_NAME_SETTING, FAVORITE_MAIL_NAME_CHANCE)
     story = (random.choice(FAVORITE_MAIL_STORIES)
-             if random.random() < await _percent(
+             if random.random() < await percent_share(
                  site_id, FAVORITE_MAIL_STORY_SETTING, FAVORITE_MAIL_STORY_CHANCE)
              else '')
-    question = random.random() < await _percent(
+    question = random.random() < await percent_share(
         site_id, FAVORITE_MAIL_QUESTION_SETTING, FAVORITE_MAIL_QUESTION_CHANCE)
 
     return await favorite_mail_template(
@@ -834,35 +835,6 @@ def _fill(template: str, pair: dict) -> str:
     return invite_marks_strip(
         mail_render(str(template or ''),
                     {INVITE_SLOT_MAN: name.split()[0] if name.split() else ''}))
-
-
-async def _percent(site_id: int, key: str, fallback: float) -> float:
-    """Настройка-процент долей от единицы. Одна на все три доли письма.
-
-    Args:
-        site_id: сайт-закладка.
-        key: ключ настройки — процент целым числом.
-        fallback: доля, если настройки нет или она не читается.
-
-    ⚠ **В настройке проценты, а в коде доля.** Человек в форме думает «каждое
-    десятое письмо», то есть 10, а `random.random()` сравнивают с 0.1. Деление —
-    здесь, в одном месте: разнеси его по вызовам, и первый же забытый превратил бы
-    10% в «всегда».
-
-    ⚠ **Ноль — законное значение**, и отличать его от «настройки нет» обязательно:
-    пустая строка даёт умолчание, а «0» означает «никогда». Поэтому проверяется
-    пустота, а не истинность.
-    """
-    try:
-        raw = str(await site_setting(int(site_id), key) or '').strip()
-        if raw == '':
-            return float(fallback)
-
-        return min(max(float(raw), 0.0), 100.0) / 100.0
-    except Exception as e:
-        logger_info(f'[dating] доля «{key}» сайта #{site_id} не прочиталась: {e}')
-
-        return float(fallback)
 
 
 async def _language(site_id: int) -> str:

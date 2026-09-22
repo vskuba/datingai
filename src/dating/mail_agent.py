@@ -68,6 +68,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.agent import (AGENT_NODE, agent_site)
 from src.dating.companion_ref import COMPANION_REF_ID
+from src.dating.percent import percent_share
 from src.dating.mail import (MAIL_VAR_RE,
                                    MAILING_ANGLES, MAILING_AVOID_MAX,
                                    MAILING_GREETINGS,
@@ -428,7 +429,7 @@ async def mail_write(site_id: int, variables: list[dict],
     # обязательные переменные, и останься там `companion_name`, судья у соседа
     # завернул бы шаблон без имени как неполный. Поэтому имя убирается из
     # обязательных, а зачин выбирается из тех приёмов, где имени нет.
-    man_name = random.random() < await _percent(
+    man_name = random.random() < await percent_share(
         int(site_id), MAILING_NAME_SETTING, MAILING_NAME_CHANCE)
 
     # ⚠ Отбираем **до** запроса: дальше этот список уходит агенту сразу четырьмя
@@ -440,14 +441,14 @@ async def mail_write(site_id: int, variables: list[dict],
     # ⚠ Зачин выбирается **после** жребия имени и из своего списка: приёмы с
     # именем и без него разведены, иначе панель просила бы имя там, где метки
     # нет (`MAILING_GREETINGS_NAME`).
-    greeting = ('' if random.random() < await _percent(
+    greeting = ('' if random.random() < await percent_share(
                     int(site_id), MAILING_NO_GREETING_SETTING,
                     MAILING_NO_GREETING_CHANCE)
                 else random.choice(MAILING_GREETINGS_NAME if man_name
                                    else MAILING_GREETINGS))
 
     story = (random.choice(MAILING_STORIES)
-             if random.random() < await _percent(
+             if random.random() < await percent_share(
                  int(site_id), MAILING_STORY_SETTING, MAILING_STORY_CHANCE)
              else '')
 
@@ -1075,30 +1076,6 @@ def _slots(girl_slot: bool, man_slot: bool) -> str:
 
     return ('Меток в тексте быть не должно вовсе: ни своего имени, ни обращения по '
             'имени. Реплика обращена к нему и без этого.')
-
-
-async def _percent(site_id: int, key: str, fallback: float) -> float:
-    """Настройка-процент долей от единицы. Общая на все доли шаблона рассылки.
-
-    ⚠ **Ноль — законное значение**, и отличать его от «настройки нет» обязательно:
-    пустая строка даёт умолчание, а «0» означает «никогда». Поэтому проверяется
-    пустота, а не истинность.
-
-    ⚠ **Сбой чтения даёт умолчание, а не ноль**: шаблон без рассказа хуже, чем с
-    рассказом, но пустой пул хуже и того.
-    """
-    from src.uvicorn.routers.dating.site_ import site_setting
-
-    try:
-        raw = str(await site_setting(int(site_id), key) or '').strip()
-        if raw == '':
-            return float(fallback)
-
-        return min(max(float(raw), 0.0), 100.0) / 100.0
-    except Exception as e:
-        logger_info(f'[dating] доля «{key}» сайта #{site_id} не прочиталась: {e}')
-
-        return float(fallback)
 
 
 async def _mail_avoid(site_id: int) -> list[str]:

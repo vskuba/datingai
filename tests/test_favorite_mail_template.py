@@ -25,7 +25,8 @@ from src.dating import favorite_mail
 from src.dating.favorite_mail import (FAVORITE_MAIL_ANGLES,
                                       FAVORITE_MAIL_LENGTHS,
                                       FAVORITE_MAIL_STORIES,
-                                      _fill, _percent, _template)
+                                      _fill, _template)
+from src.dating.percent import percent_share
 from src.dating.mail_agent import INVITE_SLOT_MAN, _favorite
 
 pytestmark = pytest.mark.mail
@@ -122,7 +123,7 @@ class TestPercent:
     """Доли: в настройке проценты, в коде — доля от единицы."""
 
     async def test_an_absent_setting_gives_the_default(self):
-        assert await _percent(STAND_SITE, f'net-{uuid.uuid4().hex[:6]}', 0.4) == 0.4
+        assert await percent_share(STAND_SITE, f'net-{uuid.uuid4().hex[:6]}', 0.4) == 0.4
 
     async def test_zero_is_a_decision_not_an_absence(self, share):
         """⚠⚠ Ноль означает «никогда», а не «настройки нет».
@@ -132,18 +133,18 @@ class TestPercent:
         """
         await share('favorite_mail_question_percent', 0)
 
-        assert await _percent(STAND_SITE, 'favorite_mail_question_percent', 0.25) == 0.0
+        assert await percent_share(STAND_SITE, 'favorite_mail_question_percent', 0.25) == 0.0
 
     async def test_percents_become_a_share(self, share):
         await share('favorite_mail_story_percent', 40)
 
-        assert await _percent(STAND_SITE, 'favorite_mail_story_percent', 0.1) == 0.4
+        assert await percent_share(STAND_SITE, 'favorite_mail_story_percent', 0.1) == 0.4
 
     async def test_nonsense_falls_back(self, share):
         """Не-число не роняет заход: пул важнее точности доли."""
         await share('favorite_mail_name_percent', 'пятнадцать')
 
-        assert await _percent(STAND_SITE, 'favorite_mail_name_percent', 0.1) == 0.1
+        assert await percent_share(STAND_SITE, 'favorite_mail_name_percent', 0.1) == 0.1
 
 
 class TestTheLotIsOurs:

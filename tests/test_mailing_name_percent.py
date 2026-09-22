@@ -82,7 +82,7 @@ def _fix_dice(monkeypatch, *, name: bool):
 
         return 0.0
 
-    monkeypatch.setattr(mail_agent, '_percent', _percent)
+    monkeypatch.setattr(mail_agent, 'percent_share', _percent)
 
 
 class TestTheSettingIsWiredUp:

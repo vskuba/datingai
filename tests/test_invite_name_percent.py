@@ -318,16 +318,20 @@ class TestTimeShare:
         assert spec['min'] == 0 and spec['max'] == 100
 
     def test_both_shares_use_one_converter(self):
-        """⚠ Перевод процентов в долю — **один** на обе настройки.
+        """⚠⚠ Перевод процентов в долю — **один на весь проект**.
 
-        Две копии разошлись бы: где-нибудь забыли бы поделить на сто, и доля
-        стала бы «всегда».
+        Здесь стерёгся один модуль: «две копии разошлись бы — где-нибудь забыли
+        бы поделить на сто». Опасение подтвердилось в большем масштабе: копий
+        оказалось **три** — в инвайтах, в шаблоне рассылки и в письмах
+        избранным, — и они действительно разошлись. Две клампили значение сами,
+        третья читала через `site_seconds`, то есть соблюдала границы реестра.
+
+        Теперь функция одна (`percent.percent_share`), и сторож смотрит на неё.
         """
         import inspect
 
         from src.dating import invite
 
-        assert '_percent(site_id, INVITE_TIME_SETTING' in inspect.getsource(
-            invite._time_chance)
-        assert '_percent(site_id, INVITE_MAN_NAME_SETTING' in inspect.getsource(
-            invite._man_chance)
+        for fn in (invite._time_chance, invite._man_chance):
+            assert 'percent_share(' in inspect.getsource(fn), \
+                f'{fn.__name__} снова считает долю сам'

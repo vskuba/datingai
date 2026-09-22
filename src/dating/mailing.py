@@ -569,10 +569,10 @@ async def _question_chance(site_id: int) -> float:
     ⚠ Ноль — законное значение и отличается от «настройки нет»: пустая строка даёт
     умолчание, «0» означает «никогда не спрашивать».
     """
-    from src.dating.mail_agent import _percent
+    from src.dating.percent import percent_share
 
-    return await _percent(int(site_id), MAILING_QUESTION_SETTING,
-                          MAILING_QUESTION_CHANCE)
+    return await percent_share(int(site_id), MAILING_QUESTION_SETTING,
+                               MAILING_QUESTION_CHANCE)
 
 
 async def _about_fresh(site_id: int, person: dict, girl: dict) -> None:

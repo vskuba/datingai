@@ -123,6 +123,7 @@ from redis_.redis_ import redis_conn_get
 from src.dating.json_column import json_column_load
 # ⚠ Перестановка очереди — общая с рассылкой: «выбранного вперёд» должно значить
 # одно и то же в обоих пулах, иначе человек, привыкший к одному, обманется вторым.
+from src.dating.percent import percent_share
 from src.dating.block import block_pairs
 from src.dating.mailing import mailing_people_first
 from src.dating.mail import mail_render
@@ -715,47 +716,12 @@ async def _time_chance(site_id: int) -> float:
     ⚠ Тот же перевод процентов в долю, что у имён (`_man_chance`), и та же
     причина завести: частоту модель не считает — её задаёт панель жребием.
     """
-    return await _percent(site_id, INVITE_TIME_SETTING, INVITE_TIME_CHANCE)
+    return await percent_share(site_id, INVITE_TIME_SETTING, INVITE_TIME_CHANCE)
 
 
 async def _man_chance(site_id: int) -> float:
     """Доля инвайтов с именем собеседника — настройка сайта, долей от единицы."""
-    return await _percent(site_id, INVITE_MAN_NAME_SETTING, INVITE_MAN_NAME_CHANCE)
-
-
-async def _percent(site_id: int, key: str, fallback: float) -> float:
-    """Настройка-процент долей от единицы. Одна на все доли инвайта.
-
-    Args:
-        site_id: сайт-закладка.
-        key: ключ настройки в `SITE_KNOWN`.
-        fallback: доля, если настройки нет или её не прочитать.
-
-    ⚠ **В настройке проценты, здесь доля.** Человек в форме пишет «10», а жребий
-    бросается по доле; перевод живёт в одном месте — иначе где-нибудь сравнят
-    процент с `random.random()`, и выпадать будет всегда.
-
-    ⚠⚠ **Ноль — законное значение, а не «настройки нет».** Человек выбрал в форме
-    «никогда»; подмени мы его умолчанием, имя или время появлялись бы там, где их
-    запретили. Отличаем по тому, задан ли ключ у сайта вообще.
-
-    ⚠ Сбой чтения даёт умолчание, а не ноль: «этого не будет вовсе» — решение, и
-    принимать его молча из-за недоступной базы нельзя.
-    """
-    from src.uvicorn.routers.dating.site_ import site_seconds, site_setting
-
-    try:
-        percent = int(await site_seconds(int(site_id), str(key)))
-        if not percent:
-            задано = str(await site_setting(int(site_id), str(key))).strip() != ''
-            if not задано:
-                return fallback
-    except Exception as e:
-        logger_info(f'[dating] доля «{key}» не спросилась: {e}')
-
-        return fallback
-
-    return max(0.0, min(1.0, percent / 100))
+    return await percent_share(site_id, INVITE_MAN_NAME_SETTING, INVITE_MAN_NAME_CHANCE)
 
 
 def _first_word(name: str) -> str:
