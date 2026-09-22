@@ -4976,9 +4976,11 @@
 
         // Кнопки «Переписки» — узлы шаблона: живут до смены сайта, и вешать на
         // них надо здесь.
-        const favMake = workEl.querySelector('[data-slot="fav-mail-make-btn"]');
-        if (favMake) favMake.addEventListener('click', favMailMakeRun);
-
+        //
+        // ⚠ Кнопки «Генерировать письма» здесь больше нет: пул набирает круг по
+        // сменам сайта, а человеку остаётся вычитать готовое. Тот же путь прошли
+        // инвайты. Ручка (`POST /api/dating/favorite-mail/generate`) жива — ею
+        // ходят тесты и круг; убрана кнопка, а не занятие.
         const favClear = workEl.querySelector('[data-slot="fav-mail-clear"]');
         if (favClear) favClear.addEventListener('click', favMailClear);
 
@@ -5001,7 +5003,7 @@
         }
 
         // Форму не отправляют — Enter в ней не должен перезагружать страницу.
-        workEl.querySelectorAll('[data-form="fav-mail-make"]')
+        workEl.querySelectorAll('[data-form="fav-mail-schedule"]')
             .forEach(form => form.addEventListener('submit', (e) => e.preventDefault()));
 
         // Очистка пула — тоже внутри шаблона смены сайта, и вешать на неё
@@ -6329,14 +6331,33 @@
     // Почему из пула ничего не уходит — строкой от ручки. Пусто значит «уходит».
     let inviteSendWhy = '';
 
-    // Пришедшее с сервера: смены и оба выключателя, по сайтам. Тем же приёмом, что
-    // у рассылки, — черновик отдельно от сохранённого.
-    const inviteSaved = new Map();
-    const inviteDraft = new Map();
+    // ── Расписание инвайтов ─────────────────────────────────────────────────
+    //
+    // Механика — в `scheduleBlock`, общая с рассылкой и письмами избранным.
+    // Здесь только своё: адрес ручки, имена гнёзд и слова.
 
     // Что сказать про пустое расписание. Своё, а не общее с рассылкой: там пустое
     // значит «письма шлём руками», здесь — «инвайты готовим руками».
     const INVITE_SCHEDULE_EMPTY = 'Расписания нет — инвайты готовим вручную';
+
+    const inviteSchedule = scheduleBlock({
+        form: 'invite-schedule', body: 'invite-schedule',
+        note: 'invite-sched-note', box: 'invite-sched-on',
+        path: 'invite-schedule', flagPath: 'invite-schedule-on',
+        flag: 'invite_schedule_on',
+        empty: INVITE_SCHEDULE_EMPTY,
+        failText: 'Расписание инвайтов не сохранилось: ',
+        onText: ['Генерация инвайтов включена', 'Генерация инвайтов выключена'],
+        // ⚠ И пул: загрузчик в его шапке зависит от того, идёт ли смена.
+        after: () => invitePaint(),
+    });
+
+    const inviteSaved = inviteSchedule.saved;
+    const inviteDraft = inviteSchedule.draft;
+    const inviteRows = inviteSchedule.rows;
+    const inviteScheduleLoad = inviteSchedule.load;
+    const inviteSchedulePaint = inviteSchedule.paint;
+    const inviteSchedOnSet = inviteSchedule.onSet;
 
     function inviteShow() {
         if (!workEl.querySelector('[data-slot="invite-pool"]')) return;
@@ -6393,169 +6414,6 @@
         invitePaint();
     }
 
-    async function inviteScheduleLoad() {
-        const site = siteId();
-        if (!site) return;
-
-        let answer;
-        try {
-            answer = (await getData(
-                `${BASE}/api/dating/site/${site}/invite-schedule`)).result || {};
-        } catch (e) {
-            // Молча: расписание — не то, ради чего открыли панель, и всплывающее
-            // сообщение на каждый заход было бы шумом. Подпись под лентой скажет
-            // ровно столько же и там, где смотрят.
-            answer = {schedule: [], invite_schedule_on: false, error: e.message};
-        }
-
-        if (siteId() !== site) return;
-
-        inviteSaved.set(site, answer);
-        inviteSchedulePaint();
-        // ⚠ И пул перерисовываем: загрузчик в его шапке зависит от того, идёт ли
-        // смена, а знание об этом приезжает только сейчас. Та же оговорка и та же
-        // причина, что у рассылки.
-        invitePaint();
-    }
-
-    function inviteRows() {
-        const site = siteId();
-
-        // ⚠ Черновик заводим **только от пришедшего с сервера**: иначе первая же
-        // отрисовка — та, что идёт до ответа, — запомнила бы пустой список, и он
-        // заслонил бы сохранённое навсегда. Та же ошибка, что ловили у рассылки.
-        if (!inviteSaved.has(site)) return [];
-
-        if (!inviteDraft.has(site)) {
-            const saved = (inviteSaved.get(site) || {}).schedule || [];
-            inviteDraft.set(site, saved.map(item => ({...item})));
-        }
-
-        return scheduleSort(inviteDraft.get(site) || []);
-    }
-
-    function inviteSchedulePaint() {
-        const form = workEl.querySelector('[data-form="invite-schedule"]');
-        if (!form) return;
-
-        const saved = inviteSaved.get(siteId()) || {};
-        const rows = inviteRows();
-        const why = scheduleCheck(rows, INVITE_SCHEDULE_EMPTY);
-
-        const body = slot('invite-schedule');
-        if (body) body.innerHTML = scheduleBodyHtml(rows, !!saved.invite_schedule_on);
-
-        const box = slot('invite-sched-on');
-        if (box) {
-            box.checked = !!saved.invite_schedule_on;
-            box.disabled = !CAN_EDIT_SITE;
-        }
-
-        const note = slot('invite-sched-note');
-        if (note) {
-            note.textContent = saved.error
-                ? 'расписание не пришло: ' + saved.error
-                : (CAN_EDIT_SITE
-                    ? (why || 'Сохраняется само · шаг четверть часа')
-                    : (why || 'Правит администратор · расписание общее на сайт'));
-            note.classList.toggle('sched-warn',
-                !!saved.error || (!!why && rows.length > 0));
-        }
-
-        // ⚠ Обработчики — **на каждую отрисовку**: тело блока пересобирается
-        // (`innerHTML`), и узлы каждый раз новые. Не-админу не вешаем вовсе и
-        // запираем ползунки: ручка ответит ему 403, а ползунок, возвращающийся на
-        // место после каждого движения, хуже запертого.
-        if (!CAN_EDIT_SITE) {
-            form.querySelectorAll('input[type=range], .sched-add-btn, .sched-drop')
-                .forEach(el => {
-                    el.disabled = true;
-                });
-
-            return;
-        }
-
-        scheduleBandBind(form, rows, inviteScheduleEdit);
-    }
-
-    // Единственная точка правки расписания инвайтов — сюда подключено
-    // автосохранение. Одна, а не вызов из каждого обработчика: правок три, и
-    // забытый вызов означал бы «эта правка не сохраняется», причём молча.
-    function inviteScheduleEdit(change) {
-        const site = siteId();
-        const rows = [...inviteRows()];
-        change(rows);
-        inviteDraft.set(site, rows);
-        inviteSchedulePaint();
-        inviteScheduleSaveSoon(site);
-    }
-
-    const INVITE_SAVE_MS = 500;
-    let inviteSaveTimer = 0;
-
-    function inviteScheduleSaveSoon(site) {
-        clearTimeout(inviteSaveTimer);
-        inviteSaveTimer = setTimeout(() => inviteScheduleSave(site), INVITE_SAVE_MS);
-    }
-
-    async function inviteScheduleSave(site) {
-        const rows = scheduleSort(inviteDraft.get(site) || []);
-
-        // ⚠ Негодное не отправляем **и не жалуемся**: человек ещё правит, и
-        // ругаться на промежуточное состояние значило бы кричать на каждое
-        // движение ползунка. Причина и так написана под лентой.
-        if (scheduleCheck(rows, INVITE_SCHEDULE_EMPTY) && rows.length) return;
-
-        try {
-            await putData(`${BASE}/api/dating/site/${site}/invite-schedule`,
-                {schedule: rows});
-        } catch (e) {
-            showNotification('Расписание инвайтов не сохранилось: ' + e.message,
-                'error');
-
-            return;
-        }
-
-        // ⚠ **Черновик остаётся.** Ползунки держат свои смены по ссылке, и сняв
-        // черновик, мы оставили бы обработчики без списка: следующее движение
-        // начало бы правку с пустого массива и уехало на сервер пустым
-        // расписанием. Ровно это стоило потерянных расписаний у рассылки.
-        const was = inviteSaved.get(site) || {};
-        inviteSaved.set(site, {...was, schedule: rows, error: ''});
-
-        if (siteId() !== site || workTab !== 'chat') return;
-
-        const note = slot('invite-sched-note');
-        if (note) {
-            note.textContent = 'сохранено';
-            note.classList.remove('sched-warn');
-        }
-    }
-
-    async function inviteSchedOnSet(box) {
-        const site = siteId();
-        const on = box.checked;
-        box.disabled = true;
-        try {
-            await putData(`${BASE}/api/dating/site/${site}/invite-schedule-on`,
-                {invite_schedule_on: on});
-            const was = inviteSaved.get(site) || {};
-            inviteSaved.set(site, {...was, invite_schedule_on: on});
-            // ⚠ Перерисовываем ленту: от флага зависит оттенок зелёного у идущей
-            // смены. Без этого галочка снималась бы, а смена оставалась гореть —
-            // панель обещала бы работу, которую только что запретили.
-            inviteSchedulePaint();
-            invitePaint();
-            showNotification(on ? 'Генерация инвайтов включена'
-                : 'Генерация инвайтов выключена', on ? 'success' : 'info');
-        } catch (e) {
-            box.checked = !on;
-            showNotification('Не переключилось: ' + e.message, 'error');
-        } finally {
-            box.disabled = false;
-        }
-    }
-
     async function inviteSendOnSet(box) {
         const site = siteId();
         const on = box.checked;
@@ -6581,14 +6439,10 @@
 
     // Идёт ли смена расписания инвайтов — то есть горит ли лента зелёным.
     //
-    // ⚠ Считаем **тем же `scheduleNowIndex`**, что красит ленту, и по тому же
-    // флагу: своя копия правила однажды разошлась бы с цветом смены под ней.
+    // ⚠ Ответ даёт фабрика: тем же `scheduleNowIndex`, что красит ленту, и по
+    // тому же флагу. Своя копия правила однажды разошлась бы с цветом смены.
     function inviteScheduleLive() {
-        const saved = inviteSaved.get(siteId()) || {};
-        if (!saved.invite_schedule_on) return false;
-
-        return scheduleNowIndex(scheduleSort(saved.schedule || []),
-            timeNowMinutes()) >= 0;
+        return inviteSchedule.live();
     }
 
     function inviteDrafts() {
@@ -7344,18 +7198,45 @@
     let favMailWhy = '';
     let favMailSendWhy = '';
 
-    // Настройки сайта: оба выключателя и оба предела частоты. По сайтам, как у
-    // инвайтов: переключение сайта не должно показывать чужие значения.
+    // Настройки сайта: оба выключателя, оба предела частоты и смены. По сайтам,
+    // как у инвайтов: переключение сайта не должно показывать чужие значения.
     const favMailSaved = new Map();
+
+    // ── Расписание писем избранным ──────────────────────────────────────────
+    //
+    // Механика — в `scheduleBlock`, общая с рассылкой и инвайтами.
+    //
+    // ⚠⚠ **Своей галочки у смен нет**, в отличие от тех двух: работает занятие
+    // или нет, говорит `favorite_mail_make_on` — та же галочка «генерация», что
+    // и раньше, в полосе подвкладок. Вторая рядом отвечала бы на тот же вопрос,
+    // и человек гадал бы, какая из них главная. Поэтому `box` не задан, а `flag`
+    // указывает на неё: от него зависит оттенок зелёного у идущей смены.
+    //
+    // ⚠ И хранилище общее с настройками: ручка `/favorite-mail` отдаёт смены
+    // вместе с выключателями, одним ответом.
+    const FAV_MAIL_SCHEDULE_EMPTY = 'Расписания нет — письма не сочиняются';
+
+    const favMailSchedule = scheduleBlock({
+        store: favMailSaved,
+        form: 'fav-mail-schedule', body: 'fav-mail-schedule',
+        note: 'fav-mail-sched-note',
+        getPath: 'favorite-mail', path: 'favorite-mail-schedule',
+        flag: 'favorite_mail_make_on',
+        empty: FAV_MAIL_SCHEDULE_EMPTY,
+        failText: 'Расписание писем избранным не сохранилось: ',
+        onText: ['', ''],
+        after: () => favMailPaint(),
+    });
 
     function favMailShow() {
         if (!workEl.querySelector('[data-slot="fav-mail-pool"]')) return;
 
         favStripShow();
         favMailPaint();
+        favMailSchedule.paint();
 
         if (favMailPoolFor !== siteId()) favMailLoad();
-        if (!favMailSaved.has(siteId())) favMailSetupLoad();
+        if (!favMailSaved.has(siteId())) favMailSchedule.load();
     }
 
     // ⚠ **Пустую ленту избранных прячем целиком, а не показываем с надписью.**
@@ -7427,26 +7308,6 @@
         // не говорит о другом.
         favMailSendWhy = String(answer.send_why || '');
         favMailPoolFor = site;
-        favMailPaint();
-    }
-
-    async function favMailSetupLoad() {
-        const site = siteId();
-        if (!site) return;
-
-        let answer;
-        try {
-            answer = (await getData(
-                `${BASE}/api/dating/site/${site}/favorite-mail`)).result || {};
-        } catch (e) {
-            // Молча: настройки — не то, ради чего открыли панель, и всплывающее
-            // сообщение на каждый заход было бы шумом.
-            answer = {error: e.message};
-        }
-
-        if (siteId() !== site) return;
-
-        favMailSaved.set(site, answer);
         favMailPaint();
     }
 
@@ -7556,15 +7417,12 @@
         const clear = slot('fav-mail-clear');
         if (clear) clear.disabled = favMailBusy || !drafts.length;
 
-        const btn = slot('fav-mail-make-btn');
-        if (btn) btn.disabled = favMailBusy || !siteId();
-
         if (!favMailPool.length) {
             box.innerHTML = favMailBusy
                 ? '<div class="mail-pool-empty"><span class="dating-spin"></span>'
                 + ' готовлю первые письма…</div>'
-                : '<div class="mail-pool-empty">Пул пуст. Нажмите «Генерировать '
-                + 'письма» слева — или включите генерацию, и круг наберёт пул сам.'
+                : '<div class="mail-pool-empty">Пул пуст. Включите генерацию и '
+                + 'задайте смены слева — круг наберёт пул сам.'
                 + '<br>Письмо готовится тем, чей разговор затих: последними писали '
                 + 'мы, а он не ответил.'
                 // ⚠ Два условия про **сеть** — здесь же, а не только в подсказке
@@ -7798,54 +7656,6 @@
         }
 
         favMailPaint();
-    }
-
-    async function favMailMakeRun() {
-        const site = siteId();
-        if (!site || favMailBusy) return;
-
-        const size = slot('fav-mail-size');
-        const limit = Number((size && size.value) || 10);
-        const note = slot('fav-mail-note');
-
-        favMailBusy = true;
-        favMailFrom = favMailPool.length;
-        favMailPaint();
-        if (note) {
-            note.textContent = 'готовлю…';
-            note.classList.remove('bad', 'good');
-        }
-
-        try {
-            const got = (await postData(`${BASE}/api/dating/favorite-mail/generate`,
-                {site_id: site, limit, profile_id: openId || 0})).result || {};
-
-            if (note) {
-                note.textContent = got.stopped
-                    ? `остановлено: ${got.stopped}`
-                    : `готово ${got.made || 0}`
-                    + (got.skipped ? `, пропущено ${got.skipped}` : '')
-                    + (got.left ? `, осталось ${got.left}` : '');
-                note.classList.toggle('bad', !!got.stopped);
-                note.classList.toggle('good', !got.stopped && !!got.made);
-            }
-
-            // Причины пропуска — уведомлением: их читают один раз и решают, что
-            // делать. Здесь они чаще всего про пределы частоты — «ему уже ушло
-            // два письма», — и это не поломка, а работа настройки.
-            if ((got.reasons || []).length) {
-                showNotification('Пропущено: ' + got.reasons.join('; '), 'info');
-            }
-        } catch (e) {
-            if (note) {
-                note.textContent = 'не вышло: ' + e.message;
-                note.classList.add('bad');
-            }
-        } finally {
-            favMailBusy = false;
-        }
-
-        await favMailLoad();
     }
 
     async function favMailClear() {
@@ -9481,12 +9291,10 @@
     // ⚠ Считаем **тем же `scheduleNowIndex`**, что красит ленту, и по тому же флагу
     // «активировать». Была бы своя копия правила — подпись в шапке пула однажды
     // разошлась бы с цветом смены под ней, и верить нельзя было бы обеим.
+    // Идёт ли смена рассылки. ⚠ Ответ даёт фабрика — тем же `scheduleNowIndex`,
+    // что красит ленту: своя копия правила разошлась бы с цветом смены под ней.
     function mailScheduleLive() {
-        const saved = mailSaved.get(siteId()) || {};
-        if (!saved.mailing_schedule_on) return false;
-
-        return scheduleNowIndex(scheduleSort(saved.schedule || []),
-            timeNowMinutes()) >= 0;
+        return mailSchedule.live();
     }
 
     // Набирается ли пул прямо сейчас — то есть показывать ли загрузчик.
@@ -10134,241 +9942,270 @@
     // Вид и правила ввода общие с расписанием анкеты (`schedule.js`): смена
     // там и здесь это одно и то же, и вторая копия правил разошлась бы с первой.
 
-    // Черновик по сайту. ⚠ Тот же приём, что у расписания анкеты: правки живут в
-    // памяти, пока их не сохранили, — ползунок двигают подряд, и запрос на каждое
-    // движение был бы сотней запросов.
+    // ── Расписание сайта: одна выкройка на все ленты ────────────────────────
     //
-    // Ключ — номер сайта: переключился на другой и вернулся — застал своё.
-    const mailDraft = new Map();
+    // ⚠⚠ **Здесь лежало три почти одинаковых блока** — рассылка, инвайты и
+    // (с этой правки) письма избранным. Отличались они шестью строками: адрес
+    // ручки, имена гнёзд, имя флага, слова уведомления, текст про пустое
+    // расписание и что перерисовать после загрузки. Всё остальное — черновик по
+    // сайту, отложенное сохранение, гонка ответов, «черновик не снимаем»,
+    // «обработчики на каждую отрисовку» — совпадало слово в слово.
+    //
+    // Копии эти уже расходились: у рассылки поймали «черновик заслоняет
+    // сохранённое», а у инвайтов ту же ошибку чинили отдельно и позже. Правка,
+    // которая доезжает до двух мест из трёх, — вопрос времени, а не удачи.
+    //
+    // ⚠ Наружу отдаются те же имена функций, что были: внешних вызовов у них
+    // полтора десятка (`mailScheduleLive`, `invitePaint`, полоса подвкладок), и
+    // переименование ради красоты стоило бы правки в местах, к расписанию
+    // отношения не имеющих.
+    function scheduleBlock(cfg) {
+        // Пришедшее с сервера и правка человека — **раздельно и по сайтам**.
+        // Вопросы разные: черновик это «что набрали», saved — «что в базе».
+        // Слив их, нельзя было бы завести черновик от сохранённого, не потеряв
+        // само сохранённое. Ключ — номер сайта: ушёл и вернулся — застал своё.
+        // ⚠ Хранилище бывает **чужим**: у писем избранным смены приезжают той же
+        // ручкой, что выключатели и пределы (`/favorite-mail`), и второй Map под
+        // те же данные означал бы второй запрос и два момента времени — человек
+        // увидел бы зелёную смену под снятой галочкой.
+        const saved = cfg.store || new Map();
+        const draft = new Map();
+        let timer = 0;
 
-    // Пришедшее с сервера: смены и флаг исполнения, по сайтам. Отдельно от
-    // черновика, потому что вопросы разные: черновик — «что человек набрал»,
-    // это — «что лежит в базе». Слив их, мы не смогли бы завести черновик от
-    // сохранённого, не потеряв само сохранённое.
-    const mailSaved = new Map();
+        function rows() {
+            const site = siteId();
 
-    // Что сказать про пустое расписание рассылки. Своё, а не общее с анкетой: там
-    // пустое значит «входит и выходит вручную», здесь — «письма шлём руками».
+            // ⚠ **Черновик заводим только от пришедшего с сервера.** Иначе первая
+            // отрисовка — та, что идёт до ответа, — запомнила бы пустой список, и
+            // он заслонял бы сохранённое навсегда. Так и было у рассылки: в базе
+            // смена с 00:00, на экране «Смен: 0 из 4», и переоткрытие вкладки не
+            // помогало — черновик живёт, пока выбран сайт.
+            if (!saved.has(site)) return [];
+
+            if (!draft.has(site)) {
+                const was = (saved.get(site) || {}).schedule || [];
+                draft.set(site, was.map(item => ({...item})));
+            }
+
+            return scheduleSort(draft.get(site) || []);
+        }
+
+        function form() {
+            return workEl.querySelector(`[data-form="${cfg.form}"]`);
+        }
+
+        function paint() {
+            const el = form();
+            if (!el) return;
+
+            const was = saved.get(siteId()) || {};
+            const list = rows();
+            const why = scheduleCheck(list, cfg.empty);
+
+            // ⚠ Флаг передаём ленте: от него зависит оттенок зелёного у идущей
+            // смены — «идёт сейчас» против «время подошло, но выключено».
+            const body = slot(cfg.body);
+            if (body) body.innerHTML = scheduleBodyHtml(list, !!was[cfg.flag]);
+
+            const box = cfg.box ? slot(cfg.box) : null;
+            if (box) {
+                box.checked = !!was[cfg.flag];
+                box.disabled = !CAN_EDIT_SITE;
+            }
+
+            const note = slot(cfg.note);
+            if (note) {
+                note.textContent = was.error
+                    ? 'расписание не пришло: ' + was.error
+                    : (CAN_EDIT_SITE
+                        ? (why || 'Сохраняется само · шаг четверть часа')
+                        // Не-админу говорим словами, почему смотреть можно, а
+                        // двигать нет: запертая форма без объяснения читается
+                        // как поломка.
+                        : (why || 'Правит администратор · расписание общее на сайт'));
+                note.classList.toggle('sched-warn',
+                    !!was.error || (!!why && list.length > 0));
+            }
+
+            // ⚠ Обработчики — **на каждую отрисовку**: тело ленты пересобирается
+            // (`innerHTML`), и узлы каждый раз новые. Это обратное правилу для
+            // ленты «Все онлайн», где узлы живут до смены сайта.
+            //
+            // Не-админу не вешаем вовсе и запираем ползунки: ручка ответит ему
+            // 403, а ползунок, возвращающийся на место, хуже запертого.
+            if (!CAN_EDIT_SITE) {
+                el.querySelectorAll('input[type=range], .sched-add-btn, .sched-drop')
+                    .forEach(one => {
+                        one.disabled = true;
+                    });
+
+                return;
+            }
+
+            scheduleBandBind(el, list, edit);
+        }
+
+        // Единственная точка правки — сюда подключено автосохранение. Одна, а не
+        // вызов из каждого обработчика: правок три (добавить, убрать, двинуть), и
+        // забытый вызов означал бы «эта правка не сохраняется», причём молча.
+        function edit(change) {
+            const site = siteId();
+            // ⚠ Берём `rows()`, а не сам черновик: он мог не заводиться вовсе, и
+            // старт с пустого списка стёр бы расписание, которое человек видит.
+            const list = [...rows()];
+            change(list);
+            draft.set(site, list);
+            paint();
+
+            // ⚠ Сохраняем через паузу: ползунок двигают подряд, и запрос на
+            // каждое движение был бы сотней запросов за одно перетаскивание.
+            // Полсекунды: дольше — человек успевает уйти, считая, что сохранено;
+            // короче — «остановился» срабатывает посреди движения.
+            clearTimeout(timer);
+            timer = setTimeout(() => save(site), 500);
+        }
+
+        async function save(site) {
+            const list = scheduleSort(draft.get(site) || []);
+
+            // ⚠ Негодное не отправляем **и не жалуемся**: человек ещё правит, и
+            // ругаться на промежуточное состояние значило бы кричать на каждое
+            // движение ползунка. Причина и так написана под лентой.
+            if (scheduleCheck(list, cfg.empty) && list.length) return;
+
+            try {
+                await putData(`${BASE}/api/dating/site/${site}/${cfg.path}`,
+                    {schedule: list});
+            } catch (e) {
+                showNotification(cfg.failText + e.message, 'error');
+
+                return;
+            }
+
+            // ⚠ **Черновик остаётся.** Ползунки держат свои смены по ссылке, и
+            // сняв черновик, мы оставили бы обработчики без списка: следующее
+            // движение начало бы правку с пустого массива и уехало на сервер
+            // пустым расписанием. Ровно это стоило потерянных расписаний.
+            const was = saved.get(site) || {};
+            saved.set(site, {...was, schedule: list, error: ''});
+
+            if (siteId() !== site) return;
+
+            const note = slot(cfg.note);
+            if (note) {
+                note.textContent = 'сохранено';
+                note.classList.remove('sched-warn');
+            }
+        }
+
+        async function load() {
+            const site = siteId();
+            if (!site) return;
+
+            let answer;
+            try {
+                answer = (await getData(
+                    `${BASE}/api/dating/site/${site}/${cfg.getPath || cfg.path}`)
+                ).result || {};
+            } catch (e) {
+                // Молча: расписание — не то, ради чего открыли вкладку, и
+                // всплывающее сообщение на каждый заход было бы шумом. Подпись
+                // под лентой скажет столько же и там, где смотрят.
+                answer = {schedule: [], [cfg.flag]: false, error: e.message};
+            }
+
+            // Та же гонка, что у списков: ответ по прежнему сайту может прийти
+            // позже ответа по вновь выбранному.
+            if (siteId() !== site) return;
+
+            saved.set(site, answer);
+            paint();
+
+            // ⚠ И то, что зависит от расписания, — тоже: загрузчик в шапке пула
+            // знает про смену только отсюда. Без этого после перезагрузки он
+            // пропадал и появлялся через полминуты, когда до пула добирался его
+            // собственный круг. Человек это и заметил.
+            if (cfg.after) cfg.after();
+        }
+
+        // Рисуем известное, потом спрашиваем сервер: обратный порядок оставлял бы
+        // блок пустым на всё время ожидания.
+        function show() {
+            if (!form()) return;
+
+            paint();
+            if (!saved.has(siteId())) load();
+        }
+
+        async function onSet(box) {
+            const site = siteId();
+            const on = box.checked;
+            box.disabled = true;
+            try {
+                await putData(`${BASE}/api/dating/site/${site}/${cfg.flagPath}`,
+                    {[cfg.flag]: on});
+                const was = saved.get(site) || {};
+                saved.set(site, {...was, [cfg.flag]: on});
+                // ⚠ Перерисовываем: от флага зависит оттенок зелёного у идущей
+                // смены. Без этого галочка снималась бы, а смена оставалась
+                // гореть — панель обещала бы работу, которую только что запретили.
+                paint();
+                if (cfg.after) cfg.after();
+                showNotification(on ? cfg.onText[0] : cfg.onText[1],
+                    on ? 'success' : 'info');
+            } catch (e) {
+                box.checked = !on;
+                showNotification('Не переключилось: ' + e.message, 'error');
+            } finally {
+                box.disabled = false;
+            }
+        }
+
+        // Идёт ли смена — то есть горит ли лента зелёным.
+        //
+        // ⚠ Считаем **тем же `scheduleNowIndex`**, что красит ленту, и по тому же
+        // флагу: своя копия правила однажды разошлась бы с цветом смены под ней.
+        function live() {
+            const was = saved.get(siteId()) || {};
+            if (!was[cfg.flag]) return false;
+
+            return scheduleNowIndex(scheduleSort(was.schedule || []),
+                timeNowMinutes()) >= 0;
+        }
+
+        return {saved, draft, rows, paint, show, load, edit, onSet, live};
+    }
+
+    // ── Расписание рассылки ─────────────────────────────────────────────────
+    //
+    // Вся механика — в `scheduleBlock`: черновик по сайту, отложенное
+    // сохранение, гонка ответов, обработчики на каждую отрисовку. Здесь только
+    // то, чем рассылка отличается от инвайтов и писем избранным.
     const MAIL_SCHEDULE_EMPTY = 'Расписания нет — рассылку шлём вручную';
 
-    function mailRows() {
-        const site = siteId();
+    const mailSchedule = scheduleBlock({
+        form: 'mail-schedule', body: 'mail-schedule', note: 'mail-sched-note',
+        box: 'mail-sched-on',
+        path: 'mailing-schedule', flagPath: 'mailing-schedule-on',
+        flag: 'mailing_schedule_on',
+        empty: MAIL_SCHEDULE_EMPTY,
+        failText: 'Расписание рассылки не сохранилось: ',
+        onText: ['Расписание рассылки включено', 'Расписание рассылки выключено'],
+        // ⚠ Пул зависит от расписания: загрузчик в его шапке знает про смену
+        // только отсюда.
+        after: () => mailPoolPaint(),
+    });
 
-        // ⚠ **Черновик заводим только от пришедшего с сервера.** Иначе первая же
-        // отрисовка — та, что идёт до ответа, — запоминала бы пустой список, и он
-        // заслонял бы сохранённое навсегда: ответ приходит, `mailSaved`
-        // заполняется, а `mailRows` возвращает всё тот же пустой черновик.
-        //
-        // Так и было: в базе смена с 00:00, на экране «Смен: 0 из 4» —
-        // и переоткрытие вкладки не помогало, потому что черновик живёт, пока
-        // выбран сайт.
-        if (!mailSaved.has(site)) return [];
-
-        if (!mailDraft.has(site)) {
-            const saved = (mailSaved.get(site) || {}).schedule || [];
-            mailDraft.set(site, saved.map(item => ({...item})));
-        }
-
-        return scheduleSort(mailDraft.get(site) || []);
-    }
-
-    // Показывает расписание и добирает то, чего ещё нет, — тем же порядком, что и
-    // блоки с кэшем: сначала рисуем известное, потом спрашиваем сервер. Обратный
-    // порядок оставлял бы блок пустым на всё время ожидания.
-    function mailScheduleShow() {
-        if (!workEl.querySelector('[data-form="mail-schedule"]')) return;
-
-        mailSchedulePaint();
-        if (!mailSaved.has(siteId())) mailScheduleLoad();
-    }
-
-    async function mailScheduleLoad() {
-        const site = siteId();
-        if (!site) return;
-
-        let answer;
-        try {
-            answer = (await getData(
-                `${BASE}/api/dating/site/${site}/mailing-schedule`)).result || {};
-        } catch (e) {
-            // Молча: расписание — не то, ради чего открыли вкладку, и всплывающее
-            // сообщение на каждый заход было бы шумом. Пустой блок с подписью
-            // «не пришло» скажет ровно столько же и там, где смотрят.
-            answer = {schedule: [], mailing_schedule_on: false, error: e.message};
-        }
-
-        // Та же гонка, что у списков: ответ по прежнему сайту может прийти позже
-        // ответа по вновь выбранному.
-        if (siteId() !== site) return;
-
-        mailSaved.set(site, answer);
-        mailSchedulePaint();
-
-        // ⚠ **И пул перерисовываем — расписание нужно ему тоже.** Загрузчик в шапке
-        // пула зависит от того, идёт ли смена, а знание об этом приезжает только
-        // сейчас: до ответа `mailSaved` по сайту пуст, и `mailScheduleLive()`
-        // честно отвечает «нет».
-        //
-        // Без этой строки после перезагрузки страницы загрузчик пропадал и
-        // появлялся секунд через тридцать — когда до пула добирался его собственный
-        // круг. Человек это и увидел: «обновил — пропал, потом появился».
-        mailPoolPaint();
-    }
-
-    function mailSchedulePaint() {
-        const form = workEl.querySelector('[data-form="mail-schedule"]');
-        if (!form) return;
-
-        const saved = mailSaved.get(siteId()) || {};
-        const rows = mailRows();
-        const why = scheduleCheck(rows, MAIL_SCHEDULE_EMPTY);
-
-        // ⚠ Второй довод передать выключатель — **зелёная смена**: лента красит
-        // идущую, и оттенок зависит от того, исполняется ли расписание. Рассылка
-        // выключена по умолчанию, так что без этого первый же вид страницы обещал
-        // бы работу, которой нет.
-        const body = slot('mail-schedule');
-        if (body) body.innerHTML = scheduleBodyHtml(rows, !!saved.mailing_schedule_on);
-
-        const box = slot('mail-sched-on');
-        if (box) {
-            box.checked = !!saved.mailing_schedule_on;
-            box.disabled = !CAN_EDIT_SITE;
-        }
-
-        const note = slot('mail-sched-note');
-        if (note) {
-            note.textContent = saved.error
-                ? 'расписание не пришло: ' + saved.error
-                : (CAN_EDIT_SITE
-                    ? (why || 'Сохраняется само · шаг четверть часа')
-                    // Не-админу говорим словами, почему смотреть можно, а двигать
-                    // нет: запертая форма без объяснения читается как поломка.
-                    : (why || 'Правит администратор · расписание общее на сайт'));
-            note.classList.toggle('sched-warn', !!saved.error || (!!why && rows.length > 0));
-        }
-
-        // ⚠ Обработчики вешаем **на каждую отрисовку**, а не один раз при загрузке
-        // шаблона: тело блока здесь пересобирается (`innerHTML`), и узлы каждый раз
-        // новые. Это ровно обратное правилу для ленты «Все онлайн» — там узлы
-        // шаблона живут, пока не сменится сайт, и вешать заново значило бы копить
-        // слушателей.
-        //
-        // Не-админу не вешаем вовсе и запираем ползунки: ручка ответит ему 403, и
-        // ползунок, возвращающийся на место после каждого движения, был бы хуже
-        // запертого.
-        if (!CAN_EDIT_SITE) {
-            form.querySelectorAll('input[type=range], .sched-add-btn, .sched-drop')
-                .forEach(el => {
-                    el.disabled = true;
-                });
-
-            return;
-        }
-
-        scheduleBandBind(form, rows, mailScheduleEdit);
-    }
-
-    // Единственная точка правки — сюда и подключено автосохранение. Одна точка, а
-    // не вызов из каждого обработчика: правок три (добавить, убрать, двинуть
-    // ручку), и забытый вызов означал бы «эта правка не сохраняется», причём молча.
-    function mailScheduleEdit(change) {
-        const site = siteId();
-        // ⚠ Берём **`mailRows()`, а не сам черновик**: он мог не заводиться вовсе
-        // (первая правка после загрузки), и стартовать с пустого списка значило бы
-        // стереть расписание, которое человек видит на ленте. Ровно это и
-        // случалось — см. `mailScheduleSave`.
-        //
-        // Порядок тот же, в каком лента нарисована: обработчики ищут свою смену по
-        // ссылке, и переставь мы записи местами, правка ушла бы не в ту.
-        const rows = [...mailRows()];
-        change(rows);
-        mailDraft.set(site, rows);
-        mailSchedulePaint();
-        mailScheduleSaveSoon(site);
-    }
-
-    // ⚠ **Сохраняем не сразу, а через паузу.** Ползунок двигают подряд, и запрос
-    // на каждое движение был бы сотней запросов за одно перетаскивание. Пауза
-    // полсекунды: дольше — и человек успевает уйти со страницы, считая, что
-    // сохранено; короче — и «остановился» срабатывает посреди движения.
-    const MAIL_SAVE_MS = 500;
-    let mailSaveTimer = 0;
-
-    function mailScheduleSaveSoon(site) {
-        clearTimeout(mailSaveTimer);
-        mailSaveTimer = setTimeout(() => mailScheduleSave(site), MAIL_SAVE_MS);
-    }
-
-    async function mailScheduleSave(site) {
-        const rows = scheduleSort(mailDraft.get(site) || []);
-
-        // ⚠ Негодное не отправляем **и не жалуемся**: при автосохранении человек
-        // ещё правит, и ругаться на промежуточное состояние («смены налезают»)
-        // значило бы кричать на каждое движение ползунка. Причина и так написана
-        // под лентой, а сохранится расписание, когда станет годным.
-        if (scheduleCheck(rows, MAIL_SCHEDULE_EMPTY) && rows.length) return;
-
-        try {
-            await putData(`${BASE}/api/dating/site/${site}/mailing-schedule`,
-                {schedule: rows});
-        } catch (e) {
-            showNotification('Расписание рассылки не сохранилось: ' + e.message, 'error');
-            return;
-        }
-
-        // ⚠ **Черновик остаётся.** Прежде он здесь снимался — «сохранённое теперь
-        // приходит с сервера, вторая копия однажды покажет себя вместо правды», — и
-        // это стоило потерянных расписаний.
-        //
-        // Ползунки на ленте держат свои смены **по ссылке**: обработчик знает тот
-        // самый объект, который лежит в черновике. Сняв черновик, мы оставляли
-        // обработчики без списка: следующее движение ручки начинало правку с
-        // пустого массива, своей смены в нём не находило — и лента становилась
-        // пустой, а через полсекунды пустое расписание уезжало на сервер. Под
-        // надписью «сохранено».
-        //
-        // Держать его безопасно: на сервер уходит уже приведённое (`scheduleSort`,
-        // время с ведущими нулями), и обратно пришло бы то же самое.
-        const was = mailSaved.get(site) || {};
-        mailSaved.set(site, {...was, schedule: rows, error: ''});
-
-        if (siteId() !== site || workTab !== 'mail') return;
-
-        const note = slot('mail-sched-note');
-        if (note) {
-            note.textContent = 'сохранено';
-            note.classList.remove('sched-warn');
-        }
-    }
-
-    // Включает и выключает исполнение расписания рассылки.
-    //
-    // ⚠ Отдельно от самих смен, и по той же причине, что у анкеты: смены правят
-    // ползунком, и промежуточные состояния законны.
-    async function mailScheduleOnSet(box) {
-        const site = siteId();
-        const on = box.checked;
-        box.disabled = true;
-        try {
-            await putData(`${BASE}/api/dating/site/${site}/mailing-schedule-on`,
-                {mailing_schedule_on: on});
-            const was = mailSaved.get(site) || {};
-            mailSaved.set(site, {...was, mailing_schedule_on: on});
-            // ⚠ Перерисовываем ленту: от этого флага зависит оттенок зелёного у
-            // идущей смены («идёт сейчас» против «время подошло, но выключено»).
-            // Без перерисовки галочка снималась бы, а смена оставалась гореть — то
-            // есть панель обещала бы работу, которую человек только что запретил.
-            mailSchedulePaint();
-            showNotification(on ? 'Расписание рассылки включено'
-                : 'Расписание рассылки выключено', on ? 'success' : 'info');
-        } catch (e) {
-            box.checked = !on;
-            showNotification('Не переключилось: ' + e.message, 'error');
-        } finally {
-            box.disabled = false;
-        }
-    }
+    // Имена наружу — прежние: их зовут полоса подвкладок, соседние блоки и
+    // проверка «идёт ли смена» у ответов. Переименование ради красоты стоило бы
+    // правки там, где о расписании речи нет.
+    const mailSaved = mailSchedule.saved;
+    const mailDraft = mailSchedule.draft;
+    const mailRows = mailSchedule.rows;
+    const mailScheduleShow = mailSchedule.show;
+    const mailScheduleLoad = mailSchedule.load;
+    const mailSchedulePaint = mailSchedule.paint;
+    const mailScheduleOnSet = mailSchedule.onSet;
 
     function logPaneShow(on) {
         logPaneEl.classList.toggle('off', !on);

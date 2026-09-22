@@ -513,9 +513,24 @@ class TestWorkTemplate:
         # Выключатели — только у «Переписки».
         assert 'data-for="talk"' in block, 'выключатели не привязаны к подвкладке'
         for slot in ('fav-mail-make-on', 'fav-mail-send-on', 'fav-mail-pool',
-                     'fav-mail-make-btn', 'fav-mail-limits',
+                     'fav-mail-schedule', 'fav-mail-sched-note',
+                     'fav-mail-limits',
                      'fav-sent', 'fav-sent-count', 'fav-sent-reload'):
             assert f'data-slot="{slot}"' in block, f'нет слота {slot}'
+
+        # ⚠ **Кнопки генерации здесь больше нет, и это решение заказчика.**
+        #
+        # Ею не пользовались: пул набирает круг по сменам сайта, а человеку
+        # остаётся вычитать готовое. Тот же путь прошли инвайты — там кнопку
+        # убрали раньше и по той же причине.
+        #
+        # Ручка (`POST /api/dating/favorite-mail/generate`) при этом жива: ею
+        # ходят тесты и круг. Убрана **кнопка**, а не занятие, — и проверка
+        # сторожит именно это, чтобы кнопку не вернули «на всякий случай»
+        # рядом с расписанием.
+        for slot in ('fav-mail-make-btn', 'fav-mail-size', 'fav-mail-note'):
+            assert f'data-slot="{slot}"' not in block, \
+                f'{slot} вернулся: пул набирает круг, кнопка тут лишняя'
 
         for slot in ('fav-mail-per-day', 'fav-mail-gap'):
             assert f'data-slot="{slot}"' not in block, \

@@ -154,7 +154,10 @@ async def favorite_mail_list(site_id: int = 0, status_: str = 'draft',
     return {'result': [_answer(row) for row in rows or []],
             'pool': await favorite_mail_pool_left(int(site_id)),
             'next_sec': favorite_mail_round_next(int(site_id)),
-            'why': await favorite_mail_why(int(site_id)),
+            # ⚠ Сдвиг нужен и здесь: первый вопрос повода — «идёт ли смена», а
+            # смены заданы местным временем панели, не UTC.
+            'why': await favorite_mail_why(int(site_id),
+                                           await setting_timezone_hours()),
             # ⚠ `why` — про **набор** («почему пул пуст»), `send_why` — про
             # **отправку** («почему полный пул не уходит»). Вопроса два, и ответ на
             # один ничего не говорит о другом: пул бывает пуст при живой отправке и

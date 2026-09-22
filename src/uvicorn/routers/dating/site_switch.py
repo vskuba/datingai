@@ -160,6 +160,13 @@ class DatingSiteInviteSendOn(BaseModel):
     invite_send_on: bool = Field(..., description='Инвайты уходят живым людям')
 
 
+class DatingSiteFavoriteMailSchedule(BaseModel):
+    """Смены писем избранным: когда круг набирает пул."""
+
+    schedule: list[dict] = Field(default_factory=list,
+                                 description='Смены вида {"from": "07:00", "to": "11:00"}')
+
+
 class DatingSiteFavoriteMailMakeOn(BaseModel):
     """Набирать ли пул писем избранным."""
 
@@ -547,7 +554,8 @@ async def site_favorite_mail_get(site_id: int,
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT favorite_mail_make_on, favorite_mail_send_on FROM site'
+            'SELECT favorite_mail_make_on, favorite_mail_send_on,'
+            ' favorite_mail_schedule FROM site'
             ' WHERE site_id = %s', (int(site_id),))
         row = await db.fetchone()
 
@@ -555,6 +563,10 @@ async def site_favorite_mail_get(site_id: int,
         'site_id': int(site_id),
         'favorite_mail_make_on': bool((row or {}).get('favorite_mail_make_on')),
         'favorite_mail_send_on': bool((row or {}).get('favorite_mail_send_on')),
+        # ⚠ Расписание — **той же ручкой**, а не своей. Подвкладка рисует смены и
+        # выключатель одной полосой, и два запроса дали бы два момента времени:
+        # человек увидел бы зелёную смену под снятой галочкой.
+        'schedule': schedule_load((row or {}).get('favorite_mail_schedule')),
         'favorite_mail_per_day': await site_seconds(site_id,
                                                            'favorite_mail_per_day'),
         'favorite_mail_gap': await site_seconds(site_id, 'favorite_mail_gap'),
@@ -565,6 +577,29 @@ async def site_favorite_mail_get(site_id: int,
             site_id, 'favorite_mail_pool_max')}}
 
 
+@router.put('/{site_id}/favorite-mail-schedule', include_in_schema=False)
+
+
+async def site_favorite_mail_schedule_save(
+        site_id: int, payload: DatingSiteFavoriteMailSchedule,
+        user: AuthUser = Depends(auth_required)):
+    """Переписывает смены писем избранным.
+
+    Raises:
+        HTTPException: 422 — расписание негодное; причина словами.
+
+    ⚠ **Своего выключателя у этих смен нет**, в отличие от рассылки и инвайтов:
+    роль «работает ли занятие» играет `favorite_mail_make_on` — та самая галочка
+    «генерация писем» в полосе подвкладок. Две галочки рядом отвечали бы на один
+    вопрос, и человек гадал бы, какая из них главная.
+
+    ⚠ **Всем вошедшим, а не только админу**: смены — распорядок работы, как у
+    рассылки и инвайтов.
+    """
+    return await site_schedule_put(site_id, 'favorite_mail_schedule',
+                                   payload.schedule)
+
+
 @router.put('/{site_id}/favorite-mail-make-on', include_in_schema=False)
 
 
@@ -573,11 +608,18 @@ async def site_favorite_mail_make_on(
         user: AuthUser = Depends(auth_required)):
     """Включает и выключает набор пула писем избранным.
 
-    ⚠ **Расписания у этого набора нет**, в отличие от рассылки: пул ничего не
-    отправляет, а уходят письма кругом отправки — в часы `mailing_schedule`,
-    общие на всю почту сайта. Частоту держат два предела на человека
-    (`favorite_mail_per_day`, `favorite_mail_gap`), и второе расписание отвечало
-    бы на тот же вопрос вторым голосом.
+    ⚠ **Он же — выключатель расписания**: своей галочки у смен нет. У рассылки
+    эту роль играет `mailing_schedule_on`, у инвайтов `invite_schedule_on` — имя
+    другое, смысл тот же.
+
+    ⚠⚠ **Снят — круг молчит совсем. Поднят, а смен нет — тоже молчит.** Пустое
+    расписание значит «не работаем», а не «работаем всегда»: правило одно на
+    проект (`mailing_round`, `invite_round`), и второе прочтение здесь означало
+    бы, что человек, стерев все смены, получает круглосуточную работу.
+
+    ⚠ Отправку эти смены **не** задают: письмо уносит круг отправки в часы
+    `mailing_schedule`, общие на всю почту сайта. Здесь — только «когда
+    сочиняем».
     """
     return await site_flag_put(site_id, 'favorite_mail_make_on', payload.favorite_mail_make_on)
 

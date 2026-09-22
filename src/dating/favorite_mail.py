@@ -91,6 +91,7 @@ Redis, пределы — запросом к базе, и только пото
 """
 
 import random
+import time
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
@@ -105,7 +106,9 @@ from src.dating.mail_agent import (INVITE_SLOT_MAN,
                                           DatingMailAgentError,
                                           favorite_mail_template)
 from src.dating.mail import mail_render
+from src.dating.json_column import json_column_load
 from src.dating.online import online_show
+from src.dating.schedule import schedule_now
 from src.dating.people import people_name_usable
 
 # Сколько писем набирает один заход, если настройки нет.
@@ -757,6 +760,60 @@ async def favorite_mail_girl_soon(profile_id: int, gap: int) -> str:
             f'можно через {_left_word(gap - since)}')
 
 
+def favorite_mail_shift_now(shifts, minutes: int) -> bool:
+    """Идёт ли сейчас смена набора. Пустые смены — «нет», а не «всегда».
+
+    Args:
+        shifts: содержимое столбца `favorite_mail_schedule` — как из базы.
+        minutes: минуты от начала **местных** суток.
+
+    ⚠ **Правило одно на круг и на объяснение.** Круг решает по нему, идти ли, а
+    шапка пула — что написать человеку. Заведи объяснение свою копию, оно
+    говорило бы «идёт смена» там, где круг уходит ни с чем, — и это худший из
+    возможных ответов: он отправляет искать поломку туда, где её нет.
+
+    ⚠ Пустое расписание значит «не работаем». Правило общее с рассылкой и
+    инвайтами: второе прочтение здесь означало бы, что человек, стерев все
+    смены, получает круглосуточную работу.
+    """
+    rows = json_column_load(shifts) or []
+
+    return bool(rows) and schedule_now(rows, int(minutes))
+
+
+async def favorite_mail_shift_site(site_id: int, offset_hours: int = 0) -> bool:
+    """То же, но столбец читается сам. Для тех, у кого смен ещё нет в руках.
+
+    ⚠ Круг этим **не** пользуется: он забирает смены общим запросом по сайтам, и
+    второй запрос на каждый сайт был бы платой за уже известное.
+    """
+    site_id = int(site_id or 0)
+    if not site_id:
+        return False
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT favorite_mail_schedule FROM site'
+                             ' WHERE site_id = %s', (site_id,))
+            row = await db.fetchone()
+    except Exception as e:
+        logger_info(f'[dating] смены писем избранным сайта #{site_id} '
+                    f'не спросились: {e}')
+
+        # ⚠ Сомнение — в сторону «работаем»: это объяснение, а не решение. Соври
+        # оно «не смена», человек искал бы поломку в расписании, которого не
+        # видел. Решает всё равно круг, и у него свой ответ.
+        return True
+
+    return favorite_mail_shift_now((row or {}).get('favorite_mail_schedule'),
+                                   _minutes_now(int(offset_hours)))
+
+
+def _minutes_now(offset_hours: int) -> int:
+    """Минуты от начала местных суток."""
+    return int((time.time() + int(offset_hours) * 3600) // 60 % (24 * 60))
+
+
 async def favorite_mail_gap_sec(site_id: int) -> int:
     """Пауза между письмами одной девушки, секундами. Одно чтение на всех.
 
@@ -1073,7 +1130,7 @@ def _reason(reasons: list, text: str) -> None:
         reasons.append(text)
 
 
-async def favorite_mail_why(site_id: int) -> str:
+async def favorite_mail_why(site_id: int, offset_hours: int = 0) -> str:
     """Почему пул не наполняется прямо сейчас. Пусто — наполняется, повода нет.
 
     Returns:
@@ -1095,6 +1152,13 @@ async def favorite_mail_why(site_id: int) -> str:
     site_id = int(site_id or 0)
     if not site_id:
         return ''
+
+    # ⚠ **Смена — первый вопрос, и раньше пар.** Вне смены круг не наберёт ничего,
+    # сколько бы пар ни ждало; скажи мы про пары, человек чинил бы пределы, пока
+    # дело в часах. Тот же порядок и та же формулировка, что у отправки
+    # (`send_why`) и у отправки инвайтов.
+    if not await favorite_mail_shift_site(site_id, offset_hours):
+        return 'сейчас не смена: письма сочиняются по часам, заданным у сайта'
 
     try:
         pairs = await _quiet(site_id)

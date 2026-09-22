@@ -189,18 +189,46 @@ async def girl(auth_client):
     """Анкета на стенде, **в сети**: иначе отбор её не берёт вовсе.
 
     Убирается вместе со своими письмами — по внешнему ключу.
+
+    ⚠⚠ **И смена у стенда — во все сутки.** Набор пула теперь ходит по
+    расписанию сайта (`favorite_mail_schedule`), а пустые смены значат «не
+    работаем». Без этой строки шапка пула отвечала бы «сейчас не смена» на любой
+    вопрос, и файл проверял бы часы вместо того, что в нём написано.
+
+    ⚠ `24:00`, а не `23:45`: правая граница смены строгая, и четверть часа перед
+    полуночью иначе осталась бы дырой — сюита краснела бы каждый вечер. Ровно на
+    этом уже спотыкались двадцать три теста в трёх файлах.
+
+    ⚠⚠ **И `is_gone = 0` заново.** Сайта с выдуманным номером у соседа в списке
+    `dating` нет — так и задумано, — поэтому фоновая сверка честно метит его
+    «ушёл». Ходит она каждые 30 секунд, то есть посреди прогона, а круг ушедшие
+    сайты пропускает: без этой строки тесты краснели бы вразнобой и выглядели
+    плавающими, а не сломанными.
+
+    Всё это — **одной точкой на файл**: порознь о таких строках забывают.
     """
     made = await _profile(auth_client, 'fav')
 
     async with mysql_get_db_async() as db:
         await db.execute("UPDATE profile SET status = 'online' WHERE id = %s",
                          (made,))
+        await db.execute(
+            'INSERT INTO site (site_id, favorite_mail_schedule,'
+            ' favorite_mail_make_on, is_gone) VALUES (%s, %s, 1, 0)'
+            ' ON DUPLICATE KEY UPDATE'
+            ' favorite_mail_schedule = VALUES(favorite_mail_schedule),'
+            ' favorite_mail_make_on = 1, is_gone = 0',
+            (STAND_SITE, '[{"from": "00:00", "to": "24:00"}]'))
         await db.connection.commit()
 
     yield made
 
     async with mysql_get_db_async() as db:
         await db.execute('DELETE FROM favorite WHERE profile_id = %s', (made,))
+        # ⚠ Генерацию снимаем: стенд общий на десяток файлов сюиты, и оставленный
+        # включённым он попал бы под круги соседних тестов.
+        await db.execute('UPDATE site SET favorite_mail_make_on = 0'
+                         ' WHERE site_id = %s', (STAND_SITE,))
         await db.connection.commit()
 
     await auth_client.delete(f'/api/dating/profile/{made}')
@@ -866,3 +894,141 @@ class TestOneLetterPerGirlPerPass:
 
         assert got['made'] == 0, 'письмо набралось, хотя девушка в паузе'
         assert any('можно через' in one for one in got['reasons']), got['reasons']
+
+
+class TestTheRoundKeepsToItsShifts:
+    """⚠⚠ Набор пула ходит по сменам сайта, а не круглые сутки.
+
+    Прежде расписания здесь не было, и довод был такой: «набор ничего не
+    отправляет, второе расписание отвечало бы вторым голосом на вопрос часов
+    отправки». Довод неверен в одном месте, и это место решающее: **пул
+    набирается под тех, кто в сети сейчас**. Сочинённое ночью к утру протухает —
+    человек ушёл, а письмо лежит и держит его место в пуле.
+
+    Смены отвечают на «когда сочиняем», `mailing_schedule` — на «когда
+    отправляем». Вопроса два, потому что разное и дорого: сочинение стоит вызовов
+    LLM и наружу не пишет, отправка не стоит ничего и уходит живому человеку.
+    """
+
+    async def _shifts(self, value) -> None:
+        """Кладёт смены стенду. `None` — стирает расписание вовсе."""
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO site (site_id, favorite_mail_schedule)'
+                ' VALUES (%s, %s) ON DUPLICATE KEY UPDATE'
+                ' favorite_mail_schedule = VALUES(favorite_mail_schedule)',
+                (STAND_SITE, value))
+            await db.connection.commit()
+
+    async def _ran(self, girl_id: int, monkeypatch) -> dict:
+        """Один заход круга по стенду. Наружу не ходит: агент подменён."""
+        import src.dating.favorite_mail as mod
+        import src.dating.favorite_mail_round as round_
+
+        monkeypatch.setattr(mod, '_template', _answer('Давно не общались?'))
+        monkeypatch.setattr(mod, '_sync_stars', _nothing())
+
+        # ⚠ Отметка «недавно ходили» живёт в Redis и переживает тесты: без снятия
+        # второй заход в том же прогоне молчал бы по чужой причине.
+        monkeypatch.setattr(round_, '_due', lambda site_id: True)
+        monkeypatch.setattr(round_, '_mark', lambda site_id, every: None)
+        monkeypatch.setattr(round_, '_fresh_feed', lambda site_id: False)
+
+        # Только наш стенд: у соседних сайтов свои смены и свои анкеты.
+        real = round_._sites
+
+        async def only_stand():
+            return [one for one in await real()
+                    if int(one['site_id']) == STAND_SITE]
+
+        monkeypatch.setattr(round_, '_sites', only_stand)
+
+        return await round_.favorite_mail_round_run(0)
+
+    async def test_an_empty_schedule_means_silence(self, girl, monkeypatch):
+        """⚠ Пустые смены — «не работаем», а не «работаем всегда».
+
+        Правило общее с рассылкой и инвайтами. Второе прочтение означало бы, что
+        человек, стерев все смены, получает круглосуточную работу — то есть
+        ровно обратное тому, что он сделал.
+        """
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _hers(girl, uid, '2026-09-01 10:00:00')
+        await self._shifts(None)
+
+        got = await self._ran(girl, monkeypatch)
+
+        assert got['made'] == 0, 'круг набрал пул без расписания'
+
+    async def test_a_shift_now_lets_the_round_work(self, girl, monkeypatch):
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _hers(girl, uid, '2026-09-01 10:00:00')
+        await self._shifts('[{"from": "00:00", "to": "24:00"}]')
+
+        got = await self._ran(girl, monkeypatch)
+
+        assert got['made'] == 1, got
+
+    async def test_the_round_asks_the_shared_predicate(self):
+        """⚠ Сторож общей точки: круг и шапка пула обязаны спрашивать **одно**.
+
+        Заведи круг свою проверку — панель писала бы «идёт смена» там, где он
+        уходит ни с чем, и человек искал бы поломку в пределах и анкетах.
+
+        ⚠⚠ Смотрим на **разобранный код**, а не на исходник строкой. `getsource`
+        отдаёт и комментарии, а над самой проверкой стоит пояснение с именем
+        предиката — сторож проходил бы по нему и при вырезанной проверке.
+        Поймано ровно так: правку сняли, тест остался зелёным.
+        """
+        from src.dating import favorite_mail_round
+
+        code = _source_without_doc(favorite_mail_round.favorite_mail_round_run)
+
+        assert 'favorite_mail_shift_now' in code, \
+            'круг снова проверяет смены сам'
+        assert 'schedule_now(shifts, offset)' not in code, \
+            'сдвиг часового пояса снова передан как минуты суток'
+
+
+class TestOutsideTheShiftTheHeaderSaysSo:
+    """⚠ Молчащий пул обязан объяснять себя, и **часами в первую очередь**.
+
+    Вне смены круг не наберёт ничего, сколько бы пар ни ждало. Скажи шапка про
+    пары или пределы — человек чинил бы их, пока дело в расписании.
+    """
+
+    async def _shifts(self, value) -> None:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO site (site_id, favorite_mail_schedule)'
+                ' VALUES (%s, %s) ON DUPLICATE KEY UPDATE'
+                ' favorite_mail_schedule = VALUES(favorite_mail_schedule)',
+                (STAND_SITE, value))
+            await db.connection.commit()
+
+    async def test_no_schedule_is_explained_by_the_schedule(self, girl):
+        from src.dating.favorite_mail import favorite_mail_why
+
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _hers(girl, uid, '2026-09-01 10:00:00')
+        await self._shifts(None)
+
+        try:
+            why = await favorite_mail_why(STAND_SITE)
+
+            assert 'не смена' in why, why
+        finally:
+            await self._shifts('[{"from": "00:00", "to": "24:00"}]')
+
+    async def test_inside_the_shift_the_reason_is_about_the_work(self, girl):
+        """Смена идёт — повод снова про работу, а не про часы."""
+        from src.dating.favorite_mail import favorite_mail_why
+
+        await self._shifts('[{"from": "00:00", "to": "24:00"}]')
+
+        why = await favorite_mail_why(STAND_SITE)
+
+        assert 'не смена' not in why, why
