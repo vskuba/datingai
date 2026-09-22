@@ -299,6 +299,7 @@ async def _agent_ask(agent_id: int, question: str, language: str,
     пользователей этого проекта нет, и представляться там надо своей учёткой.
     """
     from src.dating.agent import agent_vars
+    from src.dating.companion_bio import companion_bio_text
 
     card = profile.get('profile')
     if isinstance(card, str):
@@ -316,6 +317,16 @@ async def _agent_ask(agent_id: int, question: str, language: str,
                        # та же беда, от которой у девушек стоит `girl_id`.
                        'talk_history': str(history or ''),
                        'companion_uid': str(uid or ''),
+                       # ⚠⚠ **Анкета собеседника — на случай, когда фактов о нём
+                       # ещё нет.** Факты извлекает из переписки отдельный
+                       # workflow, и в начале разговора извлекать нечего: агент
+                       # писал человеку, не зная о нём ничего, хотя карточка у
+                       # нас лежит. Промпт подставляет её **вместо** фактов, а не
+                       # вместе с ними (`wf_dating_talk_companion_bio`): два
+                       # источника об одном человеке расходятся, и модель взяла бы
+                       # тот, что удобнее фразе.
+                       'companion_bio': await companion_bio_text(
+                           profile.get('site_id'), uid),
                        # ⚠⚠ Кто именно пишет. Без этого сосед берёт имя из
                        # своего справочника по `companion_id` — одно на всех, —
                        # и агент зовёт человека чужим именем, а факты о нём

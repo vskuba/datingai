@@ -5773,30 +5773,21 @@
     // ⚠ Один обработчик на оба выключателя: различает их `send`. Две почти
     // одинаковые функции разошлись бы в первой же правке — так уже было с лентами.
     async function chatInitiativeSet(box, send = false) {
-        const site = siteId();
-        const on = box.checked;
-        const было = chatInitiativeOn.get(site) || {make: false, send: false};
-        box.disabled = true;
-        try {
-            await putData(
-                `${BASE}/api/dating/site/${site}/`
-                + (send ? 'chat-initiative-send-on' : 'chat-initiative-on'),
-                send ? {chat_initiative_send_on: on} : {chat_initiative_on: on});
-            chatInitiativeOn.set(site, send ? {...было, send: on}
-                                            : {...было, make: on});
-            showNotification(
-                send
-                    ? (on ? 'Карточки инициативы будут уходить живым людям'
-                          : 'Отправка инициативы выключена')
-                    : (on ? 'Круг начнёт набирать пул инициативы'
-                          : 'Набор инициативы выключен'),
-                on ? 'success' : 'info');
-        } catch (e) {
-            box.checked = !on;
-            showNotification('Не переключилось: ' + e.message, 'error');
-        } finally {
-            box.disabled = !CAN_EDIT_SITE;
-        }
+        const было = chatInitiativeOn.get(siteId()) || {make: false, send: false};
+
+        await siteFlagToggle(box, {
+            path: send ? 'chat-initiative-send-on' : 'chat-initiative-on',
+            flag: send ? 'chat_initiative_send_on' : 'chat_initiative_on',
+            words: send
+                ? ['Карточки инициативы будут уходить живым людям',
+                   'Отправка инициативы выключена']
+                : ['Круг начнёт набирать пул инициативы',
+                   'Набор инициативы выключен'],
+            // ⚠ Два флага в одной записи: страница спрашивает их вместе, и
+            // раздельное хранение означало бы два чтения одного состояния.
+            save: (on, site) => chatInitiativeOn.set(
+                site, send ? {...было, send: on} : {...было, make: on}),
+        });
     }
 
     function chatAnswerPaint() {
@@ -5810,22 +5801,12 @@
     }
 
     async function chatAnswerSet(box) {
-        const site = siteId();
-        const on = box.checked;
-        box.disabled = true;
-        try {
-            await putData(`${BASE}/api/dating/site/${site}/chat-answer-on`,
-                {chat_answer_on: on});
-            chatAnswerOn.set(site, on);
-            showNotification(on
-                ? 'Агент будет отвечать в чате за все включённые анкеты сайта'
-                : 'Автоответ в чате выключен', on ? 'success' : 'info');
-        } catch (e) {
-            box.checked = !on;
-            showNotification('Не переключилось: ' + e.message, 'error');
-        } finally {
-            box.disabled = !CAN_EDIT_SITE;
-        }
+        await siteFlagToggle(box, {
+            path: 'chat-answer-on', flag: 'chat_answer_on',
+            words: ['Агент будет отвечать в чате за все включённые анкеты сайта',
+                    'Автоответ в чате выключен'],
+            save: (on, site) => chatAnswerOn.set(site, on),
+        });
     }
 
     // ── Доставка инвайтов: что ушло и чем кончилось ──────────────────────────
@@ -6415,26 +6396,13 @@
     }
 
     async function inviteSendOnSet(box) {
-        const site = siteId();
-        const on = box.checked;
-        box.disabled = true;
-        try {
-            await putData(`${BASE}/api/dating/site/${site}/invite-send-on`,
-                {invite_send_on: on});
-            const was = inviteSaved.get(site) || {};
-            inviteSaved.set(site, {...was, invite_send_on: on});
-            // ⚠ Пул перерисовываем: от флага зависит, живая ли кнопка «отправить»
-            // на каждой карточке. Без этого человек поднял бы галочку и продолжал
-            // видеть запертые кнопки.
-            invitePaint();
-            showNotification(on ? 'Отправка инвайтов разрешена'
-                : 'Отправка инвайтов запрещена', on ? 'success' : 'info');
-        } catch (e) {
-            box.checked = !on;
-            showNotification('Не переключилось: ' + e.message, 'error');
-        } finally {
-            box.disabled = false;
-        }
+        await siteFlagToggle(box, {
+            path: 'invite-send-on', flag: 'invite_send_on',
+            words: ['Отправка инвайтов разрешена', 'Отправка инвайтов запрещена'],
+            save: (on, site) => inviteSaved.set(
+                site, {...(inviteSaved.get(site) || {}), invite_send_on: on}),
+            after: () => invitePaint(),
+        });
     }
 
     // Идёт ли смена расписания инвайтов — то есть горит ли лента зелёным.
@@ -7678,23 +7646,20 @@
     // Выключатель: «генерация» или «отправка». Один обработчик на оба — ручки
     // различаются хвостом пути и именем поля, а поведение у них одно.
     async function favMailFlagSet(box, flag, path, words) {
-        const site = siteId();
-        const on = box.checked;
-        box.disabled = true;
-        try {
-            await putData(`${BASE}/api/dating/site/${site}/${path}`, {[flag]: on});
-
-            const saved = favMailSaved.get(site) || {};
-            saved[flag] = on;
-            favMailSaved.set(site, saved);
-            favMailPaint();
-            showNotification(on ? words[0] : words[1], on ? 'success' : 'info');
-        } catch (e) {
-            box.checked = !on;
-            showNotification('Не переключилось: ' + e.message, 'error');
-        } finally {
-            box.disabled = !CAN_EDIT_SITE;
-        }
+        await siteFlagToggle(box, {
+            path, flag, words,
+            save: (on, site) => favMailSaved.set(
+                site, {...(favMailSaved.get(site) || {}), [flag]: on}),
+            // ⚠⚠ **И лента расписания**, а не только пул. От `favorite_mail_make_on`
+            // зависит оттенок зелёного у идущей смены: это и есть «активировать».
+            // Прежде перерисовывался один пул, и включённое расписание оставалось
+            // серым до переоткрытия вкладки — панель молчала о том, что уже
+            // работает.
+            after: () => {
+                favMailPaint();
+                favMailSchedule.paint();
+            },
+        });
     }
 
     // Перечёркивает подписи выключателей, когда выбранная анкета спит.
@@ -8775,24 +8740,15 @@
     // про последствие, а не «выключено» — снятая галочка сама по себе выглядит
     // безобидно.
     async function mailCheckOnSet(box) {
-        const site = siteId();
-        const on = box.checked;
-        box.disabled = true;
-        try {
-            await putData(`${BASE}/api/dating/site/${site}/mail-check-on`,
-                {mail_check_on: on});
-            mailCheckSaved.mail_check_on = on;
-            showNotification(on
-                    ? 'Письма забираются сами — по всем анкетам сайта'
-                    : 'Забор писем выключен: новых писем не будет, а значит не '
-                    + 'будет и ответов',
-                on ? 'success' : 'info');
-        } catch (e) {
-            box.checked = !on;
-            showNotification('Не переключилось: ' + e.message, 'error');
-        } finally {
-            box.disabled = !CAN_EDIT_SITE;
-        }
+        await siteFlagToggle(box, {
+            path: 'mail-check-on', flag: 'mail_check_on',
+            words: ['Письма забираются сами — по всем анкетам сайта',
+                    'Забор писем выключен: новых писем не будет, а значит не '
+                    + 'будет и ответов'],
+            save: (on) => {
+                mailCheckSaved.mail_check_on = on;
+            },
+        });
     }
 
     // ⚠ Сохранения расписания здесь больше нет: лента в шапке **только
@@ -8811,45 +8767,29 @@
     // она про сайт. Два соседних флажка по разным правилам человек читает как
     // поломку. Пул ответов один на сайт, и «отвечаем ли вообще» отвечается один раз.
     async function replyMakeOnSet(box) {
-        const site = siteId();
-        const on = box.checked;
-        box.disabled = true;
-        try {
-            await putData(`${BASE}/api/dating/site/${site}/reply-make-on`,
-                {reply_make_on: on});
-            replySaved.reply_make_on = on;
-            // ⚠ Круг обновления смотрит на этот флажок: включили генерацию —
-            // пул начнёт наполняться сам, и страница должна это увидеть, не
-            // дожидаясь перезагрузки.
-            replyWatch();
-            showNotification(on ? 'Генерация ответов включена — по всему сайту'
-                    : 'Генерация ответов выключена',
-                on ? 'success' : 'info');
-        } catch (e) {
-            box.checked = !on;
-            showNotification('Не переключилось: ' + e.message, 'error');
-        } finally {
-            box.disabled = !CAN_EDIT_SITE;
-        }
+        await siteFlagToggle(box, {
+            path: 'reply-make-on', flag: 'reply_make_on',
+            words: ['Генерация ответов включена — по всему сайту',
+                    'Генерация ответов выключена'],
+            save: (on) => {
+                replySaved.reply_make_on = on;
+            },
+            // ⚠ Круг обновления смотрит на этот флажок: включили генерацию — пул
+            // начнёт наполняться сам, и страница должна увидеть это, не дожидаясь
+            // перезагрузки.
+            after: () => replyWatch(),
+        });
     }
 
     async function replyOnSet(box) {
-        const site = siteId();
-        const on = box.checked;
-        box.disabled = true;
-        try {
-            await putData(`${BASE}/api/dating/site/${site}/reply-send-on`,
-                {reply_send_on: on});
-            replySaved.reply_send_on = on;
-            replyWatch();
-            showNotification(on ? 'Ответы будут уходить' : 'Ответы выключены',
-                on ? 'success' : 'info');
-        } catch (e) {
-            box.checked = !on;
-            showNotification('Не переключилось: ' + e.message, 'error');
-        } finally {
-            box.disabled = !CAN_EDIT_SITE;
-        }
+        await siteFlagToggle(box, {
+            path: 'reply-send-on', flag: 'reply_send_on',
+            words: ['Ответы будут уходить', 'Ответы выключены'],
+            save: (on) => {
+                replySaved.reply_send_on = on;
+            },
+            after: () => replyWatch(),
+        });
     }
 
     function mailInPaint() {
@@ -9700,22 +9640,14 @@
     // ⚠ Хранится у сайта: письма уходят живым людям, и решение «рассылка идёт»
     // не должно теряться при перезагрузке страницы.
     async function mailSendOnSet(box) {
-        const site = siteId();
-        const on = box.checked;
-        box.disabled = true;
-        try {
-            await putData(`${BASE}/api/dating/site/${site}/mailing-send-on`,
-                {mailing_send_on: on});
-            const was = mailSaved.get(site) || {};
-            mailSaved.set(site, {...was, mailing_send_on: on});
-            showNotification(on ? 'Отправка писем включена'
-                : 'Отправка писем выключена', on ? 'success' : 'info');
-        } catch (e) {
-            box.checked = !on;
-            showNotification('Не переключилось: ' + e.message, 'error');
-        } finally {
-            box.disabled = false;
-        }
+        await siteFlagToggle(box, {
+            path: 'mailing-send-on', flag: 'mailing_send_on',
+            words: ['Отправка писем разрешена', 'Отправка писем запрещена'],
+            save: (on, site) => mailSaved.set(
+                site, {...(mailSaved.get(site) || {}), mailing_send_on: on}),
+            // ⚠ Пул: от флага зависит, живая ли кнопка «отправить» на карточке.
+            after: () => mailPoolPaint(),
+        });
     }
 
     // ── Окно письма ──────────────────────────────────────────────────────────
@@ -9942,6 +9874,44 @@
     // Вид и правила ввода общие с расписанием анкеты (`schedule.js`): смена
     // там и здесь это одно и то же, и вторая копия правил разошлась бы с первой.
 
+    // ── Выключатель сайта: одна дорога на все галочки ───────────────────────
+    //
+    // ⚠⚠ **Их было девять, и они разошлись.** Восемь отдельных функций плюс
+    // десятая внутри расписания — все делали одно: `PUT` флага, запись в своё
+    // хранилище, перерисовка, уведомление, откат галочки при отказе.
+    //
+    // Расхождение стоило работы: галочка «генерация писем» у избранных
+    // перерисовывала пул, но **не ленту расписания**, — и включённое расписание
+    // оставалось серым, пока человек не переоткроет вкладку. У рассылки и
+    // инвайтов лента перерисовывалась, потому что их переключатель дописали
+    // позже и не забыли. Ровно та разница, которую в девяти копиях не видно.
+    //
+    // ⚠ **Что перерисовать — довод вызова, а не догадка функции.** Вкладки
+    // разные: у рассылки это пул, у ответов — свой сторож, у избранных — пул и
+    // лента разом. Функция про «переключить» знать об этом не должна.
+    async function siteFlagToggle(box, {path, flag, words, save, after}) {
+        const site = siteId();
+        const on = box.checked;
+        box.disabled = true;
+        try {
+            await putData(`${BASE}/api/dating/site/${site}/${path}`, {[flag]: on});
+
+            // Куда лечь новому значению — знает вызывающий: хранилища у вкладок
+            // разные (Map по сайтам у одних, один объект у других).
+            if (save) save(on, site);
+            if (after) after(on, site);
+
+            showNotification(on ? words[0] : words[1], on ? 'success' : 'info');
+        } catch (e) {
+            // ⚠ Галочку возвращаем на место: оставшись нажатой при отказе, она
+            // обещала бы работу, которой сервер не принял.
+            box.checked = !on;
+            showNotification('Не переключилось: ' + e.message, 'error');
+        } finally {
+            box.disabled = !CAN_EDIT_SITE;
+        }
+    }
+
     // ── Расписание сайта: одна выкройка на все ленты ────────────────────────
     //
     // ⚠⚠ **Здесь лежало три почти одинаковых блока** — рассылка, инвайты и
@@ -10137,28 +10107,22 @@
             if (!saved.has(siteId())) load();
         }
 
+        // ⚠ Переключение идёт **общей дорогой** (`siteFlagToggle`), как у всех
+        // прочих галочек сайта: своё тело здесь было десятой копией одного и
+        // того же и разошлось бы с ними на первой правке.
         async function onSet(box) {
-            const site = siteId();
-            const on = box.checked;
-            box.disabled = true;
-            try {
-                await putData(`${BASE}/api/dating/site/${site}/${cfg.flagPath}`,
-                    {[cfg.flag]: on});
-                const was = saved.get(site) || {};
-                saved.set(site, {...was, [cfg.flag]: on});
-                // ⚠ Перерисовываем: от флага зависит оттенок зелёного у идущей
-                // смены. Без этого галочка снималась бы, а смена оставалась
-                // гореть — панель обещала бы работу, которую только что запретили.
-                paint();
-                if (cfg.after) cfg.after();
-                showNotification(on ? cfg.onText[0] : cfg.onText[1],
-                    on ? 'success' : 'info');
-            } catch (e) {
-                box.checked = !on;
-                showNotification('Не переключилось: ' + e.message, 'error');
-            } finally {
-                box.disabled = false;
-            }
+            await siteFlagToggle(box, {
+                path: cfg.flagPath, flag: cfg.flag, words: cfg.onText,
+                save: (on, site) => saved.set(
+                    site, {...(saved.get(site) || {}), [cfg.flag]: on}),
+                // ⚠ От флага зависит оттенок зелёного у идущей смены. Без
+                // перерисовки галочка снималась бы, а смена оставалась гореть —
+                // панель обещала бы работу, которую только что запретили.
+                after: () => {
+                    paint();
+                    if (cfg.after) cfg.after();
+                },
+            });
         }
 
         // Идёт ли смена — то есть горит ли лента зелёным.

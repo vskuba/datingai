@@ -238,3 +238,58 @@ class TestTheTwoStripsTakeTurns:
         at_sub = page.index('favSubShow();', at_paint)
 
         assert at_sub > at_paint, 'смена анкеты не перерисовывает вкладку'
+
+
+class TestTheActivationCheckboxBehavesLikeEverywhere:
+    """⚠⚠ Галочка «генерация писем» — это и есть «активировать» расписание.
+
+    Стоит она там же, где у рассылки и инвайтов, — в правом краю полосы
+    подвкладок, с тем же классом `sched-on-box`. Своей второй галочки у смен
+    нет: работает занятие или нет, отвечается один раз.
+
+    Но вела она себя **не как везде**, и это чинится здесь. Переключение
+    перерисовывало пул и не трогало ленту расписания: включённые смены
+    оставались серыми до переоткрытия вкладки. У рассылки и инвайтов лента
+    перерисовывалась — их переключатель писали позже и не забыли. Ровно та
+    разница, которую в девяти копиях одного кода не видно.
+    """
+
+    def _page(self):
+        return open('data/uvicorn/template/admin/dating/profile.html',
+                    encoding='utf-8').read()
+
+    def test_the_checkbox_repaints_the_schedule_band(self):
+        """⚠ Оттенок зелёного у идущей смены зависит от флага: без перерисовки
+        панель молчит о работе, которая уже началась."""
+        page = self._page()
+        start = page.index('async function favMailFlagSet(')
+        block = page[start:start + 900]
+
+        assert 'favMailSchedule.paint()' in block, \
+            'галочка снова не перерисовывает ленту расписания'
+
+    def test_every_switch_goes_through_one_door(self):
+        """⚠⚠ Сторож от возврата девяти копий.
+
+        Каждая делала одно: `PUT` флага, запись в своё хранилище, перерисовка,
+        уведомление, откат галочки при отказе. Отличались они тем, **что
+        перерисовать**, — и именно в этом разошлись.
+
+        Признак копии — свой откат галочки (`box.checked = !on`). Он обязан быть
+        ровно один, в общей функции.
+        """
+        page = self._page()
+
+        assert page.count('box.checked = !on') == 1, \
+            'переключатель сайта снова написан своими руками'
+        assert page.count('async function siteFlagToggle(') == 1, \
+            'общая дорога переключателя пропала или раздвоилась'
+
+    def test_the_schedule_block_uses_it_too(self):
+        """⚠ И расписания: их `onSet` был десятой копией того же тела."""
+        page = self._page()
+        start = page.index('        async function onSet(box) {')
+        block = page[start:start + 700]
+
+        assert 'siteFlagToggle(box' in block, \
+            'расписание снова переключает флаг само'
