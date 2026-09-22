@@ -38,7 +38,21 @@ STAND_SITE = 999_343
 
 @pytest.fixture
 async def letters(auth_client):
-    """Два письма рядом: ушедшее и сорвавшееся."""
+    """Два письма рядом: ушедшее и сорвавшееся.
+
+    ⚠⚠ **Оба заводятся черновиками и доводятся до исхода `UPDATE`-ом**, а не
+    вписываются готовыми. Отметку исхода ставит `ON UPDATE CURRENT_TIMESTAMP`, и
+    строка, вписанная сразу `failed`, получала бы её от `INSERT` — то есть тест
+    проверял бы умолчание столбца вместо той самой правки строки, которой
+    отправка исход и записывает.
+
+    Разница не теоретическая: пока столбец стоял `NOT NULL DEFAULT
+    CURRENT_TIMESTAMP`, отметку получало всё подряд — включая тридцать
+    накопленных строк, которым её проставил `ALTER`. Письмо, не ушедшее
+    21 сентября, показывалось датой миграции, и это прочли как «код пишет
+    запрещённой паре». Теперь умолчание — `NULL`, и подделать отметку `INSERT`-ом
+    нельзя.
+    """
     made = (await auth_client.post('/api/dating/profile', json={
         'site_id': STAND_SITE,
         'login': f'when-{uuid.uuid4().hex[:8]}@example.com',
@@ -47,10 +61,17 @@ async def letters(auth_client):
     async with mysql_get_db_async() as db:
         await db.execute(
             "INSERT INTO favorite_mail (site_id, profile_id, uid, name, body,"
-            " status, error, sent_at)"
-            " VALUES (%s, %s, '111', 'Ok', 'hi', 'sent', '', NOW()),"
-            "        (%s, %s, '222', 'Bad', 'hi', 'failed', 'сайт отказал', NULL)",
+            " status) VALUES (%s, %s, '111', 'Ok', 'hi', 'draft'),"
+            "                (%s, %s, '222', 'Bad', 'hi', 'draft')",
             (STAND_SITE, int(made), STAND_SITE, int(made)))
+        # Тот же ход, что у `mail_send_mark`: удача проставляет `sent_at`,
+        # неудача — только причину, а время исхода снимает сама правка строки.
+        await db.execute(
+            "UPDATE favorite_mail SET status = 'sent', sent_at = NOW()"
+            " WHERE profile_id = %s AND uid = '111'", (int(made),))
+        await db.execute(
+            "UPDATE favorite_mail SET status = 'failed', error = 'сайт отказал'"
+            " WHERE profile_id = %s AND uid = '222'", (int(made),))
         await db.connection.commit()
 
     yield int(made)
@@ -137,3 +158,62 @@ class TestOnePatternForAllJournals:
                     encoding='utf-8').read()
 
         assert 'row.sent_at || row.updated_at || row.created_at' in page
+
+
+class TestAnUnknownOutcomeStaysUnknown:
+    """⚠⚠ Сторож от того, чем эта колонка однажды соврала.
+
+    Столбец завели `NOT NULL DEFAULT CURRENT_TIMESTAMP`, и `ALTER` проставил всем
+    тридцати накопленным строкам **время миграции**. Письмо, не ушедшее
+    21 сентября в 16:02, стало показываться как «22 сентября 08:47»; пара к тому
+    времени уже лежала в «Не пишем», и красная строка со свежей датой читается
+    ровно одним способом — «код опять пишет запрещённому». Разбор по журналу
+    запросов показал обратное: после запрета к нему не ходили ни разу.
+
+    Цена ошибки здесь — не «некрасивая дата», а ложное обвинение своему коду.
+
+    Правило: **неизвестно — значит `NULL`**. Показ тогда берёт `created_at`
+    (`_sentWhen`), и это честный ответ «когда сочинили», а не выдуманный «когда
+    сорвалось».
+    """
+
+    async def test_a_fresh_draft_has_no_outcome_time(self, auth_client):
+        """Черновик исхода ещё не знает — и отметки у него быть не должно."""
+        made = (await auth_client.post('/api/dating/profile', json={
+            'site_id': STAND_SITE,
+            'login': f'when2-{uuid.uuid4().hex[:8]}@example.com',
+            'password': 'x'})).json()['result']
+
+        try:
+            async with mysql_get_db_async() as db:
+                await db.execute(
+                    'INSERT INTO favorite_mail (site_id, profile_id, uid, name,'
+                    " body, status) VALUES (%s, %s, '333', 'Draft', 'hi', 'draft')",
+                    (STAND_SITE, int(made)))
+                await db.connection.commit()
+
+                await db.execute(
+                    'SELECT updated_at FROM favorite_mail'
+                    ' WHERE profile_id = %s', (int(made),))
+                row = dict((await db.fetchone()) or {})
+
+            assert row.get('updated_at') is None, \
+                'черновику проставили время исхода, которого ещё не было'
+        finally:
+            await auth_client.delete(f'/api/dating/profile/{made}')
+
+    async def test_the_column_allows_unknown(self):
+        """⚠ `NOT NULL DEFAULT CURRENT_TIMESTAMP` — ровно та ошибка: он не
+        оставляет способа сказать «не знаем», и `COALESCE` до `created_at` не
+        доходит никогда."""
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT IS_NULLABLE, COLUMN_DEFAULT FROM information_schema.COLUMNS'
+                ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s'
+                '   AND COLUMN_NAME = %s', ('favorite_mail', 'updated_at'))
+            row = dict((await db.fetchone()) or {})
+
+        assert row.get('IS_NULLABLE') == 'YES', \
+            'столбец снова не умеет «не знаем»'
+        assert not row.get('COLUMN_DEFAULT'), \
+            'у столбца снова умолчание — оно подделает отметку при вставке'

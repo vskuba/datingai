@@ -213,7 +213,52 @@ async def _nothing_to_send(site_id: int, table: str) -> str:
         return ('все письма с ошибкой — круг такие не берёт, '
                 'их досылают кнопкой')
 
+    # ⚠ **Третья причина простоя, и она появилась вместе с паузой.** Пул полон,
+    # ошибок нет, а круг уходит ни с чем: каждая девушка недавно писала. Без
+    # этой строки человек видел бы полный пул и молчащую отправку — состояние,
+    # которое читается как поломка, а на деле работает ровно так, как настроено.
+    if str(table) == 'favorite_mail':
+        left = await _girls_wait(site_id)
+        if left:
+            return left
+
     return ''
+
+
+async def _girls_wait(site_id: int) -> str:
+    """Все ли девушки пула избранных сейчас в паузе. Пусто — не все.
+
+    ⚠ Спрашивает **тем же условием**, которым отбирает круг
+    (`favorite_mail_girl_free_sql`): ответ «почему стоим» обязан считаться тем
+    же кодом, что решает за круг, иначе он объяснит не тот простой.
+    """
+    from src.dating.favorite_mail import (favorite_mail_gap_sec,
+                                          favorite_mail_girl_free_sql)
+
+    gap = await favorite_mail_gap_sec(site_id)
+    free = favorite_mail_girl_free_sql(gap)
+    if not free:
+        return ''
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT COUNT(*) AS свободных FROM favorite_mail m'
+                "  WHERE m.site_id = %s AND m.status = 'draft' AND m.error = ''"
+                + free, (int(site_id),))
+            row = dict((await db.fetchone()) or {})
+    except Exception as e:
+        logger_info(f'[dating] пауза девушек не спросилась: {e}')
+
+        return ''
+
+    if int(row.get('свободных') or 0):
+        return ''
+
+    from src.dating.favorite_mail import _hours_word
+
+    return (f'все анкеты недавно писали — пауза между письмами '
+            f'{_hours_word(gap)}')
 
 
 async def _sites() -> list[dict]:
@@ -288,6 +333,27 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     # написано под сиюминутный разговор.
     online_only = " AND p.status = 'online'" if table == 'favorite_mail' else ''
 
+    # ⚠⚠ **Пауза между письмами одной девушки — здесь, а не только в наборе.**
+    #
+    # Настройка `favorite_mail_gap` говорит: от одной анкеты уходит одно письмо за
+    # срок, кому угодно. Проверяй её только набор пула — правило осталось бы на
+    # бумаге: черновики лежат готовыми, а уносит их этот круг по письму в минуту.
+    # Так и вышло 21 сентября — четыре письма от Елены четверым за восемь минут.
+    #
+    # ⚠ **Условием в запросе, а не отсевом после.** Круг берёт из пула **одно**
+    # письмо за заход; отсей мы занятую девушку после выборки, заход кончился бы
+    # ничем — и сайт молчал бы всю паузу, хотя писать готовы двенадцать других.
+    # Условие же просто отдаёт следующее письмо следующей.
+    #
+    # ⚠ Правило живёт в `favorite_mail.py` и отсюда только спрашивается: там же
+    # его читает набор пула, и две копии разошлись бы на первой правке.
+    busy = ''
+    if table == 'favorite_mail':
+        from src.dating.favorite_mail import (favorite_mail_gap_sec,
+                                              favorite_mail_girl_free_sql)
+
+        busy = favorite_mail_girl_free_sql(await favorite_mail_gap_sec(site_id))
+
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
@@ -296,7 +362,7 @@ async def _oldest(site_id: int, table: str) -> dict | None:
                 f'  FROM {table} m'
                 f'  JOIN profile p ON p.id = m.profile_id'
                 f" WHERE m.site_id = %s AND m.status = 'draft' AND m.error = ''"
-                f'   AND p.enabled = 1{online_only}'
+                f'   AND p.enabled = 1{online_only}{busy}'
                 f' ORDER BY m.id LIMIT 1', (int(site_id),))
             row = await db.fetchone()
     except Exception as e:

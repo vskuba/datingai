@@ -81,8 +81,13 @@ async def site(auth_client, monkeypatch):
     await auth_client.put(f'/api/dating/site/{SITE}/mailing-schedule',
                           json={'schedule': before['schedule']})
     async with mysql_get_db_async() as db:
+        # ⚠ И `favorite_mail_send_on` — его включают тесты паузы ниже. Останься
+        # он поднятым, стенд остался бы в списке круга для остальных файлов
+        # сюиты: ровно тот вид протечки между файлами, от которого этот сайт и
+        # выдуман.
         await db.execute('UPDATE site SET is_gone = %s, mailing_send_on = 0,'
-                         ' reply_send_on = 0 WHERE site_id = %s', (gone, SITE))
+                         ' reply_send_on = 0, favorite_mail_send_on = 0'
+                         ' WHERE site_id = %s', (gone, SITE))
         await db.connection.commit()
 
 
@@ -432,3 +437,140 @@ def _utc_hour() -> int:
     import time
 
     return time.gmtime().tm_hour
+
+
+class TestThePauseBelongsToTheGirl:
+    """⚠⚠ Пауза между письмами — про анкету, а не про получателя, и держит её
+    **этот круг**, а не только набор пула.
+
+    Настройка `favorite_mail_gap` значила «одному человеку не чаще раза в срок».
+    Про то, сколько за этот срок напишет одна девушка **разным** людям, правило
+    не говорило ничего — и круг, уносящий по письму в минуту, выпускал их подряд.
+    Живьём 21 сентября: четыре письма от Елены четверым за восемь минут (18:29,
+    18:30, 18:32, 18:37), и сайт ответил отказом.
+
+    ⚠ Проверять надо именно здесь. Черновики лежат готовыми, набор пула их уже
+    отпустил, и «одно письмо за срок» решается в последней точке — при выборе,
+    что унести следующим.
+    """
+
+    async def _favorites_on(self, gap: int, monkeypatch) -> None:
+        """Включает пул избранных у сайта и задаёт паузу."""
+        from mysql_.mysql_ import mysql_get_db_async
+        from src.dating import favorite_mail
+
+        monkeypatch.setattr(favorite_mail, 'favorite_mail_gap_sec',
+                            _fixed(int(gap)))
+
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE site SET favorite_mail_send_on = 1'
+                             ' WHERE site_id = %s', (SITE,))
+            await db.connection.commit()
+
+    async def _online(self, profile_id: int) -> None:
+        """⚠ Письма избранным уходят только от анкеты в сети — своё правило круга,
+        и без него эти тесты молчали бы по чужой причине."""
+        from mysql_.mysql_ import mysql_get_db_async
+
+        async with mysql_get_db_async() as db:
+            await db.execute("UPDATE profile SET status = 'online' WHERE id = %s",
+                             (int(profile_id),))
+            await db.connection.commit()
+
+    async def _sent(self, profile_id: int, hours_ago: float) -> None:
+        """Её ушедшее письмо — то, от чего пауза отсчитывается."""
+        from mysql_.mysql_ import mysql_get_db_async
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO favorite_mail'
+                ' (site_id, profile_id, uid, name, body, status, sent_at)'
+                " VALUES (%s, %s, %s, 'X', 'hi', 'sent',"
+                ' NOW() - INTERVAL %s MINUTE)',
+                (SITE, int(profile_id), f'u{uuid.uuid4().hex[:8]}',
+                 int(hours_ago * 60)))
+            await db.connection.commit()
+
+    async def test_a_girl_who_just_wrote_is_skipped(self, site, profile, post,
+                                                    monkeypatch):
+        """Она написала минуту назад — второе письмо не уходит, хоть и готово."""
+        await self._favorites_on(4 * 3600, monkeypatch)
+        await self._online(profile)
+        await self._sent(profile, 0)
+        await _letter(profile, 'favorite_mail')
+
+        await send_round_run(0)
+
+        assert not post, 'письмо ушло вторым подряд от той же анкеты'
+
+    async def test_another_girl_goes_instead(self, site, profile, post,
+                                             auth_client, monkeypatch):
+        """⚠⚠ И это главное: пауза одной не запирает всех.
+
+        Условие стоит **в запросе**, а не отсевом после выборки. Отсей мы занятую
+        девушку после — заход кончился бы ничем, и сайт молчал бы всю паузу, хотя
+        писать готовы остальные.
+        """
+        await self._favorites_on(4 * 3600, monkeypatch)
+        other = (await auth_client.post('/api/dating/profile', json={
+            'site_id': LIVE_SITE,
+            'login': f'snd2-{uuid.uuid4().hex[:8]}@example.com',
+            'password': 'x'})).json()['result']
+
+        try:
+            await self._online(profile)
+            await self._online(other)
+            await self._sent(profile, 0)
+
+            busy = await _letter(profile, 'favorite_mail')
+            free = await _letter(other, 'favorite_mail')
+
+            await send_round_run(0)
+
+            assert len(post) == 1, 'заход ушёл ни с чем или унёс лишнее'
+            assert post[0]['id'] == free, \
+                f'круг взял письмо занятой анкеты (#{busy}) вместо свободной'
+        finally:
+            await auth_client.delete(f'/api/dating/profile/{other}')
+
+    async def test_a_long_silence_lets_her_write(self, site, profile, post,
+                                                 monkeypatch):
+        await self._favorites_on(4 * 3600, monkeypatch)
+        await self._online(profile)
+        await self._sent(profile, 30)
+        await _letter(profile, 'favorite_mail')
+
+        await send_round_run(0)
+
+        assert len(post) == 1, 'пауза давно вышла, а письмо не ушло'
+
+    async def test_other_pools_are_not_touched(self, site, profile, post,
+                                               monkeypatch):
+        """⚠ Пауза — настройка избранных, и распоряжаться чужими пулами ей не по
+        чину: у рассылки и ответов свои правила и свои сроки.
+
+        Часы при этом общие: её ответ паузу избранных держит (это проверяет
+        `test_favorite_mail.py`), но сам ответ ею не задерживается.
+        """
+        await self._favorites_on(4 * 3600, monkeypatch)
+        await self._online(profile)
+        await self._sent(profile, 0)
+        mailing = await _letter(profile, 'mailing')
+
+        await send_round_run(0)
+
+        assert len(post) == 1 and post[0]['id'] == mailing, \
+            'пауза избранных задержала письмо чужого пула'
+
+    async def test_the_idle_reason_names_the_pause(self, site, profile,
+                                                   monkeypatch):
+        """⚠ Пул полон, ошибок нет, а отправка молчит — состояние, которое без
+        объяснения читается как поломка."""
+        await self._favorites_on(4 * 3600, monkeypatch)
+        await self._online(profile)
+        await self._sent(profile, 0)
+        await _letter(profile, 'favorite_mail')
+
+        why = await send_why(SITE, 'favorite_mail', 0)
+
+        assert 'пауза' in why, why

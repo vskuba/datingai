@@ -7,9 +7,11 @@
 * `_quiet` — кого берём. Цена ошибки высока в обе стороны: пропустим — разговор
   так и останется затихшим, возьмём лишнего — напишем тому, кто ждёт ответа на
   своё письмо, и наше «а расскажи ещё» придёт вместо ответа.
-* `_too_soon` — как часто пишем. Оба предела **про человека**: считается всё
+* `_too_soon` — сколько писем в сутки получает **человек**: считается всё
   ушедшее ему **от любой нашей анкеты** и из любого пула. Письма считает
   получатель, а не наши таблицы и не наши девушки.
+* `favorite_mail_girl_soon` — как часто пишет **девушка**, неважно кому. Ключ у
+  предела другой, и спрашивают его двое: набор пула и круг отправки.
 
 Анкеты заводятся на стенде (`STAND_SITE`), а не на рабочем сайте — иначе их
 подхватили бы круги воркера.
@@ -24,7 +26,9 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating import favorite_mail
-from src.dating.favorite_mail import _quiet, _too_soon
+from src.dating.favorite_mail import (_quiet, _too_soon,
+                                      favorite_mail_girl_free_sql,
+                                      favorite_mail_girl_soon)
 
 pytestmark = pytest.mark.mail
 # Стенд у соседа: круги воркера про него не знают — его нет в `site_`.
@@ -220,6 +224,30 @@ class TestWhoIsQuiet:
         await _draft(girl, uid)
 
         assert not [r for r in await _quiet(STAND_SITE) if r['uid'] == uid]
+
+    async def test_a_pending_draft_blocks_the_whole_girl(self, girl):
+        """⚠⚠ И не только этому человеку: черновик занимает **ближайшую очередь
+        девушки** целиком.
+
+        Прежде условие стояло по паре, и этого хватало, пока пауза считалась по
+        получателю. Теперь пауза считает отправительницу: лежащий черновик уйдёт
+        первым и займёт её срок, а набранное сверх него пролежит до вечера и
+        протухнет — отбор берёт того, кто **сейчас** в сети.
+        """
+        first, second = f'u{uuid.uuid4().hex[:8]}', f'u{uuid.uuid4().hex[:8]}'
+        for uid in (first, second):
+            await _star(girl, uid)
+            await _his(girl, uid, '2026-09-01 10:00:00')
+            await _hers(girl, uid, '2026-09-01 12:00:00')
+
+        assert len([r for r in await _quiet(STAND_SITE)
+                    if r['uid'] in (first, second)]) == 2
+
+        await _draft(girl, first)
+
+        assert not [r for r in await _quiet(STAND_SITE)
+                    if r['uid'] in (first, second)], \
+            'черновик занял очередь девушки, а отбор предложил ей второго'
 
     async def test_someone_who_is_not_a_favorite_is_skipped(self, girl):
         """Избранным человек стал потому, что ответил на письмо. Не ответивший —
@@ -456,46 +484,110 @@ class TestHowOften:
         await _hers(girl, uid, _now_minus_hours(5))
         await _hers(girl, uid, _now_minus_hours(6), 'favorite_mail')
 
-        why = await _too_soon(STAND_SITE, uid, per_day=2, gap=3600)
+        why = await _too_soon(STAND_SITE, uid, per_day=2)
 
         assert 'за сутки' in why, why
         # ⚠ Склонение — не украшение: «ушло 2 писем» читается как сбой
         # подстановки, то есть заставляет усомниться в самом числе.
         assert '2 письма' in why, why
 
-    async def test_the_gap_holds_even_under_the_daily_cap(self, girl):
-        """⚠ Второй предел про другое: два письма подряд за час выдают робота,
-        даже когда за сутки их всего два."""
+    async def test_a_long_silence_passes_the_daily_cap(self, girl):
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _hers(girl, uid, _now_minus_hours(30))
+
+        assert await _too_soon(STAND_SITE, uid, per_day=2) == ''
+
+    async def test_the_daily_cap_does_not_answer_for_the_pause(self, girl):
+        """⚠ Сторож разделения: письмо часовой давности дневного предела не
+        трогает, и `_too_soon` обязан пропустить.
+
+        Прежде пауза стояла здесь же и ловила такой случай сама. Теперь её
+        считает `favorite_mail_girl_soon`, и если она снова заведётся тут —
+        предел получателя начнёт гасить письма другим людям.
+        """
         uid = f'u{uuid.uuid4().hex[:8]}'
         await _hers(girl, uid, _now_minus_hours(1))
 
-        why = await _too_soon(STAND_SITE, uid, per_day=5, gap=4 * 3600)
+        assert await _too_soon(STAND_SITE, uid, per_day=5) == '', \
+            'дневной предел снова считает паузу — это разные правила'
+
+
+class TestThePauseBelongsToTheGirl:
+    """⚠⚠ Пауза — про отправительницу, а не про получателя.
+
+    Настройка значила «одному человеку не чаще раза в срок» и про девушку не
+    говорила ничего. Круг отправки уносит по письму в минуту, и 21 сентября от
+    одной Елены ушли четыре письма **четверым** за восемь минут — 18:29, 18:30,
+    18:32, 18:37. Каждая пара при этом была чиста: ни одному из четверых она не
+    писала дважды.
+
+    Сайт считает иначе, и теперь считаем так же: одна анкета — одно письмо за
+    срок, кому угодно.
+    """
+
+    async def test_her_letter_to_someone_else_holds_the_pause(self, girl):
+        """Тот самый случай: написала одному — второму сейчас нельзя."""
+        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
+
+        why = await favorite_mail_girl_soon(girl, 4 * 3600)
 
         # ⚠ Проверяем **суть, а не слова**: причина идёт человеку на экран, её
         # переписывают, и тест, приколоченный к формулировке, падал бы на каждой
         # правке текста. Здесь важно одно — отказ назван и назван срок.
-        assert why, 'пауза не сработала'
+        assert why, 'пауза не удержала второе письмо той же девушки'
         assert 'можно через' in why, why
 
-    async def test_a_long_silence_passes_both(self, girl):
-        uid = f'u{uuid.uuid4().hex[:8]}'
-        await _hers(girl, uid, _now_minus_hours(30))
+    async def test_a_long_silence_frees_her(self, girl):
+        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(30))
 
-        assert await _too_soon(STAND_SITE, uid, per_day=2, gap=4 * 3600) == ''
+        assert await favorite_mail_girl_soon(girl, 4 * 3600) == ''
 
-    async def test_yesterdays_letter_still_counts_for_the_gap(self, girl):
+    async def test_yesterdays_letter_still_counts(self, girl):
         """⚠ Пауза считается от последнего ушедшего **за любой срок**, а не за
-        сутки. Письмо, ушедшее 25 часов назад, в дневной счёт не попадает — и без
-        отдельного запроса пауза считалась бы от пустоты.
-        """
-        uid = f'u{uuid.uuid4().hex[:8]}'
-        await _hers(girl, uid, _now_minus_hours(25))
+        сутки: письмо 25-часовой давности в дневной счёт не попадает, и считай
+        мы паузу тем же окном — она отсчитывалась бы от пустоты."""
+        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(25))
 
-        # Дневной предел свободен, а пауза в двое суток — нет.
-        why = await _too_soon(STAND_SITE, uid, per_day=2, gap=48 * 3600)
+        why = await favorite_mail_girl_soon(girl, 48 * 3600)
 
         assert why, 'вчерашнее письмо не попало в счёт паузы'
         assert 'можно через' in why, why
+
+    async def test_another_girls_letter_does_not_hold_her(self, girl,
+                                                          auth_client):
+        """⚠⚠ Обратная сторона, и она — суть правки.
+
+        Соседняя анкета только что написала; эта молчала сутки. Считай пауза
+        по-прежнему получателя или по сайту целиком — одна активная девушка
+        запирала бы всех остальных.
+        """
+        other = await _profile(auth_client, 'fav2')
+        await _hers(other, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
+
+        try:
+            assert await favorite_mail_girl_soon(girl, 4 * 3600) == '', \
+                'письмо соседней анкеты заперло девушку, которая молчала'
+        finally:
+            await auth_client.delete(f'/api/dating/profile/{other}')
+
+    async def test_every_pool_counts(self, girl):
+        """⚠ Для сайта письмо есть письмо: ответ и рассылка держат паузу так же,
+        как возобновление. Иначе девушка, ответившая минуту назад, тут же ушла
+        бы со вторым письмом — и сайт увидел бы от неё пачку."""
+        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0),
+                    'favorite_mail')
+
+        assert await favorite_mail_girl_soon(girl, 4 * 3600), \
+            'письмо из пула избранных паузу не удержало'
+
+    async def test_zero_means_no_pause(self, girl):
+        """⚠ Ноль — законное значение, а не «настройки нет»: человек выбрал
+        «без паузы», и выдумывать за него умолчание нельзя."""
+        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
+
+        assert await favorite_mail_girl_soon(girl, 0) == ''
+        assert favorite_mail_girl_free_sql(0) == '', \
+            'условие без паузы всё равно строится — оно всегда истинно'
 
 
 class TestTheLimitIsPerPersonNotPerPair:
@@ -520,29 +612,33 @@ class TestTheLimitIsPerPersonNotPerPair:
         await _hers(girl, uid, _now_minus_hours(6), 'favorite_mail')
 
         try:
-            why = await _too_soon(STAND_SITE, uid, per_day=2, gap=3600)
+            why = await _too_soon(STAND_SITE, uid, per_day=2)
 
             assert 'за сутки' in why, \
                 f'письма другой девушки в счёт не попали: {why!r}'
         finally:
             await auth_client.delete(f'/api/dating/profile/{other}')
 
-    async def test_another_girls_letter_holds_the_gap(self, girl, auth_client):
+    async def test_the_daily_cap_counts_letters_of_every_girl(self, girl,
+                                                              auth_client):
         """⚠⚠ Тот самый случай: четыре письма за одиннадцать минут.
 
-        Первая девушка написала минуту назад — второй писать рано, хотя сама она
-        этому человеку не писала ни разу.
+        Держит его теперь **дневной предел** — он про получателя и считает всё
+        ушедшее ему от любой нашей анкеты. Паузы в этом счёте больше нет: она
+        уехала к девушке (`TestThePauseBelongsToTheGirl`), и требовать её здесь
+        значило бы запирать одного человека из-за письма, отправленного другому.
         """
         uid = f'u{uuid.uuid4().hex[:8]}'
         other = await _profile(auth_client, 'fav2')
 
         await _hers(girl, uid, _now_minus_hours(0))
+        await _hers(girl, uid, _now_minus_hours(2))
 
         try:
-            why = await _too_soon(STAND_SITE, uid, per_day=5, gap=4 * 3600)
+            why = await _too_soon(STAND_SITE, uid, per_day=2)
 
-            assert why, 'пауза не удержала письмо второй девушки'
-            assert 'можно через' in why, why
+            assert 'за сутки' in why, \
+                f'письма другой девушки в счёт получателя не попали: {why!r}'
         finally:
             await auth_client.delete(f'/api/dating/profile/{other}')
 
@@ -556,7 +652,7 @@ class TestTheLimitIsPerPersonNotPerPair:
         await _hers(girl, busy, _now_minus_hours(0))
         await _hers(girl, busy, _now_minus_hours(1))
 
-        assert await _too_soon(STAND_SITE, free, per_day=2, gap=4 * 3600) == '', \
+        assert await _too_soon(STAND_SITE, free, per_day=2) == '', \
             'предел одного человека закрыл дорогу к другому'
 
     def test_the_query_keys_on_the_site_not_the_profile(self):
@@ -672,3 +768,52 @@ def _now_minus_hours(hours: int) -> str:
 
     return (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime(
         '%Y-%m-%d %H:%M:%S')
+
+
+class TestOneLetterPerGirlPerPass:
+    """⚠⚠ За один заход девушка получает одно письмо, а не пачку.
+
+    Пауза говорит: от анкеты уходит одно письмо за срок. Набери ей заход пять —
+    четыре пролежали бы в пуле до вечера и ушли бы протухшими: отбор берёт того,
+    кто **сейчас** в сети, а через шестнадцать часов это уже неправда.
+
+    ⚠ Это следствие правки паузы, а не отдельное желание. Пока срок считался по
+    получателю, пачка от одной девушки была законной — она и уходила: четыре
+    письма Елены четверым за восемь минут.
+    """
+
+    async def test_a_second_pair_of_the_same_girl_is_skipped(self, girl,
+                                                             monkeypatch):
+        import src.dating.favorite_mail as mod
+
+        uids = [f'u{uuid.uuid4().hex[:8]}' for _ in range(3)]
+        for uid in uids:
+            await _star(girl, uid)
+            await _hers(girl, uid, '2026-09-01 10:00:00')
+
+        monkeypatch.setattr(mod, '_template', _answer('Давно не общались, как ты?'))
+        monkeypatch.setattr(mod, '_sync_stars', _nothing())
+
+        got = await mod.favorite_mail_make(STAND_SITE, limit=5, profile_id=girl)
+
+        assert got['made'] == 1, \
+            f"за заход девушке набрали {got['made']} писем вместо одного"
+        assert any('этим заходом' in one for one in got['reasons']), got['reasons']
+
+    async def test_a_girl_in_pause_gets_nothing(self, girl, monkeypatch):
+        """⚠ Пауза проверяется **и в наборе**, а не только в отправке: письмо —
+        это вызов LLM, и платить за него, чтобы черновик лежал до вечера, незачем.
+        """
+        import src.dating.favorite_mail as mod
+
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _hers(girl, uid, _now_minus_hours(1))
+
+        monkeypatch.setattr(mod, '_template', _answer('Давно не общались, как ты?'))
+        monkeypatch.setattr(mod, '_sync_stars', _nothing())
+
+        got = await mod.favorite_mail_make(STAND_SITE, limit=5, profile_id=girl)
+
+        assert got['made'] == 0, 'письмо набралось, хотя девушка в паузе'
+        assert any('можно через' in one for one in got['reasons']), got['reasons']
