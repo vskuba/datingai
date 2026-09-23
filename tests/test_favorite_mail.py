@@ -1032,3 +1032,137 @@ class TestOutsideTheShiftTheHeaderSaysSo:
         why = await favorite_mail_why(STAND_SITE)
 
         assert 'не смена' not in why, why
+
+
+class TestTheGapIsInMinutes:
+    """⚠⚠ Пауза между письмами: в базе минуты, в коде секунды.
+
+    Настройка была набором из четырёх сроков в **секундах** — `3600` «1 час»,
+    `14400` «4 часа». Два изъяна: набор запрещал нужное (осмысленна любая пауза,
+    сайты разные), а секунды не читаются — «240» человек складывает в четыре
+    часа сходу, «14400» ни во что.
+
+    Стало числовое поле в минутах, единица в заголовке: «Пауза между письмами,
+    мин».
+
+    ⚠⚠⚠ **Перевод стоит в одном месте — в чтении.** Спрашивающих двое: круг
+    отправки и набор пула. Умножай каждый сам — первый же забывший сравнивал бы
+    минуты с секундами, а это разница в шестьдесят раз: пауза в четыре часа
+    стала бы четырьмя минутами, и сайт ответил бы отказом по своим пределам.
+    """
+
+    async def test_the_reader_returns_seconds(self, monkeypatch):
+        """Настройка в минутах — наружу секунды."""
+        from src.dating import favorite_mail
+
+        async def _site_seconds(site_id, key):
+            return 60 if key == favorite_mail.FAVORITE_MAIL_GAP_SETTING else 0
+
+        monkeypatch.setattr(
+            'src.uvicorn.routers.dating.site_.site_seconds', _site_seconds)
+
+        assert await favorite_mail.favorite_mail_gap_sec(1) == 3600, \
+            'шестьдесят минут это ровно час'
+
+    async def test_the_default_is_four_hours(self, monkeypatch):
+        """⚠ Умолчание тоже в минутах: 240 — те же четыре часа, что были."""
+        from src.dating import favorite_mail
+
+        async def _nothing(site_id, key):
+            return 0
+
+        monkeypatch.setattr(
+            'src.uvicorn.routers.dating.site_.site_seconds', _nothing)
+
+        assert favorite_mail.FAVORITE_MAIL_GAP_DEFAULT_MIN == 240
+        assert await favorite_mail.favorite_mail_gap_sec(1) == 240 * 60
+
+    def test_the_setting_is_a_number_not_a_choice(self):
+        """⚠ Числовое поле, а не набор: осмысленна любая пауза.
+
+        Набор отвечает на вопрос «какие значения осмысленны», и для многих
+        сроков это верно. Здесь он заставлял брать ближайший вариант, а не свой.
+        """
+        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
+
+        known = SITE_KNOWN['favorite_mail_gap']
+
+        assert known.get('kind') == 'number', 'пауза снова стала набором'
+        assert not known.get('options'), 'у числового поля не бывает вариантов'
+        assert known.get('min') == 1, 'ноль минут это «паузы нет», а не пауза'
+
+    def test_the_title_names_the_unit(self):
+        """⚠⚠ Единица — в заголовке, и это не украшение.
+
+        Число без подписи читается как секунды по привычке: так эта настройка и
+        жила. «240» без «мин» — это сколько?
+        """
+        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
+
+        assert 'мин' in SITE_KNOWN['favorite_mail_gap']['title']
+
+    def test_the_default_in_the_registry_matches_the_code(self):
+        """⚠ Два умолчания об одной паузе — в реестре и в коде.
+
+        Разойдись они, сайт без настройки вёл бы себя не так, как показывает
+        форма: человек видит 240, а круг ждёт другое.
+        """
+        from src.dating.favorite_mail import FAVORITE_MAIL_GAP_DEFAULT_MIN
+        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
+
+        assert int(SITE_KNOWN['favorite_mail_gap']['default']) == \
+            FAVORITE_MAIL_GAP_DEFAULT_MIN
+
+
+class TestTheGapLabelReadsMinutes:
+    """⚠⚠ Подпись под формой и число в форме обязаны говорить одно.
+
+    Настройку человек вводит в минутах, а подпись рядом пересказывает её словами:
+    «Одна анкета пишет не чаще, чем раз в 4 часа». Пока функция делила на 3600,
+    после перевода настройки час показался бы как «0 часов» — подпись спорила бы
+    с числом, стоящим в двух сантиметрах от неё.
+
+    ⚠ Проверяем **саму функцию страницы**, вырезая её из разметки и прогоняя
+    `node`: копия правила в тесте разошлась бы с оригиналом при первой правке.
+    """
+
+    def test_the_words_match_the_minutes(self):
+        import os
+        import re
+        import shutil
+        import subprocess
+        import tempfile
+
+        node = shutil.which('node')
+        if not node:
+            pytest.skip('node не установлен')
+
+        page = open('data/uvicorn/template/admin/dating/profile.html',
+                    encoding='utf-8').read()
+
+        found = re.search(r'function favMailGapWords\(minutes\) \{.*?\n    \}',
+                          page, re.S)
+        assert found, 'функция подписи паузы не нашлась на странице'
+
+        probe = (found.group(0) + '\n'
+                 + 'const cases = [[45, "45 мин"], [59, "59 мин"], [60, "1 час"],'
+                 + ' [240, "4 часа"], [600, "10 часов"], [0, "0 мин"]];\n'
+                 + 'for (const [value, want] of cases) {\n'
+                 + '  const got = favMailGapWords(value);\n'
+                 + '  if (got !== want) {\n'
+                 + '    console.log(`${value} → ${got}, ждали ${want}`);\n'
+                 + '    process.exit(1);\n'
+                 + '  }\n'
+                 + '}\n')
+
+        fd, path = tempfile.mkstemp(suffix='.mjs')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(probe)
+
+            result = subprocess.run([node, path], capture_output=True, text=True)
+
+            assert result.returncode == 0, \
+                f'подпись паузы считает неверно: {result.stdout.strip()}'
+        finally:
+            os.remove(path)
