@@ -386,28 +386,23 @@ class TestPoolLinksToCompanion:
     """
 
     async def test_name_is_a_link_to_our_page(self, auth_client):
+        """⚠ Имя-ссылка на месте и берёт адрес у общей сборки.
+
+        ⚠⚠ **Сам адрес здесь больше не проверяется.** Он переехал в
+        `companionHref` — одну сборку на весь раздел, — и вопросы про его вид
+        (ключ сайта, пустой номер, вторая сборка руками) живут там же, в
+        `test_companion_link_one.py`. Спрашивать их и тут значило бы держать два
+        ответа на один вопрос: разойдясь, они спорили бы между собой.
+        """
         page = (await auth_client.get(PAGE)).text
 
         assert 'function companionLink(' in page, 'ссылки на карточку адресата нет'
 
-        # ⚠ Адрес собирается из двух кусков (`${BASE}/admin/dating` и хвост с
-        # доводами), и проверять его одной строкой нельзя: перенос строки в
-        # шаблоне ломал бы тест, ничего не ломая в панели. Смотрим обе половины
-        # внутри самой функции.
         start = page.find('function companionLink(')
         body = page[start:start + 900]
 
-        assert '/admin/dating' in body, 'ссылка ведёт не на страницу «Анкеты»'
-        assert '?companion=' in body, 'ссылка не называет собеседника'
-
-    async def test_link_carries_uid_and_site(self, auth_client):
-        """⚠ Довод — `uid`, номер человека на сайте, а не наш `id` карточки: письмо
-        знает первое, и оно не меняется. Сайт — отдельно: `uid` уникален внутри
-        сайта, а ключ выбранного сайта общий на весь раздел."""
-        page = (await auth_client.get(PAGE)).text
-
-        assert 'companion=${encodeURIComponent(uid)}&site=${siteId()}' in page, \
-            'ссылка потеряла номер человека или сайт'
+        assert 'companionHref(' in body, \
+            'имя адресата собирает адрес само, мимо общей сборки'
 
     async def test_click_on_the_name_does_not_open_the_letter(self, auth_client):
         """Карточка щёлкается целиком, и окно письма, всплывшее за спиной под новой

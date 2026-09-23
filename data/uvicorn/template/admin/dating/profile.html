@@ -2330,6 +2330,33 @@
         overflow-wrap: anywhere;
     }
 
+    /* Сторона разговора в строке окна письма. Та же раскладка, что у обеих
+       сторон в журнале доставки (`.mail-sent-who.talk`) — вид один, потому что
+       и вопрос один: кто кому пишет. */
+    .letter-val.talk {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    /* Имя-ссылка внутри стороны разговора.
+
+       ⚠ Подчёркивание **постоянное**, как у `.mail-card-to`, и по той же
+       причине: рядом стоят лицо и номер, щёлкать по которым некуда, и без
+       явного признака человек не угадает, что ведёт куда-то только имя.
+
+       ⚠ `color: inherit` — чтобы ссылка не спорила с `.person-name`: цвет там
+       уже выбран под строку, и синее подчёркнутое имя посреди карточки читается
+       как чужеродная вставка. */
+    .talk-side-link {
+        color: inherit;
+        text-decoration: underline;
+    }
+
+    .talk-side-link:hover {
+        color: #1e1b4b;
+    }
+
     .letter-body {
         width: 100%;
         box-sizing: border-box;
@@ -5100,9 +5127,9 @@
         // на полпути значит терять место, до которого он долистал.
         const who = row ? (row.name || row.login || '') : '';
         // Адрес один на оба узла — имя и лицо ведут в одно место, и собирать его
-        // дважды значило бы однажды разойтись.
-        const href = row
-            ? `${BASE}/admin/dating?girl=${row.id}&site=${siteId()}` : '';
+        // дважды значило бы однажды разойтись. Тем же `girlHref`, что у сторон
+        // разговора: мест, ведущих на анкету девушки, стало больше одного.
+        const href = row ? girlHref(row.id) : '';
         const hint = `Открыть анкету ${esc(who)} на «Анкетах» — в новой вкладке`;
 
         workWhoEl.innerHTML = row
@@ -7552,7 +7579,11 @@
             // (`online`, `online_known`) ручка считала и раньше, не хватало одной
             // только отрисовки — и три пула, стоящие рядом в одной полосе вкладок,
             // отвечали на один вопрос по-разному.
-            + `<span class="to">→ ${esc(one.name || one.uid)}${liveDot(one)}`
+            //
+            // ⚠ И та же `companionLink`: карточки пулов — один вид, а имя
+            // адресата вело на «Анкеты» только у рассылки. Своя разметка здесь
+            // означала бы две ссылки на одно место, расходящиеся с первой правкой.
+            + `<span class="to">→ ${companionLink(one)}${liveDot(one)}`
             + '</span></span>'
             + `<span class="mail-card-body">${esc(one.body)}</span>`
             + (one.status === 'sent'
@@ -7570,6 +7601,13 @@
     function favMailCardsBind(box) {
         box.querySelectorAll('.mail-card').forEach(el =>
             el.addEventListener('click', () => favMailOpen(Number(el.dataset.index))));
+
+        // ⚠ Щелчок по имени **не открывает письмо**: он уводит на анкету, и окно
+        // письма, всплывающее за спиной под новой вкладкой, человек нашёл бы,
+        // только вернувшись обратно. То же правило и та же причина, что у
+        // крестика рядом и что у пула рассылки.
+        box.querySelectorAll('.mail-card-to').forEach(link =>
+            link.addEventListener('click', (e) => e.stopPropagation()));
 
         // ⚠ Кнопки гасят всплытие: без этого щелчок открывал бы ещё и окно правки —
         // поверх того, что уже уходит или что человек только что решил убрать.
@@ -7594,11 +7632,25 @@
         const sent = one.status !== 'draft';
         const modal = modalOpen({
             title: `Письмо: ${one.girl || '—'} → ${one.name || one.uid}`,
+            // ⚠ **Обе стороны — тем же `talkSide`, что в «Диалогах» и в журнале
+            // доставки**: лицо, имя, номер. Прежде здесь стояли две строки
+            // голого текста, «Диана» и «Gerard · 128282», и чтобы понять, кому
+            // письмо, человек уходил на «Анкеты» искать номер руками.
+            //
+            // Имена — ссылками, и адреса собирают `girlHref`/`companionHref`:
+            // те же, что у карточки пула и у шапки работы с анкетой. Своей
+            // разметки здесь нет намеренно — разошлась бы с ними на первой правке.
             body: '<div class="letter-row"><span class="letter-key">От кого</span>'
-                + `<span class="letter-val">${esc(one.girl || '—')}</span></div>`
+                + '<span class="letter-val talk">'
+                + talkSide(one.profile_name || one.girl, one.profile_photo,
+                           one.profile_uid, 'анкета, от которой письмо',
+                           null, girlHref(one.profile_id))
+                + '</span></div>'
                 + '<div class="letter-row"><span class="letter-key">Кому</span>'
-                + `<span class="letter-val">${esc(one.name || 'без имени')} · `
-                + `${esc(one.uid)}</span></div>`
+                + '<span class="letter-val talk">'
+                + talkSide(one.name, one.photo, one.uid, 'кому письмо',
+                           null, companionHref(one.uid))
+                + '</span></div>'
                 + '<div class="letter-row"><span class="letter-key">Состояние</span>'
                 + `<span class="letter-val">${sent ? 'отправлено'
                     : 'в пуле, не отправлено'}</span></div>`
@@ -9256,12 +9308,11 @@
     // которого не будет.
     function companionLink(row) {
         const who = esc(row.name || row.uid);
-        const uid = String(row.uid || '').trim();
+        const href = companionHref(row.uid);
 
-        if (!uid) return who;
+        if (!href) return who;
 
-        return `<a class="mail-card-to" href="${BASE}/admin/dating`
-            + `?companion=${encodeURIComponent(uid)}&site=${siteId()}"`
+        return `<a class="mail-card-to" href="${href}"`
             + ` title="Открыть карточку ${who} на «Анкетах» — в новой вкладке"`
             // ⚠ Новой вкладкой, хоть страница и своя: письмо читают, чтобы
             // решить, отправлять ли его, и уводить со списка на полпути значит
@@ -9270,6 +9321,32 @@
             // `noopener` при этом всё равно ставим: он не только про чужие сайты,
             // а про то, что открытой странице незачем управлять открывшей.
             + ` target="_blank" rel="noopener">${who}</a>`;
+    }
+
+    // Сами адреса «Анкет» — отдельно от разметки, и вот почему.
+    //
+    // ⚠ **Один адрес нужен двум разным видам.** Строчная ссылка (`companionLink`)
+    // рисует одно имя, сторона разговора (`talkSide`) — лицо, имя и номер; общего
+    // куска разметки у них нет, а адрес обязан быть тот же. Собери его дважды — и
+    // однажды в одном месте забудут `site`, после чего «Анкеты» откроются на том
+    // сайте, что был выбран там в прошлый раз.
+    //
+    // Нет номера — пустая строка: ссылка в никуда обещает переход, которого не
+    // будет, и оба вида показывают тогда простой текст.
+    function companionHref(uid) {
+        const id = String(uid || '').trim();
+
+        return id ? `${BASE}/admin/dating?companion=${encodeURIComponent(id)}`
+            + `&site=${siteId()}` : '';
+    }
+
+    // ⚠ Довод — **наш** `profile_id`, а не её номер на сайте: «Анкеты» открывают
+    // строку нашей базы, а `site_uid` там не ключ. Тот же адрес, что у имени
+    // анкеты в шапке работы с ней (`workPaint`).
+    function girlHref(profileId) {
+        const id = Number(profileId || 0);
+
+        return id ? `${BASE}/admin/dating?girl=${id}&site=${siteId()}` : '';
     }
 
     // Точка «в сети» после имени адресата.
@@ -10515,8 +10592,21 @@
     // Точка «в сети» — только у собеседника: про свою анкету это знает столбец
     // «В сети» в списке слева, а здесь она означала бы вопрос, которого тут не
     // задают.
-    function talkSide(name, photo, uid, hint, online = null) {
+    // ⚠ `href` — необязательный и последний: сторон разговора на странице дюжина,
+    // и ссылка нужна не всем. Где её нет, разметка прежняя, до символа.
+    function talkSide(name, photo, uid, hint, online = null, href = '') {
         const letter = esc((name || '?').slice(0, 1).toUpperCase());
+        const who = esc(name || 'без имени');
+
+        // ⚠ Ссылкой оборачивается **имя, а не вся сторона**: рядом живут лицо и
+        // номер на сайте, и щелчок по номеру, уводящий на «Анкеты», человек
+        // читает как промах мимо цели. Адрес собирают `companionHref`/`girlHref`
+        // — здесь его не строят, иначе появилась бы третья копия правила.
+        const shown = href
+            ? `<a class="talk-side-link" href="${href}" target="_blank"`
+              + ` rel="noopener"`
+              + ` title="Открыть ${who} на «Анкетах» — в новой вкладке">${who}</a>`
+            : who;
 
         return `<span class="talk-side" title="${esc(hint)}">`
             + (online === null ? ''
@@ -10527,7 +10617,7 @@
                 + ' onerror="this.remove()">' : '')
             + '</span>'
             + '<span class="person-text">'
-            + `<span class="person-name">${esc(name || 'без имени')}</span>`
+            + `<span class="person-name">${shown}</span>`
             + `<span class="person-meta" title="номер на сайте">${esc(uid || '')}</span>`
             + '</span></span>';
     }
@@ -10875,8 +10965,12 @@
         const card = companionsKnown.get(uid);
         if (card) {
             return personCardFirst(uid, p, card)
-                + `<a class="person-card-mark has" href="${BASE}/admin/dating`
-                + `?companion=${encodeURIComponent(uid)}&site=${siteId()}"`
+                // ⚠ Адрес — общей `companionHref`, а не своей сборкой: комментарий
+                // выше не зря говорит «ровно как в пуле писем», но собиралось это
+                // здесь заново. Две сборки одного адреса расходятся тихо — забудь
+                // одна ключ `site`, и «Анкеты» открылись бы на том сайте, что был
+                // выбран там в прошлый раз.
+                + `<a class="person-card-mark has" href="${companionHref(uid)}"`
                 + ' target="_blank" rel="noopener"'
                 + ` title="Карточка ${esc(p.name || uid)} уже заведена — открыть">`
                 + '☰</a>';
