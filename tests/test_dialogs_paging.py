@@ -428,3 +428,92 @@ async def favorite_pairs(profile):
         await db.execute('DELETE FROM favorite WHERE profile_id = %s', (profile,))
         await db.execute('DELETE FROM mail_in WHERE profile_id = %s', (profile,))
         await db.connection.commit()
+
+
+class TestThePageLeavesRoomForThePager:
+    """⚠⚠ Размер страницы считается так, чтобы прокрутки не осталось.
+
+    Первая версия считала по свободному месту как есть — и прокрутка не уходила.
+    Замерено на проде:
+
+        1. подвала нет (`display: none`), список занимает 706 пикселей → 15 строк;
+        2. приходят 15 строк, появляется пейджер и забирает 43 пикселя;
+        3. список ужался до 663, содержимое осталось 706 — прокрутка на 43.
+
+    Ровно одна лишняя строка. Отсюда два вычитания: отступы списка и место под
+    подвал, причём подвал вычитается **всегда**, а не когда он видим.
+
+    ⚠ Проверяем **саму функцию страницы**, вырезая её из разметки: копия правила
+    в тесте разошлась бы с оригиналом при первой правке.
+    """
+
+    def test_the_rows_fit_without_scrolling(self):
+        import os
+        import re
+        import shutil
+        import subprocess
+        import tempfile
+
+        node = shutil.which('node')
+        if not node:
+            pytest.skip('node не установлен')
+
+        page = open('data/uvicorn/template/admin/dating/profile.html',
+                    encoding='utf-8').read()
+
+        # Константы и сама функция — из разметки, а не переписанные сюда.
+        consts = re.findall(r'const TALK_(?:ROW_HEIGHT|PAGE_MIN|FOOT_HEIGHT) = \d+;',
+                            page)
+        assert len(consts) == 3, f'константы расчёта не нашлись: {consts}'
+
+        found = re.search(r'function talkPageSize\(slotName\) \{.*?\n    \}',
+                          page, re.S)
+        assert found, 'функция расчёта размера страницы не нашлась'
+
+        # ⚠ Подменяем только добычу узла: сам расчёт — настоящий.
+        body = found.group(0).replace(
+            'const box = slot(slotName);\n        if (!box) return 0;',
+            'const box = slotName;')
+
+        probe = ('\n'.join(consts) + '\n' + body + '\n'
+                 + 'const PAD = 16;\n'
+                 + 'for (const height of [400, 500, 663, 706, 1000, 1440]) {\n'
+                 + '  const box = {clientHeight: height};\n'
+                 + '  globalThis.getComputedStyle = () => ({paddingTop: "8px",'
+                 + ' paddingBottom: "8px"});\n'
+                 + '  const rows = talkPageSize(box);\n'
+                 + '  const need = rows * TALK_ROW_HEIGHT + PAD;\n'
+                 + '  const free = height - TALK_FOOT_HEIGHT;\n'
+                 + '  if (rows > TALK_PAGE_MIN && need > free) {\n'
+                 + '    console.log(`высота ${height}: ${rows} строк займут ${need},'
+                 + ' а места ${free}`);\n'
+                 + '    process.exit(1);\n'
+                 + '  }\n'
+                 + '}\n')
+
+        fd, path = tempfile.mkstemp(suffix='.mjs')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(probe)
+
+            result = subprocess.run([node, path], capture_output=True, text=True)
+
+            assert result.returncode == 0, \
+                (f'строки не помещаются — прокрутка вернётся:'
+                 f' {result.stdout.strip()}{result.stderr.strip()[:200]}')
+        finally:
+            os.remove(path)
+
+    def test_the_footer_height_is_reserved(self):
+        """⚠ Сторож самого приёма: вычитание подвала не должно пропасть.
+
+        Сними его — и всё снова поместится «в обрез», то есть не поместится.
+        Проверка отдельная, потому что предыдущая молчит, когда строк мало
+        (упирается в `TALK_PAGE_MIN`).
+        """
+        page = open('data/uvicorn/template/admin/dating/profile.html',
+                    encoding='utf-8').read()
+
+        assert 'TALK_FOOT_HEIGHT' in page, 'резерв под пейджер пропал'
+        assert page.count('TALK_FOOT_HEIGHT') >= 2, \
+            'константа объявлена, но в расчёте не участвует'
