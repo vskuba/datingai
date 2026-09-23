@@ -28,6 +28,8 @@ from src.dating.mail import MAIL_BODY_MAX
 from src.dating.mail_send import (DatingMailSendError, mail_send_mark,
                                          mail_send_one)
 from src.dating.online import online_show
+from src.dating.pool_pair import (pool_pair_girl, pool_pair_joins,
+                                  pool_pair_select)
 from src.dating.send_round import send_why
 from src.dating.mailing import (MAILING_BATCH_DEFAULT,
                                        MAILING_BATCH_MAX,
@@ -96,13 +98,19 @@ async def mailing_list(site_id: int = 0, status_: str = 'draft',
     if not int(site_id or 0):
         return {'result': [], 'send_why': ''}
 
-    sql = ('SELECT m.id, m.site_id, m.profile_id, m.mail_id, m.uid, m.name,'
+    sql = ('SELECT m.id, m.site_id, m.profile_id, m.mail_id, m.uid,'
+           # ⚠ Имя и лицо собеседника — общим куском
+           # (`pool_pair.py`): их собирают три пула писем, и свой
+           # запрос в каждом однажды разошёлся — у рассылки лица не
+           # было вовсе, хотя оно лежало в базе.
+           + pool_pair_select('m', own_photo=False) +
            ' m.body, m.status, m.error, m.sent_at, m.created_at,'
            ' p.login AS profile_login, p.profile AS profile_card,'
            ' t.name AS mail_name'
            ' FROM mailing m'
            ' LEFT JOIN profile p ON p.id = m.profile_id'
            ' LEFT JOIN mail t ON t.id = m.mail_id'
+           + pool_pair_joins() +
            ' WHERE m.site_id = %s')
     args = [int(site_id)]
 
@@ -423,13 +431,15 @@ async def _row(mailing_id: int) -> dict:
     """Письмо по номеру или 404."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT m.id, m.site_id, m.profile_id, m.mail_id, m.uid, m.name,'
+            'SELECT m.id, m.site_id, m.profile_id, m.mail_id, m.uid,'
+            + pool_pair_select('m', own_photo=False) +
             ' m.body, m.status, m.error, m.sent_at, m.created_at,'
             ' p.login AS profile_login, p.profile AS profile_card,'
             ' t.name AS mail_name'
             ' FROM mailing m'
             ' LEFT JOIN profile p ON p.id = m.profile_id'
             ' LEFT JOIN mail t ON t.id = m.mail_id'
+            + pool_pair_joins() +
             ' WHERE m.id = %s', (int(mailing_id),))
         row = await db.fetchone()
 
@@ -453,7 +463,7 @@ def _answer(row: dict) -> dict:
     # последнем снимке.
     online = online_show(int(row['site_id']), str(row['uid']))
 
-    return {'online': bool(online.get('online')),
+    got = {'online': bool(online.get('online')),
             'online_known': bool(online.get('known')),
             'id': int(row['id']),
             'site_id': int(row['site_id']),
@@ -466,7 +476,8 @@ def _answer(row: dict) -> dict:
             'error': str(row['error'] or ''),
             'sent_at': row['sent_at'],
             'created_at': row['created_at'],
-            # Имя анкеты, а не логин: логин это почта, и в карточке «от кого» она
-            # читается как подпись робота. Логин остаётся запасным.
-            'girl': str((card or {}).get('name') or row.get('profile_login') or ''),
             'mail_name': str(row.get('mail_name') or 'шаблон удалён')}
+
+    # ⚠ Имя, лицо и номер анкеты — тем же общим куском, что у остальных
+    # пулов: окно письма рисует обе стороны одним видом (`talkSide`).
+    return pool_pair_girl(got, card or {})

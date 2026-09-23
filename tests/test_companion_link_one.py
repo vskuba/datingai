@@ -119,16 +119,17 @@ class TestTheLetterWindowShowsBothSides:
     def test_both_sides_use_the_common_view(self):
         """⚠⚠ Тем же `talkSide`, что «Диалоги» и журнал доставки.
 
-        Своя разметка здесь означала бы третий вид одной и той же пары на
-        соседних вкладках.
+        ⚠ Спрашиваем у `letterSides` — общего помощника всех окон писем: сама
+        разметка переехала туда, и проверять её у одного окна значило бы
+        стеречь то место, где её больше нет.
         """
-        body = _body('favMailOpen')
+        body = _body('letterSides')
 
         assert body.count('talkSide(') == 2, \
             'окно письма рисует стороны не общим видом'
 
     def test_both_names_are_links(self):
-        body = _body('favMailOpen')
+        body = _body('letterSides')
 
         assert 'girlHref(' in body, 'имя девушки в окне письма не ссылка'
         assert 'companionHref(' in body, 'имя собеседника в окне письма не ссылка'
@@ -136,12 +137,12 @@ class TestTheLetterWindowShowsBothSides:
     def test_the_face_comes_from_the_row(self):
         """⚠ Лицо берётся из строки пула, своей ручки под фото нет.
 
-        Поля ручка считала и раньше (`profile_photo`, `photo`) — не хватало
-        только отрисовки.
+        Поля ручки считали и раньше (`profile_photo`, `photo`) — не хватало
+        только отрисовки, и у рассылки не хватало самих полей.
         """
-        body = _body('favMailOpen')
+        body = _body('letterSides')
 
-        assert 'one.profile_photo' in body and 'one.photo' in body, \
+        assert 'row.profile_photo' in body and 'row.photo' in body, \
             'окно письма перестало показывать лица'
 
 
@@ -163,6 +164,55 @@ class TestTheSideStaysUsableWithoutALink:
 
         assert 'id ?' in body or 'if (!id)' in body, \
             'пустой номер собеседника даёт ссылку в никуда'
+
+
+class TestBothLetterWindowsShareOnePlace:
+    """⚠⚠ Окна писем рисуют пару сторон **одним** помощником.
+
+    Их три — рассылка, ответы, письма избранным, — и вопрос у них один: от какой
+    анкеты письмо и какому собеседнику. Собранные порознь, они и разошлись: у
+    избранных стояли лицо и ссылка, у рассылки «Diana → 803656», голый номер.
+    """
+
+    def test_the_helper_exists(self):
+        assert 'function letterSides(' in _page(), \
+            'пропал общий помощник пары сторон'
+
+    def test_both_windows_call_it(self):
+        """⚠ И окно избранных, и окно рассылки — через него."""
+        for name in ('favMailOpen', 'letterOpen', 'inviteOpen', 'replyOpen'):
+            assert 'letterSides(' in _body(name), \
+                f'{name} рисует стороны своей разметкой'
+
+    def test_nobody_draws_the_pair_by_hand(self):
+        """⚠⚠ Сторож приёма: строка «От кого» пишется в одном месте.
+
+        Появится вторая — значит кто-то снова собрал пару руками, и она
+        разойдётся с первой на первой же правке.
+        """
+        page = _page()
+        found = page.count('letter-key">От кого')
+
+        assert found == 1, \
+            f'строка «От кого» собирается {found} раз — должен только letterSides'
+
+    def test_the_server_gives_the_same_fields(self):
+        """⚠ Поля обеим ручкам даёт общий кусок запроса.
+
+        Помощник берёт `profile_photo`, `photo`, `profile_uid` как есть; собери
+        их ручки по-своему — рассылка снова осталась бы без лиц.
+        """
+        import inspect
+
+        from src.dating import pool_pair
+        from src.uvicorn.routers.dating import favorite_mail, mailing
+
+        assert 'pool_pair_select' in inspect.getsource(mailing), \
+            'рассылка собирает имя и лицо собеседника своим запросом'
+        assert 'pool_pair_select' in inspect.getsource(favorite_mail), \
+            'избранные собирают имя и лицо собеседника своим запросом'
+        assert 'profile_photo' in inspect.getsource(pool_pair.pool_pair_girl), \
+            'общий кусок перестал отдавать лицо анкеты'
 
 
 def _page() -> str:

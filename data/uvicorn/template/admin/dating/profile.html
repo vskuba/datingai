@@ -6590,11 +6590,7 @@
         const sent = one.status !== 'draft';
         const modal = modalOpen({
             title: `Инвайт: ${one.profile_name || '—'} → ${one.name || one.uid}`,
-            body: '<div class="letter-row"><span class="letter-key">От кого</span>'
-                + `<span class="letter-val">${esc(one.profile_name || '—')}</span></div>`
-                + '<div class="letter-row"><span class="letter-key">Кому</span>'
-                + `<span class="letter-val">${esc(one.name || 'без имени')} · `
-                + `${esc(one.uid)}</span></div>`
+            body: letterSides(one)
                 + '<div class="letter-row"><span class="letter-key">Состояние</span>'
                 + `<span class="letter-val">${sent ? 'отправлено'
                     : 'в пуле, не отправлено'}</span></div>`
@@ -7640,17 +7636,7 @@
             // Имена — ссылками, и адреса собирают `girlHref`/`companionHref`:
             // те же, что у карточки пула и у шапки работы с анкетой. Своей
             // разметки здесь нет намеренно — разошлась бы с ними на первой правке.
-            body: '<div class="letter-row"><span class="letter-key">От кого</span>'
-                + '<span class="letter-val talk">'
-                + talkSide(one.profile_name || one.girl, one.profile_photo,
-                           one.profile_uid, 'анкета, от которой письмо',
-                           null, girlHref(one.profile_id))
-                + '</span></div>'
-                + '<div class="letter-row"><span class="letter-key">Кому</span>'
-                + '<span class="letter-val talk">'
-                + talkSide(one.name, one.photo, one.uid, 'кому письмо',
-                           null, companionHref(one.uid))
-                + '</span></div>'
+            body: letterSides(one)
                 + '<div class="letter-row"><span class="letter-key">Состояние</span>'
                 + `<span class="letter-val">${sent ? 'отправлено'
                     : 'в пуле, не отправлено'}</span></div>`
@@ -8405,11 +8391,7 @@
         const sent = row.status !== 'draft';
         const box = modalOpen({
             title: `Ответ: ${row.girl || '—'} → ${row.name || row.uid}`,
-            body: '<div class="letter-row"><span class="letter-key">От кого</span>'
-                + `<span class="letter-val">${esc(row.girl || '—')}</span></div>`
-                + '<div class="letter-row"><span class="letter-key">Кому</span>'
-                + `<span class="letter-val">${esc(row.name || 'без имени')} · `
-                + `${esc(row.uid)}</span></div>`
+            body: letterSides(row)
                 + '<div class="letter-row"><span class="letter-key">Состояние</span>'
                 + `<span class="letter-val">${_state(row)}</span></div>`
                 + (row.status === 'draft' && row.error
@@ -9833,10 +9815,7 @@
         const sent = row.status !== 'draft';
         const box = modalOpen({
             title: `Письмо: ${row.girl || '—'} → ${row.name || row.uid}`,
-            body: '<div class="letter-row"><span class="letter-key">От кого</span>'
-                + `<span class="letter-val">${esc(row.girl || '—')}</span></div>`
-                + '<div class="letter-row"><span class="letter-key">Кому</span>'
-                + `<span class="letter-val">${esc(row.name || 'без имени')} · ${esc(row.uid)}</span></div>`
+            body: letterSides(row)
                 + '<div class="letter-row"><span class="letter-key">Шаблон</span>'
                 + `<span class="letter-val">${esc(row.mail_name)}</span></div>`
                 + '<div class="letter-row"><span class="letter-key">Состояние</span>'
@@ -10620,6 +10599,30 @@
             + `<span class="person-name">${shown}</span>`
             + `<span class="person-meta" title="номер на сайте">${esc(uid || '')}</span>`
             + '</span></span>';
+    }
+
+    // Две строки окна письма: от какой анкеты и какому собеседнику.
+    //
+    // ⚠⚠ **Один помощник на все окна писем.** Их три — рассылка, ответы,
+    // письма избранным, — и вопрос у них один. Собранные порознь, они и
+    // разошлись: у избранных стояли лицо и ссылка, у рассылки «Diana → 803656»,
+    // голый номер вместо человека.
+    //
+    // ⚠ Поля берутся из строки пула как есть: их отдаёт общий кусок запроса
+    // (`pool_pair.py`), одинаковый у всех трёх ручек. Разойдись имена полей —
+    // сломается сразу здесь, а не в одном забытом окне.
+    function letterSides(row) {
+        return '<div class="letter-row"><span class="letter-key">От кого</span>'
+            + '<span class="letter-val talk">'
+            + talkSide(row.profile_name || row.girl, row.profile_photo,
+                       row.profile_uid, 'анкета, от которой письмо',
+                       null, girlHref(row.profile_id))
+            + '</span></div>'
+            + '<div class="letter-row"><span class="letter-key">Кому</span>'
+            + '<span class="letter-val talk">'
+            + talkSide(row.name, row.photo, row.uid, 'кому письмо',
+                       null, companionHref(row.uid))
+            + '</span></div>';
     }
 
     // Подсказка строки диалога: о чём и когда была последняя реплика.

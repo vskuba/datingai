@@ -37,6 +37,8 @@ from src.dating.mail_reply import mail_reply_thread
 from src.dating.mail_send import (DatingMailSendError, mail_send_mark,
                                          mail_send_one)
 from src.dating.online import online_show
+from src.dating.pool_pair import (pool_pair_girl, pool_pair_joins,
+                                  pool_pair_select)
 from src.uvicorn.routers.dating.chat import chat_dialogs_size
 from src.uvicorn.routers.dating.site_ import site_setting
 from src.uvicorn.routers.setting import setting_timezone_hours
@@ -112,10 +114,7 @@ async def favorite_mail_list(site_id: int = 0, status_: str = 'draft',
     # номером. Порядок источников тот же, что у диалогов: контакт анкеты (свежее)
     # → карточка сайта → то, что записали при наборе.
     sql = ('SELECT m.id, m.site_id, m.profile_id, m.uid,'
-           '       COALESCE(NULLIF(c.name, %s), NULLIF(comp.name, %s),'
-           '                NULLIF(m.name, %s), %s) AS name,'
-           '       COALESCE(NULLIF(comp.photo, %s), NULLIF(c.photo, %s),'
-           '                NULLIF(m.photo, %s), %s) AS photo,'
+           + pool_pair_select() +
            ' m.body, m.status, m.error, m.answer, m.sent_at, m.created_at,'
            # ⚠ Время исхода: у ушедшего письма это `sent_at`, у неудачного
            # его нет вовсе — отметку снимает сама неудача, — и остаётся
@@ -124,12 +123,9 @@ async def favorite_mail_list(site_id: int = 0, status_: str = 'draft',
            ' p.login AS profile_login, p.profile AS profile_card'
            ' FROM favorite_mail m'
            ' LEFT JOIN profile p ON p.id = m.profile_id'
-           ' LEFT JOIN contact c'
-           '   ON c.profile_id = m.profile_id AND c.uid = m.uid'
-           ' LEFT JOIN companion comp'
-           '   ON comp.site_id = m.site_id AND comp.uid = m.uid'
+           + pool_pair_joins() +
            ' WHERE m.site_id = %s')
-    args = ['', '', '', '', '', '', '', '', int(site_id)]
+    args = [int(site_id)]
 
     asked = [one.strip() for one in str(status_ or '').split(',')]
     wanted = [one for one in asked if one in ('draft', 'sent', 'failed')]
@@ -298,8 +294,9 @@ async def favorite_mail_threads(site_id: int = 0, profile_id: int = 0,
         # шевелилось последним.
         await db.execute(
             'SELECT f.profile_id, f.uid,'
-            '       COALESCE(NULLIF(c.name, %s), NULLIF(comp.name, %s), %s) AS name,'
-            '       COALESCE(NULLIF(comp.photo, %s), NULLIF(c.photo, %s), %s) AS photo,'
+            # ⚠ Тот же кусок, что у пулов писем: вопрос «как зовут и как
+            # выглядит собеседник» один на весь раздел.
+            + pool_pair_select('f', own_name=False, own_photo=False) +
             '       p.login AS profile_login, p.profile AS profile_card,'
             '       talk.letters, talk.last_at, talk.last_side,'
             '       EXISTS (SELECT 1 FROM favorite_mail d'
@@ -307,7 +304,9 @@ async def favorite_mail_threads(site_id: int = 0, profile_id: int = 0,
             "                  AND d.status = 'draft') AS in_pool"
             + pairs_join + pairs_card + pairs_where
             + ' ORDER BY talk.last_at DESC LIMIT %s OFFSET %s',
-            tuple(['', '', '', '', '', '', *pairs_args, size, (page - 1) * size]))
+            # ⚠ Шести пустых строк здесь больше нет: общий кусок
+            # (`pool_pair_select`) ставит их литералами, а не заполнителями.
+            tuple([*pairs_args, size, (page - 1) * size]))
         rows = await db.fetchall()
 
     threads = []
@@ -566,15 +565,10 @@ def _answer(row) -> dict:
 
     got['online'] = bool(online.get('online'))
     got['online_known'] = bool(online.get('known'))
-    # Имя анкеты, а не логин: логин это почта, и в карточке «от кого» она
-    # читается как подпись робота. Логин остаётся запасным.
-    got['girl'] = str(card.get('name') or got.get('profile_login') or '')
-    got['profile_name'] = got['girl']
-    # ⚠ Лицо и номер анкеты — тоже: «Доставка» рисует обе стороны тем же видом,
-    # что «Диалоги» (`talkSide`), а тому нужны три поля на сторону. Без них девушка
-    # оставалась буквой в кружке, хотя карточка уже была в руках запроса.
-    got['profile_photo'] = str(card.get('photo') or '')
-    got['profile_uid'] = str(card.get('site_uid') or '')
+    # ⚠ Имя, лицо и номер анкеты — общим куском (`pool_pair.py`): «Доставка» и
+    # окно письма рисуют обе стороны тем же видом, что «Диалоги» (`talkSide`), и
+    # так же их рисует рассылка.
+    pool_pair_girl(got, card)
     got['sent_at'] = str(got['sent_at']) if got.get('sent_at') else ''
     got['created_at'] = str(got.get('created_at') or '')
     got['updated_at'] = str(got['updated_at']) if got.get('updated_at') \
