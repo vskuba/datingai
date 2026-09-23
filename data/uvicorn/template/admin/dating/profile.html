@@ -4181,7 +4181,6 @@
             <div class="chat-log-head" id="logHead">Импорт</div>
             <div class="chat-log-body" id="log"></div>
         </div>
-        <div class="pane-foot" id="contactsPager"></div>
     </div>
 </div>
 {% endblock %}
@@ -4266,7 +4265,6 @@
     const workWhoEl = document.getElementById('workWho');
     const pageTabsEl = document.getElementById('pageTabs');
     const pageEl = document.querySelector('.dating-page');
-    const contactsPagerEl = document.getElementById('contactsPager');
     const panelLinkEl = document.getElementById('panelLink');
 
     let profiles = [];
@@ -5100,18 +5098,18 @@
         // анкеты — там пароль, расписание и выключатели. Новой вкладкой, как и
         // ссылки на собеседников: человек читает письма, и уводить его со списка
         // на полпути значит терять место, до которого он долистал.
-        const кто = row ? (row.name || row.login || '') : '';
+        const who = row ? (row.name || row.login || '') : '';
         // Адрес один на оба узла — имя и лицо ведут в одно место, и собирать его
         // дважды значило бы однажды разойтись.
-        const куда = row
+        const href = row
             ? `${BASE}/admin/dating?girl=${row.id}&site=${siteId()}` : '';
-        const подсказка = `Открыть анкету ${esc(кто)} на «Анкетах» — в новой вкладке`;
+        const hint = `Открыть анкету ${esc(who)} на «Анкетах» — в новой вкладке`;
 
         workWhoEl.innerHTML = row
             ? `<a class="work-who-link" target="_blank" rel="noopener"`
-              + ` href="${куда}" title="${подсказка}">${esc(кто)}</a>`
+              + ` href="${href}" title="${hint}">${esc(who)}</a>`
             : '';
-        workWhoEl.title = кто;
+        workWhoEl.title = who;
 
         // Лицо перед именем. Адрес — из той же строки списка, что рисует
         // аватарку слева: своей ручки под фотографию нет, да и не нужно.
@@ -5128,14 +5126,14 @@
             // отдаём ему пустую строку.
             if (src && face.getAttribute('src') !== src) face.src = src;
             face.style.visibility = '';
-            face.title = кто;
+            face.title = who;
         }
         // ⚠ Прячем и показываем **обёртку**, а не картинку: пустая ссылка без
         // содержимого всё равно занимает место и ловит щелчки, ведя в никуда.
         if (faceLink) {
             faceLink.hidden = !(row && row.photo);
-            faceLink.href = куда;
-            faceLink.title = подсказка;
+            faceLink.href = href;
+            faceLink.title = hint;
         }
 
         // Почта и номер на сайте — по ним анкету ищут в панели сайта, и держать
@@ -5216,14 +5214,10 @@
         workEmptyEl.classList.toggle('off', !!row || siteWide);
 
         if (!row && !siteWide) {
-            pagerRender(contactsPagerEl, 0, 0, () => {
-            });
             return;
         }
 
         if (!await workTemplate()) {
-            pagerRender(contactsPagerEl, 0, 0, () => {
-            });
             return;
         }
 
@@ -5253,8 +5247,6 @@
             || workTab === 'mail');
 
         if (!workPanel(workTab)) {
-            pagerRender(contactsPagerEl, 0, 0, () => {
-            });
             return;
         }
 
@@ -5280,30 +5272,22 @@
             // попутно, в конце отрисовки переписки; здесь переписки нет, и без
             // этого вызова колонка стояла бы пустой до перехода в «Чат».
             peopleShow(true);
-            pagerRender(contactsPagerEl, 0, 0, () => {
-            });
             return;
         }
 
         if (workTab === 'mail') {
             mailPaint();
-            pagerRender(contactsPagerEl, 0, 0, () => {
-            });
             return;
         }
 
         if (workTab === 'stats') {
             statsShow();
-            pagerRender(contactsPagerEl, 0, 0, () => {
-            });
             return;
         }
 
         // Панели шаблона без данных: он сам говорит, что их ещё нет. Вкладка «Настройки» отсюда ушла: правка
         // учётки, действия и автоответ живут на «Анкетах», рядом с выключателем и
         // расписанием — там, где анкету и настраивают.
-        pagerRender(contactsPagerEl, 0, 0, () => {
-        });
     }
 
     // Вкладка «Письма рассылка»: лента «Все онлайн», расписание рассылки под ней
@@ -5550,13 +5534,13 @@
         const row = openRow();
         // ⚠ Подпись говорит и про охват, и про срок: два сужения сразу, и
         // человек должен видеть оба — иначе «мало» читается как поломка.
-        const срок = statsHours
+        const period = statsHours
             ? ` За последние ${statsHours} ч.`
             : '';
         fillSlot('stats-note', (row
             ? `Числа по анкете ${row.name || row.login}. Уберите выбор в списке `
               + 'слева, чтобы увидеть весь сайт.'
-            : 'Числа по всему сайту. Выберите анкету слева, чтобы сузить.') + срок);
+            : 'Числа по всему сайту. Выберите анкету слева, чтобы сузить.') + period);
 
         if (!statsData) {
             box.innerHTML = '<div class="work-soon">Считаю…</div>';
@@ -5773,7 +5757,7 @@
     // ⚠ Один обработчик на оба выключателя: различает их `send`. Две почти
     // одинаковые функции разошлись бы в первой же правке — так уже было с лентами.
     async function chatInitiativeSet(box, send = false) {
-        const было = chatInitiativeOn.get(siteId()) || {make: false, send: false};
+        const prev = chatInitiativeOn.get(siteId()) || {make: false, send: false};
 
         await siteFlagToggle(box, {
             path: send ? 'chat-initiative-send-on' : 'chat-initiative-on',
@@ -5786,7 +5770,7 @@
             // ⚠ Два флага в одной записи: страница спрашивает их вместе, и
             // раздельное хранение означало бы два чтения одного состояния.
             save: (on, site) => chatInitiativeOn.set(
-                site, send ? {...было, send: on} : {...было, make: on}),
+                site, send ? {...prev, send: on} : {...prev, make: on}),
         });
     }
 
@@ -5969,16 +5953,16 @@
         // **следствием отбора**, и снять его должно быть чем.
         inviteSentFilterPaint();
 
-        const отобрано = inviteSentGirl || inviteSentUid;
-        const дошло = inviteSent.filter(row => row.status === 'sent').length;
-        const нет = inviteSent.length - дошло;
+        const filtered = inviteSentGirl || inviteSentUid;
+        const delivered = inviteSent.filter(row => row.status === 'sent').length;
+        const failed = inviteSent.length - delivered;
 
         // ⚠ Счёт в шапке — **по всему журналу** (`total`), а исходы — по странице:
         // «ушло 3» рядом с «всего 174» читалось бы как потеря ста семидесяти.
         fillSlot('invite-sent-count', inviteSentTotal
             ? `всего ${inviteSentTotal}`
-              + (inviteSent.length ? ` · на странице: ушло ${дошло}`
-                 + `${нет ? `, не ушло ${нет}` : ''}` : '')
+              + (inviteSent.length ? ` · на странице: ушло ${delivered}`
+                 + `${failed ? `, не ушло ${failed}` : ''}` : '')
             : '');
 
         // ⚠ Прокрутку держим сами: список перечитывается своим кругом раз в
@@ -5986,7 +5970,7 @@
         const scroll = box.scrollTop;
 
         if (!inviteSent.length) {
-            box.innerHTML = отобрано
+            box.innerHTML = filtered
                 ? '<div class="mail-sent-empty">По этому отбору ничего нет.<br>'
                   + 'Снимите его крестиком в полосе сверху.</div>'
                 : '<div class="mail-sent-empty">Инвайтов с этого сайта '
@@ -6004,10 +5988,10 @@
             // две строки под каждой карточкой, и двадцать пять записей на странице
             // превращались в простыню. Нужен он тогда, когда «ушло» не сходится с
             // тем, что видно на сайте, — и тогда его читают наведением.
-            const подсказка = [row.error, row.answer].filter(Boolean).join('\n');
+            const hint = [row.error, row.answer].filter(Boolean).join('\n');
 
             return `<div class="mail-sent-row plain one ${ok ? 'ok' : 'bad'}"`
-                + `${подсказка ? ` title="${esc(подсказка)}"` : ''}>`
+                + `${hint ? ` title="${esc(hint)}"` : ''}>`
                 + `<span class="mail-sent-dot ${ok ? 'ok' : 'bad'}"></span>`
                 // ⚠ **Время — первым.** Журнал читают сверху вниз вопросом «что
                 // происходило последним»; дата у правого края заставляла прыгать
@@ -6433,15 +6417,15 @@
 
         // ⚠ Полный пул загрузчика не получает: круг его не трогает, и крутилка
         // обещала бы работу, которой нет.
-        const потолок = Number(saved.invite_pool_max || 0);
+        const cap = Number(saved.invite_pool_max || 0);
         // ⚠ «Полон» считаем по **всему пулу**, а не по показанной странице: та
         // обрывается на трёхстах (`INVITE_LIMIT`), и крутилка гасла бы на них.
-        const полон = потолок && invitePoolSize >= потолок;
+        const isFull = cap && invitePoolSize >= cap;
         const busy = slot('invite-pool-busy');
         if (busy) {
             // ⚠ Крутилка осталась про **круг**: кнопки генерации больше нет,
             // и поднимать флаг руками стало некому.
-            busy.hidden = полон || !inviteScheduleLive();
+            busy.hidden = isFull || !inviteScheduleLive();
 
             {
                 // ⚠ **Со сроком, а не «по расписанию».** Круг работает вспышками
@@ -6497,11 +6481,11 @@
         // Отметки нет: круг возьмётся на ближайшем тике, а он раз в минуту.
         if (!sec) return 'наберёт в ближайшую минуту';
 
-        const мин = Math.ceil(sec / 60);
+        const mins = Math.ceil(sec / 60);
 
-        return мин < 60
-            ? `наберёт через ${мин} мин`
-            : `наберёт через ${Math.floor(мин / 60)} ч ${мин % 60} мин`;
+        return mins < 60
+            ? `наберёт через ${mins} мин`
+            : `наберёт через ${Math.floor(mins / 60)} ч ${mins % 60} мин`;
     }
 
     function inviteCard(one, index) {
@@ -6787,6 +6771,13 @@
     // ⚠ **Анкета — фильтр, а не условие показа**: без выбора список полон.
     let favTalks = [];
     let favTalksFor = null;
+    // Страница списка (с нуля, как у прочих пейджеров панели), сколько всего
+    // переписок и сколько страниц. ⚠ Счёт — **от сервера**, а не длина
+    // `favTalks`: та теперь равна размеру страницы, и подпись «всего диалогов»
+    // показывала бы пятьдесят при трёхстах.
+    let favTalksPage = 0;
+    let favTalksTotal = 0;
+    let favTalksPages = 1;
     // Открытая переписка: пара «анкета — человек». Строкой, а не номером: номер у
     // пары один на двоих, и по нему её не найти.
     let favTalkOpen = '';
@@ -6796,12 +6787,15 @@
 
         favTalksPaint();
 
-        const ключ = `${siteId()}|${openId || 0}`;
-        if (favTalksFor !== ключ) {
-            favTalksFor = ключ;
+        const key = `${siteId()}|${openId || 0}`;
+        if (favTalksFor !== key) {
+            favTalksFor = key;
             // ⚠ Выбор сбрасываем при смене фильтра: открытая переписка чужой
             // анкеты в списке, где её больше нет, читалась бы как ошибка.
             favTalkOpen = '';
+            // ⚠ И страницу: у другой анкеты переписок может быть меньше, и
+            // седьмая страница осталась бы пустой при полном списке.
+            favTalksPage = 0;
             favTalksLoad();
         }
     }
@@ -6815,19 +6809,28 @@
             return;
         }
 
-        const был = openId || 0;
+        const prevId = openId || 0;
 
         try {
-            favTalks = (await getData(
+            const data = (await getData(
                 `${BASE}/api/dating/favorite-mail/threads?site_id=${site}`
-                + `&profile_id=${был}`)).result || [];
+                + `&profile_id=${prevId}&page=${favTalksPage + 1}`)) || {};
+
+            favTalks = data.result || [];
+            favTalksTotal = Number(data.total || 0);
+            favTalksPages = Math.max(1, Number(data.pages || 1));
+            // ⚠ Страницу берём **из ответа**: сервер поджимает её к последней,
+            // и без этого пейджер подсвечивал бы седьмую, показывая третью.
+            favTalksPage = Math.max(0, Number(data.page || 1) - 1);
         } catch (e) {
             favTalks = [];
+            favTalksTotal = 0;
+            favTalksPages = 1;
             showNotification('Переписки не пришли: ' + e.message, 'error');
         }
 
         // Сайт или анкету могли переключить, пока ответ ехал.
-        if (siteId() !== site || (openId || 0) !== был) return;
+        if (siteId() !== site || (openId || 0) !== prevId) return;
 
         favTalksPaint();
 
@@ -6839,6 +6842,20 @@
         // ⚠ Только когда **ничего не выбрано**: перерисовка по кнопке «⟳» не
         // должна уводить человека с разговора, который он читает.
         if (!favTalkOpen && favTalks.length) favTalkSelect(0);
+    }
+
+    function favTalksPagerPaint() {
+        const foot = slot('fav-talks-pager');
+        if (!foot) return;
+
+        // ⚠ **Выбор сбрасываем при листании.** Переписка, открытая справа, на
+        // новой странице не показана — подсветка висела бы в пустоте, а «первую
+        // открываем сами» не сработало бы: открытое считается выбором.
+        pagerRender(foot, favTalksPages, favTalksPage, (pick) => {
+            favTalksPage = pick;
+            favTalkOpen = '';
+            favTalksLoad();
+        }, favTalksTotal ? `переписок: ${favTalksTotal}` : '');
     }
 
     function favTalksPaint() {
@@ -6853,8 +6870,10 @@
         // так верно. Выбранную анкету называем: она сужает список, и молчание об
         // этом объясняло бы, почему переписок вдруг стало меньше.
         const row = openRow();
-        fillSlot('fav-talks-count', `всего диалогов: ${favTalks.length}`
+        fillSlot('fav-talks-count', `всего диалогов: ${favTalksTotal}`
             + (row ? ` · только ${row.name || row.login}` : ''));
+
+        favTalksPagerPaint();
 
         if (!favTalks.length) {
             box.innerHTML = '<div class="in-empty">Переписок с избранными нет.'
@@ -6866,10 +6885,10 @@
         }
 
         box.innerHTML = favTalks.map((one, index) => {
-            const ключ = `${one.profile_id}|${one.uid}`;
+            const key = `${one.profile_id}|${one.uid}`;
             // ⚠ «Ждёт ответа» — когда последним писал **он**: это и есть работа,
             // и она должна быть видна, не открывая разговор.
-            const ждёт = one.last_side === 'him';
+            const waiting = one.last_side === 'him';
 
             // ⚠ **Карточкой-парой, а не строкой письма** — тем же видом, что
             // диалоги чата (`talkSide`): разговор это пара, и показывать его
@@ -6877,8 +6896,8 @@
             // стоят на соседних вкладках, и человек ходит между ними — одного и
             // того же собеседника он должен узнавать в лицо, не сверяя, какой это
             // список.
-            return `<div class="contact${ждёт ? ' wait' : ''}`
-                + `${favTalkOpen === ключ ? ' open' : ''}"`
+            return `<div class="contact${waiting ? ' wait' : ''}`
+                + `${favTalkOpen === key ? ' open' : ''}"`
                 + ` data-index="${index}">`
                 + '<div class="contact-bar">'
                 + talkSide(one.profile_name, one.profile_photo, '',
@@ -6887,7 +6906,7 @@
                 + talkSide(one.name, one.photo, one.uid, 'собеседник')
                 + `<span class="contact-id" title="писем в переписке">`
                 + `✉ ${one.letters}</span>`
-                + (ждёт
+                + (waiting
                     ? '<span class="need-icon" title="Ждёт ответа: последним'
                     + ' писал он">↩</span>'
                     : '')
@@ -6973,9 +6992,9 @@
             row => Number(row.profile_id) === Number(one.profile_id)
                 && String(row.uid) === String(one.uid)
                 && row.status === 'draft');
-        const ответ = index >= 0 ? mailReply[index] : null;
+        const reply = index >= 0 ? mailReply[index] : null;
 
-        if (!ответ) {
+        if (!reply) {
             box.innerHTML = '<div class="in-reply-none">Ответа в пуле нет. '
                 + 'Его напишет круг на новое входящее письмо, пока включена '
                 + '«генерация ответов».<br>Письма «Приставания» — отдельное '
@@ -6985,11 +7004,11 @@
         }
 
         box.innerHTML = '<div class="in-reply-head">Ответ на его письмо'
-            + (ответ.error
-                ? ` <span class="mail-card-fail">${esc(ответ.error)}</span>` : '')
+            + (reply.error
+                ? ` <span class="mail-card-fail">${esc(reply.error)}</span>` : '')
             + '</div>'
             + `<textarea class="letter-body" id="replyBody">`
-            + `${esc(ответ.body || '')}</textarea>`
+            + `${esc(reply.body || '')}</textarea>`
             + '<div class="letter-foot">'
             + '<button type="button" class="dating-btn primary" id="favSaveBtn">'
             + 'Сохранить</button>'
@@ -7015,13 +7034,13 @@
         const wrap = slot('fav-talk-thread');
         if (!wrap) return;
 
-        const выбран = favTalks.find(
+        const picked = favTalks.find(
             one => `${one.profile_id}|${one.uid}` === favTalkOpen);
 
-        fillSlot('fav-talk-who', выбран
-            ? `${выбран.profile_name || '—'} → ${выбран.name || выбран.uid}` : '');
+        fillSlot('fav-talk-who', picked
+            ? `${picked.profile_name || '—'} → ${picked.name || picked.uid}` : '');
 
-        if (!выбран) {
+        if (!picked) {
             wrap.innerHTML = '<span class="reply-thread-wait">Выберите переписку '
                 + 'слева — здесь будет разговор.</span>';
         }
@@ -7043,9 +7062,9 @@
 
         favSentPaint();
 
-        const ключ = `${siteId()}|${openId || 0}`;
-        if (favSentFor !== ключ) {
-            favSentFor = ключ;
+        const key = `${siteId()}|${openId || 0}`;
+        if (favSentFor !== key) {
+            favSentFor = key;
             favSentLoad();
         }
     }
@@ -7059,7 +7078,7 @@
             return;
         }
 
-        const был = openId || 0;
+        const prevId = openId || 0;
 
         try {
             // ⚠ `delivery`, а не `sent,failed`: неудачная отправка **оставляет
@@ -7080,7 +7099,7 @@
 
         // Сайт или анкету могли переключить, пока ответ ехал: ответ по прежнему
         // фильтру пришёл бы позже нового и затёр бы его.
-        if (siteId() !== site || (openId || 0) !== был) return;
+        if (siteId() !== site || (openId || 0) !== prevId) return;
 
         favSentPaint();
     }
@@ -7089,17 +7108,17 @@
         const box = slot('fav-sent');
         if (!box) return;
 
-        const дошло = favSent.filter(row => row.status === 'sent').length;
-        const нет = favSent.length - дошло;
+        const delivered = favSent.filter(row => row.status === 'sent').length;
+        const failed = favSent.length - delivered;
 
         // Счёт разделён: «12 · не ушло 3» отвечает на вопрос сразу, а общее число
         // писем не отвечает ни на какой.
         const row = openRow();
-        const охват = row ? ` · только ${row.name || row.login}` : ' · по всему сайту';
+        const scope = row ? ` · только ${row.name || row.login}` : ' · по всему сайту';
 
         fillSlot('fav-sent-count', favSent.length
-            ? `ушло ${дошло}${нет ? ` · не ушло ${нет}` : ''}${охват}`
-            : охват.replace(' · ', ''));
+            ? `ушло ${delivered}${failed ? ` · не ушло ${failed}` : ''}${scope}`
+            : scope.replace(' · ', ''));
 
         if (!favSent.length) {
             box.innerHTML = '<div class="mail-sent-empty">Писем избранным с этого '
@@ -7115,11 +7134,11 @@
             // из его слов, а не его слова; когда вывод не сходится с тем, что
             // видно на сайте, разбираются по самому ответу. Выведенный строкой,
             // он занимал бы место под каждым письмом — а нужен редко.
-            const подсказка = [one.error, one.answer].filter(Boolean).join('\n');
+            const hint = [one.error, one.answer].filter(Boolean).join('\n');
 
             return `<div class="mail-sent-row plain one ${ok ? 'ok' : 'bad'}"`
                 + ` data-index="${index}"`
-                + `${подсказка ? ` title="${esc(подсказка)}"` : ''}>`
+                + `${hint ? ` title="${esc(hint)}"` : ''}>`
                 + `<span class="mail-sent-dot ${ok ? 'ok' : 'bad'}"></span>`
                 // ⚠ Время исхода, а не только отправки: у неудачного письма
                 // `sent_at` нет, и колонка стояла пустой (`_sentWhen`).
@@ -7228,14 +7247,14 @@
     // они отличаются, и отдали бы две с половиной сотни пикселей высоты за ответ,
     // который нужен один.
     function favStripShow() {
-        const пусто = !openId;
+        const noGirl = !openId;
 
         workEl.querySelectorAll('.strip-row[data-strip="favorite"]').forEach(
-            row => row.classList.toggle('off', пусто));
+            row => row.classList.toggle('off', noGirl));
 
         // ⚠ Наоборот: общая лента живёт ровно тогда, когда своей нет.
         workEl.querySelectorAll('.strip-row[data-strip="favonline"]').forEach(
-            row => row.classList.toggle('off', !пусто));
+            row => row.classList.toggle('off', !noGirl));
 
         // Разделитель под лентой — вместе с ней: полоса, которую не за что
         // тянуть, читается как край панели, а панель на этом не кончается.
@@ -7298,14 +7317,14 @@
         // От кого пойдут письма — словами: выбор анкеты в списке слева иначе
         // влиял бы на генерацию молча.
         const row = openRow();
-        const спит = !!row && row.status !== 'online';
+        const asleep = !!row && row.status !== 'online';
 
         // ⚠ **Про онлайн говорим здесь, а не только подсказкой у галочки.** Оба
         // условия — и набор, и отправка — требуют, чтобы девушка была на сайте, и
         // человек, включивший выключатели, иначе ждал бы писем, которых не будет.
         fillSlot('fav-mail-who', row
             ? `Только от ${row.name || row.login}: выбрана в списке слева.`
-              + (спит
+              + (asleep
                   ? ' ⚠ Она не в сети: пока не войдёт, письма ей не готовятся и'
                     + ' не уходят — ни кругом, ни кнопкой.'
                   : ' Она в сети — письма готовятся и уходят.')
@@ -7365,9 +7384,9 @@
             busy.hidden = !(favMailBusy || saved.favorite_mail_make_on);
 
             if (favMailBusy) {
-                const сделано = Math.max(0, favMailPool.length - favMailFrom);
+                const done = Math.max(0, favMailPool.length - favMailFrom);
                 fillSlot('fav-mail-busy-text',
-                    сделано ? `готово ${сделано}…` : 'готовлю…');
+                    done ? `готово ${done}…` : 'готовлю…');
             } else {
                 // ⚠ **Крутилка обещала работу, которой могло не быть.** «Набирается
                 // кругом» вертелось всегда, пока поднята генерация, — а пул стоял
@@ -7443,16 +7462,16 @@
         // Отметки нет: круг возьмётся на ближайшем тике, а он раз в минуту.
         if (!sec) return 'наберёт в ближайшую минуту';
 
-        const мин = Math.ceil(sec / 60);
+        const mins = Math.ceil(sec / 60);
 
-        return мин < 60
-            ? `наберёт через ${мин} мин`
-            : `наберёт через ${Math.floor(мин / 60)} ч ${мин % 60} мин`;
+        return mins < 60
+            ? `наберёт через ${mins} мин`
+            : `наберёт через ${Math.floor(mins / 60)} ч ${mins % 60} мин`;
     }
 
     function favMailCard(one, index) {
         const sent = one.status !== 'draft';
-        const можно = !!(favMailSaved.get(siteId()) || {}).favorite_mail_send_on;
+        const allowed = !!(favMailSaved.get(siteId()) || {}).favorite_mail_send_on;
 
         // ⚠ Номер собеседника — **в самой карточке**, а не только в тексте. По нему
         // карточка подсвечивается, когда того же человека выбирают в ленте «Все
@@ -7466,9 +7485,9 @@
                 // ⚠ Заперта, пока у сайта снята отправка. Подсказка говорит, где
                 // её поднять: запертая кнопка без объяснения читается как поломка.
                 : `<button type="button" class="mail-card-send" data-index="${index}"`
-                + ` title="${можно ? 'Отправить это письмо сейчас, не дожидаясь круга'
+                + ` title="${allowed ? 'Отправить это письмо сейчас, не дожидаясь круга'
                     : 'Отправка писем у сайта снята — поднимите её в полосе подвкладок'}"`
-                + `${можно ? '' : ' disabled'}>▶</button>`
+                + `${allowed ? '' : ' disabled'}>▶</button>`
                 + `<button type="button" class="mail-card-drop" data-index="${index}"`
                 + ' title="Убрать из пула">×</button>')
             + '</span>'
@@ -7667,15 +7686,15 @@
     // ⚠ Ищем **ярлыки**, а не сами поля: зачёркивать нужно текст («генерация»,
     // «отправка писем»), а галочка остаётся нажимаемой — решение про сайт.
     function favMailFlagsPaint(row) {
-        const спит = !!row && row.status !== 'online';
+        const asleep = !!row && row.status !== 'online';
 
         ['fav-mail-make-on', 'fav-mail-send-on'].forEach(name => {
             const box = slot(name);
             const label = box && box.closest('label');
             if (!label) return;
 
-            label.classList.toggle('asleep', спит);
-            label.title = спит
+            label.classList.toggle('asleep', asleep);
+            label.title = asleep
                 ? `${row.name || row.login} не в сети — пока она не войдёт, письма `
                   + 'ей не готовятся и не уходят. Выключатель про весь сайт: у '
                   + 'других анкет занятие идёт'
@@ -7683,7 +7702,7 @@
 
             // Своё исходное описание запоминаем один раз: иначе второй заход
             // затёр бы его текстом про сон.
-            if (!label.dataset.title && !спит) label.dataset.title = label.title;
+            if (!label.dataset.title && !asleep) label.dataset.title = label.title;
         });
     }
 
@@ -7797,7 +7816,7 @@
             // ушло от этого сайта», а уходят и рассылка, и ответы — они лежат в
             // разных таблицах, но получатель их не различает. Показывай мы одну,
             // половина отправленного пропала бы из журнала.
-            const [письма, ответы] = await Promise.all([
+            const [letters, replies] = await Promise.all([
                 getData(`${BASE}/api/dating/mailing?site_id=${site}&status_=delivery`),
                 getData(`${BASE}/api/dating/mail-in/reply?site_id=${site}&status_=delivery`),
             ]);
@@ -7805,8 +7824,8 @@
             // Вид у карточек один, различает их чипс — поэтому и метку `kind`
             // ставим здесь, а не гадаем по полям при отрисовке.
             mailSent = [
-                ...(письма.result || []).map(one => ({...one, kind: 'mailing'})),
-                ...(ответы.result || []).map(one => ({...one, kind: 'reply'})),
+                ...(letters.result || []).map(one => ({...one, kind: 'mailing'})),
+                ...(replies.result || []).map(one => ({...one, kind: 'reply'})),
             ].sort((a, b) => String(b.sent_at || '').localeCompare(String(a.sent_at || '')));
         } catch (e) {
             mailSent = [];
@@ -7824,13 +7843,13 @@
         const box = slot('mail-sent');
         if (!box) return;
 
-        const дошло = mailSent.filter(row => row.status === 'sent').length;
-        const нет = mailSent.length - дошло;
+        const delivered = mailSent.filter(row => row.status === 'sent').length;
+        const failed = mailSent.length - delivered;
 
         // Счётчик разделён: «12 / 3» отвечает на вопрос сразу, а общее число
         // писем не отвечает ни на какой.
         fillSlot('mail-sent-count', mailSent.length
-            ? `доставлено ${дошло}${нет ? ` · не дошло ${нет}` : ''}` : '');
+            ? `доставлено ${delivered}${failed ? ` · не дошло ${failed}` : ''}` : '');
 
         if (!mailSent.length) {
             box.innerHTML = '<div class="mail-sent-empty">Писем с этого сайта пока '
@@ -7897,8 +7916,8 @@
     // ⚠ Кому движение мешает (`prefers-reduced-motion`), значок стоит неподвижно —
     // цвет и число говорят то же самое.
     function mailInBadge(row) {
-        const счёт = mailInUnread[String(row.id)] || {};
-        const n = Number(счёт.all || 0);
+        const counts = mailInUnread[String(row.id)] || {};
+        const n = Number(counts.all || 0);
         if (!n) return '';
 
         // ⚠ **Куда ведёт значок, решают сами письма.** Письмо от избранного видно
@@ -7910,15 +7929,15 @@
         // Все письма от избранных — ведём к ним; есть хоть одно от постороннего —
         // во «Входящие»: там оно и лежит, а диалог избранного человек найдёт
         // соседней вкладкой.
-        const все_от_избранных = Number(счёт.fav || 0) >= n;
-        const куда = все_от_избранных ? 'Фавориты → Диалоги' : 'Письма входящие';
+        const allFromFavorites = Number(counts.fav || 0) >= n;
+        const where = allFromFavorites ? 'Фавориты → Диалоги' : 'Письма входящие';
 
         // ⚠ **Кнопка, а не подпись.** По значку и так тянутся щёлкнуть — он
         // единственное на странице, что движется; пусть щелчок и делает то, чего
         // от него ждут: открывает письма этой девушки.
         return `<button type="button" class="prof-mail" data-mail-in="${row.id}"`
-            + ` data-mail-fav="${все_от_избранных ? '1' : '0'}"`
-            + ` title="Новых писем: ${n}. Открыть «${куда}»">`
+            + ` data-mail-fav="${allFromFavorites ? '1' : '0'}"`
+            + ` title="Новых писем: ${n}. Открыть «${where}»">`
             + `<span class="prof-mail-icon">📩</span>${n}</button>`;
     }
 
@@ -8177,9 +8196,9 @@
         // соврать «пишу…» хуже, чем промолчать — человек ждал бы карточку,
         // которой никто не обещал.
         const busy = slot('in-reply-busy');
-        const шлём = replySending();
+        const sending = replySending();
         if (busy) {
-            busy.hidden = !шлём;
+            busy.hidden = !sending;
             fillSlot('in-reply-busy-text', 'отправляю…');
         }
 
@@ -8270,7 +8289,7 @@
                 + `<span class="letter-val">${esc(row.name || 'без имени')} · `
                 + `${esc(row.uid)}</span></div>`
                 + '<div class="letter-row"><span class="letter-key">Состояние</span>'
-                + `<span class="letter-val">${_состояние(row)}</span></div>`
+                + `<span class="letter-val">${_state(row)}</span></div>`
                 + (row.status === 'draft' && row.error
                     ? '<div class="letter-row"><span class="letter-key">Почему</span>'
                     + `<span class="letter-val bad">${esc(row.error)}</span></div>`
@@ -8355,17 +8374,17 @@
         // проверке из переписки пропал прошлый, уже отправленный ответ (обе строки
         // легли в одну секунду). Номера двух таблиц пересекаются, но пара
         // «сторона + номер» однозначна.
-        const видно = (rows || []).filter(one => String(one.text || '').trim()
+        const visible = (rows || []).filter(one => String(one.text || '').trim()
             && !(skip && skip(one)));
 
-        if (!видно.length) {
+        if (!visible.length) {
             wrap.innerHTML = '<span class="reply-thread-wait">Это первое письмо в '
                 + 'переписке.</span>';
 
             return;
         }
 
-        wrap.innerHTML = видно.map(one =>
+        wrap.innerHTML = visible.map(one =>
             `<div class="reply-msg ${one.from === 'him' ? 'him' : 'her'}">`
             // ⚠ Лицо у каждой реплики: разговор читают, скользя взглядом, и по
             // лицу видно, кто говорит, раньше, чем прочитана подпись. Нет фото —
@@ -8466,9 +8485,9 @@
     // разошлась бы с первой в пометках — а они-то и объясняют, откуда письмо.
     function replyThreadRefresh() {
         if (workTab === 'fav' && favTab === 'talks' && favTalkOpen) {
-            const где = favTalks.findIndex(
+            const at = favTalks.findIndex(
                 one => `${one.profile_id}|${one.uid}` === favTalkOpen);
-            if (где >= 0) favTalkSelect(где);
+            if (at >= 0) favTalkSelect(at);
 
             return;
         }
@@ -8640,17 +8659,17 @@
         // Ручки при этом разные, и это не расточительность: `/reply` отвечает
         // «что делаем с письмом, когда оно пришло», `/mail-in` — «придёт ли оно
         // вообще». Сложи их в одну, имя перестало бы говорить, что внутри.
-        const [ответы, письма] = await Promise.all([
+        const [replies, letters] = await Promise.all([
             getData(`${BASE}/api/dating/site/${site}/reply`).catch(() => null),
             getData(`${BASE}/api/dating/site/${site}/mail-in`).catch(() => null),
         ]);
 
         if (siteId() !== site) return;
 
-        replySaved = (ответы || {}).result || {};
+        replySaved = (replies || {}).result || {};
         // ⚠ Отказ оставляет умолчание «включено», а не снимает галочку: сервер не
         // ответил — мы не знаем, а не «не забираем».
-        mailCheckSaved = (письма || {}).result || {mail_check_on: true};
+        mailCheckSaved = (letters || {}).result || {mail_check_on: true};
 
         replySavedFor = site;
         mailInReplyPaint();
@@ -8707,8 +8726,8 @@
         // полосой и читает это как расхождение: «она онлайн, а лента говорит, что
         // нет». Онлайн она вручную — расписание тут ни при чём, и сказать об этом
         // надо там, где смотрят, а не только при наведении на смену.
-        const выключено = rows.length && !(replySched || {}).schedule_on;
-        band.title = idle || (выключено
+        const isOff = rows.length && !(replySched || {}).schedule_on;
+        band.title = idle || (isOff
             ? 'Расписание выключено — по часам анкета входить не будет.'
               + ' В сети она может быть от ручного входа. Включают на «Анкетах»'
             : rows.length
@@ -8801,9 +8820,9 @@
         // ⚠ Считаем **переписки и непрочитанные в них**, а не письма: строка в
         // списке теперь одна на разговор, и «2 письма» под одной карточкой
         // читалось бы как расхождение.
-        const новых = mailIn.reduce((sum, row) => sum + (row.unseen_count || 0), 0);
+        const fresh = mailIn.reduce((sum, row) => sum + (row.unseen_count || 0), 0);
         fillSlot('in-count', mailIn.length
-            ? `${mailIn.length}${новых ? ` · новых ${новых}` : ''}` : '');
+            ? `${mailIn.length}${fresh ? ` · новых ${fresh}` : ''}` : '');
 
         if (!mailIn.length) {
             // ⚠ Пустой список значит разное, и от этого зависит, что делать: при
@@ -8823,7 +8842,7 @@
         }
 
         box.innerHTML = mailIn.map((row, index) => {
-            const место = [row.age ? `${row.age}` : '', row.place]
+            const place = [row.age ? `${row.age}` : '', row.place]
                 .filter(Boolean).join(' · ');
 
             // ⚠ «Новое» — по всей переписке: последнее письмо могло быть уже
@@ -8845,7 +8864,7 @@
                 + talkSide(row.girl, row.profile_photo, '',
                            'анкета, которой написали')
                 + '<span class="talk-swap">↔</span>'
-                + talkSide(row.name, row.photo, row.uid, место || 'собеседник')
+                + talkSide(row.name, row.photo, row.uid, place || 'собеседник')
                 + `<span class="contact-id" title="писем в переписке">`
                 + `✉ ${row.thread_count || 1}</span>`
                 + (row.unseen_count
@@ -8974,19 +8993,19 @@
             return;
         }
 
-        const ушло = reply.status !== 'draft';
+        const sent = reply.status !== 'draft';
 
         // ⚠ Заголовок называет предмет целиком: в ленте рядом может лежать
         // черновик «Приставания», и «Ответ» без уточнения человек относил к нему.
         box.innerHTML = '<div class="in-reply-head">Ответ на это письмо'
-            + (ушло ? ' <span class="in-replied">отправлен</span>' : '')
+            + (sent ? ' <span class="in-replied">отправлен</span>' : '')
             + (reply.error
                 ? ` <span class="mail-card-fail">${esc(reply.error)}</span>` : '')
             + '</div>'
-            + `<textarea class="letter-body" id="replyBody"${ушло ? ' readonly' : ''}>`
+            + `<textarea class="letter-body" id="replyBody"${sent ? ' readonly' : ''}>`
             + `${esc(reply.body || '')}</textarea>`
             + '<div class="letter-foot">'
-            + (ушло ? ''
+            + (sent ? ''
                 : '<button type="button" class="dating-btn primary" id="replySaveBtn">'
                 + 'Сохранить</button>'
                 + '<button type="button" class="dating-btn" id="replySendBtn">'
@@ -8996,7 +9015,7 @@
             + '<span class="letter-note" id="replyNote"></span>'
             + '</div>';
 
-        if (ушло) return;
+        if (sent) return;
 
         box.querySelector('#replySaveBtn')
             .addEventListener('click', () => replySave(index, box));
@@ -9131,9 +9150,9 @@
         mailTemplates = (templates.result || []).filter(row => row.enabled);
         // ⚠ Считаем **черновики**, а не строки: отправленное письмо уходит из пула
         // в «Доставку», и общее число могло бы вырасти от чего угодно.
-        const черновиков = mailPool.filter(row => row.status === 'draft').length;
-        if (mailPoolWas >= 0 && черновиков > mailPoolWas) mailPoolGrewAt = Date.now();
-        mailPoolWas = черновиков;
+        const drafts = mailPool.filter(row => row.status === 'draft').length;
+        if (mailPoolWas >= 0 && drafts > mailPoolWas) mailPoolGrewAt = Date.now();
+        mailPoolWas = drafts;
 
         mailPoolFor = site;
         mailPoolAt = Date.now();
@@ -9217,8 +9236,8 @@
     }
 
     // «письмо / письма / писем» после числа — с пробелом впереди.
-    function _писем_готово(n) {
-        return ' ' + _писем(n);
+    function _lettersDoneWord(n) {
+        return ' ' + _lettersWord(n);
     }
 
     // Растёт ли пул прямо сейчас — по прибавке черновиков за последние минуты.
@@ -9252,8 +9271,8 @@
         // потолок: сколько попросили, столько и сделает.
         if (mailMakeBusy) return true;
 
-        const потолок = Number((mailSaved.get(siteId()) || {}).mailing_pool_max || 0);
-        const черновиков = mailPool.filter(row => row.status === 'draft').length;
+        const cap = Number((mailSaved.get(siteId()) || {}).mailing_pool_max || 0);
+        const drafts = mailPool.filter(row => row.status === 'draft').length;
 
         // ⚠ **Полнота проверяется раньше роста, и это не мелочь.** Признак «пул
         // растёт» держится две минуты после последней прибавки — чтобы не мигать в
@@ -9262,7 +9281,7 @@
         // минуты над полным пулом, которого круг уже не трогает.
         //
         // Ровно это человек и увидел: «пул заполнен, лоадер продолжает крутиться».
-        if (потолок && черновиков >= потолок) return false;
+        if (cap && drafts >= cap) return false;
 
         // Место есть — набор идёт (только что клали письмо) либо придёт по смене.
         return mailPoolGrows() || mailScheduleLive();
@@ -9284,9 +9303,9 @@
             busy.hidden = !mailPoolFilling();
 
             if (mailMakeBusy) {
-                const сделано = Math.max(0, mailPool.length - mailMakeFrom);
+                const done = Math.max(0, mailPool.length - mailMakeFrom);
                 fillSlot('mail-pool-busy-text',
-                    сделано ? `готово ${сделано}${_писем_готово(сделано)}…`
+                    done ? `готово ${done}${_lettersDoneWord(done)}…`
                         : 'готовлю…');
             } else if (mailPoolGrows()) {
                 fillSlot('mail-pool-busy-text', 'набирается…');
@@ -9674,7 +9693,7 @@
                 + '<div class="letter-row"><span class="letter-key">Шаблон</span>'
                 + `<span class="letter-val">${esc(row.mail_name)}</span></div>`
                 + '<div class="letter-row"><span class="letter-key">Состояние</span>'
-                + `<span class="letter-val">${_состояние(row)}</span></div>`
+                + `<span class="letter-val">${_state(row)}</span></div>`
                 // Причина отказа — своей строкой и только когда она есть: ради неё
                 // журнал доставки и открывают.
                 + (row.status === 'failed' && row.error
@@ -9706,7 +9725,7 @@
 
     // Состояние письма словами. Три исхода, и каждый значит своё: письмо ждёт
     // отправки, ушло или не ушло.
-    function _состояние(row) {
+    function _state(row) {
         if (row.status === 'sent') {
             return 'отправлено' + (row.sent_at ? ` · ${esc(timeShift(row.sent_at))}` : '');
         }
@@ -9827,7 +9846,7 @@
         const drafts = mailPool.filter(row => row.status === 'draft').length;
         if (!drafts) return;
 
-        if (!confirm(`Убрать из пула ${drafts} ${_писем(drafts)}?\n\n`
+        if (!confirm(`Убрать из пула ${drafts} ${_lettersWord(drafts)}?\n\n`
             + 'Отправленные останутся. Восстановить убранное нельзя — '
             + 'только сгенерировать заново.')) {
             return;
@@ -9854,7 +9873,7 @@
 
     // «письмо / письма / писем» — по числу. Мелочь, но «убрать 1 писем» читается
     // как поломка ровно там, где нужно доверие.
-    function _писем(n) {
+    function _lettersWord(n) {
         const two = n % 100;
         if (two >= 11 && two <= 14) return 'писем';
 
@@ -10248,7 +10267,7 @@
         const scroll = dialogs ? dialogs.scrollTop : 0;
         // Был ли до отрисовки хоть один разговор: по этому и решаем, открывать ли
         // первый. Считаем до перерисовки — она обнуляет отметку выбора.
-        const былВыбор = !!chatTalkOpenKey;
+        const hadPick = !!chatTalkOpenKey;
 
         if (dialogs) dialogs.innerHTML = chatContacts(data);
         if (dialogs) dialogs.scrollTop = scroll;
@@ -10270,19 +10289,33 @@
         // ⚠ Только когда **ничего не открыто**: круг перерисовки идёт каждые
         // десять секунд, и переоткрытие уводило бы человека с разговора, который
         // он читает, — да ещё и стирало бы набранный текст в форме отправки.
-        const первый = (data.contacts || [])[0];
-        if (!былВыбор && первый && slot('chat-talk-thread')) {
-            chatTalkOpen(String(первый.uid), Number(первый.profile_id) || openId);
+        const first = (data.contacts || [])[0];
+        if (!hadPick && first && slot('chat-talk-thread')) {
+            chatTalkOpen(String(first.uid), Number(first.profile_id) || openId);
         }
 
-        // Листаем запросом: страница собеседниц серверная. После перехода
+        // Листаем запросом: страница диалогов серверная. После перехода
         // прокрутка в начало — на новой странице сохранять место незачем.
-        pagerRender(contactsPagerEl, Number(data.pages || 1), contactsPage, async (page) => {
-            contactsPage = page;
-            await chatLoad();
-            const box = slot('dialogs');
-            if (box) box.scrollTop = 0;
-        });
+        //
+        // ⚠⚠ **Пейджер рисуется у самого списка** (`dialogs-pager`), а не в
+        // `#contactsPager`. Тот — подвал другой области страницы, и на вкладке
+        // «Чат → Диалоги» его нет вовсе: кнопки уходили в никуда, а список
+        // обрывался на пятидесятом диалоге молча. Ручка страницы отдавала
+        // всегда — не хватало только места, куда их положить.
+        //
+        // ⚠ Выбор сбрасываем: открытый разговор на новой странице не показан, и
+        // «первый открываем сами» без сброса не сработало бы — открытое считается
+        // выбором (`hadPick`).
+        const foot = slot('dialogs-pager');
+        if (foot) {
+            pagerRender(foot, Number(data.pages || 1), contactsPage, async (page) => {
+                contactsPage = page;
+                chatTalkOpenKey = '';
+                await chatLoad();
+                const box = slot('dialogs');
+                if (box) box.scrollTop = 0;
+            }, data.contacts_total ? `диалогов: ${data.contacts_total}` : '');
+        }
 
         chatBind();
         peopleShow(refresh);
@@ -10315,17 +10348,17 @@
         }
 
         initiativePool = answer.result || [];
-        const пул = Number((answer.answer || {}).pool || 0);
+        const pool = Number((answer.answer || {}).pool || 0);
 
         const count = slot('initiative-count');
-        if (count) count.textContent = `в пуле: ${пул}`;
+        if (count) count.textContent = `в пуле: ${pool}`;
 
         // ⚠ Причина пустоты — **текстом от сервера**, а не «пусто». Молчащая
         // колонка без объяснения читается как поломка: человек не знает, набор
         // молчит, настройка снята или сломалось.
         if (!initiativePool.length) {
-            const почему = String((answer.answer || {}).why || '');
-            box.innerHTML = `<div class="talk-load">${esc(почему || 'Пул пуст.')}</div>`;
+            const why = String((answer.answer || {}).why || '');
+            box.innerHTML = `<div class="talk-load">${esc(why || 'Пул пуст.')}</div>`;
 
             return;
         }
@@ -10385,13 +10418,13 @@
                     // ⚠ По коду, а не по тексту: формулировку в роутере
                     // однажды поправят, и примета по словам замолчит. Текст
                     // оставлен запасным — вкладка могла не перечитать `api.js`.
-                    const ушла = err.status === 404
+                    const gone = err.status === 404
                         || /карточки #\d+ нет/.test(String(err.message || ''));
 
                     showNotification(
-                        ушла ? 'Карточка уже ушла из пула — список обновлён'
+                        gone ? 'Карточка уже ушла из пула — список обновлён'
                              : err.message,
-                        ушла ? 'info' : 'error');
+                        gone ? 'info' : 'error');
                     initiativeLoad();
 
                     return;
@@ -10412,13 +10445,13 @@
     // «В сети» в списке слева, а здесь она означала бы вопрос, которого тут не
     // задают.
     function talkSide(name, photo, uid, hint, online = null) {
-        const буква = esc((name || '?').slice(0, 1).toUpperCase());
+        const letter = esc((name || '?').slice(0, 1).toUpperCase());
 
         return `<span class="talk-side" title="${esc(hint)}">`
             + (online === null ? ''
                 : `<span class="person-dot${online ? ' online' : ''}"`
                   + ` title="${online ? 'в сети' : 'не в сети'}"></span>`)
-            + `<span class="person-face">${буква}`
+            + `<span class="person-face">${letter}`
             + (photo ? `<img src="${esc(photo)}" alt="" referrerpolicy="no-referrer"`
                 + ' onerror="this.remove()">' : '')
             + '</span>'
@@ -10672,9 +10705,9 @@
     //
     // ⚠ Потолок **не выдумываем**: не знаем его — показываем одно число. Соврать
     // знаменателем хуже, чем его не показать: по нему решают, ждать ли добора.
-    function poolCount(сколько, потолок) {
-        const n = Number(сколько) || 0;
-        const max = Number(потолок) || 0;
+    function poolCount(count, cap) {
+        const n = Number(count) || 0;
+        const max = Number(cap) || 0;
 
         if (!n && !max) return '';
 
@@ -10706,8 +10739,8 @@
     // порядок обычный: латиница, потом кириллица.
     function peopleSorted(people) {
         return [...(people || [])].sort((a, b) => {
-            const сеть = Number(!!b.online) - Number(!!a.online);
-            if (сеть) return сеть;
+            const byOnline = Number(!!b.online) - Number(!!a.online);
+            if (byOnline) return byOnline;
 
             // `trim`: имя из ленты приходит как есть, и ведущий пробел уводил бы
             // человека в начало списка мимо всякого алфавита.
@@ -11358,10 +11391,10 @@
 
         // Запас в пиксель: доли пикселя после прокрутки — обычное дело, и без него
         // правая стрелка не гаснет даже в самом конце.
-        const край = strip.scrollWidth - strip.clientWidth - strip.scrollLeft;
+        const edge = strip.scrollWidth - strip.clientWidth - strip.scrollLeft;
 
         left.classList.toggle('off', strip.scrollLeft <= 1);
-        right.classList.toggle('off', край <= 1);
+        right.classList.toggle('off', edge <= 1);
     }
 
     // Вешает обработчики на стрелки. ⚠ **Один раз на загрузку шаблона**: узлы
@@ -11373,12 +11406,12 @@
             const {lane: strip, left, right} = stripSlots(row);
             if (!strip || !left || !right) return;
 
-            const шаг = (куда) => strip.scrollBy({
-                left: куда * stripStep(strip),
+            const step = (delta) => strip.scrollBy({
+                left: delta * stripStep(strip),
                 behavior: 'smooth'
             });
-            left.addEventListener('click', () => шаг(-1));
-            right.addEventListener('click', () => шаг(1));
+            left.addEventListener('click', () => step(-1));
+            right.addEventListener('click', () => step(1));
 
             // ⚠ Следим и за самой прокруткой: ленту листают не только стрелками —
             // трекпадом, колесом, стрелками клавиатуры. Не следи мы, кнопка у края
@@ -11987,12 +12020,12 @@
             return '<div class="talk-load">Переписки пока нет.</div>';
         }
 
-        const лица = faces || {him: '', her: ''};
+        const sides = faces || {him: '', her: ''};
 
         return '<div class="talk-full">'
             + [...rows].reverse().map(m => {
                 const out = m.direction === 'out';
-                const photo = out ? лица.her : лица.him;
+                const photo = out ? sides.her : sides.him;
 
                 return `<div class="msg ${out ? 'out' : 'in'}`
                     // ⚠ Ждущий ответ помечен краской: он стоит в ленте как
@@ -12213,17 +12246,17 @@
     // ⚠ **Вкладку меняем до выбора анкеты.** `openSet` запоминает выбранного за
     // текущей вкладкой (`openByTab`), и сделай мы наоборот — анкета осела бы за той
     // вкладкой, с которой ушли, а на входящих осталась бы прежняя.
-    function mailInOpenFor(id, наИзбранных = false) {
+    function mailInOpenFor(id, onFavorites = false) {
         // ⚠ **Ведём туда, где письмо и лежит.** Разделение по избранным — правило
         // показа (`api.md`, §3.7.4), и значок обязан его знать: иначе он приводит
         // на вкладку, где писем этой анкеты нет ни одного.
-        workTab = наИзбранных ? 'fav' : 'mail';
+        workTab = onFavorites ? 'fav' : 'mail';
         localStorage.setItem(WORK_TAB_KEY, workTab);
 
         // ⚠ И подвкладку тоже: обе вкладки открываются на той панели, где стояли в
         // прошлый раз, — а по конверту человек идёт читать письмо, а не смотреть
         // пул рассылки или звёздочки.
-        if (наИзбранных) {
+        if (onFavorites) {
             favTab = 'talks';
             localStorage.setItem(FAV_TAB_KEY, favTab);
         } else {
@@ -12235,8 +12268,8 @@
         // «Письма входящие» пропускает всех, но страница остаётся та, на которой
         // стояли, — и человек, нажавший на конверт, увидел бы справа письма, а слева
         // не нашёл бы, чьи они.
-        const где = shownRows().findIndex(one => one.id === id);
-        if (где >= 0) page = Math.floor(где / perPage);
+        const at = shownRows().findIndex(one => one.id === id);
+        if (at >= 0) page = Math.floor(at / perPage);
 
         openSet(id);
         tablePaint(0);
@@ -12415,13 +12448,13 @@
             return `Инвайтов ушло за последние 5 минут: ${fresh}`;
         }
 
-        const за12 = s.capped
+        const last12 = s.capped
             ? `${s.forecast_12h} — упрётся в дневную норму (осталось ${s.cap_left})`
             : s.forecast_12h;
 
         return `Ушло за 5 минут: ${s.last_5min}`
             + ` · сейчас ${s.per_hour} в час`
-            + ` · за 12 часов при таком темпе: ${за12}`;
+            + ` · за 12 часов при таком темпе: ${last12}`;
     }
 
     function inviteFlyPaint(rows) {
@@ -12449,11 +12482,11 @@
         // Конверты по ленте рисовать верно — они отвечают на «идёт ли отправка
         // сейчас», и тридцати строк на это довольно. А число обязано быть
         // настоящим.
-        const счёт = inviteSpeed.last_5min === undefined ? fresh : inviteSpeed.last_5min;
+        const count = inviteSpeed.last_5min === undefined ? fresh : inviteSpeed.last_5min;
 
         el.innerHTML = Array.from({length: Math.min(fresh, FLY_MAX)}, (_, at) =>
             `<span class="tab-fly-one" style="animation-delay:${at * 0.12}s">✉</span>`
-        ).join('') + (счёт > FLY_MAX ? `<span class="tab-fly-more">${счёт}</span>` : '');
+        ).join('') + (count > FLY_MAX ? `<span class="tab-fly-more">${count}</span>` : '');
         el.title = inviteFlyTitle(fresh);
     }
 
@@ -12571,11 +12604,11 @@
         box.hidden = !rows.length;
         if (!rows.length) return;
 
-        const свежее = feedKey(rows[0]);
+        const newest = feedKey(rows[0]);
         // Первая отрисовка не мигает, но и «прочитанным» свежее не считает: пришло
         // следующее событие — оно мигнёт, как и должно.
         if (feedFirst) {
-            feedAck = свежее;
+            feedAck = newest;
             feedFirst = false;
         }
 
@@ -12618,9 +12651,9 @@
     // старше**: отметка стоит на одном событии, но человек, увидевший его, видел и
     // строку под ним — она была на экране в тот же миг.
     function feedAckAt(rows, at) {
-        const где = rows.findIndex(row => feedKey(row) === feedAck);
+        const mark = rows.findIndex(row => feedKey(row) === feedAck);
 
-        return где !== -1 && at >= где;
+        return mark !== -1 && at >= mark;
     }
 
     // Что перечитать, когда лента сказала о новой работе: вид события → загрузчик.
@@ -12673,9 +12706,9 @@
         // ⚠ Набор не растёт бесконечно: лента отдаёт последние `FEED_LIMIT` строк,
         // и всё старше из неё давно уехало. Чистим по тому, что лента показывает.
         if (feedFreshSeen.size > FEED_LIMIT * 2) {
-            const видимые = new Set(rows.map(feedKey));
+            const shown = new Set(rows.map(feedKey));
             feedFreshSeen.forEach((key) => {
-                if (!видимые.has(key)) feedFreshSeen.delete(key);
+                if (!shown.has(key)) feedFreshSeen.delete(key);
             });
         }
     }
@@ -12714,25 +12747,25 @@
         // щелчок значит «я это видел», а видел человек всю ленту разом. Поставь мы
         // её на вторую — верхняя, то есть самое свежее, осталась бы мигать после
         // того, как её прочли.
-        const верх = box.querySelector('.feed-line');
-        feedAck = (верх && верх.dataset.key) || line.dataset.key || '';
+        const top = box.querySelector('.feed-line');
+        feedAck = (top && top.dataset.key) || line.dataset.key || '';
         box.querySelectorAll('.feed-line').forEach(one => one.classList.remove('fresh'));
     });
 
     // Открывает вкладку, к которой относится событие. Вид, которому вести некуда
     // (`panel`, `warn`), не ведёт: там смотреть нечего, кроме самой строки.
     function feedGo(kind) {
-        const куда = FEED_WHERE[kind];
-        if (!куда) return;
+        const where = FEED_WHERE[kind];
+        if (!where) return;
 
-        const [tab, sub] = куда;
+        const [tab, sub] = where;
         workTab = tab;
         localStorage.setItem(WORK_TAB_KEY, workTab);
 
         // Подвкладку ставим через тот же ключ, что и её полоса: разойдись они, и
         // полоса показала бы одно, а панель под ней — другое.
-        const ключ = {chat: CHAT_TAB_KEY, mail: MAIL_TAB_KEY, fav: FAV_TAB_KEY}[tab];
-        if (ключ) localStorage.setItem(ключ, sub);
+        const key = {chat: CHAT_TAB_KEY, mail: MAIL_TAB_KEY, fav: FAV_TAB_KEY}[tab];
+        if (key) localStorage.setItem(key, sub);
         if (tab === 'chat') chatTab = sub;
         if (tab === 'mail') mailTab = sub;
         if (tab === 'fav') favTab = sub;
@@ -12827,9 +12860,9 @@
         // бы пачками по шесть — то есть «по мере готовности» превращалось бы в
         // «иногда». Признак роста гаснет через две минуты после последней прибавки,
         // и шаг сам возвращается к спокойному.
-        const срок = (mailMakeBusy || mailPoolGrows())
+        const period = (mailMakeBusy || mailPoolGrows())
             ? MAIL_POOL_TICK_MS : MAIL_POOL_IDLE_MS;
-        if (Date.now() - mailPoolAt < срок - 500) return;
+        if (Date.now() - mailPoolAt < period - 500) return;
 
         // ⚠ Метку сайта сбрасываем: `mailPoolShow` берёт её как «уже загружено», а
         // нам нужно именно перечитать.
@@ -13166,18 +13199,18 @@
                 + ' не трогает, даже старые: список не должен пустеть">запас</span>';
         }
 
-        const дней = mailLifeDays(row.created_at);
-        if (дней === null) return '';
+        const days = mailLifeDays(row.created_at);
+        if (days === null) return '';
 
-        const осталось = keep - дней;
-        if (осталось <= 0) {
+        const left = keep - days;
+        if (left <= 0) {
             return '<span class="mail-life gone" title="старше срока — уйдёт'
                 + ' ближайшим заходом круга">уходит</span>';
         }
 
-        return `<span class="mail-life" title="шаблон уйдёт через ${осталось}`
-            + ` ${_днейСлово(осталось)}: срок из настроек сайта">${осталось}`
-            + ` ${_днейСлово(осталось)}</span>`;
+        return `<span class="mail-life" title="шаблон уйдёт через ${left}`
+            + ` ${_daysWord(left)}: срок из настроек сайта">${left}`
+            + ` ${_daysWord(left)}</span>`;
     }
 
     // Кого уборка бережёт как запас — считается в `listPaint`, а здесь читается:
@@ -13197,7 +13230,7 @@
         return Math.floor((Date.now() - at) / 86400000);
     }
 
-    function _днейСлово(n) {
+    function _daysWord(n) {
         const two = n % 100;
         if (two >= 11 && two <= 14) return 'дней';
 
@@ -13266,11 +13299,11 @@
 
         // ⚠ Порядок для расчёта срока — **тот же, что у уборки**: свежие первыми.
         // Считай мы по порядку списка, «бережём свежие N» указывало бы не на тех.
-        const свежие = [...mails]
+        const fresh = [...mails]
             .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
             .slice(0, Number((tmplSaved || {}).template_per_day || 0))
             .map(one => one.id);
-        mailLifeSafe = свежие;
+        mailLifeSafe = fresh;
 
         slot('list').innerHTML = mails.map((row, index) =>
             `<div class="mail-row${row.id === tmplOpenId ? ' open' : ''}" data-id="${row.id}">`

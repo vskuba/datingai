@@ -49,6 +49,19 @@ FAVORITE_MAIL_TABLE = 'favorite_mail'
 # Сколько карточек отдаём странице. Тот же предел, что у пула писем.
 FAVORITE_MAIL_LIMIT = 300
 
+# Сколько переписок на страницу списка «Диалоги».
+#
+# ⚠⚠ **Список стал длиннее предела, и это видно.** Прежде он отдавался целиком,
+# одним `LIMIT 300`: пока переписок было три десятка, разница между «все» и
+# «первые триста» не проявлялась, а на живом сайте список уехал за край экрана —
+# прокруткой его листали, а всё, что дальше трёхсот, не показывалось **вовсе и
+# молча**.
+#
+# ⚠ Число то же, что у диалогов чата (`chat.CHAT_DIALOGS_PAGE`): списки стоят на
+# соседних вкладках, выглядят одинаково и листаются одним и тем же пейджером.
+# Разные размеры страницы читались бы как разница по существу, которой нет.
+FAVORITE_MAIL_THREADS_PAGE = 50
+
 
 class DatingFavoriteMailGenerate(BaseModel):
     """Повод набрать пул. ⚠ Шаблонов здесь нет — их у этого занятия не бывает."""
@@ -170,8 +183,9 @@ async def favorite_mail_list(site_id: int = 0, status_: str = 'draft',
 
 @router.get('/threads', include_in_schema=False)
 async def favorite_mail_threads(site_id: int = 0, profile_id: int = 0,
+                                       page: int = 1,
                                        user: AuthUser = Depends(auth_required)):
-    """Переписки с избранными: пары «анкета — человек», свежие сверху.
+    """Переписки с избранными: пары «анкета — человек», свежие сверху, страницей.
 
     Args:
         site_id: сайт-закладка. Ноль — пустой список, а не переписки всех сайтов.
@@ -180,12 +194,14 @@ async def favorite_mail_threads(site_id: int = 0, profile_id: int = 0,
             ⚠ **Фильтр, а не условие показа**, как у диалогов чата (§3.8) и у
             журнала доставки: без выбора список полон и отвечает на «что вообще
             происходит на сайте».
+        page: страница, с единицы. Больше последней — отдаём последнюю.
 
     Returns:
         dict: `result` — по записи на пару: `profile_id`, `profile_name`, `uid`,
         `name`, `photo`, `letters` (сколько писем в переписке), `last_at` (когда
         последнее), `last_side` (`him` — ждёт нашего ответа, `her` — ждём его),
-        `in_pool` (лежит ли ему черновик).
+        `in_pool` (лежит ли ему черновик). Рядом `total`, `page`, `pages` — ими
+        страница рисует пейджер.
 
     ⚠ **Переписка — это письма, а не звёздочка.** В списке только те избранные, с
     кем письма были; добавленный в избранные и молчащий сюда не попадает —
@@ -195,19 +211,32 @@ async def favorite_mail_threads(site_id: int = 0, profile_id: int = 0,
     ушедшего (рассылка и возобновление). Смотри мы только входящие, переписка, где
     последними писали мы, выглядела бы короче, чем есть, — а именно она здесь
     главная: это и есть затихший разговор.
+
+    ⚠⚠ **Страницами, а не «первыми тремястами».** Прежде список отдавался одним
+    `LIMIT 300` без счёта, и на живом сайте всё, что дальше, не показывалось
+    **молча**: прокрутка доезжала до конца, и конец выглядел концом списка.
+    Пейджеру нужен ещё и счёт — иначе он не знает, сколько страниц, а человек не
+    знает, сколько всего переписок.
     """
     if not int(site_id or 0):
-        return {'result': []}
+        return {'result': [], 'total': 0, 'page': 1, 'pages': 1}
 
-    sql = (
-        'SELECT f.profile_id, f.uid,'
-        '       COALESCE(NULLIF(c.name, %s), NULLIF(comp.name, %s), %s) AS name,'
-        '       COALESCE(NULLIF(comp.photo, %s), NULLIF(c.photo, %s), %s) AS photo,'
-        '       p.login AS profile_login, p.profile AS profile_card,'
-        '       talk.letters, talk.last_at, talk.last_side,'
-        '       EXISTS (SELECT 1 FROM favorite_mail d'
-        '                WHERE d.profile_id = f.profile_id AND d.uid = f.uid'
-        "                  AND d.status = 'draft') AS in_pool"
+    # ⚠⚠ **Отбор пар — один кусок SQL на счёт и на список.**
+    #
+    # Пейджер рисуется по счёту, а листается список: разойдись условия — число
+    # страниц перестало бы отвечать содержимому, и последняя выходила бы пустой.
+    # Тот же приём и по той же причине стоит у диалогов чата (`chat.py`), где
+    # правило «диалог начинается с ответа» повторено в обоих запросах.
+    #
+    # ⚠ `contact` и `companion` сюда не входят: они дают **имя и лицо**, а не
+    # участвуют в отборе. Ключи у обоих уникальны (`uk_dating_contact`,
+    # `uq_dating_companion`), строк не размножают — значит счёту не нужны, а
+    # лишний `JOIN` в нём стоил бы двух проходов по чужим таблицам.
+    #
+    # ⚠⚠ Кусок разрезан **на соединение и условие**, чтобы список вставил свои
+    # `LEFT JOIN` между ними. Резать готовую строку `replace`-ом нельзя: правка
+    # пробела в одном месте молча оставила бы список без имён.
+    pairs_join = (
         '  FROM favorite f'
         '  JOIN profile p ON p.id = f.profile_id'
         '  JOIN ('
@@ -228,28 +257,51 @@ async def favorite_mail_threads(site_id: int = 0, profile_id: int = 0,
         '       ) AS all_mail'
         '      WHERE at IS NOT NULL'
         '      GROUP BY profile_id, uid) AS talk'
-        '    ON talk.profile_id = f.profile_id AND talk.uid = f.uid'
-        '  LEFT JOIN contact c'
-        '    ON c.profile_id = f.profile_id AND c.uid = f.uid'
-        '  LEFT JOIN companion comp'
-        '    ON comp.site_id = f.site_id AND comp.uid = f.uid'
+        '    ON talk.profile_id = f.profile_id AND talk.uid = f.uid')
+
+    pairs_where = (
         ' WHERE f.site_id = %s AND (%s = 0 OR f.profile_id = %s)'
         # ⚠ Тем же набором состояний, что отсекает их у «Входящих»: разойдись
         # перечисления — пара либо задвоилась бы в двух списках, либо исчезла из
         # обоих. `fail` не считается избранным: звёздочку нажать не вышло.
         f'   AND f.state IN ({FAVORITE_STATES_SQL})')
 
-    args = ['', '', '', '', '', '', ' ', ' ',
-            int(site_id), int(profile_id), int(profile_id),
-            *FAVORITE_STATES]
+    # Имя и лицо собеседника. ⚠ Только в списке: счёту они не нужны.
+    pairs_card = (
+        '  LEFT JOIN contact c'
+        '    ON c.profile_id = f.profile_id AND c.uid = f.uid'
+        '  LEFT JOIN companion comp'
+        '    ON comp.site_id = f.site_id AND comp.uid = f.uid')
 
-    # Свежие сверху: список читают, чтобы найти работу, а работа — в том, что
-    # шевелилось последним.
-    sql += ' ORDER BY talk.last_at DESC LIMIT %s'
-    args.append(FAVORITE_MAIL_LIMIT)
+    # Доводы отбора: две метки разделителя `last_side`, сайт, анкета дважды и
+    # состояния избранного. Нужны обоим запросам, и в том же порядке.
+    pairs_args = [' ', ' ', int(site_id), int(profile_id), int(profile_id),
+                  *FAVORITE_STATES]
+
+    size = FAVORITE_MAIL_THREADS_PAGE
 
     async with mysql_get_db_async() as db:
-        await db.execute(sql, tuple(args))
+        await db.execute(f'SELECT COUNT(*) AS n {pairs_join}{pairs_where}',
+                         tuple(pairs_args))
+        total = int(((await db.fetchone()) or {}).get('n') or 0)
+
+        pages = max(1, (total + size - 1) // size)
+        page = min(max(int(page or 1), 1), pages)
+
+        # Свежие сверху: список читают, чтобы найти работу, а работа — в том, что
+        # шевелилось последним.
+        await db.execute(
+            'SELECT f.profile_id, f.uid,'
+            '       COALESCE(NULLIF(c.name, %s), NULLIF(comp.name, %s), %s) AS name,'
+            '       COALESCE(NULLIF(comp.photo, %s), NULLIF(c.photo, %s), %s) AS photo,'
+            '       p.login AS profile_login, p.profile AS profile_card,'
+            '       talk.letters, talk.last_at, talk.last_side,'
+            '       EXISTS (SELECT 1 FROM favorite_mail d'
+            '                WHERE d.profile_id = f.profile_id AND d.uid = f.uid'
+            "                  AND d.status = 'draft') AS in_pool"
+            + pairs_join + pairs_card + pairs_where
+            + ' ORDER BY talk.last_at DESC LIMIT %s OFFSET %s',
+            tuple(['', '', '', '', '', '', *pairs_args, size, (page - 1) * size]))
         rows = await db.fetchall()
 
     threads = []
@@ -269,7 +321,7 @@ async def favorite_mail_threads(site_id: int = 0, profile_id: int = 0,
         got['in_pool'] = bool(got.get('in_pool'))
         threads.append(got)
 
-    return {'result': threads}
+    return {'result': threads, 'total': total, 'page': page, 'pages': pages}
 
 
 @router.get('/threads/{profile_id}/{uid}', include_in_schema=False)
