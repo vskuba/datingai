@@ -6814,7 +6814,8 @@
         try {
             const data = (await getData(
                 `${BASE}/api/dating/favorite-mail/threads?site_id=${site}`
-                + `&profile_id=${prevId}&page=${favTalksPage + 1}`)) || {};
+                + `&profile_id=${prevId}&page=${favTalksPage + 1}`
+                + `&size=${talkPageSize('fav-talks-list')}`)) || {};
 
             favTalks = data.result || [];
             favTalksTotal = Number(data.total || 0);
@@ -6842,6 +6843,39 @@
         // ⚠ Только когда **ничего не выбрано**: перерисовка по кнопке «⟳» не
         // должна уводить человека с разговора, который он читает.
         if (!favTalkOpen && favTalks.length) favTalkSelect(0);
+    }
+
+    // Высота карточки разговора вместе с зазором. ⚠ Замерено на живой странице:
+    // 40 пикселей сама карточка плюс 6 отступа. Число здесь, а не вычисляется, по
+    // двум причинам: при пустом списке мерить нечего, а при непустом замер первой
+    // карточки ловит ту, у которой две строки имени вместо одной.
+    const TALK_ROW_HEIGHT = 46;
+
+    // Меньше этого страницу не просим. ⚠ На низком окне расчёт даёт три-четыре
+    // строки, и листать их — мучение: пейджер занимает больше места, чем список.
+    const TALK_PAGE_MIN = 8;
+
+    // ⚠⚠ **Сколько строк влезает в список, столько и просим у сервера.**
+    //
+    // Прежде размер страницы был прибит на сервере полусотней, и список уезжал
+    // под прокрутку: 26 переписок в области на 14 строк. Пейджер при этом
+    // показывал «всё на одной странице» — и был прав, а человек видел скроллбар
+    // и делал вывод, что пагинации нет вовсе.
+    //
+    // ⚠ Считает **страница**, потому что только она знает высоту окна: у одного
+    // человека 768 пикселей, у другого 1440. Одно число на обоих либо оставляет
+    // пустоту внизу, либо прячет строки.
+    //
+    // ⚠ Потолок держит сервер (`chat_dialogs_size`): `?size=100000` собирался бы
+    // секундами и рисовался минуту.
+    function talkPageSize(slotName) {
+        const box = slot(slotName);
+        if (!box) return 0;
+
+        const height = box.clientHeight;
+        if (!height) return 0;
+
+        return Math.max(TALK_PAGE_MIN, Math.floor(height / TALK_ROW_HEIGHT));
     }
 
     function favTalksPagerPaint() {
@@ -7372,7 +7406,7 @@
         fillSlot('fav-mail-limits', saved.favorite_mail_per_day
             ? `Одному человеку не больше ${saved.favorite_mail_per_day} писем в `
             + `сутки. Одна анкета пишет не чаще, чем раз в `
-            + `${favMailHours(saved.favorite_mail_gap)}, — кому угодно. `
+            + `${favMailGapWords(saved.favorite_mail_gap)}, — кому угодно. `
             + 'Меняют это в настройках сайта.'
             : '');
 
@@ -7707,10 +7741,24 @@
     }
 
     // Пауза словами: в настройках она в секундах, а человеку нужны часы.
-    function favMailHours(seconds) {
-        const hours = Math.round(Number(seconds || 0) / 3600);
+    // Пауза между письмами словами: «45 мин», «1 час», «4 часа».
+    //
+    // ⚠⚠ **На вход МИНУТЫ, а не секунды.** Настройка хранится минутами — так её
+    // вводит человек («Пауза между письмами, мин»). Функция делила на 3600, и
+    // после перевода настройки час показался бы как «0 часов»: подпись под
+    // формой спорила бы с числом в самой форме.
+    //
+    // ⚠ Меньше часа называем минутами: пауза бывает в 45 минут, и «1 час» вместо
+    // них отправил бы человека ждать лишнее.
+    function favMailGapWords(minutes) {
+        const value = Math.max(0, Math.round(Number(minutes || 0)));
 
-        return hours === 1 ? '1 час' : (hours < 5 ? `${hours} часа` : `${hours} часов`);
+        if (value < 60) return `${value} мин`;
+
+        const hours = Math.round(value / 60);
+        const word = hours === 1 ? 'час' : (hours < 5 ? 'часа' : 'часов');
+
+        return `${hours} ${word}`;
     }
 
     const MAIL_TAB_KEY = 'dating.profile.mailtab';
@@ -10221,7 +10269,8 @@
         try {
             data = (await getData(`${BASE}/api/dating/chat/dialogs`
                 + `?site_id=${requestSite}&profile_id=${requestId || 0}`
-                + `&page=${contactsPage + 1}`)).result || {};
+                + `&page=${contactsPage + 1}`
+                + `&size=${talkPageSize('dialogs')}`)).result || {};
 
             // ⚠ Число ждущих ответа приходит **вместе со списком**: второй запрос
             // ради значка дал бы два разных момента времени в одном взгляде.

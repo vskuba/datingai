@@ -28,7 +28,9 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.uvicorn.routers.dating import chat as chat_module
 from src.uvicorn.routers.dating import favorite_mail as favorite_module
-from src.uvicorn.routers.dating.chat import CHAT_DIALOGS_PAGE, chat_dialogs
+from src.uvicorn.routers.dating.chat import (CHAT_DIALOGS_PAGE,
+                                             CHAT_DIALOGS_PAGE_MAX,
+                                             chat_dialogs, chat_dialogs_size)
 from src.uvicorn.routers.dating.favorite_mail import (
     FAVORITE_MAIL_THREADS_PAGE, favorite_mail_threads)
 
@@ -179,6 +181,72 @@ class TestFavoriteThreadsPaging:
 
         for field in ('name', 'photo', 'profile_name', 'letters', 'last_side'):
             assert field in row, f'в строке нет поля {field}'
+
+
+class TestThePageSizeComesFromThePage:
+    """⚠⚠ Сколько строк влезает в окно, столько страница и просит.
+
+    Прежде размер был прибит на сервере полусотней, и список уезжал под
+    прокрутку: 26 переписок в области на 14 строк. Пейджер показывал «всё на
+    одной странице» — и был прав, а человек видел скроллбар и делал вывод, что
+    пагинации нет вовсе.
+
+    ⚠ Считать может только страница: у одного человека окно 768 пикселей, у
+    другого 1440. Одно число на обоих либо оставляет пустоту внизу, либо прячет
+    строки.
+
+    ⚠⚠ Но принимать любое число нельзя — отсюда потолок, и он здесь же
+    проверяется: `?size=100000` собирался бы секундами и рисовался минуту.
+    """
+
+    def test_a_reasonable_size_is_taken(self):
+        assert chat_dialogs_size(14) == 14
+
+    def test_zero_means_the_default(self):
+        """Ноль — «реши сам»: страница ещё не отрисована и высоты не знает."""
+        assert chat_dialogs_size(0) == CHAT_DIALOGS_PAGE
+
+    def test_a_negative_size_is_a_typo(self):
+        assert chat_dialogs_size(-5) == CHAT_DIALOGS_PAGE
+
+    def test_words_give_the_default(self):
+        """⚠ Значение приходит из запроса, то есть может быть чем угодно."""
+        assert chat_dialogs_size('много') == CHAT_DIALOGS_PAGE
+
+    def test_a_huge_size_is_capped(self):
+        """⚠⚠ Потолок — защита базы, а не придирка.
+
+        Столько строк не влезет ни в один экран: просьба о большем либо описка,
+        либо пришла не от страницы.
+        """
+        assert chat_dialogs_size(100_000) == CHAT_DIALOGS_PAGE_MAX
+
+    def test_the_favourites_use_the_same_rule(self):
+        """⚠ Одно правило на оба списка: они соседние и листаются одним пейджером.
+
+        Своя копия у фаворитов разошлась бы с чатом при первой правке потолка —
+        и одинаковые на вид списки повели бы себя по-разному.
+        """
+        import inspect
+
+        code = inspect.getsource(favorite_module.favorite_mail_threads)
+
+        assert 'chat_dialogs_size' in code, \
+            'переписки избранных считают размер страницы своим правилом'
+
+    async def test_the_asked_size_reaches_the_query(self, chat_pairs):
+        """⚠ Сторож проводки: число из запроса вправду меняет длину страницы.
+
+        Порвись связь — ручка молча брала бы умолчание, страница просила бы своё,
+        и прокрутка вернулась бы при зелёных проверках выше.
+        """
+        got = (await chat_dialogs(site_id=STAND_SITE, page=1, size=2,
+                                  user=None))['result']
+
+        assert len(got['contacts']) <= 2, \
+            f'просили 2 строки, пришло {len(got["contacts"])}'
+        assert got['pages'] >= 2, \
+            f'при размере 2 и {PAIRS} парах страниц должно быть больше одной'
 
 
 class TestThePageBoundary:

@@ -37,6 +37,7 @@ from src.dating.mail_reply import mail_reply_thread
 from src.dating.mail_send import (DatingMailSendError, mail_send_mark,
                                          mail_send_one)
 from src.dating.online import online_show
+from src.uvicorn.routers.dating.chat import chat_dialogs_size
 from src.uvicorn.routers.dating.site_ import site_setting
 from src.uvicorn.routers.setting import setting_timezone_hours
 
@@ -49,7 +50,7 @@ FAVORITE_MAIL_TABLE = 'favorite_mail'
 # Сколько карточек отдаём странице. Тот же предел, что у пула писем.
 FAVORITE_MAIL_LIMIT = 300
 
-# Сколько переписок на страницу списка «Диалоги».
+# Сколько переписок на страницу списка «Диалоги», когда страница не просит своё.
 #
 # ⚠⚠ **Список стал длиннее предела, и это видно.** Прежде он отдавался целиком,
 # одним `LIMIT 300`: пока переписок было три десятка, разница между «все» и
@@ -183,7 +184,7 @@ async def favorite_mail_list(site_id: int = 0, status_: str = 'draft',
 
 @router.get('/threads', include_in_schema=False)
 async def favorite_mail_threads(site_id: int = 0, profile_id: int = 0,
-                                       page: int = 1,
+                                       page: int = 1, size: int = 0,
                                        user: AuthUser = Depends(auth_required)):
     """Переписки с избранными: пары «анкета — человек», свежие сверху, страницей.
 
@@ -195,6 +196,9 @@ async def favorite_mail_threads(site_id: int = 0, profile_id: int = 0,
             журнала доставки: без выбора список полон и отвечает на «что вообще
             происходит на сайте».
         page: страница, с единицы. Больше последней — отдаём последнюю.
+        size: сколько строк на странице. Ноль — умолчание
+            (`FAVORITE_MAIL_THREADS_PAGE`). Считает страница, по высоте видимой
+            области; потолок — на сервере.
 
     Returns:
         dict: `result` — по записи на пару: `profile_id`, `profile_name`, `uid`,
@@ -278,7 +282,9 @@ async def favorite_mail_threads(site_id: int = 0, profile_id: int = 0,
     pairs_args = [' ', ' ', int(site_id), int(profile_id), int(profile_id),
                   *FAVORITE_STATES]
 
-    size = FAVORITE_MAIL_THREADS_PAGE
+    # ⚠ Предел и его потолок — общие с диалогами чата (`chat_dialogs_size`):
+    # списки соседние, листаются одним пейджером, и два правила разошлись бы.
+    size = chat_dialogs_size(size, FAVORITE_MAIL_THREADS_PAGE)
 
     async with mysql_get_db_async() as db:
         await db.execute(f'SELECT COUNT(*) AS n {pairs_join}{pairs_where}',

@@ -29,6 +29,51 @@ router = APIRouter(prefix='/api/dating/chat', tags=['dating'])
 # разных размера означали бы прыгающий пейджер при переключении фильтра.
 CHAT_DIALOGS_PAGE = 50
 
+# ⚠⚠ **Потолок размера страницы, который вправе попросить страница.**
+#
+# Размер считает она сама — по высоте видимой области, чтобы список не уезжал под
+# прокрутку: у одного человека окно 768, у другого 1440, и одно число на обоих
+# либо оставляет пустоту, либо прячет строки.
+#
+# Но принимать любое число нельзя: `?size=100000` — это запрос, который база
+# будет собирать секундами, а страница рисовать минуту. Потолок — вдвое больше
+# умолчания: столько строк не влезет ни в один экран, а значит просьба о большем
+# либо описка, либо не от страницы.
+CHAT_DIALOGS_PAGE_MAX = 100
+
+
+def chat_dialogs_size(size: int, default: int = 0) -> int:
+    """Сколько строк отдать на странице. Негодное — умолчание.
+
+    Args:
+        size: сколько просит страница. Ноль или пусто — «реши сам».
+        default: чем ответить, когда не просят. Ноль — взять `CHAT_DIALOGS_PAGE`.
+
+    Returns:
+        int: от 1 до `CHAT_DIALOGS_PAGE_MAX`.
+
+    ⚠ **Одна функция на оба списка** — диалоги чата и переписки избранных. Они
+    стоят на соседних вкладках, выглядят одинаково и листаются одним пейджером;
+    две копии правила разошлись бы при первой правке потолка.
+
+    ⚠⚠ **Умолчание читается в теле, а не стоит в сигнатуре.** Значение довода по
+    умолчанию вычисляется **один раз, при определении функции**, — то есть это
+    снимок константы на момент импорта. Поймано тестом границы: он подменяет
+    `CHAT_DIALOGS_PAGE`, чтобы вторая страница появилась на трёх строках вместо
+    полусотни, и подмена молча не работала.
+    """
+    try:
+        want = int(size or 0)
+    except (TypeError, ValueError):
+        want = 0
+
+    fallback = int(default or 0) or CHAT_DIALOGS_PAGE
+
+    if want <= 0:
+        return fallback
+
+    return min(want, CHAT_DIALOGS_PAGE_MAX)
+
 
 @router.get('/ready', include_in_schema=False)
 async def chat_ready(site_id: int = 0, user=Depends(auth_required)):
@@ -172,7 +217,7 @@ async def chat_dialog_read(profile_id: int, uid: str,
 
 @router.get('/dialogs', include_in_schema=False)
 async def chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int = 1,
-                              user=Depends(auth_required)):
+                              size: int = 0, user=Depends(auth_required)):
     """Диалоги **всего сайта** страницей. Выбранная анкета — фильтр, не условие.
 
     Args:
@@ -181,6 +226,12 @@ async def chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int = 1,
             переписка выключенной учётки не исчезает, и прятать её значило бы
             терять разговоры вместе с флагом.
         page: страница, с единицы.
+        size: сколько строк на странице. Ноль — умолчание (`CHAT_DIALOGS_PAGE`).
+
+            ⚠ Считает **страница**, по высоте видимой области: у одного человека
+            окно 768, у другого 1440, и одно число на обоих либо оставляет
+            пустоту, либо прячет строки под прокрутку. Потолок — на сервере
+            (`chat_dialogs_size`).
 
     Returns:
         dict: `contacts` (как у карточки анкеты, плюс `profile_id`,
@@ -221,7 +272,7 @@ async def chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int = 1,
         return {'result': {'contacts': [], 'contacts_total': 0, 'page': 1, 'pages': 1}}
 
     page = max(1, int(page or 1))
-    size = CHAT_DIALOGS_PAGE
+    size = chat_dialogs_size(size)
 
     async with mysql_get_db_async() as db:
         # ⚠ Считаем **пары**, а не собеседников: один человек у двух анкет это два
