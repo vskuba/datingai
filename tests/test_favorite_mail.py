@@ -414,9 +414,10 @@ class TestAStarIsEnough:
         # три копии «спроси историю» разошлись бы на первой правке.
         assert 'talk_history_text' in inspect.getsource(answer._agent_ask), \
             'письмо снова пишется без переписки — агент не знает собеседника'
-        # ⚠ А вот «это письмо, а не реплика» решает само письмо.
-        assert 'mail=True' in inspect.getsource(answer.answer_mail_write), \
-            'письмо уходит как реплика в чат: получится две строки вместо абзаца'
+        # ⚠ А вот **какой** веткой сочинять решает само письмо: у соседа три
+        # шага сочинения, и развилка смотрит на `mail_kind`.
+        assert 'mail=ANSWER_MAIL_WRITE' in inspect.getsource(answer.answer_mail_write), \
+            'письмо уходит не веткой письма: получится реплика в двадцать слов'
 
 
 class TestTheBatchCountsLetters:

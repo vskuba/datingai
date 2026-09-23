@@ -115,7 +115,8 @@ class TestTheLetterKnowsTheMan:
 
         code = inspect.getsource(answer.answer_mail_write)
 
-        assert 'mail=True' in code, 'письмо не помечено как письмо'
+        assert 'mail=ANSWER_MAIL_WRITE' in code, \
+            'письмо не помечено как письмо первым'
 
         # ⚠ Разбираем **вызов**, а не ищем подстроку: слово `initiative` стоит
         # рядом в оговорке, объясняющей, почему флаг другой, — и поиск текстом
@@ -264,3 +265,58 @@ class TestPercent:
 
         assert await percent_share(
             STAND_SITE, 'favorite_mail_name_percent', 0.1) == 0.1
+
+
+class TestTheLengthIsDrawn:
+    """⚠⚠ Длину письма бросает панель, а не выбирает модель.
+
+    Пока длину задавала вилка в промпте («от одного абзаца до трёх»), из
+    двенадцати писем прода **девять вышли ровно в три абзаца**: у вилки верх
+    читается как цель, а образец в блоке JSON сам был на три абзаца — форму
+    образца модель копирует надёжнее, чем исполняет указания прозой.
+
+    ⚠ Жребий здесь был и раньше (`FAVORITE_MAIL_LENGTHS` шаблонной эпохи, с той
+    же оговоркой «однообразие длины видно так же, как однообразие слов») —
+    переезд писем на `dating_talk` унёс шаблон вместе с ним. Это возврат.
+    """
+
+    def test_the_dice_has_more_than_one_face(self):
+        from src.dating.answer import ANSWER_MAIL_LENGTHS
+
+        assert len(set(ANSWER_MAIL_LENGTHS)) >= 3, \
+            'вилка длины схлопнулась — письма снова будут одинаковыми'
+
+    def test_it_is_drawn_per_letter(self):
+        """⚠ Бросок на **каждое** письмо, а не один на заход."""
+        from src.dating.answer import ANSWER_MAIL_LENGTHS, answer_mail_length
+
+        got = {answer_mail_length() for _ in range(60)}
+
+        assert got <= set(ANSWER_MAIL_LENGTHS), 'жребий вернул чужое значение'
+        assert len(got) > 1, 'шестьдесят бросков дали одно значение — это не жребий'
+
+    def test_the_letter_sends_it(self):
+        """⚠ И доезжает до агента: без переменной промпт покажет метку словами."""
+        import inspect
+
+        from src.dating import answer
+
+        code = inspect.getsource(answer._agent_ask)
+
+        assert "'mail_length'" in code, 'длина письма не уезжает агенту'
+        assert 'answer_mail_length()' in code, 'длина перестала быть жребием'
+
+    def test_a_chat_reply_gets_no_length(self):
+        """⚠⚠ Реплике в чат длина не шлётся вовсе.
+
+        У неё своё правило — «до 20 слов, как в мессенджере», — и чужая длина
+        абзацами спорила бы с ним.
+        """
+        import inspect
+
+        from src.dating import answer
+
+        code = inspect.getsource(answer._agent_ask)
+
+        assert "answer_mail_length() if mail else ''" in code, \
+            'длина письма уезжает и в ветку чата'
