@@ -102,10 +102,8 @@ from src.dating.favorite import (FAVORITE_STATES,
 from src.dating.ready import password_pick
 from src.uvicorn.routers.dating.site_ import site_setting
 from src.dating.percent import percent_share
-from src.dating.mail_agent import (INVITE_SLOT_MAN,
-                                          DatingMailAgentError,
-                                          favorite_mail_template)
-from src.dating.mail import mail_render
+from src.dating.answer import answer_mail_write
+from src.dating.mail_agent import DatingMailAgentError
 from src.dating.json_column import json_column_load
 from src.dating.online import online_show
 from src.dating.schedule import schedule_now
@@ -325,7 +323,10 @@ async def favorite_mail_make(site_id: int, limit: int = 0,
     # Инвайты просят шаблон сразу: у них все проверки уже позади. Здесь же пара
     # отсеивается по онлайну и пределам прямо в цикле, и заход, где не прошла ни
     # одна, спросил бы шаблон впустую. Первая же прошедшая пара его и заказывает.
-    template, needs_name = None, False
+    # ⚠ Агент спрашивается **один раз на заход**, а не на письмо: это поход к
+    # соседу за номером, и он один на весь сайт. Лениво — как прежде шаблон:
+    # заход, где не прошла ни одна пара, не должен идти к соседу вовсе.
+    agent_id = 0
     # ⚠ Язык и страна — **один раз на заход**: они про сайт, а не про пару, и
     # настройка живёт у соседа. Запрос на пару был бы походом к соседу на каждое
     # письмо.
@@ -415,38 +416,53 @@ async def favorite_mail_make(site_id: int, limit: int = 0,
             _reason(reasons, f'{_addressee(pair)}: {FAVORITE_MAIL_SKIP_TWICE}')
             continue
 
-        if template is None:
+        # ⚠⚠ **Письмо пишется этой паре, а не всему заходу.**
+        #
+        # Прежде агент присылал **один шаблон**, и панель раскладывала его по
+        # парам подстановкой имени: десять писем стоили одного вызова. Дёшево — и
+        # мимо цели: избранный это человек, **с которым уже говорили**, а шаблон
+        # не знал о нём ничего. Промпт того занятия прямо запрещал ссылаться на
+        # прошлое, и живому человеку письмо читалось ровно так, как есть: женщина,
+        # с которой он переписывался, пишет ему как незнакомому.
+        #
+        # Теперь зовём агента писем через workflow чата: он видит переписку пары,
+        # ищет факты о ней, о нём и о договорённостях.
+        #
+        # ⚠ **Цена — вызов на письмо вместо вызова на заход**, и каждый дороже:
+        # `dating_talk` обращается к модели до четырёх раз. Считано по живому
+        # проду: писем уходит 1–23 в сутки, то есть десятки вызовов в день, а не
+        # тысячи. Персональное письмо нельзя написать, не прочитав переписку.
+        if not agent_id:
             try:
-                template = await _template(site_id, language)
+                agent_id = await _agent(site_id)
             except DatingMailAgentError as e:
-                # ⚠ Отказ агента обрывает **весь заход**: сосед занят, и следующие
-                # пары упрутся в то же самое. Круг вернётся через свой срок.
                 logger_info(f'[dating] письма избранным сайта #{site_id} '
                             f'прерваны: {e}')
                 stopped = str(e)
                 break
 
-            if not template:
-                # Агент промолчал или прислал не то. Пул подождёт: дальше по
-                # списку будет тот же самый шаблон, то есть тоже ничего.
-                _reason(reasons, FAVORITE_MAIL_SKIP_SILENT)
-                break
+        try:
+            body, error = await answer_mail_write(
+                agent_id, pair['profile'], uid, language,
+                name=str(pair.get('name') or ''))
+        except DatingMailAgentError as e:
+            error, body = str(e), ''
 
-            # ⚠ Имя проверяем, **только если шаблон его просит**. В девяти письмах
-            # из десяти метки нет вовсе, и человек с нелатинским именем (`許萊納` из
-            # ленты Ladadate) из работы не выпадает — в отличие от прежней версии,
-            # где имя в письмо вписывала сама модель.
-            needs_name = f'[[{INVITE_SLOT_MAN}]]' in template
+        if error:
+            # ⚠ Отказ агента обрывает **весь заход**: сосед занят или недоступен,
+            # и следующие пары упрутся в то же самое. Круг вернётся через свой
+            # срок.
+            logger_info(f'[dating] письма избранным сайта #{site_id} '
+                        f'прерваны: {error}')
+            stopped = error
+            break
 
-        if needs_name and not people_name_usable(pair.get('name')):
-            skipped += 1
-            _reason(reasons, f'{_addressee(pair)}: {FAVORITE_MAIL_SKIP_ALIEN}')
-            continue
-
-        body = _fill(template, pair)
         if not body:
+            # ⚠ Молчание агента — про **эту** пару, а не про заход: у следующей
+            # своя переписка и свой промпт. В отличие от шаблона, где молчание
+            # означало «дальше будет то же самое».
             skipped += 1
-            _reason(reasons, f'{_addressee(pair)}: от шаблона ничего не осталось')
+            _reason(reasons, f'{_addressee(pair)}: {FAVORITE_MAIL_SKIP_SILENT}')
             continue
 
         await _put(site_id, profile_id_, pair, body)
@@ -728,6 +744,11 @@ async def _quiet(site_id: int, profile_id: int = 0) -> list[dict]:
         'SELECT f.profile_id, f.uid,'
         '       COALESCE(c.name, comp.name, %s) AS name,'
         '       COALESCE(NULLIF(comp.photo, %s), c.photo, %s) AS photo,'
+        # ⚠⚠ Анкета девушки уезжает агенту письма: из неё берутся её имя, ключ
+        # фактов и биография (`agent_vars`, `agent_bio`). Прежде письмо писал
+        # шаблон, не знавший ни её, ни его, — и полей этих не требовалось.
+        '       p.id AS girl_id, p.site_id AS girl_site, p.login AS girl_login,'
+        '       p.profile AS girl_card,'
         '       talk.last_at, talk.last_side'
         '  FROM favorite f'
         # ⚠ **Анкета обязана быть в сети**, а не просто включена. Письмо уходит
@@ -801,7 +822,27 @@ async def _quiet(site_id: int, profile_id: int = 0) -> list[dict]:
 
         return []
 
-    return [dict(row) for row in rows or []]
+    return [_pair_row(row) for row in rows or []]
+
+
+def _pair_row(row) -> dict:
+    """Строка пары с анкетой девушки, собранной под вызов агента.
+
+    ⚠ **Анкета складывается здесь, а не у вызывающего.** Агенту она уходит в том
+    же виде, что и в чате (`answer._agent_ask` ждёт строку `profile` с полями
+    `id`, `site_id`, `login`, `profile`), и собирать её в цикле набора значило бы
+    держать знание о её устройстве в двух местах.
+    """
+    pair = dict(row)
+
+    pair['profile'] = {
+        'id': int(pair.pop('girl_id', 0) or 0),
+        'site_id': int(pair.pop('girl_site', 0) or 0),
+        'login': str(pair.pop('girl_login', '') or ''),
+        'profile': pair.pop('girl_card', None),
+    }
+
+    return pair
 
 
 def _girl_sent_union(key: str) -> str:
@@ -983,71 +1024,19 @@ async def _since(when) -> int:
     return int((row or {}).get('sec') or 0)
 
 
-async def _template(site_id: int, language: str) -> str:
-    """Шаблон письма от агента: жребий на пять осей и один запрос.
+async def _agent(site_id: int) -> int:
+    """Агент писем этого сайта. Заводится при первом обращении.
 
-    ⚠ **Жребий бросаем мы, а не модель** — вывод куплен на инвайтах и здесь тот
-    же. «Вставляй имя изредка», «иногда спрашивай», «будь разной» модель понимает
-    одинаково плохо: у неё сильные притяжения, и просьба их не ломает. Заданное
-    снаружи она соблюдает точно.
-
-    Оси:
-
-    * **метка имени** — доля `favorite_mail_name_percent`, по умолчанию 10%;
-    * **приём** (`FAVORITE_MAIL_ANGLES`) — с чем письмо приходит;
-    * **длина** (`FAVORITE_MAIL_LENGTHS`) — от абзаца до трёх;
-    * **рассказ о себе** — доля `favorite_mail_story_percent`, и если выпал, то
-      ещё и тема (`FAVORITE_MAIL_STORIES`);
-    * **вопрос** — доля `favorite_mail_question_percent`.
-
-    Плюс не жребий: **список того, что уже писали** этому сайту.
-
-    ⚠ **Время просим только под рассказ.** Инвайты научили: дай модели время — и
-    она поминает его почти в каждом тексте (94 из 202 за сутки). Но «как прошёл
-    день», написанное без часа, выходит про несуществующий день — поэтому время
-    едет ровно тогда, когда выпала история о себе, и молчит в остальных случаях.
+    ⚠ **Свой агент, а не агент чата**, хотя workflow у них теперь общий
+    (`dating_talk`). Разный у них системный промпт: тот про реплики в мессенджере,
+    этот про письма — абзац и больше, тон серьёзнее. Ради этого отдельный агент и
+    заведён: одна работа, разные голоса.
     """
-    man_slot = random.random() < await percent_share(
-        site_id, FAVORITE_MAIL_NAME_SETTING, FAVORITE_MAIL_NAME_CHANCE)
-    story = (random.choice(FAVORITE_MAIL_STORIES)
-             if random.random() < await percent_share(
-                 site_id, FAVORITE_MAIL_STORY_SETTING, FAVORITE_MAIL_STORY_CHANCE)
-             else '')
-    question = random.random() < await percent_share(
-        site_id, FAVORITE_MAIL_QUESTION_SETTING, FAVORITE_MAIL_QUESTION_CHANCE)
+    from src.dating.mail_agent import (FAVORITE_MAIL_NAME,
+                                       FAVORITE_MAIL_WORKFLOW, _agent_id)
 
-    return await favorite_mail_template(
-        int(site_id), language,
-        man_slot=man_slot,
-        angle=random.choice(FAVORITE_MAIL_ANGLES),
-        length=random.choice(FAVORITE_MAIL_LENGTHS),
-        story=story,
-        question=question,
-        avoid=await _avoid(site_id),
-        country=await _country(site_id),
-        with_time=bool(story))
-
-
-def _fill(template: str, pair: dict) -> str:
-    """Подставляет имя собеседника в шаблон и вычищает то, что не подставилось.
-
-    ⚠ **Имя — первое слово, а не полное.** В карточке лежит «Brian Ritter», а
-    обращаются «Brian»; фамилия в письме звучит как обращение из документа.
-
-    ⚠ **Метки девушки здесь нет вовсе**, и подставлять её нечем: своего имени она
-    в письме не называет — он знает, от кого оно.
-
-    ⚠ **Неподставленное вырезаем** (`invite_marks_strip`): метка, для которой
-    имени не нашлось, уехала бы человеку прямо в двойных скобках. Тот же
-    разборщик, что у инвайтов, — вторая копия правил разошлась бы с первой.
-    """
-    from src.dating.invite import invite_marks_strip
-
-    name = str((pair or {}).get('name') or '').strip()
-
-    return invite_marks_strip(
-        mail_render(str(template or ''),
-                    {INVITE_SLOT_MAN: name.split()[0] if name.split() else ''}))
+    return await _agent_id(int(site_id), FAVORITE_MAIL_NAME,
+                           FAVORITE_MAIL_WORKFLOW)
 
 
 async def _language(site_id: int) -> str:

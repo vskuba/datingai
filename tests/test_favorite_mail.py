@@ -66,9 +66,22 @@ async def _profile(auth_client, tag: str) -> int:
 
 
 def _answer(value):
-    """Подменённый агент: всегда один и тот же текст."""
+    """Подменённый агент письма: всегда один и тот же текст.
+
+    ⚠ Возвращает **пару** `(текст, ошибка)` — так устроен `answer_mail_write`:
+    отказ соседа и молчание агента здесь разные исходы, и первый обрывает заход,
+    а второй пропускает одну пару.
+    """
     async def _got(*args, **kwargs):
-        return value
+        return value, ''
+
+    return _got
+
+
+def _agent_id(number: int = 1):
+    """Подменённый поиск агента: тест не ходит к соседу за номером."""
+    async def _got(*args, **kwargs):
+        return number
 
     return _got
 
@@ -379,27 +392,30 @@ class TestAStarIsEnough:
 
         assert order == [never, talked], order
 
-    def test_the_history_does_not_travel_to_the_agent_at_all(self):
-        """⚠⚠ Истории агент больше не видит **никогда** — шаблон один на весь пул.
+    def test_the_history_travels_to_the_agent(self):
+        """⚠⚠ Переписка уезжает агенту — и это ровно то, что было наоборот.
 
-        Прежде она уезжала переменной, и пустая была особым случаем: промпт у
-        соседа ветвился `%if mail_history%` и в этом случае запрещал ссылаться на
-        прошлые слова. Теперь история пуста всегда — запрет стал безусловным, а
-        переменная отвязана от workflow.
+        Прежний шаблон не видел истории **никогда**: он был один на весь пул, и
+        промпт прямо запрещал ссылаться на прошлое. Здесь стоял тест, который это
+        утверждал.
 
-        Проверяется здесь именно это: письмо не притворяется продолжением
-        разговора, которого агент не видел.
+        Так и вышла беда: избранный — человек, с которым уже говорили, а письмо
+        приходило от женщины, «не помнящей» разговора. Теперь письмо пишет агент
+        чата через `dating_talk`, и переписка пары — первое, что он получает.
+
+        ⚠ Проверка перевёрнута намеренно, а не удалена: она сторожит то же место
+        с другой стороны. Вернись шаблон — покраснеет.
         """
         import inspect
 
-        from src.dating import mail_agent
+        from src.dating import answer
 
-        code = inspect.getsource(mail_agent.favorite_mail_template)
+        code = inspect.getsource(answer.answer_mail_write)
 
-        assert 'mail_history' not in code, \
-            'переписка снова уезжает агенту — шаблон общий, ей там не место'
-        assert 'girl_card' not in code and 'companion_card' not in code, \
-            'карточки снова уезжают агенту: подстраиваться шаблону не подо что'
+        assert 'talk_history_text' in code, \
+            'письмо снова пишется без переписки — агент не знает собеседника'
+        assert 'mail=True' in code, \
+            'письмо уходит как реплика в чат: получится две строки вместо абзаца'
 
 
 class TestTheBatchCountsLetters:
@@ -440,8 +456,9 @@ class TestTheBatchCountsLetters:
         monkeypatch.setattr(mod, 'online_show',
                             lambda site_id, uid: {'online': str(uid) == near,
                                                   'known': True})
-        monkeypatch.setattr(mod, '_template',
+        monkeypatch.setattr(mod, 'answer_mail_write',
                             _answer('Давно не общались, как ты?'))
+        monkeypatch.setattr(mod, '_agent', _agent_id())
         monkeypatch.setattr(mod, '_sync_stars', _nothing())
 
         got = await mod.favorite_mail_make(STAND_SITE, limit=1)
@@ -503,12 +520,13 @@ class TestBothMustBeOnline:
 
         called = []
 
-        async def _agent(*args, **kwargs):
+        async def _write(*args, **kwargs):
             called.append(args)
 
-            return 'письмо'
+            return 'письмо', ''
 
-        monkeypatch.setattr(favorite_mail, '_template', _agent)
+        monkeypatch.setattr(favorite_mail, 'answer_mail_write', _write)
+        monkeypatch.setattr(favorite_mail, '_agent', _agent_id())
 
         uid = f'u{uuid.uuid4().hex[:8]}'
         await _star(girl, uid)
@@ -868,7 +886,9 @@ class TestOneLetterPerGirlPerPass:
             await _star(girl, uid)
             await _hers(girl, uid, '2026-09-01 10:00:00')
 
-        monkeypatch.setattr(mod, '_template', _answer('Давно не общались, как ты?'))
+        monkeypatch.setattr(mod, 'answer_mail_write',
+                            _answer('Давно не общались, как ты?'))
+        monkeypatch.setattr(mod, '_agent', _agent_id())
         monkeypatch.setattr(mod, '_sync_stars', _nothing())
 
         got = await mod.favorite_mail_make(STAND_SITE, limit=5, profile_id=girl)
@@ -887,7 +907,9 @@ class TestOneLetterPerGirlPerPass:
         await _star(girl, uid)
         await _hers(girl, uid, _now_minus_hours(1))
 
-        monkeypatch.setattr(mod, '_template', _answer('Давно не общались, как ты?'))
+        monkeypatch.setattr(mod, 'answer_mail_write',
+                            _answer('Давно не общались, как ты?'))
+        monkeypatch.setattr(mod, '_agent', _agent_id())
         monkeypatch.setattr(mod, '_sync_stars', _nothing())
 
         got = await mod.favorite_mail_make(STAND_SITE, limit=5, profile_id=girl)
@@ -925,7 +947,9 @@ class TestTheRoundKeepsToItsShifts:
         import src.dating.favorite_mail as mod
         import src.dating.favorite_mail_round as round_
 
-        monkeypatch.setattr(mod, '_template', _answer('Давно не общались?'))
+        monkeypatch.setattr(mod, 'answer_mail_write',
+                            _answer('Давно не общались?'))
+        monkeypatch.setattr(mod, '_agent', _agent_id())
         monkeypatch.setattr(mod, '_sync_stars', _nothing())
 
         # ⚠ Отметка «недавно ходили» живёт в Redis и переживает тесты: без снятия
