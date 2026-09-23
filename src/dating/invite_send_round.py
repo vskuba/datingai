@@ -310,8 +310,8 @@ async def _nothing_to_send(site_id: int) -> str:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                "SELECT SUM(p.status = 'online' AND p.enabled = 1) AS от_живых,"
-                "       SUM(i.error <> '') AS с_ошибкой, COUNT(*) AS всего"
+                "SELECT SUM(p.status = 'online' AND p.enabled = 1) AS from_alive,"
+                "       SUM(i.error <> '') AS failed, COUNT(*) AS total"
                 '  FROM invite i'
                 '  JOIN profile p ON p.id = i.profile_id'
                 " WHERE i.site_id = %s AND i.status = 'draft'", (int(site_id),))
@@ -321,13 +321,13 @@ async def _nothing_to_send(site_id: int) -> str:
 
         return ''
 
-    if not int(row.get('всего') or 0):
+    if not int(row.get('total') or 0):
         return 'пул пуст: отправлять нечего'
 
-    if not int(row.get('от_живых') or 0):
+    if not int(row.get('from_alive') or 0):
         return 'анкеты, которым принадлежат черновики, сейчас не в сети'
 
-    if int(row.get('с_ошибкой') or 0) >= int(row.get('всего') or 0):
+    if int(row.get('failed') or 0) >= int(row.get('total') or 0):
         return ('все черновики с ошибкой — круг такие не берёт, '
                 'их досылают кнопкой')
 

@@ -121,3 +121,55 @@ class TestTheTextIsBounded:
         for line in got.split('\n'):
             assert line.endswith('я') or line.startswith(('Имя', 'Возраст')), \
                 f'строка оборвана посреди: {line[-30:]!r}'
+
+
+class TestTheGirlSendsHerOwnBio:
+    """⚠⚠ Её анкета уходит агенту тем же кругом, что и анкета собеседника.
+
+    Факты о девушке придумывает подпрогон `girl_fact_invent` и копит от разговора
+    к разговору. У новой анкеты их нет вовсе — и она отвечала бы, не зная о себе
+    ничего, хотя карточка с сайта у нас лежит.
+
+    Промпт у соседа подставляет анкету, **только если** не нашлось ни одним из
+    двух поисков (`wf_dating_talk_girl_bio`). Здесь проверяется наша половина:
+    что она вообще уходит и собирается тем же кодом, что и при заведении агента.
+    """
+
+    def test_the_call_sends_the_girl_bio(self):
+        """⚠ Сторож передачи: без неё ветка у соседа мертва, а маршрут зелёный."""
+        import inspect
+
+        from src.dating import answer
+
+        code = inspect.getsource(answer._agent_ask)
+
+        assert "'girl_bio'" in code, 'анкета девушки перестала уходить агенту'
+
+    def test_it_is_built_by_the_same_maker(self):
+        """⚠⚠ Тем же `agent_bio`, что кладёт биографию при заведении агента.
+
+        Два сборщика значили бы, что агент **знает о себе одно**, а отвечает по
+        другому: заводили его по одной биографии, а в разговор уходит вторая.
+        Разойтись им достаточно одной правки.
+        """
+        import inspect
+
+        from src.dating import answer
+
+        code = inspect.getsource(answer._agent_ask)
+
+        assert 'agent_bio(' in code, \
+            'анкета девушки собирается не общим сборщиком'
+
+    def test_an_empty_card_sends_nothing(self):
+        """⚠ Карточки нет — уходит пустая строка, и ветка у соседа не сработает.
+
+        Это правильный исход: `%if girl_bio%` пустую считает ложью и блок прячет.
+        Заголовок «Твоя анкета ===» без строк под ним модель прочла бы как факт
+        «анкета пуста».
+        """
+        from src.dating.agent import agent_bio
+
+        assert agent_bio({}) == ''
+        assert agent_bio({'name': 'Vera'}) == '', \
+            'одно имя — ещё не анкета, фактов из него не добыть'

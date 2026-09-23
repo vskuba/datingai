@@ -219,12 +219,12 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
             # справочника на той стороне откроет её снова — и узнаем мы тем же
             # способом, случайно. Поэтому текст с чужим именем не уходит вовсе:
             # лучше промолчать, чем написать живому человеку не его именем.
-            чужое = companion_ref_foreign(answer, companion_title(name, uid))
-            if чужое:
-                errors.append(f'{who}: в ответе чужое имя «{чужое}»')
+            alien = companion_ref_foreign(answer, companion_title(name, uid))
+            if alien:
+                errors.append(f'{who}: в ответе чужое имя «{alien}»')
                 await log_write(
                     profile_id, 'fail',
-                    f'Не отправлено {me} → {who}: в ответе чужое имя «{чужое}» — '
+                    f'Не отправлено {me} → {who}: в ответе чужое имя «{alien}» — '
                     f'«{answer[:120]}»')
                 continue
 
@@ -298,7 +298,7 @@ async def _agent_ask(agent_id: int, question: str, language: str,
     Ходим служебным токеном, а не заголовками того, кто нажал кнопку: в RhapsodyAi
     пользователей этого проекта нет, и представляться там надо своей учёткой.
     """
-    from src.dating.agent import agent_vars
+    from src.dating.agent import agent_bio, agent_vars
     from src.dating.companion_bio import companion_bio_text
 
     card = profile.get('profile')
@@ -327,6 +327,17 @@ async def _agent_ask(agent_id: int, question: str, language: str,
                        # тот, что удобнее фразе.
                        'companion_bio': await companion_bio_text(
                            profile.get('site_id'), uid),
+                       # ⚠⚠ **И её собственная анкета — на тот же случай.**
+                       # Факты о девушке придумывает `girl_fact_invent` и копит
+                       # от разговора к разговору; у новой анкеты их нет вовсе, и
+                       # она отвечала бы, не зная о себе ничего. Промпт берёт
+                       # анкету, **только если** не нашлось ни одним из двух
+                       # поисков (`wf_dating_talk_girl_bio`).
+                       #
+                       # ⚠ Тот же `agent_bio`, что кладёт биографию при заведении
+                       # агента: один сборщик на оба случая — иначе агент знал бы
+                       # о себе одно, а отвечал по другому.
+                       'girl_bio': agent_bio(card or {}),
                        # ⚠⚠ Кто именно пишет. Без этого сосед берёт имя из
                        # своего справочника по `companion_id` — одно на всех, —
                        # и агент зовёт человека чужим именем, а факты о нём
