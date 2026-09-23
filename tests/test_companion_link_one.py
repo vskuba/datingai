@@ -30,18 +30,6 @@ PAGE = (pathlib.Path(__file__).resolve().parents[1]
         / 'data/uvicorn/template/admin/dating/profile.html')
 
 
-def _page() -> str:
-    return PAGE.read_text(encoding='utf-8')
-
-
-def _body(name: str) -> str:
-    """Тело функции страницы — от объявления до закрывающей скобки её уровня."""
-    page = _page()
-    got = page[page.index(f'function {name}('):]
-
-    return got[:got.index('\n    }')]
-
-
 class TestTheAddressIsBuiltOnce:
     """⚠⚠ Главное: адрес «Анкет» собирают две функции, и только они."""
 
@@ -175,3 +163,15 @@ class TestTheSideStaysUsableWithoutALink:
 
         assert 'id ?' in body or 'if (!id)' in body, \
             'пустой номер собеседника даёт ссылку в никуда'
+
+
+def _page() -> str:
+    return PAGE.read_text(encoding='utf-8')
+
+
+def _body(name: str) -> str:
+    """Тело функции страницы — от объявления до закрывающей скобки её уровня."""
+    page = _page()
+    got = page[page.index(f'function {name}('):]
+
+    return got[:got.index('\n    }')]
