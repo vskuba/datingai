@@ -410,11 +410,12 @@ class TestAStarIsEnough:
 
         from src.dating import answer
 
-        code = inspect.getsource(answer.answer_mail_write)
-
-        assert 'talk_history_text' in code, \
+        # ⚠ Историю берёт точка вызова, общая для чата, инициативы и письма:
+        # три копии «спроси историю» разошлись бы на первой правке.
+        assert 'talk_history_text' in inspect.getsource(answer._agent_ask), \
             'письмо снова пишется без переписки — агент не знает собеседника'
-        assert 'mail=True' in code, \
+        # ⚠ А вот «это письмо, а не реплика» решает само письмо.
+        assert 'mail=True' in inspect.getsource(answer.answer_mail_write), \
             'письмо уходит как реплика в чат: получится две строки вместо абзаца'
 
 

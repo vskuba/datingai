@@ -47,7 +47,8 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_chat_ask
 from src.dating.log import log_write
-from src.dating.talk_history import talk_history_text
+from src.dating.talk_history import (TALK_HISTORY_CHAT, TALK_HISTORY_MAIL,
+                                     talk_history_text)
 from src.dating.chat_reply import (chat_reply_failed, chat_reply_put,
                                    chat_reply_sent, chat_reply_waiting)
 from src.dating.companion_ref import (COMPANION_REF_ID, companion_ref_foreign,
@@ -165,24 +166,16 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
             # круг успел бы начаться заново, спросив агента о том же во второй раз.
             await _tried_mark(profile_id, uid)
 
-            # ⚠⚠ **История уезжает агенту переменной, а не живёт сессией у
-            # соседа.** Прежде он видел одну строку — эту самую реплику: шаг
-            # `session_messages` берёт историю по `session_uuid`, которого мы не
-            # передавали, и в его базе на каждый вызов рождалась пустая сессия.
-            #
-            # Держать сессию у него и не нужно: запрос к LLM прошлого не помнит, а
-            # история у нас уже есть — в `message`, вместе с перенесёнными
-            # инвайтами. Отсюда агент видит разговор целиком: чем он начался и что
-            # человек отвечал вчера (`talk_history.py`).
-            history = await talk_history_text(profile_id, uid)
-
             # ⚠⚠ «Здесь молчать нельзя» — решаем мы, а не агент. У соседа это
             # переменная `answer_anyway`: она не отменяет проверку ответа, а
             # закрывает судье путь молчания (`wf_dating_talk_answer_anyway`).
+            #
+            # ⚠ Историю разговора спрашивать тут не нужно: обе — чат и письма —
+            # берёт сам `_agent_ask`. Прежде её добывали три места перед вызовом,
+            # и с появлением второго канала они разошлись бы.
             anyway = await _anyway_here(profile_id, uid, anyway_first)
             answer, error = await _agent_ask(agent_id, question, language, profile,
-                                             history=history, uid=uid,
-                                             anyway=anyway, name=name)
+                                             uid=uid, anyway=anyway, name=name)
             asked += 1
             if error:
                 errors.append(f'{who}: {error}')
@@ -287,6 +280,11 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
 ANSWER_MAIL_PROMPT = ('Напиши письмо этому человеку: разговор затих, '
                       'последнее слово было твоё.')
 
+# Повод написать **ответ** на пришедшее письмо. ⚠ Само письмо сюда не кладём: оно
+# уже в `talk_history_mail` последней строкой, и вторая копия в вопросе заставила
+# бы модель выбирать, на какую отвечать.
+ANSWER_MAIL_REPLY_PROMPT = 'Ответь на последнее письмо этого человека.'
+
 
 async def answer_mail_write(agent_id: int, profile: dict, uid: str,
                             language: str, name: str = '') -> tuple[str, str]:
@@ -329,11 +327,9 @@ async def answer_mail_write(agent_id: int, profile: dict, uid: str,
     ⚠ **Отбор и пределы стоят до этого вызова** (`favorite_mail.py`): каждое
     письмо дорого, и платить за него ради того, чтобы выбросить, незачем.
     """
-    history = await talk_history_text(int(profile['id']), str(uid))
-
     return await _agent_ask(
         int(agent_id), ANSWER_MAIL_PROMPT, str(language or ''), profile,
-        history=history, uid=str(uid), name=str(name or ''),
+        uid=str(uid), name=str(name or ''),
         # ⚠⚠ **`mail_mode`, а не `make_initiative`.** У той свой смысл —
         # «собеседник молчит, пишем первыми **репликой в чат**», и попади письмо
         # в её ветку, оно получило бы «до 25 слов, как в мессенджере».
@@ -343,8 +339,49 @@ async def answer_mail_write(agent_id: int, profile: dict, uid: str,
         anyway=True)
 
 
+async def answer_mail_reply(agent_id: int, profile: dict, uid: str,
+                            language: str, name: str = '') -> tuple[str, str]:
+    """Ответ на пришедшее письмо. Возвращает (текст, ошибка).
+
+    Args:
+        agent_id: агент **ответов** этого сайта (`mail_reply_<сайт>`). ⚠ Свой, а
+            не тот, что пишет первым: workflow общий, промпты разные — там
+            «заговори», здесь «ответь».
+        profile: анкета девушки, от чьего имени ответ.
+        uid: собеседник на сайте.
+        language: язык ответа — настройка сайта.
+        name: его имя, как его видит панель.
+
+    Returns:
+        tuple: текст ответа и ошибка. Пустой текст без ошибки — агент промолчал.
+
+    ## ⚠⚠ Зачем переписан: письмо и чат были разными людьми
+
+    Прежде ответы писал свой workflow (`dating_mail_reply`), и переписку он
+    получал **своим** запросом — из трёх таблиц, не зная про письма избранным
+    вовсе. Чата же он не видел ни строкой: человек, с которым девушка вчера
+    переболтала весь вечер в чате, получал ответ от той, кто про этот вечер не
+    помнит.
+
+    Теперь ответ идёт общим `dating_talk`, и агенту уезжают **обе** истории —
+    чат и письма (`talk_history.py`). Отличается только системный промпт агента:
+    у `fav_mail_*` он про «напиши первой», у этого — про «ответь на письмо».
+
+    ⚠ Само письмо в вопрос не кладём: оно последней строкой в `talk_history_mail`.
+    """
+    return await _agent_ask(
+        int(agent_id), ANSWER_MAIL_REPLY_PROMPT, str(language or ''), profile,
+        uid=str(uid), name=str(name or ''),
+        # ⚠ Письмо, а не реплика в чат: ветка `%if mail_mode%` снимает «до 25
+        # слов» и просит от абзаца до трёх.
+        mail=True,
+        # ⚠ Молчать нельзя: человек написал письмо и ждёт ответа. В чате
+        # молчание законно, здесь оно читается как «его игнорируют».
+        anyway=True)
+
+
 async def _agent_ask(agent_id: int, question: str, language: str,
-                     profile: dict, history: str = '',
+                     profile: dict,
                      uid: str = '', anyway: bool = False,
                      name: str = '', initiative: str = '',
                      mail: bool = False) -> tuple[str, str]:
@@ -352,6 +389,12 @@ async def _agent_ask(agent_id: int, question: str, language: str,
 
     Пустой ответ ошибкой не считается — он значим сам по себе и разбирается выше:
     агент может намеренно промолчать.
+
+    ⚠ **Историю берём здесь, а не у вызывающего.** Звали три места — чат,
+    инициатива, письмо, — и каждое спрашивало её само перед вызовом. Каналов
+    стало два, и три копии «спроси историю» разошлись бы на первой правке: одно
+    место отдавало бы обе, другое по-прежнему чат. Вопрос «что агент знает о
+    человеке» принадлежит этой точке.
 
     ⚠ **Кто говорит — задаётся переменными вызова, а не агентом.** Отвечает один
     универсальный агент на все анкеты (`agent.py`), и без `girl_name` он
@@ -376,10 +419,21 @@ async def _agent_ask(agent_id: int, question: str, language: str,
         answer = await rhapsody_api_chat_ask(
             agent_id, question, companion_id=ANSWER_COMPANION_ID,
             variables={'user_language': language,
+                       # ⚠⚠ **Две истории, и обе всегда.** С человеком говорят
+                       # двумя каналами — репликами в чате и письмами, — и это
+                       # разные разговоры: разной длины, разного тона, часто
+                       # разных дней. Отдай мы половину, письмо писалось бы, не
+                       # помня вчерашнего чата (`talk_history.py`).
+                       #
                        # ⚠ История **и** ключ собеседника: без ключа у соседа
                        # факты обо всех мужчинах слились бы в один документ —
                        # та же беда, от которой у девушек стоит `girl_id`.
-                       'talk_history': str(history or ''),
+                       'talk_history_chat': await talk_history_text(
+                           int(profile.get('id') or 0), str(uid or ''),
+                           TALK_HISTORY_CHAT),
+                       'talk_history_mail': await talk_history_text(
+                           int(profile.get('id') or 0), str(uid or ''),
+                           TALK_HISTORY_MAIL),
                        'companion_uid': str(uid or ''),
                        # ⚠⚠ **Анкета собеседника — на случай, когда фактов о нём
                        # ещё нет.** Факты извлекает из переписки отдельный
@@ -428,7 +482,6 @@ async def _agent_ask(agent_id: int, question: str, language: str,
         return '', str(e)
 
     return answer, ''
-
 
 
 def _me_name(profile: dict) -> str:

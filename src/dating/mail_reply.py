@@ -19,14 +19,17 @@
 подряд, не дождавшись ответа; три ответа в очередь на них — это не переписка, а
 автоответчик. Берём последнее, а прежние идут в историю.
 
-## ⚠ История — не больше N последних
+## ⚠⚠ Историю собирает не этот модуль
 
-Настройка сайта `reply_history` (обычно 10). Причина не в цене: переписку на сорок
-писем модель читает по диагонали и отвечает на первое попавшееся вместо последнего.
+Прежде круг собирал переписку **своим** запросом — из трёх таблиц, не зная про
+письма избранным вовсе, — и чата не видел ни строкой. Человек, с которым девушка
+вчера переболтала весь вечер в чате, получал ответ от той, кто про этот вечер не
+помнит.
 
-Историю собираем из **двух источников**: входящие письма (`mail_in`) и наши
-ответы (`mail_reply`) — иначе агент не знает, что уже сказал, и здоровается
-второй раз.
+Теперь ответ идёт общим `dating_talk` (`answer.answer_mail_reply`), и обе истории
+— чат и письма — берёт `talk_history.py`. Сколько писем показывать, по-прежнему
+говорит настройка сайта `reply_history`: переписку на сорок писем модель читает
+по диагонали и отвечает на первое попавшееся вместо последнего.
 
 ## Чего здесь нет
 
@@ -38,7 +41,8 @@
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating.mail_agent import DatingMailAgentError, mail_reply
+from src.dating.answer import answer_mail_reply
+from src.dating.mail_agent import DatingMailAgentError
 
 # Настройка сайта: сколько писем переписки отдаём агенту.
 MAIL_REPLY_HISTORY_SETTING = 'reply_history'
@@ -80,8 +84,9 @@ async def mail_reply_make(site_id: int, limit: int = 0) -> dict:
     if not letters:
         return {'made': 0, 'skipped': 0, 'reasons': [], 'left': 0}
 
-    keep = await _history_size(site_id)
     cap = min(int(limit) or MAIL_REPLY_BATCH, MAIL_REPLY_BATCH)
+    language = await _language(site_id)
+    agent_id = 0
 
     made, skipped, reasons, left = 0, 0, [], 0
 
@@ -90,23 +95,36 @@ async def mail_reply_make(site_id: int, limit: int = 0) -> dict:
             left += 1
             continue
 
-        history = await _history(letter, keep)
-        if not history:
-            # Текста нет ни у одного письма переписки — отвечать не на что.
+        if not str(letter.get('body') or '').strip():
+            # Тела ещё нет — отвечать не на что.
             skipped += 1
             _reason(reasons, 'у письма нет текста — тело ещё не забрали с сайта')
             continue
 
         profile = await _profile(int(letter['profile_id']))
-        companion = await _companion(site_id, str(letter['uid']))
 
-        try:
-            body = await mail_reply(profile, site_id, history, companion)
-        except DatingMailAgentError as e:
+        # ⚠ Агент спрашивается лениво и один на заход: это поход к соседу, и
+        # заход, где не прошло ни одно письмо, не должен идти туда вовсе.
+        if not agent_id:
+            try:
+                agent_id = await _agent(site_id)
+            except DatingMailAgentError as e:
+                logger_info(f'[dating] ответы сайта #{site_id} прерваны: {e}')
+                _reason(reasons, str(e))
+                break
+
+        # ⚠⚠ Переписку сюда не передаём: обе истории — чат и письма — берёт сам
+        # `answer_mail_reply`. Прежде круг собирал её своим запросом, знавшим про
+        # три таблицы из четырёх и не знавшим про чат вовсе.
+        body, error = await answer_mail_reply(
+            agent_id, profile, str(letter['uid']), language,
+            str(letter.get('name') or ''))
+
+        if error:
             # ⚠ Отказ агента обрывает **весь заход**: сосед занят, и следующие
             # письма упрутся в то же самое. Круг вернётся через свой срок.
-            logger_info(f'[dating] ответы сайта #{site_id} прерваны: {e}')
-            _reason(reasons, str(e))
+            logger_info(f'[dating] ответы сайта #{site_id} прерваны: {error}')
+            _reason(reasons, str(error))
             break
 
         body = str(body or '').strip()
@@ -337,61 +355,6 @@ async def _faces(profile_id: int, uid: str) -> dict:
             'her': str(card.get('photo') or '')}
 
 
-async def _history(letter: dict, keep: int) -> list[dict]:
-    """Переписка с этим человеком: последние `keep` писем, старые сверху.
-
-    ⚠ **Из трёх источников**, и третий — не мелочь.
-
-    | Что | Откуда | Чья реплика |
-    |-----|--------|-------------|
-    | его письма | `mail_in` | его |
-    | наши ответы | `mail_reply` | наша |
-    | **письма рассылки** | `mailing`, только `sent` | наша |
-
-    Третий добавлен потому, что разговор чаще всего **начинали мы**: ушло письмо
-    рассылки, он на него ответил. Без него агент видит переписку с середины — «Moto
-    is my life» без вопроса, на который это ответ, — и пишет, будто человек заговорил
-    сам собой.
-
-    ⚠ **Только отправленные письма рассылки.** Лежащее в пуле он не видел, и считать
-    его сказанным значило бы отвечать на разговор, которого не было.
-    """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            "SELECT 'him' AS side, body, date_post AS at, id FROM mail_in"
-            ' WHERE profile_id = %s AND uid = %s'
-            ' UNION ALL'
-            " SELECT 'her' AS side, body, created_at AS at, id FROM mail_reply"
-            ' WHERE profile_id = %s AND uid = %s'
-            ' UNION ALL'
-            " SELECT 'her' AS side, body, sent_at AS at, id FROM mailing"
-            " WHERE profile_id = %s AND uid = %s AND status = 'sent'"
-            # Свежие сверху — и обрезаем; порядок для промпта развернём ниже.
-            ' ORDER BY at DESC, id DESC LIMIT %s',
-            (int(letter['profile_id']), str(letter['uid']),
-             int(letter['profile_id']), str(letter['uid']),
-             int(letter['profile_id']), str(letter['uid']), int(keep)))
-        rows = await db.fetchall()
-
-    # ⚠ Разворачиваем: агенту переписку отдаём **старыми сверху**, как её читает
-    # человек. Обрезали же с конца — иначе «последние десять» оказались бы первыми
-    # десятью, то есть самыми старыми.
-    history = [{'from': str(row['side']), 'text': str(row['body'] or '').strip()}
-               for row in reversed(rows or [])]
-
-    return [one for one in history if one['text']]
-
-
-async def _history_size(site_id: int) -> int:
-    """Сколько писем переписки отдаём агенту."""
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
-    return min(int(await site_seconds(site_id,
-                                             MAIL_REPLY_HISTORY_SETTING)
-                   or MAIL_REPLY_HISTORY_DEFAULT),
-               MAIL_REPLY_HISTORY_MAX)
-
-
 async def _profile(profile_id: int) -> dict:
     """Анкета, от имени которой отвечаем."""
     async with mysql_get_db_async() as db:
@@ -430,3 +393,25 @@ def _reason(reasons: list, text: str) -> None:
     """Копит первые несколько причин пропуска: страница показывает их человеку."""
     if len(reasons) < 5 and text not in reasons:
         reasons.append(text)
+
+
+async def _agent(site_id: int) -> int:
+    """Агент ответов этого сайта. Заводится при первом обращении.
+
+    ⚠ **Свой агент, а не агент писем и не агент чата**, хотя workflow у всех
+    троих теперь общий (`dating_talk`). Разный у них системный промпт: у чата про
+    реплики в мессенджере, у `fav_mail_*` про «напиши первой», у этого — про
+    ответ на пришедшее письмо. Ради этого отдельный агент и заведён: одна
+    работа, разные голоса.
+    """
+    from src.dating.mail_agent import (MAIL_REPLY_NAME, MAIL_REPLY_WORKFLOW,
+                                       _agent_id)
+
+    return await _agent_id(int(site_id), MAIL_REPLY_NAME, MAIL_REPLY_WORKFLOW)
+
+
+async def _language(site_id: int) -> str:
+    """Язык ответа — настройка сайта, та же, что у остальных почтовых занятий."""
+    from src.dating.mail_agent import mail_agent_language
+
+    return await mail_agent_language(int(site_id))

@@ -161,15 +161,15 @@ async def _one(profile: dict, agent: int, pair: dict) -> str:
         return 'есть'
 
     language = str(pair.get('language') or 'en')
-    history = await _history(profile_id, uid)
     kind = initiative_kind()
 
     # ⚠⚠ `anyway=True` всегда. Инициатива, на которую агент промолчал, — заход,
     # потраченный впустую: пара останется затихшей, а счётчик повторов не
     # сдвинется. Судья при этом не перестаёт проверять текст, он лишь не вправе
     # выбрать молчание (`wf_dating_talk_answer_anyway`).
+    # ⚠ Историю не спрашиваем: обе — чат и письма — берёт сам `_agent_ask`.
     text, error = await _agent_ask(agent, INITIATIVE_PROMPT, language, profile,
-                                   history=history, uid=uid, name=name,
+                                   uid=uid, name=name,
                                    anyway=True, initiative=kind)
 
     if error:
@@ -336,13 +336,6 @@ async def _agent(profile: dict) -> int:
         logger_info(f"[dating] агент для инициативы #{profile.get('id')}: {e}")
 
         return 0
-
-
-async def _history(profile_id: int, uid: str) -> str:
-    """Разговор пары для агента. ⚠ Без него он не знает, о чём уже говорили."""
-    from src.dating.talk_history import talk_history_text
-
-    return await talk_history_text(int(profile_id), str(uid))
 
 
 async def _after(site_id: int) -> int:

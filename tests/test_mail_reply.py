@@ -24,8 +24,7 @@ import uuid
 import pytest
 
 from src.dating import mail_reply as mod
-from src.dating.mail_reply import (_history, _history_size, _to_answer,
-                                          mail_reply_make)
+from src.dating.mail_reply import _to_answer, mail_reply_make
 
 pytestmark = pytest.mark.mail
 
@@ -72,18 +71,30 @@ async def profile(auth_client):
 
 @pytest.fixture
 def agent(monkeypatch):
-    """Подменяет агента: запоминает, что ему отдали, вместо похода к LLM."""
+    """Подменяет агента: запоминает, что ему отдали, вместо похода к LLM.
+
+    ⚠ Подменяется `answer_mail_reply` — ответ идёт общим `dating_talk`, а не своим
+    workflow. Историю он берёт сам (`talk_history.py`), поэтому её здесь нет:
+    что попадает в переписку, проверяет `test_talk_history.py`.
+    """
     calls = []
 
-    async def fake(profile, site_id, history, companion=None):
-        calls.append({'history': list(history), 'companion': companion,
+    async def fake(agent_id, profile, uid, language, name=''):
+        calls.append({'uid': str(uid), 'language': str(language),
+                      'name': str(name),
                       'profile_id': int(profile.get('id') or 0)})
 
-        return f'Ответ №{len(calls)}'
+        return f'Ответ №{len(calls)}', ''
 
-    monkeypatch.setattr(mod, 'mail_reply', fake)
+    monkeypatch.setattr(mod, 'answer_mail_reply', fake)
+    monkeypatch.setattr(mod, '_agent', _fake_agent)
 
     return calls
+
+
+async def _fake_agent(site_id: int) -> int:
+    """Номер агента без похода к соседу: заведение проверяется не здесь."""
+    return 1
 
 
 async def _in(profile: dict, uid: str, body: str, minutes: int = 0) -> int:
@@ -225,130 +236,6 @@ class TestWhoIsAnswered:
                 await db.connection.commit()
 
 
-class TestHistory:
-    """Что уходит агенту."""
-
-    async def test_history_is_oldest_first(self, profile, agent):
-        """⚠ Агенту переписка отдаётся **старыми сверху**, как её читает человек."""
-        await _in(profile, '111', 'первое', minutes=30)
-        await _in(profile, '111', 'второе', minutes=20)
-        await _in(profile, '111', 'третье', minutes=10)
-
-        await mail_reply_make(SITE)
-
-        texts = [one['text'] for one in agent[0]['history']]
-        assert texts == ['первое', 'второе', 'третье']
-
-    async def test_history_includes_our_replies(self, profile, agent):
-        """⚠ **Из двух источников.** Возьми мы только входящие, агент не знал бы, что
-        уже сказал, и здоровался бы второй раз.
-
-        ⚠ Второе письмо приходит **после** нашего ответа (`minutes=-1`), и это не
-        уловка ради зелёного теста, а единственный правдивый порядок: отвечаем мы
-        всегда на последнее письмо, значит ответ не может оказаться старше того, что
-        пришло следом. Датируй мы письмо задним числом — проверяли бы связку
-        событий, которой в жизни не бывает.
-        """
-        await _in(profile, '111', 'привет', minutes=30)
-        await mail_reply_make(SITE)
-
-        await _in(profile, '111', 'как дела?', minutes=-1)
-        agent.clear()
-        await mail_reply_make(SITE)
-
-        sides = [one['from'] for one in agent[0]['history']]
-        assert 'her' in sides, 'наш прошлый ответ не попал в историю'
-        assert sides == ['him', 'her', 'him'], 'порядок разговора сбит'
-
-    async def test_mailing_letters_are_in_history(self, profile, agent):
-        """⚠ **Письмо рассылки — часть разговора, и оно первое.**
-
-        Чаще всего разговор начинали мы: ушло письмо рассылки, он на него ответил.
-        Без него агент видит переписку с середины — «Moto is my life» без вопроса, на
-        который это ответ, — и пишет, будто человек заговорил сам собой.
-        """
-        await _out(profile, '111', 'Чем увлекаешься?', minutes=40)
-        await _in(profile, '111', 'Moto is my life', minutes=30)
-
-        await mail_reply_make(SITE)
-
-        sides = [one['from'] for one in agent[0]['history']]
-        texts = [one['text'] for one in agent[0]['history']]
-
-        assert texts[0] == 'Чем увлекаешься?', 'письмо рассылки не попало в историю'
-        assert sides == ['her', 'him'], 'разговор начат не с нашего письма'
-
-    async def test_unsent_mailing_is_not_in_history(self, profile, agent):
-        """⚠ **Только отправленные.** Лежащее в пуле он не видел, и считать его
-        сказанным значило бы отвечать на разговор, которого не было."""
-        await _out(profile, '111', 'черновик в пуле', minutes=40, status='draft')
-        await _in(profile, '111', 'Moto is my life', minutes=30)
-
-        await mail_reply_make(SITE)
-
-        texts = [one['text'] for one in agent[0]['history']]
-
-        assert 'черновик в пуле' not in texts, \
-            'неотправленное письмо попало в разговор'
-        assert texts == ['Moto is my life']
-
-    async def test_history_is_cut_from_the_end(self, auth_client, profile, agent):
-        """⚠ Режем **с конца**: «последние N», а не «первые N» — иначе агент получал
-        бы самые старые письма и отвечал на позапрошлогоднее."""
-        for n in range(8):
-            await _in(profile, '111', f'письмо {n}', minutes=60 - n)
-
-        before = (await auth_client.get(
-            f'/api/dating/site/{SITE}')).json()['result']['settings']
-        try:
-            await auth_client.put(f'/api/dating/site/{SITE}',
-                                  json={'settings': {**before, 'reply_history': '5'}})
-            await mail_reply_make(SITE)
-        finally:
-            await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': before})
-
-        texts = [one['text'] for one in agent[0]['history']]
-
-        assert len(texts) == 5
-        assert texts[-1] == 'письмо 7', 'последнее письмо не последнее в истории'
-        assert texts[0] == 'письмо 3', 'обрезали не с того конца'
-
-    async def test_history_size_from_the_setting(self, auth_client):
-        before = (await auth_client.get(
-            f'/api/dating/site/{SITE}')).json()['result']['settings']
-        try:
-            await auth_client.put(f'/api/dating/site/{SITE}',
-                                  json={'settings': {**before, 'reply_history': '20'}})
-
-            assert await _history_size(SITE) == 20
-        finally:
-            await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': before})
-
-    async def test_history_size_has_a_hard_cap(self, monkeypatch):
-        """⚠ Жёсткий потолок поверх настройки: «500» превратило бы промпт в
-        простыню, на которую модель ответит первым, что увидит."""
-        from src.dating.mail_reply import MAIL_REPLY_HISTORY_MAX
-        import src.uvicorn.routers.dating.site_ as site_mod
-
-        async def huge(site_id, key):
-            return 5000
-
-        monkeypatch.setattr(site_mod, 'site_seconds', huge)
-
-        assert await _history_size(SITE) == MAIL_REPLY_HISTORY_MAX
-
-    async def test_companion_card_is_passed(self, auth_client, profile, agent):
-        """Карточка собеседника уходит агенту: без неё ответ выйдет общим."""
-        await auth_client.post('/api/dating/companion', json={
-            'site_id': SITE, 'uid': '111', 'name': 'Semen', 'age': 46,
-            'city': 'Krakow', 'country': 'Poland'})
-        await _in(profile, '111', 'Moto is my life')
-
-        await mail_reply_make(SITE)
-
-        assert (agent[0]['companion'] or {}).get('name') == 'Semen'
-
-
 class TestThread:
     """Переписка для показа человеку."""
 
@@ -392,16 +279,20 @@ class TestRefusal:
 
     async def test_agent_refusal_stops_the_pass(self, profile, monkeypatch):
         """⚠ Обрывает **весь заход**: сосед занят, и следующие письма упрутся в то
-        же самое. Круг вернётся через свой срок."""
-        from src.dating.mail_agent import DatingMailAgentError
+        же самое. Круг вернётся через свой срок.
 
+        ⚠ Отказ теперь приходит **второй половиной ответа**, а не исключением:
+        `answer_mail_reply` отдаёт `(текст, ошибка)`, как и остальной чат.
+        """
         calls = []
 
-        async def broken(profile, site_id, history, companion=None):
+        async def broken(agent_id, profile, uid, language, name=''):
             calls.append(1)
-            raise DatingMailAgentError('браузер соседа занят')
 
-        monkeypatch.setattr(mod, 'mail_reply', broken)
+            return '', 'браузер соседа занят'
+
+        monkeypatch.setattr(mod, 'answer_mail_reply', broken)
+        monkeypatch.setattr(mod, '_agent', _fake_agent)
 
         await _in(profile, '111', 'первое')
         await _in(profile, '222', 'второе')
@@ -412,11 +303,27 @@ class TestRefusal:
         assert len(calls) == 1, 'после отказа продолжили дёргать агента'
         assert got['reasons'], 'причина не названа'
 
-    async def test_empty_answer_is_not_saved(self, profile, monkeypatch):
-        async def empty(profile, site_id, history, companion=None):
-            return '   '
+    async def test_a_missing_agent_stops_the_pass(self, profile, monkeypatch):
+        """⚠ Агент не завёлся — то же самое: следующие письма упрутся в то же."""
+        from src.dating.mail_agent import DatingMailAgentError
 
-        monkeypatch.setattr(mod, 'mail_reply', empty)
+        async def no_agent(site_id):
+            raise DatingMailAgentError('у сайта нет метки для агента')
+
+        monkeypatch.setattr(mod, '_agent', no_agent)
+        await _in(profile, '111', 'первое')
+
+        got = await mail_reply_make(SITE)
+
+        assert got['made'] == 0
+        assert got['reasons'], 'причина не названа'
+
+    async def test_empty_answer_is_not_saved(self, profile, monkeypatch):
+        async def empty(agent_id, profile, uid, language, name=''):
+            return '   ', ''
+
+        monkeypatch.setattr(mod, 'answer_mail_reply', empty)
+        monkeypatch.setattr(mod, '_agent', _fake_agent)
         await _in(profile, '111', 'Moto is my life')
 
         got = await mail_reply_make(SITE)
