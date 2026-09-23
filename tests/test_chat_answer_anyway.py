@@ -290,21 +290,21 @@ class TestInitiativeSetting:
         """
         import pathlib
 
-        корень = pathlib.Path(__file__).resolve().parents[1]
+        root = pathlib.Path(__file__).resolve().parents[1]
         # ⚠ Ищем **чтение**, а не имя: упомянуть ключ в документации модуля
         # законно — иначе следующий читатель не найдёт, откуда берётся срок.
         # Читается настройка одним способом на весь проект — `site_seconds`.
-        читают = []
-        for one in (корень / 'src').rglob('*.py'):
+        readers = []
+        for one in (root / 'src').rglob('*.py'):
             if one.name == 'site_.py':
                 continue
 
-            текст = one.read_text(encoding='utf-8')
-            for строка in текст.split('\n'):
-                if 'chat_initiative_after' in строка and 'site_seconds' in строка:
-                    читают.append(str(one))
+            text = one.read_text(encoding='utf-8')
+            for line in text.split('\n'):
+                if 'chat_initiative_after' in line and 'site_seconds' in line:
+                    readers.append(str(one))
 
-        assert not читают, f'настройку уже читают: {читают}'
+        assert not readers, f'настройку уже читают: {readers}'
 
 
 class TestAlwaysMeansAlways:

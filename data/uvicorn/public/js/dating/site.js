@@ -105,7 +105,7 @@ export async function datingPanelPaint(el, base, siteId) {
     }
 
     const status = String(panel.status || '');
-    const слово = {online: 'на связи', offline: 'вход потерян', error: 'не отвечает'}[status]
+    const word = {online: 'на связи', offline: 'вход потерян', error: 'не отвечает'}[status]
         || 'ещё не проверяли';
 
     el.hidden = false;
@@ -113,7 +113,7 @@ export async function datingPanelPaint(el, base, siteId) {
     el.href = panel.url;
     el.target = '_blank';
     el.rel = 'noopener';
-    el.title = [`Админ-панель: ${слово}`,
+    el.title = [`Админ-панель: ${word}`,
                 panel.checked_at ? `проверено ${panel.checked_at} UTC` : '',
                 panel.login_at ? `вход ${panel.login_at} UTC` : '',
                 panel.error || ''].filter(Boolean).join('\n');

@@ -1597,12 +1597,12 @@ def _number_check(key: str, value: str) -> str:
 
     if (low is not None and number < int(low)) \
             or (high is not None and number > int(high)):
-        границы = f'от {low} до {high}' if high is not None else f'не меньше {low}'
+        bounds = f'от {low} до {high}' if high is not None else f'не меньше {low}'
 
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f'«{spec.get("title") or key}»: значение {number} вне границ '
-                   f'({границы})')
+                   f'({bounds})')
 
     return str(number)
 

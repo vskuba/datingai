@@ -185,12 +185,12 @@ async def _one(profile: dict, agent: int, pair: dict) -> str:
 
     # ⚠ Сторож чужого имени — тот же, что у ответов. Инициатива уходит живому
     # человеку так же, как ответ, и цена ошибки та же.
-    чужое = companion_ref_foreign(text, companion_title(name, uid))
-    if чужое:
+    alien = companion_ref_foreign(text, companion_title(name, uid))
+    if alien:
         await log_write(profile_id, 'fail',
-                        f'Инициатива не взята для {who}: чужое имя «{чужое}»')
+                        f'Инициатива не взята для {who}: чужое имя «{alien}»')
 
-        return f'ошибка:{who}: в тексте чужое имя «{чужое}»'
+        return f'ошибка:{who}: в тексте чужое имя «{alien}»'
 
     await chat_initiative_put(int(profile.get('site_id') or 0), profile_id, uid,
                               name, text, int(pair.get('try_no') or 1))
@@ -208,7 +208,7 @@ def initiative_kind() -> str:
     острого. Чёрный юмор хорош раз в десяток реплик и ужасен каждую вторую.
     """
     kinds = [one for one, _ in INITIATIVE_KINDS]
-    weights = [вес for _, вес in INITIATIVE_KINDS]
+    weights = [weight for _, weight in INITIATIVE_KINDS]
 
     return random.choices(kinds, weights=weights, k=1)[0]
 
@@ -292,13 +292,13 @@ async def _quiet(profile_id: int, after_sec: int, repeat_max: int) -> list[dict]
                 " WHERE profile_id = %s AND uid = %s AND status = 'sent'"
                 '   AND sent_at > %s',
                 (int(profile_id), str(row['uid']), row['his_last']))
-            было = int(((await db.fetchone()) or {}).get('n') or 0)
+            before = int(((await db.fetchone()) or {}).get('n') or 0)
 
-            if было >= int(repeat_max):
+            if before >= int(repeat_max):
                 continue
 
             got.append({'uid': str(row['uid']), 'name': row.get('name') or '',
-                        'try_no': было + 1})
+                        'try_no': before + 1})
 
             if len(got) >= INITIATIVE_PER_PROFILE:
                 break

@@ -126,7 +126,7 @@ async def log_feed(site_id: int = 0, profile_id: int = 0, kind: str = 'all',
     sql, params = _query(int(site_id), int(profile_id), kind, level, q)
 
     async with mysql_get_db_async() as db:
-        await db.execute(f'SELECT COUNT(*) AS n FROM ({sql}) AS лента', params)
+        await db.execute(f'SELECT COUNT(*) AS n FROM ({sql}) AS feed', params)
         total = int((await db.fetchone() or {}).get('n') or 0)
 
         # Номер страницы поправляем здесь же и возвращаем исправленный: список

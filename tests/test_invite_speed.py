@@ -256,7 +256,7 @@ class TestTheNumberNextToEnvelopes:
 
         assert 'inviteSpeed.last_5min' in body, \
             'число снова из ленты — упрётся в тридцать и будет врать'
-        assert 'tab-fly-more">${счёт}' in body
+        assert 'tab-fly-more">${count}' in body
 
     def test_the_envelopes_still_come_from_the_feed(self):
         """⚠ Конверты остаются по ленте, и это верно.

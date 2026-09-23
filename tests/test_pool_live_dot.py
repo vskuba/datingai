@@ -94,7 +94,7 @@ class TestItIsInScope:
         page = _page()
 
         for name in ('liveDot', 'inviteCard', 'favMailCard'):
-            место = page.index(f'function {name}(')
-            строка = page[page.rindex('\n', 0, место) + 1:место]
+            at = page.index(f'function {name}(')
+            line = page[page.rindex('\n', 0, at) + 1:at]
 
-            assert строка == '    ', f'{name} уехала в чужую область видимости'
+            assert line == '    ', f'{name} уехала в чужую область видимости'

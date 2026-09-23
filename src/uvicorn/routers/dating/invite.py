@@ -240,8 +240,8 @@ async def _speed(site_id: int) -> dict:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                "SELECT SUM(sent_at > NOW() - INTERVAL 5 MINUTE) AS за_пять,"
-                '       SUM(sent_at > NOW() - INTERVAL 1 DAY) AS за_сутки'
+                "SELECT SUM(sent_at > NOW() - INTERVAL 5 MINUTE) AS per_five,"
+                '       SUM(sent_at > NOW() - INTERVAL 1 DAY) AS per_day'
                 "  FROM invite WHERE site_id = %s AND status = 'sent'"
                 '   AND sent_at > NOW() - INTERVAL 1 DAY', (int(site_id),))
             row = await db.fetchone() or {}
@@ -250,17 +250,17 @@ async def _speed(site_id: int) -> dict:
 
         return {}
 
-    за_пять = int(row.get('за_пять') or 0)
-    за_сутки = int(row.get('за_сутки') or 0)
+    per_five = int(row.get('per_five') or 0)
+    per_day = int(row.get('per_day') or 0)
 
-    per_hour = за_пять * 12
+    per_hour = per_five * 12
     cap = await site_seconds(int(site_id), INVITE_SEND_MAX_DAY_SETTING)
-    cap_left = max(0, int(cap or 0) - за_сутки) if cap else 0
+    cap_left = max(0, int(cap or 0) - per_day) if cap else 0
 
     forecast = per_hour * 12
     capped = bool(cap) and forecast > cap_left
 
-    return {'last_5min': за_пять,
+    return {'last_5min': per_five,
             'per_hour': per_hour,
             'forecast_12h': min(forecast, cap_left) if capped else forecast,
             'cap_left': cap_left,

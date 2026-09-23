@@ -277,10 +277,10 @@ class TestCards:
         """
         got = list(_cards(GIRLS, PEOPLE, set(), set(), taken={(849, '222')}))
 
-        пары = {(girl['id'], person['uid']) for girl, person in got}
+        pairs = {(girl['id'], person['uid']) for girl, person in got}
 
-        assert (849, '222') not in пары, 'занятая пара выдана снова'
-        assert (850, '222') in пары, 'человек закрыт для остальных анкет'
+        assert (849, '222') not in pairs, 'занятая пара выдана снова'
+        assert (850, '222') in pairs, 'человек закрыт для остальных анкет'
 
     def test_taken_is_filled_as_we_go(self):
         """Набор занятых пополняется на ходу — им же вызывающий и пользуется."""

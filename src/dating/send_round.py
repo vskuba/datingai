@@ -196,7 +196,7 @@ async def _nothing_to_send(site_id: int, table: str) -> str:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                f"SELECT COUNT(*) AS всего, SUM(error <> '') AS с_ошибкой"
+                f"SELECT COUNT(*) AS total, SUM(error <> '') AS failed"
                 f'  FROM {table} WHERE site_id = %s AND status = %s',
                 (int(site_id), 'draft'))
             row = dict((await db.fetchone()) or {})
@@ -205,11 +205,11 @@ async def _nothing_to_send(site_id: int, table: str) -> str:
 
         return ''
 
-    total = int(row.get('всего') or 0)
+    total = int(row.get('total') or 0)
     if not total:
         return 'пул пуст: отправлять нечего'
 
-    if int(row.get('с_ошибкой') or 0) >= total:
+    if int(row.get('failed') or 0) >= total:
         return ('все письма с ошибкой — круг такие не берёт, '
                 'их досылают кнопкой')
 
@@ -243,7 +243,7 @@ async def _girls_wait(site_id: int) -> str:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'SELECT COUNT(*) AS свободных FROM favorite_mail m'
+                'SELECT COUNT(*) AS free FROM favorite_mail m'
                 "  WHERE m.site_id = %s AND m.status = 'draft' AND m.error = ''"
                 + free, (int(site_id),))
             row = dict((await db.fetchone()) or {})
@@ -252,7 +252,7 @@ async def _girls_wait(site_id: int) -> str:
 
         return ''
 
-    if int(row.get('свободных') or 0):
+    if int(row.get('free') or 0):
         return ''
 
     from src.dating.favorite_mail import _hours_word
@@ -430,11 +430,11 @@ async def _today(site_id: int, offset_hours: int = 0) -> int:
                                               mail_sent_union)
 
             await db.execute(
-                'SELECT COUNT(*) AS ушло FROM ('
+                'SELECT COUNT(*) AS sent FROM ('
                 + mail_sent_union(
                     "site_id = %s AND status = 'sent'"
                     ' AND DATE(sent_at + INTERVAL %s HOUR) = %s')
-                + ') AS ушло',
+                + ') AS sent',
                 (int(site_id), hours, today) * len(MAIL_SEND_TABLES))
             row = await db.fetchone()
     except Exception as e:
@@ -444,7 +444,7 @@ async def _today(site_id: int, offset_hours: int = 0) -> int:
         # неизвестный потолок, а лишнее письмо отменить нельзя.
         return 10 ** 6
 
-    return int((row or {}).get('ушло') or 0)
+    return int((row or {}).get('sent') or 0)
 
 
 async def _every(site_id: int) -> int:

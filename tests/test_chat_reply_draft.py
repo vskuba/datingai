@@ -351,14 +351,14 @@ class TestDraftsWaitAsLongAsNeeded:
 
     async def test_an_old_draft_still_goes_out(self, monkeypatch, girl):
         """Черновику двое суток, адресат появился — ответ уходит."""
-        ушло = []
+        sent = []
 
         async def _ask(agent_id, question, language, profile, history='', uid='',
                        anyway=False, name='', initiative=''):
             return 'не должны спрашивать', ''
 
         async def _send(profile, presence, uid, text):
-            ушло.append(text)
+            sent.append(text)
 
             return {'ok': True, 'error': ''}
 
@@ -382,7 +382,7 @@ class TestDraftsWaitAsLongAsNeeded:
 
         got = await answer_mod.answer_run(profile, {}, 7)
 
-        assert ушло == ['ответ'], 'двухдневный черновик не ушёл'
+        assert sent == ['ответ'], 'двухдневный черновик не ушёл'
         assert got['asked'] == 0, 'за готовый текст заплатили второй раз'
 
     def test_there_is_no_lifetime_setting(self):

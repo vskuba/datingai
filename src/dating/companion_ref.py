@@ -120,13 +120,13 @@ def companion_ref_foreign(text: str, title: str = '') -> str:
 
     # Имя адресата исключаем: собеседника вправду может звать Вадим, и запрещать
     # агенту обращаться к нему по имени было бы бессмысленно.
-    свой = str(title or '').strip().lower()
+    own = str(title or '').strip().lower()
 
-    for имя in COMPANION_REF_FOREIGN:
-        if имя == свой:
+    for name in COMPANION_REF_FOREIGN:
+        if name == own:
             continue
 
-        if re.search(rf'\b{re.escape(имя)}\b', text, re.IGNORECASE):
-            return имя
+        if re.search(rf'\b{re.escape(name)}\b', text, re.IGNORECASE):
+            return name
 
     return ''

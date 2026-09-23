@@ -71,7 +71,7 @@ async def initiative_round_run() -> dict:
 
     made = sent = stale = 0
 
-    for site_id, набор, отправка in sites:
+    for site_id, make, send in sites:
         try:
             # ⚠ Чистка идёт **всегда**, независимо от флагов: карточка, ставшая
             # вредной, вредна и при снятой отправке — человек прочитает её в пуле
@@ -91,11 +91,11 @@ async def initiative_round_run() -> dict:
             # сочинить заново, когда девушка вернётся.
             stale += await pool_sweep(site_id)
 
-            if набор:
+            if make:
                 got = await initiative_make(site_id, limit=INITIATIVE_ROUND_MAKE)
                 made += int(got.get('made') or 0)
 
-            if отправка:
+            if send:
                 sent += await _send(site_id)
         except Exception as e:
             logger_info(f'[dating] круг инициативы, сайт #{site_id}: {e}')

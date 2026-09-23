@@ -158,7 +158,7 @@ async def ready_online(profile_id: int) -> bool:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                "SELECT status = 'online' AND enabled = 1 AS живая"
+                "SELECT status = 'online' AND enabled = 1 AS alive"
                 '  FROM profile WHERE id = %s', (int(profile_id),))
             row = await db.fetchone()
     except Exception as e:
@@ -168,7 +168,7 @@ async def ready_online(profile_id: int) -> bool:
 
         return True
 
-    return bool((row or {}).get('живая'))
+    return bool((row or {}).get('alive'))
 
 
 async def ready_write(profile_id: int, state: dict) -> None:

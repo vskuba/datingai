@@ -202,19 +202,19 @@ class TestTheTwoStripsTakeTurns:
                     encoding='utf-8').read()
 
     def test_the_general_strip_hides_when_a_girl_is_open(self):
-        """⚠ Условие **обратное** тому, что у своей ленты: `!пусто` против
-        `пусто`. Поставь одинаковое — ленты либо обе горели бы, либо обе гасли."""
+        """⚠ Условие **обратное** тому, что у своей ленты: `!noGirl` против
+        `noGirl`. Поставь одинаковое — ленты либо обе горели бы, либо обе гасли."""
         page = self._page()
 
         assert ("workEl.querySelectorAll('.strip-row[data-strip=\"favonline\"]')"
-                ".forEach(\n            row => row.classList.toggle('off', !пусто))"
+                ".forEach(\n            row => row.classList.toggle('off', !noGirl))"
                 in page), 'общая лента больше не уступает место своей'
 
     def test_the_own_strip_hides_without_a_girl(self):
         page = self._page()
 
         assert ("workEl.querySelectorAll('.strip-row[data-strip=\"favorite\"]')"
-                ".forEach(\n            row => row.classList.toggle('off', пусто))"
+                ".forEach(\n            row => row.classList.toggle('off', noGirl))"
                 in page), 'своя лента больше не прячется без выбранной анкеты'
 
     def test_the_splitter_stays(self):

@@ -74,15 +74,15 @@ class TestThePool:
         await _card(girl, 'u-1', 'ждёт')
         await _card(girl, 'u-2', 'ушло', status='sent')
 
-        пул = (await auth_client.get(
+        pool = (await auth_client.get(
             f'/api/dating/chat-initiative?site_id={STAND_SITE}&profile_id={girl}')
         ).json()['result']
-        ушло = (await auth_client.get(
+        sent = (await auth_client.get(
             f'/api/dating/chat-initiative?site_id={STAND_SITE}'
             f'&profile_id={girl}&status_=sent')).json()['result']
 
-        assert [one['body'] for one in пул] == ['ждёт']
-        assert [one['body'] for one in ушло] == ['ушло']
+        assert [one['body'] for one in pool] == ['ждёт']
+        assert [one['body'] for one in sent] == ['ушло']
 
     async def test_no_site_no_pool(self, auth_client):
         """⚠ Без сайта — пусто, а не пул всех сайтов сразу."""
@@ -212,14 +212,14 @@ class TestTheSettings:
     def test_both_are_registered(self):
         from src.uvicorn.routers.dating.site_ import SITE_KNOWN
 
-        через = SITE_KNOWN['chat_initiative_after']
-        раз = SITE_KNOWN['chat_initiative_repeat']
+        after = SITE_KNOWN['chat_initiative_after']
+        times = SITE_KNOWN['chat_initiative_repeat']
 
-        assert через['title'] == 'Инициатива, проявить через минут'
-        assert раз['title'] == 'Инициатива, сколько раз повторить'
-        assert раз['default'] == '2'
-        assert раз['kind'] == 'number' and раз['min'] == 0
-        assert через['group'] == раз['group'] == 'invite', \
+        assert after['title'] == 'Инициатива, проявить через минут'
+        assert times['title'] == 'Инициатива, сколько раз повторить'
+        assert times['default'] == '2'
+        assert times['kind'] == 'number' and times['min'] == 0
+        assert after['group'] == times['group'] == 'invite', \
             'настройки читают вместе — и стоять им рядом'
 
     def test_both_admit_they_do_nothing_yet(self):
@@ -236,8 +236,8 @@ class TestTheColumn:
     def test_the_markup_has_three_columns(self):
         import pathlib
 
-        корень = pathlib.Path(__file__).resolve().parents[1]
-        page = (корень / 'data/uvicorn/template/admin/dating/profile/site/_base.html'
+        root = pathlib.Path(__file__).resolve().parents[1]
+        page = (root / 'data/uvicorn/template/admin/dating/profile/site/_base.html'
                 ).read_text(encoding='utf-8')
 
         assert 'in-cols-3' in page, 'раскладка на три колонки не заведена'
@@ -249,17 +249,17 @@ class TestTheColumn:
         расширь мы `.in-cols`, у них появилась бы пустая третья."""
         import pathlib
 
-        корень = pathlib.Path(__file__).resolve().parents[1]
-        page = (корень / 'data/uvicorn/template/admin/dating/profile.html'
+        root = pathlib.Path(__file__).resolve().parents[1]
+        page = (root / 'data/uvicorn/template/admin/dating/profile.html'
                 ).read_text(encoding='utf-8')
 
         assert '.in-cols-3 {' in page
         # У общей раскладки колонок по-прежнему три поля сетки (колонка, полоса,
         # колонка), а не пять.
-        общая = page[page.index('    .in-cols {'):]
-        общая = общая[:общая.index('}')]
+        shared = page[page.index('    .in-cols {'):]
+        shared = shared[:shared.index('}')]
 
-        assert общая.count('minmax') == 2, 'общую раскладку тронули — сломает соседей'
+        assert shared.count('minmax') == 2, 'общую раскладку тронули — сломает соседей'
 
 
 class TestTheColumnKeepsUp:
@@ -276,27 +276,27 @@ class TestTheColumnKeepsUp:
     def _page(self) -> str:
         import pathlib
 
-        корень = pathlib.Path(__file__).resolve().parents[1]
+        root = pathlib.Path(__file__).resolve().parents[1]
 
-        return (корень / 'data/uvicorn/template/admin/dating/profile.html'
+        return (root / 'data/uvicorn/template/admin/dating/profile.html'
                 ).read_text(encoding='utf-8')
 
     def test_the_pool_is_reread_on_a_timer(self):
         """⚠ Тем же кругом, что пулы инвайтов и писем: их наполняет воркер."""
         page = self._page()
-        круг = page[page.index('const POOL_IDLE_MS'):]
-        круг = круг[:круг.index('}, POOL_IDLE_MS);')]
+        loop = page[page.index('const POOL_IDLE_MS'):]
+        loop = loop[:loop.index('}, POOL_IDLE_MS);')]
 
-        assert 'initiativeLoad()' in круг, 'колонка не перечитывается сама'
+        assert 'initiativeLoad()' in loop, 'колонка не перечитывается сама'
 
     def test_the_chat_timer_is_not_enough(self):
         """⚠ Круг чата сюда не годится: он стоит при невыбранной анкете, а диалоги
         сайта смотрят как раз без выбора."""
         page = self._page()
-        чат = page[page.index("if (workTab === 'chat') chatLoad();") - 200:]
-        чат = чат[:чат.index('}, LOG_MS);')]
+        chat = page[page.index("if (workTab === 'chat') chatLoad();") - 200:]
+        chat = chat[:chat.index('}, LOG_MS);')]
 
-        assert '!openId' in чат, 'условие круга чата изменилось — проверьте вывод'
+        assert '!openId' in chat, 'условие круга чата изменилось — проверьте вывод'
 
     def test_a_vanished_card_is_not_an_error(self):
         """⚠⚠ «Карточки нет» — рассинхрон, а не отказ: цель человека достигнута."""
@@ -304,12 +304,12 @@ class TestTheColumnKeepsUp:
         # ⚠ Ищем **обработчик пула инициативы**, а не первое вхождение `mail-card-drop`:
         # тем же классом подписана кнопка у трёх соседних пулов, и первое совпадение
         # приходится на общее правило CSS.
-        блок = page[page.index('function initiativeBind('):]
-        блок = блок[:блок.index('\n    }')]
+        block = page[page.index('function initiativeBind('):]
+        block = block[:block.index('\n    }')]
 
-        assert 'err.status === 404' in блок, \
+        assert 'err.status === 404' in block, \
             'исчезнувшая карточка всё ещё показывается красной ошибкой'
-        assert 'initiativeLoad();' in блок, 'список после отказа не перечитывается'
+        assert 'initiativeLoad();' in block, 'список после отказа не перечитывается'
 
     def test_the_status_code_reaches_the_page(self):
         """⚠ Код ответа — полем ошибки, а не только в тексте.
@@ -319,7 +319,7 @@ class TestTheColumnKeepsUp:
         """
         import pathlib
 
-        корень = pathlib.Path(__file__).resolve().parents[1]
-        api = (корень / 'data/uvicorn/public/js/api.js').read_text(encoding='utf-8')
+        root = pathlib.Path(__file__).resolve().parents[1]
+        api = (root / 'data/uvicorn/public/js/api.js').read_text(encoding='utf-8')
 
         assert 'error.status = response.status' in api

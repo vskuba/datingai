@@ -411,14 +411,14 @@ async def test_mail_in_round_check_is_on_by_default(auth_client):
     from mysql_.mysql_ import mysql_get_db_async
 
     async with mysql_get_db_async() as db:
-        await db.execute("SELECT COLUMN_DEFAULT AS умолчание"
+        await db.execute("SELECT COLUMN_DEFAULT AS col_default"
                          ' FROM INFORMATION_SCHEMA.COLUMNS'
                          " WHERE TABLE_SCHEMA = DATABASE()"
                          "   AND TABLE_NAME = 'site'"
                          "   AND COLUMN_NAME = 'mail_check_on'")
         row = await db.fetchone()
 
-    assert str((row or {}).get('умолчание')) == '1'
+    assert str((row or {}).get('col_default')) == '1'
 
 
 async def test_mail_in_round_handler_reports_on_for_unknown_site(auth_client):

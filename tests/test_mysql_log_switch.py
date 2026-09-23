@@ -74,10 +74,10 @@ class TestTheFlowIsGuarded:
         import mysql_.mysql_ as mod
 
         source = inspect.getsource(mod)
-        место = source.index('[MySQL SQL Many]')
-        кусок = source[место - 200:место]
+        at = source.index('[MySQL SQL Many]')
+        chunk = source[at - 200:at]
 
-        assert 'if LOG_QUERIES:' in кусок
+        assert 'if LOG_QUERIES:' in chunk
 
 
 def _parent(source: str, needle: str) -> str:

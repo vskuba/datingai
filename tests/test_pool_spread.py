@@ -64,9 +64,9 @@ class TestEveryCardPicksAnew:
 
         list(invite_cards(GIRLS, PEOPLE, set(), set()))
 
-        ожидаем = [n for n in range(len(PEOPLE), 0, -1) for _ in GIRLS]
+        expected = [n for n in range(len(PEOPLE), 0, -1) for _ in GIRLS]
 
-        assert [len(one) for one in seen] == ожидаем
+        assert [len(one) for one in seen] == expected
 
 
     def test_mailing_chooses_for_every_person(self, monkeypatch):

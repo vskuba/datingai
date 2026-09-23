@@ -476,6 +476,129 @@ async def favorite_mail_pool_left(site_id: int) -> int:
     return int((row or {}).get('n') or 0)
 
 
+def favorite_mail_girl_free_sql(gap: int, key: str = 'm.profile_id') -> str:
+    """Условие «этой девушке сейчас можно писать» — куском `WHERE`.
+
+    Пустая строка, если паузы нет: ноль — законное значение, человек выбрал
+    «без паузы», и городить условие, которое всегда истинно, незачем.
+
+    ⚠ Срок подставляется **числом**, а не `%s`: кусок уезжает в чужой запрос,
+    где своя очередь подстановок, и лишний `%s` в середине сдвинул бы все
+    остальные. Значение приходит из настройки через `int()` — строке взяться
+    неоткуда.
+    """
+    gap = int(gap or 0)
+    if gap <= 0:
+        return ''
+
+    return (f' AND NOT EXISTS (SELECT 1 FROM ({_girl_sent_union(key)}) AS sent'
+            f'  WHERE sent.sent_at > NOW() - INTERVAL {gap} SECOND)')
+
+async def favorite_mail_girl_soon(profile_id: int, gap: int) -> str:
+    """Рано ли **этой девушке** писать письмо. Пустая строка — можно.
+
+    Args:
+        profile_id: анкета, от чьего имени письмо уйдёт.
+        gap: пауза в секундах (`favorite_mail_gap`). Ноль — паузы нет.
+
+    Returns:
+        str: причина словами — с тем, сколько ещё ждать. «Прошло меньше четырёх
+        часов» человек читать умеет, но считать в уме не обязан.
+
+    ⚠ **Кому она писала — неважно.** В этом и состоит правило: сайт видит поток
+    писем от одной девушки, а не пары «она — он», и разбирать наши пулы за него
+    никто не будет.
+
+    ⚠ **Сбой базы — не пишем.** Непрочитанный счёт означает неизвестный предел, а
+    лишнее письмо живому человеку отменить нельзя. Та же сторона ошибки, что у
+    дневного потолка.
+    """
+    from src.dating.mail_send import MAIL_SEND_TABLES
+
+    profile_id, gap = int(profile_id or 0), int(gap or 0)
+    if not profile_id or gap <= 0:
+        return ''
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                f'SELECT MAX(sent_at) AS last_at'
+                f'  FROM ({_girl_sent_union("%s")}) AS sent',
+                (profile_id,) * len(MAIL_SEND_TABLES))
+            row = await db.fetchone()
+    except Exception as e:
+        logger_info(f'[dating] когда анкета #{profile_id} писала в последний раз '
+                    f'— не спросилось: {e}')
+
+        return 'не удалось посчитать, когда она писала в последний раз'
+
+    when = (row or {}).get('last_at')
+    if when is None:
+        return ''
+
+    since = await _since(when)
+    if since >= gap:
+        return ''
+
+    return (f'она писала {_ago_word(since)}, пауза {_hours_word(gap)} — '
+            f'можно через {_left_word(gap - since)}')
+
+def favorite_mail_shift_now(shifts, minutes: int) -> bool:
+    """Идёт ли сейчас смена набора. Пустые смены — «нет», а не «всегда».
+
+    Args:
+        shifts: содержимое столбца `favorite_mail_schedule` — как из базы.
+        minutes: минуты от начала **местных** суток.
+
+    ⚠ **Правило одно на круг и на объяснение.** Круг решает по нему, идти ли, а
+    шапка пула — что написать человеку. Заведи объяснение свою копию, оно
+    говорило бы «идёт смена» там, где круг уходит ни с чем, — и это худший из
+    возможных ответов: он отправляет искать поломку туда, где её нет.
+
+    ⚠ Пустое расписание значит «не работаем». Правило общее с рассылкой и
+    инвайтами: второе прочтение здесь означало бы, что человек, стерев все
+    смены, получает круглосуточную работу.
+    """
+    rows = json_column_load(shifts) or []
+
+    return bool(rows) and schedule_now(rows, int(minutes))
+
+async def favorite_mail_shift_site(site_id: int, offset_hours: int = 0) -> bool:
+    """То же, но столбец читается сам. Для тех, у кого смен ещё нет в руках.
+
+    ⚠ Круг этим **не** пользуется: он забирает смены общим запросом по сайтам, и
+    второй запрос на каждый сайт был бы платой за уже известное.
+    """
+    site_id = int(site_id or 0)
+    if not site_id:
+        return False
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT favorite_mail_schedule FROM site'
+                             ' WHERE site_id = %s', (site_id,))
+            row = await db.fetchone()
+    except Exception as e:
+        logger_info(f'[dating] смены писем избранным сайта #{site_id} '
+                    f'не спросились: {e}')
+
+        # ⚠ Сомнение — в сторону «работаем»: это объяснение, а не решение. Соври
+        # оно «не смена», человек искал бы поломку в расписании, которого не
+        # видел. Решает всё равно круг, и у него свой ответ.
+        return True
+
+    return favorite_mail_shift_now((row or {}).get('favorite_mail_schedule'),
+                                   _minutes_now(int(offset_hours)))
+
+async def favorite_mail_gap_sec(site_id: int) -> int:
+    """Пауза между письмами одной девушки, секундами. Одно чтение на всех.
+
+    ⚠ Умолчание живёт здесь, а не у каждого спрашивающего: круг отправки и круг
+    набора обязаны понимать «настройки нет» одинаково.
+    """
+    return await _seconds(site_id, FAVORITE_MAIL_GAP_SETTING,
+                          FAVORITE_MAIL_GAP_DEFAULT)
+
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 async def _sync_stars(site_id: int, profile_id: int = 0) -> None:
@@ -691,122 +814,12 @@ def _girl_sent_union(key: str) -> str:
         f"profile_id = {key} AND status = 'sent' AND sent_at IS NOT NULL")
 
 
-def favorite_mail_girl_free_sql(gap: int, key: str = 'm.profile_id') -> str:
-    """Условие «этой девушке сейчас можно писать» — куском `WHERE`.
-
-    Пустая строка, если паузы нет: ноль — законное значение, человек выбрал
-    «без паузы», и городить условие, которое всегда истинно, незачем.
-
-    ⚠ Срок подставляется **числом**, а не `%s`: кусок уезжает в чужой запрос,
-    где своя очередь подстановок, и лишний `%s` в середине сдвинул бы все
-    остальные. Значение приходит из настройки через `int()` — строке взяться
-    неоткуда.
-    """
-    gap = int(gap or 0)
-    if gap <= 0:
-        return ''
-
-    return (f' AND NOT EXISTS (SELECT 1 FROM ({_girl_sent_union(key)}) AS ушло'
-            f'  WHERE ушло.sent_at > NOW() - INTERVAL {gap} SECOND)')
 
 
-async def favorite_mail_girl_soon(profile_id: int, gap: int) -> str:
-    """Рано ли **этой девушке** писать письмо. Пустая строка — можно.
-
-    Args:
-        profile_id: анкета, от чьего имени письмо уйдёт.
-        gap: пауза в секундах (`favorite_mail_gap`). Ноль — паузы нет.
-
-    Returns:
-        str: причина словами — с тем, сколько ещё ждать. «Прошло меньше четырёх
-        часов» человек читать умеет, но считать в уме не обязан.
-
-    ⚠ **Кому она писала — неважно.** В этом и состоит правило: сайт видит поток
-    писем от одной девушки, а не пары «она — он», и разбирать наши пулы за него
-    никто не будет.
-
-    ⚠ **Сбой базы — не пишем.** Непрочитанный счёт означает неизвестный предел, а
-    лишнее письмо живому человеку отменить нельзя. Та же сторона ошибки, что у
-    дневного потолка.
-    """
-    from src.dating.mail_send import MAIL_SEND_TABLES
-
-    profile_id, gap = int(profile_id or 0), int(gap or 0)
-    if not profile_id or gap <= 0:
-        return ''
-
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                f'SELECT MAX(sent_at) AS последнее'
-                f'  FROM ({_girl_sent_union("%s")}) AS ушло',
-                (profile_id,) * len(MAIL_SEND_TABLES))
-            row = await db.fetchone()
-    except Exception as e:
-        logger_info(f'[dating] когда анкета #{profile_id} писала в последний раз '
-                    f'— не спросилось: {e}')
-
-        return 'не удалось посчитать, когда она писала в последний раз'
-
-    when = (row or {}).get('последнее')
-    if when is None:
-        return ''
-
-    since = await _since(when)
-    if since >= gap:
-        return ''
-
-    return (f'она писала {_ago_word(since)}, пауза {_hours_word(gap)} — '
-            f'можно через {_left_word(gap - since)}')
 
 
-def favorite_mail_shift_now(shifts, minutes: int) -> bool:
-    """Идёт ли сейчас смена набора. Пустые смены — «нет», а не «всегда».
-
-    Args:
-        shifts: содержимое столбца `favorite_mail_schedule` — как из базы.
-        minutes: минуты от начала **местных** суток.
-
-    ⚠ **Правило одно на круг и на объяснение.** Круг решает по нему, идти ли, а
-    шапка пула — что написать человеку. Заведи объяснение свою копию, оно
-    говорило бы «идёт смена» там, где круг уходит ни с чем, — и это худший из
-    возможных ответов: он отправляет искать поломку туда, где её нет.
-
-    ⚠ Пустое расписание значит «не работаем». Правило общее с рассылкой и
-    инвайтами: второе прочтение здесь означало бы, что человек, стерев все
-    смены, получает круглосуточную работу.
-    """
-    rows = json_column_load(shifts) or []
-
-    return bool(rows) and schedule_now(rows, int(minutes))
 
 
-async def favorite_mail_shift_site(site_id: int, offset_hours: int = 0) -> bool:
-    """То же, но столбец читается сам. Для тех, у кого смен ещё нет в руках.
-
-    ⚠ Круг этим **не** пользуется: он забирает смены общим запросом по сайтам, и
-    второй запрос на каждый сайт был бы платой за уже известное.
-    """
-    site_id = int(site_id or 0)
-    if not site_id:
-        return False
-
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute('SELECT favorite_mail_schedule FROM site'
-                             ' WHERE site_id = %s', (site_id,))
-            row = await db.fetchone()
-    except Exception as e:
-        logger_info(f'[dating] смены писем избранным сайта #{site_id} '
-                    f'не спросились: {e}')
-
-        # ⚠ Сомнение — в сторону «работаем»: это объяснение, а не решение. Соври
-        # оно «не смена», человек искал бы поломку в расписании, которого не
-        # видел. Решает всё равно круг, и у него свой ответ.
-        return True
-
-    return favorite_mail_shift_now((row or {}).get('favorite_mail_schedule'),
-                                   _minutes_now(int(offset_hours)))
 
 
 def _minutes_now(offset_hours: int) -> int:
@@ -814,14 +827,6 @@ def _minutes_now(offset_hours: int) -> int:
     return int((time.time() + int(offset_hours) * 3600) // 60 % (24 * 60))
 
 
-async def favorite_mail_gap_sec(site_id: int) -> int:
-    """Пауза между письмами одной девушки, секундами. Одно чтение на всех.
-
-    ⚠ Умолчание живёт здесь, а не у каждого спрашивающего: круг отправки и круг
-    набора обязаны понимать «настройки нет» одинаково.
-    """
-    return await _seconds(site_id, FAVORITE_MAIL_GAP_SETTING,
-                          FAVORITE_MAIL_GAP_DEFAULT)
 
 
 async def _too_soon(site_id: int, uid: str, per_day: int) -> str:
@@ -874,9 +879,9 @@ async def _too_soon(site_id: int, uid: str, per_day: int) -> str:
     # наших девушек ему написала. Все три таблицы этот столбец несут.
     from src.dating.mail_send import MAIL_SEND_TABLES, mail_sent_union
 
-    sql = ('SELECT COUNT(*) AS сутки, MAX(sent_at) AS последнее FROM ('
+    sql = ('SELECT COUNT(*) AS per_day_count, MAX(sent_at) AS last_at FROM ('
            + mail_sent_union("site_id = %s AND uid = %s AND status = 'sent'")
-           + ') AS ушло'
+           + ') AS sent'
              ' WHERE sent_at IS NOT NULL AND sent_at > NOW() - INTERVAL 1 DAY')
 
     try:
@@ -889,8 +894,8 @@ async def _too_soon(site_id: int, uid: str, per_day: int) -> str:
 
         return 'не удалось посчитать, сколько ему уже написали'
 
-    day_sent = int((row or {}).get('сутки') or 0)
-    when = (row or {}).get('последнее')
+    day_sent = int((row or {}).get('per_day_count') or 0)
+    when = (row or {}).get('last_at')
     since = await _since(when) if when is not None else None
 
     # ⚠ **Дневной предел называет, когда он отпустит.** «Ушло два — предел два»
@@ -961,10 +966,10 @@ async def _since(when) -> int:
     об этом незачем, когда ту же разницу умеет посчитать тот, кто хранит метку.
     """
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT TIMESTAMPDIFF(SECOND, %s, NOW()) AS сек', (when,))
+        await db.execute('SELECT TIMESTAMPDIFF(SECOND, %s, NOW()) AS sec', (when,))
         row = await db.fetchone()
 
-    return int((row or {}).get('сек') or 0)
+    return int((row or {}).get('sec') or 0)
 
 
 async def _template(site_id: int, language: str) -> str:

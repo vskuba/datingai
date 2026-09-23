@@ -123,10 +123,10 @@ class TestWhoIsQuiet:
         Он промолчал вчера, а сегодня написал снова — сегодняшнее ждёт ответа, и
         это снова работа автоответа.
         """
-        старое = await _said(girl, 'u-1', direction='in', minutes_ago=400)
+        old = await _said(girl, 'u-1', direction='in', minutes_ago=400)
         async with mysql_get_db_async() as db:
             await db.execute('UPDATE message SET answer_silent_at = NOW()'
-                             ' WHERE id = %s', (старое,))
+                             ' WHERE id = %s', (old,))
             await db.connection.commit()
 
         await _said(girl, 'u-1', direction='in', minutes_ago=180)
@@ -214,13 +214,13 @@ class TestTheKindIsDrawn:
 
     def test_the_sharp_ones_are_rare(self):
         """⚠ Чёрный юмор хорош раз в десяток реплик и ужасен каждую вторую."""
-        веса = dict(initiative_mod.INITIATIVE_KINDS)
-        острое = [вес for приём, вес in веса.items()
-                  if 'мрачно' in приём or 'глупость' in приём]
-        лёгкое = [вес for приём, вес in веса.items() if 'историю из своего дня' in приём]
+        weights = dict(initiative_mod.INITIATIVE_KINDS)
+        sharp = [weight for kind, weight in weights.items()
+                  if 'мрачно' in kind or 'глупость' in kind]
+        light = [weight for kind, weight in weights.items() if 'историю из своего дня' in kind]
 
-        assert острое and лёгкое
-        assert max(острое) < min(лёгкое), 'острое выпадает не реже безобидного'
+        assert sharp and light
+        assert max(sharp) < min(light), 'острое выпадает не реже безобидного'
 
 
 class TestItReachesTheAgent:
@@ -426,9 +426,9 @@ class TestBothMustBeOnline:
                              (girl,))
             await db.connection.commit()
 
-        готовые = await chat_initiative_ready(STAND_SITE)
+        ready = await chat_initiative_ready(STAND_SITE)
 
-        assert not [one for one in готовые if int(one['profile_id']) == girl]
+        assert not [one for one in ready if int(one['profile_id']) == girl]
 
     async def test_a_sleeping_companion_keeps_the_card(self, monkeypatch, girl):
         """⚠ Собеседник не в сети — карточка **ждёт**, а не гибнет.
@@ -447,10 +447,10 @@ class TestBothMustBeOnline:
 
     async def test_both_online_sends(self, monkeypatch, girl):
         """Оба в сети — реплика уходит."""
-        ушло = []
+        outbox = []
 
         async def _send(profile, presence, uid, text):
-            ушло.append(text)
+            outbox.append(text)
 
             return {'ok': True, 'error': ''}
 
@@ -461,5 +461,5 @@ class TestBothMustBeOnline:
 
         sent = await round_mod._send(STAND_SITE)
 
-        assert sent == 1 and ушло == ['текст']
+        assert sent == 1 and outbox == ['текст']
         assert await chat_initiative_waiting(girl, 'u-1') == {}, 'карточка не ушла'

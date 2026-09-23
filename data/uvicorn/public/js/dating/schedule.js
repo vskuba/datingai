@@ -171,18 +171,18 @@ export function scheduleRoom(rows) {
     for (const item of rows) {
         const start = timeMinutes(item.from);
         // Свободного места нужно на зазор больше с каждой стороны, где есть сосед.
-        const отступ = cursor ? need : 0;
-        if (start - cursor >= need * 2 + отступ) {
-            return {from: cursor + отступ, to: cursor + отступ + need};
+        const pad = cursor ? need : 0;
+        if (start - cursor >= need * 2 + pad) {
+            return {from: cursor + pad, to: cursor + pad + need};
         }
 
         cursor = Math.max(cursor, timeMinutes(item.to));
     }
 
-    const отступ = cursor ? need : 0;
-    if (DAY_MINUTES - cursor >= need + отступ) {
-        return {from: cursor + отступ,
-                to: Math.min(cursor + отступ + need, DAY_MINUTES)};
+    const pad = cursor ? need : 0;
+    if (DAY_MINUTES - cursor >= need + pad) {
+        return {from: cursor + pad,
+                to: Math.min(cursor + pad + need, DAY_MINUTES)};
     }
 
     return null;
