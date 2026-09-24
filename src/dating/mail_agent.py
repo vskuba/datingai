@@ -330,7 +330,7 @@ async def mail_agent_fill(profile: dict, site_id: int,
         # за внимание LLM.
         question='Заполни переменные писем по сведениям об анкете.',
         companion_id=MAIL_AGENT_COMPANION_ID,
-        variables={'girl_card': _card(profile),
+        variables={'girl_bio': _card(profile),
                    'mail_vars': _wanted_text(wanted),
                    # ⚠ **Заготовка ответа с настоящими ключами.** Прежде промпт
                    # давал пример с выдуманными именами и надеялся, что модель
@@ -544,8 +544,16 @@ async def mail_question(profile: dict, site_id: int,
         agent_id=agent_id,
         question='Придумай вопрос получателю.',
         companion_id=MAIL_AGENT_COMPANION_ID,
-        variables={'girl_card': _card(profile),
-                   'companion_card': _companion_card(companion),
+        # ⚠⚠ Имена ключей — `*_bio`, как у `dating_talk`. Прежде почта звала то
+        # же самое `*_card`, и правя её промпт, легко было написать по привычке
+        # `%companion_bio%`: метка молча осталась бы в тексте, а модель прочитала
+        # бы её словами (`…_wf_mail_card_to_bio`).
+        #
+        # ⚠ Собирают значение прежние функции: форма у почты своя — строки с
+        # подписями, а не связный рассказ. Имя отвечает на вопрос «о ком», а не
+        # «как отформатировано».
+        variables={'girl_bio': _card(profile),
+                   'companion_bio': _companion_card(companion),
                    # ⚠ Язык — на каждом вызове: без него сосед возьмёт первый
                    # язык узла, а он свой у каждой установки (см. константу).
                    'user_language': language})
