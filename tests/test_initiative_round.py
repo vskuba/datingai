@@ -195,36 +195,92 @@ class TestWhoIsQuiet:
         assert [one['try_no'] for one in got] == [1], 'счёт не обнулился'
 
 
-class TestTheKindIsDrawn:
-    """⚠⚠ Приём выбирает панель."""
+class TestTheKindIsNotOursAnymore:
+    """⚠⚠ Приём бросает сосед, и здесь его быть не должно.
 
-    def test_a_kind_is_a_task(self):
-        """⚠ Формулировка — задача агенту, а не тема: «пошути» он исполнит как
-        угодно, узкая задача — одним способом."""
-        got = initiative_mod.initiative_kind()
+    Двенадцать приёмов с весами жили тут константой и жребием, а панель слала
+    готовое. Теперь их бросает шаг «Жребий» у соседа: список приёмов — часть
+    задания модели, и лежать он должен рядом с промптом, который его исполняет.
 
-        assert got in [one for one, _ in initiative_mod.INITIATIVE_KINDS]
-        assert len(got) > 30, 'приём выродился в одно слово'
+    ⚠ Тест сторожит **не отсутствие кода**, а то, что копия не вернётся. Вернись
+    она — разойтись с промптом у неё займёт одну правку, и узнать об этом будет
+    неоткуда: приём приедет разумный, просто не тот, о котором просит промпт.
+    """
 
-    def test_the_draw_is_varied(self):
-        """Сто жребиев — не один и тот же приём."""
-        got = {initiative_mod.initiative_kind() for _ in range(100)}
+    def test_the_panel_does_not_draw_it(self):
+        assert not hasattr(initiative_mod, 'initiative_kind'), \
+            'жребий приёма вернулся в панель — он живёт у соседа'
+        assert not hasattr(initiative_mod, 'INITIATIVE_KINDS'), \
+            'список приёмов вернулся в панель — он живёт у соседа'
 
-        assert len(got) >= 6, f'жребий вырождается: {len(got)} приёмов из ста'
+    def test_the_question_points_at_the_dice_variable(self):
+        """⚠ Вопрос агенту называет переменную по имени: разойдись оно с тем,
+        что кладёт жребий, — модель прочтёт метку словами и ответит наугад."""
+        assert 'dice_initiative_kind' in initiative_mod.INITIATIVE_PROMPT
 
-    def test_the_sharp_ones_are_rare(self):
-        """⚠ Чёрный юмор хорош раз в десяток реплик и ужасен каждую вторую."""
-        weights = dict(initiative_mod.INITIATIVE_KINDS)
-        sharp = [weight for kind, weight in weights.items()
-                  if 'мрачно' in kind or 'глупость' in kind]
-        light = [weight for kind, weight in weights.items() if 'историю из своего дня' in kind]
 
-        assert sharp and light
-        assert max(sharp) < min(light), 'острое выпадает не реже безобидного'
+class TestTheSiteSettingsReachTheDice:
+    """⚠⚠ Доли разнообразия крутит человек на странице сайта, а бросает сосед.
+
+    Три настройки — имя, вопрос, рассказ — уже однажды перестали работать молча:
+    переезд писем на `dating_talk` унёс код, который их читал, а ручки на
+    странице остались и крутились впустую. Заметить это можно было только по
+    десятку одинаковых писем.
+
+    ⚠ Проверяем **отправку**, а не жребий: жребий у соседа, и его правильность
+    стережёт его же сюита. Здесь вопрос один — доехало ли число.
+    """
+
+    async def test_the_percents_are_sent(self, monkeypatch, girl):
+        from src.dating import answer as answer_mod
+
+        got = {}
+
+        async def _chat_ask(agent_id, question, companion_id=0, variables=None):
+            got.update(variables or {})
+
+            return 'ответ'
+
+        monkeypatch.setattr(answer_mod, 'rhapsody_api_chat_ask', _chat_ask)
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT * FROM profile WHERE id = %s', (girl,))
+            profile = dict(await db.fetchone())
+
+        await answer_mod._agent_ask(7, 'вопрос', 'en', profile)
+
+        for _, name, share in answer_mod.ANSWER_DICE_PERCENTS:
+            assert name in got, f'доля «{name}» не уехала соседу'
+            # ⚠ Проценты, а не доля: у соседа жребий считает в сотнях, и `0.4`
+            # вместо `40` выпадал бы раз в двести пятьдесят писем.
+            assert got[name] == str(int(share * 100)), \
+                f'«{name}» уехала как {got[name]!r}, а не процентами'
+
+    async def test_a_broken_setting_falls_back_to_the_default(self, monkeypatch,
+                                                              girl):
+        """⚠⚠ Не прочиталось — шлём умолчание, а не ноль.
+
+        Ноль значит «никогда», и принять такое решение молча из-за недоступной
+        базы нельзя: письма пошли бы все на одно лицо, а причину искали бы в
+        промпте.
+        """
+        from src.dating import answer as answer_mod
+        from src.dating import percent as percent_mod
+
+        async def _boom(site_id, key):
+            raise RuntimeError('база недоступна')
+
+        monkeypatch.setattr(
+            'src.uvicorn.routers.dating.site_.site_seconds', _boom)
+
+        got = await percent_mod.percent_value(343, 'favorite_mail_name_percent',
+                                              0.10)
+
+        assert got == '10', f'вместо умолчания уехало {got!r}'
 
 
 class TestItReachesTheAgent:
-    """Переменные вызова: инициатива и приём."""
+    """Переменные вызова: повод заговорить первой."""
 
     async def test_the_variables_are_sent(self, monkeypatch, girl):
         from src.dating import answer as answer_mod
@@ -243,10 +299,12 @@ class TestItReachesTheAgent:
             profile = dict(await db.fetchone())
 
         await answer_mod._agent_ask(7, 'вопрос', 'en', profile,
-                                    initiative='пофлиртуй коротко')
+                                    initiative=True)
 
         assert got['make_initiative'] == '1'
-        assert got['initiative_kind'] == 'пофлиртуй коротко'
+        # ⚠ Приёма среди переменных вызова быть не должно: его бросает сосед.
+        assert 'initiative_kind' not in got, \
+            'панель всё ещё шлёт приём — у соседа он больше не объявлен, будет 400'
 
     async def test_without_initiative_the_flag_is_zero(self, monkeypatch, girl):
         """⚠ Строкой `'0'`, а не `False`: у соседа `%if%` ложно для `'0'`, а
@@ -269,7 +327,7 @@ class TestItReachesTheAgent:
         await answer_mod._agent_ask(7, 'вопрос', 'en', profile)
 
         assert got['make_initiative'] == '0'
-        assert got['initiative_kind'] == ''
+        assert 'initiative_kind' not in got
 
 
 class TestTheTwoSwitches:

@@ -55,6 +55,7 @@ from src.dating.chat_reply import (chat_reply_failed, chat_reply_put,
 from src.dating.companion_ref import (COMPANION_REF_ID, companion_ref_foreign,
                                       companion_title, companion_vars)
 from src.dating.online import online_check
+from src.dating.percent import percent_value
 from src.dating.send import send_message
 
 # Запись справочника собеседников у соседа, заведённая под нас
@@ -414,10 +415,46 @@ async def answer_mail_reply(agent_id: int, profile: dict, uid: str,
         anyway=True)
 
 
+# Доли, которыми жребий у соседа правит разнообразие письма: ключ настройки
+# сайта → имя переменной вызова и умолчание долей (0..1).
+#
+# ⚠⚠ **Жребий бросает сосед, а настройки живут здесь** — и это не половинчатость,
+# а разделение по смыслу. «Сколько писем с именем» — дело сайта: у одного
+# агентства так принято, у другого иначе, и крутит это человек на странице сайта.
+# А «какие бывают зачины» — дело промпта, и лежит оно рядом с промптом.
+#
+# ⚠ Ключи переменных с приставкой `dice_`: у соседа так зовётся всё, что ведёт
+# жребий, и по имени в промпте видно, что значение бросили, а не прислали.
+ANSWER_DICE_PERCENTS = (
+    ('favorite_mail_name_percent', 'dice_mail_name_percent', 0.10),
+    ('favorite_mail_question_percent', 'dice_mail_question_percent', 0.25),
+    ('favorite_mail_story_percent', 'dice_mail_story_percent', 0.40),
+)
+
+
+async def _dice_percents(site_id) -> dict:
+    """Доли настроек сайта — переменными вызова для шага «Жребий».
+
+    ⚠ Шлём **всегда**, а не только для писем: лишняя переменная у соседа ничего
+    не стоит, а «слать или не слать» — это ещё одно условие, которое однажды
+    разойдётся с тем, какие ветки ими пользуются.
+
+    ⚠⚠ Сбой чтения даёт **умолчание, а не ноль**: ноль значит «никогда», и
+    принять такое решение молча из-за недоступной базы нельзя — письма пошли бы
+    все на одно лицо, и причину искали бы в промпте.
+    """
+    return {name: await percent_value(int(site_id or 0), key, default)
+            for key, name, default in ANSWER_DICE_PERCENTS}
+
+
 async def _agent_ask(agent_id: int, question: str, language: str,
                      profile: dict,
                      uid: str = '', anyway: bool = False,
-                     name: str = '', initiative: str = '',
+                     # ⚠ Флаг, а не приём. Прежде сюда клали текст приёма
+                     # («пошути коротко») — жребий бросала панель; теперь его
+                     # бросает шаг «Жребий» у соседа, и отсюда нужен один ответ:
+                     # заговорить первой или отвечать на сказанное.
+                     name: str = '', initiative: bool = False,
                      mail: str = '') -> tuple[str, str]:
     """Спрашивает агента в RhapsodyAi. Возвращает (ответ, ошибка).
 
@@ -501,11 +538,14 @@ async def _agent_ask(agent_id: int, question: str, language: str,
                        'answer_anyway': '1' if anyway else '0',
                        # ⚠⚠ Инициатива: шаг сочинения меняет задачу с
                        # «ответь» на «заговори» (`wf_dating_talk_initiative`).
-                       # Приём приходит **готовым** — жребий бросает панель
-                       # (`initiative.py`): «будь разной» модель не понимает,
-                       # и три текста из трёх выходят на один лад.
+                       #
+                       # ⚠ Шлём **только повод**, а не приём. Приём («пошути»,
+                       # «подколи», «расскажи историю») бросает жребий у соседа,
+                       # шаг «Жребий» (`…_wf_talk_dice_common.sql`): двенадцать
+                       # приёмов с весами переехали туда слово в слово. Здесь
+                       # они лежали лишней копией договора — и разошлись бы с
+                       # промптом на первой же правке.
                        'make_initiative': '1' if initiative else '0',
-                       'initiative_kind': str(initiative or ''),
                        # ⚠⚠ Письмо, а не реплика. Строкой '1'/'0' — по тому же
                        # доводу, что у соседних флагов.
                        'mail_mode': '1' if mail else '0',
@@ -529,6 +569,7 @@ async def _agent_ask(agent_id: int, question: str, language: str,
                        # копии броска разошлись бы, а третий вид письма про
                        # жребий просто забыл бы.
                        'mail_length': answer_mail_length() if mail else '',
+                       **(await _dice_percents(profile.get('site_id'))),
                        **agent_vars(profile, card or {})})
     except RhapsodyError as e:
         return '', str(e)
