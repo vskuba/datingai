@@ -1521,64 +1521,6 @@ async def site_save(site_id: int, payload: DatingSiteSave,
     return {'result': {'site_id': site_id, 'settings': _masked(clean)}}
 
 
-def _number_check(key: str, value: str) -> str:
-    """Числовая настройка — целое в своих границах. Иначе `422`.
-
-    Args:
-        key: ключ настройки.
-        value: что прислали.
-
-    Returns:
-        str: то же значение, приведённое к целому без хвостов («07» → «7»).
-
-    Raises:
-        HTTPException: 422 — не число или вне границ, с указанием, каких.
-
-    ⚠⚠ **Проверять обязательно здесь, а не только в форме.** У поля стоят `min` и
-    `max`, но браузер — не единственный источник запроса: ручка открыта тому, у
-    кого есть токен, и «-500» прошло бы молча. Для доли это не мелочь:
-    отрицательная сравнится с `random.random()` как «никогда», и человек получил
-    бы тихо выключённую настройку вместо отказа.
-
-    ⚠ **Не числовые настройки не трогаем.** Здесь только те, у кого в реестре
-    стоит `kind: 'number'`: остальные бывают строками, JSON и расписанием.
-    """
-    spec = SITE_KNOWN.get(str(key), {})
-    if str(spec.get('kind') or '') != 'number':
-        return str(value)
-
-    try:
-        number = int(str(value).strip())
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f'«{spec.get("title") or key}»: нужно целое число, '
-                   f'а пришло «{str(value)[:40]}»')
-
-    # ⚠⚠ **Потолка у счётчиков нет, и это решение заказчика.**
-    #
-    # Он стоял и мешал: «тысяча» казалась щедрой для пула инвайтов, а на проде
-    # десяток анкет и почти две сотни людей дают под две тысячи пар — запрет
-    # пришёлся ровно по живой работе. Всякое число «по здравому смыслу» однажды
-    # окажется меньше настоящей: сколько людей на сайте, знает тот, кто его ведёт.
-    #
-    # ⚠ **Нижняя граница остаётся.** Отрицательное количество — не выбор, а
-    # поломка: `-5` сравнится с чем угодно как «никогда» и тихо выключит занятие
-    # вместо того, чтобы отказать вслух.
-    low, high = spec.get('min'), spec.get('max')
-
-    if (low is not None and number < int(low)) \
-            or (high is not None and number > int(high)):
-        bounds = f'от {low} до {high}' if high is not None else f'не меньше {low}'
-
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f'«{spec.get("title") or key}»: значение {number} вне границ '
-                   f'({bounds})')
-
-    return str(number)
-
-
 async def site_setting(site_id: int, key: str, default: str = '') -> str:
     """Одна настройка сайта — для кода, которому она понадобится.
 
@@ -1687,6 +1629,64 @@ async def site_rows() -> list[dict]:
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+
+def _number_check(key: str, value: str) -> str:
+    """Числовая настройка — целое в своих границах. Иначе `422`.
+
+    Args:
+        key: ключ настройки.
+        value: что прислали.
+
+    Returns:
+        str: то же значение, приведённое к целому без хвостов («07» → «7»).
+
+    Raises:
+        HTTPException: 422 — не число или вне границ, с указанием, каких.
+
+    ⚠⚠ **Проверять обязательно здесь, а не только в форме.** У поля стоят `min` и
+    `max`, но браузер — не единственный источник запроса: ручка открыта тому, у
+    кого есть токен, и «-500» прошло бы молча. Для доли это не мелочь:
+    отрицательная сравнится с `random.random()` как «никогда», и человек получил
+    бы тихо выключённую настройку вместо отказа.
+
+    ⚠ **Не числовые настройки не трогаем.** Здесь только те, у кого в реестре
+    стоит `kind: 'number'`: остальные бывают строками, JSON и расписанием.
+    """
+    spec = SITE_KNOWN.get(str(key), {})
+    if str(spec.get('kind') or '') != 'number':
+        return str(value)
+
+    try:
+        number = int(str(value).strip())
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f'«{spec.get("title") or key}»: нужно целое число, '
+                   f'а пришло «{str(value)[:40]}»')
+
+    # ⚠⚠ **Потолка у счётчиков нет, и это решение заказчика.**
+    #
+    # Он стоял и мешал: «тысяча» казалась щедрой для пула инвайтов, а на проде
+    # десяток анкет и почти две сотни людей дают под две тысячи пар — запрет
+    # пришёлся ровно по живой работе. Всякое число «по здравому смыслу» однажды
+    # окажется меньше настоящей: сколько людей на сайте, знает тот, кто его ведёт.
+    #
+    # ⚠ **Нижняя граница остаётся.** Отрицательное количество — не выбор, а
+    # поломка: `-5` сравнится с чем угодно как «никогда» и тихо выключит занятие
+    # вместо того, чтобы отказать вслух.
+    low, high = spec.get('min'), spec.get('max')
+
+    if (low is not None and number < int(low)) \
+            or (high is not None and number > int(high)):
+        bounds = f'от {low} до {high}' if high is not None else f'не меньше {low}'
+
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f'«{spec.get("title") or key}»: значение {number} вне границ '
+                   f'({bounds})')
+
+    return str(number)
 
 
 def _known() -> list[dict]:

@@ -138,53 +138,6 @@ async def mail_reply_make(site_id: int, limit: int = 0) -> dict:
     return {'made': made, 'skipped': skipped, 'reasons': reasons, 'left': left}
 
 
-# ── Приватное ────────────────────────────────────────────────────────────────
-
-async def _to_answer(site_id: int) -> list[dict]:
-    """Письма, на которые стоит ответить, — свежие сверху.
-
-    ⚠ **Только последнее письмо от каждого собеседника.** Он мог написать три
-    подряд, не дождавшись ответа; три ответа в очередь на них — не переписка, а
-    автоответчик. Прежние при этом не теряются: они уйдут в историю.
-
-    ⚠ **Только у сайта с включённой генерацией** (`site_.reply_make_on`).
-    Решение человека, и оно про сайт целиком: пул ответов один на сайт, и «отвечаем
-    ли вообще» отвечается один раз.
-
-    Прежде флаг жил у анкеты (`profile_.reply_on`) — «у этой отвечаем, у той
-    пишем руками». Отбор был честным, но включать его приходилось сорок раз, а
-    забытая анкета молчала, и причину искали в поломке. Вдобавок на странице этот
-    выключатель стоит рядом с «отправкой ответов», а та про сайт: два соседних
-    флажка по разным правилам объяснить нельзя (миграция
-    `20260910120000_dating_site_reply_make_on.sql`).
-
-    ⚠ Понадобится отбор по анкетам — возвращать его надо **вторым** уровнем, как у
-    рассылки (расписание сайта плюс «Письма рассылка» у анкеты), а не заменой.
-    """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'SELECT m.id, m.site_id, m.profile_id, m.uid, m.name, m.body,'
-            ' m.date_post'
-            ' FROM mail_in m'
-            ' JOIN profile p ON p.id = m.profile_id'
-            ' LEFT JOIN mail_reply r ON r.mail_in_id = m.id'
-            ' JOIN site s ON s.site_id = m.site_id'
-            ' WHERE m.site_id = %s AND s.reply_make_on = 1 AND p.enabled = 1'
-            "   AND m.body <> '' AND r.id IS NULL"
-            # ⚠ Последнее письмо пары «анкета — собеседник»: `NOT EXISTS` по более
-            # свежему. Так же надёжно, как оконная функция, и работает на любой
-            # версии MySQL.
-            '   AND NOT EXISTS ('
-            '       SELECT 1 FROM mail_in n'
-            '        WHERE n.profile_id = m.profile_id AND n.uid = m.uid'
-            '          AND (n.date_post > m.date_post'
-            '               OR (n.date_post = m.date_post AND n.id > m.id)))'
-            ' ORDER BY m.date_post DESC, m.id DESC', (int(site_id),))
-        rows = await db.fetchall()
-
-    return [dict(row) for row in rows or []]
-
-
 async def mail_reply_thread(profile_id: int, uid: str, keep: int = 0,
                             with_favorite: bool = False) -> list[dict]:
     """Переписка с человеком — для показа человеку, а не агенту.
@@ -307,6 +260,53 @@ async def mail_reply_thread(profile_id: int, uid: str, keep: int = 0,
              'at': row['at'], 'status': str(row['status'] or ''),
              'photo': faces['him' if str(row['side']) == 'him' else 'her']}
             for row in reversed(rows or [])]
+
+
+# ── Приватное ────────────────────────────────────────────────────────────────
+
+async def _to_answer(site_id: int) -> list[dict]:
+    """Письма, на которые стоит ответить, — свежие сверху.
+
+    ⚠ **Только последнее письмо от каждого собеседника.** Он мог написать три
+    подряд, не дождавшись ответа; три ответа в очередь на них — не переписка, а
+    автоответчик. Прежние при этом не теряются: они уйдут в историю.
+
+    ⚠ **Только у сайта с включённой генерацией** (`site_.reply_make_on`).
+    Решение человека, и оно про сайт целиком: пул ответов один на сайт, и «отвечаем
+    ли вообще» отвечается один раз.
+
+    Прежде флаг жил у анкеты (`profile_.reply_on`) — «у этой отвечаем, у той
+    пишем руками». Отбор был честным, но включать его приходилось сорок раз, а
+    забытая анкета молчала, и причину искали в поломке. Вдобавок на странице этот
+    выключатель стоит рядом с «отправкой ответов», а та про сайт: два соседних
+    флажка по разным правилам объяснить нельзя (миграция
+    `20260910120000_dating_site_reply_make_on.sql`).
+
+    ⚠ Понадобится отбор по анкетам — возвращать его надо **вторым** уровнем, как у
+    рассылки (расписание сайта плюс «Письма рассылка» у анкеты), а не заменой.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT m.id, m.site_id, m.profile_id, m.uid, m.name, m.body,'
+            ' m.date_post'
+            ' FROM mail_in m'
+            ' JOIN profile p ON p.id = m.profile_id'
+            ' LEFT JOIN mail_reply r ON r.mail_in_id = m.id'
+            ' JOIN site s ON s.site_id = m.site_id'
+            ' WHERE m.site_id = %s AND s.reply_make_on = 1 AND p.enabled = 1'
+            "   AND m.body <> '' AND r.id IS NULL"
+            # ⚠ Последнее письмо пары «анкета — собеседник»: `NOT EXISTS` по более
+            # свежему. Так же надёжно, как оконная функция, и работает на любой
+            # версии MySQL.
+            '   AND NOT EXISTS ('
+            '       SELECT 1 FROM mail_in n'
+            '        WHERE n.profile_id = m.profile_id AND n.uid = m.uid'
+            '          AND (n.date_post > m.date_post'
+            '               OR (n.date_post = m.date_post AND n.id > m.id)))'
+            ' ORDER BY m.date_post DESC, m.id DESC', (int(site_id),))
+        rows = await db.fetchall()
+
+    return [dict(row) for row in rows or []]
 
 
 async def _faces(profile_id: int, uid: str) -> dict:

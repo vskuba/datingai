@@ -673,23 +673,6 @@ async def invite_template(site_id: int, language: str = INVITE_LANGUAGE,
                     str(language or INVITE_LANGUAGE))
 
 
-def _history_text(history: list[dict]) -> str:
-    """Переписка одним куском: кто и что написал, старые сверху.
-
-    ⚠ **Подписи «Он» и «Она», а не имена.** Имена уже стоят в карточках выше, и
-    третий раз они только сбивают: модель начинает обращаться к себе по имени.
-    Здесь важно одно — кто из двоих говорит.
-    """
-    rows = []
-    for one in history:
-        who = 'Он' if str((one or {}).get('from')) == 'him' else 'Она'
-        text = str((one or {}).get('text') or '').strip()
-        if text:
-            rows.append(f'{who}: {text}')
-
-    return '\n\n'.join(rows)
-
-
 async def mail_agent_name(site_id: int) -> str:
     """Системное имя агента этого сайта. Пустая строка — метки сайта нет.
 
@@ -699,6 +682,31 @@ async def mail_agent_name(site_id: int) -> str:
     slug = await agent_site(int(site_id))
 
     return MAIL_AGENT_NAME.format(site=slug) if slug else ''
+
+
+async def mail_agent_language(site_id: int) -> str:
+    """Язык, на котором пишет агент этого сайта. Не задан — `en`.
+
+    ⚠ **Берётся из `presence.answer_language` у соседа** — той же настройки, что у
+    автоответа и инвайтов: язык это свойство сайта, а не занятия, и второе место
+    для него разошлось бы с первым.
+
+    ⚠ **Спрашивать обязательно, даже когда ответ очевиден.** Не передай мы язык в
+    вызов, сосед подставит первый язык узла — а он свой у каждой установки
+    (`MAIL_AGENT_LANGUAGE`). Именно так письма на проде оказались русскими
+    при одинаковых с локальной установкой промптах.
+
+    Сосед недоступен — умолчание: письмо на английском хуже идеального, а письмо,
+    не написанное вовсе, хуже любого.
+    """
+    # ⚠ Из **нашего** описания сайта (`site_presence.py`), а не запросом к
+    # соседу: язык спрашивают круги — рассылка, ответы, инвайты, — и поход за
+    # тремя сотнями байт ради слова `"en"` повторялся бы десятками раз в час.
+    from src.dating.site_presence import site_presence
+
+    presence = await site_presence(int(site_id))
+
+    return str(presence.get('answer_language') or MAIL_AGENT_LANGUAGE)
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
@@ -1317,28 +1325,3 @@ def _json_chunk(answer: str) -> str:
     start, end = text.find('{'), text.rfind('}')
 
     return text[start:end + 1] if 0 <= start < end else ''
-
-
-async def mail_agent_language(site_id: int) -> str:
-    """Язык, на котором пишет агент этого сайта. Не задан — `en`.
-
-    ⚠ **Берётся из `presence.answer_language` у соседа** — той же настройки, что у
-    автоответа и инвайтов: язык это свойство сайта, а не занятия, и второе место
-    для него разошлось бы с первым.
-
-    ⚠ **Спрашивать обязательно, даже когда ответ очевиден.** Не передай мы язык в
-    вызов, сосед подставит первый язык узла — а он свой у каждой установки
-    (`MAIL_AGENT_LANGUAGE`). Именно так письма на проде оказались русскими
-    при одинаковых с локальной установкой промптах.
-
-    Сосед недоступен — умолчание: письмо на английском хуже идеального, а письмо,
-    не написанное вовсе, хуже любого.
-    """
-    # ⚠ Из **нашего** описания сайта (`site_presence.py`), а не запросом к
-    # соседу: язык спрашивают круги — рассылка, ответы, инвайты, — и поход за
-    # тремя сотнями байт ради слова `"en"` повторялся бы десятками раз в час.
-    from src.dating.site_presence import site_presence
-
-    presence = await site_presence(int(site_id))
-
-    return str(presence.get('answer_language') or MAIL_AGENT_LANGUAGE)
