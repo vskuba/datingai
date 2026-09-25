@@ -96,7 +96,7 @@ class TestTheLotIsOurs:
         assert agent['mail_story'] in MAILING_STORIES
 
     async def test_no_story_means_an_empty_section(self, agent, share):
-        """⚠ Пустая строка гасит секцию у соседа (`%if mail_story%`).
+        """⚠ Пустая строка гасит секцию у соседа (`[<if mail_story>]`).
 
         «Рассказа не нужно» промптом не говорят — его просто не просят.
         """

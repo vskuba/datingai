@@ -500,10 +500,10 @@ async def mail_write(site_id: int, variables: list[dict],
                    # людей — три похожих текста в день и есть рассылка робота.
                    'mail_angle': random.choice(MAILING_ANGLES),
                    # Пусто — письмо начинается сразу с мысли; промпт гасит секцию
-                   # и запрещает приветствие прямо (`%if mail_greeting%`).
+                   # и запрещает приветствие прямо (`[<if mail_greeting>]`).
                    'mail_greeting': greeting,
                    'mail_length': random.choice(MAILING_LENGTHS),
-                   # ⚠ Пустая строка гасит секцию у соседа (`%if mail_story%`):
+                   # ⚠ Пустая строка гасит секцию у соседа (`[<if mail_story>]`):
                    # «рассказа не нужно» промптом не говорят, его просто не просят.
                    'mail_story': story,
                    'mail_avoid': _avoid_text(await _mail_avoid(int(site_id))),
@@ -657,7 +657,7 @@ async def invite_template(site_id: int, language: str = INVITE_LANGUAGE,
                    # инвайте: на живом пуле 94 из 202 за сутки. Это не её
                    # ошибка, а свойство: увидела сведение — сочла нужным.
                    #
-                   # Пустая строка гасит секцию у соседа (`%if invite_time%`), и
+                   # Пустая строка гасит секцию у соседа (`[<if invite_time>]`), и
                    # помянуть время модель не может — его в промпте нет.
                    'invite_time': '1' if with_time else '',
                    'datetime_current_get_zone': await _timezone(),
@@ -982,7 +982,7 @@ async def _mail_avoid(site_id: int) -> list[str]:
 def _avoid_text(avoid) -> str:
     """Список прошлых шаблонов строкой для промпта. Пусто — пустая строка.
 
-    ⚠ **Пустую строку промпт прячет сам** (`%if invite_avoid%…%endif%` у соседа):
+    ⚠ **Пустую строку промпт прячет сам** (`[<if invite_avoid>]…[<endif>]` у соседа):
     заголовок «так уже было» без единой строки под ним модель читает как
     противоречие и начинает выдумывать, чего избегать.
 
