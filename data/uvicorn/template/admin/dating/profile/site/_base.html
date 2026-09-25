@@ -709,6 +709,10 @@
                     title="Перечитать журнал доставки">⟳</button>
         </div>
         <div class="mail-sent" data-slot="fav-sent"></div>
+        {# ⚠ Пейджер общий с прочими списками панели (`pagerRender`) — тот же, что у
+           «Доставки инвайтов» рядом. Прежде здесь стоял один `LIMIT 300` без счёта:
+           всё, что дальше трёхсот писем, не показывалось **вовсе и молча**. #}
+        <div class="pane-foot" data-slot="fav-sent-pager"></div>
         {% endblock %}
     </div>
 

@@ -7136,6 +7136,18 @@
     // фильтром: сменили её — список надо перечитать, а не показывать прежний.
     let favSentFor = null;
 
+    // Страница, с нуля — как у прочих пейджеров панели (`pagerRender`).
+    let favSentPage = 0;
+    let favSentPages = 1;
+    let favSentTotal = 0;
+
+    // Сколько строк на странице. ⚠ Двадцать пять, как у «Доставки инвайтов»:
+    // строка журнала высокая — в ней обе стороны, текст письма и ответ сайта. И
+    // число то же намеренно: два журнала стоят на соседних вкладках, выглядят
+    // одинаково и листаются одним пейджером — разные размеры страницы читались бы
+    // как разница по существу, которой нет.
+    const FAV_SENT_PER = 25;
+
     function favSentShow() {
         if (!workEl.querySelector('[data-slot="fav-sent"]')) return;
 
@@ -7144,6 +7156,10 @@
         const key = `${siteId()}|${openId || 0}`;
         if (favSentFor !== key) {
             favSentFor = key;
+            // ⚠ **Страницу сбрасываем в первую.** Анкета — фильтр, и он меняет
+            // длину журнала: седьмая страница «всего сайта» почти наверняка пуста
+            // у одной девушки — человек выбрал бы её и увидел пустоту.
+            favSentPage = 0;
             favSentLoad();
         }
     }
@@ -7167,10 +7183,22 @@
             // ⚠ Анкета — **фильтр**, а не условие показа: без выбора журнал
             // полон и отвечает на «что вообще уходило с сайта», с выбором
             // сужается до её писем. Тот же порядок, что у диалогов и у пула.
-            favSent = (await getData(
+            //
+            // ⚠⚠ **Страница — в запросе, а не в браузере.** Прежде ручка отдавала
+            // один `LIMIT 300` без счёта: пока журнал был короче, разница не
+            // проявлялась, а дальше трёхсот писем не показывалось **вовсе и
+            // молча** — ни пейджера, ни намёка, что за краем что-то есть.
+            const got = (await getData(
                 `${BASE}/api/dating/favorite-mail?site_id=${site}`
-                + `&status_=delivery&profile_id=${openId || 0}`)
-            ).result || [];
+                + `&status_=delivery&profile_id=${openId || 0}`
+                + `&page=${favSentPage + 1}&per=${FAV_SENT_PER}`)) || {};
+
+            favSent = got.result || [];
+            favSentPages = Math.max(1, Number(got.pages) || 1);
+            favSentTotal = Number(got.total) || 0;
+            // Номер берём из ответа: сервер поправит его, если журнал укоротился и
+            // страница уехала за конец. Ручка считает с единицы, пейджер — с нуля.
+            favSentPage = Math.max(0, (Number(got.page) || 1) - 1);
         } catch (e) {
             favSent = [];
             showNotification('Доставка не пришла: ' + e.message, 'error');
@@ -7190,19 +7218,31 @@
         const delivered = favSent.filter(row => row.status === 'sent').length;
         const failed = favSent.length - delivered;
 
-        // Счёт разделён: «12 · не ушло 3» отвечает на вопрос сразу, а общее число
-        // писем не отвечает ни на какой.
         const row = openRow();
-        const scope = row ? ` · только ${row.name || row.login}` : ' · по всему сайту';
+        const scope = row ? `только ${row.name || row.login}` : 'по всему сайту';
 
-        fillSlot('fav-sent-count', favSent.length
-            ? `ушло ${delivered}${failed ? ` · не ушло ${failed}` : ''}${scope}`
-            : scope.replace(' · ', ''));
+        // ⚠⚠ Счёт в шапке — **по всему журналу** (`total`), а исходы — **по
+        // странице**, и сказано это словами. Со страницами прежний вид врал бы
+        // молча: «ушло 24 · не ушло 1» считалось по загруженным строкам, то есть
+        // по двадцати пяти из ста семидесяти, — и читалось как весь журнал.
+        //
+        // ⚠ Порядок слов тот же, что у «Доставки инвайтов» рядом: соседние
+        // вкладки об одном, и два разных вида одного ответа человеку пришлось бы
+        // разгадывать.
+        fillSlot('fav-sent-count', favSentTotal
+            ? `${scope} · всего ${favSentTotal}`
+              + (favSent.length ? ` · на странице: ушло ${delivered}`
+                 + `${failed ? `, не ушло ${failed}` : ''}` : '')
+            : scope);
 
         if (!favSent.length) {
             box.innerHTML = '<div class="mail-sent-empty">Писем избранным с этого '
                 + 'сайта пока не уходило.<br>Здесь появятся отправленные — и те, '
                 + 'что отправить не вышло, с причиной.</div>';
+            // ⚠ Пейджер рисуем и здесь: пустота бывает **следствием фильтра по
+            // анкете**, а журнал сайта при этом не пуст — уйди пейджер с экрана
+            // вместе со строками, человек решил бы, что журнал кончился.
+            favSentPagerPaint();
 
             return;
         }
@@ -7238,6 +7278,18 @@
                 + `${ok ? 'доставлено' : 'не ушло'}</span>`
                 + '</div>';
         }).join('');
+
+        favSentPagerPaint();
+    }
+
+    function favSentPagerPaint() {
+        const foot = slot('fav-sent-pager');
+        if (!foot) return;
+
+        pagerRender(foot, favSentPages, favSentPage, (pick) => {
+            favSentPage = pick;
+            favSentLoad();
+        }, favSentTotal ? `писем: ${favSentTotal}` : '');
     }
 
     // ── Переписка с избранными: пул писем, возобновляющих разговор ───────────
