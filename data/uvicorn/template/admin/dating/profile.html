@@ -1108,6 +1108,29 @@
         color: #b91c1c;
     }
 
+    /* Галочка в шапке колонки: прижата к правому краю, буквы обычные.
+       ⚠ Шапка задана `text-transform: uppercase` и жирным — подпись галочки под
+       это правило не идёт: она предложение, а не заголовок, и капсом читается как
+       крик. */
+    .in-only {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        font-weight: 400;
+        color: #64748b;
+        text-transform: none;
+        letter-spacing: normal;
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .in-only input {
+        margin: 0;
+        cursor: pointer;
+    }
+
     .in-list {
         flex: 1 1 auto;
         min-height: 0;
@@ -4997,6 +5020,29 @@
             favTalksShow();
         });
 
+        // Галочка «с ответами» в шапке разговора: отбирает список слева.
+        //
+        // ⚠ Слушаем **все** узлы с этим именем: шаблон работы у сайтов свой, и
+        // галочка может быть переопределена — как это уже сделано у лент.
+        workEl.querySelectorAll('[data-slot="fav-answered"]').forEach(box =>
+            box.addEventListener('change', () => {
+                favAnswered = !!box.checked;
+                // ⚠ Пишем только отказ: пустой ключ означает «включено», и так
+                // умолчание живёт в одном месте, а не в двух.
+                if (favAnswered) localStorage.removeItem(FAV_ANSWERED_KEY);
+                else localStorage.setItem(FAV_ANSWERED_KEY, '0');
+
+                // ⚠⚠ **Страницу в первую, и выбор долой.** Отбор меняет длину
+                // списка: седьмая страница «всех» почти наверняка пуста, когда
+                // молчащих отсекли, — человек снял бы галочку и увидел пустоту.
+                // А открытая переписка могла из списка уйти вовсе.
+                favTalksPage = 0;
+                favTalkOpen = '';
+                favTalkRow = null;
+                favAnsweredPaint();
+                favTalksLoad();
+            }));
+
         // Обновить пул ответов в третьей колонке «Диалогов». ⚠ Своя кнопка, как у
         // «Инициативы» в чате: ответы кладёт круг, а колонка сама не
         // перечитывается — человек вернётся на вкладку, ничего не нажимая.
@@ -6823,9 +6869,29 @@
     // списка, и в `favTalks` её не окажется вовсе.
     let favTalkRow = null;
 
+    // Показывать только переписки, где собеседник ответил хотя бы раз.
+    //
+    // ⚠⚠ **Включено по умолчанию, и умолчание записано так, чтобы оно им было.**
+    // В `localStorage` кладём только отказ (`'0'`): пустой ключ у нового человека
+    // означает «включено». Храни мы здесь «1», первый заход показывал бы список со
+    // снятой галочкой — то есть не то, что задумано.
+    const FAV_ANSWERED_KEY = 'dating.profile.favanswered';
+    let favAnswered = localStorage.getItem(FAV_ANSWERED_KEY) !== '0';
+
+    // Ставит галочку «с ответами» в то состояние, в котором она на самом деле.
+    //
+    // ⚠ Отдельной функцией, а не строкой в привязке: состояние переживает
+    // перезагрузку страницы (`localStorage`), и при первой отрисовке галочку надо
+    // поднять — иначе список отобран, а галочка снята, и это читается как поломка.
+    function favAnsweredPaint() {
+        workEl.querySelectorAll('[data-slot="fav-answered"]').forEach(
+            box => { box.checked = favAnswered; });
+    }
+
     function favTalksShow() {
         if (!workEl.querySelector('[data-slot="fav-talks-list"]')) return;
 
+        favAnsweredPaint();
         favTalksPaint();
 
         // ⚠⚠ Пул **ответов** для третьей колонки грузим здесь, а не только на
@@ -6867,7 +6933,11 @@
             const data = (await getData(
                 `${BASE}/api/dating/favorite-mail/threads?site_id=${site}`
                 + `&profile_id=${prevId}&page=${favTalksPage + 1}`
-                + `&size=${talkPageSize('fav-talks-list')}`)) || {};
+                + `&size=${talkPageSize('fav-talks-list')}`
+                // ⚠ Отбор уезжает **в запрос**: считай его страница, «с ответами»
+                // означало бы «те из присланных, где он ответил», а число страниц
+                // отвечало бы всему списку — последние выходили бы пустыми.
+                + `&answered=${favAnswered ? 1 : 0}`)) || {};
 
             favTalks = data.result || [];
             favTalksTotal = Number(data.total || 0);
@@ -6984,9 +7054,18 @@
         favTalksPagerPaint();
 
         if (!favTalks.length) {
-            box.innerHTML = '<div class="in-empty">Переписок с избранными нет.'
-                + '<br>Сюда попадают те, с кем письма уже были: добавленный в '
-                + 'избранные и молчащий разговора не имеет.</div>';
+            // ⚠⚠ **Пустота под галочкой — другая беда, и говорить о ней надо
+            // иначе.** Прежний текст («сюда попадают те, с кем письма уже были»)
+            // при поднятой галочке прямо врёт: письма как раз были, просто все
+            // наши. Человек читал бы это как «переписок нет вовсе» и пошёл бы
+            // искать поломку вместо того, чтобы снять галочку.
+            box.innerHTML = favAnswered
+                ? '<div class="in-empty">Переписок с ответами нет.<br>Снимите '
+                  + 'галочку «с ответами» в шапке разговора, чтобы увидеть и тех, '
+                  + 'кому мы писали, а он молчит.</div>'
+                : '<div class="in-empty">Переписок с избранными нет.'
+                  + '<br>Сюда попадают те, с кем письма уже были: добавленный в '
+                  + 'избранные и молчащий разговора не имеет.</div>';
             favTalkPaint();
 
             return;

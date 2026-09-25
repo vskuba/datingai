@@ -546,6 +546,65 @@ class TestRedisFailure:
         assert _due(SITE) is False
 
 
+async def _slot_check(hold: bool, said: str) -> None:
+    """Проверяет слот и, **если он не тот, объясняет почему**.
+
+    ## ⚠⚠ Зачем это, а не обычный `assert`
+
+    Проверки ниже падали в полном прогоне и не падали порознь — плавающий отказ,
+    и сообщение у него было голым («слот отпущен после захода без единого
+    пропуска»). По такому сообщению причину не найти: круг отпускает слот
+    (`_unmark`) ровно в одном случае — когда `_make` вернул «делать было нечего», а
+    таких случаев два, и оба зависят от **чужого состояния стенда**:
+
+        шаблонов нет     другой файл сюиты снял у них «участвует в рассылке»
+        пул полон        другой файл набил `mailing` черновиками сайта
+
+    Второе особенно коварно: потолок пула — **на сайт**, и пятьдесят чужих
+    черновиков делают заход пустым, ничего не ломая по существу.
+
+    ⚠ Поэтому диагноз снимается **в точке падения**, а не гадается потом: на стенде
+    состояние живёт минуты, и к разбору его уже не застать. Четыре догадки по этому
+    отказу были отсеяны вслепую (`.claude/docs/testing.md`) — пятую отсеет само
+    сообщение.
+
+    Args:
+        hold: каким слот обязан быть — `True` держим (отметка стоит), `False`
+            отпущен.
+        said: что это значит по существу, словами теста.
+    """
+    # `_due` True — «пора заходить», то есть отметки нет и слот отпущен.
+    held = not _due(SITE)
+    if held is hold:
+        return
+
+    if hold:
+        # Ждали, что слот занят, а он свободен — единственный путь к этому
+        # `_unmark`, и причин у него две. Спросим обе.
+        from src.dating.mailing import mailing_templates
+
+        tpl = await mailing_templates(SITE)
+        have = await _pool_size(SITE)
+        cap = await _pool_max(SITE)
+
+        # ⚠⚠ Если оба показателя здоровы — причина **третья**, и это само по себе
+        # находка: `_unmark` зовётся только из ветки `idle`, а её условий два. Такое
+        # сообщение значит «ищи новый путь к `_unmark`», а не «посмотри настройки».
+        blame = ('⚠ ОБА показателя здоровы — значит причина НЕ в них, и это уже '
+                 'находка: ищите третий путь к `_unmark`.'
+                 if tpl and have < cap else
+                 'Оба состояния оставляют ДРУГИЕ файлы сюиты, а не этот тест.')
+
+        raise AssertionError(
+            f'{said}. Слот отпущен, а это значит, что круг счёл заход пустым — '
+            f'и вот из-за чего: шаблонов у сайта {len(tpl or [])} (ноль — их '
+            f'сняли), пул {have} из {cap} (полный — делать было нечего). {blame}')
+
+    # Обратный случай: ждали, что слот отпущен. Диагноз про шаблоны и пул тут не к
+    # месту — заход как раз состоялся, и вопрос в решении о слоте.
+    raise AssertionError(f'{said}. Слот занят, хотя должен был освободиться.')
+
+
 class TestSlotAfterAWastedPass:
     """⚠ Получасовой слот — награда за работу, а не за попытку.
 
@@ -570,7 +629,7 @@ class TestSlotAfterAWastedPass:
 
         await mailing_round_run(0)
 
-        assert _due(SITE), 'слот занят после захода, потратившего себя на пропуски'
+        await _slot_check(False, 'заход потратил себя на бесплатные пропуски')
 
     async def test_healthy_pass_keeps_the_slot(self, site, template, made,
                                                clean_mark):
@@ -585,7 +644,7 @@ class TestSlotAfterAWastedPass:
 
         await mailing_round_run(0)
 
-        assert not _due(SITE), 'слот отпущен после здорового захода'
+        await _slot_check(True, 'заход был здоровым: пул набран')
 
     async def test_paid_skips_keep_the_slot(self, site, template, made, clean_mark):
         """⚠ «Агент не ответил» слот держит, хотя пропусков и больше.
@@ -599,7 +658,7 @@ class TestSlotAfterAWastedPass:
 
         await mailing_round_run(0)
 
-        assert not _due(SITE), 'слот отпущен после захода, стоившего вызовов LLM'
+        await _slot_check(True, 'пропуски стоили вызовов LLM')
 
     async def test_mixed_reasons_keep_the_slot(self, site, template, made,
                                               clean_mark):
@@ -614,7 +673,7 @@ class TestSlotAfterAWastedPass:
 
         await mailing_round_run(0)
 
-        assert not _due(SITE), 'слот отпущен, хотя часть пропусков была платной'
+        await _slot_check(True, 'часть пропусков была платной')
 
     async def test_silence_about_reasons_keeps_the_slot(self, site, template, made,
                                                         clean_mark):
@@ -628,7 +687,7 @@ class TestSlotAfterAWastedPass:
 
         await mailing_round_run(0)
 
-        assert not _due(SITE), 'слот отпущен по незнакомой причине'
+        await _slot_check(True, 'причины пропусков неизвестны')
 
     async def test_slot_holds_when_nothing_was_skipped(self, site, template, made,
                                                        clean_mark):
@@ -637,7 +696,7 @@ class TestSlotAfterAWastedPass:
 
         await mailing_round_run(0)
 
-        assert not _due(SITE), 'слот отпущен после захода без единого пропуска'
+        await _slot_check(True, 'заход прошёл без единого пропуска')
 
     async def test_released_slot_lets_the_next_tick_in(self, site, template, made,
                                                        clean_mark):
