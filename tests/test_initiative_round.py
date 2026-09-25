@@ -213,10 +213,27 @@ class TestTheKindIsNotOursAnymore:
         assert not hasattr(initiative_mod, 'INITIATIVE_KINDS'), \
             'список приёмов вернулся в панель — он живёт у соседа'
 
-    def test_the_question_points_at_the_dice_variable(self):
-        """⚠ Вопрос агенту называет переменную по имени: разойдись оно с тем,
-        что кладёт жребий, — модель прочтёт метку словами и ответит наугад."""
-        assert 'dice_initiative_kind' in initiative_mod.INITIATIVE_PROMPT
+    def test_the_question_carries_no_task(self):
+        """⚠⚠ Вопрос агенту **пуст**, и задания в нём больше нет.
+
+        `prompt_user` у соседа означает «что сказал собеседник» — так и написано
+        в промпте: «=== %companion_title% пишет === %prompt_user%». Здесь он не
+        сказал ничего, потому мы и пишем первыми.
+
+        Задание («заговори сама, приёмом из жребия») целиком лежит в промпте
+        ветки «Инициатива», а ветку выбирает флаг `initiative`. Положи мы задание
+        в вопрос — модель прочла бы его как слова человека, а шаг записи у соседа
+        сохранил бы нашу инструкцию в переписку от его имени.
+        """
+        import inspect
+
+        assert not hasattr(initiative_mod, 'INITIATIVE_PROMPT'), \
+            'задание вернулось в вопрос — оно живёт в промпте ветки у соседа'
+
+        code = inspect.getsource(initiative_mod)
+
+        assert 'initiative=True' in code, \
+            'ветку больше нечем выбрать: без флага заход уйдёт в ответ на реплику'
 
 
 class TestTheSiteSettingsReachTheDice:

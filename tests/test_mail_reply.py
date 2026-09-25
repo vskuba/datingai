@@ -74,8 +74,8 @@ def agent(monkeypatch):
     """Подменяет агента: запоминает, что ему отдали, вместо похода к LLM.
 
     ⚠ Подменяется `answer_mail_reply` — ответ идёт общим `dating_talk`, а не своим
-    workflow. Историю он берёт сам (`talk_history.py`), поэтому её здесь нет:
-    что попадает в переписку, проверяет `test_talk_history.py`.
+    workflow. Историю собирает **сосед** из `companion_session`, поэтому её здесь
+    нет: что панель отсюда её не шлёт, стережёт `test_chat_answer_anyway.py`.
     """
     calls = []
 

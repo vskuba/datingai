@@ -408,12 +408,17 @@ class TestAStarIsEnough:
         """
         import inspect
 
+        # ⚠⚠ **Сторож переехал на ключи, а не ослаб.** Ленту собирает сам сосед
+        # из `companion_session` — считать её здесь значило бы держать разговор
+        # в двух домах. Но найти её он может только по ключам пары, и шлём их
+        # мы: отвались любой — письмо уйдёт от женщины, «не помнящей» разговора,
+        # ровно как до всей этой затеи.
         from src.dating import answer
 
-        # ⚠ Историю берёт точка вызова, общая для чата, инициативы и письма:
-        # три копии «спроси историю» разошлись бы на первой правке.
-        assert 'talk_history_text' in inspect.getsource(answer._agent_ask), \
-            'письмо снова пишется без переписки — агент не знает собеседника'
+        code = inspect.getsource(answer._agent_ask)
+
+        assert 'agent_vars(' in code and 'companion_vars(' in code, \
+            'ключи пары не уезжают — сосед не найдёт переписку'
         # ⚠ А вот **какой** веткой сочинять решает само письмо: у соседа три
         # шага сочинения, и развилка смотрит на `mail_kind`.
         assert 'mail=ANSWER_MAIL_WRITE' in inspect.getsource(answer.answer_mail_write), \

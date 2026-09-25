@@ -216,6 +216,34 @@ class TestTheCompanionIsNamed:
         assert asked['_companion_id'] == answer_mod.ANSWER_COMPANION_ID
         assert asked['_companion_id'] != 1
 
+    async def test_the_history_is_not_sent_from_here(self, asked, girl):
+        """⚠⚠ Историю разговора отсюда **не шлём**: у неё один дом, и он у соседа.
+
+        Обе ленты — чат и письма — собирают два шага `dating_talk` из
+        `companion_session`, и туда же он пишет каждый обмен. Пока ленту считали
+        здесь (из пяти наших таблиц) и присылали готовым текстом, разговор жил в
+        двух местах: у нас разборно, у соседа слепками промпта.
+
+        ⚠ Вернись отправка — домов снова станет два, и разойдутся они на первой
+        правке формата. Своего кода истории у панели больше нет вовсе
+        (`talk_history.py` удалён).
+
+        ⚠⚠ А вот **ключи пары** уезжать обязаны, и это соседний тест: без них
+        сосед не найдёт, чью переписку читать, и напишет человеку, которого «не
+        помнит».
+        """
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT * FROM profile WHERE id = %s', (girl,))
+            profile = dict(await db.fetchone())
+
+        await answer_mod._agent_ask(7, 'вопрос', 'en', profile,
+                                    uid='128282', name='Gerard')
+
+        assert 'talk_history_chat' not in asked, \
+            'история чата снова уезжает отсюда — её собирает сосед'
+        assert 'talk_history_mail' not in asked, \
+            'история писем снова уезжает отсюда — её собирает сосед'
+
 
 class TestForeignNameIsNotSent:
     """⚠⚠ Ответ с чужим именем не уходит и в пул не ложится."""
@@ -224,7 +252,7 @@ class TestForeignNameIsNotSent:
         from src.dating.chat_reply import chat_reply_waiting
 
         async def _ask(agent_id, question, language, profile, history='', uid='',
-                       anyway=False, name=''):
+                       anyway=False, name='', **_):
             # Ровно тот ответ, что ушёл с прода.
             return "ok vadim, let's go. what's on your mind today?", ''
 

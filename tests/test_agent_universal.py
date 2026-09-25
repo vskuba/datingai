@@ -33,15 +33,15 @@ class TestVars:
 
         assert got['girl_name'] == 'Diana'
 
-    def test_no_name_leaves_the_login(self):
+    def test_no_name_leaves_the_number(self):
         """⚠ Пустое имя не значит пустую подстановку.
 
         Уйди в промпт пустота — агент назвался бы никак, а собеседник получил бы
-        «You are a girl .». Логин хуже читается, но он есть всегда.
+        «You are a girl .». Номер хуже читается, но он есть всегда.
         """
         got = agent_vars({'login': 'diana9021@mail.test'}, {})
 
-        assert got['girl_name'] == 'diana9021@mail.test'
+        assert got['girl_name'] == '9021'
 
     def test_fact_key_is_built_from_login_not_name(self):
         """⚠ Ключ фактов — по логину, а не по имени.
@@ -54,18 +54,22 @@ class TestVars:
 
         assert first['girl_id'] != second['girl_id']
 
-    def test_fact_key_matches_the_old_personal_agent(self):
-        """⚠ Ключ совпадает с именем прежнего персонального агента, и намеренно.
+    def test_the_number_and_the_name_travel_apart(self):
+        """⚠⚠ Номер и имя — **разные величины**, и слеплены они больше не будут.
 
-        У тех в `workflow_variable` лежало `{"girl_id": "diana_9021"}` — то же
-        самое, что строит `agent_name`. Совпадение переносит накопленные
-        факты на общего агента: разойдись ключи, анкета начала бы с чистого листа,
-        и её история осталась бы лежать мёртвой.
+        Прежде `girl_id` вёз `diana_9021` — имя с номером одной строкой, — и это
+        стоило настоящей ошибки: в промпте разбора стояло «на этот вопрос
+        **%girl_id%** должна ответить», то есть модель читала «на этот вопрос
+        elena_89 должна ответить».
+
+        Ключ склеивает сосед шагом «Ключи», и там видно, из чего он собран
+        (`…_wf_talk_girl_key`). Отсюда уезжают части.
         """
         got = agent_vars({'login': 'bogiladiana9021@bigmir.net'},
                                 {'name': 'Diana'})
 
-        assert got['girl_id'] == 'diana_9021'
+        assert got['girl_id'] == '9021'
+        assert got['girl_name'] == 'Diana'
 
 
 class TestWhichAgentAnswers:

@@ -48,8 +48,6 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_chat_ask
 from src.dating.log import log_write
-from src.dating.talk_history import (TALK_HISTORY_CHAT, TALK_HISTORY_MAIL,
-                                     talk_history_text)
 from src.dating.chat_reply import (chat_reply_failed, chat_reply_put,
                                    chat_reply_sent, chat_reply_waiting)
 from src.dating.companion_ref import (COMPANION_REF_ID, companion_ref_foreign,
@@ -86,11 +84,6 @@ ANSWER_RETRY_SEC = 300
 # начале разговора молчание обрывает то, что мы сами и начали инвайтом.
 ANSWER_ANYWAY_FIRST_SETTING = 'chat_answer_anyway_first'
 ANSWER_ANYWAY_FIRST_DEFAULT = 5
-
-# Что сказать агенту, когда собеседник молчит. Это не текст сообщения — это
-# вопрос агенту, а сочиняет он сам.
-ANSWER_NUDGE_PROMPT = ('Собеседница не ответила на последнее сообщение. '
-                              'Продолжи разговор: задай ей новый вопрос.')
 
 # Язык ответа. Не вкусовщина: фильтр сайта отклоняет кириллицу — «Message not
 # delivered. Unacceptable words: …», — поэтому русский ответ агента до собеседника
@@ -159,10 +152,20 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
         ready = await chat_reply_waiting(profile_id, int(row['id']))
 
         if not ready:
-            # Тишина — это не реплика: агенту про неё говорим прямо, иначе он
-            # ответит на давнее сообщение, как будто оно только что пришло.
-            question = (str(row['text']) if row.get('direction') == 'in'
-                        else ANSWER_NUDGE_PROMPT)
+            # ⚠⚠ **Вопрос — это слова собеседника, и только они.** Промпт у
+            # соседа так и объявляет: «=== %companion_title% пишет ===
+            # %prompt_user%». Клади мы туда задание («Продолжи разговор…»),
+            # модель прочла бы нашу инструкцию как сказанное человеком, а шаг
+            # записи положил бы её в переписку от его имени.
+            #
+            # Пусто — законный исход: последним говорили мы, он молчит.
+            question = str(row['text']) if row.get('direction') == 'in' else ''
+
+            # ⚠ Молчит — значит заговариваем первыми, и сказать об этом надо
+            # **флагом**, а не текстом вопроса. Флаг уводит заход веткой
+            # «Инициатива», у которой задание «заговори» написано в промпте;
+            # прежде ветку выбирал текст, и потому он был обязателен.
+            first = not question
 
             # Попытку отмечаем до вопроса, а не после: прогон длится минуты, и
             # круг успел бы начаться заново, спросив агента о том же во второй раз.
@@ -177,7 +180,8 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
             # и с появлением второго канала они разошлись бы.
             anyway = await _anyway_here(profile_id, uid, anyway_first)
             answer, error = await _agent_ask(agent_id, question, language, profile,
-                                             uid=uid, anyway=anyway, name=name)
+                                             uid=uid, anyway=anyway, name=name,
+                                             initiative=first)
             asked += 1
             if error:
                 errors.append(f'{who}: {error}')
@@ -275,18 +279,6 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
             'drafted': drafted, 'errors': errors}
 
 
-# Повод, с которым зовут агента ради письма. ⚠ Короткий намеренно: всю работу
-# задаёт промпт ветки `%if mail_mode%` у соседа, а сюда уходит только повод его
-# запустить. Длинный вопрос спорил бы с промптом за внимание модели — тот же
-# довод, что у почтовых занятий (`mail_agent.py`).
-ANSWER_MAIL_PROMPT = ('Напиши письмо этому человеку: разговор затих, '
-                      'последнее слово было твоё.')
-
-# Повод написать **ответ** на пришедшее письмо. ⚠ Само письмо сюда не кладём: оно
-# уже в `talk_history_mail` последней строкой, и вторая копия в вопросе заставила
-# бы модель выбирать, на какую отвечать.
-ANSWER_MAIL_REPLY_PROMPT = 'Ответь на последнее письмо этого человека.'
-
 # Вид письма — он же имя ветки у соседа. ⚠ Значения знает развилка
 # `transitions_before` шага «Ответ в чат»: разойдись они, письмо ушло бы веткой
 # чата и вышло репликой в двадцать слов.
@@ -363,7 +355,7 @@ async def answer_mail_write(agent_id: int, profile: dict, uid: str,
     письмо дорого, и платить за него ради того, чтобы выбросить, незачем.
     """
     return await _agent_ask(
-        int(agent_id), ANSWER_MAIL_PROMPT, str(language or ''), profile,
+        int(agent_id), '', str(language or ''), profile,
         uid=str(uid), name=str(name or ''),
         # ⚠⚠ **Письмо, а не инициатива.** У той свой смысл — «собеседник
         # молчит, пишем первыми **репликой в чат**», и попади письмо в её ветку,
@@ -398,14 +390,17 @@ async def answer_mail_reply(agent_id: int, profile: dict, uid: str,
     переболтала весь вечер в чате, получал ответ от той, кто про этот вечер не
     помнит.
 
-    Теперь ответ идёт общим `dating_talk`, и агенту уезжают **обе** истории —
-    чат и письма (`talk_history.py`). Отличается только системный промпт агента:
-    у `fav_mail_*` он про «напиши первой», у этого — про «ответь на письмо».
+    Теперь ответ идёт общим `dating_talk`, и агенту доезжают **обе** истории —
+    чат и письма, — но собирает их сам сосед из `companion_session`. Отличается
+    только системный промпт агента: у `fav_mail_*` он про «напиши первой», у
+    этого — про «ответь на письмо».
 
-    ⚠ Само письмо в вопрос не кладём: оно последней строкой в `talk_history_mail`.
+    ⚠ Само письмо в вопрос не кладём — и вопрос здесь **пуст** вовсе: письмо уже
+    последней строкой в ленте писем, а `prompt_user` означает «что сказал
+    собеседник».
     """
     return await _agent_ask(
-        int(agent_id), ANSWER_MAIL_REPLY_PROMPT, str(language or ''), profile,
+        int(agent_id), '', str(language or ''), profile,
         uid=str(uid), name=str(name or ''),
         # ⚠ Своя ветка у соседа: «отвечай на то, что он написал», а не
         # «заговори первой».
@@ -490,11 +485,22 @@ async def _agent_ask(agent_id: int, question: str, language: str,
         answer = await rhapsody_api_chat_ask(
             agent_id, question, companion_id=ANSWER_COMPANION_ID,
             variables={'user_language': language,
-                       # ⚠⚠ **Две истории, и обе всегда.** С человеком говорят
-                       # двумя каналами — репликами в чате и письмами, — и это
-                       # разные разговоры: разной длины, разного тона, часто
-                       # разных дней. Отдай мы половину, письмо писалось бы, не
-                       # помня вчерашнего чата (`talk_history.py`).
+                       # ⚠⚠ **Историю разговора отсюда больше не шлём.** Обе
+                       # ленты — чат и письма — собирает сам сосед двумя шагами
+                       # workflow из `companion_session`
+                       # (`…_wf_talk_companion_session`), и туда же он кладёт
+                       # каждый обмен. Дом у разговора один.
+                       #
+                       # Прежде ленту считали здесь из пяти своих таблиц и
+                       # присылали готовым текстом. Пока она жила у нас, у соседа
+                       # разговор оседал слепками — в `variables_start` каждого
+                       # прогона и внутри собранных промптов, — и выбрать его по
+                       # паре, времени или каналу было нельзя.
+                       #
+                       # ⚠⚠ Своего кода истории у панели больше нет:
+                       # `talk_history.py` был единственным её читателем и удалён.
+                       # Заводить второй не надо — он считал бы ленту из наших
+                       # пяти таблиц, то есть из второго дома.
                        #
                        # ⚠⚠ Ключ собеседника здесь **не шлётся**, и это не
                        # упущение. Прежде уходил `companion_uid` — номер человека
@@ -502,12 +508,6 @@ async def _agent_ask(agent_id: int, question: str, language: str,
                        # собеседника, и её номер (`companion_id`) он и так знает
                        # из поля запроса. Два ключа на одного человека расходятся
                        # при первой же правке; факты ключуются тем, что у соседа.
-                       'talk_history_chat': await talk_history_text(
-                           int(profile.get('id') or 0), str(uid or ''),
-                           TALK_HISTORY_CHAT),
-                       'talk_history_mail': await talk_history_text(
-                           int(profile.get('id') or 0), str(uid or ''),
-                           TALK_HISTORY_MAIL),
                        # ⚠⚠ **Анкета собеседника — на случай, когда фактов о нём
                        # ещё нет.** Факты извлекает из переписки отдельный
                        # workflow, и в начале разговора извлекать нечего: агент

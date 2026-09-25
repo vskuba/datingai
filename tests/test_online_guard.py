@@ -178,7 +178,7 @@ class TestGuardStandsInBothPaths:
                      'text': 'вопрос', 'direction': 'in'}]
 
         async def _ask(agent_id, question, language, profile=None,
-                   history='', uid='', anyway=False, name=''):
+                   history='', uid='', anyway=False, name='', **_):
             asked.append(question)
 
             return ('ответ', '')
@@ -225,7 +225,7 @@ class TestGuardStandsInBothPaths:
                      'text': 'вопрос', 'direction': 'in'}]
 
         async def _ask(agent_id, question, language, profile=None,
-                   history='', uid='', anyway=False, name=''):
+                   history='', uid='', anyway=False, name='', **_):
             asked.append(question)
 
             return ('ответ', '')
