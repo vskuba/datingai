@@ -29,10 +29,6 @@ from src.dating.log import log_write
 from src.dating.pool import pool_drop
 from src.dating.role import ROLE_DEFAULT, role_scenario
 
-# Сколько ждать сценарий выхода. Это несколько кликов по уже открытому кабинету;
-# не уложился — значит кабинет не поднялся, и ждать дальше нечего.
-DISCONNECT_TIMEOUT = 120.0
-
 
 async def disconnect_run(profile: dict, site: dict, presence: dict,
                                 runner, session_open, session_list, session_close) -> dict:

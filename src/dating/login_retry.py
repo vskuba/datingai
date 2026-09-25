@@ -127,19 +127,6 @@ async def login_retry_fail(profile_id: int) -> None:
         await db.connection.commit()
 
 
-async def login_retry_clear(profile_id: int) -> None:
-    """Гасит счётчик — только удавшийся вход и делает это.
-
-    Зовётся оттуда же, где снимается тревога автовосстановления: удача по одной
-    двери не должна означать разного в двух местах.
-    """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'UPDATE profile SET login_fail_tries = 0, login_fail_at = NULL'
-            ' WHERE id = %s', (int(profile_id),))
-        await db.connection.commit()
-
-
 async def login_retry_max(site_id: int) -> int:
     """Сколько неудач подряд терпит этот сайт — для журнала и страниц.
 

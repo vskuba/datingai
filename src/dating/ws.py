@@ -19,10 +19,6 @@ from mysql_.mysql_ import mysql_get_db_async
 # Сколько ждать, пока страница поднимет сокет. Замеры: 10-20 секунд.
 WS_WAIT_SEC = 30
 
-# Перехват открывает страницу и ждёт — минуты хватает с запасом, дольше ждать
-# нечего: не поднялся, значит не поднимется.
-WS_TIMEOUT = 120.0
-
 
 async def ws_capture(profile: dict, presence: dict, site_url: str = '',
                             session_id: str = '') -> str:

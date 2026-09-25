@@ -115,24 +115,6 @@ async def chat_reply_failed(reply_id: int, error: str) -> None:
         await db.connection.commit()
 
 
-async def chat_reply_drop(profile_id: int, uid: str) -> int:
-    """Убирает **ждущие** черновики пары. Возвращает, сколько убрал.
-
-    Зовётся, когда ответ стал не нужен: человек ответил сам, пару закрыли, анкету
-    отключили. Ушедшие не трогаем — они часть переписки.
-    """
-    if not int(profile_id or 0):
-        return 0
-
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            "DELETE FROM chat_reply WHERE profile_id = %s AND uid = %s"
-            " AND status = 'draft'", (int(profile_id), str(uid or '')))
-        await db.connection.commit()
-
-        return int(db.rowcount or 0)
-
-
 async def chat_reply_pending(profile_id: int, uid: str) -> list[dict]:
     """Черновики пары для показа в разговоре — с их поводом.
 
