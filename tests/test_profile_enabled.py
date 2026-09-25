@@ -351,7 +351,14 @@ class TestAutoRoundSkipsDisabled:
 
     @pytest.fixture
     def spied(self, monkeypatch):
-        """Круг с подменёнными дорогими шагами. Возвращает, до чего дошло."""
+        """Круг с подменёнными дорогими шагами. Возвращает, до чего дошло.
+
+        ⚠ Выключатель сайта поднят подменой: здесь проверяется флаг **анкеты**, а
+        анкеты в этих тестах заводятся без `site_id` вовсе — настоящий `_answer_on`
+        спросил бы про сайт «0» и отказал бы всем, то есть тесты зеленели бы по
+        причине, к их вопросу не относящейся. Сам выключатель проверяется в
+        `tests/test_auto_agent_id.py`, `TestTheSiteSwitch`.
+        """
         from src.dating import auto
 
         seen = {'agents': [], 'answers': []}
@@ -366,8 +373,12 @@ class TestAutoRoundSkipsDisabled:
 
             return {'asked': 1, 'sent': 1, 'silent': 0, 'offline': 0, 'errors': []}
 
+        async def _answer_on(site_id):
+            return True
+
         monkeypatch.setattr(auto, '_agent_id', _agent)
         monkeypatch.setattr(auto, 'answer_run', _answer)
+        monkeypatch.setattr(auto, '_answer_on', _answer_on)
 
         return seen
 

@@ -32,7 +32,13 @@ def _profiles(*ids) -> list:
 
 @pytest.fixture
 def spy(monkeypatch):
-    """Подменяет поход к соседу и сам ответ; копит, с чем звали `answer_run`."""
+    """Подменяет поход к соседу и сам ответ; копит, с чем звали `answer_run`.
+
+    ⚠ Выключатель сайта поднимается здесь же. Эти тесты про то, **что уезжает в
+    `answer_run`**, а не про право отвечать; без подмены они спрашивали бы базу и
+    падали от того, что у тестового сайта галочка снята, — то есть по причине, к их
+    вопросу не относящейся. Само право проверяется ниже, `TestTheSiteSwitch`.
+    """
     got = []
 
     async def _answer_run(profile, presence, agent, limit=0):
@@ -40,7 +46,11 @@ def spy(monkeypatch):
 
         return {'asked': 1, 'sent': 1, 'silent': 0, 'offline': 0, 'errors': []}
 
+    async def _answer_on(site_id):
+        return True
+
     monkeypatch.setattr(auto, 'answer_run', _answer_run)
+    monkeypatch.setattr(auto, '_answer_on', _answer_on)
 
     return got
 
@@ -123,3 +133,72 @@ class TestDisabledIsStillSkipped:
 
         assert asked == [], 'за агентом выключенной анкеты всё-таки сходили'
         assert spy == []
+
+
+class TestTheSiteSwitch:
+    """⚠⚠ Галочка сайта «отправка ответов» обязана выключать автоответ.
+
+    Она уже переставала работать однажды, и молча: убирая вторую проверку (флаг
+    анкеты `auto_answer`), потеряли и первую — `_answer_on` остался в файле, но
+    звать его перестали. Панель галочку исправно сохраняла, круг отвечал.
+
+    ⚠ Сторона ошибки здесь обратная обычной: не «агент молчит, когда должен
+    говорить», а «пишет живому человеку, когда человек это запретил». Отменить
+    ушедшее нельзя, поэтому тест отдельный и проверяет обе стороны выключателя.
+    """
+
+    @pytest.fixture
+    def only_answer(self, monkeypatch):
+        """Ответ подменён, выключатель — нет: он и есть предмет проверки."""
+        got = []
+
+        async def _answer_run(profile, presence, agent, limit=0):
+            got.append(int(profile['id']))
+
+            return {'asked': 1, 'sent': 1, 'silent': 0, 'offline': 0, 'errors': []}
+
+        async def _agent_id(profile):
+            return 42
+
+        monkeypatch.setattr(auto, 'answer_run', _answer_run)
+        monkeypatch.setattr(auto, '_agent_id', _agent_id)
+
+        return got
+
+    async def test_the_switch_off_keeps_us_silent(self, monkeypatch, only_answer):
+        async def _answer_on(site_id):
+            return False
+
+        monkeypatch.setattr(auto, '_answer_on', _answer_on)
+        got = await auto.auto_round(_profiles(1, 2))
+
+        assert only_answer == [], 'галочка снята, а ответ всё равно ушёл'
+        assert got['profiles'] == 0
+
+    async def test_the_switch_on_lets_us_answer(self, monkeypatch, only_answer):
+        async def _answer_on(site_id):
+            return True
+
+        monkeypatch.setattr(auto, '_answer_on', _answer_on)
+        await auto.auto_round(_profiles(1, 2))
+
+        assert only_answer == [1, 2], 'галочка поднята, а ответа нет'
+
+    async def test_the_switch_is_asked_before_the_neighbour(self, monkeypatch,
+                                                           only_answer):
+        """⚠ Порядок: выключатель дешевле похода к соседу за агентом."""
+        asked = []
+
+        async def _agent_id(profile):
+            asked.append(int(profile['id']))
+
+            return 42
+
+        async def _answer_on(site_id):
+            return False
+
+        monkeypatch.setattr(auto, '_agent_id', _agent_id)
+        monkeypatch.setattr(auto, '_answer_on', _answer_on)
+        await auto.auto_round(_profiles(1))
+
+        assert asked == [], 'за агентом сходили при снятой галочке'
