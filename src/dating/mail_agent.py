@@ -673,17 +673,6 @@ async def invite_template(site_id: int, language: str = INVITE_LANGUAGE,
                     str(language or INVITE_LANGUAGE))
 
 
-async def mail_agent_name(site_id: int) -> str:
-    """Системное имя агента этого сайта. Пустая строка — метки сайта нет.
-
-    Отдельной функцией, потому что имя нужно и заведению, и поиску, и сообщению об
-    отказе: три написания разошлись бы.
-    """
-    slug = await agent_site(int(site_id))
-
-    return MAIL_AGENT_NAME.format(site=slug) if slug else ''
-
-
 async def mail_agent_language(site_id: int) -> str:
     """Язык, на котором пишет агент этого сайта. Не задан — `en`.
 
