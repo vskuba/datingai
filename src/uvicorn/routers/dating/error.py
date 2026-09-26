@@ -22,7 +22,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
 from src.dating.error import ERROR_LIMIT, ERROR_TITLES, error_rows
-from src.uvicorn.routers.dating.log import _NAME, _PHOTO, _run_text
+from src.uvicorn.routers.dating.log import _NAME, _PHOTO, _run_text, feed_page
 
 router = APIRouter(prefix='/api/dating/error', tags=['dating'])
 
@@ -102,27 +102,15 @@ async def error_feed(site_id: int = 0, source: str = '', q: str = '', page: int 
                             detail=f'неизвестный источник «{source}»')
 
     per_page = max(1, min(int(per_page or ERROR_FEED_PAGE), ERROR_FEED_PAGE_MAX))
-    page = max(1, int(page or 1))
-
-    sql, params = _feed_query(int(site_id), str(source or ''), str(q or '').strip())
 
     async with mysql_get_db_async() as db:
-        await db.execute(f'SELECT COUNT(*) AS n FROM ({sql}) AS feed', params)
-        total = int((await db.fetchone() or {}).get('n') or 0)
+        feed = await feed_page(db, _feed_query(int(site_id), str(source or ''),
+                                               str(q or '').strip()),
+                               int(page or 1), per_page)
 
-        pages = max(1, -(-total // per_page))
-        page = min(page, pages)
-
-        # Порядок по времени, а не по `id`: номера идут из четырёх таблиц и
-        # несравнимы между собой — тот же закон, что у общей ленты.
-        await db.execute(f'{sql} ORDER BY created_at DESC, id DESC'
-                         ' LIMIT %s OFFSET %s',
-                         (*params, per_page, (page - 1) * per_page))
-        rows = await db.fetchall()
-
-    return {'result': {'rows': [_feed_row(dict(row)) for row in rows],
-                      'total': total, 'page': page, 'pages': pages,
-                      'sources': ERROR_FEED_SOURCES}}
+    return {'result': {'rows': [_feed_row(row) for row in feed['rows']],
+                      'total': feed['total'], 'page': feed['page'],
+                      'pages': feed['pages'], 'sources': ERROR_FEED_SOURCES}}
 
 
 # ── Приватное (лента) ────────────────────────────────────────────────────────
@@ -149,10 +137,11 @@ def _feed_row(row: dict) -> dict:
     return row
 
 
-def _feed_query(site_id: int, source: str, q: str) -> tuple[str, list]:
-    """Собирает запрос ленты отказов и его параметры.
+def _feed_query(site_id: int, source: str, q: str) -> list[tuple[str, list]]:
+    """Собирает половины ленты отказов: пар `(запрос, параметры)`, как в общей
+    ленте (`feed_page`).
 
-    Четыре половины дают **одинаковый набор колонок** — иначе `UNION` их не сложит.
+    Половины дают **одинаковый набор колонок** — иначе `UNION` их не сложит.
     Чего-то половине неоткуда взять (у общих отказов нет анкеты, у журнала анкеты
     нет счётчика повторов) — подставляется пустым или нулём: это разная природа
     записей, а не потеря.
@@ -162,7 +151,7 @@ def _feed_query(site_id: int, source: str, q: str) -> tuple[str, list]:
     строке, а общие отказы не относятся ни к одному сайту и остаются видны
     при любом выборе.
     """
-    parts, params = [], []
+    parts: list[tuple[str, list]] = []
 
     if source in ('', 'profile'):
         where = ['l.level = \'fail\'', 'p.site_id = %s']
@@ -170,7 +159,7 @@ def _feed_query(site_id: int, source: str, q: str) -> tuple[str, list]:
         if q:
             where.append(f'(l.text LIKE %s OR {_NAME} LIKE %s OR p.login LIKE %s)')
             args += [f'%{q}%'] * 3
-        parts.append(
+        parts.append((
             'SELECT l.id, \'profile\' AS source, l.text, l.created_at,'
             '       l.created_at AS first_at, 0 AS hits,'
             '       p.id AS profile_id,'
@@ -178,8 +167,7 @@ def _feed_query(site_id: int, source: str, q: str) -> tuple[str, list]:
             "       '' AS scenario_name, 0 AS step_no"
             '  FROM log l'
             '  JOIN profile p ON p.id = l.profile_id'
-            f' WHERE {" AND ".join(where)}')
-        params += args
+            f' WHERE {" AND ".join(where)}', args))
 
     if source in ('', 'scenario'):
         where = ["r.status = 'error'", 'r.site_id = %s']
@@ -188,7 +176,7 @@ def _feed_query(site_id: int, source: str, q: str) -> tuple[str, list]:
             where.append(f"(r.scenario_name LIKE %s OR r.error LIKE %s"
                          f" OR {_NAME} LIKE %s OR p.login LIKE %s)")
             args += [f'%{q}%'] * 4
-        parts.append(
+        parts.append((
             "SELECT r.id, 'scenario' AS source, COALESCE(r.error, '') AS text,"
             '       r.created_at, r.created_at AS first_at, 0 AS hits,'
             '       r.profile_id,'
@@ -196,8 +184,7 @@ def _feed_query(site_id: int, source: str, q: str) -> tuple[str, list]:
             '       r.scenario_name, r.step_no'
             '  FROM scenario_run r'
             '  LEFT JOIN profile p ON p.id = r.profile_id'
-            f' WHERE {" AND ".join(where)}')
-        params += args
+            f' WHERE {" AND ".join(where)}', args))
 
     if source in ('', 'request'):
         # ⚠ Походы без сайта (к соседу) показываем вместе с выбранным: они не про
@@ -207,7 +194,7 @@ def _feed_query(site_id: int, source: str, q: str) -> tuple[str, list]:
         if q:
             where.append('(r.error LIKE %s OR r.path LIKE %s)')
             args += [f'%{q}%'] * 2
-        parts.append(
+        parts.append((
             # ⚠ Число в CONCAT идёт без `CAST(... AS CHAR)`: каст вешает на кусок
             # сличение соединения с тем же весом, что у столбца, — и `UNION` падает
             # с 1271 на базах, где сличение соединения и таблиц различаются.
@@ -220,8 +207,7 @@ def _feed_query(site_id: int, source: str, q: str) -> tuple[str, list]:
             "       r.door AS scenario_name, 0 AS step_no"
             '  FROM request r'
             '  LEFT JOIN profile p ON p.id = r.profile_id'
-            f' WHERE {" AND ".join(where)}')
-        params += args
+            f' WHERE {" AND ".join(where)}', args))
 
     if source in ('', 'system'):
         # Человек читает «Список сайтов: сосед не ответил», а не `sites_sync` —
@@ -233,14 +219,13 @@ def _feed_query(site_id: int, source: str, q: str) -> tuple[str, list]:
         if q:
             where.append('(message LIKE %s OR source LIKE %s)')
             args += [f'%{q}%'] * 2
-        parts.append(
+        parts.append((
             "SELECT id, 'system' AS source, message AS text, last_at AS created_at,"
             '       first_at, hits,'
             "       0 AS profile_id, '' AS profile_name,"
             "       '' AS profile_photo,"
             "       source AS scenario_name, 0 AS step_no"
             '  FROM error'
-            f' WHERE {" AND ".join(where)}')
-        params += args
+            f' WHERE {" AND ".join(where)}', args))
 
-    return ' UNION ALL '.join(parts), params
+    return parts

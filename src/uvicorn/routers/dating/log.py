@@ -16,10 +16,11 @@
 | `log` | ход работы по анкетам: вход, проверка, сообщения | записей без анкеты |
 | `scenario_run` | прогоны сценариев: сценарий, исход, шаг, длительность | ничего, кроме прогонов |
 
-Лента собирается **`UNION ALL` в базе**, а не склейкой двух ответов в Python. Иначе
-пришлось бы тянуть с запасом из обеих таблиц и резать после сортировки: чтобы
-показать пятьдесят свежих строк, надо знать, сколько их взять из каждой, а этого
-заранее не знает никто.
+Лента собирается **в базе**: каждая половина ленты — отдельный запрос со своим
+отбором, порядком и пределом (`feed_page`), и лишь верхушки половин складываются
+`UNION ALL` в одну страницу. Весь список при этом не разворачивается: чтобы
+показать пятьдесят свежих строк, половина обязана сама отдать ровно столько,
+сколько нужно, а не всё своё содержимое.
 
 ⚠ **Прогоны импорта и выгрузки видны только здесь.** У них нет анкеты (`profile_id`
 пуст) — они идут по сайту целиком, и в журнал ни одной учётки не попадают. Это и
@@ -61,6 +62,53 @@ LOG_PAGE_MAX = 200
 # Отбор по источнику, а не по уровню: уровни (`ok`, `fail`) есть у обоих, а вопрос
 # «что запускалось у соседа» отвечается именно источником.
 LOG_KINDS = ('all', 'profile', 'scenario')
+
+
+async def feed_page(db, parts: list[tuple[str, list]], page: int,
+                    per_page: int) -> dict:
+    """Считает половины ленты по отдельности и берёт из них одну страницу.
+
+    Половины считаются каждая по своему индексу, и каждая же отдаёт лишь верхние
+    `page × per_page` строк по времени ленты: окно любой страницы целиком лежит
+    в верхушках половин, поэтому вся лента не разворачивается ни в счёт, ни в
+    временную таблицу — ни широких колонок, ни сортировки на весь объём.
+
+    Args:
+        db: соединение с базой.
+        parts: половины ленты — пар `(запрос, параметры)` без порядка и предела.
+        page: страница, с единицы; правится на последнюю, если лента короче.
+        per_page: строк на странице.
+
+    Returns:
+        dict: `rows` — строки страницы без правок, `total`, `page` (исправленный),
+        `pages`.
+    """
+    # Счёт: слагаемые половины дают тот же итог, что весь список, но каждая
+    # половина считает себя по своему индексу.
+    await db.execute(
+        'SELECT ' + ' + '.join(f'(SELECT COUNT(*) FROM ({sql}) c{i})'
+                               for i, (sql, _) in enumerate(parts)) + ' AS n',
+        [a for _, args in parts for a in args])
+    total = int((await db.fetchone() or {}).get('n') or 0)
+
+    pages = max(1, -(-total // per_page))
+    page = min(page, pages)
+
+    # Страница: верхние `page × per_page` строк каждой половины — окно любой
+    # страницы целиком лежит в верхушках половин. Порядок по времени, а не по
+    # `id`: номера идут из разных таблиц и несравнимы между собой — тот же
+    # закон, что у общей ленты.
+    cap = page * per_page
+    await db.execute(
+        ' UNION ALL '.join(f'SELECT * FROM ({sql}'
+                           f' ORDER BY created_at DESC, id DESC LIMIT %s) h{i}'
+                           for i, (sql, _) in enumerate(parts))
+        + ' ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s',
+        [a for sql, args in parts for a in (*args, cap)]
+        + [per_page, (page - 1) * per_page])
+
+    return {'rows': [dict(r) for r in await db.fetchall() or []],
+            'total': total, 'page': page, 'pages': pages}
 
 
 @router.get('', include_in_schema=False)
@@ -121,29 +169,14 @@ async def log_feed(site_id: int = 0, profile_id: int = 0, kind: str = 'all',
     двумя разными способами значило бы разойтись в словах об одном событии.
     """
     per_page = max(1, min(int(per_page or LOG_PAGE), LOG_PAGE_MAX))
-    page = max(1, int(page or 1))
-
-    sql, params = _query(int(site_id), int(profile_id), kind, level, q)
 
     async with mysql_get_db_async() as db:
-        await db.execute(f'SELECT COUNT(*) AS n FROM ({sql}) AS feed', params)
-        total = int((await db.fetchone() or {}).get('n') or 0)
+        feed = await feed_page(db, _query(int(site_id), int(profile_id), kind,
+                                          level, q),
+                               int(page or 1), per_page)
 
-        # Номер страницы поправляем здесь же и возвращаем исправленный: список
-        # мог укоротиться, пока человек листал, и просить у него ещё одно нажатие,
-        # чтобы увидеть хоть что-то, незачем. То же делает карточка собеседниц.
-        pages = max(1, -(-total // per_page))
-        page = min(page, pages)
-
-        # ⚠ Порядок по времени, а не по `id`: номера идут из **двух** таблиц, и
-        # соседние по времени записи могут иметь несравнимые номера. Сортировка по
-        # `id` перемешала бы ленту так, что этого никто бы не заметил.
-        await db.execute(f'{sql} ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s',
-                         (*params, per_page, (page - 1) * per_page))
-        rows = await db.fetchall()
-
-    return {'rows': [_row(dict(row)) for row in rows],
-            'total': total, 'page': page, 'pages': pages}
+    return {'rows': [_row(row) for row in feed['rows']],
+            'total': feed['total'], 'page': feed['page'], 'pages': feed['pages']}
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
@@ -211,18 +244,19 @@ def _run_text(row: dict) -> str:
     return f"Получен ответ на сценарий {name} — {int(row.get('ms') or 0) / 1000:.1f} с"
 
 
-def _query(site_id: int, profile_id: int, kind: str, level: str, q: str) -> tuple[str, list]:
-    """Собирает запрос ленты и его параметры.
+def _query(site_id: int, profile_id: int, kind: str, level: str,
+           q: str) -> list[tuple[str, list]]:
+    """Собирает половины ленты и их параметры: `(запрос, параметры)` на каждую.
 
-    Обе половины дают **одинаковый набор колонок** — иначе `UNION` их не сложит.
-    Недостающее подставляется пустым: у строки журнала анкеты нет ни сценария, ни
-    длительности, и это не потеря, а разная природа записей.
+    Обе половины дают **одинаковый набор колонок** — иначе `UNION` их не сложит
+    (`feed_page`). Недостающее подставляется пустым: у строки журнала анкеты нет
+    ни сценария, ни длительности, и это не потеря, а разная природа записей.
 
     Отбор по сайту у половин разный, и это не оплошность: у прогона сайт записан
     прямо в строке, а строка журнала анкеты знает только анкету — сайт достаётся
     через неё. Отбор по анкете, наоборот, одинаков: номер анкеты есть у обеих.
     """
-    parts, params = [], []
+    parts: list[tuple[str, list]] = []
 
     # `1 = 1` как основа: без отбора половина отдала бы всё подряд, а пустой
     # `WHERE` — синтаксическая ошибка. Оба вызывающих отбор задают (ручка требует
@@ -243,15 +277,14 @@ def _query(site_id: int, profile_id: int, kind: str, level: str, q: str) -> tupl
             where.append(f'(l.text LIKE %s OR {_NAME} LIKE %s OR p.login LIKE %s)')
             args += [f'%{q}%'] * 3
 
-        parts.append(
+        parts.append((
             "SELECT l.id, 'profile' AS source, l.level, l.text, l.created_at,"
             f'       p.id AS profile_id, {_NAME} AS profile_name,'
             f'       {_PHOTO} AS profile_photo,'
             "       '' AS scenario_name, 0 AS step_no, 0 AS ms"
             '  FROM log l'
             '  JOIN profile p ON p.id = l.profile_id'
-            f' WHERE {" AND ".join(where)}')
-        params += args
+            f' WHERE {" AND ".join(where)}', args))
 
     if kind in ('all', 'scenario'):
         where, args = ['1 = 1'], []
@@ -279,7 +312,7 @@ def _query(site_id: int, profile_id: int, kind: str, level: str, q: str) -> tupl
                          f' OR {_NAME} LIKE %s OR p.login LIKE %s)')
             args += [f'%{q}%'] * 4
 
-        parts.append(
+        parts.append((
             "SELECT r.id, 'scenario' AS source,"
             "       CASE r.status WHEN 'ok' THEN 'ok'"
             "                     WHEN 'sent' THEN 'info' ELSE 'fail' END AS level,"
@@ -289,7 +322,6 @@ def _query(site_id: int, profile_id: int, kind: str, level: str, q: str) -> tupl
             '       r.scenario_name, r.step_no, r.ms'
             '  FROM scenario_run r'
             '  LEFT JOIN profile p ON p.id = r.profile_id'
-            f' WHERE {" AND ".join(where)}')
-        params += args
+            f' WHERE {" AND ".join(where)}', args))
 
-    return ' UNION ALL '.join(parts), params
+    return parts

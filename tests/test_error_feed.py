@@ -15,6 +15,16 @@ import pytest
 from src.dating.error import ERROR_TITLES
 from src.uvicorn.routers.dating.error import _feed_query, _feed_row
 
+def _flat(parts):
+    """Склеивает половины в один текст, параметры сводит в один список.
+
+    Так проверки видят ленту целиком, а не угадывают, в какой половине что
+    лежит: сборщик с 2026-09-26 отдаёт половины отдельными запросами, а не
+    готовый `UNION`.
+    """
+    return (' UNION ALL '.join(sql for sql, _ in parts),
+            [a for _, args in parts for a in args])
+
 pytestmark = pytest.mark.page
 SITE = 343
 
@@ -24,7 +34,7 @@ class TestQueryShape:
 
     def test_all_joins_four_sources(self):
         """Отказы приходят из четырёх мест — и все четыре складываются в ленту."""
-        sql, params = _feed_query(SITE, '', '')
+        sql, params = _flat(_feed_query(SITE, '', ''))
 
         assert 'UNION ALL' in sql
         for table in ('FROM log', 'FROM scenario_run', 'FROM request', 'FROM error'):
@@ -38,7 +48,7 @@ class TestQueryShape:
         анкеты нет счётчика повторов. Подставляется пустым или нулём — это разная
         природа записей, а не потеря.
         """
-        sql, _ = _feed_query(SITE, '', '')
+        sql, _ = _flat(_feed_query(SITE, '', ''))
         halves = sql.split(' UNION ALL ')
 
         assert len(halves) == 4
@@ -49,7 +59,7 @@ class TestQueryShape:
     def test_only_failures_are_taken(self):
         """Лента берёт из каждой половины только неудачу: к ней приходят за тем,
         что сломалось, а не за всей лентой подряд."""
-        sql, _ = _feed_query(SITE, '', '')
+        sql, _ = _flat(_feed_query(SITE, '', ''))
 
         assert "l.level = 'fail'" in sql, 'журнал анкет берётся без отбора по уровню'
         assert "r.status = 'error'" in sql, 'прогоны берутся без отбора по исходу'
@@ -60,7 +70,7 @@ class TestQueryShape:
         строка журнала знает только анкету, походы без сайта (к соседу) и общие
         отказы не относятся ни к одному сайту и прячутся молча, если их обрезать
         жёстким равенством."""
-        sql, _ = _feed_query(SITE, '', '')
+        sql, _ = _flat(_feed_query(SITE, '', ''))
 
         assert 'p.site_id = %s' in sql
         assert 'r.site_id = %s' in sql
@@ -76,7 +86,7 @@ class TestQueryFilters:
         «откуда» обязан переключать, а не подмешивать остальное."""
         for source, table in (('profile', 'FROM log'), ('scenario', 'FROM scenario_run'),
                               ('request', 'FROM request'), ('system', 'FROM error')):
-            sql, params = _feed_query(SITE, source, '')
+            sql, params = _flat(_feed_query(SITE, source, ''))
 
             assert table in sql
             assert len(sql.split(' UNION ALL ')) == 1
@@ -84,7 +94,7 @@ class TestQueryFilters:
 
     def test_search_covers_text_and_profile(self):
         """Ищут и по причине, и по анкете — помняют обычно одно из двух."""
-        sql, params = _feed_query(SITE, 'profile', 'Diana')
+        sql, params = _flat(_feed_query(SITE, 'profile', 'Diana'))
 
         assert 'l.text LIKE %s' in sql
         assert params.count('%Diana%') == 3

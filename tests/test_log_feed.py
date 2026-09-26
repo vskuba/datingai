@@ -20,6 +20,17 @@ import pytest
 
 from src.uvicorn.routers.dating.log import _query, _run_text
 
+
+def _flat(parts):
+    """Склеивает половины в один текст, параметры сводит в один список.
+
+    Так проверки видят ленту целиком, а не угадывают, в какой половине что
+    лежит: сборщик с 2026-09-26 отдаёт половины отдельными запросами, а не
+    готовый `UNION`.
+    """
+    return (' UNION ALL '.join(sql for sql, _ in parts),
+            [a for _, args in parts for a in args])
+
 pytestmark = pytest.mark.page
 SITE = 343
 
@@ -34,14 +45,14 @@ class TestQueryShape:
         пятьдесят свежих строк, надо знать, сколько взять из каждой таблицы, а
         этого заранее не знает никто.
         """
-        sql, params = _query(SITE, 0, 'all', '', '')
+        sql, params = _flat(_query(SITE, 0, 'all', '', ''))
 
         assert 'UNION ALL' in sql
         assert 'FROM log' in sql and 'FROM scenario_run' in sql
         assert params == [SITE, SITE]
 
     def test_profile_only(self):
-        sql, params = _query(SITE, 0, 'profile', '', '')
+        sql, params = _flat(_query(SITE, 0, 'profile', '', ''))
 
         assert 'FROM scenario_run' not in sql
         assert params == [SITE]
@@ -53,7 +64,7 @@ class TestQueryShape:
         и `log` находится внутри `p.login`, который в запросе есть всегда. Тест
         падал, хотя код был верен: он проверял подстроку, а не таблицу.
         """
-        sql, params = _query(SITE, 0, 'scenario', '', '')
+        sql, params = _flat(_query(SITE, 0, 'scenario', '', ''))
 
         assert 'FROM log' not in sql
         assert params == [SITE]
@@ -64,7 +75,7 @@ class TestQueryShape:
         У строки журнала анкеты нет ни сценария, ни длительности — недостающее
         подставляется пустым. Это не потеря, а разная природа записей.
         """
-        sql, _ = _query(SITE, 0, 'all', '', '')
+        sql, _ = _flat(_query(SITE, 0, 'all', '', ''))
         halves = sql.split(' UNION ALL ')
 
         assert len(halves) == 2
@@ -75,7 +86,7 @@ class TestQueryShape:
     def test_site_is_matched_differently_in_each_half(self):
         """И это не оплошность: у прогона сайт записан прямо в строке, а строка
         журнала анкеты знает только анкету — сайт достаётся через неё."""
-        sql, _ = _query(SITE, 0, 'all', '', '')
+        sql, _ = _flat(_query(SITE, 0, 'all', '', ''))
 
         assert 'p.site_id = %s' in sql, 'журнал анкеты отбирается через саму анкету'
         assert 'r.site_id = %s' in sql, 'у прогона сайт лежит в строке'
@@ -90,7 +101,7 @@ class TestQueryFilters:
         Сводится к тем же уровням, что у журнала анкеты: иначе фильтр «только
         отказы» работал бы на одной половине ленты и молчал на другой.
         """
-        sql, params = _query(SITE, 0, 'all', 'fail', '')
+        sql, params = _flat(_query(SITE, 0, 'all', 'fail', ''))
 
         assert 'l.level = %s' in sql
         assert 'r.status = %s' in sql
@@ -102,7 +113,7 @@ class TestQueryFilters:
         Прогон в состоянии `sent` ещё не имеет итога; ложить его в `ok` значило бы
         сказать, что он отработал, а в `fail` — что упал. Ни то ни другое.
         """
-        sql, params = _query(SITE, 0, 'all', 'info', '')
+        sql, params = _flat(_query(SITE, 0, 'all', 'info', ''))
 
         assert 'r.status = %s' in sql
         assert params == [SITE, 'info', SITE, 'sent']
@@ -113,14 +124,14 @@ class TestQueryFilters:
         Половина ленты обязана остаться пустой, а не отдать все прогоны подряд:
         иначе «покажи входящие» приносило бы и то, чего человек не просил.
         """
-        sql, params = _query(SITE, 0, 'all', 'in', '')
+        sql, params = _flat(_query(SITE, 0, 'all', 'in', ''))
 
         assert '1 = 0' in sql
         assert params == [SITE, 'in', SITE]
 
     def test_search_covers_text_and_profile(self):
         """Ищут и по тексту строки, и по анкете: помнят обычно одно из двух."""
-        sql, params = _query(SITE, 0, 'profile', '', 'Diana')
+        sql, params = _flat(_query(SITE, 0, 'profile', '', 'Diana'))
 
         assert 'l.text LIKE %s' in sql
         assert params.count('%Diana%') == 3
@@ -128,7 +139,7 @@ class TestQueryFilters:
     def test_search_covers_scenario_and_error(self):
         """У прогонов ищется имя сценария и причина отказа: с симптома начинают
         чаще, чем с имени."""
-        sql, params = _query(SITE, 0, 'scenario', '', 'занят')
+        sql, params = _flat(_query(SITE, 0, 'scenario', '', 'занят'))
 
         assert 'r.scenario_name LIKE %s' in sql
         assert 'r.error LIKE %s' in sql
@@ -141,7 +152,7 @@ class TestQueryFilters:
         `profile`. Две разошедшиеся копии выражения дали бы «ищу по одному,
         показываю другое».
         """
-        sql, _ = _query(SITE, 0, 'profile', '', 'кто-то')
+        sql, _ = _flat(_query(SITE, 0, 'profile', '', 'кто-то'))
 
         assert sql.count("JSON_EXTRACT(p.profile, '$.name')") == 2
 
@@ -157,7 +168,7 @@ class TestProfileScope:
         значило бы держать две записи об одном событии, которые разойдутся при
         первой же правке текста.
         """
-        sql, params = _query(0, 849, 'all', '', '')
+        sql, params = _flat(_query(0, 849, 'all', '', ''))
 
         assert 'l.profile_id = %s' in sql, 'журнал анкеты не отбирается по ней самой'
         assert 'r.profile_id = %s' in sql, 'прогоны не отбираются по анкете'
@@ -167,7 +178,7 @@ class TestProfileScope:
         """Без отбора половина отдала бы всё подряд, а пустой `WHERE` — это
         синтаксическая ошибка. Оба вызывающих отбор задают, но полагаться на это в
         сборке запроса нельзя: третий об этом правиле не узнает."""
-        sql, params = _query(0, 0, 'all', '', '')
+        sql, params = _flat(_query(0, 0, 'all', '', ''))
 
         assert 'WHERE 1 = 1' in sql
         assert params == []
