@@ -85,9 +85,7 @@ class TestNodesFitTheColumns:
 
     def test_the_column_count_matches(self):
         cols = _grid('.mail-sent-row.plain.one {')
-        # ⚠ `why` не считаем: он уходит **своей строкой** (`grid-column: 3 / -1`),
-        # а не в колонку. Остальные шесть стоят в линию.
-        nodes = [one for one in _row_nodes() if one != 'mail-sent-why']
+        nodes = _row_nodes()
 
         assert len(nodes) == len(cols), \
             (f'узлов {len(nodes)} на {len(cols)} колонок: '
@@ -100,7 +98,7 @@ class TestNodesFitTheColumns:
         шестую неявную, а у избранных в пятую объявленную.
         """
         cols = _grid('.mail-sent-row.plain.one {')
-        nodes = [one for one in _row_nodes() if one != 'mail-sent-why']
+        nodes = _row_nodes()
 
         assert nodes.index('mail-sent-state') == len(cols) - 1, \
             'исход не в последней колонке — у журналов он встанет по-разному'
@@ -109,7 +107,7 @@ class TestNodesFitTheColumns:
         """⚠ Растягивается колонка **текста**, а не соседняя: пустота между именами
         и чипсом оторвала бы метку от письма, к которому она относится."""
         cols = _grid('.mail-sent-row.plain.one {')
-        nodes = [one for one in _row_nodes() if one != 'mail-sent-why']
+        nodes = _row_nodes()
 
         assert cols[nodes.index('mail-sent-text')] == '1fr', \
             'растягивается не колонка текста'
@@ -146,25 +144,45 @@ class TestTheEmptyChipHoldsItsColumn:
             'обычный чипс потерял вид'
 
 
-class TestTheTailKeepsItsOwnLine:
-    """⚠ Пометка «осталось в пуле» идёт **своей строкой**, а не колонкой.
+class TestTheRowHasNoTailRules:
+    """⚠⚠ Хвостовой строки у записи больше нет — и правил под неё тоже.
 
-    Она длиннее любой колонки и относится ко всей записи; втисни её в линию — либо
-    обрежется, либо раздвинет соседей. Отсюда `grid-column` вместо места в потоке.
+    Правило `grid-column: 3 / -1` уводило узел на свою строку под записью. Его
+    подопечных не осталось ни одного: `.mail-sent-why` убрали вместе с пометкой
+    «осталось в пуле» (26.09.2026), `.mail-sent-said` не рисуется с 13.09, а текст
+    реплики в журнале всегда идёт строкой `.one` — и та по весу сильнее.
+
+    ⚠ Проверяется именно **отсутствие**: правило под несуществующий узел читают как
+    действующее, и следующий, кто заведёт хвост, получит его в третьей колонке без
+    всякого на то решения.
     """
 
-    def test_the_tail_spans_the_row(self):
-        """⚠ Ищем **правило с `grid-column`**, а не первое вхождение селектора.
-
-        Этим селектором заданы два правила: одно про междустрочие, другое про
-        колонку. Первая версия теста брала первое совпадение и падала на верном
-        коде — то есть проверяла порядок правил в файле, а не поведение.
-        """
+    def test_there_is_no_tail_rule(self):
         page = PAGE.read_text(encoding='utf-8')
         rules = re.findall(
-            r'\.mail-sent-row\.plain \.mail-sent-text,.*?\{([^}]*)\}',
-            page, re.S)
+            r'\n    \.mail-sent-row\.plain \.mail-sent-[a-z]+[^{]*\{([^}]*)\}', page)
 
-        assert rules, 'правил для хвоста нет вовсе'
-        assert any('grid-column: 3 / -1' in one for one in rules), \
-            'хвост встал в колонку — раздвинет строку или обрежется'
+        assert not any('grid-column: 3 / -1' in one for one in rules), \
+            'правило хвостовой строки вернулось — у него нет подопечных'
+
+    def test_the_dead_class_is_gone(self):
+        """⚠ `.mail-sent-said` — четыре правила на класс, который не рисуется."""
+        page = PAGE.read_text(encoding='utf-8')
+
+        assert '.mail-sent-said {' not in page, \
+            'правила мёртвого класса вернулись'
+        assert 'class="mail-sent-said' not in page, \
+            'класс снова рисуется — тогда правила нужны, а тест нет'
+
+    def test_the_text_still_beats_the_base_rule(self):
+        """⚠⚠ `grid-column: auto` у `.one` убирать **нельзя**, хоть хвостового
+        правила и не стало: текст перебивает не его, а **базовое** `.mail-sent-text`
+        с `grid-column: 2 / -1`. Убери — и реплика уедет со своей колонки на всю
+        ширину, то есть строка снова станет двухэтажной.
+        """
+        page = PAGE.read_text(encoding='utf-8')
+        at = page.index('.mail-sent-row.plain.one .mail-sent-text {')
+        block = page[at:page.index('}', at)]
+
+        assert 'grid-column: auto' in block, \
+            'текст перестал перебивать базовое правило — строка раздвоится'
