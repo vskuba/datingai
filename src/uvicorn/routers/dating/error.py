@@ -22,7 +22,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
 from src.dating.error import ERROR_LIMIT, ERROR_TITLES, error_rows
-from src.uvicorn.routers.dating.log import _run_text
+from src.uvicorn.routers.dating.log import _NAME, _PHOTO, _run_text
 
 router = APIRouter(prefix='/api/dating/error', tags=['dating'])
 
@@ -164,21 +164,17 @@ def _feed_query(site_id: int, source: str, q: str) -> tuple[str, list]:
     """
     parts, params = [], []
 
-    name = ("COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(p.profile, '$.name')), 'null'),"
-            " p.login, '')")
-    photo = ("COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(p.profile, '$.photo')), 'null'), '')")
-
     if source in ('', 'profile'):
         where = ['l.level = \'fail\'', 'p.site_id = %s']
         args = [site_id]
         if q:
-            where.append(f'(l.text LIKE %s OR {name} LIKE %s OR p.login LIKE %s)')
+            where.append(f'(l.text LIKE %s OR {_NAME} LIKE %s OR p.login LIKE %s)')
             args += [f'%{q}%'] * 3
         parts.append(
             'SELECT l.id, \'profile\' AS source, l.text, l.created_at,'
             '       l.created_at AS first_at, 0 AS hits,'
             '       p.id AS profile_id,'
-            f'       {name} AS profile_name, {photo} AS profile_photo,'
+            f'       {_NAME} AS profile_name, {_PHOTO} AS profile_photo,'
             "       '' AS scenario_name, 0 AS step_no"
             '  FROM log l'
             '  JOIN profile p ON p.id = l.profile_id'
@@ -190,13 +186,13 @@ def _feed_query(site_id: int, source: str, q: str) -> tuple[str, list]:
         args = [site_id]
         if q:
             where.append(f"(r.scenario_name LIKE %s OR r.error LIKE %s"
-                         f" OR {name} LIKE %s OR p.login LIKE %s)")
+                         f" OR {_NAME} LIKE %s OR p.login LIKE %s)")
             args += [f'%{q}%'] * 4
         parts.append(
             "SELECT r.id, 'scenario' AS source, COALESCE(r.error, '') AS text,"
             '       r.created_at, r.created_at AS first_at, 0 AS hits,'
             '       r.profile_id,'
-            f'       {name} AS profile_name, {photo} AS profile_photo,'
+            f'       {_NAME} AS profile_name, {_PHOTO} AS profile_photo,'
             '       r.scenario_name, r.step_no'
             '  FROM scenario_run r'
             '  LEFT JOIN profile p ON p.id = r.profile_id'
@@ -220,7 +216,7 @@ def _feed_query(site_id: int, source: str, q: str) -> tuple[str, list]:
             "                           ' — ', r.status), r.error) AS text,"
             '       r.created_at, r.created_at AS first_at, 0 AS hits,'
             '       r.profile_id,'
-            f'       {name} AS profile_name, {photo} AS profile_photo,'
+            f'       {_NAME} AS profile_name, {_PHOTO} AS profile_photo,'
             "       r.door AS scenario_name, 0 AS step_no"
             '  FROM request r'
             '  LEFT JOIN profile p ON p.id = r.profile_id'
