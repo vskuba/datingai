@@ -54,7 +54,7 @@ class TestInviteText:
 
     def test_slot_survives(self):
         """Метка — то, ради чего шаблон и просят: её заменит подстановка."""
-        assert _invite(f'{MAN_SLOT}, ты всегда так смотришь?', man_slot=True) \
+        assert _invite(f'{MAN_SLOT}, ты всегда так смотришь?') \
                == f'{MAN_SLOT}, ты всегда так смотришь?'
 
     def test_curly_and_percent_forms_are_normalised(self):
@@ -64,9 +64,9 @@ class TestInviteText:
         одно; спорить об этом в промпте дороже, чем нормализовать здесь. Не
         приведи мы их — метка уехала бы в чат живому человеку прямо в скобках.
         """
-        assert _invite('{companion_name}, привет', man_slot=True) == f'{MAN_SLOT}, привет'
-        assert _invite('%companion_name%, привет', man_slot=True) == f'{MAN_SLOT}, привет'
-        assert _invite('[[ companion_name ]], привет', man_slot=True) \
+        assert _invite('{companion_name}, привет') == f'{MAN_SLOT}, привет'
+        assert _invite('%companion_name%, привет') == f'{MAN_SLOT}, привет'
+        assert _invite('[[ companion_name ]], привет') \
                == f'{MAN_SLOT}, привет'
 
     def test_unknown_slot_drops_the_template(self):
@@ -102,7 +102,7 @@ class TestInviteText:
         Реплика без имени остаётся репликой, а отказ стоил бы всего пула: заход
         один, шаблон один.
         """
-        assert _invite('Ты всегда так молчалив?', man_slot=True) \
+        assert _invite('Ты всегда так молчалив?') \
                == 'Ты всегда так молчалив?'
 
     def test_long_template_is_cut_not_dropped(self):
@@ -335,16 +335,35 @@ class TestInviteLanguage:
         assert (await _asked_with(language='')).get('user_language') \
                == INVITE_LANGUAGE
 
-    async def test_slots_are_asked_by_us(self, monkeypatch):
-        """⚠ Какие метки ставить — говорим мы, а не решает модель.
+    async def test_the_shares_are_sent_not_the_dice(self, monkeypatch):
+        """⚠⚠ Панель шлёт **доли**, а жребий бросает сосед.
 
-        «Вставляй имя изредка» она понимает как «вставляй всегда»: вероятность у
-        неё стилистическая. Жребий (5% и 30%) бросает панель, а сюда едет прямое
-        указание.
+        «Вставляй имя изредка» модель понимает как «вставляй всегда»: вероятность у
+        неё стилистическая, и выбирать должен кто-то снаружи. С 26.09.2026 это шаг
+        `dice` в `dating_invite_one`, а отсюда едут проценты из настроек сайта.
+
+        ⚠ Готовые значения присылать **нельзя**: у соседа `invite_slots`,
+        `invite_angle`, `invite_length` больше не объявлены, и ручка отвергает вызов
+        целиком — «Переменные … не объявлены».
         """
-        got = await _asked_with(language='en', man_slot=True)
+        got = await _asked_with(language='en', name_percent=30,
+                                girl_name_percent=5)
 
-        assert INVITE_SLOT_MAN in got.get('invite_slots', '')
+        assert got.get('invite_name_percent') == '30'
+        assert got.get('invite_girl_name_percent') == '5'
+        for gone in ('invite_slots', 'invite_angle', 'invite_length',
+                     'invite_time', 'invite_country', 'invite_time_percent',
+                     'datetime_current_get_zone'):
+            assert gone not in got, \
+                f'панель снова шлёт {gone} — у соседа он не объявлен, вызов упадёт'
+
+    async def test_the_shares_are_numbers_as_text(self, monkeypatch):
+        """⚠ Проценты уезжают **строкой с целым числом**: у соседа они попадают
+        прямо в описание жребия, где доли заданы числами. Пришли «0.3» — жребий
+        отказал бы, а «30%» прочитались бы как 30."""
+        got = await _asked_with(language='en', name_percent=10)
+
+        assert got.get('invite_name_percent') == '10'
 
     async def test_no_cards_go_to_the_agent(self, monkeypatch):
         """⚠⚠ Ни карточки девушки, ни карточки мужчины: шаблон общий.
@@ -357,9 +376,14 @@ class TestInviteLanguage:
         assert 'girl_card' not in got and 'companion_card' not in got
 
 
-async def _asked_with(language: str, girl_slot: bool = False,
-                      man_slot: bool = False) -> dict:
-    """Какие переменные ушли бы агенту. Транспорт подменён: проверяется вызов."""
+async def _asked_with(language: str, name_percent: int = 0,
+                      girl_name_percent: int = 0) -> dict:
+    """Какие переменные ушли бы агенту. Транспорт подменён: проверяется вызов.
+
+    ⚠⚠ Доводы — **доли в процентах**, а не готовые значения. Жребий (приём, длина,
+    метки имён) бросает теперь шаг `dice` у соседа; панель присылает только
+    проценты из настроек сайта.
+    """
     from src.dating import mail_agent as agent
 
     sent = {}
@@ -378,8 +402,8 @@ async def _asked_with(language: str, girl_slot: bool = False,
     try:
         # ⚠ Именованно, а не по порядку: новый аргумент в середине сигнатуры
         # сдвинул бы позиционные молча — так и вышло с `with_time`.
-        await agent.invite_template(343, language, girl_slot=girl_slot,
-                                    man_slot=man_slot)
+        await agent.invite_template(343, language, name_percent=name_percent,
+                                    girl_name_percent=girl_name_percent)
     finally:
         agent._agent_id = real_id
         agent.rhapsody_api_chat_ask = real_ask
@@ -648,9 +672,8 @@ class TestOneCallPerPool:
         # ⚠ Подпись повторяет живую целиком, включая жребий на приём и длину:
         # заглушка, не принявшая их, ловила бы `TypeError` вместо проверяемого
         # правила.
-        async def _template(site_id, language, with_time=True,
-                            girl_slot=False, man_slot=False,
-                            angle='', length='', avoid=None, country='',
+        async def _template(site_id, language, avoid=None,
+                            name_percent=0, girl_name_percent=0,
                             how_many=1):
             calls.append(site_id)
 
@@ -679,9 +702,8 @@ async def _made_with(monkeypatch, template, people=None) -> dict:
     from src.dating import invite
 
     if template is not None:
-        async def _template(site_id, language, with_time=True,
-                            girl_slot=False, man_slot=False,
-                            angle='', length='', avoid=None, country='',
+        async def _template(site_id, language, avoid=None,
+                            name_percent=0, girl_name_percent=0,
                             how_many=1):
             # Заглушке дают строку — превращаем в список, как отвечает живой
             # агент. ⚠ Пустая строка значит «агент промолчал»: у живого это
@@ -740,16 +762,25 @@ class TestVariety:
     длина и список «так уже было», — и модель получает не пожелание, а указание.
     """
 
-    async def test_the_angle_and_length_reach_the_agent(self, monkeypatch):
-        """Приём и длина уезжают агенту переменными, а не остаются у нас."""
+    async def test_the_dice_moved_to_the_neighbour(self, monkeypatch):
+        """⚠⚠ Приём и длину бросает **сосед**, а панель их не выбирает вовсе.
+
+        Прежде выбирала она (`INVITE_ANGLES`, `INVITE_LENGTHS`) и присылала готовое
+        значение. Теперь списки лежат в описании жребия у соседа — там же, где
+        промпт, который ими пользуется, — и новая грань разнообразия стоит правки
+        одного места, а не четырёх.
+
+        Здесь стережётся, что панель к этому не вернулась: уехать должны **доли**,
+        а готовых значений у соседа никто не ждёт.
+        """
         from src.dating import invite
 
         sent = {}
 
-        async def _template(site_id, language, with_time=True,
-                            girl_slot=False, man_slot=False,
-                            angle='', length='', avoid=None, country='', how_many=1):
-            sent.update({'angle': angle, 'length': length, 'avoid': avoid})
+        async def _template(site_id, language, avoid=None,
+                            name_percent=0, girl_name_percent=0, how_many=1):
+            sent.update({'avoid': avoid, 'name_percent': name_percent,
+                         'girl_name_percent': girl_name_percent})
 
             return 'текст'
 
@@ -761,57 +792,26 @@ class TestVariety:
 
         await invite._templates(STAND_SITE, 'en', 1)
 
-        assert sent['angle'] in invite.INVITE_ANGLES
-        assert sent['length'] in invite.INVITE_LENGTHS
+        assert 'name_percent' in sent, 'доля имени не уехала — жребий получит метку'
+        # ⚠ Строка с целым числом: переменные вызова уходят строками, а у соседа
+        # значение попадает прямо в описание жребия, где доли заданы числами.
+        # «0.3» жребий отверг бы, «30%» прочитал бы как 30.
+        assert str(sent['name_percent']).isdigit(), \
+            f'доля не целое число строкой: {sent["name_percent"]!r}'
 
-    async def test_the_dice_actually_roll(self, monkeypatch):
-        """⚠ Жребий **на каждый заход**, а не один раз при запуске.
+    async def test_the_lists_are_gone_from_the_panel(self):
+        """⚠ Списков приёмов и длин в панели больше нет — они у соседа.
 
-        Выбери мы приём однажды — пул выходил бы разнообразным между сайтами и
-        одинаковым внутри дня, то есть ровно там, где это видно человеку.
+        Оставь их здесь копией — два источника разошлись бы на первой правке, и
+        разошлись бы молча: панель бы их не присылала, а человек, поправив список
+        тут, ждал бы других реплик.
         """
         from src.dating import invite
 
-        seen = set()
-
-        async def _template(site_id, language, with_time=True,
-                            girl_slot=False, man_slot=False,
-                            angle='', length='', avoid=None, country='', how_many=1):
-            seen.add((angle, length))
-
-            return 'текст'
-
-        async def _avoid(site_id):
-            return []
-
-        monkeypatch.setattr(invite, 'invite_template', _template)
-        monkeypatch.setattr(invite, '_avoid', _avoid)
-
-        for _ in range(30):
-            await invite._templates(STAND_SITE, 'en', 1)
-
-        # Восемь приёмов на четыре длины: за тридцать бросков сочетаний обязано
-        # набраться заметно больше одного. Точного числа не требуем — это жребий.
-        assert len(seen) > 5, f'жребий не бросается: сочетаний всего {len(seen)}'
-
-    async def test_the_angles_differ_by_substance(self):
-        """⚠ Приёмы отличаются **по существу**, а не по словам.
-
-        «Дерзкий вопрос» и «игривый вопрос» дали бы одно и то же: вопрос. Список
-        разводит сами заходы — вопрос, вызов, признание, игра, — и только поэтому
-        работает.
-        """
-        from src.dating.invite import INVITE_ANGLES
-
-        assert len(INVITE_ANGLES) >= 6, 'приёмов мало — пул будет однообразным'
-        assert len(set(INVITE_ANGLES)) == len(INVITE_ANGLES)
-
-    async def test_the_lengths_cover_both_ends(self):
-        """От трёх слов до абзаца: однообразие длины видно так же, как слов."""
-        from src.dating.invite import INVITE_LENGTHS
-
-        together = ' '.join(INVITE_LENGTHS)
-        assert 'коротко' in together and 'абзац' in together
+        assert not hasattr(invite, 'INVITE_ANGLES'), \
+            'список приёмов вернулся в панель — он должен быть только у соседа'
+        assert not hasattr(invite, 'INVITE_LENGTHS'), \
+            'список длин вернулся в панель'
 
     def test_the_avoid_list_is_numbered(self):
         """Список прошлых шаблонов идёт перечнем, а не одним текстом с переносами."""
@@ -996,30 +996,32 @@ class TestPoolRefills:
         assert 'ready_only=True' in code, \
             'застрявшие карточки снова считаются годными — добор встанет'
 
+class TestTimeAndPlaceAreGone:
+    """⚠⚠ Времени и страны в инвайте больше нет — и присылать их НЕЛЬЗЯ.
 
-class TestNowAndPlace:
-    """⚠⚠ Агент знает, который час и откуда девушка.
-
-    **Поймано в живом пуле прода:**
+    Прежде агент знал, который час и откуда девушка. Довод был куплен живым пулом:
 
         «My thoughts have turned sideways **tonight**, spinning loops of quiet…»
 
-    Модель писала про вечер, не зная, вечер сейчас или утро. Получатель читает
-    реплику в своё время, и перепутанное время суток выдаёт робота вернее любой
-    другой приметы: живой человек про это не ошибается.
+    Модель писала про вечер, не зная, вечер сейчас или утро, — а перепутанное время
+    суток выдаёт робота вернее любой другой приметы.
 
-    ⚠ **Приём взят у чата, а не выдуман заново.** `dating_talk` давно держит шаг
-    `datetime_current_get` и кладёт его ответ в промпт секцией «Текущее время».
-    Инструмент отдаёт готовую фразу — день недели, дату, время и словесное время
-    суток. Вторая реализация времени разошлась бы с первой на первой же правке.
+    ⚠ Но показывать время **всегда** оказалось хуже: она поминала его в 94 инвайтах
+    из 202 за сутки. Меру искали долей, а 26.09.2026 решили убрать вовсе — вместе со
+    страной, шагом `datetime_current_get` и часовым поясом.
 
-    ⚠ **Страна — настройка сайта, а не анкеты.** Шаблон один на всех девушек
-    сайта, и страна конкретной анкеты была бы враньём для остальных сорока
-    девяти.
+    ## ⚠⚠ Почему это тест, а не просто удаление
+
+    Соблазн присылать лишнее «на всякий случай» велик, а цена измерена: у соседа эти
+    переменные **не объявлены**, и ручка отвергает вызов целиком — «Переменные
+    invite_country, invite_time … не объявлены». То есть заход не потеряет доводы
+    молча, он упадёт. Здесь и стережётся, что панель их не шлёт.
+
+    ⚠ Вернуть время — четыре вещи: шаг и пояс у соседа, доля в жребии (`dice`) и
+    секция в промпте. Настройку `invite_time_percent` заводить в реестр заново.
     """
 
-    async def test_the_timezone_goes_to_the_agent(self, monkeypatch):
-        """Часовой пояс уезжает той же переменной, что у чата."""
+    async def test_nothing_about_time_or_place_is_sent(self, monkeypatch):
         from src.dating import mail_agent
 
         said = {}
@@ -1033,66 +1035,33 @@ class TestNowAndPlace:
         monkeypatch.setattr(mail_agent, '_agent_id',
                             lambda *a, **k: _async(7))
 
-        await mail_agent.invite_template(343, 'en', country='Украина')
-
-        assert 'datetime_current_get_zone' in said, \
-            'агент снова не знает времени — вернутся реплики про вечер в полдень'
-        assert said['invite_country'] == 'Украина'
-
-    async def test_the_timezone_is_the_panel_one(self, monkeypatch):
-        """⚠ Пояс берётся из настройки панели, а не пишется числом в коде.
-
-        По той же настройке сдвигаются смены расписания и метки времени на
-        страницах. Заведи мы второй источник — агент писал бы «доброе утро»
-        ровно тогда, когда у панели смена ещё ночная.
-        """
-        import inspect
-
-        from src.dating import mail_agent
-
-        code = inspect.getsource(mail_agent._timezone)
-
-        assert "setting_get('timezone'" in code
-
-    async def test_an_empty_country_is_allowed(self, monkeypatch):
-        """Пустая страна — законный случай: агент про место молчит.
-
-        Лучше молчание, чем догадка: приписать девушке чужую страну хуже, чем
-        не упоминать её вовсе.
-        """
-        from src.dating import mail_agent
-
-        said = {}
-
-        async def _ask(**kwargs):
-            said.update(kwargs.get('variables') or {})
-
-            return 'Привет!'
-
-        monkeypatch.setattr(mail_agent, 'rhapsody_api_chat_ask', _ask)
-        monkeypatch.setattr(mail_agent, '_agent_id', lambda *a, **k: _async(7))
-
         await mail_agent.invite_template(343, 'en')
 
-        assert said['invite_country'] == ''
+        for gone in ('datetime_current_get_zone', 'invite_time',
+                     'invite_time_percent', 'invite_country'):
+            assert gone not in said, \
+                (f'панель снова шлёт {gone} — у соседа он не объявлен, '
+                 f'и вызов упадёт целиком')
 
-    async def test_the_country_is_a_site_setting(self, auth_client):
-        """Ключ в реестре — иначе страну негде задать."""
-        got = (await auth_client.get('/api/dating/site')).json()['result']
-        known = {row['key']: row for row in got['known']}
+    async def test_the_setting_is_gone_from_the_registry(self):
+        """⚠ И настройка сайта убрана: она обещала влияние, которого нет.
 
-        assert 'girl_country' in known
-        assert known['girl_country']['default'] == '', \
-            'у страны появилось умолчание — сайт без настройки соврёт о месте'
+        Оставь её в реестре — человек задал бы долю и не понял, почему ничего не
+        меняется. Это то же правило, по которому сняты нечитаемые переменные.
+        """
+        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
 
-    def test_the_maker_asks_the_setting(self):
-        """Набор пула читает настройку, а не константу."""
-        import inspect
+        assert 'invite_time_percent' not in SITE_KNOWN
 
-        from src.dating import invite
+    async def test_the_name_share_stays(self):
+        """⚠⚠ А доля имени **осталась**, и это граница правила.
 
-        assert 'country=await _country(site_id)' in inspect.getsource(
-            invite._templates)
+        Её читает жребий у соседа (метка `%invite_name_percent%` в описании), то
+        есть влияние настоящее. Читает не промпт, а инструмент — и этого довольно.
+        """
+        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
+
+        assert 'invite_name_percent' in SITE_KNOWN
 
 
 def _async(value):

@@ -562,26 +562,24 @@ async def mail_question(profile: dict, site_id: int,
 
 
 async def invite_template(site_id: int, language: str = INVITE_LANGUAGE,
-                          with_time: bool = True,
-                                 girl_slot: bool = False, man_slot: bool = False,
-                                 angle: str = '', length: str = '',
-                                 avoid: list = None, country: str = '',
-                                 how_many: int = 1) -> list[str]:
+                                 avoid: list = None, how_many: int = 1,
+                                 name_percent: str = '0',
+                                 girl_name_percent: str = '0') -> list[str]:
     """Сочиняет **шаблон** первой реплики в чат — один на весь пул инвайтов.
 
     Args:
         site_id: сайт-закладка: по нему заводится агент.
         language: код языка реплики. ⚠ **Передаётся всегда**, см. оговорку ниже.
-        girl_slot: нужна ли в тексте метка имени девушки (`[[girl_name]]`).
-        man_slot: нужна ли метка имени собеседника (`[[companion_name]]`).
-        angle: приём — каким заходом писать (вопрос, вызов, признание…). Жребий
-            бросает вызывающий (`invite.INVITE_ANGLES`).
-        length: какой длины просить — от трёх слов до абзаца.
         avoid: что уже писали этому сайту; модель получает список со словами «так
             уже было».
-        country: откуда девушки сайта — настройка `girl_country`. Пусто —
-            агент про место молчит, и это законно.
         how_many: сколько **разных** текстов просим — по числу девушек в сети.
+        name_percent: доля реплик с обращением к нему по имени, **целые проценты
+            строкой** (`'10'`) — настройка сайта `invite_name_percent`. Строкой
+            потому, что переменные вызова уходят строками, и превращать число по
+            дороге значило бы делать это там, где не видно.
+        girl_name_percent: доля реплик, где девушка называет своё имя — тоже
+            проценты строкой. Настройки сайта под неё нет, и ноль — решение: «Я
+            Diana, и мне скучно» в первой реплике звучит как визитка бота.
 
     Returns:
         list: тексты шаблонов, от одного до `how_many`. Пустой список — агент
@@ -637,30 +635,38 @@ async def invite_template(site_id: int, language: str = INVITE_LANGUAGE,
         agent_id=agent_id,
         question='Напиши шаблон первой реплики в чат.',
         companion_id=MAIL_AGENT_COMPANION_ID,
-        variables={'invite_slots': _slots(girl_slot, man_slot),
-                   'invite_angle': str(angle or ''),
-                   'invite_length': str(length or ''),
-                   'invite_avoid': _avoid_text(avoid),
-                   'invite_country': str(country or ''),
-                   # ⚠⚠ **Часовой пояс панели, и та же переменная, что у чата.**
-                   # Ею агент зовёт инструмент `datetime_current_get` и получает
-                   # готовую фразу: день недели, дата, время и словесное время
-                   # суток («вечер», «раннее утро»).
+        # ⚠⚠ **Доли, а не готовые значения.** Приём, длину, метки имён и «показать
+        # ли время» бросает теперь **шаг жребия** у соседа (`dice`, workflow
+        # `dating_invite_one`), а панель присылает только проценты — настройки
+        # сайта, которыми эти доли заданы.
+        #
+        # Так каждая грань разнообразия живёт в одном месте: раньше новая стоила
+        # четырёх — настройка в реестре, жребий здесь, объявление переменной у
+        # соседа и правка промпта.
+        #
+        # ⚠ Прежние `invite_angle`, `invite_length`, `invite_slots`, `invite_time`,
+        # `invite_country` присылать **нельзя**: у соседа они больше не объявлены, а
+        # ручка отвергает вызов с незнакомой переменной («Переменные … не
+        # объявлены») — то есть заход упал бы целиком, а не молча потерял бы доводы.
+        variables={'invite_avoid': _avoid_text(avoid),
+                   'invite_name_percent': str(name_percent or '0'),
+                   'invite_girl_name_percent': str(girl_name_percent or '0'),
+                   # ⚠⚠ **Времени в инвайте больше нет вовсе** — ни секции в
+                   # промпте, ни шага `datetime_current_get`, ни часового пояса.
+                   # Решение человека (26.09.2026): показывать время оказалось
+                   # хуже, чем не показывать.
                    #
-                   # Ради этого всё и заведено: в пуле прода лежал шаблон «My
-                   # thoughts have turned sideways **tonight**» — модель писала
-                   # про вечер, не зная, который час. Перепутанное время суток
-                   # выдаёт робота вернее любой другой приметы: живой человек в
-                   # этом не ошибается.
-                   # ⚠⚠ **Флаг «показывать ли время» — жребий панели.** Дай
-                   # модели время всегда — она поминает его почти в каждом
-                   # инвайте: на живом пуле 94 из 202 за сутки. Это не её
-                   # ошибка, а свойство: увидела сведение — сочла нужным.
+                   # Довод, по которому его заводили, при этом в силе: «доброе
+                   # утро» в девять вечера выдаёт робота вернее всего остального,
+                   # и в пуле прода лежал шаблон «My thoughts have turned sideways
+                   # tonight» — модель писала про вечер, не зная, который час.
+                   # Мера была в доле: дай время всегда — она поминала его в 94
+                   # инвайтах из 202 за сутки.
                    #
-                   # Пустая строка гасит секцию у соседа (`[<if invite_time>]`), и
-                   # помянуть время модель не может — его в промпте нет.
-                   'invite_time': '1' if with_time else '',
-                   'datetime_current_get_zone': await _timezone(),
+                   # ⚠ Вернуть — четыре вещи: шаг времени и пояс у соседа, долю в
+                   # жребии и секцию в промпте. Присылать пояс «на всякий случай»
+                   # нельзя: у соседа он не объявлен, и ручка отвергнет вызов
+                   # целиком.
                    # Та же переменная, что у автоответа и писем (`user_language`
                    # у соседа): две переменные одного смысла разошлись бы.
                    # ⚠ Сколько текстов ждём. Промпт у соседа ветвится по этому
@@ -669,8 +675,7 @@ async def invite_template(site_id: int, language: str = INVITE_LANGUAGE,
                    'invite_count': str(max(1, int(how_many))),
                    'user_language': str(language or INVITE_LANGUAGE)})
 
-    return _invites(answer, girl_slot, man_slot,
-                    str(language or INVITE_LANGUAGE))
+    return _invites(answer, str(language or INVITE_LANGUAGE))
 
 
 async def mail_agent_language(site_id: int) -> str:
@@ -699,19 +704,6 @@ async def mail_agent_language(site_id: int) -> str:
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
-
-async def _timezone() -> str:
-    """Часовой пояс панели — тот же, по которому живут круги и страницы.
-
-    ⚠ **Настройка одна на всё, и второй заводить нельзя.** По ней сдвигаются
-    смены расписания (`round.py`), метки времени на страницах
-    (`dating_time.js`) и теперь время, которое видит агент. Разойдись они — агент
-    писал бы «доброе утро» ровно тогда, когда у панели смена ещё ночная.
-    """
-    from src.uvicorn.routers.setting import setting_get
-
-    return str(await setting_get('timezone', '+0') or '+0')
-
 
 async def _chat_ask(site_id: int, **kwargs):
     """Вопрос агенту — с именем работы для журнала запросов.
@@ -922,35 +914,6 @@ def _question(answer: str) -> str:
     return cut[:at + 1] if at >= 0 else ''
 
 
-def _slots(girl_slot: bool, man_slot: bool) -> str:
-    """Указание модели, какие метки поставить в шаблон. Строка едет в промпт.
-
-    ⚠ **Формулируем мы, а не промпт разбирает флаги.** У соседа шаблонизатор
-    подставляет значения переменных и условий не понимает; собери мы фразу там —
-    пришлось бы держать в промпте все четыре сочетания, и правка вероятностей
-    означала бы правку чужой базы.
-    """
-    if girl_slot and man_slot:
-        return (f'Поставь в текст ОБЕ метки: [[{INVITE_SLOT_MAN}]] — там, где '
-                f'обращаешься к нему по имени, и [[{INVITE_SLOT_GIRL}]] — там, '
-                f'где называешь своё. Каждую ровно один раз.')
-
-    if man_slot:
-        return (f'Поставь в текст метку [[{INVITE_SLOT_MAN}]] — ровно один раз, '
-                f'там, где обращаешься к нему по имени. Панель подставит только '
-                f'ПЕРВОЕ имя («John», а не «John Smith»), так что пиши обращение '
-                f'так, как зовут в чате. Своего имени не называй и других меток '
-                f'не ставь.')
-
-    if girl_slot:
-        return (f'Поставь в текст метку [[{INVITE_SLOT_GIRL}]] — ровно один раз, '
-                f'там, где называешь своё имя. По имени к нему не обращайся и других '
-                f'меток не ставь.')
-
-    return ('Меток в тексте быть не должно вовсе: ни своего имени, ни обращения по '
-            'имени. Реплика обращена к нему и без этого.')
-
-
 async def _mail_avoid(site_id: int) -> list[str]:
     """Прошлые шаблоны рассылки этого сайта — чтобы не повторяться.
 
@@ -994,7 +957,7 @@ def _avoid_text(avoid) -> str:
     return '\n'.join(f'{n}. {one}' for n, one in enumerate(rows, 1))
 
 
-def _invites(answer: str, girl_slot: bool = False, man_slot: bool = False,
+def _invites(answer: str,
              language: str = '') -> list[str]:
     """Шаблоны реплики из ответа агента: список, даже когда он один.
 
@@ -1038,7 +1001,7 @@ def _invites(answer: str, girl_slot: bool = False, man_slot: bool = False,
     for one in parts:
         # ⚠ Конверт уже снят, и вердикт проверен: каждому куску отдаём **голый**
         # текст, иначе `_invite` искал бы в нём второй конверт и не нашёл.
-        ready = _invite(f'{INVITE_TEXT_MARK} {one}', girl_slot, man_slot, language)
+        ready = _invite(f'{INVITE_TEXT_MARK} {one}', language)
         if ready:
             got.append(ready)
 
@@ -1048,8 +1011,7 @@ def _invites(answer: str, girl_slot: bool = False, man_slot: bool = False,
     return got
 
 
-def _invite(answer: str, girl_slot: bool = False, man_slot: bool = False,
-            language: str = '') -> str:
+def _invite(answer: str, language: str = '') -> str:
     """Шаблон реплики из ответа агента: один абзац, без кавычек, с нашими метками.
 
     ⚠ **Один абзац — требование, а не пожелание.** Реплика всплывает у человека в
@@ -1063,9 +1025,18 @@ def _invite(answer: str, girl_slot: bool = False, man_slot: bool = False,
     модели ловится по началу строки и почему чужая метка отбрасывает шаблон
     целиком.
     """
-    return _template_check(answer, language, 'инвайта',
-                           wanted=((girl_slot, INVITE_SLOT_GIRL),
-                                   (man_slot, INVITE_SLOT_MAN)),
+    # ⚠⚠ `wanted` пустой, и это не упущение: **панель больше не знает, какие метки
+    # просили** — жребий бросает сосед и наружу об этом не сообщает.
+    #
+    # Проверка та лишь писала в журнал («шаблон без метки — берём как есть») и
+    # шаблон не отбрасывала. Спрашивать у соседа, что он выпал, ради строки в
+    # журнале — плата вместо выигрыша: пропущенную метку и так видно по тому, что
+    # подстановка ничего не заменила.
+    #
+    # ⚠ **Чужая метка по-прежнему отбрасывает шаблон целиком** — это внутри
+    # `_template_check` и от `wanted` не зависит. Выдуманная `[[his_city]]` уехала
+    # бы человеку прямо в скобках, и не одному, а всему пулу.
+    return _template_check(answer, language, 'инвайта', wanted=(),
                            one_paragraph=True, limit=INVITE_MAX)
 
 
