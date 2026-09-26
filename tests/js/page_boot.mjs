@@ -51,6 +51,12 @@ const postData = getData, putData = getData, deleteData = getData;
 const esc = (s) => String(s ?? '');
 const onlineDot = esc, warnBadge = esc, seenText = esc, timeShort = esc;
 const timeFull = esc, logRender = () => '', pagerRender = () => {};
+// Селект сайта и помощники ленты: страницы «Журналы» и «Ошибки» читают их на
+// верхнем уровне. datingSiteFill — первый же await стартового IIFE: без заглушки
+// вызов не доходит до await, и модуль падает с «tab before initialization».
+const DATING_SITE_KEY = 'x', datingSiteFill = async () => {}, face = () => '';
+const datingPanelPaint = () => {};
+const timeShift = esc, logStamp = esc;
 // Возраст словами из dating_time.js. ⚠ Нужны здесь потому, что страница берёт
 // timeAgoSec НА ВЕРХНЕМ УРОВНЕ: лента событий меряет возраст тем же помощником,
 // что и колонки собеседников, и делает это присваиванием, а не вызовом внутри

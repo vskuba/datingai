@@ -158,13 +158,15 @@
         <span class="dating-hint" id="hint"></span>
     </div>
 
-    {# ⚠ **Две вкладки, а не один список с фильтром.** Предметы разные: «Журнал»
+    {# ⚠ **Три вкладки, а не один список с фильтром.** Предметы разные: «Журнал»
        отвечает «что происходило с анкетой» и живёт десятками строк в сутки,
-       «Запросы» — «куда мы ходили наружу», и там десятки тысяч. Одна лента на
+       «Запросы» — «куда мы ходили наружу», и там десятки тысяч, «Ошибки» —
+       «что сломалось», и идёт оно сразу из всех четырёх мест. Одна лента на
        двоих утопила бы первое во втором. #}
     <div class="page-tabs" id="logTabs">
         <button class="page-tab active" data-tab="log">📜 Журнал</button>
         <button class="page-tab" data-tab="request">🌐 Запросы</button>
+        <button class="page-tab" data-tab="error">⚠️ Ошибки</button>
     </div>
 
     <div class="pane" id="pane-log">
@@ -216,6 +218,26 @@
         </div>
         <div class="pane-foot" id="reqPager"></div>
     </div>
+
+    {# Все отказы проекта одним списком: журнал анкет, прогоны сценариев, походы
+       наружу и общие отказы (`error`). Две прежние ленты берут по предмету,
+       эта — срез с четырёх: к ней приходят с одним вопросом «что сломалось»,
+       и искать отказ по четырём вкладкам сразу незачем. #}
+    <div class="pane off" id="pane-error">
+        <div class="pane-head">
+            <div class="log-tools">
+                <select id="errSource" title="Откуда пришёл отказ">
+                    <option value="">Откуда угодно</option>
+                </select>
+                <input type="search" id="errFind" placeholder="поиск по тексту и анкете">
+                <span class="log-count" id="errCount"></span>
+            </div>
+        </div>
+        <div class="pane-body" id="errFeed">
+            <div class="feed-empty">Загружаю…</div>
+        </div>
+        <div class="pane-foot" id="errPager"></div>
+    </div>
 </div>
 {% endblock %}
 
@@ -223,7 +245,7 @@
 <script type="module">
     import {getData} from '{{ static_url('js/api.js') }}';
     import {showNotification} from '{{ static_url('js/notification.js') }}';
-    import {esc, face, pagerRender} from '{{ static_url('js/dating/view.js') }}';
+    import {esc, face, logStamp, pagerRender} from '{{ static_url('js/dating/view.js') }}';
     import {DATING_SITE_KEY, datingSiteFill} from '{{ static_url('js/dating/site.js') }}';
     // Метки приходят с сервера в UTC — сдвигает страница (`dashboard_frontend.md`, §3.8).
     import {timeShift} from '{{ static_url('js/dating/time.js') }}';
@@ -296,7 +318,19 @@
         });
     }
 
+    // Чем строка ленты отличается от соседней: значок источника, что сказать в
+    // колонке «кто», когда анкеты в строке нет, и чем звать источник в подсказке.
+    // Картами, а не веткой `if`: источников четыре, и забытая ветка молча
+    // отдаёт «работа по анкете» про чужую природу строки.
+    const KIND = {
+        profile: ['·', 'работа по анкете', 'весь сайт'],
+        scenario: ['⚙', 'прогон сценария', 'весь сайт'],
+        request: ['🌐', 'запрос наружу', 'к соседу или сайту'],
+        system: ['⚠', 'отказ не про анкету', 'не про конкретный сайт'],
+    };
+
     function row(r) {
+        const kind = KIND[r.source] || KIND.profile;
         const scenario = r.source === 'scenario';
 
         // Текст приходит готовым: собирает его сервер, потому что лент две —
@@ -309,17 +343,23 @@
 
         return `<div class="feed-row ${esc(r.level)}${slow}">`
             + `<span class="feed-time">${esc(timeShift(r.created_at).slice(5, 19))}</span>`
-            + `<span class="feed-kind" title="${scenario ? 'прогон сценария' : 'работа по анкете'}">`
-            + `${scenario ? '⚙' : '·'}</span>`
-            // Прогон без анкеты — импорт или выгрузка: они идут по сайту целиком.
-            // Пишем это словом, а не пустотой: пустая клетка читается как «имя
-            // потерялось».
+            + `<span class="feed-kind" title="${esc(kind[1])}">${kind[0]}</span>`
+            // Прогон без анкеты — импорт или выгрузка, отказ без анкеты — общий:
+            // они идут по сайту целиком или мимо него. Пишем это словом, а не
+            // пустотой: пустая клетка читается как «имя потерялось».
             + `<span class="feed-who${r.profile_name ? '' : ' none'}"`
-            + ` title="${esc(r.profile_name || 'по сайту целиком')}">`
+            + ` title="${esc(r.profile_name || kind[2])}">`
             + face(r.profile_photo, 'feed-face')
-            + `<span class="feed-who-text">${esc(r.profile_name || 'весь сайт')}</span>`
+            + `<span class="feed-who-text">${esc(r.profile_name || kind[2])}</span>`
             + '</span>'
-            + `<span class="feed-text">${esc(r.text)}</span>`
+            // Счётчик повторов — только там, где они есть: одна строка значит
+            // «сломано», «×214 с 12:15» — «сломано и не чинится».
+            + `<span class="feed-text">${esc(r.text)}`
+            + (Number(r.hits) > 1
+                ? `<span class="err-hits" title="впервые: ${esc(logStamp(r.first_at))}">`
+                  + `×${Number(r.hits)}</span>`
+                : '')
+            + '</span>'
             + '</div>';
     }
 
@@ -333,8 +373,10 @@
     siteEl.addEventListener('change', () => {
         localStorage.setItem(DATING_SITE_KEY, siteEl.value);
         reqPage = 1;
+        errPage = 1;
         reset();
         if (tab === 'request') reqLoad();
+        if (tab === 'error') errLoad();
     });
     kindEl.addEventListener('change', reset);
     levelEl.addEventListener('change', reset);
@@ -353,6 +395,7 @@
         tabPaint();
         await load();
         if (tab === 'request') await reqLoad();
+        if (tab === 'error') await errLoad();
     })();
 
     // Круг не трогает страницу, пока её читают: скрытая вкладка не обновляется, а
@@ -363,6 +406,7 @@
 
         if (tab === 'log' && page === 1) load();
         if (tab === 'request' && reqPage === 1) reqLoad();
+        if (tab === 'error' && errPage === 1) errLoad();
     }, RELOAD_MS);
 
     // ── Вкладка «Запросы» ────────────────────────────────────────────────────
@@ -490,12 +534,82 @@
     doorEl.addEventListener('change', () => { reqPage = 1; reqLoad(); });
     resultEl.addEventListener('change', () => { reqPage = 1; reqLoad(); });
 
+    // ── Вкладка «Ошибки» ─────────────────────────────────────────────────────
+    //
+    // ⚠ Все отказы проекта одним списком: журнал анкет, прогоны, походы наружу
+    // и общие отказы. Две прежние ленты берут по предмету, эта — срез с четырёх:
+    // к ней приходят с одним вопросом «что сломалось», и искать отказ по
+    // четырём лентам сразу незачем. Рисует строки тот же `row()`, что и
+    // «Журнал»: три ленты одними глазами читаются потому, что рисуются одинаково.
+    const errSourceEl = document.getElementById('errSource');
+    const errFindEl = document.getElementById('errFind');
+    const errFeedEl = document.getElementById('errFeed');
+    const errPagerEl = document.getElementById('errPager');
+    const errCountEl = document.getElementById('errCount');
+
+    let errPage = 1;
+    let errFindTimer = 0;
+
+    async function errLoad() {
+        if (!siteId()) {
+            errFeedEl.innerHTML = '<div class="feed-empty">Выберите сайт</div>';
+            pagerRender(errPagerEl, 0, 0, () => {});
+            errCountEl.textContent = '';
+            return;
+        }
+
+        const query = new URLSearchParams({
+            site_id: siteId(), source: errSourceEl.value,
+            q: errFindEl.value.trim(), page: errPage,
+        });
+
+        let data;
+        try {
+            data = (await getData(`${BASE}/api/dating/error/feed?${query}`)).result;
+        } catch (e) {
+            errFeedEl.innerHTML = `<div class="feed-empty">Отказы не пришли: ${esc(e.message)}</div>`;
+            return;
+        }
+
+        errPage = Number(data.page || 1);
+        errCountEl.textContent = data.total ? `отказов: ${data.total}` : '';
+
+        // ⚠ Надписи переключателя пришлись с сервера (`sources`), а не завелись
+        // копией на странице: переименуют занятие в словаре — вкладка подхватит
+        // молча. Заполняется один раз: список статичен, перетыкать его незачем.
+        if (errSourceEl.options.length <= 1) {
+            for (const [key, label] of Object.entries(data.sources || {})) {
+                errSourceEl.add(new Option(label, key));
+            }
+        }
+
+        // ⚠ Уровень у строк этой ленты один на всех и известен странице: за ней
+        // приходят только за отказами, и серверу повторять это в каждой строке
+        // незачем.
+        errFeedEl.innerHTML = data.rows.length
+            ? data.rows.map((one) => row({ ...one, level: 'fail' })).join('')
+            : '<div class="feed-empty">По этому отбору отказов нет</div>';
+
+        pagerRender(errPagerEl, Number(data.pages || 1), errPage - 1, (pick) => {
+            errPage = pick + 1;
+            errLoad();
+            errFeedEl.scrollTop = 0;
+        });
+    }
+
+    errSourceEl.addEventListener('change', () => { errPage = 1; errLoad(); });
+    errFindEl.addEventListener('input', () => {
+        clearTimeout(errFindTimer);
+        errFindTimer = setTimeout(() => { errPage = 1; errLoad(); }, 400);
+    });
+
     // ── Переключение вкладок ─────────────────────────────────────────────────
     //
     // Вкладку помним между заходами: разбирают такое длинными заходами, и
     // возвращаться к «Запросам» вручную после каждой перезагрузки незачем.
     const TAB_KEY = 'dating_log_tab';
-    let tab = localStorage.getItem(TAB_KEY) === 'request' ? 'request' : 'log';
+    let tab = ['request', 'error'].includes(localStorage.getItem(TAB_KEY))
+        ? localStorage.getItem(TAB_KEY) : 'log';
 
     function tabPaint() {
         document.querySelectorAll('#logTabs .page-tab').forEach(one => {
@@ -503,9 +617,12 @@
         });
         document.getElementById('pane-log').classList.toggle('off', tab !== 'log');
         document.getElementById('pane-request').classList.toggle('off', tab !== 'request');
+        document.getElementById('pane-error').classList.toggle('off', tab !== 'error');
         hintEl.textContent = tab === 'log'
             ? 'работа по анкетам и прогоны сценариев одной лентой'
-            : 'каждый поход наружу: куда, чем кончилось и за сколько';
+            : tab === 'request'
+                ? 'каждый поход наружу: куда, чем кончилось и за сколько'
+                : 'что сломалось на проекте: откуда, у кого и повторяется ли';
     }
 
     document.getElementById('logTabs').addEventListener('click', (e) => {
@@ -515,9 +632,10 @@
         tab = btn.dataset.tab;
         localStorage.setItem(TAB_KEY, tab);
         tabPaint();
-        // Лента второй вкладки грузится при первом заходе на неё: держать обе
-        // свежими значило бы два запроса там, где смотрят в один.
+        // Ленты неактивных вкладок грузятся при первом заходе на них: держать
+        // все свежими значило бы три запроса там, где смотрят в один.
         if (tab === 'request') reqLoad();
+        if (tab === 'error') errLoad();
     });
 </script>
 {% endblock %}

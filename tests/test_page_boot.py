@@ -30,7 +30,9 @@ pytestmark = pytest.mark.page
 # Страницы со своим модулем. ⚠ Список руками, а не обходом каталога: у шаблонов
 # сайта (`profile/site/*.html`) своего скрипта нет, и запускать в них нечего.
 PAGES = ('data/uvicorn/template/admin/dating/profile.html',
-         'data/uvicorn/template/admin/dating/index.html')
+         'data/uvicorn/template/admin/dating/index.html',
+         'data/uvicorn/template/admin/dating/log.html',
+         'data/uvicorn/template/admin/dating/error.html')
 
 HARNESS = 'tests/js/page_boot.mjs'
 
