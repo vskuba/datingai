@@ -7526,7 +7526,62 @@
         // одного на анкету за срок, и стена чипсов ему не грозит.
         box.innerHTML = sentRows(favSent, {});
 
+        // ⚠ Обработчики — после отрисовки: строки переписываются целиком при каждом
+        // приходе журнала, и повешенное на прежние узлы не пережило бы обновления.
+        box.querySelectorAll('.mail-sent-row').forEach(el =>
+            el.addEventListener('click',
+                () => favSentOpen(Number(el.dataset.index))));
+
         favSentPagerPaint();
+    }
+
+    // Окно записи журнала доставки избранным — **только чтение**.
+    //
+    // ⚠⚠ Своё, а не `letterOpen`, и разница по существу, а не в полях. То окно
+    // умеет править письмо и убирать его из пула — ручками **рассылки**
+    // (`/api/dating/mailing/{id}`). Позови его отсюда, и «Сохранить в пуле» ушло бы
+    // в чужую таблицу: письма избранным живут в `favorite_mail`.
+    //
+    // ⚠ Править здесь и нечего: строка журнала — это уже случившееся. Черновик с
+    // причиной отказа правят в пуле «Приставания», где у него своё окно
+    // (`favMailOpen`) и своя ручка.
+    //
+    // ⚠ Вид общий с окном письма (`letterSides`, `letter-row`, `letter-body`): три
+    // журнала доставки стоят на соседних вкладках, и человек, привыкший к одному,
+    // не должен разгадывать второе.
+    function favSentOpen(index) {
+        const row = favSent[index];
+        if (!row) return;
+
+        const ok = row.status === 'sent';
+
+        modalOpen({
+            title: `Письмо избранному: ${row.profile_name || row.girl || '—'}`
+                + ` → ${row.name || row.uid}`,
+            body: letterSides(row)
+                + '<div class="letter-row"><span class="letter-key">Состояние</span>'
+                + `<span class="letter-val${ok ? '' : ' bad'}">${_state(row)}</span>`
+                + '</div>'
+                // ⚠ Причина — своей строкой и только когда она есть: ради неё журнал
+                // и открывают. У дошедшего письма её нет, и пустая строка под каждым
+                // читалась бы как «что-то не показали».
+                + (row.error
+                    ? '<div class="letter-row"><span class="letter-key">Почему</span>'
+                    + `<span class="letter-val bad">${esc(row.error)}</span></div>`
+                    : '')
+                // ⚠⚠ **Ответ сайта — отдельной строкой, а не в подсказке.**
+                // «Доставлено» это наш вывод из его слов; когда вывод не сходится с
+                // тем, что видно на сайте, разбираются по самому ответу — и здесь для
+                // него есть место, в отличие от строки журнала.
+                + (row.answer
+                    ? '<div class="letter-row"><span class="letter-key">Ответ сайта</span>'
+                    + `<span class="letter-val">${esc(row.answer)}</span></div>`
+                    : '')
+                // ⚠ `readonly`, а не «поле без кнопок»: текст надо дать выделить и
+                // скопировать, но правка задним числом отвечала бы неправдой на
+                // вопрос «что человек получил».
+                + `<textarea class="letter-body" readonly>${esc(row.body || '')}</textarea>`,
+        });
     }
 
     function favSentPagerPaint() {
@@ -10124,6 +10179,24 @@
     // Окно письма. ⚠ Список передаётся снаружи: писем два рода — те, что в пуле
     // (их правят), и те, что ушли (их читают), — а окно у них одно, потому что
     // человек в обоих случаях хочет одного: увидеть текст целиком.
+    //
+    // ## ⚠⚠⚠ Список нужен и правке, а не только чтению
+    //
+    // Здесь была беда, найденная 26.09.2026 при заведении такого же окна
+    // «Фаворитам». Список передавался **только** сюда, а `letterSave` и
+    // `letterDrop` читали `mailPool[index]` — свой, жёстко. Пока окно открывали из
+    // пула, они совпадали; из **журнала доставки** индекс уже чужой.
+    //
+    // Журнал показывает `delivery` — это `sent`, `failed` **и черновики с причиной
+    // отказа** (неудача оставляет письмо в пуле). У черновика `sent === false`,
+    // значит кнопки «Сохранить в пуле» и «Убрать из пула» рисовались — и правили
+    // строку `mailPool` под тем же номером, то есть **случайное чужое письмо**.
+    //
+    // ⚠ Молча: ответ приходил успешный, карточка пула перерисовывалась, и человек
+    // видел сохранение — только не того письма, которое открывал.
+    //
+    // Отсюда `list` уезжает и в правку. Умолчание оставлено: из пула окно зовут без
+    // него, и там оно верно.
     function letterOpen(index, list = mailPool) {
         const row = list[index];
         if (!row) return;
@@ -10163,9 +10236,9 @@
         if (sent) return;
 
         box.querySelector('#letterSave').addEventListener('click', () =>
-            letterSave(index, box));
+            letterSave(index, box, list));
         box.querySelector('#letterDrop').addEventListener('click', () =>
-            letterDrop(index, box));
+            letterDrop(index, box, list));
     }
 
     // Состояние письма словами. Три исхода, и каждый значит своё: письмо ждёт
@@ -10180,15 +10253,20 @@
         return 'в пуле, не отправлено';
     }
 
-    async function letterSave(index, box) {
-        const row = mailPool[index];
+    async function letterSave(index, box, list = mailPool) {
+        // ⚠ Строку берём из **того** списка, из которого открыли окно: индекс от
+        // журнала доставки указывает в чужой массив (см. оговорку у `letterOpen`).
+        const row = list[index];
         const note = box.querySelector('#letterNote');
         const body = box.querySelector('#letterBody').value;
 
         try {
             const answer = await putData(`${BASE}/api/dating/mailing/${row.id}`,
                 {body});
-            mailPool[index] = answer.result;
+            // ⚠ Кладём в **тот же** список, из которого взяли: запись в `mailPool`
+            // по чужому индексу подменяла соседнее письмо в пуле — той же бедой,
+            // что и чтение (см. оговорку у `letterOpen`).
+            list[index] = answer.result;
         } catch (e) {
             if (note) {
                 note.textContent = e.message;
@@ -10202,16 +10280,22 @@
             note.textContent = 'сохранено';
             note.classList.add('good');
         }
-        // Карточку в пуле перерисовываем: в ней видны первые строки письма, и
-        // после правки они должны сойтись с тем, что человек только что написал.
-        mailPoolPaint();
+        // Карточку перерисовываем: в ней видны первые строки письма, и после
+        // правки они должны сойтись с тем, что человек только что написал.
+        //
+        // ⚠ Своим списком — своя отрисовка. Правили пул — перерисовываем пул;
+        // правили строку журнала доставки — журнал. Общая `mailPoolPaint` для
+        // второго случая молчала бы: строка в журнале осталась бы прежней, и
+        // человек решил бы, что правка не сохранилась.
+        if (list === mailPool) mailPoolPaint();
+        else if (list === mailSent) mailSentPaint();
     }
 
     // Убирает письмо из пула. Зовётся из двух мест — крестиком на карточке и
     // кнопкой в окне письма, — потому окно и передаётся необязательным: с карточки
     // закрывать нечего.
-    async function letterDrop(index, box) {
-        const row = mailPool[index];
+    async function letterDrop(index, box, list = mailPool) {
+        const row = list[index];
         if (!row) return;
 
         if (!confirm(`Убрать письмо ${row.girl} → ${row.name || row.uid} из пула?`)) {
@@ -10226,8 +10310,9 @@
             return;
         }
 
-        mailPool.splice(index, 1);
-        mailPoolPaint();
+        list.splice(index, 1);
+        if (list === mailPool) mailPoolPaint();
+        else if (list === mailSent) mailSentPaint();
         if (box) box.remove();
         showNotification('Письмо убрано из пула', 'info');
     }
