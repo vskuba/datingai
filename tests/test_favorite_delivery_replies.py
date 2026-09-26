@@ -341,3 +341,93 @@ class TestThePageAsksTheNewHandler:
 
         assert "row.kind === 'reply'" in body, 'окно не различает род письма'
         assert 'Ответ избранному' in body, 'у ответа прежний заголовок письма'
+
+
+class TestTheReplyHasATimeOfOutcome:
+    """⚠⚠ У неудачного ответа есть **своё** время, а не время сочинения.
+
+    До миграции `20260926200000` в `mail_reply` был один столбец времени — `sent_at`,
+    «когда ушло», — и у неудачи его нет и быть не может: отметку снимает сама неудача.
+    Показ падал до `created_at`, то есть до минуты, когда черновик **сочинили**, а
+    между сочинением и сорвавшейся отправкой бывают часы: пул набирает один круг,
+    уносит письма другой по своему расписанию.
+
+    ⚠ Ровно та же беда была у писем избранным, и её уже чинили (`20260922100000`).
+    Здесь она вернулась с другой стороны — ответы приехали в тот же журнал.
+    """
+
+    async def test_the_column_allows_null_without_a_default(self):
+        """⚠⚠⚠ Главное в миграции — **вид** столбца, а не его наличие.
+
+        Заведённый `NOT NULL DEFAULT CURRENT_TIMESTAMP`, он получает от `ALTER` время
+        самой миграции **всем накопленным строкам**. Так уже вышло у писем избранным
+        четыре дня назад: письмо, не ушедшее 21 сентября в 16:02, показалось как
+        «22 сентября 08:47». Пара к тому времени лежала в «Не пишем», и красная строка
+        со свежей датой читается одним способом — «код опять пишет запрещённому».
+
+        Неизвестно — значит `NULL`: показ сам возьмёт `created_at`.
+        """
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT IS_NULLABLE, COLUMN_DEFAULT, EXTRA'
+                ' FROM information_schema.COLUMNS'
+                ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s'
+                '   AND COLUMN_NAME = %s', ('mail_reply', 'updated_at'))
+            col = await db.fetchone()
+
+        assert col, 'столбца `updated_at` у `mail_reply` нет — миграция не дошла'
+        assert col['IS_NULLABLE'] == 'YES', \
+            'столбец не допускает NULL — ложную отметку будет нечем снять'
+        assert col['COLUMN_DEFAULT'] is None, \
+            'у столбца появилось умолчание — накопленные строки получат дату миграции'
+        assert 'on update' in str(col['EXTRA']).lower(), \
+            'нет `ON UPDATE CURRENT_TIMESTAMP` — отметку придётся писать руками'
+
+    async def test_a_failed_reply_carries_the_time(self, journal):
+        """То, что видит человек: у красной строки журнала есть дата."""
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                "UPDATE mail_reply SET status = 'failed', sent_at = NULL,"
+                " error = 'сайт отверг' WHERE profile_id = %s AND uid = %s",
+                (journal['girl'], journal['star']))
+            await db.connection.commit()
+
+        got = await favorite_mail_delivery(site_id=STAND_SITE, per=100, user=None)
+        bad = next(one for one in got['result'] if one['kind'] == 'reply')
+
+        assert not bad['sent_at'], 'у неудачи не должно быть времени отправки'
+        assert bad['updated_at'], \
+            'времени исхода нет — колонка в журнале останется пустой'
+
+    async def test_a_sent_reply_still_shows_its_send_time(self, journal):
+        """⚠ Обратная сторона: у ушедшего ответа показывается именно отправка."""
+        got = await favorite_mail_delivery(site_id=STAND_SITE, per=100, user=None)
+        ok = next(one for one in got['result']
+                  if one['kind'] == 'reply' and one['status'] == 'sent')
+
+        assert ok['sent_at'], 'у ушедшего ответа пропало время отправки'
+
+    def test_the_order_key_is_the_same_in_three_places(self):
+        """⚠⚠ Один ключ времени в SQL ответов, в SQL писем и в срезе слияния.
+
+        По этому ключу зовущий **режет страницу** из двух слитых списков: разойдись
+        порядок в запросе с порядком в срезе — страница молча показала бы не те
+        строки, и заметить это можно только сверкой с полным журналом.
+        """
+        import inspect
+
+        from src.dating import mail_reply as domain
+        from src.uvicorn.routers.dating import favorite_mail as fav
+        from src.uvicorn.routers.dating import mailing as mail
+
+        assert 'COALESCE(r.sent_at, r.updated_at, r.created_at)' in \
+            inspect.getsource(domain.mail_reply_delivery), \
+            'ответы снова сортируются без времени исхода'
+        assert 'COALESCE(m.sent_at, m.updated_at, m.created_at)' in \
+            inspect.getsource(fav.favorite_mail_delivery), \
+            'письма избранным сортируются другим ключом'
+
+        for code in (inspect.getsource(fav.favorite_mail_delivery),
+                     inspect.getsource(mail.mailing_delivery)):
+            assert "one.get('updated_at')" in code, \
+                'срез слияния не знает про время исхода — порядок разойдётся с SQL'

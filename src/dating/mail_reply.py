@@ -304,6 +304,14 @@ def mail_reply_answer(row: dict) -> dict:
             'status': str(row['status']),
             'error': str(row['error'] or ''),
             'sent_at': row['sent_at'],
+            # ⚠ Время **исхода**: у ушедшего ответа есть `sent_at`, у неудачного его
+            # нет вовсе — отметку снимает сама неудача, — и остаётся `updated_at`.
+            # Без него журнал доставки показывал время **сочинения** черновика, а
+            # между ним и сорвавшейся отправкой бывают часы.
+            #
+            # ⚠ `.get`, а не ключом: этот же вид строки собирает пул «Ответов», а его
+            # запрос столбца не спрашивает — там вопрос «что лежит», не «чем кончилось».
+            'updated_at': row.get('updated_at'),
             'created_at': row['created_at'],
             # Имя анкеты, а не логин: логин это почта, и в карточке «от кого» она
             # читается как подпись робота. То же правило, что у пула рассылки.
@@ -383,6 +391,8 @@ async def mail_reply_delivery(db, site_id: int, take: int, profile_id: int = 0,
     await db.execute(
         'SELECT r.id, r.site_id, r.profile_id, r.mail_in_id, r.uid, r.name,'
         ' r.body, r.status, r.error, r.sent_at, r.created_at,'
+        # ⚠ Время исхода у неудачного ответа: `sent_at` у него нет вовсе.
+        ' r.updated_at,'
         ' p.login AS profile_login, p.profile AS profile_card,'
         ' i.body AS in_body, i.date_post AS in_at,'
         ' i.message_id AS in_message_id, i.photo AS in_photo'
@@ -393,7 +403,12 @@ async def mail_reply_delivery(db, site_id: int, take: int, profile_id: int = 0,
         ' WHERE r.site_id = %s' + where +
         # ⚠ По времени события, а не по номеру: журнал читают как ленту «что
         # происходило», и неудача, случившаяся позже удачи, обязана стоять выше.
-        ' ORDER BY COALESCE(r.sent_at, r.created_at) DESC, r.id DESC'
+        #
+        # ⚠⚠ Тот же `COALESCE`, что у писем избранным и у показа (`_sentWhen`). Три
+        # места, и порядок в них обязан совпадать: по этому же ключу зовущий **режет
+        # страницу** из слитых списков, и разойдись они — срез взял бы строки не в том
+        # порядке, в котором их считали.
+        ' ORDER BY COALESCE(r.sent_at, r.updated_at, r.created_at) DESC, r.id DESC'
         ' LIMIT %s',
         tuple([int(site_id)] + args + [int(take)]))
 

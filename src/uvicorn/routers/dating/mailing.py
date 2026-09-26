@@ -263,9 +263,14 @@ async def mailing_delivery(site_id: int = 0, page: int = 1, per: int = 0,
 
     # ⚠ Ключ сортировки — **время события**, и он же стоит в обоих запросах.
     # Разойдись они — срез брал бы строки не по тому порядку, в котором их считали.
+    #
+    # ⚠ `updated_at` в ключе — ради **ответов**: у неудачного это единственное его
+    # время (`sent_at` снимает сама неудача). У писем рассылки столбца нет вовсе, и
+    # для них звено просто пустое.
     rows = sorted(letters + replies,
-                  key=lambda one: (str(one.get('sent_at') or
-                                       one.get('created_at') or ''),
+                  key=lambda one: (str(one.get('sent_at')
+                                       or one.get('updated_at')
+                                       or one.get('created_at') or ''),
                                    int(one.get('id') or 0)),
                   reverse=True)
 
