@@ -39,12 +39,26 @@ from src.dating.mailing import (MAILING_BATCH_DEFAULT,
 from src.uvicorn.routers.setting import setting_timezone_hours
 from src.uvicorn.routers.dating.site_ import (site_seconds,
                                                     site_setting)
+# ⚠ Сборка строки ответа берётся у соседа, а не повторяется здесь: журнал доставки
+# показывает ответы теми же полями, что «Письма → Входящие», и вторая сборка
+# разошлась бы с первой — у неё, например, лицо приходит из письма (`in_photo`).
+#
+# ⚠ Цикла нет и быть не может: `mail_in` не знает про `mailing` (проверено), а
+# общее у них — только `site_`.
+from src.uvicorn.routers.dating.mail_in import _reply_answer
 
 router = APIRouter(prefix='/api/dating/mailing', tags=['dating'])
 
 # Сколько писем отдаём странице разом. Пул читают глазами, и тысячная карточка не
 # помогает никому.
 MAILING_LIMIT = 300
+
+# Сколько строк на странице журнала доставки. ⚠ **То же число, что у доставки
+# инвайтов и писем избранным**: три журнала стоят на соседних вкладках, выглядят
+# одинаково и листаются одним пейджером — разные размеры страницы читались бы как
+# разница по существу, которой нет.
+MAILING_DELIVERY_PER = 25
+
 
 
 class DatingMailingGenerate(BaseModel):
@@ -144,6 +158,149 @@ async def mailing_list(site_id: int = 0, status_: str = 'draft',
             # объяснения читается как поломка (`send_round.py`).
             'send_why': await send_why(int(site_id), 'mailing',
                                               await setting_timezone_hours())}
+
+
+@router.get('/delivery', include_in_schema=False)
+async def mailing_delivery(site_id: int = 0, page: int = 1, per: int = 0,
+                                  user: AuthUser = Depends(auth_required)):
+    """Журнал доставки писем: **рассылка и ответы одним списком**, страницей.
+
+    Args:
+        site_id: сайт-закладка. Ноль — пустой список.
+        page: страница, с единицы. Больше последней — отдаём последнюю.
+        per: сколько строк на ней. Ноль — умолчание `MAILING_DELIVERY_PER`.
+
+    Returns:
+        dict: `result` — строки обоих родов, свежие сверху, у каждой `kind`
+        (`mailing` — ушло по шаблону рассылки, `reply` — ответ на его письмо).
+        Рядом `total`, `page`, `pages` — ими страница рисует пейджер.
+
+    ## ⚠⚠ Почему ручка одна, а не две
+
+    Страница показывала этот журнал **двумя запросами** и сливала их у себя. Со
+    страницами так нельзя: «вторая страница рассылки» плюс «вторая страница
+    ответов» — не вторая страница журнала, и число страниц по такому слиянию
+    посчитать нечем. Отсюда одна ручка: она и сливает, и считает.
+
+    ⚠ **Метку `kind` ставит сервер.** Страница не должна угадывать род письма по
+    набору полей: карточки выглядят одинаково («Diana → Semen»), а вещи разные —
+    первое ушло незнакомому по шаблону, второе написано на его письмо.
+
+    ## ⚠⚠ Как берётся страница: слияние двух отсортированных списков
+
+    Чтобы отдать первые `page * per` строк журнала, довольно взять по столько же
+    свежих из каждой таблицы, слить и отрезать нужный кусок: строки за этим
+    пределом в срез не попадут ни при каком порядке. Счёт — сумма двух `COUNT` по
+    тем же условиям.
+
+    ⚠ **Цена приёма растёт с номером страницы**: сороковая страница по 25 строк
+    читает по тысяче строк из каждой таблицы. Журнал читают с первых страниц, и это
+    терпимо; станет мало — надо идти дальше `UNION ALL` по скелету
+    (`источник, id, время`) со страницей на нём и дозагрузкой полных строк по
+    ключам. Приём выбран сознательно, и предел его назван, чтобы следующий читатель
+    не считал это недосмотром.
+    """
+    if not int(site_id or 0):
+        # ⚠ Поля пейджера есть и в пустом ответе: страница читает их без проверок,
+        # и `pages: undefined` нарисовало бы пейджер из одной мёртвой страницы.
+        return {'result': [], 'page': 1, 'pages': 1, 'total': 0}
+
+    per = min(int(per or 0) or MAILING_DELIVERY_PER, MAILING_LIMIT)
+    page = max(1, int(page or 1))
+    # Сколько свежих строк хватит взять из каждой таблицы, чтобы отрезать нужную
+    # страницу слияния.
+    take = page * per
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT (SELECT COUNT(*) FROM mailing m WHERE m.site_id = %s'
+            + _delivery_where('m') +
+            ') AS letters,'
+            ' (SELECT COUNT(*) FROM mail_reply r WHERE r.site_id = %s'
+            + _delivery_where('r') +
+            ') AS replies',
+            (int(site_id), int(site_id)))
+        counts = (await db.fetchone()) or {}
+        total = int(counts.get('letters') or 0) + int(counts.get('replies') or 0)
+
+        pages = max(1, -(-total // per))
+        # ⚠ Страницу поправляем, а не отвергаем: журнал мог укоротиться, пока
+        # человек листал, и отказ вместо последней страницы читался бы как поломка.
+        page = min(page, pages)
+        take = page * per
+
+        # ⚠ Письма рассылки — **тем же запросом, что пул** (`mailing_list`): поля
+        # собираются одним куском (`pool_pair_select`), и второй запрос за теми же
+        # строками разошёлся бы с первым на первой правке.
+        await db.execute(
+            'SELECT m.id, m.site_id, m.profile_id, m.mail_id, m.uid,'
+            + pool_pair_select('m', own_photo=False) +
+            ' m.body, m.status, m.error, m.sent_at, m.created_at,'
+            ' p.login AS profile_login, p.profile AS profile_card,'
+            ' t.name AS mail_name'
+            ' FROM mailing m'
+            ' LEFT JOIN profile p ON p.id = m.profile_id'
+            ' LEFT JOIN mail t ON t.id = m.mail_id'
+            + pool_pair_joins() +
+            ' WHERE m.site_id = %s'
+            + _delivery_where('m')
+            # ⚠ По времени события, а не по номеру: журнал читают как ленту «что
+            # происходило», и неудача, случившаяся позже удачи, обязана стоять выше.
+            # У неудачной `sent_at` нет вовсе — его снимает сама неудача.
+            + ' ORDER BY COALESCE(m.sent_at, m.created_at) DESC, m.id DESC'
+            ' LIMIT %s',
+            (int(site_id), take))
+        letters = [{**_answer(row), 'kind': 'mailing'}
+                   for row in (await db.fetchall()) or []]
+
+        await db.execute(
+            'SELECT r.id, r.site_id, r.profile_id, r.mail_in_id, r.uid, r.name,'
+            ' r.body, r.status, r.error, r.sent_at, r.created_at,'
+            ' p.login AS profile_login, p.profile AS profile_card,'
+            ' i.body AS in_body, i.date_post AS in_at,'
+            ' i.message_id AS in_message_id, i.photo AS in_photo'
+            ' FROM mail_reply r'
+            ' LEFT JOIN profile p ON p.id = r.profile_id'
+            ' LEFT JOIN mail_in i ON i.id = r.mail_in_id'
+            ' WHERE r.site_id = %s'
+            + _delivery_where('r')
+            + ' ORDER BY COALESCE(r.sent_at, r.created_at) DESC, r.id DESC'
+            ' LIMIT %s',
+            (int(site_id), take))
+        # ⚠⚠ **Ответы приводим к общему виду здесь, на границе.** `_reply_answer`
+        # зовут и «Входящие», где сторону девушки читают как `girl`/`girl_photo`, а
+        # общая строка журнала доставки — как `profile_name`/`profile_photo`, теми
+        # же именами, что у пулов (`pool_pair_girl`). Без этой пары строк лицо
+        # девушки в журнале пропадало бы молча: имя есть, фото пусто.
+        #
+        # ⚠ Правим **не** `_reply_answer`: он отвечает двум вкладкам, и переименуй
+        # в нём поля — сломались бы «Входящие». Нормализация на границе дешевле и
+        # видна целиком.
+        #
+        # ⚠ `profile_uid` у ответов нет вовсе (номер анкеты на сайте лежит в её
+        # карточке, а запрос ответов её не читает) — пустая строка честнее нуля:
+        # `talkSide` без номера просто не покажет его.
+        replies = []
+        for row in (await db.fetchall()) or []:
+            # ⚠ Один вызов на строку: внутри `_reply_answer` спрашивается снимок
+            # «в сети ли адресат», и звать её трижды ради трёх полей значило бы
+            # платить за один ответ три раза.
+            got = _reply_answer(row)
+            replies.append({**got, 'kind': 'reply',
+                            'profile_name': got['girl'],
+                            'profile_photo': got['girl_photo'],
+                            'profile_uid': ''})
+
+    # ⚠ Ключ сортировки — **время события**, и он же стоит в обоих запросах.
+    # Разойдись они — срез брал бы строки не по тому порядку, в котором их считали.
+    rows = sorted(letters + replies,
+                  key=lambda one: (str(one.get('sent_at') or
+                                       one.get('created_at') or ''),
+                                   int(one.get('id') or 0)),
+                  reverse=True)
+
+    return {'result': rows[(page - 1) * per:page * per],
+            'page': page, 'pages': pages, 'total': total}
 
 
 @router.get('/gaps', include_in_schema=False)
@@ -395,6 +552,25 @@ async def mailing_drop(mailing_id: int,
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+
+def _delivery_where(alias: str) -> str:
+    """Условие «всё про доставку» для таблицы под этим алиасом.
+
+    ⚠ Одной функцией на **четыре** места: счёт по двум таблицам и выборка по ним же.
+    Разойдись условия счёта и выборки — число страниц перестало бы отвечать
+    содержимому, и последняя выходила бы пустой.
+
+    ⚠⚠ Именно функция, а не строка с `replace` по имени столбца: такая замена
+    ломается молча, стоит слову `status` или `error` появиться внутри литерала.
+
+    ⚠ «Доставка» шире перечисления `sent,failed`: неудачная отправка **оставляет
+    письмо в пуле** (`draft` с непустой причиной, `mail_send.py`), и по статусу её
+    от нетронутого не отличить.
+    """
+    return (f" AND ({alias}.status IN ('sent', 'failed')"
+            f"      OR ({alias}.status = 'draft' AND {alias}.error <> ''))")
+
 #
 # ⚠ Здесь только то, что превращает строку базы в ответ странице. Сам набор
 # писем — в `src/dating/mailing.py`: его зовёт и круг рассылки, а круг

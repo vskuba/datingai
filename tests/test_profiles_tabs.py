@@ -645,7 +645,10 @@ class TestDeliveryLooksLikeDialogs:
         одного вопроса человек читает как два разных списка.
         """
         page = (await auth_client.get(PAGE)).text
-        window = _delivery_row(page)
+        # ⚠ Пробелы и переносы сжимаем: вызов не влезает в строку и перенесён по
+        # аргументам. Проверка по точному написанию падала бы от переноса, то есть
+        # от формата, а не от того, что стережём.
+        window = re.sub(r'\s+', ' ', _delivery_row(page))
 
         assert 'talkSide(row.profile_name, row.profile_photo, row.profile_uid' in window, \
             'левая сторона строки собрана не общим помощником'
