@@ -12,14 +12,17 @@
 (`favorite_round`), ответ пишет круг ответов по **тому же** письму. Один повод — два
 занятия, и получатель у них один.
 
-## ⚠ Строка остаётся и в журнале писем, и это правильно
+## ⚠⚠ Журналы делят ответы, а не показывают каждый своё
 
-Это **журнал, а не пул**: одно событие видно с двух сторон — «что ушло избранным» и
-«что вообще уходило почтой». Двойной работы тут нет, в отличие от двойного **пула**,
-которым эту вкладку уже дважды путали (см. оговорку у `favTalkEdit`).
+Пары из звёздочек — здесь, все прочие — в «Письмах». Вместе это все ответы ровно по
+одному разу.
 
-Поэтому здесь два сторожа сразу: строка **пришла** в журнал избранных и **осталась** в
-журнале писем.
+Сперва было иначе: строка честно попадала в оба журнала — «это журнал, а не пул», одно
+событие с двух сторон. Человек это отменил, и довод его сильнее: ответ избранному ищут
+на «Фаворитах», а второй список того же самого лишь заставляет сверять их между собой.
+
+Поэтому здесь два сторожа сразу: строка **пришла** в журнал избранных и **ушла** из
+журнала писем — а третий проверяет, что по дороге она не потерялась совсем.
 
 ## ⚠ Ответ незнакомому сюда не попадает
 
@@ -156,20 +159,70 @@ class TestBothSourcesAreThere:
                                                  for one in got['result']]
 
 
-class TestTheRowStaysInTheMailJournal:
-    """⚠⚠ Сторож обратного: журнал писем ответа не потерял.
+class TestTheJournalsSplitTheReplies:
+    """⚠⚠⚠ Два журнала **делят** ответы: ни одного дважды, ни одного нигде.
 
-    Это журналы, а не пулы: одно событие видно с двух сторон. Унеси мы строку на
-    «Фаворитов» — «Письма → Доставка» перестали бы отвечать на «что вообще уходило».
+    Сперва было иначе: строка честно попадала в оба журнала — «это журнал, а не
+    пул», одно событие с двух сторон. Человек это отменил: ответ избранному ищут на
+    «Фаворитах», а второй список того же самого лишь заставляет сверять их между собой.
+
+    ## ⚠ Почему проверок три, а не одна
+
+    «Не дважды» и «не нигде» — разные беды, и вторая хуже. Двойной показ виден глазом:
+    человек замечает знакомую строку и спрашивает. Пропажа не видна вовсе — письмо
+    ушло, а журнал о нём молчит, и узнать об этом можно только из базы.
+
+    Отсюда третья проверка, самая важная: **сумма половин равна всем ответам**.
+    Разойдись правила половин хоть на одну пару — она выпадет из обоих журналов.
     """
 
-    async def test_the_mail_journal_still_shows_both_replies(self, journal):
+    async def test_the_favorite_reply_is_only_in_the_favorites(self, journal):
         got = await mailing_delivery(site_id=STAND_SITE, per=200, user=None)
-        mine = [one['uid'] for one in got['result']
-                if one['uid'] in (journal['star'], journal['alien'])]
 
-        assert sorted(mine) == sorted([journal['star'], journal['alien']]), \
-            'журнал писем потерял ответы'
+        assert journal['star'] not in [one['uid'] for one in got['result']], \
+            'ответ избранному снова виден и в журнале писем'
+
+    async def test_the_stranger_reply_is_only_in_the_mail(self, journal):
+        """⚠ Обратная сторона: ответ незнакомцу из «Писем» не пропал.
+
+        Половины разделены **знаком одного условия**, и ошибка в нём убрала бы из
+        журнала писем все ответы разом, а не только избранных.
+        """
+        fav = await favorite_mail_delivery(site_id=STAND_SITE, per=200, user=None)
+        mail = await mailing_delivery(site_id=STAND_SITE, per=200, user=None)
+
+        assert journal['alien'] not in [one['uid'] for one in fav['result']], \
+            'ответ незнакомцу приехал в журнал избранных'
+        assert journal['alien'] in [one['uid'] for one in mail['result']], \
+            'журнал писем потерял ответ незнакомцу'
+
+    async def test_the_halves_add_up_to_everything(self, journal):
+        """⚠⚠⚠ Сумма половин = все ответы сайта, и каждый ровно раз.
+
+        Считается **по базе**, а не по ожидаемым числам: тест, сверяющий журналы лишь
+        между собой, прошёл бы и при двух одинаково неверных правилах.
+        """
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT id FROM mail_reply WHERE site_id = %s'
+                "   AND (status IN ('sent', 'failed')"
+                "        OR (status = 'draft' AND error <> ''))",
+                (STAND_SITE,))
+            whole = {int(row['id']) for row in (await db.fetchall()) or []}
+
+        fav = await favorite_mail_delivery(site_id=STAND_SITE, per=500, user=None)
+        mail = await mailing_delivery(site_id=STAND_SITE, per=500, user=None)
+
+        stars = [one['id'] for one in fav['result'] if one['kind'] == 'reply']
+        others = [one['id'] for one in mail['result'] if one['kind'] == 'reply']
+
+        assert not (set(stars) & set(others)), \
+            f'одни и те же ответы в обоих журналах: {set(stars) & set(others)}'
+        assert set(stars) | set(others) == whole, \
+            ('ответы потерялись между журналами: '
+             f'{whole - (set(stars) | set(others))}')
+        assert len(stars) + len(others) == len(whole), \
+            'ответ показан дважды внутри одного журнала'
 
 
 class TestTheOrderIsByEvent:

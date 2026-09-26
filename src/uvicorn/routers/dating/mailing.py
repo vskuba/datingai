@@ -187,6 +187,10 @@ async def mailing_delivery(site_id: int = 0, profile_id: int = 0, uid: str = '',
         (`mailing` — ушло по шаблону рассылки, `reply` — ответ на его письмо).
         Рядом `total`, `page`, `pages` — ими страница рисует пейджер.
 
+        ⚠⚠ Ответы — **только парам, которых нет в избранных**: ответ избранному живёт
+        в журнале «Фаворитов» (§3.7.7). Журналы делят их без пересечения, и вместе это
+        все ответы ровно по одному разу.
+
     ## ⚠⚠ Почему ручка одна, а не две
 
     Страница показывала этот журнал **двумя запросами** и сливала их у себя. Со
@@ -227,16 +231,19 @@ async def mailing_delivery(site_id: int = 0, profile_id: int = 0, uid: str = '',
     # то же условие, что уйдёт в выборку ниже. Разойдись счёт с выборкой — число
     # страниц перестало бы отвечать содержимому.
     own, own_args = pool_pick_where('m', int(profile_id), str(uid or ''))
-    _, reply_where, reply_args = mail_reply_delivery_scope(int(profile_id),
-                                                          uid=str(uid or ''))
+    # ⚠⚠ `favorites=False` — это **не «без отбора»**, а вторая половина: ответы парам,
+    # которых нет в звёздочках. Пары из звёздочек показывает журнал «Фаворитов», и
+    # прежде строка честно попадала в оба — человек это отменил.
+    reply_join, reply_where, reply_args = mail_reply_delivery_scope(
+        favorites=False, profile_id=int(profile_id), uid=str(uid or ''))
 
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT (SELECT COUNT(*) FROM mailing m WHERE m.site_id = %s'
             + pool_delivery_where('m') + own +
             ') AS letters,'
-            ' (SELECT COUNT(*) FROM mail_reply r WHERE r.site_id = %s'
-            + reply_where +
+            ' (SELECT COUNT(*) FROM mail_reply r' + reply_join +
+            '   WHERE r.site_id = %s' + reply_where +
             ') AS replies',
             tuple([int(site_id)] + own_args + [int(site_id)] + reply_args))
         counts = (await db.fetchone()) or {}
@@ -276,10 +283,11 @@ async def mailing_delivery(site_id: int = 0, profile_id: int = 0, uid: str = '',
         # запрос: тот же журнал есть на «Фаворитах», и вторая копия чтения разошлась
         # бы с первой — полями, порядком или условием отбора.
         #
-        # ⚠ Здесь без отбора по избранным: журнал писем отвечает на «что вообще
-        # уходило с сайта», и ответ незнакомому — такой же ответ.
-        replies = await mail_reply_delivery(db, int(site_id), take,
-                                           int(profile_id), uid=str(uid or ''))
+        # ⚠ Здесь **вторая половина** ответов: пары, которых нет в звёздочках. Первую
+        # показывает «Фавориты → Доставка», и делят они их без пересечения.
+        replies = await mail_reply_delivery(db, int(site_id), take, favorites=False,
+                                           profile_id=int(profile_id),
+                                           uid=str(uid or ''))
 
     # ⚠ Ключ сортировки — **время события**, и он же стоит в обоих запросах.
     # Разойдись они — срез брал бы строки не по тому порядку, в котором их считали.

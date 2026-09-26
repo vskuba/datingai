@@ -325,43 +325,64 @@ def mail_reply_answer(row: dict) -> dict:
             'in_message_id': int(row.get('in_message_id') or 0)}
 
 
-def mail_reply_delivery_scope(profile_id: int = 0, favorites: bool = False,
+def mail_reply_delivery_scope(*, favorites: bool, profile_id: int = 0,
                               uid: str = '') -> tuple[str, str, list]:
     """Отбор ответов для журнала доставки: приклейка, условие и аргументы.
 
     Args:
+        favorites: какую **половину** ответов брать. `True` — только пары, которые
+            есть в избранных; `False` — только те, которых там нет.
         profile_id: сузить до одной анкеты. Ноль — все анкеты сайта.
-        favorites: только пары, которые есть в избранных этой анкеты.
         uid: сузить до одного собеседника. Пусто — все.
 
     Returns:
         tuple: (`JOIN`-часть, кусок `WHERE` после `r.site_id = %s`, аргументы к нему).
 
+    ## ⚠⚠⚠ Довод обязательный, и «не фильтровать» из него убрано
+
+    Два журнала доставки **делят** ответы, а не показывают каждый своё подмножество:
+    «Фавориты» берут пары из звёздочек, «Письма» — все прочие. Вместе это все ответы
+    ровно по одному разу.
+
+    Прежде `False` означало «без отбора», и одна и та же строка честно попадала в оба
+    журнала — это было решение («журнал, а не пул»), и человек его отменил: ответ
+    избранному ищут на «Фаворитах», а видеть его вторым списком незачем.
+
+    ⚠ Поэтому довод **без умолчания и только по имени**: половина, взятая молча по
+    умолчанию, однажды снова склеила бы журналы. Забудь его вызывающий — падёт на
+    вызове, а не в глазах человека.
+
     ⚠⚠ **Отбор отдаётся кусками, а не готовым запросом**, потому что зовущих два и
     каждому он нужен дважды: для счёта строк и для выборки страницы. Разойдись они —
     число страниц перестало бы отвечать содержимому.
 
-    ⚠ `favorites` приклеивает `favorite` **без оглядки на `state`**, как это делает
-    список переписок с избранными (`favorite_mail_threads` идёт `FROM favorite`).
-    Звезда со `state = 'fail'` — это «нажать не вышло», а не «человек не избранный»:
-    убери мы такие пары, журнал разошёлся бы со списком разговоров на той же вкладке.
+    ⚠ Приклейка идёт **без оглядки на `favorite.state`**, как и список переписок с
+    избранными (`favorite_mail_threads` идёт `FROM favorite`). Звезда со
+    `state = 'fail'` — это «нажать не вышло», а не «человек не избранный»: убери мы
+    такие пары, журнал разошёлся бы со списком разговоров на той же вкладке.
+
+    ⚠⚠ Половины считаются **одним и тем же условием**, отличаясь только знаком:
+    `JOIN` против `LEFT JOIN … IS NULL`. Напиши их порознь — и пара, попавшая между
+    двумя разными правилами, пропала бы из обоих журналов совсем. А это хуже
+    двойного показа: тогда письмо видно дважды, здесь — ни разу.
 
     ⚠ Пара в `favorite` одна на `(profile_id, uid)` — уникальным ключом, — поэтому
     приклейка строк не удваивает. Была бы не одна, счёт и выборка поехали бы вместе.
     """
-    join = ('  JOIN favorite fv'
-            '    ON fv.profile_id = r.profile_id AND fv.uid = r.uid'
-            if favorites else '')
+    stars = ('  JOIN favorite fv'
+             if favorites else '  LEFT JOIN favorite fv')
+    join = f'{stars}    ON fv.profile_id = r.profile_id AND fv.uid = r.uid'
     # ⚠ Отбор именами — общей `pool_pick_where`, той же, что у писем и инвайтов:
     # шесть своих копий расходятся с первой правкой, и забытый `strip()` у номера
     # превращает «отобрать по Семёну» в «ничего не нашлось», молча.
     pick, args = pool_pick_where('r', profile_id, uid)
+    where = pool_delivery_where('r') + ('' if favorites else ' AND fv.id IS NULL')
 
-    return join, pool_delivery_where('r') + pick, args
+    return join, where + pick, args
 
 
-async def mail_reply_delivery(db, site_id: int, take: int, profile_id: int = 0,
-                              favorites: bool = False,
+async def mail_reply_delivery(db, site_id: int, take: int, *, favorites: bool,
+                              profile_id: int = 0,
                               uid: str = '') -> list[dict]:
     """Ответы для журнала доставки — свежие сверху, готовыми строками страницы.
 
@@ -370,8 +391,10 @@ async def mail_reply_delivery(db, site_id: int, take: int, profile_id: int = 0,
             открой мы второе — счёт и строки пришли бы из разных мгновений.
         site_id: сайт-закладка.
         take: сколько свежих строк взять (см. приём слияния у зовущих).
+        favorites: какую половину ответов брать — см. `mail_reply_delivery_scope`.
+            ⚠ Обязателен и только по имени: журналы делят ответы, и половина,
+            взятая молча, склеила бы их обратно.
         profile_id: сузить до одной анкеты.
-        favorites: только пары из избранных.
         uid: сузить до одного собеседника — отбор именем в журнале.
 
     Returns:
@@ -387,7 +410,8 @@ async def mail_reply_delivery(db, site_id: int, take: int, profile_id: int = 0,
     запрос ответов её не читает) — пустая строка честнее нуля: `talkSide` без номера
     просто не покажет его.
     """
-    join, where, args = mail_reply_delivery_scope(profile_id, favorites, uid)
+    join, where, args = mail_reply_delivery_scope(favorites=favorites,
+                                                 profile_id=profile_id, uid=uid)
 
     await db.execute(
         'SELECT r.id, r.site_id, r.profile_id, r.mail_in_id, r.uid, r.name,'
