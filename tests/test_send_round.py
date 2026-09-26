@@ -1,4 +1,4 @@
-"""Круг отправки: письма и ответы уходят сами, по одному.
+"""Круг отправки: письма каждого занятия уходят сами, по своему сроку.
 
 ⚠⚠ **Ни одно письмо здесь наружу не уходит, и это главное свойство файла.**
 Отправка — необратимое действие: письмо приходит живому человеку от имени
@@ -41,11 +41,11 @@ async def site(auth_client, monkeypatch):
 
     ⚠⚠ **И снимает дневной потолок, иначе тесты зависят от соседей.**
 
-    `_today` считает **все** письма стенда, ушедшие сегодня, — включая оставленные
+    `_today` считает ушедшие сегодня письма **рассылки** — включая оставленные
     другими файлами сюиты: они бегут раньше по алфавиту и убирают за собой только
-    свои строки. Наберётся сорок — и круг молча перестаёт отправлять, а тесты здесь
-    падают на `assert ... == 1` без единого намёка на причину. Так же молчит и
-    объяснение простоя: `send_why` честно скажет «норма выбрана».
+    свои строки. Наберётся сорок — и круг молча перестаёт слать рассылку, а тесты
+    здесь падают на `assert ... == 1` без единого намёка на причину. Так же молчит
+    и объяснение простоя: `send_why` честно скажет «норма выбрана».
 
     Поймано живьём: полный прогон покраснел один раз из трёх, файл поодиночке
     зеленел всегда. Воспроизведено набивкой счётчика до 45 — тогда краснеют сразу
@@ -206,9 +206,9 @@ class TestSwitchesRule:
 
 
 class TestOneAtATime:
-    """⚠ По одному письму за заход, с паузой.
+    """⚠ Рассылка уходит по одному письму за заход, со своей паузой.
 
-    Пул в полсотни писем, ушедший залпом, — это рассылка робота, чем он и
+    Пул в полсотни писем, ушедший залпом, — это рассылка робота, чем она и
     является. Пауза делает поток похожим на человека, который сидит и пишет.
     """
 
@@ -218,10 +218,10 @@ class TestOneAtATime:
 
         await send_round_run(0)
 
-        assert len(post) == 1, 'за один заход ушло больше одного письма'
+        assert len(post) == 1, 'за один заход ушло больше одного письма рассылки'
 
     async def test_second_pass_waits(self, site, profile, post):
-        """Второй заход сразу за первым молчит: пауза ещё не вышла."""
+        """Второй заход сразу за первым молчит: пауза рассылки ещё не вышла."""
         await _letter(profile)
         await _letter(profile)
 
@@ -230,12 +230,14 @@ class TestOneAtATime:
 
         assert len(post) == 1, 'пауза между письмами не соблюдена'
 
-    async def test_pause_has_a_floor(self):
-        """⚠ Нижний предел поверх настройки: «5» в поле превратило бы смену в
-        очередь из сотни писем в час — то, от чего пауза и заведена."""
-        from src.dating.send_round import SEND_EVERY_MIN
+    async def test_pause_has_no_floor_and_loses_to_options(self):
+        """⚠ Предела константой больше нет: темп задан **набором**, а `site_seconds`
+        значение вне набора не берёт — значит, «5» в базу не проедет вовсе."""
+        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
 
-        assert SEND_EVERY_MIN >= 30
+        values = {int(v) for v, _ in SITE_KNOWN['send_every']['options']}
+
+        assert min(values) >= 30
 
 
 class TestValuesAreSiteSettings:
@@ -261,11 +263,11 @@ class TestValuesAreSiteSettings:
         await send_round_run(0)
         assert len(post) == 1, 'первое письмо не ушло'
 
-        round_._sent_at[SITE] = time.time() - 100
+        round_._sent_at[(SITE, 'mailing')] = time.time() - 100
         assert (await send_round_run(0))['sent'] == 0, \
             'пауза короче умолчания в три минуты'
 
-        round_._sent_at[SITE] = time.time() - 190
+        round_._sent_at[(SITE, 'mailing')] = time.time() - 190
         assert (await send_round_run(0))['sent'] == 1, \
             'пауза длиннее умолчания в три минуты'
 
@@ -284,13 +286,13 @@ class TestValuesAreSiteSettings:
         try:
             await auth_client.put(f'/api/dating/site/{SITE}',
                                   json={'settings': {**before, 'send_every': '60'}})
-            assert await round_._every(SITE) == 60, \
+            assert await round_._every(SITE, 'send_every') == 60, \
                 'сайт настроил паузу в минуту, круг её не видит'
             await _letter(profile)
             await _letter(profile)
 
             assert (await send_round_run(0))['sent'] == 1, 'первое письмо не ушло'
-            round_._sent_at[SITE] = time.time() - 70
+            round_._sent_at[(SITE, 'mailing')] = time.time() - 70
 
             assert (await send_round_run(0))['sent'] == 1, \
                 'круг ждёт паузу из кода, а не настроенную сайтом'
@@ -308,16 +310,47 @@ class TestValuesAreSiteSettings:
         assert SITE_KNOWN['send_max_day']['default'] == '40'
 
 
-class TestRepliesGoFirst:
-    """⚠ Ответы вперёд писем: их ждёт живой человек, написавший первым."""
+class TestPoolsPaceIndependently:
+    """⚠ Каждое занятие меряется своим сроком: ответы не ждут рассылочной паузы,
+    а рассылка — ответы.
 
-    async def test_reply_wins_over_mailing(self, site, profile, post):
-        await _letter(profile, 'mailing')
+    На одном сайте три почтовых занятия, и замок был один на всех: ответы молчали
+    под рассылочными тремя минутами, а рассылка стояла под ответными пятью.
+    У каждого теперь свои часы.
+    """
+
+    async def test_each_ready_pool_sends_its_own(self, site, profile, post):
+        """Один заход — по письму из каждого пула, кому пора, не глядя на соседей."""
+        mailing = await _letter(profile, 'mailing')
+        reply = await _letter(profile, 'mail_reply')
+
+        assert (await send_round_run(0))['sent'] == 2, \
+            'пулы ушли общим замком, а не своими часами'
+        assert {(one['id'], one['table']) for one in post} == {
+            (mailing, 'mailing'), (reply, 'mail_reply')}
+
+    async def test_reply_waits_its_own_five_minutes(self, site, profile, post):
+        """Рассылка через три минуты уже вольна, ответ же держат его собственные
+        пять: чужая свобода его не выпускает.
+
+        200 секунд: довольно для рассылочных 180 (это видит тест выше), мало для
+        ответных 300.
+        """
+        import time
+
         await _letter(profile, 'mail_reply')
+        second = await _letter(profile, 'mail_reply')
 
         await send_round_run(0)
+        round_._sent_at[(SITE, 'mail_reply')] = time.time() - 200
 
-        assert post and post[0]['table'] == 'mail_reply'
+        assert (await send_round_run(0))['sent'] == 0, \
+            'ответ ждал рассылочную паузу, а не свой срок'
+
+        round_._sent_at[(SITE, 'mail_reply')] = time.time() - 310
+        assert (await send_round_run(0))['sent'] == 1, \
+            'ответ дождался сверх своего срока'
+        assert post[-1]['id'] == second
 
 
 class TestFailedLetterIsLeftAlone:
@@ -358,10 +391,11 @@ class TestFailedLetterIsLeftAlone:
 
 
 class TestDailyCap:
-    """⚠ Потолок в сутки — общий на рассылку и ответы.
+    """⚠ Норма суток — своя у рассылки: под неё не попадают ни ответы, ни письма
+    избранным — у тех пределы свои и стоят они на «Фаворитах».
 
-    Считает их получатель, а не наши таблицы: раздельные потолки означали бы вдвое
-    больше писем от одной девушки.
+    Потолок был общий на три пула: рассылка вставала, когда норму съели ответы,
+    а на одно письмо отвечают в силу самого ответа, а не по сайтной норме.
     """
 
     async def test_cap_stops_sending(self, auth_client, site, profile, post,
@@ -393,6 +427,20 @@ class TestDailyCap:
         finally:
             await auth_client.put(f'/api/dating/site/{SITE}',
                                   json={'settings': before})
+
+    async def test_norm_covers_mailing_only(self, site, profile, post, monkeypatch):
+        """Норма рассылки выбрана целиком — ответы не под ней: человек, который
+        написал сам, ждёт ответа, какие бы числа ни были у рассылки за сутки.
+        """
+        monkeypatch.setattr(round_, '_max_day', _fixed(0))
+        monkeypatch.setattr(round_, '_today', _fixed(0))
+
+        await _letter(profile)
+        reply = await _letter(profile, 'mail_reply')
+
+        assert (await send_round_run(0))['sent'] == 1, \
+            'норма рассылки заглушила ответ'
+        assert post == [{'id': reply, 'table': 'mail_reply'}]
 
     async def test_unknown_count_stops_sending(self, monkeypatch):
         """⚠ Счётчик не прочитался — молчим.
@@ -441,9 +489,8 @@ class TestScheduleIsRespected:
 class TestWhyItStands:
     """⚠⚠ Молчащий пул обязан объяснять себя — то же правило, что у инвайтов.
 
-    У писем оно острее: дневной потолок **общий** на три пула, и встать рассылка
-    может оттого, что норму съели ответы. Числа при этом лежат в разных таблицах, и
-    сложить их человеку негде.
+    И у каждого пула теперь свой повод: рассылка говорит свою норму, причём числом,
+    а два других пула о ней не обязаны знать вовсе — ответы под ней не стоят.
     """
 
     async def test_the_switch_off_says_so(self):
@@ -467,17 +514,26 @@ class TestWhyItStands:
 
         assert 'не смена' in said
 
-    async def test_the_day_cap_says_it_is_shared(self, site, monkeypatch):
-        """⚠ Строка обязана сказать, что потолок **общий**: встала рассылка, а
-        выбрали норму ответы — искать причину человек пойдёт не туда."""
-        import src.dating.send_round as round_
-
+    async def test_the_mailing_norm_says_so(self, site, monkeypatch):
+        """⚠ Строка обязана назвать норму рассылки числом — иначе молчание
+        читается как поломка. И только рассылку: ответы о ней не должны лгать.
+        """
         monkeypatch.setattr(round_, '_max_day', _fixed(5))
         monkeypatch.setattr(round_, '_today', _fixed(5))
 
         said = await send_why(SITE, 'mailing', 0)
 
-        assert 'ушло 5 из 5' in said and 'общая' in said
+        assert 'ушло 5 из 5' in said and 'рассылки' in said
+
+    async def test_other_pools_do_not_mention_the_norm(self, site, profile,
+                                                        monkeypatch):
+        """Строка про чужую норму в шапке ответов была бы ложью: ответы под
+        рассылочной нормой не стоят — и не слышат о ней."""
+        monkeypatch.setattr(round_, '_max_day', _fixed(0))
+        monkeypatch.setattr(round_, '_today', _fixed(0))
+        await _letter(profile, 'mail_reply')
+
+        assert await send_why(SITE, 'mail_reply', 0) == ''
 
     async def test_an_empty_pool_says_so(self, site):
         assert await send_why(SITE, 'mailing', 0) \
@@ -632,8 +688,8 @@ class TestThePauseBelongsToTheGirl:
         """⚠ Пауза — настройка избранных, и распоряжаться чужими пулами ей не по
         чину: у рассылки и ответов свои правила и свои сроки.
 
-        Часы при этом общие: её ответ паузу избранных держит (это проверяет
-        `test_favorite_mail.py`), но сам ответ ею не задерживается.
+        Ответ же паузой избранных не задерживается вовсе — что пределы избранных
+        считают все её ушедшие письма вместе, держит `test_favorite_mail.py`.
         """
         await self._favorites_on(4 * 3600, monkeypatch)
         await self._online(profile)
