@@ -27,9 +27,10 @@ from src.dating.json_column import json_column_load
 from src.dating.mail import MAIL_BODY_MAX
 from src.dating.mail_send import (DatingMailSendError, mail_send_mark,
                                          mail_send_one)
+from src.dating.mail_reply import mail_reply_delivery
 from src.dating.online import online_show
-from src.dating.pool_pair import (pool_pair_girl, pool_pair_joins,
-                                  pool_pair_select)
+from src.dating.pool_pair import (pool_delivery_where, pool_pair_girl,
+                                         pool_pair_joins, pool_pair_select)
 from src.dating.send_round import send_why
 from src.dating.mailing import (MAILING_BATCH_DEFAULT,
                                        MAILING_BATCH_MAX,
@@ -45,7 +46,6 @@ from src.uvicorn.routers.dating.site_ import (site_seconds,
 #
 # ⚠ Цикла нет и быть не может: `mail_in` не знает про `mailing` (проверено), а
 # общее у них — только `site_`.
-from src.uvicorn.routers.dating.mail_in import _reply_answer
 
 router = APIRouter(prefix='/api/dating/mailing', tags=['dating'])
 
@@ -214,10 +214,10 @@ async def mailing_delivery(site_id: int = 0, page: int = 1, per: int = 0,
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT (SELECT COUNT(*) FROM mailing m WHERE m.site_id = %s'
-            + _delivery_where('m') +
+            + pool_delivery_where('m') +
             ') AS letters,'
             ' (SELECT COUNT(*) FROM mail_reply r WHERE r.site_id = %s'
-            + _delivery_where('r') +
+            + pool_delivery_where('r') +
             ') AS replies',
             (int(site_id), int(site_id)))
         counts = (await db.fetchone()) or {}
@@ -243,7 +243,7 @@ async def mailing_delivery(site_id: int = 0, page: int = 1, per: int = 0,
             ' LEFT JOIN mail t ON t.id = m.mail_id'
             + pool_pair_joins() +
             ' WHERE m.site_id = %s'
-            + _delivery_where('m')
+            + pool_delivery_where('m')
             # ⚠ По времени события, а не по номеру: журнал читают как ленту «что
             # происходило», и неудача, случившаяся позже удачи, обязана стоять выше.
             # У неудачной `sent_at` нет вовсе — его снимает сама неудача.
@@ -253,43 +253,13 @@ async def mailing_delivery(site_id: int = 0, page: int = 1, per: int = 0,
         letters = [{**_answer(row), 'kind': 'mailing'}
                    for row in (await db.fetchall()) or []]
 
-        await db.execute(
-            'SELECT r.id, r.site_id, r.profile_id, r.mail_in_id, r.uid, r.name,'
-            ' r.body, r.status, r.error, r.sent_at, r.created_at,'
-            ' p.login AS profile_login, p.profile AS profile_card,'
-            ' i.body AS in_body, i.date_post AS in_at,'
-            ' i.message_id AS in_message_id, i.photo AS in_photo'
-            ' FROM mail_reply r'
-            ' LEFT JOIN profile p ON p.id = r.profile_id'
-            ' LEFT JOIN mail_in i ON i.id = r.mail_in_id'
-            ' WHERE r.site_id = %s'
-            + _delivery_where('r')
-            + ' ORDER BY COALESCE(r.sent_at, r.created_at) DESC, r.id DESC'
-            ' LIMIT %s',
-            (int(site_id), take))
-        # ⚠⚠ **Ответы приводим к общему виду здесь, на границе.** `_reply_answer`
-        # зовут и «Входящие», где сторону девушки читают как `girl`/`girl_photo`, а
-        # общая строка журнала доставки — как `profile_name`/`profile_photo`, теми
-        # же именами, что у пулов (`pool_pair_girl`). Без этой пары строк лицо
-        # девушки в журнале пропадало бы молча: имя есть, фото пусто.
+        # ⚠⚠ Ответы читает **общая функция** (`mail_reply_delivery`), а не свой
+        # запрос: тот же журнал есть на «Фаворитах», и вторая копия чтения разошлась
+        # бы с первой — полями, порядком или условием отбора.
         #
-        # ⚠ Правим **не** `_reply_answer`: он отвечает двум вкладкам, и переименуй
-        # в нём поля — сломались бы «Входящие». Нормализация на границе дешевле и
-        # видна целиком.
-        #
-        # ⚠ `profile_uid` у ответов нет вовсе (номер анкеты на сайте лежит в её
-        # карточке, а запрос ответов её не читает) — пустая строка честнее нуля:
-        # `talkSide` без номера просто не покажет его.
-        replies = []
-        for row in (await db.fetchall()) or []:
-            # ⚠ Один вызов на строку: внутри `_reply_answer` спрашивается снимок
-            # «в сети ли адресат», и звать её трижды ради трёх полей значило бы
-            # платить за один ответ три раза.
-            got = _reply_answer(row)
-            replies.append({**got, 'kind': 'reply',
-                            'profile_name': got['girl'],
-                            'profile_photo': got['girl_photo'],
-                            'profile_uid': ''})
+        # ⚠ Здесь без отбора по избранным: журнал писем отвечает на «что вообще
+        # уходило с сайта», и ответ незнакомому — такой же ответ.
+        replies = await mail_reply_delivery(db, int(site_id), take)
 
     # ⚠ Ключ сортировки — **время события**, и он же стоит в обоих запросах.
     # Разойдись они — срез брал бы строки не по тому порядку, в котором их считали.
@@ -553,23 +523,6 @@ async def mailing_drop(mailing_id: int,
 
 # ── Приватное ────────────────────────────────────────────────────────────────
 
-
-def _delivery_where(alias: str) -> str:
-    """Условие «всё про доставку» для таблицы под этим алиасом.
-
-    ⚠ Одной функцией на **четыре** места: счёт по двум таблицам и выборка по ним же.
-    Разойдись условия счёта и выборки — число страниц перестало бы отвечать
-    содержимому, и последняя выходила бы пустой.
-
-    ⚠⚠ Именно функция, а не строка с `replace` по имени столбца: такая замена
-    ломается молча, стоит слову `status` или `error` появиться внутри литерала.
-
-    ⚠ «Доставка» шире перечисления `sent,failed`: неудачная отправка **оставляет
-    письмо в пуле** (`draft` с непустой причиной, `mail_send.py`), и по статусу её
-    от нетронутого не отличить.
-    """
-    return (f" AND ({alias}.status IN ('sent', 'failed')"
-            f"      OR ({alias}.status = 'draft' AND {alias}.error <> ''))")
 
 #
 # ⚠ Здесь только то, что превращает строку базы в ответ странице. Сам набор

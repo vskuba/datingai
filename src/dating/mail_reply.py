@@ -47,7 +47,10 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.answer import answer_mail_reply
+from src.dating.json_column import json_column_load
 from src.dating.mail_agent import DatingMailAgentError
+from src.dating.online import online_show
+from src.dating.pool_pair import pool_delivery_where
 
 # Сколько писем переписки показываем человеку в окне ответа.
 #
@@ -260,6 +263,151 @@ async def mail_reply_thread(profile_id: int, uid: str, keep: int = 0,
              'at': row['at'], 'status': str(row['status'] or ''),
              'photo': faces['him' if str(row['side']) == 'him' else 'her']}
             for row in reversed(rows or [])]
+
+
+def mail_reply_answer(row: dict) -> dict:
+    """Строка пула ответов в вид для страницы.
+
+    Args:
+        row: строка `mail_reply`, склеенная с анкетой и входящим письмом.
+
+    Returns:
+        dict: поля страницы — обе стороны, состояние, текст и то, на что отвечаем.
+
+    ⚠⚠ **Один вид на три места**: пул «Ответов», окно правки и **оба** журнала
+    доставки. Жил он приватной функцией роутера (`mail_in._reply_answer`), и сосед
+    уже импортировал его оттуда через подчёркивание — то есть вид строки давно был
+    общим, а лежал как чужая тайна.
+
+    ⚠ Сторона девушки называется здесь `girl`/`girl_photo`, а не
+    `profile_name`/`profile_photo`: так её читают «Входящие». Журналу доставки нужны
+    вторые имена, и переименовывает он **у себя, на границе** — иначе сломались бы
+    «Входящие».
+    """
+    card = json_column_load(row.get('profile_card'))
+
+    # В сети ли адресат — **из снимка ленты, а не походом на сайт**. Тем же
+    # `online_show`, что у пула рассылки и карточек собеседников: правило одно, и
+    # вторая копия разошлась бы.
+    online = online_show(int(row['site_id']), str(row['uid']))
+
+    return {'id': int(row['id']),
+            'site_id': int(row['site_id']),
+            'profile_id': int(row['profile_id']),
+            'mail_in_id': int(row['mail_in_id']),
+            'online': bool(online.get('online')),
+            'online_known': bool(online.get('known')),
+            'photo': str(row.get('in_photo') or ''),
+            'uid': str(row['uid']),
+            'name': str(row['name']),
+            'body': str(row['body']),
+            'status': str(row['status']),
+            'error': str(row['error'] or ''),
+            'sent_at': row['sent_at'],
+            'created_at': row['created_at'],
+            # Имя анкеты, а не логин: логин это почта, и в карточке «от кого» она
+            # читается как подпись робота. То же правило, что у пула рассылки.
+            'girl': str((card or {}).get('name') or row.get('profile_login') or ''),
+            # Лицо девушки — из её карточки: в переписке реплики подписаны лицами, а
+            # не только именами.
+            'girl_photo': str((card or {}).get('photo') or ''),
+            # На что отвечаем — рядом: ответ читают, сверяя с письмом.
+            'in_body': str(row.get('in_body') or ''),
+            'in_at': row.get('in_at'),
+            'in_message_id': int(row.get('in_message_id') or 0)}
+
+
+def mail_reply_delivery_scope(profile_id: int = 0,
+                              favorites: bool = False) -> tuple[str, str, list]:
+    """Отбор ответов для журнала доставки: приклейка, условие и аргументы.
+
+    Args:
+        profile_id: сузить до одной анкеты. Ноль — все анкеты сайта.
+        favorites: только пары, которые есть в избранных этой анкеты.
+
+    Returns:
+        tuple: (`JOIN`-часть, кусок `WHERE` после `r.site_id = %s`, аргументы к нему).
+
+    ⚠⚠ **Отбор отдаётся кусками, а не готовым запросом**, потому что зовущих два и
+    каждому он нужен дважды: для счёта строк и для выборки страницы. Разойдись они —
+    число страниц перестало бы отвечать содержимому.
+
+    ⚠ `favorites` приклеивает `favorite` **без оглядки на `state`**, как это делает
+    список переписок с избранными (`favorite_mail_threads` идёт `FROM favorite`).
+    Звезда со `state = 'fail'` — это «нажать не вышло», а не «человек не избранный»:
+    убери мы такие пары, журнал разошёлся бы со списком разговоров на той же вкладке.
+
+    ⚠ Пара в `favorite` одна на `(profile_id, uid)` — уникальным ключом, — поэтому
+    приклейка строк не удваивает. Была бы не одна, счёт и выборка поехали бы вместе.
+    """
+    join = ('  JOIN favorite fv'
+            '    ON fv.profile_id = r.profile_id AND fv.uid = r.uid'
+            if favorites else '')
+    where = pool_delivery_where('r')
+    args = []
+
+    if int(profile_id or 0):
+        where += ' AND r.profile_id = %s'
+        args.append(int(profile_id))
+
+    return join, where, args
+
+
+async def mail_reply_delivery(db, site_id: int, take: int, profile_id: int = 0,
+                              favorites: bool = False) -> list[dict]:
+    """Ответы для журнала доставки — свежие сверху, готовыми строками страницы.
+
+    Args:
+        db: открытое соединение. ⚠ Своего не берём: журнал сливает две таблицы, и
+            открой мы второе — счёт и строки пришли бы из разных мгновений.
+        site_id: сайт-закладка.
+        take: сколько свежих строк взять (см. приём слияния у зовущих).
+        profile_id: сузить до одной анкеты.
+        favorites: только пары из избранных.
+
+    Returns:
+        list: строки с `kind = 'reply'` и именами полей общей строки журнала.
+
+    ⚠⚠ **Ответы приводим к общему виду здесь, на границе.** `mail_reply_answer`
+    отвечает ещё и «Входящим», где сторону девушки читают как `girl`/`girl_photo`, а
+    общая строка журнала доставки — как `profile_name`/`profile_photo`, теми же
+    именами, что у пулов (`pool_pair_girl`). Без этой пары строк лицо девушки в
+    журнале пропадало бы молча: имя есть, фото пусто.
+
+    ⚠ `profile_uid` у ответов нет вовсе (номер анкеты на сайте лежит в её карточке, а
+    запрос ответов её не читает) — пустая строка честнее нуля: `talkSide` без номера
+    просто не покажет его.
+    """
+    join, where, args = mail_reply_delivery_scope(profile_id, favorites)
+
+    await db.execute(
+        'SELECT r.id, r.site_id, r.profile_id, r.mail_in_id, r.uid, r.name,'
+        ' r.body, r.status, r.error, r.sent_at, r.created_at,'
+        ' p.login AS profile_login, p.profile AS profile_card,'
+        ' i.body AS in_body, i.date_post AS in_at,'
+        ' i.message_id AS in_message_id, i.photo AS in_photo'
+        ' FROM mail_reply r'
+        ' LEFT JOIN profile p ON p.id = r.profile_id'
+        ' LEFT JOIN mail_in i ON i.id = r.mail_in_id'
+        + join +
+        ' WHERE r.site_id = %s' + where +
+        # ⚠ По времени события, а не по номеру: журнал читают как ленту «что
+        # происходило», и неудача, случившаяся позже удачи, обязана стоять выше.
+        ' ORDER BY COALESCE(r.sent_at, r.created_at) DESC, r.id DESC'
+        ' LIMIT %s',
+        tuple([int(site_id)] + args + [int(take)]))
+
+    rows = []
+    for row in (await db.fetchall()) or []:
+        # ⚠ Один вызов на строку: внутри спрашивается снимок «в сети ли адресат», и
+        # звать её трижды ради трёх полей значило бы платить за один ответ три раза.
+        got = mail_reply_answer(row)
+        rows.append({**got, 'kind': 'reply',
+                     'profile_name': got['girl'],
+                     'profile_photo': got['girl_photo'],
+                     'profile_uid': ''})
+
+    return rows
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

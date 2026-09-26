@@ -19,7 +19,7 @@ from src.dating.favorite import (FAVORITE_STATES,
                                         FAVORITE_STATES_SQL)
 from src.dating.mail_in import (DatingMailInError, mail_in_fetch,
                                        mail_in_unread)
-from src.dating.mail_reply import (mail_reply_make,
+from src.dating.mail_reply import (mail_reply_answer, mail_reply_make,
                                           mail_reply_thread)
 from src.dating.mail_send import (DatingMailSendError, mail_send_mark,
                                          mail_send_one)
@@ -294,7 +294,7 @@ async def mail_reply_list(site_id: int = 0, status_: str = 'draft',
         await db.execute(sql, tuple(args))
         rows = await db.fetchall()
 
-    return {'result': [_reply_answer(row) for row in rows or []]}
+    return {'result': [mail_reply_answer(row) for row in rows or []]}
 
 
 @router.post('/reply/make', include_in_schema=False)
@@ -535,7 +535,7 @@ async def _reply_row(reply_id: int) -> dict:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail=f'ответа #{reply_id} нет')
 
-    return _reply_answer(row)
+    return mail_reply_answer(row)
 
 
 async def _sender(profile_id: int) -> dict:
@@ -599,43 +599,6 @@ async def _row(mail_in_id: int) -> dict:
                             detail=f'письма #{mail_in_id} нет')
 
     return _answer(row)
-
-
-def _reply_answer(row: dict) -> dict:
-    """Строка пула ответов в ответ странице."""
-    from src.dating.json_column import json_column_load
-
-    card = json_column_load(row.get('profile_card'))
-
-    # В сети ли адресат — **из снимка ленты, а не походом на сайт**. Тем же
-    # `online_show`, что у пула рассылки и карточек собеседников: правило
-    # одно, и вторая копия разошлась бы.
-    online = online_show(int(row['site_id']), str(row['uid']))
-
-    return {'id': int(row['id']),
-            'site_id': int(row['site_id']),
-            'profile_id': int(row['profile_id']),
-            'mail_in_id': int(row['mail_in_id']),
-            'online': bool(online.get('online')),
-            'online_known': bool(online.get('known')),
-            'photo': str(row.get('in_photo') or ''),
-            'uid': str(row['uid']),
-            'name': str(row['name']),
-            'body': str(row['body']),
-            'status': str(row['status']),
-            'error': str(row['error'] or ''),
-            'sent_at': row['sent_at'],
-            'created_at': row['created_at'],
-            # Имя анкеты, а не логин: логин это почта, и в карточке «от кого» она
-            # читается как подпись робота. То же правило, что у пула рассылки.
-            'girl': str((card or {}).get('name') or row.get('profile_login') or ''),
-            # Лицо девушки — из её карточки: в переписке реплики подписаны лицами, а
-            # не только именами.
-            'girl_photo': str((card or {}).get('photo') or ''),
-            # На что отвечаем — рядом: ответ читают, сверяя с письмом.
-            'in_body': str(row.get('in_body') or ''),
-            'in_at': row.get('in_at'),
-            'in_message_id': int(row.get('in_message_id') or 0)}
 
 
 def _girl(row: dict) -> str:

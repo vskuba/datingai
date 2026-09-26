@@ -84,8 +84,8 @@ class TestEveryRowHasATime:
 
     async def test_the_failed_letter_carries_a_time(self, letters, auth_client):
         got = (await auth_client.get(
-            f'/api/dating/favorite-mail?site_id={STAND_SITE}'
-            f'&profile_id={letters}&status_=delivery')).json()['result']
+            f'/api/dating/favorite-mail/delivery?site_id={STAND_SITE}'
+            f'&profile_id={letters}')).json()['result']
 
         bad = next(r for r in got if r['status'] == 'failed')
 
@@ -98,8 +98,8 @@ class TestEveryRowHasATime:
         """⚠ Обратная сторона: у ушедшего письма показывается именно отправка,
         а не время правки строки."""
         got = (await auth_client.get(
-            f'/api/dating/favorite-mail?site_id={STAND_SITE}'
-            f'&profile_id={letters}&status_=delivery')).json()['result']
+            f'/api/dating/favorite-mail/delivery?site_id={STAND_SITE}'
+            f'&profile_id={letters}')).json()['result']
 
         ok = next(r for r in got if r['status'] == 'sent')
 
@@ -108,8 +108,8 @@ class TestEveryRowHasATime:
     async def test_both_rows_are_filled(self, letters, auth_client):
         """То, что видит человек: ни одной пустой ячейки времени."""
         got = (await auth_client.get(
-            f'/api/dating/favorite-mail?site_id={STAND_SITE}'
-            f'&profile_id={letters}&status_=delivery')).json()['result']
+            f'/api/dating/favorite-mail/delivery?site_id={STAND_SITE}'
+            f'&profile_id={letters}')).json()['result']
 
         assert len(got) == 2
 
@@ -130,7 +130,7 @@ class TestTheJournalReadsAsATimeline:
     def test_it_sorts_by_outcome_time(self):
         import src.uvicorn.routers.dating.favorite_mail as mod
 
-        code = inspect.getsource(mod.favorite_mail_list)
+        code = inspect.getsource(mod.favorite_mail_delivery)
 
         assert 'COALESCE(m.sent_at, m.updated_at, m.created_at)' in code, \
             'журнал снова сортируется по номеру строки'

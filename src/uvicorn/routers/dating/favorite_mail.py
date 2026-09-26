@@ -33,12 +33,14 @@ from src.dating.favorite_mail import (FAVORITE_MAIL_BATCH_DEFAULT,
 from src.dating.favorite_mail_round import favorite_mail_round_next
 from src.dating.json_column import json_column_load
 from src.dating.mail import MAIL_BODY_MAX
-from src.dating.mail_reply import mail_reply_thread
+from src.dating.mail_reply import (mail_reply_delivery,
+                                          mail_reply_delivery_scope,
+                                          mail_reply_thread)
 from src.dating.mail_send import (DatingMailSendError, mail_send_mark,
                                          mail_send_one)
 from src.dating.online import online_show
-from src.dating.pool_pair import (pool_pair_girl, pool_pair_joins,
-                                  pool_pair_select)
+from src.dating.pool_pair import (pool_delivery_where, pool_pair_girl,
+                                         pool_pair_joins, pool_pair_select)
 from src.uvicorn.routers.dating.chat import chat_dialogs_size
 from src.uvicorn.routers.dating.site_ import site_setting
 from src.uvicorn.routers.setting import setting_timezone_hours
@@ -51,6 +53,13 @@ FAVORITE_MAIL_TABLE = 'favorite_mail'
 
 # Сколько карточек отдаём странице. Тот же предел, что у пула писем.
 FAVORITE_MAIL_LIMIT = 300
+
+# Сколько строк на странице журнала «Доставка», когда страница не просит своё.
+#
+# ⚠ Число то же, что у журнала писем (`MAILING_DELIVERY_PER`): журналы стоят на
+# соседних вкладках, выглядят одной выкройкой и листаются одним пейджером. Разные
+# размеры страницы читались бы как разница по существу, которой нет.
+FAVORITE_MAIL_DELIVERY_PER = 25
 
 # Сколько переписок на страницу списка «Диалоги», когда страница не просит своё.
 #
@@ -215,6 +224,138 @@ async def favorite_mail_list(site_id: int = 0, status_: str = 'draft',
                 int(site_id), FAVORITE_MAIL_TABLE,
                 await setting_timezone_hours()),
             'send_on': await _send_on(int(site_id))}
+
+
+@router.get('/delivery', include_in_schema=False)
+async def favorite_mail_delivery(site_id: int = 0, profile_id: int = 0,
+                                        page: int = 1, per: int = 0,
+                                        user: AuthUser = Depends(auth_required)):
+    """Журнал доставки избранным: **приставание и ответы одним списком**, страницей.
+
+    Args:
+        site_id: сайт-закладка. Ноль — пустой список.
+        profile_id: сузить до одной анкеты. Ноль — все анкеты сайта.
+
+            ⚠ **Фильтр, а не условие показа**, как у списка разговоров на той же
+            вкладке: без выбора журнал полон и отвечает на «что вообще уходило
+            избранным этого сайта».
+        page: страница, с единицы. Больше последней — отдаём последнюю.
+        per: сколько строк на ней. Ноль — умолчание `FAVORITE_MAIL_DELIVERY_PER`.
+
+    Returns:
+        dict: строки обоих родов, свежие сверху, у каждой `kind` (`favorite` — письмо
+        замолчавшему, `reply` — ответ на его письмо). Рядом `total`, `page`, `pages` —
+        ими страница рисует пейджер.
+
+    ## ⚠⚠ Зачем здесь ответы
+
+    Вкладка «Фавориты» ведёт одно занятие целиком: кому пишем (лента и пул), о чём
+    говорим («Диалоги»), что ушло («Доставка»). Ответы стоят в том же ряду — третьей
+    колонкой «Диалогов», — а их исход виден был только на «Письмах → Доставка», то
+    есть работа делалась на одной вкладке, а её итог показывался на другой.
+
+    Мера сходимости, снятая с прода: **из четырёх ушедших ответов все четыре** —
+    паре, которая есть в избранных. Это не совпадение, а устройство: звёздочку жмёт
+    круг избранных по входящему письму (`favorite_round`), ответ пишет круг ответов по
+    тому же письму. Один повод — два занятия, и получатель у них один.
+
+    ⚠ **Строка при этом остаётся и в журнале писем.** Это журнал, а не пул: одно и то
+    же событие видно с двух сторон — «что ушло избранным» и «что вообще уходило
+    почтой». Двойной работы тут нет, в отличие от двойного **пула**, которым эту
+    вкладку уже дважды путали.
+
+    ⚠ Ответ незнакомому (пары нет в избранных) сюда не попадает — и правильно: на
+    этой вкладке его не с чем связать. Такой виден на «Письмах».
+
+    ## Как берётся страница
+
+    Тем же приёмом, что у журнала писем (`mailing_delivery`), и по той же причине:
+    «вторая страница приставания» плюс «вторая страница ответов» — не вторая страница
+    журнала. Берём по `page * per` свежих из каждой таблицы, сливаем, отрезаем нужный
+    кусок; счёт — сумма двух `COUNT` по тем же условиям.
+
+    ⚠ Цена приёма растёт с номером страницы: сороковая по 25 строк читает по тысяче
+    строк из каждой таблицы. Журнал читают с первых страниц — терпимо; предел назван,
+    чтобы следующий читатель не счёл это недосмотром.
+
+    ⚠⚠ У ответа **нет** `updated_at`, и у неудачного его дата — время сочинения
+    (`created_at`), а не отказа. У писем избранным столбец есть, и там показывается
+    минута неудачи. Разница видна в журнале и лечится миграцией `mail_reply`, а не
+    показом: подставлять «сейчас» там, где времени нет, — это соврать свежей датой.
+    """
+    if not int(site_id or 0):
+        # ⚠ Поля пейджера есть и в пустом ответе: страница читает их без проверок, и
+        # `pages: undefined` нарисовало бы пейджер из одной мёртвой страницы.
+        return {'result': [], 'page': 1, 'pages': 1, 'total': 0}
+
+    per = min(int(per or 0) or FAVORITE_MAIL_DELIVERY_PER, FAVORITE_MAIL_LIMIT)
+    page = max(1, int(page or 1))
+    # Сколько свежих строк хватит взять из каждой таблицы, чтобы отрезать нужную
+    # страницу слияния.
+    take = page * per
+
+    # ⚠ Отбор ответов — **общими кусками** (`mail_reply_delivery_scope`): те же, что
+    # уйдут в чтение строк ниже. Своё условие здесь разошлось бы со чтением, и число
+    # страниц перестало бы отвечать содержимому.
+    join, where, args = mail_reply_delivery_scope(int(profile_id), favorites=True)
+    own = ' AND m.profile_id = %s' if int(profile_id or 0) else ''
+    own_args = [int(profile_id)] if int(profile_id or 0) else []
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT (SELECT COUNT(*) FROM favorite_mail m WHERE m.site_id = %s'
+            + pool_delivery_where('m') + own +
+            ') AS letters,'
+            ' (SELECT COUNT(*) FROM mail_reply r' + join +
+            '   WHERE r.site_id = %s' + where +
+            ') AS replies',
+            tuple([int(site_id)] + own_args + [int(site_id)] + args))
+        counts = (await db.fetchone()) or {}
+        total = int(counts.get('letters') or 0) + int(counts.get('replies') or 0)
+
+        pages = max(1, -(-total // per))
+        # ⚠ Страницу поправляем, а не отвергаем: журнал мог укоротиться, пока человек
+        # листал, и отказ вместо последней страницы читался бы как поломка.
+        page = min(page, pages)
+        take = page * per
+
+        # ⚠ Письма избранным — **тем же куском полей, что пул** (`pool_pair_*`): обе
+        # стороны рисуются общим видом, и второй набор полей разошёлся бы с первым.
+        await db.execute(
+            'SELECT m.id, m.site_id, m.profile_id, m.uid,'
+            + pool_pair_select() +
+            ' m.body, m.status, m.error, m.answer, m.sent_at, m.created_at,'
+            ' m.updated_at,'
+            ' p.login AS profile_login, p.profile AS profile_card'
+            ' FROM favorite_mail m'
+            ' LEFT JOIN profile p ON p.id = m.profile_id'
+            + pool_pair_joins() +
+            ' WHERE m.site_id = %s'
+            + pool_delivery_where('m') + own
+            # ⚠ По времени события, а не по номеру: журнал читают как ленту «что
+            # происходило», и неудача, случившаяся позже удачи, обязана стоять выше.
+            + ' ORDER BY COALESCE(m.sent_at, m.updated_at, m.created_at) DESC,'
+            ' m.id DESC LIMIT %s',
+            tuple([int(site_id)] + own_args + [take]))
+        letters = [{**_answer(row), 'kind': 'favorite'}
+                   for row in (await db.fetchall()) or []]
+
+        # ⚠ Ответы — той же общей функцией, что у журнала писем, с одним отличием:
+        # `favorites=True`. Отличие и есть весь смысл этой вкладки.
+        replies = await mail_reply_delivery(db, int(site_id), take,
+                                           int(profile_id), favorites=True)
+
+    # ⚠ Ключ сортировки — **время события**, и он же стоит в обоих запросах.
+    # Разойдись они — срез брал бы строки не в том порядке, в котором их считали.
+    rows = sorted(letters + replies,
+                  key=lambda one: (str(one.get('sent_at')
+                                       or one.get('updated_at')
+                                       or one.get('created_at') or ''),
+                                   int(one.get('id') or 0)),
+                  reverse=True)
+
+    return {'result': rows[(page - 1) * per:page * per],
+            'page': page, 'pages': pages, 'total': total}
 
 
 @router.get('/threads', include_in_schema=False)

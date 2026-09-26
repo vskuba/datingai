@@ -84,9 +84,14 @@ async def journal(auth_client):
 
 
 async def _ask(client, per: int = 25, page: int = 1, profile_id: int = 0) -> dict:
-    return (await client.get('/api/dating/favorite-mail',
+    """Журнал доставки — **своей ручкой**, а не пулом с отбором по состоянию.
+
+    ⚠ Ручка сменилась, когда журнал стал сливать два источника: приставание и ответы
+    избранным (`test_favorite_delivery_replies.py`). Пул остался на прежней
+    (`?status_=draft`) — он про другое, и проверки ниже это стерегут.
+    """
+    return (await client.get('/api/dating/favorite-mail/delivery',
                              params={'site_id': STAND_SITE,
-                                     'status_': 'delivery',
                                      'page': page, 'per': per,
                                      'profile_id': profile_id})).json()
 
@@ -125,11 +130,11 @@ class TestPages:
         assert got['page'] == got['pages'] and got['result']
 
     async def test_the_pages_match_the_count(self, auth_client, journal):
-        """⚠⚠ Счёт и страницы считает **один** кусок SQL.
+        """⚠⚠ Счёт и выборка спрашивают **одно** условие — `pool_delivery_where`.
 
-        Разойдись условия у счёта и у выборки — число страниц перестало бы
-        отвечать содержимому, и последняя выходила бы пустой. Поэтому счёт идёт
-        обёрткой вокруг **того же** запроса, вместе с его `LEFT JOIN`-ами.
+        Разойдись они — число страниц перестало бы отвечать содержимому, и последняя
+        выходила бы пустой. Таких мест у журнала теперь четыре: счёт и выборка по
+        двум таблицам, — и все четыре зовут одну функцию.
         """
         got = await _ask(auth_client, per=3)
 
@@ -216,8 +221,7 @@ class TestThePagerIsOnThePage:
         `pages: undefined` нарисовало бы пейджер из одной мёртвой страницы вместо
         пустого подвала.
         """
-        got = (await auth_client.get('/api/dating/favorite-mail',
-                                     params={'site_id': 0,
-                                             'status_': 'delivery'})).json()
+        got = (await auth_client.get('/api/dating/favorite-mail/delivery',
+                                     params={'site_id': 0})).json()
 
         assert got['pages'] == 1 and got['page'] == 1 and got['total'] == 0
