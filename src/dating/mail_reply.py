@@ -50,7 +50,7 @@ from src.dating.answer import answer_mail_reply
 from src.dating.json_column import json_column_load
 from src.dating.mail_agent import DatingMailAgentError
 from src.dating.online import online_show
-from src.dating.pool_pair import pool_delivery_where
+from src.dating.pool_pair import pool_delivery_where, pool_pick_where
 
 # Сколько писем переписки показываем человеку в окне ответа.
 #
@@ -325,13 +325,14 @@ def mail_reply_answer(row: dict) -> dict:
             'in_message_id': int(row.get('in_message_id') or 0)}
 
 
-def mail_reply_delivery_scope(profile_id: int = 0,
-                              favorites: bool = False) -> tuple[str, str, list]:
+def mail_reply_delivery_scope(profile_id: int = 0, favorites: bool = False,
+                              uid: str = '') -> tuple[str, str, list]:
     """Отбор ответов для журнала доставки: приклейка, условие и аргументы.
 
     Args:
         profile_id: сузить до одной анкеты. Ноль — все анкеты сайта.
         favorites: только пары, которые есть в избранных этой анкеты.
+        uid: сузить до одного собеседника. Пусто — все.
 
     Returns:
         tuple: (`JOIN`-часть, кусок `WHERE` после `r.site_id = %s`, аргументы к нему).
@@ -351,18 +352,17 @@ def mail_reply_delivery_scope(profile_id: int = 0,
     join = ('  JOIN favorite fv'
             '    ON fv.profile_id = r.profile_id AND fv.uid = r.uid'
             if favorites else '')
-    where = pool_delivery_where('r')
-    args = []
+    # ⚠ Отбор именами — общей `pool_pick_where`, той же, что у писем и инвайтов:
+    # шесть своих копий расходятся с первой правкой, и забытый `strip()` у номера
+    # превращает «отобрать по Семёну» в «ничего не нашлось», молча.
+    pick, args = pool_pick_where('r', profile_id, uid)
 
-    if int(profile_id or 0):
-        where += ' AND r.profile_id = %s'
-        args.append(int(profile_id))
-
-    return join, where, args
+    return join, pool_delivery_where('r') + pick, args
 
 
 async def mail_reply_delivery(db, site_id: int, take: int, profile_id: int = 0,
-                              favorites: bool = False) -> list[dict]:
+                              favorites: bool = False,
+                              uid: str = '') -> list[dict]:
     """Ответы для журнала доставки — свежие сверху, готовыми строками страницы.
 
     Args:
@@ -372,6 +372,7 @@ async def mail_reply_delivery(db, site_id: int, take: int, profile_id: int = 0,
         take: сколько свежих строк взять (см. приём слияния у зовущих).
         profile_id: сузить до одной анкеты.
         favorites: только пары из избранных.
+        uid: сузить до одного собеседника — отбор именем в журнале.
 
     Returns:
         list: строки с `kind = 'reply'` и именами полей общей строки журнала.
@@ -386,7 +387,7 @@ async def mail_reply_delivery(db, site_id: int, take: int, profile_id: int = 0,
     запрос ответов её не читает) — пустая строка честнее нуля: `talkSide` без номера
     просто не покажет его.
     """
-    join, where, args = mail_reply_delivery_scope(profile_id, favorites)
+    join, where, args = mail_reply_delivery_scope(profile_id, favorites, uid)
 
     await db.execute(
         'SELECT r.id, r.site_id, r.profile_id, r.mail_in_id, r.uid, r.name,'

@@ -5664,20 +5664,13 @@
     // ⚠ Отвеченные инвайты при этом **остаются в «Диалогах»**: пришёл ответ —
     // значит разговор пошёл, и ничем от прочих он не отличается.
     let inviteSent = [];
-    // Отбор именами: анкета и собеседник — **порознь**, и оба могут быть подняты.
-    // Ноль и пустая строка означают «все».
-    //
-    // ⚠ **Отбор начинается в карточке**, а не в полосе сверху. Полоса сперва
-    // перечисляла всех, кто встречается в журнале, — за сутки это полторы сотни
-    // имён, стена чипсов поверх самого журнала. Имя, по которому хотят отобрать,
-    // человек **видит перед собой в строке**: там он по нему и нажимает.
-    //
-    // Имя храним рядом с номером: полоса отбора показывает его, а строк, из
-    // которых его можно было бы взять, на других страницах может не быть.
-    let inviteSentGirl = 0;
-    let inviteSentGirlName = '';
-    let inviteSentUid = '';
-    let inviteSentUidName = '';
+    // Отбор именами — **общим `sentPicker`**, тем же, что у двух журналов писем.
+    // Он завёлся здесь и оттуда перешёл к соседям: вопрос у трёх журналов один.
+    // Устройство и доводы — у самой выкройки.
+    const inviteSentPick = sentPicker(() => {
+        inviteSentPage = 0;
+        inviteSentLoad();
+    });
     // Страница, с нуля — как у прочих пейджеров панели (`pagerRender`).
     let inviteSentPage = 0;
     let inviteSentPages = 1;
@@ -5715,7 +5708,7 @@
             const got = (await getData(
                 `${BASE}/api/dating/invite?site_id=${site}&status_=delivery`
                 + `&page=${inviteSentPage + 1}&per=${INVITE_SENT_PER}`
-                + `&profile_id=${inviteSentGirl}&uid=${encodeURIComponent(inviteSentUid)}`
+                + inviteSentPick.params()
             )) || {};
 
             inviteSent = got.result || [];
@@ -5735,86 +5728,15 @@
         inviteSentPaint();
     }
 
-    // Нажатие по имени в карточке: отобрать по нему. То же имя второй раз —
-    // снять отбор, как и крестик в полосе.
-    //
-    // ⚠ **Страницу сбрасываем в первую.** Отбор меняет длину журнала, и седьмая
-    // страница «всех» почти наверняка пуста у одного собеседника — человек нажал
-    // бы имя и увидел пустоту.
-    //
-    // ⚠ **По одному имени на сторону.** Нажатие на другую девушку заменяет
-    // прежнюю, а не добавляет вторую: «от Соломии или от Дианы» — вопрос, которого
-    // никто не задавал, а показывать в полосе десяток чипсов значит вернуть ту
-    // самую стену, от которой уходим.
-    function inviteSentPick(what, value, name) {
-        if (what === 'girl') {
-            const same = inviteSentGirl === Number(value);
-            inviteSentGirl = same ? 0 : Number(value);
-            inviteSentGirlName = same ? '' : String(name || '');
-        } else {
-            const same = inviteSentUid === String(value);
-            inviteSentUid = same ? '' : String(value);
-            inviteSentUidName = same ? '' : String(name || '');
-        }
-
-        inviteSentPage = 0;
-        inviteSentLoad();
-    }
-
-    // Полоса отбора: только выбранное, каждое — с крестиком.
-    //
-    // ⚠ Пусто — полосы нет вовсе (`.sent-filter:empty`): пустая рамка над списком
-    // обещала бы отбор, которого не делали.
-    function inviteSentFilterPaint() {
-        const box = slot('invite-sent-filter');
-        if (!box) return;
-
-        const chips = [];
-        if (inviteSentGirl) {
-            chips.push({what: 'girl', label: 'от кого',
-                        name: inviteSentGirlName || `#${inviteSentGirl}`,
-                        value: inviteSentGirl});
-        }
-        if (inviteSentUid) {
-            chips.push({what: 'uid', label: 'кому',
-                        name: inviteSentUidName || inviteSentUid,
-                        value: inviteSentUid});
-        }
-
-        box.innerHTML = chips.map(one =>
-            `<span class="sent-chip on" title="Отобрано: ${esc(one.label)}">`
-            + `<span class="sent-chip-label on">${esc(one.label)}:</span> `
-            + `${esc(one.name)}`
-            // ⚠ Крестик — **кнопка внутри чипса**, а не весь чипс: по имени в
-            // полосе тянет нажать, чтобы «посмотреть ещё раз», и снимать отбор
-            // этим движением было бы неожиданно.
-            + `<button type="button" class="sent-chip-x" data-what="${one.what}"`
-            + ' title="Снять отбор">×</button></span>').join('');
-
-        box.querySelectorAll('.sent-chip-x').forEach(btn =>
-            btn.addEventListener('click', () => {
-                if (btn.dataset.what === 'girl') {
-                    inviteSentGirl = 0;
-                    inviteSentGirlName = '';
-                } else {
-                    inviteSentUid = '';
-                    inviteSentUidName = '';
-                }
-
-                inviteSentPage = 0;
-                inviteSentLoad();
-            }));
-    }
-
     function inviteSentPaint() {
         const box = slot('invite-sent');
         if (!box) return;
 
         // Полосу рисуем всегда, даже когда список пуст: пустота бывает
         // **следствием отбора**, и снять его должно быть чем.
-        inviteSentFilterPaint();
+        inviteSentPick.paint('invite-sent-filter');
 
-        const filtered = inviteSentGirl || inviteSentUid;
+        const filtered = inviteSentPick.on();
         const delivered = inviteSent.filter(row => row.status === 'sent').length;
         const failed = inviteSent.length - delivered;
 
@@ -5849,20 +5771,138 @@
         // по имени начинается **в карточке**, где имя и так перед глазами.
         box.innerHTML = sentRows(inviteSent, {
             okWord: 'ушло',
-            pick: (what, value) => what === 'girl'
-                ? inviteSentGirl === Number(value)
-                : inviteSentUid === String(value),
+            pick: inviteSentPick.is,
         });
 
-        // ⚠ Обработчики — после отрисовки: строки переписываются целиком своим
-        // кругом, и повешенное на прежние узлы не пережило бы первого обновления.
-        box.querySelectorAll('.sent-pick').forEach(one =>
-            one.addEventListener('click', () => one.dataset.girl
-                ? inviteSentPick('girl', one.dataset.girl, one.dataset.name)
-                : inviteSentPick('uid', one.dataset.uid, one.dataset.name)));
+        inviteSentPick.bind(box);
 
         box.scrollTop = scroll;
         inviteSentPagerPaint();
+    }
+
+    // ── Отбор именами в журнале доставки: один на все три журнала ────────────
+    //
+    // ⚠⚠ **Один объект, а не три набора переменных.** Отбор завёлся у инвайтов и
+    // оттуда просился к соседям: у трёх журналов один вопрос — «всё, что уходило от
+    // этой девушки» и «всё, что уходило ему». Скопируй его — и это девяносто строк
+    // трижды: состояние, доводы запроса, полоса чипсов, обработчики. Расходятся
+    // такие копии на первой правке, и первым отваливается `encodeURIComponent` у
+    // номера.
+    //
+    // ⚠ **Отбор начинается в карточке**, а не в полосе сверху. Полоса сперва
+    // перечисляла всех, кто встречается в журнале, — за сутки это полторы сотни
+    // имён, стена чипсов поверх самого журнала. Имя, по которому хотят отобрать,
+    // человек **видит перед собой в строке**: там он по нему и нажимает.
+    //
+    // ⚠ Имя храним рядом с номером: полоса показывает его, а строк, из которых его
+    // можно было бы взять, на других страницах может не быть.
+    //
+    // ⚠⚠ Считает отбор **сервер**, вместе со страницей. Отбери мы среди присланного,
+    // «все письма Семёну» означало бы «те из них, что попали на открытую страницу».
+    function sentPicker(reload) {
+        const one = {girl: 0, girlName: '', uid: '', uidName: ''};
+
+        // Доводы запроса. ⚠ Номер собеседника — через `encodeURIComponent`: у него
+        // бывают не только цифры, и `+` в адресе означал бы пробел.
+        one.params = () => `&profile_id=${one.girl}`
+            + `&uid=${encodeURIComponent(one.uid)}`;
+
+        one.on = () => Boolean(one.girl || one.uid);
+
+        // Поднято ли это имя — этим выкройка строки красит кнопку.
+        one.is = (what, value) => what === 'girl'
+            ? one.girl === Number(value)
+            : one.uid === String(value);
+
+        // Нажатие по имени в строке: отобрать по нему. То же имя второй раз — снять
+        // отбор, как и крестик в полосе.
+        //
+        // ⚠ **Страницу сбрасываем в первую.** Отбор меняет длину журнала, и седьмая
+        // страница «всех» почти наверняка пуста у одного собеседника — человек нажал
+        // бы имя и увидел пустоту.
+        //
+        // ⚠ **По одному имени на сторону.** Нажатие на другую девушку заменяет
+        // прежнюю, а не добавляет вторую: «от Соломии или от Дианы» — вопрос, которого
+        // никто не задавал, а десяток чипсов в полосе вернул бы ту самую стену.
+        one.pick = (what, value, name) => {
+            if (what === 'girl') {
+                const same = one.girl === Number(value);
+                one.girl = same ? 0 : Number(value);
+                one.girlName = same ? '' : String(name || '');
+            } else {
+                const same = one.uid === String(value);
+                one.uid = same ? '' : String(value);
+                one.uidName = same ? '' : String(name || '');
+            }
+
+            reload();
+        };
+
+        one.clear = (what) => {
+            if (what === 'girl') {
+                one.girl = 0;
+                one.girlName = '';
+            } else {
+                one.uid = '';
+                one.uidName = '';
+            }
+
+            reload();
+        };
+
+        // Полоса отбора: только выбранное, каждое — с крестиком.
+        //
+        // ⚠ Пусто — полосы нет вовсе (`.sent-filter:empty`): пустая рамка над списком
+        // обещала бы отбор, которого не делали.
+        one.paint = (name) => {
+            const box = slot(name);
+            if (!box) return;
+
+            const chips = [];
+            if (one.girl) {
+                chips.push({what: 'girl', label: 'от кого',
+                            name: one.girlName || `#${one.girl}`});
+            }
+            if (one.uid) {
+                chips.push({what: 'uid', label: 'кому',
+                            name: one.uidName || one.uid});
+            }
+
+            box.innerHTML = chips.map(chip =>
+                `<span class="sent-chip on" title="Отобрано: ${esc(chip.label)}">`
+                + `<span class="sent-chip-label on">${esc(chip.label)}:</span> `
+                + `${esc(chip.name)}`
+                // ⚠ Крестик — **кнопка внутри чипса**, а не весь чипс: по имени в
+                // полосе тянет нажать, чтобы «посмотреть ещё раз», и снимать отбор
+                // этим движением было бы неожиданно.
+                + `<button type="button" class="sent-chip-x" data-what="${chip.what}"`
+                + ' title="Снять отбор">×</button></span>').join('');
+
+            box.querySelectorAll('.sent-chip-x').forEach(btn =>
+                btn.addEventListener('click', () => one.clear(btn.dataset.what)));
+        };
+
+        // ⚠ Обработчики вешаются **после** отрисовки строк: список переписывается
+        // целиком своим кругом, и повешенное на прежние узлы не пережило бы первого
+        // обновления.
+        //
+        // ⚠⚠ `stopPropagation` обязателен, и не у инвайтов, а у двух журналов писем:
+        // там **вся строка** открывает окно записи. Без него нажатие по имени делало
+        // бы две вещи разом — отбирало список и открывало окно поверх него, — причём
+        // окно ещё и с той строкой, которую человек нажал мимоходом.
+        one.bind = (box) => {
+            box.querySelectorAll('.sent-pick').forEach(el =>
+                el.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (el.dataset.girl) {
+                        one.pick('girl', el.dataset.girl, el.dataset.name);
+                    } else {
+                        one.pick('uid', el.dataset.uid, el.dataset.name);
+                    }
+                }));
+        };
+
+        return one;
     }
 
     // ── Строка журнала доставки: одна выкройка на все три журнала ────────────
@@ -5876,7 +5916,7 @@
     //
     // ⚠ Различия, которые остались, — по существу, и каждое названо доводом:
     //
-    //     pick  имена — кнопки отбора (инвайты: журнал растёт на реплику в минуту)
+    //     pick  поднято ли это имя в отборе (`sentPicker.is`) — у всех трёх
     //     kind  чипс «ответ на письмо» (письма: два источника в одном журнале)
     //     state своё слово исхода: у инвайта «ушло», у письма «доставлено»
     //
@@ -7234,6 +7274,18 @@
         }
     }
 
+    // Отбор именами — **общий `sentPicker`**, тот же, что у доставки инвайтов.
+    //
+    // ⚠⚠ Отбор по девушке и выбор анкеты в списке слева отвечают на один вопрос, и
+    // старший здесь **отбор**: он сделан нажатием, назван чипсом и снимается
+    // крестиком, а выбор в списке — окружение, про которое журнал знать не обязан.
+    // Выбери человек Диану в списке и нажми «Elena» в строке — увидит Elena, и полоса
+    // прямо скажет, почему.
+    const favSentPick = sentPicker(() => {
+        favSentPage = 0;
+        favSentLoad();
+    });
+
     async function favSentLoad() {
         const site = siteId();
         if (!site) {
@@ -7264,9 +7316,13 @@
             // один `LIMIT 300` без счёта: пока журнал был короче, разница не
             // проявлялась, а дальше трёхсот писем не показывалось **вовсе и
             // молча** — ни пейджера, ни намёка, что за краем что-то есть.
+            // ⚠ Анкета — из отбора, а нет отбора — из выбора в списке слева:
+            // вопрос один, и два ответа на него противоречили бы друг другу.
+            const girl = favSentPick.girl || openId || 0;
             const got = (await getData(
                 `${BASE}/api/dating/favorite-mail/delivery?site_id=${site}`
-                + `&profile_id=${openId || 0}`
+                + `&profile_id=${girl}`
+                + `&uid=${encodeURIComponent(favSentPick.uid)}`
                 + `&page=${favSentPage + 1}&per=${FAV_SENT_PER}`)) || {};
 
             favSent = got.result || [];
@@ -7291,6 +7347,10 @@
         const box = slot('fav-sent');
         if (!box) return;
 
+        // Полосу рисуем всегда, даже когда список пуст: пустота бывает **следствием
+        // отбора**, и снять его должно быть чем.
+        favSentPick.paint('fav-sent-filter');
+
         const delivered = favSent.filter(row => row.status === 'sent').length;
         const failed = favSent.length - delivered;
 
@@ -7312,9 +7372,15 @@
             : scope);
 
         if (!favSent.length) {
-            box.innerHTML = '<div class="mail-sent-empty">Писем избранным с этого '
-                + 'сайта пока не уходило.<br>Здесь появятся отправленные — и те, '
-                + 'что отправить не вышло, с причиной.</div>';
+            // ⚠ Три пустоты — три разных ответа. «Писем не уходило» на месте «по
+            // этому отбору ничего нет» отправило бы человека проверять занятие,
+            // вместо того чтобы снять отбор.
+            box.innerHTML = favSentPick.on()
+                ? '<div class="mail-sent-empty">По этому отбору ничего нет.<br>'
+                  + 'Снимите его крестиком в полосе сверху.</div>'
+                : '<div class="mail-sent-empty">Писем избранным с этого '
+                  + 'сайта пока не уходило.<br>Здесь появятся отправленные — и те, '
+                  + 'что отправить не вышло, с причиной.</div>';
             // ⚠ Пейджер рисуем и здесь: пустота бывает **следствием фильтра по
             // анкете**, а журнал сайта при этом не пуст — уйди пейджер с экрана
             // вместе со строками, человек решил бы, что журнал кончился.
@@ -7333,6 +7399,9 @@
         // которого не задают. То же правило, что на «Письмах → Доставка».
         box.innerHTML = sentRows(favSent, {
             kind: true,
+            // ⚠ Имена — кнопки отбора, как у инвайтов: журнал длинный (83 строки на
+            // живом сайте), и «всё, что уходило ему» иначе приходится искать глазами.
+            pick: favSentPick.is,
             // ⚠ `failed` у письма значит «сайт отверг», и слово у него своё:
             // «не доставлено» против «не ушло» у застрявшего в пуле.
             failWord: 'не доставлено',
@@ -7340,6 +7409,12 @@
 
         // ⚠ Обработчики — после отрисовки: строки переписываются целиком при каждом
         // приходе журнала, и повешенное на прежние узлы не пережило бы обновления.
+        favSentPick.bind(box);
+
+        // ⚠ Щелчок по строке открывает окно записи — **и он не должен спорить с
+        // отбором по имени**: `.sent-pick` внутри строки гасит всплытие сам
+        // (`stopPropagation` в выкройке), иначе нажатие на имя открывало бы ещё и
+        // окно поверх только что отобранного списка.
         box.querySelectorAll('.mail-sent-row').forEach(el =>
             el.addEventListener('click',
                 () => favSentOpen(Number(el.dataset.index))));
@@ -8092,6 +8167,16 @@
         mailSentLoad();
     }
 
+    // Отбор именами — тот же общий `sentPicker`, что у двух соседних журналов.
+    //
+    // ⚠ Здесь он нужнее всех: журнал сливает рассылку и ответы, на живом сайте это
+    // 149 строк, и «что мы вообще писали этому человеку» иначе читается глазами по
+    // шести страницам.
+    const mailSentPick = sentPicker(() => {
+        mailSentPage = 0;
+        mailSentLoad();
+    });
+
     async function mailSentLoad() {
         const site = siteId();
         if (!site) {
@@ -8113,6 +8198,7 @@
             // страница не должна — карточки выглядят одинаково, а вещи разные.
             const got = (await getData(
                 `${BASE}/api/dating/mailing/delivery?site_id=${site}`
+                + mailSentPick.params()
                 + `&page=${mailSentPage + 1}&per=${MAIL_SENT_PER}`)) || {};
 
             mailSent = got.result || [];
@@ -8137,6 +8223,10 @@
         const box = slot('mail-sent');
         if (!box) return;
 
+        // Полосу рисуем всегда, даже когда список пуст: пустота бывает **следствием
+        // отбора**, и снять его должно быть чем.
+        mailSentPick.paint('mail-sent-filter');
+
         const delivered = mailSent.filter(row => row.status === 'sent').length;
         const failed = mailSent.length - delivered;
 
@@ -8154,9 +8244,15 @@
             : '');
 
         if (!mailSent.length) {
-            box.innerHTML = '<div class="mail-sent-empty">Писем с этого сайта пока '
-                + 'не уходило.<br>Здесь появятся отправленные — и те, что '
-                + 'отправить не вышло, с причиной.</div>';
+            // ⚠ Две пустоты — два разных ответа: «ничего не уходило» на месте «по
+            // этому отбору ничего нет» отправило бы человека проверять рассылку,
+            // вместо того чтобы снять отбор.
+            box.innerHTML = mailSentPick.on()
+                ? '<div class="mail-sent-empty">По этому отбору ничего нет.<br>'
+                  + 'Снимите его крестиком в полосе сверху.</div>'
+                : '<div class="mail-sent-empty">Писем с этого сайта пока '
+                  + 'не уходило.<br>Здесь появятся отправленные — и те, что '
+                  + 'отправить не вышло, с причиной.</div>';
             // ⚠ Пейджер рисуем и здесь: пустая страница бывает у укоротившегося
             // журнала, и уйди пейджер с экрана вместе со строками — вернуться на
             // предыдущую было бы нечем.
@@ -8175,7 +8271,11 @@
             // ⚠ `failed` у письма значит «сайт отверг», и слово у него своё:
             // «не доставлено» против «не ушло» у застрявшего в пуле.
             failWord: 'не доставлено',
+            // Имена — кнопки отбора, как у двух соседних журналов.
+            pick: mailSentPick.is,
         });
+
+        mailSentPick.bind(box);
 
         box.querySelectorAll('.mail-sent-row').forEach(el =>
             el.addEventListener('click', () => letterOpen(Number(el.dataset.index),
@@ -12537,6 +12637,16 @@
         // Страница собеседниц и раскрытый диалог — про прежнюю анкету: седьмая
         // страница чужих собеседниц и чужой открытый диалог ничего не значат.
         contactsPage = 0;
+        // ⚠⚠ **Отбор по девушке в журнале избранных снимаем.** Он и выбор анкеты
+        // отвечают на один вопрос, и старший в журнале — отбор; но выбор анкеты
+        // человек только что сделал **явно**, а значит спорить с ним нельзя: иначе
+        // нажатие на другую девушку в списке не меняло бы журнал вовсе, и это
+        // читалось бы как «страница сломалась».
+        //
+        // ⚠ Отбор по собеседнику остаётся: «все письма ему» — вопрос про человека,
+        // а не про анкету, и смена анкеты его не отменяет.
+        favSentPick.girl = 0;
+        favSentPick.girlName = '';
         workPaint();
     }
 

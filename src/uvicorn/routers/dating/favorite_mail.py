@@ -40,7 +40,8 @@ from src.dating.mail_send import (DatingMailSendError, mail_send_mark,
                                          mail_send_one)
 from src.dating.online import online_show
 from src.dating.pool_pair import (pool_delivery_where, pool_pair_girl,
-                                         pool_pair_joins, pool_pair_select)
+                                         pool_pair_joins, pool_pair_select,
+                                         pool_pick_where)
 from src.uvicorn.routers.dating.chat import chat_dialogs_size
 from src.uvicorn.routers.dating.site_ import site_setting
 from src.uvicorn.routers.setting import setting_timezone_hours
@@ -228,6 +229,7 @@ async def favorite_mail_list(site_id: int = 0, status_: str = 'draft',
 
 @router.get('/delivery', include_in_schema=False)
 async def favorite_mail_delivery(site_id: int = 0, profile_id: int = 0,
+                                        uid: str = '',
                                         page: int = 1, per: int = 0,
                                         user: AuthUser = Depends(auth_required)):
     """Журнал доставки избранным: **приставание и ответы одним списком**, страницей.
@@ -239,6 +241,12 @@ async def favorite_mail_delivery(site_id: int = 0, profile_id: int = 0,
             ⚠ **Фильтр, а не условие показа**, как у списка разговоров на той же
             вкладке: без выбора журнал полон и отвечает на «что вообще уходило
             избранным этого сайта».
+        uid: только письма этому собеседнику. Пусто — всем.
+
+            ⚠ Отбор именами — нажатием по имени **в строке журнала**, как у инвайтов
+            (§3.9). Обе стороны порознь и обе разом: «от Дианы и ему» — законный
+            вопрос. Считается он **на сервере**: отбери мы среди присланного, «все
+            письма Семёну» означало бы «те, что попали на открытую страницу».
         page: страница, с единицы. Больше последней — отдаём последнюю.
         per: сколько строк на ней. Ноль — умолчание `FAVORITE_MAIL_DELIVERY_PER`.
 
@@ -297,9 +305,11 @@ async def favorite_mail_delivery(site_id: int = 0, profile_id: int = 0,
     # ⚠ Отбор ответов — **общими кусками** (`mail_reply_delivery_scope`): те же, что
     # уйдут в чтение строк ниже. Своё условие здесь разошлось бы со чтением, и число
     # страниц перестало бы отвечать содержимому.
-    join, where, args = mail_reply_delivery_scope(int(profile_id), favorites=True)
-    own = ' AND m.profile_id = %s' if int(profile_id or 0) else ''
-    own_args = [int(profile_id)] if int(profile_id or 0) else []
+    join, where, args = mail_reply_delivery_scope(int(profile_id), favorites=True,
+                                                 uid=str(uid or ''))
+    # ⚠ Отбор по своей таблице — той же `pool_pick_where`, что и у ответов выше:
+    # условие одно, и два его написания разошлись бы на первой правке.
+    own, own_args = pool_pick_where('m', int(profile_id), str(uid or ''))
 
     async with mysql_get_db_async() as db:
         await db.execute(
@@ -343,7 +353,8 @@ async def favorite_mail_delivery(site_id: int = 0, profile_id: int = 0,
         # ⚠ Ответы — той же общей функцией, что у журнала писем, с одним отличием:
         # `favorites=True`. Отличие и есть весь смысл этой вкладки.
         replies = await mail_reply_delivery(db, int(site_id), take,
-                                           int(profile_id), favorites=True)
+                                           int(profile_id), favorites=True,
+                                           uid=str(uid or ''))
 
     # ⚠ Ключ сортировки — **время события**, и он же стоит в обоих запросах.
     # Разойдись они — срез брал бы строки не в том порядке, в котором их считали.

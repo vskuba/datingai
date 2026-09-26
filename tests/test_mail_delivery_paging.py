@@ -331,8 +331,7 @@ class TestOnePatternForThreeJournals:
     def test_the_differences_are_named_options(self):
         """⚠ Различия остались, но каждое — довод с именем, а не своя копия.
 
-        `kind` — два источника в одном журнале, `pick` — отбор по имени у
-        растущего журнала инвайтов.
+        `kind` — два источника в одном журнале, `pick` — поднято ли имя в отборе.
 
         ⚠ Довода `pool` («осталось в пуле») больше нет: пометку убрали, и довод
         остался бы обещанием, которого выкройка не исполняет.
@@ -345,7 +344,7 @@ class TestOnePatternForThreeJournals:
         # Проверяем это прямо — иначе тест молчал бы о её возврате.
         assert 'pool: true' not in page, \
             'довод `pool` вернулся, а пометку под него убрали'
-        assert 'pick: (what, value)' in page, \
+        assert 'pick: inviteSentPick.is' in page, \
             'отбор инвайтов потерян при сведении к общей выкройке'
 
     def test_the_mail_journal_has_a_pager(self):

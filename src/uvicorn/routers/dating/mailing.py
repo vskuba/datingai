@@ -27,10 +27,12 @@ from src.dating.json_column import json_column_load
 from src.dating.mail import MAIL_BODY_MAX
 from src.dating.mail_send import (DatingMailSendError, mail_send_mark,
                                          mail_send_one)
-from src.dating.mail_reply import mail_reply_delivery
+from src.dating.mail_reply import (mail_reply_delivery,
+                                          mail_reply_delivery_scope)
 from src.dating.online import online_show
 from src.dating.pool_pair import (pool_delivery_where, pool_pair_girl,
-                                         pool_pair_joins, pool_pair_select)
+                                         pool_pair_joins, pool_pair_select,
+                                         pool_pick_where)
 from src.dating.send_round import send_why
 from src.dating.mailing import (MAILING_BATCH_DEFAULT,
                                        MAILING_BATCH_MAX,
@@ -161,12 +163,22 @@ async def mailing_list(site_id: int = 0, status_: str = 'draft',
 
 
 @router.get('/delivery', include_in_schema=False)
-async def mailing_delivery(site_id: int = 0, page: int = 1, per: int = 0,
+async def mailing_delivery(site_id: int = 0, profile_id: int = 0, uid: str = '',
+                                  page: int = 1, per: int = 0,
                                   user: AuthUser = Depends(auth_required)):
     """Журнал доставки писем: **рассылка и ответы одним списком**, страницей.
 
     Args:
         site_id: сайт-закладка. Ноль — пустой список.
+        profile_id: только письма этой анкеты. Ноль — всех.
+        uid: только письма этому собеседнику. Пусто — всем.
+
+            ⚠ Отбор именами — нажатием по имени **в строке журнала**, как у инвайтов
+            (§3.9) и у писем избранным. Обе стороны порознь и обе разом.
+
+            ⚠⚠ Считается он **на сервере**, вместе со страницей: отбери мы среди
+            присланного, «все письма Семёну» означало бы «те из них, что попали на
+            открытую страницу», — а журнал растёт на письмо в минуту.
         page: страница, с единицы. Больше последней — отдаём последнюю.
         per: сколько строк на ней. Ноль — умолчание `MAILING_DELIVERY_PER`.
 
@@ -211,15 +223,22 @@ async def mailing_delivery(site_id: int = 0, page: int = 1, per: int = 0,
     # страницу слияния.
     take = page * per
 
+    # ⚠ Отбор именами — общей `pool_pick_where` для писем и `…_scope` для ответов:
+    # то же условие, что уйдёт в выборку ниже. Разойдись счёт с выборкой — число
+    # страниц перестало бы отвечать содержимому.
+    own, own_args = pool_pick_where('m', int(profile_id), str(uid or ''))
+    _, reply_where, reply_args = mail_reply_delivery_scope(int(profile_id),
+                                                          uid=str(uid or ''))
+
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT (SELECT COUNT(*) FROM mailing m WHERE m.site_id = %s'
-            + pool_delivery_where('m') +
+            + pool_delivery_where('m') + own +
             ') AS letters,'
             ' (SELECT COUNT(*) FROM mail_reply r WHERE r.site_id = %s'
-            + pool_delivery_where('r') +
+            + reply_where +
             ') AS replies',
-            (int(site_id), int(site_id)))
+            tuple([int(site_id)] + own_args + [int(site_id)] + reply_args))
         counts = (await db.fetchone()) or {}
         total = int(counts.get('letters') or 0) + int(counts.get('replies') or 0)
 
@@ -243,13 +262,13 @@ async def mailing_delivery(site_id: int = 0, page: int = 1, per: int = 0,
             ' LEFT JOIN mail t ON t.id = m.mail_id'
             + pool_pair_joins() +
             ' WHERE m.site_id = %s'
-            + pool_delivery_where('m')
+            + pool_delivery_where('m') + own
             # ⚠ По времени события, а не по номеру: журнал читают как ленту «что
             # происходило», и неудача, случившаяся позже удачи, обязана стоять выше.
             # У неудачной `sent_at` нет вовсе — его снимает сама неудача.
             + ' ORDER BY COALESCE(m.sent_at, m.created_at) DESC, m.id DESC'
             ' LIMIT %s',
-            (int(site_id), take))
+            tuple([int(site_id)] + own_args + [take]))
         letters = [{**_answer(row), 'kind': 'mailing'}
                    for row in (await db.fetchall()) or []]
 
@@ -259,7 +278,8 @@ async def mailing_delivery(site_id: int = 0, page: int = 1, per: int = 0,
         #
         # ⚠ Здесь без отбора по избранным: журнал писем отвечает на «что вообще
         # уходило с сайта», и ответ незнакомому — такой же ответ.
-        replies = await mail_reply_delivery(db, int(site_id), take)
+        replies = await mail_reply_delivery(db, int(site_id), take,
+                                           int(profile_id), uid=str(uid or ''))
 
     # ⚠ Ключ сортировки — **время события**, и он же стоит в обоих запросах.
     # Разойдись они — срез брал бы строки не по тому порядку, в котором их считали.
