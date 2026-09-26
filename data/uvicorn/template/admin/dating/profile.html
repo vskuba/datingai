@@ -12864,21 +12864,6 @@
         tablePaint(0);
     }
 
-    // Долгое действие: помечаем анкету занятой, чтобы перерисовка не вернула
-    // кнопке прежний вид и её не нажали второй раз. Журнал тикает всё это время —
-    // ход входа виден строками, а не одной крутилкой.
-    async function longRun(row, run) {
-        busy.add(row.id);
-        tablePaint(0);
-        try {
-            return await run();
-        } finally {
-            busy.delete(row.id);
-            await profilesLoad();
-        }
-    }
-
-
     // ── Обвязка страницы ─────────────────────────────────────────────────────
 
     siteEl.addEventListener('change', () => {

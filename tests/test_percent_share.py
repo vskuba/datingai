@@ -22,7 +22,7 @@ import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating.percent import percent_hit, percent_share
+from src.dating.percent import percent_share
 
 pytestmark = pytest.mark.mail
 
@@ -141,17 +141,25 @@ class TestNobodyKeepsAPrivateCopy:
             assert 'percent_share' in text, f'{name}.py не зовёт общую долю'
 
 
-class TestTheDiceLivesHereToo:
-    """⚠ Жребий рядом с чтением: порознь их и путали — `random.random() <`
-    писалось руками в семи местах, и каждое было поводом ошибиться знаком."""
+class TestTheEdgesMeanWhatTheySay:
+    """⚠⚠ Края доли значат «никогда» и «всегда» — и это проверяется прямо.
 
-    async def test_zero_never_hits(self, site_set):
+    Прежде здесь стояла пара тестов на `percent_hit`: двадцать бросков при доле 0 и
+    при доле 100. Функции больше нет — жребий переехал к соседу (шаг `dice`), и её
+    не позвал никто ни разу. Но **проверяемое ею правило осталось**, и оно про
+    чтение: ноль обязан дойти нулём, а сотня — единицей.
+
+    ⚠ Без этих двух проверок незамеченным прошло бы, например, `max(0.01, …)` —
+    и «никогда» превратилось бы в «иногда». На жребии это ловилось двадцатью
+    бросками; на доле ловится одним сравнением, и точнее.
+    """
+
+    async def test_zero_reads_as_never(self, site_set):
         await site_set(KEY, 0)
 
-        assert not any([await percent_hit(STAND_SITE, KEY, 0.5)
-                        for _ in range(20)])
+        assert await percent_share(STAND_SITE, KEY, 0.5) == 0.0
 
-    async def test_a_hundred_always_hits(self, site_set):
+    async def test_a_hundred_reads_as_always(self, site_set):
         await site_set(KEY, 100)
 
-        assert all([await percent_hit(STAND_SITE, KEY, 0.5) for _ in range(20)])
+        assert await percent_share(STAND_SITE, KEY, 0.5) == 1.0
