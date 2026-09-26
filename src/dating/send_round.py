@@ -1,4 +1,4 @@
-"""Круг отправки: письма и ответы уходят сами, по одному.
+"""Круг отправки: письма каждого занятия уходят сами, по одному, по своему сроку.
 
 Выключатели сайта — `mailing_send_on`, `reply_send_on` и `favorite_mail_send_on`
 — только хранят решение; исполнитель у всех троих один, этот круг.
@@ -15,12 +15,17 @@
 **Смены сайта соблюдаются.** Шлём в те же часы, когда набираем
 (`mailing_schedule`): письмо в четыре утра выдаёт робота вернее любого текста.
 
-**По одному письму за заход, с паузой.** Пул в полсотни писем, ушедший залпом, —
-это рассылка робота, чем он и является. Пауза `send_every` (по умолчанию три
-минуты) делает поток похожим на человека, который сидит и пишет.
+**Каждый пул меряется своим сроком.** Ответы — `reply_every`, рассылку —
+`send_every`, письма избранным — их собственное условие выборки
+(`favorite_mail_gap`, см. `_oldest`). Полсотни писем, ушедшие залпом, — рассылка
+робота, чем она и является; пауза делает поток похожим на человека, который сидит
+и пишет. Но чужой темп пул не держит: ответ ждёт свой срок, а не рассылочный —
+человек написал и ждёт ответа, пока массовая рассылка копится в своей очереди.
 
-**Потолок в сутки.** `send_max_day`: даже за длинную смену уходит не больше, чем
-человек физически написал бы. Считается по факту отправки, а не по попыткам.
+**Норма суток — тоже своя.** У рассылки она сайтная (`send_max_day`, по её же
+ушедшим строкам): даже за длинную смену уходит не больше, чем человек физически
+написал бы. У писем избранным предел на человека и считается на наборе
+(`favorite_mail_per_day`); у ответов потолка нет вовсе — молчание отвечают.
 
 ⚠ **Письма избранным — только от анкеты, которая сейчас в сети** (`status =
 'online'`). Это возобновление затихшего разговора: человек читает письмо, пока
@@ -44,35 +49,33 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.json_column import json_column_load
 from src.dating.mail_send import (DatingMailSendError, mail_send_mark,
-                                         mail_send_one)
+                                  mail_send_one)
 from src.dating.schedule import schedule_now
 
-# Как часто круг просыпается. ⚠ Это **не** частота отправки: ту задаёт
-# `send_every`, а круг лишь смотрит, не пора ли.
+# Как часто круг просыпается. ⚠ Это **не** частота отправки: её задаёт каждый пул
+# своим сроком (`_POOLS`), а круг лишь смотрит, кому из них пора.
 SEND_ROUND_TICK_SEC = 30
 
-# Пауза между письмами, если у сайта не задана. Три минуты: полсотни писем уходят
-# за два с половиной часа — примерно столько человек и потратил бы.
-SEND_EVERY_DEFAULT = 180
+# Пулы круга: выключатель, таблица, настройка своего темпа и слово для шапки.
+# ⚠ Порядок — порядок обхода, не приоритет: пулы независимы, и каждый, кому пора,
+# уходит своим кругом, не дожидаясь соседей. Тем, у кого срок сайтный; у избранных
+# `None` — их время живёт в условии выборки (`favorite_mail_girl_free_sql`
+# в `_oldest`), а не в замке на сайт.
+_POOLS = (
+    ('reply_send_on', 'mail_reply', 'reply_every', 'ответов'),
+    ('favorite_mail_send_on', 'favorite_mail', None, 'писем избранным'),
+    ('mailing_send_on', 'mailing', 'send_every', 'рассылки'),
+)
 
-# ⚠ Нижний предел поверх настройки. Настройку правят руками, и «5» превратило бы
-# смену в очередь из сотни писем в час — то самое, от чего пауза и заведена.
-SEND_EVERY_MIN = 30
-
-# Сколько писем в сутки, если настройки нет. Столько человек и пишет за день.
-SEND_MAX_DAY_DEFAULT = 40
-
-# Настройки сайта.
-SEND_EVERY_SETTING = 'send_every'
-SEND_MAX_DAY_SETTING = 'send_max_day'
-
-# Когда сайт слал в последний раз: `{сайт: время}`. В памяти процесса — как у
-# круга присутствия: перезапуск смены стоит одного лишнего письма, а не потока.
-_sent_at: dict[int, float] = {}
+# Когда пул сайта слал в последний раз: `{(сайт, пул): время}`. В памяти процесса —
+# как у круга присутствия: перезапуск смены стоит одного лишнего письма, а не
+# потока. Избранных здесь нет: их темп отсчитывается от ушедших писем в базе,
+# а не от памяти процесса.
+_sent_at: dict[tuple[int, str], float] = {}
 
 
 async def send_round_run(offset_hours: int = 0) -> dict:
-    """Один круг: отправить по одному письму и ответу с каждого готового сайта.
+    """Один круг: по письму из каждого пула, которому пора, с каждого готового сайта.
 
     Args:
         offset_hours: часовое смещение панели — смены заданы местным временем.
@@ -93,31 +96,41 @@ async def send_round_run(offset_hours: int = 0) -> dict:
         # ⚠ Смены общие с набором: шлём тогда же, когда готовим. Пустое
         # расписание — «нет», а не «всегда»: правило одно на проект.
         if not schedule_now(json_column_load(site['mailing_schedule']),
-                                   minutes):
+                            minutes):
             continue
 
-        every = await _every(site_id)
-        if time.time() - _sent_at.get(site_id, 0.0) < every:
-            continue
+        for flag, table, setting, _said in _POOLS:
+            if not int(site[flag]):
+                continue
 
-        if await _today(site_id, offset_hours) >= await _max_day(site_id):
-            continue
+            # ⚠ Темп у пула свой: ответ ждёт `reply_every`, а не рассылочные
+            # три минуты; рассылка не смотрит на соседние сроки.
+            if setting and time.time() - _sent_at.get((site_id, table), 0.0) < \
+                    await _every(site_id, setting):
+                continue
 
-        # ⚠ Ответы вперёд прочего. Человек ждёт ответа на своё письмо, а
-        # рассылка уходит незнакомым: при общем потолке первым уходит то, чего
-        # ждут. Возобновление — между ними: собеседник знакомый, но не ждёт.
-        letter, table = await _next(site_id, bool(site['reply_send_on']),
-                                    bool(site['mailing_send_on']),
-                                    bool(site['favorite_mail_send_on']))
-        if not letter:
-            continue
+            # ⚠ Норма рассылки считает её собственные ушедшие письма: ответы
+            # и письма избранным под неё не попадают — у тех пределы свои
+            # и стоят на «Фаворитах».
+            if table == 'mailing' and \
+                    await _today(site_id, offset_hours) >= await _max_day(site_id):
+                continue
 
-        _sent_at[site_id] = time.time()
+            # ⚠ Строки с прежней ошибкой `_oldest` не берёт: неудача оставляет
+            # письмо в пуле с причиной, и круг к нему не возвращается — такое
+            # письмо ждёт человека. Иначе отказ сайта («слишком часто») стал бы
+            # бесконечным повтором ровно тогда, когда сайт просит остановиться.
+            letter = await _oldest(site_id, table)
+            if not letter:
+                continue
 
-        if await _send(letter, table):
-            sent += 1
-        else:
-            failed += 1
+            if setting:
+                _sent_at[(site_id, table)] = time.time()
+
+            if await _send(letter, table):
+                sent += 1
+            else:
+                failed += 1
 
     if sent or failed:
         logger_info(f'[dating] круг отправки: ушло {sent}'
@@ -132,8 +145,8 @@ async def send_why(site_id: int, table: str, offset_hours: int = 0) -> str:
     Args:
         site_id: сайт-закладка.
         table: чей пул спрашивают — `mailing`, `mail_reply` или
-            `favorite_mail`. У каждого свой выключатель, а всё прочее —
-            смены, пауза, дневной потолок — **общее**: отправитель один.
+            `favorite_mail`. У каждого занятия теперь всё своё: и выключатель,
+            и срок, и норма — потому и ответ у каждого свой.
         offset_hours: часовое смещение панели.
 
     Returns:
@@ -143,25 +156,19 @@ async def send_why(site_id: int, table: str, offset_hours: int = 0) -> str:
     50 из 50», анкеты в сети, смена идёт — и ничего не уходит; причина законная,
     но лежит в журнале воркера, а человек смотрит на страницу.
 
-    ⚠ **Общий потолок объясняется прямо.** У трёх пулов он один (`send_max_day`), и
-    выбрать его может соседний: рассылка встала, потому что ответы съели норму. Без
-    этой строки объяснение не найти нигде — числа лежат в разных таблицах.
+    ⚠ **Норма объясняется своим числом и только у своего пула.** Потолок
+    `send_max_day` рассылки — и только рассылку: строка о нём в шапке ответов
+    была бы ложью, ответы под ним не стоят.
 
     ⚠ **Считается теми же вопросами и в том же порядке, что и круг**, а не второй
     их копией.
     """
-    # ⚠ Список таблиц берём у самой отправки, а не пишем второй: разойдись они,
-    # шапка молчала бы у пула, который отправитель знает.
-    from src.dating.mail_send import MAIL_SEND_TABLES
-
     site_id = int(site_id or 0)
-    if not site_id or str(table) not in MAIL_SEND_TABLES:
+    pool = next((one for one in _POOLS if one[1] == str(table)), None)
+    if not site_id or not pool:
         return ''
 
-    flag = {'mailing': 'mailing_send_on', 'mail_reply': 'reply_send_on',
-            'favorite_mail': 'favorite_mail_send_on'}[str(table)]
-    said = {'mailing': 'рассылки', 'mail_reply': 'ответов',
-            'favorite_mail': 'писем избранным'}[str(table)]
+    flag, table, _, said = pool
 
     try:
         site = {int(one['site_id']): one for one in await _sites()}.get(site_id)
@@ -169,14 +176,15 @@ async def send_why(site_id: int, table: str, offset_hours: int = 0) -> str:
             return f'отправка {said} выключена'
 
         if not schedule_now(json_column_load(site['mailing_schedule']),
-                                   _minutes_now(offset_hours)):
+                            _minutes_now(offset_hours)):
             return 'сейчас не смена: письма уходят по часам, заданным у сайта'
 
-        today, cap = await _today(site_id, offset_hours), await _max_day(site_id)
-        if today >= cap:
-            return (f'на сегодня норма выбрана: ушло {today} из {cap} — '
-                    'общая на рассылку, ответы и письма избранным. '
-                    'Поднять — настройка сайта «Писем наружу в сутки»')
+        if table == 'mailing':
+            today, cap = await _today(site_id, offset_hours), await _max_day(site_id)
+            if today >= cap:
+                return (f'норма рассылки на сегодня выбрана: ушло {today} из {cap}. '
+                        'Поднять — настройка сайта «Не больше писем рассылки '
+                        'в сутки»')
 
         if await _oldest(site_id, str(table)):
             return ''
@@ -281,43 +289,13 @@ async def _sites() -> list[dict]:
     return [dict(row) for row in rows or []]
 
 
-async def _next(site_id: int, reply_on: bool, mailing_on: bool,
-                favorite_on: bool = False) -> tuple:
-    """Что отправить следующим: `(письмо, таблица)` либо `(None, '')`.
-
-    ⚠ **Только строки без прежней ошибки.** Неудача оставляет письмо в пуле с
-    причиной в `error`; берись круг за него снова, один отказ сайта («слишком
-    часто») превратился бы в бесконечный повтор ровно тогда, когда сайт просит
-    остановиться. Такое письмо ждёт человека — тот прочтёт причину и нажмёт
-    отправку сам.
-
-    ⚠ **Порядок пулов — порядок ожидания.** Ответа ждёт живой человек, написавший
-    первым; возобновления не ждёт никто, но собеседник знакомый и однажды отвечал;
-    рассылка уходит незнакомым. При общем дневном потолке очередь решает, что
-    достанется человеку, а что подождёт до завтра.
-    """
-    for on, table in ((reply_on, 'mail_reply'),
-                      (favorite_on, 'favorite_mail'),
-                      (mailing_on, 'mailing')):
-        if not on:
-            continue
-
-        row = await _oldest(site_id, table)
-        if row:
-            return row, table
-
-    return None, ''
-
-
 async def _oldest(site_id: int, table: str) -> dict | None:
     """Самое давнее неотправленное письмо таблицы. Порядок — очередь, а не стопка.
 
     ⚠ Имя таблицы подставляется в запрос, поэтому берётся **только из белого
-    списка** `MAIL_SEND_TABLES` — того же, что у отправки.
+    списка** `_POOLS`.
     """
-    from src.dating.mail_send import MAIL_SEND_TABLES
-
-    if table not in MAIL_SEND_TABLES:
+    if not any(one[1] == table for one in _POOLS):
         return None
 
     # ⚠ **Письма избранным уходят только от анкеты, которая сейчас в сети.**
@@ -337,7 +315,7 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     #
     # Настройка `favorite_mail_gap` говорит: от одной анкеты уходит одно письмо за
     # срок, кому угодно. Проверяй её только набор пула — правило осталось бы на
-    # бумаге: черновики лежат готовыми, а уносит их этот круг по письму в минуту.
+    # бумаге: черновики лежат готовыми, а уносит их этот круг по письму за раз.
     # Так и вышло 21 сентября — четыре письма от Елены четверым за восемь минут.
     #
     # ⚠ **Условием в запросе, а не отсевом после.** Круг берёт из пула **одно**
@@ -389,7 +367,7 @@ async def _send(letter: dict, table: str) -> bool:
         await mail_send_one(letter, profile, base, password, table)
     except DatingMailSendError as e:
         # ⚠ Причину храним: она ляжет на карточку, и человек увидит, почему письмо
-        # осталось в пуле. Круг к нему больше не вернётся — см. `_next`.
+        # осталось в пуле. Круг к нему больше не вернётся — см. `_oldest`.
         await mail_send_mark(letter, sent=False, error=str(e), table=table)
         logger_info(f"[dating] {table} #{letter['id']} не ушло: {e}")
 
@@ -403,17 +381,17 @@ async def _send(letter: dict, table: str) -> bool:
 
 
 async def _today(site_id: int, offset_hours: int = 0) -> int:
-    """Сколько писем сайта ушло за сегодня — всеми тремя пулами.
+    """Сколько писем рассылки ушло за сегодня.
 
-    ⚠ Потолок **общий**: письма считает получатель, а не наши таблицы. Раздельные
-    потолки означали бы втрое больше писем от одной девушки — при том, что в почту
-    они приходят вместе.
+    ⚠ Считает **только рассылку**: норма `send_max_day` отныне её собственная,
+    и соседние пулы её не едят — у ответов и писем избранным свои пределы
+    на «Фаворитах».
 
     ⚠⚠ **Сутки местные, а не серверные** — та же поправка и та же причина, что у
     инвайтов (`invite_send_round.py`): база живёт по UTC, смены и панель —
     по местному времени, и при смещении в три часа норма кончалась в три ночи.
     """
-    # Местная дата считается **один раз**: три подзапроса с `NOW()` внутри могли бы
+    # Местная дата считается **один раз**: два запроса с `NOW()` внутри могли бы
     # разойтись на границе суток — редко, но именно на ней это и важно.
     hours = int(offset_hours or 0)
     today = None
@@ -422,20 +400,11 @@ async def _today(site_id: int, offset_hours: int = 0) -> int:
             await db.execute('SELECT DATE(NOW() + INTERVAL %s HOUR) AS d', (hours,))
             today = ((await db.fetchone()) or {}).get('d')
 
-            # ⚠ Таблицы перечисляет `mail_sent_union`, а не этот запрос:
-            # потолок обязан считать ровно те пулы, из которых круг отправляет.
-            # Прежде здесь стояли три `SELECT COUNT(*)` подряд, записанные
-            # руками, — четвёртый пул до них бы не доехал.
-            from src.dating.mail_send import (MAIL_SEND_TABLES,
-                                              mail_sent_union)
-
             await db.execute(
-                'SELECT COUNT(*) AS sent FROM ('
-                + mail_sent_union(
-                    "site_id = %s AND status = 'sent'"
-                    ' AND DATE(sent_at + INTERVAL %s HOUR) = %s')
-                + ') AS sent',
-                (int(site_id), hours, today) * len(MAIL_SEND_TABLES))
+                "SELECT COUNT(*) AS sent FROM mailing"
+                " WHERE site_id = %s AND status = 'sent'"
+                '   AND DATE(sent_at + INTERVAL %s HOUR) = %s',
+                (int(site_id), hours, today))
             row = await db.fetchone()
     except Exception as e:
         logger_info(f'[dating] дневной счёт отправки не спросился: {e}')
@@ -447,22 +416,22 @@ async def _today(site_id: int, offset_hours: int = 0) -> int:
     return int((row or {}).get('sent') or 0)
 
 
-async def _every(site_id: int) -> int:
-    """Пауза между письмами, в секундах, — не короче предела."""
+async def _every(site_id: int, setting: str) -> int:
+    """Пауза этого пула, в секундах.
+
+    ⚠ Предела поверх нет, и он не нужен: темп задан **набором** значений, а
+    `site_seconds` чужое значение не берёт — возвращает реестровое умолчание.
+    """
     from src.uvicorn.routers.dating.site_ import site_seconds
 
-    every = int(await site_seconds(site_id, SEND_EVERY_SETTING)
-                or SEND_EVERY_DEFAULT)
-
-    return max(every, SEND_EVERY_MIN)
+    return int(await site_seconds(site_id, setting))
 
 
 async def _max_day(site_id: int) -> int:
-    """Сколько писем в сутки разрешено этому сайту."""
+    """Сколько писем рассылки в сутки разрешено этому сайту."""
     from src.uvicorn.routers.dating.site_ import site_seconds
 
-    return int(await site_seconds(site_id, SEND_MAX_DAY_SETTING)
-               or SEND_MAX_DAY_DEFAULT)
+    return int(await site_seconds(site_id, 'send_max_day'))
 
 
 def _minutes_now(offset_hours: int) -> int:
