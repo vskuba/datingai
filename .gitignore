@@ -10,6 +10,7 @@ __pycache__/
 *.pyc
 data/logs/
 .idea/
+.git_worktree
 .env.prod
 data/*.log
 data/*.log.*
