@@ -238,6 +238,76 @@ class TestOneAtATime:
         assert SEND_EVERY_MIN >= 30
 
 
+class TestValuesAreSiteSettings:
+    """⚠ Пауза и потолок — настройки сайта на странице, а не числа в коде.
+
+    Хранить их в константах значило бы спорить с человеком, который знает свой
+    сайт лучше: поднял паузу на вкладке «Письма» — и круг ждёт ровно столько,
+    сколько подняли, а не сколько когда-то казалось всем сразу. Умолчание же —
+    те же значения, что были в константах: незанятый сайт ведёт себя как раньше.
+    """
+
+    async def test_default_pause_is_the_old_constant(self, site, profile, post):
+        """Не задал сайт паузу — круг ждёт три минуты, прежнюю константу.
+
+        100 секунд — мало (за константы в 30 или 60 письмо ушло бы раньше),
+        190 — довольно (за часы письмо промолчало бы и дальше).
+        """
+        import time
+
+        await _letter(profile)
+        await _letter(profile)
+
+        await send_round_run(0)
+        assert len(post) == 1, 'первое письмо не ушло'
+
+        round_._sent_at[SITE] = time.time() - 100
+        assert (await send_round_run(0))['sent'] == 0, \
+            'пауза короче умолчания в три минуты'
+
+        round_._sent_at[SITE] = time.time() - 190
+        assert (await send_round_run(0))['sent'] == 1, \
+            'пауза длиннее умолчания в три минуты'
+
+    async def test_pause_is_a_site_setting(self, auth_client, site, profile, post):
+        """⚠ Пауза берётся из настроек сайта: поднял минуту — круг ждёт минуту.
+
+        Прошло 70 секунд после прошлого письма — этого не хватило бы умолчанию
+        в три минуты (`test_default_pause_is_the_old_constant`) и хватило бы
+        минуты из настройки: уходит второе. Молчал бы круг — значит ждёт число
+        из кода, а не то, что человек поставил на странице.
+        """
+        import time
+
+        before = (await auth_client.get(
+            f'/api/dating/site/{SITE}')).json()['result']['settings']
+        try:
+            await auth_client.put(f'/api/dating/site/{SITE}',
+                                  json={'settings': {**before, 'send_every': '60'}})
+            assert await round_._every(SITE) == 60, \
+                'сайт настроил паузу в минуту, круг её не видит'
+            await _letter(profile)
+            await _letter(profile)
+
+            assert (await send_round_run(0))['sent'] == 1, 'первое письмо не ушло'
+            round_._sent_at[SITE] = time.time() - 70
+
+            assert (await send_round_run(0))['sent'] == 1, \
+                'круг ждёт паузу из кода, а не настроенную сайтом'
+            assert len(post) == 2
+        finally:
+            await auth_client.put(f'/api/dating/site/{SITE}',
+                                  json={'settings': before})
+
+    async def test_registry_defaults_are_the_old_constants(self):
+        """Умолчания лежат в реестре настроек: их видит страница и берёт круг,
+        когда сайт ничего не задавал. Оба числа — ровно те, что жили в константах."""
+        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
+
+        assert SITE_KNOWN['send_every']['default'] == '180'
+        assert SITE_KNOWN['send_max_day']['default'] == '40'
+
+
 class TestRepliesGoFirst:
     """⚠ Ответы вперёд писем: их ждёт живой человек, написавший первым."""
 

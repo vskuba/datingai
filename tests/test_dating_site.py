@@ -191,10 +191,17 @@ class TestKnownGroups:
         ('api_base', 'api'),
         ('api_password', 'api'),
         ('online_check_every', 'rate'),
+        # ⚠ Пауза и потолок отправки — общая почтовая труба: правятся на вкладке
+        # «Письма» и действуют сразу на три пула. Уедут в «Рассылку писем» —
+        # человек поправит паузу рассылки, а она окажется и ответам, и избранным.
+        ('send_every', 'letter'),
+        ('send_max_day', 'letter'),
     ])
     async def test_setting_is_in_its_group(self, rhapsody, monkeypatch, key, group):
         """Разбивка, которую просили: доступ к API отдельно, частота онлайна
-        отдельно."""
+        отдельно. Отправка — на своей вкладке «Письма»: паузу и потолок круг
+        берёт отсюда, а не из кода (умолчания равны прежним константам, см.
+        `test_send_round.py`)."""
         monkeypatch.setattr(site_, '_settings_all', _saved({}))
         known = {row['key']: row
                  for row in (await site_list(user=None))['result']['known']}
