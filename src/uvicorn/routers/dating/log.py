@@ -76,7 +76,8 @@ async def feed_page(db, parts: list[tuple[str, list]], page: int,
     Args:
         db: соединение с базой.
         parts: половины ленты — пар `(запрос, параметры)` без порядка и предела.
-        page: страница, с единицы; правится на последнюю, если лента короче.
+        page: страница; нормализуется здесь же: ниже единицы не бывает, а
+            запрос дальше конца ленты — это последняя.
         per_page: строк на странице.
 
     Returns:
@@ -92,7 +93,10 @@ async def feed_page(db, parts: list[tuple[str, list]], page: int,
     total = int((await db.fetchone() or {}).get('n') or 0)
 
     pages = max(1, -(-total // per_page))
-    page = min(page, pages)
+    # Норма страницы здесь же, где и весь расчёт: ниже единицы страницы не
+    # бывает, а просить страницу дальше последней — всё равно что просить
+    # последнюю (тот же закон, что у карточки анкеты).
+    page = max(1, min(int(page or 1), pages))
 
     # Страница: верхние `page × per_page` строк каждой половины — окно любой
     # страницы целиком лежит в верхушках половин. Порядок по времени, а не по
@@ -173,7 +177,7 @@ async def log_feed(site_id: int = 0, profile_id: int = 0, kind: str = 'all',
     async with mysql_get_db_async() as db:
         feed = await feed_page(db, _query(int(site_id), int(profile_id), kind,
                                           level, q),
-                               int(page or 1), per_page)
+                               page, per_page)
 
     return {'rows': [_row(row) for row in feed['rows']],
             'total': feed['total'], 'page': feed['page'], 'pages': feed['pages']}

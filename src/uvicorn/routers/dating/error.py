@@ -106,7 +106,7 @@ async def error_feed(site_id: int = 0, source: str = '', q: str = '', page: int 
     async with mysql_get_db_async() as db:
         feed = await feed_page(db, _feed_query(int(site_id), str(source or ''),
                                                str(q or '').strip()),
-                               int(page or 1), per_page)
+                               page, per_page)
 
     return {'result': {'rows': [_feed_row(row) for row in feed['rows']],
                       'total': feed['total'], 'page': feed['page'],

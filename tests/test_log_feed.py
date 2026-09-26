@@ -255,6 +255,18 @@ class TestFeedHandler:
 
         assert len(result['rows']) <= 200
 
+    async def test_page_below_one_becomes_one(self, auth_client):
+        """Страницы ниже единицы не бывает: нулевая — это первая, а не отказ.
+
+        Норма живёт в `feed_page` вместе с остальным расчётом и возвращается
+        исправленным номером: сверять пейджер некому, кроме самой ленты.
+        """
+        result = (await auth_client.get('/api/dating/log',
+                                        params={'site_id': SITE, 'page': 0})
+                  ).json()['result']
+
+        assert result['page'] == 1
+
     async def test_site_is_required(self, auth_client):
         """Без сайта лента перемешала бы работу по разным сайтам."""
         assert (await auth_client.get('/api/dating/log')).status_code == 422
