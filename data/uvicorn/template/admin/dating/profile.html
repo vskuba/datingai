@@ -159,7 +159,7 @@
 
     /* Точки-захват: три штриха посередине полосы. Без них тонкая линия
        читается как рамка, а не как то, что можно взять и потянуть. */
-    .split-row::after, .split-people::after {
+    .split-row::after {
         content: '';
         display: block;
         border-radius: 2px;
@@ -170,16 +170,6 @@
         width: 26px;
         height: 2px;
         margin: 2px auto;
-    }
-
-    .split-people::after {
-        width: 2px;
-        height: 26px;
-        margin: auto;
-    }
-
-    .split-people {
-        display: flex;
     }
 
     /* Полоса вкладок — в `dating_page.css`: теми же вкладками живёт
@@ -989,23 +979,15 @@
 
     /* ── Входящие письма ── */
 
-    /* Полоса подвкладок и панели — те же, что у «Писем рассылка»: человек
-       ходит между вкладками, и одинаковые на вид полосы читаются как одна
-       механика, а не как две разные. */
+    /* ⚠ Правил `.in-pane`, `.in-row`, `.in-face`, `.in-body`, `.in-who`,
+       `.in-name`, `.in-to`, `.in-meta`, `.in-when`, `.in-text`, `.in-quote`,
+       `.in-fail`, `.in-thread`, `.in-unseen` здесь больше нет: список писем и
+       диалогов рисуется карточками `.contact` (`mailInPaint`), и ни один из этих
+       классов не выводится с переезда вкладки. Правило под несуществующий узел
+       читают как действующее.
 
-    /* ⚠ `min-height: 0` и `flex: 1 1 auto` — чтобы список прокручивался
-       **внутри панели**, а не растил её: без этого шапка со счётчиком и кнопкой
-       уезжала бы за экран при чтении длинного списка. */
-    .in-pane {
-        display: flex;
-        flex-direction: column;
-        min-height: 0;
-        flex: 1 1 auto;
-    }
-
-    .in-pane.off {
-        display: none;
-    }
+       ⚠ Живыми из семьи остались `.in-cols`, `.in-empty`, `.in-replied`,
+       `.in-reply-*` — они рисуются, и трогать их незачем. */
 
     /* Колонки вкладки «Ответы»: слева часы девушки, справа пул.
 
@@ -1138,98 +1120,6 @@
         padding: 8px 12px;
     }
 
-    /* Письмо: лицо, кто и когда, текст. ⚠ Непрочитанное отбито слева полосой —
-       тем же приёмом, что выбранная анкета: список читают сверху вниз, и
-       отличать новое надо, не вглядываясь. */
-    .in-row {
-        display: flex;
-        gap: 9px;
-        padding: 9px 10px;
-        margin-bottom: 6px;
-        border: 1px solid #eef2f7;
-        border-radius: 8px;
-        background: #fff;
-        cursor: pointer;
-    }
-
-    .in-row:hover {
-        border-color: #e0e7ff;
-        background: #f8fafc;
-    }
-
-    .in-row.new {
-        background: #f5f7ff;
-        box-shadow: inset 3px 0 0 #4f46e5;
-    }
-
-    /* Открытая переписка в списке «Диалогов»: её разговор читают справа, и без
-       отметки строка теряется — список длинный, а выбор в нём один. */
-    .in-row.open {
-        border-color: #c7d2fe;
-        background: #eef2ff;
-    }
-
-    .in-face {
-        flex: 0 0 auto;
-        width: 36px;
-        height: 36px;
-        border-radius: 50%;
-        object-fit: cover;
-        background: #e2e8f0;
-    }
-
-    .in-body {
-        flex: 1 1 auto;
-        min-width: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-    }
-
-    .in-who {
-        display: flex;
-        align-items: baseline;
-        gap: 7px;
-    }
-
-    .in-name {
-        font-size: 12px;
-        font-weight: 600;
-        color: #1e293b;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    .in-meta {
-        font-size: 10px;
-        color: #94a3b8;
-    }
-
-    .in-when {
-        margin-left: auto;
-        flex: 0 0 auto;
-        font-size: 10px;
-        color: #94a3b8;
-    }
-
-    .in-text {
-        font-size: 12px;
-        color: #475569;
-        line-height: 1.4;
-        display: -webkit-box;
-        -webkit-line-clamp: 3;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-    }
-
-    /* Текста ещё нет — говорим об этом словами: пустое место человек прочитал
-       бы как «письмо пустое», а оно просто не забрано. */
-    .in-text.empty {
-        color: #cbd5e1;
-        font-style: italic;
-    }
-
     .in-replied {
         font-size: 10px;
         color: #166534;
@@ -1274,18 +1164,6 @@
         text-align: center;
     }
 
-    /* Карточка ответа. ⚠ Без аватарки, в отличие от входящего: там лицо
-       отвечает «от кого письмо», здесь строка «Diana → Semen» говорит больше —
-       у ответа две стороны. */
-    .in-row.reply {
-        cursor: default;
-    }
-
-    .in-row.reply:hover {
-        background: #fff;
-        border-color: #eef2f7;
-    }
-
     /* Письмо, на которое отвечаем, — цитатой над ответом. ⚠ Ответ читают,
        сверяя с ним: по одному тексту не понять, к месту ли он. */
     .mail-card-quote {
@@ -1298,23 +1176,6 @@
         -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
         overflow: hidden;
-    }
-
-    .in-quote {
-        padding-left: 8px;
-        border-left: 2px solid #e0e7ff;
-        font-size: 11px;
-        color: #94a3b8;
-        line-height: 1.35;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-    }
-
-    .in-fail {
-        font-size: 10px;
-        color: #b91c1c;
     }
 
     /* Заготовка письма: серая карточка на месте той, что вот-вот появится.
@@ -1538,35 +1399,6 @@
 
     .mail-card-who .to {
         color: #4338ca;
-    }
-
-    /* Кому пришло письмо — тем же цветом, что «кому» у карточек рассылки:
-       направление одно и то же, и второй краски оно не заслуживает. */
-    .in-name .in-to {
-        color: #4338ca;
-        font-weight: 600;
-    }
-
-    /* Счётчик реплик: тише имени и даты — он про объём, а не про суть. */
-    .in-thread {
-        flex: 0 0 auto;
-        font-size: 10px;
-        color: #64748b;
-        background: #f1f5f9;
-        border-radius: 999px;
-        padding: 1px 6px;
-    }
-
-    /* Непрочитанных в переписке. ⚠ Показываем от двух: единица и так видна
-       по самой строке — она подсвечена как новая. */
-    .in-unseen {
-        flex: 0 0 auto;
-        font-size: 10px;
-        font-weight: 700;
-        color: #b45309;
-        background: #fef3c7;
-        border-radius: 999px;
-        padding: 1px 6px;
     }
 
     /* Имя адресата — ссылка на его анкету на сайте. Цвет берём у соседа
@@ -2584,39 +2416,14 @@
         flex: 1 1 auto;
     }
 
-    /* Первая колонка — два ряда: список диалогов и переписка с выбранным.
-       Раньше переписка раскрывалась внутри строки списка, и собеседник,
-       выбранный в колонке «Все онлайн», показать её не мог вовсе. Теперь
-       разговор один на все три колонки, а где его выбрали — неважно. */
-    .chat-talk {
-        min-width: 0;
-        display: flex;
-        flex-direction: column;
-    }
+    /* ⚠ Рядом с `.contact-girl` не стало и `.chat-talk`, `.chat-dialogs-head`,
+       `.chat-dialogs-count`, `.chat-dialogs .contact-who`: ряды и шапка ушли в
+       общие `data-slot`-ячейки `_base.html`, а обойма собеседника — в
+       `.talk-side`. Ни один из них не рисовался.
 
-    /* Шапка ряда диалогов: подпись, счёт и кнопка загрузки. Кнопка здесь, а
-       не в шапке панели: она про этот ряд, и на других вкладках ей делать
-       нечего. */
-    .chat-dialogs-head {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        flex: 0 0 auto;
-        font-size: 10px;
-        font-weight: 700;
-        color: #94a3b8;
-        text-transform: uppercase;
-        letter-spacing: .04em;
-        padding-bottom: 4px;
-    }
-
-    .chat-dialogs-count {
-        color: #4338ca;
-    }
-
-    /* ⚠ `.contact-girl` больше нет: имя девушки было подписью над строкой и
-       только без фильтра. Теперь обе стороны разговора стоят в самой строке и
-       видны всегда — `.talk-side` ниже. */
+       ⚠ `.contact-girl` больше нет по своей причине: имя девушки было подписью
+       над строкой и только без фильтра. Теперь обе стороны разговора стоят в
+       самой строке и видны всегда — `.talk-side` ниже. */
 
     .chat-dialogs {
         flex: 1 1 auto;
@@ -2656,8 +2463,9 @@
        разговором, строку в нём **выбирают**, и выбранная должна быть видна: белая
        плашка с рамкой отзывается на наведение и на выбор, а черта — ни на что.
 
-       Тем же видом устроены «Входящие» (`.in-row`): оба списка — «с кем говорим»,
-       стоят на соседних вкладках, и человек ходит между ними.
+       Тем же видом устроены «Входящие»: оба списка — «с кем говорим», стоят на
+       соседних вкладках, и человек ходит между ними. ⚠ Они и рисуются теперь **тем
+       же** `.contact`: своя строка `.in-row` у них была, разошлась видом и убрана.
 
        ⚠ Класс **общий** (`talk-cards`), а не привязанный к чату: те же карточки
        стоят в «Диалогах» фаворитов. Пока правило висело на `.chat-dialogs`, у
@@ -2840,16 +2648,6 @@
         .chat-dialogs .need-icon {
             animation: none;
         }
-    }
-
-    /* Обойма собеседника. Внутри — те же `person-*`, что в колонках справа:
-       один и тот же человек стоит в трёх местах вкладки, и три разных вида
-       одного человека читаются как три разные сущности. */
-    .chat-dialogs .contact-who {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        min-width: 0;
     }
 
     /* Лицо крупнее колоночного: в колонке 150 пикселей ширины и место дорого,
@@ -3194,13 +2992,9 @@
         background: transparent;
     }
 
-    /* Разделитель колонок собеседников: тот же вид и то же поведение, что у
-       остальных на странице, только уже — между узкими колонками широкая
-       полоса съела бы половину содержимого. */
-    .split-people {
-        flex: 0 0 5px;
-        cursor: col-resize;
-    }
+    /* ⚠ `.split-people` больше нет — ни правил, ни разметки, ни обвязки в
+       `splitDrag`. Колонки собеседников тянутся `.split-online`/`.split-fav`;
+       этот разделитель остался от прежней раскладки и не рисовался. */
 
     .people-head {
         display: flex;
@@ -3310,12 +3104,6 @@
        просто снят раньше. Янтарный между серым «свежо» и красным «не вышло». */
     .people-when .old {
         color: #b45309;
-    }
-
-    .people-body {
-        flex: 1 1 auto;
-        min-height: 0;
-        overflow-y: auto;
     }
 
     /* Строка человека: лицо, под ним имя с возрастом. Не в одну строку —
@@ -3522,16 +3310,9 @@
         display: inline-block;
     }
 
-    /* Ответ «нет» пишем прочерком, а не пустотой: пустая ячейка читается как
-       «не успело загрузиться». */
-    .prof-no {
-        color: #cbd5e1;
-    }
-
-    .prof-yes {
-        color: #15803d;
-        font-weight: 700;
-    }
+    /* ⚠ `.prof-no`, `.prof-yes` и `.people-body` убраны: таблица анкет пишет
+       «да/нет» бейджами (`view.js`), а список собеседников прокручивается
+       `.people-col`. Не рисовались ни один. */
 
     /* Значок выключенной анкеты — рядом с именем, где стоит и тревога
        автовхода: оба про состояние этой самой анкеты. */
@@ -4845,14 +4626,6 @@
 
         // Расписание шаблонов: выключатель и «сколько в сутки».
         tmplBind();
-
-        // Колонки собеседников растут **влево**, к переписке: правый край каждой
-        // стоит на месте, а тянут за левый.
-        workEl.querySelectorAll('.split-people').forEach(split => {
-            const col = split.nextElementSibling;
-            splitDrag(split, split.dataset.var, 90, 400,
-                (e) => col.getBoundingClientRect().right - e.clientX);
-        });
 
         // «⟳» у ленты «Все онлайн»: список по сайту, и обходит он выдержку, но не
         // жёсткий пол ручки.

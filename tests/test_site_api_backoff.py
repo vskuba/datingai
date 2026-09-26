@@ -249,12 +249,7 @@ class TestSiteWideBan:
         """
         assert SITE_API_FAIL_LIMIT_SEC >= 24 * 3600
 
-    def test_a_ban_can_be_lifted_by_hand(self, redis):
-        """Сменили выход — адрес другой, и ждать нечего."""
-        from src.dating.site_api import (_fail_site_left, _fail_site_mark,
-                                                site_api_fail_clear)
-
-        _fail_site_mark(343, 'ERROR_SING_IN_BY_IP_DAILY_FAILED_LIMIT')
-        site_api_fail_clear(site_id=343)
-
-        assert _fail_site_left(343) == 0
+    # ⚠ Тест «запрет снимают руками» убран вместе с `site_api_fail_clear`: он
+    # охранял способность, которой никто не пользовался — ни ручка, ни кнопка.
+    # Сторож у мёртвого кода держит его живым на вид: имя встречается, значит
+    # «зовётся», и следующий поиск неиспользуемого пройдёт мимо.

@@ -384,20 +384,11 @@ def _fail_site_mark(site_id: int, error: str) -> None:
                 f'{SITE_API_FAIL_LIMIT_SEC // 3600} ч ни одной анкетой')
 
 
-def site_api_fail_clear(site_id: int = 0, profile_id: int = 0) -> None:
-    """Снимает запрет руками — когда человек знает то, чего не знает код.
-
-    Например: сменили выход наружу, и адрес теперь другой; или на стороне сайта
-    подтвердили, что предел сброшен. Ждать в этих случаях нечего.
-    """
-    try:
-        conn = redis_conn_get()
-        if int(site_id or 0):
-            conn.delete(SITE_API_FAIL_SITE_KEY.format(site_id=int(site_id)))
-        if int(profile_id or 0):
-            conn.delete(SITE_API_FAIL_KEY.format(profile_id=int(profile_id)))
-    except Exception as e:
-        logger_info(f'[dating] запрет не снялся: {e}')
+# ⚠ Снятия запрета руками здесь нет, и это осознанно. Функция была — `redis.delete`
+# по двум ключам, — но её не звал никто: ни ручка, ни кнопка на странице. Обещание
+# «человек снимет запрет, когда знает больше кода» ничем не исполнялось, а читающий
+# код верил, что такой путь есть. Понадобится — заводить вместе с ручкой и кнопкой,
+# иначе это снова будет мёртвый код с докстрингом.
 
 
 def _fail_kind(profile_id: int) -> str:

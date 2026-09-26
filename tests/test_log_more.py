@@ -152,14 +152,24 @@ class TestIdleIsRecorded:
     Пул инвайтов на проде застыл на 21 черновике и не набирался неделю. Со
     стороны выглядело как «работает»: круг ходил, чистил ушедших и не добавлял
     ничего. Понять причину можно было только чтением кода.
+
+    ## ⚠⚠ У каждого теста здесь свой ключ круга, и это обязательно
+
+    Запись простоя помнит прошлую причину **в памяти процесса** (`_seen`), а сюита
+    идёт одним процессом. Возьми два теста один ключ — второй увидит причину,
+    оставленную первым, и «первая причина пишется» обернётся `False`. Зависел бы не
+    код, а порядок запуска.
+
+    ⚠ Прежде чистоту наводил `idle_forget('проба')` — функция в коде проекта, которую
+    не звал никто, кроме этих тестов. Её убрали: крючок ради сюиты в рабочем коде
+    читается как рабочий путь.
     """
 
     async def test_the_first_reason_is_written(self):
-        from src.dating.idle import idle_forget, idle_write
+        from src.dating.idle import idle_write
 
-        idle_forget('проба')
-
-        assert await idle_write('проба', 'пул пуст', site_id=999_343) is True
+        assert await idle_write('проба-первая', 'пул пуст',
+                                site_id=999_343) is True
 
     async def test_the_same_reason_is_silent(self):
         """⚠ Пишется **смена** причины, а не каждый заход.
@@ -167,21 +177,20 @@ class TestIdleIsRecorded:
         Круг идёт раз в минуту; пиши он каждый раз, за ночь набежало бы пятьсот
         одинаковых строк, и настоящая беда утонула бы в них.
         """
-        from src.dating.idle import idle_forget, idle_write
+        from src.dating.idle import idle_write
 
-        idle_forget('проба')
-        await idle_write('проба', 'пул пуст', site_id=999_343)
+        await idle_write('проба-та же', 'пул пуст', site_id=999_343)
 
-        assert await idle_write('проба', 'пул пуст', site_id=999_343) is False
+        assert await idle_write('проба-та же', 'пул пуст',
+                                site_id=999_343) is False
 
     async def test_a_new_reason_speaks_again(self):
-        from src.dating.idle import idle_forget, idle_write
+        from src.dating.idle import idle_write
 
-        idle_forget('проба')
-        await idle_write('проба', 'пул пуст', site_id=999_343)
+        await idle_write('проба-другая', 'пул пуст', site_id=999_343)
 
-        assert await idle_write('проба', 'норма выбрана',
-                                       site_id=999_343) is True
+        assert await idle_write('проба-другая', 'норма выбрана',
+                                site_id=999_343) is True
 
     async def test_going_back_to_work_is_an_event_too(self):
         """⚠ Уход простоя — тоже событие.
@@ -189,12 +198,11 @@ class TestIdleIsRecorded:
         Без него в журнале остаётся вопрос без ответа: чинилось оно само или всё
         ещё стоит.
         """
-        from src.dating.idle import idle_forget, idle_write
+        from src.dating.idle import idle_write
 
-        idle_forget('проба')
-        await idle_write('проба', 'пул пуст', site_id=999_343)
+        await idle_write('проба-ушёл', 'пул пуст', site_id=999_343)
 
-        assert await idle_write('проба', '', site_id=999_343) is True
+        assert await idle_write('проба-ушёл', '', site_id=999_343) is True
 
     def test_the_sender_explains_itself(self):
         """Круг отправки инвайтов пишет причину — тем же кодом, что отвечает странице."""

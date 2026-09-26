@@ -20,11 +20,21 @@ import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating.log import LOG_KEEP_DEFAULT, LOG_KEEP_SETTING, log_sweep
+from src.dating.log import LOG_KEEP_SETTING, log_sweep
 
 pytestmark = pytest.mark.core
 
 STAND_SITE = 999_343
+
+# Умолчание срока, часами. ⚠⚠ Это **сверка с реестром, а не второй источник**:
+# настоящее умолчание лежит у настройки сайта (`SITE_KNOWN['log_keep_hours']`), и
+# `test_the_default_is_three_days` ниже сличает это число с ним. Разойдутся — падёт
+# именно та проверка, а не «край срока» с непонятной причиной.
+#
+# ⚠ Прежде число держала своя константа в `log.py` — `LOG_KEEP_DEFAULT = 72`, — но
+# чистка её не читала: срок она берёт из настройки. Копия умолчания в коде
+# читается как действующая и расходится с реестром молча.
+KEEP_HOURS = 72
 
 
 @pytest.fixture
@@ -83,8 +93,8 @@ class TestItSweepsByAge:
 
     async def test_the_edge_is_the_setting(self, girl):
         """Умолчание — трое суток; час до границы живёт, час после уходит."""
-        await _line(girl, 'внутри срока', hours_ago=LOG_KEEP_DEFAULT - 1)
-        await _line(girl, 'за сроком', hours_ago=LOG_KEEP_DEFAULT + 1)
+        await _line(girl, 'внутри срока', hours_ago=KEEP_HOURS - 1)
+        await _line(girl, 'за сроком', hours_ago=KEEP_HOURS + 1)
 
         await log_sweep()
 
@@ -124,12 +134,18 @@ class TestTheSetting:
         one = known['log_keep_hours']
 
         assert one['title'] == 'Логи в базе данных хранить, в часах'
-        assert one['default'] == str(LOG_KEEP_DEFAULT)
+        assert one['default'] == str(KEEP_HOURS)
         assert one['kind'] == 'number'
         assert one['min'] == 0, 'ноль обязан быть допустим — это «не чистить»'
 
     def test_the_default_is_three_days(self):
-        assert LOG_KEEP_DEFAULT == 72
+        """⚠ Умолчание спрашиваем у **реестра настроек** — единственного места, где
+        оно есть. Сверка держит и `KEEP_HOURS` выше: поменяй реестр, не поправив
+        число, — упадёт здесь, с прямой причиной."""
+        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
+
+        assert SITE_KNOWN['log_keep_hours']['default'] == '72'
+        assert KEEP_HOURS == 72
 
 
 class TestTheRoundRunsIt:

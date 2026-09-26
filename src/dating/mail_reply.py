@@ -360,14 +360,6 @@ async def _profile(profile_id: int) -> dict:
     return dict(row or {})
 
 
-async def _companion(site_id: int, uid: str) -> dict:
-    """Карточка собеседника, если она есть. Нет — пустой словарь, и агент об этом
-    узнает словами: выдумывать про него нечего."""
-    from src.uvicorn.routers.dating.companion import companion_get
-
-    return await companion_get(int(site_id), str(uid)) or {}
-
-
 async def _put(site_id: int, letter: dict, body: str) -> None:
     """Кладёт ответ в пул. `INSERT IGNORE` ловит гонку двух заходов разом.
 

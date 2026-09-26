@@ -20,7 +20,7 @@
 без сверки пул честно отвечал бы «писать некому», имея кому.
 """
 
-import time
+import itertools
 
 import pytest
 
@@ -28,54 +28,59 @@ pytestmark = pytest.mark.mail
 
 STAND_SITE = 999_343
 
+# ⚠⚠ Свой номер сайта каждому тесту. Отметка сверки живёт **в памяти процесса**
+# (`_sync_at`), а сюита идёт одним процессом: возьми два теста один номер — второй
+# увидит отметку, поставленную первым, и «после старта сверяем сразу» обернётся
+# `False`. Зависел бы не код, а порядок запуска.
+#
+# ⚠ Прежде чистоту наводил `favorite_sync_forget()` в `setup_method` — функция в коде
+# проекта, которую не звал никто, кроме этих тестов. Её убрали: крючок ради сюиты в
+# рабочем коде читается как рабочий путь.
+#
+# ⚠ Номера начинаются заведомо выше стендового: `_sync_due` в базу не ходит и строки
+# сайта не спрашивает, так что заводить их не нужно, а пересечься с чужими нельзя.
+_site_seq = itertools.count(STAND_SITE + 100)
+
+
+def _site() -> int:
+    """Незанятый номер сайта — по одному на вызов."""
+    return next(_site_seq)
+
 
 class TestTheGate:
     """Сам сторож: когда сверке пора, а когда рано."""
-
-    def setup_method(self):
-        from src.dating.favorite_mail import favorite_sync_forget
-
-        favorite_sync_forget()
 
     def test_the_first_pass_syncs(self):
         """После старта сверяем сразу: своей таблице ещё нечем верить."""
         from src.dating.favorite_mail import _sync_due
 
-        assert _sync_due(STAND_SITE) is True
+        assert _sync_due(_site()) is True
 
     def test_right_after_a_sync_it_waits(self):
         from src.dating.favorite_mail import _sync_due, _sync_mark
 
-        _sync_mark(STAND_SITE, 3600)
+        site = _site()
+        _sync_mark(site, 3600)
 
-        assert _sync_due(STAND_SITE) is False, \
+        assert _sync_due(site) is False, \
             'сверка пошла бы снова — вернулись 157 запросов в час'
 
     def test_after_the_period_it_syncs_again(self):
         from src.dating.favorite_mail import _sync_due, _sync_mark
 
-        _sync_mark(STAND_SITE, 0)
+        site = _site()
+        _sync_mark(site, 0)
 
-        assert _sync_due(STAND_SITE) is True
+        assert _sync_due(site) is True
 
     def test_sites_do_not_share_the_mark(self):
         """⚠ Отметка на сайт, а не общая: у разных сайтов свой срок."""
         from src.dating.favorite_mail import _sync_due, _sync_mark
 
-        _sync_mark(STAND_SITE, 3600)
+        marked, other = _site(), _site()
+        _sync_mark(marked, 3600)
 
-        assert _sync_due(STAND_SITE + 1) is True
-
-    def test_forgetting_lets_it_sync_now(self):
-        """Правка настройки на странице «Сайты» обязана подействовать сразу,
-        а не досиживать прежний час."""
-        from src.dating.favorite_mail import (_sync_due, _sync_mark,
-                                              favorite_sync_forget)
-
-        _sync_mark(STAND_SITE, 3600)
-        favorite_sync_forget(STAND_SITE)
-
-        assert _sync_due(STAND_SITE) is True
+        assert _sync_due(other) is True
 
     def test_the_mark_is_set_before_going(self):
         """⚠ Отметка ставится **до** похода, а не после.

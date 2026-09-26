@@ -73,7 +73,6 @@
 | `rhapsody_api_scenario_find_by_id` | `GET /api/browser/scenario/{id}` | подстановки известного сценария перед прогоном |
 | `rhapsody_api_scenario_run` | `POST /api/browser/scenario/{id}/run` | сам прогон в браузере. ⚠ Напрямую **не зовётся**: только через `scenario_run` (§4) |
 | `rhapsody_api_session_open/close/list/state` | `/api/browser/session…` | жизнь вкладки |
-| `rhapsody_api_session_goto` | `POST /api/browser/session/{id}/goto` | увести вкладку на адрес. ⚠ **В коде проекта не зовётся** — оставлена под ручную отладку |
 | `rhapsody_api_ws_capture` | `POST /api/browser/ws/capture` | снять адрес чат-сокета |
 | `rhapsody_api_agent_create` | `POST /agent/create` | завести агента анкеты |
 | `rhapsody_api_agent_find` | `GET /agent/name/{name}` | найти его номер |

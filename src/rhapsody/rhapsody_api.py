@@ -438,12 +438,6 @@ async def rhapsody_api_session_close(session_id: str) -> bool:
     return bool(data.get('closed'))
 
 
-async def rhapsody_api_session_goto(session_id: str, url: str) -> dict:
-    """Переводит страницу сессии на адрес."""
-    return await _request('POST', f'/api/browser/session/{session_id}/goto',
-                          {'url': str(url)}, timeout=RHAPSODY_API_TIMEOUT_SCENARIO)
-
-
 async def rhapsody_api_session_state(session_id: str) -> dict:
     """Снимает вход сессии (`storage_state`) — по нему потом идёт HTTP-опрос."""
     data = await _request('GET', f'/api/browser/session/{session_id}/storage_state')
