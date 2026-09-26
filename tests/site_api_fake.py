@@ -116,6 +116,13 @@ class SiteApiFake:
         # отправка дошла до сайта — и что ушло ровно то, что лежало в пуле.
         self.sent: list[tuple[str, str, str]] = []
 
+        # То же, но **телом целиком**, как его собрал код. ⚠ Нужно полям, которых в
+        # тройке выше нет: `ReplyForMessageId` — признак «это ответ на письмо», и его
+        # потеря не видна ни по одному полю тройки. Ровно так беда и жила: круг
+        # отправки номера не передавал, ответы уходили отдельными письмами, а
+        # заглушка об этом молчала, потому что смотреть было некуда.
+        self.payloads: list[dict] = []
+
         # Разрешения, выданные `check-send`. ⚠ Сайт принимает только своё, и
         # заглушка тоже: письмо с чужим `CheckId` должно отвергаться здесь, иначе
         # проверка «шлём разрешение, которое дали» ничего не значит.
@@ -238,6 +245,7 @@ class SiteApiFake:
             self.checks.discard(check)
             self.sent.append((str(sent.get('RecipientAccountId') or ''),
                               str(sent.get('Body') or ''), check))
+            self.payloads.append(dict(sent))
 
             return self._json(200, {'Status': 'OK',
                                     'Message': 'Message sent successfully.'})

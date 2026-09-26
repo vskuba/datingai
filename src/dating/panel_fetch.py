@@ -79,22 +79,7 @@ async def panel_fetch_html(site_id: int, path: str, params: dict = None) -> str:
     ней, ответом стала бы страница входа — с кодом `200` и без единой строки
     таблицы, то есть «панель отдала пусто» вместо «сессия протухла».
     """
-    from src.dating.panel import _row, _url, panel_root
-
-    url = await _url(site_id)
-    if not url:
-        raise DatingPanelFetchError('у сайта не задан адрес админ-панели')
-
-    # ⚠ Адреса строим от **корня панели**, а не от корня сайта: таблицы лежат
-    # рядом с той страницей, что стоит в настройке (`/partner/agency/…`), а не в
-    # корне домена. С origin вместо корня запрос уходил бы на
-    # `https://ladadate.com/userchatmessages` — и панель честно отвечала `404`.
-    base = panel_root(url)
-    state = json_column_load((await _row(site_id)).get('panel_state'))
-    cookies = http_heartbeat_cookies(state, base)
-    if not cookies:
-        raise DatingPanelFetchError('в панель ещё не входили: нет cookie')
-
+    base, cookies = await _session(site_id)
     client = http_heartbeat_client()
     started = time.monotonic()
     try:
@@ -104,30 +89,67 @@ async def panel_fetch_html(site_id: int, path: str, params: dict = None) -> str:
                                   timeout=PANEL_FETCH_TIMEOUT)
     except Exception as e:
         await _note(site_id, base, path, params, 0,
-                    f'панель не ответила: {type(e).__name__}: {e}', started)
+                    f'панель не ответила: {type(e).__name__}: {e}', started,
+                    method='GET')
 
         raise DatingPanelFetchError(f'панель не ответила: {type(e).__name__}: {e}')
     finally:
         await client.aclose()
 
-    # ⚠ Переадресация здесь — **отказ**, а не удача: панель уводит на форму входа
-    # тогда, когда сессию не признала. По коду `302` этого не видно, поэтому исход
-    # в журнал пишем разобранным.
-    if answer.status_code in (301, 302, 303, 307, 308):
-        await _note(site_id, base, path, params, answer.status_code,
-                    'панель увела на вход: сессия не признана', started)
+    return await _page(site_id, base, path, params, answer, started, 'GET')
 
-        raise DatingPanelFetchError('панель увела на вход: сессия не признана')
 
-    if answer.status_code != 200:
-        await _note(site_id, base, path, params, answer.status_code,
-                    f'панель ответила {answer.status_code}', started)
+async def panel_fetch_post(site_id: int, path: str, data: dict) -> str:
+    """Отправка формы панели под нашей сессией. Разметка ответа строкой.
 
-        raise DatingPanelFetchError(f'панель ответила {answer.status_code}')
+    Args:
+        site_id: сайт, в чью панель отправляем.
+        path: путь относительно корня панели — `usermessage`.
+        data: поля формы «имя → значение».
 
-    await _note(site_id, base, path, params, answer.status_code, '', started)
+    Returns:
+        str: разметка страницы, которой панель ответила.
 
-    return answer.text
+    Raises:
+        DatingPanelFetchError: панели нет в настройках, сессии нет, панель увела на
+            форму входа или ответила отказом.
+
+    ## ⚠⚠ Форма уходит `multipart/form-data`, а не строкой полей
+
+    Так объявлена сама форма панели (`enctype="multipart/form-data"` — у неё есть
+    поле файла), и отправлять иначе значит надеяться, что чужой сервер разберёт и
+    так. Пустой словарь `files` в httpx как раз и переключает кодировку на
+    многочастную, ничего не прикладывая.
+
+    ## ⚠⚠ Переадресацию не идём — по той же причине, что и при чтении
+
+    Панель уводит гостя на форму входа. Пойди мы за ней, ответом стала бы страница
+    входа с кодом `200` — то есть «форма отправлена» вместо «сессия протухла».
+
+    ⚠ А вот **успешную** переадресацию после отправки панель тоже может прислать
+    (`POST` → `302` на страницу списка). Отличить её от увода на вход по коду
+    нельзя, поэтому исход отправки решает не она, а перечитывание страницы
+    вызывающим: `mail_reply_panel.py` смотрит, закрылась ли форма ответа.
+    """
+    base, cookies = await _session(site_id)
+    client = http_heartbeat_client()
+    started = time.monotonic()
+    try:
+        answer = await client.post(f"{base}/{str(path or '').lstrip('/')}",
+                                   data=data or {}, files={}, cookies=cookies,
+                                   follow_redirects=False,
+                                   timeout=PANEL_FETCH_TIMEOUT)
+    except Exception as e:
+        await _note(site_id, base, path, None, 0,
+                    f'панель не ответила: {type(e).__name__}: {e}', started,
+                    method='POST')
+
+        raise DatingPanelFetchError(f'панель не ответила: {type(e).__name__}: {e}')
+    finally:
+        await client.aclose()
+
+    return await _page(site_id, base, path, None, answer, started, 'POST',
+                      redirect_ok=True)
 
 
 def panel_fetch_table(html: str) -> list[list[dict]]:
@@ -229,8 +251,76 @@ class _Table(HTMLParser):
             self._cell['ссылка'] += data
 
 
+async def _session(site_id: int) -> tuple[str, dict]:
+    """Корень панели и cookie сессии. Нет их — отказ с причиной.
+
+    ⚠ Адреса строим от **корня панели**, а не от корня сайта: таблицы лежат рядом с
+    той страницей, что стоит в настройке (`/partner/agency/…`), а не в корне домена.
+    С origin вместо корня запрос уходил бы на `https://ladadate.com/usermessages` —
+    и панель честно отвечала `404`.
+
+    ⚠ Своего входа здесь нет: сессию держит круг панели (`panel_round.py`), и вход
+    из читателя означал бы два входа наперегонки, когда за страницами придут двое.
+    """
+    from src.dating.panel import _row, _url, panel_root
+
+    url = await _url(site_id)
+    if not url:
+        raise DatingPanelFetchError('у сайта не задан адрес админ-панели')
+
+    base = panel_root(url)
+    state = json_column_load((await _row(site_id)).get('panel_state'))
+    cookies = http_heartbeat_cookies(state, base)
+    if not cookies:
+        raise DatingPanelFetchError('в панель ещё не входили: нет cookie')
+
+    return base, cookies
+
+
+async def _page(site_id: int, base: str, path: str, params: dict, answer,
+                started: float, method: str, redirect_ok: bool = False) -> str:
+    """Исход ответа панели: разметка или отказ с разобранной причиной.
+
+    Args:
+        redirect_ok: считать ли переадресацию обычным ответом. ⚠ Нужно **отправке**:
+            панель отвечает на удачную форму `302` на список, и отличить эту
+            переадресацию от увода на вход по коду нельзя.
+
+    ## ⚠⚠ Почему у отправки это не дыра
+
+    Отправка не верит ни коду, ни переадресации: удачу решает **перечитывание**
+    страницы письма (`mail_reply_panel.py` смотрит, закрылась ли форма ответа). И
+    читает его обычный строгий GET — значит протухшая сессия скажется там, и скажется
+    правильными словами, а не «панель приняла форму».
+
+    ⚠ Одна проверка на чтение и на отправку: правила у них почти те же, а две копии
+    разошлись бы ровно там, где это не видно, — в том, что считать протухшей сессией.
+    """
+    # ⚠ Переадресация при **чтении** — отказ, а не удача: панель уводит на форму
+    # входа тогда, когда сессию не признала. По коду `302` этого не видно, поэтому
+    # исход в журнал пишем разобранным.
+    if not redirect_ok and answer.status_code in (301, 302, 303, 307, 308):
+        await _note(site_id, base, path, params, answer.status_code,
+                    'панель увела на вход: сессия не признана', started,
+                    method=method)
+
+        raise DatingPanelFetchError('панель увела на вход: сессия не признана')
+
+    if answer.status_code >= 400 or (answer.status_code != 200 and not redirect_ok):
+        await _note(site_id, base, path, params, answer.status_code,
+                    f'панель ответила {answer.status_code}', started,
+                    method=method)
+
+        raise DatingPanelFetchError(f'панель ответила {answer.status_code}')
+
+    await _note(site_id, base, path, params, answer.status_code, '', started,
+                method=method)
+
+    return answer.text
+
+
 async def _note(site_id: int, base: str, path: str, params: dict, status: int,
-                error: str, started: float) -> None:
+                error: str, started: float, method: str = 'GET') -> None:
     """Строка в журнал запросов. Панель — дверь **сайта**, а не анкеты.
 
     ⚠ Поэтому `profile_id` здесь ноль: сессию панели держит сайт целиком
@@ -260,5 +350,5 @@ async def _note(site_id: int, base: str, path: str, params: dict, status: int,
 
     await request_write(
         door=REQUEST_PANEL, profile_id=0, site_id=int(site_id),
-        method='GET', path=shown, status=int(status or 0),
+        method=str(method or 'GET'), path=shown, status=int(status or 0),
         ok=not error, error=error, ms=request_ms(started))

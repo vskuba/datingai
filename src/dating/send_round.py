@@ -332,13 +332,28 @@ async def _oldest(site_id: int, table: str) -> dict | None:
 
         busy = favorite_mail_girl_free_sql(await favorite_mail_gap_sec(site_id))
 
+    # ⚠⚠⚠ **Номер письма, на которое отвечаем, — у ответов обязателен.**
+    #
+    # Он уезжает в `ReplyForMessageId`, и без него сайт показывает наш ответ
+    # **отдельным письмом**: собеседник не понимает, на что ему отвечают. Кнопка
+    # человека (`mail_reply_send`) его передавала всегда, а этот запрос поля не
+    # выбирал вовсе — то есть **всё, что уходило кругом, шло не ответом**. Найдено
+    # 26.09.2026 при разведке панели: она числила неотвеченными письма, на которые
+    # ответ ушёл сутки назад.
+    #
+    # ⚠ Он же нужен и панельному пути: `MessageId` формы — это тот самый номер.
+    reply_to = (', i.message_id AS reply_to' if table == 'mail_reply' else '')
+    reply_join = ('  LEFT JOIN mail_in i ON i.id = m.mail_in_id'
+                  if table == 'mail_reply' else '')
+
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
                 f'SELECT m.id, m.site_id, m.profile_id, m.uid, m.body, m.status,'
-                f' p.login, p.password, p.password_source'
+                f' p.login, p.password, p.password_source{reply_to}'
                 f'  FROM {table} m'
                 f'  JOIN profile p ON p.id = m.profile_id'
+                f'{reply_join}'
                 f" WHERE m.site_id = %s AND m.status = 'draft' AND m.error = ''"
                 f'   AND p.enabled = 1{online_only}{busy}'
                 f' ORDER BY m.id LIMIT 1', (int(site_id),))
@@ -362,6 +377,10 @@ async def _send(letter: dict, table: str) -> bool:
     profile = {'id': letter['profile_id'], 'site_id': site_id,
                'login': letter['login'], 'password': letter['password'],
                'password_source': letter['password_source']}
+
+    # ⚠ `letter` уезжает в отправку как есть, вместе с `reply_to`: он пришёл из
+    # запроса выше и нужен обоим путям — `ReplyForMessageId` у ручки API и
+    # `MessageId` у формы панели.
 
     try:
         await mail_send_one(letter, profile, base, password, table)

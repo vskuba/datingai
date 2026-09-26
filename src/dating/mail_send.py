@@ -163,6 +163,19 @@ async def mail_send_one(letter: dict, profile: dict, base: str,
     if not body:
         raise DatingMailSendError('письмо пустое — отправлять нечего')
 
+    # ── Развилка: панель или ручка сайта ────────────────────────────────────
+    #
+    # ⚠⚠ **Здесь, а не у вызывающих.** Отправку зовут двое — кнопка человека и круг
+    # отправки, — и развилка у каждого разошлась бы: этой бедой уже обожглись на
+    # `reply_to`, который кнопка передавала, а круг терял.
+    #
+    # ⚠ Спрашиваем **до** `check-send`: между разрешением и отправкой не делаем
+    # ничего, `CheckId` живёт десять секунд.
+    if str(table) == 'mail_reply':
+        done = await _by_panel(letter, table, int(profile.get('id') or 0))
+        if done is not None:
+            return done
+
     if not str(base or '').strip():
         raise DatingMailSendError('у сайта не задан адрес API '
                                   '(настройка сайта «Адрес API сайта»)')
@@ -302,6 +315,63 @@ async def mail_send_mark(letter: dict, sent: bool, error: str = '',
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+async def _by_panel(letter: dict, table: str, profile_id: int):
+    """Отправка ответа **через панель**, если так решено для этой пары.
+
+    Args:
+        letter: строка пула ответов. Нужен `reply_to` — номер письма в панели.
+        table: куда лечь исходу; здесь всегда `mail_reply`.
+        profile_id: анкета-отправительница.
+
+    Returns:
+        `{'sent': True}` — ушло панелью. `None` — панельный путь не наш случай либо
+        не вышел, и решать дальше обычной ручке.
+
+    ## ⚠⚠ Почему `None`, а не исключение
+
+    «Панель не наш случай» и «панель не смогла, но можно ручкой» — это не отказ
+    отправки, а выбор пути. Брось мы исключение, вызывающий обязан был бы его
+    ловить и разбирать причину словами — то есть повторять здешнее решение.
+
+    ⚠ А вот **окончательный** отказ (панель не смогла, и досылать запрещено) —
+    именно исключение: письмо не ушло, и сказать об этом надо тем же способом, каким
+    об этом говорит обычный путь.
+    """
+    from src.dating.mail_reply_panel import (DatingPanelReplyError,
+                                             mail_reply_panel_due,
+                                             mail_reply_panel_fallback,
+                                             mail_reply_panel_send)
+
+    site_id = int(letter.get('site_id') or 0)
+    uid = str(letter.get('uid') or '').strip()
+
+    if not await mail_reply_panel_due(site_id, profile_id, uid):
+        return None
+
+    try:
+        done = await mail_reply_panel_send(site_id,
+                                          int(letter.get('reply_to') or 0),
+                                          str(letter.get('body') or ''))
+    except DatingPanelReplyError as e:
+        if await mail_reply_panel_fallback(site_id):
+            # ⚠ Причину не теряем: она уйдёт в журнал анкеты, даже если письмо
+            # следом уйдёт ручкой. Иначе «панель включена, а письма идут ручкой»
+            # выглядело бы как неработающая настройка.
+            logger_info(f'[dating] ответ #{letter.get("id")} панелью не ушёл '
+                        f'({e}) — досылаем ручкой API')
+
+            return None
+
+        await mail_send_mark(letter, sent=False, error=str(e), table=table)
+
+        raise DatingMailSendError(f'панель не приняла ответ: {e}')
+
+    await mail_send_mark(letter, sent=True, table=table,
+                         answer=str(done.get('answer') or ''))
+
+    return {'sent': True}
+
 
 async def _deny_check(profile: dict, letter: dict, table: str, uid: str,
                       said: str) -> None:
