@@ -36,6 +36,16 @@ import socket
 #
 # Проверкой, а не безусловно: в контейнере (если сюиту однажды запустят там) имя
 # резолвится, и подменять его нечем и незачем.
+#
+# ⚠⚠ **Единственная приватная выше публичных, и это осознанное исключение из
+# `code_rules.md`, §3.** Правило требует все приватные в конец файла, и остальные
+# шесть там и лежат. Эта стоит здесь потому, что **зовётся строкой ниже** — до
+# импортов `httpx`, `pytest` и всего из `src/`. Перенеси её вниз, и вызов окажется
+# раньше определения: файл не прочитается вовсе.
+#
+# Проверка порядка (`function_/function_order.py`) этого не знает и показывает на
+# неё двадцатью находками «публичное после приватного» — все двадцать про эту одну
+# строку. Читать их надо как «исключение на месте», а не как беспорядок.
 def _mysql_reachable() -> None:
     """Адрес базы, годный оттуда, откуда её зовут."""
     host = os.getenv('MYSQL_HOST', 'mysql')
@@ -102,24 +112,6 @@ TIMEOUT = 30.0
 #     подделку.
 # Всё прочее — ошибка, даже если адрес выглядит безобидно.
 _NET_ALLOWED_PORTS = {3306, 3313, 6379}
-
-
-def _net_allowed(address) -> bool:
-    """Свой ли это адрес. Всё, что не своё, — запрещено."""
-    if not isinstance(address, tuple) or len(address) < 2:
-        # Юникс-сокеты и прочее не сетевое: наружу по ним не уйти.
-        return True
-
-    host, port = str(address[0]), int(address[1] or 0)
-
-    if port in _NET_ALLOWED_PORTS:
-        return True
-
-    # Панель: порт из `BASE_URL`, хост только локальный.
-    if host in {'127.0.0.1', 'localhost', '::1'} and port == _BASE_PORT:
-        return True
-
-    return False
 
 
 _BASE_PORT = int((BASE_URL.rsplit(':', 1) + ['80'])[1].split('/')[0])
@@ -214,52 +206,6 @@ TEST_SWEEP_BY_PROFILE = ('scenario_run', 'stat_day')
 
 # Снимает уборку целиком: `KEEP_TEST_DATA=1 python -m pytest …`
 TEST_SWEEP_KEEP = 'KEEP_TEST_DATA'
-
-
-def _test_profiles() -> list:
-    """Номера анкет, заведённых сюитой. Пусто — законный исход."""
-    from mysql_.mysql_query import mysql_query_run
-
-    got = mysql_query_run(
-        'SELECT `id` FROM `profile`'
-        ' WHERE `login` LIKE %s AND `login` NOT LIKE %s',
-        (f'%{TEST_MAIL_DOMAIN}', f'{TEST_SEED_PREFIX}%'))
-
-    return [int(one['id']) for one in (got.get('rows') or [])]
-
-
-def _test_rows_drop() -> dict:
-    """Снести анкеты сюиты и всё, что за ними не уходит само.
-
-    Returns:
-        `{имя таблицы: сколько удалено}`; пустой словарь — убирать было нечего.
-    """
-    from mysql_.mysql_query import mysql_query_run
-
-    found = _test_profiles()
-    if not found:
-        return {}
-
-    holes = ','.join(['%s'] * len(found))
-    counted = {}
-
-    # ⚠ Сперва то, что каскадом не уйдёт, и только потом сами анкеты: после
-    # `DELETE FROM profile` у `scenario_run` в `profile_id` уже `NULL`, и связь с
-    # анкетой пропадает — строки остались бы навсегда, ничьи.
-    for table in TEST_SWEEP_BY_PROFILE:
-        # Имя таблицы уезжает в SQL текстом — потому и берётся только из
-        # `TEST_SWEEP_BY_PROFILE`, а не из ответа базы.
-        got = mysql_query_run(
-            f'DELETE FROM `{table}` WHERE `profile_id` IN ({holes})', tuple(found))
-        gone = int(got.get('affected') or 0)
-        if gone:
-            counted[table] = gone
-
-    got = mysql_query_run(f'DELETE FROM `profile` WHERE `id` IN ({holes})',
-                          tuple(found))
-    counted['profile'] = int(got.get('affected') or 0)
-
-    return counted
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -371,23 +317,6 @@ async def no_live_writes():
             'и берите выдуманный номер анкеты, а не живой.')
 
 
-async def _live_messages() -> int:
-    """Сколько сообщений у анкет, которые были в базе до прогона."""
-    async with mysql_get_db_async() as db:
-        if not _PROFILES_LIVE:
-            await db.execute('SELECT id FROM profile')
-            _PROFILES_LIVE.update(int(row['id']) for row in await db.fetchall() or [])
-
-        if not _PROFILES_LIVE:
-            return 0
-
-        await db.execute('SELECT COUNT(*) AS n FROM message '
-                         f"WHERE profile_id IN ({','.join(['%s'] * len(_PROFILES_LIVE))})",
-                         tuple(_PROFILES_LIVE))
-
-        return int(((await db.fetchone()) or {}).get('n') or 0)
-
-
 @pytest.fixture(autouse=True)
 async def db_pool():
     """Гасит фоновые задачи и закрывает пул соединений после каждого теста.
@@ -411,21 +340,6 @@ async def db_pool():
 
     await _tasks_stop()
     await mysql_pool_close()
-
-
-async def _tasks_stop() -> None:
-    """Отменяет всё, что тест оставил работать в фоне, и дожидается конца.
-
-    Ждать после отмены обязательно: отмена доходит до задачи только на следующем
-    шаге цикла, и без ожидания она успевает пожаловаться уже после того, как тест
-    прошёл.
-    """
-    mine = asyncio.current_task()
-    tasks = [task for task in asyncio.all_tasks() if task is not mine and not task.done()]
-    for task in tasks:
-        task.cancel()
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 # ── Сайт в нашем снимке ──────────────────────────────────────────────────────
@@ -494,32 +408,6 @@ async def client():
 _SESSIONS: dict[str, httpx.Cookies] = {}
 
 
-async def _login(username: str, password: str) -> httpx.Cookies:
-    """Куки роли: берём готовые, а нет — входим один раз на весь прогон.
-
-    ⚠ **Проверяем, что кука ещё жива**, дешёвым запросом (10 мс): она живёт час, и
-    длинный прогон мог её пережить. Протухла — входим заново; без этой проверки
-    сюита падала бы 401-ми на последних файлах, и причину искали бы в правках.
-    """
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT,
-                                 follow_redirects=False) as http:
-        cookies = _SESSIONS.get(username)
-        if cookies is not None:
-            http.cookies = cookies
-            if (await http.get('/api/dating/site')).status_code == 200:
-                return cookies
-
-        response = await http.post('/auth/login', json={'username': username,
-                                                        'password': password})
-        assert response.status_code == 200, (
-            f'не вышло войти под {username}: '
-            f'{response.status_code} {response.text[:200]}')
-
-        _SESSIONS[username] = http.cookies
-
-        return http.cookies
-
-
 @pytest.fixture
 async def auth_client():
     """Клиент с сессией. Не сошлось — тест падает здесь, а не в середине проверки.
@@ -548,3 +436,125 @@ async def dating_client():
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT,
                                  follow_redirects=False, cookies=cookies) as http:
         yield http
+
+
+def _net_allowed(address) -> bool:
+    """Свой ли это адрес. Всё, что не своё, — запрещено."""
+    if not isinstance(address, tuple) or len(address) < 2:
+        # Юникс-сокеты и прочее не сетевое: наружу по ним не уйти.
+        return True
+
+    host, port = str(address[0]), int(address[1] or 0)
+
+    if port in _NET_ALLOWED_PORTS:
+        return True
+
+    # Панель: порт из `BASE_URL`, хост только локальный.
+    if host in {'127.0.0.1', 'localhost', '::1'} and port == _BASE_PORT:
+        return True
+
+    return False
+
+
+def _test_profiles() -> list:
+    """Номера анкет, заведённых сюитой. Пусто — законный исход."""
+    from mysql_.mysql_query import mysql_query_run
+
+    got = mysql_query_run(
+        'SELECT `id` FROM `profile`'
+        ' WHERE `login` LIKE %s AND `login` NOT LIKE %s',
+        (f'%{TEST_MAIL_DOMAIN}', f'{TEST_SEED_PREFIX}%'))
+
+    return [int(one['id']) for one in (got.get('rows') or [])]
+
+
+def _test_rows_drop() -> dict:
+    """Снести анкеты сюиты и всё, что за ними не уходит само.
+
+    Returns:
+        `{имя таблицы: сколько удалено}`; пустой словарь — убирать было нечего.
+    """
+    from mysql_.mysql_query import mysql_query_run
+
+    found = _test_profiles()
+    if not found:
+        return {}
+
+    holes = ','.join(['%s'] * len(found))
+    counted = {}
+
+    # ⚠ Сперва то, что каскадом не уйдёт, и только потом сами анкеты: после
+    # `DELETE FROM profile` у `scenario_run` в `profile_id` уже `NULL`, и связь с
+    # анкетой пропадает — строки остались бы навсегда, ничьи.
+    for table in TEST_SWEEP_BY_PROFILE:
+        # Имя таблицы уезжает в SQL текстом — потому и берётся только из
+        # `TEST_SWEEP_BY_PROFILE`, а не из ответа базы.
+        got = mysql_query_run(
+            f'DELETE FROM `{table}` WHERE `profile_id` IN ({holes})', tuple(found))
+        gone = int(got.get('affected') or 0)
+        if gone:
+            counted[table] = gone
+
+    got = mysql_query_run(f'DELETE FROM `profile` WHERE `id` IN ({holes})',
+                          tuple(found))
+    counted['profile'] = int(got.get('affected') or 0)
+
+    return counted
+
+
+async def _live_messages() -> int:
+    """Сколько сообщений у анкет, которые были в базе до прогона."""
+    async with mysql_get_db_async() as db:
+        if not _PROFILES_LIVE:
+            await db.execute('SELECT id FROM profile')
+            _PROFILES_LIVE.update(int(row['id']) for row in await db.fetchall() or [])
+
+        if not _PROFILES_LIVE:
+            return 0
+
+        await db.execute('SELECT COUNT(*) AS n FROM message '
+                         f"WHERE profile_id IN ({','.join(['%s'] * len(_PROFILES_LIVE))})",
+                         tuple(_PROFILES_LIVE))
+
+        return int(((await db.fetchone()) or {}).get('n') or 0)
+
+
+async def _tasks_stop() -> None:
+    """Отменяет всё, что тест оставил работать в фоне, и дожидается конца.
+
+    Ждать после отмены обязательно: отмена доходит до задачи только на следующем
+    шаге цикла, и без ожидания она успевает пожаловаться уже после того, как тест
+    прошёл.
+    """
+    mine = asyncio.current_task()
+    tasks = [task for task in asyncio.all_tasks() if task is not mine and not task.done()]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _login(username: str, password: str) -> httpx.Cookies:
+    """Куки роли: берём готовые, а нет — входим один раз на весь прогон.
+
+    ⚠ **Проверяем, что кука ещё жива**, дешёвым запросом (10 мс): она живёт час, и
+    длинный прогон мог её пережить. Протухла — входим заново; без этой проверки
+    сюита падала бы 401-ми на последних файлах, и причину искали бы в правках.
+    """
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT,
+                                 follow_redirects=False) as http:
+        cookies = _SESSIONS.get(username)
+        if cookies is not None:
+            http.cookies = cookies
+            if (await http.get('/api/dating/site')).status_code == 200:
+                return cookies
+
+        response = await http.post('/auth/login', json={'username': username,
+                                                        'password': password})
+        assert response.status_code == 200, (
+            f'не вышло войти под {username}: '
+            f'{response.status_code} {response.text[:200]}')
+
+        _SESSIONS[username] = http.cookies
+
+        return http.cookies
