@@ -79,12 +79,16 @@ class TestTheTitle:
 
 
 class TestTheVariables:
-    """⚠⚠ Ключ и имя — **разные** поля."""
+    """⚠⚠ Ключ и имя — **разные** поля. Троица едет целиком: с `…remove_companion`
+    сосед из запроса ничего не подставляет, и шаг «Переменные» склеивает
+    `companion_unique_id` из `%companion_id%_%companion_name%` — без номера
+    ключ съедает приставку."""
 
     def test_both_go_out(self):
         got = companion_vars(343, '128282', 'Gerard')
 
-        assert got == {'companion_name': 'dating_343_128282',
+        assert got == {'companion_id': COMPANION_REF_ID,
+                       'companion_name': 'dating_343_128282',
                        'companion_title': 'Gerard'}
 
     def test_the_agent_never_greets_a_key(self):
