@@ -49,6 +49,38 @@ PANEL_FAKE_ROOT = 'https://panel.test/partner/agency'
 PANEL_FAKE_STATE = ('{"cookies": [{"name": "SID", "value": "s1",'
                     ' "domain": "panel.test"}], "origins": []}')
 
+# ⚠⚠⚠ **Контракт формы, снятый с живой панели машинно** (26.09.2026, письмо
+# 826504459). Не «примерно так выглядит», а ровно то, что отдаёт Ladadate: адрес,
+# метод, кодировка и все пять полей по порядку.
+#
+# Ради него и заведена эта константа: поддельная страница ниже написана руками, и
+# рукописная заглушка расходится с живой страницей молча. Сторож
+# (`test_mail_reply_panel.py`) разбирает поддельную страницу тем же разбором и
+# сличает с этим словарём — то есть заглушка **приколота** к панели, а не похожа на
+# неё.
+#
+# ⚠ `uploadFile` здесь есть, а мы его **не отправляем**: браузер послал бы пустую
+# часть файла, мы не посылаем ничего. Проверить это локально нечем — живая панель
+# либо примет, либо нет; записано, чтобы при отказе смотрели сюда первым делом.
+PANEL_FAKE_CONTRACT = {
+    'action': '/partner/agency/usermessage',
+    'method': 'post',
+    'enctype': 'multipart/form-data',
+    'fields': [
+        {'tag': 'textarea', 'name': 'ToBody', 'type': None, 'value': None},
+        {'tag': 'input', 'name': 'MessageId', 'type': 'hidden', 'value': 'НОМЕР'},
+        {'tag': 'input', 'name': 'uploadFile', 'type': 'file', 'value': None},
+        {'tag': 'input', 'name': 'buttonIgnore', 'type': 'submit',
+         'value': 'Ignore Message'},
+        {'tag': 'button', 'name': 'buttonReply', 'type': 'submit',
+         'value': 'Reply'},
+    ],
+}
+
+# Куда панель принимает форму. ⚠ Путь **от корня сайта**, как в `action` живой формы:
+# заглушка отвечает отказом на любой другой, иначе промах в адресе прошёл бы молча.
+PANEL_FAKE_POST_PATH = '/partner/agency/usermessage'
+
 # Страница письма с **открытой** формой ответа. Разметка снята с живой панели
 # 26.09.2026 и обрезана до того, что читает код: скрытый номер, поле текста и обе
 # кнопки.
@@ -94,6 +126,8 @@ class PanelFake:
         self.sent = []
         # Куда ходили: `(метод, путь)`.
         self.calls = []
+        # Каким `Content-Type` уходила форма — по одному на отправку.
+        self.kinds = []
         # Сессия не признана: панель уводит на вход.
         self.expired = False
         # Панель отвечает отказом: код, который она вернёт.
@@ -125,7 +159,7 @@ class PanelFake:
             return httpx.Response(302, headers={'Location': '/partner/signin'})
 
         if request.method == 'POST':
-            return self._post(request)
+            return self._post(request, path)
 
         return self._get(path)
 
@@ -146,8 +180,20 @@ class PanelFake:
 
         return httpx.Response(200, text=PANEL_FAKE_OPEN.format(message_id=one))
 
-    def _post(self, request: httpx.Request) -> httpx.Response:
-        """Отправленная форма: разбираем поля и запоминаем."""
+    def _post(self, request: httpx.Request, path: str) -> httpx.Response:
+        """Отправленная форма: разбираем поля и запоминаем.
+
+        ⚠⚠ Адрес сверяется с `action` живой формы. Прежде заглушка принимала форму по
+        любому пути — и промах в адресе прошёл бы молча: тест зелёный, а панель на
+        проде отвечает `404`. Ровно то расхождение, из-за которого контрактные
+        проверки и пишут.
+        """
+        if path != PANEL_FAKE_POST_PATH:
+            return httpx.Response(404, text=f'panel has no {path}')
+
+        # Кодировку запоминаем как есть: форма панели объявлена `multipart`, и
+        # отправка строкой полей — расхождение, которое видно только здесь.
+        self.kinds.append(request.headers.get('content-type', ''))
         fields = _multipart(request)
         self.sent.append(fields)
 
@@ -196,6 +242,10 @@ def _multipart(request: httpx.Request) -> dict:
     ⚠ Строку полей (`application/x-www-form-urlencoded`) разбираем тоже: так видно,
     если код однажды перестанет отправлять многочастную форму, — а форма панели
     объявлена `multipart`, и отправлять иначе значит надеяться на чужой сервер.
+
+    ⚠⚠ Пустую часть файла (`uploadFile` без имени и тела) пропускаем: её посылает и
+    браузер, и она же включает многочастную кодировку. В `sent` ей места нет — иначе
+    сторож «в форму не уехало лишнего» спорил бы с тем, что уехало нарочно.
     """
     kind = request.headers.get('content-type', '')
     if 'multipart/form-data' not in kind:
@@ -211,6 +261,12 @@ def _multipart(request: httpx.Request) -> dict:
 
         name = part.split('name="', 1)[1].split('"', 1)[0]
         _, _, value = part.partition('\r\n\r\n')
-        out[name] = value.rstrip('\r\n-')
+        value = value.rstrip('\r\n-')
+
+        # Пустая часть файла — не поле формы: она нужна кодировке, а не панели.
+        if name == 'uploadFile' and not value:
+            continue
+
+        out[name] = value
 
     return out

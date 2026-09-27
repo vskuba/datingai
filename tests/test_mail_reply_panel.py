@@ -36,7 +36,8 @@ from src.dating.mail_reply_panel import (DatingPanelReplyError,
                                          mail_reply_panel_fallback,
                                          mail_reply_panel_open,
                                          mail_reply_panel_send)
-from tests.panel_fake import (PANEL_FAKE_OPEN, PANEL_FAKE_STATE, PANEL_FAKE_URL,
+from tests.panel_fake import (PANEL_FAKE_CONTRACT, PANEL_FAKE_OPEN,
+                              PANEL_FAKE_STATE, PANEL_FAKE_URL,
                               panel)  # noqa: F401 — фикстура
 
 pytestmark = pytest.mark.mail
@@ -127,6 +128,100 @@ class TestTheFormWeSend:
             await mail_reply_panel_send(SITE, MESSAGE, '   ')
 
         assert panel.sent == [], 'пустая форма всё равно ушла в панель'
+
+
+class TestTheFakeMatchesTheLivePanel:
+    """⚠⚠⚠ Заглушка **приколота** к живой странице, а не похожа на неё.
+
+    Поддельная страница написана руками, а рукописная заглушка расходится с чужим
+    сервером молча: тесты зелёные, прод отвечает `404`. Поэтому контракт снят с живой
+    панели машинно (`PANEL_FAKE_CONTRACT`, 26.09.2026), и здесь поддельная страница
+    разбирается тем же разбором и сличается с ним.
+
+    ⚠ Так же проверяется и **наша** отправка: адрес, метод и кодировка берутся из
+    `action`/`method`/`enctype` той же формы, а не из памяти писавшего.
+    """
+
+    def test_the_fake_form_is_the_live_form(self):
+        got = _contract(PANEL_FAKE_OPEN.format(message_id=MESSAGE))
+        want = dict(PANEL_FAKE_CONTRACT)
+        # ⚠ Номер письма в живом снимке свой — сверяем его отдельно, ниже.
+        want['fields'] = [{**one, 'value': str(MESSAGE)}
+                          if one['name'] == 'MessageId' else one
+                          for one in want['fields']]
+
+        assert got == want, (
+            'поддельная страница разошлась с живой:\n'
+            f'  заглушка: {got}\n'
+            f'  панель:   {want}')
+
+    def test_every_live_field_is_in_the_fake(self):
+        """⚠ Отдельной проверкой — чтобы отказ был читаемым: сравнение словарей выше
+        скажет «не равно», а это скажет, какого поля не хватает."""
+        got = {one['name'] for one in
+               _contract(PANEL_FAKE_OPEN.format(message_id=MESSAGE))['fields']}
+        want = {one['name'] for one in PANEL_FAKE_CONTRACT['fields']}
+
+        assert got == want, f'поля разошлись: нет {want - got}, лишние {got - want}'
+
+
+class TestWeSendWhatTheFormDeclares:
+    """⚠⚠ Адрес, метод и кодировка — из формы живой панели, а не из памяти."""
+
+    async def test_the_form_goes_to_the_declared_address(self, site, panel):
+        """⚠⚠ Прежде заглушка принимала форму по любому пути: промах в адресе прошёл
+        бы молча — тест зелёный, панель на проде отвечает `404`."""
+        panel.open(MESSAGE)
+
+        await mail_reply_panel_send(SITE, MESSAGE, 'мой ответ')
+
+        posts = [one[1] for one in panel.calls if one[0] == 'POST']
+        assert posts == [PANEL_FAKE_CONTRACT['action']], \
+            f"форма ушла не по адресу формы: {posts}"
+
+    async def test_the_content_type_is_the_declared_one(self, site, panel):
+        """⚠ `multipart/form-data` — как объявлено формой. Строка полей у ASP.NET
+        может и пройти, но это надежда на чужой сервер, а не договор."""
+        panel.open(MESSAGE)
+
+        await mail_reply_panel_send(SITE, MESSAGE, 'мой ответ')
+
+        assert PANEL_FAKE_CONTRACT['enctype'] in panel.kinds[0], \
+            f'форма ушла кодировкой {panel.kinds[0]!r}'
+
+    async def test_the_page_is_read_by_the_declared_path(self, site, panel):
+        """⚠ Страница письма — `usermessage/{номер}`: тот же путь, что за кнопкой
+        «Reply» в списке панели."""
+        panel.open(MESSAGE)
+
+        await mail_reply_panel_send(SITE, MESSAGE, 'мой ответ')
+
+        gets = [one[1] for one in panel.calls if one[0] == 'GET']
+        assert gets == [f"{PANEL_FAKE_CONTRACT['action']}/{MESSAGE}"] * 2, \
+            f'страницу читали не по тому пути: {gets}'
+
+    async def test_a_wrong_address_is_refused_loudly(self, site, panel,
+                                                     monkeypatch):
+        """⚠⚠⚠ Сторож самого сторожа: заглушка обязана **ругаться** на чужой адрес.
+
+        Иначе проверка выше ничего не значит — она бы проходила и с заглушкой,
+        принимающей что угодно.
+        """
+        import src.dating.mail_reply_panel as module
+
+        panel.open(MESSAGE)
+        monkeypatch.setattr(module, 'MAIL_REPLY_PANEL_PATH', 'usermessage')
+
+        # Путь чтения тот же, а отправка уедет в «usermessages» — на одну букву мимо.
+        async def wrong(site_id, path, data):
+            from src.dating.panel_fetch import panel_fetch_post
+
+            return await panel_fetch_post(site_id, 'usermessages', data)
+
+        monkeypatch.setattr(module, 'panel_fetch_post', wrong)
+
+        with pytest.raises(DatingPanelReplyError, match='404'):
+            await mail_reply_panel_send(SITE, MESSAGE, 'мой ответ')
 
 
 class TestTheReplyPageDecides:
@@ -295,6 +390,42 @@ async def girl_and_man(auth_client):
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+def _contract(html: str) -> dict:
+    """Форма ответа как договор: адрес, метод, кодировка и поля по порядку.
+
+    ⚠⚠ Разбор **тот же**, каким контракт снимали с живой панели: сверяй мы заглушку
+    другим разбором — сошлись бы два разных прочтения одной страницы, и расхождение
+    осталось бы невидимым.
+    """
+    import re
+
+    found = None
+    for form in re.findall(r'<form[^>]*>.*?</form>', html, re.S):
+        if 'name="ToBody"' in form or 'name="MessageId"' in form:
+            found = form
+            break
+
+    if not found:
+        return {'form': None}
+
+    head = re.match(r'<form[^>]*>', found).group(0)
+
+    def attr(name, where=head):
+        got = re.search(rf'{name}="([^"]*)"', where)
+
+        return got.group(1) if got else None
+
+    fields = []
+    for one in re.findall(r'<(?:input|textarea|button)[^>]*>', found):
+        fields.append({'tag': re.match(r'<(\w+)', one).group(1),
+                       'name': attr('name', one),
+                       'type': attr('type', one),
+                       'value': attr('value', one)})
+
+    return {'action': attr('action'), 'method': attr('method'),
+            'enctype': attr('enctype'), 'fields': fields}
+
 
 async def _settings(client, more: dict) -> None:
     """Настройки сайта — **целиком**, а не одним ключом.

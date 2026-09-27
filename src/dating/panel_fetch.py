@@ -58,6 +58,14 @@ class DatingPanelFetchError(RuntimeError):
 # нечего — круг придёт снова.
 PANEL_FETCH_TIMEOUT = 20.0
 
+# Пустая часть файла для формы панели: у неё есть `<input type="file">`, и браузер
+# посылает такую часть даже когда файл не выбран.
+#
+# ⚠⚠ Она же **включает многочастную кодировку**: `files={}` этого не делает — пустой
+# словарь ложен, и httpx уходит строкой полей. Имя поля то же, что в форме панели
+# (`uploadFile`), чтобы набор частей совпадал с тем, что она ждёт.
+PANEL_FETCH_EMPTY_FILE = {'uploadFile': ('', b'', 'application/octet-stream')}
+
 
 async def panel_fetch_html(site_id: int, path: str, params: dict = None) -> str:
     """Страница панели под нашей сессией. Разметка строкой.
@@ -117,9 +125,16 @@ async def panel_fetch_post(site_id: int, path: str, data: dict) -> str:
     ## ⚠⚠ Форма уходит `multipart/form-data`, а не строкой полей
 
     Так объявлена сама форма панели (`enctype="multipart/form-data"` — у неё есть
-    поле файла), и отправлять иначе значит надеяться, что чужой сервер разберёт и
-    так. Пустой словарь `files` в httpx как раз и переключает кодировку на
-    многочастную, ничего не прикладывая.
+    поле файла), и отправлять иначе значит надеяться, что чужой сервер разберёт и так.
+
+    ⚠⚠⚠ **Пустой `files={}` кодировку НЕ переключает** — пустой словарь ложен, и httpx
+    уходит обычным `application/x-www-form-urlencoded`. Поймано сторожем контракта
+    (`test_mail_reply_panel.py`), который сверяет `Content-Type` с `enctype` живой
+    формы; до него код три правки считался многочастным, не будучи им.
+
+    Поэтому прикладывается **пустая часть файла** — ровно то, что посылает браузер,
+    когда файл не выбран: `uploadFile` с пустым именем и пустым телом. Так и кодировка
+    та, и набор частей совпадает с формой панели.
 
     ## ⚠⚠ Переадресацию не идём — по той же причине, что и при чтении
 
@@ -136,8 +151,8 @@ async def panel_fetch_post(site_id: int, path: str, data: dict) -> str:
     started = time.monotonic()
     try:
         answer = await client.post(f"{base}/{str(path or '').lstrip('/')}",
-                                   data=data or {}, files={}, cookies=cookies,
-                                   follow_redirects=False,
+                                   data=data or {}, files=PANEL_FETCH_EMPTY_FILE,
+                                   cookies=cookies, follow_redirects=False,
                                    timeout=PANEL_FETCH_TIMEOUT)
     except Exception as e:
         await _note(site_id, base, path, None, 0,
