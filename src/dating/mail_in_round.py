@@ -48,7 +48,7 @@ import asyncio
 from logging_.logging_ import logger_info
 
 from src.dating.feed import feed_done, feed_write
-from src.dating.round import (round_slot_due,
+from src.dating.round import (pool_round_run, round_slot_due,
                             round_slot_mark)
 from mysql_.mysql_ import mysql_get_db_async
 
@@ -84,93 +84,114 @@ async def mail_in_round_run() -> dict:
             `added` — новых писем принесено, `failed` — анкет с отказом.
     """
     sites = await _sites()
-    if not sites:
-        return {'sites': 0, 'profiles': 0, 'added': 0, 'failed': 0}
-
     ran = seen = added = failed = 0
-    for site in sites:
-        site_id = int(site['site_id'])
-        # ⚠ Сбой — молчим: лишние обходы — тринадцать входов, а сайт считает
-        # частые заходы подозрением.
-        if not round_slot_due(MAIL_IN_ROUND_KEY, site_id, 'письмам'):
-            continue
-
-        # ⚠ Отметку ставим **до** обхода: он идёт секундами на анкету, и
-        # следующий тик завёл бы второй обход, пока идёт первый.
-        round_slot_mark(MAIL_IN_ROUND_KEY, site_id, await _every(site_id),
-                        'письмам')
-
-        profiles = await _profiles(site_id)
-        if not profiles:
-            continue
-
-        ran += 1
-        base = str(await _setting(site_id, 'api_base')).strip()
-        password = str(await _setting(site_id, 'api_password')).strip()
-        if not base:
-            continue
-
-        # ⚠ В ленту пишем **до** обхода: он идёт секундами на анкету (тринадцать
-        # анкет — десятки секунд), и человек должен видеть «идём за почтой» пока
-        # оно идёт, а не после (`feed.py`).
-        # ⚠ Без многоточия в конце. Оно ставилось как «работа идёт», а читается
-        # как обрезанный текст: человек решил, что строку режут, и пошёл искать
-        # предел длины. Что работа идёт, видно по самой строке — итог её заменит.
-        started = feed_write(site_id, 'mail',
-                                    f'Забираю письма: анкет {len(profiles)}')
-
-        arrived = site_failed = fresh = 0
-        for number, profile in enumerate(profiles):
-            if number:
-                await asyncio.sleep(MAIL_IN_PAUSE_SEC)
-
-            # ⚠⚠ **Статус перечитываем перед самим походом.** Отбор выше взял
-            # анкеты `status = 'online'`, но обход идёт по одной с паузой — сайт
-            # считает частые заходы подозрением, — и список успевает устареть.
-            #
-            # Поймано живьём: смена кончилась на второй секунде обхода, и два
-            # `GET /messages` ушли под анкетами, которые уже были офлайн. Вреда
-            # в тот раз не вышло (токен жив, входа не было), но правило «под
-            # спящей наружу не ходим» держится не на везении.
-            if not await ready_online(int(profile['id'])):
-                continue
-
-            seen += 1
-            got = await _fetch(profile, base, password)
-            if got is None:
-                failed += 1
-                site_failed += 1
-            else:
-                arrived += int(got.get('added') or 0)
-                fresh += int(got.get('fresh') or 0)
-                added += int(got.get('added') or 0)
-
-        # ⚠ Итог **заменяет** строку «забираю», а не встаёт второй: без него на
-        # экране оставалось бы вечное «забираю письма», которое читается как
-        # незаконченная работа. Вторая же строка забивала бы полосу одной почтой.
-        #
-        # ⚠ Пишем и пустой итог: «новых нет» — тоже ответ, и молчание вместо него
-        # оставляло бы человека гадать, дошёл ли круг до конца.
-        # ⚠ **«Привезено» и «свежих» — разные числа, и врозь их пишем не зря.**
-        # Забор берёт письма от последнего известного минус запас, а первый заход —
-        # за неделю: «новых 5» почти всегда значит пять писем, каких у нас не было,
-        # а не пять только что пришедших. Человек это проверяет сразу — открывает
-        # входящие и находит там позавчерашнее.
-        if not arrived:
-            summary = 'Писем не пришло'
-        elif fresh:
-            summary = f'Писем: {arrived}, свежих {fresh}'
-        else:
-            summary = f'Писем привезено: {arrived} — все старые'
-
-        feed_done(site_id, started, 'warn' if site_failed and not arrived else 'mail',
-                         summary + (f' · с отказом анкет: {site_failed}' if site_failed else ''))
+    for _, c in await pool_round_run(sites, gate=_gate, every=_every, work=_work,
+                                    key=MAIL_IN_ROUND_KEY, what='письмам'):
+        if c is not None:
+            ran += c['sites']
+            seen += c['profiles']
+            added += c['added']
+            failed += c['failed']
 
     if added or failed:
         logger_info(f'[dating] круг писем: анкет {seen}, новых {added}'
                     + (f', с отказом {failed}' if failed else ''))
 
     return {'sites': ran, 'profiles': seen, 'added': added, 'failed': failed}
+
+
+async def _gate(site: dict, minutes: int) -> bool:
+    """Забор включён (спрашивает `_sites`) и вышел срок обхода.
+
+    ⚠ Сбой — молчим: лишние обходы — тринадцать входов, а сайт считает частые
+    заходы подозрением. Отметку обвязка ставит до обхода: он идёт секундами на
+    анкету, и следующий тик завёл бы второй обход, пока идёт первый.
+    """
+    return round_slot_due(MAIL_IN_ROUND_KEY, int(site['site_id']), 'письмам')
+
+
+async def _work(site: dict, minutes: int) -> dict | None:
+    """Обходит анкеты сайта одной пачкой с паузой; итог заменяет «забираю».
+
+    В ленту пишем до обхода: он идёт секундами на анкету, и человек должен
+    видеть «идём за почтой» пока оно идёт (`feed.py`). Без многоточия:
+    читается как обрезанный текст. Итог заменяет строку «забираю», а не встаёт
+    второй, и пишется даже пустым: «новых нет» — тоже ответ. «Привезено» и
+    «свежих» — разные числа, и врозь их пишем не зря: забор берёт письма от
+    последнего известного минус запас, и «новых 5» почти всегда значит пять
+    писем, каких у нас не было, а не пять пришедших только что. Статус каждой
+    анкеты перечитывается перед походом — список успевает устареть за паузой,
+    а правило «под спящей наружу не ходим» держится не на везении.
+    """
+    site_id = int(site['site_id'])
+
+    profiles = await _profiles(site_id)
+    if not profiles:
+        return None
+
+    base = str(await _setting(site_id, 'api_base')).strip()
+    password = str(await _setting(site_id, 'api_password')).strip()
+    if not base:
+        return {'sites': 1, 'profiles': 0, 'added': 0, 'failed': 0}
+
+    # ⚠ В ленту пишем **до** обхода: он идёт секундами на анкету (тринадцать
+    # анкет — десятки секунд), и человек должен видеть «идём за почтой» пока
+    # оно идёт, а не после (`feed.py`).
+    # ⚠ Без многоточия в конце. Оно ставилось как «работа идёт», а читается
+    # как обрезанный текст: человек решил, что строку режут, и пошёл искать
+    # предел длины. Что работа идёт, видно по самой строке — итог её заменит.
+    started = feed_write(site_id, 'mail',
+                                f'Забираю письма: анкет {len(profiles)}')
+
+    seen = added = failed = arrived = site_failed = fresh = 0
+    for number, profile in enumerate(profiles):
+        if number:
+            await asyncio.sleep(MAIL_IN_PAUSE_SEC)
+
+        # ⚠⚠ **Статус перечитываем перед самим походом.** Отбор выше взял
+        # анкеты `status = 'online'`, но обход идёт по одной с паузой — сайт
+        # считает частые заходы подозрением, — и список успевает устареть.
+        #
+        # Поймано живьём: смена кончилась на второй секунде обхода, и два
+        # `GET /messages` ушли под анкетами, которые уже были офлайн. Вреда
+        # в тот раз не вышло (токен жив, входа не было), но правило «под
+        # спящей наружу не ходим» держится не на везении.
+        if not await ready_online(int(profile['id'])):
+            continue
+
+        seen += 1
+        got = await _fetch(profile, base, password)
+        if got is None:
+            failed += 1
+            site_failed += 1
+        else:
+            arrived += int(got.get('added') or 0)
+            fresh += int(got.get('fresh') or 0)
+            added += int(got.get('added') or 0)
+
+    # ⚠ Итог **заменяет** строку «забираю», а не встаёт второй: без него на
+    # экране оставалось бы вечное «забираю письма», которое читается как
+    # незаконченная работа. Вторая же строка забивала бы полосу одной почтой.
+    #
+    # ⚠ Пишем и пустой итог: «новых нет» — тоже ответ, и молчание вместо него
+    # оставляло бы человека гадать, дошёл ли круг до конца.
+    # ⚠ **«Привезено» и «свежих» — разные числа, и врозь их пишем не зря.**
+    # Забор берёт письма от последнего известного минус запас, а первый заход —
+    # за неделю: «новых 5» почти всегда значит пять писем, каких у нас не было,
+    # а не пять только что пришедших. Человек это проверяет сразу — открывает
+    # входящие и находит там позавчерашнее.
+    if not arrived:
+        summary = 'Писем не пришло'
+    elif fresh:
+        summary = f'Писем: {arrived}, свежих {fresh}'
+    else:
+        summary = f'Писем привезено: {arrived} — все старые'
+
+    feed_done(site_id, started, 'warn' if site_failed and not arrived else 'mail',
+                     summary + (f' · с отказом анкет: {site_failed}' if site_failed else ''))
+
+
+    return {'sites': 1, 'profiles': seen, 'added': added, 'failed': failed}
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

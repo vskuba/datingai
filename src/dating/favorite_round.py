@@ -68,7 +68,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.ready import ready_online
-from src.dating.round import (round_slot_due,
+from src.dating.round import (pool_round_run, round_slot_due,
                             round_slot_mark)
 from src.dating.favorite import (FAVORITE_ALREADY,
                                         FAVORITE_DONE,
@@ -107,51 +107,15 @@ async def favorite_round_run() -> dict:
             `failed` — не вышло.
     """
     ran = seen = added = already = failed = 0
-
-    for site in await _sites():
-        site_id = int(site['site_id'])
-        # ⚠ Сбой — молчим: входы браузером под каждой анкетой подряд.
-        if not await _on(site_id) or not round_slot_due(
-                FAVORITE_ROUND_KEY, site_id, 'избранным'):
-            continue
-
-        # ⚠ Отметку ставим **до** обхода: он идёт минутами, и следующий тик завёл
-        # бы второй обход, пока идёт первый.
-        round_slot_mark(FAVORITE_ROUND_KEY, site_id, await _every(site_id),
-                        'избранным')
-
-        base = str(await _setting(site_id, 'api_base')).strip()
-        if not base:
-            continue
-
-        profiles = await _profiles(site_id)
-        if not profiles:
-            continue
-
-        ran += 1
-        password = str(await _setting(site_id, 'api_password')).strip()
-        left = await _batch(site_id)
-
-        for profile in profiles:
-            if left <= 0:
-                break
-
-            # ⚠ **Статус перед походом, а не только при отборе.** Звёздочка — это
-            # вход под девушкой на сайте, и заходы разведены паузой: за время
-            # обхода список успевает устареть. Та же беда, что поймана у писем
-            # (`ready_online`), и тот же ответ.
-            if not await ready_online(int(profile['id'])):
-                continue
-
-            seen += 1
-            got = await _profile_run(profile, base, password, left)
-            added += got['added']
-            already += got['already']
-            failed += got['failed']
-            # ⚠ Потолок съедают **прогоны**, а не неудачи вообще. Не пришедший
-            # список избранных — это отказ по HTTP, вкладку у соседа он не занимал,
-            # и вычитать его из потолка значило бы наказывать сайт за молчание.
-            left -= got['spent']
+    for _, c in await pool_round_run(await _sites(), gate=_gate, every=_every,
+                                    work=_work, key=FAVORITE_ROUND_KEY,
+                                    what='избранным'):
+        if c is not None:
+            ran += c['sites']
+            seen += c['profiles']
+            added += c['added']
+            already += c['already']
+            failed += c['failed']
 
     if added or failed:
         logger_info(f'[dating] круг избранных: анкет {seen}, добавлено {added}'
@@ -160,6 +124,66 @@ async def favorite_round_run() -> dict:
 
     return {'sites': ran, 'profiles': seen, 'added': added, 'already': already,
             'failed': failed}
+
+
+async def _gate(site: dict, minutes: int) -> bool:
+    """Добавление включено и вышел срок обхода.
+
+    ⚠ Сбой — молчим: входы браузером под каждой анкетой подряд. Отметку
+    обвязка ставит до обхода: он идёт минутами, и следующий тик завёл бы
+    второй обход, пока идёт первый.
+    """
+    return await _on(int(site['site_id'])) and round_slot_due(
+        FAVORITE_ROUND_KEY, int(site['site_id']), 'избранным')
+
+
+async def _work(site: dict, minutes: int) -> dict | None:
+    """Ставит звёздочку анкетам сайта; статус перечитывается перед походом.
+
+    Звёздочка — это вход под девушкой на сайте, и заходы разведены паузой:
+    за время обхода список успевает устареть. Та же беда, что поймана у
+    писем (`ready_online`), и тот же ответ. Потолок съедают прогоны, а не
+    неудачи вообще: не пришедший список — отказ по HTTP, вкладку у соседа он
+    не занимал, и вычитать его из потолка значило бы наказывать сайт за
+    молчание.
+    """
+    site_id = int(site['site_id'])
+
+    seen = added = already = failed = 0
+    base = str(await _setting(site_id, 'api_base')).strip()
+    if not base:
+        return None
+
+    profiles = await _profiles(site_id)
+    if not profiles:
+        return None
+
+    password = str(await _setting(site_id, 'api_password')).strip()
+    left = await _batch(site_id)
+
+    for profile in profiles:
+        if left <= 0:
+            break
+
+        # ⚠ **Статус перед походом, а не только при отборе.** Звёздочка — это
+        # вход под девушкой на сайте, и заходы разведены паузой: за время
+        # обхода список успевает устареть. Та же беда, что поймана у писем
+        # (`ready_online`), и тот же ответ.
+        if not await ready_online(int(profile['id'])):
+            continue
+
+        seen += 1
+        got = await _profile_run(profile, base, password, left)
+        added += got['added']
+        already += got['already']
+        failed += got['failed']
+        # ⚠ Потолок съедают **прогоны**, а не неудачи вообще. Не пришедший
+        # список избранных — это отказ по HTTP, вкладку у соседа он не занимал,
+        # и вычитать его из потолка значило бы наказывать сайт за молчание.
+        left -= got['spent']
+
+    return {'sites': 1, 'profiles': seen, 'added': added,
+            'already': already, 'failed': failed}
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

@@ -382,7 +382,7 @@ class TestOrder:
     def test_write_goes_before_sweep(self):
         import inspect
 
-        code = inspect.getsource(mail_round_run)
+        code = inspect.getsource(round_._work)
 
         assert code.index('_write(site_id') < code.index('_sweep(site_id)'), \
             'уборка идёт раньше написания: не ответит агент — и сайт останется с ' \

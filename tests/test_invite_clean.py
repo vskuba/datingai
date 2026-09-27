@@ -162,7 +162,7 @@ class TestTheRoundCleansOutsideShifts:
     def test_clean_comes_before_the_shift_check(self):
         import inspect
 
-        code = inspect.getsource(invite_round.invite_round_run)
+        code = inspect.getsource(invite_round._gate)
         clean = code.index('await _clean(site_id)')
         shift = code.index('schedule_now(shifts, minutes)')
 

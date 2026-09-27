@@ -31,7 +31,7 @@
 from logging_.logging_ import logger_info
 
 from src.dating.feed import feed_write
-from src.dating.round import (round_slot_due,
+from src.dating.round import (pool_round_run, round_slot_due,
                             round_slot_mark)
 from mysql_.mysql_ import mysql_get_db_async
 
@@ -63,34 +63,13 @@ async def reply_round_run() -> dict:
         dict: `sites` — сайтов взято в работу, `made` — сколько ответов написано.
     """
     sites = await _sites()
-    if not sites:
-        return {'sites': 0, 'made': 0}
-
     ran = made = 0
-    for site_id in sites:
-        # ⚠ Сбой — молчим (правило общее в `round_slot_due`): лишний заход —
-        # вызовы LLM на каждый ответ.
-        if not round_slot_due(REPLY_ROUND_KEY, site_id, 'ответам'):
-            continue
-
-        # ⚠ Отметку ставим **до** набора: он длится минутами, и следующий тик
-        # завёл бы второй, пока идёт первый. Тот же приём, что у рассылки.
-        round_slot_mark(REPLY_ROUND_KEY, site_id, await _every(site_id),
-                        'ответам')
-
-        try:
-            result = await mail_reply_make(site_id, await _batch(site_id))
-        except Exception as e:
-            logger_info(f'[dating] круг ответов, сайт #{site_id}: {e}')
-
-            continue
-
-        ran += 1
-        made += int(result.get('made') or 0)
-
-        if result.get('made'):
-            feed_write(site_id, 'reply',
-                              f"Готовы ответы на письма: {result['made']}")
+    for _, result in await pool_round_run(sites, gate=_gate, every=_every,
+                                         work=_work, key=REPLY_ROUND_KEY,
+                                         what='ответам'):
+        if result is not None:
+            ran += 1
+            made += int(result.get('made') or 0)
 
     if made:
         logger_info(f'[dating] круг ответов: сайтов {ran}, написано {made}')
@@ -98,6 +77,33 @@ async def reply_round_run() -> dict:
     return {'sites': ran, 'made': made}
 
 
+async def _gate(site_id: int, minutes: int) -> bool:
+    """Пора ли отвечать этому сайту: вышел ли срок круга.
+
+    ⚠ Сбой — молчим (правило общее в `round_slot_due`): лишний заход —
+    вызовы LLM на каждый ответ.
+    """
+    return round_slot_due(REPLY_ROUND_KEY, site_id, 'ответам')
+
+
+async def _work(site_id: int, minutes: int) -> dict | None:
+    """Отвечает на входящие этого сайта; отказ одной анкеты не уносит остальных.
+
+    Черновик ответа уходит по своему сроку, и лента видит работу до её итога
+    (`feed.py`): строка-итог заменяет «отвечаем», а не встаёт второй.
+    """
+    try:
+        result = await mail_reply_make(site_id, await _batch(site_id))
+    except Exception as e:
+        logger_info(f'[dating] круг ответов, сайт #{site_id}: {e}')
+
+        return None
+
+    if result.get('made'):
+        feed_write(site_id, 'reply',
+                          f"Готовы ответы на письма: {result['made']}")
+
+    return result
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 async def _sites() -> list[int]:

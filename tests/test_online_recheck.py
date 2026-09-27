@@ -106,7 +106,7 @@ class TestRoundsAskBeforeGoing:
 
         from src.dating import mail_in_round
 
-        code = inspect.getsource(mail_in_round.mail_in_round_run)
+        code = inspect.getsource(mail_in_round._work)
 
         assert 'ready_online(' in code, \
             'круг писем снова ходит по устаревшему списку'
@@ -120,7 +120,7 @@ class TestRoundsAskBeforeGoing:
         from src.dating import favorite_round
 
         assert 'ready_online(' in inspect.getsource(
-            favorite_round.favorite_round_run)
+            favorite_round._work)
 
     def test_the_check_goes_to_our_own_base(self):
         """⚠ Запрос к **своей** базе: он не идёт наружу и сайтом не считается.

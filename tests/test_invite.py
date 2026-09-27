@@ -629,7 +629,7 @@ class TestRoundReadsTheClock:
 
         from src.dating import invite_round
 
-        code = inspect.getsource(invite_round.invite_round_run)
+        code = inspect.getsource(invite_round._gate)
 
         assert 'schedule_now(shifts, minutes)' in code, \
             'в проверку смен снова уходит не то число'
@@ -946,7 +946,7 @@ class TestPoolRefills:
 
         from src.dating import invite_round
 
-        code = inspect.getsource(invite_round.invite_round_run)
+        code = inspect.getsource(invite_round._work)
 
         assert '_pool_max(site_id) - await invite_pool_left' in code, \
             'круг снова ждёт пустого пула — при выключенной отправке он застынет'
@@ -976,7 +976,7 @@ class TestPoolRefills:
 
         code = inspect.getsource(
             __import__('src.dating.invite_round', fromlist=['x']
-                       ).invite_round_run)
+                       )._work)
 
         assert 'invite_make(site_id, left)' in code, \
             'круг снова режет добор своей меркой'
@@ -991,7 +991,7 @@ class TestPoolRefills:
 
         from src.dating import invite_round
 
-        code = inspect.getsource(invite_round.invite_round_run)
+        code = inspect.getsource(invite_round._work)
 
         assert 'ready_only=True' in code, \
             'застрявшие карточки снова считаются годными — добор встанет'

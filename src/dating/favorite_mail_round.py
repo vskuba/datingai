@@ -43,7 +43,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from redis_.redis_ import redis_conn_get
 
 from src.dating.feed import feed_write
-from src.dating.round import (round_minutes, round_slot_due,
+from src.dating.round import (pool_round_run, round_slot_due,
                             round_slot_mark)
 from src.dating.pool import pool_sweep
 from src.dating.favorite_mail import (FAVORITE_MAIL_BATCH_DEFAULT,
@@ -85,66 +85,69 @@ async def favorite_mail_round_run(offset: int = 0) -> dict:
     круг**: за обход они не меняются, а часы у всех сайтов одни.
     """
     sites = await _sites()
-    minutes = round_minutes(offset)
     ran = made = 0
-
-    for site in sites:
-        site_id = int(site['site_id'])
-
-        # ⚠ Смена спрашивается **общим предикатом** (`favorite_mail_shift_now`),
-        # а не своей проверкой: по нему же отвечает шапка пула. Разойдись они —
-        # панель писала бы «идёт смена» там, где круг уходит ни с чем.
-        if not favorite_mail_shift_now(site.get('favorite_mail_schedule'),
-                                       minutes):
-            continue
-
-        # ⚠ **Новый снимок ленты будит круг сразу**, не дожидаясь срока. Это и есть
-        # связка «обновили ленту → проверили, фаворит ли он → пристаём»: писать
-        # можно только тому, кто **сейчас** на сайте, а заходят люди на десять
-        # минут — получасовой круг их попросту не застаёт.
-        #
-        # ⚠ Частить это не даёт: заход по новому снимку дёшев, пока писать некому
-        # (SQL и Redis, без единого вызова LLM), а частоту писем **одному
-        # человеку** держат его же пределы — два в сутки и четыре часа паузы. Срок
-        # круга остаётся вторым сроком: он ограничивает заходы, когда лента стоит.
-        # ⚠ Сбой — молчим (правило общее в `round_slot_due`): лишний заход —
-        # вызовы LLM и письма в пуле.
-        if not _fresh_feed(site_id) and not round_slot_due(
-                FAVORITE_MAIL_ROUND_KEY, site_id, 'письмам избранным'):
-            continue
-
-        # ⚠ Отметку ставим **до** захода: он идёт минутами (каждое письмо — вызов
-        # LLM), и следующий тик завёл бы второй, пока идёт первый.
-        #
-        # Ставим её и когда пришли по свежей ленте: два снимка подряд (лента
-        # снимается раз в две минуты) иначе дали бы два захода подряд, а второму
-        # писать уже некому — пределы на человека те же.
-        round_slot_mark(FAVORITE_MAIL_ROUND_KEY, site_id, await _every(site_id),
-                        'письмам избранным')
-
-        # ⚠ Сперва убираем черновики ушедших анкет: отправить их некому, а место
-        # в пуле они держат (`pool.py`).
-        await pool_sweep(site_id)
-
-        pool = await favorite_mail_pool_left(site_id)
-        room = await _pool_max(site_id) - pool
-        if room <= 0:
-            continue
-
-        ran += 1
-        got = await favorite_mail_make(
-            site_id, min(room, FAVORITE_MAIL_BATCH_DEFAULT))
-        made += int(got.get('made') or 0)
-
-        if got.get('made'):
-            feed_write(site_id, 'fav',
-                              f"Готовы письма избранным: {got['made']}")
+    for _, c in await pool_round_run(sites, offset_hours=offset, gate=_gate,
+                                    every=_every, work=_work,
+                                    key=FAVORITE_MAIL_ROUND_KEY,
+                                    what='письмам избранным'):
+        if c is not None:
+            ran += c['sites']
+            made += c['made']
 
     if made:
-        logger_info(f'[dating] круг писем избранным: сайтов {ran}, написано {made}')
+        logger_info(f'[dating] круг писем избранным: сайтов {ran}, '
+                    f'написано {made}')
 
     return {'sites': ran, 'made': made}
 
+
+async def _gate(site: dict, minutes: int) -> bool:
+    """Смена идёт (общим предикатом) и круг пора: свежая лента или вышел срок.
+
+    ⚠ Смена спрашивается общим предикатом (`favorite_mail_shift_now`), а не
+    своей проверкой: по нему же отвечает шапка пула. Разойдись они — панель
+    писала бы «идёт смена» там, где круг уходит ни с чем.
+
+    ⚠ Новый снимок ленты будит круг сразу, не дожидаясь срока: писать можно
+    только тому, кто сейчас на сайте, а заходят люди на десять минут —
+    получасовой круг их попросту не застаёт. Частить это не даёт: заход по
+    новому снимку дёшев, пока писать некому (SQL и Redis, без вызовов LLM),
+    а частоту одному человеку держат его же пределы. Сбой — молчим.
+
+    ⚠ Отметку обвязка ставит до захода и ставит, когда пришла свежая лента:
+    два снимка подряд дали бы два захода, а второму писать уже некому.
+    """
+    site_id = int(site['site_id'])
+    if not favorite_mail_shift_now(site.get('favorite_mail_schedule'), minutes):
+        return False
+
+    return _fresh_feed(site_id) or round_slot_due(
+        FAVORITE_MAIL_ROUND_KEY, site_id, 'письмам избранным')
+
+
+async def _work(site: dict, minutes: int) -> dict | None:
+    """Добирает пул писем избранным; черновики ушедших уходят первыми.
+    """
+    site_id = int(site['site_id'])
+
+    # ⚠ Сперва убираем черновики ушедших анкет: отправить их некому, а место
+    # в пуле они держат (`pool.py`).
+    await pool_sweep(site_id)
+
+    pool = await favorite_mail_pool_left(site_id)
+    room = await _pool_max(site_id) - pool
+    if room <= 0:
+        return None
+
+    got = await favorite_mail_make(
+        site_id, min(room, FAVORITE_MAIL_BATCH_DEFAULT))
+    made = int(got.get('made') or 0)
+
+    if got.get('made'):
+        feed_write(site_id, 'fav',
+                          f"Готовы письма избранным: {got['made']}")
+
+    return {'sites': 1, 'made': made}
 
 # ── Приватное ────────────────────────────────────────────────────────────────
 

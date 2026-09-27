@@ -121,3 +121,34 @@ def round_slot_release(key: str, site_id: int, what: str) -> None:
         redis_conn_get().delete(key.format(site_id=int(site_id)))
     except Exception as e:
         logger_info(f'[dating] отметка {what} не снялась: {e}')
+
+
+# ── Общее для кругов: обход сайтов ──────────────────────────────────────────
+
+async def pool_round_run(rows: list, *, offset_hours: int = 0,
+                         gate: Callable, every: Callable, work: Callable,
+                         key: str, what: str) -> list[tuple]:
+    """Обходит сайты круга одним скелетом: шлюз, слот до дела, само дело.
+
+    Строку, прошедшую шлюз `gate`, обход помечает по сроку `every` **до** дела
+    — набор идёт минутами, и следующий тик завёл бы второй поверх первого, —
+    и зовёт `work`. Отдаёт список пар `(строка, итог)`: как считать итог
+    (`checked`, `ran`, `made`) и когда слот отпустить (заход впустую слот не
+    держит), знает круг — у него свои слова и свои причины рядом с `work`.
+
+    ⚠ `gate` отвечает за шлюз целиком, обеими половинками: выключатель сайта,
+    смены, срок круга — а где и лента-будильник. У кругов эти половинки
+    разные (инвайтам чистка обязана и при молчащем наборе, избранному письму
+    лента будит круг раньше срока), и одна дога не ответила бы за обе.
+    """
+    out: list[tuple] = []
+    minutes = round_minutes(offset_hours)
+
+    for row in rows:
+        site_id = int(row['site_id']) if isinstance(row, dict) else int(row)
+        if not await gate(row, minutes):
+            continue
+        round_slot_mark(key, site_id, await every(site_id), what)
+        out.append((row, await work(row, minutes)))
+
+    return out

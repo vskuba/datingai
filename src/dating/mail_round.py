@@ -85,7 +85,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.json_column import json_column_load
-from src.dating.round import (round_minutes, round_slot_due,
+from src.dating.round import (pool_round_run, round_slot_due,
                             round_slot_mark)
 from src.dating.mail import MAIL_NAME_MAX
 from src.dating.mail_agent import DatingMailAgentError, mail_write
@@ -141,39 +141,17 @@ async def mail_round_run(offset_hours: int = 0) -> dict:
 
     Returns:
         dict: `checked` — сколько сайтов посмотрели, `made` — сколько заготовок
-        написали.
+        написали, `gone` — сколько убрано старых.
     """
     sites = await _sites()
-    minutes = round_minutes(offset_hours)
     made = gone = 0
-
-    for site in sites:
-        site_id = int(site['site_id'])
-
-        # Смена идёт? Пустое расписание — это «нет», а не «всегда»: правило общее с
-        # расписанием анкеты и рассылки.
-        if not schedule_now(site['schedule'], minutes):
-            continue
-
-        if not round_slot_due(MAIL_ROUND_KEY, site_id, 'шаблонам'):
-            continue
-
-        # ⚠ Отметку ставим **до** работы: заготовка пишется минуту, и следующий тик
-        # завёл бы вторую, пока идёт первая. Тот же приём, что у круга рассылки.
-        round_slot_mark(MAIL_ROUND_KEY, site_id, MAIL_ROUND_EVERY_SEC,
-                        'шаблонам')
-
-        # ⚠ **Сперва пишем, потом убираем**, и порядок здесь решает, чем кончится
-        # неудачный заход.
-        #
-        # Убери мы первыми — а написать не вышло (сосед занят, агент молчит), — и
-        # сайт остаётся с тем немногим, что уцелело от предохранителя, взамен ничего
-        # не получив. Один такой заход в сутки, и рассылке нечем писать.
-        #
-        # Написав раньше, мы удаляем старое, **уже имея новое**: замена, а не
-        # освобождение места под неё.
-        made += await _write(site_id, offset_hours)
-        gone += await _sweep(site_id)
+    for _, counters in await pool_round_run(sites, offset_hours=offset_hours,
+                                           gate=_gate, every=_every,
+                                           work=lambda site, _m: _work(site, offset_hours),
+                                           key=MAIL_ROUND_KEY, what='шаблонам'):
+        if counters is not None:
+            made += counters['made']
+            gone += counters['gone']
 
     if made or gone:
         logger_info(f'[dating] круг шаблонов: написано {made}, убрано старых {gone}')
@@ -181,6 +159,35 @@ async def mail_round_run(offset_hours: int = 0) -> dict:
     return {'checked': len(sites), 'made': made, 'gone': gone}
 
 
+async def _gate(site: dict, minutes: int) -> bool:
+    """Смена идёт и шаблонный срок вышел.
+
+    Смена идёт? Пустое расписание — это «нет», а не «всегда»: правило общее с
+    расписанием анкеты и рассылки.
+    """
+    if not schedule_now(site['schedule'], minutes):
+        return False
+
+    return round_slot_due(MAIL_ROUND_KEY, int(site['site_id']), 'шаблонам')
+
+
+async def _every(site_id: int) -> int:
+    return MAIL_ROUND_EVERY_SEC
+
+
+async def _work(site: dict, offset_hours: int) -> dict:
+    """Пишет заготовку и убирает старые; порядок решает, чем кончится неудача.
+
+    ⚠ **Сперва пишем, потом убираем.** Убери мы первыми — а написать не вышло
+    (сосед занят, агент молчит), — и сайт остаётся с тем немногим, что
+    уцелело от предохранителя, взамен ничего не получив. Один такой заход
+    в сутки, и рассылке нечем писать. Написав раньше, мы удаляем старое,
+    **уже имея новое**: замена, а не освобождение места под неё.
+    """
+    site_id = int(site['site_id'])
+
+    return {'made': await _write(site_id, offset_hours),
+            'gone': await _sweep(site_id)}
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 async def _sites() -> list[dict]:

@@ -1015,7 +1015,7 @@ class TestTheRoundKeepsToItsShifts:
         """
         from src.dating import favorite_mail_round
 
-        code = _source_without_doc(favorite_mail_round.favorite_mail_round_run)
+        code = _source_without_doc(favorite_mail_round._gate)
 
         assert 'favorite_mail_shift_now' in code, \
             'круг снова проверяет смены сам'
