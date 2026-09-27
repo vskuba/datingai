@@ -476,7 +476,7 @@ def _answer(row) -> dict:
     card = json_column_load(got.pop('profile_card', None)) or {}
     got['profile_name'] = str(card.get('name') or got.get('profile_login') or '')
     got['profile_photo'] = str(card.get('photo') or '')
-    got['profile_uid'] = str(card.get('site_uid') or '')
+    got['profile_uid'] = str(card.get('id') or '')
     got['sent_at'] = str(got['sent_at']) if got.get('sent_at') else ''
     # ⚠ Время события у **неудачной** строки: `sent_at` у неё снят, и без этого
     # поля карточка показывала бы пустое место там, где стоит время отправки.

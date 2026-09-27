@@ -266,7 +266,7 @@ async def _profiles_index(site_id: int) -> tuple[dict, dict]:
         card = json_column_load(row.get('profile'))
         item = {'id': int(row['id']), 'login': str(row.get('login') or ''), 'card': card}
         by_login[item['login']] = item
-        site_uid = str(card.get('site_uid') or '')
+        site_uid = str(card.get('id') or '')
         if site_uid:
             by_uid[site_uid] = item
 

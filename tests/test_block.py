@@ -300,7 +300,7 @@ async def _profile_card(profile_id: int, name: str, photo: str,
     async with mysql_get_db_async() as db:
         await db.execute('UPDATE profile SET profile = %s WHERE id = %s',
                          (json.dumps({'name': name, 'photo': photo,
-                                      'site_uid': site_uid}, ensure_ascii=False),
+                                      'id': site_uid}, ensure_ascii=False),
                           int(profile_id)))
         await db.connection.commit()
 

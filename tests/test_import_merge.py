@@ -82,6 +82,10 @@ class TestImportCard:
         card = import_card(CARD_EXTRACT, NOW)
 
         assert card['login'] == 'bogiladiana9021@bigmir.net'
+        # ⚠ Здесь `site_uid` — поле **разобранной записи** (`import_card`), а не
+        # ключ сохраняемой карточки. Это разные вещи с разной судьбой: запись живёт
+        # один заход импорта, карточка ложится в `profile.profile` и читается всеми.
+        # Дубль убрали **в карточке** (`20260927140000`), см. `test_card_for_profile`.
         assert card['site_uid'] == '643694'
         assert card['age'] == 36, 'возраст считается из года рождения по текущему году'
 
@@ -152,7 +156,13 @@ class TestImportPlan:
 
         assert plan['action'] == 'create'
         assert plan['login'] == 'a@b.c'
-        assert plan['card']['site_uid'] == '643694'
+        assert plan['card']['id'] == '643694'
+        # ⚠⚠ Номер в сохраняемой карточке — **одним** ключом. Дубль
+        # `site_uid` убран (`20260927140000`): его писал только импорт, вход
+        # писал один `id`, и читатели разбрелись — кто спрашивал одно, кто
+        # другое. У анкеты, заведённой входом, `pool_pair` показывал пустой
+        # номер. Два имени одной величины разводят по смыслу, не заметив.
+        assert 'site_uid' not in plan['card']
 
     def test_login_falls_back_to_site_uid(self):
         """Карточку не читали — логином становится номер: без него анкету нечем

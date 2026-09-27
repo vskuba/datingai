@@ -307,7 +307,7 @@ async def profile_view_card(profile_id: int, page: int = 1,
     # Пустая строка — обычный исход: у сайта нет шаблона или у анкеты нет номера.
     card = json_column_load(profile.get('profile'))
     site_url = await profile_link(int(profile.get('site_id') or 0),
-                                         str(card.get('site_uid') or ''))
+                                         str(card.get('id') or ''))
 
     # `enabled` и `auto_answer` едут в карточку, потому что оба рисуются на ней
     # чекбоксами — на «Анкетах» справа и в окне переписки. Без них страница знала бы

@@ -616,7 +616,7 @@ def _profile_name(profile: dict) -> str:
     """
     card = json_column_load(profile.get('profile'))
     name = str(card.get('name') or '').strip()
-    uid = str(card.get('site_uid') or card.get('id') or '').strip()
+    uid = str(card.get('id') or '').strip()
 
     return f'{name} {uid}'.strip() if name else uid
 

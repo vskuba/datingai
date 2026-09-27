@@ -18,7 +18,8 @@ Ladadate — один агент, два вызова: «I'm diana» и «i'm ek
 import pytest
 
 from src.dating.agent import (AGENT_SETTING, AGENT_UNIVERSAL,
-                                     agent_id, agent_key, agent_vars)
+                                     agent_id, agent_key,
+                                     agent_site_uid, agent_vars)
 
 pytestmark = pytest.mark.profile
 
@@ -40,7 +41,7 @@ class TestVars:
 
     def test_the_three_travel_apart(self):
         got = agent_vars({'login': 'zliznukolenavlad89@gmail.com', 'id': 43},
-                                {'name': 'Elena', 'site_uid': '599939'})
+                                {'name': 'Elena', 'id': '599939'})
 
         assert got == {'girl_id': '599939',
                        'girl_title': 'Elena',
@@ -58,7 +59,7 @@ class TestVars:
         новая выдумка.
         """
         got = agent_vars({'login': 'elena2795kirichenko01@bigmir.net', 'id': 44},
-                                {'name': 'Elena', 'site_uid': '486221'})
+                                {'name': 'Elena', 'id': '486221'})
 
         assert got['girl_id'] == '486221'
 
@@ -69,16 +70,16 @@ class TestVars:
         становился адрес почты. Теперь номер есть всегда.
         """
         got = agent_vars({'login': 'solomia@bigmir.net', 'id': 50},
-                                {'name': 'Solomia', 'site_uid': '924237'})
+                                {'name': 'Solomia', 'id': '924237'})
 
         assert got['girl_id'] == '924237'
 
     def test_two_namesakes_keep_their_facts_apart(self):
         """⚠ Имена повторяются: на проде две Diana, две Elena, две Natalia."""
         first = agent_vars({'login': 'a@mail.test', 'id': 46},
-                                  {'name': 'Natalia', 'site_uid': '363331'})
+                                  {'name': 'Natalia', 'id': '363331'})
         second = agent_vars({'login': 'b@mail.test', 'id': 47},
-                                   {'name': 'Natalia', 'site_uid': '201992'})
+                                   {'name': 'Natalia', 'id': '201992'})
 
         assert first['girl_id'] != second['girl_id']
         assert first['girl_name'] == second['girl_name'] == 'natalia'
@@ -101,7 +102,7 @@ class TestVars:
         «You are a girl .». Номер хуже читается, но он есть всегда.
         """
         got = agent_vars({'login': 'diana9021@mail.test', 'id': 40},
-                                {'site_uid': '643694'})
+                                {'id': '643694'})
 
         assert got['girl_title'] == got['girl_name'] == '643694'
 
@@ -137,6 +138,70 @@ class TestTheTechnicalName:
             got = agent_key(one)
 
             assert re.fullmatch(r'[a-z0-9_]*', got), f'{one!r} → {got!r}'
+
+
+class TestTheNumberComesFromTheColumn:
+    """⚠⚠ Номер сайта берётся колонкой `profile.profile_id`, а не из JSON.
+
+    Колонку завела миграция `20260927130000`; JSON остаётся запасной ступенью, и
+    убирать его рано — словарь анкеты собирают шесть разных запросов.
+    """
+
+    def test_the_column_wins(self):
+        got = agent_site_uid({'id': 43, 'profile_id': '599939',
+                                     'profile': '{"id": "000"}'})
+
+        assert got == '599939', 'колонка проиграла JSON-у'
+
+    def test_the_json_is_the_fallback(self):
+        """⚠ Запасная ступень: запрос, забывший колонку, не должен обнулять номер."""
+        got = agent_site_uid({'id': 43, 'profile': '{"id": "599939"}'})
+
+        assert got == '599939'
+
+    def test_the_card_counts_too(self):
+        """⚠ Карточку читаем и разобранной: половина зовущих парсит JSON заранее."""
+        got = agent_site_uid({'id': 43}, {'id': '599939'})
+
+        assert got == '599939'
+
+    def test_our_own_number_is_the_last_resort(self):
+        """⚠⚠⚠ Пусто не возвращаем никогда: пустой `girl_id` сливает факты всех
+        девушек в один документ, и беда тихая — ответы осмысленны, просто чужие."""
+        assert agent_site_uid({'id': 43}) == '43'
+        assert agent_site_uid({}) == ''  # анкеты нет вовсе — сказать нечего
+
+
+class TestEveryLoaderTakesTheColumn:
+    """⚠⚠⚠ Сторож на **все** запросы, чьи строки доезжают до `agent_vars`.
+
+    Словарь анкеты собирают шесть разных мест, и половина перечисляет колонки
+    поимённо. Забудь одно — `girl_id` скатится на запасную ступень, и заметить это
+    можно будет только по перемешавшимся фактам.
+
+    ⚠ Проверяется исходник, а не поведение: чтобы поймать это прогоном, нужен живой
+    сокет, живой круг писем и живая инициатива разом.
+    """
+
+    @pytest.mark.parametrize('where, what', [
+        # Держатель сокетов: главный путь автоответа.
+        ('src/dating/chat_hold.py', 'p.profile_id'),
+        ('src/dating/chat_hold.py', "'profile_id': row['profile_id']"),
+        # Ответы на входящие письма.
+        ('src/dating/mail_reply.py', 'SELECT id, site_id, login, profile_id'),
+        # Инициатива: заговорить первой.
+        ('src/dating/initiative.py', 'SELECT id, site_id, login, profile_id'),
+        # Письма избранным: строка пула собирается своим именем колонки.
+        ('src/dating/favorite_mail.py', 'p.profile_id AS girl_uid'),
+        ('src/dating/favorite_mail.py', "'profile_id': pair.pop('girl_uid'"),
+    ])
+    def test_the_loader_selects_it(self, where, what):
+        import pathlib
+
+        text = (pathlib.Path(__file__).resolve().parents[1] / where
+                ).read_text(encoding='utf-8')
+
+        assert what in text, f'{where}: нет «{what}» — номер поедет запасной ступенью'
 
 
 class TestWhichAgentAnswers:
