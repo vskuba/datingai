@@ -177,6 +177,123 @@ def no_test_rows_in_request_log():
     request_off(False)
 
 
+# ── Уборка за прогоном: анкеты сюиты и всё, что на них висит ─────────────────
+#
+# ⚠⚠ Здесь нет отдельной тестовой учётки — сюита ходит под теми же, что и человек
+# (расхождение с общим правилом, записано в `CLAUDE.md` и `testing.md`, §1).
+# Значит признак «чья строка» приходится брать не у пользователя, а у **анкеты**:
+# почти всё в этой базе висит на `profile_id`, и тринадцать таблиц уходят за ней
+# каскадом — `message`, `mailing`, `invite`, `favorite_mail`, `mail_in`,
+# `mail_reply`, `block`, `contact`, `chat_reply`, `chat_initiative`, `log`,
+# `profile_var`. Снеся анкету, мы снимаем её переписку и пулы одним движением.
+#
+# Метка анкеты сюиты — **почтовый домен логина**. Тесты заводят их как
+# `<повод>-<восемь шестнадцатеричных>@example.com`: `talk-…`, `dlv-…`, `fav-…`,
+# `stat-…`, `in-…`, `send-…`, `ans-…`. Домен один на всех и у живых анкет
+# невозможен: там настоящие почты настоящих учёток сайта.
+TEST_MAIL_DOMAIN = '@example.com'
+
+# ⚠⚠⚠ А вот `seed-NNN@example.com` — **не мусор, и сносить их нельзя**. Это
+# посевные данные установки (`mysql_seed_up`), на них стоят сами тесты: например,
+# `test_contacts_sort.py` открывает `seed-000-big@example.com` и ждёт там большую
+# переписку. Домен у них тот же, что у временных, — отличает только префикс.
+#
+# Отсюда правило из двух условий, а не из одного: «домен тестовый И префикс не
+# посевной». Забудь второе — и первый же прогон унесёт данные, на которых стоит
+# половина сюиты, а починка выглядела бы как «тесты вдруг покраснели».
+TEST_SEED_PREFIX = 'seed-'
+
+# Таблицы, которые **не** уходят каскадом за анкетой: внешнего ключа на неё у них
+# нет вовсе (`stat_day`) либо он гасится в `NULL` (`scenario_run`). Их чистим сами
+# — до удаления анкет, пока номера ещё связывают строки с анкетой.
+#
+# ⚠ `request` тут нет намеренно: сюита в журнал внешних запросов не пишет вовсе,
+# это обеспечивает `no_test_rows_in_request_log` выше. Строки, которые там лежат, —
+# от живого приложения, и уборке не подлежат.
+TEST_SWEEP_BY_PROFILE = ('scenario_run', 'stat_day')
+
+# Снимает уборку целиком: `KEEP_TEST_DATA=1 python -m pytest …`
+TEST_SWEEP_KEEP = 'KEEP_TEST_DATA'
+
+
+def _test_profiles() -> list:
+    """Номера анкет, заведённых сюитой. Пусто — законный исход."""
+    from mysql_.mysql_query import mysql_query_run
+
+    got = mysql_query_run(
+        'SELECT `id` FROM `profile`'
+        ' WHERE `login` LIKE %s AND `login` NOT LIKE %s',
+        (f'%{TEST_MAIL_DOMAIN}', f'{TEST_SEED_PREFIX}%'))
+
+    return [int(one['id']) for one in (got.get('rows') or [])]
+
+
+def _test_rows_drop() -> dict:
+    """Снести анкеты сюиты и всё, что за ними не уходит само.
+
+    Returns:
+        `{имя таблицы: сколько удалено}`; пустой словарь — убирать было нечего.
+    """
+    from mysql_.mysql_query import mysql_query_run
+
+    found = _test_profiles()
+    if not found:
+        return {}
+
+    holes = ','.join(['%s'] * len(found))
+    counted = {}
+
+    # ⚠ Сперва то, что каскадом не уйдёт, и только потом сами анкеты: после
+    # `DELETE FROM profile` у `scenario_run` в `profile_id` уже `NULL`, и связь с
+    # анкетой пропадает — строки остались бы навсегда, ничьи.
+    for table in TEST_SWEEP_BY_PROFILE:
+        # Имя таблицы уезжает в SQL текстом — потому и берётся только из
+        # `TEST_SWEEP_BY_PROFILE`, а не из ответа базы.
+        got = mysql_query_run(
+            f'DELETE FROM `{table}` WHERE `profile_id` IN ({holes})', tuple(found))
+        gone = int(got.get('affected') or 0)
+        if gone:
+            counted[table] = gone
+
+    got = mysql_query_run(f'DELETE FROM `profile` WHERE `id` IN ({holes})',
+                          tuple(found))
+    counted['profile'] = int(got.get('affected') or 0)
+
+    return counted
+
+
+@pytest.fixture(scope='session', autouse=True)
+def cleanup_test_profiles():
+    """Уборка анкет сюиты — и до прогона, и после него.
+
+    ⚠ **До** — потому что хвост остаётся не только от обычного прогона: упавшая
+    фикстура, `Ctrl-C`, отказ базы посреди теста. Именно в этих случаях уборка и
+    нужна, и именно в них «убрать в конце» не срабатывает.
+
+    ⚠⚠ **После** — то, о чём просили: прогон не оставляет следов. Цена принята:
+    упавший прогон уносит и свои данные тоже, а заглянуть в них иногда надо. На
+    этот случай `KEEP_TEST_DATA=1` снимает уборку целиком — и ту, что до, тоже:
+    «не трогай мои данные» значит не трогай.
+
+    ⚠ Своего снимка «что было до» фикстура не делает: признак у анкеты свой,
+    собственный, и чужую она не заденет, даже если прогон шёл параллельно.
+    """
+    keep = str(os.getenv(TEST_SWEEP_KEEP, '')).strip().lower() in ('1', 'true', 'yes')
+
+    if keep:
+        print(f'\n⚠ {TEST_SWEEP_KEEP} — уборка за прогоном снята, анкеты останутся')
+        yield
+        return
+
+    _test_rows_drop()
+    yield
+    counted = _test_rows_drop()
+
+    if counted:
+        said = ', '.join(f'{name}: {qty}' for name, qty in counted.items())
+        print(f'\nУбрано за прогоном — {said}')
+
+
 @pytest.fixture(autouse=True)
 def no_outside_calls(monkeypatch, request):
     """Падает, если тест пытается открыть соединение за пределы своей установки.
