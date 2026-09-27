@@ -66,9 +66,10 @@ import asyncio
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
-from redis_.redis_ import redis_conn_get
 
 from src.dating.ready import ready_online
+from src.dating.round import (round_slot_due,
+                            round_slot_mark)
 from src.dating.favorite import (FAVORITE_ALREADY,
                                         FAVORITE_DONE,
                                         FAVORITE_REASON_MAIL,
@@ -109,12 +110,15 @@ async def favorite_round_run() -> dict:
 
     for site in await _sites():
         site_id = int(site['site_id'])
-        if not await _on(site_id) or not _due(site_id):
+        # ⚠ Сбой — молчим: входы браузером под каждой анкетой подряд.
+        if not await _on(site_id) or not round_slot_due(
+                FAVORITE_ROUND_KEY, site_id, 'избранным'):
             continue
 
         # ⚠ Отметку ставим **до** обхода: он идёт минутами, и следующий тик завёл
         # бы второй обход, пока идёт первый.
-        _mark(site_id, await _every(site_id))
+        round_slot_mark(FAVORITE_ROUND_KEY, site_id, await _every(site_id),
+                        'избранным')
 
         base = str(await _setting(site_id, 'api_base')).strip()
         if not base:
@@ -360,27 +364,3 @@ async def _batch(site_id: int) -> int:
     return await _seconds(site_id, FAVORITE_BATCH_SETTING)
 
 
-def _due(site_id: int) -> bool:
-    """Пора ли идти. ⚠ Сбой Redis решается в сторону бездействия.
-
-    Не прочиталась отметка — не идём. Лишний заход это входы браузером под каждой
-    анкетой подряд, а сайт считает частые заходы подозрением; пропущенный стоит
-    десяти минут задержки звёздочки. Цена ошибок несимметрична.
-    """
-    try:
-        return not redis_conn_get().get(
-            FAVORITE_ROUND_KEY.format(site_id=int(site_id)))
-    except Exception as e:
-        logger_info(f'[dating] отметка избранных не прочиталась: {e}')
-
-        return False
-
-
-def _mark(site_id: int, every: int) -> None:
-    """Отмечает заход. Срок отметки **и есть** настройка: Redis погасит её сам."""
-    try:
-        redis_conn_get().setex(
-            FAVORITE_ROUND_KEY.format(site_id=int(site_id)),
-            max(int(every), 1), '1')
-    except Exception as e:
-        logger_info(f'[dating] отметка избранных не поставилась: {e}')

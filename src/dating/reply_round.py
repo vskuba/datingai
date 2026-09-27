@@ -31,8 +31,9 @@
 from logging_.logging_ import logger_info
 
 from src.dating.feed import feed_write
+from src.dating.round import (round_slot_due,
+                            round_slot_mark)
 from mysql_.mysql_ import mysql_get_db_async
-from redis_.redis_ import redis_conn_get
 
 from src.dating.mail_reply import mail_reply_make
 
@@ -67,12 +68,15 @@ async def reply_round_run() -> dict:
 
     ran = made = 0
     for site_id in sites:
-        if not _due(site_id):
+        # ⚠ Сбой — молчим (правило общее в `round_slot_due`): лишний заход —
+        # вызовы LLM на каждый ответ.
+        if not round_slot_due(REPLY_ROUND_KEY, site_id, 'ответам'):
             continue
 
         # ⚠ Отметку ставим **до** набора: он длится минутами, и следующий тик
         # завёл бы второй, пока идёт первый. Тот же приём, что у рассылки.
-        _mark(site_id, await _every(site_id))
+        round_slot_mark(REPLY_ROUND_KEY, site_id, await _every(site_id),
+                        'ответам')
 
         try:
             result = await mail_reply_make(site_id, await _batch(site_id))
@@ -134,25 +138,3 @@ async def _batch(site_id: int) -> int:
                or REPLY_BATCH_DEFAULT)
 
 
-def _due(site_id: int) -> bool:
-    """Пора ли набирать. ⚠ Сбой Redis решается в сторону бездействия.
-
-    Не прочиталась отметка — не идём: лишний заход стоит вызовов LLM на каждый
-    ответ, а пропущенный — пяти минут ожидания. Цена ошибок несимметрична.
-    """
-    try:
-        return not redis_conn_get().get(
-            REPLY_ROUND_KEY.format(site_id=int(site_id)))
-    except Exception as e:
-        logger_info(f'[dating] отметка ответов не прочиталась: {e}')
-
-        return False
-
-
-def _mark(site_id: int, every: int) -> None:
-    """Отмечает заход. Срок отметки **и есть** настройка: Redis погасит её сам."""
-    try:
-        redis_conn_get().setex(REPLY_ROUND_KEY.format(site_id=int(site_id)),
-                               max(int(every), 1), '1')
-    except Exception as e:
-        logger_info(f'[dating] отметка ответов не поставилась: {e}')

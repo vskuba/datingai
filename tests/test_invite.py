@@ -600,7 +600,7 @@ class TestRoundReadsTheClock:
     def test_minutes_of_the_local_day(self):
         import time
 
-        from src.dating.invite_round import _minutes_now
+        from src.dating.round import round_minutes as _minutes_now
 
         # Полдень по Гринвичу: при сдвиге +3 местное время — 15:00.
         noon = 12 * 3600

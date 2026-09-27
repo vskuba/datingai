@@ -28,6 +28,7 @@ import uuid
 import pytest
 
 from src.dating import mail_round as round_
+from src.dating import round as engine
 from src.dating.mail_round import (MAIL_ROUND_KEY,
                                           mail_round_run, _made_today,
                                           _sweep, _today, _write)
@@ -420,7 +421,7 @@ class TestOrder:
             def setex(self, key, seconds, value):
                 self.store[key] = value
 
-        monkeypatch.setattr(round_, 'redis_conn_get', lambda: _Redis())
+        monkeypatch.setattr(engine, 'redis_conn_get', lambda: _Redis())
 
         was = await _settings(auth_client, template_keep='2', template_per_day='3')
         try:
@@ -455,7 +456,7 @@ class TestOrder:
             def setex(self, key, seconds, value):
                 self.store[key] = value
 
-        monkeypatch.setattr(round_, 'redis_conn_get', lambda: _Redis())
+        monkeypatch.setattr(engine, 'redis_conn_get', lambda: _Redis())
 
         was = await _settings(auth_client, template_keep='2', template_per_day='3')
         try:
@@ -547,7 +548,7 @@ class TestWhoIsTaken:
                 self.store[key] = value
 
         fake = _Redis()
-        monkeypatch.setattr(round_, 'redis_conn_get', lambda: fake)
+        monkeypatch.setattr(engine, 'redis_conn_get', lambda: fake)
 
         return fake
 
@@ -589,7 +590,7 @@ class TestWhoIsTaken:
         def broken():
             raise RuntimeError('redis лежит')
 
-        monkeypatch.setattr(round_, 'redis_conn_get', broken)
+        monkeypatch.setattr(engine, 'redis_conn_get', broken)
 
         assert (await mail_round_run(0))['made'] == 0
         assert not agent

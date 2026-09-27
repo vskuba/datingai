@@ -26,9 +26,10 @@ cookie. Не признала — заходит сценарием и спра�
 """
 
 from logging_.logging_ import logger_info
-from redis_.redis_ import redis_conn_get
 
 from src.dating.feed import feed_write
+from src.dating.round import (round_slot_due,
+                            round_slot_mark)
 from src.dating.panel import (panel_every, panel_keep,
                                      panel_sites)
 
@@ -50,12 +51,14 @@ async def panel_round_run() -> dict:
     ran = online = logged = 0
 
     for site_id in await panel_sites():
-        if not _due(site_id):
+        # ⚠ Сбой — молчим: лишний заход может кончиться вкладкой Chromium.
+        if not round_slot_due(PANEL_ROUND_KEY, site_id, 'панели'):
             continue
 
         # ⚠ Отметку ставим **до** захода: вход сценарием идёт десятками секунд, и
         # следующий тик завёл бы второй, пока идёт первый.
-        _mark(site_id, await panel_every(site_id))
+        round_slot_mark(PANEL_ROUND_KEY, site_id, await panel_every(site_id),
+                        'панели')
 
         ran += 1
         answer = await panel_keep(site_id)
@@ -80,26 +83,3 @@ async def panel_round_run() -> dict:
 
 # ── Приватное ────────────────────────────────────────────────────────────────
 
-def _due(site_id: int) -> bool:
-    """Пора ли спрашивать. ⚠ Сбой Redis решается в сторону бездействия.
-
-    Лишний заход может кончиться входом сценарием, то есть вкладкой Chromium;
-    пропущенный — задержкой в пять минут. Цена несимметрична, и сомнение решается
-    в сторону молчания — то же правило, что у прочих кругов.
-    """
-    try:
-        return not redis_conn_get().get(
-            PANEL_ROUND_KEY.format(site_id=int(site_id)))
-    except Exception as e:
-        logger_info(f'[dating] отметка панели не прочиталась: {e}')
-
-        return False
-
-
-def _mark(site_id: int, every: int) -> None:
-    """Отмечает заход. Срок отметки **и есть** настройка: Redis погасит её сам."""
-    try:
-        redis_conn_get().setex(PANEL_ROUND_KEY.format(site_id=int(site_id)),
-                               max(int(every), 1), '1')
-    except Exception as e:
-        logger_info(f'[dating] отметка панели не поставилась: {e}')

@@ -100,8 +100,8 @@ async def _alive(invite_id: int) -> bool:
 @pytest.fixture(autouse=True)
 def now(monkeypatch):
     """Снимает отметку «чистили недавно»: она живёт в Redis и переживает тест."""
-    monkeypatch.setattr(invite_round, '_clean_due', lambda site_id: True)
-    monkeypatch.setattr(invite_round, '_clean_mark', lambda site_id: None)
+    monkeypatch.setattr(invite_round, 'round_slot_due', lambda key, site_id, what: True)
+    monkeypatch.setattr(invite_round, 'round_slot_mark', lambda *a: None)
 
 
 class TestCleanByAge:
@@ -181,7 +181,7 @@ class TestItHasItsOwnPace:
         import inspect
 
         code = inspect.getsource(invite_round._clean)
-        mark = code.index('_clean_mark(site_id)')
+        mark = code.index('round_slot_mark(INVITE_ROUND_CLEAN_KEY')
         off = code.index('if hours <= 0:')
 
         assert mark < off, 'отметка ставится после выхода по выключенной настройке'

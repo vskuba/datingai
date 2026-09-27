@@ -79,14 +79,14 @@ DELETE SET NULL`: готовое письмо помнит свой текст �
 уносит — только имя шаблона в карточке сменится на «шаблон удалён».
 """
 
-import time
 
 from datetime_.datetime_ import datetime_offset_now
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
-from redis_.redis_ import redis_conn_get
 
 from src.dating.json_column import json_column_load
+from src.dating.round import (round_minutes, round_slot_due,
+                            round_slot_mark)
 from src.dating.mail import MAIL_NAME_MAX
 from src.dating.mail_agent import DatingMailAgentError, mail_write
 from src.dating.schedule import schedule_now
@@ -144,7 +144,7 @@ async def mail_round_run(offset_hours: int = 0) -> dict:
         написали.
     """
     sites = await _sites()
-    minutes = _minutes_now(offset_hours)
+    minutes = round_minutes(offset_hours)
     made = gone = 0
 
     for site in sites:
@@ -155,12 +155,13 @@ async def mail_round_run(offset_hours: int = 0) -> dict:
         if not schedule_now(site['schedule'], minutes):
             continue
 
-        if not _due(site_id):
+        if not round_slot_due(MAIL_ROUND_KEY, site_id, 'шаблонам'):
             continue
 
         # ⚠ Отметку ставим **до** работы: заготовка пишется минуту, и следующий тик
         # завёл бы вторую, пока идёт первая. Тот же приём, что у круга рассылки.
-        _mark(site_id)
+        round_slot_mark(MAIL_ROUND_KEY, site_id, MAIL_ROUND_EVERY_SEC,
+                        'шаблонам')
 
         # ⚠ **Сперва пишем, потом убираем**, и порядок здесь решает, чем кончится
         # неудачный заход.
@@ -349,31 +350,3 @@ def _today(offset_hours: int) -> str:
     return datetime_offset_now(int(offset_hours)).strftime('%Y-%m-%d')
 
 
-def _minutes_now(offset_hours: int = 0) -> int:
-    """Минуты от начала местных суток. Смещение — из настройки `timezone`."""
-    return int((time.time() + int(offset_hours) * 3600) // 60 % (24 * 60))
-
-
-def _due(site_id: int) -> bool:
-    """Пора ли писать этому сайту.
-
-    ⚠ **Сбой Redis — не идём.** Лишний заход это вызов LLM и лишний текст в списке;
-    пропущенный — час ожидания. Цена несимметрична, и сомнение решается в сторону
-    бездействия. То же правило, что у круга рассылки.
-    """
-    try:
-        return not redis_conn_get().get(
-            MAIL_ROUND_KEY.format(site_id=int(site_id)))
-    except Exception as e:
-        logger_info(f'[dating] отметка шаблонов не прочиталась: {e}')
-
-        return False
-
-
-def _mark(site_id: int) -> None:
-    """Отмечает, что сайту только что писали."""
-    try:
-        redis_conn_get().setex(MAIL_ROUND_KEY.format(site_id=int(site_id)),
-                               MAIL_ROUND_EVERY_SEC, '1')
-    except Exception as e:
-        logger_info(f'[dating] отметка шаблонов не записалась: {e}')

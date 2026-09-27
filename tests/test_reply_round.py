@@ -19,11 +19,22 @@ import pytest
 from src.dating import reply_round as round_
 from src.dating.reply_round import (REPLY_BATCH_DEFAULT,
                                            REPLY_EVERY_DEFAULT,
-                                           REPLY_ROUND_KEY, _batch, _due,
-                                           _every, _mark, _sites,
+                                           REPLY_ROUND_KEY, _batch, _every, _sites,
                                            reply_round_run)
 
 pytestmark = pytest.mark.mail
+
+
+# Помощники круга переехали в общую обвязку — тесты зовут её теми же именами.
+from src.dating import round as engine
+
+
+def _due(site_id):
+    return engine.round_slot_due(REPLY_ROUND_KEY, site_id, 'ответам')
+
+
+def _mark(site_id, every):
+    engine.round_slot_mark(REPLY_ROUND_KEY, site_id, every, 'ответам')
 
 # Выдуманный сайт: у соседа его нет, живую генерацию задеть невозможно.
 SITE = 999_778
@@ -64,7 +75,7 @@ def clean_mark(monkeypatch):
     все следующие видят «ещё не пора».
     """
     fake = _FakeRedis()
-    monkeypatch.setattr(round_, 'redis_conn_get', lambda: fake)
+    monkeypatch.setattr(engine, 'redis_conn_get', lambda: fake)
 
     return fake
 

@@ -27,6 +27,7 @@ import pytest
 
 from src.dating import (heartbeat_round, online_round, panel_round,
                         profile_page, schedule_round)
+from src.dating import round as engine
 
 pytestmark = pytest.mark.profile
 
@@ -42,14 +43,14 @@ class TestTheLocalMinutesAgreeBetweenRounds:
 
     @pytest.mark.parametrize('offset', [-11, -3, 0, 2, 3, 5, 12])
     def test_both_rounds_give_the_same_minute(self, offset):
-        assert (heartbeat_round._minutes_now(offset)
-                == schedule_round._minutes_now(offset)), \
+        assert (heartbeat_round.round_minutes(offset)
+                == schedule_round.round_minutes(offset)), \
             f'на поясе {offset:+} круги разошлись в местном времени'
 
     def test_the_offset_shifts_by_whole_hours(self):
         """Пояс +3 отличается от +0 ровно на 180 минут по кругу суток."""
-        base = heartbeat_round._minutes_now(0)
-        shifted = heartbeat_round._minutes_now(3)
+        base = heartbeat_round.round_minutes(0)
+        shifted = heartbeat_round.round_minutes(3)
 
         assert (shifted - base) % (24 * 60) == 180, \
             f'сдвиг {shifted - base} минут вместо 180'
@@ -57,7 +58,7 @@ class TestTheLocalMinutesAgreeBetweenRounds:
     def test_the_minute_is_inside_a_day(self):
         """⚠ Значение — минуты **внутри** суток: расписание сверяет его со сменой."""
         for offset in (-12, 0, 14):
-            got = heartbeat_round._minutes_now(offset)
+            got = heartbeat_round.round_minutes(offset)
 
             assert 0 <= got < 24 * 60, f'пояс {offset:+} дал {got} минут'
 
@@ -116,9 +117,10 @@ class TestThePanelDoubtsTowardsSilence:
         def _boom():
             raise RuntimeError('Redis лёг')
 
-        monkeypatch.setattr(panel_round, 'redis_conn_get', _boom)
+        monkeypatch.setattr(engine, 'redis_conn_get', _boom)
 
-        assert panel_round._due(4242) is False, \
+        assert engine.round_slot_due(panel_round.PANEL_ROUND_KEY, 4242,
+                            'панели') is False, \
             'Redis недоступен, а круг решил идти — это вкладка Chromium на ровном месте'
 
     def test_a_broken_redis_does_not_raise_on_mark(self, monkeypatch):
@@ -127,9 +129,9 @@ class TestThePanelDoubtsTowardsSilence:
         def _boom():
             raise RuntimeError('Redis лёг')
 
-        monkeypatch.setattr(panel_round, 'redis_conn_get', _boom)
+        monkeypatch.setattr(engine, 'redis_conn_get', _boom)
 
-        panel_round._mark(4242, every=300)
+        engine.round_slot_mark(panel_round.PANEL_ROUND_KEY, 4242, 300, 'панели')
 
     def test_the_term_of_the_mark_is_the_setting(self, monkeypatch):
         """⚠⚠ Срок отметки **и есть** настройка: Redis гасит её сам.
@@ -146,8 +148,8 @@ class TestThePanelDoubtsTowardsSilence:
             def get(self, key):
                 return None
 
-        monkeypatch.setattr(panel_round, 'redis_conn_get', lambda: _Fake())
-        panel_round._mark(4242, every=300)
+        monkeypatch.setattr(engine, 'redis_conn_get', lambda: _Fake())
+        engine.round_slot_mark(panel_round.PANEL_ROUND_KEY, 4242, 300, 'панели')
 
         assert said['term'] == 300, f'срок отметки {said.get("term")} вместо 300'
         assert '4242' in said['key'], f'ключ не про этот сайт: {said.get("key")}'
@@ -164,8 +166,8 @@ class TestThePanelDoubtsTowardsSilence:
             def get(self, key):
                 return None
 
-        monkeypatch.setattr(panel_round, 'redis_conn_get', lambda: _Fake())
-        panel_round._mark(4242, every=0)
+        monkeypatch.setattr(engine, 'redis_conn_get', lambda: _Fake())
+        engine.round_slot_mark(panel_round.PANEL_ROUND_KEY, 4242, 0, 'панели')
 
         assert said['term'] >= 1, 'срок отметки нулевой — Redis её не примет'
 

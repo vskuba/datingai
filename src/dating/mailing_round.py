@@ -48,12 +48,9 @@
 удвоили бы очередь к соседу, ничего не ускорив: очередь у него общая.
 """
 
-import time
-
 from datetime_.datetime_ import datetime_offset_hours
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
-from redis_.redis_ import redis_conn_get
 
 from src.dating.pool import pool_sweep
 from src.dating.json_column import json_column_load
@@ -61,6 +58,8 @@ from src.dating.mailing import (MAILING_BATCH_MAX,
                                        mailing_make,
                                        mailing_templates)
 from src.dating.schedule import schedule_now
+from src.dating.round import (round_minutes, round_slot_due,
+                            round_slot_mark, round_slot_release)
 
 # Как часто круг просыпается. Минута — как у расписания анкет: смены заданы с
 # точностью до четверти часа, и чаще смотреть нечего.
@@ -107,7 +106,7 @@ async def mailing_round_run(offset_hours: int = 0) -> dict:
         `ran` — скольким набирали, `made` — сколько писем готово всего.
     """
     sites = await _sites()
-    minutes = _minutes_now(offset_hours)
+    minutes = round_minutes(offset_hours)
 
     ran = made = 0
 
@@ -121,13 +120,15 @@ async def mailing_round_run(offset_hours: int = 0) -> dict:
             continue
 
         every = await _every(site_id)
-        if not _due(site_id):
+        # ⚠ Сбой — не идём, общим правилом `round_slot_due`: лишний заход это вызовы
+        # LLM и письма живым людям.
+        if not round_slot_due(MAILING_ROUND_KEY, site_id, 'рассылке'):
             continue
 
         # ⚠ Отметку ставим **до** набора, а не после: он длится минуты, и следующий
         # тик круга завёл бы второй, пока идёт первый. Тот же приём, что у импорта
         # переписки и у сторожа фоновых списков.
-        _mark(site_id, every)
+        round_slot_mark(MAILING_ROUND_KEY, site_id, every, 'рассылке')
 
         result, idle = await _make(site_id)
         if result is None:
@@ -141,7 +142,7 @@ async def mailing_round_run(offset_hours: int = 0) -> dict:
             # нет). Сорванный набор слот держит: причина обычно не рассосётся за
             # минуту, а повтор стоит вызовов LLM.
             if idle:
-                _unmark(site_id)
+                round_slot_release(MAILING_ROUND_KEY, site_id, 'рассылке')
 
             continue
 
@@ -164,7 +165,7 @@ async def mailing_round_run(offset_hours: int = 0) -> dict:
         # стоило вызова, и повтор через минуту жёг бы их кругами: такой заход
         # слот держит, как и раньше.
         if _skipped_for_free(result):
-            _unmark(site_id)
+            round_slot_release(MAILING_ROUND_KEY, site_id, 'рассылке')
 
     if ran:
         logger_info(f'[dating] круг рассылки: сайтов {ran}, писем {made}')
@@ -343,50 +344,3 @@ async def _pool_size(site_id: int) -> int:
         row = await db.fetchone()
 
     return int((row or {}).get('n') or 0)
-
-
-def _minutes_now(offset_hours: int = 0) -> int:
-    """Минуты от начала местных суток. Смещение — из настройки `timezone`."""
-    return int((time.time() + int(offset_hours) * 3600) // 60 % (24 * 60))
-
-
-def _due(site_id: int) -> bool:
-    """Пора ли добирать пул этому сайту.
-
-    ⚠ **Сбой Redis — не идём**, в отличие от импорта переписки. Там пропущенный
-    круг стоит задержки сообщения, а лишний прогон — сорока секунд браузера; здесь
-    наоборот: лишний заход это вызовы LLM и письма живым людям. Когда цена ошибки
-    несимметрична, сомнение решается в сторону бездействия.
-    """
-    try:
-        return not redis_conn_get().get(
-            MAILING_ROUND_KEY.format(site_id=int(site_id)))
-    except Exception as e:
-        logger_info(f'[dating] отметка рассылки не прочиталась: {e}')
-
-        return False
-
-
-def _unmark(site_id: int) -> None:
-    """Снимает отметку: набора не было, и занимать слот нечем.
-
-    ⚠ Сбой Redis глотаем молча — отметка всё равно погаснет сама по сроку. Хуже
-    было бы уронить обход остальных сайтов из-за неубранного ключа.
-    """
-    try:
-        redis_conn_get().delete(MAILING_ROUND_KEY.format(site_id=int(site_id)))
-    except Exception as e:
-        logger_info(f'[dating] отметка рассылки не снялась: {e}')
-
-
-def _mark(site_id: int, every: int) -> None:
-    """Отмечает, что сайту только что набирали.
-
-    Отметкой с истечением, а не временем в значении: срок и есть настройка, и Redis
-    сам погасит ключ, когда придёт пора.
-    """
-    try:
-        redis_conn_get().setex(MAILING_ROUND_KEY.format(site_id=int(site_id)),
-                               max(1, int(every)), '1')
-    except Exception as e:
-        logger_info(f'[dating] отметка рассылки не записалась: {e}')

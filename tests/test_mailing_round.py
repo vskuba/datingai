@@ -19,11 +19,24 @@ from src.dating import mailing_round as round_
 from src.dating.mailing_round import (MAILING_EVERY_DEFAULT,
                                              MAILING_POOL_MAX,
                                              MAILING_POOL_MAX_DEFAULT,
-                                             MAILING_ROUND_KEY,
-                                             _due, _mark, _minutes_now, _pool_max,
+                                             MAILING_ROUND_KEY, _pool_max,
                                              _pool_size, mailing_round_run)
 
 pytestmark = pytest.mark.mail
+
+
+# Помощники круга переехали в общую обвязку — тесты зовут её теми же именами.
+from src.dating import round as engine
+
+
+def _due(site_id):
+    return engine.round_slot_due(MAILING_ROUND_KEY, site_id, 'рассылке')
+
+
+def _mark(site_id, every):
+    engine.round_slot_mark(MAILING_ROUND_KEY, site_id, every, 'рассылке')
+
+_minutes_now = engine.round_minutes
 
 # Выдуманный сайт: у соседа его нет, живую рассылку задеть невозможно.
 SITE = 999_777
@@ -122,7 +135,7 @@ def clean_mark(monkeypatch):
     следующие видят «ещё не пора».
     """
     fake = _FakeRedis()
-    monkeypatch.setattr(round_, 'redis_conn_get', lambda: fake)
+    monkeypatch.setattr(engine, 'redis_conn_get', lambda: fake)
 
     return fake
 
@@ -541,7 +554,7 @@ class TestRedisFailure:
         def broken():
             raise RuntimeError('redis лежит')
 
-        monkeypatch.setattr(round_, 'redis_conn_get', broken)
+        monkeypatch.setattr(engine, 'redis_conn_get', broken)
 
         assert _due(SITE) is False
 

@@ -961,8 +961,8 @@ class TestTheRoundKeepsToItsShifts:
 
         # ⚠ Отметка «недавно ходили» живёт в Redis и переживает тесты: без снятия
         # второй заход в том же прогоне молчал бы по чужой причине.
-        monkeypatch.setattr(round_, '_due', lambda site_id: True)
-        monkeypatch.setattr(round_, '_mark', lambda site_id, every: None)
+        monkeypatch.setattr(round_, 'round_slot_due', lambda key, site_id, what: True)
+        monkeypatch.setattr(round_, 'round_slot_mark', lambda *a: None)
         monkeypatch.setattr(round_, '_fresh_feed', lambda site_id: False)
 
         # Только наш стенд: у соседних сайтов свои смены и свои анкеты.

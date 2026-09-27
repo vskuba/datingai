@@ -77,6 +77,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.invite_send import invite_send_one
+from src.dating.round import round_minutes
 from src.dating.idle import idle_write
 from src.dating.json_column import json_column_load
 from src.dating.online import online_check
@@ -157,7 +158,7 @@ async def invite_send_round_run(offset_hours: int = 0) -> dict:
     Returns:
         dict: `sent` и `failed` — сколько ушло и сколько не ушло за этот заход.
     """
-    minutes = _minutes_now(offset_hours)
+    minutes = round_minutes(offset_hours)
     sent = failed = 0
 
     for site in await _sites():
@@ -278,7 +279,7 @@ async def invite_send_why(site_id: int, offset_hours: int = 0) -> str:
             return 'отправка инвайтов выключена'
 
         if not schedule_now(json_column_load(site['invite_schedule']),
-                                   _minutes_now(offset_hours)):
+                                   round_minutes(offset_hours)):
             return 'сейчас не смена: инвайты уходят по часам, заданным у сайта'
 
         today, cap = await _today(site_id, offset_hours), await _max_day(site_id)
@@ -466,13 +467,3 @@ async def _max_day(site_id: int) -> int:
                or INVITE_SEND_MAX_DAY_DEFAULT)
 
 
-def _minutes_now(offset_hours: int) -> int:
-    """Минуты от начала местных суток: смены сверяют с часами на стене.
-
-    Тот же расчёт, что у круга отправки писем, — и намеренно тот же: два способа
-    посчитать «который час» разошлись бы на границе суток, и одна из отправок
-    ушла бы вне смены.
-    """
-    local = time.gmtime(time.time() + int(offset_hours or 0) * 3600)
-
-    return local.tm_hour * 60 + local.tm_min

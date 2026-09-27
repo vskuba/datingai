@@ -47,6 +47,7 @@ from src.dating.request import request_ms
 from src.dating.proxy import (proxy_enabled,
                                      proxy_required)
 from src.dating.schedule import schedule_now
+from src.dating.round import round_minutes
 
 # Как часто круг просыпается. ⚠ Это **не** период удара: бить чаще, чем задано
 # сайту, круг не станет — он смотрит, кому пора, и пропускает остальных. Пятнадцать
@@ -75,7 +76,7 @@ async def heartbeat_round_run(offset_hours: int = 0) -> dict:
     if not sites:
         return {'sites': 0, 'beaten': 0, 'failed': 0}
 
-    minutes = _minutes_now(offset_hours)
+    minutes = round_minutes(offset_hours)
 
     # ⚠ **Клиент на выход, а не один на круг.** Раньше он был один: соединения к
     # тому же хосту переиспользовались, и тысяча анкет проходила одним пулом. Но
@@ -264,13 +265,3 @@ def _mark(site_id: int) -> None:
     _beaten[int(site_id)] = time.time()
 
 
-def _minutes_now(offset_hours: int) -> int:
-    """Минуты от начала **местных** суток: расписание сверяют с часами на стене.
-
-    Тот же расчёт, что у круга расписания: сервер живёт по UTC, а «в сети с 07:00»
-    человек понимает буквально. Разойдись эти два места — анкета входила бы по
-    одним часам, а в сети держалась по другим.
-    """
-    local = time.gmtime(time.time() + int(offset_hours) * 3600)
-
-    return local.tm_hour * 60 + local.tm_min

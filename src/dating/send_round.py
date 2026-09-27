@@ -48,6 +48,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.json_column import json_column_load
+from src.dating.round import round_minutes
 from src.dating.mail_send import (DatingMailSendError, mail_send_mark,
                                   mail_send_one)
 from src.dating.schedule import schedule_now
@@ -87,7 +88,7 @@ async def send_round_run(offset_hours: int = 0) -> dict:
     if not sites:
         return {'sent': 0, 'failed': 0}
 
-    minutes = _minutes_now(offset_hours)
+    minutes = round_minutes(offset_hours)
     sent = failed = 0
 
     for site in sites:
@@ -176,7 +177,7 @@ async def send_why(site_id: int, table: str, offset_hours: int = 0) -> str:
             return f'отправка {said} выключена'
 
         if not schedule_now(json_column_load(site['mailing_schedule']),
-                            _minutes_now(offset_hours)):
+                            round_minutes(offset_hours)):
             return 'сейчас не смена: письма уходят по часам, заданным у сайта'
 
         if table == 'mailing':
@@ -453,8 +454,3 @@ async def _max_day(site_id: int) -> int:
     return int(await site_seconds(site_id, 'send_max_day'))
 
 
-def _minutes_now(offset_hours: int) -> int:
-    """Минуты от начала местных суток: смены сверяют с часами на стене."""
-    local = time.gmtime(time.time() + int(offset_hours) * 3600)
-
-    return local.tm_hour * 60 + local.tm_min

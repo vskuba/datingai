@@ -15,12 +15,21 @@
 import pytest
 
 from src.dating import mail_in_round as round_
+from src.dating import round as engine
+from src.dating.round import round_slot_due, round_slot_mark
 from src.dating.mail_in_round import (MAIL_IN_EVERY_DEFAULT,
-                                             MAIL_IN_ROUND_KEY, _due,
-                                             _every, _mark, _profiles, _sites,
-                                             mail_in_round_run)
+                                             MAIL_IN_ROUND_KEY, _every, _profiles,
+                                             _sites, mail_in_round_run)
 
 pytestmark = pytest.mark.mail
+
+# Помощники круга переехали в общую обвязку — тесты зовут их теми же именами.
+def _due(site_id):
+    return round_slot_due(MAIL_IN_ROUND_KEY, site_id, 'письмам')
+
+
+def _mark(site_id, every):
+    round_slot_mark(MAIL_IN_ROUND_KEY, site_id, every, 'письмам')
 
 # Выдуманный сайт: у соседа его нет, живой забор задеть невозможно.
 SITE = 999_779
@@ -56,7 +65,7 @@ class _FakeRedis:
 def clean_mark(monkeypatch):
     """Пустая память отметок на каждый тест."""
     fake = _FakeRedis()
-    monkeypatch.setattr(round_, 'redis_conn_get', lambda: fake)
+    monkeypatch.setattr(engine, 'redis_conn_get', lambda: fake)
 
     return fake
 

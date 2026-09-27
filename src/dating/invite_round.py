@@ -66,13 +66,14 @@
 соседу, ничего не ускорив: очередь у него общая.
 """
 
-import time
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 from redis_.redis_ import redis_conn_get
 
 from src.dating.feed import feed_write
+from src.dating.round import (round_minutes, round_slot_due,
+                            round_slot_mark)
 from src.dating.pool import pool_sweep, pool_sweep_away
 from src.dating.invite import (INVITE_POOL_DEFAULT,
                                       INVITE_POOL_SETTING,
@@ -125,7 +126,7 @@ async def invite_round_run(offset: int = 0) -> dict:
     # Минуты от начала **местных** суток: то, что и ждёт проверка смен. Считаем
     # один раз на круг, а не на сайт: за обход они не меняются, а смены у всех
     # сайтов сверяются с одними часами.
-    minutes = _minutes_now(offset)
+    minutes = round_minutes(offset)
 
     for site in await _sites():
         site_id = int(site['site_id'])
@@ -141,12 +142,13 @@ async def invite_round_run(offset: int = 0) -> dict:
         if not shifts or not schedule_now(shifts, minutes):
             continue
 
-        if not _due(site_id):
+        if not round_slot_due(INVITE_ROUND_KEY, site_id, 'инвайтам'):
             continue
 
         # ⚠ Отметку ставим **до** набора: он идёт минутами, и следующий тик завёл
         # бы второй набор, пока идёт первый.
-        _mark(site_id, await _every(site_id))
+        round_slot_mark(INVITE_ROUND_KEY, site_id, await _every(site_id),
+                        'инвайтам')
 
         # ⚠ Сперва убираем из пула черновики ушедших анкет, и только потом
         # считаем место. Инвайт от анкеты не в сети отправить некому — отправка
@@ -203,15 +205,6 @@ async def invite_round_run(offset: int = 0) -> dict:
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
-
-def _minutes_now(offset_hours: int) -> int:
-    """Минуты от начала местных суток: смены сверяют с часами на стене.
-
-    ⚠ Своей функцией, а не выражением на месте: ровно её отсутствие и превратило
-    сдвиг часового пояса в «минуты суток». Такой же помощник есть у кругов
-    рассылки и отправки — эти три места считают одно и то же.
-    """
-    return int((time.time() + int(offset_hours) * 3600) // 60 % (24 * 60))
 
 async def _sites() -> list[dict]:
     """Сайты с включённым расписанием инвайтов."""
@@ -312,7 +305,7 @@ async def _clean(site_id: int) -> int:
     """
     from src.uvicorn.routers.dating.site_ import site_seconds
 
-    if not _clean_due(site_id):
+    if not round_slot_due(INVITE_ROUND_CLEAN_KEY, site_id, 'чистке инвайтов'):
         return 0
 
     try:
@@ -324,7 +317,8 @@ async def _clean(site_id: int) -> int:
 
     # ⚠ Отметку ставим и при выключенной настройке: иначе чтение настройки
     # повторялось бы каждый тик, то есть шестьдесят раз за те же десять минут.
-    _clean_mark(site_id)
+    round_slot_mark(INVITE_ROUND_CLEAN_KEY, site_id, INVITE_ROUND_CLEAN_EVERY,
+                  'чистке инвайтов')
     if hours <= 0:
         return 0
 
@@ -348,48 +342,3 @@ async def _clean(site_id: int) -> int:
     return gone
 
 
-def _clean_due(site_id: int) -> bool:
-    """Пора ли чистить. ⚠ Сбой Redis решается в сторону бездействия, как и набор."""
-    try:
-        return not redis_conn_get().get(
-            INVITE_ROUND_CLEAN_KEY.format(site_id=int(site_id)))
-    except Exception as e:
-        logger_info(f'[dating] отметка чистки инвайтов не прочиталась: {e}')
-
-        return False
-
-
-def _clean_mark(site_id: int) -> None:
-    """Отмечает уборку: срок отметки и есть её частота."""
-    try:
-        redis_conn_get().setex(
-            INVITE_ROUND_CLEAN_KEY.format(site_id=int(site_id)),
-            INVITE_ROUND_CLEAN_EVERY, '1')
-    except Exception as e:
-        logger_info(f'[dating] отметка чистки инвайтов не поставилась: {e}')
-
-
-def _due(site_id: int) -> bool:
-    """Пора ли набирать. ⚠ Сбой Redis решается в сторону бездействия.
-
-    Не прочиталась отметка — не идём. Лишний заход это вызовы LLM и минуты очереди
-    у соседа; пропущенный стоит получаса задержки пула, который всё равно ждёт
-    человека. Цена ошибок несимметрична.
-    """
-    try:
-        return not redis_conn_get().get(
-            INVITE_ROUND_KEY.format(site_id=int(site_id)))
-    except Exception as e:
-        logger_info(f'[dating] отметка инвайтов не прочиталась: {e}')
-
-        return False
-
-
-def _mark(site_id: int, every: int) -> None:
-    """Отмечает заход. Срок отметки **и есть** настройка: Redis погасит её сам."""
-    try:
-        redis_conn_get().setex(
-            INVITE_ROUND_KEY.format(site_id=int(site_id)),
-            max(int(every), 1), '1')
-    except Exception as e:
-        logger_info(f'[dating] отметка инвайтов не поставилась: {e}')

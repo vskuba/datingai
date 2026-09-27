@@ -76,7 +76,7 @@ async def probe(monkeypatch):
 def clock(monkeypatch):
     """Подменяет «сколько сейчас»: ждать 07:00 в тесте нельзя."""
     state = {'hour': 9}
-    monkeypatch.setattr(rnd, '_minutes_now', lambda offset: state['hour'] * 60)
+    monkeypatch.setattr(rnd, 'round_minutes', lambda offset: state['hour'] * 60)
 
     return state
 
@@ -254,8 +254,8 @@ class TestLocalTime:
 
         monkeypatch.setattr(time, 'time', lambda: 0.0)   # 00:00 UTC
 
-        assert rnd._minutes_now(0) == 0
-        assert rnd._minutes_now(3) == 3 * 60
+        assert rnd.round_minutes(0) == 0
+        assert rnd.round_minutes(3) == 3 * 60
 
 
 class TestSessionIsReleasedToo:

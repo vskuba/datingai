@@ -43,6 +43,8 @@ from mysql_.mysql_ import mysql_get_db_async
 from redis_.redis_ import redis_conn_get
 
 from src.dating.feed import feed_write
+from src.dating.round import (round_minutes, round_slot_due,
+                            round_slot_mark)
 from src.dating.pool import pool_sweep
 from src.dating.favorite_mail import (FAVORITE_MAIL_BATCH_DEFAULT,
                                              FAVORITE_MAIL_POOL_SETTING,
@@ -82,10 +84,8 @@ async def favorite_mail_round_run(offset: int = 0) -> dict:
     00:03, и круг молча пропускал каждый сайт. Считаем минуты **один раз на
     круг**: за обход они не меняются, а часы у всех сайтов одни.
     """
-    from src.dating.favorite_mail import _minutes_now
-
     sites = await _sites()
-    minutes = _minutes_now(offset)
+    minutes = round_minutes(offset)
     ran = made = 0
 
     for site in sites:
@@ -107,7 +107,10 @@ async def favorite_mail_round_run(offset: int = 0) -> dict:
         # (SQL и Redis, без единого вызова LLM), а частоту писем **одному
         # человеку** держат его же пределы — два в сутки и четыре часа паузы. Срок
         # круга остаётся вторым сроком: он ограничивает заходы, когда лента стоит.
-        if not _fresh_feed(site_id) and not _due(site_id):
+        # ⚠ Сбой — молчим (правило общее в `round_slot_due`): лишний заход —
+        # вызовы LLM и письма в пуле.
+        if not _fresh_feed(site_id) and not round_slot_due(
+                FAVORITE_MAIL_ROUND_KEY, site_id, 'письмам избранным'):
             continue
 
         # ⚠ Отметку ставим **до** захода: он идёт минутами (каждое письмо — вызов
@@ -116,7 +119,8 @@ async def favorite_mail_round_run(offset: int = 0) -> dict:
         # Ставим её и когда пришли по свежей ленте: два снимка подряд (лента
         # снимается раз в две минуты) иначе дали бы два захода подряд, а второму
         # писать уже некому — пределы на человека те же.
-        _mark(site_id, await _every(site_id))
+        round_slot_mark(FAVORITE_MAIL_ROUND_KEY, site_id, await _every(site_id),
+                        'письмам избранным')
 
         # ⚠ Сперва убираем черновики ушедших анкет: отправить их некому, а место
         # в пуле они держат (`pool.py`).
@@ -208,32 +212,6 @@ def _fresh_feed(site_id: int) -> bool:
     _feed_seen[int(site_id)] = at
 
     return seen is not None and at > seen
-
-
-def _due(site_id: int) -> bool:
-    """Пора ли заходить. ⚠ Сбой Redis решается в сторону бездействия.
-
-    Лишний заход это вызовы LLM и письма в пуле; пропущенный — полчаса задержки.
-    Цена несимметрична, и сомнение решается в сторону молчания — то же правило,
-    что у прочих кругов.
-    """
-    try:
-        return not redis_conn_get().get(
-            FAVORITE_MAIL_ROUND_KEY.format(site_id=int(site_id)))
-    except Exception as e:
-        logger_info(f'[dating] отметка писем избранным не прочиталась: {e}')
-
-        return False
-
-
-def _mark(site_id: int, every: int) -> None:
-    """Отмечает заход. Срок отметки **и есть** настройка: Redis погасит её сам."""
-    try:
-        redis_conn_get().setex(
-            FAVORITE_MAIL_ROUND_KEY.format(site_id=int(site_id)),
-            max(int(every), 1), '1')
-    except Exception as e:
-        logger_info(f'[dating] отметка писем избранным не поставилась: {e}')
 
 
 def favorite_mail_round_next(site_id: int) -> int:

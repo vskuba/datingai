@@ -91,7 +91,6 @@ Redis, пределы — запросом к базе, и только пото
 """
 
 import random
-import time
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
@@ -100,6 +99,7 @@ from src.dating.favorite import (FAVORITE_STATES,
                                         FAVORITE_STATES_SQL,
                                         favorite_sync)
 from src.dating.ready import password_pick
+from src.dating.round import round_minutes
 from src.uvicorn.routers.dating.site_ import site_setting
 from src.dating.percent import percent_share
 from src.dating.answer import answer_mail_write
@@ -545,7 +545,7 @@ async def favorite_mail_shift_site(site_id: int, offset_hours: int = 0) -> bool:
         return True
 
     return favorite_mail_shift_now((row or {}).get('favorite_mail_schedule'),
-                                   _minutes_now(int(offset_hours)))
+                                   round_minutes(int(offset_hours)))
 
 async def favorite_mail_gap_sec(site_id: int) -> int:
     """Пауза между письмами одной девушки, **секундами**. Одно чтение на всех.
@@ -878,11 +878,6 @@ def _girl_sent_union(key: str) -> str:
     return mail_sent_union(
         f"profile_id = {key} AND status = 'sent' AND sent_at IS NOT NULL")
 
-
-
-def _minutes_now(offset_hours: int) -> int:
-    """Минуты от начала местных суток."""
-    return int((time.time() + int(offset_hours) * 3600) // 60 % (24 * 60))
 
 
 async def _too_soon(site_id: int, uid: str, per_day: int) -> str:

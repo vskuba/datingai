@@ -48,8 +48,9 @@ import asyncio
 from logging_.logging_ import logger_info
 
 from src.dating.feed import feed_done, feed_write
+from src.dating.round import (round_slot_due,
+                            round_slot_mark)
 from mysql_.mysql_ import mysql_get_db_async
-from redis_.redis_ import redis_conn_get
 
 from src.dating.mail_in import DatingMailInError, mail_in_fetch
 from src.dating.ready import ready_online
@@ -89,12 +90,15 @@ async def mail_in_round_run() -> dict:
     ran = seen = added = failed = 0
     for site in sites:
         site_id = int(site['site_id'])
-        if not _due(site_id):
+        # ⚠ Сбой — молчим: лишние обходы — тринадцать входов, а сайт считает
+        # частые заходы подозрением.
+        if not round_slot_due(MAIL_IN_ROUND_KEY, site_id, 'письмам'):
             continue
 
         # ⚠ Отметку ставим **до** обхода: он идёт секундами на анкету, и
         # следующий тик завёл бы второй обход, пока идёт первый.
-        _mark(site_id, await _every(site_id))
+        round_slot_mark(MAIL_IN_ROUND_KEY, site_id, await _every(site_id),
+                        'письмам')
 
         profiles = await _profiles(site_id)
         if not profiles:
@@ -259,27 +263,3 @@ async def _every(site_id: int) -> int:
                or MAIL_IN_EVERY_DEFAULT)
 
 
-def _due(site_id: int) -> bool:
-    """Пора ли идти. ⚠ Сбой Redis решается в сторону бездействия.
-
-    Не прочиталась отметка — не идём. Лишний обход это тринадцать входов на сайт
-    подряд, а сайт считает частые заходы подозрением; пропущенный стоит пяти минут
-    задержки письма. Цена ошибок несимметрична.
-    """
-    try:
-        return not redis_conn_get().get(
-            MAIL_IN_ROUND_KEY.format(site_id=int(site_id)))
-    except Exception as e:
-        logger_info(f'[dating] отметка писем не прочиталась: {e}')
-
-        return False
-
-
-def _mark(site_id: int, every: int) -> None:
-    """Отмечает обход. Срок отметки **и есть** настройка: Redis погасит её сам."""
-    try:
-        redis_conn_get().setex(
-            MAIL_IN_ROUND_KEY.format(site_id=int(site_id)),
-            max(int(every), 1), '1')
-    except Exception as e:
-        logger_info(f'[dating] отметка писем не поставилась: {e}')

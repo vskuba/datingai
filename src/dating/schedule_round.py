@@ -26,13 +26,13 @@
 разом уронил бы его пул. Тот же порядок, что у круга восстановления входов.
 """
 
-import time
 
 from datetime_.datetime_ import datetime_offset_hours
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.log import log_write
+from src.dating.round import round_minutes
 from src.dating.pool import pool_drop
 from src.dating.schedule import schedule_now
 
@@ -53,7 +53,7 @@ async def schedule_round_run(offset_hours: int = 0) -> dict:
         вышло и сколько сокетов оборвано из-за снятой галочки.
     """
     rows = await _rows()
-    minutes = _minutes_now(offset_hours)
+    minutes = round_minutes(offset_hours)
 
     entered = left = dropped = 0
 
@@ -156,17 +156,6 @@ async def _rows() -> list[dict]:
         return []
 
     return [dict(row) for row in rows or []]
-
-
-def _minutes_now(offset_hours: int) -> int:
-    """Минуты от начала **местных** суток.
-
-    Расписание сверяют с часами на стене, а сервер живёт по UTC: «войти в 7 утра»
-    человек понимает буквально.
-    """
-    local = time.gmtime(time.time() + int(offset_hours) * 3600)
-
-    return local.tm_hour * 60 + local.tm_min
 
 
 async def _enter(profile_id: int) -> bool:
