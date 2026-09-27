@@ -205,8 +205,11 @@ def _card_build(row: dict, base: str) -> dict:
     страница читает `profile.name` и `profile.photo` независимо от того, откуда
     они взялись, и второй формы у неё быть не должно.
     """
+    # ⚠⚠ Номер кладётся **одним** ключом `id`. Прежде рядом лежал `site_uid` с
+    # тем же значением: вход (`site_profile.card_parse`) писал `id`, импорт писал
+    # оба, — и читатели разбрелись, кто во что. Два имени одной величины значат,
+    # что однажды их разведут по смыслу, не заметив.
     card = {'id': str(row.get('site_uid') or ''),
-            'site_uid': str(row.get('site_uid') or ''),
             'name': str(row.get('name') or ''),
             'photo': import_photo(row.get('photo_path'), base),
             'age': int(row.get('age') or 0),

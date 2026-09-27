@@ -343,7 +343,7 @@ async def block_rows(site_id: int, profile_id: int = 0, page: int = 1,
         # девушка оставалась буквой в кружке, хотя её фотография лежала в той же
         # строке запроса — карточка анкеты уже была в руках.
         got['profile_photo'] = str(card.get('photo') or '')
-        got['profile_uid'] = str(card.get('site_uid') or '')
+        got['profile_uid'] = str(card.get('id') or '')
         got['photo'] = str(got.get('photo') or '')
         got['created_at'] = str(got['created_at']) if got.get('created_at') else ''
         out.append(got)

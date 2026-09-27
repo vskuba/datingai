@@ -356,7 +356,7 @@ async def chat_panel_profiles(site_id: int) -> dict:
 
     found = {}
     for row in rows:
-        site_uid = str((json_column_load(row['profile']) or {}).get('site_uid') or '').strip()
+        site_uid = str((json_column_load(row['profile']) or {}).get('id') or '').strip()
         if site_uid:
             found[site_uid] = int(row['id'])
 

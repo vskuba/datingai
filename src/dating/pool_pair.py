@@ -104,7 +104,7 @@ def pool_pair_girl(got: dict, card: dict) -> dict:
     got['girl'] = str(card.get('name') or got.get('profile_login') or '')
     got['profile_name'] = got['girl']
     got['profile_photo'] = str(card.get('photo') or '')
-    got['profile_uid'] = str(card.get('site_uid') or '')
+    got['profile_uid'] = str(card.get('id') or '')
 
     return got
 

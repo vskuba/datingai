@@ -312,23 +312,29 @@ def agent_site_uid(profile: dict, card: dict = None) -> str:
     ⚠ Третья — наш собственный номер. Он не совпадает с сайтовым, но **уникален и
     постоянен**, а значит факты не сольются. Случай редкий: карточка ещё не снята.
 
-    ⚠ `site_uid` в карточке — то же самое поле, что `id`, и читается вторым: сайт
-    кладёт оба, а наш разбор анкеты (`site_profile.py`) заполняет `site_uid`.
+    ⚠ В карточке номер лежит под ключом `id` — **одним**. Дубль `site_uid` с тем
+    же значением убран (`20260927140000`): два имени одной величины однажды разводят
+    по смыслу, не заметив.
     """
     column = str((profile or {}).get('profile_id') or '').strip()
     if column:
         return column
 
-    known = card if card is not None else (profile or {}).get('profile')
-    if isinstance(known, str):
-        from src.dating.json_column import json_column_load
+    # ⚠ Смотрим **оба** источника карточки: разобранную, если её дали, и JSON самой
+    # анкеты. Обычно это одно и то же, но зовущие разные: одни парсят JSON заранее,
+    # другие отдают строку как есть. Проверяй мы только переданное — анкета с
+    # номером в JSON и карточкой без него скатилась бы на свой номер молча.
+    for known in (card, (profile or {}).get('profile')):
+        if isinstance(known, str):
+            from src.dating.json_column import json_column_load
 
-        known = json_column_load(known)
+            known = json_column_load(known)
 
-    known = known or {}
-    said = str(known.get('id') or known.get('site_uid') or '').strip()
+        said = str((known or {}).get('id') or '').strip()
+        if said:
+            return said
 
-    return said or str((profile or {}).get('id') or '').strip()
+    return str((profile or {}).get('id') or '').strip()
 
 
 def agent_key(name: str) -> str:

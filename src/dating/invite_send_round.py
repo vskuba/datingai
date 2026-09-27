@@ -229,19 +229,6 @@ async def invite_send_round_run(offset_hours: int = 0) -> dict:
     return {'sent': sent, 'failed': failed}
 
 
-async def _batch(site_id: int) -> int:
-    """Сколько реплик отправлять за заход. Настройка сайта.
-
-    ⚠ Ноль и мусор дают единицу, а не «ничего»: «не отправлять» — это отдельный
-    выключатель (`invite_send_on`), и отменять отправку настройкой размера пачки
-    значило бы два выключателя об одном.
-    """
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
-    return max(1, int(await site_seconds(site_id, INVITE_SEND_BATCH_SETTING))
-               or INVITE_SEND_BATCH_DEFAULT)
-
-
 async def invite_send_why(site_id: int, offset_hours: int = 0) -> str:
     """Почему из пула сейчас ничего не уходит. Пусто — уходит, повода нет.
 
@@ -301,6 +288,19 @@ async def invite_send_why(site_id: int, offset_hours: int = 0) -> str:
         # Молчим: подсказка не обязана работать, когда не работает база. Пустая
         # строка означает «сказать нечего», а не «всё хорошо».
         return ''
+
+
+async def _batch(site_id: int) -> int:
+    """Сколько реплик отправлять за заход. Настройка сайта.
+
+    ⚠ Ноль и мусор дают единицу, а не «ничего»: «не отправлять» — это отдельный
+    выключатель (`invite_send_on`), и отменять отправку настройкой размера пачки
+    значило бы два выключателя об одном.
+    """
+    from src.uvicorn.routers.dating.site_ import site_seconds
+
+    return max(1, int(await site_seconds(site_id, INVITE_SEND_BATCH_SETTING))
+               or INVITE_SEND_BATCH_DEFAULT)
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

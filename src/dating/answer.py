@@ -595,7 +595,7 @@ def _me_name(profile: dict) -> str:
 
     card = card or {}
     name = str(card.get('name') or '').strip()
-    uid = str(card.get('site_uid') or card.get('id') or '').strip()
+    uid = str(card.get('id') or '').strip()
 
     if name:
         return f'{name} {uid}'.strip()
