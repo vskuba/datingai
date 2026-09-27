@@ -2,9 +2,10 @@
 
 ## ⚠⚠ Что было сломано
 
-`/chat/ask` требует `companion_id` и берёт по нему **имя** из своего справочника.
-Мы слали туда единицу, считая поле «типом собеседника» — так и было написано в
-комментарии. Единица оказалась конкретной персоной, «Vadim».
+`/chat/ask` собеседника в запросе больше не приносит, и троицу читающих workflow
+имён зовущий кладёт в `variables` сам (`companion_vars`). Прежде номер ехал полем
+запроса и считался «типом собеседника»; у соседа по нему резолвилось **имя**, и
+единица оказалась конкретной персоной, «Vadim».
 
 **Имя в тексте.** Промпты зовут собеседника `%companion_title%`, и на проде агент
 написал живому человеку по имени Gerard: «ok vadim, let's go».
@@ -20,11 +21,9 @@
 
 import pytest
 
-from src.dating.answer import ANSWER_COMPANION_ID
 from src.dating.companion_ref import (COMPANION_REF_ID, companion_ref,
                                       companion_ref_foreign, companion_title,
                                       companion_vars)
-from src.dating.mail_agent import MAIL_AGENT_COMPANION_ID
 
 pytestmark = pytest.mark.chat
 
@@ -127,13 +126,15 @@ class TestTheForeignNameGuard:
 
 
 class TestBothDoorsUseIt:
-    """⚠ Константа одна на оба входа к соседу, и это больше не единица."""
+    """Сборщик троицы один на оба входа к соседу, и номер в нём — не единица."""
 
     def test_the_chat_uses_our_record(self):
-        assert ANSWER_COMPANION_ID == COMPANION_REF_ID
+        """Чат зовёт агента с номером из общего сборщика."""
+        assert companion_vars(343, '128282', 'Gerard')['companion_id'] == COMPANION_REF_ID
 
     def test_the_mail_agent_uses_it_too(self):
-        assert MAIL_AGENT_COMPANION_ID == COMPANION_REF_ID
+        """Почтовый вход берёт тот же номер — второго сборщика нет."""
+        assert companion_vars(343, '1', 'X')['companion_id'] == COMPANION_REF_ID
 
     def test_it_is_not_the_stranger(self):
         """Единица в справочнике соседа — «Vadim», живая персона."""

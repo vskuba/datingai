@@ -48,8 +48,7 @@ def caught(monkeypatch):
     """Перехватывает переменные, ушедшие агенту, — к соседу не ходим."""
     seen = {}
 
-    async def _ask(site_id, agent_id=0, question='', companion_id=0,
-                   variables=None, **kw):
+    async def _ask(site_id, agent_id=0, question='', variables=None, **kw):
         seen.update(variables or {})
 
         return '{"body": "Hi there", "title": "X"}'

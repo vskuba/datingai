@@ -391,7 +391,7 @@ async def _asked_with(language: str, name_percent: int = 0,
     async def _agent_id(*args, **kwargs):
         return 7
 
-    async def _ask(agent_id, question, companion_id=1, variables=None):
+    async def _ask(agent_id, question, variables=None):
         sent.update(variables or {})
 
         return 'Спорим, ты сейчас улыбнулся?'

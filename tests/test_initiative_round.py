@@ -253,7 +253,7 @@ class TestTheSiteSettingsReachTheDice:
 
         got = {}
 
-        async def _chat_ask(agent_id, question, companion_id=0, variables=None):
+        async def _chat_ask(agent_id, question, variables=None):
             got.update(variables or {})
 
             return 'ответ'
@@ -304,7 +304,7 @@ class TestItReachesTheAgent:
 
         got = {}
 
-        async def _chat_ask(agent_id, question, companion_id=0, variables=None):
+        async def _chat_ask(agent_id, question, variables=None):
             got.update(variables or {})
 
             return 'ответ'
@@ -330,7 +330,7 @@ class TestItReachesTheAgent:
 
         got = {}
 
-        async def _chat_ask(agent_id, question, companion_id=0, variables=None):
+        async def _chat_ask(agent_id, question, variables=None):
             got.update(variables or {})
 
             return 'ответ'

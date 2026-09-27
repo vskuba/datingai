@@ -25,6 +25,7 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating import answer as answer_mod
+from src.dating.companion_ref import COMPANION_REF_ID
 
 pytestmark = pytest.mark.chat
 
@@ -115,7 +116,7 @@ class TestItReachesTheAgent:
     def asked(self, monkeypatch):
         got = {}
 
-        async def _chat_ask(agent_id, question, companion_id=0, variables=None):
+        async def _chat_ask(agent_id, question, variables=None):
             got.update(variables or {})
 
             return 'ответ'
@@ -183,9 +184,8 @@ class TestTheCompanionIsNamed:
     def asked(self, monkeypatch):
         got = {}
 
-        async def _chat_ask(agent_id, question, companion_id=0, variables=None):
+        async def _chat_ask(agent_id, question, variables=None):
             got.update(variables or {})
-            got['_companion_id'] = companion_id
 
             return 'ответ'
 
@@ -213,8 +213,8 @@ class TestTheCompanionIsNamed:
 
         await answer_mod._agent_ask(7, 'вопрос', 'en', profile, uid='1', name='X')
 
-        assert asked['_companion_id'] == answer_mod.ANSWER_COMPANION_ID
-        assert asked['_companion_id'] != 1
+        assert asked['companion_id'] == COMPANION_REF_ID
+        assert asked['companion_id'] != 1
 
     async def test_the_history_is_not_sent_from_here(self, asked, girl):
         """⚠⚠ Историю разговора отсюда **не шлём**: у неё один дом, и он у соседа.

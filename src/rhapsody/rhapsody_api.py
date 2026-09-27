@@ -522,7 +522,7 @@ async def rhapsody_api_agent_find(name: str) -> dict:
     return data.get('result') or {}
 
 
-async def rhapsody_api_chat_ask(agent_id: int, question: str, companion_id: int = 0,
+async def rhapsody_api_chat_ask(agent_id: int, question: str,
                                 variables: dict = None) -> str:
     """Спрашивает агента и отдаёт его ответ строкой.
 
@@ -531,8 +531,6 @@ async def rhapsody_api_chat_ask(agent_id: int, question: str, companion_id: int 
     """
     payload = {'question': str(question), 'agent_id': int(agent_id),
                'variables': {'chat_timeout': RHAPSODY_API_CHAT_TIMEOUT, **(variables or {})}}
-    if companion_id:
-        payload['companion_id'] = int(companion_id)
 
     data = await _request('POST', '/chat/ask', payload, timeout=RHAPSODY_API_TIMEOUT_AGENT)
 

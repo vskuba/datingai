@@ -67,7 +67,6 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.agent import (AGENT_NODE, agent_site)
-from src.dating.companion_ref import COMPANION_REF_ID
 from src.dating.percent import percent_share
 from src.dating.mail import (MAIL_VAR_RE,
                                    MAILING_ANGLES, MAILING_AVOID_MAX,
@@ -277,19 +276,6 @@ MAIL_COMPANION_ABOUT_MAX = 400
 # обрезанный город полезнее пустого.
 MAIL_AGENT_VALUE_MAX = 500
 
-# Запись справочника собеседников у соседа, заведённая под нас
-# (`companion_ref.py`). ⚠ **Поле обязательное** — без него `/chat/ask` отвечает
-# отказом, и разговора не выйдет; проверено живьём.
-#
-# ⚠⚠ **Это не «тип собеседника»**, как здесь было написано. Справочник хранит
-# конкретных персон, и единица в нём — «Vadim»: пока мы слали её, агент звал живых
-# людей чужим именем, а факты обо всех мужчинах складывал в один документ Qdrant.
-#
-# Здесь, в отличие от чата, собеседника и вправду нет: эти вызовы — про анкету и
-# про текст письма, а не разговор с человеком. Номер нужен только затем, чтобы
-# `agent_session` сослался на честную строку.
-MAIL_AGENT_COMPANION_ID = COMPANION_REF_ID
-
 
 class DatingMailAgentError(Exception):
     """Не вышло спросить агента. Причина — словами, для страницы."""
@@ -329,7 +315,6 @@ async def mail_agent_fill(profile: dict, site_id: int,
         # уходит только повод его запустить. Длинный вопрос спорил бы с промптом
         # за внимание LLM.
         question='Заполни переменные писем по сведениям об анкете.',
-        companion_id=MAIL_AGENT_COMPANION_ID,
         variables={'girl_bio': _card(profile),
                    'mail_vars': _wanted_text(wanted),
                    # ⚠ **Заготовка ответа с настоящими ключами.** Прежде промпт
@@ -458,7 +443,6 @@ async def mail_write(site_id: int, variables: list[dict],
         int(site_id),
         agent_id=agent_id,
         question='Напиши шаблон письма.',
-        companion_id=MAIL_AGENT_COMPANION_ID,
         # ⚠ **Карточек участников здесь нет, и это главное.** Прежде агенту
         # отдавали `girl_card` и `companion_card` — и он честно писал письмо
         # Дианы Джону: «Diana here! I'm a choreographer living in Kyiv». Такой
@@ -543,7 +527,6 @@ async def mail_question(profile: dict, site_id: int,
         int(site_id),
         agent_id=agent_id,
         question='Придумай вопрос получателю.',
-        companion_id=MAIL_AGENT_COMPANION_ID,
         # ⚠⚠ Имена ключей — `*_bio`, как у `dating_talk`. Прежде почта звала то
         # же самое `*_card`, и правя её промпт, легко было написать по привычке
         # `%companion_bio%`: метка молча осталась бы в тексте, а модель прочитала
@@ -634,7 +617,6 @@ async def invite_template(site_id: int, language: str = INVITE_LANGUAGE,
         int(site_id),
         agent_id=agent_id,
         question='Напиши шаблон первой реплики в чат.',
-        companion_id=MAIL_AGENT_COMPANION_ID,
         # ⚠⚠ **Доли, а не готовые значения.** Приём, длину, метки имён и «показать
         # ли время» бросает теперь **шаг жребия** у соседа (`dice`, workflow
         # `dating_invite_one`), а панель присылает только проценты — настройки

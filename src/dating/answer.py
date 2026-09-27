@@ -50,18 +50,11 @@ from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_chat_ask
 from src.dating.log import log_write
 from src.dating.chat_reply import (chat_reply_failed, chat_reply_put,
                                    chat_reply_sent, chat_reply_waiting)
-from src.dating.companion_ref import (COMPANION_REF_ID, companion_ref_foreign,
-                                      companion_title, companion_vars)
+from src.dating.companion_ref import (companion_ref_foreign, companion_title,
+                                      companion_vars)
 from src.dating.online import online_check
 from src.dating.percent import percent_value
 from src.dating.send import send_message
-
-# Запись справочника собеседников у соседа, заведённая под нас
-# (`companion_ref.py`). ⚠ Это **не «тип собеседника»**, как здесь было
-# написано: справочник хранит конкретных персон, и единица в нём — «Vadim».
-# Агент полгода звал живых людей чужим именем, а факты обо всех мужчинах
-# складывал в один документ. Кто именно пишет — теперь в переменных вызова.
-ANSWER_COMPANION_ID = COMPANION_REF_ID
 
 # Сколько диалогов отвечаем за раз. Каждый — прогон workflow, и полсотни разом
 # превратили бы кнопку в получасовое ожидание.
@@ -483,7 +476,7 @@ async def _agent_ask(agent_id: int, question: str, language: str,
 
     try:
         answer = await rhapsody_api_chat_ask(
-            agent_id, question, companion_id=ANSWER_COMPANION_ID,
+            agent_id, question,
             variables={'user_language': language,
                        # ⚠⚠ **Историю разговора отсюда больше не шлём.** Обе
                        # ленты — чат и письма — собирает сам сосед двумя шагами
@@ -529,10 +522,9 @@ async def _agent_ask(agent_id: int, question: str, language: str,
                        # агента: один сборщик на оба случая — иначе агент знал бы
                        # о себе одно, а отвечал по другому.
                        'girl_bio': agent_bio(card or {}),
-                       # ⚠⚠ Кто именно пишет. Без этого сосед берёт имя из
-                       # своего справочника по `companion_id` — одно на всех, —
-                       # и агент зовёт человека чужим именем, а факты о нём
-                       # ложатся в общий документ (`companion_ref.py`).
+                       # ⚠⚠ Кто именно пишет. Что не прислано — то пустой
+                       # default, и факты леглись бы в общий документ безымянно
+                       # (`companion_ref.py`).
                        **companion_vars(profile.get('site_id'), uid, name),
                        # ⚠ Строкой '1'/'0': у соседа `%if%` считает ложными
                        # пустое, '0' и отсутствие (`ai_workflow_variable_truthy`),
