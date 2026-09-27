@@ -96,38 +96,6 @@ async def stats_get(site_id: int = 0, profile_id: int = 0, hours: int = 0,
                        'llm': await _llm()}}
 
 
-# ── Приватное ────────────────────────────────────────────────────────────────
-
-
-def _window(column: str, hours: int) -> str:
-    """Кусок условия «за последние N часов». Ноль часов — пустая строка.
-
-    Args:
-        column: колонка со временем события. ⚠ Своя у каждого занятия: реплика —
-            когда написана, письмо — когда ушло, черновик — когда приготовлен.
-        hours: окно. Ноль означает «за всё время», и тогда условия нет вовсе.
-
-    ⚠ **Число подставляем в текст, а не параметром**, и это не оплошность: `hours`
-    приводится к `int` вызывающим, а `INTERVAL ? HOUR` с плейсхолдером MySQL не
-    принимает. Колонка — наша константа из этого файла.
-    """
-    hours = int(hours or 0)
-
-    return f' AND {column} > NOW() - INTERVAL {hours} HOUR' if hours > 0 else ''
-
-
-def _empty(site_id: int, profile_id: int) -> dict:
-    """Пустой ответ той же формы. ⚠ Формы одной: страница не должна помнить, какая
-    ветка что кладёт, — отсутствующий ключ читался бы как ноль только случайно."""
-    return {'site_id': site_id, 'profile_id': profile_id, 'hours': 0,
-            'chat': {'in': 0, 'out': 0, 'dialogs': 0, 'waiting': 0},
-            'mail': {'in': 0, 'out': 0, 'draft': 0, 'unseen': 0},
-            'favorite': {'added': 0, 'already': 0, 'failed': 0},
-            'invite': {'out': 0, 'draft': 0},
-            'llm': {'days': 0, 'requests': 0, 'errors': 0, 'tokens_input': 0,
-                    'tokens_output': 0, 'rows': [], 'error': ''}}
-
-
 @router.post('/reset', include_in_schema=False)
 async def stats_reset(site_id: int = 0, kind: str = '', profile_id: int = 0,
                       user: AuthUser = Depends(auth_required)):
@@ -263,6 +231,38 @@ async def stats_profiles(site_id: int = 0, hours: int = 0,
     return {'result': out}
 
 
+
+
+# ── Приватное ────────────────────────────────────────────────────────────────
+
+
+def _window(column: str, hours: int) -> str:
+    """Кусок условия «за последние N часов». Ноль часов — пустая строка.
+
+    Args:
+        column: колонка со временем события. ⚠ Своя у каждого занятия: реплика —
+            когда написана, письмо — когда ушло, черновик — когда приготовлен.
+        hours: окно. Ноль означает «за всё время», и тогда условия нет вовсе.
+
+    ⚠ **Число подставляем в текст, а не параметром**, и это не оплошность: `hours`
+    приводится к `int` вызывающим, а `INTERVAL ? HOUR` с плейсхолдером MySQL не
+    принимает. Колонка — наша константа из этого файла.
+    """
+    hours = int(hours or 0)
+
+    return f' AND {column} > NOW() - INTERVAL {hours} HOUR' if hours > 0 else ''
+
+
+def _empty(site_id: int, profile_id: int) -> dict:
+    """Пустой ответ той же формы. ⚠ Формы одной: страница не должна помнить, какая
+    ветка что кладёт, — отсутствующий ключ читался бы как ноль только случайно."""
+    return {'site_id': site_id, 'profile_id': profile_id, 'hours': 0,
+            'chat': {'in': 0, 'out': 0, 'dialogs': 0, 'waiting': 0},
+            'mail': {'in': 0, 'out': 0, 'draft': 0, 'unseen': 0},
+            'favorite': {'added': 0, 'already': 0, 'failed': 0},
+            'invite': {'out': 0, 'draft': 0},
+            'llm': {'days': 0, 'requests': 0, 'errors': 0, 'tokens_input': 0,
+                    'tokens_output': 0, 'rows': [], 'error': ''}}
 async def _chat(site_id: int, profile_id: int, hours: int = 0) -> dict:
     """Реплики чата: пришло, ушло, сколько разговоров и сколько ждут ответа.
 

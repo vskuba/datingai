@@ -259,28 +259,6 @@ async def profile_action_proxy_list(profile_id: int, user=Depends(auth_required)
                         'taken': busy.get(str(row.get('check_ip') or ''), 0)}
                        for row in rows],
             'seats': seats, 'current': int(profile.get('proxy_id') or 0)}
-
-
-async def _proxy_on(profile: dict) -> None:
-    """Пользуется ли сайт анкеты выходами. Нет — 409 с тем, что нажать.
-
-    ⚠ **Отказ, а не молчаливое согласие.** Поставить выход анкете сайта, где
-    прокси выключены, значит записать в базу адрес, которым никто не пойдёт:
-    двери спрашивают выключатель и получают пусто. Человек видел бы выбранный
-    канал в карточке и считал бы, что анкета ходит им.
-
-    Код 409, а не 422: тело запроса правильное, не сходится состояние — и чинится
-    оно в другом месте, о котором и говорит текст.
-    """
-    from src.dating.proxy import proxy_enabled
-
-    if not await proxy_enabled(int(profile.get('site_id') or 0)):
-        raise HTTPException(
-            status_code=409,
-            detail='у сайта выключены выходы: включите галочку «Использовать '
-                   'выходы» на вкладке «Прокси» в настройках сайта')
-
-
 class DatingProfileSchedule(BaseModel):
     """Расписание анкеты: смены суток целиком."""
 
@@ -379,24 +357,6 @@ async def profile_action_schedule_on(profile_id: int, data: DatingProfileSchedul
               else 'Расписание выключено'))
 
     return {'result': {'schedule_on': data.schedule_on, 'dropped': dropped}}
-
-
-async def _keep_online_clear(profile_id: int) -> None:
-    """Снимает присмотр автомата: круг восстановления больше не вернёт анкету в сеть.
-
-    ⚠ **Не бросает.** Флаг расписания уже записан, и падать здесь — значит отвечать
-    человеку отказом на действие, которое состоялось. Не снялось — круг вернёт
-    анкету, и это видно в журнале; отказ же спрятал бы и саму смену флага.
-    """
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute('UPDATE profile SET keep_online = 0 WHERE id = %s',
-                             (int(profile_id),))
-            await db.connection.commit()
-    except Exception as e:
-        logger_info(f'[dating] присмотр анкеты #{profile_id} не снялся: {e}')
-
-
 class DatingProfileEnabled(BaseModel):
     """Выключатель анкеты целиком."""
 
@@ -577,50 +537,6 @@ async def profile_action_send(profile_id: int, data: DatingProfileSend,
                                   context={'profile_id': profile_id, 'to': data.to})
 
     return {'result': result}
-
-
-async def _contact_name(profile_id: int, uid: str) -> str:
-    """Имя собеседника для журнала: «Semen Gorbunkov 181685».
-
-    Имя приходит с каждым сообщением от сайта и лежит в переписке — своей таблицы
-    имён для этого заводить не надо. Берём последнее непустое: люди меняют имя в
-    анкете, и свежее ближе к правде.
-
-    Номер остаётся всегда, даже когда имени нет: по нему собеседника ищут и в
-    панели сайта, и в его чате.
-    """
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute("SELECT sender_name FROM message "
-                             " WHERE profile_id = %s AND sender_uid = %s "
-                             "   AND sender_name <> '' "
-                             " ORDER BY created_at DESC, id DESC LIMIT 1",
-                             (int(profile_id), str(uid)[:32]))
-            row = await db.fetchone()
-    except Exception as e:
-        logger_info(f'[dating] имя собеседника не прочиталось: {e}')
-
-        return str(uid)
-
-    name = str((row or {}).get('sender_name') or '').strip()
-
-    return f'{name} {uid}' if name else str(uid)
-
-
-def _profile_name(profile: dict) -> str:
-    """Имя анкеты с сайта — то, под которым её видит собеседник.
-
-    Оно в JSON-столбце `profile`, а не отдельной колонкой: анкета целиком приходит
-    от сайта, и вытаскивать из неё поля в свои колонки значило бы держать вторую
-    копию (`dating.md`, §6).
-    """
-    card = json_column_load(profile.get('profile'))
-    name = str(card.get('name') or '').strip()
-    uid = str(card.get('id') or '').strip()
-
-    return f'{name} {uid}'.strip() if name else uid
-
-
 @router.put('/{profile_id}/auto', include_in_schema=False)
 async def profile_action_auto(profile_id: int, data: DatingProfileAuto, request: Request,
                            user=Depends(auth_required)):
@@ -925,6 +841,87 @@ async def profile_action_check(profile_id: int, request: Request,
     return {'result': result}
 
 
+# ── Приватное ────────────────────────────────────────────────────────────────
+
+
+async def _proxy_on(profile: dict) -> None:
+    """Пользуется ли сайт анкеты выходами. Нет — 409 с тем, что нажать.
+
+    ⚠ **Отказ, а не молчаливое согласие.** Поставить выход анкете сайта, где
+    прокси выключены, значит записать в базу адрес, которым никто не пойдёт:
+    двери спрашивают выключатель и получают пусто. Человек видел бы выбранный
+    канал в карточке и считал бы, что анкета ходит им.
+
+    Код 409, а не 422: тело запроса правильное, не сходится состояние — и чинится
+    оно в другом месте, о котором и говорит текст.
+    """
+    from src.dating.proxy import proxy_enabled
+
+    if not await proxy_enabled(int(profile.get('site_id') or 0)):
+        raise HTTPException(
+            status_code=409,
+            detail='у сайта выключены выходы: включите галочку «Использовать '
+                   'выходы» на вкладке «Прокси» в настройках сайта')
+
+
+async def _keep_online_clear(profile_id: int) -> None:
+    """Снимает присмотр автомата: круг восстановления больше не вернёт анкету в сеть.
+
+    ⚠ **Не бросает.** Флаг расписания уже записан, и падать здесь — значит отвечать
+    человеку отказом на действие, которое состоялось. Не снялось — круг вернёт
+    анкету, и это видно в журнале; отказ же спрятал бы и саму смену флага.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE profile SET keep_online = 0 WHERE id = %s',
+                             (int(profile_id),))
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] присмотр анкеты #{profile_id} не снялся: {e}')
+
+
+async def _contact_name(profile_id: int, uid: str) -> str:
+    """Имя собеседника для журнала: «Semen Gorbunkov 181685».
+
+    Имя приходит с каждым сообщением от сайта и лежит в переписке — своей таблицы
+    имён для этого заводить не надо. Берём последнее непустое: люди меняют имя в
+    анкете, и свежее ближе к правде.
+
+    Номер остаётся всегда, даже когда имени нет: по нему собеседника ищут и в
+    панели сайта, и в его чате.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute("SELECT sender_name FROM message "
+                             " WHERE profile_id = %s AND sender_uid = %s "
+                             "   AND sender_name <> '' "
+                             " ORDER BY created_at DESC, id DESC LIMIT 1",
+                             (int(profile_id), str(uid)[:32]))
+            row = await db.fetchone()
+    except Exception as e:
+        logger_info(f'[dating] имя собеседника не прочиталось: {e}')
+
+        return str(uid)
+
+    name = str((row or {}).get('sender_name') or '').strip()
+
+    return f'{name} {uid}' if name else str(uid)
+
+
+def _profile_name(profile: dict) -> str:
+    """Имя анкеты с сайта — то, под которым её видит собеседник.
+
+    Оно в JSON-столбце `profile`, а не отдельной колонкой: анкета целиком приходит
+    от сайта, и вытаскивать из неё поля в свои колонки значило бы держать вторую
+    копию (`dating.md`, §6).
+    """
+    card = json_column_load(profile.get('profile'))
+    name = str(card.get('name') or '').strip()
+    uid = str(card.get('id') or '').strip()
+
+    return f'{name} {uid}'.strip() if name else uid
+
+
 async def _agent_id_by_name(name: str) -> int:
     """Номер агента у соседа. Своей таблицы агентов здесь нет: они, workflow и
     факты — хозяйство RhapsodyAi, и вторая копия расходилась бы с первой."""
@@ -968,5 +965,3 @@ async def _session_open_for(site: dict, profile: dict) -> str:
                                           site_id=int(site['id']),
                                           proxy_id=int(profile.get('proxy_id') or 0),
                                           storage_state=profile.get('storage_state') or {})
-
-
