@@ -258,6 +258,51 @@ class TestSeen:
                                  (profile['id'],))
                 await db.connection.commit()
 
+    async def test_unread_carries_last_stamps(self, site_api, profile):
+        """⚠ Время несёт снимок, а не окно.
+
+        Значок после прочтения не гаснет, а пульсирует двенадцать часов от
+        последнего письма — окно решает страница, сервер несёт отметку UTC.
+        Без `last_at` пульс было бы не от чего отсчитать.
+        """
+        await _fetch(profile)
+
+        count = (await mail_in_unread(SITE)).get(profile['id'])
+
+        assert count['last_at'], 'последнее письмо без отметки времени'
+        # ⚠ Избранных нет — и избранной отметки быть не должно.
+        assert count['fav_last_at'] is None
+
+    async def test_unread_fav_last_at_is_the_favorite_one(self, site_api, profile):
+        """`fav_last_at` — время последнего письма **избранного**, а не любого."""
+        from mysql_.mysql_ import mysql_get_db_async
+        from src.dating.favorite import FAVORITE_STATES
+
+        await _fetch(profile)
+        rows = await _rows(profile['id'])
+        uid = str(rows[0]['uid'])
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO favorite (site_id, profile_id, uid, state)'
+                ' VALUES (%s, %s, %s, %s)'
+                ' ON DUPLICATE KEY UPDATE state = VALUES(state)',
+                (SITE, profile['id'], uid, FAVORITE_STATES[0]))
+            await db.connection.commit()
+
+        try:
+            count = (await mail_in_unread(SITE)).get(profile['id'])
+
+            assert count['fav_last_at'], 'письмо избранного без своей отметки'
+            # ⚠ Письмо избранного не новее любого: избранная отметка не позже
+            # общей.
+            assert str(count['fav_last_at']) <= str(count['last_at'])
+        finally:
+            async with mysql_get_db_async() as db:
+                await db.execute('DELETE FROM favorite WHERE profile_id = %s',
+                                 (profile['id'],))
+                await db.connection.commit()
+
     async def test_whole_thread_is_marked_at_once(self, site_api, profile):
         """⚠ Разговор читают целиком, а не по письму.
 
@@ -284,8 +329,14 @@ class TestSeen:
             marked += got['result']['seen']
 
         assert marked == total
-        assert profile['id'] not in await mail_in_unread(SITE), \
+
+        # ⚠ Анкета **остаётся** в снимке: прочитанное — это счёт ноль, а не
+        # «письма не было», и значок после прочтения пульсирует от `last_at`
+        # (окно на странице).
+        count = (await mail_in_unread(SITE)).get(profile['id'])
+        assert count and count['all'] == 0, \
             'значок остался гореть после прочтения всех разговоров'
+        assert count['last_at'], 'прочитанные письма потеряли отметку времени'
 
     async def test_marking_a_thread_leaves_other_people_alone(self, site_api, profile):
         """⚠ Метка — по паре «анкета + собеседник», а не по анкете.

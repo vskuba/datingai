@@ -183,6 +183,59 @@ async def _unanswered(site_id: int, profile_id: int = 0) -> int:
         return 0
 
 
+def _stamp_iso(value) -> str:
+    """Отметка времени для страницы: UTC, ISO, без часового пояса.
+
+    ⚠ **Страница разбирает её по частям в `Date.UTC`**: ISO-строка **без** пояса
+    в браузере читается как **местное** время, и окно значка в двенадцать часов
+    уедет на сдвиг часового пояса человека. Пояс мы не присоединяем: сервер
+    отдаёт UTC, а сдвиг — дело страницы.
+    """
+    if not value:
+        return ''
+
+    return str(value).replace(' ', 'T')[:19]
+
+
+async def _unread_last_in(site_id: int, profile_id: int = 0):
+    """Непрочитанные входящие и время последнего входящего — для значка.
+
+    Returns:
+        tuple: (сколько непрочитанных, когда пришёл последний входящий).
+
+    ⚠ **Непрочитано — не «ждёт ответа»** (`_unanswered`): вопросы разные. Второй
+    снимается **ответом** и считает пары; значок спрашивает «сколько новых
+    **релик**» и снимается **взглядом** — три подряд от одного человека это
+    «3», а не «1 разговор».
+
+    ⚠ **Один запрос на оба числа**: значок рисуется разом, и два запроса дали бы
+    два разных момента времени в одном взгляде.
+
+    ⚠ **Время последнего входящего — независимо от прочтения**: после прочтения
+    значок не гаснет, а пульсирует двенадцать часов от этой отметки (окно
+    решает страница), и без времени ей это решить нечем.
+
+    Сбой чтения отвечает (0, ''): значок — подсказка, а не работа.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT SUM(m.is_read = 0) AS unread,'
+                '       MAX(m.created_at) AS last_at'
+                '  FROM message m'
+                '    JOIN profile p ON p.id = m.profile_id'
+                '   WHERE p.site_id = %s AND (%s = 0 OR m.profile_id = %s)'
+                "     AND m.direction = 'in'",
+                (int(site_id), int(profile_id), int(profile_id)))
+            row = await db.fetchone() or {}
+
+        return (int(row.get('unread') or 0), _stamp_iso(row.get('last_at')))
+    except Exception as e:
+        logger_info(f'[dating] непрочитанные диалоги сайта #{site_id} не спросились: {e}')
+
+        return 0, ''
+
+
 @router.post('/dialogs/{profile_id}/{uid}/read', include_in_schema=False)
 async def chat_dialog_read(profile_id: int, uid: str,
                            user=Depends(auth_required)):
@@ -414,6 +467,10 @@ async def chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int = 1,
                     (int(contact['profile_id']), contact['uid'], ''))
                 contact['name'] = ((await db.fetchone()) or {}).get('name') or ''
 
+    # ⚠ Оба числа значка — **до** ответа, одним ходом: ответ уже собран, и
+    # запрос после него дал бы список и значок с разных моментов времени.
+    unread, last_in_at = await _unread_last_in(int(site_id), int(profile_id))
+
     return {'result': {'contacts': contacts, 'contacts_total': total,
                        'page': page, 'pages': pages,
                        # ⚠⚠ **Сколько разговоров ждут ответа — числом от сервера.**
@@ -426,4 +483,64 @@ async def chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int = 1,
                        # Поймано глазами: два непрочитанных разговора в базе,
                        # полоса вкладок молчит. Лента годится, чтобы показать
                        # «что-то происходит», но не чтобы считать.
-                       'unanswered': await _unanswered(int(site_id), int(profile_id))}}
+                       'unanswered': await _unanswered(int(site_id), int(profile_id)),
+                       # ⚠⚠ **Непрочитанные реплики — отдельное число.**
+                       #
+                       # Выше «ждёт ответа» считает **пары**, и человек обычно
+                       # пишет в один разговор: значок у вкладки почти всегда
+                       # показывал «1» и прыгал при прочитанном. Значок считает
+                       # **релики**: три подряд от одного человека — «3».
+                       'unread': unread,
+                       # ⚠ Когда пришёл последний входящий. После прочтения
+                       # значок не гаснет, а пульсирует двенадцать часов от этой
+                       # отметки — окно решает страница, времени у неё нет.
+                       'last_in_at': last_in_at}}
+
+
+@router.get('/unread', include_in_schema=False)
+async def chat_unread(site_id: int = 0, user=Depends(auth_required)):
+    """Непрочитанные чаты по анкетам и время последнего входящего.
+
+    Returns:
+        dict: `{номер_анкеты: {'n': сколько непрочитанных,
+        'last_in_at': когда пришёл последний входящий (UTC) или ''}}` — по каждой
+        анкете, где входящие были.
+
+    ⚠ **Своя ручка, а не поле списка диалогов**: значок висит в списке анкет,
+    который красит свой круг, а список диалогов — только на вкладке «Чат».
+    Ходить за ним в `/dialogs` значило бы тянуть страницу диалогов ради числа.
+
+    ⚠ **Анкеты без непрочитанных тоже отвечают**, если входящие у них есть:
+    после прочтения значок не гаснет, а пульсирует двенадцать часов от
+    `last_in_at`. Фазу решает страница (окно у неё, не у нас), ручка несёт
+    время.
+
+    ⚠ **Без фильтра по анкете**: значок стоит в строке каждой анкеты, и список
+    общий на сайт — как и значок писем рядом с ним.
+
+    Ноль — пустой словарь: значок — подсказка, а не работа.
+    """
+    if not int(site_id or 0):
+        return {'result': {}}
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT m.profile_id,'
+                '       SUM(m.is_read = 0) AS n,'
+                '       MAX(m.created_at) AS last_at'
+                '  FROM message m'
+                '    JOIN profile p ON p.id = m.profile_id'
+                '   WHERE p.site_id = %s AND m.direction = \'in\''
+                '   GROUP BY m.profile_id',
+                (int(site_id),))
+            rows = await db.fetchall() or []
+
+        return {'result': {str(int(row['profile_id'])):
+                           {'n': int(row.get('n') or 0),
+                            'last_in_at': _stamp_iso(row.get('last_at'))}
+                           for row in rows}}
+    except Exception as e:
+        logger_info(f'[dating] непрочитанные чаты сайта #{site_id} не спросились: {e}')
+
+        return {'result': {}}

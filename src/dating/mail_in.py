@@ -176,18 +176,31 @@ async def mail_in_fetch(profile: dict, base: str, password: str) -> dict:
 
 
 async def mail_in_unread(site_id: int) -> dict:
-    """Сколько непросмотренных писем у каждой анкеты сайта и **где они лежат**.
+    """Непрочитанные письма каждой анкеты сайта, **где они лежат** и их время.
 
     Returns:
-        dict: `{profile_id: {'all': сколько, 'fav': сколько из них от избранных}}`.
-        Анкет без новых писем в нём нет вовсе — страница рисует значок только тем,
-        у кого он есть.
+        dict: `{profile_id: {'all': сколько непрочитанных,
+        'fav': сколько из них от избранных,
+        'last_at': когда пришло последнее письмо (UTC) или None,
+        'fav_last_at': когда пришло последнее письмо **от избранного** (UTC)
+        или None}}`.
+        Анкет, у которых не было ни одного письма, в нём нет вовсе.
+
+    ⚠ **Не только анкет с непрочитанными.** После прочтения значок не гаснет, а
+    пульсирует двенадцать часов от последнего письма — окно решает страница
+    (`FRESH_WINDOW_MS`), времени у неё нет. Поэтому отвечают и прочитанные
+    анкеты, со счётом нулём и отметкой времени; страницы без писем не отвечают
+    вовсе.
 
     ⚠ **`fav` нужен не для счёта, а для перехода.** Письмо от избранного
     показывается только на «Фавориты → Диалоги», от прочих — только на «Письма →
     Входящие» (`api.md`, §3.7.4). Значок в списке анкет вёл всегда во «Входящие», и
     для письма от избранного это был переход в пустоту: человек щёлкал по конверту
     с числом и попадал на «писем пока нет».
+
+    ⚠ **`fav_last_at` — для значка вкладки «Фавориты → Диалоги»**: там считаются
+    письма именно от избранных, и пульс после прочтения идёт от последнего
+    *избранного* письма, а не от любого.
 
     Отдельной функцией и одним запросом: значок стоит в списке анкет, и спрашивать
     по анкете значило бы двадцать запросов на каждую отрисовку списка.
@@ -196,17 +209,27 @@ async def mail_in_unread(site_id: int) -> dict:
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT m.profile_id, COUNT(*) AS n,'
-            '       SUM(EXISTS (SELECT 1 FROM favorite f'
-            '                    WHERE f.profile_id = m.profile_id AND f.uid = m.uid'
-            f'                     AND f.state IN ({FAVORITE_STATES_SQL}))) AS fav'
+            'SELECT m.profile_id,'
+            '       SUM(m.seen = 0) AS n,'
+            '       SUM(m.seen = 0 AND EXISTS (SELECT 1 FROM favorite f'
+            '                                  WHERE f.profile_id = m.profile_id'
+            '                                    AND f.uid = m.uid'
+            f'                                    AND f.state IN ({FAVORITE_STATES_SQL}))) AS fav,'
+            '       MAX(m.created_at) AS last_at,'
+            '       MAX(CASE WHEN EXISTS (SELECT 1 FROM favorite f'
+            '                        WHERE f.profile_id = m.profile_id'
+            '                          AND f.uid = m.uid'
+            f'                          AND f.state IN ({FAVORITE_STATES_SQL}))'
+            '         THEN m.created_at END) AS fav_last_at'
             '  FROM mail_in m'
-            ' WHERE m.site_id = %s AND m.seen = 0 GROUP BY m.profile_id',
-            (*FAVORITE_STATES, int(site_id)))
+            ' WHERE m.site_id = %s GROUP BY m.profile_id',
+            (*FAVORITE_STATES, *FAVORITE_STATES, int(site_id)))
         rows = await db.fetchall()
 
-    return {int(row['profile_id']): {'all': int(row['n']),
-                                     'fav': int(row['fav'] or 0)}
+    return {int(row['profile_id']): {'all': int(row['n'] or 0),
+                                     'fav': int(row['fav'] or 0),
+                                     'last_at': row['last_at'],
+                                     'fav_last_at': row['fav_last_at']}
             for row in rows or []}
 
 
