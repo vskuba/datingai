@@ -15,7 +15,7 @@ import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.uvicorn.routers.dating.chat import chat_dialogs
+from src.uvicorn.routers.dating.chat import chat_dialogs, chat_unread
 
 pytestmark = pytest.mark.chat
 # Стенд у соседа: заведение анкеты сверяет номер, а круги воркера про него не
@@ -248,3 +248,75 @@ class TestFilter:
 
         assert row['profile_id'] == talk['profile_id']
         assert 'profile_name' in row and 'profile_photo' in row
+
+
+class TestUnreadBadge:
+    """⚠ Значок у вкладки и в строке анкеты: **релики**, а не пары.
+
+    Прежний счётчик «ждёт ответа» считал **пары** и почти всегда показывал «1»,
+    прыгая даже на прочитанном. Значок считает **непрочитанные входящие**: три
+    подряд от одного человека — «3». Отдельная ручка `GET /unread` несёт это по
+    всем анкетам сайта разом — значок висит в списке анкет, и ходить в `/dialogs`
+    за числом значило бы тянуть страницу диалогов.
+    """
+
+    async def test_dialogs_carry_unread_and_last_in(self, talk):
+        """`/dialogs` несёт число непрочитанных и время последнего входящего."""
+        got = await chat_dialogs(site_id=STAND_SITE, profile_id=0, user=None)
+
+        assert int(got['result']['unread']) == 1, \
+            'входящая реплика не посчитана непрочитанной'
+        assert got['result']['last_in_at'], 'нет времени последнего входящего'
+
+    async def test_unread_counts_three_incoming_as_three(self, talk):
+        """Три подряд от одного человека — «3», а не «1» как у пар."""
+        await _say(talk['profile_id'], talk['uid'], 'in', 'second')
+        await _say(talk['profile_id'], talk['uid'], 'in', 'third')
+
+        got = await chat_unread(site_id=STAND_SITE, user=None)
+        entry = got['result'].get(str(talk['profile_id']))
+
+        assert entry and int(entry['n']) == 3, \
+            f'три непрочитанные реплики посчитаны как {entry}'
+
+    async def test_unread_is_empty_without_a_site(self):
+        got = await chat_unread(site_id=0, user=None)
+
+        assert got['result'] == {}
+
+    async def test_outgoing_alone_does_not_answer(self, auth_client):
+        """Исходящие в значок не попадают: он про **входящие**."""
+        made = (await auth_client.post('/api/dating/profile', json={
+            'site_id': STAND_SITE, 'login': f'out-{uuid.uuid4().hex[:8]}@example.com',
+            'password': 'x'})).json()['result']
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        try:
+            await _say(made, uid, 'out', 'hello there')
+
+            got = await chat_unread(site_id=STAND_SITE, user=None)
+
+            assert str(made) not in got['result'], \
+                'исходящая реплика завела строку в значок входящих'
+        finally:
+            await auth_client.delete(f'/api/dating/profile/{made}')
+
+    async def test_read_reply_still_answers_with_time(self, talk):
+        """⚠ Прочитанное не исчезает из снимка: счёт ноль, время живёт.
+
+        После прочтения значок не гаснет, а пульсирует двенадцать часов от
+        `last_in_at` — окно решает страница, сервер несёт время. Без строки с
+        нулём и отметкой пульс было бы не от чего отсчитать.
+        """
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'UPDATE message SET is_read = 1'
+                ' WHERE profile_id = %s AND sender_uid = %s AND direction = %s',
+                (talk['profile_id'], talk['uid'], 'in'))
+            await db.connection.commit()
+
+        entry = (await chat_unread(site_id=STAND_SITE, user=None))['result'] \
+            .get(str(talk['profile_id']))
+
+        assert entry is not None, 'прочитанная анкета исчезла из снимка'
+        assert int(entry['n']) == 0, 'прочитанное всё ещё считается непрочитанным'
+        assert entry['last_in_at'], 'прочитанное потеряло отметку времени'
