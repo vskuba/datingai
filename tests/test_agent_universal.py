@@ -18,7 +18,7 @@ Ladadate — один агент, два вызова: «I'm diana» и «i'm ek
 import pytest
 
 from src.dating.agent import (AGENT_SETTING, AGENT_UNIVERSAL,
-                                     agent_id, agent_vars)
+                                     agent_id, agent_key, agent_vars)
 
 pytestmark = pytest.mark.profile
 
@@ -26,12 +26,73 @@ SITE = 999_784
 
 
 class TestVars:
-    """Чем агент узнаёт, кто он сейчас."""
+    """Чем агент узнаёт, кто он сейчас: номер, имя для текста, имя для ключа.
 
-    def test_name_comes_from_the_card(self):
-        got = agent_vars({'login': 'diana9021@mail.test'}, {'name': 'Diana'})
+    ## ⚠⚠ Три величины, и каждая отвечает на свой вопрос
 
-        assert got['girl_name'] == 'Diana'
+        girl_id     599939   номер анкеты **на сайте** — ключ фактов
+        girl_title  Elena    как её видит собеседник — уходит в промпт
+        girl_name   elena    то же имя техническим видом — вторая часть ключа
+
+    Слепи любые две, и получишь одну из двух бед: агент обращается номером либо
+    ключует факты именем, которое на сайте носят десятки людей.
+    """
+
+    def test_the_three_travel_apart(self):
+        got = agent_vars({'login': 'zliznukolenavlad89@gmail.com', 'id': 43},
+                                {'name': 'Elena', 'site_uid': '599939'})
+
+        assert got == {'girl_id': '599939',
+                       'girl_title': 'Elena',
+                       'girl_name': 'elena'}
+
+    def test_the_key_is_the_site_number(self):
+        """⚠⚠⚠ Номер сайта, а не цифры логина.
+
+        Прежде ключ собирался как `''.join(ch for ch in login if ch.isdigit())`, и
+        это было случайное число: у `elena2795kirichenko01@bigmir.net` выходило
+        `279501` — склейка двух кусков.
+
+        ⚠ Самый большой документ фактов на проде (`643694_diana`, 23 факта) собран
+        из номера сайта — то есть это **восстановление исходного замысла**, а не
+        новая выдумка.
+        """
+        got = agent_vars({'login': 'elena2795kirichenko01@bigmir.net', 'id': 44},
+                                {'name': 'Elena', 'site_uid': '486221'})
+
+        assert got['girl_id'] == '486221'
+
+    def test_a_login_without_digits_no_longer_breaks_the_key(self):
+        """⚠⚠ Живой случай: у анкеты Solomia в логине цифр нет вовсе.
+
+        Прежний код отдавал в этом случае **весь логин**, то есть ключом фактов
+        становился адрес почты. Теперь номер есть всегда.
+        """
+        got = agent_vars({'login': 'solomia@bigmir.net', 'id': 50},
+                                {'name': 'Solomia', 'site_uid': '924237'})
+
+        assert got['girl_id'] == '924237'
+
+    def test_two_namesakes_keep_their_facts_apart(self):
+        """⚠ Имена повторяются: на проде две Diana, две Elena, две Natalia."""
+        first = agent_vars({'login': 'a@mail.test', 'id': 46},
+                                  {'name': 'Natalia', 'site_uid': '363331'})
+        second = agent_vars({'login': 'b@mail.test', 'id': 47},
+                                   {'name': 'Natalia', 'site_uid': '201992'})
+
+        assert first['girl_id'] != second['girl_id']
+        assert first['girl_name'] == second['girl_name'] == 'natalia'
+
+    def test_no_site_number_falls_back_to_ours(self):
+        """⚠ Карточка ещё не снята — берём свой номер анкеты.
+
+        Пустой `girl_id` слил бы факты всех девушек в один документ, и это хуже
+        любого запасного варианта: наш номер тоже уникален и не меняется.
+        """
+        got = agent_vars({'login': 'diana9021@mail.test', 'id': 40},
+                                {'name': 'Diana'})
+
+        assert got['girl_id'] == '40'
 
     def test_no_name_leaves_the_number(self):
         """⚠ Пустое имя не значит пустую подстановку.
@@ -39,37 +100,43 @@ class TestVars:
         Уйди в промпт пустота — агент назвался бы никак, а собеседник получил бы
         «You are a girl .». Номер хуже читается, но он есть всегда.
         """
-        got = agent_vars({'login': 'diana9021@mail.test'}, {})
+        got = agent_vars({'login': 'diana9021@mail.test', 'id': 40},
+                                {'site_uid': '643694'})
 
-        assert got['girl_name'] == '9021'
+        assert got['girl_title'] == got['girl_name'] == '643694'
 
-    def test_fact_key_is_built_from_login_not_name(self):
-        """⚠ Ключ фактов — по логину, а не по имени.
 
-        Имена на сайте повторяются десятками: три Natalia в списке обычное дело, и
-        общий ключ склеил бы их факты в один документ. Логин уникален.
-        """
-        first = agent_vars({'login': 'natalia1@mail.test'}, {'name': 'Natalia'})
-        second = agent_vars({'login': 'natalia2@mail.test'}, {'name': 'Natalia'})
+class TestTheTechnicalName:
+    """⚠⚠ `girl_name` — устойчивый идентификатор, а не текст для человека."""
 
-        assert first['girl_id'] != second['girl_id']
+    @pytest.mark.parametrize('name, want', [
+        ('Elena', 'elena'),
+        ('Diana', 'diana'),
+        # ⚠ Кириллица — `i18n_translit_cyr`, а не КМУ: та дала бы `Evhenyia`
+        # (украинское «г» → `h`) и русских букв не покрывает вовсе.
+        ('Евгения', 'evgeniya'),
+        ('Юлия', 'yuliya'),
+        ('Соломія', 'solomiya'),
+        # ⚠ Пробел становится подчёркиванием, а не исчезает: ключ читают глазами.
+        ('Anna Maria', 'anna_maria'),
+        # ⚠⚠ Знаки препинания выбрасываются: ключ уезжает в `document_id` Qdrant
+        # и в фильтры поиска.
+        ("O'Hara", 'ohara'),
+        ('  Elena  ', 'elena'),
+        ('', ''),
+    ])
+    def test_it_becomes_a_key(self, name, want):
+        assert agent_key(name) == want
 
-    def test_the_number_and_the_name_travel_apart(self):
-        """⚠⚠ Номер и имя — **разные величины**, и слеплены они больше не будут.
+    def test_it_never_leaves_anything_but_a_key(self):
+        """⚠ Сторож на всё разом: что бы ни пришло, на выходе только латиница,
+        цифры и подчёркивание."""
+        import re
 
-        Прежде `girl_id` вёз `diana_9021` — имя с номером одной строкой, — и это
-        стоило настоящей ошибки: в промпте разбора стояло «на этот вопрос
-        **%girl_id%** должна ответить», то есть модель читала «на этот вопрос
-        elena_89 должна ответить».
+        for one in ('Ёлка', 'Ann@ Mari#a', '寿司', 'Zoë', '!!!', '123'):
+            got = agent_key(one)
 
-        Ключ склеивает сосед шагом «Ключи», и там видно, из чего он собран
-        (`…_wf_talk_girl_key`). Отсюда уезжают части.
-        """
-        got = agent_vars({'login': 'bogiladiana9021@bigmir.net'},
-                                {'name': 'Diana'})
-
-        assert got['girl_id'] == '9021'
-        assert got['girl_name'] == 'Diana'
+            assert re.fullmatch(r'[a-z0-9_]*', got), f'{one!r} → {got!r}'
 
 
 class TestWhichAgentAnswers:

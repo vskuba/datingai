@@ -541,7 +541,7 @@ async def _faces(profile_id: int, uid: str) -> dict:
 async def _profile(profile_id: int) -> dict:
     """Анкета, от имени которой отвечаем."""
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT id, site_id, login, profile FROM profile'
+        await db.execute('SELECT id, site_id, login, profile_id, profile FROM profile'
                          ' WHERE id = %s', (int(profile_id),))
         row = await db.fetchone()
 

@@ -22,6 +22,7 @@ from collections.abc import Awaitable, Callable
 
 from datetime_.datetime_ import datetime_offset_hours
 from logging_.logging_ import logger_exception, logger_info
+from mysql_.mysql_ import mysql_get_db_async
 from redis_.redis_ import redis_conn_get
 from setting_.setting_ import setting_get
 
@@ -152,3 +153,61 @@ async def pool_round_run(rows: list, *, offset_hours: int = 0,
         out.append((row, await work(row, minutes)))
 
     return out
+
+
+# ── Общее для кругов: свой темп в памяти процесса ────────────────────────────
+# Темп отправки и присутствия круги держали в памяти процесса одно и то же:
+# часы прошлого захода и сравнение. Ключ (сайт, пул) у каждого свой, и то же
+# правило, отвечавшее втроём, молча разъехалось бы wording'ом.
+
+
+def round_mem_due(mem: dict, key, every: float, what: str = '') -> bool:
+    """Вышел ли темп этого ключа: с прошлого захода прошло не меньше `every`.
+
+    Первый заход — всегда пора: ключа в памяти нет, а не было ещё ни одного.
+    Темп живёт в памяти процесса, а не в Redis: перезапуск смены стоит одного
+    лишнего захода, а не потока.
+    """
+    return time.time() - mem.get(key, 0.0) >= float(every)
+
+
+def round_mem_mark(mem: dict, key, what: str = '') -> None:
+    """Запомнить момент захода — темп отсчитывается от него."""
+    mem[key] = time.time()
+
+
+# ── Общее для кругов: суточная норма ─────────────────────────────────────────
+# Сколько ушло за сегодня, считали двое одними запросами: таблица и поведение
+# при сбое свои, скелет один.
+
+
+async def round_day_count(table: str, site_id: int, offset_hours: int,
+                          unknown: int, what: str) -> int:
+    """Сколько строк таблицы ушло с этого сайта за местные календарные сутки.
+
+    ⚠ Сутки местные, а не серверные: база живёт по UTC, смены и панель — по
+    местному времени, и при смещении в три часа норма кончалась в три ночи.
+
+    ⚠ Дата считается **один раз**, двумя запросами с `NOW()` внутри: они могли
+    бы разойтись на границе суток — редко, но именно на ней это и важно.
+    """
+    hours = int(offset_hours or 0)
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT DATE(NOW() + INTERVAL %s HOUR) AS d',
+                             (hours,))
+            today = ((await db.fetchone()) or {}).get('d')
+
+            await db.execute(
+                f"SELECT COUNT(*) AS n FROM {table}"
+                " WHERE site_id = %s AND status = 'sent'"
+                '   AND DATE(sent_at + INTERVAL %s HOUR) = %s',
+                (int(site_id), hours, today))
+            row = await db.fetchone()
+    except Exception as e:
+        logger_info(f'[dating] дневной счёт {what} не спросился: {e}')
+
+        # ⚠ Что значит сбой — решает круг: молчание или потолок выбран.
+        return unknown
+
+    return int((row or {}).get('n') or 0)

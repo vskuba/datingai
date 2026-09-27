@@ -47,7 +47,8 @@ from src.dating.request import request_ms
 from src.dating.proxy import (proxy_enabled,
                                      proxy_required)
 from src.dating.schedule import schedule_now
-from src.dating.round import round_minutes
+from src.dating.round import (round_mem_due, round_mem_mark,
+                            round_minutes)
 
 # Как часто круг просыпается. ⚠ Это **не** период удара: бить чаще, чем задано
 # сайту, круг не станет — он смотрит, кому пора, и пропускает остальных. Пятнадцать
@@ -256,12 +257,12 @@ async def _on_shift(site_id: int, minutes: int) -> list[int]:
 
 
 def _due(site_id: int, every: int) -> bool:
-    """Пора ли бить по этому сайту. Первый заход — всегда пора."""
-    return time.time() - _beaten.get(int(site_id), 0.0) >= int(every)
+    """Пора ли бить по этому сайту. Правило общее — `round_mem_due`."""
+    return round_mem_due(_beaten, int(site_id), every)
 
 
 def _mark(site_id: int) -> None:
     """Запомнить, что по сайту только что прошлись."""
-    _beaten[int(site_id)] = time.time()
+    round_mem_mark(_beaten, int(site_id))
 
 

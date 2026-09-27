@@ -71,13 +71,13 @@
 пауза считается **каждому сайту своя**.
 """
 
-import time
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.invite_send import invite_send_one
-from src.dating.round import round_minutes
+from src.dating.round import (round_day_count, round_mem_due,
+                            round_mem_mark, round_minutes)
 from src.dating.idle import idle_write
 from src.dating.json_column import json_column_load
 from src.dating.online import online_check
@@ -181,7 +181,7 @@ async def invite_send_round_run(offset_hours: int = 0) -> dict:
             await idle_write('invite_send', why, site_id=site_id)
             continue
 
-        if time.time() - _sent_at.get(site_id, 0.0) < await _every(site_id):
+        if not round_mem_due(_sent_at, site_id, await _every(site_id)):
             continue
 
         invite = await _next(site_id)
@@ -196,7 +196,7 @@ async def invite_send_round_run(offset_hours: int = 0) -> dict:
         # ⚠ Отметку о заходе ставим **до** отправки, а не после. Отправка идёт
         # секунды, а тик — пятнадцать: не отметь мы сразу, второй тик успел бы
         # взять ту же строку, пока первый ждёт ответа сайта.
-        _sent_at[site_id] = time.time()
+        round_mem_mark(_sent_at, site_id)
 
         # ⚠⚠ **Пачка не смеет перескочить дневной потолок.** До правки за заход
         # уходила одна реплика, и проверка нормы перед ней была достаточной;
@@ -415,40 +415,24 @@ async def _next(site_id: int) -> dict:
 async def _today(site_id: int, offset_hours: int = 0) -> int:
     """Сколько реплик сайта ушло за сегодня. Считаем по факту, а не по попыткам.
 
-    ⚠⚠ **Сутки — местные, а не серверные.** Прежде здесь стояло `DATE(sent_at) =
-    CURDATE()`, то есть календарный день **базы**, а она живёт по UTC. Смены же
-    заданы местным временем, и панель показывает местное: при смещении в три часа
-    сутки нормы кончались в три часа ночи — посреди ночной смены.
+    Правило общее — `round_day_count`; вот что было не так у инвайтов.
+    ⚠⚠ Прежде здесь стояло `DATE(sent_at) = CURDATE()`, то есть календарный
+    день **базы**, а она живёт по UTC. Ровно это и наблюдалось: ночная смена
+    (00:00–05:00 местных) прошла границу суток UTC, за час выбрала все сто
+    реплик «нового дня» — и до следующей полуночи UTC отправка стояла. В пуле
+    при этом лежало полсотни готовых, девять анкет были в сети, и по всем
+    признакам панель выглядела сломанной.
 
-    Ровно это и наблюдалось: ночная смена (00:00–05:00 местных) прошла границу
-    суток UTC, за час выбрала все сто реплик «нового дня» — и до следующей полуночи
-    UTC отправка стояла. В пуле при этом лежало полсотни готовых, девять анкет были
-    в сети, и по всем признакам панель выглядела сломанной.
-
-    ⚠ Календарные сутки, а не скользящие, — намеренно: настройка называется «в
-    сутки», и человек читает её как «с полуночи». Скользящее окно у нас есть, но у
-    другого вопроса — «как часто звать **одного и того же**» (`invite.py`),
-    где полночь и правда ничего не значит.
+    ⚠ Календарные сутки, а не скользящие, — намеренно: настройка называется
+    «в сутки», и человек читает её как «с полуночи». Скользящее окно у нас
+    есть, но у другого вопроса — «как часто звать **одного и того же**»
+    (`invite.py`), где полночь и правда ничего не значит.
     """
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                'SELECT COUNT(*) AS n FROM invite'
-                " WHERE site_id = %s AND status = 'sent'"
-                '   AND DATE(sent_at + INTERVAL %s HOUR)'
-                '     = DATE(NOW() + INTERVAL %s HOUR)',
-                (int(site_id), int(offset_hours or 0), int(offset_hours or 0)))
-            row = await db.fetchone()
-    except Exception as e:
-        logger_info(f'[dating] дневной счёт инвайтов #{site_id} не спросился: {e}')
-
-        # ⚠ Не сосчитали — считаем, что потолок выбран. Верная сторона ошибки:
-        # молчание дешевле сотни реплик сверх нормы.
-        return INVITE_SEND_MAX_DAY_DEFAULT
-
-    return int((row or {}).get('n') or 0)
-
-
+    # Не сосчитали — считаем, что потолок выбран. Верная сторона ошибки:
+    # молчание дешевле сотни реплик сверх нормы.
+    return await round_day_count('invite', site_id, offset_hours,
+                                 INVITE_SEND_MAX_DAY_DEFAULT,
+                                 f'инвайтов #{site_id}')
 async def _every(site_id: int) -> int:
     """Пауза между репликами у этого сайта, не короче жёсткого предела."""
     from src.uvicorn.routers.dating.site_ import site_seconds

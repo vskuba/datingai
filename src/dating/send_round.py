@@ -42,13 +42,13 @@
 сайт просит остановиться.
 """
 
-import time
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.json_column import json_column_load
-from src.dating.round import round_minutes
+from src.dating.round import (round_day_count, round_mem_due,
+                            round_mem_mark, round_minutes)
 from src.dating.mail_send import (DatingMailSendError, mail_send_mark,
                                   mail_send_one)
 from src.dating.schedule import schedule_now
@@ -106,8 +106,8 @@ async def send_round_run(offset_hours: int = 0) -> dict:
 
             # ⚠ Темп у пула свой: ответ ждёт `reply_every`, а не рассылочные
             # три минуты; рассылка не смотрит на соседние сроки.
-            if setting and time.time() - _sent_at.get((site_id, table), 0.0) < \
-                    await _every(site_id, setting):
+            if setting and not round_mem_due(_sent_at, (site_id, table),
+                                              await _every(site_id, setting)):
                 continue
 
             # ⚠ Норма рассылки считает её собственные ушедшие письма: ответы
@@ -126,7 +126,7 @@ async def send_round_run(offset_hours: int = 0) -> dict:
                 continue
 
             if setting:
-                _sent_at[(site_id, table)] = time.time()
+                round_mem_mark(_sent_at, (site_id, table))
 
             if await _send(letter, table):
                 sent += 1
@@ -401,41 +401,17 @@ async def _send(letter: dict, table: str) -> bool:
 
 
 async def _today(site_id: int, offset_hours: int = 0) -> int:
-    """Сколько писем рассылки ушло за сегодня.
+    """Сколько писем рассылки ушло за сегодня. Правило общее — `round_day_count`.
 
     ⚠ Считает **только рассылку**: норма `send_max_day` отныне её собственная,
     и соседние пулы её не едят — у ответов и писем избранным свои пределы
     на «Фаворитах».
 
-    ⚠⚠ **Сутки местные, а не серверные** — та же поправка и та же причина, что у
-    инвайтов (`invite_send_round.py`): база живёт по UTC, смены и панель —
-    по местному времени, и при смещении в три часа норма кончалась в три ночи.
+    ⚠ Сомнение — в сторону молчания: неизвестный потолок считают выбранным,
+    а лишнее письмо отменить нельзя.
     """
-    # Местная дата считается **один раз**: два запроса с `NOW()` внутри могли бы
-    # разойтись на границе суток — редко, но именно на ней это и важно.
-    hours = int(offset_hours or 0)
-    today = None
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute('SELECT DATE(NOW() + INTERVAL %s HOUR) AS d', (hours,))
-            today = ((await db.fetchone()) or {}).get('d')
-
-            await db.execute(
-                "SELECT COUNT(*) AS sent FROM mailing"
-                " WHERE site_id = %s AND status = 'sent'"
-                '   AND DATE(sent_at + INTERVAL %s HOUR) = %s',
-                (int(site_id), hours, today))
-            row = await db.fetchone()
-    except Exception as e:
-        logger_info(f'[dating] дневной счёт отправки не спросился: {e}')
-
-        # ⚠ Сомнение — в сторону молчания: непрочитанный счётчик означает
-        # неизвестный потолок, а лишнее письмо отменить нельзя.
-        return 10 ** 6
-
-    return int((row or {}).get('sent') or 0)
-
-
+    return await round_day_count('mailing', site_id, offset_hours, 10 ** 6,
+                                 'отправки')
 async def _every(site_id: int, setting: str) -> int:
     """Пауза этого пула, в секундах.
 

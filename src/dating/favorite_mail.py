@@ -761,6 +761,8 @@ async def _quiet(site_id: int, profile_id: int = 0) -> list[dict]:
         # фактов и биография (`agent_vars`, `agent_bio`). Прежде письмо писал
         # шаблон, не знавший ни её, ни его, — и полей этих не требовалось.
         '       p.id AS girl_id, p.site_id AS girl_site, p.login AS girl_login,'
+        # ⚠ Номер на сайте — им ключуются факты (`agent_site_uid`).
+        '       p.profile_id AS girl_uid,'
         '       p.profile AS girl_card,'
         '       talk.last_at, talk.last_side'
         '  FROM favorite f'
@@ -852,6 +854,7 @@ def _pair_row(row) -> dict:
         'id': int(pair.pop('girl_id', 0) or 0),
         'site_id': int(pair.pop('girl_site', 0) or 0),
         'login': str(pair.pop('girl_login', '') or ''),
+        'profile_id': pair.pop('girl_uid', None),
         'profile': pair.pop('girl_card', None),
     }
 

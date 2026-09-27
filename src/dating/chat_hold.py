@@ -460,6 +460,10 @@ async def _profiles_ready() -> list[dict]:
         await db.execute(
             'SELECT p.id, p.login, p.site_id, p.storage_state, p.ws_url, '
             '       p.auto_answer, p.auto_answer_only, p.enabled, p.can_work, '
+            # ⚠ Номер анкеты на сайте: им ключуются факты у соседа
+            # (`agent_site_uid`). Забудь его здесь — и факты всех девушек
+            # легли бы в один документ.
+            '       p.profile_id, '
             '       p.work_reason, p.role, p.profile, '
             '       p.password <> %s AS has_password, '
             '       COALESCE(s.url, %s) AS site_url '
@@ -524,6 +528,7 @@ async def _profiles_ready() -> list[dict]:
                    'auto_answer': row['auto_answer'],
                    'auto_answer_only': row['auto_answer_only'],
                    'enabled': row['enabled'], 'role': row['role'],
+                   'profile_id': row['profile_id'],
                    'profile': row['profile']}
         ready.append({'profile': profile, 'presence': presence,
                       # ⚠ Адрес — из нашего снимка списка сайтов, а не из карточки

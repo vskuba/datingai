@@ -271,7 +271,7 @@ async def _profiles(site_id: int) -> list[dict]:
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT id, site_id, login, profile, role, auto_answer_only'
+            'SELECT id, site_id, login, profile_id, profile, role, auto_answer_only'
             '  FROM profile'
             " WHERE site_id = %s AND enabled = 1 AND status = 'online'",
             (int(site_id),))
