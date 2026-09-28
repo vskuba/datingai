@@ -18,7 +18,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.auth.auth import AuthUser, auth_required
-from src.dating.favorite import favorite_forget
+from src.dating.favorite import FAVORITE_FAIL, favorite_forget
+from src.uvicorn.routers.dating.profile_ import profile_row
 
 router = APIRouter(prefix='/api/dating/favorite', tags=['dating'])
 
@@ -26,24 +27,35 @@ router = APIRouter(prefix='/api/dating/favorite', tags=['dating'])
 @router.delete('', include_in_schema=False)
 async def favorite_drop(profile_id: int = 0, uid: str = '',
                                user: AuthUser = Depends(auth_required)):
-    """Забывает пару: убирает строку избранных и черновик приставания.
+    """Забывает пару: гасит звезду сайта и убирает строку избранных с черновиком.
 
     Args:
         profile_id: номер анкеты девушки. Ноль — 422, пара не названа.
         uid: номер мужчины на сайте. Пусто — 422.
 
     Returns:
-        dict: `dropped` — была ли строка. Нет — это не ошибка: кнопку жмут
-            и по ошибке, а хотела она, чтобы он избранным не значился, — что
-            уже и так так.
+        dict: `state` (`done` — звезда сайта погасла нашей работой, `already` —
+            её там и так не было) и `dropped` — была ли строка у нас. Удача без
+            строки — не ошибка: кнопку жмут и по ошибке, а хотела она, чтобы он
+            избранным не значился — а он и не значился.
 
-    ⚠ **Звезду на сайте ручка не снимает** — у сайта такой ручки нет, а наш
-    сценарий зажжённую звезду не жмёт вовсе. Убранный со звёздочкой на сайте
-    вернётся строкой при следующем обходе избранных: сайту верить про избранных
-    больше некому (`favorite_sync`).
+    ⚠ **Отказ сайта — 409, словом из `error`.** Звезда не погасла — значит не
+    убрано нигде: строка на месте, и человек видит причину, а не молчаливое
+    «убрано», которое завтра перешибёт `favorite_sync`.
+
+    ⚠ **Прогон идёт отсюда же, синхронно: ~40 секунд браузера** (шаги сценария
+    «из избранных»). Кнопка наживая, человек ждёт — и ждёт ровно столько,
+    сколько ждёт любой вход браузером под его анкетой.
     """
     if not int(profile_id or 0) or not str(uid or '').strip():
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail='не названа пара — убирать некого')
 
-    return {'result': {'dropped': await favorite_forget(int(profile_id), str(uid))}}
+    profile = await profile_row(int(profile_id))
+
+    out = await favorite_forget(profile, str(uid))
+    if out['state'] == FAVORITE_FAIL:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=out['error'])
+
+    return {'result': out}

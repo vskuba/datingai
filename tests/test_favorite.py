@@ -89,6 +89,42 @@ class TestState:
                == (FAVORITE_DONE, '')
 
 
+class TestStateUndoing:
+    """Что случилось со звёздочкой, когда её **снимали**.
+
+    ⚠ Разбор один на оба направления (`on=False`): сценарии «в избранные» и «из
+    избранных» отличаются одним шагом, и отдельная копия разборщика разошлась бы
+    с первой на первой же правке. Эти строки и сторожат, что общая выкройка
+    читает обратную сторону так же честно, как прямую.
+    """
+
+    def test_lit_star_pressed_out_is_done(self):
+        """Горела, нажали — погасла. Это наша работа на обратном ходе."""
+        assert favorite_state(ALREADY_FAVORITE, BEFORE_EMPTY, on=False) \
+               == (FAVORITE_DONE, '')
+
+    def test_star_not_born_lit_is_already(self):
+        """⚠ Его и так не было в избранных — `already`, а не выдуманное `done`:
+        событие «мы не при чём» круг читает именно так."""
+        assert favorite_state(BEFORE_EMPTY, BEFORE_EMPTY, on=False) \
+               == (FAVORITE_ALREADY, '')
+
+    def test_star_that_stayed_lit_is_a_failure(self):
+        """Нажали, а класс не ушёл — снятие не дошло, и доверять ему нельзя."""
+        state, error = favorite_state(ALREADY_FAVORITE, ALREADY_FAVORITE,
+                                      on=False)
+
+        assert state == FAVORITE_FAIL
+        assert 'не погасла' in error
+
+    def test_empty_after_is_a_failure_here_too(self):
+        """Пустое «после» — ничего не видели, а не «погасло»."""
+        state, error = favorite_state(ALREADY_FAVORITE, '', on=False)
+
+        assert state == FAVORITE_FAIL
+        assert error
+
+
 class TestRowsFromTheSite:
     """Список избранных читается **записями**, а не номерами.
 
