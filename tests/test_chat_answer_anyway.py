@@ -25,7 +25,6 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating import answer as answer_mod
-from src.dating.companion_ref import COMPANION_REF_ID
 
 pytestmark = pytest.mark.chat
 
@@ -202,19 +201,36 @@ class TestTheCompanionIsNamed:
                                     uid='128282', name='Gerard')
 
         assert asked['companion_title'] == 'Gerard', 'агент не знает имени адресата'
-        assert asked['companion_name'] == f'dating_{STAND_SITE}_128282', \
+        assert asked['companion_name'] == 'gerard', \
             'ключ фактов не уехал — факты всех мужчин сольются в один документ'
+        assert asked['companion_id'] == '128282', \
+            'номер уехал не тот — склейка у соседа ждёт его слева'
 
-    async def test_the_record_is_ours(self, asked, girl):
-        """⚠ `companion_id` больше не единица: единица — «Vadim» из справочника."""
+    async def test_the_key_the_neighbour_will_build(self, asked, girl):
+        """⚠⚠ Склейку делает сосед, и проверить её можно только собрав ту же.
+
+        Шаг «Переменные» (позиция 0 у `dating_talk`) клеит
+        `companion_unique_id` из `%companion_id%_%companion_name%`. Выкройка та
+        же, что у девушки (`%girl_id%_%girl_name%` → `643694_diana`), и ключ
+        обязан читаться человеком: `128282_gerard`.
+
+        Прежде здесь выходило `10_dating_999343_128282` — мёртвая константа,
+        приставка, сайт, номер и ни одного имени.
+        """
         async with mysql_get_db_async() as db:
             await db.execute('SELECT * FROM profile WHERE id = %s', (girl,))
             profile = dict(await db.fetchone())
 
-        await answer_mod._agent_ask(7, 'вопрос', 'en', profile, uid='1', name='X')
+        await answer_mod._agent_ask(7, 'вопрос', 'en', profile,
+                                    uid='128282', name='Gerard')
 
-        assert asked['companion_id'] == COMPANION_REF_ID
-        assert asked['companion_id'] != 1
+        key = f"{asked['companion_id']}_{asked['companion_name']}"
+
+        assert key == '128282_gerard'
+        # Мёртвая десятка и приставка ушли из ключа совсем.
+        assert not key.startswith('10_')
+        assert 'dating' not in key
+        assert str(STAND_SITE) not in key
 
     async def test_the_history_is_not_sent_from_here(self, asked, girl):
         """⚠⚠ Историю разговора отсюда **не шлём**: у неё один дом, и он у соседа.

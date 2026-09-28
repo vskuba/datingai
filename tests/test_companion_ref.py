@@ -16,47 +16,102 @@
 разговоры девушки со всеми — в один. Ровно та беда, от которой у девушек стоит
 `girl_id`.
 
+## ⚠⚠ И что было сломано во второй раз: троица разошлась с девушкиной
+
+Починка выше свалила **весь ключ** в `companion_name` (`dating_343_128282`), а
+`companion_id` оставила приколоченным к единственной общей записи справочника
+(`10`). Записи той больше нет — сосед перестал резолвить собеседника из запроса
+(`remove_companion`, `agent_session_companion_drop`), — и десятка осталась мёртвой
+константой, приставкой ко всякому ключу.
+
+Склейка у соседа одна и та же на обе стороны:
+
+    companion_unique_id = %companion_id%_%companion_name%
+    girl_unique_id      = %girl_id%_%girl_name%
+
+У девушки выходило `643694_diana`, у него — `10_dating_343_128282`: константа,
+приставка, сайт, номер и **ни одного имени**. Читают эти ключи люди, разбирая, чьи
+факты в документе.
+
 ⚠ **Наружу сюита не ходит** (`testing.md`): проверяется то, что мы передаём.
 """
 
+import re
+from pathlib import Path
+
 import pytest
 
-from src.dating.companion_ref import (COMPANION_REF_ID, companion_ref,
-                                      companion_ref_foreign, companion_title,
+from src.dating.agent import agent_key
+from src.dating.companion_ref import (companion_name, companion_ref_foreign,
+                                      companion_title, companion_uid,
                                       companion_vars)
 
 pytestmark = pytest.mark.chat
 
 
-class TestTheKey:
-    """⚠ Ключ — пара «сайт + номер», а не имя."""
+class TestTheNumber:
+    """`companion_id` — его номер **на сайте**, как `girl_id` у девушки."""
 
-    def test_it_joins_site_and_uid(self):
-        assert companion_ref(343, '128282') == 'dating_343_128282'
+    def test_it_is_the_uid(self):
+        assert companion_uid('128282') == '128282'
+
+    def test_it_is_not_the_dead_constant(self):
+        """⚠⚠ Десятка была номером общей записи справочника — её больше нет.
+
+        Пока она стояла здесь, ключ всякого собеседника начинался с `10_`, и
+        номер человека ехал не в той половине склейки.
+        """
+        assert companion_uid('128282') != 10
+        assert companion_uid('128282') != '10'
 
     def test_two_people_never_share_it(self):
-        """⚠⚠ Ради этого всё: имена на сайте повторяются десятками.
+        assert companion_uid('111') != companion_uid('222')
 
-        Привяжи мы факты к имени, двое разных мужчин делили бы один документ, и
-        агент рассказывал бы одному биографию другого.
-        """
-        first = companion_ref(343, '111')
-        second = companion_ref(343, '222')
+    def test_it_is_safe_for_a_document_id(self):
+        """⚠ Половина ключа уезжает в `document_id` чужого хранилища."""
+        assert companion_uid('a b/c#1') == 'abc1'
 
-        assert first != second
-
-    def test_sites_do_not_collide(self):
-        """Номера у сайтов свои, и один и тот же может встретиться на обоих."""
-        assert companion_ref(343, '111') != companion_ref(999, '111')
-
-    def test_no_uid_no_key(self):
+    def test_no_uid_no_number(self):
         """Нет номера — звать агента незачем: факты некуда положить."""
-        assert companion_ref(343, '') == ''
-        assert companion_ref(343, None) == ''
+        assert companion_uid('') == ''
+        assert companion_uid(None) == ''
 
-    def test_the_key_is_safe_for_a_document_id(self):
-        """⚠ Ключ уезжает в `document_id` чужого хранилища — мусор в нём вычищаем."""
-        assert companion_ref(343, 'a b/c#1') == 'dating_343_abc1'
+
+class TestTheTechnicalName:
+    """⚠⚠ `companion_name` собирается **той же** функцией, что `girl_name`."""
+
+    def test_it_is_the_translit_of_the_name(self):
+        assert companion_name('Gerard', '128282') == 'gerard'
+
+    def test_it_is_the_very_same_rule_as_the_girls(self):
+        """⚠⚠ Не вторая копия правила, а `agent_key` — один на оба конца.
+
+        Разойдись они, ключ девушки и ключ мужчины собирались бы по разным
+        правилам, и первая же правка транслита развела бы их молча.
+        """
+        for said in ('Gerard', 'Jan Kowalski', 'Соломія', 'VINCENT'):
+            assert companion_name(said, '1') == agent_key(said)
+
+    def test_spaces_become_underscores(self):
+        """⚠ Ключ читают люди: «jan_kowalski» читается, «jankowalski» — нет."""
+        assert companion_name('Jan Kowalski', '1') == 'jan_kowalski'
+
+    def test_a_cyrillic_name_arrives_in_latin(self):
+        assert companion_name('Євген', '1') == agent_key('Євген')
+
+    def test_without_a_name_the_uid_stands_in(self):
+        """Как `girl_name` скатывается на `girl_id`: ключ обязан быть."""
+        assert companion_name('', '128282') == '128282'
+        assert companion_name('許萊納', '128282') == '128282'
+
+    def test_it_is_no_longer_the_whole_key(self):
+        """⚠⚠ Ради этого правка: имя переменной больше не врёт о содержимом.
+
+        В «имени собеседника» лежал ключ `dating_343_128282`, и всякий, кто правил
+        промпт, видел не то, что там на самом деле.
+        """
+        assert 'dating' not in companion_name('Gerard', '128282')
+        assert '343' not in companion_name('Gerard', '128282')
 
 
 class TestTheTitle:
@@ -78,16 +133,15 @@ class TestTheTitle:
 
 
 class TestTheVariables:
-    """⚠⚠ Ключ и имя — **разные** поля. Троица едет целиком: с `…remove_companion`
-    сосед из запроса ничего не подставляет, и шаг «Переменные» склеивает
-    `companion_unique_id` из `%companion_id%_%companion_name%` — без номера
-    ключ съедает приставку."""
+    """⚠⚠ Три величины, и слепить их снова нельзя. Троица едет целиком: с
+    `…remove_companion` сосед из запроса ничего не подставляет, и шаг «Переменные»
+    склеивает `companion_unique_id` из `%companion_id%_%companion_name%`."""
 
-    def test_both_go_out(self):
+    def test_all_three_go_out(self):
         got = companion_vars(343, '128282', 'Gerard')
 
-        assert got == {'companion_id': COMPANION_REF_ID,
-                       'companion_name': 'dating_343_128282',
+        assert got == {'companion_id': '128282',
+                       'companion_name': 'gerard',
                        'companion_title': 'Gerard'}
 
     def test_the_agent_never_greets_a_key(self):
@@ -95,6 +149,50 @@ class TestTheVariables:
         got = companion_vars(343, '128282', 'Gerard')
 
         assert got['companion_title'] != got['companion_name']
+
+    def test_the_site_is_no_longer_asked_for(self):
+        """⚠ Сайт из ключа ушёл — довод и цена в докстринге `companion_vars`.
+
+        Довод здесь один: у девушки его тоже нет, а склейка одна на обе стороны.
+        """
+        assert companion_vars(343, '128282', 'Gerard') \
+            == companion_vars(999, '128282', 'Gerard')
+
+
+class TestTheKeyMatchesTheGirls:
+    """⚠⚠ Ради этого вся правка: ключ собеседника читается так же, как ключ девушки.
+
+    Склейку делает сосед (`%companion_id%_%companion_name%`), и проверить её здесь
+    можно только собрав то же самое из того, что мы отдаём.
+    """
+
+    @staticmethod
+    def _key(said: dict, who: str) -> str:
+        return f'{said[f"{who}_id"]}_{said[f"{who}_name"]}'
+
+    def test_the_companion_key_reads_like_a_person(self):
+        assert self._key(companion_vars(343, '128282', 'Gerard'),
+                         'companion') == '128282_gerard'
+
+    def test_the_dead_constant_is_gone_from_the_key(self):
+        """`10_dating_343_128282` — константа, приставка, сайт и номер без имени."""
+        got = self._key(companion_vars(343, '128282', 'Gerard'), 'companion')
+
+        assert not got.startswith('10_')
+        assert 'dating' not in got
+
+    def test_both_halves_are_shaped_like_the_girls(self):
+        """⚠ Девушка даёт `643694_diana` — та же выкройка «номер + имя»."""
+        from src.dating.agent import agent_vars
+
+        hers = self._key(agent_vars({'profile_id': '643694'},
+                                    {'name': 'Diana'}), 'girl')
+        his = self._key(companion_vars(343, '128282', 'Gerard'), 'companion')
+
+        assert hers == '643694_diana'
+        # Одна выкройка: цифры, подчёркивание, латиница строчными.
+        for said in (hers, his):
+            assert re.fullmatch(r'[a-z0-9_]+', said), said
 
 
 class TestTheForeignNameGuard:
@@ -126,16 +224,24 @@ class TestTheForeignNameGuard:
 
 
 class TestBothDoorsUseIt:
-    """Сборщик троицы один на оба входа к соседу, и номер в нём — не единица."""
+    """Сборщик троицы один на оба входа к соседу."""
 
     def test_the_chat_uses_our_record(self):
         """Чат зовёт агента с номером из общего сборщика."""
-        assert companion_vars(343, '128282', 'Gerard')['companion_id'] == COMPANION_REF_ID
+        assert companion_vars(343, '128282', 'Gerard')['companion_id'] == '128282'
 
     def test_the_mail_agent_uses_it_too(self):
-        """Почтовый вход берёт тот же номер — второго сборщика нет."""
-        assert companion_vars(343, '1', 'X')['companion_id'] == COMPANION_REF_ID
+        """Почтовый вход берёт тот же сборщик — второго нет."""
+        assert companion_vars(343, '1', 'X')['companion_id'] == '1'
 
-    def test_it_is_not_the_stranger(self):
-        """Единица в справочнике соседа — «Vadim», живая персона."""
-        assert COMPANION_REF_ID != 1
+    def test_the_answer_door_still_sends_the_trio(self):
+        """⚠ Сторож против второй сборки: `answer.py` кладёт троицу `**`-раскрытием.
+
+        Собери её кто-нибудь руками — и `companion_id` снова разошёлся бы с
+        `companion_name`, как уже было с мёртвой десяткой.
+        """
+        code = Path('src/dating/answer.py').read_text(encoding='utf-8')
+
+        assert '**companion_vars(' in code
+        # Мёртвой константы не осталось нигде: она была приставкой ко всякому ключу.
+        assert 'COMPANION_REF_ID' not in code
