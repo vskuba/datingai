@@ -34,17 +34,6 @@ PAGE = (pathlib.Path(__file__).resolve().parents[1]
         / 'data/uvicorn/template/admin/dating/profile.html')
 
 
-def _func(name: str) -> str:
-    """Тело функции страницы — из разметки, а не переписанное в тест."""
-    page = PAGE.read_text(encoding='utf-8')
-    found = re.search(r'\n    (?:async )?function ' + name
-                      + r'\([^)]*\) \{.*?\n    \}', page, re.S)
-
-    assert found, f'функция {name} не нашлась'
-
-    return found.group(0)
-
-
 class TestTheButtonIsOnTheRedRowOnly:
     """Кнопка есть красной строке «Фаворитов» и только ей."""
 
@@ -111,3 +100,52 @@ class TestTheClickCallsTheHandle:
         body = _func('favSentPaint')
 
         assert "'error'" in body, 'отказ ручки не показан'
+
+    def test_the_button_is_locked_while_it_waits(self):
+        """⚠⚠ Кнопка запирается на время запроса — она **долгая**.
+
+        За ручкой стоит сценарий в живом браузере: он гасит звезду на самом сайте,
+        и у близнеца «в избранные» замерено 12 секунд в среднем и 24 в худшем.
+        Немую кнопку столько не ждут — щёлкают второй раз, и уходит второй прогон:
+        по исходу безвредный (звезда уже погасла, сайт ответит `already`), но
+        берущий вторую вкладку из пула, общего с человеком.
+
+        Правило на странице уже записано — у «Генерировать письма» и у отправки
+        реплики в чат: запереть и **сказать словами**.
+        """
+        body = _func('favSentPaint')
+
+        assert 'el.disabled = true' in body, \
+            'кнопка не запирается — второй щелчок пошлёт второй прогон браузера'
+        assert body.index('el.disabled = true') < body.index('deleteData'), \
+            'кнопка запирается после запроса — щёлкнуть успеют до того'
+
+    def test_the_button_comes_back_on_failure(self):
+        """⚠ После отказа кнопка живая: иначе повторить нечем, а причина отказа
+        бывает временной — занятый браузер, сорвавшийся вход.
+
+        ⚠⚠ На удаче её **не возвращают** нарочно: строки журнала переписываются
+        целиком (`favSentLoad`), и узла, которому возвращать вид, на странице уже
+        нет.
+        """
+        body = _func('favSentPaint')
+
+        assert 'el.disabled = false' in body, \
+            'после отказа кнопка осталась запертой — повторить нечем'
+        # ⚠ Ветка отказа — **между** уведомлением об отказе и уведомлением об
+        # удаче: `return` для этого не годится, их в теле несколько, и первый
+        # попадается раньше кнопки.
+        assert (body.index("'error'") < body.index('el.disabled = false')
+                < body.index("'success'")), \
+            'кнопка возвращается не на ветке отказа'
+
+
+def _func(name: str) -> str:
+    """Тело функции страницы — из разметки, а не переписанное в тест."""
+    page = PAGE.read_text(encoding='utf-8')
+    found = re.search(r'\n    (?:async )?function ' + name
+                      + r'\([^)]*\) \{.*?\n    \}', page, re.S)
+
+    assert found, f'функция {name} не нашлась'
+
+    return found.group(0)

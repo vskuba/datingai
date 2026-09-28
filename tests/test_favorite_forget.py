@@ -47,18 +47,6 @@ DARK = 'favorite__status  profile_btn-friend'
 EXTRACT_BEFORE, EXTRACT_AFTER = 'до', 'после'
 
 
-def _site(rhapsody, before: str, after: str) -> None:
-    """Сосед отвечает прогоном ровно этого сценария и отдаёт такие классы.
-
-    Сценарий заводится под стендовый сайт сюиты и своим именем: промах по имени
-    («нашли «в избранные» вместо «из избранных»») тонет здесь же, где и найден.
-    """
-    rhapsody.scenarios.append({'id': 911, 'site_id': STAND_SITE,
-                               'name': FAVORITE_FORGET_SCENARIO})
-    rhapsody.run = {'status': 'success', 'step_no': 0, 'error': '',
-                    'extract': {EXTRACT_BEFORE: before, EXTRACT_AFTER: after}}
-
-
 @pytest.fixture
 async def pair(auth_client, rhapsody):
     """Анкета с избранным, его черновиком, его ушедшим письмом и чужими строками.
@@ -239,3 +227,15 @@ class TestTheHandle:
 
         assert pair['star'] in await favorite_settled(pair['girl']), \
             'отказ без пары что-то да сделал'
+
+
+def _site(rhapsody, before: str, after: str) -> None:
+    """Сосед отвечает прогоном ровно этого сценария и отдаёт такие классы.
+
+    Сценарий заводится под стендовый сайт сюиты и своим именем: промах по имени
+    («нашли «в избранные» вместо «из избранных»») тонет здесь же, где и найден.
+    """
+    rhapsody.scenarios.append({'id': 911, 'site_id': STAND_SITE,
+                               'name': FAVORITE_FORGET_SCENARIO})
+    rhapsody.run = {'status': 'success', 'step_no': 0, 'error': '',
+                    'extract': {EXTRACT_BEFORE: before, EXTRACT_AFTER: after}}
