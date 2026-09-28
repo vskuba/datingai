@@ -48,14 +48,20 @@ def _grid(selector: str) -> list:
 
 
 def _row_nodes() -> list:
-    """Узлы верхнего уровня строки — в порядке появления в выкройке."""
+    """Узлы верхнего уровня строки — в порядке появления в выкройке.
+
+    ⚠ Седьмой — `<button class="mail-sent-unfav">`, кнопка «удалить из
+    фаворитов»: она узел строки наравне с прочими, и считаем мы её вместе с
+    ними, а не отдельным счётом — иначе счёт колонок снова разошёлся бы с тем,
+    что кладёт выкройка."""
     page = PAGE.read_text(encoding='utf-8')
     body = re.search(r'function sentRow\(row, opts\) \{.*?\n    \}', page, re.S)
 
     assert body, 'выкройка строки не нашлась'
 
     seen = []
-    for one in re.findall(r'<span class="(mail-sent-[a-z]+)', body.group(0)):
+    for one in re.findall(r'<(?:span|button)[^>]*?class="(mail-sent-[a-z]+)',
+                         body.group(0)):
         if one not in seen:
             seen.append(one)
 
@@ -91,17 +97,23 @@ class TestNodesFitTheColumns:
             (f'узлов {len(nodes)} на {len(cols)} колонок: '
              f'{", ".join(nodes)} против {" ".join(cols)}')
 
-    def test_the_outcome_is_in_the_last_column(self):
-        """⚠ Исход — в последней колонке, у правого края.
+    def test_the_outcome_is_in_the_declared_column(self):
+        """⚠ Исход сидит в объявленной колонке, и на одном месте у всех трёх.
 
-        Это и есть то, что расходилось: с пятью колонками он у писем садился в
+        Это и есть то, что расходилось: с пятью колонками у писем он садился в
         шестую неявную, а у избранных в пятую объявленную.
+
+        ⚠ С появлением колонки действия она предпоследняя, не последняя: за ней
+        только седьмая, а её узел — не у всех журналов. Оттого и сторож теперь
+        два: где сел исход и что за ним действительно кончается строка.
         """
         cols = _grid('.mail-sent-row.plain.one {')
         nodes = _row_nodes()
 
-        assert nodes.index('mail-sent-state') == len(cols) - 1, \
-            'исход не в последней колонке — у журналов он встанет по-разному'
+        assert nodes.index('mail-sent-state') == len(cols) - 2, \
+            'исход не в своей колонке — у журналов он встанет по-разному'
+        assert nodes[-1] == 'mail-sent-unfav', \
+            'за исходом не стало колонки действия — у избранных сдвинулось бы всё'
 
     def test_the_text_column_stretches(self):
         """⚠ Растягивается колонка **текста**, а не соседняя: пустота между именами
