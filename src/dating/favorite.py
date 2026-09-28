@@ -4,12 +4,17 @@
 последующем: избранные это короткий список, по которому ведут переписку, и человек,
 однажды ответивший, не должен теряться среди тысяч анкет сайта.
 
+Разворот тот же рукояткой: «убрать из фаворитов» на красной строке «Фаворитов →
+Доставки» гасит звезду **и на сайте** — у сайта своей ручки снимать избранное нет,
+а погаси мы только свою строку, `favorite_sync` прочитает список сайта и вернёт
+её обратно, ровно к следующему обходу.
+
 ## Две двери, и обе нужны
 
 | Что | Чем | Сколько стоит |
 |-----|-----|---------------|
 | «он уже в избранных?» | API сайта, `GET /users/my-favorites` | ~70 мс |
-| «добавить в избранные» | сценарий у соседа, живой браузер | ~40 секунд |
+| «добавить в избранные» и «убрать» | сценарий у соседа, живой браузер | ~40 секунд |
 
 Ручки «добавить» у сайта **нет** — только кнопка на странице анкеты. Отсюда
 неравенство: спросить дёшево, сделать дорого. На нём и держится порядок работы —
@@ -23,18 +28,24 @@
     class="favorite__status  profile_btn-friend"                  title="Add to Favorites"
     class="favorite__status favorite__status-ok profile_btn-friend" title="Remove from Favorites"
 
-То есть **второе нажатие снимает избранное**. Сценарий поэтому нажимает только
-незажжённую звезду (`.favorite__status:not(.favorite__status-ok)`, шаг помечен
-`optional`), а этот модуль читает класс до и после и по ним говорит, что случилось.
-Порядок «сперва список сайта» — тоже про это: он избавляет от лишних заходов, но не
-он делает прогон безопасным. Безопасным его делает `:not` в селекторе.
+То есть **второе нажатие снимает избранное**. Отсюда два сценария с одним шагом
+различия: «в избранные» жмёт только незажжённую звезду
+(`.favorite__status:not(.favorite__status-ok)`), «из избранных» — только зажжённую
+(`.favorite__status.favorite__status-ok`), шаг помечен `optional`, а этот модуль
+читает класс до и после и по ним говорит, что случилось и в какую сторону. Порядок
+«сперва список сайта» — тоже про это: он избавляет от лишних заходов, но не он
+делает прогон безопасным. Безопасным его делает селектор, совпадающий с одним
+состоянием переключателя.
 
 ## Три исхода, и они разные
 
+Исходы одни в обе сторону, только цель разная: в одну — чтобы звезда горела,
+в другую — чтобы погасла.
+
 | Исход | Что было | Пойдём ли снова |
 |-------|----------|-----------------|
-| `done` | звёздочка не горела, мы нажали — загорелась | нет |
-| `already` | горела до нас | нет |
+| `done` | звезда была не в нужном состоянии, мы нажали — стала нужной | нет |
+| `already` | была в нём до нас | нет |
 | `fail` | вход, сеть, занятый браузер, не та анкета | да, до потолка `tries` |
 
 ⚠ **`fail` повторяем** — в отличие от сбора описаний (`companion_about`, где
@@ -61,9 +72,11 @@ from src.dating.site_api import DatingSiteApiError, site_api_call
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
                                        rhapsody_api_site_get)
 
-# Имя сценария у соседа. ⚠ Чужое имя: так он записан в его базе, и переименование
-# здесь ничего не изменит — менять надо вместе с ним.
-FAVORITE_SCENARIO = 'анкета мужчины: в избранные'
+# Имена сценариев у соседа — двух, туда и обратно. ⚠ Чужие имена: так они записаны
+# в его базе, и переименование здесь ничего не изменит — менять надо вместе с ним.
+# Один жмёт незажжённую звезду (`:not`), второй — зажжённую.
+FAVORITE_ADD_SCENARIO = 'анкета мужчины: в избранные'
+FAVORITE_FORGET_SCENARIO = 'анкета мужчины: из избранных'
 
 # Класс зажжённой звёздочки. ⚠ **Признак состояния — он, а не подпись.** Подпись
 # («Remove from Favorites») сайт переводит на язык кабинета, а класс — нет.
@@ -122,19 +135,29 @@ class DatingFavoriteError(RuntimeError):
     """Добавить не вышло. Текст годен для журнала анкеты и для страницы."""
 
 
-def favorite_state(before: str, after: str) -> tuple:
+def favorite_state(before: str, after: str, on: bool = True) -> tuple:
     """Что случилось со звёздочкой — по её классу до и после нажатия.
 
     Args:
         before: класс `.favorite__status` до нажатия (шаг «до» сценария).
         after: он же после (шаг «после»).
+        on: чего мы ждали от звезды — загореться (`True`, «в избранные»)
+            или погаснуть (`False`, «из избранных»).
 
     Returns:
         tuple: `(исход, причина)`. Причина непуста только у `fail`.
 
-    ⚠ **Горела до нас — это `already`, а не `done`.** Для круга разницы нет, оба
-    означают «больше не ходить», но событие разное: `done` сделала панель, `already`
-    было и так. Свести их в одно значило бы потерять ответ на «а мы-то что сделали».
+    ⚠ **Была в целевом состоянии до нас — это `already`, а не `done`.** У круга
+    разницы нет, оба означают «больше не ходить», но событие разное: `done`
+    сделала панель, `already` было и так. Свести их в одно значило бы потерять
+    ответ на «а мы-то что сделали».
+
+    ⚠ **Направлений два, а разбор один.** Сценарии «в избранные» и «из избранных»
+    отличаются одним шагом: первый не жмёт горящую звезду (`:not`), второй —
+    погасшую. Свой разбор на каждое направление разошёлся бы с первым на первой
+    же правке, поэтому здесь просто сравнение с тем, каким класс звезда **стать
+    должна**: `was == on` — пришла целевой, мы не при чём, `now == on` — стало
+    нашей работой.
 
     ⚠ **Класс читаем построчно.** `extract` отдаёт все совпадения селектора через
     перевод строки, и хотя звёздочка на анкете одна, второй элемент с тем же
@@ -152,13 +175,15 @@ def favorite_state(before: str, after: str) -> tuple:
     if not str(after or '').strip():
         return FAVORITE_FAIL, 'сайт не показал звёздочку после нажатия'
 
-    if was:
+    if was == on:
         return FAVORITE_ALREADY, ''
 
-    if now:
+    if now == on:
         return FAVORITE_DONE, ''
 
-    return FAVORITE_FAIL, 'звёздочка не зажглась — нажатие не дошло до сайта'
+    return FAVORITE_FAIL, ('звёздочка не зажглась — нажатие не дошло до сайта'
+                           if on else
+                           'звёздочка не погасла — нажатие не дошло до сайта')
 
 
 def favorite_pick(letters: list, favorites: set, settled: dict,
@@ -357,41 +382,6 @@ async def favorite_sync(profile: dict, base: str, password: str) -> int:
     return len(fresh)
 
 
-async def _cards_put(site_id: int, rows: list[dict]) -> None:
-    """Кладёт карточки собеседников из списка избранных.
-
-    ⚠ **Пустое значение не стирает прежнее** (`IF(VALUES(x) = '', x, VALUES(x))`):
-    сайт иногда отдаёт запись без фотографии, и затирать ею снятое сценарием лицо
-    значило бы терять то, за чем ходили в браузер. Тот же приём, что у ручки
-    карточки собеседника.
-
-    ⚠ **`priority` и `about` не трогаем вовсе** — их ставит человек и агент, а
-    список сайта про них ничего не знает.
-    """
-    if not rows:
-        return
-
-    try:
-        async with mysql_get_db_async() as db:
-            for one in rows:
-                await db.execute(
-                    'INSERT INTO companion'
-                    ' (site_id, uid, name, photo, age, city, country)'
-                    ' VALUES (%s, %s, %s, %s, %s, %s, %s)'
-                    ' ON DUPLICATE KEY UPDATE'
-                    "  name = IF(VALUES(name) = '', name, VALUES(name)),"
-                    "  photo = IF(VALUES(photo) = '', photo, VALUES(photo)),"
-                    '  age = IF(VALUES(age) = 0, age, VALUES(age)),'
-                    "  city = IF(VALUES(city) = '', city, VALUES(city)),"
-                    "  country = IF(VALUES(country) = '', country, VALUES(country))",
-                    (int(site_id), one['uid'], one['name'], one['photo'],
-                     int(one['age'] or 0), one['city'], one['country']))
-
-            await db.connection.commit()
-    except Exception as e:
-        logger_info(f'[dating] карточки избранных сайта #{site_id} не легли: {e}')
-
-
 async def favorite_site_uids(site_id: int) -> set:
     """Кого хоть одна анкета сайта держит в избранных.
 
@@ -518,7 +508,7 @@ async def favorite_add(profile: dict, uid: str, site_password: str = '',
     uid = str(uid or '').strip()
 
     try:
-        run = await _run(profile, uid, site_password)
+        run = await _run(profile, uid, site_password, FAVORITE_ADD_SCENARIO)
     except DatingFavoriteError as e:
         await favorite_mark(site_id, profile_id, uid, FAVORITE_FAIL,
                                    str(e), reason)
@@ -545,7 +535,110 @@ async def favorite_add(profile: dict, uid: str, site_password: str = '',
     return {'state': state, 'error': error}
 
 
+async def favorite_forget(profile: dict, uid: str,
+                                 site_password: str = '') -> dict:
+    """Гасит звезду сайта под анкетой девушки и убирает пару из нашей таблицы.
+
+    Args:
+        profile: анкета девушки, **под которой входим**: избранные её.
+        uid: номер мужчины на сайте.
+        site_password: общий пароль анкет сайта (настройка `api_password`) —
+            прогону сценария входить тем же входом, что и добавление.
+
+    Returns:
+        dict: `state` (`done` — звезда погасла нашей работой, `already` — её там
+            и так не было), `error` словами при отказе и `dropped` — была ли
+            строка у нас. `already` и `dropped: False` — не ошибки: нажатие
+            значит «не считать избранным», а он и без нас не считался.
+
+    ⚠ **Сперва сайт, потом своё.** Сценарий идёт первым: не погаснет звезда там
+    — строку при следующей сверке вернёт `favorite_sync`, и «удаление» держится
+    ровно до `favorite_sync_every`. Не погасла на сайте — значит не убрано
+    нигде: строка ждёт человека с причиной в отказе.
+
+    ⚠ **Черновик приставания уходит вместе со строкой.** Письмо избранному
+    пишется потому, что он избранный; с погасшей звездой слать его нечего. Тот
+    же жест, что у запрета (`block_add` — он тоже выметает пулы). Ушедшие письма
+    не трогаем: это журнал, а журнал отвечает за уже случившееся.
+
+    ⚠ **Ошибок не глотит** — в отличие от `favorite_mark`. Там потерянная строка
+    дешевле потерянного прогона, за который уже заплачено сорока секундами; здесь
+    нажал человек, и человек обязан увидеть отказ. Ответит ручка-дверь словом из
+    `error`, страница покажет.
+    """
+    profile_id = int(profile.get('id') or 0)
+    uid = str(uid or '').strip()[:PEOPLE_UID_MAX]
+
+    try:
+        run = await _run(profile, uid, site_password, FAVORITE_FORGET_SCENARIO)
+    except DatingFavoriteError as e:
+        await log_write(profile_id, 'fail', f'Снятие избранного {uid}: {e}')
+
+        return {'state': FAVORITE_FAIL, 'error': str(e)}
+
+    extract = run.get('extract') or {}
+    state, error = favorite_state(extract.get('до'), extract.get('после'), on=False)
+
+    if state == FAVORITE_FAIL:
+        await log_write(profile_id, 'fail', f'Снятие избранного {uid}: {error}')
+
+        return {'state': state, 'error': error}
+
+    # ⚠ Звезда на сайте погашена (или её там и не было) — теперь наша очередь.
+    async with mysql_get_db_async() as db:
+        await db.execute('DELETE FROM favorite WHERE profile_id = %s AND uid = %s',
+                         (profile_id, uid))
+        dropped = int(db.rowcount or 0)
+        await db.execute("DELETE FROM favorite_mail"
+                         " WHERE profile_id = %s AND uid = %s AND status = 'draft'",
+                         (profile_id, uid))
+        await db.connection.commit()
+
+    # ⚠ Уровень `info`, а не `fail`: работа не сломалась, список изменил человек.
+    # Завтра спросят, почему этой паре ничего не уходит, — ответ должен лежать там.
+    await log_write(profile_id, 'info', f'Из избранного убран: {uid}')
+    logger_info(f'[dating] избранные: анкета #{profile_id} забыла {uid}'
+                f' ({state}, строка {"была" if dropped else "не нужна"})')
+
+    return {'state': state, 'dropped': bool(dropped)}
+
+
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+async def _cards_put(site_id: int, rows: list[dict]) -> None:
+    """Кладёт карточки собеседников из списка избранных.
+
+    ⚠ **Пустое значение не стирает прежнее** (`IF(VALUES(x) = '', x, VALUES(x))`):
+    сайт иногда отдаёт запись без фотографии, и затирать ею снятое сценарием лицо
+    значило бы терять то, за чем ходили в браузер. Тот же приём, что у ручки
+    карточки собеседника.
+
+    ⚠ **`priority` и `about` не трогаем вовсе** — их ставит человек и агент, а
+    список сайта про них ничего не знает.
+    """
+    if not rows:
+        return
+
+    try:
+        async with mysql_get_db_async() as db:
+            for one in rows:
+                await db.execute(
+                    'INSERT INTO companion'
+                    ' (site_id, uid, name, photo, age, city, country)'
+                    ' VALUES (%s, %s, %s, %s, %s, %s, %s)'
+                    ' ON DUPLICATE KEY UPDATE'
+                    "  name = IF(VALUES(name) = '', name, VALUES(name)),"
+                    "  photo = IF(VALUES(photo) = '', photo, VALUES(photo)),"
+                    '  age = IF(VALUES(age) = 0, age, VALUES(age)),'
+                    "  city = IF(VALUES(city) = '', city, VALUES(city)),"
+                    "  country = IF(VALUES(country) = '', country, VALUES(country))",
+                    (int(site_id), one['uid'], one['name'], one['photo'],
+                     int(one['age'] or 0), one['city'], one['country']))
+
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] карточки избранных сайта #{site_id} не легли: {e}')
+
 
 def _on(value) -> bool:
     """Горит ли звёздочка: есть ли класс-признак хоть в одной снятой строке."""
@@ -553,8 +646,10 @@ def _on(value) -> bool:
                for line in str(value or '').splitlines())
 
 
-async def _run(profile: dict, uid: str, site_password: str) -> dict:
-    """Прогон сценария у соседа. Любая неудача — `DatingFavoriteError` словами."""
+async def _run(profile: dict, uid: str, site_password: str,
+               scenario_name: str) -> dict:
+    """Прогон сценария у соседа — в любую из сторон. Любая неудача —
+    `DatingFavoriteError` словами."""
     from src.uvicorn.routers.dating.site_ import site_setting
 
     site_id = int(profile['site_id'])
@@ -570,13 +665,13 @@ async def _run(profile: dict, uid: str, site_password: str) -> dict:
 
     try:
         site = await rhapsody_api_site_get(site_id)
-        scenario = await rhapsody_api_scenario_find(site_id, FAVORITE_SCENARIO)
+        scenario = await rhapsody_api_scenario_find(site_id, scenario_name)
     except RhapsodyError as e:
         raise DatingFavoriteError(str(e)) from e
 
     if not scenario:
         raise DatingFavoriteError(
-            f'у сайта нет сценария «{FAVORITE_SCENARIO}» — '
+            f'у сайта нет сценария «{scenario_name}» — '
             f'заведите его в RhapsodyAi на вкладке «Сценарии»')
 
     try:
