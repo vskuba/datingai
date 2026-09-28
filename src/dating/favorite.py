@@ -545,6 +545,57 @@ async def favorite_add(profile: dict, uid: str, site_password: str = '',
     return {'state': state, 'error': error}
 
 
+async def favorite_forget(profile_id: int, uid: str) -> bool:
+    """Убирает пару из **наших** избранных: строку таблицы и черновик приставания.
+
+    Args:
+        profile_id: анкета девушки, чьё избранное её и есть.
+        uid: номер мужчины на сайте.
+
+    Returns:
+        bool: была ли строка. `False` — не ошибка: его могли убрать прежде,
+            а нажатие значит «не считать избранным», что уже и так так.
+
+    ⚠ **Наша таблица, а не звезда сайта.** Ручки снять избранное у сайта нет,
+    и зажжённую звезду наш сценарий не жмёт вовсе (`favorite_add` — она
+    переключатель). «Убрать» здесь значит забыть его у себя: из пула он уходит,
+    переписка переезжает в журнал «Письма» (тот берёт пары по звезде,
+    `mail_reply_delivery_scope`), а круг вернёт его строкой, только если он
+    и правда сидит в списке сайта — там источником истины он и остаётся.
+
+    ⚠ **Черновик приставания уходит вместе со строкой.** Письмо избранному
+    пишется потому, что он избранный; с погасшей звездой слать его нечего. Тот
+    же жест, что у запрета (`block_add` — он тоже выметает пулы). Ушедшие письма
+    не трогаем: это журнал, а журнал отвечает за уже случившееся.
+
+    ⚠ **Ошибок не глотит** — в отличие от `favorite_mark`. Там потерянная строка
+    дешевле потерянного прогона, за который уже заплачено сорока секундами; здесь
+    нажал человек, и человек обязан увидеть отказ. Ответит middleware сам.
+    """
+    profile_id, uid = int(profile_id or 0), str(uid or '').strip()[:PEOPLE_UID_MAX]
+    if not profile_id or not uid:
+        return False
+
+    async with mysql_get_db_async() as db:
+        await db.execute('DELETE FROM favorite WHERE profile_id = %s AND uid = %s',
+                         (profile_id, uid))
+        dropped = int(db.rowcount or 0)
+        await db.execute("DELETE FROM favorite_mail"
+                         " WHERE profile_id = %s AND uid = %s AND status = 'draft'",
+                         (profile_id, uid))
+        await db.connection.commit()
+
+    if not dropped:
+        return False
+
+    # ⚠ Уровень `info`, а не `fail`: работа не сломалась, список изменил человек.
+    # Завтра спросят, почему этой паре ничего не уходит, — ответ должен лежать там.
+    await log_write(profile_id, 'info', f'Из избранного убран: {uid}')
+    logger_info(f'[dating] избранные: анкета #{profile_id} забыла {uid}')
+
+    return True
+
+
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 def _on(value) -> bool:
