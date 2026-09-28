@@ -25,7 +25,7 @@ router = APIRouter(prefix='/api/dating/favorite', tags=['dating'])
 
 @router.delete('', include_in_schema=False)
 async def favorite_drop(profile_id: int = 0, uid: str = '',
-                                user: AuthUser = Depends(auth_required)):
+                               user: AuthUser = Depends(auth_required)):
     """Забывает пару: убирает строку избранных и черновик приставания.
 
     Args:

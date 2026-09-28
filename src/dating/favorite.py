@@ -357,41 +357,6 @@ async def favorite_sync(profile: dict, base: str, password: str) -> int:
     return len(fresh)
 
 
-async def _cards_put(site_id: int, rows: list[dict]) -> None:
-    """Кладёт карточки собеседников из списка избранных.
-
-    ⚠ **Пустое значение не стирает прежнее** (`IF(VALUES(x) = '', x, VALUES(x))`):
-    сайт иногда отдаёт запись без фотографии, и затирать ею снятое сценарием лицо
-    значило бы терять то, за чем ходили в браузер. Тот же приём, что у ручки
-    карточки собеседника.
-
-    ⚠ **`priority` и `about` не трогаем вовсе** — их ставит человек и агент, а
-    список сайта про них ничего не знает.
-    """
-    if not rows:
-        return
-
-    try:
-        async with mysql_get_db_async() as db:
-            for one in rows:
-                await db.execute(
-                    'INSERT INTO companion'
-                    ' (site_id, uid, name, photo, age, city, country)'
-                    ' VALUES (%s, %s, %s, %s, %s, %s, %s)'
-                    ' ON DUPLICATE KEY UPDATE'
-                    "  name = IF(VALUES(name) = '', name, VALUES(name)),"
-                    "  photo = IF(VALUES(photo) = '', photo, VALUES(photo)),"
-                    '  age = IF(VALUES(age) = 0, age, VALUES(age)),'
-                    "  city = IF(VALUES(city) = '', city, VALUES(city)),"
-                    "  country = IF(VALUES(country) = '', country, VALUES(country))",
-                    (int(site_id), one['uid'], one['name'], one['photo'],
-                     int(one['age'] or 0), one['city'], one['country']))
-
-            await db.connection.commit()
-    except Exception as e:
-        logger_info(f'[dating] карточки избранных сайта #{site_id} не легли: {e}')
-
-
 async def favorite_site_uids(site_id: int) -> set:
     """Кого хоть одна анкета сайта держит в избранных.
 
@@ -597,6 +562,41 @@ async def favorite_forget(profile_id: int, uid: str) -> bool:
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+async def _cards_put(site_id: int, rows: list[dict]) -> None:
+    """Кладёт карточки собеседников из списка избранных.
+
+    ⚠ **Пустое значение не стирает прежнее** (`IF(VALUES(x) = '', x, VALUES(x))`):
+    сайт иногда отдаёт запись без фотографии, и затирать ею снятое сценарием лицо
+    значило бы терять то, за чем ходили в браузер. Тот же приём, что у ручки
+    карточки собеседника.
+
+    ⚠ **`priority` и `about` не трогаем вовсе** — их ставит человек и агент, а
+    список сайта про них ничего не знает.
+    """
+    if not rows:
+        return
+
+    try:
+        async with mysql_get_db_async() as db:
+            for one in rows:
+                await db.execute(
+                    'INSERT INTO companion'
+                    ' (site_id, uid, name, photo, age, city, country)'
+                    ' VALUES (%s, %s, %s, %s, %s, %s, %s)'
+                    ' ON DUPLICATE KEY UPDATE'
+                    "  name = IF(VALUES(name) = '', name, VALUES(name)),"
+                    "  photo = IF(VALUES(photo) = '', photo, VALUES(photo)),"
+                    '  age = IF(VALUES(age) = 0, age, VALUES(age)),'
+                    "  city = IF(VALUES(city) = '', city, VALUES(city)),"
+                    "  country = IF(VALUES(country) = '', country, VALUES(country))",
+                    (int(site_id), one['uid'], one['name'], one['photo'],
+                     int(one['age'] or 0), one['city'], one['country']))
+
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] карточки избранных сайта #{site_id} не легли: {e}')
+
 
 def _on(value) -> bool:
     """Горит ли звёздочка: есть ли класс-признак хоть в одной снятой строке."""
