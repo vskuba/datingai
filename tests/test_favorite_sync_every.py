@@ -93,24 +93,39 @@ class TestTheGate:
 
         from src.dating import favorite_mail
 
-        code = inspect.getsource(favorite_mail.favorite_mail_make)
+        code = inspect.getsource(favorite_mail.favorite_mail_stars_sync)
 
         assert code.index('_sync_mark(') < code.index('await _sync_stars('), \
             'отметка стоит после похода — два тика сверят разом'
 
 
 class TestThePass:
-    """Как сторож встроен в заход набора пула."""
+    """Как сторож встроен в заход набора пула.
+
+    ⚠ Сверка переехала из тела набора в свою `favorite_mail_stars_sync`: её зовёт
+    и набор, и круг — **до** счёта места в пуле. Довод переезда — в её докстринге:
+    полный пул не давал почистить сам себя. Сторож того порядка —
+    `test_favorite_gone.py`, `TestTheFullPoolStillSyncs`.
+    """
 
     def test_the_pass_asks_the_gate(self):
         import inspect
 
         from src.dating import favorite_mail
 
-        code = inspect.getsource(favorite_mail.favorite_mail_make)
+        code = inspect.getsource(favorite_mail.favorite_mail_stars_sync)
 
         assert '_sync_due(site_id)' in code, \
             'сверка снова идёт на каждый заход круга'
+
+    def test_the_making_still_syncs(self):
+        """⚠ Набор сверку не потерял: кнопка человека зовёт именно его."""
+        import inspect
+
+        from src.dating import favorite_mail
+
+        assert 'await favorite_mail_stars_sync(' in inspect.getsource(
+            favorite_mail.favorite_mail_make)
 
     def test_the_human_button_always_syncs(self):
         """⚠ Кнопка человека сверяет мимо срока.
@@ -123,7 +138,7 @@ class TestThePass:
 
         from src.dating import favorite_mail
 
-        code = inspect.getsource(favorite_mail.favorite_mail_make)
+        code = inspect.getsource(favorite_mail.favorite_mail_stars_sync)
 
         assert 'if profile_id or _sync_due(site_id):' in code
 
@@ -138,7 +153,7 @@ class TestThePass:
         from src.dating import favorite_mail
 
         assert 'await _sync_stars(' in inspect.getsource(
-            favorite_mail.favorite_mail_make)
+            favorite_mail.favorite_mail_stars_sync)
 
 
 class TestTheSetting:

@@ -343,3 +343,71 @@ class TestThePoolStopsWriting:
 
         assert await _quiet(STAND_SITE, girl) == [], \
             'погашенной паре всё ещё пишут письма'
+
+
+class TestTheFullPoolStillSyncs:
+    """⚠⚠ Дверь, запиравшаяся изнутри: полный пул не давал себя почистить.
+
+    Сверка гасит пропавших и уносит их черновики, но жила **внутри набора** — то
+    есть за проверкой «есть ли место в пуле»:
+
+        room = await _pool_max(site_id) - pool
+        if room <= 0:
+            return None
+
+    Выходило кольцо: стухший черновик держит место → места нет → набор не зовётся
+    → сверка не идёт → черновик не убирается. И единственный, кто из этого кольца
+    выходил, — **круг отправки**: полный пул он как раз разбирает, то есть слал
+    письмо тому, кто давно не избранный.
+
+    Найдено на проде сразу после выкладки `gone`: пул был полон, и за пятнадцать
+    минут не погасла ни одна из 22 пар. Гасили разовым прогоном сверки руками.
+    """
+
+    async def test_the_round_syncs_before_counting_room(self, monkeypatch):
+        """Пул полон — набор не идёт, а сверка идёт."""
+        from src.dating import favorite_mail_round
+
+        synced = []
+
+        async def sync(site_id, profile_id=0):
+            synced.append(int(site_id))
+
+        async def nothing(site_id):
+            return None
+
+        async def full(site_id):
+            return 10 ** 6
+
+        async def cap(site_id):
+            return 20
+
+        async def never(*args, **kwargs):
+            raise AssertionError('набор пошёл при полном пуле')
+
+        monkeypatch.setattr(favorite_mail_round, 'favorite_mail_stars_sync', sync)
+        monkeypatch.setattr(favorite_mail_round, 'pool_sweep', nothing)
+        monkeypatch.setattr(favorite_mail_round, 'favorite_mail_pool_left', full)
+        monkeypatch.setattr(favorite_mail_round, '_pool_max', cap)
+        monkeypatch.setattr(favorite_mail_round, 'favorite_mail_make', never)
+
+        got = await favorite_mail_round._work({'site_id': STAND_SITE}, 0)
+
+        assert got is None, 'при полном пуле круг всё-таки набирал письма'
+        assert synced == [STAND_SITE], \
+            'сверка не прошла — пул снова заперт своим же мусором'
+
+    def test_the_gate_is_still_the_gate(self):
+        """⚠ Свой вызов у круга **не отменяет срока**: сверка спрашивает его сама.
+
+        Иначе круг, будимый свежей лентой каждые три минуты, вернул бы те самые
+        157 запросов в час, ради которых срок и заводили
+        (`test_favorite_sync_every`).
+        """
+        import inspect
+
+        from src.dating import favorite_mail
+
+        code = inspect.getsource(favorite_mail.favorite_mail_stars_sync)
+
+        assert 'if profile_id or _sync_due(site_id):' in code

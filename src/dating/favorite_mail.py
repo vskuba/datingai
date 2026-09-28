@@ -234,10 +234,7 @@ async def favorite_mail_make(site_id: int, limit: int = 0,
     #
     # ⚠ Кнопка человека сверяет **всегда**: он нажал её именно затем, чтобы
     # увидеть сайт сейчас, а не наш снимок часовой давности.
-    if profile_id or _sync_due(site_id):
-        _sync_mark(site_id, await _seconds(site_id, FAVORITE_SYNC_EVERY_SETTING,
-                                           FAVORITE_SYNC_EVERY_DEFAULT))
-        await _sync_stars(site_id, profile_id)
+    await favorite_mail_stars_sync(site_id, profile_id)
 
     pairs = await _quiet(site_id, profile_id)
     if not pairs:
@@ -413,6 +410,51 @@ async def favorite_mail_make(site_id: int, limit: int = 0,
 
     return {'made': made, 'skipped': skipped, 'reasons': reasons, 'left': left,
             'stopped': stopped}
+
+
+async def favorite_mail_stars_sync(site_id: int, profile_id: int = 0) -> None:
+    """Сверяет звёзды с сайтом — не чаще своего срока. Ничего не бросает.
+
+    Args:
+        site_id: сайт-закладка.
+        profile_id: заданный номер — это **кнопка человека**, и она сверяет мимо
+            срока: он нажал её именно затем, чтобы увидеть сайт сейчас, а не наш
+            снимок часовой давности.
+
+    ## ⚠⚠ Своей функцией, а не строкой внутри набора, и это правка живой беды
+
+    Сверка и правда живёт ради набора — но с 28 сентября она делает и второе дело:
+    гасит пары, которых в списках сайта больше нет (`favorite_sync`). А круг
+    (`favorite_mail_round._work`) до набора **не доходит, когда пул полон**:
+
+        room = await _pool_max(site_id) - pool
+        if room <= 0:
+            return None
+
+    Выходила запертая дверь: стухший черновик держит место в пуле → места нет →
+    набор не зовётся → сверка не идёт → черновик не убирается. И единственный, кто
+    выходил из этого круга, — **круг отправки**: он-то полный пул как раз разбирает,
+    то есть отправлял письмо тому, кто давно не избранный.
+
+    Теперь круг зовёт сверку **до** счёта места, своим вызовом. Повторный вызов из
+    набора ничего не стоит: срок отмечен, `_sync_due` ответит «рано».
+
+    ⚠ **Срок остаётся в памяти процесса** (`_sync_at`): смена держателя
+    перезапускается раз в час, то есть ровно с тем же сроком — лишняя сверка после
+    перезапуска дешевле отдельного ключа в чужом хранилище.
+
+    ⚠ **Отметка ставится до похода, а не после.** Сверка идёт по анкете с запросом
+    на каждую — тринадцать анкет это тринадцать запросов и почти секунда; не отметь
+    мы сразу, следующий тик завёл бы вторую сверку поверх первой.
+    """
+    site_id, profile_id = int(site_id or 0), int(profile_id or 0)
+    if not site_id:
+        return
+
+    if profile_id or _sync_due(site_id):
+        _sync_mark(site_id, await _seconds(site_id, FAVORITE_SYNC_EVERY_SETTING,
+                                           FAVORITE_SYNC_EVERY_DEFAULT))
+        await _sync_stars(site_id, profile_id)
 
 
 async def favorite_mail_pool_left(site_id: int) -> int:

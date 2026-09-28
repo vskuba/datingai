@@ -50,7 +50,8 @@ from src.dating.favorite_mail import (FAVORITE_MAIL_BATCH_DEFAULT,
                                              FAVORITE_MAIL_POOL_SETTING,
                                              favorite_mail_make,
                                              favorite_mail_pool_left,
-                                             favorite_mail_shift_now)
+                                             favorite_mail_shift_now,
+                                             favorite_mail_stars_sync)
 
 # Как часто круг просыпается. ⚠ Не частота захода: её задаёт `favorite_mail_every`.
 FAVORITE_MAIL_ROUND_TICK_SEC = 60
@@ -159,6 +160,19 @@ async def _work(site: dict, minutes: int) -> dict | None:
     # ⚠ Сперва убираем черновики ушедших анкет: отправить их некому, а место
     # в пуле они держат (`pool.py`).
     await pool_sweep(site_id)
+
+    # ⚠⚠ **Сверка звёзд — до счёта места, и это не порядок ради порядка.**
+    #
+    # Она гасит пары, пропавшие из списков сайта, и уносит их черновики
+    # (`favorite_sync`). Стояла она внутри набора — то есть **за** проверкой
+    # `room <= 0`, — и дверь запиралась изнутри: стухший черновик держит место в
+    # пуле, места нет, набор не зовётся, сверка не идёт, черновик не убирается.
+    # Единственный, кто из этого круга выходил, — круг отправки: полный пул он как
+    # раз разбирает, то есть слал письмо тому, кто давно не избранный.
+    #
+    # ⚠ Второй вызов из набора ничего не стоит: срок отмечен, `_sync_due` ответит
+    # «рано».
+    await favorite_mail_stars_sync(site_id)
 
     pool = await favorite_mail_pool_left(site_id)
     room = await _pool_max(site_id) - pool
