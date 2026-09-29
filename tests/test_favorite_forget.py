@@ -10,10 +10,13 @@
 
 У сайта своей ручки снимать избранное нет, а `favorite_sync` читает список сайта
 и вернул бы строку обратно при следующем обходе — «удаление» держалось бы ровно
-до `favorite_sync_every`. Поэтому жмём переключатель и там: шаг сценария
-«из избранных» `.favorite__status.favorite__status-ok` (`optional`) тушит
-горящую звезду, и только после этого уходит наша строка и черновик. Ушедшее письмо —
-журнал, его не трогаем.
+до `favorite_sync_every`. Поэтому жмём переключатель и там. ⚠ **Не на анкете** —
+нажатие звезды на анкете сайтом не работает (обработчик читает номер из строки
+списка и вне его падает молча): сценарий «из избранных» открывает `/favorites`,
+жжёт горящую звезду строки `#userid-<uid>` и подтверждает снятие в окне самого
+сайта. Удача выглядит так, что **строка снята со страницы вместе со звездой** —
+пустое «после» при горящем «до». И только после этого уходит наша строка и
+черновик. Ушедшее письмо — журнал, его не трогаем.
 
 ⚠ Звезда не погасла на сайте — значит не убрано нигде: строка остаётся, а
 человек видит причину. Это отличие от `favorite_mark` намеренное: тот глотает
@@ -41,6 +44,11 @@ STAND_SITE = 999_343
 # разметка — выдуманные классы проверяли бы нашу мысль о вёрстке, а не вёрстку.
 LIT = 'favorite__status favorite__status-ok profile_btn-friend'
 DARK = 'favorite__status  profile_btn-friend'
+
+# Успех на `/favorites` выглядит пустотой: сайт при подтверждении снятия убирает
+# строку человека со страницы вместе со звездой — спросить «как он там теперь»
+# уже не у чего. Тот же смысл, что сторожит `test_favorite.TestStateUndoing`.
+ROW_GONE = ''
 
 # Ключи `extract`, которыми тело сверяет состояние, — как записаны у соседа в
 # базе сценария.
@@ -110,9 +118,10 @@ class TestForgetsThePair:
     """Тело ручки: сперва сайт, потом строка — и только пара."""
 
     async def test_the_star_goes_out_and_the_row_goes(self, pair, rhapsody):
-        """⚠ Звезда погасла на сайте, строка ушла у нас — пара выпала из набора
+        """⚠ На `/favorites` сайт снял строку человека вместе со звездой (пустое
+        «после» при горящем «до»), строка ушла у нас — пара выпала из набора
         писем, и `favorite_sync` вернёт её лишь если она и правда горит."""
-        _site(rhapsody, LIT, DARK)
+        _site(rhapsody, LIT, ROW_GONE)
 
         got = await favorite_forget(pair['profile'], pair['star'])
 
@@ -138,7 +147,7 @@ class TestForgetsThePair:
 
     async def test_the_other_profile_keeps_him(self, pair, rhapsody):
         """⚠ Убирается **пара**, а не человек: у другой анкеты он избран и остаётся."""
-        _site(rhapsody, LIT, DARK)
+        _site(rhapsody, LIT, ROW_GONE)
         await favorite_forget(pair['profile'], pair['star'])
 
         async with mysql_get_db_async() as db:
@@ -152,7 +161,7 @@ class TestForgetsThePair:
     async def test_the_draft_goes_and_the_letter_stays(self, pair, rhapsody):
         """⚠ Черновик выметается вместе с парой — иначе круг уйдёт в отказ, а
         журнал остаётся: уже случившееся не переписывают."""
-        _site(rhapsody, LIT, DARK)
+        _site(rhapsody, LIT, ROW_GONE)
         await favorite_forget(pair['profile'], pair['star'])
 
         async with mysql_get_db_async() as db:
@@ -168,11 +177,11 @@ class TestForgetsThePair:
         """⚠ Повтор не ошибка: `already`, `dropped: False` — его уже нет ни на
         сайте, ни у нас, а человек хотел именно этого. И нажатие по своей сути
         то же, что первое, — жать ещё раз незачем, но и нельзя наказать."""
-        _site(rhapsody, LIT, DARK)
+        _site(rhapsody, LIT, ROW_GONE)
         first = await favorite_forget(pair['profile'], pair['star'])
         assert first == {'state': 'done', 'dropped': True}
 
-        # Теперь звезда не горит и шаг сценария пропущен — классы одинаковы.
+        # Строка видна, звезда не горит: шаг нажатия пропущен, классы одинаковы.
         _site(rhapsody, DARK, DARK)
         second = await favorite_forget(pair['profile'], pair['star'])
         assert second == {'state': 'already', 'dropped': False}
@@ -186,12 +195,24 @@ class TestForgetsThePair:
         assert pair['star'] in await favorite_settled(pair['girl']), \
             'пустой довод что-то да удалил'
 
+    async def test_blind_run_deletes_nothing(self, pair, rhapsody):
+        """⚠ Сайт не показал ничего — пусто и «до», и «после». Утверждать нечего:
+        ни удачи, ни `already` — отказ, строка на месте. Пустое «после» само по
+        себе значило бы успех, но только когда «до» мы видели горящим."""
+        _site(rhapsody, '', '')
+
+        got = await favorite_forget(pair['profile'], pair['star'])
+
+        assert got['state'] == 'fail' and 'не показал' in got['error']
+        assert pair['star'] in await favorite_settled(pair['girl']), \
+            'строка ушла, хотя на сайте мы не видели ничего'
+
 
 class TestTheHandle:
     """Дверь: зовёт тело, просит пару, отказ сайта отдаёт словом."""
 
     async def test_the_handle_forgets(self, pair, rhapsody):
-        _site(rhapsody, LIT, DARK)
+        _site(rhapsody, LIT, ROW_GONE)
 
         got = await favorite_drop(profile_id=pair['girl'], uid=pair['star'],
                                   user=None)

@@ -92,16 +92,36 @@ class TestState:
 class TestStateUndoing:
     """Что случилось со звёздочкой, когда её **снимали**.
 
-    ⚠ Разбор один на оба направления (`on=False`): сценарии «в избранные» и «из
-    избранных» отличаются одним шагом, и отдельная копия разборщика разошлась бы
-    с первой на первой же правке. Эти строки и сторожат, что общая выкройка
-    читает обратную сторону так же честно, как прямую.
+    ⚠ Разбор один на оба направления (`on=False`): сценарии различаются и
+    страницей, и селектором, но состояние снимают одинаково — класс звезды до и
+    после. Отдельная копия разборщика разошлась бы с первой на первой же правке.
+    Эти строки и сторожат, что общая выкройка читает обратную сторону так же
+    честно, как прямую.
     """
 
     def test_lit_star_pressed_out_is_done(self):
         """Горела, нажали — погасла. Это наша работа на обратном ходе."""
         assert favorite_state(ALREADY_FAVORITE, BEFORE_EMPTY, on=False) \
                == (FAVORITE_DONE, '')
+
+    def test_row_removed_together_with_star_is_done(self):
+        """⚠ **Пустое «после» при горящем «до» — успех снятия.** На странице
+        избранных сайт при подтверждении убирает строку человека вместе со
+        звездой, и звезды на странице не остаётся вовсе. На анкете пустоты бы не
+        было (звезда висит всегда) — потому-то прежний разбор и считал её отказом.
+        Живая проверка 2026-09-29: снятие работает только там, и выглядит так.
+        """
+        assert favorite_state(ALREADY_FAVORITE, '', on=False) \
+               == (FAVORITE_DONE, '')
+
+    def test_blind_empty_pair_is_a_failure(self):
+        """⚠ А вот если и «до» пусто — мы ничего не видели вовсе. Пустое «после»
+        без увиденной горящей звезды — слепота (шага не было, строку не нашли),
+        а не работа: выдумывать удачу нечем."""
+        state, error = favorite_state('', '', on=False)
+
+        assert state == FAVORITE_FAIL
+        assert error
 
     def test_star_not_born_lit_is_already(self):
         """⚠ Его и так не было в избранных — `already`, а не выдуманное `done`:
@@ -116,13 +136,6 @@ class TestStateUndoing:
 
         assert state == FAVORITE_FAIL
         assert 'не погасла' in error
-
-    def test_empty_after_is_a_failure_here_too(self):
-        """Пустое «после» — ничего не видели, а не «погасло»."""
-        state, error = favorite_state(ALREADY_FAVORITE, '', on=False)
-
-        assert state == FAVORITE_FAIL
-        assert error
 
 
 class TestRowsFromTheSite:
