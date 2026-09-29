@@ -75,6 +75,7 @@
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.companion_card import companion_save
 from src.dating.log import log_write
 from src.dating.people import PEOPLE_NAME_MAX, PEOPLE_UID_MAX
 from src.dating.ready import password_pick
@@ -709,23 +710,20 @@ async def _cards_put(site_id: int, rows: list[dict]) -> None:
     if not rows:
         return
 
+    # ⚠⚠ Своего запроса здесь больше нет — пишем общей дверью `companion_save`.
+    # Прежде «пустое не затирает известное» держала склейка
+    # `IF(VALUES(x) = '', x, VALUES(x))` прямо в запросе, и такая же склейка стояла
+    # у ручки ленты — двумя копиями одного правила. Теперь пустое просто **не
+    # передаётся**, а части имени дверь считает сама.
     try:
-        async with mysql_get_db_async() as db:
-            for one in rows:
-                await db.execute(
-                    'INSERT INTO companion'
-                    ' (site_id, uid, name, photo, age, city, country)'
-                    ' VALUES (%s, %s, %s, %s, %s, %s, %s)'
-                    ' ON DUPLICATE KEY UPDATE'
-                    "  name = IF(VALUES(name) = '', name, VALUES(name)),"
-                    "  photo = IF(VALUES(photo) = '', photo, VALUES(photo)),"
-                    '  age = IF(VALUES(age) = 0, age, VALUES(age)),'
-                    "  city = IF(VALUES(city) = '', city, VALUES(city)),"
-                    "  country = IF(VALUES(country) = '', country, VALUES(country))",
-                    (int(site_id), one['uid'], one['name'], one['photo'],
-                     int(one['age'] or 0), one['city'], one['country']))
+        for one in rows:
+            known = {name: value for name, value in
+                     (('name', one['name']), ('photo', one['photo']),
+                      ('age', int(one['age'] or 0)), ('city', one['city']),
+                      ('country', one['country']))
+                     if value}
 
-            await db.connection.commit()
+            await companion_save(int(site_id), one['uid'], **known)
     except Exception as e:
         logger_info(f'[dating] карточки избранных сайта #{site_id} не легли: {e}')
 

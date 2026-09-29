@@ -48,6 +48,95 @@ async def companion(auth_client):
     await _drop(auth_client, SITE, uid)
 
 
+class TestNamePartsAreStored:
+    """⚠⚠ Части имени лежат в карточке и пишутся **вместе** с именем.
+
+    Прежде их выводили из `name` на чтении, и против колонок был прямой довод:
+    они разойдутся с именем в первую же правку, и письмо уйдёт с прежним
+    обращением. Довод снят не обещанием, а единственностью двери
+    (`companion_card.companion_save`) — она пересчитывает части всяким вызовом,
+    который меняет имя. Ниже это и проверяется, включая разойдутся-ли.
+    """
+
+    async def test_parts_are_filled_on_creation(self, auth_client, companion):
+        """«Julian» — одно слово, и первое имя обязано быть."""
+        assert companion['firstname'] == 'Julian'
+        assert companion['lastname'] == ''
+
+    async def test_two_word_name_splits(self, auth_client):
+        uid = f'tst-{uuid.uuid4().hex[:10]}'
+        made = (await auth_client.post('/api/dating/companion', json={
+            'site_id': SITE, 'uid': uid, 'name': 'Brian Ritter'})).json()['result']
+
+        try:
+            assert made['firstname'] == 'Brian'
+            assert made['lastname'] == 'Ritter'
+        finally:
+            await _drop(auth_client, SITE, uid)
+
+    async def test_the_shout_is_tamed_before_splitting(self, auth_client):
+        """⚠ Регистр правится **до** разбора, иначе в первое слово уедет крик."""
+        uid = f'tst-{uuid.uuid4().hex[:10]}'
+        made = (await auth_client.post('/api/dating/companion', json={
+            'site_id': SITE, 'uid': uid,
+            'name': 'VINCENT PITCHEN'})).json()['result']
+
+        try:
+            assert made['name'] == 'Vincent Pitchen'
+            assert made['firstname'] == 'Vincent'
+        finally:
+            await _drop(auth_client, SITE, uid)
+
+    async def test_parts_follow_a_renamed_card(self, auth_client, companion):
+        """⚠⚠⚠ Ради этого дверь и одна: имя сменилось — части поехали за ним.
+
+        Разойдись они, письмо звало бы человека прежним именем, и увидеть это
+        можно было бы только в тексте у живого получателя.
+        """
+        again = (await auth_client.post('/api/dating/companion', json={
+            'site_id': SITE, 'uid': companion['uid'],
+            'name': 'Semen Gorbunkov'})).json()['result']
+
+        assert again['name'] == 'Semen Gorbunkov'
+        assert again['firstname'] == 'Semen'
+        assert again['lastname'] == 'Gorbunkov'
+
+    async def test_parts_cannot_be_set_from_outside(self, auth_client, companion):
+        """⚠ Снаружи части не пишутся — только считаются из имени.
+
+        Дай мы их присылать, появился бы второй способ задать имя, и он разошёлся
+        бы с первым.
+        """
+        from src.dating.companion_card import COMPANION_CARD_COLUMNS
+
+        assert 'firstname' not in COMPANION_CARD_COLUMNS
+        assert 'lastname' not in COMPANION_CARD_COLUMNS
+
+    async def test_the_door_is_the_only_writer_of_name(self):
+        """⚠⚠ Сторож против второй двери: `name` пишется одним местом.
+
+        Появись второй `INSERT`/`UPDATE` с колонкой `name`, части снова могли бы
+        отстать от имени — то самое возражение, ради снятия которого дверь и
+        завели.
+        """
+        import pathlib
+        import re
+
+        writers = []
+        for path in pathlib.Path('src').rglob('*.py'):
+            if path.name == 'companion_card.py':
+                continue
+
+            code = path.read_text(encoding='utf-8')
+            for chunk in re.findall(
+                    r'(?:INSERT[^;\'"]{0,80}INTO\s+companion\b'
+                    r'|UPDATE\s+companion\b)[^;]{0,400}', code, re.I):
+                if re.search(r'\bname\b', chunk):
+                    writers.append(f'{path}: {" ".join(chunk.split())[:70]}')
+
+        assert not writers, 'имя карточки пишут мимо двери: ' + '; '.join(writers)
+
+
 class TestCompanionSave:
     """Заведение и обновление из ленты."""
 

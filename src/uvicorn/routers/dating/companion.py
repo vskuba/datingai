@@ -37,7 +37,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.dating.companion_about import (COMPANION_ABOUT_EVERY_DEFAULT,
                                         COMPANION_ABOUT_EVERY_SETTING)
 from src.uvicorn.routers.dating.site_ import site_seconds
-from src.dating.people import people_name_case
+from src.dating.companion_card import companion_save
 
 from src.auth.auth import AuthUser, auth_required
 from src.dating.mailing import mailing_companion_vars
@@ -124,7 +124,7 @@ async def companion_list(site_id: int = 0, find: str = '',
     if not int(site_id or 0):
         return {'result': [], 'total': 0, 'limit': COMPANION_LIMIT}
 
-    sql = ('SELECT id, site_id, uid, name, photo, age, city, country, email,'
+    sql = ('SELECT id, site_id, uid, name, firstname, lastname, photo, age, city, country, email,'
            ' priority, about, about_state, about_error, about_at, created_at,'
            ' updated_at FROM companion WHERE site_id = %s')
     args = [int(site_id)]
@@ -169,9 +169,14 @@ async def companion_list(site_id: int = 0, find: str = '',
 
 
 @router.post('', include_in_schema=False)
-async def companion_save(payload: DatingCompanionSave,
+async def companion_add(payload: DatingCompanionSave,
                                 user: AuthUser = Depends(auth_required)):
     """Заводит карточку собеседника или обновляет то, что о нём знает лента.
+
+    ⚠ Имя обработчика — `companion_add`, а не `companion_save`: так зовётся
+    **дверь записи** (`companion_card.companion_save`), и пока обработчик носил то
+    же имя, он затенял её собой — вызов уходил рекурсией в себя, а не в дверь.
+    Ручка отвечала `500`, поймано сюитой.
 
     Returns:
         dict: карточка целиком — страница показывает её сразу, не перечитывая
@@ -188,25 +193,22 @@ async def companion_save(payload: DatingCompanionSave,
     Открыто всем вошедшим: это работа с людьми сайта, ровно та, ради которой
     панель и открывают.
     """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT INTO companion (site_id, uid, name, photo, age, city, country)'
-            ' VALUES (%s, %s, %s, %s, %s, %s, %s)'
-            ' ON DUPLICATE KEY UPDATE'
-            # ⚠ `IF(%s = '', name, %s)` вместо простого присваивания: пустое
-            # значение из ленты означает «не знаю», а не «сотри».
-            "  name = IF(VALUES(name) = '', name, VALUES(name)),"
-            "  photo = IF(VALUES(photo) = '', photo, VALUES(photo)),"
-            '  age = IF(VALUES(age) = 0, age, VALUES(age)),'
-            "  city = IF(VALUES(city) = '', city, VALUES(city)),"
-            "  country = IF(VALUES(country) = '', country, VALUES(country))",
-            # ⚠ Регистр правим и здесь: карточку заводит не только лента, но и
-            # кнопка из журнала — имя приходит от сайта тем же «VINCENT».
-            (int(payload.site_id), payload.uid.strip(),
-             people_name_case(payload.name),
-             payload.photo.strip(), int(payload.age), payload.city.strip(),
-             payload.country.strip()))
-        await db.connection.commit()
+    # ⚠⚠ «Пустое не затирает известное» держится теперь **отбором здесь**, а не
+    # склейкой `IF(VALUES(x) = '', x, VALUES(x))` в запросе. Правило то же: лента
+    # отдаёт разный набор, и заход без города не должен стирать город, снятый
+    # прошлым. Но решать это вызывающему правильнее — у двери есть случай, где
+    # пустое значит именно «сотри» (`about_error=''` гасит прежнюю ошибку), и
+    # фильтр внутри запретил бы его навсегда.
+    #
+    # ⚠ Регистр имени и части имени правит сама дверь: карточку заводит не только
+    # лента, но и кнопка из журнала — имя приходит от сайта тем же «VINCENT».
+    known = {name: value for name, value in
+             (('name', payload.name.strip()), ('photo', payload.photo.strip()),
+              ('age', int(payload.age)), ('city', payload.city.strip()),
+              ('country', payload.country.strip()))
+             if value}
+
+    await companion_save(int(payload.site_id), payload.uid.strip(), **known)
 
     return {'result': await _row_by_uid(int(payload.site_id), payload.uid.strip())}
 
@@ -363,52 +365,26 @@ async def companion_touch(site_id: int, uid: str, **fields) -> dict:
     if not uid:
         return {}
 
-    # Карточки может не быть вовсе: описание собирают и для того, кого в лентах
-    # ещё не видели.
-    await _ensure(int(site_id), uid)
-
-    known = ('about', 'about_state', 'about_error', 'city', 'country',
-             'name', 'photo', 'age')
-    parts, args = [], []
-    for name in known:
-        if name not in fields:
-            continue
-
-        parts.append(f'{name} = %s')
-        args.append(int(fields[name] or 0) if name == 'age' else str(fields[name] or ''))
-
-    if 'about_state' in fields:
-        # Время ответа сайта — вместе с состоянием: по нему видно, давно ли
-        # спрашивали, и оно же отвечает на «не пора ли ещё раз».
-        parts.append('about_at = NOW()')
-
-    if parts:
-        args.extend([int(site_id), uid])
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                f"UPDATE companion SET {', '.join(parts)}"
-                ' WHERE site_id = %s AND uid = %s', tuple(args))
-            await db.connection.commit()
+    # ⚠⚠ Своего запроса здесь больше нет — пишем общей дверью `companion_save`.
+    # Прежде этот обработчик правил карточку сам, и правил **без**
+    # `people_name_case`: имя «VINCENT» с сайта доезжало до письма криком, потому
+    # что нормализацию звали два других пути, а этот про неё не знал. Заодно
+    # оттуда же тянулись части имени — теперь их считает дверь, вместе с `name`.
+    #
+    # ⚠ Отдельного «заведи, если нет» больше не нужно: дверь заводит и правит
+    # одним запросом, то есть и гонку двух кругов ловит там же.
+    await companion_save(int(site_id), uid, **fields)
 
     return await companion_get(int(site_id), uid)
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
 
-async def _ensure(site_id: int, uid: str) -> None:
-    """Заводит пустую карточку, если её ещё нет. `INSERT IGNORE` ловит гонку."""
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'INSERT IGNORE INTO companion (site_id, uid, name)'
-            " VALUES (%s, %s, '')", (int(site_id), str(uid)))
-        await db.connection.commit()
-
-
 async def _row(companion_id: int) -> dict:
     """Карточка по номеру или 404."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT id, site_id, uid, name, photo, age, city, country, email,'
+            'SELECT id, site_id, uid, name, firstname, lastname, photo, age, city, country, email,'
             ' priority, about, about_state, about_error, about_at, created_at,'
             ' updated_at FROM companion WHERE id = %s', (int(companion_id),))
         row = await db.fetchone()
@@ -425,7 +401,7 @@ async def _row_by_uid(site_id: int, uid: str, soft: bool = False) -> dict:
     """Карточка по сайту и номеру. `soft` — пустой словарь вместо 404."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT id, site_id, uid, name, photo, age, city, country, email,'
+            'SELECT id, site_id, uid, name, firstname, lastname, photo, age, city, country, email,'
             ' priority, about, about_state, about_error, about_at, created_at,'
             ' updated_at FROM companion WHERE site_id = %s AND uid = %s',
             (int(site_id), str(uid)))
@@ -485,6 +461,13 @@ def _answer(row: dict, online: dict = None, every: int = 0) -> dict:
             'site_id': int(row['site_id']),
             'uid': str(row['uid']),
             'name': str(row['name']),
+            # ⚠ Части имени уезжают страницей **и** в подстановку: по ним
+            # `mailing_companion_vars` показывает, чем подставится
+            # `companion_first_name`, а `mailing_person_fields` предпочитает
+            # поле карточки выводимому. Не отдай мы их — подстановка молча
+            # скатилась бы на разбор `name`, то есть на догадку вместо факта.
+            'firstname': str(row.get('firstname') or ''),
+            'lastname': str(row.get('lastname') or ''),
             'photo': str(row['photo']),
             'age': int(row['age'] or 0),
             'city': str(row['city']),

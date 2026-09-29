@@ -92,7 +92,12 @@ class TestDoors:
         ('src.dating.profile_cache', 'снимок собеседников кабинета'),
         ('src.dating.chat_panel', 'переписка из панели агентства'),
         ('src.dating.dialog', 'переписка со страницы чата'),
-        ('src.uvicorn.routers.dating.companion', 'карточка собеседника'),
+        # ⚠⚠ Дверь карточки — `companion_card`, а не роутер. Прежде регистр
+        # правила сама ручка `POST`, и потому её и проверяли здесь; теперь
+        # карточку пишет одна дверь (`companion_save`), и правило стоит в ней —
+        # разом за ручку ленты, за забор избранных и за `companion_touch`,
+        # который его как раз **не** звал и нёс «VINCENT» в письмо.
+        ('src.dating.companion_card', 'карточка собеседника'),
     ])
     def test_every_door_calls_it(self, module, place):
         """⚠ Проверка по исходнику, а не по вызову: дверь ведёт наружу.

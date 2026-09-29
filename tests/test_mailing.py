@@ -960,28 +960,36 @@ class TestNameIsAnAddress:
                             {'default_value': ''}) == 'Semen'
 
     def test_single_word_name_stays_whole(self):
-        """⚠ Здесь и видно, почему правится подстановка, а не тексты шаблонов.
-
-        Замени мы `[[companion_name]]` на `[[companion_first_name]]` в готовых
-        письмах — адресатам с именем одним словом подставлять стало бы нечего:
-        `firstname` у них пуст намеренно (`people_name_parts`), нехватка
-        переменной останавливает отправку, и письмо не ушло бы вовсе.
-        """
+        """Имя одним словом подставляется целиком — оно и есть имя."""
         from src.dating.mailing import _from_person
 
         assert _from_person('companion_name', {'name': 'Kevin'},
                             {'default_value': ''}) == 'Kevin'
 
-    def test_first_name_variable_still_answers_honestly(self):
-        """`companion_first_name` остаётся честным: делить нечего — пусто.
+    def test_first_name_is_filled_for_a_single_word_too(self):
+        """⚠⚠ Раньше здесь была пустота, и это останавливало отправку.
 
-        Он отвечает на вопрос «знаем ли мы имя отдельно», и подменять его целым
-        именем значило бы стереть разницу между «знаем» и «просто строка».
+        `companion_first_name` отвечал «делить нечего» у большинства адресатов —
+        имя одним словом на сайте обычное дело, — а пустая переменная письмо не
+        пускает. Теперь первое слово есть всегда, когда есть имя.
         """
         from src.dating.mailing import _from_person
 
         assert _from_person('companion_first_name', {'name': 'Kevin'},
-                            {'default_value': ''}) == ''
+                            {'default_value': ''}) == 'Kevin'
+
+    def test_the_two_name_variables_agree(self):
+        """⚠ `companion_name` берёт то же первое слово, что `companion_first_name`.
+
+        Разойдись они — письмо звало бы человека по-разному в двух абзацах.
+        """
+        from src.dating.mailing import _from_person
+
+        for said in ('Kevin', 'Semen Gorbunkov', 'JULIO RODRIGO ZAPATA OLIVA'):
+            person, var = {'name': said}, {'default_value': ''}
+
+            assert _from_person('companion_name', person, var) \
+                == _from_person('companion_first_name', person, var), said
 
     def test_other_fields_are_untouched(self):
         """Правило — только про `…_name`: прочие поля берутся как лежат."""

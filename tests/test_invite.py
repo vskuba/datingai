@@ -417,10 +417,23 @@ class TestCompanionNameParts:
     Сайт отдаёт имя одной строкой, и обращение «Здравствуйте, Brian Ritter»
     читается как заполненная форма: по имени и фамилии разом не обращаются нигде.
 
-    ⚠ **Нет пробела — обе части пусты**, а не «имя целиком». Соблазн отдать
-    «Kevin» первым именем велик, но тогда пропадает разница между «имя известно
-    отдельно» и «у нас просто строка», а решать, чем звать, должен тот, кто пишет
-    текст: промпт через `[<if …>] … [<else>]`, шаблон через `default_value`.
+    ## ⚠⚠ Одно слово — тоже имя, и раньше было иначе
+
+    Прежде имя без пробела давало **обе части пустыми**: считалось, что так видна
+    разница между «имя известно отдельно» и «у нас просто строка», а чем звать —
+    решает тот, кто пишет текст.
+
+    Цена этого решения оказалась выше пользы, и мерили её дважды:
+
+    * инвайты — **23 черновика из 36** ушли бы с сырой меткой
+      `[[companion_name]]` в тексте живому человеку, и ради этого в `invite.py`
+      завелась своя копия разбора (`_first_word`);
+    * письма — `companion_first_name` пустовал у большинства адресатов (имя одним
+      словом на сайте — обычное дело), а пустая переменная **останавливает
+      отправку**.
+
+    Теперь правило одно на панель: первое слово есть всегда, когда есть имя. Две
+    копии «первого слова» сведены в одну — `_first_word` зовёт `people_name_parts`.
     """
 
     def test_two_words_split(self):
@@ -438,17 +451,36 @@ class TestCompanionNameParts:
         assert people_name_parts('JULIO RODRIGO ZAPATA OLIVA') == {
             'firstname': 'JULIO', 'lastname': 'RODRIGO ZAPATA OLIVA'}
 
-    def test_single_word_gives_nothing(self):
+    def test_single_word_is_the_first_name(self):
+        """⚠⚠ «Kevin» — это имя, а не «просто строка»: так его и зовут.
+
+        Фамилии при этом нет, и выдумывать её нельзя — пусто значит «не знаем».
+        """
         from src.dating.people import people_name_parts
 
-        assert people_name_parts('Kevin') == {'firstname': '', 'lastname': ''}
+        assert people_name_parts('Kevin') == {
+            'firstname': 'Kevin', 'lastname': ''}
 
     def test_underscores_are_not_spaces(self):
         """⚠ `Tall_Good_Man` — одно слово, хотя выглядит как три. Разбери мы его
         по подчёркиванию, человека звали бы «Tall»."""
         from src.dating.people import people_name_parts
 
-        assert people_name_parts('Tall_Good_Man')['firstname'] == ''
+        assert people_name_parts('Tall_Good_Man') == {
+            'firstname': 'Tall_Good_Man', 'lastname': ''}
+
+    def test_the_invite_shares_the_rule(self):
+        """⚠⚠ Сторож против второй копии: `_first_word` была ею до этой правки.
+
+        Разойдись они снова — инвайт звал бы человека одним словом, а письмо
+        другим, и заметно это стало бы только по текстам у живых людей.
+        """
+        from src.dating.invite import _first_word
+        from src.dating.people import people_name_parts
+
+        for said in ('Kevin', 'Brian Ritter', 'JULIO RODRIGO ZAPATA OLIVA',
+                     '  Ales   kumer ', 'Tall_Good_Man', ''):
+            assert _first_word(said) == people_name_parts(said)['firstname'], said
 
     def test_extra_spaces_do_not_make_parts(self):
         from src.dating.people import people_name_parts
@@ -526,16 +558,37 @@ class TestCompanionVars:
 
         assert mailing_person_key('companion_firstName', fields) == 'firstname'
 
-    def test_single_word_leaves_the_variable_unfilled(self):
-        """Пусто — законный исход: письмо не уйдёт, пока человек не решит, чем
-        заменить. Это лучше, чем уйти с фамилией вместо имени."""
+    def test_single_word_fills_the_variable(self):
+        """⚠⚠ Раньше здесь была пустота, и письмо из-за неё не уходило.
+
+        Пустое значение переменной останавливает отправку, а имя одним словом на
+        сайте — обычное дело: `companion_first_name` пустовал у большинства
+        адресатов. Теперь «Kevin» — это имя, им и обращаются.
+        """
         from src.dating.mailing import mailing_companion_vars
 
         known = [{'name': 'companion_first_name', 'source': 'companion',
                   'title': '', 'default_value': ''}]
         row = mailing_companion_vars({'name': 'Kevin'}, known)[0]
 
-        assert row['value'] == '' and row['filled'] is False
+        assert row['value'] == 'Kevin' and row['filled'] is True
+
+    def test_the_stored_part_wins_over_the_derived_one(self):
+        """⚠ Своё поле карточки сильнее выводимого, и порядок этот не новый.
+
+        Части имени лежат колонками (`companion.firstname`), но пул подставляет
+        из ленты «Все онлайн», где их нет, — и там в дело идёт разбор `name`.
+        Приехали колонкой — берём её: разбор по пробелу догадка, а присланное
+        полем — факт.
+        """
+        from src.dating.mailing import mailing_companion_vars
+
+        known = [{'name': 'companion_first_name', 'source': 'companion',
+                  'title': '', 'default_value': ''}]
+        row = mailing_companion_vars(
+            {'name': 'Brian Ritter', 'firstname': 'Bri'}, known)[0]
+
+        assert row['value'] == 'Bri'
 
 
 class TestDelivery:
