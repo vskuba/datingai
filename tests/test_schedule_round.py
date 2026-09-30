@@ -86,8 +86,11 @@ def door(monkeypatch):
     """Подменяет вход и выход. Возвращает, кого куда водили."""
     seen = {'entered': [], 'left': []}
 
-    async def _enter(profile_id):
-        seen['entered'].append(int(profile_id))
+    async def _enter(profile):
+        # ⚠ Кругу передаётся вся строка, а не номер: вход спрашивает дверь до
+        # записи в журнал, и ей нужны `site_id` с чередой неудач.
+        profile_id = int(profile['id'])
+        seen['entered'].append(profile_id)
         async with mysql_get_db_async() as db:
             await db.execute("UPDATE profile SET status = 'online',"
                              " storage_state = '{}', ws_url = 'wss://x?t=1'"
@@ -316,3 +319,67 @@ class TestSessionIsReleasedToo:
             await db.connection.commit()
 
         assert (await schedule_round_run(0))['left'] == 0
+
+
+class TestTheRoundDoesNotPromiseWhatItCannotDo:
+    """⚠⚠ «Смена началась, вхожу» писалось **до** проверки — и на этом кончалось.
+
+    Прод, анкета #40 (Ladadate), 30.09. Потолок неудач входа был исчерпан, автомат
+    к сайту не ходил вовсе, — а в журнале каждую смену стояло «Расписание: смена
+    началась, вхожу» и больше ничего. Человек читает это как удачу: обещание есть,
+    отказа нет.
+
+    Молчать при запрете круг решил намеренно (он идёт раз в минуту, и строка на
+    каждый заход дала бы пятнадцать записей за четверть часа паузы) — но молчать
+    надо было **вместе с обещанием**, а не после него.
+
+    ⚠ Строку запрета при этом пишем, и повтор не копится: `log_write` схлопывает
+    одинаковые подряд, оставляя одну с временем последней проверки. Тем же приёмом
+    и по той же причине помечает свои анкеты круг восстановления
+    (`revive_db_site_missing`).
+    """
+
+    def _held(self) -> dict:
+        """Анкета, которой вход сейчас запрещён паузой после сорвавшегося прогона."""
+        from datetime_.datetime_ import datetime_utc_now
+
+        return {'id': 1, 'site_id': 1, 'login_fail_tries': 0,
+                'login_fail_at': datetime_utc_now()}
+
+    @pytest.fixture
+    def journal(self, monkeypatch):
+        """Журнал круга и вход-счётчик: настоящий вход сюда не заходит."""
+        seen = {'said': [], 'logins': []}
+
+        async def log_write(profile_id, kind, text):
+            seen['said'].append(str(text))
+
+        async def login_run(profile_id, *a, **kw):
+            seen['logins'].append(int(profile_id))
+
+            return {'status': 'ok'}
+
+        from src.dating import login as login_module
+
+        monkeypatch.setattr(rnd, 'log_write', log_write)
+        monkeypatch.setattr(login_module, 'login_run', login_run)
+
+        return seen
+
+    async def test_a_held_login_does_not_promise(self, journal):
+        entered = await rnd._enter(self._held())
+
+        assert entered is False
+        assert journal['logins'] == [], 'круг пошёл в браузер, хотя вход запрещён'
+        said = ' | '.join(journal['said'])
+        assert 'вхожу' not in said, f'обещание осталось: {said}'
+        assert 'вход не идёт' in said, f'о запрете не сказано ничего: {said}'
+
+    async def test_an_allowed_login_still_says_it_is_going(self, journal):
+        """Разрешённый вход объявляется как прежде: строка отвечает «где оно сейчас»."""
+        entered = await rnd._enter({'id': 1, 'site_id': 1, 'login_fail_tries': 0,
+                                    'login_fail_at': None})
+
+        assert entered is True
+        assert journal['logins'] == [1]
+        assert any('вхожу' in text for text in journal['said']), journal['said']

@@ -778,3 +778,67 @@ class TestReviveRoundBackoff:
 
         assert round_stub['logins'] == [1, 2]
         assert counts['tried'] == 2
+
+
+class TestGiveUpTellsWhichSilenceItIs:
+    """⚠⚠ «Сутки не выходит войти» и «сутки не пробовали» — разные беды.
+
+    Прод, анкета #40 (Ladadate), 30.09 06:00. Строка «сутки не выходит войти,
+    автовход остановлен» звала искать беду на сайте — а искать надо было у себя: за
+    те сутки не было ни одной настоящей попытки. Все двенадцать остановил потолок
+    неудач входа у своей же двери, защёлкнутый тремя браузерными таймаутами
+    (`login_retry.py`).
+
+    Разница не в вежливости формулировки, а в том, куда человек пойдёт смотреть:
+    в журнал сайта или в карточку анкеты.
+    """
+
+    def _dead(self, **kw) -> list[dict]:
+        """Анкета, которую сутки не удаётся вернуть, и срок попытки ещё не стёрт.
+
+        Именно непустой `relogin_next_at` и делает круг «тем самым, который
+        сдался»: следующий сотрёт срок, и сдача станет давней.
+        """
+        return [_profile(id=1, site_id=1,
+                         relogin_since=NOW - timedelta(hours=25),
+                         relogin_next_at=NOW - timedelta(minutes=1), **kw)]
+
+    async def test_a_plain_give_up_keeps_its_words(self, round_stub):
+        """Попытки шли и не вышли — говорим про сайт, как и раньше."""
+        round_stub['profiles'] = self._dead()
+        round_stub['status'][1] = 'offline'
+
+        counts = await revive_round_run(login_run=_login_stub(round_stub))
+
+        assert counts['given_up'] == 1
+        assert any('сутки не выходит войти' in why
+                   for _, why in round_stub['errors']), round_stub['errors']
+
+    async def test_a_latched_ceiling_says_the_automation_never_tried(self, round_stub):
+        """⚠⚠ Потолок исчерпан — значит попыток не было, и строка обязана это сказать."""
+        round_stub['profiles'] = self._dead(login_fail_tries=3)
+        round_stub['status'][1] = 'offline'
+
+        counts = await revive_round_run(login_run=_login_stub(round_stub))
+
+        assert counts['given_up'] == 1
+        said = ' '.join(why for _, why in round_stub['errors'])
+        assert 'потолок' in said, said
+        assert 'не пробовал' in said, said
+        # Журнал анкеты говорит то же: человек смотрит в него, а не в чужую вкладку.
+        logged = ' '.join(text for _, kind, text in round_stub['logs'] if kind == 'fail')
+        assert 'потолок' in logged, logged
+
+    async def test_the_row_carries_the_counter(self):
+        """⚠ Счётчик неудач обязан приезжать в круг: без него он не различит беды.
+
+        Отбор анкет — единственное место, где это читается, и забытый столбец
+        выглядел бы как «потолок никогда не исчерпан».
+        """
+        import inspect
+
+        from src.dating import revive_db
+
+        code = inspect.getsource(revive_db.revive_db_profiles_kept)
+
+        assert 'login_fail_tries' in code, 'круг снова не видит потолка неудач'

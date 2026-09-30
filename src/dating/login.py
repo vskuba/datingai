@@ -83,7 +83,8 @@ async def login_run(profile_id: int, scenario_id: int = 0, session_id: str = '',
     """
     from src.dating.login_retry import (DatingLoginHeld,
                                                login_retry_allowed,
-                                               login_retry_fail)
+                                               login_retry_fail,
+                                               login_retry_hold)
 
     profile = await _profile_row(profile_id)
 
@@ -195,6 +196,13 @@ async def login_run(profile_id: int, scenario_id: int = 0, session_id: str = '',
             await login_state_clear(profile_id)
             await log_write(profile_id, 'fail',
                                    f"Сайт вход не признал: {verify['error']}")
+            # ⚠⚠ **Вот он, настоящий отказ входа — и он в потолок не попадал.**
+            # Ветка уходит своим `return`, до счёта неудач внизу дело не доходило
+            # никогда: сколько бы раз сайт ни отказал, автомат пробовал снова.
+            # Ровно эта беда потолок и породила — девять входов за четырнадцать
+            # минут у анкеты, чей кабинет сайт не подтверждал (`login_retry.py`), —
+            # и ею же не ловилась.
+            await login_retry_fail(profile_id)
             await login_session_close(session_id)
             await rhapsody_api_error_write(
                 'dating', f"вход под «{profile['login']}» не признан сайтом: {verify['error']}",
@@ -252,7 +260,13 @@ async def login_run(profile_id: int, scenario_id: int = 0, session_id: str = '',
         #
         # Записывается и вход по кнопке (`force`): человек обошёл паузу, но его
         # неудача такая же настоящая, и следующему автомату о ней знать полезно.
-        await login_retry_fail(profile_id)
+        #
+        # ⚠⚠ **Пауза, а не потолок.** Сорвавшийся сценарий — это не отказ сайта:
+        # вкладка закрылась, клик не дождался кнопки, пул соседа был занят. Пока
+        # это шло в общий счётчик, три браузерных таймаута за вечер запирали
+        # здоровую учётку до нажатия кнопки человеком (анкета #40, 28.09 — разбор
+        # в `login_retry.py`).
+        await login_retry_hold(profile_id)
         await rhapsody_api_error_write(
             'dating', f"вход под «{profile['login']}» не прошёл: {result.get('error', '')}",
             session_id=session_id,

@@ -80,7 +80,7 @@ async def schedule_round_run(offset_hours: int = 0) -> dict:
         on_shift = schedule_now(row['schedule'], minutes)
 
         if on_shift and not online:
-            if await _enter(profile_id):
+            if await _enter(row):
                 entered += 1
 
             continue
@@ -146,7 +146,11 @@ async def _rows() -> list[dict]:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                'SELECT id, login, schedule, schedule_on, enabled, status, ws_url,'
+                # ⚠ `site_id` и счётчик неудач берём здесь же: вход по расписанию
+                # спрашивает дверь (`login_retry_allowed`) **до** записи в журнал,
+                # а ей нужна и настройка сайта, и череда отказов.
+                'SELECT id, login, site_id, schedule, schedule_on, enabled, status,'
+                '       ws_url, login_fail_tries, login_fail_at,'
                 '       storage_state IS NOT NULL AS storage_state'
                 '  FROM profile WHERE schedule_on = 1 ORDER BY id')
             rows = await db.fetchall()
@@ -158,24 +162,47 @@ async def _rows() -> list[dict]:
     return [dict(row) for row in rows or []]
 
 
-async def _enter(profile_id: int) -> bool:
+async def _enter(profile: dict) -> bool:
     """Вход по расписанию. Не бросает: один сорванный вход не должен лишать
-    остальных."""
+    остальных.
+
+    ⚠⚠ **Сперва спрашиваем дверь, потом обещаем.** Строка «смена началась, вхожу»
+    писалась раньше проверки, и при запрете за ней не следовало ничего: журнал
+    обещал вход каждую смену, а его не было. Живой случай — анкета #40 (Ladadate),
+    30.09: потолок неудач исчерпан, автомат к сайту не ходил сутки, а в журнале
+    стояло только «вхожу».
+
+    Проверка двойная (внутри `login_run` она своя), и это не расточительность:
+    её ответ нужен **до** записи, а между нашим вопросом и дверью может лечь
+    неудача соседней попытки — потому ветка `DatingLoginHeld` ниже и остаётся.
+    """
     from src.dating.login import DatingLoginError, login_run
-    from src.dating.login_retry import DatingLoginHeld
+    from src.dating.login_retry import DatingLoginHeld, login_retry_allowed
+
+    profile_id = int(profile['id'])
+
+    allowed, why = await login_retry_allowed(profile)
+    if not allowed:
+        # ⚠ Строку пишем, а не молчим: повтор не копится, потому что `log_write`
+        # схлопывает одинаковые подряд — в ленте останется одна запись со временем
+        # последней проверки. Тем же приёмом и по той же причине метит свои анкеты
+        # круг восстановления (`revive_db_site_missing`).
+        await log_write(profile_id, 'info', f'Расписание: смена идёт, но {why}')
+
+        return False
 
     try:
         await log_write(profile_id, 'info', 'Расписание: смена началась, вхожу')
         result = await login_run(profile_id)
     except DatingLoginHeld as e:
-        # ⚠⚠ **Пауза — не отказ, и журнал об этом молчит.** Круг идёт раз в минуту;
-        # пиши он сюда строку, четверть часа паузы дала бы пятнадцать одинаковых
-        # записей, и настоящая причина утонула бы в них.
+        # ⚠⚠ **Пауза — не отказ, и здесь журнал о ней молчит.** Это гонка, а не
+        # обычный путь: запрет мы уже спросили выше и он нас пропустил, значит
+        # между вопросом и дверью успела лечь чужая неудача. Писать вторую строку
+        # об одном и том же незачем — про запрет уже сказано там, где он виден.
         #
         # Именно этот круг и долбил сайт: он входил прямым вызовом, мимо лестницы
         # автовосстановления, — девять входов за четырнадцать минут. Теперь
-        # правило стоит у самой двери (`login_retry.py`), а здесь остаётся
-        # только уйти молча.
+        # правило стоит у самой двери (`login_retry.py`).
         logger_info(f'[dating] расписание, вход #{profile_id} отложен: {e}')
 
         return False
