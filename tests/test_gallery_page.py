@@ -170,3 +170,25 @@ def test_carousel_styles_live_in_the_sheet(page):
     for name in ('.gallery-carousel', '.gallery-frame', '.gallery-step'):
         assert name in css, f'{name} нет в общей таблице стилей'
         assert f'{name} {{' not in page, f'{name} описан в разметке, а не в CSS'
+
+
+def test_info_button_is_not_buried_under_the_caption(page):
+    """⚠⚠ Кнопка описания не должна уходить под полосу имени.
+
+    Было: кнопка занимала 4–28 px снизу, полоса имени 0–17, и 13 пикселей из
+    24 оказывались под подписью — `elementFromPoint` в середине кнопки
+    возвращал `gallery-name`, то есть нажатие доставалось не ей.
+
+    Держится это на двух вещах, и проверяем обе: высота полосы задана
+    переменной, а отступ кнопки считается от неё же. Разойдись они — кнопка
+    снова уедет под подпись.
+    """
+    css = CSS_FILE.read_text(encoding='utf-8')
+
+    assert '--gallery-name-h' in css, 'высота полосы не названа переменной'
+    assert 'calc(var(--gallery-name-h)' in css, (
+        'отступ кнопки задан мимо переменной — величины разойдутся')
+
+    strip = css[css.index('.gallery-name {'):css.index('}', css.index('.gallery-name {'))]
+    assert 'pointer-events: none' in strip, (
+        'подпись ловит нажатия, хотя это текст, а не кнопка')
