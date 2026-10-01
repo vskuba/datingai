@@ -16,8 +16,9 @@
 вызов зрения стоит секунд, а разбор — работа фоновая, у неё нет причин
 выигрывать гонку у чата.
 
-⚠⚠ **Модели уходит сжатый кадр, а не оригинал.** Снимок приводится к RGB-JPEG
-со стороной не больше 1600 (`ai_vision_normalize`): 8,5 МБ PNG становятся 275 КБ.
+⚠⚠ **Модели уходит сжатый кадр, а не оригинал.** С Диска просим 800 пикселей
+по длинной стороне и приводим к RGB-JPEG (`ai_vision_normalize`): 8,5 МБ PNG
+становятся 53 КБ.
 Заодно снимается чужая грабля — локальные vision-серверы **не читают RGBA-PNG**
 и отвечают `400 Failed to load image`, а на Диске лежат именно PNG.
 """
@@ -30,21 +31,34 @@ from google_drive_.google_drive_bytes import google_drive_bytes
 from json_.json_ import json_from_string
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating.agent import agent_site
-from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_agent_find,
+from src.dating.agent import AGENT_NODE, agent_site
+from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_agent_create,
+                                       rhapsody_api_agent_find,
                                        rhapsody_api_chat_ask)
 
 # Сколько снимков разбираем за один заход. Решение человека.
 GALLERY_VISION_BATCH = 5
 
 # Какой кадр просим у Диска под разбор. Не оригинал: 800 по длинной стороне —
-# это ~700 КБ против 8,5 МБ, а модели для описания платья и обстановки большего
-# не нужно. Полный кадр существует для человека, а не для неё.
+# это 53 КБ JPEG против 8,5 МБ, а модели для описания платья и обстановки
+# большего не нужно. Полный кадр существует для человека, а не для неё.
+#
+# ⚠ Кадр едет к соседу переменной workflow, то есть **ложится в трассу
+# прогона**: 800 — это ~70 КБ base64 на вызов, 1600 было бы 367 КБ.
 GALLERY_VISION_WIDTH = 800
 
 # Имя workflow у соседа. ⚠ Точное, с приставкой `dating_`: сосед ищет его по
 # совпадению имени, и расхождение выглядит как «агент молчит».
+#
+# ⚠⚠ **Workflow выбирает агент, а не вызов.** Он задаётся один раз, при
+# заведении агента (`rhapsody_api_agent_create(workflow=…)`), и переменной его
+# не переключить: первая редакция слала `{'workflow': …}` в `chat_ask` и
+# работала бы ровно до первого прогона — агент гонял бы свой, не глядя.
 GALLERY_VISION_WORKFLOW = 'dating_gallery_describe'
+
+# Имя агента: одно на сайт, как у писем и инвайтов. Приставка нужна, чтобы его
+# было видно среди сотен чужих у соседа.
+GALLERY_VISION_AGENT = 'gallery_describe_{site}'
 
 # Что просим у модели. ⚠ **Поля названы прямо здесь**: не назовёшь — модель
 # придумает свои, и каждый раз другие, а колонки заполнять будет нечем.
@@ -128,8 +142,8 @@ async def gallery_vision_one(row: dict) -> dict:
 
     answer = await rhapsody_api_chat_ask(
         await _agent_id(row['profile_id']), GALLERY_VISION_PROMPT,
-        {'workflow': GALLERY_VISION_WORKFLOW,
-         'image': 'data:image/jpeg;base64,' + base64.b64encode(frame).decode()})
+        {'image': 'data:image/jpeg;base64,' + base64.b64encode(frame).decode(),
+         'prompt': GALLERY_VISION_PROMPT})
 
     got = json_from_string(answer)
     if not got:
@@ -146,21 +160,39 @@ async def gallery_vision_one(row: dict) -> dict:
 
 
 async def _agent_id(profile_id: int) -> int:
-    """Агент сайта, которому принадлежит анкета.
+    """Агент разбора для сайта анкеты; нет такого — заводим.
 
-    Агент один на сайт, как и у прочих занятий: метка собирается из имени
-    сайта-закладки (`agent_site`), и своего агента на каждую девушку здесь не
-    заводится.
+    Агент один на сайт, как у писем и инвайтов: метка собирается из имени
+    сайта-закладки (`agent_site`), своего агента на каждую девушку не заводится.
+
+    ⚠ **Заводим при первом обращении, а не заранее.** Сайтов у соседа десятки, и
+    агент впрок — это агент тем, кто галереей не пользуется вовсе.
+
+    ⚠ Метка обязательна и подставить общую вместо неё нельзя: агент приписался
+    бы к чужому сайту (`agent_site`).
     """
     async with mysql_get_db_async() as db:
         await db.execute('SELECT site_id FROM profile WHERE id = %s', (profile_id,))
         site_id = int(((await db.fetchone()) or {}).get('site_id') or 0)
 
-    found = await rhapsody_api_agent_find(f'dating_gallery_{await agent_site(site_id)}')
-    if not found:
-        raise RuntimeError('агент разбора фотографий у соседа не заведён')
+    slug = await agent_site(site_id)
+    if not slug:
+        raise RuntimeError(f'у сайта #{site_id} нет метки для агента: имя сайта '
+                           'у соседа не сводится к латинице')
 
-    return int(found.get('id') or 0)
+    name = GALLERY_VISION_AGENT.format(site=slug)
+    found = await rhapsody_api_agent_find(name)
+    if found.get('id'):
+        return int(found['id'])
+
+    made = await rhapsody_api_agent_create(
+        node=AGENT_NODE, workflow=GALLERY_VISION_WORKFLOW, name=name,
+        title=f'Галерея: {name}', variables={}, site=slug)
+    agent_id = int(made.get('id') or 0)
+    if not agent_id:
+        raise RuntimeError('сосед завёл агента разбора, но не вернул его номер')
+
+    return agent_id
 
 
 async def _result_save(row_id: int, description: str, tags: list, md5: str) -> None:

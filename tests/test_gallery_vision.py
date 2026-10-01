@@ -253,3 +253,24 @@ async def test_one_failure_does_not_take_the_batch(tree, agent, girl, only_mine)
 
     assert got['took'] == GALLERY_VISION_BATCH
     assert got['failed'] == 1 and got['done'] == GALLERY_VISION_BATCH - 1
+
+
+async def test_prompt_goes_as_a_variable(tree, agent, girl):
+    """⚠⚠ Просьба уходит **переменной** `prompt`, а не только вопросом.
+
+    Workflow соседа подставляет её в шаг `tool_invoke` (`inputs_map`), и без
+    этой переменной инструмент получил бы пустую просьбу — модель придумала бы
+    свои поля, и колонки заполнять было бы нечем.
+
+    ⚠ Переменной `workflow` здесь нет и быть не должно: workflow задаётся
+    агенту при заведении, и переключить его вызовом нельзя. Первая редакция
+    слала его переменной — это выглядело бы работающим ровно до первого
+    прогона.
+    """
+    await gallery_vision_one((await _mine(girl))[0])
+
+    sent = agent.asked[0]['variables']
+
+    assert 'image' in sent and 'prompt' in sent
+    assert sent['prompt'] == sent['prompt'].strip() and 'description' in sent['prompt']
+    assert 'workflow' not in sent, 'workflow задаётся агенту, а не вызовом'
