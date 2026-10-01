@@ -765,36 +765,63 @@
     background: #eef2ff; color: #4338ca; font-size: 11px; font-weight: 700;
 }
 
-/* Сетка подстраивается под ширину колонки: карточку анкеты открывают и на
-   узком экране, и во всю ширину. */
+/* Плитки — как «Исходники» на Face Swap у PersonaAI: квадрат, имя поверх
+   снизу, признак в углу, кнопка проступает под курсором. Размеры крупнее:
+   там плитку выбирают галочкой в узкой колонке, здесь её рассматривают.
+
+   ⚠ `auto-fill`, а не фиксированное число столбцов: карточку анкеты открывают
+   и на узком экране, и во всю ширину. */
 .gallery-grid {
-    display: grid; gap: 8px;
-    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    display: grid; gap: 8px; padding: 2px;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
 }
 .gallery-thumb {
-    position: relative; cursor: pointer; border-radius: 8px; overflow: hidden;
-    background: #f1f5f9; border: 1px solid #e5e7eb;
+    position: relative; aspect-ratio: 1 / 1; border-radius: 8px; overflow: hidden;
+    background: #f1f5f9; border: 2px solid transparent; cursor: pointer;
 }
-/* Квадратная плитка при любых пропорциях снимка: сетка из разновысоких плиток
-   читается как сломанная вёрстка, а не как галерея. */
-.gallery-thumb img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+/* Квадрат при любых пропорциях снимка: сетка из разновысоких плиток читается
+   как сломанная вёрстка, а не как галерея. */
+.gallery-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .gallery-thumb:hover { border-color: #4f46e5; }
+
+/* Признак описания — углом плитки. ⚠ Разобранное моделью и правленое рукой
+   различаются цветом: по сетке видно, где работа модели, а где человека. */
+.gallery-thumb.described::after,
+.gallery-thumb.edited::after {
+    content: '✓'; position: absolute; right: 4px; top: 2px;
+    font-size: 14px; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, .75);
+}
+.gallery-thumb.edited::after { content: '✎'; color: #c7d2fe; }
+
+/* Имя — поверх кадра снизу, а не отдельной строкой под ним: строка добавляла
+   плиткам разную высоту и ломала ряд. */
 .gallery-name {
-    padding: 3px 5px; font-size: 10px; color: #64748b;
+    position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 6px;
+    font-size: 10px; color: #fff; background: rgba(15, 23, 42, .72);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+
 /* Значок видео: щелчок по такой плитке уводит в просмотрщик Диска, а не
    открывает кадр у нас, и человек вправе знать это заранее. */
 .gallery-video {
-    position: absolute; left: 5px; top: 5px; padding: 1px 5px; border-radius: 6px;
+    position: absolute; left: 5px; top: 5px; padding: 1px 6px; border-radius: 6px;
     background: rgba(15, 23, 42, .75); color: #fff; font-size: 10px; font-weight: 700;
 }
+
+/* Кнопка описания проступает под курсором — как лупа у исходников. ⚠ На
+   плитке с описанием видна всегда: иначе его не прочесть, не угадав, что
+   кнопка там есть. */
 .gallery-info {
-    position: absolute; right: 5px; top: 5px; width: 18px; height: 18px;
-    border: 0; border-radius: 50%; cursor: pointer; font: 700 11px/18px serif;
-    background: rgba(15, 23, 42, .72); color: #fff; padding: 0;
+    position: absolute; right: 4px; bottom: 4px; width: 24px; height: 24px;
+    border: 0; border-radius: 6px; cursor: pointer; padding: 0;
+    background: rgba(15, 23, 42, .62); color: #fff;
+    font: 700 13px/24px serif; opacity: 0; transition: opacity .12s linear;
 }
+.gallery-thumb:hover .gallery-info,
+.gallery-thumb.described .gallery-info,
+.gallery-thumb.edited .gallery-info { opacity: 1; }
 .gallery-info:hover { background: #4f46e5; }
+.gallery-info:focus-visible { outline: 2px solid #a5b4fc; outline-offset: 2px; }
 
 /* Выбор папки и кнопки — одной строкой, переносятся на узком. */
 .gallery-pick { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
@@ -821,4 +848,43 @@
 .gallery-card-foot {
     display: flex; align-items: center; justify-content: space-between;
     gap: 8px; margin-top: 10px;
+}
+
+/* ── Карусель просмотра кадра ────────────────────────────────────────────────
+   Листание фотографий поверх страницы: стрелки по бокам, подпись снизу.
+   ⚠ Видео сюда не попадает — его полный кадр отдаёт просмотрщик Диска. */
+.gallery-carousel { cursor: default; gap: 10px; padding: 16px; }
+
+/* Кадр и подпись одним блоком: подпись обязана быть **под снимком**, а не
+   поверх него — поверх она ложится на лицо, ради которого кадр и открыли. */
+.gallery-frame {
+    margin: 0; display: flex; flex-direction: column; align-items: center;
+    gap: 8px; max-width: calc(100% - 120px); max-height: 100%;
+}
+.gallery-frame img {
+    max-width: 100%; max-height: 82vh; object-fit: contain; border-radius: 6px;
+    background: #0f172a;
+}
+.gallery-frame figcaption {
+    max-width: 100%; color: #e2e8f0; font-size: 12px; text-align: center;
+    line-height: 1.4; text-wrap: balance;
+}
+
+/* Стрелки — крупная цель нажатия: по ним щёлкают подряд, и промах отбрасывает
+   человека из просмотра (щелчок мимо закрывает карусель). */
+.gallery-step {
+    flex: 0 0 auto; width: 44px; height: 64px; border: 0; cursor: pointer;
+    border-radius: 8px; background: rgba(226, 232, 240, .14); color: #fff;
+    font: 300 30px/1 system-ui, sans-serif; padding: 0;
+    transition: background .12s linear;
+}
+.gallery-step:hover { background: rgba(226, 232, 240, .3); }
+.gallery-step:focus-visible { outline: 2px solid #a5b4fc; outline-offset: 2px; }
+
+/* На узком экране стрелки уходят под кадр: по бокам им места нет, а трогать
+   размер самого снимка ради них неправильно — смотрят именно его. */
+@media (max-width: 680px) {
+    .gallery-carousel { flex-wrap: wrap; }
+    .gallery-frame { order: -1; max-width: 100%; }
+    .gallery-step { width: 56px; height: 44px; }
 }

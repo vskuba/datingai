@@ -122,3 +122,51 @@ def test_script_has_no_syntax_error(page):
         assert got.returncode == 0, f'скрипт не проходит `node --check`: {got.stderr}'
     finally:
         os.remove(path)
+
+
+def test_carousel_scrolls_through_photos(page):
+    """⚠ Кадр листается: стрелки, клавиши и счёт позиции.
+
+    Прежде просмотр показывал один снимок и закрывался по щелчку — вернуться к
+    соседнему можно было только закрыв и открыв заново.
+    """
+    block = page[page.index('function galleryFrame('):page.index('function galleryModal(')]
+
+    assert 'gallery-step' in block, 'нет кнопок листания'
+    assert "'ArrowRight'" in block and "'ArrowLeft'" in block, 'клавиши не слушаются'
+    assert "'Escape'" in block, 'Esc перестал закрывать'
+    assert 'из ${photos.length}' in block, 'не видно, какой кадр по счёту'
+
+
+def test_carousel_takes_photos_only(page):
+    """⚠ Видео в ленту не берётся: его полный кадр отдаёт просмотрщик Диска."""
+    block = page[page.index('function galleryPhotos('):page.index('function galleryFrame(')]
+
+    assert "kind === 'image'" in block, 'в ленту попадёт видео, которое нечем показать'
+
+
+def test_carousel_preloads_neighbours(page):
+    """Соседние кадры подгружаются заранее — иначе стрелка показывает пустоту."""
+    block = page[page.index('function galleryFrame('):page.index('function galleryModal(')]
+
+    assert 'new Image()' in block, 'нет предзагрузки соседей'
+
+
+def test_carousel_clicks_do_not_close_it(page):
+    """⚠ Нажатие по стрелке и по кадру не закрывает просмотр.
+
+    Подложка закрывается щелчком, и без остановки всплытия каждое листание
+    выбрасывало бы человека из карусели.
+    """
+    block = page[page.index('function galleryFrame('):page.index('function galleryModal(')]
+
+    assert 'stopPropagation' in block
+
+
+def test_carousel_styles_live_in_the_sheet(page):
+    """Размеры карусели — в общей таблице стилей, а не в разметке."""
+    css = CSS_FILE.read_text(encoding='utf-8')
+
+    for name in ('.gallery-carousel', '.gallery-frame', '.gallery-step'):
+        assert name in css, f'{name} нет в общей таблице стилей'
+        assert f'{name} {{' not in page, f'{name} описан в разметке, а не в CSS'

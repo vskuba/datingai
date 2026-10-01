@@ -1067,17 +1067,21 @@
 
     function galleryTile(file) {
         const src = `${BASE}/api/dating/gallery/${currentId}/img/${file.id}?w=400`;
-        // ⚠ Значок «i» горит, когда описание есть, и гаснет, когда его нет:
-        // по сетке сразу видно, что модель уже разобрала, а что ещё нет.
-        const mark = file.edited ? 'правлено' : file.described ? 'разобрано' : 'без описания';
+        // ⚠ Признак описания — **галочкой в углу плитки**, а не видом кнопки:
+        // по сетке сразу видно, что модель уже разобрала, а что ещё нет, и
+        // видно это не наводя курсор.
+        const mark = file.edited ? 'правлено человеком'
+                   : file.described ? 'разобрано моделью' : 'без описания';
+        const state = file.edited ? ' edited' : file.described ? ' described' : '';
 
-        return `<div class="gallery-thumb" data-id="${esc(file.id)}"`
+        return `<div class="gallery-thumb${state}" data-id="${esc(file.id)}"`
             + ` data-kind="${esc(file.kind)}" data-view="${esc(file.view_url)}">`
             + `<img src="${src}" alt="${esc(file.name)}" loading="lazy">`
             + (file.kind === 'video' ? '<span class="gallery-video">видео</span>' : '')
             + `<button type="button" class="gallery-info" title="${esc(mark)}"`
             + ` data-info="${esc(file.id)}">i</button>`
-            + `<div class="gallery-name">${esc(file.name)}</div></div>`;
+            + `<div class="gallery-name" title="${esc(file.name)}">`
+            + `${esc(file.name)}</div></div>`;
     }
 
     function galleryBind() {
@@ -1141,19 +1145,73 @@
         return null;
     }
 
+    // ── Просмотр кадра: карусель ─────────────────────────────────────────────
+    //
+    // ⚠ **Листаются только фотографии.** Видео в карусель не берётся: у нас от
+    // него есть лишь первый кадр, а сам файл отдаёт просмотрщик Диска — листать
+    // там нечего, и заглушка посреди ленты читалась бы как поломка.
+    //
+    // ⚠ Лента идёт **через все группы подряд**, в порядке показа: человек
+    // просматривает галерею целиком, а не по разделам. Чтобы он не терял
+    // границу, над кадром стоит имя группы и счёт «3 из 11».
+
+    function galleryPhotos() {
+        return galleryData.groups.flatMap(g =>
+            g.files.filter(f => f.kind === 'image').map(f => ({...f, group: g.name})));
+    }
+
     function galleryFrame(id) {
+        const photos = galleryPhotos();
+        let at = photos.findIndex(f => f.id === id);
+        if (at < 0) return;
+
         const back = document.createElement('div');
-        back.className = 'gallery-view';
-        back.innerHTML = `<img src="${BASE}/api/dating/gallery/${currentId}`
-                       + `/img/${id}?w=1600" alt="">`;
-        const close = () => back.remove();
+        back.className = 'gallery-view gallery-carousel';
+        back.innerHTML =
+            '<button type="button" class="gallery-step prev" aria-label="Предыдущее">‹</button>'
+            + '<figure class="gallery-frame"><img alt=""><figcaption></figcaption></figure>'
+            + '<button type="button" class="gallery-step next" aria-label="Следующее">›</button>';
+
+        const img = back.querySelector('img');
+        const cap = back.querySelector('figcaption');
+        const src = f => `${BASE}/api/dating/gallery/${currentId}/img/${f.id}?w=1600`;
+
+        const show = step => {
+            // По кругу: с последнего вперёд — на первое. Упираться в край
+            // человеку незачем, снимков немного и лента короткая.
+            at = (at + step + photos.length) % photos.length;
+            const f = photos[at];
+            img.src = src(f);
+            cap.textContent = `${f.group} · ${f.name} · ${at + 1} из ${photos.length}`
+                            + (f.description ? ' — ' + f.description : '');
+            // Соседей подгружаем заранее: кадр в 1600 весит мегабайты, и без
+            // этого каждое нажатие стрелки показывало бы пустоту.
+            [1, -1].forEach(d => {
+                const near = photos[(at + d + photos.length) % photos.length];
+                if (near && near.id !== f.id) new Image().src = src(near);
+            });
+        };
+
+        const close = () => {
+            back.remove();
+            document.removeEventListener('keydown', onKey);
+        };
+        function onKey(event) {
+            if (event.key === 'Escape') return close();
+            if (event.key === 'ArrowRight') return show(1);
+            if (event.key === 'ArrowLeft') return show(-1);
+        }
+
         back.addEventListener('click', close);
-        document.addEventListener('keydown', function esc(event) {
-            if (event.key !== 'Escape') return;
-            close();
-            document.removeEventListener('keydown', esc);
-        });
+        // Нажатия внутри кадра и по стрелкам не должны закрывать просмотр.
+        back.querySelectorAll('.gallery-step, .gallery-frame').forEach(el =>
+            el.addEventListener('click', e => e.stopPropagation()));
+        back.querySelector('.prev').addEventListener('click', () => show(-1));
+        back.querySelector('.next').addEventListener('click', () => show(1));
+        document.addEventListener('keydown', onKey);
+
         document.body.appendChild(back);
+        show(0);
     }
 
     function galleryModal(id) {
