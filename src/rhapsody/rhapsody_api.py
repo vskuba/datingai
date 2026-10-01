@@ -522,19 +522,84 @@ async def rhapsody_api_agent_find(name: str) -> dict:
     return data.get('result') or {}
 
 
-async def rhapsody_api_chat_ask(agent_id: int, question: str,
-                                variables: dict = None) -> str:
-    """Спрашивает агента и отдаёт его ответ строкой.
+async def rhapsody_api_chat_talk(agent_id: int, question: str,
+                                 variables: dict = None) -> dict:
+    """Спрашивает агента и отдаёт ответ вместе с номером обмена разговора.
 
-    Пустая строка — законный ответ: агент может намеренно промолчать, и это
-    решение, а не сбой.
+    Returns:
+        dict: `text` — ответ агента (пустой законен: он может промолчать),
+        `message_id` — номер строки `companion_session` у соседа. Ноль значит
+        «обмена нет»: агент смолчал, прогон ушёл в «Тишину».
+
+    ## ⚠⚠ Номер нужен, чтобы отметить доставку
+
+    Сосед пишет обмен **внутри прогона** — до того, как мы попробуем отправить
+    реплику. Отметку ставит `rhapsody_api_chat_delivered`, когда реплика реально
+    ушла; без неё лента для агента эту строку не покажет.
+
+    ⚠ Зовут это только дороги `dating_talk` — чат и два пула писем. Галерея и
+    почтовые агенты номера не получают: их workflow в `companion_session` не
+    пишут, и спрашивать его там было бы враньём.
     """
     payload = {'question': str(question), 'agent_id': int(agent_id),
                'variables': {'chat_timeout': RHAPSODY_API_CHAT_TIMEOUT, **(variables or {})}}
 
     data = await _request('POST', '/chat/ask', payload, timeout=RHAPSODY_API_TIMEOUT_AGENT)
 
-    return str(data.get('result') or '')
+    try:
+        number = int(data.get('message_id') or 0)
+    except (TypeError, ValueError):
+        number = 0
+
+    return {'text': str(data.get('result') or ''), 'message_id': number}
+
+
+async def rhapsody_api_chat_ask(agent_id: int, question: str,
+                                variables: dict = None) -> str:
+    """Спрашивает агента и отдаёт его ответ строкой.
+
+    Пустая строка — законный ответ: агент может намеренно промолчать, и это
+    решение, а не сбой.
+
+    ⚠ Тонкая обёртка над `rhapsody_api_chat_talk` для тех, кому номер обмена не
+    нужен: галерея и почтовые агенты (`mail_agent.py`) идут другими workflow, и
+    `companion_session` там не пишется вовсе.
+    """
+    return (await rhapsody_api_chat_talk(agent_id, question, variables))['text']
+
+
+async def rhapsody_api_chat_delivered(message_id: int) -> bool:
+    """Говорит соседу, что наша реплика дошла до собеседника.
+
+    Args:
+        message_id: номер обмена из `rhapsody_api_chat_talk`. Ноль — звать не
+            надо, и функция молча отвечает `False`.
+
+    Returns:
+        bool: легла ли отметка. `False` у уже отмеченной строки — обычный исход,
+        а не беда: ручка у соседа идемпотентна.
+
+    ## ⚠⚠ Отказ не роняет отправку
+
+    Реплика к этому моменту **уже ушла живому человеку**, и бросить исключение
+    значило бы отменить то, что отменить нельзя. Неудача метки — строка в
+    журнале: агент один раз увидит в истории лишнюю свою реплику, и это
+    несравнимо дешевле.
+    """
+    number = int(message_id or 0)
+
+    if number <= 0:
+        return False
+
+    try:
+        data = await _request('POST', '/chat/message/delivered',
+                              {'message_id': number})
+    except RhapsodyError as e:
+        logger_info(f'[rhapsody] отметка доставки {number} не легла: {e}')
+
+        return False
+
+    return bool((data.get('result') or {}).get('marked'))
 
 
 # Сколько дней просить у журнала LLM. ⚠ Больше семи бессмысленно: сосед держит
