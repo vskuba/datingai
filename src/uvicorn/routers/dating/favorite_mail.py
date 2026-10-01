@@ -759,7 +759,7 @@ async def _row(mail_id: int) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT m.id, m.site_id, m.profile_id, m.uid, m.name, m.photo,'
-            ' m.body, m.status, m.error, m.sent_at, m.created_at,'
+            ' m.body, m.status, m.error, m.sent_at, m.created_at, m.message_id,'
             ' p.login AS profile_login, p.profile AS profile_card'
             ' FROM favorite_mail m'
             ' LEFT JOIN profile p ON p.id = m.profile_id'

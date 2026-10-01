@@ -49,8 +49,8 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.dating.json_column import json_column_load
 from src.dating.round import (round_day_count, round_mem_due,
                             round_mem_mark, round_minutes)
-from src.dating.mail_send import (DatingMailSendError, mail_send_mark,
-                                  mail_send_one)
+from src.dating.mail_send import (MAIL_SEND_TALK_TABLES, DatingMailSendError,
+                                  mail_send_mark, mail_send_one)
 from src.dating.schedule import schedule_now
 
 # Как часто круг просыпается. ⚠ Это **не** частота отправки: её задаёт каждый пул
@@ -347,11 +347,20 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     reply_join = ('  LEFT JOIN mail_in i ON i.id = m.mail_in_id'
                   if table == 'mail_reply' else '')
 
+    # ⚠⚠ **Номер обмена разговора — у пулов `dating_talk` обязателен.**
+    #
+    # `mail_send_mark` отмечает им доставку у соседа (`companion_session`), и
+    # читает ровно это поле из строки письма. Не выбери его запрос — грабля та
+    # же, что с `reply_to` строкой выше: отметка не уйдёт никогда, и узнать об
+    # этом можно только через сутки, случайно. У `mailing` колонки нет вовсе —
+    # ей и выбирать нечего.
+    message_id = (', m.message_id' if table in MAIL_SEND_TALK_TABLES else '')
+
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
                 f'SELECT m.id, m.site_id, m.profile_id, m.uid, m.body, m.status,'
-                f' p.login, p.password, p.password_source{reply_to}'
+                f' p.login, p.password, p.password_source{reply_to}{message_id}'
                 f'  FROM {table} m'
                 f'  JOIN profile p ON p.id = m.profile_id'
                 f'{reply_join}'

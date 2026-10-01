@@ -54,6 +54,7 @@ from src.dating.log import log_write
 from src.dating.ready import password_pick
 from src.dating.request import REQUEST_SEND
 from src.dating.site_api import DatingSiteApiError, site_api_call
+from src.rhapsody.rhapsody_api import rhapsody_api_chat_delivered
 
 # Что зовём. Пути из документации сайта.
 MAIL_SEND_CHECK_PATH = '/messages/check-send/{uid}'
@@ -77,6 +78,14 @@ MAIL_SEND_ERROR_MAX = 500
 # лежит здесь — там же, где отправка.
 MAIL_SEND_TABLES = ('mailing', 'mail_reply',
                            'favorite_mail')
+
+# Пулы, письма которых сочиняет `dating_talk`, — только их обмены лежат у соседа
+# в `companion_session`.
+#
+# ⚠⚠ `mailing` сюда не входит и входить не должен: рассылка идёт своим workflow
+# (`mail_agent.py`), обмена разговора у неё нет, и отметка ушла бы в пустоту либо,
+# хуже, в чужую строку с совпавшим номером.
+MAIL_SEND_TALK_TABLES = ('mail_reply', 'favorite_mail')
 
 
 def mail_sent_union(where: str, select: str = 'sent_at') -> str:
@@ -312,6 +321,17 @@ async def mail_send_mark(letter: dict, sent: bool, error: str = '',
         'ok' if sent else 'fail',
         f'письмо ушло: {addressee}' if sent
         else f'письмо не ушло: {addressee} — {str(error or "причина неизвестна")}')
+
+    # ⚠⚠ **Доставка отмечается здесь, а не в круге отправки.** Через эту точку
+    # проходят обе дороги письма — круг и путь через панель
+    # (`mail_reply_panel.py`), — и она уже знает таблицу доводом `table`. Две
+    # точки вместо одной разошлись бы ровно так же, как разошлись бы записи
+    # исхода, которые тут и сведены в одно место.
+    #
+    # ⚠ Отметка **после** записи исхода: сосед может не ответить, а исход письма
+    # обязан лечь в любом случае.
+    if sent and table in MAIL_SEND_TALK_TABLES:
+        await rhapsody_api_chat_delivered(int(letter.get('message_id') or 0))
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

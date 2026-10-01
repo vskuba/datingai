@@ -18,6 +18,7 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating import answer as answer_mod
+from src.dating import mail_send as mail_send_mod
 
 pytestmark = pytest.mark.chat
 
@@ -208,3 +209,119 @@ class TestInitiativeMarksDelivery:
         assert sent == 1, 'реплика обязана уйти'
         assert initiative_marked == [771], \
             'ушедшая инициатива обязана быть отмечена своим номером обмена'
+
+
+async def _in_row(profile_id: int, uid: str = 'u-1', name: str = 'Brian') -> int:
+    """Входящее письмо — под него завёден `mail_reply.mail_in_id`.
+
+    ⚠ `mail_reply.mail_in_id` держит внешний ключ на `mail_in.id` (каскад): без
+    настоящей строки `INSERT` в пул ответов упал бы нарушением связи.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO mail_in (site_id, profile_id, message_id, uid, name, body)'
+            " VALUES (%s, %s, %s, %s, %s, 'привет')",
+            (STAND_SITE, int(profile_id), int(uuid.uuid4().int % 1_000_000_000),
+             uid, name))
+        await db.connection.commit()
+
+        return int(db.lastrowid)
+
+
+@pytest.fixture
+async def letter(girl):
+    """Строка пула ответов с номером обмена. Убирается за собой."""
+    in_id = await _in_row(girl)
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO mail_reply'
+            ' (site_id, profile_id, mail_in_id, uid, name, body, status, message_id)'
+            " VALUES (%s, %s, %s, 'u-1', 'Brian', 'текст', 'draft', 555)",
+            (STAND_SITE, int(girl), in_id))
+        row_id = int(db.lastrowid)
+        await db.connection.commit()
+
+    yield {'id': row_id, 'profile_id': int(girl), 'uid': 'u-1',
+           'name': 'Brian', 'message_id': 555}
+
+    async with mysql_get_db_async() as db:
+        await db.execute('DELETE FROM mail_reply WHERE id = %s', (row_id,))
+        await db.execute('DELETE FROM mail_in WHERE id = %s', (in_id,))
+        await db.connection.commit()
+
+
+@pytest.fixture
+def mail_marked(monkeypatch):
+    """Номера, отмеченные доставленными при отправке письма."""
+    got = []
+
+    async def _delivered(message_id):
+        got.append(int(message_id))
+
+        return True
+
+    monkeypatch.setattr(mail_send_mod, 'rhapsody_api_chat_delivered', _delivered)
+
+    return got
+
+
+class TestMailMarksDelivery:
+    async def test_sent_letter_is_marked(self, mail_marked, letter):
+        """Ушедшее письмо из пула ответов помечается доставленным."""
+        await mail_send_mod.mail_send_mark(letter, sent=True, table='mail_reply')
+
+        assert mail_marked == [555]
+
+    async def test_failed_letter_is_not_marked(self, mail_marked, letter):
+        """⚠ Неудачная отправка отметки не ставит."""
+        await mail_send_mod.mail_send_mark(letter, sent=False,
+                                           error='сайт отказал', table='mail_reply')
+
+        assert mail_marked == []
+
+    async def test_mailing_is_never_marked(self, mail_marked, letter):
+        """⚠⚠ Рассылка идёт своим workflow и в `companion_session` не пишет.
+
+        Номер в строке есть, таблица другая — отметка уйти не должна: у рассылки
+        обмена разговора нет, и совпавший номер указал бы на чужую строку.
+        """
+        await mail_send_mod.mail_send_mark({**letter, 'id': 0}, sent=True,
+                                           table='mailing')
+
+        assert mail_marked == []
+
+
+class TestTheNumberSurvivesTheQuery:
+    async def test_the_round_selects_the_number(self, girl):
+        """⚠⚠ Круг обязан выбирать номер обмена из строки пула.
+
+        Не выбери он поле — `mail_send_mark` прочитает пустоту, и отметка не
+        уйдёт никогда. В проекте это уже случалось с `reply_to`: ручка его
+        передавала, запрос круга не выбирал, и всё ушедшее кругом шло не ответом.
+        """
+        import src.dating.send_round as send_round_mod
+
+        in_id = await _in_row(girl, uid='u-2', name='Oleg')
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO mail_reply'
+                ' (site_id, profile_id, mail_in_id, uid, name, body, status,'
+                "  error, message_id)"
+                " VALUES (%s, %s, %s, 'u-2', 'Oleg', 'текст', 'draft', '', 4242)",
+                (STAND_SITE, int(girl), in_id))
+            row_id = int(db.lastrowid)
+            await db.connection.commit()
+
+        try:
+            letter = await send_round_mod._oldest(STAND_SITE, 'mail_reply')
+
+            assert letter is not None, 'письмо из пула не нашлось'
+            assert int(letter['message_id']) == 4242, \
+                'запрос круга не довёз номер обмена из строки пула'
+        finally:
+            async with mysql_get_db_async() as db:
+                await db.execute('DELETE FROM mail_reply WHERE id = %s', (row_id,))
+                await db.execute('DELETE FROM mail_in WHERE id = %s', (in_id,))
+                await db.connection.commit()

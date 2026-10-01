@@ -426,7 +426,11 @@ async def mail_reply_send(reply_id: int,
               'body': row['body'], 'status': row['status'],
               'profile_id': int(row['profile_id']),
               # ⚠ Вот ради чего номер письма ехал в ответе списка.
-              'reply_to': int(row['in_message_id'] or 0)}
+              'reply_to': int(row['in_message_id'] or 0),
+              # ⚠⚠ Номер обмена разговора — без него `mail_send_mark` не
+              # отметит у соседа доставку. Та же грабля, что у `reply_to`
+              # строкой выше: не довези его сюда, и отметка ушла бы в пустоту.
+              'message_id': int(row.get('message_id') or 0)}
 
     try:
         await mail_send_one(letter, profile, base, password,
@@ -530,7 +534,7 @@ async def _reply_row(reply_id: int) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT r.id, r.site_id, r.profile_id, r.mail_in_id, r.uid, r.name,'
-            ' r.body, r.status, r.error, r.sent_at, r.created_at,'
+            ' r.body, r.status, r.error, r.sent_at, r.created_at, r.message_id,'
             ' p.login AS profile_login, p.profile AS profile_card,'
             ' i.body AS in_body, i.date_post AS in_at,'
             ' i.message_id AS in_message_id, i.photo AS in_photo'

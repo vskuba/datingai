@@ -322,7 +322,13 @@ def mail_reply_answer(row: dict) -> dict:
             # На что отвечаем — рядом: ответ читают, сверяя с письмом.
             'in_body': str(row.get('in_body') or ''),
             'in_at': row.get('in_at'),
-            'in_message_id': int(row.get('in_message_id') or 0)}
+            'in_message_id': int(row.get('in_message_id') or 0),
+            # ⚠⚠ Номер обмена разговора у соседа (`companion_session`), а не
+            # номер письма на сайте (тот — `in_message_id` выше). По нему
+            # отправка отмечает у соседа доставку; запрос, который не выбрал
+            # это поле, оставил бы отметку без номера молча — `.get`, потому
+            # что не все запросы, собирающие этот вид, его спрашивают.
+            'message_id': int(row.get('message_id') or 0)}
 
 
 def mail_reply_delivery_scope(*, favorites: bool, profile_id: int = 0,
