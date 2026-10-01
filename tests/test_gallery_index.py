@@ -22,6 +22,7 @@ import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.error import ERROR_DRIVE
 from src.dating.gallery_index import (GALLERY_WHY_NOT_SHARED,
                                       gallery_index_folders,
                                       gallery_index_profile,
@@ -215,3 +216,37 @@ async def test_token_is_asked_once(tree, girl):
     tokens = [url for url in tree.calls if 'oauth2.googleapis.com' in url]
 
     assert len(tokens) == 1, f'за токеном сходили {len(tokens)} раз вместо одного'
+
+
+async def test_missing_folder_is_not_a_source_failure(tree, girl):
+    """⚠⚠ «Папки нет» не идёт в журнал отказов, а «не расшарили» — идёт.
+
+    Журнал отказов — для того, что **не про анкету** (правило `error.py`).
+    У девушки без фотографий папки и не должно быть; пиши мы это в журнал,
+    один заход задания по полусотне анкет клал бы туда полсотни строк подряд,
+    затирая друг друга, — и настоящий отказ источника в этом шуме утонул бы.
+
+    Проверено на живом заходе: 53 анкеты, папка одна, 52 отказа «папки нет».
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute('DELETE FROM error WHERE source = %s', (ERROR_DRIVE,))
+        await db.connection.commit()
+
+    # Про анкету: в журнал не идёт.
+    assert (await gallery_index_sync(girl, 'папки-нет'))['ok'] is False
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT COUNT(*) AS n FROM error WHERE source = %s',
+                         (ERROR_DRIVE,))
+        assert int(((await db.fetchone()) or {}).get('n') or 0) == 0, \
+            'отказ про анкету засорил журнал источников'
+
+    # Про источник: идёт.
+    tree.not_shared = True
+    assert (await gallery_index_sync(girl, GIRL_FOLDER))['ok'] is False
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT COUNT(*) AS n FROM error WHERE source = %s',
+                         (ERROR_DRIVE,))
+        assert int(((await db.fetchone()) or {}).get('n') or 0) == 1, \
+            'отказ источника обязан попасть в журнал'
+        await db.execute('DELETE FROM error WHERE source = %s', (ERROR_DRIVE,))
+        await db.connection.commit()
