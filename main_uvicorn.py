@@ -35,6 +35,7 @@ from src.auth.auth import AuthUser
 from src.auth.auth_seed import auth_seed_first_user, auth_seed_operator
 from src.uvicorn.routers import auth as auth_router
 from src.uvicorn.routers import backup as backup_router
+from src.uvicorn.routers import cronjob as cronjob_router
 from src.uvicorn.routers import dashboard
 from src.uvicorn.routers import seed as seed_router
 from src.uvicorn.routers import setting as setting_router
@@ -317,6 +318,7 @@ app.include_router(export.router)
 app.include_router(import_.router)
 app.include_router(dating_log_router.router)
 app.include_router(dating_request_router.router)
+app.include_router(cronjob_router.router)
 app.include_router(dating_feed_router.router)
 app.include_router(dating_gallery_router.router)
 # ⚠ Реестр переменных — **до** шаблонов: его пути начинаются с
