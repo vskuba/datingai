@@ -347,6 +347,58 @@ class TestItReachesTheAgent:
         assert 'initiative_kind' not in got
 
 
+class TestTheWholeTripSurvivesTheExchangeNumber:
+    """⚠⚠ Задача 7б: живая поломка на двойной распаковке `_agent_ask`.
+
+    `_agent_ask` когда-то отдавала пару `(текст, ошибка)`, потом переехала на
+    тройку `(текст, ошибка, номер обмена)` — номер нужен, чтобы позже отметить
+    доставку. Все вызывающие переписали на тройку, кроме одного: `initiative.py`
+    остался на `text, error = await _agent_ask(...)`, и круг инициативы падал на
+    первом же заходе `ValueError: too many values to unpack (expected 2)`.
+
+    Починка это исправила, но её саму ни один тест не трогал: сочинение
+    инициативы целиком (`_one`) в сюите не прогонялось. Следующий откат —
+    например, правка `answer.py`, вернувшая старую пару, — всплыл бы снова
+    только в бою, тем же `ValueError`, а не здесь.
+
+    Тест гонит `_one` как её гонит `initiative_make`: с живым профилем, живым
+    пулом и подменённым агентом. Падение на распаковке он ловит самим фактом
+    прогона; а то, что номер обмена действительно доезжает до строки пула
+    (`chat_initiative.talk_message_id`), проверяет прямым запросом — именно он
+    нужен круга отправки, чтобы потом отметить доставку у соседа.
+    """
+
+    async def test_one_card_carries_the_exchange_number_to_the_pool(
+            self, monkeypatch, girl):
+        from src.dating import answer as answer_mod
+
+        async def _chat_talk(agent_id, question, variables=None):
+            return {'text': 'как прошли выходные?', 'message_id': 555111}
+
+        monkeypatch.setattr(answer_mod, 'rhapsody_api_chat_talk', _chat_talk)
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT * FROM profile WHERE id = %s', (girl,))
+            profile = dict(await db.fetchone())
+
+        # Без тройки здесь уже упало бы `ValueError: too many values to
+        # unpack` — ровно то, что случилось на проде.
+        got = await initiative_mod._one(
+            profile, 7, {'uid': 'u-1', 'name': 'Brian', 'try_no': 1})
+
+        assert got == 'made', f'карточка не сложилась: {got}'
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                "SELECT talk_message_id FROM chat_initiative"
+                " WHERE profile_id = %s AND uid = 'u-1'", (girl,))
+            row = await db.fetchone()
+
+        assert row is not None, 'карточка не легла в пул'
+        assert int(row['talk_message_id'] or 0) == 555111, \
+            'номер обмена потерялся по дороге от агента до строки пула'
+
+
 class TestTheTwoSwitches:
     """⚠⚠ Флага два: набор и отправка."""
 
