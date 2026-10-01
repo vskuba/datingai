@@ -921,19 +921,24 @@
         // счётчики, значок «нужен ответ»), и человек не знал, какому верить. Здесь
         // осталось то, чего нет там, — **настройки самой анкеты**.
         //
-        // ⚠ Колонка поделена на две вкладки: «Общая информация» (карточка с сайта
-        // и настройки) и «Переменные» (чем письма подставляют). Разное по природе:
-        // первое — как анкету ведут, второе — что о ней знают письма. Одной
-        // простынёй переменные тонули бы под расписанием и удалением.
+        // ⚠ Колонка поделена на три вкладки: «Общая информация» (карточка с сайта
+        // и настройки), «Переменные» (чем письма подставляют) и «Галерея» (её фото
+        // с Google Диска). Разное по природе: первое — как анкету ведут, второе —
+        // что о ней знают письма, третье — как она выглядит. Одной простынёй
+        // переменные тонули бы под расписанием, а плитки — под всем сразу.
         const scroll = profileEl.scrollTop;
+        const body = cardTab === 'var' ? '<div id="varBox"></div>'
+            : cardTab === 'gallery' ? '<div id="galleryBox"></div>'
+            : head + settingsBlock(data);
         profileEl.innerHTML =
             '<div class="card-tabs">'
             + `<button type="button" class="card-tab${cardTab === 'main' ? ' on' : ''}"`
             + ' data-tab="main">Общая информация</button>'
             + `<button type="button" class="card-tab${cardTab === 'var' ? ' on' : ''}"`
             + ' data-tab="var">Переменные</button>'
-            + '</div>'
-            + (cardTab === 'var' ? '<div id="varBox"></div>' : head + settingsBlock(data));
+            + `<button type="button" class="card-tab${cardTab === 'gallery' ? ' on' : ''}"`
+            + ' data-tab="gallery">Галерея</button>'
+            + '</div>' + body;
         profileEl.scrollTop = scroll;
 
         profileEl.querySelectorAll('.card-tab').forEach(btn =>
@@ -950,7 +955,246 @@
             return;
         }
 
+        if (cardTab === 'gallery') {
+            galleryPaint();
+            galleryLoad(requestId, data.gallery_folder || '');
+
+            return;
+        }
+
         settingsBind();
+    }
+
+    // ── Галерея анкеты ───────────────────────────────────────────────────────
+    //
+    // Фотографии девушки с Google Диска. Плитки приходят **из нашей базы**, а не
+    // с Диска: индекс держит свежим задание Cronicle и кнопка «Обновить».
+    // Поэтому вкладка открывается мгновенно и открывается тогда, когда Диск
+    // молчит, — а описание и теги, добытые моделью, не добываются заново.
+    //
+    // ⚠ **Папку выбирают из списка, а не вписывают.** Список — настоящие имена
+    // папок с Диска. Поле ввода возвращало бы человека к отказу «папки «X» нет»,
+    // ради избавления от которого выбор и затеян.
+    //
+    // ⚠ Группы («public», «intim» и любые другие) приходят **с сервера** вместе
+    // с порядком. Страница их не придумывает: заведённая человеком третья папка
+    // обязана появиться сама.
+
+    let galleryData = null;
+    let galleryFor = 0;
+    let galleryFolders = [];
+
+    async function galleryLoad(profileId, folder) {
+        try {
+            const [view, folders] = await Promise.all([
+                getData(`${BASE}/api/dating/gallery/${profileId}`),
+                getData(`${BASE}/api/dating/gallery/folders`),
+            ]);
+            // Та же гонка, что у карточки и переменных: ответ по уже снятой
+            // анкете может прийти позже ответа по вновь выбранной.
+            if (currentId !== profileId) return;
+
+            galleryData = view.result;
+            galleryFolders = (folders.result || {}).folders || [];
+            galleryData.foldersWhy = (folders.result || {}).why || '';
+        } catch (e) {
+            if (currentId !== profileId) return;
+            galleryData = {groups: [], total: 0, folder: folder, why: e.message};
+            galleryFolders = [];
+        }
+
+        galleryFor = profileId;
+        galleryPaint();
+    }
+
+    function galleryPaint() {
+        const box = document.getElementById('galleryBox');
+        if (!box) return;
+
+        if (galleryFor !== currentId || !galleryData) {
+            box.innerHTML = '<div class="empty">гружу…</div>';
+
+            return;
+        }
+
+        box.innerHTML = galleryHead() + galleryGroups();
+        galleryBind();
+    }
+
+    function galleryHead() {
+        const chosen = galleryData.folder || '';
+        const known = galleryFolders.includes(chosen);
+        // ⚠ Папку, которой нет в списке, всё равно показываем выбранной: иначе
+        // селект молча перескочил бы на чужую, и человек бы этого не заметил.
+        const options = (known || !chosen ? galleryFolders : [chosen, ...galleryFolders])
+            .map(name => `<option value="${esc(name)}"${name === chosen ? ' selected' : ''}>`
+                       + `${esc(name)}</option>`).join('');
+
+        return '<div class="prof-set">'
+            + '<div class="prof-set-head">Папка с фото на Диске</div>'
+            + (galleryData.foldersWhy
+                ? `<div class="gallery-why">${esc(galleryData.foldersWhy)}</div>` : '')
+            + '<div class="gallery-pick">'
+            + `<select id="galleryFolder"><option value="">— по логину анкеты —</option>`
+            + `${options}</select>`
+            + '<button type="button" class="btn" id="gallerySave">Сохранить</button>'
+            + '<button type="button" class="btn" id="gallerySync">Обновить</button>'
+            + '</div>'
+            + '<div class="var-note">Пусто — папка ищется по логину анкеты: так они '
+            + 'и названы на Диске. Выбирают здесь только исключение.</div>'
+            + (galleryData.taken_at
+                ? `<div class="gallery-when">сверено ${timeShift(galleryData.taken_at)}</div>`
+                : '')
+            + (galleryData.why ? `<div class="gallery-why">${esc(galleryData.why)}</div>` : '')
+            + '</div>';
+    }
+
+    function galleryGroups() {
+        if (!galleryData.groups.length) {
+            return '<div class="empty">Фотографий нет. Проверьте папку и нажмите '
+                 + '«Обновить» — список берётся из нашей базы, а наполняет её обход '
+                 + 'Диска.</div>';
+        }
+
+        return galleryData.groups.map(group =>
+            '<div class="gallery-group">'
+            + `<div class="gallery-group-head">${esc(group.name)} `
+            + `<span class="gallery-count">${group.files.length}</span></div>`
+            + '<div class="gallery-grid">'
+            + group.files.map(galleryTile).join('')
+            + '</div></div>').join('');
+    }
+
+    function galleryTile(file) {
+        const src = `${BASE}/api/dating/gallery/${currentId}/img/${file.id}?w=400`;
+        // ⚠ Значок «i» горит, когда описание есть, и гаснет, когда его нет:
+        // по сетке сразу видно, что модель уже разобрала, а что ещё нет.
+        const mark = file.edited ? 'правлено' : file.described ? 'разобрано' : 'без описания';
+
+        return `<div class="gallery-thumb" data-id="${esc(file.id)}"`
+            + ` data-kind="${esc(file.kind)}" data-view="${esc(file.view_url)}">`
+            + `<img src="${src}" alt="${esc(file.name)}" loading="lazy">`
+            + (file.kind === 'video' ? '<span class="gallery-video">видео</span>' : '')
+            + `<button type="button" class="gallery-info" title="${esc(mark)}"`
+            + ` data-info="${esc(file.id)}">i</button>`
+            + `<div class="gallery-name">${esc(file.name)}</div></div>`;
+    }
+
+    function galleryBind() {
+        const save = document.getElementById('gallerySave');
+        const sync = document.getElementById('gallerySync');
+        const pick = document.getElementById('galleryFolder');
+
+        if (save) save.addEventListener('click', async () => {
+            const was = currentId;
+            try {
+                await putData(`${BASE}/api/dating/gallery/${was}/folder`,
+                              {folder: pick.value});
+            } catch (e) {
+                alert('папку сохранить не вышло: ' + e.message);
+
+                return;
+            }
+            if (currentId === was) galleryLoad(was, pick.value);
+        });
+
+        if (sync) sync.addEventListener('click', async () => {
+            const was = currentId;
+            sync.disabled = true;
+            try {
+                const got = (await postData(
+                    `${BASE}/api/dating/gallery/${was}/sync`, {})).result;
+                if (!got.ok) alert(got.why);
+            } catch (e) {
+                alert('обновить не вышло: ' + e.message);
+            } finally {
+                sync.disabled = false;
+            }
+            if (currentId === was) galleryLoad(was, pick ? pick.value : '');
+        });
+
+        document.querySelectorAll('.gallery-info').forEach(btn =>
+            btn.addEventListener('click', event => {
+                event.stopPropagation();
+                galleryModal(btn.dataset.info);
+            }));
+
+        document.querySelectorAll('.gallery-thumb').forEach(tile =>
+            tile.addEventListener('click', () => {
+                // Видео открывает просмотрщик Диска: гонять десятки мегабайт
+                // через панель значило бы качать их внутрь.
+                if (tile.dataset.kind === 'video' && tile.dataset.view) {
+                    window.open(tile.dataset.view, '_blank', 'noopener');
+
+                    return;
+                }
+                galleryFrame(tile.dataset.id);
+            }));
+    }
+
+    function galleryFile(id) {
+        for (const group of galleryData.groups) {
+            const found = group.files.find(file => file.id === id);
+            if (found) return found;
+        }
+
+        return null;
+    }
+
+    function galleryFrame(id) {
+        const back = document.createElement('div');
+        back.className = 'gallery-view';
+        back.innerHTML = `<img src="${BASE}/api/dating/gallery/${currentId}`
+                       + `/img/${id}?w=1600" alt="">`;
+        const close = () => back.remove();
+        back.addEventListener('click', close);
+        document.addEventListener('keydown', function esc(event) {
+            if (event.key !== 'Escape') return;
+            close();
+            document.removeEventListener('keydown', esc);
+        });
+        document.body.appendChild(back);
+    }
+
+    function galleryModal(id) {
+        const file = galleryFile(id);
+        if (!file) return;
+
+        const back = document.createElement('div');
+        back.className = 'gallery-view gallery-modal';
+        back.innerHTML = '<div class="gallery-card" onclick="event.stopPropagation()">'
+            + `<div class="gallery-card-head">${esc(file.name)}</div>`
+            + (file.described_error
+                ? `<div class="gallery-why">${esc(file.described_error)}</div>` : '')
+            + '<label>Что на снимке</label>'
+            + `<textarea id="galleryText" rows="6">${esc(file.description)}</textarea>`
+            + '<label>Теги через запятую</label>'
+            + `<input id="galleryTags" value="${esc((file.tags || []).join(', '))}">`
+            + '<div class="gallery-card-foot">'
+            + `<span class="gallery-when">${file.edited ? 'правлено человеком'
+                : file.described ? 'разобрано моделью' : 'ещё не разбиралось'}</span>`
+            + '<button type="button" class="btn" id="galleryKeep">Сохранить</button>'
+            + '</div></div>';
+
+        back.addEventListener('click', () => back.remove());
+        document.body.appendChild(back);
+
+        document.getElementById('galleryKeep').addEventListener('click', async () => {
+            const was = currentId;
+            const tags = document.getElementById('galleryTags').value
+                .split(',').map(one => one.trim()).filter(Boolean);
+            try {
+                await putData(`${BASE}/api/dating/gallery/${was}/file/${id}`,
+                              {description: document.getElementById('galleryText').value,
+                               tags: tags});
+            } catch (e) {
+                alert('сохранить не вышло: ' + e.message);
+
+                return;
+            }
+            back.remove();
+            if (currentId === was) galleryLoad(was, galleryData.folder);
+        });
     }
 
     // ── Переменные анкеты ────────────────────────────────────────────────────

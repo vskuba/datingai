@@ -746,3 +746,79 @@
     display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px;
     background: #fee2e2; color: #b91c1c; font-size: 11px; font-weight: 700;
 }
+
+/* ── Галерея анкеты ──────────────────────────────────────────────────────────
+   Третья вкладка карточки на «Анкетах»: фотографии девушки с Google Диска.
+   Размеры живут здесь, а не в разметке: плитку рисует JS строкой, и правка
+   вида в шаблоне означала бы правку кода. */
+
+/* Группы («public», «intim» и любые другие с Диска) идут подряд, каждая со
+   своей подписью. ⚠ Имена приходят с сервера: заведённая человеком третья
+   папка обязана появиться сама, и места под неё отводить не надо. */
+.gallery-group { margin-top: 14px; }
+.gallery-group-head {
+    font-size: 12px; font-weight: 700; color: #334155; text-transform: uppercase;
+    letter-spacing: .04em; margin-bottom: 6px;
+}
+.gallery-count {
+    display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 8px;
+    background: #eef2ff; color: #4338ca; font-size: 11px; font-weight: 700;
+}
+
+/* Сетка подстраивается под ширину колонки: карточку анкеты открывают и на
+   узком экране, и во всю ширину. */
+.gallery-grid {
+    display: grid; gap: 8px;
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+}
+.gallery-thumb {
+    position: relative; cursor: pointer; border-radius: 8px; overflow: hidden;
+    background: #f1f5f9; border: 1px solid #e5e7eb;
+}
+/* Квадратная плитка при любых пропорциях снимка: сетка из разновысоких плиток
+   читается как сломанная вёрстка, а не как галерея. */
+.gallery-thumb img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+.gallery-thumb:hover { border-color: #4f46e5; }
+.gallery-name {
+    padding: 3px 5px; font-size: 10px; color: #64748b;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Значок видео: щелчок по такой плитке уводит в просмотрщик Диска, а не
+   открывает кадр у нас, и человек вправе знать это заранее. */
+.gallery-video {
+    position: absolute; left: 5px; top: 5px; padding: 1px 5px; border-radius: 6px;
+    background: rgba(15, 23, 42, .75); color: #fff; font-size: 10px; font-weight: 700;
+}
+.gallery-info {
+    position: absolute; right: 5px; top: 5px; width: 18px; height: 18px;
+    border: 0; border-radius: 50%; cursor: pointer; font: 700 11px/18px serif;
+    background: rgba(15, 23, 42, .72); color: #fff; padding: 0;
+}
+.gallery-info:hover { background: #4f46e5; }
+
+/* Выбор папки и кнопки — одной строкой, переносятся на узком. */
+.gallery-pick { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.gallery-pick select { flex: 1 1 180px; min-width: 0; }
+.gallery-when { margin-top: 4px; font-size: 11px; color: #94a3b8; }
+/* Причина отказа — красным и словами. ⚠ Пустая сетка без неё читается как
+   «у девушки нет фото», и человек идёт заводить папки заново. */
+.gallery-why { margin-top: 4px; font-size: 12px; color: #b91c1c; }
+
+/* Кадр поверх страницы и окно правки — одна подложка на двоих. */
+.gallery-view {
+    position: fixed; inset: 0; z-index: 50; display: flex; cursor: zoom-out;
+    align-items: center; justify-content: center; background: rgba(15, 23, 42, .82);
+}
+.gallery-view img { max-width: 92vw; max-height: 92vh; object-fit: contain; }
+.gallery-modal { cursor: default; }
+.gallery-card {
+    width: min(560px, 92vw); max-height: 88vh; overflow: auto; padding: 16px;
+    background: #fff; border-radius: 12px; display: flex; flex-direction: column; gap: 6px;
+}
+.gallery-card-head { font-size: 14px; font-weight: 700; color: #0f172a; }
+.gallery-card label { font-size: 11px; color: #64748b; margin-top: 6px; }
+.gallery-card textarea, .gallery-card input { width: 100%; box-sizing: border-box; }
+.gallery-card-foot {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-top: 10px;
+}
