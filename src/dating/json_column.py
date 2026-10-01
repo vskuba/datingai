@@ -18,3 +18,21 @@ def json_column_load(value) -> dict:
             return {}
 
     return value if isinstance(value, dict) else {}
+
+
+def json_column_list(value) -> list:
+    """То же, но столбец держит **массив**: теги снимка, перечень имён.
+
+    Отдельной функцией, а не признаком у соседней: та объявлена отдающей
+    словарь, и её зовут четыре места, разбирающие ответ как словарь. Расширь мы
+    её возврат — проверка `if not данные:` осталась бы верной, а `данные.get(…)`
+    упала бы на списке, и упала бы не здесь, а у вызывающего.
+    """
+    if isinstance(value, str):
+        try:
+            got = json.loads(value or '[]')
+        except Exception:
+            return []
+        return got if isinstance(got, list) else []
+
+    return value if isinstance(value, list) else []
