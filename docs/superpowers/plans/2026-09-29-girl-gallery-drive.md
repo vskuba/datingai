@@ -449,7 +449,16 @@ git commit -am "Галерея анкеты: индексация и разбо�
 
 ---
 
-## Задача 10. Документация
+## Задача 10. Документация ✅ сделано 01.10.2026
+
+`api.md` §3.13, `database.md`, `dashboard_frontend.md` §3.5.0, `worker.md` §3.1,
+`.env.dist`, строки в `CLAUDE.md` (пять в «Development Patterns», пять в
+«Key Files»).
+
+**Полная сюита: 3000 зелёных.**
+
+**Прежняя редакция задачи:**
+
 
 - [ ] `api.md` §3.13 «Галерея»: ручки, права, форма отказа, почему плитки из базы.
 - [ ] `database.md` — `gallery_file` и `profile.gallery_folder`; ⚠ `file_id` как
