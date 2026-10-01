@@ -210,6 +210,36 @@ class TestInitiativeMarksDelivery:
         assert initiative_marked == [771], \
             'ушедшая инициатива обязана быть отмечена своим номером обмена'
 
+    async def test_failed_card_is_not_marked(self, monkeypatch, initiative_marked,
+                                             girl):
+        """⚠⚠ Не ушедшую карточку отмечать нельзя — ради этого всё и затеяно.
+
+        Отметка стоит внутри `if result['ok']` рядом с пометкой «ушло». Вынеси
+        её наружу — и сосед счёл бы доставленной реплику, которой собеседник не
+        получал: ровно та поломка, от которой лечимся, только заведённая заново.
+        """
+        import src.dating.initiative_round as initiative_round_mod
+        from src.dating.chat_initiative import chat_initiative_put
+
+        async with mysql_get_db_async() as db:
+            await db.execute("UPDATE profile SET status = 'online' WHERE id = %s",
+                             (girl,))
+            await db.connection.commit()
+
+        await chat_initiative_put(STAND_SITE, girl, 'u-2', 'Brian', 'текст',
+                                  talk_message_id=772)
+
+        async def _send_fail(profile, presence, uid, text, **kwargs):
+            return {'ok': False, 'error': 'сайт отказал'}
+
+        monkeypatch.setattr(initiative_round_mod, 'online_check',
+                            lambda site_id, uid: {'online': True})
+        monkeypatch.setattr(initiative_round_mod, 'send_message', _send_fail)
+
+        await initiative_round_mod._send(STAND_SITE)
+
+        assert initiative_marked == [], 'не ушедшую карточку отмечать нельзя'
+
 
 async def _in_row(profile_id: int, uid: str = 'u-1', name: str = 'Brian') -> int:
     """Входящее письмо — под него завёден `mail_reply.mail_in_id`.
@@ -320,6 +350,104 @@ class TestTheNumberSurvivesTheQuery:
             assert letter is not None, 'письмо из пула не нашлось'
             assert int(letter['message_id']) == 4242, \
                 'запрос круга не довёз номер обмена из строки пула'
+        finally:
+            async with mysql_get_db_async() as db:
+                await db.execute('DELETE FROM mail_reply WHERE id = %s', (row_id,))
+                await db.execute('DELETE FROM mail_in WHERE id = %s', (in_id,))
+                await db.connection.commit()
+
+    async def test_the_round_selects_the_number_for_favorites(self, girl):
+        """⚠ Тот же запрос круга, но для пула избранных.
+
+        Запрос общий на три пула, а кусок с номером подставляется по условию:
+        верни условие не к той таблице — и письма избранным молча перестанут
+        отмечаться, пока ответы отмечаются исправно.
+        """
+        import src.dating.send_round as send_round_mod
+
+        async with mysql_get_db_async() as db:
+            # ⚠ Письмо избранному круг берёт **только у анкеты в сети**: оно
+            # написано под сиюминутный разговор. У ответов и рассылки такого
+            # условия нет — спящей девушке они законны.
+            await db.execute("UPDATE profile SET status = 'online' WHERE id = %s",
+                             (int(girl),))
+            await db.execute(
+                'INSERT INTO favorite_mail'
+                ' (site_id, profile_id, uid, name, photo, body, status,'
+                "  error, message_id)"
+                " VALUES (%s, %s, 'u-3', 'Oleg', '', 'текст', 'draft', '', 4343)",
+                (STAND_SITE, int(girl)))
+            row_id = int(db.lastrowid)
+            await db.connection.commit()
+
+        try:
+            letter = await send_round_mod._oldest(STAND_SITE, 'favorite_mail')
+
+            assert letter is not None, 'письмо из пула не нашлось'
+            assert int(letter['message_id']) == 4343, \
+                'запрос круга не довёз номер обмена для пула избранных'
+        finally:
+            async with mysql_get_db_async() as db:
+                await db.execute('DELETE FROM favorite_mail WHERE id = %s', (row_id,))
+                await db.connection.commit()
+
+    async def test_the_button_selects_the_number(self, girl):
+        """⚠⚠ Кнопка «отправить сейчас» — вторая дорога письма, и своя выборка.
+
+        Круг и кнопка собирают письмо **разными** запросами, а отмечает их одна
+        точка. Потеряй поле кнопка — отметка пропадала бы только у того, что
+        человек отправил руками: беда, которую не видно в журналах круга.
+        """
+        from src.uvicorn.routers.dating import favorite_mail as favorite_mail_mod
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO favorite_mail'
+                ' (site_id, profile_id, uid, name, photo, body, status,'
+                "  error, message_id)"
+                " VALUES (%s, %s, 'u-4', 'Oleg', '', 'текст', 'draft', '', 4444)",
+                (STAND_SITE, int(girl)))
+            row_id = int(db.lastrowid)
+            await db.connection.commit()
+
+        try:
+            letter = await favorite_mail_mod._row(row_id)
+
+            assert int(letter['message_id']) == 4444, \
+                'выборка кнопки не довезла номер обмена'
+        finally:
+            async with mysql_get_db_async() as db:
+                await db.execute('DELETE FROM favorite_mail WHERE id = %s', (row_id,))
+                await db.connection.commit()
+
+    async def test_the_panel_reply_selects_the_number(self, girl):
+        """⚠⚠ Третья дорога — ответ на письмо из панели, и номер на ней ещё
+        обязан пережить преобразователь.
+
+        Строку отдаёт `_reply_row`, а в вид для страницы её переводит
+        `mail_reply_answer`: потеряй поле любой из двух, и отметка не уйдёт. ⚠ У
+        строки рядом живёт `in_message_id` — номер **входящего письма на сайте**,
+        совсем другая величина; перепутать их значит отметить чужой обмен.
+        """
+        from src.uvicorn.routers.dating import mail_in as mail_in_mod
+
+        in_id = await _in_row(girl, uid='u-5', name='Oleg')
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO mail_reply'
+                ' (site_id, profile_id, mail_in_id, uid, name, body, status,'
+                "  error, message_id)"
+                " VALUES (%s, %s, %s, 'u-5', 'Oleg', 'текст', 'draft', '', 4545)",
+                (STAND_SITE, int(girl), in_id))
+            row_id = int(db.lastrowid)
+            await db.connection.commit()
+
+        try:
+            letter = await mail_in_mod._reply_row(row_id)
+
+            assert int(letter['message_id']) == 4545, \
+                'выборка ответа из панели не довезла номер обмена'
         finally:
             async with mysql_get_db_async() as db:
                 await db.execute('DELETE FROM mail_reply WHERE id = %s', (row_id,))
