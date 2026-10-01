@@ -34,6 +34,43 @@ ANSWER = json.dumps({'description': 'девушка в кружевном пла
                      'tags': ['lace', 'indoor', 'smiling']}, ensure_ascii=False)
 
 
+async def _mine(girl: int, limit: int = 50) -> list[dict]:
+    """Очередь разбора **этой** анкеты.
+
+    ⚠⚠ Прямой `gallery_vision_due(1)` отдаёт первую строку по **всей** базе, и
+    `gallery_vision_one` на ней записал бы фальшивое описание живой девушке.
+    Так и случилось на первом прогоне с анкетой 849.
+    """
+    return [row for row in await gallery_vision_due(limit)
+            if row['profile_id'] == girl]
+
+
+@pytest.fixture
+def only_mine(monkeypatch, girl):
+    """Отбор, суженный до **своей** анкеты.
+
+    ⚠⚠ **Без этого тест правит чужие данные.** `gallery_vision_due` по природе
+    глобальна — это задание, обходящее всю базу, — и `gallery_vision_run()` в
+    тесте разобрал бы заодно снимки живых анкет, записав им фальшивое описание
+    от заглушки агента. Так и случилось на первом прогоне: у настоящей анкеты
+    849 появилось «девушка в кружевном платье в гостиной» из этого файла.
+
+    Что именно отбирать, проверяют тесты `gallery_vision_due` отдельно и без
+    записи. Здесь проверяется другое — как `run` делит пачку и считает исход.
+    """
+    import src.dating.gallery_vision as module
+
+    real = module.gallery_vision_due
+
+    async def _due(limit=GALLERY_VISION_BATCH):
+        return [row for row in await real(limit * 10)
+                if row['profile_id'] == girl][:limit]
+
+    monkeypatch.setattr(module, 'gallery_vision_due', _due)
+
+    return _due
+
+
 @pytest.fixture
 def agent(monkeypatch):
     """Агент соседа: отвечает заготовленным и считает, о чём спрашивали."""
@@ -94,7 +131,7 @@ async def girl(auth_client):
     await profile_delete(profile_id, user=None)
 
 
-async def test_batch_is_five(tree, agent, girl):
+async def test_batch_is_five(tree, agent, girl, only_mine):
     """⚠ За заход ровно пять, хотя лежит семь."""
     got = await gallery_vision_run()
 
@@ -103,7 +140,7 @@ async def test_batch_is_five(tree, agent, girl):
     assert len(agent.asked) == GALLERY_VISION_BATCH
 
 
-async def test_described_is_not_taken_again(tree, agent, girl):
+async def test_described_is_not_taken_again(tree, agent, girl, only_mine):
     """⚠⚠ Разобранное не берётся повторно: второй заход добирает остаток."""
     await gallery_vision_run()
     second = await gallery_vision_run()
@@ -114,7 +151,7 @@ async def test_described_is_not_taken_again(tree, agent, girl):
     assert third['took'] == 0, 'третьему заходу брать нечего'
 
 
-async def test_changed_file_is_taken_again(tree, agent, girl):
+async def test_changed_file_is_taken_again(tree, agent, girl, only_mine):
     """Снимок подменили — сумма разошлась, разбираем заново."""
     await gallery_vision_run()
     async with mysql_get_db_async() as db:
@@ -122,7 +159,7 @@ async def test_changed_file_is_taken_again(tree, agent, girl):
                          " WHERE file_id = 'file-0'")
         await db.connection.commit()
 
-    due = [row['file_id'] for row in await gallery_vision_due(10)]
+    due = [row['file_id'] for row in await _mine(girl)]
 
     assert 'file-0' in due, 'сменившийся снимок обязан вернуться в очередь'
 
@@ -134,14 +171,14 @@ async def test_edited_by_hand_is_never_taken(tree, agent, girl):
                          "description = 'правлено' WHERE file_id = 'file-0'")
         await db.connection.commit()
 
-    due = [row['file_id'] for row in await gallery_vision_due(10)]
+    due = [row['file_id'] for row in await _mine(girl)]
 
     assert 'file-0' not in due
 
 
 async def test_image_goes_compressed_not_raw(tree, agent, girl):
     """⚠ Модели уходит сжатый JPEG, а не PNG с Диска: RGBA она не читает."""
-    await gallery_vision_one((await gallery_vision_due(1))[0])
+    await gallery_vision_one((await _mine(girl))[0])
 
     image = agent.asked[0]['variables']['image']
 
@@ -150,7 +187,7 @@ async def test_image_goes_compressed_not_raw(tree, agent, girl):
 
 async def test_fields_are_named_in_the_prompt(tree, agent, girl):
     """Поля названы в просьбе: не назовёшь — модель придумает свои."""
-    await gallery_vision_one((await gallery_vision_due(1))[0])
+    await gallery_vision_one((await _mine(girl))[0])
 
     question = agent.asked[0]['question']
 
@@ -159,7 +196,7 @@ async def test_fields_are_named_in_the_prompt(tree, agent, girl):
 
 async def test_answer_lands_in_columns(tree, agent, girl):
     """Описание и теги ложатся в индекс, вместе с разобранной суммой."""
-    row = (await gallery_vision_due(1))[0]
+    row = (await _mine(girl))[0]
     await gallery_vision_one(row)
 
     async with mysql_get_db_async() as db:
@@ -175,7 +212,7 @@ async def test_answer_lands_in_columns(tree, agent, girl):
     assert got['described_error'] == ''
 
 
-async def test_bad_json_is_an_error_not_a_description(tree, agent, girl):
+async def test_bad_json_is_an_error_not_a_description(tree, agent, girl, only_mine):
     """⚠ Невнятный ответ — ошибка, а не пустое описание.
 
     И `described_at` не ставится: строка обязана вернуться в очередь. Проставь
@@ -198,7 +235,7 @@ async def test_bad_json_is_an_error_not_a_description(tree, agent, girl):
     assert not row['description']
 
 
-async def test_one_failure_does_not_take_the_batch(tree, agent, girl):
+async def test_one_failure_does_not_take_the_batch(tree, agent, girl, only_mine):
     """Отказ по одному снимку не уносит остальную пачку."""
     calls = {'n': 0}
     good = agent.answer
