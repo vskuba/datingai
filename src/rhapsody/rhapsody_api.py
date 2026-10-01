@@ -599,7 +599,17 @@ async def rhapsody_api_chat_delivered(message_id: int) -> bool:
 
         return False
 
-    return bool((data.get('result') or {}).get('marked'))
+    # ⚠ Разбор — тоже под защитой. Реплика к этому моменту уже ушла живому
+    # человеку: ответь сосед кодом 200 с `result`, который не словарь (список,
+    # строка, число), `.get('marked')` бросит `AttributeError`, и исключение
+    # отменило бы то, что отменить нельзя.
+    try:
+        return bool((data.get('result') or {}).get('marked'))
+    except AttributeError:
+        logger_info(f'[rhapsody] отметка доставки {number}: '
+                    f'сосед ответил не тем, что мы умеем прочитать: {data!r}')
+
+        return False
 
 
 # Сколько дней просить у журнала LLM. ⚠ Больше семи бессмысленно: сосед держит
