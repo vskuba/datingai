@@ -253,12 +253,12 @@ class TestTheSiteSettingsReachTheDice:
 
         got = {}
 
-        async def _chat_ask(agent_id, question, variables=None):
+        async def _chat_talk(agent_id, question, variables=None):
             got.update(variables or {})
 
-            return 'ответ'
+            return {'text': 'ответ', 'message_id': 0}
 
-        monkeypatch.setattr(answer_mod, 'rhapsody_api_chat_ask', _chat_ask)
+        monkeypatch.setattr(answer_mod, 'rhapsody_api_chat_talk', _chat_talk)
 
         async with mysql_get_db_async() as db:
             await db.execute('SELECT * FROM profile WHERE id = %s', (girl,))
@@ -304,12 +304,12 @@ class TestItReachesTheAgent:
 
         got = {}
 
-        async def _chat_ask(agent_id, question, variables=None):
+        async def _chat_talk(agent_id, question, variables=None):
             got.update(variables or {})
 
-            return 'ответ'
+            return {'text': 'ответ', 'message_id': 0}
 
-        monkeypatch.setattr(answer_mod, 'rhapsody_api_chat_ask', _chat_ask)
+        monkeypatch.setattr(answer_mod, 'rhapsody_api_chat_talk', _chat_talk)
 
         async with mysql_get_db_async() as db:
             await db.execute('SELECT * FROM profile WHERE id = %s', (girl,))
@@ -330,12 +330,12 @@ class TestItReachesTheAgent:
 
         got = {}
 
-        async def _chat_ask(agent_id, question, variables=None):
+        async def _chat_talk(agent_id, question, variables=None):
             got.update(variables or {})
 
-            return 'ответ'
+            return {'text': 'ответ', 'message_id': 0}
 
-        monkeypatch.setattr(answer_mod, 'rhapsody_api_chat_ask', _chat_ask)
+        monkeypatch.setattr(answer_mod, 'rhapsody_api_chat_talk', _chat_talk)
 
         async with mysql_get_db_async() as db:
             await db.execute('SELECT * FROM profile WHERE id = %s', (girl,))

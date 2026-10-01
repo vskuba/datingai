@@ -115,12 +115,12 @@ class TestItReachesTheAgent:
     def asked(self, monkeypatch):
         got = {}
 
-        async def _chat_ask(agent_id, question, variables=None):
+        async def _chat_talk(agent_id, question, variables=None):
             got.update(variables or {})
 
-            return 'ответ'
+            return {'text': 'ответ', 'message_id': 0}
 
-        monkeypatch.setattr(answer_mod, 'rhapsody_api_chat_ask', _chat_ask)
+        monkeypatch.setattr(answer_mod, 'rhapsody_api_chat_talk', _chat_talk)
 
         return got
 
@@ -183,12 +183,12 @@ class TestTheCompanionIsNamed:
     def asked(self, monkeypatch):
         got = {}
 
-        async def _chat_ask(agent_id, question, variables=None):
+        async def _chat_talk(agent_id, question, variables=None):
             got.update(variables or {})
 
-            return 'ответ'
+            return {'text': 'ответ', 'message_id': 0}
 
-        monkeypatch.setattr(answer_mod, 'rhapsody_api_chat_ask', _chat_ask)
+        monkeypatch.setattr(answer_mod, 'rhapsody_api_chat_talk', _chat_talk)
 
         return got
 
@@ -270,7 +270,7 @@ class TestForeignNameIsNotSent:
         async def _ask(agent_id, question, language, profile, history='', uid='',
                        anyway=False, name='', **_):
             # Ровно тот ответ, что ушёл с прода.
-            return "ok vadim, let's go. what's on your mind today?", ''
+            return "ok vadim, let's go. what's on your mind today?", '', 0
 
         sent = []
 

@@ -46,7 +46,8 @@ import random
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_chat_ask
+from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_chat_delivered,
+                                       rhapsody_api_chat_talk)
 from src.dating.log import log_write
 from src.dating.chat_reply import (chat_reply_failed, chat_reply_put,
                                    chat_reply_sent, chat_reply_waiting)
@@ -143,6 +144,13 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
         # повод другой, черновика по нему нет, и мы сочиним свежий ответ, а не
         # отправим заготовленный на позавчерашнее.
         ready = await chat_reply_waiting(profile_id, int(row['id']))
+        # ⚠⚠ Умолчание на случай готового черновика: тогда агента в этом заходе
+        # не спрашивали, номера обмена нет, и отмечать доставку нечем — `0`
+        # отправит `rhapsody_api_chat_delivered` в его собственный холостой ход.
+        # Без умолчания переменная осталась бы от **прошлой** строки цикла (это
+        # обычная переменная функции, а не цикла) и отметила бы доставку чужим,
+        # более ранним номером обмена.
+        message_id = 0
 
         if not ready:
             # ⚠⚠ **Вопрос — это слова собеседника, и только они.** Промпт у
@@ -172,9 +180,10 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
             # берёт сам `_agent_ask`. Прежде её добывали три места перед вызовом,
             # и с появлением второго канала они разошлись бы.
             anyway = await _anyway_here(profile_id, uid, anyway_first)
-            answer, error = await _agent_ask(agent_id, question, language, profile,
-                                             uid=uid, anyway=anyway, name=name,
-                                             initiative=first)
+            answer, error, message_id = await _agent_ask(
+                agent_id, question, language, profile,
+                uid=uid, anyway=anyway, name=name,
+                initiative=first)
             asked += 1
             if error:
                 errors.append(f'{who}: {error}')
@@ -242,7 +251,12 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
 
         answer = str(ready['body'])
         result = await send_message(profile, presence, uid, answer)
+        # ⚠⚠ Доставку отмечаем **только у ушедшего**, и это вся суть правки.
+        # Сосед записал обмен внутри прогона — до того, как мы постучались к
+        # сайту. Не отметь мы её отдельно, агент увидел бы в истории реплику,
+        # которой собеседник не получал.
         if result['ok']:
+            await rhapsody_api_chat_delivered(message_id)
             sent += 1
             await chat_reply_sent(int(ready['id']))
             await log_write(profile_id, 'out', f'{me} → {who}: «{answer[:300]}»')
@@ -307,8 +321,8 @@ def answer_mail_length() -> str:
 
 
 async def answer_mail_write(agent_id: int, profile: dict, uid: str,
-                            language: str, name: str = '') -> tuple[str, str]:
-    """Письмо избранному, который замолчал. Возвращает (текст, ошибка).
+                            language: str, name: str = '') -> tuple[str, str, int]:
+    """Письмо избранному, который замолчал. Возвращает (текст, ошибка, номер).
 
     Args:
         agent_id: агент **писем** этого сайта (`fav_mail_<сайт>`). ⚠ Не агент
@@ -320,8 +334,9 @@ async def answer_mail_write(agent_id: int, profile: dict, uid: str,
         name: его имя, как его видит панель.
 
     Returns:
-        tuple: текст письма и ошибка. Пустой текст без ошибки — агент промолчал;
-        для письма это негодный исход, и решает его вызывающий.
+        tuple: текст, ошибка и номер обмена разговора. Номер кладётся в строку
+        пула и доживает до отправки: письмо уходит кругом через часы после
+        сочинения.
 
     ## ⚠⚠ Почему письмо пишет workflow чата, а не свой
 
@@ -360,8 +375,8 @@ async def answer_mail_write(agent_id: int, profile: dict, uid: str,
 
 
 async def answer_mail_reply(agent_id: int, profile: dict, uid: str,
-                            language: str, name: str = '') -> tuple[str, str]:
-    """Ответ на пришедшее письмо. Возвращает (текст, ошибка).
+                            language: str, name: str = '') -> tuple[str, str, int]:
+    """Ответ на пришедшее письмо. Возвращает (текст, ошибка, номер обмена).
 
     Args:
         agent_id: агент **ответов** этого сайта (`mail_reply_<сайт>`). ⚠ Свой, а
@@ -373,7 +388,9 @@ async def answer_mail_reply(agent_id: int, profile: dict, uid: str,
         name: его имя, как его видит панель.
 
     Returns:
-        tuple: текст ответа и ошибка. Пустой текст без ошибки — агент промолчал.
+        tuple: текст, ошибка и номер обмена разговора. Номер кладётся в строку
+        пула и доживает до отправки: письмо уходит кругом через часы после
+        сочинения.
 
     ## ⚠⚠ Зачем переписан: письмо и чат были разными людьми
 
@@ -443,11 +460,16 @@ async def _agent_ask(agent_id: int, question: str, language: str,
                      # бросает шаг «Жребий» у соседа, и отсюда нужен один ответ:
                      # заговорить первой или отвечать на сказанное.
                      name: str = '', initiative: bool = False,
-                     mail: str = '') -> tuple[str, str]:
-    """Спрашивает агента в RhapsodyAi. Возвращает (ответ, ошибка).
+                     mail: str = '') -> tuple[str, str, int]:
+    """Спрашивает агента в RhapsodyAi. Возвращает (ответ, ошибка, номер обмена).
 
     Пустой ответ ошибкой не считается — он значим сам по себе и разбирается выше:
     агент может намеренно промолчать.
+
+    Returns:
+        tuple: ответ, ошибка и **номер обмена разговора** у соседа. Номер нужен,
+        чтобы отметить доставку, когда реплика вправду уйдёт: сосед пишет обмен
+        внутри прогона, то есть до отправки. Ноль — агент промолчал.
 
     ⚠ **Историю берём здесь, а не у вызывающего.** Звали три места — чат,
     инициатива, письмо, — и каждое спрашивало её само перед вызовом. Каналов
@@ -475,7 +497,7 @@ async def _agent_ask(agent_id: int, question: str, language: str,
             card = {}
 
     try:
-        answer = await rhapsody_api_chat_ask(
+        got = await rhapsody_api_chat_talk(
             agent_id, question,
             variables={'user_language': language,
                        # ⚠⚠ **Историю разговора отсюда больше не шлём.** Обе
@@ -566,9 +588,9 @@ async def _agent_ask(agent_id: int, question: str, language: str,
                        **(await _dice_percents(profile.get('site_id'))),
                        **agent_vars(profile, card or {})})
     except RhapsodyError as e:
-        return '', str(e)
+        return '', str(e), 0
 
-    return answer, ''
+    return got['text'], '', int(got.get('message_id') or 0)
 
 
 def _me_name(profile: dict) -> str:
