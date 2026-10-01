@@ -76,7 +76,9 @@
 | `rhapsody_api_ws_capture` | `POST /api/browser/ws/capture` | снять адрес чат-сокета |
 | `rhapsody_api_agent_create` | `POST /agent/create` | завести агента анкеты |
 | `rhapsody_api_agent_find` | `GET /agent/name/{name}` | найти его номер |
-| `rhapsody_api_chat_ask` | `POST /chat/ask` | получить ответ в чате |
+| `rhapsody_api_chat_talk` | `POST /chat/ask` | ответ агента **вместе с номером обмена**: `{text, message_id}`. Зовут дороги `dating_talk` — чат, инициатива, оба письма |
+| `rhapsody_api_chat_ask` | `POST /chat/ask` | тот же вызов, но ответом строка. Для тех, кому номер не нужен: `mail_agent.py` и `gallery_vision.py` идут **другими** workflow, и обмена у них нет |
+| `rhapsody_api_chat_delivered` | `POST /chat/message/delivered` | «эта реплика дошла до человека». ⚠⚠ Зовётся **только после удачной отправки**; ноль и отказ соседа гасятся внутри — отправку не роняет, потому что реплика к этому моменту уже ушла |
 | `rhapsody_api_error_write` | `POST /api/browser/error` | строка во вкладку «Ошибки» соседа |
 
 ## 4. Места, где контракт неочевиден
