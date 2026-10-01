@@ -65,16 +65,17 @@ async def _profile(auth_client, tag: str) -> int:
     return int(made)
 
 
-def _answer(value):
+def _answer(value, message_id: int = 0):
     """Подменённый агент письма: всегда один и тот же текст.
 
     ⚠ Возвращает **тройку** `(текст, ошибка, номер)` — так устроен
     `answer_mail_write`: отказ соседа и молчание агента здесь разные исходы, и
-    первый обрывает заход, а второй пропускает одну пару. Номер обмена нулю —
-    подменённый агент ни к кому не ходил.
+    первый обрывает заход, а второй пропускает одну пару. Номер обмена нулю по
+    умолчанию — подменённый агент ни к кому не ходил; тесты, которым номер
+    важен, задают его явно.
     """
     async def _got(*args, **kwargs):
-        return value, '', 0
+        return value, '', message_id
 
     return _got
 
@@ -158,6 +159,18 @@ async def _draft(profile_id: int, uid: str) -> None:
             " VALUES (%s, %s, %s, 'X', 'hi', 'draft')",
             (STAND_SITE, int(profile_id), str(uid)))
         await db.connection.commit()
+
+
+async def _letters(site_id: int = STAND_SITE) -> list[dict]:
+    """Строки пула письма избранным — для проверки того, что в них реально
+    легло, а не только того, что набор отчитался числом."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT profile_id, uid, body, status, message_id'
+            ' FROM favorite_mail WHERE site_id = %s ORDER BY id',
+            (int(site_id),))
+
+        return [dict(row) for row in await db.fetchall() or []]
 
 
 # Кто «сейчас в сети» по мнению подменённого снимка ленты. Список, а не
@@ -1198,3 +1211,63 @@ class TestTheGapLabelReadsMinutes:
                 f'подпись паузы считает неверно: {result.stdout.strip()}'
         finally:
             os.remove(path)
+
+
+class TestMessageIdReachesThePool:
+    """⚠⚠ Номер обмена обязан доехать до строки пула, а не только пройти форму.
+
+    Задача 7 научила `_put` принимать довод `message_id`, но ревью поймало дыру
+    мутационным тестом: убери колонку из `INSERT`, оставив сигнатуры прежними —
+    и вся сюита `mail` остаётся зелёной, потому что существующие тесты проверяют
+    лишь то, что набор не падает на распаковке тройки `answer_mail_write`.
+    Здесь стережём само содержимое строки: номер, который отдал агент, должен
+    лежать в колонке `favorite_mail.message_id` — без него круг отправки не
+    сможет отметить у соседа, что письмо дошло.
+    """
+
+    async def test_message_id_lands_in_the_pool_row(self, girl, monkeypatch):
+        """Агент отдал ненулевой номер обмена — он обязан лежать в столбце, а не
+        потеряться между сочинением письма и записью в пул."""
+        import src.dating.favorite_mail as mod
+
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _hers(girl, uid, '2026-09-01 10:00:00')
+
+        monkeypatch.setattr(mod, 'answer_mail_write',
+                            _answer('Давно не общались, как ты?', 9911))
+        monkeypatch.setattr(mod, '_agent', _agent_id())
+        monkeypatch.setattr(mod, '_sync_stars', _nothing())
+
+        got = await mod.favorite_mail_make(STAND_SITE, limit=5, profile_id=girl)
+        rows = [r for r in await _letters() if r['uid'] == uid]
+
+        assert got['made'] == 1
+        assert rows and rows[0]['message_id'] == 9911, \
+            'номер обмена не доехал до строки пула'
+
+    async def test_silent_agent_leaves_null_not_zero(self, girl, monkeypatch):
+        """Агент не дал номера (вернул ноль — обычное поведение подмены
+        `_answer` без явного номера) — в строке обязан лежать `NULL`, а не `0`.
+
+        «Не знаем» и «ноль» — разные вещи: отметка доставки у соседа идёт по
+        номеру, и ложный ноль в колонке выглядел бы настоящим обменом №0, а не
+        его отсутствием — отметка уйдёт в никуда молча, без ошибки в логах.
+        """
+        import src.dating.favorite_mail as mod
+
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _hers(girl, uid, '2026-09-01 10:00:00')
+
+        monkeypatch.setattr(mod, 'answer_mail_write',
+                            _answer('Давно не общались, как ты?'))
+        monkeypatch.setattr(mod, '_agent', _agent_id())
+        monkeypatch.setattr(mod, '_sync_stars', _nothing())
+
+        got = await mod.favorite_mail_make(STAND_SITE, limit=5, profile_id=girl)
+        rows = [r for r in await _letters() if r['uid'] == uid]
+
+        assert got['made'] == 1
+        assert rows and rows[0]['message_id'] is None, \
+            'отсутствие номера легло нулём, а не NULL'

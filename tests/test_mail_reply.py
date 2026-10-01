@@ -141,8 +141,9 @@ async def _replies(site_id: int = SITE) -> list[dict]:
     from mysql_.mysql_ import mysql_get_db_async
 
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT mail_in_id, uid, body, status FROM mail_reply'
-                         ' WHERE site_id = %s ORDER BY id', (int(site_id),))
+        await db.execute('SELECT mail_in_id, uid, body, status, message_id'
+                         ' FROM mail_reply WHERE site_id = %s ORDER BY id',
+                         (int(site_id),))
 
         return [dict(row) for row in await db.fetchall() or []]
 
@@ -533,3 +534,49 @@ class TestPendingReplyStandsLast:
                   if one['kind'] == 'in'][0]
 
         assert reply['at'] > letter['at'], 'ответ встал раньше письма, на которое он'
+
+
+class TestMessageIdReachesThePool:
+    """⚠⚠ Номер обмена обязан доехать до строки пула, а не только пройти форму.
+
+    Задача 7 научила `_put` принимать довод `message_id`, но ревью поймало дыру
+    мутационным тестом: убери колонку из `INSERT`, оставив сигнатуры прежними —
+    и вся сюита `mail` остаётся зелёной, потому что существующие тесты проверяют
+    лишь то, что вызывающий код не падает на распаковке тройки. Здесь стережём
+    само содержимое строки: номер, который отдал агент, должен лежать в колонке
+    `mail_reply.message_id` — тем же номером, без которого отправка не сможет
+    отметить у соседа, что реплика дошла.
+    """
+
+    async def test_message_id_lands_in_the_pool_row(self, profile, monkeypatch):
+        """Агент отдал ненулевой номер обмена — он обязан лежать в столбце, а не
+        потеряться между сочинением ответа и записью в пул."""
+        async def fake(agent_id, profile, uid, language, name=''):
+            return 'Ответ про мотоциклы', '', 4242
+
+        monkeypatch.setattr(mod, 'answer_mail_reply', fake)
+        monkeypatch.setattr(mod, '_agent', _fake_agent)
+
+        await _in(profile, '111', 'Moto is my life')
+        got = await mail_reply_make(SITE)
+        rows = await _replies()
+
+        assert got['made'] == 1
+        assert rows[0]['message_id'] == 4242, \
+            'номер обмена не доехал до строки пула'
+
+    async def test_silent_agent_leaves_null_not_zero(self, profile, agent):
+        """Агент промолчал про номер (фикстура `agent` отдаёт его нулём) — в
+        строке обязан лежать `NULL`, а не `0`.
+
+        «Не знаем» и «ноль» — разные вещи: отметка доставки у соседа идёт по
+        номеру, и ложный ноль в колонке выглядел бы настоящим обменом №0, а не
+        его отсутствием — отметка уйдёт в никуда молча, без ошибки в логах.
+        """
+        await _in(profile, '111', 'Moto is my life')
+        got = await mail_reply_make(SITE)
+        rows = await _replies()
+
+        assert got['made'] == 1
+        assert rows[0]['message_id'] is None, \
+            'отсутствие номера легло нулём, а не NULL'
