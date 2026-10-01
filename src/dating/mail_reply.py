@@ -114,7 +114,7 @@ async def mail_reply_make(site_id: int, limit: int = 0) -> dict:
         # ⚠⚠ Переписку сюда не передаём: обе истории — чат и письма — берёт сам
         # `answer_mail_reply`. Прежде круг собирал её своим запросом, знавшим про
         # три таблицы из четырёх и не знавшим про чат вовсе.
-        body, error = await answer_mail_reply(
+        body, error, message_id = await answer_mail_reply(
             agent_id, profile, str(letter['uid']), language,
             str(letter.get('name') or ''))
 
@@ -131,7 +131,7 @@ async def mail_reply_make(site_id: int, limit: int = 0) -> dict:
             _reason(reasons, 'агент ответил пусто')
             continue
 
-        await _put(site_id, letter, body)
+        await _put(site_id, letter, body, message_id)
         made += 1
 
     if made or skipped:
@@ -548,19 +548,24 @@ async def _profile(profile_id: int) -> dict:
     return dict(row or {})
 
 
-async def _put(site_id: int, letter: dict, body: str) -> None:
+async def _put(site_id: int, letter: dict, body: str, message_id: int = 0) -> None:
     """Кладёт ответ в пул. `INSERT IGNORE` ловит гонку двух заходов разом.
 
     ⚠ Уникальный ключ по `mail_in_id`: один ответ на письмо. Два ответа подряд
     одному человеку выглядят поломкой — ею и являются.
+
+    ⚠⚠ `message_id` — номер обмена разговора у соседа. Доживает здесь до
+    отправки: письмо уносит круг через часы после сочинения, а отметить доставку
+    можно только зная номер. Ноль ложится `NULL` — «не знаем».
     """
     async with mysql_get_db_async() as db:
         await db.execute(
             'INSERT IGNORE INTO mail_reply'
-            ' (site_id, profile_id, mail_in_id, uid, name, body, status)'
-            " VALUES (%s, %s, %s, %s, %s, %s, 'draft')",
+            ' (site_id, profile_id, mail_in_id, uid, name, body, status, message_id)'
+            " VALUES (%s, %s, %s, %s, %s, %s, 'draft', %s)",
             (int(site_id), int(letter['profile_id']), int(letter['id']),
-             str(letter['uid']), str(letter['name'] or ''), body))
+             str(letter['uid']), str(letter['name'] or ''), body,
+             int(message_id or 0) or None))
         await db.connection.commit()
 
 

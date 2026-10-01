@@ -68,12 +68,13 @@ async def _profile(auth_client, tag: str) -> int:
 def _answer(value):
     """Подменённый агент письма: всегда один и тот же текст.
 
-    ⚠ Возвращает **пару** `(текст, ошибка)` — так устроен `answer_mail_write`:
-    отказ соседа и молчание агента здесь разные исходы, и первый обрывает заход,
-    а второй пропускает одну пару.
+    ⚠ Возвращает **тройку** `(текст, ошибка, номер)` — так устроен
+    `answer_mail_write`: отказ соседа и молчание агента здесь разные исходы, и
+    первый обрывает заход, а второй пропускает одну пару. Номер обмена нулю —
+    подменённый агент ни к кому не ходил.
     """
     async def _got(*args, **kwargs):
-        return value, ''
+        return value, '', 0
 
     return _got
 
@@ -530,7 +531,7 @@ class TestBothMustBeOnline:
         async def _write(*args, **kwargs):
             called.append(args)
 
-            return 'письмо', ''
+            return 'письмо', '', 0
 
         monkeypatch.setattr(favorite_mail, 'answer_mail_write', _write)
         monkeypatch.setattr(favorite_mail, '_agent', _agent_id())

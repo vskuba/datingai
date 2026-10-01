@@ -84,7 +84,7 @@ def agent(monkeypatch):
                       'name': str(name),
                       'profile_id': int(profile.get('id') or 0)})
 
-        return f'Ответ №{len(calls)}', ''
+        return f'Ответ №{len(calls)}', '', 0
 
     monkeypatch.setattr(mod, 'answer_mail_reply', fake)
     monkeypatch.setattr(mod, '_agent', _fake_agent)
@@ -282,14 +282,14 @@ class TestRefusal:
         же самое. Круг вернётся через свой срок.
 
         ⚠ Отказ теперь приходит **второй половиной ответа**, а не исключением:
-        `answer_mail_reply` отдаёт `(текст, ошибка)`, как и остальной чат.
+        `answer_mail_reply` отдаёт `(текст, ошибка, номер)`, как и остальной чат.
         """
         calls = []
 
         async def broken(agent_id, profile, uid, language, name=''):
             calls.append(1)
 
-            return '', 'браузер соседа занят'
+            return '', 'браузер соседа занят', 0
 
         monkeypatch.setattr(mod, 'answer_mail_reply', broken)
         monkeypatch.setattr(mod, '_agent', _fake_agent)
@@ -320,7 +320,7 @@ class TestRefusal:
 
     async def test_empty_answer_is_not_saved(self, profile, monkeypatch):
         async def empty(agent_id, profile, uid, language, name=''):
-            return '   ', ''
+            return '   ', '', 0
 
         monkeypatch.setattr(mod, 'answer_mail_reply', empty)
         monkeypatch.setattr(mod, '_agent', _fake_agent)

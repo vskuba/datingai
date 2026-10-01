@@ -376,11 +376,11 @@ async def favorite_mail_make(site_id: int, limit: int = 0,
                 break
 
         try:
-            body, error = await answer_mail_write(
+            body, error, message_id = await answer_mail_write(
                 agent_id, pair['profile'], uid, language,
                 name=str(pair.get('name') or ''))
         except DatingMailAgentError as e:
-            error, body = str(e), ''
+            error, body, message_id = str(e), '', 0
 
         if error:
             # ⚠ Отказ агента обрывает **весь заход**: сосед занят или недоступен,
@@ -399,7 +399,7 @@ async def favorite_mail_make(site_id: int, limit: int = 0,
             _reason(reasons, f'{_addressee(pair)}: {FAVORITE_MAIL_SKIP_SILENT}')
             continue
 
-        await _put(site_id, profile_id_, pair, body)
+        await _put(site_id, profile_id_, pair, body, message_id)
         written.add(uid)
         girls.add(profile_id_)
         made += 1
@@ -1141,7 +1141,8 @@ async def _seconds(site_id: int, key: str, fallback: int) -> int:
     return int(await site_seconds(site_id, key) or fallback)
 
 
-async def _put(site_id: int, profile_id: int, pair: dict, body: str) -> None:
+async def _put(site_id: int, profile_id: int, pair: dict, body: str,
+               message_id: int = 0) -> None:
     """Кладёт письмо в пул.
 
     ⚠ **Без `INSERT IGNORE`, в отличие от прочих пулов**: уникального ключа на
@@ -1149,14 +1150,18 @@ async def _put(site_id: int, profile_id: int, pair: dict, body: str) -> None:
     двух черновиков разом защищает отбор (`_quiet` не берёт тех, у кого черновик
     уже лежит), а гонка двух заходов стоила бы одного лишнего письма в пуле, где
     его прочтёт человек.
+
+    ⚠⚠ `message_id` — номер обмена разговора у соседа; им отмечается доставка в
+    момент отправки. Ноль ложится `NULL`: агент промолчал либо строка старая.
     """
     async with mysql_get_db_async() as db:
         await db.execute(
             'INSERT INTO favorite_mail'
-            ' (site_id, profile_id, uid, name, photo, body, status)'
-            " VALUES (%s, %s, %s, %s, %s, %s, 'draft')",
+            ' (site_id, profile_id, uid, name, photo, body, status, message_id)'
+            " VALUES (%s, %s, %s, %s, %s, %s, 'draft', %s)",
             (int(site_id), int(profile_id), str(pair['uid']),
-             str(pair.get('name') or ''), str(pair.get('photo') or ''), body))
+             str(pair.get('name') or ''), str(pair.get('photo') or ''), body,
+             int(message_id or 0) or None))
         await db.connection.commit()
 
 
