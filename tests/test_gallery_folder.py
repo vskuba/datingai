@@ -17,6 +17,15 @@
 Папки на Диске названы логином анкеты, поэтому пустая колонка читается как
 «как у всех», и логин подставляет сервер. Тест на это и смотрит: у свежей
 анкеты поле есть и оно пустое — а не отсутствует.
+
+## ⚠⚠ Карточка спрашивается **в процессе**, а не по HTTP
+
+Это намеренное расхождение с общим правилом, и у него есть причина
+(`testing.md` §1.2 — расхождение уже записано там). Поднятая локально панель
+бежит ту ветку, из которой её запустили; спроси мы карточку по HTTP, тест
+краснел бы не потому, что код плох, а потому, что рядом работает другая
+версия. Запись в базу и запрет общего `PUT` проверяются по HTTP — там эта
+разница ничего не решает.
 """
 
 import uuid
@@ -26,6 +35,7 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.uvicorn.routers.dating.profile_ import profile_delete
+from src.uvicorn.routers.dating.profile_view import profile_view_card
 
 pytestmark = pytest.mark.profile
 
@@ -47,22 +57,22 @@ async def girl(auth_client):
     await profile_delete(profile_id, user=None)
 
 
-async def test_card_gives_empty_folder(auth_client, girl):
+async def test_card_gives_empty_folder(girl):
     """У свежей анкеты поле есть и оно пустое — «как у всех», а не «нет поля»."""
-    card = (await auth_client.get(f'/api/dating/profile/{girl}/card')).json()['result']
+    card = (await profile_view_card(girl, user=None))['result']
 
     assert 'gallery_folder' in card, 'карточка обязана отдавать поле всегда'
     assert card['gallery_folder'] == ''
 
 
-async def test_card_gives_chosen_folder(auth_client, girl):
+async def test_card_gives_chosen_folder(girl):
     """Выбранная папка доезжает до карточки."""
     async with mysql_get_db_async() as db:
         await db.execute('UPDATE profile SET gallery_folder = %s WHERE id = %s',
                          (FOLDER, girl))
         await db.connection.commit()
 
-    card = (await auth_client.get(f'/api/dating/profile/{girl}/card')).json()['result']
+    card = (await profile_view_card(girl, user=None))['result']
 
     assert card['gallery_folder'] == FOLDER
 
