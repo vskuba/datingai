@@ -151,3 +151,60 @@ class TestDraftKeepsTheNumber:
         await answer_mod.answer_run(await _profile(girl), {}, agent_id=7)
 
         assert marked == [991], 'номер обязан дожить до отправки в строке пула'
+
+
+@pytest.fixture
+def initiative_marked(monkeypatch):
+    """Номера, которые круг инициативы отметил доставленными.
+
+    ⚠ Своя подмена, не `marked`: тот патчит `rhapsody_api_chat_delivered` в
+    `answer.py` (чат), а здесь зовёт тот же сосед, но из `initiative_round.py`.
+    """
+    import src.dating.initiative_round as initiative_round_mod
+
+    got = []
+
+    async def _delivered(message_id):
+        got.append(int(message_id))
+
+        return True
+
+    monkeypatch.setattr(initiative_round_mod, 'rhapsody_api_chat_delivered',
+                        _delivered)
+
+    return got
+
+
+class TestInitiativeMarksDelivery:
+    async def test_sent_card_is_marked(self, monkeypatch, initiative_marked, girl):
+        """Ушедшая инициатива помечается своим номером обмена.
+
+        ⚠ Карточку сочиняет один круг, уносит другой: номер к моменту отправки
+        живёт только в строке пула.
+        """
+        import src.dating.initiative_round as initiative_round_mod
+        from src.dating.chat_initiative import chat_initiative_put
+
+        # ⚠ `chat_initiative_ready` берёт карточки только у анкет в сети —
+        # обычная фикстура `girl` этой правкой не трогается, статус правим
+        # здесь же.
+        async with mysql_get_db_async() as db:
+            await db.execute("UPDATE profile SET status = 'online' WHERE id = %s",
+                             (girl,))
+            await db.connection.commit()
+
+        await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'текст',
+                                  talk_message_id=771)
+
+        async def _send_ok(profile, presence, uid, text, **kwargs):
+            return {'ok': True, 'error': ''}
+
+        monkeypatch.setattr(initiative_round_mod, 'online_check',
+                            lambda site_id, uid: {'online': True})
+        monkeypatch.setattr(initiative_round_mod, 'send_message', _send_ok)
+
+        sent = await initiative_round_mod._send(STAND_SITE)
+
+        assert sent == 1, 'реплика обязана уйти'
+        assert initiative_marked == [771], \
+            'ушедшая инициатива обязана быть отмечена своим номером обмена'

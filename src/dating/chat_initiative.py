@@ -14,8 +14,23 @@ from mysql_.mysql_ import mysql_get_db_async
 
 
 async def chat_initiative_put(site_id: int, profile_id: int, uid: str,
-                              name: str, body: str, try_no: int = 1) -> int:
+                              name: str, body: str, try_no: int = 1,
+                              talk_message_id: int = 0) -> int:
     """Кладёт карточку в пул. Возвращает номер строки, ноль — не легло.
+
+    Args:
+        site_id: сайт-закладка.
+        profile_id: наша анкета.
+        uid: собеседник на сайте.
+        name: его имя на момент набора.
+        body: чем заговорить.
+        try_no: который это заход подряд к затихшему.
+        talk_message_id: номер обмена разговора **у соседа** — тот, которым
+            отмечается доставка (`rhapsody_api_chat_delivered`). Приходит из
+            `_agent_ask` в момент сочинения, а отправка идёт другим кругом
+            позже; без своего места в строке он до неё не дожил бы. Ноль
+            значит «агент промолчал о номере» и ложится `NULL`, а не самим
+            нулём — отметка на нуле ушла бы в никуда.
 
     ⚠ **Повтор не ошибка.** Ключ базы держит одну ждущую карточку на пару, и
     второй заход круга на ту же пару превращается в `INSERT IGNORE`, который
@@ -28,10 +43,11 @@ async def chat_initiative_put(site_id: int, profile_id: int, uid: str,
     async with mysql_get_db_async() as db:
         await db.execute(
             'INSERT IGNORE INTO chat_initiative'
-            '  (site_id, profile_id, uid, name, body, try_no)'
-            ' VALUES (%s, %s, %s, %s, %s, %s)',
+            '  (site_id, profile_id, uid, name, body, try_no, talk_message_id)'
+            ' VALUES (%s, %s, %s, %s, %s, %s, %s)',
             (int(site_id or 0), int(profile_id), str(uid), str(name or ''),
-             str(body), max(1, int(try_no or 1))))
+             str(body), max(1, int(try_no or 1)),
+             int(talk_message_id or 0) or None))
         await db.connection.commit()
 
         return int(db.lastrowid or 0)
@@ -63,10 +79,15 @@ async def chat_initiative_ready(site_id: int) -> list[dict]:
     отправить нечем. Проверка стоит в запросе, а не после — иначе круг брал бы
     карточки спящих и каждый раз откладывал их, не доходя до тех, что можно
     отправить.
+
+    ⚠ Отдаём и `talk_message_id`: круг отправки берёт номер отметки доставки
+    отсюда — он сочинял карточку другим кругом и другим заходом, и другого
+    источника у номера нет.
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT i.id, i.site_id, i.profile_id, i.uid, i.name, i.body, i.try_no'
+            'SELECT i.id, i.site_id, i.profile_id, i.uid, i.name, i.body,'
+            '       i.try_no, i.talk_message_id'
             '  FROM chat_initiative i'
             '  JOIN profile p ON p.id = i.profile_id'
             " WHERE i.site_id = %s AND i.status = 'draft' AND i.error = ''"

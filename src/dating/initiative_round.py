@@ -48,6 +48,7 @@ from src.dating.pool import pool_sweep
 from src.dating.log import log_write
 from src.dating.online import online_check
 from src.dating.send import send_message
+from src.rhapsody.rhapsody_api import rhapsody_api_chat_delivered
 
 # Как часто круг просыпается. Минута — как у автоответа: чаще незачем, сроки
 # инициативы считаются десятками минут.
@@ -133,6 +134,10 @@ async def _send(site_id: int) -> int:
         if result['ok']:
             sent += 1
             await chat_initiative_sent(int(card['id']))
+            # ⚠⚠ Доставку отмечаем только у ушедшего: сосед записал обмен внутри
+            # прогона, то есть до того, как мы постучались к сайту знакомств.
+            # Номер дожил до сюда в строке пула — карточку сочинял другой круг.
+            await rhapsody_api_chat_delivered(int(card.get('talk_message_id') or 0))
             await log_write(int(card['profile_id']), 'out',
                             f"Инициатива → {who}: «{str(card['body'])[:300]}»")
         elif result.get('offline'):

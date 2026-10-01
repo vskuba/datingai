@@ -136,9 +136,9 @@ async def _one(profile: dict, agent: int, pair: dict) -> str:
     # имени человека.
     #
     # ⚠ Ветку выбирает флаг `initiative`, а не текст вопроса.
-    text, error = await _agent_ask(agent, '', language, profile,
-                                   uid=uid, name=name,
-                                   anyway=True, initiative=True)
+    text, error, message_id = await _agent_ask(agent, '', language, profile,
+                                               uid=uid, name=name,
+                                               anyway=True, initiative=True)
 
     if error:
         await log_write(profile_id, 'fail',
@@ -160,8 +160,13 @@ async def _one(profile: dict, agent: int, pair: dict) -> str:
 
         return f'ошибка:{who}: в тексте чужое имя «{alien}»'
 
+    # ⚠⚠ Номер обмена кладём в строку пула: карточку сочиняет этот круг, а
+    # уносит отправкой другой (`initiative_round._send`), позже — когда
+    # собеседник окажется в сети. Без своего места в строке номер до отправки
+    # не дожил бы, и ушедшая инициатива осталась бы у соседа неотмеченной.
     await chat_initiative_put(int(profile.get('site_id') or 0), profile_id, uid,
-                              name, text, int(pair.get('try_no') or 1))
+                              name, text, int(pair.get('try_no') or 1),
+                              message_id)
     await log_write(profile_id, 'info',
                     f'Инициатива готова: {_me_name(profile)} → {who} '
                     f'(заход {int(pair.get("try_no") or 1)})')
