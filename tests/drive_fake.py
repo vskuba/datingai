@@ -54,9 +54,21 @@ DRIVE_FAKE_THUMB = 'https://lh3.test/thumb-{file_id}=s220'
 # знай она только первый, прокси вкладки шёл бы на живой googleusercontent.com.
 DRIVE_FAKE_THUMB_BY_ID = 'https://lh3.googleusercontent.com/d/'
 
-# Байты за картинку: настоящая сигнатура PNG, чтобы проверке «это картинка, а не
-# страница входа» было что проверять.
-DRIVE_FAKE_PNG = b'\x89PNG\r\n\x1a\n' + b'0' * 64
+# Байты за картинку. ⚠ **Настоящий PNG, а не сигнатура с мусором**: разбор
+# снимка открывает его Pillow (`ai_vision_normalize`), и подделка валится
+# `OSError: Truncated File Read` — отказом, который про заглушку, а не про код.
+def _png() -> bytes:
+    from io import BytesIO
+
+    from PIL import Image
+
+    out = BytesIO()
+    Image.new('RGB', (16, 16), (120, 140, 160)).save(out, 'PNG')
+
+    return out.getvalue()
+
+
+DRIVE_FAKE_PNG = _png()
 
 DRIVE_FAKE_FOLDER_MIME = 'application/vnd.google-apps.folder'
 
