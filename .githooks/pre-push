@@ -17,9 +17,19 @@
 # верхушке, но промежуточный коммит с битым указателем ломает любой чужой
 # `checkout` на нём — и обнаружится это через неделю у того, кто не виноват.
 #
+# ⚠⚠ **`GIT_DIR` снимаем, и без этого проверка не работает в worktree.** Git
+# выставляет хуку `GIT_DIR` суперпроекта, и `git -C py_modules …` читает **его**
+# каталог вместо каталога подмодуля: `rev-parse refs/remotes/origin/HEAD`
+# отвечает «unknown revision», `branch -r --contains` — «malformed object name»,
+# обе проверки проваливаются, и застава держит пуш, у которого всё в порядке.
+# В обычном чекауте этого не видно: там `GIT_DIR` указывает туда же, куда и
+# `-C`. Измерено на worktree `.git_worktree/gallery`.
+#
 # Обойти намеренно: `git push --no-verify`.
 
 set -eu
+
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE 2>/dev/null || true
 
 zero='0000000000000000000000000000000000000000'
 bad=''

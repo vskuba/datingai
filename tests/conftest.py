@@ -73,6 +73,11 @@ from tests.rhapsody_fake import rhapsody  # noqa: E402,F401 — фикстура
 # сюита не ходит ни в соседний проект, ни на сам сайт.
 from tests.site_api_fake import site_api  # noqa: E402,F401 — фикстура
 
+# Поддельный Google Диск. Третья внешняя дверь и третья заглушка: ходим туда
+# ключом сервисного аккаунта, и живой прогон означал бы настоящие запросы
+# настоящими полномочиями к чужим фотографиям.
+from tests.drive_fake import drive  # noqa: E402,F401 — фикстура
+
 # Куда стучаться. На проде — `https://dating.92.5.17.195.sslip.io`: своё имя,
 # корень домена, `BASE_PATH` при этом пуст — как локально.
 BASE_URL = os.getenv('BASE_URL', 'http://localhost:8021').rstrip('/')
