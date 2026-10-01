@@ -17,12 +17,16 @@
 трёх кругах, а во входе. Обойти его нельзя, не переписав вход.
 """
 
+import uuid
+
 import pytest
 
 from src.dating.login_retry import (LOGIN_RETRY_EVERY_DEFAULT,
                                            LOGIN_RETRY_MAX_DEFAULT,
                                            DatingLoginHeld,
-                                           login_retry_allowed)
+                                           login_retry_allowed,
+                                           login_retry_fail,
+                                           login_retry_hold)
 
 pytestmark = pytest.mark.profile
 
@@ -30,6 +34,30 @@ pytestmark = pytest.mark.profile
 def _profile(tries: int, last=None, site_id: int = 1):
     return {'id': 1, 'site_id': site_id, 'login_fail_tries': tries,
             'login_fail_at': last}
+
+
+async def _girl() -> int:
+    """Анкета сюиты: метка `@example.com` уносит её уборкой после прогона."""
+    from mysql_.mysql_ import mysql_get_db_async
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO profile (site_id, login, password, enabled)'
+            ' VALUES (%s, %s, %s, 1)',
+            (999_343, f'retry-{uuid.uuid4().hex[:8]}@example.com', 'x'))
+        await db.connection.commit()
+
+        return int(db.lastrowid)
+
+
+async def _row(profile_id: int) -> dict:
+    from mysql_.mysql_ import mysql_get_db_async
+
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT login_fail_tries, login_fail_at FROM profile'
+                         ' WHERE id = %s', (int(profile_id),))
+
+        return dict(await db.fetchone())
 
 
 class TestFirstTryIsFree:
@@ -109,6 +137,116 @@ class TestCeiling:
 
         assert 'login_fail_tries + 1' in code
         assert 'SET login_fail_tries = 0' not in code
+
+
+class TestTheCeilingCountsTheSiteNotTheBrowser:
+    """⚠⚠ Живая беда: три сорванных вкладки Chromium заперли здоровую анкету.
+
+    Прод, анкета #40 (Ladadate), вечер 28.09. Три неудачи подряд, и все три
+    браузерные: «Target page, context or browser has been closed» на шаге 2 и
+    дважды `Locator.click: Timeout 30000ms` на шаге 4. Сайт при этом пускал — тем
+    же логином человек вошёл руками без заминки, и остальные двенадцать анкет
+    Ladadate в те же сутки входили как обычно.
+
+    Потолок защёлкнулся, и с 28.09 21:50 автомат к сайту не ходил **ни разу**:
+    двенадцать «попыток» лестницы восстановления упёрлись в свою же дверь, а через
+    сутки панель объявила «сутки не выходит войти». Снять защёлку могла только
+    кнопка человека.
+
+    ⚠⚠ **Второй конец той же ошибки — отказ сайта в потолок не попадал вовсе.**
+    Ветка «Сайт вход не признал» уходит из входа своим `return` и до счётчика не
+    доходит. То есть беда, ради которой потолок и заводили (сайт не подтверждает
+    кабинет, круг расписания долбит вход каждые 86 секунд), им не ловилась.
+
+    Отсюда правило: потолок считает **отказ сайта**, а сорвавшийся прогон получает
+    только паузу. Сломанный браузер соседа — не причина запирать учётку.
+    """
+
+    async def test_a_site_refusal_counts(self):
+        """Отказ сайта — настоящая неудача входа: счётчик и время."""
+        girl = await _girl()
+        await login_retry_fail(girl)
+        row = await _row(girl)
+
+        assert int(row['login_fail_tries']) == 1
+        assert row['login_fail_at'] is not None
+
+    async def test_a_broken_run_pauses_but_does_not_count(self):
+        """⚠ Сорвавшийся прогон ставит паузу и **не** двигает потолок."""
+        girl = await _girl()
+        await login_retry_hold(girl)
+        row = await _row(girl)
+
+        assert int(row['login_fail_tries']) == 0, (
+            'сорвавшаяся вкладка Chromium снова копит потолок — три подряд запрут '
+            'здоровую анкету до нажатия кнопки')
+        assert row['login_fail_at'] is not None, (
+            'после сорвавшегося прогона нет паузы — круг пойдёт в браузер снова '
+            'через минуту')
+
+    async def test_the_pause_holds_without_a_counter(self):
+        """⚠ Пауза держит и при нулевом счётчике: иначе у сорвавшегося прогона
+        её не было бы вовсе."""
+        from datetime_.datetime_ import datetime_utc_now
+
+        allowed, why = await login_retry_allowed(_profile(0, last=datetime_utc_now()))
+
+        assert not allowed
+        assert 'осталось' in why, why
+        # Номера попытки тут нет и быть не должно: к потолку это не попытка.
+        assert 'Попытка' not in why, why
+
+    async def test_broken_runs_never_latch(self):
+        """⚠⚠ Сколько бы прогонов ни сорвалось, потолок не наступит.
+
+        Пять подряд — и после паузы вход снова разрешён. Это и есть разница с
+        отказом сайта: тот на третий раз замолкает совсем.
+        """
+        from datetime import timedelta
+
+        from datetime_.datetime_ import datetime_utc_now
+
+        girl = await _girl()
+        for _ in range(5):
+            await login_retry_hold(girl)
+
+        row = await _row(girl)
+        long_ago = datetime_utc_now() - timedelta(seconds=LOGIN_RETRY_EVERY_DEFAULT + 60)
+        allowed, why = await login_retry_allowed(
+            _profile(int(row['login_fail_tries']), last=long_ago))
+
+        assert allowed, why
+
+    def test_the_refusal_branch_counts_at_the_door(self):
+        """⚠⚠ Ветка «сайт вход не признал» обязана считать неудачу до своего `return`.
+
+        Здесь и была ошибка: ветка уходила из входа сама, и отказ сайта в счётчик
+        не попадал никогда.
+        """
+        import inspect
+
+        from src.dating import login
+
+        code = inspect.getsource(login.login_run)
+        start = code.index("if verify['status'] != 'online':")
+        end = code.index("return {'status': 'error'", start)
+
+        assert 'login_retry_fail' in code[start:end], (
+            'отказ сайта снова не считается в потолок — круг будет долбить вход '
+            'до конца времён')
+
+    def test_the_broken_run_branch_only_holds(self):
+        """⚠ Ветка сорвавшегося прогона ставит паузу, а не считает потолок."""
+        import inspect
+
+        from src.dating import login
+
+        code = inspect.getsource(login.login_run)
+        tail = code[code.rindex("if result.get('status') == 'error':"):]
+
+        assert 'login_retry_hold' in tail, 'сорвавшийся прогон перестал ставить паузу'
+        assert 'login_retry_fail' not in tail, (
+            'сорвавшийся прогон снова копит потолок')
 
 
 class TestTheDoorHoldsTheRule:

@@ -83,7 +83,8 @@ async def login_run(profile_id: int, scenario_id: int = 0, session_id: str = '',
     """
     from src.dating.login_retry import (DatingLoginHeld,
                                                login_retry_allowed,
-                                               login_retry_fail)
+                                               login_retry_fail,
+                                               login_retry_hold)
 
     profile = await _profile_row(profile_id)
 
@@ -195,6 +196,13 @@ async def login_run(profile_id: int, scenario_id: int = 0, session_id: str = '',
             await login_state_clear(profile_id)
             await log_write(profile_id, 'fail',
                                    f"Сайт вход не признал: {verify['error']}")
+            # ⚠⚠ **Вот он, настоящий отказ входа — и он в потолок не попадал.**
+            # Ветка уходит своим `return`, до счёта неудач внизу дело не доходило
+            # никогда: сколько бы раз сайт ни отказал, автомат пробовал снова.
+            # Ровно эта беда потолок и породила — девять входов за четырнадцать
+            # минут у анкеты, чей кабинет сайт не подтверждал (`login_retry.py`), —
+            # и ею же не ловилась.
+            await login_retry_fail(profile_id)
             await login_session_close(session_id)
             await rhapsody_api_error_write(
                 'dating', f"вход под «{profile['login']}» не признан сайтом: {verify['error']}",
@@ -252,7 +260,13 @@ async def login_run(profile_id: int, scenario_id: int = 0, session_id: str = '',
         #
         # Записывается и вход по кнопке (`force`): человек обошёл паузу, но его
         # неудача такая же настоящая, и следующему автомату о ней знать полезно.
-        await login_retry_fail(profile_id)
+        #
+        # ⚠⚠ **Пауза, а не потолок.** Сорвавшийся сценарий — это не отказ сайта:
+        # вкладка закрылась, клик не дождался кнопки, пул соседа был занят. Пока
+        # это шло в общий счётчик, три браузерных таймаута за вечер запирали
+        # здоровую учётку до нажатия кнопки человеком (анкета #40, 28.09 — разбор
+        # в `login_retry.py`).
+        await login_retry_hold(profile_id)
         await rhapsody_api_error_write(
             'dating', f"вход под «{profile['login']}» не прошёл: {result.get('error', '')}",
             session_id=session_id,
@@ -289,59 +303,6 @@ async def login_profile_page(profile: dict, presence: dict, session_id: str) -> 
                                   context={'profile_id': profile['id'], 'where': 'чтение анкеты'})
 
     return result['profile'] if result['ok'] else {}
-
-
-async def _try_text(profile: dict) -> str:
-    """Строка «Вход запущен» с номером попытки, если он не первый.
-
-    ⚠ **У первой попытки номера нет.** Приписывать «попытка 1 из 3» к обычному
-    входу значило бы красить тревожным то, что происходит каждую смену, — и
-    номер перестал бы что-либо значить ровно тогда, когда он важен.
-    """
-    from src.dating.login_retry import login_retry_max
-
-    tries = int(profile.get('login_fail_tries') or 0)
-    if not tries:
-        return 'Вход запущен'
-
-    limit = await login_retry_max(int(profile.get('site_id') or 0))
-
-    return f'Вход запущен (попытка {tries + 1} из {limit})'
-
-
-def _card_empty(profile: dict) -> bool:
-    """Пуста ли карточка анкеты — есть ли смысл её читать.
-
-    ⚠ **Признак — имя, а не наличие столбца.** В `profile` сайт кладёт полтора
-    десятка полей, и «что-то есть» ничего не значит: карточка без имени в панели
-    выглядит безымянной строкой, ради чего чтение и заводилось. Фото при этом
-    достаточным не считаем — по одной картинке анкету не отличить от соседней,
-    а имена у наших девушек повторяются (две Elena, две Natalia, две Diana).
-    """
-    card = json_column_load(profile.get('profile')) or {}
-
-    return not str(card.get('name') or '').strip()
-
-
-async def _ws_needed(site_id: int, site: dict) -> bool:
-    """Нужен ли этому сайту адрес чат-сокета.
-
-    ⚠ **Спрашиваем транспорт отправки, а не наличие `chat_url`.** Транспорт и
-    есть ответ на вопрос «чем тут разговаривают»: `ws` значит сокет, `http` и
-    `scenario` — что сокета нет и искать его незачем. Проверяй мы `chat_url`,
-    правило разошлось бы с отправкой в первый же день, когда у сайта заведут
-    адрес чата без сокета.
-
-    Наша настройка при этом старше соседской — то же правило, что везде
-    (`ready.py`).
-    """
-    from src.dating.ready import ready_transport
-    from src.uvicorn.routers.dating.site_ import site_settings
-
-    transport = ready_transport(json_column_load(site.get('presence')),
-                                       await site_settings(int(site_id)))
-
-    return transport == 'ws'
 
 
 async def login_ws_capture(profile: dict, session_id: str = '') -> str:
@@ -437,6 +398,59 @@ async def login_session_open(site: dict, name: str, profile: dict = None) -> str
 
     return await rhapsody_api_session_open(url=site['url'], name=name[:100],
                                           site_id=int(site['id']), proxy_id=proxy_id)
+
+
+async def _try_text(profile: dict) -> str:
+    """Строка «Вход запущен» с номером попытки, если он не первый.
+
+    ⚠ **У первой попытки номера нет.** Приписывать «попытка 1 из 3» к обычному
+    входу значило бы красить тревожным то, что происходит каждую смену, — и
+    номер перестал бы что-либо значить ровно тогда, когда он важен.
+    """
+    from src.dating.login_retry import login_retry_max
+
+    tries = int(profile.get('login_fail_tries') or 0)
+    if not tries:
+        return 'Вход запущен'
+
+    limit = await login_retry_max(int(profile.get('site_id') or 0))
+
+    return f'Вход запущен (попытка {tries + 1} из {limit})'
+
+
+def _card_empty(profile: dict) -> bool:
+    """Пуста ли карточка анкеты — есть ли смысл её читать.
+
+    ⚠ **Признак — имя, а не наличие столбца.** В `profile` сайт кладёт полтора
+    десятка полей, и «что-то есть» ничего не значит: карточка без имени в панели
+    выглядит безымянной строкой, ради чего чтение и заводилось. Фото при этом
+    достаточным не считаем — по одной картинке анкету не отличить от соседней,
+    а имена у наших девушек повторяются (две Elena, две Natalia, две Diana).
+    """
+    card = json_column_load(profile.get('profile')) or {}
+
+    return not str(card.get('name') or '').strip()
+
+
+async def _ws_needed(site_id: int, site: dict) -> bool:
+    """Нужен ли этому сайту адрес чат-сокета.
+
+    ⚠ **Спрашиваем транспорт отправки, а не наличие `chat_url`.** Транспорт и
+    есть ответ на вопрос «чем тут разговаривают»: `ws` значит сокет, `http` и
+    `scenario` — что сокета нет и искать его незачем. Проверяй мы `chat_url`,
+    правило разошлось бы с отправкой в первый же день, когда у сайта заведут
+    адрес чата без сокета.
+
+    Наша настройка при этом старше соседской — то же правило, что везде
+    (`ready.py`).
+    """
+    from src.dating.ready import ready_transport
+    from src.uvicorn.routers.dating.site_ import site_settings
+
+    transport = ready_transport(json_column_load(site.get('presence')),
+                                       await site_settings(int(site_id)))
+
+    return transport == 'ws'
 
 
 async def _verify(profile: dict, site: dict) -> dict:

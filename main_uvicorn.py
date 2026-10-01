@@ -84,9 +84,10 @@ from src.worker.dating.chat_worker import chat_worker_keep_stop, chat_worker_rec
 MAIN_UVICORN_PUBLIC = ('/login', '/auth/login', '/auth/logout', '/static', '/health',
                        '/docs', '/openapi.json', '/redoc')
 
-# Сколько живёт сессия панели. Час — как у соседа: смена оператора не должна
-# оставлять открытую панель на чужом экране.
-MAIN_UVICORN_SESSION_MAX_AGE = 3600
+# Сколько живёт сессия панели. Четыре часа: смена оператора не должна оставлять
+# открытую панель на чужом экране, но час выгонял человека посреди работы —
+# переписку ведут дольше, и перелогин приходился на разговор.
+MAIN_UVICORN_SESSION_MAX_AGE = 4 * 3600
 
 
 async def main_uvicorn_auth_middleware(request: Request, call_next):

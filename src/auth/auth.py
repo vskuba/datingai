@@ -79,7 +79,8 @@ async def auth_required(request: Request) -> AuthUser:
         # Роль читается из куки, а не из базы: `auth_required` висит на каждой
         # точке, а страница опрашивает их пачками каждые пятнадцать секунд —
         # запрос к базе на каждый вызов заметен. Плата за это одна: смена роли
-        # доезжает после перелогина, но не позже — кука живёт час.
+        # доезжает после перелогина, но не позже — кука живёт четыре часа
+        # (`MAIN_UVICORN_SESSION_MAX_AGE`).
         return AuthUser(user_id, username, request.session.get('role', AUTH_ROLE_DATING))
 
     token = auth_token_of(request)
