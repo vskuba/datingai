@@ -49,6 +49,11 @@ from google_drive_ import google_drive_bytes as bytes_module
 # проверяется вовсе.
 DRIVE_FAKE_THUMB = 'https://lh3.test/thumb-{file_id}=s220'
 
+# ⚠ Второй адрес превью — **по номеру файла**, без сохранённой ссылки. Так
+# ходят показывающие (`GOOGLE_DRIVE_THUMB_BY_ID`), и заглушка обязана знать оба:
+# знай она только первый, прокси вкладки шёл бы на живой googleusercontent.com.
+DRIVE_FAKE_THUMB_BY_ID = 'https://lh3.googleusercontent.com/d/'
+
 # Байты за картинку: настоящая сигнатура PNG, чтобы проверке «это картинка, а не
 # страница входа» было что проверять.
 DRIVE_FAKE_PNG = b'\x89PNG\r\n\x1a\n' + b'0' * 64
@@ -114,7 +119,7 @@ class DriveFake:
         if self.silent:
             return httpx.Response(500, text='Backend Error')
 
-        if url.startswith(DRIVE_FAKE_THUMB.split('{')[0]):
+        if url.startswith((DRIVE_FAKE_THUMB.split('{')[0], DRIVE_FAKE_THUMB_BY_ID)):
             if self.login_redirect:
                 return httpx.Response(302, headers={
                     'location': 'https://accounts.google.com/signin'})

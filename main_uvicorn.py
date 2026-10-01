@@ -47,6 +47,7 @@ from src.uvicorn.routers.dating import chat_initiative as dating_chat_initiative
 from src.uvicorn.routers.dating import companion as dating_companion_router
 from src.uvicorn.routers.dating import error as dating_error_router
 from src.uvicorn.routers.dating import feed as dating_feed_router
+from src.uvicorn.routers.dating import gallery as dating_gallery_router
 from src.uvicorn.routers.dating import log as dating_log_router
 from src.uvicorn.routers.dating import request as dating_request_router
 from src.uvicorn.routers.dating import mail as dating_mail_router
@@ -316,6 +317,7 @@ app.include_router(import_.router)
 app.include_router(dating_log_router.router)
 app.include_router(dating_request_router.router)
 app.include_router(dating_feed_router.router)
+app.include_router(dating_gallery_router.router)
 # ⚠ Реестр переменных — **до** шаблонов: его пути начинаются с
 # `/api/dating/mail/var`, и запиши мы их после `/api/dating/mail/{mail_id}`,
 # слово «var» однажды прочиталось бы как номер шаблона.
