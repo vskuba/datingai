@@ -36,16 +36,23 @@ from mysql_.mysql_ import mysql_get_db_async
 CHAT_REPLY_SHOW = 1
 
 async def chat_reply_put(site_id: int, profile_id: int, message_id: int,
-                         uid: str, name: str, body: str) -> int:
+                         uid: str, name: str, body: str,
+                         talk_message_id: int = 0) -> int:
     """Кладёт черновик ответа. Возвращает номер строки, ноль — не легло.
 
     Args:
         site_id: сайт-закладка.
         profile_id: наша анкета.
-        message_id: повод написать — реплика, на которую отвечаем.
+        message_id: повод написать — реплика в нашей `message`, на которую
+            отвечаем. На нём стоит `UNIQUE`-ключ.
         uid: собеседник на сайте.
         name: его имя на момент ответа.
         body: текст, который уйдёт.
+        talk_message_id: номер обмена разговора **у соседа** — тот, которым
+            отмечается доставка (`rhapsody_api_chat_delivered`). Не повод и не
+            ключ: это чужой счётчик, пришедший с ответом агента. Ноль значит
+            «агент промолчал о номере» и ложится `NULL`, а не самим нулём —
+            отметка на нуле ушла бы в никуда.
 
     ⚠ **Повтор — не ошибка.** Ключ на `message_id` превращает второй заход круга
     на ту же реплику в `INSERT IGNORE`, который ничего не делает. Это и есть
@@ -57,10 +64,11 @@ async def chat_reply_put(site_id: int, profile_id: int, message_id: int,
     async with mysql_get_db_async() as db:
         await db.execute(
             'INSERT IGNORE INTO chat_reply'
-            '  (site_id, profile_id, message_id, uid, name, body)'
-            ' VALUES (%s, %s, %s, %s, %s, %s)',
+            '  (site_id, profile_id, message_id, uid, name, body, talk_message_id)'
+            ' VALUES (%s, %s, %s, %s, %s, %s, %s)',
             (int(site_id or 0), int(profile_id), int(message_id),
-             str(uid or ''), str(name or ''), str(body)))
+             str(uid or ''), str(name or ''), str(body),
+             int(talk_message_id or 0) or None))
         await db.connection.commit()
 
         return int(db.lastrowid or 0)
@@ -72,13 +80,17 @@ async def chat_reply_waiting(profile_id: int, message_id: int) -> dict:
     ⚠ Спрашиваем **по поводу**, а не по паре: у пары в базе может лежать и старый
     черновик — при своей, уже неактуальной реплике. Отдать его значило бы
     отправить ответ на позавчерашнее.
+
+    ⚠ Отдаём и `talk_message_id`: ветка готового черновика в `answer_run` берёт
+    номер отметки доставки отсюда — агента во втором заходе уже не спрашивают, и
+    другого источника у номера нет.
     """
     if not (int(profile_id or 0) and int(message_id or 0)):
         return {}
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT id, body, error FROM chat_reply'
+            'SELECT id, body, error, talk_message_id FROM chat_reply'
             " WHERE profile_id = %s AND message_id = %s AND status = 'draft'",
             (int(profile_id), int(message_id)))
         row = await db.fetchone()

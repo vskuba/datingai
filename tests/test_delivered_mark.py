@@ -120,3 +120,34 @@ class TestChatMarksDelivery:
         await answer_mod.answer_run(await _profile(girl), {}, agent_id=7)
 
         assert marked == []
+
+
+class TestDraftKeepsTheNumber:
+    async def test_draft_carries_the_number_to_the_next_round(self, monkeypatch, marked, girl):
+        """⚠⚠ Черновик, ушедший следующим кругом, помечается своим номером.
+
+        Собеседника не было в сети — текст лёг в пул; круг спустя он вернулся, и
+        реплика ушла. Номер обмена к этому времени живёт только в строке пула —
+        агента во втором заходе не спрашивали.
+        """
+        await _said(girl)
+        _agent(monkeypatch, 'hello', 991)
+        _sending(monkeypatch, ok=True)
+
+        # Первый заход: собеседника нет в сети — черновик лёг, отправки не было.
+        monkeypatch.setattr(answer_mod, 'online_check',
+                            lambda site_id, uid: {'online': False})
+        await answer_mod.answer_run(await _profile(girl), {}, agent_id=7)
+
+        assert marked == [], 'неотправленное отмечать нельзя'
+
+        # Второй заход: он в сети, агента не спрашиваем — текст уже лежит.
+        async def _no_agent(*args, **kwargs):
+            raise AssertionError('агента во втором заходе спрашивать не должны')
+
+        monkeypatch.setattr(answer_mod, 'rhapsody_api_chat_talk', _no_agent)
+        monkeypatch.setattr(answer_mod, 'online_check',
+                            lambda site_id, uid: {'online': True})
+        await answer_mod.answer_run(await _profile(girl), {}, agent_id=7)
+
+        assert marked == [991], 'номер обязан дожить до отправки в строке пула'
