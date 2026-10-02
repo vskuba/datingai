@@ -134,6 +134,63 @@ async def chat_listen(profile: dict, seconds: float = 0,
     return {'saved': saved, 'frames': frames, 'error': ''}
 
 
+async def chat_invites_to_history(db, profile_id: int, uid: str) -> int:
+    """Кладёт в переписку последние инвайты этой пары — их столько, сколько
+    просит настройка сайта `invite_keep`.
+
+    Args:
+        db: открытая сделка вызывающего. ⚠ **Своей не заводим**: перенос и запись
+            ответа обязаны случиться вместе, иначе сбой между ними оставил бы
+            диалог без повода или повод без диалога.
+        profile_id: девушка.
+        uid: собеседник на сайте.
+
+    Returns:
+        int: сколько приглашений перенесено. Ноль — обычный случай: ответ пришёл
+        человеку, которому мы не писали (он сам начал разговор).
+
+    ## ⚠⚠ Время берём от инвайта, а не текущее
+
+    `created_at` ставится равным `sent_at` приглашения. Поставь мы `NOW()` —
+    приглашение оказалось бы **новее** ответа на него, и диалог читался бы задом
+    наперёд: сначала «привет, как ты?», потом наше «спорим, ты улыбнулся».
+    Разбор истории у нас идёт по времени, а не по `id` (`send._said_already`),
+    так что это не косметика.
+
+    ## ⚠ Берём только отправленные
+
+    Черновик в пуле человеку не уходил — в переписке ему места нет. `status` у
+    инвайта как раз это и различает: `sent` — ушло, `draft` — лежит, `failed` —
+    не дошло.
+    """
+    from src.dating.invite import INVITE_KEEP_DEFAULT
+
+    keep = await _invite_keep(profile_id)
+
+    await db.execute(
+        'SELECT uid, body, sent_at FROM invite'
+        "  WHERE profile_id = %s AND uid = %s AND status = 'sent'"
+        '    AND sent_at IS NOT NULL'
+        '  ORDER BY sent_at DESC LIMIT %s',
+        (int(profile_id), str(uid), max(1, int(keep or INVITE_KEEP_DEFAULT))))
+    invites = await db.fetchall() or []
+
+    for one in reversed(invites):
+        # ⚠ `message_uid` собираем из номера строки инвайта: у приглашения нет
+        # номера сообщения на сайте (его даёт сокет, а инвайт уходит ручкой), а
+        # `INSERT IGNORE` без уникального ключа пустит одно и то же дважды.
+        await db.execute(
+            'INSERT IGNORE INTO message'
+            ' (profile_id, sender_uid, sender_name, text, message_uid, direction,'
+            "  is_answered, source, created_at)"
+            " VALUES (%s, %s, '', %s, %s, 'out', 1, 'invite', %s)",
+            (int(profile_id), str(uid), str(one['body'] or ''),
+             f"invite-{profile_id}-{uid}-{one['sent_at']:%Y%m%d%H%M%S}",
+             one['sent_at']))
+
+    return len(invites)
+
+
 async def _hello_ask(socket, profile_id: int, site) -> None:
     """Спрашивает накопившееся — теми же кадрами, что шлёт страница чата.
 
@@ -202,63 +259,6 @@ async def _pending_take(socket, profile_id: int, raw, site) -> int:
         await _confirm(socket, message, site)
 
     return saved
-
-
-async def chat_invites_to_history(db, profile_id: int, uid: str) -> int:
-    """Кладёт в переписку последние инвайты этой пары — их столько, сколько
-    просит настройка сайта `invite_keep`.
-
-    Args:
-        db: открытая сделка вызывающего. ⚠ **Своей не заводим**: перенос и запись
-            ответа обязаны случиться вместе, иначе сбой между ними оставил бы
-            диалог без повода или повод без диалога.
-        profile_id: девушка.
-        uid: собеседник на сайте.
-
-    Returns:
-        int: сколько приглашений перенесено. Ноль — обычный случай: ответ пришёл
-        человеку, которому мы не писали (он сам начал разговор).
-
-    ## ⚠⚠ Время берём от инвайта, а не текущее
-
-    `created_at` ставится равным `sent_at` приглашения. Поставь мы `NOW()` —
-    приглашение оказалось бы **новее** ответа на него, и диалог читался бы задом
-    наперёд: сначала «привет, как ты?», потом наше «спорим, ты улыбнулся».
-    Разбор истории у нас идёт по времени, а не по `id` (`send._said_already`),
-    так что это не косметика.
-
-    ## ⚠ Берём только отправленные
-
-    Черновик в пуле человеку не уходил — в переписке ему места нет. `status` у
-    инвайта как раз это и различает: `sent` — ушло, `draft` — лежит, `failed` —
-    не дошло.
-    """
-    from src.dating.invite import INVITE_KEEP_DEFAULT
-
-    keep = await _invite_keep(profile_id)
-
-    await db.execute(
-        'SELECT uid, body, sent_at FROM invite'
-        "  WHERE profile_id = %s AND uid = %s AND status = 'sent'"
-        '    AND sent_at IS NOT NULL'
-        '  ORDER BY sent_at DESC LIMIT %s',
-        (int(profile_id), str(uid), max(1, int(keep or INVITE_KEEP_DEFAULT))))
-    invites = await db.fetchall() or []
-
-    for one in reversed(invites):
-        # ⚠ `message_uid` собираем из номера строки инвайта: у приглашения нет
-        # номера сообщения на сайте (его даёт сокет, а инвайт уходит ручкой), а
-        # `INSERT IGNORE` без уникального ключа пустит одно и то же дважды.
-        await db.execute(
-            'INSERT IGNORE INTO message'
-            ' (profile_id, sender_uid, sender_name, text, message_uid, direction,'
-            "  is_answered, source, created_at)"
-            " VALUES (%s, %s, '', %s, %s, 'out', 1, 'invite', %s)",
-            (int(profile_id), str(uid), str(one['body'] or ''),
-             f"invite-{profile_id}-{uid}-{one['sent_at']:%Y%m%d%H%M%S}",
-             one['sent_at']))
-
-    return len(invites)
 
 
 async def _invite_keep(profile_id: int) -> int:
