@@ -183,16 +183,20 @@ async def _agent_id(profile_id: int) -> int:
     name = GALLERY_VISION_AGENT.format(site=slug)
     found = await rhapsody_api_agent_find(name)
     if found.get('id'):
-        return int(found['id'])
+        return _with_workflow(found)
 
     made = await rhapsody_api_agent_create(
         node=AGENT_NODE, workflow=GALLERY_VISION_WORKFLOW, name=name,
         title=f'Галерея: {name}', variables={}, site=slug)
-    agent_id = int(made.get('id') or 0)
-    if not agent_id:
+    if not int(made.get('id') or 0):
         raise RuntimeError('сосед завёл агента разбора, но не вернул его номер')
 
-    return agent_id
+    # ⚠⚠ **Свежезаведённого агента перечитываем, а не верим ответу.** Заведение
+    # идёт прогоном его же workflow, и `create` отвечает раньше, чем привязка
+    # дописана: в тот зазор `chat_ask` бьёт в агента без workflow, а сосед
+    # отвечает `500 Внутренняя ошибка сервера` — без намёка на причину.
+    # Измерено: первый заход после заведения падал ровно так, второй проходил.
+    return _with_workflow(await rhapsody_api_agent_find(name))
 
 
 async def _result_save(row_id: int, description: str, tags: list, md5: str) -> None:
@@ -216,3 +220,23 @@ async def _error_save(row_id: int, why: str) -> None:
         await db.execute('UPDATE gallery_file SET described_error = %s WHERE id = %s',
                          (why[:500], row_id))
         await db.connection.commit()
+
+
+def _with_workflow(agent: dict) -> int:
+    """Номер агента, у которого есть workflow; иначе — внятный отказ.
+
+    ⚠ Агент без привязки существует и находится по имени, но работать не
+    может: `chat_ask` к нему отвечает `500` без объяснения. Лучше сказать это
+    словом и оставить строку в очереди — следующий заход застанет привязку
+    дописанной.
+    """
+    agent_id = int(agent.get('id') or 0)
+    if not agent_id:
+        raise RuntimeError('агента разбора у соседа нет')
+
+    if not int(agent.get('workflow_id') or 0):
+        raise RuntimeError(
+            f'агент «{agent.get("name")}» заведён, но workflow к нему ещё не '
+            f'привязан — разберём на следующем заходе')
+
+    return agent_id

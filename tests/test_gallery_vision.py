@@ -274,3 +274,29 @@ async def test_prompt_goes_as_a_variable(tree, agent, girl):
     assert 'image' in sent and 'prompt' in sent
     assert sent['prompt'] == sent['prompt'].strip() and 'description' in sent['prompt']
     assert 'workflow' not in sent, 'workflow задаётся агенту, а не вызовом'
+
+
+def test_agent_without_workflow_is_refused_with_words():
+    """⚠⚠ Агент без привязанного workflow — отказ словом, а не `500` от соседа.
+
+    Заведение агента идёт прогоном его же workflow, и `create` отвечает
+    раньше, чем привязка дописана. В этот зазор `chat_ask` бьёт в агента без
+    workflow, а сосед отвечает «Внутренняя ошибка сервера» — без намёка на
+    причину. Измерено живьём: первый заход после заведения падал ровно так,
+    второй проходил.
+
+    Отказ ловит `gallery_vision_run` как любой другой: строка получает
+    `described_error` и остаётся в очереди — следующий заход застанет
+    привязку дописанной.
+    """
+    from src.dating.gallery_vision import _with_workflow
+
+    assert _with_workflow({'id': 777, 'name': 'x', 'workflow_id': 75}) == 777
+
+    with pytest.raises(RuntimeError) as refused:
+        _with_workflow({'id': 777, 'name': 'gallery_describe_ladadate'})
+    assert 'workflow' in str(refused.value)
+    assert 'следующем заходе' in str(refused.value), 'отказ обязан сказать, что дальше'
+
+    with pytest.raises(RuntimeError):
+        _with_workflow({})
