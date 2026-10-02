@@ -19,7 +19,6 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
 
 from mysql_.mysql_ import mysql_get_db_async
 
@@ -34,10 +33,6 @@ router = APIRouter(prefix='/api/dating/chat-initiative', tags=['dating'])
 CHAT_INITIATIVE_LIMIT = 300
 
 
-class DatingChatInitiativeEdit(BaseModel):
-    """Правка текста карточки перед отправкой."""
-
-    body: str = Field(min_length=1, max_length=4000)
 
 
 @router.get('', include_in_schema=False)
@@ -88,27 +83,17 @@ async def chat_initiative_list(site_id: int = 0, status_: str = 'draft',
             'answer': {'pool': pool, 'why': await _why(site_id, pool)}}
 
 
-@router.put('/{initiative_id}', include_in_schema=False)
-async def chat_initiative_edit(initiative_id: int,
-                               payload: DatingChatInitiativeEdit,
-                               user: AuthUser = Depends(auth_required)):
-    """Правит текст карточки — только пока она в пуле.
-
-    ⚠ Ушедшее не правится: это уже сказанное, и подменять его в базе значило бы
-    держать переписку, которой не было.
-    """
-    row = await _row(initiative_id)
-
-    if row['status'] != 'draft':
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail='карточка уже ушла — править нечего')
-
-    async with mysql_get_db_async() as db:
-        await db.execute('UPDATE chat_initiative SET body = %s WHERE id = %s',
-                         (str(payload.body).strip(), int(initiative_id)))
-        await db.connection.commit()
-
-    return {'result': await _row(initiative_id)}
+# ⚠⚠ **Правки текста карточки здесь нет, и это решение.** Карточку сочиняет
+# агент `dating_talk`, и сосед записывает сказанное в свой `companion_session`
+# **внутри прогона** — то есть до того, как мы вообще постучимся к сайту. Исправь
+# человек текст здесь, и уйдёт одно, а в памяти агента останется другое: в
+# следующем разговоре он продолжит от слов, которых собеседник не читал.
+#
+# Расхождение это **молчаливое** — ни в журнале, ни на странице его не видно,
+# всплывает оно только странным ответом агента через неделю.
+#
+# ⚠ Не нравится черновик — его **удаляют** (`DELETE` ниже, поштучно и пулом), а
+# не переписывают. Круг сочинит новый.
 
 
 @router.delete('', include_in_schema=False)

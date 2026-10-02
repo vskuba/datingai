@@ -7319,11 +7319,10 @@
             + (reply.error
                 ? ` <span class="mail-card-fail">${esc(reply.error)}</span>` : '')
             + '</div>'
-            + `<textarea class="letter-body" id="replyBody">`
+            // ⚠ Текст виден, но не правится — см. довод у `replyDrop`.
+            + `<textarea class="letter-body" id="replyBody" readonly>`
             + `${esc(reply.body || '')}</textarea>`
             + '<div class="letter-foot">'
-            + '<button type="button" class="dating-btn primary" id="favSaveBtn">'
-            + 'Сохранить</button>'
             + '<button type="button" class="dating-btn" id="favSendBtn">'
             + 'Отправить</button>'
             + '<button type="button" class="dating-btn danger" id="favDropBtn">'
@@ -7332,10 +7331,8 @@
             + '</div>';
 
         // ⚠ Зовём **те же** функции, что карточка ответа на «Входящих»: ответ
-        // один, и второй способ его сохранить разошёлся бы с первым. Они ищут
+        // один, и второй способ его отправить разошёлся бы с первым. Они ищут
         // поля `#replyBody`/`#replyNote` — разметку мы дали ту же.
-        box.querySelector('#favSaveBtn')
-            .addEventListener('click', () => replySave(index, box));
         box.querySelector('#favSendBtn')
             .addEventListener('click', () => replySend(index));
         box.querySelector('#favDropBtn')
@@ -8062,16 +8059,20 @@
                 // же доводу, что и у сторон письма выше.
                 + letterFact('Состояние', letterState(one))
                 + letterFact('Почему', one.error, true)
-                // ⚠ Отправленное показываем, но не даём править: строка отвечает на
-                // вопрос «что человек прочитал», и задним числом этот ответ
-                // меняться не должен.
-                + `<textarea class="letter-body" id="favMailBody"${sent ? ' readonly' : ''}>`
+                // ⚠⚠ **Текст показываем, но не даём править — никогда.** Письмо
+                // сочинил агент, и сосед записал сказанное к себе **внутри
+                // прогона**, то есть ещё до отправки. Исправь текст здесь — уйдёт
+                // одно, а в памяти агента останется другое, и в следующем
+                // разговоре он продолжит от слов, которых человек не читал.
+                // Расхождение молчаливое: его не видно ни в журнале, ни тут.
+                //
+                // ⚠ Не нравится черновик — его убирают из пула кнопкой ниже, а
+                // не переписывают. Круг сочинит новое.
+                + '<textarea class="letter-body" id="favMailBody" readonly>'
                 + `${esc(one.body)}</textarea>`
                 + '<div class="letter-foot">'
                 + (sent ? ''
-                    : '<button type="button" class="dating-btn primary" id="favMailSave">'
-                    + 'Сохранить в пуле</button>'
-                    + '<button type="button" class="dating-btn" id="favMailDropBtn">'
+                    : '<button type="button" class="dating-btn" id="favMailDropBtn">'
                     + 'Убрать из пула</button>')
                 + '<span class="letter-note" id="favMailNote"></span>'
                 + '</div>',
@@ -8079,38 +8080,10 @@
 
         if (sent) return;
 
-        modal.querySelector('#favMailSave').addEventListener('click',
-            () => favMailSave(index, modal));
         modal.querySelector('#favMailDropBtn').addEventListener('click',
             () => favMailDrop(index, modal));
     }
 
-    async function favMailSave(index, modal) {
-        const one = favMailPool[index];
-        if (!one) return;
-
-        // ⚠ Поля ищем по **двум** именам: окно правки зовёт их `favMailBody`, а
-        // блок под разговором — `favBody`. Одна функция на оба места: правка
-        // письма одна и та же, и вторая копия разошлась бы с первой.
-        const field = modal.querySelector('#favMailBody') || modal.querySelector('#favBody');
-        const note = modal.querySelector('#favMailNote') || modal.querySelector('#favNote');
-        const body = field.value.trim();
-        if (!body) {
-            note.textContent = 'пустое письмо не сохраняем';
-
-            return;
-        }
-
-        try {
-            const got = (await putData(`${BASE}/api/dating/favorite-mail/${one.id}`,
-                {body})).result;
-            favMailPool[index] = got;
-            favMailPaint();
-            note.textContent = 'сохранено';
-        } catch (e) {
-            note.textContent = 'не сохранилось: ' + e.message;
-        }
-    }
 
     async function favMailDrop(index, modal = null) {
         const one = favMailPool[index];
@@ -8995,13 +8968,13 @@
                 // здесь: у полусотни карточек это полсотни разговоров.
                 + '<div class="reply-thread" id="replyThread">'
                 + '<span class="reply-thread-wait">гружу переписку…</span></div>'
-                + `<textarea class="letter-body" id="replyBody"${sent ? ' readonly' : ''}>`
+                // ⚠ Текст виден всегда и не правится никогда — см. довод у
+                // `replyDrop`: сосед записал сказанное до нашей отправки.
+                + '<textarea class="letter-body" id="replyBody" readonly>'
                 + `${esc(row.body)}</textarea>`
                 + '<div class="letter-foot">'
                 + (sent ? ''
-                    : '<button type="button" class="dating-btn primary" id="replySave">'
-                    + 'Сохранить в пуле</button>'
-                    + '<button type="button" class="dating-btn" id="replyDropBtn">'
+                    : '<button type="button" class="dating-btn" id="replyDropBtn">'
                     + 'Убрать из пула</button>')
                 + '<span class="letter-note" id="replyNote"></span>'
                 + '</div>',
@@ -9014,8 +8987,6 @@
 
         if (sent) return;
 
-        box.querySelector('#replySave').addEventListener('click', () =>
-            replySave(index, box));
         box.querySelector('#replyDropBtn').addEventListener('click', () =>
             replyDrop(index, box));
     }
@@ -9118,35 +9089,15 @@
         wrap.scrollTop = wrap.scrollHeight;
     }
 
-    async function replySave(index, box) {
-        const row = mailReply[index];
-        const text = box.querySelector('#replyBody').value.trim();
-        const note = box.querySelector('#replyNote');
-
-        if (!text) {
-            note.textContent = 'пустой ответ отправлять нечего';
-            note.classList.add('bad');
-
-            return;
-        }
-
-        try {
-            const answer = await putData(
-                `${BASE}/api/dating/mail-in/reply/${row.id}`, {body: text});
-            mailReply[index] = answer.result || {...row, body: text};
-        } catch (e) {
-            note.textContent = 'не сохранилось: ' + e.message;
-            note.classList.add('bad');
-
-            return;
-        }
-
-        note.textContent = 'сохранено';
-        note.classList.remove('bad');
-        // ⚠ Перерисовываем **оба** места, где ответ показан: правка идёт и из
-        // «Входящих», и из «Фаворитов → Диалоги», а список один на двоих.
-        replyShown();
-    }
+    // ⚠⚠ **Сохранения правленого ответа здесь нет, и это решение.** Ответ сочинил
+    // агент, и сосед записал сказанное к себе **внутри прогона** — то есть ещё до
+    // того, как круг унесёт письмо человеку. Исправь текст тут, и уйдёт одно, а в
+    // памяти агента останется другое: в следующем разговоре он продолжит от слов,
+    // которых собеседник не читал. Расхождение молчаливое — ни в журнале, ни на
+    // странице его не видно.
+    //
+    // ⚠ Не нравится черновик — его **убирают из пула** (`replyDrop`), а не
+    // переписывают. Круг сочинит новый на то же входящее письмо.
 
     // Перерисовывает всё, где виден пул ответов, после его правки.
     //
@@ -9697,13 +9648,12 @@
             + (reply.error
                 ? ` <span class="mail-card-fail">${esc(reply.error)}</span>` : '')
             + '</div>'
-            + `<textarea class="letter-body" id="replyBody"${sent ? ' readonly' : ''}>`
+            // ⚠ Текст виден, но не правится — см. довод у `replyDrop`.
+            + '<textarea class="letter-body" id="replyBody" readonly>'
             + `${esc(reply.body || '')}</textarea>`
             + '<div class="letter-foot">'
             + (sent ? ''
-                : '<button type="button" class="dating-btn primary" id="replySaveBtn">'
-                + 'Сохранить</button>'
-                + '<button type="button" class="dating-btn" id="replySendBtn">'
+                : '<button type="button" class="dating-btn" id="replySendBtn">'
                 + 'Отправить</button>'
                 + '<button type="button" class="dating-btn danger" id="replyDropBtn">'
                 + 'Убрать из пула</button>')
@@ -9712,8 +9662,6 @@
 
         if (sent) return;
 
-        box.querySelector('#replySaveBtn')
-            .addEventListener('click', () => replySave(index, box));
         box.querySelector('#replySendBtn')
             .addEventListener('click', () => replySend(index));
         box.querySelector('#replyDropBtn')

@@ -32,7 +32,6 @@ from src.dating.favorite_mail import (FAVORITE_MAIL_BATCH_DEFAULT,
                                              favorite_mail_why)
 from src.dating.favorite_mail_round import favorite_mail_round_next
 from src.dating.json_column import json_column_load
-from src.dating.mail import MAIL_BODY_MAX
 from src.dating.mail_reply import (mail_reply_delivery,
                                           mail_reply_delivery_scope,
                                           mail_reply_thread)
@@ -85,12 +84,6 @@ class DatingFavoriteMailGenerate(BaseModel):
                        description='Сколько пар пробуем за это нажатие')
     profile_id: int = Field(0, ge=0, description='Писать только от этой анкеты. '
                                                  'Ноль — от всех включённых')
-
-
-class DatingFavoriteMailEdit(BaseModel):
-    """Правка текста письма перед отправкой."""
-
-    body: str = Field(..., min_length=1, max_length=MAIL_BODY_MAX)
 
 
 @router.get('', include_in_schema=False)
@@ -593,28 +586,17 @@ async def favorite_mail_generate(payload: DatingFavoriteMailGenerate,
     return {'result': {**got, 'pool': await favorite_mail_pool_left(site_id)}}
 
 
-@router.put('/{mail_id}', include_in_schema=False)
-async def favorite_mail_edit(mail_id: int, payload: DatingFavoriteMailEdit,
-                                    user: AuthUser = Depends(auth_required)):
-    """Правит текст письма в пуле.
-
-    Raises:
-        HTTPException: 404 — письма нет; 409 — оно уже ушло.
-
-    ⚠ **Отправленное не правится.** Журнал отвечает на вопрос «что человек
-    получил», и задним числом этот ответ меняться не должен.
-    """
-    row = await _row(mail_id)
-    if row['status'] != 'draft':
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail='письмо уже ушло — его текст не меняется')
-
-    async with mysql_get_db_async() as db:
-        await db.execute('UPDATE favorite_mail SET body = %s WHERE id = %s',
-                         (payload.body, int(mail_id)))
-        await db.connection.commit()
-
-    return {'result': await _row(mail_id)}
+# ⚠⚠ **Правки текста письма здесь нет, и это решение.** Письмо сочиняет агент
+# `dating_talk`, и сосед записывает сказанное в свой `companion_session` **внутри
+# прогона** — то есть до того, как круг отправки унесёт письмо человеку. Исправь
+# текст здесь, и уйдёт одно, а в памяти агента останется другое: в следующем
+# разговоре он продолжит от слов, которых собеседник не читал.
+#
+# Расхождение **молчаливое**: ни в журнале, ни на странице его не видно, а
+# всплывает оно странным ответом агента через неделю.
+#
+# ⚠ Не нравится черновик — его **удаляют** (`DELETE` ниже, поштучно и пулом), а
+# не переписывают. Круг сочинит новое.
 
 
 @router.post('/{mail_id}/send', include_in_schema=False)

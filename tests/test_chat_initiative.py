@@ -162,27 +162,27 @@ class TestOneDraftPerPair:
         assert int(row['n']) == 2
 
 
-class TestEditAndDrop:
-    """Правка и удаление — только пока карточка в пуле."""
+class TestDropNotEdit:
+    """Карточку убирают, а не переписывают."""
 
-    async def test_the_text_is_edited(self, auth_client, girl):
+    async def test_the_text_is_not_edited(self, auth_client, girl):
+        """⚠⚠ Правки текста нет вовсе, и это стережётся.
+
+        Карточку сочиняет агент `dating_talk`, а сосед записывает сказанное к
+        себе **внутри прогона** — до того, как мы постучимся к сайту. Исправь
+        текст здесь, и уйдёт одно, а в памяти агента останется другое: в
+        следующем разговоре он продолжит от слов, которых собеседник не читал.
+        Расхождение молчаливое, в журналах его не видно.
+
+        ⚠ Поэтому ручки нет совсем, а не «нельзя у ушедшего»: половинчатый
+        запрет выглядел бы недоделкой и его бы сняли.
+        """
         card_id = await _card(girl, 'u-1')
 
         got = await auth_client.put(f'/api/dating/chat-initiative/{card_id}',
                                     json={'body': 'а чем занят в субботу?'})
 
-        assert got.status_code == 200
-        assert got.json()['result']['body'] == 'а чем занят в субботу?'
-
-    async def test_sent_is_not_edited(self, auth_client, girl):
-        """⚠ Ушедшее — уже сказанное: подменять его значило бы держать переписку,
-        которой не было."""
-        card_id = await _card(girl, 'u-1', status='sent')
-
-        got = await auth_client.put(f'/api/dating/chat-initiative/{card_id}',
-                                    json={'body': 'поздно'})
-
-        assert got.status_code == 409
+        assert got.status_code == 405, 'правка обязана быть недоступна'
 
     async def test_a_card_is_dropped(self, auth_client, girl):
         card_id = await _card(girl, 'u-1')

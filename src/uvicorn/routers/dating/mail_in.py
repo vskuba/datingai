@@ -330,31 +330,17 @@ async def mail_reply_generate(site_id: int = 0, limit: int = 0,
     return {'result': await mail_reply_make(int(site_id), int(limit or 0))}
 
 
-class DatingMailReplyEdit(BaseModel):
-    """Правка ответа: текст, который человек поправил, прочитав."""
-
-    body: str = Field(..., min_length=1, max_length=20000)
-
-
-@router.put('/reply/{reply_id}', include_in_schema=False)
-async def mail_reply_edit(reply_id: int, payload: DatingMailReplyEdit,
-                                 user: AuthUser = Depends(auth_required)):
-    """Правит текст ответа — то, что уйдёт.
-
-    ⚠ Только у неотправленного: ушедшее письмо уже случилось, и править его нечестно
-    перед тем, кто его получил. Тот же порядок, что у пула рассылки.
-    """
-    row = await _reply_row(reply_id)
-    if row['status'] != 'draft':
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail='ответ уже ушёл — править нечего')
-
-    async with mysql_get_db_async() as db:
-        await db.execute('UPDATE mail_reply SET body = %s WHERE id = %s',
-                         (payload.body.strip(), int(reply_id)))
-        await db.connection.commit()
-
-    return {'result': await _reply_row(reply_id)}
+# ⚠⚠ **Правки текста ответа здесь нет, и это решение.** Ответ сочиняет агент
+# `dating_talk`, и сосед записывает сказанное в свой `companion_session` **внутри
+# прогона** — то есть до того, как круг отправки унесёт письмо человеку. Исправь
+# текст здесь, и уйдёт одно, а в памяти агента останется другое: в следующем
+# разговоре он продолжит от слов, которых собеседник не читал.
+#
+# Расхождение **молчаливое**: ни в журнале, ни на странице его не видно, а
+# всплывает оно странным ответом агента через неделю.
+#
+# ⚠ Не нравится черновик — его **удаляют** (`DELETE /reply/{id}` ниже), а не
+# переписывают. Круг сочинит новый.
 
 
 @router.get('/reply/{reply_id}/thread', include_in_schema=False)
