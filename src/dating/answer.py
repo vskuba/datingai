@@ -85,6 +85,24 @@ ANSWER_ANYWAY_FIRST_DEFAULT = 5
 # лишь разумное умолчание.
 ANSWER_LANGUAGE = 'en'
 
+# Чем разделяются склеенные реплики собеседника в одном вопросе.
+#
+# ⚠⚠ **Пустая строка между репликами, а не пробел и не один перевод.**
+# Собеседник пишет короткими очередями («mmmmmm» / «good and you???» / «how did
+# you sleep???»), и слитые в строку они читаются моделью как одно сбивчивое
+# предложение. Одного перевода мало: внутри самой реплики переводы строк
+# встречаются, и граница между репликами потерялась бы среди них.
+ANSWER_TAIL_GLUE = '\n\n'
+
+# Сколько последних неотвеченных реплик склеиваем в вопрос.
+#
+# ⚠ Предел нужен, потому что хвост бывает длинным не только от разговорчивости:
+# импорт из панели приносит переписку пачкой, и у пары накапливается два
+# десятка неотвеченных (на проде встречено 17 у одной). Всё это в вопрос не
+# нужно — история разговора у агента и так есть, а вопрос отвечает на «что он
+# сказал ПРЯМО СЕЙЧАС».
+ANSWER_TAIL_LIMIT = 10
+
 
 async def answer_run(profile: dict, presence: dict, agent_id: int,
                             limit: int = ANSWER_LIMIT) -> dict:
@@ -164,7 +182,25 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
             # записи положил бы её в переписку от его имени.
             #
             # Пусто — законный исход: последним говорили мы, он молчит.
-            question = str(row['text']) if row.get('direction') == 'in' else ''
+            #
+            # ⚠⚠⚠ **Берём ВЕСЬ хвост неотвеченного, а не одну последнюю
+            # реплику.** Повод («последняя реплика диалога») — это про то, кому
+            # писать; что именно он сказал — другой вопрос, и ответ на него
+            # шире одной строки.
+            #
+            # Цена прежнего поведения измерена на проде: собеседник пишет
+            # очередями, и `_answered_mark` закрывает **все** его реплики разом,
+            # хотя агент видел только последнюю. Diana ↔ Mike, 27.09:
+            #
+            #     07:07 in  mmmmmm
+            #     07:07 in  good and you??? how was your coffee???
+            #     07:08 in  how did you sleep???      ← только это видел агент
+            #     07:09 out coffee was perfect…
+            #
+            # Два вопроса из трёх не дошли ни до модели, ни в переписку — и
+            # больше не дойдут никогда: строки помечены отвеченными. Таких пар
+            # на установке восемь, в одной накопилось семнадцать реплик.
+            question = await _waiting_tail(profile_id, uid, row)
 
             # ⚠ Молчит — значит заговариваем первыми, и сказать об этом надо
             # **флагом**, а не текстом вопроса. Флаг уводит заход веткой
@@ -813,7 +849,11 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool) -> 
             # (`chat_reply.message_id`). Ключ черновика стоит на нём: написал
             # собеседник снова — повод новый, и прежний черновик в разговор уже не
             # идёт. Без номера протухание пришлось бы сверять по времени руками.
-            'SELECT m.id, m.sender_uid, m.sender_name, m.text, m.direction FROM message m '
+            # ⚠ `m.created_at` в выдаче — граница хвоста неотвеченного
+            # (`_waiting_tail`): без него в вопрос попало бы и пришедшее, пока
+            # шёл прогон, то есть то, на что ответит следующий круг.
+            'SELECT m.id, m.sender_uid, m.sender_name, m.text, m.direction,'
+            '       m.created_at FROM message m '
             '  JOIN (SELECT sender_uid, MAX(created_at) AS last_at FROM message '
             '         WHERE profile_id = %s GROUP BY sender_uid) t '
             '    ON t.sender_uid = m.sender_uid AND t.last_at = m.created_at '
@@ -825,6 +865,100 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool) -> 
         rows = await db.fetchall()
 
     return [dict(row) for row in (rows or [])]
+
+
+async def _waiting_tail(profile_id: int, uid: str, row: dict) -> str:
+    """Всё, что собеседник сказал и на что мы не ответили, — одним вопросом.
+
+    Args:
+        profile_id: наша анкета.
+        uid: номер собеседника на сайте.
+        row: повод написать из `_waiting_find` — последняя реплика диалога.
+
+    Returns:
+        str: реплики по возрастанию времени, через перевод строки. Пусто —
+        последним говорили мы (повод был «тишина», а не входящее).
+
+    ## ⚠⚠ Почему хвост, а не одна реплика
+
+    `_answered_mark` после отправки закрывает **все** входящие собеседника
+    (`WHERE … is_answered = 0`), а в вопрос уходила одна последняя. Остальные
+    молча исчезали: ни модель их не видела, ни переписка у соседа.
+
+    ## ⚠⚠⚠ Граница хвоста — НАША ПОСЛЕДНЯЯ РЕПЛИКА, а не `is_answered`
+
+    Напрашивается `is_answered = 0` — ровно то, что закроет `_answered_mark`.
+    **Так нельзя**, и это проверено на живых данных: пометка проставляется
+    не всегда. Привезённое из панели ложится в таблицу **задним числом**, уже
+    после нашего ответа, и остаётся с нулём навсегда.
+
+    Diana ↔ Mike, 27.09: по `is_answered` в хвост попали бы **девять** реплик,
+    включая «hi» в 05:50, на которое ответили двумя часами раньше. Агент
+    получил бы вопросом половину дневной переписки и ответил бы на давно
+    закрытое.
+
+    По нашей последней реплике хвост — две: «you want to come???» и «oh». Это
+    и есть то, что человек сказал после наших слов.
+
+    ⚠ Нашей реплики нет вовсе (разговор начал он) — берём всё, что есть, но не
+    больше `ANSWER_TAIL_LIMIT`.
+
+    ## ⚠ Отбор идёт до повода по времени
+
+    Иначе в вопрос попало бы и то, что пришло, пока прогон шёл, — а на него
+    ответит следующий круг, и повторять его здесь значит отвечать дважды.
+
+    ⚠ Реплики, на которые решили **промолчать** (`answer_silent_at`), входят
+    тоже: молчание не повод забыть сказанное. Написал он после нашего молчания
+    ещё раз — агент должен видеть обе реплики.
+
+    ⚠ Своей ошибкой не роняем круг: не вышло прочесть хвост — отвечаем по
+    одной реплике, как раньше. Ответ без двух строк лучше, чем молчание.
+    """
+    if row.get('direction') != 'in':
+        return ''
+
+    one = str(row.get('text') or '')
+
+    try:
+        async with mysql_get_db_async() as db:
+            # Когда мы говорили в последний раз. Пусто — не говорили вовсе.
+            await db.execute(
+                'SELECT MAX(m.created_at) AS said_at FROM message m'
+                " WHERE m.profile_id = %s AND m.sender_uid = %s"
+                "   AND m.direction = 'out' AND m.created_at <= %s",
+                (int(profile_id), str(uid)[:32], row.get('created_at')))
+            said_at = ((await db.fetchone()) or {}).get('said_at')
+
+            # ⚠ По времени и `id`, как и «последняя реплика» в
+            # `_waiting_find`: импорт из панели кладёт историю с большими
+            # `id`, и порядок у этих двух мест обязан быть один.
+            after = ' AND m.created_at > %s' if said_at else ''
+            params = [int(profile_id), str(uid)[:32]]
+
+            if said_at:
+                params.append(said_at)
+
+            params.extend([row.get('created_at'), row.get('created_at'),
+                           int(row.get('id') or 0), int(ANSWER_TAIL_LIMIT)])
+
+            await db.execute(
+                'SELECT m.text FROM message m'
+                " WHERE m.profile_id = %s AND m.sender_uid = %s"
+                "   AND m.direction = 'in'" + after +
+                '   AND (m.created_at < %s OR (m.created_at = %s AND m.id <= %s))'
+                ' ORDER BY m.created_at DESC, m.id DESC LIMIT %s',
+                tuple(params))
+            rows = await db.fetchall()
+    except Exception as e:
+        logger_info(f'[dating] хвост неотвеченного не прочитался: {e}')
+
+        return one
+
+    texts = [str(r['text'] or '').strip() for r in reversed(rows or [])]
+    texts = [t for t in texts if t]
+
+    return ANSWER_TAIL_GLUE.join(texts) if texts else one
 
 
 async def _silent_mark(profile_id: int, uid: str) -> None:
