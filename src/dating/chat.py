@@ -328,6 +328,18 @@ async def _message_save(profile_id: int, message: dict) -> bool:
             added = bool(db.rowcount)
             await db.connection.commit()
 
+        if added:
+            # ⚠⚠ Реплика едет к соседу СРАЗУ, а не когда агент решит ответить.
+            # Прежде путь был один — прогон workflow из `answer.py`, — и он
+            # проходим только при ответе: сказанное, на что мы смолчали, у
+            # соседа не появлялось вовсе. Двенадцать таких за восемь дней,
+            # замерено 02.10.2026.
+            #
+            # ⚠ После записи и только для живого сокета. Импорт из панели
+            # (`chat_panel.py`) возит историю сотнями строк за месяц —
+            # перенос накопленного делается миграцией, а не этим вызовом.
+            await _history_push(profile_id, message)
+
         if added and first:
             await _talk_new(profile_id, message)
 
@@ -335,6 +347,60 @@ async def _message_save(profile_id: int, message: dict) -> bool:
     except Exception as e:
         logger_info(f'[dating] сообщение не записалось: {e}')
         return False
+
+
+async def _history_push(profile_id: int, message: dict) -> None:
+    """Отдаёт входящую реплику в историю разговора у соседа.
+
+    ⚠⚠ Своей бедой не роняет приём сообщения: оно к этому моменту уже лежит в
+    `message`, и исключение отсюда отменило бы запись. Не ушло — строка в
+    журнале, история у соседа на реплику короче.
+
+    ⚠ Ключи собираются теми же функциями, что и для вызова агента
+    (`agent_vars`, `companion_vars`): склейка `{номер}_{имя}` у соседа одна на
+    все дороги, и второе правило разошлось бы с первым молча.
+    """
+    try:
+        from src.dating.agent import agent_vars
+        from src.dating.companion_ref import companion_vars
+        from src.rhapsody.rhapsody_api import rhapsody_api_chat_incoming
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT * FROM profile WHERE id = %s LIMIT 1',
+                             (int(profile_id),))
+            profile = await db.fetchone()
+
+        if not profile:
+            return
+
+        card = profile.get('profile')
+
+        if isinstance(card, str):
+            try:
+                card = json.loads(card or '{}')
+            except ValueError:
+                card = {}
+
+        girl = agent_vars(profile, card or {})
+        companion = companion_vars(profile.get('site_id'),
+                                   message['sender_uid'],
+                                   message.get('sender_name'))
+
+        # ⚠ Проверяется только собеседник: у анкеты ключ есть всегда —
+        # `agent_site_uid` падает до нашего внутреннего номера и пусто не
+        # возвращает никогда (так же, как при вызове агента, и ключ у обеих
+        # дорог обязан быть один). А вот номер собеседника бывает пуст, и
+        # тогда класть реплику некуда.
+        if not companion.get('companion_id'):
+            return
+
+        await rhapsody_api_chat_incoming(
+            f"{girl['girl_id']}_{girl['girl_name']}",
+            f"{companion['companion_id']}_{companion['companion_name']}",
+            message['text'], kind='chat',
+            source_uid=str(message.get('message_uid') or ''))
+    except Exception as e:
+        logger_info(f'[dating] входящее не уехало в историю: {e}')
 
 
 async def _talk_new(profile_id: int, message: dict) -> None:

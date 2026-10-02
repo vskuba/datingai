@@ -612,6 +612,71 @@ async def rhapsody_api_chat_delivered(message_id: int) -> bool:
         return False
 
 
+async def rhapsody_api_chat_incoming(owner_unique_id: str,
+                                     companion_unique_id: str, text: str,
+                                     kind: str = 'chat', source_uid: str = '',
+                                     said_at: str = '') -> int:
+    """Отдаёт соседу реплику собеседника — сразу, не дожидаясь нашего ответа.
+
+    Args:
+        owner_unique_id: ключ нашей анкеты у соседа (`{номер}_{имя}`).
+        companion_unique_id: ключ собеседника там же.
+        text: что он написал.
+        kind: `chat` или `mail`.
+        source_uid: наш `message_uid` — им сосед ловит повтор вызова.
+        said_at: когда написано, `ГГГГ-ММ-ДД ЧЧ:ММ:СС` UTC.
+
+    Returns:
+        int: номер обмена у соседа; 0 — не записалось либо уже было.
+
+    ## ⚠⚠ ЗАЧЕМ
+
+    В `companion_session` вела одна дорога — прогон workflow, а его запускает
+    `/chat/ask`, то есть **решение ответить**. Реплика, на которую агент не
+    ответил, не попадала к соседу ничем: ни ошибки, ни следа. Замерено
+    02.10.2026 — двенадцать таких за восемь дней, среди потерянного «how did
+    you sleep???» и «sent you photo».
+
+    ## ⚠⚠ Отказ не роняет приём сообщения
+
+    Сообщение к этому моменту **уже лежит у нас** (`message`), и исключение
+    отсюда отменило бы его запись. Неудача — строка в журнале: история у
+    соседа будет на реплику короче, и это несравнимо дешевле потери самого
+    сообщения.
+
+    ⚠ Звать можно на каждое входящее, в том числе на то, на которое ответим:
+    ответ агента эту строку поглотит (`_pending_absorb` у соседа).
+    """
+    said = str(text or '').strip()
+
+    if not said or not str(owner_unique_id or '').strip() \
+            or not str(companion_unique_id or '').strip():
+        return 0
+
+    try:
+        data = await _request('POST', '/chat/message/incoming',
+                              {'owner_unique_id': str(owner_unique_id),
+                               'companion_unique_id': str(companion_unique_id),
+                               'text': said, 'kind': str(kind or 'chat'),
+                               'source_uid': str(source_uid or ''),
+                               'said_at': str(said_at or '')})
+    except RhapsodyError as e:
+        logger_info(f'[rhapsody] входящее не ушло в историю: {e}')
+
+        return 0
+
+    # ⚠ Разбор под защитой по тому же доводу, что у отметки доставки: ответь
+    # сосед кодом 200 с `result`, который не словарь, `.get` бросил бы
+    # `AttributeError` — и приём сообщения упал бы на разборе чужого ответа.
+    try:
+        return int((data.get('result') or {}).get('id') or 0)
+    except (AttributeError, TypeError, ValueError):
+        logger_info('[rhapsody] приём входящего: сосед ответил не тем, '
+                    f'что мы умеем прочитать: {data!r}')
+
+        return 0
+
+
 # Сколько дней просить у журнала LLM. ⚠ Больше семи бессмысленно: сосед держит
 # `llm_request` неделю и сам ограничивает запрос до семи дней. Число здесь затем,
 # чтобы страница не обещала «за месяц» того, чего нет.
