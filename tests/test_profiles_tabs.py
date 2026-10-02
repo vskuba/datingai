@@ -581,14 +581,33 @@ class TestReplyChangesRepaintBothPlaces:
     кнопке воспроизводится только в нём.
     """
 
-    async def test_drop_and_save_go_through_the_common_repaint(self, auth_client):
+    async def test_drop_goes_through_the_common_repaint(self, auth_client):
+        """⚠ Правки текста больше нет, и мест изменения пула осталось одно.
+
+        Прежде их было два — «Сохранить» и «Убрать из пула», — и сторож считал
+        вызовы перерисовки. Сохранение убрано намеренно (`api.md`, §3.7.4): текст
+        сочинил агент, и сосед записал сказанное **до** нашей отправки, так что
+        правка развела бы ушедшее с запомненным молча.
+
+        Стеречь остаётся то же: удаление рисует **через общую** функцию, а не
+        своим кодом, — иначе «Фавориты → Диалоги» снова перестанут обновляться.
+        """
         page = (await auth_client.get(PAGE)).text
 
         assert 'function replyShown' in page, \
             'общей перерисовки пула ответов нет — места разойдутся'
         assert 'replyShown(box);' in page, 'удаление из пула рисует не через неё'
-        assert page.count('replyShown(') >= 3, \
-            'общую перерисовку зовут не отовсюду, где ответ меняется'
+
+    async def test_the_reply_text_cannot_be_edited(self, auth_client):
+        """⚠⚠ Поля правки ответа на странице нет — ни одного из прежних.
+
+        Сторожим по исходнику: вернись кнопка «Сохранить», и панель снова начала
+        бы отправлять текст, которого агент не помнит.
+        """
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'replySave(' not in page, 'правка ответа вернулась на страницу'
+        assert 'favMailSave(' not in page, 'правка письма избранному вернулась'
 
     async def test_repaint_touches_both_editors(self, auth_client):
         """Обе формы — и входящих, и фаворитов — в одной перерисовке."""
