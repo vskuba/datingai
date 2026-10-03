@@ -7,13 +7,18 @@
 такая пара лежит мёртвой.
 
 Пул собирает, **чем** заговорить снова: вопрос или короткий текст под конкретную
-пару. Человек читает и правит до отправки, как в трёх соседних пулах.
+пару. Человек читает его до отправки, как в трёх соседних пулах; правки текста
+здесь нет намеренно.
 
-## ⚠⚠ Работы за пулом пока нет
+## ⚠⚠ Пустоту объясняет сервер, и повод считает круг
 
-Таблица, ручки и колонка заведены, а набирать карточки некому: круга инициативы не
-существует. Пул пуст, и пустоту объясняет **сервер** — иначе молчащая колонка
-читается как поломка.
+Набирает пул круг инициативы, он же уносит готовое в чат. Пустая колонка без
+причины читается как поломка — поэтому ответ несёт `answer.why`, а считает его
+`initiative_why`: тот же код, что решает за круг.
+
+⚠ Прежде здесь стояла одна фраза на все случаи — «круга инициативы ещё не
+сделан», — и она **пережила сам круг** на две недели: занятие работало, а колонка
+уверяла, что его нет. Поэтому проверки ниже спрашивают **повод**, а не текст.
 """
 
 import uuid
@@ -55,6 +60,15 @@ async def _card(profile_id: int, uid: str, body: str = 'как прошли вы
         await db.connection.commit()
 
         return int(db.lastrowid)
+
+
+async def _switch(make: bool) -> None:
+    """Выключатель набора у сайта сюиты — им и решается, пуст ли пул законно."""
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE site SET chat_initiative_on = %s'
+                         ' WHERE site_id = %s',
+                         (1 if make else 0, STAND_SITE))
+        await db.connection.commit()
 
 
 class TestThePool:
@@ -102,16 +116,80 @@ class TestThePool:
 
 
 class TestEmptinessExplainsItself:
-    """⚠⚠ Пустое место не отличается от поломки."""
+    """⚠⚠ Пустое место не отличается от поломки.
 
-    async def test_the_reason_comes_with_the_answer(self, auth_client, girl):
+    Повод считает круг (`initiative_why`), и проверяем мы **повод**, а не
+    заученный текст: прежняя проверка стерегла фразу «круга инициативы ещё не
+    сделан» и честно её сторожила, пока круг две недели работал.
+    """
+
+    @pytest.fixture(autouse=True)
+    async def _keep_the_switch(self):
+        """⚠ Выключатель общий на сайт, а сайт сюиты один на весь прогон.
+
+        Оставь мы его поднятым — соседние файлы увидели бы включённое занятие
+        там, где его никто не включал.
+        """
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT chat_initiative_on AS on_ FROM site'
+                             ' WHERE site_id = %s', (STAND_SITE,))
+            before = int(((await db.fetchone()) or {}).get('on_') or 0)
+
+        yield
+
+        await _switch(make=bool(before))
+
+    async def test_a_lowered_switch_is_named(self, auth_client, girl):
+        """Набор снят — так и сказано: это человек сделал сам."""
+        await _switch(make=False)
+
         got = (await auth_client.get(
             f'/api/dating/chat-initiative?site_id={STAND_SITE}&profile_id={girl}')
         ).json()
 
         assert got['result'] == []
-        assert 'круг инициативы ещё не сделан' in got['answer']['why'], \
-            'колонка молчит без объяснения — читается как поломка'
+        assert 'набор инициативы выключен' in got['answer']['why'], \
+            got['answer']['why']
+
+    async def test_a_sleeping_site_is_named(self, auth_client, girl):
+        """⚠ Набор поднят, но ни одной анкеты в сети — инициатива уходит в чат."""
+        await _switch(make=True)
+
+        got = (await auth_client.get(
+            f'/api/dating/chat-initiative?site_id={STAND_SITE}&profile_id={girl}')
+        ).json()
+
+        assert 'не в сети' in got['answer']['why'], got['answer']['why']
+
+    async def test_nothing_in_the_way_is_said_out_loud(self, auth_client, girl):
+        """⚠⚠ Мешать некому — это **утверждение**, а не пустая строка.
+
+        Молчание здесь читалось бы как поломка ровно так же, как пустая колонка.
+        """
+        await _switch(make=True)
+        async with mysql_get_db_async() as db:
+            await db.execute("UPDATE profile SET status = 'online' WHERE id = %s",
+                             (girl,))
+            await db.connection.commit()
+
+        got = (await auth_client.get(
+            f'/api/dating/chat-initiative?site_id={STAND_SITE}&profile_id={girl}')
+        ).json()
+
+        assert 'затихших разговоров сейчас нет' in got['answer']['why'], \
+            got['answer']['why']
+
+    async def test_the_reason_is_not_a_second_copy_of_the_rules(self):
+        """⚠⚠ Ручка не считает повод сама — зовёт круг.
+
+        Своя копия правил разошлась бы с кругом на первой же правке отбора, и
+        колонка объясняла бы простой, которого нет.
+        """
+        from pytest_.pytest_guard import pytest_guard_calls
+
+        from src.uvicorn.routers.dating import chat_initiative as handler
+
+        assert 'initiative_why' in pytest_guard_calls(handler)
 
     async def test_a_full_pool_says_nothing(self, auth_client, girl):
         """Есть карточки — объяснять нечего."""
@@ -207,27 +285,49 @@ class TestDropNotEdit:
 
 
 class TestTheSettings:
-    """Настройки инициативы — пара, их читают вместе."""
+    """Настройки инициативы — тройка, их читают вместе."""
 
-    def test_both_are_registered(self):
+    def test_all_three_are_registered(self):
         from src.uvicorn.routers.dating.site_ import SITE_KNOWN
 
         after = SITE_KNOWN['chat_initiative_after']
+        upto = SITE_KNOWN['chat_initiative_after_max']
         times = SITE_KNOWN['chat_initiative_repeat']
 
-        assert after['title'] == 'Инициатива, проявить через минут'
-        assert times['title'] == 'Инициатива, сколько раз повторить'
+        assert after['title'] == 'Инициатива, проявить через минут (от)'
+        assert upto['title'] == 'Инициатива, проявить через минут (до)'
+        assert times['title'] == 'Инициатива, сколько раз повторить, в сутки'
         assert times['default'] == '2'
         assert times['kind'] == 'number' and times['min'] == 0
-        assert after['group'] == times['group'] == 'invite', \
+        assert upto['kind'] == 'number' and upto['min'] == 0, \
+            'ноль обязан быть допустим — это «без разброса»'
+        assert after['group'] == upto['group'] == times['group'] == 'invite', \
             'настройки читают вместе — и стоять им рядом'
 
-    def test_both_admit_they_do_nothing_yet(self):
-        """⚠⚠ Работы нет — об этом должно быть написано у обеих."""
+    def test_none_of_them_pretends_to_be_unfinished(self):
+        """⚠⚠ Работа сделана — и оговорки «пока ни на что не влияет» быть не должно.
+
+        Оговорка в подписи переживает работу легко: её пишут при заведении
+        настройки и забывают снять, а человек потом читает, что рабочее число ни
+        на что не влияет, и не ставит его вовсе.
+        """
         from src.uvicorn.routers.dating.site_ import SITE_KNOWN
 
-        for key in ('chat_initiative_after', 'chat_initiative_repeat'):
-            assert 'работа не сделана' in SITE_KNOWN[key]['note'], key
+        for key in ('chat_initiative_after', 'chat_initiative_after_max',
+                    'chat_initiative_repeat'):
+            assert 'работа не сделана' not in SITE_KNOWN[key]['note'], key
+
+    def test_the_day_is_spelled_out_in_the_note(self):
+        """⚠ Скользящие сутки и то, что ответ не обнуляет счёт, — в подписи.
+
+        Оба правила человек не выведет из названия: «сколько раз повторить, в
+        сутки» не говорит ни про 24 часа вместо полуночи, ни про ответ.
+        """
+        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
+
+        note = SITE_KNOWN['chat_initiative_repeat']['note']
+
+        assert 'скольз' in note and 'не обнуля' in note
 
 
 class TestTheColumn:
