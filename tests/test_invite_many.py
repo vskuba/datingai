@@ -78,11 +78,16 @@ class TestManyTemplates:
         # А между девушками — разные.
         assert len({next(iter(texts)) for texts in by_girl.values()}) == 3, by_girl
 
-    async def test_fewer_templates_are_spread_round(self, monkeypatch):
-        """⚠ Агент прислал меньше, чем просили (судья забраковал часть).
+    async def test_fewer_templates_take_fewer_girls(self, monkeypatch):
+        """⚠⚠ Агент прислал меньше, чем просили — заход идёт **не от всех анкет**.
 
-        Остатку девушек тексты достаются по кругу: это лучше, чем оставить их без
-        инвайтов вовсе, и всё равно лучше прежнего — там один текст был на всех.
+        Прежде остатку девушек тексты доставались **по кругу**, и это читалось
+        как «лучше, чем ничего». Цена обнаружилась на одном тексте: круг
+        замыкался на нём же, и все анкеты писали одно и то же — ровно то, от
+        чего весь этот механизм и заводился.
+
+        Теперь нехватка отнимает **девушек**, а не разнообразие: сколько
+        текстов, столько и анкет в заходе. Остальные ждут следующего.
         """
         async def _agent(site_id, language, **kwargs):
             return ['один', 'два']
@@ -93,14 +98,19 @@ class TestManyTemplates:
         monkeypatch.setattr(invite, '_people', _answer(
             [{'uid': f'u{one}', 'name': f'M{one}'} for one in range(1, 9)]))
 
-        # ⚠ Потолок берём с запасом — по числу **пар**, а не людей: карточек
-        # теперь четыре девушки × восемь человек, и они перемешаны. Возьми мы
-        # восемь из тридцати двух, тест краснел бы раз в сотню прогонов на ровном
-        # месте: в выборку могла не попасть одна из анкет.
         await invite.invite_make(STAND_SITE, 4 * 8)
 
         assert {text for _, text in put} == {'один', 'два'}
-        assert len({girl for girl, _ in put}) == 4, 'кто-то остался без инвайтов'
+        assert len({girl for girl, _ in put}) == 2, \
+            'текстов два, а анкет в заходе больше — текст пошёл по кругу'
+
+        # ⚠ И главное: у каждой анкеты заход свой **один** текст, а не оба.
+        by_girl = {}
+        for girl, text in put:
+            by_girl.setdefault(girl, set()).add(text)
+
+        assert all(len(texts) == 1 for texts in by_girl.values()), \
+            'одной анкете досталось два разных текста'
 
 
 class TestShuffle:
