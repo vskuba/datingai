@@ -271,50 +271,31 @@ class TestPercent:
             STAND_SITE, 'favorite_mail_name_percent', 0.1) == 0.1
 
 
-class TestTheLengthIsDrawn:
-    """⚠⚠ Длину письма бросает панель, а не выбирает модель.
+class TestTheLengthIsNotOursToSend:
+    """⚠⚠ Длину письма бросает сосед, и присылать её нам больше нельзя.
 
-    Пока длину задавала вилка в промпте («от одного абзаца до трёх»), из
-    двенадцати писем прода **девять вышли ровно в три абзаца**: у вилки верх
-    читается как цель, а образец в блоке JSON сам был на три абзаца — форму
-    образца модель копирует надёжнее, чем исполняет указания прозой.
+    Жребий длины жил здесь и был прав: пока длину задавала вилка в промпте («от
+    одного абзаца до трёх»), из двенадцати писем прода **девять вышли ровно в три
+    абзаца** — у вилки верх читается как цель. Переехало **место** броска: шаг
+    «Жребий» у соседа отдаёт `dice_mail_length`, и три ветки письма читают его
+    сами.
 
-    ⚠ Жребий здесь был и раньше (`FAVORITE_MAIL_LENGTHS` шаблонной эпохи, с той
-    же оговоркой «однообразие длины видно так же, как однообразие слов») —
-    переезд писем на `dating_talk` унёс шаблон вместе с ним. Это возврат.
+    ⚠ Этот класс стережёт не жребий, а **молчание**: объявление `mail_length`
+    входящей у соседа снято, и сторож (`chat.py:_variables_allowed`) отвечает
+    `400` на любое необъявленное имя. Один раз это уже стоило прода — все четыре
+    ветки `dating_talk` встали, включая обычный ответ в чат.
     """
 
-    def test_the_dice_has_more_than_one_face(self):
-        from src.dating.answer import ANSWER_MAIL_LENGTHS
+    def test_the_panel_sends_no_length(self):
+        """⚠⚠ Имени нет в запросе вовсе — ни с каким значением.
 
-        assert len(set(ANSWER_MAIL_LENGTHS)) >= 3, \
-            'вилка длины схлопнулась — письма снова будут одинаковыми'
+        Сторож считает **имена** присланного, а не значения: `mail_length: ''`
+        для ветки чата — такое же необъявленное имя, как и для письма. Прежний
+        тернарник `… if mail else ''` от `400` не спасал.
 
-    def test_it_is_drawn_per_letter(self):
-        """⚠ Бросок на **каждое** письмо, а не один на заход."""
-        from src.dating.answer import ANSWER_MAIL_LENGTHS, answer_mail_length
-
-        got = {answer_mail_length() for _ in range(60)}
-
-        assert got <= set(ANSWER_MAIL_LENGTHS), 'жребий вернул чужое значение'
-        assert len(got) > 1, 'шестьдесят бросков дали одно значение — это не жребий'
-
-    def test_the_letter_sends_it(self):
-        """⚠ И доезжает до агента: без переменной промпт покажет метку словами."""
-        import inspect
-
-        from src.dating import answer
-
-        code = inspect.getsource(answer._agent_ask)
-
-        assert "'mail_length'" in code, 'длина письма не уезжает агенту'
-        assert 'answer_mail_length()' in code, 'длина перестала быть жребием'
-
-    def test_a_chat_reply_gets_no_length(self):
-        """⚠⚠ Реплике в чат длина не шлётся вовсе.
-
-        У неё своё правило — «до 20 слов, как в мессенджере», — и чужая длина
-        абзацами спорила бы с ним.
+        ⚠ Ищем **ключ в кавычках**, а не подстроку: `getsource` отдаёт и
+        комментарии, а в них законно стоит `dice_mail_length` — имя жребия у
+        соседа, внутри которого `mail_length` лежит подстрокой.
         """
         import inspect
 
@@ -322,5 +303,14 @@ class TestTheLengthIsDrawn:
 
         code = inspect.getsource(answer._agent_ask)
 
-        assert "answer_mail_length() if mail else ''" in code, \
-            'длина письма уезжает и в ветку чата'
+        assert "'mail_length'" not in code, \
+            'длина письма снова уезжает соседу — сосед ответит 400'
+
+    def test_the_dice_is_not_rebuilt_here(self):
+        """⚠ И своего жребия длины у панели больше нет: две копии разошлись бы."""
+        from src.dating import answer
+
+        assert not hasattr(answer, 'ANSWER_MAIL_LENGTHS'), \
+            'вилка длины вернулась в панель — жребий теперь у соседа'
+        assert not hasattr(answer, 'answer_mail_length'), \
+            'жребий длины вернулся в панель — жребий теперь у соседа'

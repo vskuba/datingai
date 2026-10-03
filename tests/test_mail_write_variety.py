@@ -16,9 +16,8 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating import mail_agent
-from src.dating.mail import (MAILING_ANGLES, MAILING_GREETINGS,
-                             MAILING_GREETINGS_NAME,
-                             MAILING_LENGTHS, MAILING_STORIES)
+from src.dating.mail import (MAILING_GREETINGS, MAILING_GREETINGS_NAME,
+                             MAILING_STORIES)
 from src.dating.mail_agent import mail_write
 from src.dating.percent import percent_share
 
@@ -76,13 +75,25 @@ def agent(monkeypatch):
 
 
 class TestTheLotIsOurs:
-    """⚠⚠ Приём и длина приходят готовыми, а не просьбой «будь разной»."""
+    """⚠⚠ Рассказ о себе приходит готовым, а не просьбой «будь разной».
 
-    async def test_the_angle_and_the_length_travel(self, agent, share):
+    ⚠ Приёма и длины здесь больше нет: обе оси бросает шаг «Жребий» самого
+    `dating_mail_write` (`dice_mail_angle`, `dice_mail_length`), объявления
+    входящими сняты — присылка любой роняет весь вызов `400`-м.
+    """
+
+    async def test_neither_angle_nor_length_is_sent(self, agent, share):
+        """⚠⚠ Имён нет в запросе вовсе — сосед отвергнет весь вызов.
+
+        Сторож считает **имена** присланного, а не значения, и отвергает запрос
+        целиком: одна забытая переменная останавливает занятие, а не портит его.
+        """
         await mail_write(STAND_SITE, VARS)
 
-        assert agent['mail_angle'] in MAILING_ANGLES
-        assert agent['mail_length'] in MAILING_LENGTHS
+        assert 'mail_angle' not in agent, \
+            'приём уезжает соседу — он ответит 400 и шаблон не сочинится'
+        assert 'mail_length' not in agent, \
+            'длина уезжает соседу — он ответит 400 и шаблон не сочинится'
 
     async def test_the_story_is_a_topic_not_a_plea(self, agent, share):
         """Выпал рассказ — приходит **тема**, а не «расскажи что-нибудь о себе».
@@ -228,11 +239,12 @@ class TestTheNameIsMandatoryUntilAskedOtherwise:
         assert 'companion_name' in agent['mail_var_must']
 
 
-class TestTheCeilingBecameARange:
-    """⚠ «До четырёх абзацев» — это потолок, а не вилка: модель писала четыре."""
+class TestTheStoriesStayOurs:
+    """⚠ Рассказ о себе — последняя ось, которую выбираем мы.
 
-    def test_the_lengths_are_a_range(self):
-        assert len(MAILING_LENGTHS) >= 3, 'вилка длины схлопнулась в одно значение'
+    Приём и длина уехали в шаг «Жребий» самого `dating_mail_write`, и число их
+    граней стережёт теперь сюита соседа: оно видно только там, где брошен жребий.
+    """
 
     def test_the_stories_fit_any_girl(self):
         """⚠⚠ Рассказ обязан подходить **любой** анкете — их сорок.

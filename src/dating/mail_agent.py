@@ -69,10 +69,9 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.dating.agent import (AGENT_NODE, agent_site)
 from src.dating.percent import percent_share
 from src.dating.mail import (MAIL_VAR_RE,
-                                   MAILING_ANGLES, MAILING_AVOID_MAX,
+                                   MAILING_AVOID_MAX,
                                    MAILING_GREETINGS,
                                    MAILING_GREETINGS_NAME,
-                                   MAILING_LENGTHS,
                                    MAILING_NAME_CHANCE,
                                    MAILING_NAME_SETTING,
                                    MAILING_NO_GREETING_CHANCE,
@@ -478,15 +477,19 @@ async def mail_write(site_id: int, variables: list[dict],
                    'mail_var_live': ','.join(row['name'] for row in must
                                              if row.get('source') == 'live'),
                    'mail_hint': str(hint or '').strip() or 'обычное первое письмо',
-                   # ⚠⚠ Приём и длина — **жребий панели**, а не просьба «будь
-                   # разной»: у модели сильные притяжения, и одинаковый вход даёт
-                   # похожий выход. Шаблон рассылки живёт сутками и уходит сотням
-                   # людей — три похожих текста в день и есть рассылка робота.
-                   'mail_angle': random.choice(MAILING_ANGLES),
+                   # ⚠⚠ **Приёма и длины здесь больше нет: обе оси бросает шаг
+                   # «Жребий» этого же workflow** (позиция 0) — `dice_mail_angle`
+                   # и `dice_mail_length`. Объявления входящими сняты, и присылка
+                   # любой из них роняет **весь** вызов: сторож отвечает `400`.
+                   #
+                   # ⚠ Довод, ради которого оси заводили, в силе — разнообразие
+                   # даём мы, а не надеемся на модель: у неё сильные притяжения, и
+                   # «будь разной» их не ломает. Шаблон рассылки живёт сутками и
+                   # уходит сотням людей. Переехало **место** броска, а не решение
+                   # бросать, и возвращать его сюда не надо.
                    # Пусто — письмо начинается сразу с мысли; промпт гасит секцию
                    # и запрещает приветствие прямо (`[<if mail_greeting>]`).
                    'mail_greeting': greeting,
-                   'mail_length': random.choice(MAILING_LENGTHS),
                    # ⚠ Пустая строка гасит секцию у соседа (`[<if mail_story>]`):
                    # «рассказа не нужно» промптом не говорят, его просто не просят.
                    'mail_story': story,
