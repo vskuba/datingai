@@ -298,57 +298,61 @@ class TestForeignNameIsNotSent:
 
 
 class TestInitiativeSetting:
-    """⚠ Настройка «через сколько проявлять инициативу» — заведена впрок.
+    """⚠ Срок инициативы — **интервал**, и обе его границы в реестре.
 
-    Работы за ней пока нет, и подсказка говорит об этом прямо: настройка без
-    объяснения читается как рабочая, человек ставит число и ждёт, что девушка
-    начнёт писать сама.
+    Прежде настройка была заведена впрок и подпись говорила «работа не сделана».
+    Работа сделана (`initiative.py`), и границ стало две: «от» и «до», между ними
+    жребий.
     """
 
-    def test_it_is_registered(self):
+    def test_both_bounds_are_registered(self):
         from src.uvicorn.routers.dating.site_ import SITE_KNOWN
 
-        one = SITE_KNOWN['chat_initiative_after']
+        low = SITE_KNOWN['chat_initiative_after']
+        high = SITE_KNOWN['chat_initiative_after_max']
 
-        assert one['kind'] == 'number'
-        assert one['default'] == '60'
-        assert one['min'] == 0, 'ноль обязан быть допустим — это «выключено»'
-        assert one['group'] == 'invite', 'место ей на вкладке «Инвайты и чат»'
+        assert low['kind'] == high['kind'] == 'number'
+        assert low['default'] == '60' and high['default'] == '120'
+        assert low['min'] == 0, 'ноль обязан быть допустим — это «выключено»'
+        assert high['min'] == 0, 'ноль в «до» — это «без разброса»'
+        assert low['group'] == high['group'] == 'invite', \
+            'место им на вкладке «Инвайты и чат»'
 
-    def test_the_note_admits_it_does_nothing_yet(self):
-        """⚠⚠ Пока работы нет, об этом должно быть написано.
+    def test_the_bounds_are_read_as_a_pair(self):
+        """⚠⚠ Обе границы читает **одна** дверь, и она же приводит их к порядку.
 
-        Убери оговорку вместе с заведением работы — тест напомнит.
+        Читай их два места порознь, и «до» ниже «от» разошлось бы по коду двумя
+        разными решениями: одно писало бы раньше срока, другое ровно по «от».
         """
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
+        from src.dating.initiative import (INITIATIVE_AFTER_MAX_SETTING,
+                                           INITIATIVE_AFTER_SETTING,
+                                           _after_range, _due_sec)
 
-        note = SITE_KNOWN['chat_initiative_after']['note']
+        assert INITIATIVE_AFTER_SETTING == 'chat_initiative_after'
+        assert INITIATIVE_AFTER_MAX_SETTING == 'chat_initiative_after_max'
+        assert callable(_after_range) and callable(_due_sec)
 
-        assert 'работа не сделана' in note, \
-            'настройка молча притворяется рабочей'
+    def test_the_draw_does_not_lean_on_the_process(self):
+        """⚠⚠ Жребий срока не вправе зависеть от процесса.
 
-    def test_nothing_reads_it_yet(self):
-        """⚠ И правда не читается: иначе оговорка врала бы.
+        `hash()` солится на каждый процесс (`PYTHONHASHSEED`), а воркеров
+        несколько и перезапускаются они часто: пара получала бы новый срок от
+        каждого — то есть ровно тот развал, от которого жребий уводится в
+        устойчивый. То же у `random`: он про «каждый раз по-новому».
 
-        Когда работу сделают, тест упадёт — и вместе с ним снимут оговорку выше.
+        ⚠ Сторож смотрит **вызовы**, а не текст: про обе ловушки написано в самом
+        модуле, и поиск подстроки краснел бы на объяснении (`pytest_guard.py`
+        общего слоя — тот самый случай, он там и записан).
         """
-        import pathlib
+        from pytest_.pytest_guard import pytest_guard_calls
 
-        root = pathlib.Path(__file__).resolve().parents[1]
-        # ⚠ Ищем **чтение**, а не имя: упомянуть ключ в документации модуля
-        # законно — иначе следующий читатель не найдёт, откуда берётся срок.
-        # Читается настройка одним способом на весь проект — `site_seconds`.
-        readers = []
-        for one in (root / 'src').rglob('*.py'):
-            if one.name == 'site_.py':
-                continue
+        from src.dating import initiative as module
 
-            text = one.read_text(encoding='utf-8')
-            for line in text.split('\n'):
-                if 'chat_initiative_after' in line and 'site_seconds' in line:
-                    readers.append(str(one))
+        called = pytest_guard_calls(module)
 
-        assert not readers, f'настройку уже читают: {readers}'
+        assert 'hash' not in called, 'жребий съехал на солёный hash()'
+        assert not {one for one in called if one.startswith('random.')}, \
+            'жребий съехал на случай — он перестал быть устойчивым'
 
 
 class TestAlwaysMeansAlways:

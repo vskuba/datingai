@@ -71,6 +71,32 @@ async def _said(profile_id: int, uid: str, direction: str = 'out',
         return int(db.lastrowid)
 
 
+async def _card_sent(profile_id: int, uid: str, minutes_ago: int) -> None:
+    """Ушедшая карточка инициативы — тем же счётом, каким её видит отбор.
+
+    ⚠ Время считает база: дневной предел мерится её `NOW()`.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO chat_initiative (site_id, profile_id, uid, name, body,'
+            "  try_no, status, sent_at)"
+            " VALUES (%s, %s, %s, 'Brian', 'заход', 1, 'sent',"
+            '  NOW() - INTERVAL %s MINUTE)',
+            (STAND_SITE, int(profile_id), uid, int(minutes_ago)))
+        await db.connection.commit()
+
+
+async def _last_at(profile_id: int, uid: str):
+    """Время последней реплики пары — ключ жребия срока."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT MAX(created_at) AS last_at FROM message'
+            ' WHERE profile_id = %s AND sender_uid = %s',
+            (int(profile_id), uid))
+
+        return ((await db.fetchone()) or {}).get('last_at')
+
+
 class TestWhoIsQuiet:
     """⚠⚠ Что считается затихшим разговором."""
 
@@ -79,7 +105,7 @@ class TestWhoIsQuiet:
         await _said(girl, 'u-1', direction='in', minutes_ago=200)
         await _said(girl, 'u-1', direction='out', minutes_ago=180)
 
-        got = await initiative_mod._quiet(girl, 3600, 2)
+        got = await initiative_mod._quiet(girl, 3600, 3600, 2)
 
         assert [one['uid'] for one in got] == ['u-1']
 
@@ -91,7 +117,7 @@ class TestWhoIsQuiet:
         await _said(girl, 'u-1', direction='out', minutes_ago=200)
         await _said(girl, 'u-1', direction='in', minutes_ago=180)
 
-        assert await initiative_mod._quiet(girl, 3600, 2) == []
+        assert await initiative_mod._quiet(girl, 3600, 3600, 2) == []
 
     async def test_deliberate_silence_is_silence(self, girl):
         """⚠⚠ Последним говорил он, но агент **решил промолчать** — это тишина.
@@ -112,7 +138,7 @@ class TestWhoIsQuiet:
                 ' WHERE id = %s', (message_id,))
             await db.connection.commit()
 
-        got = await initiative_mod._quiet(girl, 3600, 2)
+        got = await initiative_mod._quiet(girl, 3600, 3600, 2)
 
         assert [one['uid'] for one in got] == ['u-1'], \
             'пара после намеренного молчания осталась мёртвой'
@@ -131,14 +157,14 @@ class TestWhoIsQuiet:
 
         await _said(girl, 'u-1', direction='in', minutes_ago=180)
 
-        assert await initiative_mod._quiet(girl, 3600, 2) == []
+        assert await initiative_mod._quiet(girl, 3600, 3600, 2) == []
 
     async def test_fresh_silence_waits(self, girl):
         """Срок не вышел — ждём: час тишины это ещё не конец разговора."""
         await _said(girl, 'u-1', direction='in', minutes_ago=30)
         await _said(girl, 'u-1', direction='out', minutes_ago=20)
 
-        assert await initiative_mod._quiet(girl, 3600, 2) == []
+        assert await initiative_mod._quiet(girl, 3600, 3600, 2) == []
 
     async def test_a_silent_invite_is_not_ours(self, girl):
         """⚠ Он не сказал ни слова — это неотвеченный инвайт.
@@ -148,7 +174,7 @@ class TestWhoIsQuiet:
         """
         await _said(girl, 'u-1', direction='out', minutes_ago=300)
 
-        assert await initiative_mod._quiet(girl, 3600, 2) == []
+        assert await initiative_mod._quiet(girl, 3600, 3600, 2) == []
 
     async def test_the_repeat_limit_stops_it(self, girl):
         """⚠⚠ Молчание — тоже ответ.
@@ -169,30 +195,125 @@ class TestWhoIsQuiet:
                     (STAND_SITE, girl, n, 200 - n))
             await db.connection.commit()
 
-        assert await initiative_mod._quiet(girl, 3600, 2) == [], \
+        assert await initiative_mod._quiet(girl, 3600, 3600, 2) == [], \
             'третий заход при пределе два'
 
-    async def test_his_answer_resets_the_count(self, girl):
-        """⚠⚠ Заговорил — счёт начинается заново.
+    async def test_his_answer_does_not_reset_the_count(self, girl):
+        """⚠⚠ Предел **дневной**, и его ответ счёт не обнуляет.
 
-        Считаем ушедшие карточки **после его последней реплики**: ответил — граница
-        сдвинулась, и прежние заходы больше не в счёт.
+        Прежде считалось от его последней реплики: ответил — заходы обнулялись.
+        Выходило, что предел держит один промежуток тишины, а не день, и
+        отвечающий через раз получал инициативу хоть двадцать раз в сутки.
+        «Два в сутки» значит два.
         """
         await _said(girl, 'u-1', direction='in', minutes_ago=400)
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                'INSERT INTO chat_initiative (site_id, profile_id, uid, name, body,'
-                " try_no, status, sent_at) VALUES (%s, %s, 'u-1', 'Brian', 'заход',"
-                " 1, 'sent', NOW() - INTERVAL 350 MINUTE)", (STAND_SITE, girl))
-            await db.connection.commit()
+        await _card_sent(girl, 'u-1', minutes_ago=350)
 
         # Он ответил после того захода, а потом снова замолчал.
         await _said(girl, 'u-1', direction='in', minutes_ago=300)
         await _said(girl, 'u-1', direction='out', minutes_ago=250)
 
-        got = await initiative_mod._quiet(girl, 3600, 1)
+        assert await initiative_mod._quiet(girl, 3600, 3600, 1) == [], \
+            'ответ обнулил дневной счёт — предел перестал быть дневным'
 
-        assert [one['try_no'] for one in got] == [1], 'счёт не обнулился'
+    async def test_yesterdays_card_falls_out_of_the_day(self, girl):
+        """⚠ Сутки **скользящие**: заход вчерашний — значит не в счёт.
+
+        Мерка та же, что у инвайтов (`invite_repeat_max_day`): полночь ничего не
+        значит для того, кто читает сообщения, а 24 часа значат.
+        """
+        await _said(girl, 'u-1', direction='in', minutes_ago=2000)
+        await _said(girl, 'u-1', direction='out', minutes_ago=1900)
+        await _card_sent(girl, 'u-1', minutes_ago=25 * 60)
+
+        got = await initiative_mod._quiet(girl, 3600, 3600, 1)
+
+        assert [one['uid'] for one in got] == ['u-1'], \
+            'заход суточной давности держит пару вечно'
+        assert [one['try_no'] for one in got] == [1], \
+            'номер захода считается по тем же скользящим суткам'
+
+
+class TestTheTermIsDrawnPerPair:
+    """⚠⚠ Срок тишины — интервал «от … до», и жребий внутри него устойчив.
+
+    Одно число на сайт означало бы, что все затихшие пары оживают через
+    одинаковое время после последней реплики — ряд сообщений по линейке.
+    """
+
+    def test_the_draw_stays_within_the_bounds(self):
+        drawn = {initiative_mod._due_sec(7, f'u-{n}', '2026-10-03 19:00:00',
+                                         3600, 7200)
+                 for n in range(300)}
+
+        assert min(drawn) >= 3600 and max(drawn) <= 7200
+        assert len(drawn) > 100, 'разброса нет — жребий выдаёт одно и то же'
+
+    def test_the_same_silence_keeps_the_same_term(self):
+        """⚠⚠ Круг просыпается раз в минуту, и срок пары обязан не меняться.
+
+        Свежий случай на каждом тике уносил бы пару в работу на первом низком
+        выпадении — то есть почти сразу после «от», и «до» не значила бы ничего.
+        """
+        first = initiative_mod._due_sec(7, 'u-1', '2026-10-03 19:00:00',
+                                        3600, 7200)
+        again = initiative_mod._due_sec(7, 'u-1', '2026-10-03 19:00:00',
+                                        3600, 7200)
+
+        assert first == again
+
+    def test_a_new_silence_gets_a_new_term(self):
+        """Он ответил или ушла наша инициатива — время сдвинулось, срок другой."""
+        before = initiative_mod._due_sec(7, 'u-1', '2026-10-03 19:00:00',
+                                         3600, 7200)
+        after = initiative_mod._due_sec(7, 'u-1', '2026-10-03 21:17:00',
+                                        3600, 7200)
+
+        assert before != after
+
+    def test_the_upper_bound_below_the_lower_means_no_spread(self):
+        """⚠ «До» ниже «от» или ноль — работаем ровно по «от», а не раньше."""
+        assert initiative_mod._due_sec(7, 'u-1', 'x', 3600, 0) == 3600
+        assert initiative_mod._due_sec(7, 'u-1', 'x', 3600, 1800) == 3600
+
+    async def test_each_pair_waits_out_its_own_term(self, girl):
+        """⚠⚠ Тишина прошла «от», но у каждой пары свой срок — ждёт своего.
+
+        Восемь пар молчат **одинаково**, 61 минуту, при границах 60 и 600. Со
+        старым одним числом ушли бы все восемь разом; с жребием уходят только те,
+        кому он выпал ниже их тишины, — а их почти не бывает.
+
+        ⚠ Ожидаемое считаем тем же `_due_sec`, которым считает отбор: жребий
+        выводится из пары и времени её последней реплики, и обе стороны обязаны
+        получить одно и то же число. Своя копия правила здесь означала бы тест,
+        проверяющий сам себя.
+        """
+        uids = [f'u-{n}' for n in range(1, 9)]
+        for uid in uids:
+            await _said(girl, uid, direction='in', minutes_ago=200)
+            await _said(girl, uid, direction='out', minutes_ago=61)
+
+        due = {uid: initiative_mod._due_sec(girl, uid,
+                                            await _last_at(girl, uid),
+                                            3600, 36000)
+               for uid in uids}
+        ready = {uid for uid, term in due.items() if term <= 61 * 60}
+
+        got = {one['uid'] for one in
+               await initiative_mod._quiet(girl, 3600, 36000, 2)}
+
+        assert got <= ready, \
+            f'взяли раньше жребия: {sorted(got - ready)} при сроках {due}'
+        assert len(got) == min(len(ready), initiative_mod.INITIATIVE_PER_PROFILE)
+
+    async def test_silence_past_the_upper_bound_always_goes(self, girl):
+        """Тишина длиннее «до» — берём при любом выпадении жребия."""
+        await _said(girl, 'u-1', direction='in', minutes_ago=600)
+        await _said(girl, 'u-1', direction='out', minutes_ago=500)
+
+        got = await initiative_mod._quiet(girl, 3600, 7200, 2)
+
+        assert [one['uid'] for one in got] == ['u-1']
 
 
 class TestTheKindIsNotOursAnymore:
