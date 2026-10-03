@@ -164,11 +164,6 @@ async def pool_sweep_away(site_id: int) -> int:
     return len(gone)
 
 
-def _away(state: dict) -> bool:
-    """Точно ли человека нет в сети. «Не знаем» — не повод стирать."""
-    return bool(state.get('known')) and not state.get('online')
-
-
 async def pool_sweep(site_id: int) -> int:
     """Стирает черновики **всех** анкет сайта, которых сейчас нет в сети.
 
@@ -216,3 +211,57 @@ async def pool_sweep(site_id: int) -> int:
         logger_info(f'[dating] сайт #{site_id}: убрано черновиков ушедших анкет: {total}')
 
     return total
+
+
+async def pool_sweep_answered(site_id: int) -> int:
+    """Стирает инвайты тем, кто за это время **ответил**.
+
+    Returns:
+        int: сколько черновиков убрали.
+
+    ⚠ **Только инвайты, и по той же причине, по которой их чистят от ушедших.**
+    Инвайт — первая реплика незнакомому; ответил человек, и первой реплики больше
+    не бывает — разговор уже идёт, и зачин поверх него читается как агент, не
+    читающий ответов (`pool_answered_where`). У писем иначе: письмо отвечавшему
+    законно, там это переписка, а не знакомство.
+
+    ⚠⚠ **Без этой уборки отказ перед отправкой обернулся бы против нас.** Круг
+    такую строку не берёт (`invite_send_round._next`), и сама она никуда не
+    денется: потолок пула (`invite_pool_max`) она держит, а расходоваться ей
+    нечем. Пул зарос бы мертвечиной, и набор однажды встал бы «пул полон» — ровно
+    та беда, что уже случалась с черновиками ушедших: 50 черновиков, годных 27.
+
+    ⚠ Зовут это круги **перед тем, как считать место в пуле**, рядом с остальными
+    чистками: посчитай мы раньше, пул увидится полным и заход уйдёт ни с чем.
+    """
+    from src.dating.pool_pair import pool_answered_where
+
+    site_id = int(site_id or 0)
+    if not site_id:
+        return 0
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                "DELETE i FROM invite i WHERE i.site_id = %s AND i.status = 'draft'"
+                # ⚠ Условие **то же**, что у очереди отправки, и взято оттуда же:
+                # своя копия расходится с первой правкой, а расхождение здесь
+                # тихое — уборка сносила бы не то, что отказывается отправлять.
+                # Половина выбирается доводом: нам нужны именно ответившие.
+                + pool_answered_where('i', answered=True), (site_id,))
+            total = int(db.rowcount or 0)
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] черновики ответивших не убрались: {e}')
+
+        return 0
+
+    if total:
+        logger_info(f'[dating] пул инвайтов #{site_id}: убрано {total} — они ответили')
+
+    return total
+
+
+def _away(state: dict) -> bool:
+    """Точно ли человека нет в сети. «Не знаем» — не повод стирать."""
+    return bool(state.get('known')) and not state.get('online')

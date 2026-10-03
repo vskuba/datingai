@@ -81,6 +81,7 @@ from src.dating.round import (round_day_count, round_mem_due,
 from src.dating.idle import idle_write
 from src.dating.json_column import json_column_load
 from src.dating.online import online_check
+from src.dating.pool_pair import pool_answered_where
 from src.dating.schedule import schedule_now
 
 # Как часто круг просыпается. ⚠ Это **не** частота отправки: ту задаёт
@@ -373,6 +374,13 @@ async def _next(site_id: int) -> dict:
     (`send`): второй источник «кто в сети» разошёлся бы с первым, и круг
     выбирал бы того, кому отправка всё равно откажет.
 
+    ⚠⚠ **И только тому, кто нам ещё не отвечал** (`pool_answered_where`). Правило
+    стоит и в самой отправке — там оно последнее, — но здесь без него пачка
+    **рвалась бы**: отказ обрывает заход и считается неудачей сайта, и одна
+    устаревшая строка остановила бы отправку по всему сайту. Условие **одно на
+    оба места**: своя копия разошлась бы с первой правкой, и очередь выдавала бы
+    то, что отправка отвергает.
+
     ⚠⚠ **Приоритетные — первыми.** Отметка на карточке (`companion.priority`)
     и заведена ради этого: человек указал, с кем говорить в первую очередь. Стой
     очередь по одному возрасту, его реплика ждала бы полсотни чужих — при паузе в
@@ -397,7 +405,8 @@ async def _next(site_id: int) -> dict:
                 '         ON c.site_id = i.site_id AND c.uid = i.uid'
                 " WHERE i.site_id = %s AND i.status = 'draft' AND i.error = %s"
                 "   AND p.enabled = 1 AND p.status = 'online'"
-                ' ORDER BY COALESCE(c.priority, 0) DESC, i.created_at, i.id',
+                + pool_answered_where('i')
+                + ' ORDER BY COALESCE(c.priority, 0) DESC, i.created_at, i.id',
                 (int(site_id), ''))
             rows = await db.fetchall()
     except Exception as e:

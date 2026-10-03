@@ -74,7 +74,7 @@ from redis_.redis_ import redis_conn_get
 from src.dating.feed import feed_write
 from src.dating.round import (pool_round_run, round_slot_due,
                             round_slot_mark)
-from src.dating.pool import pool_sweep, pool_sweep_away
+from src.dating.pool import pool_sweep, pool_sweep_answered, pool_sweep_away
 from src.dating.invite import (INVITE_POOL_DEFAULT,
                                       INVITE_POOL_SETTING,
                                       DatingInviteError, invite_make,
@@ -207,6 +207,12 @@ async def _work(site: dict, minutes: int) -> dict | None:
     # зовёт сидящего в чате сейчас; ушёл — звать некого, а место в пуле она
     # держит. Без этой строки пул зарастал: 50 черновиков, годных 27.
     await pool_sweep_away(site_id)
+
+    # ⚠⚠ И черновики тем, кто за это время **ответил**: инвайт заканчивается
+    # ответом, и первой реплики ему больше не бывает. Такую строку не берёт ни
+    # очередь отправки, ни сама отправка — то есть без уборки она лежала бы в
+    # пуле вечно, занимая потолок (`pool.pool_sweep_answered`).
+    await pool_sweep_answered(site_id)
 
     # ⚠⚠ **Добираем до потолка, а не ждём, пока пул опустеет.**
     #

@@ -30,6 +30,7 @@ from src.dating.feed import feed_write
 from src.dating.invite import invite_marks_strip
 from src.dating.json_column import json_column_load
 from src.dating.log import log_write
+from src.dating.pool_pair import pool_answered_where
 from src.dating.stat import STAT_INVITE_SENT, stat_add
 from src.dating.send import send_message
 from src.rhapsody.rhapsody_api import RhapsodyError
@@ -50,11 +51,31 @@ async def invite_send_one(invite: dict) -> dict:
     отвечают на него по-разному: кнопка отдаёт 409 человеку, круг такую строку
     в выборку не берёт вовсе. Проверь мы это внутри, оба получили бы один и тот
     же безликий отказ вместо своего.
+
+    ⚠⚠ **А вот «он уже ответил» проверяется именно здесь, и это другое дело.**
+    Состояние строки — вопрос очереди, а ответ человека — вопрос о том, уместна ли
+    реплика вовсе: инвайт заканчивается **ответом**, и после него первой реплики
+    больше не бывает. Дверей к отправке две — круг и кнопка, — и обе обязаны
+    упереться в одно правило.
     """
     invite_id = int(invite['id'])
     site_id = int(invite['site_id'])
     profile_id = int(invite['profile_id'])
     who = str(invite.get('name') or '') or str(invite['uid'])
+
+    # ⚠⚠ **До `_claim`, а не после.** Занятая строка уже помечена `sent`: откажи
+    # мы после, пришлось бы возвращать её в пул — то есть писать второй раз то,
+    # что можно не писать вовсе.
+    if await _answered(invite_id):
+        # ⚠ **Строку убираем, а не глушим причиной.** Причина в `error` оставляет
+        # её в пуле ждать человека с кнопкой — а ждать нечего: ответ отменяет
+        # первую реплику навсегда, и дослать её нельзя. Держала бы она при этом
+        # потолок пула (`invite_pool_max`), как держали его черновики ушедших
+        # анкет, пока не завелась чистка (`pool.py`).
+        await _forget(invite_id)
+        logger_info(f'[dating] инвайт #{invite_id} не ушёл: {who} уже ответил')
+
+        return {'ok': False, 'error': 'он уже ответил — первая реплика ему не нужна'}
 
     # ⚠⚠ **Занимаем строку до отправки — иначе одну реплику пошлют несколько раз.**
     #
@@ -253,6 +274,49 @@ def _why_short(error: str, answer: str) -> str:
     return left or error
 
 
+
+
+async def _answered(invite_id: int) -> bool:
+    """Отвечал ли уже адресат этой строки — её собственной анкете.
+
+    ⚠⚠ **Спрашиваем тем же условием, которым отбирает круг**
+    (`pool_answered_where`): правило одно, запрос другой. Круг спрашивает «дай
+    годные строки сайта», здесь вопрос «годна ли эта» — и напиши мы его своими
+    словами, две проверки разошлись бы на первой правке: очередь выдавала бы то,
+    что отправка отвергает, или наоборот.
+
+    Запрос построен **от отрицания**: строка приходит, когда адресат молчит. Так
+    условие остаётся дословно тем же, что в очереди, и его не приходится
+    переворачивать — перевёрнутая копия и есть второе правило.
+
+    ⚠ Сбой базы — **«отвечал»**, то есть отказ слать. Не зная, был ли ответ, мы
+    рискуем тем самым зачином поверх живого разговора; цена ошибки в другую
+    сторону — одна непосланная реплика, которую круг пошлёт следующим заходом.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT 1 AS free_ FROM invite i WHERE i.id = %s'
+                             + pool_answered_where('i'), (int(invite_id),))
+
+            return not await db.fetchone()
+    except Exception as e:
+        logger_info(f'[dating] инвайт #{invite_id}: не спросить, отвечал ли он: {e}')
+
+        return True
+
+
+async def _forget(invite_id: int) -> None:
+    """Убирает строку из пула: отвечавшему первой реплики больше не бывает.
+
+    Молчит при сбое намеренно: отправка уже не состоялась, и ронять её поверх
+    неубранной строки нечем — круг такую строку всё равно не возьмёт.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('DELETE FROM invite WHERE id = %s', (int(invite_id),))
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] инвайт #{invite_id} не убрался из пула: {e}')
 
 
 async def _claim(invite_id: int) -> bool:

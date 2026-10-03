@@ -270,6 +270,176 @@ class TestNoDouble:
         assert back['error'], 'причина не записана'
 
 
+class TestAnsweredBeforeSending:
+    """⚠⚠ Ответ проверяется **ещё раз перед отправкой**, а не только на наборе.
+
+    Поймано на проде 03.10.2026, пара Оксана ↔ Frank. Пул набрался в 06:04:20,
+    когда Frank молчал на пять приглашений, — для набора он был законным
+    незнакомцем. В 06:05:12 он ответил, а в 06:07:28 круг унёс **лежавшую** строку,
+    и его же реплика встала в диалоге ответом на его слова: «Ich denke, dass du Sex
+    mit Frauen hast» → «You look like the type who's smart… terrible at chess».
+
+    ⚠ Одного `_talked` на наборе мало **по устройству**: между набором и отправкой
+    проходят минуты (`invite_send_every` при пуле в тысячи строк), а у сайта без
+    сокета входящее приезжает импортом панели — то есть «он ответил» узнаётся
+    позже, чем набран пул. Разрыв не закрыть, его можно только перепроверить.
+    """
+
+    async def test_his_answer_stops_the_waiting_draft(self, girl, monkeypatch):
+        """Ответил, пока черновик лежал, — наружу реплика не уходит."""
+        from src.dating import invite_send
+
+        sent = []
+
+        async def _send(profile, presence, uid, body, to_history=True):
+            sent.append(body)
+
+            return {'ok': True}
+
+        monkeypatch.setattr(invite_send, 'send_message', _send)
+        monkeypatch.setattr(invite_send, 'site_presence', _site())
+        invite_id = await _invite_row(girl)
+        await _message(girl, 'in')
+
+        got = await invite_send.invite_send_one(dict(await _row(invite_id)))
+
+        assert not sent, 'первая реплика ушла тому, кто уже ответил'
+        assert not got['ok']
+        assert 'ответил' in got['error'], f"причина не названа: {got['error']}"
+
+    async def test_the_stale_draft_leaves_the_pool(self, girl, monkeypatch):
+        """⚠ И строка уходит из пула, а не висит в нём вечно.
+
+        Отказ без уборки был бы хуже молчания: круг такую строку не возьмёт, а
+        потолок пула (`invite_pool_max`) она держит — и набор однажды встанет
+        «пул полон» на мертвечине. Та же беда уже случалась с черновиками ушедших
+        анкет (`pool.py`).
+        """
+        from src.dating import invite_send
+
+        async def _send(profile, presence, uid, body, to_history=True):
+            return {'ok': True}
+
+        monkeypatch.setattr(invite_send, 'send_message', _send)
+        monkeypatch.setattr(invite_send, 'site_presence', _site())
+        invite_id = await _invite_row(girl)
+        await _message(girl, 'in')
+
+        await invite_send.invite_send_one(dict(await _row(invite_id)))
+
+        # ⚠ Спрашиваем **саму строку**, а не «сколько черновиков»: ушедшая в
+        # `sent` тоже перестаёт быть черновиком, и счёт черновиков принял бы
+        # отправленную реплику за убранную.
+        assert not await _alive(invite_id), 'негодный черновик остался держать место'
+
+    async def test_silence_still_sends(self, girl, monkeypatch):
+        """⚠ Молчащему зовём по-прежнему: правило про **ответ**, а не про инвайт.
+
+        Наш собственный инвайт ложится в переписку исходящим (`chat.py`), и
+        считай мы любую строку разговором — отправка умерла бы целиком.
+        """
+        from src.dating import invite_send
+
+        sent = []
+
+        async def _send(profile, presence, uid, body, to_history=True):
+            sent.append(body)
+
+            return {'ok': True}
+
+        monkeypatch.setattr(invite_send, 'send_message', _send)
+        monkeypatch.setattr(invite_send, 'site_presence', _site())
+        invite_id = await _invite_row(girl)
+        await _message(girl, 'out')
+
+        got = await invite_send.invite_send_one(dict(await _row(invite_id)))
+
+        assert got['ok'], f"молчащему не ушло: {got['error']}"
+        assert len(sent) == 1
+
+    async def test_his_answer_to_another_girl_leaves_this_one_free(
+            self, girl, auth_client, monkeypatch):
+        """⚠ Запрет на **пару**, а не на человека: он ответил одной — вторая его
+        по-прежнему не знает, и для неё это законная первая реплика."""
+        from src.dating import invite_send
+
+        sent = []
+
+        async def _send(profile, presence, uid, body, to_history=True):
+            sent.append(body)
+
+            return {'ok': True}
+
+        monkeypatch.setattr(invite_send, 'send_message', _send)
+        monkeypatch.setattr(invite_send, 'site_presence', _site())
+        other = int((await auth_client.post('/api/dating/profile', json={
+            'site_id': STAND_SITE,
+            'login': f'rep3-{uuid.uuid4().hex[:8]}@example.com',
+            'password': 'x'})).json()['result'])
+        try:
+            await _message(other, 'in')
+            invite_id = await _invite_row(girl)
+
+            got = await invite_send.invite_send_one(dict(await _row(invite_id)))
+
+            assert got['ok'], 'чужой разговор закрыл вторую анкету'
+            assert len(sent) == 1
+        finally:
+            async with mysql_get_db_async() as db:
+                await db.execute('DELETE FROM message WHERE profile_id = %s', (other,))
+                await db.execute('DELETE FROM profile WHERE id = %s', (other,))
+                await db.connection.commit()
+
+    async def test_the_round_does_not_offer_it(self, girl):
+        """⚠⚠ И очередь круга такую строку **не выдаёт**.
+
+        Одного рубежа в отправке мало: неудача у круга **обрывает пачку**
+        (`invite_send_round_run`) и считается отказом сайта. Одна устаревшая
+        строка останавливала бы отправку по всему сайту на заход и писала бы
+        «не ушло» там, где ничего не случилось.
+        """
+        from src.dating.invite_send_round import _next
+
+        async with mysql_get_db_async() as db:
+            await db.execute("UPDATE profile SET status = 'online', enabled = 1"
+                             ' WHERE id = %s', (girl,))
+            await db.connection.commit()
+
+        await _invite_row(girl)
+
+        assert await _next(STAND_SITE), 'молчащего круг не увидел вовсе'
+
+        await _message(girl, 'in')
+
+        assert not await _next(STAND_SITE), 'круг выдал строку ответившему'
+
+    async def test_the_pool_cleanup_takes_them_out(self, girl):
+        """⚠⚠ И уборка пула такие строки **сносит**.
+
+        Без неё отказ обернулся бы против нас: отправка строку не берёт, круг не
+        берёт, расходоваться ей нечем — а потолок `invite_pool_max` она держит.
+        Пул зарос бы мертвечиной и однажды встал «пул полон», ровно как уже
+        случалось с черновиками ушедших анкет.
+        """
+        from src.dating.pool import pool_sweep_answered
+
+        mine = await _invite_row(girl)
+        await _message(girl, 'in')
+
+        assert await pool_sweep_answered(STAND_SITE) >= 1
+        assert not await _alive(mine), 'черновик ответившего остался в пуле'
+
+    async def test_the_cleanup_spares_the_silent(self, girl):
+        """⚠ И **не трогает** молчащих: иначе уборка выметала бы весь пул."""
+        from src.dating.pool import pool_sweep_answered
+
+        mine = await _invite_row(girl)
+
+        await pool_sweep_answered(STAND_SITE)
+
+        assert await _alive(mine), 'уборка снесла черновик молчащему'
+
+
 def _site():
     """Описание сайта — то, что отдаёт `site_presence` из нашей базы.
 
@@ -294,6 +464,15 @@ async def _invite_row(profile_id: int) -> int:
         await db.connection.commit()
 
     return int(made)
+
+
+async def _alive(invite_id: int) -> bool:
+    """Жива ли строка пула — в любом состоянии."""
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT COUNT(*) AS n FROM invite WHERE id = %s',
+                         (int(invite_id),))
+
+        return bool(int((await db.fetchone())['n']))
 
 
 async def _row(invite_id: int) -> dict:
