@@ -43,6 +43,8 @@
 """
 
 
+import asyncio
+
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
@@ -50,12 +52,28 @@ from src.dating.json_column import json_column_load
 from src.dating.round import (round_day_count, round_mem_due,
                             round_mem_mark, round_minutes)
 from src.dating.mail_send import (MAIL_SEND_TALK_TABLES, DatingMailSendError,
-                                  mail_send_mark, mail_send_one)
+                                  DatingMailWaitError, mail_send_fail,
+                                  mail_send_one)
+from src.dating.mail_wait import mail_wait_uids
 from src.dating.schedule import schedule_now
 
 # Как часто круг просыпается. ⚠ Это **не** частота отправки: её задаёт каждый пул
 # своим сроком (`_POOLS`), а круг лишь смотрит, кому из них пора.
 SEND_ROUND_TICK_SEC = 30
+
+# ⚠⚠ **Пауза между двумя письмами одного захода. Написана по живому отказу.**
+#
+# Ручки сайта ограничены по частоте **на учётку**: два запроса с разрывом меньше
+# ста миллисекунд дают `403 ERROR_TOO_MANY_REQUESTS`, и дальше учётка молчит ещё
+# несколько секунд (проверено на проде: разрыв в секунду отказ не вызывает, разрыв
+# в 50 мс вызывает всегда). Пулы же обходятся подряд, и `check-send` второго
+# уходил сразу за удачной отправкой первого.
+#
+# Две секунды — заведомо больше измеренного порога и заведомо меньше тика круга
+# (30 с), то есть пауза не съедает заход. ⚠ Точного порога сайт не называет, и
+# выверять его до миллисекунды незачем: цена ошибки в сторону «подождали дольше» —
+# две секунды, в обратную — похороненное письмо.
+SEND_ROUND_GAP_SEC = 2.0
 
 # Пулы круга: выключатель, таблица, настройка своего темпа и слово для шапки.
 # ⚠ Порядок — порядок обхода, не приоритет: пулы независимы, и каждый, кому пора,
@@ -89,7 +107,10 @@ async def send_round_run(offset_hours: int = 0) -> dict:
         return {'sent': 0, 'failed': 0}
 
     minutes = round_minutes(offset_hours)
-    sent = failed = 0
+    sent = failed = waited = 0
+    # Был ли за этот заход поход к сайту: по нему решается пауза перед следующим
+    # пулом (см. `SEND_ROUND_GAP_SEC`).
+    touched = False
 
     for site in sites:
         site_id = int(site['site_id'])
@@ -128,16 +149,29 @@ async def send_round_run(offset_hours: int = 0) -> dict:
             if setting:
                 round_mem_mark(_sent_at, (site_id, table))
 
-            if await _send(letter, table):
-                sent += 1
-            else:
-                failed += 1
+            # ⚠⚠ **Пауза перед вторым пулом захода, и она не вежливость.**
+            #
+            # Пулы обходятся подряд, и `check-send` следующего уходил через
+            # 64–94 мс после удачного `/messages/send` предыдущего. Сайт на такой
+            # разрыв отвечает `403 ERROR_TOO_MANY_REQUESTS` — и письмо второго
+            # пула умирало ни за что. Четыре таких случая за трое суток в журнале
+            # запросов, и все с одинаковой приметой: отказ сразу за удачей.
+            if touched:
+                await asyncio.sleep(SEND_ROUND_GAP_SEC)
 
-    if sent or failed:
+            touched = True
+
+            got = await _send(letter, table)
+            sent += got == 'sent'
+            waited += got == 'wait'
+            failed += got == 'fail'
+
+    if sent or failed or waited:
         logger_info(f'[dating] круг отправки: ушло {sent}'
-                    + (f', не ушло {failed}' if failed else ''))
+                    + (f', не ушло {failed}' if failed else '')
+                    + (f', ждут {waited}' if waited else ''))
 
-    return {'sent': sent, 'failed': failed}
+    return {'sent': sent, 'failed': failed, 'waited': waited}
 
 
 async def send_why(site_id: int, table: str, offset_hours: int = 0) -> str:
@@ -222,6 +256,14 @@ async def _nothing_to_send(site_id: int, table: str) -> str:
         return ('все письма с ошибкой — круг такие не берёт, '
                 'их досылают кнопкой')
 
+    # ⚠ **Четвёртая причина простоя, и она появилась вместе с остудой.** Пул полон,
+    # ошибок нет, девушки свободны — а получателям сайт сейчас писать не даёт. Без
+    # этой строки человек видел бы полный пул и молчащую отправку, то есть то же
+    # самое состояние, которое прежде означало поломку.
+    left = await _cooling_wait(site_id, table)
+    if left:
+        return left
+
     # ⚠ **Третья причина простоя, и она появилась вместе с паузой.** Пул полон,
     # ошибок нет, а круг уходит ни с чем: каждая девушка недавно писала. Без
     # этой строки человек видел бы полный пул и молчащую отправку — состояние,
@@ -232,6 +274,41 @@ async def _nothing_to_send(site_id: int, table: str) -> str:
             return left
 
     return ''
+
+
+async def _cooling_wait(site_id: int, table: str) -> str:
+    """Все ли адресаты пула сейчас остывают. Пусто — не все.
+
+    ⚠ Спрашивает **тем же списком**, которым отбирает круг (`mail_wait_uids`):
+    ответ «почему стоим» обязан считаться тем же кодом, что решает за круг.
+    """
+    cooling = mail_wait_uids(site_id)
+    if not cooling or not any(one[1] == str(table) for one in _POOLS):
+        return ''
+
+    # ⚠ Список подстановок собирается отдельной строкой, а не `%`-форматированием
+    # запроса: в запросе есть и свои `%s`, и формат съел бы их первыми.
+    holes = ', '.join(['%s'] * len(cooling))
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                f'SELECT COUNT(*) AS free FROM {table}'
+                f" WHERE site_id = %s AND status = 'draft' AND error = ''"
+                f'   AND uid NOT IN ({holes})',
+                (int(site_id), *cooling))
+            row = dict((await db.fetchone()) or {})
+    except Exception as e:
+        logger_info(f'[dating] остуда адресатов не спросилась: {e}')
+
+        return ''
+
+    if int(row.get('free') or 0):
+        return ''
+
+    return (f'сайт сейчас не даёт писать ни одному адресату пула: у них выбран '
+            f'предел входящих ({len(cooling)} чел. остывают). Письма целы — '
+            f'уйдут, когда предел отпустит')
 
 
 async def _girls_wait(site_id: int) -> str:
@@ -356,6 +433,19 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     # ей и выбирать нечего.
     message_id = (', m.message_id' if table in MAIL_SEND_TALK_TABLES else '')
 
+    # ⚠⚠ **Остывшие получатели выпадают из очереди, а не отсеиваются после.**
+    #
+    # Круг берёт из пула **одно** письмо за заход. Отсей мы остывшего после
+    # выборки — заход кончился бы ничем, и сайт молчал бы всю минуту, имея
+    # сорок девять писем другим людям. Тот же довод и то же решение, что у паузы
+    # девушки строкой выше.
+    #
+    # ⚠ Список берём у `mail_wait`, а не считаем здесь: его же читает набор пула,
+    # и две копии правила разошлись бы на первой правке.
+    cooling = mail_wait_uids(site_id)
+    cool = (' AND m.uid NOT IN (%s)' % ', '.join(['%s'] * len(cooling))
+            if cooling else '')
+
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
@@ -365,8 +455,9 @@ async def _oldest(site_id: int, table: str) -> dict | None:
                 f'  JOIN profile p ON p.id = m.profile_id'
                 f'{reply_join}'
                 f" WHERE m.site_id = %s AND m.status = 'draft' AND m.error = ''"
-                f'   AND p.enabled = 1{online_only}{busy}'
-                f' ORDER BY m.id LIMIT 1', (int(site_id),))
+                f'   AND p.enabled = 1{online_only}{busy}{cool}'
+                f' ORDER BY m.id LIMIT 1',
+                (int(site_id), *cooling))
             row = await db.fetchone()
     except Exception as e:
         logger_info(f'[dating] очередь отправки {table} не спросилась: {e}')
@@ -376,8 +467,17 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     return dict(row) if row else None
 
 
-async def _send(letter: dict, table: str) -> bool:
-    """Отправляет одно письмо. Не бросает: круг обходит остальные сайты дальше."""
+async def _send(letter: dict, table: str) -> str:
+    """Отправляет одно письмо. Не бросает: круг обходит остальные сайты дальше.
+
+    Returns:
+        str: `sent` — ушло, `wait` — сайт просит подождать (письмо цело),
+        `fail` — не ушло, причина в письме.
+
+    ⚠ **Три исхода, а не два.** Прежде был `bool`, и «подождать» неизбежно
+    считалось неудачей — а это разные события: после `fail` письмо ждёт человека,
+    после `wait` его унесёт следующий заход.
+    """
     from src.uvicorn.routers.dating.site_ import site_setting
 
     site_id = int(letter['site_id'])
@@ -395,18 +495,19 @@ async def _send(letter: dict, table: str) -> bool:
     try:
         await mail_send_one(letter, profile, base, password, table)
     except DatingMailSendError as e:
-        # ⚠ Причину храним: она ляжет на карточку, и человек увидит, почему письмо
-        # осталось в пуле. Круг к нему больше не вернётся — см. `_oldest`.
-        await mail_send_mark(letter, sent=False, error=str(e), table=table)
+        # ⚠ Причину храним — но не всякую: временную в письмо писать нельзя,
+        # круг к такому письму не вернулся бы никогда. Решает это одна дверь
+        # `mail_send_fail`, а не здешний разбор рода ошибки.
+        await mail_send_fail(letter, e, table=table)
         logger_info(f"[dating] {table} #{letter['id']} не ушло: {e}")
 
-        return False
+        return 'wait' if isinstance(e, DatingMailWaitError) else 'fail'
     except Exception as e:
         logger_info(f"[dating] {table} #{letter['id']} сорвалось: {e}")
 
-        return False
+        return 'fail'
 
-    return True
+    return 'sent'
 
 
 async def _today(site_id: int, offset_hours: int = 0) -> int:

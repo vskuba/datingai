@@ -21,7 +21,7 @@ from src.dating.mail_in import (DatingMailInError, mail_in_fetch,
                                        mail_in_unread)
 from src.dating.mail_reply import (mail_reply_answer, mail_reply_make,
                                           mail_reply_thread)
-from src.dating.mail_send import (DatingMailSendError, mail_send_mark,
+from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
                                          mail_send_one)
 from src.dating.online import online_show
 from src.uvicorn.routers.dating.site_ import site_setting
@@ -422,8 +422,8 @@ async def mail_reply_send(reply_id: int,
         await mail_send_one(letter, profile, base, password,
                                    table='mail_reply')
     except DatingMailSendError as e:
-        await mail_send_mark(letter, sent=False, error=str(e),
-                                    table='mail_reply')
+        # ⚠ Временная причина письмо не портит — решает `mail_send_fail`.
+        await mail_send_fail(letter, e, table='mail_reply')
         logger_info(f'[dating] ответ #{reply_id} не ушёл: {e}')
 
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))

@@ -60,11 +60,15 @@ SITE_API_FAKE_USERS = {
          'Country': 'Spain', 'CountryCode': 'ES', 'ProfilePhoto': None},
     ],
     'online': [
+        # ⚠⚠ `AgeFrom`/`AgeTo` — **окно возраста, которое он ищет**, и живой сайт
+        # отдаёт их всегда. Заглушка их не знала, и правило «письма вне окна сайт
+        # не принимает» (`mail_age.py`) проверять было нечем.
         {'AccountId': '812886', 'Name': 'Vincent pitchen', 'Age': 49, 'City': 'paris',
-         'Country': 'France', 'CountryCode': 'FR',
+         'Country': 'France', 'CountryCode': 'FR', 'AgeFrom': 25, 'AgeTo': 45,
          'ProfilePhoto': 'https://site.test/content/photos/7f23711de44941d4a2f8f9508b86b5de.jpg'},
         {'AccountId': '169410', 'Name': 'Zahir', 'Age': 51, 'City': 'Rome',
-         'Country': 'Italy', 'CountryCode': 'IT', 'ProfilePhoto': None},
+         'Country': 'Italy', 'CountryCode': 'IT', 'AgeFrom': 40, 'AgeTo': 70,
+         'ProfilePhoto': None},
     ],
 }
 
@@ -128,9 +132,14 @@ class SiteApiFake:
         # проверка «шлём разрешение, которое дали» ничего не значит.
         self.checks: set = set()
 
-        # Кому писать нельзя: `check-send` ответит отказом. Живой сайт так и делает
-        # — например, когда этому человеку уже писали слишком часто.
+        # Кому писать нельзя совсем: `check-send` ответит отказом.
         self.no_send: set = set()
+
+        # ⚠⚠ У кого **переполнен ящик за этот час**. Отдельно от `no_send`, потому
+        # что это другое событие: отказ временный, и письмо по нему хоронить
+        # нельзя (`mail_wait.py`). На живом проде это 1392 отказа из 1463 — самый
+        # частый ответ ручки, которого заглушка не умела вовсе.
+        self.full: set = set()
 
         # Входящие письма: что лежит у сайта для нашей девушки. ⚠ Поля — те же, что
         # у живого (`GET /messages`): список **без текста**, тело отдаётся отдельно
@@ -157,6 +166,14 @@ class SiteApiFake:
     def forbid_send(self, uid: str) -> None:
         """Этому адресату сайт писать не даёт: `check-send` отвечает 403."""
         self.no_send.add(str(uid))
+
+    def fill_inbox(self, uid: str) -> None:
+        """У этого человека переполнен ящик за час: отказ **временный**.
+
+        ⚠ Отличается от `forbid_send` не кодом, а природой: через час писать ему
+        снова можно, и письмо, похороненное таким отказом, потеряно зря.
+        """
+        self.full.add(str(uid))
 
     def expire_token(self) -> None:
         """Все выданные токены протухли — сайт отвечает на них 401.
@@ -212,13 +229,23 @@ class SiteApiFake:
                 return self._json(403, {'Error': 'Too many requests',
                                         'Reason': 'ERROR_TOO_MANY_REQUESTS'})
 
+            if uid in self.full:
+                # Слово в слово живой ответ — на нём стоит разбор остуды.
+                return self._json(403, {
+                    'Error': "The user's hourly incoming message limit has been "
+                             'exceeded',
+                    'Reason': 'ERROR_MESSAGE_USER_HOUR_IN_LIMIT'})
+
             check = f'check-{uid}-{len(self.checks)}'
             self.checks.add(check)
 
             return self._json(200, {
                 'CheckId': check,
+                # ⚠ Десять секунд, а не тридцать: в документации сайта написано
+                # «30 seconds», живой же отвечает «10 second» (проверено на
+                # проде 03.10.2026). Код считает по десяти.
                 'Message': 'You can send a message to this user within the next '
-                           '30 seconds.'})
+                           '10 second.'})
 
         # Одно письмо: то же самое плюс `Body`.
         one = path.rsplit('/', 1)[-1]

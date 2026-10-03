@@ -35,7 +35,7 @@ from src.dating.json_column import json_column_load
 from src.dating.mail_reply import (mail_reply_delivery,
                                           mail_reply_delivery_scope,
                                           mail_reply_thread)
-from src.dating.mail_send import (DatingMailSendError, mail_send_mark,
+from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
                                          mail_send_one)
 from src.dating.online import online_show
 from src.dating.pool_pair import (pool_delivery_where, pool_pair_girl,
@@ -633,8 +633,8 @@ async def favorite_mail_send(mail_id: int,
     except DatingMailSendError as e:
         # ⚠ Причину храним **до** ответа: страница покажет её на карточке, а человек
         # закроет вкладку и вернётся завтра — в ответе HTTP её к тому времени нет.
-        await mail_send_mark(letter, sent=False, error=str(e),
-                                    table=FAVORITE_MAIL_TABLE)
+        # ⚠ Но **не всякую**: временная причина письмо не портит (`mail_send_fail`).
+        await mail_send_fail(letter, e, table=FAVORITE_MAIL_TABLE)
         logger_info(f'[dating] письмо избранному #{mail_id} не ушло: {e}')
 
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))

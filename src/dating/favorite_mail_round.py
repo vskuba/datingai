@@ -174,7 +174,10 @@ async def _work(site: dict, minutes: int) -> dict | None:
     # «рано».
     await favorite_mail_stars_sync(site_id)
 
-    pool = await favorite_mail_pool_left(site_id)
+    # ⚠ Место считаем по **живым** черновикам: строка с причиной отказа ждёт
+    # человека, а не отправку, и держать ею потолок значило бы молчать при
+    # пустой очереди (`favorite_mail_pool_left`).
+    pool = await favorite_mail_pool_left(site_id, ready_only=True)
     room = await _pool_max(site_id) - pool
     if room <= 0:
         return None

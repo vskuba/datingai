@@ -543,7 +543,10 @@ class TestSource:
              'api_password': SITE_API_FAKE_PASSWORD}))
         await _fill()
 
-        site_api.refuse(403, {'Error': 'Too many requests'}, on='/users/')
+        # ⚠ С `Reason`, как у живого: по нему отказ и объясняется словами
+        # (`SITE_API_REASON_MEANING`). Без него фраза была бы общей.
+        site_api.refuse(403, {'Error': 'Too many requests',
+                              'Reason': 'ERROR_TOO_MANY_REQUESTS'}, on='/users/')
         answer = (await _retry(door))['result']
 
         assert [row['uid'] for row in answer['people']] == ['788856'], 'снимок выброшен'

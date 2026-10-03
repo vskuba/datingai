@@ -105,6 +105,7 @@ from src.dating.percent import percent_share
 from src.dating.answer import answer_mail_write
 from src.dating.mail_agent import DatingMailAgentError
 from src.dating.json_column import json_column_load
+from src.dating.mail_wait import mail_wait_left, mail_wait_skip
 from src.dating.online import online_show
 from src.dating.schedule import schedule_now
 from src.dating.people import people_name_usable
@@ -316,6 +317,18 @@ async def favorite_mail_make(site_id: int, limit: int = 0,
                              + ('' if online.get('known') else ' (ленту ещё не снимали)'))
             continue
 
+        # ⚠⚠ **Остывший получатель — пропуск, и он дешевле всех прочих.**
+        #
+        # Сайт сам сказал, что писать этому человеку сейчас нельзя
+        # (`mail_wait.py`), и письмо ему — это вызов `dating_talk`, то есть до
+        # четырёх обращений к модели. Платить за черновик, который пролежит час
+        # и уйдёт отбору «он уже не в сети», незачем.
+        left = mail_wait_left(site_id, uid)
+        if left:
+            skipped += 1
+            _reason(reasons, f'{_addressee(pair)}: {mail_wait_skip(left)}')
+            continue
+
         # ⚠ **Пределы проверяем до агента**, а не после: каждое письмо это вызов
         # LLM, и платить за него ради того, чтобы потом выбросить, незачем. Тот же
         # порядок, что у рассылки, — дешёвое раньше платного.
@@ -457,13 +470,26 @@ async def favorite_mail_stars_sync(site_id: int, profile_id: int = 0) -> None:
         await _sync_stars(site_id, profile_id)
 
 
-async def favorite_mail_pool_left(site_id: int) -> int:
-    """Сколько писем лежит в пуле сайта. Круг добирает до потолка по этому числу."""
+async def favorite_mail_pool_left(site_id: int, ready_only: bool = False) -> int:
+    """Сколько писем лежит в пуле сайта. Круг добирает до потолка по этому числу.
+
+    Args:
+        ready_only: считать только те, что **уйдут сами** — без прежней ошибки.
+
+    ⚠⚠ **Два счёта, и путать их нельзя** — то же правило и тот же довод, что у
+    инвайтов (`invite_pool_left`). Страница показывает пул целиком: застрявшее с
+    ошибкой — работа человека, он дошлёт руками. Круг же считает **место**, а
+    строка с причиной места не занимает: отправка такие не берёт никогда
+    (`send_round._oldest`), и пул из них означал бы «мест нет» при пустой очереди.
+    """
+    where = " AND error = ''" if ready_only else ''
+
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
                 'SELECT COUNT(*) AS n FROM favorite_mail'
-                " WHERE site_id = %s AND status = 'draft'", (int(site_id),))
+                " WHERE site_id = %s AND status = 'draft'" + where,
+                (int(site_id),))
             row = await db.fetchone()
     except Exception as e:
         logger_info(f'[dating] пул писем избранным не посчитался: {e}')

@@ -37,7 +37,9 @@ from src.dating.mail import (MAILING_QUESTION_CHANCE,
                                    MAILING_QUESTION_SETTING,
                                    mail_mark_drop, mail_missing,
                                    mail_render, mail_vars_found)
+from src.dating.mail_age import mail_age_fits, mail_age_nobody
 from src.dating.mail_agent import DatingMailAgentError, mail_question
+from src.dating.mail_wait import mail_wait_uids
 from src.dating.people import (PEOPLE_NAME_ALIEN,
                                       people_name_parts,
                                       people_name_usable)
@@ -114,6 +116,28 @@ async def mailing_make(site_id: int, templates: list, limit: int,
 
     known = await mail_var_rows(site_id)
     taken = await _taken(site_id)
+    # ⚠⚠ **Остывшие адресаты выпадают до всякого сочинения.** Сайт уже сказал,
+    # что писать им сейчас не даст (`mail_wait.py`), и письмо такому человеку
+    # легло бы в пул мёртвым грузом: отправка его не унесёт, а место оно займёт.
+    # Один поход в Redis на заход — против двухсот отказов сайта.
+    cooling = set(mail_wait_uids(site_id))
+    cooled = 0
+    if cooling:
+        warm = [one for one in people
+                if str(one.get('uid') or '') not in cooling]
+        cooled, people = len(people) - len(warm), warm
+
+    # ⚠ Пустой список после остуды — **ответ с причиной**, а не молчаливый ноль.
+    # «Готово 0, пропущено 0» человек читает как поломку; здесь же всё работает,
+    # и сказать надо именно это.
+    if not people:
+        return {'made': 0, 'skipped': cooled,
+                'reasons': ([f'все {cooled} адресатов остывают: сайт не даёт им '
+                             f'сейчас писать'] if cooled else []),
+                'left': 0, 'stopped': ''}
+    # Кто из адресатов уже писал нашим девушкам: таким пара не отсекается по
+    # возрасту (`mail_age.py`). Один запрос на заход.
+    talked = await _talked(site_id)
     # Пары «адресат — шаблон», потраченные любой анкетой: один текст уходит
     # человеку ровно раз (`_pairs`).
     spent = {(uid, mail_id) for _, uid, mail_id in taken if mail_id}
@@ -125,13 +149,32 @@ async def mailing_make(site_id: int, templates: list, limit: int,
     # письмам, и проход, где всё пропускается, шёл по всем парам до конца: 176 пар,
     # 8 минут и ноль писем на выходе. Поймано живым прогоном.
     made, tried, skipped, reasons, left, stopped = 0, 0, 0, [], 0, ''
+
+    # ⚠⚠ **Кому не напишет ни одна наша анкета — говорим словами, а не молча.**
+    #
+    # Отсев по возрасту живёт в `_pairs` и работает парами: не подошла эта
+    # девушка — напишет другая. Но бывает, что не подходит ни одна, и тогда
+    # человек просто исчезает из набора. Молчаливое исчезновение адресатов — то
+    # самое «круг работает, писем нет», за которое уже платили временем.
+    for person in people:
+        why = mail_age_nobody(girls, person, talked)
+        if not why:
+            continue
+
+        skipped += 1
+        # ⚠ Причина подписана адресатом, поэтому и не дедуплицируется: у каждого
+        # человека своё окно, и «пропущено 24» без имён — число без ответа на
+        # «кого». Держим первые пять, как и прочие причины набора.
+        if len(reasons) < 5:
+            reasons.append(f'{person.get("name") or person.get("uid")}: {why}')
+
     # ⚠ Значения анкеты читаются **один раз на анкету**, а не на письмо: они не
     # зависят от адресата, а запрос на каждое письмо превратил бы полсотни писем в
     # полсотни лишних походов в базу.
     values_by_girl = {}
 
     for girl, template, person in _pairs(girls, people, templates, taken, blocked,
-                                         spent):
+                                         spent, talked):
         if tried >= limit:
             left += 1
             continue
@@ -378,7 +421,7 @@ def mailing_companion_vars(person: dict, known: list) -> list[dict]:
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 def _pairs(girls: list, people: list, templates: list, taken: set,
-           blocked: set = None, spent: set = None):
+           blocked: set = None, spent: set = None, talked: set = None):
     """Тройки «анкета — адресат — шаблон»: кому, от кого и чем писать.
 
     ⚠ **По адресатам, а не перебором всех сочетаний.** Анкет два десятка, людей в
@@ -425,12 +468,21 @@ def _pairs(girls: list, people: list, templates: list, taken: set,
     """
     blocked = blocked or set()
     spent = spent or set()
+    talked = talked or set()
 
     for person in people:
         free = [(girl, template) for girl in girls for template in templates
                 if (girl['id'], person['uid'], template['id']) not in taken
                 and (person['uid'], template['id']) not in spent
-                and (girl['id'], person['uid']) not in blocked]
+                and (girl['id'], person['uid']) not in blocked
+                # ⚠⚠ **Возрастное окно отнимает анкету, а не адресата** — ровно
+                # как запрет строкой выше. Ему тридцать пять, ищет он
+                # сорокалетних: письмо напишет та наша девушка, чей возраст в
+                # окно попадает, а не ни одна. Проверь мы возраст после выбора
+                # пары — случай раз за разом выпадал бы на негодную анкету, и
+                # человек остался бы без письма при годной рядом.
+                and mail_age_fits(girl, person,
+                                  (girl['id'], person['uid']) in talked)]
         if not free:
             continue
 
@@ -878,6 +930,45 @@ async def _taken(site_id: int) -> set:
 
     return {(int(row['profile_id']), str(row['uid']), int(row['mail_id'] or 0))
             for row in rows}
+
+
+async def _talked(site_id: int) -> set:
+    """Пары «анкета — адресат», где **он написал первым**: письмом или в чате.
+
+    ⚠ Нужно одному — возрастному отсеву (`mail_age.py`): критерий возраста сайт,
+    судя по журналу, спрашивает только на холодном обращении, а в начатом
+    разговоре пропускает. Шесть из девятнадцати разрешённых пар с промахом мимо
+    окна — именно такие.
+
+    ⚠ **Два источника, и оба обязательны.** Письмо лежит в `mail_in`, реплика
+    чата — в `message` с `direction = 'in'`; у сайта без чата работает первый, у
+    сайта без писем — второй. Один источник означал бы «он нам не писал» там, где
+    писал другим каналом.
+
+    ⚠ Сбой запроса отвечает пустым множеством: «не знаем, писал ли» — это
+    «считаем, что не писал», то есть обычный холодный отбор. Ошибка в эту сторону
+    стоит пропущенной пары, в обратную — письма, которое сайт не возьмёт.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT profile_id, uid FROM mail_in WHERE site_id = %s'
+                ' UNION'
+                # ⚠ Псевдоним обязателен: имена столбцов `UNION` берёт у первой
+                # половины, и без него строка чата приехала бы под именем `uid`
+                # молча — читается как опечатка, а не как правило.
+                ' SELECT m.profile_id, m.sender_uid AS uid FROM message m'
+                '  JOIN profile p ON p.id = m.profile_id'
+                "  WHERE p.site_id = %s AND m.direction = 'in'",
+                (int(site_id), int(site_id)))
+            rows = await db.fetchall()
+    except Exception as e:
+        logger_info(f'[dating] кто писал первым не спросилось: {e}')
+
+        return set()
+
+    return {(int(row['profile_id']), str(row['uid'] or ''))
+            for row in rows or []}
 
 
 async def _put(site_id: int, girl: dict, person: dict, template: dict,

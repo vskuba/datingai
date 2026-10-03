@@ -25,7 +25,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.auth.auth import AuthUser, auth_required
 from src.dating.json_column import json_column_load
 from src.dating.mail import MAIL_BODY_MAX
-from src.dating.mail_send import (DatingMailSendError, mail_send_mark,
+from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
                                          mail_send_one)
 from src.dating.mail_reply import (mail_reply_delivery,
                                           mail_reply_delivery_scope)
@@ -483,7 +483,9 @@ async def mailing_send(mailing_id: int,
     except DatingMailSendError as e:
         # ⚠ Причину храним **до** ответа: страница покажет её на карточке, а человек
         # закроет вкладку и вернётся завтра — в ответе HTTP её к тому времени нет.
-        await mail_send_mark(letter, sent=False, error=str(e))
+        # ⚠ Но **не всякую**: временная причина письмо не портит — решает это
+        # `mail_send_fail`, одна дверь на круг и три кнопки.
+        await mail_send_fail(letter, e)
         logger_info(f'[dating] письмо #{mailing_id} не ушло: {e}')
 
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))

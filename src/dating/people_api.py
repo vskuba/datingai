@@ -72,7 +72,12 @@ PEOPLE_API_STATES = {'favorite': 'my-favorites', 'online': 'online'}
 # Имена полей в ответе сайта.
 PEOPLE_API_ROWS = 'Users'
 PEOPLE_API_FIELDS = {'uid': 'AccountId', 'name': 'Name', 'age': 'Age',
-                            'photo': 'ProfilePhoto'}
+                            'photo': 'ProfilePhoto',
+                            # ⚠⚠ **Окно возраста, которое он ищет.** Приезжало
+                            # всегда и выбрасывалось — а сайт по нему отказывает
+                            # в письме (`mail_age.py`), и отказ этот стоил 205
+                            # сочинённых впустую писем за три недели.
+                            'age_from': 'AgeFrom', 'age_to': 'AgeTo'}
 
 # ⚠ Имя отказа оставлено прежним: его ловят страницы и роутеры, а класс с
 # переездом транспорта не изменился — изменилось только место, где он объявлен.
@@ -119,6 +124,19 @@ async def people_api_rows(profile: dict, kind: str, base: str,
 
 # ── Приватное ────────────────────────────────────────────────────────────────
 
+def _number(value) -> int:
+    """Число из записи сайта. Ноль — поля нет или оно не число.
+
+    ⚠ `int(value or 0)` здесь не годится: сайт вправе прислать строку `"35"` или
+    `null`, и первое `int()` съел бы, а второе уронил бы разбор всего списка —
+    двести человек из-за одного поля.
+    """
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _rows(users, online: bool) -> list[dict]:
     """Записи сайта — в наш вид.
 
@@ -152,6 +170,12 @@ def _rows(users, online: bool) -> list[dict]:
                       'name': people_name_case(
                           str(user.get(PEOPLE_API_FIELDS['name']) or ''))[:PEOPLE_NAME_MAX],
                       'age': int(age) if isinstance(age, int) else 0,
+                      # ⚠ Окно возраста, в котором он ждёт писем. Ноль значит
+                      # «не знаем» — и правило набора трактует его как «пишем»
+                      # (`mail_age.py`). У сценария этих полей нет вовсе: он
+                      # снимает плитки со страницы, где окна не видно.
+                      'age_from': _number(user.get(PEOPLE_API_FIELDS['age_from'])),
+                      'age_to': _number(user.get(PEOPLE_API_FIELDS['age_to'])),
                       'photo': photo,
                       # Ключ по фотографии — тот же, что у сценария: имя файла у
                       # сайта одно и то же и в API, и в разметке. На нём держится

@@ -121,6 +121,11 @@ def post(monkeypatch):
 
     monkeypatch.setattr(round_, 'mail_send_one', fake)
     monkeypatch.setattr(round_, '_sent_at', {})
+    # ⚠ Остуды нет: очередь спрашивает список остывших получателей
+    # (`mail_wait_uids`), а живого Redis у сюиты с хоста нет — его адрес в `.env`
+    # внутренний. Про саму остуду есть свой файл (`test_mail_wait.py`); здесь она
+    # должна просто не мешать.
+    monkeypatch.setattr(round_, 'mail_wait_uids', lambda site_id: [])
 
     return sent
 

@@ -51,6 +51,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.log import log_write
+from src.dating.mail_wait import mail_wait_mark, mail_wait_words
 from src.dating.ready import password_pick
 from src.dating.request import REQUEST_SEND
 from src.dating.site_api import DatingSiteApiError, site_api_call
@@ -121,6 +122,17 @@ def mail_sent_union(where: str, select: str = 'sent_at') -> str:
 
 class DatingMailSendError(RuntimeError):
     """Письмо не ушло. Текст годен для страницы и для столбца `error`."""
+
+
+class DatingMailWaitError(DatingMailSendError):
+    """Письмо не ушло **сейчас**, но цело: причина временная (`mail_wait.py`).
+
+    ⚠ **Наследник, а не отдельная ветка.** Пять дорог отправки ловят
+    `DatingMailSendError` и показывают его текст человеку — это поведение верно и
+    здесь. Различие ровно одно: причину **не пишем в `error`**, иначе круг к
+    письму не вернётся никогда (`send_round._oldest`). Решает это одна дверь —
+    `mail_send_fail`, и переспрашивать её род ошибки вызывающим не нужно.
+    """
 
 
 async def mail_send_one(letter: dict, profile: dict, base: str,
@@ -201,6 +213,14 @@ async def mail_send_one(letter: dict, profile: dict, base: str,
             MAIL_SEND_CHECK_PATH.format(uid=uid), method='GET',
             door=REQUEST_SEND)
     except DatingSiteApiError as e:
+        # ⚠⚠ **Сперва временная причина, и только потом вечная.** «У него
+        # переполнен ящик за этот час» — это 1392 отказа из 1463 на живом проде, и
+        # до появления остуды каждый такой отказ хоронил письмо навсегда: причина
+        # ложилась в `error`, а строки с причиной круг не берёт.
+        left = mail_wait_mark(int(profile.get('site_id') or 0), uid, str(e))
+        if left:
+            raise DatingMailWaitError(mail_wait_words(str(e), left))
+
         # ⚠ Отказ приходит **и на этом шаге**: «можно ли писать этому человеку» —
         # ровно тот вопрос, на который сайт отвечает «он вас закрыл».
         await _deny_check(profile, letter, table, uid, str(e))
@@ -221,6 +241,13 @@ async def mail_send_one(letter: dict, profile: dict, base: str,
             payload=_payload(check_id, uid, body, reply_to), method='POST',
             door=REQUEST_SEND)
     except DatingSiteApiError as e:
+        # ⚠ Та же развилка, что и у разрешения: ящик получателя мог переполниться
+        # между двумя шагами — их разделяют доли секунды, но предел считает не
+        # только нас. Правило одно на оба отказа.
+        left = mail_wait_mark(int(profile.get('site_id') or 0), uid, str(e))
+        if left:
+            raise DatingMailWaitError(mail_wait_words(str(e), left))
+
         await _deny_check(profile, letter, table, uid, str(e))
 
         raise DatingMailSendError(f'сайт не принял письмо: {e}')
@@ -245,6 +272,42 @@ async def mail_send_one(letter: dict, profile: dict, base: str,
     logger_info(f'[dating] письмо #{letter_id} ушло: анкета #{profile.get("id")} → {uid}')
 
     return {'sent': True}
+
+
+async def mail_send_fail(letter: dict, error, table: str = 'mailing') -> None:
+    """Исход неудачной отправки — одной дверью на все пять дорог.
+
+    Args:
+        letter: строка письма целиком (как у `mail_send_mark`).
+        error: **само исключение**, а не его текст: по роду ошибки и решается,
+            портить ли письмо причиной. Строку тоже принимаем — тогда это
+            обычная неудача.
+        table: чей пул — `mailing`, `mail_reply` или `favorite_mail`.
+
+    ## ⚠⚠ Зачем отдельной функцией
+
+    `except DatingMailSendError: mail_send_mark(sent=False, error=str(e))` стояло
+    **четырьмя копиями** — в круге отправки и у трёх кнопок. Пока правило было
+    одно («не ушло — пиши причину»), копии не расходились. С остудой правил стало
+    два, и четвёртая забытая копия означала бы ровно ту беду, от которой остуда и
+    заведена: письмо, похороненное временной причиной.
+
+    ⚠ **Молчание здесь — это решение, а не пропуск.** Временная причина не ложится
+    в `error` намеренно: там она запрещает кругу вернуться к письму
+    (`send_round._oldest`). Человеку же она видна — её несёт текст исключения в
+    ответе кнопки и в журнале анкеты.
+    """
+    if isinstance(error, DatingMailWaitError):
+        # ⚠ Уровень `info`, а не `fail`: ничего не сломалось, письмо ждёт своего
+        # часа. И только из этих пяти значений — `log.level` их перечисляет
+        # `ENUM`-ом, а чужое он молча не запишет вовсе.
+        await log_write(
+            int(letter.get('profile_id') or 0), 'info',
+            f'{str(letter.get("name") or letter.get("uid") or "")}: {error}')
+
+        return
+
+    await mail_send_mark(letter, sent=False, error=str(error), table=table)
 
 
 async def mail_send_mark(letter: dict, sent: bool, error: str = '',

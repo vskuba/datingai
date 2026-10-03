@@ -33,7 +33,11 @@ class TestRows:
 
         assert [row['uid'] for row in rows] == ['812886', '169410']
         assert rows[0]['name'] == 'Vincent Pitchen' and rows[0]['age'] == 49
-        assert set(rows[0]) == {'uid', 'name', 'age', 'photo', 'photo_uid',
+        # ⚠ `age_from`/`age_to` — окно возраста, которое он ищет. Приезжало от
+        # сайта всегда, а выбрасывалось: правило «письма вне окна сайт не
+        # принимает» стоило 205 сочинённых впустую писем (`mail_age.py`).
+        assert set(rows[0]) == {'uid', 'name', 'age', 'age_from', 'age_to',
+                                'photo', 'photo_uid',
                                 'online', 'is_new', 'link'}
 
     async def test_photo_key_matches_the_scenario(self, site_api):
@@ -156,8 +160,13 @@ class TestToken:
 class TestRefusals:
     """Отказ сайта — фразой для журнала анкеты, а не кодом."""
 
+    # ⚠ У 403 фраза общая — «сайт отказал». Своих слов у кода нет: под одним
+    # 403 сайт присылает пять разных событий, и объясняет их он сам, полем
+    # `Reason` (`SITE_API_REASON_MEANING`). Прежде здесь стояло «просит
+    # подождать: слишком часто» на любой 403 — то есть у вечного отказа по
+    # возрасту человек читал про темп и искал поломку, которой нет.
     @pytest.mark.parametrize('code, words', [
-        (403, 'сайт просит подождать'),
+        (403, 'сайт отказал'),
         (404, 'сайт не знает такой ручки'),
         (500, 'сайт ответил ошибкой'),
     ])
