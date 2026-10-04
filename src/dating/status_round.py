@@ -46,6 +46,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.round import round_mem_due, round_mem_mark
+from src.dating.site_setting import site_seconds
 from src.dating.status import status_probe_site
 
 # Как часто круг просыпается. ⚠ Это **не** частота опроса: её задаёт настройка
@@ -129,7 +130,5 @@ async def _sites() -> list[int]:
 
 async def _every(site_id: int) -> int:
     """Как часто опрашивать этот сайт."""
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return int(await site_seconds(site_id, STATUS_ROUND_EVERY_SETTING)
                or STATUS_ROUND_EVERY_DEFAULT)

@@ -40,6 +40,7 @@ from http_.http_heartbeat import http_heartbeat_cookies, http_heartbeat_ready
 
 from src.dating.json_column import json_column_load
 from src.dating.proxy import proxy_enabled
+from src.dating.site_setting import site_seconds, site_setting
 
 # Наша настройка сайта: JSON в формате движка.
 HEARTBEAT_SETTING = 'heartbeat'
@@ -63,8 +64,6 @@ async def heartbeat_config(site_id: int) -> dict:
     решается транспорт отправки (`ready_transport`) — сосед описывает сайт,
     но как с ним работать, решает наша сторона.
     """
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     own = json_column_load(await site_setting(site_id,
                                                      HEARTBEAT_SETTING))
     if own:
@@ -75,8 +74,6 @@ async def heartbeat_config(site_id: int) -> dict:
 
 async def heartbeat_every(site_id: int) -> int:
     """Период удара в секундах — не чаще потолка."""
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     every = int(await site_seconds(site_id, HEARTBEAT_EVERY_SETTING)
                 or HEARTBEAT_EVERY_DEFAULT)
 

@@ -49,6 +49,7 @@
 """
 
 from src.dating.json_column import json_column_load
+from src.dating.site_setting import site_setting
 
 # Ключ нашей настройки. Значение — JSON строкой, как у `heartbeat`.
 SITE_PRESENCE_SETTING = 'presence'
@@ -67,8 +68,6 @@ async def site_presence(site_id: int) -> dict:
     держателя, и упавшая петля унесла бы чат целиком.
     """
     from logging_.logging_ import logger_info
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     raw = await site_setting(site_id, SITE_PRESENCE_SETTING)
     own = json_column_load(raw)
     if own:

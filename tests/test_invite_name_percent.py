@@ -28,6 +28,7 @@ import uuid
 
 import pytest
 from mysql_.mysql_ import mysql_get_db_async
+from src.dating.site_setting import SITE_KNOWN
 
 pytestmark = pytest.mark.chat
 
@@ -115,7 +116,7 @@ class TestTheShare:
         def _broken(*args, **kwargs):
             raise RuntimeError('база отвалилась')
 
-        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_seconds', _broken)
+        monkeypatch.setattr('src.dating.percent.site_seconds', _broken)
 
         assert await invite._man_percent(STAND_SITE) == \
             str(invite.INVITE_MAN_NAME_PERCENT)
@@ -252,8 +253,6 @@ class TestTimeIsGone:
 
     async def test_the_setting_is_gone(self):
         """⚠ Настройки в реестре нет: она обещала бы влияние, которого не будет."""
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         assert 'invite_time_percent' not in SITE_KNOWN
 
     async def test_the_panel_sends_nothing_about_time(self):

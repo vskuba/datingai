@@ -43,6 +43,7 @@ from src.dating.json_column import json_column_load
 from src.dating.mail_agent import INVITE_MAX
 from src.dating.online import online_show
 from src.dating.pool_pair import pool_pick_where
+from src.dating.site_setting import site_seconds
 from src.uvicorn.routers.setting import setting_timezone_hours
 
 router = APIRouter(prefix='/api/dating/invite', tags=['dating'])
@@ -388,8 +389,6 @@ async def _speed(site_id: int) -> dict:
     полночь для человека, который читает реплики, ничего не значит.
     """
     from src.dating.invite_send_round import INVITE_SEND_MAX_DAY_SETTING
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     try:
         async with mysql_get_db_async() as db:
             await db.execute(

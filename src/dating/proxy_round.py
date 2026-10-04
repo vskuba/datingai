@@ -51,6 +51,8 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.dating.proxy import (PROXY_PING_SETTING,
                                      proxy_enabled)
 from src.dating.round import round_mem_due, round_mem_mark
+from src.dating.site_setting import site_seconds
+from src.dating.site_snapshot import site_rows
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_proxy_check_all
 
 # Как часто круг просыпается. ⚠ Это **не** период проверки: он смотрит, не пора
@@ -166,9 +168,6 @@ async def _every() -> int:
     общие, и один сайт не вправе оставить чужие анкеты без свежих данных. Ноль
     здесь выходит только если так сказали **все**.
     """
-    from src.uvicorn.routers.dating.site_ import (site_rows,
-                                                        site_seconds)
-
     try:
         rows = await site_rows()
     except Exception as e:

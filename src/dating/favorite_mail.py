@@ -100,7 +100,6 @@ from src.dating.favorite import (FAVORITE_STATES,
                                         favorite_sync)
 from src.dating.ready import password_pick
 from datetime_.datetime_ import datetime_day_minutes
-from src.uvicorn.routers.dating.site_ import site_setting
 from src.dating.percent import percent_share
 from src.dating.answer import answer_mail_write
 from src.dating.mail_agent import DatingMailAgentError
@@ -109,6 +108,7 @@ from src.dating.mail_wait import mail_wait_left, mail_wait_skip
 from src.dating.online import online_show
 from src.dating.schedule import schedule_now
 from src.dating.people import people_name_usable
+from src.dating.site_setting import site_seconds, site_setting
 
 # Сколько писем набирает один заход, если настройки нет.
 FAVORITE_MAIL_BATCH_DEFAULT = 10
@@ -1162,8 +1162,6 @@ async def _avoid(site_id: int) -> list[str]:
 
 
 async def _seconds(site_id: int, key: str, fallback: int) -> int:
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return int(await site_seconds(site_id, key) or fallback)
 
 

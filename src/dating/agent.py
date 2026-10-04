@@ -57,6 +57,8 @@ import re
 
 from src.dating.log import log_write
 from src.dating.role import ROLE_DEFAULT
+from src.dating.site_setting import site_setting
+from src.dating.site_snapshot import site_rows
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_agent_create,
                                        rhapsody_api_agent_find)
 
@@ -216,8 +218,6 @@ async def agent_id(profile: dict, card: dict) -> int:
 
 async def agent_universal_name(site_id: int) -> str:
     """Каким агентом отвечает этот сайт. Пустая настройка — универсальным."""
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     try:
         own = str(await site_setting(int(site_id or 0),
                                             AGENT_SETTING) or '').strip()
@@ -421,8 +421,6 @@ async def agent_site(site_id: int) -> str:
     # ⚠ Имя — из **нашего снимка** списка сайтов (`site_`), а не карточкой у
     # соседа: снимок затем и заведён, чтобы раздел не зависел от него в мелочах
     # (`api.md`, §3.5). Ведёт список по-прежнему он, сверка идёт в фоне.
-    from src.uvicorn.routers.dating.site_ import site_rows
-
     row = next((one for one in await site_rows()
                 if int(one['id']) == int(site_id or 0)), {})
     slug = AGENT_SITE_RE.sub('', str(row.get('name') or '').lower())

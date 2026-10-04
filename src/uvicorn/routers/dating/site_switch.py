@@ -26,7 +26,7 @@ from src.auth.auth import AuthUser, auth_admin_required, auth_required
 # разошёлся бы с первым (`schedule.py`).
 from src.dating.schedule import (schedule_check, schedule_dump,
                                         schedule_load)
-from src.uvicorn.routers.dating.site_ import site_seconds
+from src.dating.site_setting import site_seconds
 
 router = APIRouter(prefix='/api/dating/site', tags=['dating'])
 

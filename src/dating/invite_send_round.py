@@ -84,6 +84,7 @@ from src.dating.json_column import json_column_load
 from src.dating.online import online_check
 from src.dating.pool_pair import pool_answered_where
 from src.dating.schedule import schedule_now
+from src.dating.site_setting import site_seconds
 
 # Как часто круг просыпается. ⚠ Это **не** частота отправки: ту задаёт
 # `invite_send_every`, а круг лишь смотрит, не пора ли.
@@ -299,8 +300,6 @@ async def _batch(site_id: int) -> int:
     выключатель (`invite_send_on`), и отменять отправку настройкой размера пачки
     значило бы два выключателя об одном.
     """
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return max(1, int(await site_seconds(site_id, INVITE_SEND_BATCH_SETTING))
                or INVITE_SEND_BATCH_DEFAULT)
 
@@ -445,8 +444,6 @@ async def _today(site_id: int, offset_hours: int = 0) -> int:
                                 f'инвайтов #{site_id}')
 async def _every(site_id: int) -> int:
     """Пауза между репликами у этого сайта, не короче жёсткого предела."""
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     every = int(await site_seconds(site_id, INVITE_SEND_EVERY_SETTING)
                 or INVITE_SEND_EVERY_DEFAULT)
 
@@ -455,8 +452,6 @@ async def _every(site_id: int) -> int:
 
 async def _max_day(site_id: int) -> int:
     """Потолок реплик в сутки у этого сайта."""
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return int(await site_seconds(site_id, INVITE_SEND_MAX_DAY_SETTING)
                or INVITE_SEND_MAX_DAY_DEFAULT)
 

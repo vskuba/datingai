@@ -52,6 +52,7 @@ from src.dating.people import people_name_case
 from src.dating.message_twin import message_twin_absent
 from src.dating.json_column import json_column_load
 from src.dating.scenario import scenario_run
+from src.dating.site_setting import site_setting
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_find
 
 # Имя сценария у соседа. По имени, а не по номеру: номера у разных установок свои,
@@ -278,8 +279,6 @@ async def chat_panel_import(site_id: int, days: int) -> dict:
 async def _panel_ready(site_id: int) -> bool:
     """Есть ли у сайта заведённая админ-панель. Она и решает, чем забирать."""
     from src.dating.panel import PANEL_URL_SETTING
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     return bool(await site_setting(site_id, PANEL_URL_SETTING))
 
 

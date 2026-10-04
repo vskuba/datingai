@@ -89,6 +89,7 @@ from datetime import timedelta
 
 from datetime_.datetime_ import datetime_utc_now
 from mysql_.mysql_ import mysql_get_db_async
+from src.dating.site_setting import site_seconds
 
 # Настройки сайта. Ключи — в `SITE_KNOWN`.
 LOGIN_RETRY_MAX_SETTING = 'login_retry_max'
@@ -209,15 +210,11 @@ async def login_retry_max(site_id: int) -> int:
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 async def _retry_max(site_id: int) -> int:
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return int(await site_seconds(site_id, LOGIN_RETRY_MAX_SETTING)
                or LOGIN_RETRY_MAX_DEFAULT)
 
 
 async def _retry_every(site_id: int) -> int:
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return int(await site_seconds(site_id, LOGIN_RETRY_EVERY_SETTING)
                or LOGIN_RETRY_EVERY_DEFAULT)
 

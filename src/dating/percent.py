@@ -35,6 +35,7 @@
 """
 
 from logging_.logging_ import logger_info
+from src.dating.site_setting import site_seconds, site_setting
 
 
 async def percent_share(site_id: int, key: str, fallback: float) -> float:
@@ -55,8 +56,6 @@ async def percent_share(site_id: int, key: str, fallback: float) -> float:
     ⚠ **Читаем через `site_seconds`**, а не разбираем строку сами: он применяет
     границы из реестра (`min`/`max`), и 150% не превратится в «всегда».
     """
-    from src.uvicorn.routers.dating.site_ import site_seconds, site_setting
-
     try:
         percent = int(await site_seconds(int(site_id), str(key)))
 

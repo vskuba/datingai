@@ -90,6 +90,7 @@ from src.dating.round import (round_sites_run, round_slot_due,
 from src.dating.mail import MAIL_NAME_MAX
 from src.dating.mail_agent import DatingMailAgentError, mail_write
 from src.dating.schedule import schedule_now
+from src.dating.site_setting import site_seconds
 
 # Как часто круг просыпается. Минута — как у прочих кругов смены.
 MAIL_ROUND_TICK_SEC = 60
@@ -221,8 +222,6 @@ async def _write(site_id: int, offset_hours: int) -> int:
     лишать день третьей.
     """
     from src.uvicorn.routers.dating.mail_var import mail_var_rows
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     per_day = int(await site_seconds(site_id, MAIL_ROUND_PER_DAY_SETTING)
                   or MAIL_ROUND_PER_DAY)
     day = _today(offset_hours)
@@ -291,8 +290,6 @@ async def _sweep(site_id: int) -> int:
     `ON DELETE SET NULL`, и письмо помнит свой текст само. В карточке сменится
     только имя шаблона — на «шаблон удалён».
     """
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     days = int(await site_seconds(site_id, MAIL_ROUND_KEEP_SETTING) or 0)
     if days <= 0:
         return 0

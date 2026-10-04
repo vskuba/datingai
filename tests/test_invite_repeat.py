@@ -168,7 +168,7 @@ class TestRepeat:
             return 604_800
 
         monkeypatch.setattr(invite, 'INVITE_REPEAT_DEFAULT', 1)
-        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_seconds',
+        monkeypatch.setattr('src.dating.invite.site_seconds',
                             week)
         await _invite(girl, 'sent', ago_sec=90_000)
 

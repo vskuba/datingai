@@ -52,6 +52,7 @@ from src.dating.favorite_mail import (FAVORITE_MAIL_BATCH_DEFAULT,
                                              favorite_mail_pool_left,
                                              favorite_mail_shift_now,
                                              favorite_mail_stars_sync)
+from src.dating.site_setting import site_seconds
 
 # Как часто круг просыпается. ⚠ Не частота захода: её задаёт `favorite_mail_every`.
 FAVORITE_MAIL_ROUND_TICK_SEC = 60
@@ -215,16 +216,12 @@ async def _sites() -> list[dict]:
 
 
 async def _every(site_id: int) -> int:
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return int(await site_seconds(site_id,
                                          FAVORITE_MAIL_ROUND_EVERY_SETTING)
                or FAVORITE_MAIL_ROUND_EVERY_DEFAULT)
 
 
 async def _pool_max(site_id: int) -> int:
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return int(await site_seconds(site_id,
                                          FAVORITE_MAIL_POOL_SETTING)
                or FAVORITE_MAIL_ROUND_POOL_DEFAULT)

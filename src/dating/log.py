@@ -10,6 +10,7 @@
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
+from src.dating.site_setting import site_seconds
 
 # Длина строки журнала. Тексты из чата бывают на страницу, а в ленте читаются
 # первые слова — остальное видно в самой переписке.
@@ -103,8 +104,6 @@ async def log_sweep() -> int:
     проходит за доли секунды, и между пачками писатели успевают вклиниться. То же
     решение и та же причина, что у журнала запросов (`request_sweep`).
     """
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     gone = 0
     try:
         async with mysql_get_db_async() as db:

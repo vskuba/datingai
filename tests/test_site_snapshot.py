@@ -12,8 +12,10 @@ import pytest
 
 from src.dating.error import (ERROR_SITES_SYNC, error_clear,
                                      error_rows)
+from src.dating.site_setting import site_setting
+from src.dating.site_snapshot import site_rows
 from src.uvicorn.routers.dating import site_, site_sync
-from src.uvicorn.routers.dating.site_ import site_rows
+from src.uvicorn.routers.dating.site_ import DatingSiteSave, site_save
 from src.uvicorn.routers.dating.site_sync import (site_sync_now,
                                                          site_sync_start)
 from src.uvicorn.routers.site import site_list
@@ -102,8 +104,6 @@ class TestSnapshot:
         убрать по ошибке или на время — восстановить её у соседа куда проще, чем
         вспомнить, что было настроено здесь.
         """
-        from src.uvicorn.routers.dating.site_ import site_save, DatingSiteSave
-
         await site_save(GOLD, DatingSiteSave(settings={'тест_снимок': '1'}), user=None)
         try:
             synced.sites = [site for site in synced.sites if site['id'] != GOLD]
@@ -113,8 +113,6 @@ class TestSnapshot:
             synced.sites = [{'id': GOLD, 'name': 'Goldenbride',
                              'url': 'https://goldenbride.net', 'tags': 'dating'}]
             await site_sync_now()
-
-            from src.uvicorn.routers.dating.site_ import site_setting
 
             assert await site_setting(GOLD, 'тест_снимок') == '1', 'настройки потеряны'
         finally:

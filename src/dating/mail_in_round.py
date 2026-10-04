@@ -54,6 +54,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.mail_in import DatingMailInError, mail_in_fetch
 from src.dating.ready import ready_online
+from src.dating.site_setting import site_seconds, site_setting
 
 # Как часто круг просыпается. ⚠ Не частота забора: её задаёт `mail_check_every`.
 MAIL_IN_ROUND_TICK_SEC = 60
@@ -271,15 +272,11 @@ async def _fetch(profile: dict, base: str, password: str) -> dict | None:
 
 
 async def _setting(site_id: int, key: str) -> str:
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     return await site_setting(site_id, key)
 
 
 async def _every(site_id: int) -> int:
     """Как часто ходить за письмами этого сайта, в секундах."""
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return int(await site_seconds(site_id, MAIL_IN_EVERY_SETTING)
                or MAIL_IN_EVERY_DEFAULT)
 

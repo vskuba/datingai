@@ -30,6 +30,7 @@ from datetime_.datetime_ import datetime_day_minutes
 from round_ import round_slot as slot
 from round_.round_slot import round_slot_key
 from src.dating import round as engine
+from src.dating.site_setting import SITE_KNOWN
 
 
 def _due(site_id):
@@ -385,8 +386,6 @@ class TestNoBatchSetting:
     """
 
     def test_the_setting_is_gone_from_the_registry(self):
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         assert 'mailing_batch' not in SITE_KNOWN
 
     def test_the_round_does_not_ask_for_it(self):
@@ -522,7 +521,7 @@ class TestPoolCeiling:
             return 5000
 
         import src.uvicorn.routers.dating.site_ as site_mod
-        monkeypatch.setattr(site_mod, 'site_seconds', huge)
+        monkeypatch.setattr('src.dating.mailing_round.site_seconds', huge)
 
         assert await _pool_max(SITE) == MAILING_POOL_MAX
 

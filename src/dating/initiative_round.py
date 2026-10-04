@@ -79,6 +79,7 @@ from src.dating.log import log_write
 from src.dating.round import round_mem_due, round_mem_mark, round_sites_run
 from src.dating.online import online_check
 from src.dating.send import send_message
+from src.dating.site_setting import site_seconds
 from src.rhapsody.rhapsody_api import rhapsody_api_chat_delivered
 
 # Как часто круг просыпается. Минута — как у автоответа: чаще незачем, сроки
@@ -348,8 +349,6 @@ async def _send_every(site_id: int) -> int:
     ⚠ Настройка **в минутах**, как и соседние сроки инициативы: границы одного
     занятия обязаны мериться одним.
     """
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     try:
         minutes = int(await site_seconds(int(site_id or 0),
                                          INITIATIVE_SEND_EVERY_SETTING))

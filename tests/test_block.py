@@ -95,7 +95,7 @@ class TestDeny:
                     else '')
 
         import src.uvicorn.routers.dating.site_ as site_router
-        monkeypatch.setattr(site_router, 'site_setting', _said)
+        monkeypatch.setattr('src.dating.block.site_setting', _said)
 
         assert await block_deny(STAND_SITE, DENY) == ''
         assert await block_deny(STAND_SITE, 'oops HE_IS_DONE_WITH_YOU') == 'all'

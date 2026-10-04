@@ -24,7 +24,7 @@ from src.dating.mail_reply import (mail_reply_answer, mail_reply_make,
 from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
                                          mail_send_one)
 from src.dating.online import online_show
-from src.uvicorn.routers.dating.site_ import site_setting
+from src.dating.site_setting import site_setting
 
 router = APIRouter(prefix='/api/dating/mail-in', tags=['dating'])
 

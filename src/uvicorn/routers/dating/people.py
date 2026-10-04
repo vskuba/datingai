@@ -95,10 +95,10 @@ from src.dating.people_api import (DatingPeopleApiError, people_api_kinds,
 from src.dating.ready import password_pick
 from src.dating.scenario import scenario_run
 from src.dating.site_api import site_api_has_token
+from src.dating.site_setting import site_seconds, site_setting
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
                                        rhapsody_api_scenario_forget)
 from src.uvicorn.routers.dating.profile_ import profile_row, profile_site
-from src.uvicorn.routers.dating.site_ import site_seconds, site_setting
 
 router = APIRouter(prefix='/api/dating/people', tags=['dating'])
 

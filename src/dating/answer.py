@@ -45,6 +45,7 @@ import json
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.site_setting import site_seconds
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_chat_delivered,
                                        rhapsody_api_chat_talk)
 from src.dating.log import log_write
@@ -652,8 +653,6 @@ async def _anyway_first(site_id: int) -> int:
     разговора — то поведение, ради которого настройку и заводили, и тихо терять
     его из-за сбоя чтения хуже, чем лишний раз ответить.
     """
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     try:
         return max(0, int(await site_seconds(int(site_id or 0),
                                              ANSWER_ANYWAY_FIRST_SETTING)))

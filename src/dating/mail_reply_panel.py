@@ -59,6 +59,7 @@ from logging_.logging_ import logger_info
 
 from src.dating.panel_fetch import (DatingPanelFetchError, panel_fetch_html,
                                     panel_fetch_post)
+from src.dating.site_setting import site_setting
 
 # Страница письма в панели. ⚠ Путь **относительный корню панели**
 # (`/partner/agency`), как и у прочих её страниц: корень собирает `panel_fetch`.
@@ -113,8 +114,6 @@ async def mail_reply_panel_due(site_id: int, profile_id: int, uid: str) -> bool:
     отвечаем прежним путём: он рабочий, а молчание вместо ответа хуже, чем ответ не
     тем каналом.
     """
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     try:
         picked = str(await site_setting(int(site_id),
                                         MAIL_REPLY_PANEL_SOURCE_SETTING)).strip()
@@ -140,8 +139,6 @@ async def mail_reply_panel_fallback(site_id: int) -> bool:
     ⚠ Умолчание — досылать: так ведёт себя прежний код, и включение панели не должно
     само по себе останавливать ответы.
     """
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     try:
         picked = str(await site_setting(int(site_id),
                                         MAIL_REPLY_PANEL_FALLBACK_SETTING)).strip()

@@ -33,6 +33,7 @@ from src.dating.feed import feed_write
 from src.dating.log import log_message_in
 from src.dating.proxy import proxy_url
 from src.dating.site.site_registry import site_registry_chat
+from src.dating.site_setting import site_seconds
 
 # Сколько собеседников перечисляем в запросе истории. Сервер принимает список, но
 # у анкеты с сотней диалогов строка вырастет до килобайта — берём свежие.
@@ -270,8 +271,6 @@ async def _invite_keep(profile_id: int) -> int:
     """
     from src.dating.invite import (INVITE_KEEP_DEFAULT,
                                           INVITE_KEEP_SETTING)
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     try:
         async with mysql_get_db_async() as db:
             await db.execute('SELECT site_id FROM profile WHERE id = %s',

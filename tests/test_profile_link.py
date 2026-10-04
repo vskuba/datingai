@@ -111,7 +111,7 @@ class TestFromSetting:
     """Шаблон берётся из настройки сайта, а не откуда-нибудь ещё."""
 
     async def test_setting_makes_the_link(self, monkeypatch):
-        monkeypatch.setattr(site_, '_settings_all',
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all',
                             _settings({STAND_SITE: {PROFILE_LINK_SETTING: PATTERN}}))
 
         assert await profile_link(STAND_SITE, '643694') \
@@ -120,7 +120,7 @@ class TestFromSetting:
     async def test_site_without_the_pattern_gives_nothing(self, monkeypatch):
         """Умолчание настройки пустое: сайт, которому шаблон не вписали, ссылки
         не получает — и это не поломка, а «ещё не настроили»."""
-        monkeypatch.setattr(site_, '_settings_all', _settings({}))
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all', _settings({}))
 
         assert await profile_link(STAND_SITE, '643694') == ''
 
@@ -129,7 +129,7 @@ class TestCard:
     """Карточка анкеты отдаёт готовый адрес полем `site_url`."""
 
     async def test_card_carries_the_link(self, rhapsody, girl, monkeypatch):
-        monkeypatch.setattr(site_, '_settings_all',
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all',
                             _settings({STAND_SITE: {PROFILE_LINK_SETTING: PATTERN}}))
 
         card = (await profile_view_card(girl['id'], user=None))['result']
@@ -140,7 +140,7 @@ class TestCard:
         """⚠ Поле есть всегда, пустое или нет: страница проверяет значение, а
         отсутствующий ключ она прочитала бы как `undefined` — и это тот же «нет
         ссылки», но выясняется он не сразу и не там."""
-        monkeypatch.setattr(site_, '_settings_all', _settings({}))
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all', _settings({}))
 
         card = (await profile_view_card(girl['id'], user=None))['result']
 
@@ -150,7 +150,7 @@ class TestCard:
                                                          monkeypatch):
         """Анкета, заведённая руками, номера на сайте не имеет — вести ссылке
         некуда. У Goldenbride сейчас так у всех сорока."""
-        monkeypatch.setattr(site_, '_settings_all',
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all',
                             _settings({STAND_SITE: {PROFILE_LINK_SETTING: PATTERN}}))
 
         profile_id = int((await auth_client.post('/api/dating/profile', json={
@@ -171,7 +171,7 @@ class TestKnownSetting:
     async def test_pattern_is_a_free_field_of_the_work_group(self, rhapsody, monkeypatch):
         """Свободное поле, а не набор: адрес у каждого сайта свой, и предложить
         его списком нельзя."""
-        monkeypatch.setattr(site_, '_settings_all', _settings({}))
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all', _settings({}))
         known = {row['key']: row
                  for row in (await site_list(user=None))['result']['known']}
 

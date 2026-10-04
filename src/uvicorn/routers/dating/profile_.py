@@ -40,6 +40,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
+from src.dating.site_snapshot import site_rows
 from src.mysql_.repository.profile_repository import DatingProfileRepository
 from src.dating.json_column import json_column_load
 from src.dating.proxy import proxy_enabled
@@ -320,8 +321,6 @@ async def profile_site(site_id: int) -> dict:
             запроса, а не сбой шлюза — код прежний.
     """
     from src.dating.site_presence import site_presence
-    from src.uvicorn.routers.dating.site_ import site_rows
-
     presence = await site_presence(int(site_id))
     row = next((one for one in await site_rows()
                 if int(one['id']) == int(site_id)), None)

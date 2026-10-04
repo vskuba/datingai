@@ -21,6 +21,7 @@ import uuid
 import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
+from src.dating.site_setting import SITE_KNOWN
 
 pytestmark = pytest.mark.chat
 
@@ -161,8 +162,6 @@ class TestNoFreshnessGate:
     """
 
     def test_the_setting_is_gone(self):
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         assert 'chat_answer_panel_fresh' not in SITE_KNOWN
 
     def test_the_selection_has_no_age_clause(self):

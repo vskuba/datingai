@@ -81,6 +81,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from setting_.setting_ import setting_get
 
 from src.dating.log import log_write
+from src.dating.site_setting import site_setting
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_proxy_list
 
 # Сколько живёт кэш адреса. Полчаса: пароль канала меняют редко, а перечитывать
@@ -278,8 +279,6 @@ async def proxy_seats(site_id: int) -> int:
     Настройка сайта, а не панели: у Goldenbride предел один, у Ladadate другой.
     Не задана — единица: она всегда безопасна.
     """
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     try:
         value = await site_setting(int(site_id), PROXY_SEATS_SETTING)
     except Exception:
@@ -313,8 +312,6 @@ async def proxy_countries(site_id: int) -> list[str]:
     заводят не сразу, а сайт должен работать с первого дня: «ни одной» здесь
     означало бы анкеты, которые молча не входят.
     """
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     try:
         raw = await site_setting(int(site_id), PROXY_COUNTRIES_SETTING)
     except Exception:
@@ -439,8 +436,6 @@ async def proxy_enabled(site_id: int) -> bool:
     только после перезапуска воркера — то есть тогда, когда о нём уже забыли.
     Цена — одна строка из `site`, таблицы в единицы записей.
     """
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     if not int(site_id or 0):
         # Сайт неизвестен — считаем выключенным. Здесь это верное «не знаю»:
         # включённый механизм ходит к соседу и занимает адреса, а выключенный

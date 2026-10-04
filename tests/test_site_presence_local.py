@@ -53,7 +53,7 @@ class TestOwnSettingWins:
         """Сосед подменяется взрывом: дойдёт вызов — тест назовёт причину."""
         import src.dating.site_presence as module
 
-        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_setting',
+        monkeypatch.setattr('src.dating.site_presence.site_setting',
                             _own(json.dumps(CONFIG)))
         monkeypatch.setattr(module, 'site_presence_neighbour', _boom)
 
@@ -65,7 +65,7 @@ class TestOwnSettingWins:
         Поле правится руками, то есть сломанным бывает по определению. Брось мы
         отсюда — упал бы держатель, а вместе с ним чат всех сайтов сразу.
         """
-        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_setting',
+        monkeypatch.setattr('src.dating.site_presence.site_setting',
                             _own('{сломано}'))
 
         async def _nothing(site_id):
@@ -88,7 +88,7 @@ class TestNeighbourIsTheFallback:
     async def test_without_own_setting_the_neighbour_answers(self, monkeypatch):
         import src.dating.site_presence as module
 
-        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_setting',
+        monkeypatch.setattr('src.dating.site_presence.site_setting',
                             _own(''))
 
         async def _neighbour(site_id):

@@ -34,6 +34,7 @@
 """
 
 from urllib.parse import quote
+from src.dating.site_setting import site_setting
 
 # Метка номера в шаблоне. Та же, что у адреса чата у соседа (`send.py`).
 PROFILE_LINK_MARK = '{ID}'
@@ -65,8 +66,6 @@ async def profile_link(site_id: int, site_uid: str) -> str:
     просто не будет — бросать исключение значило бы ронять карточку из-за
     незаполненной настройки.
     """
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     uid = str(site_uid or '').strip()
     if not uid:
         return ''

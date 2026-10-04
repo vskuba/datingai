@@ -367,7 +367,7 @@ class TestOwnSettingWins:
         async def _own(site_id, key, default=''):
             return json.dumps(CONFIG)
 
-        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_setting',
+        monkeypatch.setattr('src.dating.heartbeat.site_setting',
                             _own)
 
         got = await heartbeat.heartbeat_config(19)
@@ -389,7 +389,7 @@ class TestOwnSettingWins:
         async def _neighbour(site_id):
             return {'base': BASE, 'heartbeat': {'path': '/hb'}}
 
-        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_setting',
+        monkeypatch.setattr('src.dating.heartbeat.site_setting',
                             _empty)
         monkeypatch.setattr(heartbeat, '_presence_of', _neighbour)
 

@@ -57,6 +57,7 @@ from http_.http_heartbeat import (http_heartbeat_check, http_heartbeat_client,
 
 from src.dating.json_column import json_column_load
 from src.dating.scenario import scenario_run
+from src.dating.site_setting import site_seconds, site_setting
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
                                        rhapsody_api_session_close,
                                        rhapsody_api_session_state)
@@ -251,8 +252,6 @@ async def panel_sites() -> list[int]:
     ⚠ Ушедшие у соседа (`is_gone`) не берём: закладки нет, а настройки её пережили
     — ходить в панель сайта, которого у нас больше нет, незачем.
     """
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     try:
         async with mysql_get_db_async() as db:
             await db.execute('SELECT site_id FROM site WHERE is_gone = 0'
@@ -274,8 +273,6 @@ async def panel_sites() -> list[int]:
 
 async def panel_every(site_id: int) -> int:
     """Частота проверки этого сайта в секундах."""
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return int(await site_seconds(site_id, PANEL_EVERY_SETTING)
                or PANEL_EVERY_DEFAULT)
 
@@ -283,8 +280,6 @@ async def panel_every(site_id: int) -> int:
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 async def _url(site_id: int) -> str:
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     return str(await site_setting(site_id, PANEL_URL_SETTING) or '').strip()
 
 
@@ -296,8 +291,6 @@ async def _config(site_id: int) -> dict:
     нужно лишь знать, жива ли она. Лишний POST на чужую панель раз в пять минут —
     это действие от имени агентства, которого никто не просил.
     """
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     base, path = _split(await _url(site_id))
     mark = str(await site_setting(site_id, PANEL_MARK_SETTING) or '').strip()
 

@@ -36,6 +36,7 @@ from src.dating.round import (round_sites_run, round_slot_due,
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.mail_reply import mail_reply_make
+from src.dating.site_setting import site_seconds
 
 # Как часто круг просыпается. ⚠ Не частота набора: её задаёт `reply_every`.
 REPLY_ROUND_TICK_SEC = 60
@@ -124,8 +125,6 @@ async def _sites() -> list[int]:
 
 async def _every(site_id: int) -> int:
     """Как часто добирать пул этому сайту, в секундах."""
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return int(await site_seconds(site_id, REPLY_EVERY_SETTING)
                or REPLY_EVERY_DEFAULT)
 
@@ -138,8 +137,6 @@ async def _batch(site_id: int) -> int:
     вернётся умолчание. Свой `min()` поверх этого был бы защитой от того, чего
     уже не бывает, и создавал бы вид, что настройку можно задать любую.
     """
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return int(await site_seconds(site_id, REPLY_BATCH_SETTING)
                or REPLY_BATCH_DEFAULT)
 

@@ -30,6 +30,7 @@ import pytest
 from src.dating import mail_agent
 from src.dating.mail import (MAILING_GREETINGS, MAILING_GREETINGS_NAME,
                              MAILING_NAME_CHANCE, MAILING_NAME_SETTING)
+from src.dating.site_setting import SITE_KNOWN
 
 pytestmark = pytest.mark.mail
 
@@ -88,8 +89,6 @@ class TestTheSettingIsWiredUp:
     """⚠ Настройка есть в реестре и согласована с кодом."""
 
     def test_the_registry_knows_it(self):
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         one = SITE_KNOWN[MAILING_NAME_SETTING]
 
         assert one['group'] == 'mail', 'настройка не на вкладке рассылки'
@@ -100,8 +99,6 @@ class TestTheSettingIsWiredUp:
         """⚠⚠ Умолчание живёт **в двух местах**: реестр показывает его человеку,
         код берёт, когда настройка не сохранена. Разойдись они — страница врала
         бы, и никакой ошибки при этом не случилось бы."""
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         assert (float(SITE_KNOWN[MAILING_NAME_SETTING]['default']) / 100
                 == MAILING_NAME_CHANCE)
 

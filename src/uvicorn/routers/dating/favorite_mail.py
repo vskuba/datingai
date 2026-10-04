@@ -41,8 +41,8 @@ from src.dating.online import online_show
 from src.dating.pool_pair import (pool_delivery_where, pool_pair_girl,
                                          pool_pair_joins, pool_pair_select,
                                          pool_pick_where)
+from src.dating.site_setting import site_setting
 from src.uvicorn.routers.dating.chat import chat_dialogs_size
-from src.uvicorn.routers.dating.site_ import site_setting
 from src.uvicorn.routers.setting import setting_timezone_hours
 
 router = APIRouter(prefix='/api/dating/favorite-mail', tags=['dating'])

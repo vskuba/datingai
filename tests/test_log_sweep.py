@@ -21,6 +21,7 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.log import LOG_KEEP_SETTING, log_sweep
+from src.dating.site_setting import SITE_KNOWN
 
 pytestmark = pytest.mark.core
 
@@ -117,7 +118,7 @@ class TestZeroMeansKeep:
         async def _zero(site_id, key):
             return 0 if key == LOG_KEEP_SETTING else 0
 
-        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_seconds', _zero)
+        monkeypatch.setattr('src.dating.log.site_seconds', _zero)
 
         await _line(girl, 'древняя', hours_ago=5000)
         await log_sweep()
@@ -142,8 +143,6 @@ class TestTheSetting:
         """⚠ Умолчание спрашиваем у **реестра настроек** — единственного места, где
         оно есть. Сверка держит и `KEEP_HOURS` выше: поменяй реестр, не поправив
         число, — упадёт здесь, с прямой причиной."""
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         assert SITE_KNOWN['log_keep_hours']['default'] == '72'
         assert KEEP_HOURS == 72
 

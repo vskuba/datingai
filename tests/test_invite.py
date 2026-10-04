@@ -25,6 +25,7 @@ from src.dating.mail_agent import (INVITE_LANGUAGE,
                                           INVITE_MAX,
                                           INVITE_SLOT_GIRL,
                                           INVITE_SLOT_MAN, _invite)
+from src.dating.site_setting import SITE_KNOWN
 
 pytestmark = pytest.mark.chat
 
@@ -1106,8 +1107,6 @@ class TestTimeAndPlaceAreGone:
         Оставь её в реестре — человек задал бы долю и не понял, почему ничего не
         меняется. Это то же правило, по которому сняты нечитаемые переменные.
         """
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         assert 'invite_time_percent' not in SITE_KNOWN
 
     async def test_the_name_share_stays(self):
@@ -1116,8 +1115,6 @@ class TestTimeAndPlaceAreGone:
         Её читает жребий у соседа (метка `%invite_name_percent%` в описании), то
         есть влияние настоящее. Читает не промпт, а инструмент — и этого довольно.
         """
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         assert 'invite_name_percent' in SITE_KNOWN
 
 

@@ -47,6 +47,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.feed import feed_write
 from src.dating.log import log_write
+from src.dating.site_setting import site_setting
 
 # Настройка сайта: по каким словам в ответе узнаём «он закрылся».
 BLOCK_DENY_SETTING = 'block_deny_mark'
@@ -107,8 +108,6 @@ async def block_deny(site_id: int, answer: str) -> str:
     обеими приметами разом, шире тот запрет, что гасит оба канала: ошибиться в
     сторону молчания дешевле, чем писать тому, кто просил не писать.
     """
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     answer = str(answer or '')
     if not answer:
         return ''

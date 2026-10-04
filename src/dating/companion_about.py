@@ -46,6 +46,7 @@ from src.dating.json_column import json_column_load
 from src.dating.ready import password_pick
 from src.dating.scenario import scenario_run
 from src.dating.site.site_registry import site_registry_about
+from src.dating.site_setting import site_seconds, site_setting
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
                                        rhapsody_api_site_get)
 
@@ -350,8 +351,6 @@ async def companion_about_http(profile: dict, uid: str) -> dict:
     # ⚠ Чем разбирать эту страницу, знает драйвер сайта: путь, классы блоков и
     # способ достать из них текст. Настройка та же, что у чата и присутствия —
     # `presence` сайта (`site_about.py`).
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     driver = site_registry_about(
         json_column_load(await site_setting(site_id, 'presence')))
     url = driver.url(base, uid)
@@ -435,8 +434,6 @@ async def companion_about_fetch(profile: dict, uid: str) -> dict:
     ходить — своим или общим агентским (`password_source`). Подставь сосед свою
     переменную сайта, анкета с личным паролем ходила бы под чужим.
     """
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     site_id = int(profile['site_id'])
     uid = str(uid or '').strip()
     if not uid:
@@ -538,8 +535,6 @@ async def companion_about_due(site_id: int, card: dict) -> bool:
     ⚠ Сбой чтения настройки отвечает «не пора»: лишний поход дешевле
     пропущенного, но не настолько, чтобы ходить на каждой ошибке.
     """
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     state = str((card or {}).get('about_state') or 'none')
 
     if not card or state == 'none':

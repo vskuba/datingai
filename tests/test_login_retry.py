@@ -413,7 +413,7 @@ class TestSocketOnlyWhereItExists:
         async def _settings(site_id):
             return {'send_transport': 'scenario'}
 
-        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_settings',
+        monkeypatch.setattr('src.dating.login.site_settings',
                             _settings)
 
         assert not await login._ws_needed(

@@ -136,6 +136,7 @@ from src.dating.mail_agent import (INVITE_LANGUAGE,
                                           invite_template)
 from src.dating.people import (PEOPLE_NAME_MAX, PEOPLE_UID_MAX,
                                       people_name_usable)
+from src.dating.site_setting import site_seconds, site_setting
 
 # Сколько карточек делаем за заход, если размер пула не задан. ⚠ Это больше **не**
 # число вызовов LLM: вызов один на весь заход, а карточки собирает подстановка.
@@ -746,8 +747,6 @@ async def _country(site_id: int) -> str:
     праздник или чужой сезон. Пусто — агент про место молчит, и это лучше
     догадки.
     """
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     return str(await site_setting(int(site_id), INVITE_COUNTRY_SETTING))
 
 
@@ -979,8 +978,6 @@ async def _invited(site_id: int) -> set:
     (`_pairs`) — две Дианы, написавшие разом, были настоящей бедой, и она не
     вернётся.
     """
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     after = int(await site_seconds(int(site_id), INVITE_REPEAT_SETTING)
                 or INVITE_REPEAT_DEFAULT)
     per_day = int(await site_seconds(int(site_id),

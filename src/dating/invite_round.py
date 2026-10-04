@@ -81,6 +81,7 @@ from src.dating.invite import (INVITE_POOL_DEFAULT,
                                       invite_pool_left)
 from src.dating.json_column import json_column_load
 from src.dating.schedule import schedule_now
+from src.dating.site_setting import site_seconds
 
 # Как часто круг просыпается. ⚠ Не частота набора: её задаёт `invite_every`.
 INVITE_ROUND_TICK_SEC = 60
@@ -271,8 +272,6 @@ async def _sites() -> list[dict]:
 
 
 async def _seconds(site_id: int, key: str) -> int:
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return int(await site_seconds(site_id, key))
 
 
@@ -322,8 +321,6 @@ async def _clean(site_id: int) -> int:
 
     ⚠ Сбой чистки не роняет круг: набор пула важнее размера таблицы.
     """
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     if not round_slot_due(INVITE_ROUND_CLEAN_KEY, site_id, 'чистке инвайтов'):
         return 0
 

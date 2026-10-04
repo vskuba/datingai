@@ -79,6 +79,7 @@ from src.dating.chat_initiative import (chat_initiative_put,
 from src.dating.companion_ref import companion_ref_foreign, companion_title
 from src.dating.json_column import json_column_load
 from src.dating.log import log_write
+from src.dating.site_setting import site_seconds
 
 # Настройки сайта и их умолчания.
 INITIATIVE_AFTER_SETTING = 'chat_initiative_after'
@@ -416,8 +417,6 @@ async def _after_range(site_id: int) -> tuple[int, int]:
     не настройка, а описка, и работать по ней значило бы писать раньше, чем
     человек велел. Ноль в «до» — законное «без разброса».
     """
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     try:
         low = int(await site_seconds(int(site_id or 0),
                                      INITIATIVE_AFTER_SETTING))
@@ -474,8 +473,6 @@ async def _repeat(site_id: int) -> int:
     ⚠ Его ответ этот счёт обнуляет (`_quiet`), так что «два» значит «два раза в
     одну тишину», а не «два в сутки». За сутки отвечает `_max_day`.
     """
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     try:
         return max(0, int(await site_seconds(int(site_id or 0),
                                              INITIATIVE_REPEAT_SETTING)))
@@ -497,8 +494,6 @@ async def _max_day(site_id: int) -> int:
     выключателем `chat_initiative_on` или нулём в `chat_initiative_repeat`, и
     третьего способа выключить занятие быть не должно.
     """
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     try:
         return max(1, int(await site_seconds(int(site_id or 0),
                                              INITIATIVE_MAX_DAY_SETTING)))

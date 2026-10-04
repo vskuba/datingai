@@ -23,7 +23,7 @@
 from fastapi import APIRouter, Depends
 
 from src.auth.auth import auth_required
-from src.uvicorn.routers.dating.site_ import site_rows
+from src.dating.site_snapshot import site_rows
 from src.uvicorn.routers.dating.site_sync import site_sync_start
 
 router = APIRouter(prefix='/api/site', tags=['site'])

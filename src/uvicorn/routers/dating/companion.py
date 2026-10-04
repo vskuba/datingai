@@ -36,12 +36,12 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.companion_about import (COMPANION_ABOUT_EVERY_DEFAULT,
                                         COMPANION_ABOUT_EVERY_SETTING)
-from src.uvicorn.routers.dating.site_ import site_seconds
 from src.dating.companion_card import companion_save
 
 from src.auth.auth import AuthUser, auth_required
 from src.dating.mailing import mailing_companion_vars
 from src.dating.online import online_show
+from src.dating.site_setting import site_seconds
 
 router = APIRouter(prefix='/api/dating/companion', tags=['dating'])
 

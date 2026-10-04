@@ -491,7 +491,7 @@ class TestTheSiteSettingsReachTheDice:
             raise RuntimeError('база недоступна')
 
         monkeypatch.setattr(
-            'src.uvicorn.routers.dating.site_.site_seconds', _boom)
+            'src.dating.percent.site_seconds', _boom)
 
         got = await percent_mod.percent_value(343, 'favorite_mail_name_percent',
                                               0.10)

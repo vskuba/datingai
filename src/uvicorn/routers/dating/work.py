@@ -40,7 +40,8 @@ from fastapi.responses import HTMLResponse
 from logging_.logging_ import logger_info
 
 from src.auth.auth import AuthUser, auth_required
-from src.uvicorn.routers.dating.site_ import site_setting
+from src.dating.site_setting import site_setting
+from src.dating.site_snapshot import site_rows
 from src.uvicorn.uvicorn_base import uvicorn_base_path
 
 router = APIRouter(prefix='/admin/dating/profile', tags=['pages'])
@@ -170,8 +171,6 @@ async def _site_name(site_id: int) -> str:
     """
     # ⚠ Из нашего снимка списка сайтов, а не карточкой у соседа: страница
     # открывается человеком, и лежащий сосед не должен ронять выбор разметки.
-    from src.uvicorn.routers.dating.site_ import site_rows
-
     row = next((one for one in await site_rows()
                 if int(one['id']) == int(site_id)), {})
 

@@ -34,6 +34,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.block import (BLOCK_DENY_DEFAULT, BLOCK_DENY_MAIL_DEFAULT,
                              block_deny)
+from src.dating.site_setting import SITE_KNOWN
 
 pytestmark = pytest.mark.mail
 
@@ -104,8 +105,6 @@ class TestTheMarksAreTwoSettings:
         сайта. Разойдись они — страница «Сайты» показывала бы одно, а работа шла бы
         по другому, и никакой ошибки при этом не случилось бы.
         """
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         assert SITE_KNOWN['block_deny_mark']['default'] == BLOCK_DENY_DEFAULT
         assert (SITE_KNOWN['block_deny_mail_mark']['default']
                 == BLOCK_DENY_MAIL_DEFAULT)

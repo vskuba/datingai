@@ -25,6 +25,7 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating import answer as answer_mod
+from src.dating.site_setting import SITE_KNOWN
 
 pytestmark = pytest.mark.chat
 
@@ -155,8 +156,6 @@ class TestTheSetting:
     """Настройка сайта, задающая порог."""
 
     def test_it_is_registered(self):
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         one = SITE_KNOWN['chat_answer_anyway_first']
 
         assert one['kind'] == 'number'
@@ -306,8 +305,6 @@ class TestInitiativeSetting:
     """
 
     def test_both_bounds_are_registered(self):
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         low = SITE_KNOWN['chat_initiative_after']
         high = SITE_KNOWN['chat_initiative_after_max']
 

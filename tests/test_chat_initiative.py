@@ -26,6 +26,7 @@ import uuid
 import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
+from src.dating.site_setting import SITE_GROUPS, SITE_KNOWN, SITE_SUBGROUPS
 
 pytestmark = pytest.mark.chat
 
@@ -294,8 +295,6 @@ class TestTheSettings:
     """Настройки инициативы — пятёрка, их читают вместе."""
 
     def test_all_five_are_registered(self):
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         after = SITE_KNOWN['chat_initiative_after']
         upto = SITE_KNOWN['chat_initiative_after_max']
         times = SITE_KNOWN['chat_initiative_repeat']
@@ -325,8 +324,6 @@ class TestTheSettings:
         потолок, молча выключил инициативу целиком и ищет причину в сроках.
         """
         from src.dating.initiative import INITIATIVE_MAX_DAY_DEFAULT
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         cap = SITE_KNOWN['chat_initiative_max_day']
 
         assert cap['kind'] == 'number' and cap['min'] == 1
@@ -356,10 +353,6 @@ class TestTheSettings:
         ⚠ Подписи и порядок подразделов знает **сервер** (`SITE_SUBGROUPS`), а не
         страница: иначе новый подраздел требовал бы правки в двух местах.
         """
-        from src.uvicorn.routers.dating.site_ import (SITE_GROUPS,
-                                                      SITE_KNOWN,
-                                                      SITE_SUBGROUPS)
-
         subs = {key: (group, title) for key, group, title in SITE_SUBGROUPS}
 
         assert subs.get('initiative') == ('invite', 'Инициатива'), \
@@ -395,8 +388,6 @@ class TestTheSettings:
         настройки и забывают снять, а человек потом читает, что рабочее число ни
         на что не влияет, и не ставит его вовсе.
         """
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         for key in INITIATIVE_SETTINGS:
             assert 'работа не сделана' not in SITE_KNOWN[key]['note'], key
 
@@ -407,8 +398,6 @@ class TestTheSettings:
         промежуток тишины и что его реплика счёт сбрасывает. А это главное в
         настройке: без обнуления число читалось бы как дневная норма.
         """
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         note = SITE_KNOWN['chat_initiative_repeat']['note']
 
         assert 'обнуля' in note, 'про обнуление ответом в подписи не сказано'
@@ -417,8 +406,6 @@ class TestTheSettings:
 
     def test_the_sliding_day_is_spelled_out_in_the_backstop(self):
         """⚠ Скользящие сутки — в подписи потолка: полночь человек подразумевает сам."""
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         assert 'скольз' in SITE_KNOWN['chat_initiative_max_day']['note']
 
 

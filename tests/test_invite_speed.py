@@ -94,7 +94,7 @@ class TestForecast:
         async def _no_cap(site_id, key):
             return 0
 
-        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_seconds', _no_cap)
+        monkeypatch.setattr('src.uvicorn.routers.dating.invite.site_seconds', _no_cap)
         await _sent(girl, minutes_ago=[1] * 5)
 
         got = await _speed(STAND_SITE)
@@ -113,7 +113,7 @@ class TestForecast:
         async def _cap(site_id, key):
             return 100
 
-        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_seconds', _cap)
+        monkeypatch.setattr('src.uvicorn.routers.dating.invite.site_seconds', _cap)
         await _sent(girl, minutes_ago=[1] * 10)
 
         got = await invite._speed(STAND_SITE)

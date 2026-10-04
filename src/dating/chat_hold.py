@@ -63,6 +63,7 @@ from src.dating.proxy_round import (PROXY_ROUND_TICK_SEC,
                                            proxy_round_run)
 from src.dating.request_round import (REQUEST_ROUND_TICK_SEC,
                                              request_round_run)
+from src.dating.site_setting import site_seconds, site_settings
 from src.dating.status_round import (STATUS_ROUND_TICK_SEC,
                                             status_round_run)
 from src.dating.reply_round import (REPLY_ROUND_TICK_SEC,
@@ -72,8 +73,6 @@ from src.dating.send_round import (SEND_ROUND_TICK_SEC,
 from src.dating.schedule_round import (SCHEDULE_ROUND_TICK_SEC,
                                               schedule_round_run)
 from src.dating.socket_ import socket_write
-from src.uvicorn.routers.dating.site_ import (site_seconds,
-                                                    site_settings)
 from src.rhapsody.rhapsody_api import rhapsody_api_error_write
 from src.dating.site_presence import site_presence
 from src.dating.chat import chat_listen

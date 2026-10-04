@@ -29,6 +29,7 @@ from src.dating import favorite_mail
 from src.dating.favorite_mail import (_quiet, _too_soon,
                                       favorite_mail_girl_free_sql,
                                       favorite_mail_girl_soon)
+from src.dating.site_setting import SITE_KNOWN
 
 pytestmark = pytest.mark.mail
 # Стенд у соседа: круги воркера про него не знают — его нет в `site_`.
@@ -1104,7 +1105,7 @@ class TestTheGapIsInMinutes:
             return 60 if key == favorite_mail.FAVORITE_MAIL_GAP_SETTING else 0
 
         monkeypatch.setattr(
-            'src.uvicorn.routers.dating.site_.site_seconds', _site_seconds)
+            'src.dating.favorite_mail.site_seconds', _site_seconds)
 
         assert await favorite_mail.favorite_mail_gap_sec(1) == 3600, \
             'шестьдесят минут это ровно час'
@@ -1117,7 +1118,7 @@ class TestTheGapIsInMinutes:
             return 0
 
         monkeypatch.setattr(
-            'src.uvicorn.routers.dating.site_.site_seconds', _nothing)
+            'src.dating.favorite_mail.site_seconds', _nothing)
 
         assert favorite_mail.FAVORITE_MAIL_GAP_DEFAULT_MIN == 240
         assert await favorite_mail.favorite_mail_gap_sec(1) == 240 * 60
@@ -1128,8 +1129,6 @@ class TestTheGapIsInMinutes:
         Набор отвечает на вопрос «какие значения осмысленны», и для многих
         сроков это верно. Здесь он заставлял брать ближайший вариант, а не свой.
         """
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         known = SITE_KNOWN['favorite_mail_gap']
 
         assert known.get('kind') == 'number', 'пауза снова стала набором'
@@ -1142,8 +1141,6 @@ class TestTheGapIsInMinutes:
         Число без подписи читается как секунды по привычке: так эта настройка и
         жила. «240» без «мин» — это сколько?
         """
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         assert 'мин' in SITE_KNOWN['favorite_mail_gap']['title']
 
     def test_the_default_in_the_registry_matches_the_code(self):
@@ -1153,8 +1150,6 @@ class TestTheGapIsInMinutes:
         форма: человек видит 240, а круг ждёт другое.
         """
         from src.dating.favorite_mail import FAVORITE_MAIL_GAP_DEFAULT_MIN
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         assert int(SITE_KNOWN['favorite_mail_gap']['default']) == \
             FAVORITE_MAIL_GAP_DEFAULT_MIN
 

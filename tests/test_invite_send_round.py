@@ -21,6 +21,7 @@ from src.dating.invite_send_round import (INVITE_SEND_EVERY_MIN,
                                                  INVITE_SEND_ROUND_TICK_SEC,
                                                  invite_send_why,
                                                  invite_send_round_run)
+from src.dating.site_setting import SITE_KNOWN
 
 pytestmark = pytest.mark.chat
 
@@ -301,8 +302,6 @@ class TestPause:
         Иначе человек выбирает «3 секунды», а круг шлёт раз в пятнадцать — и
         поломкой это не выглядит, потому что реплики-то уходят.
         """
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         options = SITE_KNOWN['invite_send_every']['options']
         low = min(int(value) for value, _ in options)
 
@@ -877,7 +876,7 @@ class TestBatch:
         async def _none(site_id, key):
             return 0
 
-        monkeypatch.setattr('src.uvicorn.routers.dating.site_.site_seconds', _none)
+        monkeypatch.setattr('src.dating.invite_send_round.site_seconds', _none)
         await _draft(girl)
 
         assert (await invite_send_round_run())['sent'] == 1

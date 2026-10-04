@@ -76,6 +76,7 @@ from src.dating.favorite import (FAVORITE_ALREADY,
                                         DatingFavoriteError, favorite_add,
                                         favorite_mark, favorite_pick,
                                         favorite_settled, favorite_uids)
+from src.dating.site_setting import site_seconds, site_setting
 
 # Как часто круг просыпается. ⚠ Не частота захода: её задаёт `favorite_every`.
 FAVORITE_ROUND_TICK_SEC = 60
@@ -357,14 +358,10 @@ async def _senders(profile_id: int) -> list[str]:
 
 
 async def _setting(site_id: int, key: str) -> str:
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     return await site_setting(site_id, key)
 
 
 async def _seconds(site_id: int, key: str) -> int:
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return int(await site_seconds(site_id, key))
 
 

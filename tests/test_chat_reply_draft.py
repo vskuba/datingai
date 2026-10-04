@@ -28,6 +28,7 @@ from src.dating import answer as answer_mod
 from src.dating.chat_reply import (chat_reply_failed, chat_reply_pending,
                                    chat_reply_put, chat_reply_sent,
                                    chat_reply_waiting)
+from src.dating.site_setting import SITE_KNOWN
 
 pytestmark = pytest.mark.chat
 
@@ -387,8 +388,6 @@ class TestDraftsWaitAsLongAsNeeded:
 
     def test_there_is_no_lifetime_setting(self):
         """⚠ Настройки срока нет — её убрали как лишнюю сущность."""
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         assert 'chat_reply_stale_hours' not in SITE_KNOWN
 
     def test_there_is_no_sweeper(self):

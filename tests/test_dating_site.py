@@ -19,11 +19,12 @@
 
 import pytest
 
+from src.dating.site_setting import site_seconds, site_setting
 from src.uvicorn.routers.dating import site_
-from src.uvicorn.routers.dating.site_ import site_list
+from src.uvicorn.routers.dating.site_ import (SITE_SECRET_MASK as MASK,
+                                              site_list)
 from src.uvicorn.routers.dating.site_sync import site_sync_now
 
-from src.uvicorn.routers.dating.site_ import SITE_SECRET_MASK as MASK
 
 pytestmark = pytest.mark.core
 KEY = 'тест_ключ'
@@ -105,7 +106,7 @@ class TestSiteList:
         значения ведём мы. Сайт без сохранённых настроек виден с пустым набором —
         иначе его нельзя было бы настроить в первый раз.
         """
-        monkeypatch.setattr(site_, '_settings_all',
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all',
                             _saved({343: {'favorites_keep': '86400'}}))
         await site_sync_now()
 
@@ -123,7 +124,7 @@ class TestSiteList:
         Список ведёт он: строка без имени и адреса в селекте бесполезна, а её
         появление означало бы, что свой список сайтов у нас всё-таки завёлся.
         """
-        monkeypatch.setattr(site_, '_settings_all', _saved({777: {KEY: '1'}}))
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all', _saved({777: {KEY: '1'}}))
         await site_sync_now()
 
         sites = (await site_list(user=None))['result']['sites']
@@ -133,7 +134,7 @@ class TestSiteList:
     async def test_known_settings_come_with_their_values(self, rhapsody, monkeypatch):
         """Реестр известных настроек уезжает на страницу: набор значений — условие
         кода, и страница рисует по нему селект, а не выдумывает свой."""
-        monkeypatch.setattr(site_, '_settings_all', _saved({}))
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all', _saved({}))
 
         known = (await site_list(user=None))['result']['known']
         keep = next(row for row in known if row['key'] == 'favorites_keep')
@@ -149,7 +150,7 @@ class TestSiteList:
         снимком и сверяем в фоне — лежащий сосед не повод показывать пустую
         страницу настроек. Отказ сверки виден на «Ошибках» (`test_site_snapshot.py`).
         """
-        monkeypatch.setattr(site_, '_settings_all', _saved({}))
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all', _saved({}))
         rhapsody.offline()
 
         sites = (await site_list(user=None))['result']['sites']
@@ -167,7 +168,7 @@ class TestKnownGroups:
     """
 
     async def test_every_setting_lands_in_a_known_group(self, rhapsody, monkeypatch):
-        monkeypatch.setattr(site_, '_settings_all', _saved({}))
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all', _saved({}))
         answer = (await site_list(user=None))['result']
 
         groups = {group['key'] for group in answer['groups']}
@@ -187,7 +188,7 @@ class TestKnownGroups:
         положит её в общую таблицу вкладки, — но заметить это глазами так же
         трудно, как потерянную группу.
         """
-        monkeypatch.setattr(site_, '_settings_all', _saved({}))
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all', _saved({}))
         answer = (await site_list(user=None))['result']
 
         groups = {group['key'] for group in answer['groups']}
@@ -211,7 +212,7 @@ class TestKnownGroups:
     async def test_groups_keep_their_order(self, rhapsody, monkeypatch):
         """Порядок групп — с сервера, и он значит: от частого к редкому. Сроки и
         транспорт правят на ходу, доступ к API вписывают раз при заведении."""
-        monkeypatch.setattr(site_, '_settings_all', _saved({}))
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all', _saved({}))
         answer = (await site_list(user=None))['result']
 
         assert [group['key'] for group in answer['groups']] == \
@@ -237,7 +238,7 @@ class TestKnownGroups:
         отдельно. На «Письмах» только приём входящих, ответы — на «Фаворитах»,
         сроки отправки — на «Рассылке писем»: круг берёт их отсюда, а не из кода
         (умолчания равны прежним константам, см. `test_send_round.py`)."""
-        monkeypatch.setattr(site_, '_settings_all', _saved({}))
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all', _saved({}))
         known = {row['key']: row
                  for row in (await site_list(user=None))['result']['known']}
 
@@ -258,7 +259,7 @@ class TestKnownDurations:
     ])
     async def test_seconds_setting_offers_its_values(self, rhapsody, monkeypatch,
                                                      key, default, values):
-        monkeypatch.setattr(site_, '_settings_all', _saved({}))
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all', _saved({}))
 
         known = {row['key']: row for row in
                  (await site_list(user=None))['result']['known']}
@@ -274,8 +275,6 @@ class TestKnownDurations:
         «месяц», и проверка шла бы месяц, хотя ни одна страница такого не
         предлагала. Поймать это иначе нечем — молча работало бы не то.
         """
-        from src.uvicorn.routers.dating.site_ import site_seconds
-
         await auth_client.put(f'/api/dating/site/{SITE}',
                               json={'settings': {'chat_check_every': '99999'}})
 
@@ -284,8 +283,6 @@ class TestKnownDurations:
     async def test_chosen_value_is_used(self, auth_client, kept):
         await auth_client.put(f'/api/dating/site/{SITE}',
                               json={'settings': {'chat_check_every': '3600'}})
-
-        from src.uvicorn.routers.dating.site_ import site_seconds
 
         assert await site_seconds(SITE, 'chat_check_every') == 3600
 
@@ -349,7 +346,7 @@ class TestSecretSettings:
     async def test_registry_tells_the_page_it_is_secret(self, rhapsody, monkeypatch):
         """Страница рисует пароль полем-звёздочками по признаку из реестра, а не по
         догадке об имени ключа."""
-        monkeypatch.setattr(site_, '_settings_all', _saved({}))
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all', _saved({}))
 
         known = {row['key']: row for row in
                  (await site_list(user=None))['result']['known']}
@@ -457,8 +454,6 @@ async def _secret_in_base(site_id: int) -> str:
     виден — в этом и смысл проверки. Иначе «маска означает не трогать» проверялось
     бы маской же, то есть ничем.
     """
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     return await site_setting(site_id, 'api_password')
 
 
@@ -485,7 +480,7 @@ class TestCompanionAccount:
     async def test_both_live_in_the_work_group(self, rhapsody, monkeypatch):
         """В «Работе с сайтом», рядом с прочими адресами и учётками: человек ищет
         настройку там, где видит её работу."""
-        monkeypatch.setattr(site_, '_settings_all', _saved({}))
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all', _saved({}))
         known = {row['key']: row
                  for row in (await site_list(user=None))['result']['known']}
 
@@ -495,7 +490,7 @@ class TestCompanionAccount:
     async def test_password_is_a_secret_and_login_is_not(self, rhapsody, monkeypatch):
         """⚠ Пароль приходит маской: ответ списка уходит на каждую смену сайта и
         оседает в журналах браузера. Логин не секрет — его видно на самом сайте."""
-        monkeypatch.setattr(site_, '_settings_all', _saved({}))
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all', _saved({}))
         known = {row['key']: row
                  for row in (await site_list(user=None))['result']['known']}
 
@@ -504,7 +499,7 @@ class TestCompanionAccount:
 
     async def test_both_are_free_fields(self, rhapsody, monkeypatch):
         """Набора значений у учётки быть не может — она своя у каждого сайта."""
-        monkeypatch.setattr(site_, '_settings_all', _saved({}))
+        monkeypatch.setattr('src.dating.site_setting.site_settings_all', _saved({}))
         known = {row['key']: row
                  for row in (await site_list(user=None))['result']['known']}
 

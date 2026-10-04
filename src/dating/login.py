@@ -19,6 +19,8 @@ import json
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.site_setting import site_setting, site_settings
+from src.dating.site_snapshot import site_rows
 from src.mysql_.repository.profile_repository import DatingProfileRepository
 from src.rhapsody.rhapsody_api import (rhapsody_api_error_write,
                                        rhapsody_api_scenario_find_by_id, rhapsody_api_scenario_login_find,
@@ -29,7 +31,6 @@ from src.dating.json_column import json_column_load
 from src.dating.log import log_write
 from src.dating.presence import presence_probe
 from src.dating.ready import password_pick
-from src.uvicorn.routers.dating.site_ import site_setting
 from src.dating.scenario import scenario_run
 from src.dating.profile_page import profile_page_read
 from src.dating.proxy import proxy_ready, proxy_url
@@ -445,8 +446,6 @@ async def _ws_needed(site_id: int, site: dict) -> bool:
     (`ready.py`).
     """
     from src.dating.ready import ready_transport
-    from src.uvicorn.routers.dating.site_ import site_settings
-
     transport = ready_transport(json_column_load(site.get('presence')),
                                        await site_settings(int(site_id)))
 
@@ -560,8 +559,6 @@ async def _site_check(site_id: int) -> dict:
     # Прежде обе половины брались карточкой у соседа; вход идёт сценарием, то
     # есть сосед всё равно нужен, но за **сценарием**, а не за настройкой.
     from src.dating.site_presence import site_presence
-    from src.uvicorn.routers.dating.site_ import site_rows
-
     presence = await site_presence(int(site_id))
     row = next((one for one in await site_rows()
                 if int(one['id']) == int(site_id)), None)

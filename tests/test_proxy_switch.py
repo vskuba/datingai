@@ -20,6 +20,7 @@ from src.dating import heartbeat, proxy, proxy_round
 from src.dating.proxy import (PROXY_ENABLED_SETTING,
                                      DatingProxyError, proxy_enabled,
                                      proxy_ready, proxy_url)
+from src.uvicorn.routers.dating.site_ import _proxy_off
 
 pytestmark = pytest.mark.profile
 
@@ -41,7 +42,7 @@ def setting(monkeypatch):
     # ⚠ Подменяем **там, откуда берут**: `proxy_enabled` импортирует
     # функцию внутри себя, из модуля настроек сайта.
     import src.uvicorn.routers.dating.site_ as site_module
-    monkeypatch.setattr(site_module, 'site_setting', _one)
+    monkeypatch.setattr('src.dating.proxy.site_setting', _one)
 
     return state
 
@@ -177,8 +178,8 @@ class TestPingRound:
             return 300
 
         import src.uvicorn.routers.dating.site_ as site_module
-        monkeypatch.setattr(site_module, 'site_rows', _rows)
-        monkeypatch.setattr(site_module, 'site_seconds', _seconds)
+        monkeypatch.setattr('src.dating.proxy_round.site_rows', _rows)
+        monkeypatch.setattr('src.dating.proxy_round.site_seconds', _seconds)
 
     async def test_disabled_site_does_not_ask_for_checks(self, sites, monkeypatch):
         """Прокси выключены у всех — круг молчит, к соседу не идёт.
@@ -223,15 +224,11 @@ class TestForgetOnSwitchOff:
         return seen
 
     async def test_switch_off_clears(self, cleared):
-        from src.uvicorn.routers.dating.site_ import _proxy_off
-
         await _proxy_off(SITE, {'proxy_enabled': '1'}, {})
 
         assert cleared == [SITE]
 
     async def test_switch_on_keeps(self, cleared):
-        from src.uvicorn.routers.dating.site_ import _proxy_off
-
         await _proxy_off(SITE, {}, {'proxy_enabled': '1'})
 
         assert not cleared
@@ -243,8 +240,6 @@ class TestForgetOnSwitchOff:
         текущему состоянию, каждое сохранение у сайта без прокси лезло бы в
         таблицу анкет ни за чем.
         """
-        from src.uvicorn.routers.dating.site_ import _proxy_off
-
         await _proxy_off(SITE, {'mail_check_every': '300'}, {'mail_check_every': '120'})
 
         assert not cleared

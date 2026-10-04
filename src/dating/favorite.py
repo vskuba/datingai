@@ -82,6 +82,7 @@ from src.dating.ready import password_pick
 from src.dating.scenario import scenario_run
 from src.dating.request import REQUEST_PEOPLE
 from src.dating.site_api import DatingSiteApiError, site_api_call
+from src.dating.site_setting import site_setting
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
                                        rhapsody_api_site_get)
 
@@ -782,8 +783,6 @@ async def _run(profile: dict, uid: str, site_password: str,
                scenario_name: str) -> dict:
     """Прогон сценария у соседа — в любую из сторон. Любая неудача —
     `DatingFavoriteError` словами."""
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     site_id = int(profile['site_id'])
     if not uid:
         raise DatingFavoriteError('не назван номер собеседника')
