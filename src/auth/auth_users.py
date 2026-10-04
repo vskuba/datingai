@@ -25,11 +25,11 @@
 
 import re
 
+from auth_.auth_primitive import auth_password_hash, auth_token_new
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.auth.auth import (AUTH_ROLE_ADMIN, AUTH_ROLE_DATING, auth_password_hash,
-                           auth_token_new)
+from src.auth.auth import AUTH_ROLE_ADMIN, AUTH_ROLE_DATING
 
 # Что годится в имя учётки. Оно уходит в журналы и в списки, поэтому без пробелов
 # и юникода: `оператор вася` в логе выглядит как поломка кодировки, а не как имя.

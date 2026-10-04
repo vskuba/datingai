@@ -30,6 +30,7 @@ from config.config import config_get
 from logging_.logging_ import logger_exception, logger_info, logging_init
 from mysql_.migration.mysql_migration_up import mysql_migration_up
 from mysql_.mysql_ import mysql_pool_close, mysql_pool_get
+from uvicorn_.uvicorn_validation import uvicorn_validation_handler
 
 from src.auth.auth import AuthUser
 from src.auth.auth_seed import auth_seed_first_user, auth_seed_operator
@@ -74,7 +75,6 @@ from src.uvicorn.routers.dating import profile_action
 from src.uvicorn.routers.dating import profile_view
 from src.uvicorn.routers.dating import proxy as dating_proxy_router
 from src.uvicorn.uvicorn_base import uvicorn_base_path
-from src.uvicorn.uvicorn_validation import uvicorn_validation_handler
 from src.worker.dating.chat_worker import chat_worker_keep_stop, chat_worker_recover
 
 # Куда пускаем без входа. Список короткий и явный: всё остальное — под сессией,

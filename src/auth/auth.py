@@ -22,22 +22,15 @@
 нет в базе: иначе время ответа выдало бы, существует ли такой пользователь.
 """
 
-import secrets
-
 import bcrypt
 from fastapi import Depends, HTTPException, Request, status
 
+# Примитивы входа — из общего слоя: токен из заголовков, хеш-заглушка для
+# несуществующего логина. Здесь остаётся то, что знает **нашу** схему и наши
+# роли: кто такой `AuthUser`, в какой таблице искать и что значит `admin`.
+from auth_.auth_primitive import AUTH_DUMMY_HASH, auth_token_of
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
-
-# Заголовки, которыми принимается токен. Два, потому что `Bearer` общепринят, а
-# `X-API-KEY` привычен интеграциям.
-AUTH_TOKEN_HEADERS = ('authorization', 'x-api-key')
-AUTH_TOKEN_PREFIX = 'bearer '
-
-# Хеш-заглушка для несуществующего логина: сравнение с ней стоит столько же,
-# сколько с настоящим, и по времени ответа перебрать имена не выйдет.
-AUTH_DUMMY_HASH = bcrypt.hashpw(b'-', bcrypt.gensalt()).decode()
 
 # Роли. `admin` — единственная, дающая доступ к устройству установки; всё
 # остальное считается работой с анкетами. Сравнение идёт с этой константой, а не
@@ -109,24 +102,6 @@ async def auth_admin_required(user: AuthUser = Depends(auth_required)) -> AuthUs
     return user
 
 
-def auth_token_of(request: Request) -> str:
-    """Токен из заголовков запроса. Нет ни одного — пустая строка.
-
-    `Bearer` необязателен: голый токен в `Authorization` тоже принимается — так
-    его шлют из curl чаще, чем по спецификации, и отвергать за это жестоко.
-    """
-    for name in AUTH_TOKEN_HEADERS:
-        value = str(request.headers.get(name) or '').strip()
-        if not value:
-            continue
-        if value.lower().startswith(AUTH_TOKEN_PREFIX):
-            return value[len(AUTH_TOKEN_PREFIX):].strip()
-
-        return value
-
-    return ''
-
-
 async def auth_token_user(token: str) -> AuthUser | None:
     """Владелец токена. Нет такого — None, решает вызывающий."""
     try:
@@ -165,13 +140,3 @@ async def auth_user_check(username: str, password: str) -> AuthUser | None:
         return None
 
     return AuthUser(int(row['id']), str(row['username']), str(row['role']))
-
-
-def auth_password_hash(password: str) -> str:
-    """Хеш пароля для записи в базу. Открытый пароль не хранится нигде."""
-    return bcrypt.hashpw(str(password).encode(), bcrypt.gensalt()).decode()
-
-
-def auth_token_new() -> str:
-    """Новый токен доступа. 32 байта случайности — перебирать нечего."""
-    return secrets.token_urlsafe(32)

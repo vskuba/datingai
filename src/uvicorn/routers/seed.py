@@ -32,8 +32,6 @@ import os
 import re
 from datetime import datetime, timezone
 
-import pymysql
-import pymysql.converters
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -41,6 +39,8 @@ from pydantic import BaseModel, Field
 from config.config import config_get
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_conn_get
+from mysql_.mysql_seed import mysql_seed_split
+from mysql_.sql_export import sql_export_value
 
 from src.auth.auth import auth_admin_required
 
@@ -259,27 +259,12 @@ def _seed_table_sql(connection, table: str) -> str:
         return '\n'.join(lines)
 
     columns = list(rows[0].keys())
-    values = ['  (' + ', '.join(_seed_value(row[column]) for column in columns) + ')' for row in rows]
+    values = ['  (' + ', '.join(sql_export_value(row[column]) for column in columns) + ')' for row in rows]
 
     lines.append(f'INSERT IGNORE INTO `{table}` ({", ".join(f"`{c}`" for c in columns)}) VALUES')
     lines.append(',\n'.join(values) + ';')
 
     return '\n'.join(lines)
-
-
-def _seed_value(value) -> str:
-    """Значение в SQL-литерал. Экранирует драйвер, а не мы: своё экранирование
-    рано или поздно не учитывает какой-нибудь символ, и файл рвётся посередине."""
-    if value is None:
-        return 'NULL'
-    if isinstance(value, bool):
-        return '1' if value else '0'
-    if isinstance(value, (int, float)):
-        return str(value)
-    if isinstance(value, (bytes, bytearray)):
-        return "'" + pymysql.converters.escape_string(value.decode('utf-8', errors='replace')) + "'"
-
-    return "'" + pymysql.converters.escape_string(str(value)) + "'"
 
 
 def _seed_apply(path: str) -> None:
@@ -291,7 +276,7 @@ def _seed_apply(path: str) -> None:
     connection = mysql_conn_get()
     try:
         with connection.cursor() as cursor:
-            for statement in _seed_split(content):
+            for statement in mysql_seed_split(content):
                 cursor.execute(statement)
         connection.commit()
     except Exception:
@@ -299,47 +284,3 @@ def _seed_apply(path: str) -> None:
         raise
     finally:
         connection.close()
-
-
-def _seed_split(sql: str) -> list[str]:
-    """Режет файл на команды по `;`.
-
-    Не `split(';')`: точка с запятой встречается внутри значений — в биографии
-    анкеты, в тексте сообщения, — и наивная разрезка рвёт файл посреди строки.
-    Поэтому разделитель считается разделителем только вне кавычек.
-    """
-    statements, buffer, quote = [], [], None
-    index = 0
-
-    while index < len(sql):
-        char = sql[index]
-
-        if quote and char == '\\':
-            buffer.append(char)
-            index += 1
-            if index < len(sql):
-                buffer.append(sql[index])
-                index += 1
-            continue
-
-        if char in ("'", '"'):
-            if quote == char:
-                quote = None
-            elif quote is None:
-                quote = char
-        elif char == ';' and quote is None:
-            statement = ''.join(buffer).strip()
-            if statement:
-                statements.append(statement)
-            buffer = []
-            index += 1
-            continue
-
-        buffer.append(char)
-        index += 1
-
-    statement = ''.join(buffer).strip()
-    if statement:
-        statements.append(statement)
-
-    return statements
