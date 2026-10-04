@@ -41,6 +41,9 @@ from src.dating.mailing import (MAILING_BATCH_DEFAULT,
                                        mailing_make, mailing_people,
                                        mailing_templates)
 from src.dating.site_setting import site_seconds, site_setting
+from src.uvicorn.routers.dating.pool_handle import (pool_handle_clear,
+                                                    pool_handle_drop,
+                                                    pool_handle_sender)
 from src.uvicorn.routers.setting import setting_timezone_hours
 # ⚠ Сборка строки ответа берётся у соседа, а не повторяется здесь: журнал доставки
 # показывает ответы теми же полями, что «Письма → Входящие», и вторая сборка
@@ -484,7 +487,7 @@ async def mailing_send(mailing_id: int,
             detail='он уже ответил письмом: рассылка таким не уходит — '
                    'с ним работает «приставание» на «Фаворитах»')
 
-    profile = await _sender(int(letter['profile_id']))
+    profile = await pool_handle_sender(int(letter['profile_id']), 'письма')
     site_id = int(letter['site_id'])
 
     base = str(await site_setting(site_id, 'api_base')).strip()
@@ -528,21 +531,7 @@ async def mailing_clear(site_id: int = 0,
     однажды прочитался бы как номер письма — тот же порядок, что у `/draft` и
     `/var` на «Письмах» (`api.md`, §3.7).
     """
-    if not int(site_id or 0):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail='не назван сайт — очищать нечего')
-
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            "DELETE FROM mailing WHERE site_id = %s AND status = 'draft'",
-            (int(site_id),))
-        dropped = int(db.rowcount or 0)
-        await db.connection.commit()
-
-    if dropped:
-        logger_info(f'[dating] пул сайта #{site_id} очищен: убрано {dropped}')
-
-    return {'result': {'dropped': dropped}}
+    return await pool_handle_clear('mailing', site_id, what='рассылки')
 
 
 @router.delete('/{mailing_id}', include_in_schema=False)
@@ -556,16 +545,10 @@ async def mailing_drop(mailing_id: int,
     Убрать из пула — значит «это письмо не пойдёт». Ушедшее удалить нельзя: оно уже
     случилось, и стереть запись значило бы соврать журналу.
     """
-    row = await _row(mailing_id)
-    if row['status'] != 'draft':
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail='письмо уже ушло — из журнала оно не убирается')
-
-    async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM mailing WHERE id = %s', (int(mailing_id),))
-        await db.connection.commit()
-
-    return {'result': {'id': int(mailing_id)}}
+    return await pool_handle_drop(
+        'mailing', mailing_id,
+        missing=f'письма #{mailing_id} нет',
+        sent='письмо уже ушло — из журнала оно не убирается')
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
@@ -575,33 +558,6 @@ async def mailing_drop(mailing_id: int,
 # ⚠ Здесь только то, что превращает строку базы в ответ странице. Сам набор
 # писем — в `src/dating/mailing.py`: его зовёт и круг рассылки, а круг
 # не должен ходить в роутеры.
-
-async def _sender(profile_id: int) -> dict:
-    """Анкета, от которой уходит письмо, — целиком.
-
-    ⚠ Нужны **все поля входа**, а не одно имя: под этой анкетой заходят в API сайта,
-    и для входа берутся `login`, `password` и `password_source`. Ровно на этом
-    однажды падал набор пула (`KeyError: 'site_id'`), когда полей взяли меньше, чем
-    нужно вызываемому.
-    """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'SELECT id, site_id, login, password, password_source, enabled'
-            ' FROM profile WHERE id = %s', (int(profile_id),))
-        row = await db.fetchone()
-
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail='анкета письма удалена — отправлять не от кого')
-
-    if not int(row.get('enabled') or 0):
-        # ⚠ Выключенную анкету не ведут вовсе (`dating.md`, §5.10), и отправка от
-        # неё — действие наружу, самое заметное из всех.
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail='анкета выключена — от неё не отправляем')
-
-    return dict(row)
-
 
 async def _answered(mailing_id: int) -> bool:
     """Ответил ли адресат этого письма — её же анкете, письмом.

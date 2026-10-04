@@ -42,8 +42,10 @@ from src.dating.invite_send_round import invite_send_why
 from src.dating.json_column import json_column_load
 from src.dating.mail_agent import INVITE_MAX
 from src.dating.online import online_show
-from src.dating.pool_pair import pool_pick_where
+from src.dating.pool_pair import pool_pair_girl, pool_pick_where
 from src.dating.site_setting import site_seconds
+from src.uvicorn.routers.dating.pool_handle import (pool_handle_clear,
+                                                    pool_handle_drop)
 from src.uvicorn.routers.setting import setting_timezone_hours
 
 router = APIRouter(prefix='/api/dating/invite', tags=['dating'])
@@ -318,24 +320,7 @@ async def invite_clear(site_id: int = 0,
     ⚠ **Путь без номера, и объявлен он до `/{invite_id}`.** Иначе пустой хвост
     однажды прочитался бы как номер инвайта — тот же порядок, что у пула писем.
     """
-    if not int(site_id or 0):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail='не назван сайт — очищать нечего')
-
-    async with mysql_get_db_async() as db:
-        await db.execute("DELETE FROM invite"
-                         " WHERE site_id = %s AND status = 'draft'",
-                         (int(site_id),))
-        # ⚠ `db.rowcount`, а не `db.cursor.rowcount`: у обёртки курсора своего
-        # `cursor` нет, и второе роняло ручку `AttributeError`. Поймано живым
-        # нажатием — очистка отвечала 500 там, где всё удалилось.
-        dropped = int(db.rowcount or 0)
-        await db.connection.commit()
-
-    if dropped:
-        logger_info(f'[dating] пул инвайтов сайта #{site_id} очищен: убрано {dropped}')
-
-    return {'result': {'dropped': dropped}}
+    return await pool_handle_clear('invite', site_id, what='инвайтов')
 
 
 @router.delete('/{invite_id}', include_in_schema=False)
@@ -346,16 +331,9 @@ async def invite_drop(invite_id: int,
     Raises:
         HTTPException: 404 — инвайта нет; 409 — он уже ушёл.
     """
-    row = await _row(invite_id)
-    if row['status'] != 'draft':
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail='инвайт уже ушёл — его не убрать')
-
-    async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM invite WHERE id = %s', (int(invite_id),))
-        await db.connection.commit()
-
-    return {'result': {'dropped': 1}}
+    return await pool_handle_drop('invite', invite_id,
+                                  missing='инвайта нет',
+                                  sent='инвайт уже ушёл — его не убрать')
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
@@ -472,10 +450,10 @@ def _answer(row) -> dict:
     строку списка.
     """
     got = dict(row)
-    card = json_column_load(got.pop('profile_card', None)) or {}
-    got['profile_name'] = str(card.get('name') or got.get('profile_login') or '')
-    got['profile_photo'] = str(card.get('photo') or '')
-    got['profile_uid'] = str(card.get('id') or '')
+    # Имя, лицо и номер девушки — общей `pool_pair_girl`, той же, что у пулов
+    # писем. Своя копия этих трёх строк здесь и стояла, и отличалась от общей
+    # молча: не ставила `girl`, под которым сторону разговора читает `talkSide`.
+    pool_pair_girl(got, json_column_load(got.pop('profile_card', None)) or {})
     got['sent_at'] = str(got['sent_at']) if got.get('sent_at') else ''
     # ⚠ Время события у **неудачной** строки: `sent_at` у неё снят, и без этого
     # поля карточка показывала бы пустое место там, где стоит время отправки.

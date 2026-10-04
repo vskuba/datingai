@@ -43,6 +43,9 @@ from src.dating.pool_pair import (pool_delivery_where, pool_pair_girl,
                                          pool_pick_where)
 from src.dating.site_setting import site_setting
 from src.uvicorn.routers.dating.chat import chat_dialogs_size
+from src.uvicorn.routers.dating.pool_handle import (pool_handle_clear,
+                                                    pool_handle_drop,
+                                                    pool_handle_sender)
 from src.uvicorn.routers.setting import setting_timezone_hours
 
 router = APIRouter(prefix='/api/dating/favorite-mail', tags=['dating'])
@@ -621,7 +624,7 @@ async def favorite_mail_send(mail_id: int,
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail='письмо уже ушло — второй раз не отправляем')
 
-    profile = await _sender(int(letter['profile_id']))
+    profile = await pool_handle_sender(int(letter['profile_id']), 'письма')
     site_id = int(letter['site_id'])
 
     base = str(await site_setting(site_id, 'api_base')).strip()
@@ -653,21 +656,8 @@ async def favorite_mail_clear(site_id: int = 0,
     ⚠ **Путь без номера объявлен до `/{mail_id}`**: иначе пустой хвост однажды
     прочитался бы как номер письма.
     """
-    if not int(site_id or 0):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail='не назван сайт — очищать нечего')
-
-    async with mysql_get_db_async() as db:
-        await db.execute("DELETE FROM favorite_mail"
-                         " WHERE site_id = %s AND status = 'draft'", (int(site_id),))
-        dropped = int(db.rowcount or 0)
-        await db.connection.commit()
-
-    if dropped:
-        logger_info(f'[dating] пул писем избранным сайта #{site_id} очищен: '
-                    f'убрано {dropped}')
-
-    return {'result': {'dropped': dropped}}
+    return await pool_handle_clear('favorite_mail', site_id,
+                                   what='писем избранным')
 
 
 @router.delete('/{mail_id}', include_in_schema=False)
@@ -678,17 +668,10 @@ async def favorite_mail_drop(mail_id: int,
     Raises:
         HTTPException: 404 — письма нет; 409 — оно уже ушло.
     """
-    row = await _row(mail_id)
-    if row['status'] != 'draft':
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail='письмо уже ушло — из журнала оно не убирается')
-
-    async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM favorite_mail WHERE id = %s',
-                         (int(mail_id),))
-        await db.connection.commit()
-
-    return {'result': {'dropped': 1}}
+    return await pool_handle_drop(
+        'favorite_mail', mail_id,
+        missing=f'письма #{mail_id} нет',
+        sent='письмо уже ушло — из журнала оно не убирается')
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
@@ -711,29 +694,6 @@ async def _send_on(site_id: int) -> bool:
         return False
 
     return bool((row or {}).get('favorite_mail_send_on'))
-
-
-async def _sender(profile_id: int) -> dict:
-    """Анкета, от которой уходит письмо, — со всеми полями входа.
-
-    ⚠ Нужны `login`, `password` и `password_source`: под этой анкетой заходят в
-    API сайта. Тот же набор, что у отправки из пула рассылки.
-    """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'SELECT id, site_id, login, password, password_source, enabled'
-            ' FROM profile WHERE id = %s', (int(profile_id),))
-        row = await db.fetchone()
-
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail='анкета письма удалена — отправлять не от кого')
-
-    if not int(row.get('enabled') or 0):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail='анкета выключена — от неё не отправляем')
-
-    return dict(row)
 
 
 async def _row(mail_id: int) -> dict:

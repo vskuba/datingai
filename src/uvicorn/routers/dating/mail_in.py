@@ -25,6 +25,8 @@ from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
                                          mail_send_one)
 from src.dating.online import online_show
 from src.dating.site_setting import site_setting
+from src.uvicorn.routers.dating.pool_handle import (pool_handle_drop,
+                                                    pool_handle_sender)
 
 router = APIRouter(prefix='/api/dating/mail-in', tags=['dating'])
 
@@ -376,16 +378,10 @@ async def mail_reply_drop(reply_id: int,
     говорит «не такой», а не «не отвечать вовсе». Письмо снова становится годным для
     ответа, и следующий заход напишет новый.
     """
-    row = await _reply_row(reply_id)
-    if row['status'] != 'draft':
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail='ответ уже ушёл — из пула его не убрать')
-
-    async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM mail_reply WHERE id = %s', (int(reply_id),))
-        await db.connection.commit()
-
-    return {'result': {'dropped': 1}}
+    return await pool_handle_drop(
+        'mail_reply', reply_id,
+        missing=f'ответа #{reply_id} нет',
+        sent='ответ уже ушёл — из пула его не убрать')
 
 
 @router.post('/reply/{reply_id}/send', include_in_schema=False)
@@ -402,7 +398,7 @@ async def mail_reply_send(reply_id: int,
     """
     row = await _reply_row(reply_id)
 
-    profile = await _sender(int(row['profile_id']))
+    profile = await pool_handle_sender(int(row['profile_id']), 'ответа')
     site_id = int(row['site_id'])
 
     base = str(await site_setting(site_id, 'api_base')).strip()
@@ -535,29 +531,6 @@ async def _reply_row(reply_id: int) -> dict:
                             detail=f'ответа #{reply_id} нет')
 
     return mail_reply_answer(row)
-
-
-async def _sender(profile_id: int) -> dict:
-    """Анкета, от имени которой отвечаем, — целиком.
-
-    ⚠ Нужны **все поля входа**: под ней заходят в API сайта. Ровно на этом однажды
-    падал набор пула, когда полей взяли меньше, чем нужно вызываемому.
-    """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'SELECT id, site_id, login, password, password_source, enabled'
-            ' FROM profile WHERE id = %s', (int(profile_id),))
-        row = await db.fetchone()
-
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail='анкета ответа удалена — отправлять не от кого')
-
-    if not int(row.get('enabled') or 0):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail='анкета выключена — от неё не отправляем')
-
-    return dict(row)
 
 
 async def _profile(profile_id: int) -> dict:

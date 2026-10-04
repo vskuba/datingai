@@ -30,7 +30,7 @@
 уходит тем же путём, что и всё в чат (`send.py`), кругом.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 
 from mysql_.mysql_ import mysql_get_db_async
 
@@ -38,14 +38,15 @@ from src.auth.auth import AuthUser, auth_required
 from src.dating.initiative_round import initiative_why
 from src.dating.json_column import json_column_load
 from src.dating.online import online_show
+from src.dating.pool_pair import pool_pair_girl
+from src.uvicorn.routers.dating.pool_handle import (pool_handle_clear,
+                                                    pool_handle_drop)
 
 router = APIRouter(prefix='/api/dating/chat-initiative', tags=['dating'])
 
 # Сколько карточек отдаём страницей. То же число, что у пула инвайтов: колонки
 # стоят на одной вкладке, и два разных размера читались бы как разные правила.
 CHAT_INITIATIVE_LIMIT = 300
-
-
 
 
 @router.get('', include_in_schema=False)
@@ -74,6 +75,7 @@ async def chat_initiative_list(site_id: int = 0, status_: str = 'draft',
         await db.execute(
             'SELECT i.id, i.site_id, i.profile_id, i.uid, i.name, i.body,'
             '       i.try_no, i.status, i.error, i.sent_at, i.created_at,'
+            '       i.updated_at,'
             '       p.login AS profile_login, p.profile AS profile_card'
             '  FROM chat_initiative i'
             '  LEFT JOIN profile p ON p.id = i.profile_id'
@@ -116,37 +118,18 @@ async def chat_initiative_clear(site_id: int = 0, profile_id: int = 0,
 
     ⚠ Ушедшие не трогаем: они часть переписки, а не пула.
     """
-    if not int(site_id or 0):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail='сайт не выбран')
-
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            "DELETE FROM chat_initiative WHERE site_id = %s AND status = 'draft'"
-            ' AND (%s = 0 OR profile_id = %s)',
-            (int(site_id), int(profile_id), int(profile_id)))
-        gone = int(db.rowcount or 0)
-        await db.connection.commit()
-
-    return {'result': {'deleted': gone}}
+    return await pool_handle_clear('chat_initiative', site_id,
+                                   what='инициативы', profile_id=profile_id)
 
 
 @router.delete('/{initiative_id}', include_in_schema=False)
 async def chat_initiative_drop(initiative_id: int,
                                user: AuthUser = Depends(auth_required)):
     """Убирает одну карточку из пула."""
-    row = await _row(initiative_id)
-
-    if row['status'] != 'draft':
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail='карточка уже ушла — из пула её не убрать')
-
-    async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM chat_initiative WHERE id = %s',
-                         (int(initiative_id),))
-        await db.connection.commit()
-
-    return {'result': {'deleted': 1}}
+    return await pool_handle_drop(
+        'chat_initiative', initiative_id,
+        missing=f'карточки #{initiative_id} нет',
+        sent='карточка уже ушла — из пула её не убрать')
 
 
 async def _why(site_id: int, pool: int) -> str:
@@ -167,32 +150,23 @@ async def _why(site_id: int, pool: int) -> str:
     return await initiative_why(int(site_id or 0))
 
 
-async def _row(initiative_id: int) -> dict:
-    """Карточка по номеру или 404."""
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'SELECT i.id, i.site_id, i.profile_id, i.uid, i.name, i.body,'
-            '       i.try_no, i.status, i.error, i.sent_at, i.created_at,'
-            '       p.login AS profile_login, p.profile AS profile_card'
-            '  FROM chat_initiative i'
-            '  LEFT JOIN profile p ON p.id = i.profile_id'
-            ' WHERE i.id = %s', (int(initiative_id),))
-        row = await db.fetchone()
-
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail=f'карточки #{initiative_id} нет')
-
-    return _answer(row)
-
-
 def _answer(row) -> dict:
-    """Строка пула в вид для страницы."""
+    """Строка пула в вид для страницы.
+
+    ⚠ Имя, лицо и номер девушки — общей `pool_pair_girl`, той же, что у пулов
+    писем и у инвайтов. Своя копия стояла здесь и **теряла два поля из
+    четырёх**: `profile_uid` (номер девушки на сайте) и `girl`, под которым
+    сторону разговора читает общий вид `talkSide`. Заметить это глазами было
+    нечем — карточка рисуется и без них, просто беднее.
+    """
     got = dict(row)
-    card = json_column_load(got.pop('profile_card', None)) or {}
-    got['profile_name'] = str(card.get('name') or got.get('profile_login') or '')
-    got['profile_photo'] = str(card.get('photo') or '')
+    pool_pair_girl(got, json_column_load(got.pop('profile_card', None)) or {})
     got['sent_at'] = str(got['sent_at']) if got.get('sent_at') else ''
+    # ⚠ Время события у **неудачной** карточки: `sent_at` у неё снят самой
+    # неудачей, и без этого поля показ (`_sentWhen`) доходит до `created_at` —
+    # то есть до времени, когда текст сочинили. Между сочинением и отказом
+    # проходят часы: карточку готовит круг набора, уносит круг отправки.
+    got['updated_at'] = str(got['updated_at']) if got.get('updated_at') else ''
     got['created_at'] = str(got.get('created_at') or '')
 
     # В сети ли адресат — тем же `online_show`, что у трёх соседних пулов: правило

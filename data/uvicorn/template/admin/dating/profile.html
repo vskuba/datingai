@@ -11068,6 +11068,8 @@
     // по сути вещи человеку пришлось бы разгадывать заново.
     function initiativeCard(one, index) {
         const sent = one.status !== 'draft';
+        // Время исхода — общим `_sentWhen`, тем же, что у журналов доставки.
+        const when = _sentWhen(one);
 
         return `<div class="mail-card${sent ? ' sent' : ''}" data-index="${index}"`
             + ` data-uid="${esc(one.uid || '')}">`
@@ -11084,9 +11086,14 @@
             // настройкой сайта, и без номера непонятно, близко ли он.
             + (Number(one.try_no) > 1
                 ? `<span class="mail-card-sent">заход ${esc(one.try_no)}</span>` : '')
+            // ⚠ У красной строки — **время отказа**, а не сочинения. Без него
+            // «не ушло» не отвечает на первый же вопрос: час она висит или
+            // неделю.
             + (one.status === 'draft' && one.error
                 ? `<span class="mail-card-fail" title="${esc(one.error)}">`
-                + `не ушло: ${esc(one.error)}</span>`
+                + `не ушло: ${esc(one.error)}`
+                + (when ? ` · ${esc(when)}` : '')
+                + '</span>'
                 : '')
             + '</div>';
     }
