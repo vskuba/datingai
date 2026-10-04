@@ -279,27 +279,6 @@ async def panel_every(site_id: int) -> int:
 
 # ── Приватное ────────────────────────────────────────────────────────────────
 
-async def _url(site_id: int) -> str:
-    return str(await site_setting(site_id, PANEL_URL_SETTING) or '').strip()
-
-
-async def _config(site_id: int) -> dict:
-    """Описание проверки в формате движка присутствия.
-
-    ⚠ Удара (`beat`) здесь нет вовсе, и это разница с анкетами. Анкету сайт
-    показывает в сети, **пока** она стучится; сессия панели живёт сама, и нам
-    нужно лишь знать, жива ли она. Лишний POST на чужую панель раз в пять минут —
-    это действие от имени агентства, которого никто не просил.
-    """
-    base, path = _split(await _url(site_id))
-    mark = str(await site_setting(site_id, PANEL_MARK_SETTING) or '').strip()
-
-    # ⚠ `no_redirect` — вторая примета, и работает она там, где первой нет: панель,
-    # уводящая гостя на форму, даёт `302`, а вошедшего пускает с `200`.
-    return {'base': base,
-            'alive': [{'path': path, 'method': 'GET', 'ok_mark': mark,
-                       'no_redirect': True}]}
-
 
 def panel_root(url: str) -> str:
     """Корень панели: от него строятся адреса её страниц.
@@ -406,3 +385,25 @@ async def _session_close(session_id: str) -> None:
 def _at(value) -> str:
     """Метка времени строкой UTC. Пусто — не было."""
     return value.strftime('%Y-%m-%d %H:%M:%S') if value else ''
+
+
+async def _url(site_id: int) -> str:
+    return str(await site_setting(site_id, PANEL_URL_SETTING) or '').strip()
+
+
+async def _config(site_id: int) -> dict:
+    """Описание проверки в формате движка присутствия.
+
+    ⚠ Удара (`beat`) здесь нет вовсе, и это разница с анкетами. Анкету сайт
+    показывает в сети, **пока** она стучится; сессия панели живёт сама, и нам
+    нужно лишь знать, жива ли она. Лишний POST на чужую панель раз в пять минут —
+    это действие от имени агентства, которого никто не просил.
+    """
+    base, path = _split(await _url(site_id))
+    mark = str(await site_setting(site_id, PANEL_MARK_SETTING) or '').strip()
+
+    # ⚠ `no_redirect` — вторая примета, и работает она там, где первой нет: панель,
+    # уводящая гостя на форму, даёт `302`, а вошедшего пускает с `200`.
+    return {'base': base,
+            'alive': [{'path': path, 'method': 'GET', 'ok_mark': mark,
+                       'no_redirect': True}]}
