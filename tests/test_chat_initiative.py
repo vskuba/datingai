@@ -215,8 +215,8 @@ class TestOneDraftPerPair:
 
     async def test_history_is_allowed(self, girl):
         """⚠⚠ Ушедшие ключ не держат: иначе второй инициативы тому же человеку не
-        было бы **никогда**, а весь смысл настройки «сколько раз повторить» — в
-        том, что заходов несколько."""
+        было бы **никогда**, а весь смысл настройки «сколько раз подряд звать
+        молчащего» — в том, что заходов несколько."""
         await _card(girl, 'u-1', 'первая', status='sent')
         await _card(girl, 'u-1', 'вторая', status='sent', try_no=2)
         await _card(girl, 'u-1', 'третья, ждёт')
@@ -286,23 +286,26 @@ class TestDropNotEdit:
 
 # Настройки занятия: их читают вместе, и стоять им рядом — одним подразделом.
 INITIATIVE_SETTINGS = ('chat_initiative_after', 'chat_initiative_after_max',
-                       'chat_initiative_repeat', 'chat_initiative_send_every')
+                       'chat_initiative_repeat', 'chat_initiative_max_day',
+                       'chat_initiative_send_every')
 
 
 class TestTheSettings:
-    """Настройки инициативы — четвёрка, их читают вместе."""
+    """Настройки инициативы — пятёрка, их читают вместе."""
 
-    def test_all_four_are_registered(self):
+    def test_all_five_are_registered(self):
         from src.uvicorn.routers.dating.site_ import SITE_KNOWN
 
         after = SITE_KNOWN['chat_initiative_after']
         upto = SITE_KNOWN['chat_initiative_after_max']
         times = SITE_KNOWN['chat_initiative_repeat']
+        cap = SITE_KNOWN['chat_initiative_max_day']
         pause = SITE_KNOWN['chat_initiative_send_every']
 
         assert after['title'] == 'Инициатива, проявить через минут (от)'
         assert upto['title'] == 'Инициатива, проявить через минут (до)'
-        assert times['title'] == 'Инициатива, сколько раз повторить, в сутки'
+        assert times['title'] == 'Инициатива, сколько раз подряд звать молчащего'
+        assert cap['title'] == 'Инициатива, не больше этого в сутки на пару'
         assert pause['title'] == 'Инициатива, пауза между отправками, в мин'
         assert times['default'] == '2'
         assert times['kind'] == 'number' and times['min'] == 0
@@ -313,6 +316,35 @@ class TestTheSettings:
         assert all(SITE_KNOWN[key]['group'] == 'invite'
                    for key in INITIATIVE_SETTINGS), \
             'настройки читают вместе — и стоять им рядом'
+
+    def test_the_backstop_cannot_be_zeroed(self):
+        """⚠⚠ Ноль у дневного потолка **запрещён**, и это не придирка.
+
+        Занятие выключают галочкой либо нулём в «сколько раз подряд»; третий
+        способ, да ещё неявный, означал бы, что человек, поставивший ноль в
+        потолок, молча выключил инициативу целиком и ищет причину в сроках.
+        """
+        from src.dating.initiative import INITIATIVE_MAX_DAY_DEFAULT
+        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
+
+        cap = SITE_KNOWN['chat_initiative_max_day']
+
+        assert cap['kind'] == 'number' and cap['min'] == 1
+        assert cap['default'] == str(INITIATIVE_MAX_DAY_DEFAULT), \
+            'умолчание реестра разошлось с умолчанием кода'
+
+    def test_the_backstop_is_above_the_row_limit(self):
+        """⚠ Потолок не должен мешать живому разговору.
+
+        Он сторожит зацикленный автоответчик, а не человека, — и умолчание у
+        него поэтому выше, чем у счёта «подряд». Сравняй их, и предохранитель
+        начал бы отвечать на тот же вопрос, что «подряд», то есть стал бы вторым
+        пределом об одном.
+        """
+        from src.dating.initiative import (INITIATIVE_MAX_DAY_DEFAULT,
+                                           INITIATIVE_REPEAT_DEFAULT)
+
+        assert INITIATIVE_MAX_DAY_DEFAULT > INITIATIVE_REPEAT_DEFAULT
 
     def test_they_stand_in_one_subsection(self):
         """⚠⚠ Все четыре — подразделом «Инициатива», а не вразброс по вкладке.
@@ -368,17 +400,26 @@ class TestTheSettings:
         for key in INITIATIVE_SETTINGS:
             assert 'работа не сделана' not in SITE_KNOWN[key]['note'], key
 
-    def test_the_day_is_spelled_out_in_the_note(self):
-        """⚠ Скользящие сутки и то, что ответ не обнуляет счёт, — в подписи.
+    def test_the_reset_is_spelled_out_in_the_note(self):
+        """⚠⚠ Обнуление ответом — в подписи, иначе его не вывести из названия.
 
-        Оба правила человек не выведет из названия: «сколько раз повторить, в
-        сутки» не говорит ни про 24 часа вместо полуночи, ни про ответ.
+        «Сколько раз подряд звать молчащего» не говорит, что считается именно
+        промежуток тишины и что его реплика счёт сбрасывает. А это главное в
+        настройке: без обнуления число читалось бы как дневная норма.
         """
         from src.uvicorn.routers.dating.site_ import SITE_KNOWN
 
         note = SITE_KNOWN['chat_initiative_repeat']['note']
 
-        assert 'скольз' in note and 'не обнуля' in note
+        assert 'обнуля' in note, 'про обнуление ответом в подписи не сказано'
+        assert 'не обнуля' not in note, \
+            'подпись осталась от дневного предела — она теперь врёт'
+
+    def test_the_sliding_day_is_spelled_out_in_the_backstop(self):
+        """⚠ Скользящие сутки — в подписи потолка: полночь человек подразумевает сам."""
+        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
+
+        assert 'скольз' in SITE_KNOWN['chat_initiative_max_day']['note']
 
 
 class TestTheColumn:
