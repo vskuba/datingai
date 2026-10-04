@@ -20,7 +20,7 @@ import json
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_find
+from src.dating.scenario import scenario_find
 
 from src.dating.role import ROLE_DEFAULT, role_scenario
 
@@ -59,7 +59,7 @@ async def profile_page_read(profile: dict, presence: dict, session_id: str,
         return {'ok': False, 'profile': {},
                 'error': f'у сайта нет сценария анкеты для роли «{role}»'}
 
-    scenario = await _scenario_find(int(profile['site_id']), name)
+    scenario = await scenario_find(int(profile['site_id']), name)
     if not scenario:
         return {'ok': False, 'profile': {},
                 'error': f'сценарий анкеты «{name}» у сайта не заведён'}
@@ -79,20 +79,6 @@ async def profile_page_read(profile: dict, presence: dict, session_id: str,
     await _profile_save(int(profile['id']), card)
 
     return {'ok': True, 'profile': card, 'error': ''}
-
-
-async def _scenario_find(site_id: int, name: str) -> dict | None:
-    """Сценарий сайта по имени. Живёт он в RhapsodyAi — спрашиваем его.
-
-    Нет такого — None: вызывающий скажет об этом человеку своими словами.
-    """
-    try:
-        scenario = await rhapsody_api_scenario_find(int(site_id), str(name))
-    except RhapsodyError as e:
-        logger_info(f'[dating] сценарий «{name}» не спросился: {e}')
-        return None
-
-    return dict(scenario) if scenario else None
 
 
 def _profile_build(extract: dict, profile: dict, presence: dict) -> dict:

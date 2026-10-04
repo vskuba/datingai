@@ -26,7 +26,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 from src.dating.people import people_name_case
 
-from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_find
+from src.dating.scenario import scenario_find
 
 from src.dating.log import log_message_in, log_write
 from src.dating.role import ROLE_DEFAULT, role_scenario
@@ -83,7 +83,7 @@ async def dialog_read(profile: dict, presence: dict, session_id: str, runner,
     role = role or str(profile.get('role') or ROLE_DEFAULT)
 
     name = role_scenario(presence, 'dialog_read_scenario', role)
-    scenario = await _scenario_find(int(profile['site_id']), name) if name else None
+    scenario = await scenario_find(int(profile['site_id']), name) if name else None
     if not scenario:
         return {'saved': 0, 'error': f'нет сценария чтения диалога для роли «{role}»'}
 
@@ -122,7 +122,7 @@ async def dialog_read(profile: dict, presence: dict, session_id: str, runner,
 async def _names_read(profile: dict, presence: dict, session_id: str, runner, role: str) -> dict:
     """Имена собеседников из вкладки ACTIVE."""
     name = role_scenario(presence, 'dialog_list_scenario', role)
-    scenario = await _scenario_find(int(profile['site_id']), name) if name else None
+    scenario = await scenario_find(int(profile['site_id']), name) if name else None
     if not scenario:
         return {'names': [], 'error': f'нет сценария списка диалогов для роли «{role}»'}
 
@@ -223,15 +223,3 @@ async def _messages_save(profile_id: int, uid: str, who: str, flow: list) -> int
     return saved
 
 
-async def _scenario_find(site_id: int, name: str) -> dict | None:
-    """Сценарий сайта по имени. Живёт он в RhapsodyAi — спрашиваем его.
-
-    Нет такого — None: вызывающий скажет об этом человеку своими словами.
-    """
-    try:
-        scenario = await rhapsody_api_scenario_find(int(site_id), str(name))
-    except RhapsodyError as e:
-        logger_info(f'[dating] сценарий «{name}» не спросился: {e}')
-        return None
-
-    return dict(scenario) if scenario else None

@@ -22,7 +22,7 @@
 from mysql_.mysql_ import mysql_get_db_async
 
 from logging_.logging_ import logger_info
-from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_find
+from src.dating.scenario import scenario_find
 
 from src.dating.json_column import json_column_load
 from src.dating.log import log_write
@@ -101,7 +101,7 @@ async def _logout(profile: dict, site: dict, presence: dict, runner, session_ope
         return False, (f'у сайта нет ни ручки выхода (`logout` в настройке '
                        f'присутствия), ни сценария для роли «{role}»')
 
-    scenario = await _scenario_find(int(profile['site_id']), name)
+    scenario = await scenario_find(int(profile['site_id']), name)
     if not scenario:
         return False, f'сценарий выхода «{name}» у сайта не заведён'
 
@@ -209,20 +209,6 @@ async def _session_own(login: str, session_list) -> str:
             return str(session.get('session_id') or '')
 
     return ''
-
-
-async def _scenario_find(site_id: int, name: str) -> dict | None:
-    """Сценарий сайта по имени. Живёт он в RhapsodyAi — спрашиваем его.
-
-    Нет такого — None: вызывающий скажет об этом человеку своими словами.
-    """
-    try:
-        scenario = await rhapsody_api_scenario_find(int(site_id), str(name))
-    except RhapsodyError as e:
-        logger_info(f'[dating] сценарий «{name}» не спросился: {e}')
-        return None
-
-    return dict(scenario) if scenario else None
 
 
 async def _state_clear(profile_id: int) -> None:

@@ -61,11 +61,53 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.request import dating_request_about
-from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_run
+from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
+                                       rhapsody_api_scenario_run)
 
 # Длина имени сценария — та же, что в схеме (`VARCHAR(200)`). Режем здесь, чтобы
 # длинное имя не роняло вставку.
 SCENARIO_NAME_MAX = 200
+
+
+async def scenario_find(site_id: int, name: str) -> dict | None:
+    """Сценарий сайта по имени. Живёт он в RhapsodyAi — спрашиваем его.
+
+    Args:
+        site_id: сайт-закладка, у которого спрашиваем.
+        name: имя сценария, как оно записано у соседа.
+
+    Returns:
+        Запись сценария либо `None` — вызывающий скажет об этом человеку своими
+        словами. Отказ соседа тоже даёт `None`: «сценария нет» и «сосед не
+        ответил» для вызывающего кончаются одним — гнать нечего.
+
+    ⚠ Рядом с прогоном, а не в трёх местах: эта функция стояла копией в
+    `dialog.py`, `disconnect.py` и `profile_page.py` — байт в байт, включая
+    докстринг. Искать сценарий и гонять его — одно дело с одной дверью
+    (`code_rules.md`, §4.2).
+
+    ## ⚠⚠ Ещё девять мест ищут сценарий по имени — и сюда они не переводятся
+
+    `chat_panel`, `panel`, `send`, `companion_about`, `favorite`, `export`,
+    `import_`, `people`, `chat` делают это же вызовом с `try/except` на месте, и
+    по форме похожи до строчки. Но каждое **сохраняет текст отказа** и ведёт его
+    своим каналом: импорт переписки возвращает его в ответе ручки, круг панели
+    пишет в базу, отправка завёртывает в `_fail`, карточка собеседника и
+    избранные — в свои исключения. Здесь же «сценария нет» и «сосед не ответил»
+    сливаются в `None`, а текст уходит в журнал установки.
+
+    Перевести их сюда значило бы **съесть девять сообщений человеку** — тех
+    самых, по которым видно, лежит сосед или сценарий не заведён. Похожее по
+    форме не всегда одно по смыслу, и ложное обобщение дороже дубля (§4.2).
+    """
+    try:
+        scenario = await rhapsody_api_scenario_find(int(site_id), str(name))
+    except RhapsodyError as e:
+        logger_info(f'[dating] сценарий «{name}» не спросился: {e}')
+
+        return None
+
+    return dict(scenario) if scenario else None
 
 
 async def scenario_run(scenario: dict, site_id: int, profile_id: int = 0,
