@@ -177,6 +177,37 @@ class TestKnownGroups:
             assert spec['group'] in groups, \
                 f"настройка «{spec['key']}» в неизвестной группе «{spec['group']}»"
 
+    async def test_every_subsection_lands_in_a_known_group(self, rhapsody,
+                                                           monkeypatch):
+        """⚠ Подраздел висит на существующей вкладке, а его ключ кто-то объявил.
+
+        Подразделы — вторая ступень той же разбивки: вкладка «Инвайты и чат»
+        собрала настройки трёх занятий, и внутри неё они стоят своими шапками
+        (`SITE_SUBGROUPS`). Опечатка в `sub` настройку не теряет — страница
+        положит её в общую таблицу вкладки, — но заметить это глазами так же
+        трудно, как потерянную группу.
+        """
+        monkeypatch.setattr(site_, '_settings_all', _saved({}))
+        answer = (await site_list(user=None))['result']
+
+        groups = {group['key'] for group in answer['groups']}
+        subs = {one['key']: one['group'] for one in answer['subs']}
+
+        assert all(one['title'] for one in answer['subs']), 'подразделу нужна подпись'
+
+        for key, group in subs.items():
+            assert group in groups, \
+                f'подраздел «{key}» висит на неизвестной вкладке «{group}»'
+
+        for spec in answer['known']:
+            if not spec['sub']:
+                continue
+
+            assert spec['sub'] in subs, \
+                f"настройка «{spec['key']}» в неизвестном подразделе «{spec['sub']}»"
+            assert subs[spec['sub']] == spec['group'], \
+                f"настройка «{spec['key']}» и её подраздел на разных вкладках"
+
     async def test_groups_keep_their_order(self, rhapsody, monkeypatch):
         """Порядок групп — с сервера, и он значит: от частого к редкому. Сроки и
         транспорт правят на ходу, доступ к API вписывают раз при заведении."""

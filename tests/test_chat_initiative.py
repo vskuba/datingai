@@ -284,25 +284,77 @@ class TestDropNotEdit:
             'чистка пула унесла и ушедшее — а это часть переписки'
 
 
-class TestTheSettings:
-    """Настройки инициативы — тройка, их читают вместе."""
+# Настройки занятия: их читают вместе, и стоять им рядом — одним подразделом.
+INITIATIVE_SETTINGS = ('chat_initiative_after', 'chat_initiative_after_max',
+                       'chat_initiative_repeat', 'chat_initiative_send_every')
 
-    def test_all_three_are_registered(self):
+
+class TestTheSettings:
+    """Настройки инициативы — четвёрка, их читают вместе."""
+
+    def test_all_four_are_registered(self):
         from src.uvicorn.routers.dating.site_ import SITE_KNOWN
 
         after = SITE_KNOWN['chat_initiative_after']
         upto = SITE_KNOWN['chat_initiative_after_max']
         times = SITE_KNOWN['chat_initiative_repeat']
+        pause = SITE_KNOWN['chat_initiative_send_every']
 
         assert after['title'] == 'Инициатива, проявить через минут (от)'
         assert upto['title'] == 'Инициатива, проявить через минут (до)'
         assert times['title'] == 'Инициатива, сколько раз повторить, в сутки'
+        assert pause['title'] == 'Инициатива, пауза между отправками, в мин'
         assert times['default'] == '2'
         assert times['kind'] == 'number' and times['min'] == 0
         assert upto['kind'] == 'number' and upto['min'] == 0, \
             'ноль обязан быть допустим — это «без разброса»'
-        assert after['group'] == upto['group'] == times['group'] == 'invite', \
+        assert pause['kind'] == 'number' and pause['min'] == 0, \
+            'ноль обязан быть допустим — это «без паузы»'
+        assert all(SITE_KNOWN[key]['group'] == 'invite'
+                   for key in INITIATIVE_SETTINGS), \
             'настройки читают вместе — и стоять им рядом'
+
+    def test_they_stand_in_one_subsection(self):
+        """⚠⚠ Все четыре — подразделом «Инициатива», а не вразброс по вкладке.
+
+        Вкладка «Инвайты и чат» собрала настройки трёх занятий, и плоская
+        таблица заставляет читать все четырнадцать строк, чтобы найти одну.
+        Подраздел отвечает на вопрос «где настраивается инициатива» глазами.
+
+        ⚠ Подписи и порядок подразделов знает **сервер** (`SITE_SUBGROUPS`), а не
+        страница: иначе новый подраздел требовал бы правки в двух местах.
+        """
+        from src.uvicorn.routers.dating.site_ import (SITE_GROUPS,
+                                                      SITE_KNOWN,
+                                                      SITE_SUBGROUPS)
+
+        subs = {key: (group, title) for key, group, title in SITE_SUBGROUPS}
+
+        assert subs.get('initiative') == ('invite', 'Инициатива'), \
+            'подраздел инициативы не объявлен — настройки уедут в общую таблицу'
+        assert all(SITE_KNOWN[key].get('sub') == 'initiative'
+                   for key in INITIATIVE_SETTINGS), \
+            'настройка инициативы осталась вне подраздела'
+
+        groups = {key for key, _ in SITE_GROUPS}
+        for key, group, _ in SITE_SUBGROUPS:
+            assert group in groups, \
+                f'подраздел «{key}» висит на несуществующей вкладке «{group}»'
+
+    def test_the_page_draws_subsections_from_the_answer(self):
+        """⚠ Страница рисует подразделы по ответу сервера, а не по своему списку.
+
+        Своя копия разошлась бы с реестром на первой правке: настройка получила
+        бы `sub`, которого страница не знает, и легла бы в общую таблицу молча.
+        """
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parents[1]
+        page = (root / 'data/uvicorn/template/admin/dating/site.html'
+                ).read_text(encoding='utf-8')
+
+        assert 'answer.subs' in page, 'подразделы с сервера не читаются'
+        assert 'set-box-head sub' in page, 'шапка подраздела не рисуется'
 
     def test_none_of_them_pretends_to_be_unfinished(self):
         """⚠⚠ Работа сделана — и оговорки «пока ни на что не влияет» быть не должно.
@@ -313,8 +365,7 @@ class TestTheSettings:
         """
         from src.uvicorn.routers.dating.site_ import SITE_KNOWN
 
-        for key in ('chat_initiative_after', 'chat_initiative_after_max',
-                    'chat_initiative_repeat'):
+        for key in INITIATIVE_SETTINGS:
             assert 'работа не сделана' not in SITE_KNOWN[key]['note'], key
 
     def test_the_day_is_spelled_out_in_the_note(self):

@@ -684,6 +684,7 @@ class TestBothMustBeOnline:
         Он вернётся, и она уйдёт: ровно как черновик ответа. Пометки о неудаче
         тоже не ставим — неудачи не было.
         """
+        round_mod._sent_at.clear()
         await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'текст')
         monkeypatch.setattr(round_mod, 'online_check',
                             lambda site_id, uid: {'online': False, 'known': True})
@@ -702,6 +703,7 @@ class TestBothMustBeOnline:
 
             return {'ok': True, 'error': ''}
 
+        round_mod._sent_at.clear()
         await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'текст')
         monkeypatch.setattr(round_mod, 'online_check',
                             lambda site_id, uid: {'online': True, 'known': True})
@@ -711,3 +713,206 @@ class TestBothMustBeOnline:
 
         assert sent == 1 and outbox == ['текст']
         assert await chat_initiative_waiting(girl, 'u-1') == {}, 'карточка не ушла'
+
+
+class TestThePauseBetweenSends:
+    """⚠⚠ По одной карточке за паузу, и пауза общая на весь сайт.
+
+    Беда, ради которой написано: пул набирается сразу **всем анкетам сайта**, а
+    круг уносил по три карточки за тик, не выжидая ничего. Включённая инициатива
+    выглядела залпом — десяток девушек пишет первыми в одну минуту, нередко одним
+    и тем же людям, сидящим в ленте. Со стороны это не «разговоры
+    возобновились», а рассылка.
+
+    ⚠⚠ **Речь только об инициативе в чате** — продолжении затихшего разговора с
+    тем, кто девушке уже отвечал. Прочие занятия меряются своими сроками, и эта
+    пауза их не касается: она живёт в своём словаре и читается из своей
+    настройки.
+    """
+
+    @staticmethod
+    def _outbox(monkeypatch, online: bool = True) -> list:
+        """Отправка и лента — заглушками; наружу сюита не ходит."""
+        outbox = []
+
+        async def _send(profile, presence, uid, text):
+            outbox.append(text)
+
+            return {'ok': True, 'error': ''}
+
+        monkeypatch.setattr(round_mod, 'online_check',
+                            lambda site_id, uid: {'online': online,
+                                                  'known': True})
+        monkeypatch.setattr(round_mod, 'send_message', _send)
+        round_mod._sent_at.clear()
+
+        return outbox
+
+    async def test_only_one_card_leaves_per_pause(self, monkeypatch, girl):
+        """Два готовых черновика — уходит один, второй ждёт своей паузы."""
+        outbox = self._outbox(monkeypatch)
+
+        await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'первый')
+        await chat_initiative_put(STAND_SITE, girl, 'u-2', 'Colin', 'второй')
+
+        assert await round_mod._send(STAND_SITE) == 1
+        assert await round_mod._send(STAND_SITE) == 0, \
+            'вторая карточка ушла сразу — паузы нет'
+        assert outbox == ['первый'], 'очередь не от старой карточки к свежей'
+        assert await chat_initiative_waiting(girl, 'u-2'), 'вторую потеряли'
+
+    async def test_the_waiting_card_goes_when_the_pause_runs_out(self, monkeypatch,
+                                                                 girl):
+        """Пауза вышла — ждавшая карточка уходит следующим заходом."""
+        import time
+
+        outbox = self._outbox(monkeypatch)
+
+        await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'первый')
+        await chat_initiative_put(STAND_SITE, girl, 'u-2', 'Colin', 'второй')
+
+        await round_mod._send(STAND_SITE)
+        # Отодвигаем отметку на умолчание (три минуты) с запасом.
+        round_mod._sent_at[STAND_SITE] = time.time() - 200
+
+        assert await round_mod._send(STAND_SITE) == 1
+        assert outbox == ['первый', 'второй']
+
+    async def test_the_pause_covers_the_whole_site(self, monkeypatch, girl,
+                                                   auth_client):
+        """⚠⚠ Пауза **на сайт**, а не на анкету: залп и получается из того, что
+        пишут все разом.
+
+        Предел на каждую девушку его не разредил бы — двенадцать анкет дали бы
+        двенадцать реплик в одну минуту, каждая «в рамках своей паузы».
+        """
+        outbox = self._outbox(monkeypatch)
+
+        other = int((await auth_client.post('/api/dating/profile', json={
+            'site_id': STAND_SITE,
+            'login': f'init-pause-{uuid.uuid4().hex[:8]}@example.com',
+            'password': 'x'})).json()['result'])
+
+        try:
+            async with mysql_get_db_async() as db:
+                await db.execute("UPDATE profile SET status = 'online'"
+                                 ' WHERE id = %s', (other,))
+                await db.connection.commit()
+
+            await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'её')
+            await chat_initiative_put(STAND_SITE, other, 'u-2', 'Colin', 'соседки')
+
+            assert await round_mod._send(STAND_SITE) == 1
+            assert await round_mod._send(STAND_SITE) == 0, \
+                'вторая девушка написала в ту же минуту — пауза считается по анкете'
+            assert len(outbox) == 1
+        finally:
+            async with mysql_get_db_async() as db:
+                await db.execute('DELETE FROM chat_initiative WHERE profile_id = %s',
+                                 (other,))
+                await db.execute('DELETE FROM profile WHERE id = %s', (other,))
+                await db.connection.commit()
+
+    async def test_nobody_online_does_not_spend_the_pause(self, monkeypatch, girl):
+        """⚠⚠ Отправлять некому — пауза не тратится.
+
+        Она мерит промежутки между **ушедшими** репликами, а не между заходами
+        круга: отметь мы заход впустую, первая же тихая минута отодвинула бы
+        готовую карточку на целую паузу.
+        """
+        self._outbox(monkeypatch, online=False)
+        await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'текст')
+
+        assert await round_mod._send(STAND_SITE) == 0
+        assert STAND_SITE not in round_mod._sent_at, \
+            'пустой заход съел паузу'
+
+    async def test_a_site_refusal_ends_the_run(self, monkeypatch, girl):
+        """⚠ Отказ сайта кончает заход, а не ведёт ко второй карточке.
+
+        Причина у него почти всегда общая — сессия протухла, сайт попросил
+        подождать, — и дослать вторую значило бы собрать тот же отказ, кормя
+        счётчик обращений сайта.
+        """
+        tries = []
+
+        async def _send(profile, presence, uid, text):
+            tries.append(text)
+
+            return {'ok': False, 'error': 'сайт отказал'}
+
+        monkeypatch.setattr(round_mod, 'online_check',
+                            lambda site_id, uid: {'online': True, 'known': True})
+        monkeypatch.setattr(round_mod, 'send_message', _send)
+        round_mod._sent_at.clear()
+
+        await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'первый')
+        await chat_initiative_put(STAND_SITE, girl, 'u-2', 'Colin', 'второй')
+
+        assert await round_mod._send(STAND_SITE) == 0
+        assert tries == ['первый'], 'заход пошёл за второй карточкой после отказа'
+        assert (await chat_initiative_waiting(girl, 'u-1'))['error'], \
+            'причина отказа не записана — круг возьмётся за ту же строку снова'
+
+    async def test_the_pause_is_a_site_setting(self, auth_client):
+        """⚠ Срок берётся из настройки сайта и считается в **минутах**.
+
+        Умолчание — три минуты: инициатива возвращается к **начатому** разговору,
+        и спешить ей некуда — человек уже знаком с девушкой и зайдёт в чат ещё.
+        """
+        assert await round_mod._send_every(STAND_SITE) == 3 * 60, \
+            'умолчание разошлось с реестром'
+
+        before = (await auth_client.get(
+            f'/api/dating/site/{STAND_SITE}')).json()['result']['settings']
+        try:
+            await auth_client.put(
+                f'/api/dating/site/{STAND_SITE}',
+                json={'settings': {**before,
+                                   'chat_initiative_send_every': '7'}})
+
+            assert await round_mod._send_every(STAND_SITE) == 7 * 60, \
+                'круг не видит паузу, поставленную на странице'
+        finally:
+            await auth_client.put(f'/api/dating/site/{STAND_SITE}',
+                                  json={'settings': before})
+
+    async def test_zero_means_no_pause(self, monkeypatch, auth_client, girl):
+        """⚠ Ноль — законное «без паузы», а не «не отправлять».
+
+        Выключатель у занятия свой (`chat_initiative_send_on`), и отменять
+        отправку сроком значило бы два выключателя об одном. На деле ноль значит
+        «по карточке в минуту»: чаще круг не просыпается.
+        """
+        outbox = self._outbox(monkeypatch)
+
+        before = (await auth_client.get(
+            f'/api/dating/site/{STAND_SITE}')).json()['result']['settings']
+        try:
+            await auth_client.put(
+                f'/api/dating/site/{STAND_SITE}',
+                json={'settings': {**before,
+                                   'chat_initiative_send_every': '0'}})
+
+            assert await round_mod._send_every(STAND_SITE) == 0
+
+            await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'первый')
+            await chat_initiative_put(STAND_SITE, girl, 'u-2', 'Colin', 'второй')
+
+            assert await round_mod._send(STAND_SITE) == 1
+            assert await round_mod._send(STAND_SITE) == 1, \
+                'при нулевой паузе круг всё равно выжидает'
+            assert outbox == ['первый', 'второй']
+        finally:
+            await auth_client.put(f'/api/dating/site/{STAND_SITE}',
+                                  json={'settings': before})
+
+    def test_the_old_constant_is_gone(self):
+        """⚠⚠ Константа «три карточки за тик» не должна вернуться.
+
+        Она отвечала на тот же вопрос, что настройка, — «сколько реплик уходит
+        разом», — и вернись она, частота считалась бы в двух местах: круг выжидал
+        бы паузу и всё равно отправлял тройку.
+        """
+        assert not hasattr(round_mod, 'INITIATIVE_ROUND_SEND'), \
+            'частота отправки снова в коде — её задаёт настройка сайта'
