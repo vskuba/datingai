@@ -68,7 +68,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.ready import ready_online
-from src.dating.round import (pool_round_run, round_slot_due,
+from src.dating.round import (round_sites_run, round_slot_due,
                             round_slot_mark)
 from src.dating.favorite import (FAVORITE_ALREADY,
                                         FAVORITE_DONE,
@@ -86,7 +86,7 @@ FAVORITE_EVERY_SETTING = 'favorite_every'
 FAVORITE_BATCH_SETTING = 'favorite_batch'
 
 # Отметка «на этот сайт только что ходили». В Redis — переживает смену держателя.
-FAVORITE_ROUND_KEY = 'dating:favorite:round:{site_id}'
+FAVORITE_ROUND_KEY = 'dating:favorite:round:{id}'
 
 # Пауза между звёздочками. ⚠ Не вежливость, а осторожность: два входа под разными
 # анкетами в одну секунду сайт считает подозрением, а блокировка стоит анкеты. Та
@@ -107,7 +107,7 @@ async def favorite_round_run() -> dict:
             `failed` — не вышло.
     """
     ran = seen = added = already = failed = 0
-    for _, c in await pool_round_run(await _sites(), gate=_gate, every=_every,
+    for _, c in await round_sites_run(await _sites(), gate=_gate, every=_every,
                                     work=_work, key=FAVORITE_ROUND_KEY,
                                     what='избранным'):
         if c is not None:

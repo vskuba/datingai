@@ -43,7 +43,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from redis_.redis_ import redis_conn_get
 
 from src.dating.feed import feed_write
-from src.dating.round import (pool_round_run, round_slot_due,
+from src.dating.round import (round_sites_run, round_slot_due,
                             round_slot_mark)
 from src.dating.pool import pool_sweep
 from src.dating.favorite_mail import (FAVORITE_MAIL_BATCH_DEFAULT,
@@ -66,7 +66,7 @@ FAVORITE_MAIL_ROUND_EVERY_SETTING = 'favorite_mail_every'
 FAVORITE_MAIL_ROUND_POOL_DEFAULT = 20
 
 # Отметка «на этот сайт только что ходили». В Redis — переживает смену держателя.
-FAVORITE_MAIL_ROUND_KEY = 'dating:favorite:mail:round:{site_id}'
+FAVORITE_MAIL_ROUND_KEY = 'dating:favorite:mail:round:{id}'
 
 
 async def favorite_mail_round_run(offset: int = 0) -> dict:
@@ -87,7 +87,7 @@ async def favorite_mail_round_run(offset: int = 0) -> dict:
     """
     sites = await _sites()
     ran = made = 0
-    for _, c in await pool_round_run(sites, offset_hours=offset, gate=_gate,
+    for _, c in await round_sites_run(sites, offset_hours=offset, gate=_gate,
                                     every=_every, work=_work,
                                     key=FAVORITE_MAIL_ROUND_KEY,
                                     what='письмам избранным'):

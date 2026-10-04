@@ -32,7 +32,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.log import log_write
-from src.dating.round import round_minutes
+from datetime_.datetime_ import datetime_day_minutes
 from src.dating.pool import pool_drop
 from src.dating.schedule import schedule_now
 
@@ -53,7 +53,7 @@ async def schedule_round_run(offset_hours: int = 0) -> dict:
         вышло и сколько сокетов оборвано из-за снятой галочки.
     """
     rows = await _rows()
-    minutes = round_minutes(offset_hours)
+    minutes = datetime_day_minutes(offset_hours)
 
     entered = left = dropped = 0
 

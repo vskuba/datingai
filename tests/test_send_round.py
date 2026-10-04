@@ -458,11 +458,12 @@ class TestDailyCap:
         def broken():
             raise RuntimeError('база лежит')
 
-        # ⚠ Подменяем имя **в модуле общего круга**, а не в `mysql_`: он
+        # ⚠ Подменяем имя **в модуле общего слоя**, а не в `mysql_`: он
         # импортировал функцию к себе, и правка источника его уже не касается.
-        # Тело счёта переехало в `round.py` — там и имя.
-        from src.dating import round as engine
-        monkeypatch.setattr(engine, 'mysql_get_db_async', broken)
+        # Тело суточного счёта живёт в `py_modules/round_/round_day.py` — там и
+        # имя; `src/dating/round.py` только приносит в него нашу схему.
+        from round_ import round_day as day
+        monkeypatch.setattr(day, 'mysql_get_db_async', broken)
 
         assert await _today(SITE) > 100_000
 

@@ -1,213 +1,119 @@
-"""Обвязка воркерных кругов: сон до дедлайна, часовой пояс и журнал отказа.
+"""Круги воркера: **единственная дверь** к общему слою `round_/`.
 
-Держатель сокетов (`chat_hold.py`) крутил пятнадцать кругов руками, и
-каждый — одними и теми же четырьмя строками: сон, отмеренный до конца смены;
-работа; отказ в журнал. Копии разъезжаются молча: где-то забыли потолок сна,
-где-то — перенос строки в сообщении. Здесь раз — и все круги одинаковые.
+Сам скелет круга живёт в общем слое (`py_modules/round_/`, страница
+`docs-common/round.md`): сон до дедлайна, отметка захода в Redis, темп в памяти
+процесса, суточная норма, обход единиц одним телом. Копий у нас больше нет —
+здесь остаётся только то, что знает про **нашу** базу и наши слова.
 
-Отказ одного круга не конец смены: держатель стоит часами, за это время у
-соседа бывает и перезапуск, и окно техработ, — круг переждёт и продолжит на
-следующем тике. Поэтому ловим **всё** `Exception`, а не конкретные: уронить
-смену случайной `KeyError` из разбора чужого ответа дороже, чем круг молчания
-до следующего тика.
+## ⚠⚠ Почему круги ходят через этот файл, а не в слой напрямую
 
-⚠ `_presence_loop` держателя остаётся своим и сюда не переезжает: он спит
-**после** работы (присутствие нужно с первой секунды смены, а не через тик) и
-обходит анкеты семафором, а не одним телом.
+Две причины, и обе механические.
+
+1. **Слово журнала.** Слой пишет `[{префикс}] круг …`, и префикс задаётся один
+   раз на процесс. Привяжи этот вызов к точке входа — придётся повторить в
+   каждой: у воркера своя, у панели своя, у разового скрипта третья. Забытая
+   даст в журнале безымянный `[round]` ровно там, где строку будут искать.
+   Здесь он стоит на уровне модуля, который круги и так все импортируют, — то
+   есть не может не сработать.
+2. **Единица обхода у нас зовётся `site_id`.** Слой про сайты знакомств не
+   знает и знать не должен; как достать единицу из строки, ему говорят доводом
+   `unit_of`. Сказать это семь раз по месту значило бы семь шансов сказать
+   по-разному.
+
+## Что здесь есть
+
+| Что | Чьё знание |
+|-----|------------|
+| `round_sites_run` | единица обхода — `site_id` |
+| `round_sent_day` | наши `status = 'sent'` и `sent_at` |
+| ре-экспорт слоя | чтобы круги видели одну дверь, а не две |
+
+Местные минуты суток здесь **не живут**: предмет у них время, а не круг, и
+зовут их прямо из слоя — `datetime_day_minutes`. Копий этого расчёта в проекте
+было две, и сходились они лишь пока смещение целое в часах.
 """
 
-import asyncio
-import time
-from collections.abc import Awaitable, Callable
+from round_.round_ import round_loop, round_offset_loop, round_prefix_set
+from round_.round_day import round_day_count
+from round_.round_mem import round_mem_due, round_mem_mark
+from round_.round_pass import round_pass_run
+from round_.round_slot import (round_slot_due, round_slot_mark,
+                               round_slot_release)
 
-from datetime_.datetime_ import datetime_offset_hours
-from logging_.logging_ import logger_exception, logger_info
-from mysql_.mysql_ import mysql_get_db_async
-from redis_.redis_ import redis_conn_get
-from setting_.setting_ import setting_get
+# ⚠ На уровне модуля, а не в точке входа — см. заголовок файла. Строки журнала
+# всех кругов начинаются с этого слова, по нему их отбирают в общем журнале.
+round_prefix_set('dating')
+
+# Круги зовут слой через этот модуль, и `ruff` иначе счёл бы ре-экспорт
+# неиспользованным импортом.
+__all__ = ['round_loop', 'round_offset_loop', 'round_mem_due', 'round_mem_mark',
+           'round_slot_due', 'round_slot_mark', 'round_slot_release',
+           'round_sent_day', 'round_sites_run']
 
 
-async def round_loop(deadline: float, tick_sec: float, name: str,
-                            body: Callable[[], Awaitable[None]]) -> None:
-    """Крутит `body` до `deadline` с тиком `tick_sec`; отказ круга — в журнал.
+async def round_sites_run(rows: list, *, work, gate=None, every=None,
+                          key: str = '', what: str = '',
+                          offset_hours: int = 0,
+                          keep_going: bool = False) -> list[tuple]:
+    """Обходит сайты круга заходом слоя: шлюз, отметка до дела, само дело.
 
-    Сначала сон, потом работа — порядок кругов держателя: смена только что
-    поднялась, тяжёлую работу в первую же секунду начинать незачем.
+    Args:
+        rows: строки сайтов — словари со `site_id` либо просто номера.
+        work: дело `work(row, minutes)`; итог кладётся в ответ как есть.
+        gate: шлюз `gate(row, minutes)` — отвечает целиком (выключатель сайта,
+            смены, срок круга, а где бывает — будильник ленты). `None` —
+            пускаем все сайты.
+        every: срок сайта в секундах, `every(site_id)`. Обязателен при `key`.
+        key: ключ слота с меткой `{id}`. Пусто — заход слота не ставит: темп
+            круга держится иначе (память процесса, выдержка кэша, пара в базе).
+        what: чей заход — словом, для журнала.
+        offset_hours: часовое смещение панели; из него считаются местные минуты.
+        keep_going: глотать ли отказ одного сайта. `True` — строка в журнал и
+            дальше; `False` — отказ роняет обход остальных.
 
-    ⚠ Сон отсекаем остатком до дедлайна: тик крупнее остатка — и смена кончилась
-    бы на полминуты позже, а за ней в очереди стоит следующая.
+    Returns:
+        Список пар `(строка, итог)` по сайтам, прошедшим шлюз.
+
+    ⚠ Всё содержательное — в `round_pass_run` слоя. Здесь ровно одна наша
+    мелочь: единица обхода у нас зовётся `site_id`, а не `id`.
+
+    ⚠⚠ `keep_going` стоит на `False`, то есть на поведении, с которым круги
+    пула жили до переезда в слой: отказ у одного сайта означает у них отказ у
+    всех (лёг сосед, упала база), и пройти остальные значило бы собрать ту же
+    ошибку ещё десять раз. `True` ставят круги, у которых сайты независимы, —
+    там это и было написано руками.
     """
-    while time.monotonic() < deadline:
-        await asyncio.sleep(min(tick_sec, max(1.0, deadline - time.monotonic())))
-
-        try:
-            await body()
-        except Exception as e:
-            # Не просто текст: «'NoneType' object has no attribute 'get'» без
-            # кадров не показывает, кто именно вернул не то — ни у соседа, ни у сайта.
-            logger_exception(f'[dating] круг {name}: {e}', exc=e)
+    return await round_pass_run(rows, gate=gate, every=every, work=work,
+                                key=key, what=what, offset_hours=offset_hours,
+                                keep_going=keep_going, unit_of=_site_of)
 
 
-async def round_offset_loop(deadline: float, tick_sec: float, name: str,
-                                   body: Callable[[int], Awaitable[None]]) -> None:
-    """То же, но `body` получает смещение пояса — перечитанным каждым кругом.
+async def round_sent_day(table: str, site_id: int, offset_hours: int,
+                         unknown: int, what: str) -> int:
+    """Сколько строк этой таблицы ушло с сайта за местные календарные сутки.
 
-    ⚠ Смещение читаем **каждый круг**, а не один раз: настройку `timezone` правят
-    на ходу, и запомненное значение означало бы расписание по старому поясу до
-    конца смены — шесть часов.
+    Args:
+        table: наша таблица пула (`mailing`, `invite`, …).
+        site_id: сайт-закладка.
+        offset_hours: часовое смещение панели.
+        unknown: что вернуть, если спросить не удалось. ⚠ Решает круг:
+            ноль значит «идём», потолок — «молчим».
+        what: чья норма — словом, для журнала.
+
+    Returns:
+        Число ушедших строк либо `unknown`.
+
+    ⚠ «Ушедшее» у нас значит `status = 'sent'`, а время события лежит в
+    `sent_at` — это наша схема, и потому довод сюда не вынесен: будь он доводом,
+    два круга назвали бы одно и то же разными столбцами.
     """
-
-    async def _with_offset() -> None:
-        offset = datetime_offset_hours(await setting_get('timezone', '+0'))
-        await body(offset)
-
-    await round_loop(deadline, tick_sec, name, _with_offset)
-
-
-# ── Общее для кругов: часы и слот ────────────────────────────────────────────
-# Девять кругов держали одно и то же: две функции про слот и часы. Тела
-# совпадали строка в строку, разъезжались только ключ да слово в журнале —
-# и ровно поэтому молча разъезжались правила. Ключи остаются в кругах, сюда
-# переехало только тело.
+    return await round_day_count(table, {'site_id': int(site_id),
+                                         'status': 'sent'},
+                                 date_column='sent_at',
+                                 offset_hours=offset_hours,
+                                 unknown=unknown, what=what)
 
 
-def round_minutes(offset_hours: int = 0) -> int:
-    """Минуты от начала местных суток: смены сверяют с часами на стене.
-
-    ⚠ Один на все круги. Копии считали двумя способами (`tm_hour * 60 + tm_min`
-    и целыми секундами от эпохи) и сходились лишь пока смещение целое в часах —
-    но стоило одной копии отстать, как рассылка вставала по одним часам, а
-    инвайты по другим.
-    """
-    local = time.gmtime(time.time() + int(offset_hours or 0) * 3600)
-
-    return local.tm_hour * 60 + local.tm_min
-
-
-def round_slot_due(key: str, site_id: int, what: str) -> bool:
-    """Пора ли идти этому сайту; отметки ещё нет — пора.
-
-    ⚠⚠ Сбой Redis решается в сторону бездействия: лишний заход стоит дела
-    (вызовы LLM, вкладка браузера, подозрение сайта), пропущенный — только
-    задержки. Где цена ошибок несимметрична, сомнение решается молчанием.
-    """
-    try:
-        return not redis_conn_get().get(key.format(site_id=int(site_id)))
-    except Exception as e:
-        logger_info(f'[dating] отметка {what} не прочиталась: {e}')
-
-        return False
-
-
-def round_slot_mark(key: str, site_id: int, every: float, what: str) -> None:
-    """Отмечает заход. Срок отметки **и есть** настройка: Redis погасит её сам.
-
-    ⚠ Ноль поднимаем до секунды: нулевой срок Redis не принимает, отметка не
-    поставилась бы вовсе — и круг ходил бы каждым тиком.
-    """
-    try:
-        redis_conn_get().setex(key.format(site_id=int(site_id)),
-                               max(1, int(every)), '1')
-    except Exception as e:
-        logger_info(f'[dating] отметка {what} не поставилась: {e}')
-
-
-def round_slot_release(key: str, site_id: int, what: str) -> None:
-    """Снимает слот: захода не было — и держать слот нечем.
-
-    ⚠ Сбой глотаем молча — отметка всё равно погаснет сама по сроку; хуже
-    уронить обход остальных сайтов из-за неубранного ключа.
-    """
-    try:
-        redis_conn_get().delete(key.format(site_id=int(site_id)))
-    except Exception as e:
-        logger_info(f'[dating] отметка {what} не снялась: {e}')
-
-
-# ── Общее для кругов: обход сайтов ──────────────────────────────────────────
-
-async def pool_round_run(rows: list, *, offset_hours: int = 0,
-                         gate: Callable, every: Callable, work: Callable,
-                         key: str, what: str) -> list[tuple]:
-    """Обходит сайты круга одним скелетом: шлюз, слот до дела, само дело.
-
-    Строку, прошедшую шлюз `gate`, обход помечает по сроку `every` **до** дела
-    — набор идёт минутами, и следующий тик завёл бы второй поверх первого, —
-    и зовёт `work`. Отдаёт список пар `(строка, итог)`: как считать итог
-    (`checked`, `ran`, `made`) и когда слот отпустить (заход впустую слот не
-    держит), знает круг — у него свои слова и свои причины рядом с `work`.
-
-    ⚠ `gate` отвечает за шлюз целиком, обеими половинками: выключатель сайта,
-    смены, срок круга — а где и лента-будильник. У кругов эти половинки
-    разные (инвайтам чистка обязана и при молчащем наборе, избранному письму
-    лента будит круг раньше срока), и одна дога не ответила бы за обе.
-    """
-    out: list[tuple] = []
-    minutes = round_minutes(offset_hours)
-
-    for row in rows:
-        site_id = int(row['site_id']) if isinstance(row, dict) else int(row)
-        if not await gate(row, minutes):
-            continue
-        round_slot_mark(key, site_id, await every(site_id), what)
-        out.append((row, await work(row, minutes)))
-
-    return out
-
-
-# ── Общее для кругов: свой темп в памяти процесса ────────────────────────────
-# Темп отправки и присутствия круги держали в памяти процесса одно и то же:
-# часы прошлого захода и сравнение. Ключ (сайт, пул) у каждого свой, и то же
-# правило, отвечавшее втроём, молча разъехалось бы wording'ом.
-
-
-def round_mem_due(mem: dict, key, every: float, what: str = '') -> bool:
-    """Вышел ли темп этого ключа: с прошлого захода прошло не меньше `every`.
-
-    Первый заход — всегда пора: ключа в памяти нет, а не было ещё ни одного.
-    Темп живёт в памяти процесса, а не в Redis: перезапуск смены стоит одного
-    лишнего захода, а не потока.
-    """
-    return time.time() - mem.get(key, 0.0) >= float(every)
-
-
-def round_mem_mark(mem: dict, key, what: str = '') -> None:
-    """Запомнить момент захода — темп отсчитывается от него."""
-    mem[key] = time.time()
-
-
-# ── Общее для кругов: суточная норма ─────────────────────────────────────────
-# Сколько ушло за сегодня, считали двое одними запросами: таблица и поведение
-# при сбое свои, скелет один.
-
-
-async def round_day_count(table: str, site_id: int, offset_hours: int,
-                          unknown: int, what: str) -> int:
-    """Сколько строк таблицы ушло с этого сайта за местные календарные сутки.
-
-    ⚠ Сутки местные, а не серверные: база живёт по UTC, смены и панель — по
-    местному времени, и при смещении в три часа норма кончалась в три ночи.
-
-    ⚠ Дата считается **один раз**, двумя запросами с `NOW()` внутри: они могли
-    бы разойтись на границе суток — редко, но именно на ней это и важно.
-    """
-    hours = int(offset_hours or 0)
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute('SELECT DATE(NOW() + INTERVAL %s HOUR) AS d',
-                             (hours,))
-            today = ((await db.fetchone()) or {}).get('d')
-
-            await db.execute(
-                f"SELECT COUNT(*) AS n FROM {table}"
-                " WHERE site_id = %s AND status = 'sent'"
-                '   AND DATE(sent_at + INTERVAL %s HOUR) = %s',
-                (int(site_id), hours, today))
-            row = await db.fetchone()
-    except Exception as e:
-        logger_info(f'[dating] дневной счёт {what} не спросился: {e}')
-
-        # ⚠ Что значит сбой — решает круг: молчание или потолок выбран.
-        return unknown
-
-    return int((row or {}).get('n') or 0)
+def _site_of(row) -> int:
+    """Номер сайта из строки обхода: словарь со `site_id` либо сам номер."""
+    return int(row['site_id']) if isinstance(row, dict) else int(row)

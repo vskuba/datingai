@@ -15,6 +15,8 @@
 import pytest
 
 from src.dating import mail_in_round as round_
+from round_ import round_slot as slot
+from round_.round_slot import round_slot_key
 from src.dating import round as engine
 from src.dating.round import round_slot_due, round_slot_mark
 from src.dating.mail_in_round import (MAIL_IN_EVERY_DEFAULT,
@@ -65,7 +67,11 @@ class _FakeRedis:
 def clean_mark(monkeypatch):
     """Пустая память отметок на каждый тест."""
     fake = _FakeRedis()
-    monkeypatch.setattr(engine, 'redis_conn_get', lambda: fake)
+    # ⚠ Redis подменяется **в модуле слоя**: отметка захода переехала в
+    # `py_modules/round_/round_slot.py`, а `src/dating/round.py` её лишь
+    # ре-экспортирует. Подмена в двери переставила бы её ссылку, оставив код
+    # слоя при своей, — и тест зеленел бы, ничего не проверяя.
+    monkeypatch.setattr(slot, 'redis_conn_get', lambda: fake)
 
     return fake
 
@@ -347,7 +353,7 @@ async def test_mail_in_round_marks_before_walking(site, profile, fetched, clean_
 
     await mail_in_round_run()
 
-    assert clean_mark.store.get(MAIL_IN_ROUND_KEY.format(site_id=SITE))
+    assert clean_mark.store.get(round_slot_key(MAIL_IN_ROUND_KEY, SITE))
 
 
 async def test_mail_in_round_redis_failure_means_no_work(site, profile, fetched,
@@ -366,7 +372,7 @@ async def test_mail_in_round_mark_ttl_is_the_period_setting(site, profile, fetch
     """Redis гасит отметку сам: отдельного «когда истечёт» круг не хранит."""
     await mail_in_round_run()
 
-    assert (clean_mark.ttl[MAIL_IN_ROUND_KEY.format(site_id=SITE)]
+    assert (clean_mark.ttl[round_slot_key(MAIL_IN_ROUND_KEY, SITE)]
             == MAIL_IN_EVERY_DEFAULT)
 
 

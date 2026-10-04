@@ -28,11 +28,11 @@ import time
 
 from logging_.logging_ import logger_exception, logger_info
 from mysql_.mysql_ import mysql_get_db_async
-from redis_.redis_ import redis_conn_get
 
 from src.dating.auto import AUTO_PERIOD_SEC, auto_round
 from src.dating.feed import feed_done, feed_write
-from src.dating.round import round_loop, round_offset_loop
+from src.dating.round import (round_loop, round_offset_loop,
+                              round_slot_due, round_slot_mark)
 from src.dating.favorite_mail_round import (
     FAVORITE_MAIL_ROUND_TICK_SEC, favorite_mail_round_run)
 from src.dating.panel_round import (PANEL_ROUND_TICK_SEC,
@@ -97,7 +97,7 @@ CHAT_IMPORT_SETTING = 'chat_check_every'
 
 # Отметка «у этого сайта только что забирали». Живёт в Redis ровно столько, сколько
 # сказано настройкой, — по её истечению круг и понимает, что пора снова.
-CHAT_IMPORT_KEY = 'dating:chat:import:site:{site_id}'
+CHAT_IMPORT_KEY = 'dating:chat:import:site:{id}'
 
 # Пауза после обрыва: от секунд до минуты. Растёт, пока не выйдет соединение —
 # сайт, который рвёт связь, не станет добрее от того, что мы стучимся чаще.
@@ -896,16 +896,19 @@ async def _chat_sites() -> list[int]:
 def _chat_due(site_id: int, every: int) -> bool:
     """Пора ли забирать у этого сайта. Сбой Redis — идём: пропустить хуже.
 
-    Пропущенный круг означает, что сообщение полежит до следующего; лишний прогон
-    стоит сорока секунд. Оба исхода терпимы, но первый человек замечает («она не
-    отвечает»), а второй — нет.
-    """
-    try:
-        return not redis_conn_get().get(CHAT_IMPORT_KEY.format(site_id=site_id))
-    except Exception as e:
-        logger_info(f'[dating] отметка импорта не прочиталась: {e}')
+    ⚠⚠ `unknown=True`, и это **единственный** слот панели с перевёрнутой
+    стороной сомнения. У прочих занятий лишний заход платит вызовами модели или
+    вкладкой Chromium, и сбой читается как «не пора». Здесь наоборот:
+    пропущенный круг означает, что сообщение полежит до следующего, — и это
+    замечает человек («она не отвечает»); лишний прогон стоит сорока секунд,
+    которых не замечает никто.
 
-        return True
+    ⚠ Прежде ради этого рядом с общим правилом жила своя копия функции с
+    перевёрнутым `return` — четвёртая по счёту. Довод честнее копии: копию
+    видно только тому, кто её откроет.
+    """
+    return round_slot_due(CHAT_IMPORT_KEY, site_id, 'импорта переписки',
+                          unknown=True)
 
 
 def _chat_mark(site_id: int, every: int) -> None:
@@ -915,11 +918,7 @@ def _chat_mark(site_id: int, every: int) -> None:
     сам погасит ключ, когда придёт пора. Считать разницу дат было бы тем же самым,
     только руками — и с риском разойтись, когда настройку поменяют.
     """
-    try:
-        redis_conn_get().setex(CHAT_IMPORT_KEY.format(site_id=site_id),
-                               max(1, int(every)), '1')
-    except Exception as e:
-        logger_info(f'[dating] отметка импорта не записалась: {e}')
+    round_slot_mark(CHAT_IMPORT_KEY, site_id, every, 'импорта переписки')
 
 
 async def _revive_loop(deadline: float) -> None:

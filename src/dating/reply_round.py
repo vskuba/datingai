@@ -31,7 +31,7 @@
 from logging_.logging_ import logger_info
 
 from src.dating.feed import feed_write
-from src.dating.round import (pool_round_run, round_slot_due,
+from src.dating.round import (round_sites_run, round_slot_due,
                             round_slot_mark)
 from mysql_.mysql_ import mysql_get_db_async
 
@@ -53,7 +53,7 @@ REPLY_EVERY_SETTING = 'reply_every'
 REPLY_BATCH_SETTING = 'reply_batch'
 
 # Отметка «этот сайт только что набирали». В Redis — переживает смену держателя.
-REPLY_ROUND_KEY = 'dating:reply:round:{site_id}'
+REPLY_ROUND_KEY = 'dating:reply:round:{id}'
 
 
 async def reply_round_run() -> dict:
@@ -64,7 +64,7 @@ async def reply_round_run() -> dict:
     """
     sites = await _sites()
     ran = made = 0
-    for _, result in await pool_round_run(sites, gate=_gate, every=_every,
+    for _, result in await round_sites_run(sites, gate=_gate, every=_every,
                                          work=_work, key=REPLY_ROUND_KEY,
                                          what='ответам'):
         if result is not None:

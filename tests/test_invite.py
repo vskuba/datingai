@@ -650,25 +650,29 @@ class TestRoundReadsTheClock:
     смен. Два числа отличаются на три порядка, и ошибка в них не видна глазом.
     """
 
-    def test_minutes_of_the_local_day(self):
-        import time
+    def test_minutes_of_the_local_day(self, monkeypatch):
+        """⚠ Часы подменяются у `datetime_utc_now` общего слоя, а не у
+        `time.time`: расчёт переехал в `datetime_day_minutes`, и время он
+        спрашивает у слоя. Подмена `time.time` после переезда не делает
+        ничего — тест зеленел бы на любом ответе."""
+        from datetime import datetime
 
-        from src.dating.round import round_minutes as _minutes_now
+        from datetime_ import datetime_ as dt_layer
+        from datetime_.datetime_ import \
+            datetime_day_minutes as _minutes_now
 
         # Полдень по Гринвичу: при сдвиге +3 местное время — 15:00.
-        noon = 12 * 3600
-        before = time.time
-        try:
-            time.time = lambda: noon
+        monkeypatch.setattr(dt_layer, 'datetime_utc_now',
+                            lambda: datetime(2026, 1, 1, 12, 0))
 
-            assert _minutes_now(0) == 12 * 60
-            assert _minutes_now(3) == 15 * 60
-            # ⚠ Сутки замыкаются: 23:00 плюс три часа — это 02:00 следующих.
-            time.time = lambda: 23 * 3600
+        assert _minutes_now(0) == 12 * 60
+        assert _minutes_now(3) == 15 * 60
 
-            assert _minutes_now(3) == 2 * 60
-        finally:
-            time.time = before
+        # ⚠ Сутки замыкаются: 23:00 плюс три часа — это 02:00 следующих.
+        monkeypatch.setattr(dt_layer, 'datetime_utc_now',
+                            lambda: datetime(2026, 1, 1, 23, 0))
+
+        assert _minutes_now(3) == 2 * 60
 
     def test_the_round_passes_minutes_not_the_offset(self):
         """⚠ Сторож самой подстановки: в проверку смен должно уходить число из

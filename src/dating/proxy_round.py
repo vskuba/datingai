@@ -45,13 +45,12 @@ IP анкеты выглядели бы как сидящие на разных.
 (`proxy.py`), а на странице он уходит вниз серым.
 """
 
-import time
-
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.proxy import (PROXY_PING_SETTING,
                                      proxy_enabled)
+from src.dating.round import round_mem_due, round_mem_mark
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_proxy_check_all
 
 # Как часто круг просыпается. ⚠ Это **не** период проверки: он смотрит, не пора
@@ -61,7 +60,15 @@ PROXY_ROUND_TICK_SEC = 60
 
 # Когда проверяли последний раз. В памяти смены, а не в базе: переживать
 # перезапуск этой метке незачем — после него проверить заново скорее полезно.
-_checked_at = 0.0
+#
+# ⚠ Словарь с одним ключом, а не число: темп держит общее правило слоя
+# (`round_mem_*`), и своя пара строк рядом с ним разошлась бы с ним молча.
+# Единицы обхода у этого круга нет — реестр выходов один на установку.
+_checked_at: dict[str, float] = {}
+
+# Ключ темпа. Строкой, а не числом: у круга одна работа, и назвать её словом
+# дешевле, чем помнить, что значит `0`.
+PROXY_ROUND_MEM_KEY = 'all'
 
 
 async def proxy_round_run() -> dict:
@@ -79,13 +86,12 @@ async def proxy_round_run() -> dict:
     if not every:
         return {'ran': False, 'checked': 0, 'ok': 0, 'every': 0}
 
-    global _checked_at
-    if time.monotonic() - _checked_at < every:
+    if not round_mem_due(_checked_at, PROXY_ROUND_MEM_KEY, every):
         return {'ran': False, 'checked': 0, 'ok': 0, 'every': every}
 
     # ⚠ Метку ставим **до** похода, а не после. Проверка идёт до минуты; поставь
     # мы её потом, соседний тик успел бы начать вторую такую же.
-    _checked_at = time.monotonic()
+    round_mem_mark(_checked_at, PROXY_ROUND_MEM_KEY)
 
     try:
         rows = await rhapsody_api_proxy_check_all()

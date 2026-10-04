@@ -76,7 +76,8 @@ async def probe(monkeypatch):
 def clock(monkeypatch):
     """Подменяет «сколько сейчас»: ждать 07:00 в тесте нельзя."""
     state = {'hour': 9}
-    monkeypatch.setattr(rnd, 'round_minutes', lambda offset: state['hour'] * 60)
+    monkeypatch.setattr(rnd, 'datetime_day_minutes',
+                        lambda offset: state['hour'] * 60)
 
     return state
 
@@ -252,13 +253,22 @@ class TestLocalTime:
 
     def test_offset_shifts_the_clock(self, monkeypatch):
         """«Войти в 7 утра» человек понимает буквально: смены сверяют с часами на
-        стене, а не с UTC."""
-        import time
+        стене, а не с UTC.
 
-        monkeypatch.setattr(time, 'time', lambda: 0.0)   # 00:00 UTC
+        ⚠ Часы подменяются у `datetime_utc_now` общего слоя, а не у `time.time`:
+        расчёт местных минут переехал в `datetime_day_minutes`, и он спрашивает
+        время у слоя. Подмена `time.time` после переезда не делала ничего —
+        тест зеленел бы на любом ответе.
+        """
+        from datetime import datetime
 
-        assert rnd.round_minutes(0) == 0
-        assert rnd.round_minutes(3) == 3 * 60
+        from datetime_ import datetime_ as dt_layer
+
+        monkeypatch.setattr(dt_layer, 'datetime_utc_now',
+                            lambda: datetime(2026, 1, 1, 0, 0))   # 00:00 UTC
+
+        assert rnd.datetime_day_minutes(0) == 0
+        assert rnd.datetime_day_minutes(3) == 3 * 60
 
 
 class TestSessionIsReleasedToo:

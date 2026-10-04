@@ -99,7 +99,7 @@ from src.dating.favorite import (FAVORITE_STATES,
                                         FAVORITE_STATES_SQL,
                                         favorite_sync)
 from src.dating.ready import password_pick
-from src.dating.round import round_minutes
+from datetime_.datetime_ import datetime_day_minutes
 from src.uvicorn.routers.dating.site_ import site_setting
 from src.dating.percent import percent_share
 from src.dating.answer import answer_mail_write
@@ -613,7 +613,7 @@ async def favorite_mail_shift_site(site_id: int, offset_hours: int = 0) -> bool:
         return True
 
     return favorite_mail_shift_now((row or {}).get('favorite_mail_schedule'),
-                                   round_minutes(int(offset_hours)))
+                                   datetime_day_minutes(int(offset_hours)))
 
 async def favorite_mail_gap_sec(site_id: int) -> int:
     """Пауза между письмами одной девушки, **секундами**. Одно чтение на всех.

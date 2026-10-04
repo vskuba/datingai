@@ -28,10 +28,9 @@
 утром. Кому мало — поднимет, и цена этого решения видна ему же по размеру базы.
 """
 
-import time
-
 from src.dating.log import log_sweep
 from src.dating.request import request_sweep
+from src.dating.round import round_mem_due, round_mem_mark
 
 # Как часто круг просыпается. ⚠ Не частота чистки: её задаёт срок ниже.
 REQUEST_ROUND_TICK_SEC = 60
@@ -41,7 +40,13 @@ REQUEST_ROUND_EVERY_SEC = 3600
 
 # Когда чистили последний раз. В памяти смены: переживать перезапуск метке
 # незачем — после него прибраться заново только полезно.
-_swept_at = 0.0
+#
+# ⚠ Словарь с одним ключом, а не число: темп держит общее правило слоя
+# (`round_mem_*`). Единицы обхода у уборки нет — журналы общие на установку.
+_swept_at: dict[str, float] = {}
+
+# Ключ темпа — см. `proxy_round.py`, там же довод.
+REQUEST_ROUND_MEM_KEY = 'all'
 
 
 async def request_round_run() -> dict:
@@ -54,14 +59,13 @@ async def request_round_run() -> dict:
     ⚠ **Ничего не бросает.** Уборка не повод ронять смену: оба сметальщика гасят
     свои отказы сами и возвращают то, что успели.
     """
-    global _swept_at
-
-    if time.monotonic() - _swept_at < REQUEST_ROUND_EVERY_SEC:
+    if not round_mem_due(_swept_at, REQUEST_ROUND_MEM_KEY,
+                         REQUEST_ROUND_EVERY_SEC):
         return {'ran': False, 'gone': 0}
 
     # ⚠ Метку ставим **до** уборки: миллион строк режется пачками и не мгновенно,
     # а соседний тик завёл бы вторую такую же поверх первой.
-    _swept_at = time.monotonic()
+    round_mem_mark(_swept_at, REQUEST_ROUND_MEM_KEY)
 
     requests = await request_sweep()
     # ⚠ Журнал анкет — вторым, а не вместо: сроки у них разные и заданы в

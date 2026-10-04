@@ -49,8 +49,9 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.json_column import json_column_load
-from src.dating.round import (round_day_count, round_mem_due,
-                            round_mem_mark, round_minutes)
+from datetime_.datetime_ import datetime_day_minutes
+from src.dating.round import (round_mem_due, round_mem_mark,
+                              round_sent_day)
 from src.dating.mail_send import (MAIL_SEND_TALK_TABLES, DatingMailSendError,
                                   DatingMailWaitError, mail_send_fail,
                                   mail_send_one)
@@ -106,7 +107,7 @@ async def send_round_run(offset_hours: int = 0) -> dict:
     if not sites:
         return {'sent': 0, 'failed': 0}
 
-    minutes = round_minutes(offset_hours)
+    minutes = datetime_day_minutes(offset_hours)
     sent = failed = waited = 0
     # Был ли за этот заход поход к сайту: по нему решается пауза перед следующим
     # пулом (см. `SEND_ROUND_GAP_SEC`).
@@ -211,7 +212,7 @@ async def send_why(site_id: int, table: str, offset_hours: int = 0) -> str:
             return f'отправка {said} выключена'
 
         if not schedule_now(json_column_load(site['mailing_schedule']),
-                            round_minutes(offset_hours)):
+                            datetime_day_minutes(offset_hours)):
             return 'сейчас не смена: письма уходят по часам, заданным у сайта'
 
         if table == 'mailing':
@@ -511,7 +512,7 @@ async def _send(letter: dict, table: str) -> str:
 
 
 async def _today(site_id: int, offset_hours: int = 0) -> int:
-    """Сколько писем рассылки ушло за сегодня. Правило общее — `round_day_count`.
+    """Сколько писем рассылки ушло за сегодня. Правило общее — `round_sent_day`.
 
     ⚠ Считает **только рассылку**: норма `send_max_day` отныне её собственная,
     и соседние пулы её не едят — у ответов и писем избранным свои пределы
@@ -520,8 +521,8 @@ async def _today(site_id: int, offset_hours: int = 0) -> int:
     ⚠ Сомнение — в сторону молчания: неизвестный потолок считают выбранным,
     а лишнее письмо отменить нельзя.
     """
-    return await round_day_count('mailing', site_id, offset_hours, 10 ** 6,
-                                 'отправки')
+    return await round_sent_day('mailing', site_id, offset_hours, 10 ** 6,
+                                'отправки')
 async def _every(site_id: int, setting: str) -> int:
     """Пауза этого пула, в секундах.
 

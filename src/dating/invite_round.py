@@ -72,7 +72,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from redis_.redis_ import redis_conn_get
 
 from src.dating.feed import feed_write
-from src.dating.round import (pool_round_run, round_slot_due,
+from src.dating.round import (round_sites_run, round_slot_due,
                             round_slot_mark)
 from src.dating.pool import pool_sweep, pool_sweep_answered, pool_sweep_away
 from src.dating.invite import (INVITE_POOL_DEFAULT,
@@ -89,7 +89,7 @@ INVITE_ROUND_TICK_SEC = 60
 INVITE_EVERY_SETTING = 'invite_every'
 
 # Отметка «этому сайту только что набирали». В Redis — переживает смену держателя.
-INVITE_ROUND_KEY = 'dating:invite:round:{site_id}'
+INVITE_ROUND_KEY = 'dating:invite:round:{id}'
 
 # Сколько держать строки инвайтов. Часами; ноль — не удалять.
 INVITE_CLEAN_SETTING = 'invite_clean_hours'
@@ -99,7 +99,7 @@ INVITE_CLEAN_SETTING = 'invite_clean_hours'
 # набор молчит. Десять минут: удаление стоит одного запроса, а держать таблицу
 # точнее незачем.
 INVITE_ROUND_CLEAN_EVERY = 600
-INVITE_ROUND_CLEAN_KEY = 'dating:invite:clean:{site_id}'
+INVITE_ROUND_CLEAN_KEY = 'dating:invite:clean:{id}'
 
 
 async def invite_round_run(offset: int = 0) -> dict:
@@ -124,7 +124,7 @@ async def invite_round_run(offset: int = 0) -> dict:
     """
     sites = await _sites()
     ran = made = skipped = 0
-    for _, c in await pool_round_run(sites, offset_hours=offset, gate=_gate,
+    for _, c in await round_sites_run(sites, offset_hours=offset, gate=_gate,
                                     every=_every, work=_work,
                                     key=INVITE_ROUND_KEY, what='инвайтам'):
         if c is not None:

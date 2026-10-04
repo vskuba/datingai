@@ -58,8 +58,9 @@ from src.dating.mailing import (MAILING_BATCH_MAX,
                                        mailing_make,
                                        mailing_templates)
 from src.dating.schedule import schedule_now
-from src.dating.round import (pool_round_run, round_minutes, round_slot_due,
-                            round_slot_mark, round_slot_release)
+from datetime_.datetime_ import datetime_day_minutes
+from src.dating.round import (round_sites_run, round_slot_due,
+                              round_slot_mark, round_slot_release)
 
 # Как часто круг просыпается. Минута — как у расписания анкет: смены заданы с
 # точностью до четверти часа, и чаще смотреть нечего.
@@ -91,7 +92,7 @@ MAILING_POOL_MAX = 500
 MAILING_POOL_SETTING = 'mailing_pool_max'
 
 # Отметка «этому сайту только что набирали». Живёт ровно свой срок и гаснет сама.
-MAILING_ROUND_KEY = 'dating:mailing:round:{site_id}'
+MAILING_ROUND_KEY = 'dating:mailing:round:{id}'
 
 
 async def mailing_round_run(offset_hours: int = 0) -> dict:
@@ -107,7 +108,7 @@ async def mailing_round_run(offset_hours: int = 0) -> dict:
     """
     sites = await _sites()
     ran = made = 0
-    for _, result in await pool_round_run(sites, offset_hours=offset_hours,
+    for _, result in await round_sites_run(sites, offset_hours=offset_hours,
                                          gate=_gate, every=_every, work=_work,
                                          key=MAILING_ROUND_KEY, what='рассылке'):
         if result is not None:

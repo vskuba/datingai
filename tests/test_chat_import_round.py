@@ -10,6 +10,9 @@
 
 import pytest
 
+from round_ import round_slot as slot
+from round_.round_slot import round_slot_key
+
 from src.dating import chat_hold as hold
 
 pytestmark = pytest.mark.chat
@@ -65,7 +68,10 @@ def round_(monkeypatch):
     monkeypatch.setattr(hold, '_chat_sites', _sites)
     monkeypatch.setattr(hold, 'site_seconds', _seconds)
     monkeypatch.setattr(hold, 'chat_panel_import', _import)
-    monkeypatch.setattr(hold, 'redis_conn_get', lambda: state['redis'])
+    # ⚠ Redis подменяем **в модуле слоя**: слот круга переехал в `round_/`, а
+    # `chat_hold` зовёт его через нашу дверь. Подмена в `hold` после переезда не
+    # делала бы ничего — тест зеленел бы на любом поведении отметки.
+    monkeypatch.setattr(slot, 'redis_conn_get', lambda: state['redis'])
 
     return state
 
@@ -102,8 +108,8 @@ class TestSchedule:
         """
         await hold._chat_import_round()
 
-        assert round_['redis'].ttl[hold.CHAT_IMPORT_KEY.format(site_id=SITE)] == 300
-        assert round_['redis'].ttl[hold.CHAT_IMPORT_KEY.format(site_id=OTHER)] == 3600
+        assert round_['redis'].ttl[round_slot_key(hold.CHAT_IMPORT_KEY, SITE)] == 300
+        assert round_['redis'].ttl[round_slot_key(hold.CHAT_IMPORT_KEY, OTHER)] == 3600
 
     async def test_expired_mark_lets_it_through(self, round_):
         """Отметка погасла — забираем снова. Так круг и работает: ключа нет
@@ -120,7 +126,7 @@ class TestSchedule:
         """Свой срок у каждого сайта: одному хватает часа, другому нужны пять минут."""
         await hold._chat_import_round()
         # Гасим отметку только у одного — второй должен остаться пропущенным.
-        round_['redis'].store.pop(hold.CHAT_IMPORT_KEY.format(site_id=SITE))
+        round_['redis'].store.pop(round_slot_key(hold.CHAT_IMPORT_KEY, SITE))
         round_['imported'].clear()
 
         await hold._chat_import_round()
@@ -272,7 +278,7 @@ class TestFailuresDoNotStopTheRound:
         seen = {}
 
         async def _import(site_id, days):
-            key = hold.CHAT_IMPORT_KEY.format(site_id=site_id)
+            key = round_slot_key(hold.CHAT_IMPORT_KEY, site_id)
             seen[int(site_id)] = round_['redis'].store.get(key)
 
             return {'status': 'ok', 'added': 0, 'contacts': 0, 'error': ''}

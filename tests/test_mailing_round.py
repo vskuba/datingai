@@ -26,6 +26,9 @@ pytestmark = pytest.mark.mail
 
 
 # Помощники круга переехали в общую обвязку — тесты зовут её теми же именами.
+from datetime_.datetime_ import datetime_day_minutes
+from round_ import round_slot as slot
+from round_.round_slot import round_slot_key
 from src.dating import round as engine
 
 
@@ -36,7 +39,7 @@ def _due(site_id):
 def _mark(site_id, every):
     engine.round_slot_mark(MAILING_ROUND_KEY, site_id, every, 'рассылке')
 
-_minutes_now = engine.round_minutes
+_minutes_now = datetime_day_minutes
 
 # Выдуманный сайт: у соседа его нет, живую рассылку задеть невозможно.
 SITE = 999_777
@@ -135,7 +138,11 @@ def clean_mark(monkeypatch):
     следующие видят «ещё не пора».
     """
     fake = _FakeRedis()
-    monkeypatch.setattr(engine, 'redis_conn_get', lambda: fake)
+    # ⚠ Redis подменяется **в модуле слоя**: отметка захода переехала в
+    # `py_modules/round_/round_slot.py`, а `src/dating/round.py` её лишь
+    # ре-экспортирует. Подмена в двери переставила бы её ссылку, оставив код
+    # слоя при своей, — и тест зеленел бы, ничего не проверяя.
+    monkeypatch.setattr(slot, 'redis_conn_get', lambda: fake)
 
     return fake
 
@@ -349,14 +356,14 @@ class TestHowOften:
         _mark(SITE, 1800)
 
         assert not _due(SITE)
-        assert clean_mark.ttl[MAILING_ROUND_KEY.format(site_id=SITE)] == 1800
+        assert clean_mark.ttl[round_slot_key(MAILING_ROUND_KEY, SITE)] == 1800
 
     async def test_mark_life_is_never_zero(self, clean_mark):
         """Ноль или мусор в настройке — ключ всё равно живёт: вечная отметка хуже,
         но и мгновенная означала бы набор на каждом тике."""
         _mark(SITE, 0)
 
-        assert clean_mark.ttl[MAILING_ROUND_KEY.format(site_id=SITE)] >= 1
+        assert clean_mark.ttl[round_slot_key(MAILING_ROUND_KEY, SITE)] >= 1
 
     async def test_default_is_half_an_hour(self):
         """Умолчание — полчаса: за это время лента онлайна успевает смениться
@@ -554,7 +561,15 @@ class TestRedisFailure:
         def broken():
             raise RuntimeError('redis лежит')
 
-        monkeypatch.setattr(engine, 'redis_conn_get', broken)
+        # ⚠ Redis подменяется **в модуле слоя**: отметка захода переехала в
+
+        # `py_modules/round_/round_slot.py`, а `src/dating/round.py` её лишь
+
+        # ре-экспортирует. Подмена в двери переставила бы её ссылку, оставив код
+
+        # слоя при своей, — и тест зеленел бы, ничего не проверяя.
+
+        monkeypatch.setattr(slot, 'redis_conn_get', broken)
 
         assert _due(SITE) is False
 

@@ -27,6 +27,7 @@ import pytest
 
 from src.dating import (heartbeat_round, online_round, panel_round,
                         profile_page, schedule_round)
+from round_ import round_slot as slot
 from src.dating import round as engine
 
 pytestmark = pytest.mark.profile
@@ -43,14 +44,20 @@ class TestTheLocalMinutesAgreeBetweenRounds:
 
     @pytest.mark.parametrize('offset', [-11, -3, 0, 2, 3, 5, 12])
     def test_both_rounds_give_the_same_minute(self, offset):
-        assert (heartbeat_round.round_minutes(offset)
-                == schedule_round.round_minutes(offset)), \
+        # ⚠ После переезда в слой это **одна и та же** функция у обоих кругов, и
+        # проверка стала проверкой того, что её не завели себе заново: своя
+        # копия расчёта здесь уже жила дважды и расходилась.
+        assert (heartbeat_round.datetime_day_minutes(offset)
+                == schedule_round.datetime_day_minutes(offset)), \
             f'на поясе {offset:+} круги разошлись в местном времени'
+        assert (heartbeat_round.datetime_day_minutes
+                is schedule_round.datetime_day_minutes), \
+            'у круга появился свой расчёт местных минут вместо общего'
 
     def test_the_offset_shifts_by_whole_hours(self):
         """Пояс +3 отличается от +0 ровно на 180 минут по кругу суток."""
-        base = heartbeat_round.round_minutes(0)
-        shifted = heartbeat_round.round_minutes(3)
+        base = heartbeat_round.datetime_day_minutes(0)
+        shifted = heartbeat_round.datetime_day_minutes(3)
 
         assert (shifted - base) % (24 * 60) == 180, \
             f'сдвиг {shifted - base} минут вместо 180'
@@ -58,7 +65,7 @@ class TestTheLocalMinutesAgreeBetweenRounds:
     def test_the_minute_is_inside_a_day(self):
         """⚠ Значение — минуты **внутри** суток: расписание сверяет его со сменой."""
         for offset in (-12, 0, 14):
-            got = heartbeat_round.round_minutes(offset)
+            got = heartbeat_round.datetime_day_minutes(offset)
 
             assert 0 <= got < 24 * 60, f'пояс {offset:+} дал {got} минут'
 
@@ -111,13 +118,18 @@ class TestThePanelDoubtsTowardsSilence:
     Лишний заход может кончиться входом сценарием, то есть вкладкой Chromium у
     соседа; пропущенный — задержкой в пять минут. Поэтому сбой Redis обязан читаться
     как «не пора», а не как «пора».
+
+    ⚠ Правило живёт в общем слое (`round_/round_slot.py`), и подменять Redis надо
+    **там**: `src.dating.round` его только ре-экспортирует, и подмена в двери
+    переставила бы её ссылку, оставив код слоя при своей. Зовём при этом через
+    дверь — заодно проверяется, что ре-экспорт ведёт к работающей функции.
     """
 
     def test_a_broken_redis_means_not_due(self, monkeypatch):
         def _boom():
             raise RuntimeError('Redis лёг')
 
-        monkeypatch.setattr(engine, 'redis_conn_get', _boom)
+        monkeypatch.setattr(slot, 'redis_conn_get', _boom)
 
         assert engine.round_slot_due(panel_round.PANEL_ROUND_KEY, 4242,
                             'панели') is False, \
@@ -129,7 +141,7 @@ class TestThePanelDoubtsTowardsSilence:
         def _boom():
             raise RuntimeError('Redis лёг')
 
-        monkeypatch.setattr(engine, 'redis_conn_get', _boom)
+        monkeypatch.setattr(slot, 'redis_conn_get', _boom)
 
         engine.round_slot_mark(panel_round.PANEL_ROUND_KEY, 4242, 300, 'панели')
 
@@ -148,7 +160,7 @@ class TestThePanelDoubtsTowardsSilence:
             def get(self, key):
                 return None
 
-        monkeypatch.setattr(engine, 'redis_conn_get', lambda: _Fake())
+        monkeypatch.setattr(slot, 'redis_conn_get', lambda: _Fake())
         engine.round_slot_mark(panel_round.PANEL_ROUND_KEY, 4242, 300, 'панели')
 
         assert said['term'] == 300, f'срок отметки {said.get("term")} вместо 300'
@@ -166,7 +178,7 @@ class TestThePanelDoubtsTowardsSilence:
             def get(self, key):
                 return None
 
-        monkeypatch.setattr(engine, 'redis_conn_get', lambda: _Fake())
+        monkeypatch.setattr(slot, 'redis_conn_get', lambda: _Fake())
         engine.round_slot_mark(panel_round.PANEL_ROUND_KEY, 4242, 0, 'панели')
 
         assert said['term'] >= 1, 'срок отметки нулевой — Redis её не примет'

@@ -38,7 +38,7 @@ from src.dating.panel import (panel_every, panel_keep,
 PANEL_ROUND_TICK_SEC = 60
 
 # Отметка «эту панель только что спрашивали». В Redis — переживает смену держателя.
-PANEL_ROUND_KEY = 'dating:panel:round:{site_id}'
+PANEL_ROUND_KEY = 'dating:panel:round:{id}'
 
 
 async def panel_round_run() -> dict:

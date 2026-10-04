@@ -85,7 +85,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.json_column import json_column_load
-from src.dating.round import (pool_round_run, round_slot_due,
+from src.dating.round import (round_sites_run, round_slot_due,
                             round_slot_mark)
 from src.dating.mail import MAIL_NAME_MAX
 from src.dating.mail_agent import DatingMailAgentError, mail_write
@@ -103,7 +103,7 @@ MAIL_ROUND_TICK_SEC = 60
 MAIL_ROUND_EVERY_SEC = 3600
 
 # Отметка «этому сайту только что писали». Живёт свой срок и гаснет сама.
-MAIL_ROUND_KEY = 'dating:mail:round:{site_id}'
+MAIL_ROUND_KEY = 'dating:mail:round:{id}'
 
 # Сколько заготовок в сутки, если настройки сайта нет.
 MAIL_ROUND_PER_DAY = 3
@@ -145,7 +145,7 @@ async def mail_round_run(offset_hours: int = 0) -> dict:
     """
     sites = await _sites()
     made = gone = 0
-    for _, counters in await pool_round_run(sites, offset_hours=offset_hours,
+    for _, counters in await round_sites_run(sites, offset_hours=offset_hours,
                                            gate=_gate, every=_every,
                                            work=lambda site, _m: _work(site, offset_hours),
                                            key=MAIL_ROUND_KEY, what='шаблонам'):

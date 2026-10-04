@@ -48,7 +48,7 @@ import asyncio
 from logging_.logging_ import logger_info
 
 from src.dating.feed import feed_done, feed_write
-from src.dating.round import (pool_round_run, round_slot_due,
+from src.dating.round import (round_sites_run, round_slot_due,
                             round_slot_mark)
 from mysql_.mysql_ import mysql_get_db_async
 
@@ -67,7 +67,7 @@ MAIL_IN_EVERY_DEFAULT = 300
 MAIL_IN_EVERY_SETTING = 'mail_check_every'
 
 # Отметка «на этот сайт только что ходили». В Redis — переживает смену держателя.
-MAIL_IN_ROUND_KEY = 'dating:mail_in:round:{site_id}'
+MAIL_IN_ROUND_KEY = 'dating:mail_in:round:{id}'
 
 # Пауза между анкетами одного сайта. ⚠ Не вежливость, а осторожность: тринадцать
 # входов в одну секунду сайт считает подозрением, а блокировка стоит анкеты. Та же
@@ -85,7 +85,7 @@ async def mail_in_round_run() -> dict:
     """
     sites = await _sites()
     ran = seen = added = failed = 0
-    for _, c in await pool_round_run(sites, gate=_gate, every=_every, work=_work,
+    for _, c in await round_sites_run(sites, gate=_gate, every=_every, work=_work,
                                     key=MAIL_IN_ROUND_KEY, what='письмам'):
         if c is not None:
             ran += c['sites']

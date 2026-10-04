@@ -19,6 +19,17 @@
 | отказ круга — в журнал, смена продолжается | у соседа бывает перезапуск; уронить смену дороже круга молчания |
 | пояс перечитывается **каждым** кругом | `timezone` правят на ходу, запомненный держал бы старое расписание шесть часов |
 
+## ⚠⚠ Подменять надо модуль **слоя**, а не нашу дверь
+
+Скелет круга переехал в `py_modules/round_/round_.py`; `src/dating/round.py` —
+проектная дверь, которая его ре-экспортирует. Поэтому `logger_exception` и
+`setting_get` подменяются **в слое**: подмена в двери переставила бы её ссылку,
+а код круга продолжил бы звать свою — и тест зеленел бы, ничего не проверяя.
+
+`asyncio.sleep` и `time.monotonic` — другое дело: они подменяются у самих
+модулей `asyncio` и `time`, то есть глобально, и через какую дверь к ним
+обращаться, неважно.
+
 ## ⚠ Время подделано, а не выжидается
 
 Сюита не может спать секундами: пятнадцать кругов по тику — это минуты на один
@@ -35,6 +46,7 @@ import asyncio
 
 import pytest
 
+from round_ import round_ as engine
 from src.dating import round as round_mod
 
 pytestmark = pytest.mark.core
@@ -53,8 +65,8 @@ def clock(monkeypatch):
         state['naps'].append(float(seconds))
         state['now'] += float(seconds)
 
-    monkeypatch.setattr(round_mod.asyncio, 'sleep', _sleep)
-    monkeypatch.setattr(round_mod.time, 'monotonic', lambda: state['now'])
+    monkeypatch.setattr(engine.asyncio, 'sleep', _sleep)
+    monkeypatch.setattr(engine.time, 'monotonic', lambda: state['now'])
 
     return state
 
@@ -147,7 +159,7 @@ class TestAFailingRoundDoesNotKillTheShift:
         def _exception(message, exc=None):
             said.append((message, exc))
 
-        monkeypatch.setattr(round_mod, 'logger_exception', _exception)
+        monkeypatch.setattr(engine, 'logger_exception', _exception)
 
         async def _body():
             raise ValueError('беда')
@@ -187,7 +199,7 @@ class TestTheTimezoneIsReadEveryRound:
 
             return '+3'
 
-        monkeypatch.setattr(round_mod, 'setting_get', _setting_get)
+        monkeypatch.setattr(engine, 'setting_get', _setting_get)
 
         runs = []
 
@@ -208,7 +220,7 @@ class TestTheTimezoneIsReadEveryRound:
         async def _setting_get(key, default=''):
             return '+5'
 
-        monkeypatch.setattr(round_mod, 'setting_get', _setting_get)
+        monkeypatch.setattr(engine, 'setting_get', _setting_get)
 
         got = []
 
@@ -231,7 +243,7 @@ class TestTheTimezoneIsReadEveryRound:
         async def _setting_get(key, default=''):
             return values.pop(0) if values else '+3'
 
-        monkeypatch.setattr(round_mod, 'setting_get', _setting_get)
+        monkeypatch.setattr(engine, 'setting_get', _setting_get)
 
         got = []
 

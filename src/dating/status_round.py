@@ -42,11 +42,10 @@
 меньше, чем сегодня, и не зависит от того, открыл ли кто-нибудь панель.
 """
 
-import time
-
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.round import round_mem_due, round_mem_mark
 from src.dating.status import status_probe_site
 
 # Как часто круг просыпается. ⚠ Это **не** частота опроса: её задаёт настройка
@@ -62,7 +61,7 @@ STATUS_ROUND_EVERY_DEFAULT = 60
 
 # Когда сайт опрашивали в последний раз: `{сайт: время}`. В памяти процесса, как у
 # круга присутствия: перезапуск смены — это лишний опрос, а не пропущенный, и
-# цена ошибки в эту сторону копеечная.
+# цена ошибки в эту сторону копеечная. Правило общее — `round_mem_*` слоя.
 _asked: dict[int, float] = {}
 
 
@@ -80,10 +79,11 @@ async def status_round_run() -> dict:
     sites = checked = online = 0
 
     for site_id in await _sites():
-        if time.time() - _asked.get(site_id, 0.0) < await _every(site_id):
+        if not round_mem_due(_asked, site_id, await _every(site_id)):
             continue
 
-        _asked[site_id] = time.time()
+        # ⚠ Отметку ставим **до** опроса: он идёт секундами, а тик пятнадцать.
+        round_mem_mark(_asked, site_id)
 
         got = await status_probe_site(site_id)
         if not got['ready']:

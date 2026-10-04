@@ -48,6 +48,8 @@ import time
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.round import round_sites_run
+
 # Как часто круг просыпается. Минута — как у прочих кругов смены: выдержка ленты
 # задана в секундах (обычно 120), и чаще смотреть нечего.
 #
@@ -66,20 +68,23 @@ async def online_round_run() -> dict:
     from src.uvicorn.routers.dating.people import (people_snap_due,
                                                           people_snap_start)
 
-    started = 0
     sites = await _sites()
 
-    for site_id in sites:
-        try:
-            if not await people_snap_due(site_id):
-                continue
+    async def _gate(site_id: int, minutes: int) -> bool:
+        """Пора ли этому сайту. ⚠ Своей выдержки у круга нет — см. заголовок."""
+        return await people_snap_due(site_id)
 
-            if await people_snap_start(site_id):
-                started += 1
-        except Exception as e:
-            # ⚠ Один сайт не должен ронять обход: у соседа бывает занят пул, у
-            # сайта — смениться вёрстка. Прочим это не мешает.
-            logger_info(f'[dating] лента сайта #{site_id}: {e}')
+    async def _work(site_id: int, minutes: int) -> bool:
+        """Заводит съём и не ждёт его — ровно как страница."""
+        return await people_snap_start(site_id)
+
+    # ⚠ `keep_going`: один сайт не должен ронять обход — у соседа бывает занят
+    # пул, у сайта смениться вёрстка, прочим это не мешает. ⚠ Слота круг не
+    # ставит (`key` пуст): выдержка живёт в кэше снимка, и вторая отметка рядом
+    # отвечала бы на тот же вопрос своим числом.
+    got = await round_sites_run(sites, gate=_gate, work=_work,
+                                what='ленты', keep_going=True)
+    started = sum(1 for _, taken in got if taken)
 
     if started:
         logger_info(f'[dating] круг ленты: обновляем {started} из {len(sites)}')

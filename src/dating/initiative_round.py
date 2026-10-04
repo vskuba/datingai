@@ -46,6 +46,7 @@ from src.dating.chat_initiative import (chat_initiative_failed,
 from src.dating.initiative import initiative_make
 from src.dating.pool import pool_sweep
 from src.dating.log import log_write
+from src.dating.round import round_sites_run
 from src.dating.online import online_check
 from src.dating.send import send_message
 from src.rhapsody.rhapsody_api import rhapsody_api_chat_delivered
@@ -70,36 +71,16 @@ async def initiative_round_run() -> dict:
     if not sites:
         return {'sites': 0, 'made': 0, 'sent': 0, 'stale': 0}
 
-    made = sent = stale = 0
+    # ⚠ `keep_going`: сайты здесь независимы, и отказ у одного (сосед занят,
+    # сайт сменил вёрстку) не повод не дойти до остальных. ⚠ Слота круг не
+    # ставит (`key` пуст): его тик и есть его срок — сроки инициативы считает
+    # сама пара, по времени своей последней реплики (`initiative.py`).
+    counted = await round_sites_run(sites, work=_work, what='инициативы',
+                                    keep_going=True)
 
-    for site_id, make, send in sites:
-        try:
-            # ⚠ Чистка идёт **всегда**, независимо от флагов: карточка, ставшая
-            # вредной, вредна и при снятой отправке — человек прочитает её в пуле
-            # и не поймёт, почему панель собралась писать тому, кто только что
-            # ответил сам.
-            stale += await _stale_clean(site_id)
-
-            # ⚠⚠ И карточки ушедших анкет — тем же общим сметальщиком, что у
-            # рассылки и фаворитов (`pool.py`). Зовём его **здесь**, а не
-            # полагаемся на соседние круги: те ходят по своим выключателям, и при
-            # снятой рассылке карточки инициативы от спящих девушек лежали бы в
-            # пуле, пока их кто-нибудь не увидит.
-            #
-            # ⚠ Тексты инициативы протухают быстрее прочих: приём жребия бывает
-            # «расскажи про свой день» или «спроси про планы на вечер». Пролежав
-            # до завтра, такая карточка врёт не тоном, а содержанием — и лучше
-            # сочинить заново, когда девушка вернётся.
-            stale += await pool_sweep(site_id)
-
-            if make:
-                got = await initiative_make(site_id, limit=INITIATIVE_ROUND_MAKE)
-                made += int(got.get('made') or 0)
-
-            if send:
-                sent += await _send(site_id)
-        except Exception as e:
-            logger_info(f'[dating] круг инициативы, сайт #{site_id}: {e}')
+    made = sum(int(one.get('made') or 0) for _, one in counted)
+    sent = sum(int(one.get('sent') or 0) for _, one in counted)
+    stale = sum(int(one.get('stale') or 0) for _, one in counted)
 
     if made or sent or stale:
         logger_info(f'[dating] инициатива: набрано {made}, отправлено {sent}, '
@@ -145,7 +126,8 @@ async def initiative_why(site_id: int) -> str:
         return ''
 
     try:
-        make = dict((one[0], one[1]) for one in await _sites()).get(site_id)
+        make = {int(one['site_id']): one['make']
+                for one in await _sites()}.get(site_id)
         if not make:
             return ('набор инициативы выключен: поднять — галочка «набор '
                     'инициативы» в карточке анкеты')
@@ -172,6 +154,50 @@ async def initiative_why(site_id: int) -> str:
         # Молчим: подсказка не обязана работать, когда не работает база. Пустая
         # строка означает «сказать нечего», а не «всё хорошо».
         return ''
+
+
+async def _work(site: dict, minutes: int) -> dict:
+    """Один сайт за заход: чистка, набор, отправка — в этом порядке.
+
+    Args:
+        site: строка `_sites` — номер и два флага.
+        minutes: местные минуты суток. Инициатива расписания не спрашивает,
+            довод приходит от захода слоя и здесь не нужен.
+
+    Returns:
+        dict: `made`, `sent`, `stale` — счётчики этого сайта.
+
+    ⚠ **Порядок именно такой.** Чисти мы протухшее после набора, круг успел бы
+    отправить карточку тому, кто ответил секунду назад, — а её текст сочинялся
+    под тишину и прозвучал бы мимо разговора.
+    """
+    site_id = int(site['site_id'])
+
+    # ⚠ Чистка идёт **всегда**, независимо от флагов: карточка, ставшая вредной,
+    # вредна и при снятой отправке — человек прочитает её в пуле и не поймёт,
+    # почему панель собралась писать тому, кто только что ответил сам.
+    stale = await _stale_clean(site_id)
+
+    # ⚠⚠ И карточки ушедших анкет — тем же общим сметальщиком, что у рассылки и
+    # фаворитов (`pool.py`). Зовём его **здесь**, а не полагаемся на соседние
+    # круги: те ходят по своим выключателям, и при снятой рассылке карточки
+    # инициативы от спящих девушек лежали бы в пуле, пока их кто-нибудь не
+    # увидит.
+    #
+    # ⚠ Тексты инициативы протухают быстрее прочих: приём жребия бывает
+    # «расскажи про свой день» или «спроси про планы на вечер». Пролежав до
+    # завтра, такая карточка врёт не тоном, а содержанием — и лучше сочинить
+    # заново, когда девушка вернётся.
+    stale += await pool_sweep(site_id)
+
+    made = 0
+    if site['make']:
+        got = await initiative_make(site_id, limit=INITIATIVE_ROUND_MAKE)
+        made = int(got.get('made') or 0)
+
+    return {'made': made,
+            'sent': await _send(site_id) if site['send'] else 0,
+            'stale': stale}
 
 
 async def _send(site_id: int) -> int:
@@ -251,8 +277,12 @@ async def _stale_clean(site_id: int) -> int:
     return gone
 
 
-async def _sites() -> list[tuple]:
-    """Сайты и их флаги: `(номер, набирать ли, отправлять ли)`.
+async def _sites() -> list[dict]:
+    """Сайты и их флаги: `site_id`, `make` — набирать ли, `send` — отправлять ли.
+
+    ⚠ Словарём, а не кортежем: единицу обхода заход слоя достаёт из `site_id`
+    (`round_sites_run`), и кортеж пришлось бы разбирать своим `unit_of` — то
+    есть заводить второе место, где сказано, чем сайт опознаётся.
 
     ⚠ Берём сайт, где поднят **хоть один** флаг: при снятом наборе и поднятой
     отправке круг доносит то, что уже лежит в пуле, — а это законный порядок
@@ -273,8 +303,10 @@ async def _sites() -> list[tuple]:
 
         return []
 
-    return [(int(row['site_id']), bool(row['chat_initiative_on']),
-             bool(row['chat_initiative_send_on'])) for row in (rows or [])]
+    return [{'site_id': int(row['site_id']),
+             'make': bool(row['chat_initiative_on']),
+             'send': bool(row['chat_initiative_send_on'])}
+            for row in (rows or [])]
 
 
 async def _profile(profile_id: int) -> dict:

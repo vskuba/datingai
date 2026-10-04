@@ -47,8 +47,8 @@ from src.dating.request import request_ms
 from src.dating.proxy import (proxy_enabled,
                                      proxy_required)
 from src.dating.schedule import schedule_now
-from src.dating.round import (round_mem_due, round_mem_mark,
-                            round_minutes)
+from datetime_.datetime_ import datetime_day_minutes
+from src.dating.round import round_mem_due, round_mem_mark
 
 # Как часто круг просыпается. ⚠ Это **не** период удара: бить чаще, чем задано
 # сайту, круг не станет — он смотрит, кому пора, и пропускает остальных. Пятнадцать
@@ -77,7 +77,7 @@ async def heartbeat_round_run(offset_hours: int = 0) -> dict:
     if not sites:
         return {'sites': 0, 'beaten': 0, 'failed': 0}
 
-    minutes = round_minutes(offset_hours)
+    minutes = datetime_day_minutes(offset_hours)
 
     # ⚠ **Клиент на выход, а не один на круг.** Раньше он был один: соединения к
     # тому же хосту переиспользовались, и тысяча анкет проходила одним пулом. Но

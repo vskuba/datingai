@@ -28,6 +28,8 @@ import uuid
 import pytest
 
 from src.dating import mail_round as round_
+from round_ import round_slot as slot
+from round_.round_slot import round_slot_key
 from src.dating import round as engine
 from src.dating.mail_round import (MAIL_ROUND_KEY,
                                           mail_round_run, _made_today,
@@ -421,7 +423,15 @@ class TestOrder:
             def setex(self, key, seconds, value):
                 self.store[key] = value
 
-        monkeypatch.setattr(engine, 'redis_conn_get', lambda: _Redis())
+        # ⚠ Redis подменяется **в модуле слоя**: отметка захода переехала в
+
+        # `py_modules/round_/round_slot.py`, а `src/dating/round.py` её лишь
+
+        # ре-экспортирует. Подмена в двери переставила бы её ссылку, оставив код
+
+        # слоя при своей, — и тест зеленел бы, ничего не проверяя.
+
+        monkeypatch.setattr(slot, 'redis_conn_get', lambda: _Redis())
 
         was = await _settings(auth_client, template_keep='2', template_per_day='3')
         try:
@@ -456,7 +466,15 @@ class TestOrder:
             def setex(self, key, seconds, value):
                 self.store[key] = value
 
-        monkeypatch.setattr(engine, 'redis_conn_get', lambda: _Redis())
+        # ⚠ Redis подменяется **в модуле слоя**: отметка захода переехала в
+
+        # `py_modules/round_/round_slot.py`, а `src/dating/round.py` её лишь
+
+        # ре-экспортирует. Подмена в двери переставила бы её ссылку, оставив код
+
+        # слоя при своей, — и тест зеленел бы, ничего не проверяя.
+
+        monkeypatch.setattr(slot, 'redis_conn_get', lambda: _Redis())
 
         was = await _settings(auth_client, template_keep='2', template_per_day='3')
         try:
@@ -548,7 +566,11 @@ class TestWhoIsTaken:
                 self.store[key] = value
 
         fake = _Redis()
-        monkeypatch.setattr(engine, 'redis_conn_get', lambda: fake)
+        # ⚠ Redis подменяется **в модуле слоя**: отметка захода переехала в
+        # `py_modules/round_/round_slot.py`, а `src/dating/round.py` её лишь
+        # ре-экспортирует. Подмена в двери переставила бы её ссылку, оставив код
+        # слоя при своей, — и тест зеленел бы, ничего не проверяя.
+        monkeypatch.setattr(slot, 'redis_conn_get', lambda: fake)
 
         return fake
 
@@ -582,7 +604,7 @@ class TestWhoIsTaken:
         следующий тик завёл бы вторую пачку поверх первой."""
         await mail_round_run(0)
 
-        assert clean_mark.get(MAIL_ROUND_KEY.format(site_id=SITE))
+        assert clean_mark.get(round_slot_key(MAIL_ROUND_KEY, SITE))
 
     async def test_broken_redis_stops_the_round(self, monkeypatch, site, clean, agent):
         """⚠ Сбой Redis решается в сторону бездействия: лишний заход — это вызовы
@@ -590,7 +612,15 @@ class TestWhoIsTaken:
         def broken():
             raise RuntimeError('redis лежит')
 
-        monkeypatch.setattr(engine, 'redis_conn_get', broken)
+        # ⚠ Redis подменяется **в модуле слоя**: отметка захода переехала в
+
+        # `py_modules/round_/round_slot.py`, а `src/dating/round.py` её лишь
+
+        # ре-экспортирует. Подмена в двери переставила бы её ссылку, оставив код
+
+        # слоя при своей, — и тест зеленел бы, ничего не проверяя.
+
+        monkeypatch.setattr(slot, 'redis_conn_get', broken)
 
         assert (await mail_round_run(0))['made'] == 0
         assert not agent
