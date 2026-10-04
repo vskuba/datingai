@@ -4140,6 +4140,10 @@
     // Загрузка селекта общая на весь раздел: ключ выбора у страниц один, и
     // разъехавшиеся копии писали бы в него разное.
     import {DATING_SITE_KEY, datingSiteFill, datingPanelPaint} from '{{ static_url('js/dating/site.js') }}';
+    // Два действия над пулом — убрать карточку и очистить пул. Пулов на
+    // странице четыре, и правила у этих действий общие: исчезнувшая карточка
+    // не отказ, а необратимое спрашивают (`pool.js`).
+    import {POOL_DROP_FAILED, poolClear, poolDrop} from '{{ static_url('js/dating/pool.js') }}';
 
     const BASE = '{{ base }}';
 
@@ -4811,8 +4815,8 @@
         // «Очистить пул» — узел шаблона, живёт до смены сайта. ⚠ В отличие от
         // крестиков на карточках: те пересобираются вместе с пулом, и их
         // обработчики вешаются в `mailPoolPaint`.
-        const poolClear = workEl.querySelector('[data-slot="mail-pool-clear"]');
-        if (poolClear) poolClear.addEventListener('click', mailPoolClear);
+        const poolClearBtn = workEl.querySelector('[data-slot="mail-pool-clear"]');
+        if (poolClearBtn) poolClearBtn.addEventListener('click', mailPoolClear);
 
         const mailHelp = workEl.querySelector('[data-slot="mail-help"]');
         if (mailHelp) mailHelp.addEventListener('click', mailHelpShow);
@@ -6728,13 +6732,10 @@
         const one = invitePool[index];
         if (!one) return;
 
-        try {
-            await deleteData(`${BASE}/api/dating/invite/${one.id}`);
-        } catch (e) {
-            showNotification('Не убралось: ' + e.message, 'error');
-
-            return;
-        }
+        // ⚠ Исчезнувшая карточка — не отказ, а рассинхрон: правило общее
+        // (`poolDrop`), и прежде его знал только пул инициативы.
+        const got = await poolDrop(`${BASE}/api/dating/invite/${one.id}`);
+        if (got === POOL_DROP_FAILED) return;
 
         invitePool = invitePool.filter(row => row.id !== one.id);
         // Карточку убрали — пул стал меньше на одну. ⚠ Считаем сами, а не ждём
@@ -6790,15 +6791,18 @@
         const site = siteId();
         if (!site) return;
 
-        try {
-            const got = (await deleteData(
-                `${BASE}/api/dating/invite?site_id=${site}`)).result || {};
-            showNotification(`Убрано из пула: ${got.dropped || 0}`, 'success');
-        } catch (e) {
-            showNotification('Пул не очистился: ' + e.message, 'error');
+        // ⚠ Спрашиваем перед необратимым: черновики сочиняются заново и стоят
+        // вызовов модели. Прежде инвайты очищались по одному нажатию — вопрос
+        // задавал только пул рассылки, хотя дело у всех трёх одно.
+        const drafts = inviteDrafts().length;
+        if (!drafts) return;
 
-            return;
-        }
+        const got = await poolClear(
+            `${BASE}/api/dating/invite?site_id=${site}`,
+            `Убрать из пула ${drafts} ${_cardsWord(drafts)}?\n\n`
+            + 'Отправленные останутся. Восстановить убранное нельзя — '
+            + 'только набрать пул заново.');
+        if (got === null) return;
 
         await inviteLoad();
     }
@@ -8089,13 +8093,8 @@
         const one = favMailPool[index];
         if (!one) return;
 
-        try {
-            await deleteData(`${BASE}/api/dating/favorite-mail/${one.id}`);
-        } catch (e) {
-            showNotification('Не убралось: ' + e.message, 'error');
-
-            return;
-        }
+        const got = await poolDrop(`${BASE}/api/dating/favorite-mail/${one.id}`);
+        if (got === POOL_DROP_FAILED) return;
 
         favMailPool = favMailPool.filter(row => row.id !== one.id);
         favMailPaint();
@@ -8134,15 +8133,15 @@
         const site = siteId();
         if (!site) return;
 
-        try {
-            const got = (await deleteData(
-                `${BASE}/api/dating/favorite-mail?site_id=${site}`)).result || {};
-            showNotification(`Убрано из пула: ${got.dropped || 0}`, 'success');
-        } catch (e) {
-            showNotification('Пул не очистился: ' + e.message, 'error');
+        const drafts = favMailDrafts().length;
+        if (!drafts) return;
 
-            return;
-        }
+        const got = await poolClear(
+            `${BASE}/api/dating/favorite-mail?site_id=${site}`,
+            `Убрать из пула ${drafts} ${_lettersWord(drafts)}?\n\n`
+            + 'Отправленные останутся. Восстановить убранное нельзя — '
+            + 'только сгенерировать заново.');
+        if (got === null) return;
 
         await favMailLoad();
     }
@@ -9166,22 +9165,14 @@
         const row = mailReply[index];
         if (!row) return;
 
-        if (!confirm(`Убрать ответ ${row.girl} → ${row.name || row.uid} из пула?\n\n`
-            + 'Письмо останется, и ответ можно написать заново.')) {
-            return;
-        }
-
-        try {
-            await deleteData(`${BASE}/api/dating/mail-in/reply/${row.id}`);
-        } catch (e) {
-            showNotification('Не убралось: ' + e.message, 'error');
-
-            return;
-        }
+        const got = await poolDrop(
+            `${BASE}/api/dating/mail-in/reply/${row.id}`,
+            `Убрать ответ ${row.girl} → ${row.name || row.uid} из пула?\n\n`
+            + 'Письмо останется, и ответ можно написать заново.');
+        if (got === POOL_DROP_FAILED) return;
 
         mailReply.splice(index, 1);
         replyShown(box);
-        showNotification('Ответ убран из пула', 'info');
     }
 
     // Отправляет один ответ.
@@ -10453,23 +10444,15 @@
         const row = list[index];
         if (!row) return;
 
-        if (!confirm(`Убрать письмо ${row.girl} → ${row.name || row.uid} из пула?`)) {
-            return;
-        }
-
-        try {
-            await deleteData(`${BASE}/api/dating/mailing/${row.id}`);
-        } catch (e) {
-            showNotification('Не убралось: ' + e.message, 'error');
-
-            return;
-        }
+        const got = await poolDrop(
+            `${BASE}/api/dating/mailing/${row.id}`,
+            `Убрать письмо ${row.girl} → ${row.name || row.uid} из пула?`);
+        if (got === POOL_DROP_FAILED) return;
 
         list.splice(index, 1);
         if (list === mailPool) mailPoolPaint();
         else if (list === mailSent) mailSentPaint();
         if (box) box.remove();
-        showNotification('Письмо убрано из пула', 'info');
     }
 
     // Отправляет одно письмо — то, на значок которого нажали.
@@ -10531,29 +10514,32 @@
         const drafts = mailPool.filter(row => row.status === 'draft').length;
         if (!drafts) return;
 
-        if (!confirm(`Убрать из пула ${drafts} ${_lettersWord(drafts)}?\n\n`
-            + 'Отправленные останутся. Восстановить убранное нельзя — '
-            + 'только сгенерировать заново.')) {
-            return;
-        }
-
         const site = siteId();
-        try {
-            const answer = await deleteData(
-                `${BASE}/api/dating/mailing?site_id=${site}`);
-            showNotification(
-                `Пул очищен: убрано ${(answer.result || {}).dropped || 0}`, 'info');
-        } catch (e) {
-            showNotification('Пул не очистился: ' + e.message, 'error');
-
-            return;
-        }
+        const got = await poolClear(
+            `${BASE}/api/dating/mailing?site_id=${site}`,
+            `Убрать из пула ${drafts} ${_lettersWord(drafts)}?\n\n`
+            + 'Отправленные останутся. Восстановить убранное нельзя — '
+            + 'только сгенерировать заново.');
+        if (got === null) return;
 
         // Гонка: пока шёл запрос, могли выбрать другой сайт — рисовать чужой пул
         // ответом на чужую очистку нельзя.
         if (siteId() !== site) return;
 
         await mailPoolLoad();
+    }
+
+    // «реплику / реплики / реплик» — по числу, тем же приёмом, что у писем
+    // ниже: «убрать 1 реплик» читается как поломка там, где нужно доверие.
+    function _cardsWord(n) {
+        const two = n % 100;
+        if (two >= 11 && two <= 14) return 'реплик';
+
+        const one = n % 10;
+        if (one === 1) return 'реплику';
+        if (one >= 2 && one <= 4) return 'реплики';
+
+        return 'реплик';
     }
 
     // «письмо / письма / писем» — по числу. Мелочь, но «убрать 1 писем» читается
@@ -11105,33 +11091,11 @@
                 const one = initiativePool[Number(el.dataset.index)];
                 if (!one) return;
 
-                try {
-                    await deleteData(`${BASE}/api/dating/chat-initiative/${one.id}`);
-                } catch (err) {
-                    // ⚠⚠ **«Карточки нет» — это не отказ, а рассинхрон.** Пул
-                    // живёт своей жизнью: карточку уносит отправка или чистка
-                    // пулов, когда у анкеты кончается смена. Человек в этот
-                    // момент смотрит на список, набранный минуту назад, и жмёт
-                    // «×» по тому, чего уже нет.
-                    //
-                    // Цель его при этом **достигнута** — карточки в пуле нет, —
-                    // и красная ошибка про несуществующий номер только пугает.
-                    // Сообщаем мягко и перечитываем список.
-                    // ⚠ По коду, а не по тексту: формулировку в роутере
-                    // однажды поправят, и примета по словам замолчит. Текст
-                    // оставлен запасным — вкладка могла не перечитать `api.js`.
-                    const gone = err.status === 404
-                        || /карточки #\d+ нет/.test(String(err.message || ''));
-
-                    showNotification(
-                        gone ? 'Карточка уже ушла из пула — список обновлён'
-                             : err.message,
-                        gone ? 'info' : 'error');
-                    initiativeLoad();
-
-                    return;
-                }
-
+                // ⚠ Правило «исчезнувшая карточка — не отказ» живёт в
+                // `poolDrop` (`pool.js`): оно одно на все пулы, и здесь было
+                // написано первым. Список перечитываем в любом исходе — пул
+                // живёт своей жизнью, и разъехаться мог не только этот ряд.
+                await poolDrop(`${BASE}/api/dating/chat-initiative/${one.id}`);
                 initiativeLoad();
             }));
     }

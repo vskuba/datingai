@@ -500,16 +500,33 @@ class TestTheColumnKeepsUp:
         assert '!openId' in chat, 'условие круга чата изменилось — проверьте вывод'
 
     def test_a_vanished_card_is_not_an_error(self):
-        """⚠⚠ «Карточки нет» — рассинхрон, а не отказ: цель человека достигнута."""
+        """⚠⚠ «Карточки нет» — рассинхрон, а не отказ: цель человека достигнута.
+
+        ⚠ Примета сменилась вместе с устройством, а правило — нет. Прежде она
+        искала `err.status === 404` **внутри** `initiativeBind`: правило знал
+        один обработчик из пяти, и стеречь его можно было только по месту.
+        Теперь оно живёт в `poolDrop` (`js/dating/pool.js`) — одно на все пулы,
+        — и проверка стала строже: стережёт не это место, а то, что правило
+        вообще где-то есть и что пул инициативы им пользуется.
+
+        Трое соседей, кстати, его не знали и показывали красную ошибку там, где
+        у человека всё получилось.
+        """
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parents[1]
+        mod = (root / 'data/uvicorn/public/js/dating/pool.js').read_text(
+            encoding='utf-8')
+
+        assert 'e.status === 404' in mod, \
+            'исчезнувшая карточка всё ещё показывается красной ошибкой'
+        assert 'POOL_DROP_GONE' in mod, 'исход «её уже не было» неотличим от удачи'
+
         page = self._page()
-        # ⚠ Ищем **обработчик пула инициативы**, а не первое вхождение `mail-card-drop`:
-        # тем же классом подписана кнопка у трёх соседних пулов, и первое совпадение
-        # приходится на общее правило CSS.
         block = page[page.index('function initiativeBind('):]
         block = block[:block.index('\n    }')]
 
-        assert 'err.status === 404' in block, \
-            'исчезнувшая карточка всё ещё показывается красной ошибкой'
+        assert 'poolDrop(' in block, 'пул инициативы снова удаляет своей рукой'
         assert 'initiativeLoad();' in block, 'список после отказа не перечитывается'
 
     def test_the_status_code_reaches_the_page(self):
