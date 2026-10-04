@@ -13,6 +13,7 @@ import asyncio
 
 import pytest
 
+from shift_ import shift_
 from src.worker.dating import chat_worker
 
 pytestmark = pytest.mark.chat
@@ -63,8 +64,15 @@ def worker(monkeypatch):
     redis = _FakeRedis()
     queue = _FakeQueue()
 
-    monkeypatch.setattr(chat_worker, 'redis_conn_get', lambda: redis)
-    monkeypatch.setattr(chat_worker, 'redis_queue_get', lambda name: queue)
+    # ⚠ Подменяем **в слое**: механика смены уехала в `shift_.shift_`, и
+    # подмена по месту прежнего жительства не действовала бы вовсе — тест
+    # зеленел бы, молча ходя в живой Redis. Правило общее: патчить там, где
+    # имя читают, а не там, где оно когда-то лежало.
+    monkeypatch.setattr(shift_, 'redis_conn_get', lambda: redis)
+    monkeypatch.setattr(shift_, 'redis_queue_get', lambda name: queue)
+
+    # ⚠ А шаг сторожа — у нас: он довод проекта, и слой получает его вызовом.
+    # Патч действует, потому что число читается в момент `chat_worker_recover`.
     monkeypatch.setattr(chat_worker, 'CHAT_WORKER_KEEP_STEP', 0.01)
 
     # ⚠ Сторож от прошлого теста не должен доживать до этого: он бесконечный, и
@@ -231,7 +239,7 @@ class TestRedisFailure:
             def delete(self, key):
                 raise RuntimeError('redis лёг')
 
-        monkeypatch.setattr(chat_worker, 'redis_conn_get', lambda: _Broken())
+        monkeypatch.setattr(shift_, 'redis_conn_get', lambda: _Broken())
 
         await chat_worker.chat_worker_recover()
 
@@ -245,7 +253,7 @@ class TestRedisFailure:
             def enqueue(self, *args, **kwargs):
                 raise RuntimeError('очередь недоступна')
 
-        monkeypatch.setattr(chat_worker, 'redis_queue_get', lambda name: _Broken())
+        monkeypatch.setattr(shift_, 'redis_queue_get', lambda name: _Broken())
 
         with pytest.raises(RuntimeError):
             chat_worker.chat_worker_enqueue()
