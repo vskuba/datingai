@@ -13,11 +13,11 @@ single-flight, и лишний вызов просто ничего не дел�
 
 Очередь одна (`dating`) и других в проекте нет: работа здесь одна — держать сокеты.
 
-## ⚠⚠ Устройство смены — в общем слое `py_modules/shift_/`
+## ⚠⚠ Устройство смены — в общем слое `py_modules/worker_/`
 
 Замок с коротким сроком, продление изнутри job'а, постоянный сторож, самопостановка
-следующей смены, закрытие пула MySQL — всё это `shift_.shift_`, страница
-`.claude/docs-common/shift.md`. Здесь остаётся только наше: чем занята смена
+следующей смены, закрытие пула MySQL — всё это `worker_.worker_shift`, страница
+`.claude/docs-common/worker_shift.md`. Здесь остаётся только наше: чем занята смена
 (`chat_hold_run`), её имена и сроки.
 
 Своей копии этой механики тут больше нет. Она была, и оказалась дублем соседнего
@@ -37,8 +37,8 @@ single-flight, и лишний вызов просто ничего не дел�
 """
 import asyncio
 
-from shift_.shift_ import (shift_enqueue, shift_keep_start, shift_keep_stop,
-                           shift_run)
+from worker_.worker_shift import (worker_shift_enqueue, worker_shift_keep,
+                                  worker_shift_keep_stop, worker_shift_run)
 
 from src.dating.chat_hold import chat_hold_run
 
@@ -66,7 +66,14 @@ CHAT_WORKER_KEEP_STEP = 30
 
 # Ключ замка. Имя своё у каждой установки: один ключ на двоих означал бы, что
 # смена одного проекта запирает смену другого.
-_FLIGHT_KEY = 'chat_worker:flight'
+#
+# ⚠ **Значение остаётся `…:flight`, хотя замок в слое переименован в `lock`.**
+# Ключ лежит в живом Redis: идущая прямо сейчас смена держит именно его, и новый
+# код, искавший бы другое имя, не увидел бы её и поставил **вторую** — то есть
+# ровно то, от чего замок и заведён. Для чата это два держателя одной учётки, а
+# сайт вышибает оба. Переименовать значение можно только вместе с остановкой
+# воркера.
+_LOCK_KEY = 'chat_worker:flight'
 
 # Сторож. Держим ссылку, иначе задачу может убрать сборщик мусора.
 _keep_task = None
@@ -80,9 +87,10 @@ def chat_worker_enqueue() -> str | None:
     повторный вызов бездействием, а не вторым держателем на те же сокеты. Два
     держателя одной учётки — это два соединения, и сайт вышибает оба.
     """
-    return shift_enqueue(chat_worker_job_run,
-                         queue=CHAT_WORKER_QUEUE_NAME, key=_FLIGHT_KEY,
-                         what=CHAT_WORKER_WHAT, hold=CHAT_WORKER_HOLD_SEC)
+    return worker_shift_enqueue(chat_worker_job_run,
+                                queue=CHAT_WORKER_QUEUE_NAME, key=_LOCK_KEY,
+                                what=CHAT_WORKER_WHAT,
+                                hold=CHAT_WORKER_HOLD_SEC)
 
 
 def chat_worker_job_run() -> str:
@@ -95,10 +103,10 @@ def chat_worker_job_run() -> str:
 
     ⚠ Именно поэтому она не уехала в слой — см. заголовок файла.
     """
-    return asyncio.run(shift_run(_hold, key=_FLIGHT_KEY,
-                                 what=CHAT_WORKER_WHAT,
-                                 again=chat_worker_enqueue,
-                                 hold=CHAT_WORKER_HOLD_SEC))
+    return asyncio.run(worker_shift_run(_hold, key=_LOCK_KEY,
+                                        what=CHAT_WORKER_WHAT,
+                                        again=chat_worker_enqueue,
+                                        hold=CHAT_WORKER_HOLD_SEC))
 
 
 async def chat_worker_recover() -> None:
@@ -110,7 +118,7 @@ async def chat_worker_recover() -> None:
     бездействие, а не второй держатель на те же сокеты.
 
     ⚠⚠ **Сторож постоянный, и это исправление настоящего отказа.** Довод целиком —
-    в `CHAT_WORKER_KEEP_STEP` выше и в заголовке `shift_.shift_`: разового сторожа
+    в `CHAT_WORKER_KEEP_STEP` выше и в заголовке `worker_.worker_shift`: разового сторожа
     мало, он чинит лишь случай «перезапустили оба контейнера».
 
     Живая смена отличается от мёртвой сама: первая продлевает ключ, вторая — нет.
@@ -123,13 +131,13 @@ async def chat_worker_recover() -> None:
     # только теперь ещё и незаметный.
     global _keep_task
 
-    _keep_task = shift_keep_start(chat_worker_enqueue, CHAT_WORKER_WHAT,
-                                  step=CHAT_WORKER_KEEP_STEP)
+    _keep_task = worker_shift_keep(chat_worker_enqueue, CHAT_WORKER_WHAT,
+                                   step=CHAT_WORKER_KEEP_STEP)
 
 
 async def chat_worker_keep_stop() -> None:
     """Снимает сторожа. Звать на остановке сервера — он бесконечный."""
-    shift_keep_stop(_keep_task)
+    worker_shift_keep_stop(_keep_task)
 
 
 async def _hold(hold_sec: float) -> str:

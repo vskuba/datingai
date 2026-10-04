@@ -13,7 +13,7 @@ import asyncio
 
 import pytest
 
-from shift_ import shift_
+from worker_ import worker_shift
 from src.worker.dating import chat_worker
 
 pytestmark = pytest.mark.chat
@@ -64,12 +64,12 @@ def worker(monkeypatch):
     redis = _FakeRedis()
     queue = _FakeQueue()
 
-    # ⚠ Подменяем **в слое**: механика смены уехала в `shift_.shift_`, и
+    # ⚠ Подменяем **в слое**: механика смены уехала в `worker_.worker_shift`, и
     # подмена по месту прежнего жительства не действовала бы вовсе — тест
     # зеленел бы, молча ходя в живой Redis. Правило общее: патчить там, где
     # имя читают, а не там, где оно когда-то лежало.
-    monkeypatch.setattr(shift_, 'redis_conn_get', lambda: redis)
-    monkeypatch.setattr(shift_, 'redis_queue_get', lambda name: queue)
+    monkeypatch.setattr(worker_shift, 'redis_conn_get', lambda: redis)
+    monkeypatch.setattr(worker_shift, 'redis_queue_get', lambda name: queue)
 
     # ⚠ А шаг сторожа — у нас: он довод проекта, и слой получает его вызовом.
     # Патч действует, потому что число читается в момент `chat_worker_recover`.
@@ -116,7 +116,7 @@ class TestRecoverOnStart:
         Ключ здесь продлевается сам собой (заглушка его не гасит), то есть ведёт
         себя как живая смена.
         """
-        worker.redis.store[chat_worker._FLIGHT_KEY] = '1'
+        worker.redis.store[chat_worker._LOCK_KEY] = '1'
 
         await chat_worker.chat_worker_recover()
         await _settle(worker, tries=40)
@@ -143,14 +143,14 @@ class TestAbandonedShift:
         полторы минуты, пока догорает ключ прерванной смены. Раньше он в этом
         случае не ставил ничего и уходил навсегда.
         """
-        worker.redis.store[chat_worker._FLIGHT_KEY] = '1'
+        worker.redis.store[chat_worker._LOCK_KEY] = '1'
 
         await chat_worker.chat_worker_recover()
 
         # Прерванная смена ключ не продлевает — он гаснет по сроку. Здесь это и
         # изображается: ключ убирается, пока сторож ждёт.
         await asyncio.sleep(0.02)
-        worker.redis.delete(chat_worker._FLIGHT_KEY)
+        worker.redis.delete(chat_worker._LOCK_KEY)
 
         await _settle(worker)
 
@@ -162,7 +162,7 @@ class TestAbandonedShift:
         Иначе лечение оказалось бы хуже болезни: панель не поднималась бы, пока
         сторож ходит своими кругами.
         """
-        worker.redis.store[chat_worker._FLIGHT_KEY] = '1'
+        worker.redis.store[chat_worker._LOCK_KEY] = '1'
 
         # Срок здесь **живой**, а не ужатый: проверяется именно то, что ожидание
         # ушло в фон, а не то, что оно короткое. ⚠ Через `monkeypatch`, а не
@@ -185,7 +185,7 @@ class TestAbandonedShift:
         строка на каждый заход утопила бы журнал вместе с той единственной, ради
         которой он заведён.
         """
-        worker.redis.store[chat_worker._FLIGHT_KEY] = '1'
+        worker.redis.store[chat_worker._LOCK_KEY] = '1'
 
         await chat_worker.chat_worker_recover()
         await _settle(worker, tries=40)
@@ -214,7 +214,7 @@ class TestAbandonedShift:
 
         # А теперь контейнер воркера перезапустили: смена оборвана на полуслове,
         # `finally` не выполнился, ключ гаснет по сроку.
-        worker.redis.delete(chat_worker._FLIGHT_KEY)
+        worker.redis.delete(chat_worker._LOCK_KEY)
 
         for _ in range(200):
             if len(worker.queue.jobs) > 1:
@@ -239,7 +239,7 @@ class TestRedisFailure:
             def delete(self, key):
                 raise RuntimeError('redis лёг')
 
-        monkeypatch.setattr(shift_, 'redis_conn_get', lambda: _Broken())
+        monkeypatch.setattr(worker_shift, 'redis_conn_get', lambda: _Broken())
 
         await chat_worker.chat_worker_recover()
 
@@ -253,10 +253,10 @@ class TestRedisFailure:
             def enqueue(self, *args, **kwargs):
                 raise RuntimeError('очередь недоступна')
 
-        monkeypatch.setattr(shift_, 'redis_queue_get', lambda name: _Broken())
+        monkeypatch.setattr(worker_shift, 'redis_queue_get', lambda name: _Broken())
 
         with pytest.raises(RuntimeError):
             chat_worker.chat_worker_enqueue()
 
-        assert chat_worker._FLIGHT_KEY not in worker.redis.store, \
+        assert chat_worker._LOCK_KEY not in worker.redis.store, \
             'ключ остался занят после сорванной постановки'
