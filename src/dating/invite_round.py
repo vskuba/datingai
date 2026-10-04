@@ -72,14 +72,14 @@ from mysql_.mysql_ import mysql_get_db_async
 from redis_.redis_ import redis_conn_get
 
 from src.dating.feed import feed_write
-from src.dating.round import (round_sites_run, round_slot_due,
-                            round_slot_mark)
+from src.dating.round import (round_sites, round_sites_run, round_slot_due,
+                              round_slot_mark)
 from src.dating.pool import pool_sweep, pool_sweep_answered, pool_sweep_away
 from src.dating.invite import (INVITE_POOL_DEFAULT,
                                       INVITE_POOL_SETTING,
                                       DatingInviteError, invite_make,
                                       invite_pool_left)
-from src.dating.json_column import json_column_load
+from src.dating.json_column import json_column_list
 from src.dating.schedule import schedule_now
 from src.dating.site_setting import site_seconds
 
@@ -184,7 +184,7 @@ async def _gate(site: dict, minutes: int) -> bool:
     await _clean(site_id)
 
     # Смены пусты — расписания нет, и круг молчит: готовят такие сайты руками.
-    shifts = json_column_load(site.get('invite_schedule')) or []
+    shifts = json_column_list(site['schedule']) or []
 
     return bool(shifts) and schedule_now(shifts, minutes) and round_slot_due(
         INVITE_ROUND_KEY, site_id, 'инвайтам')
@@ -256,19 +256,9 @@ async def _work(site: dict, minutes: int) -> dict | None:
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 async def _sites() -> list[dict]:
-    """Сайты с включённым расписанием инвайтов."""
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute('SELECT site_id, invite_schedule FROM site'
-                             ' WHERE is_gone = 0 AND invite_schedule_on = 1'
-                             ' ORDER BY site_id')
-            rows = await db.fetchall()
-    except Exception as e:
-        logger_info(f'[dating] сайты для инвайтов не спросились: {e}')
-
-        return []
-
-    return [dict(row) for row in rows or []]
+    """Сайты с включённым расписанием инвайтов — вместе со сменами."""
+    return await round_sites(flags=('invite_schedule_on',),
+                             schedule='invite_schedule', what='инвайтам')
 
 
 async def _seconds(site_id: int, key: str) -> int:

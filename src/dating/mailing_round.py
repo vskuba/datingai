@@ -53,13 +53,13 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.pool import pool_sweep, pool_sweep_mail_answered
-from src.dating.json_column import json_column_load
+from src.dating.json_column import json_column_list
 from src.dating.mailing import (MAILING_BATCH_MAX,
                                        mailing_make,
                                        mailing_templates)
 from src.dating.schedule import schedule_now
 from datetime_.datetime_ import datetime_day_minutes
-from src.dating.round import (round_sites_run, round_slot_due,
+from src.dating.round import (round_sites, round_sites_run, round_slot_due,
                               round_slot_mark, round_slot_release)
 from src.dating.site_setting import site_seconds
 
@@ -134,7 +134,7 @@ async def _gate(site: dict, minutes: int) -> bool:
     ⚠ Сбой — не идём, общим правилом `round_slot_due`: лишний заход это вызовы
     LLM и письма живым людям.
     """
-    if not schedule_now(site['schedule'], minutes):
+    if not schedule_now(json_column_list(site['schedule']), minutes):
         return False
 
     return round_slot_due(MAILING_ROUND_KEY, int(site['site_id']), 'рассылке')
@@ -216,28 +216,9 @@ def _skipped_for_free(result: dict) -> bool:
 
 
 async def _sites() -> list[dict]:
-    """Сайты с включённым расписанием рассылки и сами смены.
-
-    ⚠ Отбор по `mailing_schedule_on`, а не по наличию смен: смены правят ползунком,
-    и промежуточные состояния законны. Исполняй мы «по факту наличия», рассылка
-    уходила бы на каждое движение ручки — то самое разделение, ради которого
-    выключатель и заведён отдельно от расписания.
-    """
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                'SELECT site_id, mailing_schedule FROM site'
-                ' WHERE mailing_schedule_on = 1 AND is_gone = 0'
-                ' ORDER BY site_id')
-            rows = await db.fetchall()
-    except Exception as e:
-        logger_info(f'[dating] сайты для рассылки не спросились: {e}')
-
-        return []
-
-    return [{'site_id': int(row['site_id']),
-             'schedule': json_column_load(row['mailing_schedule'])}
-            for row in rows or []]
+    """Сайты с включённым расписанием рассылки и сами смены."""
+    return await round_sites(flags=('mailing_schedule_on',),
+                             schedule='mailing_schedule', what='рассылке')
 
 
 async def _every(site_id: int) -> int:

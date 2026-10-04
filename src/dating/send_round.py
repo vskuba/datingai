@@ -54,10 +54,10 @@ import asyncio
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating.json_column import json_column_load
+from src.dating.json_column import json_column_list
 from datetime_.datetime_ import datetime_day_minutes
-from src.dating.round import (round_mem_due, round_mem_mark,
-                              round_sent_day)
+from src.dating.round import (round_mem_due, round_mem_mark, round_sent_day,
+                              round_sites)
 from src.dating.mail_send import (MAIL_SEND_TALK_TABLES, DatingMailSendError,
                                   DatingMailWaitError, mail_send_fail,
                                   mail_send_one)
@@ -126,7 +126,7 @@ async def send_round_run(offset_hours: int = 0) -> dict:
 
         # ⚠ Смены общие с набором: шлём тогда же, когда готовим. Пустое
         # расписание — «нет», а не «всегда»: правило одно на проект.
-        if not schedule_now(json_column_load(site['mailing_schedule']),
+        if not schedule_now(json_column_list(site['schedule']),
                             minutes):
             continue
 
@@ -219,7 +219,7 @@ async def send_why(site_id: int, table: str, offset_hours: int = 0) -> str:
         if not site or not int(site.get(flag) or 0):
             return f'отправка {said} выключена'
 
-        if not schedule_now(json_column_load(site['mailing_schedule']),
+        if not schedule_now(json_column_list(site['schedule']),
                             datetime_day_minutes(offset_hours)):
             return 'сейчас не смена: письма уходят по часам, заданным у сайта'
 
@@ -394,22 +394,11 @@ async def _girls_wait(site_id: int) -> str:
 
 async def _sites() -> list[dict]:
     """Сайты, где включён хоть один выключатель отправки."""
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                'SELECT site_id, mailing_schedule, mailing_send_on, reply_send_on,'
-                ' favorite_mail_send_on'
-                ' FROM site'
-                ' WHERE is_gone = 0 AND (mailing_send_on = 1 OR reply_send_on = 1'
-                '                        OR favorite_mail_send_on = 1)'
-                ' ORDER BY site_id')
-            rows = await db.fetchall()
-    except Exception as e:
-        logger_info(f'[dating] сайты для отправки не спросились: {e}')
-
-        return []
-
-    return [dict(row) for row in rows or []]
+    return await round_sites(
+        flags=('mailing_send_on', 'reply_send_on', 'favorite_mail_send_on'),
+        any_of=True, schedule='mailing_schedule',
+        extra=('mailing_send_on', 'reply_send_on', 'favorite_mail_send_on'),
+        what='отправке')
 
 
 async def _oldest(site_id: int, table: str) -> dict | None:

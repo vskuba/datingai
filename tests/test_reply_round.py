@@ -201,8 +201,15 @@ async def test_reply_round_skips_gone_site(site, made, clean_mark):
 
 
 async def test_reply_round_selects_by_flag_not_by_profiles(site):
-    """`_sites` отдаёт сайты, а не анкеты: пул один на сайт."""
-    assert SITE in await _sites()
+    """`_sites` отдаёт сайты, а не анкеты: пул один на сайт.
+
+    ⚠ Строками, а не номерами: отбор у всех кругов общий (`round_sites`), и
+    строка — его договор. Сайт в списке ровно один раз, сколько бы анкет на нём
+    ни было, — это и проверяется.
+    """
+    rows = await _sites()
+
+    assert [one['site_id'] for one in rows].count(SITE) == 1, rows
 
 
 # ── Когда идём ───────────────────────────────────────────────────────────────

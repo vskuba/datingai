@@ -67,7 +67,7 @@ def site(monkeypatch):
     с опущенным флагом, и живому кругу её не видно вовсе.
     """
     async def ours():
-        return [{'site_id': STAND_SITE, 'invite_schedule': ALWAYS}]
+        return [{'site_id': STAND_SITE, 'schedule': ALWAYS}]
 
     monkeypatch.setattr(invite_send_round, '_sites', ours)
 
@@ -213,7 +213,7 @@ class TestSkips:
         away = '[{"from": "%02d:00", "to": "%02d:15"}]' % (hour, hour)
 
         async def dead_hours():
-            return [{'site_id': STAND_SITE, 'invite_schedule': away}]
+            return [{'site_id': STAND_SITE, 'schedule': away}]
 
         monkeypatch.setattr(invite_send_round, '_sites', dead_hours)
         await _draft(girl)
@@ -573,7 +573,7 @@ class TestWhyItStands:
         away = '[{"from": "%02d:00", "to": "%02d:15"}]' % (hour, hour)
 
         async def dead_hours():
-            return [{'site_id': STAND_SITE, 'invite_schedule': away}]
+            return [{'site_id': STAND_SITE, 'schedule': away}]
 
         monkeypatch.setattr(invite_send_round, '_sites', dead_hours)
 

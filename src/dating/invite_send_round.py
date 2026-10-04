@@ -77,10 +77,10 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.invite_send import invite_send_one
 from datetime_.datetime_ import datetime_day_minutes
-from src.dating.round import (round_mem_due, round_mem_mark,
-                              round_sent_day)
+from src.dating.round import (round_mem_due, round_mem_mark, round_sent_day,
+                              round_sites)
 from src.dating.idle import idle_write
-from src.dating.json_column import json_column_load
+from src.dating.json_column import json_column_list
 from src.dating.online import online_check
 from src.dating.pool_pair import pool_answered_where
 from src.dating.schedule import schedule_now
@@ -268,7 +268,7 @@ async def invite_send_why(site_id: int, offset_hours: int = 0) -> str:
             # без объяснения читается как поломка.
             return 'отправка инвайтов выключена'
 
-        if not schedule_now(json_column_load(site['invite_schedule']),
+        if not schedule_now(json_column_list(site['schedule']),
                                    datetime_day_minutes(offset_hours)):
             return 'сейчас не смена: инвайты уходят по часам, заданным у сайта'
 
@@ -337,19 +337,10 @@ async def _nothing_to_send(site_id: int) -> str:
 
 
 async def _sites() -> list[dict]:
-    """Сайты, где отправка инвайтов разрешена."""
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                'SELECT site_id, invite_schedule FROM site'
-                ' WHERE is_gone = 0 AND invite_send_on = 1 ORDER BY site_id')
-            rows = await db.fetchall()
-    except Exception as e:
-        logger_info(f'[dating] сайты для отправки инвайтов не спросились: {e}')
-
-        return []
-
-    return [dict(row) for row in rows or []]
+    """Сайты, где отправка инвайтов разрешена, — вместе со сменами."""
+    return await round_sites(flags=('invite_send_on',),
+                             schedule='invite_schedule',
+                             what='отправке инвайтов')
 
 
 async def _next(site_id: int) -> dict:

@@ -26,6 +26,8 @@ import uuid
 import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
+from src.dating import initiative_round
+from src.dating.initiative_round import initiative_why
 from src.dating.site_setting import SITE_GROUPS, SITE_KNOWN, SITE_SUBGROUPS
 
 pytestmark = pytest.mark.chat
@@ -61,6 +63,30 @@ async def _card(profile_id: int, uid: str, body: str = 'как прошли вы
         await db.connection.commit()
 
         return int(db.lastrowid)
+
+
+def _awake(monkeypatch) -> None:
+    """Показывает кругу стенд с поднятым набором — подменой отбора, а не базой.
+
+    ⚠⚠ **Поднимать флаг в базе здесь нельзя, и это не предосторожность.** Строка
+    стенда лежит `is_gone = 1` (`conftest.py`) именно затем, чтобы круги её не
+    видели: ту же базу читает **живой воркер в соседнем контейнере**. Подними мы
+    `chat_initiative_on` у видимой кругу строки — он взял бы стенд в работу и
+    пошёл писать первым живым людям, а его отправку никакой `monkeypatch` не
+    подменяет: это другой процесс. Правило общее, и у отправки инвайтов оно
+    записано теми же словами (`test_invite_send_round.py`, фикстура `site`).
+
+    ⚠ Прежде эти два теста поднимали флаг в базе и ходили в ручку по HTTP.
+    Работало это лишь потому, что отбор круга инициативы **не спрашивал
+    `is_gone`** — единственный из десяти, кто его не спрашивал. Дыра закрыта
+    (`round_sites`), и тесты переведены на прямой вызов: проверяют они повод
+    словами, а он считается здесь же, в процессе.
+    """
+    async def ours():
+        return [{'site_id': STAND_SITE, 'chat_initiative_on': 1,
+                 'chat_initiative_send_on': 0}]
+
+    monkeypatch.setattr(initiative_round, '_sites', ours)
 
 
 async def _switch(make: bool) -> None:
@@ -152,33 +178,24 @@ class TestEmptinessExplainsItself:
         assert 'набор инициативы выключен' in got['answer']['why'], \
             got['answer']['why']
 
-    async def test_a_sleeping_site_is_named(self, auth_client, girl):
+    async def test_a_sleeping_site_is_named(self, girl, monkeypatch):
         """⚠ Набор поднят, но ни одной анкеты в сети — инициатива уходит в чат."""
-        await _switch(make=True)
+        _awake(monkeypatch)
 
-        got = (await auth_client.get(
-            f'/api/dating/chat-initiative?site_id={STAND_SITE}&profile_id={girl}')
-        ).json()
+        assert 'не в сети' in await initiative_why(STAND_SITE)
 
-        assert 'не в сети' in got['answer']['why'], got['answer']['why']
-
-    async def test_nothing_in_the_way_is_said_out_loud(self, auth_client, girl):
+    async def test_nothing_in_the_way_is_said_out_loud(self, girl, monkeypatch):
         """⚠⚠ Мешать некому — это **утверждение**, а не пустая строка.
 
         Молчание здесь читалось бы как поломка ровно так же, как пустая колонка.
         """
-        await _switch(make=True)
+        _awake(monkeypatch)
         async with mysql_get_db_async() as db:
             await db.execute("UPDATE profile SET status = 'online' WHERE id = %s",
                              (girl,))
             await db.connection.commit()
 
-        got = (await auth_client.get(
-            f'/api/dating/chat-initiative?site_id={STAND_SITE}&profile_id={girl}')
-        ).json()
-
-        assert 'затихших разговоров сейчас нет' in got['answer']['why'], \
-            got['answer']['why']
+        assert 'затихших разговоров сейчас нет' in await initiative_why(STAND_SITE)
 
     async def test_the_reason_is_not_a_second_copy_of_the_rules(self):
         """⚠⚠ Ручка не считает повод сама — зовёт круг.

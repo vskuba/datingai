@@ -76,7 +76,8 @@ from src.dating.chat_initiative import (chat_initiative_failed,
 from src.dating.initiative import initiative_make
 from src.dating.pool import pool_sweep
 from src.dating.log import log_write
-from src.dating.round import round_mem_due, round_mem_mark, round_sites_run
+from src.dating.round import (round_mem_due, round_mem_mark, round_sites,
+                              round_sites_run)
 from src.dating.online import online_check
 from src.dating.send import send_message
 from src.dating.site_setting import site_seconds
@@ -178,7 +179,7 @@ async def initiative_why(site_id: int) -> str:
         return ''
 
     try:
-        make = {int(one['site_id']): one['make']
+        make = {int(one['site_id']): one['chat_initiative_on']
                 for one in await _sites()}.get(site_id)
         if not make:
             return ('набор инициативы выключен: поднять — галочка «набор '
@@ -250,12 +251,12 @@ async def _work(site: dict, minutes: int) -> dict:
     stale += await pool_sweep(site_id)
 
     made = 0
-    if site['make']:
+    if site['chat_initiative_on']:
         got = await initiative_make(site_id, limit=INITIATIVE_ROUND_MAKE)
         made = int(got.get('made') or 0)
 
     return {'made': made,
-            'sent': await _send(site_id) if site['send'] else 0,
+            'sent': await _send(site_id) if site['chat_initiative_send_on'] else 0,
             'stale': stale}
 
 
@@ -394,35 +395,12 @@ async def _stale_clean(site_id: int) -> int:
 
 
 async def _sites() -> list[dict]:
-    """Сайты и их флаги: `site_id`, `make` — набирать ли, `send` — отправлять ли.
-
-    ⚠ Словарём, а не кортежем: единицу обхода заход слоя достаёт из `site_id`
-    (`round_sites_run`), и кортеж пришлось бы разбирать своим `unit_of` — то
-    есть заводить второе место, где сказано, чем сайт опознаётся.
-
-    ⚠ Берём сайт, где поднят **хоть один** флаг: при снятом наборе и поднятой
-    отправке круг доносит то, что уже лежит в пуле, — а это законный порядок
-    работы («набрали, выключили набор, отправляем прочитанное»).
-
-    ⚠ Оба сняты по умолчанию: круг пишет живым людям первым, и накат миграции,
-    сам разрешивший это, был бы худшим из сюрпризов.
-    """
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                'SELECT site_id, chat_initiative_on, chat_initiative_send_on'
-                '  FROM site'
-                ' WHERE chat_initiative_on = 1 OR chat_initiative_send_on = 1')
-            rows = await db.fetchall()
-    except Exception as e:
-        logger_info(f'[dating] выключатели инициативы не прочитались: {e}')
-
-        return []
-
-    return [{'site_id': int(row['site_id']),
-             'make': bool(row['chat_initiative_on']),
-             'send': bool(row['chat_initiative_send_on'])}
-            for row in (rows or [])]
+    """Сайты и их выключатели: набирать ли (`chat_initiative_on`) и
+    отправлять ли (`chat_initiative_send_on`)."""
+    return await round_sites(
+        flags=('chat_initiative_on', 'chat_initiative_send_on'), any_of=True,
+        extra=('chat_initiative_on', 'chat_initiative_send_on'),
+        what='инициативе')
 
 
 async def _profile(profile_id: int) -> dict:

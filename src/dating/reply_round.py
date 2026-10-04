@@ -31,9 +31,8 @@
 from logging_.logging_ import logger_info
 
 from src.dating.feed import feed_write
-from src.dating.round import (round_sites_run, round_slot_due,
-                            round_slot_mark)
-from mysql_.mysql_ import mysql_get_db_async
+from src.dating.round import (round_sites, round_sites_run, round_slot_due,
+                              round_slot_mark)
 
 from src.dating.mail_reply import mail_reply_make
 from src.dating.site_setting import site_seconds
@@ -78,21 +77,23 @@ async def reply_round_run() -> dict:
     return {'sites': ran, 'made': made}
 
 
-async def _gate(site_id: int, minutes: int) -> bool:
+async def _gate(site: dict, minutes: int) -> bool:
     """Пора ли отвечать этому сайту: вышел ли срок круга.
 
     ⚠ Сбой — молчим (правило общее в `round_slot_due`): лишний заход —
     вызовы LLM на каждый ответ.
     """
-    return round_slot_due(REPLY_ROUND_KEY, site_id, 'ответам')
+    return round_slot_due(REPLY_ROUND_KEY, int(site['site_id']), 'ответам')
 
 
-async def _work(site_id: int, minutes: int) -> dict | None:
+async def _work(site: dict, minutes: int) -> dict | None:
     """Отвечает на входящие этого сайта; отказ одной анкеты не уносит остальных.
 
     Черновик ответа уходит по своему сроку, и лента видит работу до её итога
     (`feed.py`): строка-итог заменяет «отвечаем», а не встаёт второй.
     """
+    site_id = int(site['site_id'])
+
     try:
         result = await mail_reply_make(site_id, await _batch(site_id))
     except Exception as e:
@@ -107,20 +108,9 @@ async def _work(site_id: int, minutes: int) -> dict | None:
     return result
 # ── Приватное ────────────────────────────────────────────────────────────────
 
-async def _sites() -> list[int]:
+async def _sites() -> list[dict]:
     """Сайты с включённой генерацией ответов."""
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute('SELECT site_id FROM site'
-                             ' WHERE is_gone = 0 AND reply_make_on = 1'
-                             ' ORDER BY site_id')
-            rows = await db.fetchall()
-    except Exception as e:
-        logger_info(f'[dating] сайты для ответов не спросились: {e}')
-
-        return []
-
-    return [int(row['site_id']) for row in rows or []]
+    return await round_sites(flags=('reply_make_on',), what='ответам')
 
 
 async def _every(site_id: int) -> int:

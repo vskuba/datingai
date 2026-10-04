@@ -84,9 +84,9 @@ from datetime_.datetime_ import datetime_offset_now
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating.json_column import json_column_load
-from src.dating.round import (round_sites_run, round_slot_due,
-                            round_slot_mark)
+from src.dating.json_column import json_column_list
+from src.dating.round import (round_sites, round_sites_run, round_slot_due,
+                              round_slot_mark)
 from src.dating.mail import MAIL_NAME_MAX
 from src.dating.mail_agent import DatingMailAgentError, mail_write
 from src.dating.schedule import schedule_now
@@ -166,7 +166,7 @@ async def _gate(site: dict, minutes: int) -> bool:
     Смена идёт? Пустое расписание — это «нет», а не «всегда»: правило общее с
     расписанием анкеты и рассылки.
     """
-    if not schedule_now(site['schedule'], minutes):
+    if not schedule_now(json_column_list(site['schedule']), minutes):
         return False
 
     return round_slot_due(MAIL_ROUND_KEY, int(site['site_id']), 'шаблонам')
@@ -193,21 +193,8 @@ async def _work(site: dict, offset_hours: int) -> dict:
 
 async def _sites() -> list[dict]:
     """Сайты с включённым расписанием шаблонов и сами смены."""
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                'SELECT site_id, template_schedule FROM site'
-                ' WHERE template_schedule_on = 1 AND is_gone = 0'
-                ' ORDER BY site_id')
-            rows = await db.fetchall()
-    except Exception as e:
-        logger_info(f'[dating] сайты для шаблонов не спросились: {e}')
-
-        return []
-
-    return [{'site_id': int(row['site_id']),
-             'schedule': json_column_load(row['template_schedule'])}
-            for row in rows or []]
+    return await round_sites(flags=('template_schedule_on',),
+                             schedule='template_schedule', what='шаблонам')
 
 
 async def _write(site_id: int, offset_hours: int) -> int:

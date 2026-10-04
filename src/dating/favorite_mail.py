@@ -103,7 +103,7 @@ from datetime_.datetime_ import datetime_day_minutes
 from src.dating.percent import percent_share
 from src.dating.answer import answer_mail_write
 from src.dating.mail_agent import DatingMailAgentError
-from src.dating.json_column import json_column_load
+from src.dating.json_column import json_column_list
 from src.dating.mail_wait import mail_wait_left, mail_wait_skip
 from src.dating.online import online_show
 from src.dating.schedule import schedule_now
@@ -584,7 +584,7 @@ def favorite_mail_shift_now(shifts, minutes: int) -> bool:
     инвайтами: второе прочтение здесь означало бы, что человек, стерев все
     смены, получает круглосуточную работу.
     """
-    rows = json_column_load(shifts) or []
+    rows = json_column_list(shifts)
 
     return bool(rows) and schedule_now(rows, int(minutes))
 

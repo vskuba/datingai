@@ -24,6 +24,7 @@
 
 | Что | Чьё знание |
 |-----|------------|
+| `round_sites` | наша таблица `site`, её выключатели и `is_gone` |
 | `round_sites_run` | единица обхода — `site_id` |
 | `round_sent_day` | наши `status = 'sent'` и `sent_at` |
 | ре-экспорт слоя | чтобы круги видели одну дверь, а не две |
@@ -33,12 +34,20 @@
 было две, и сходились они лишь пока смещение целое в часах.
 """
 
+import re
+
+from logging_.logging_ import logger_info
+from mysql_.mysql_ import mysql_get_db_async
 from round_.round_ import round_loop, round_offset_loop, round_prefix_set
 from round_.round_day import round_day_count
 from round_.round_mem import round_mem_due, round_mem_mark
 from round_.round_pass import round_pass_run
 from round_.round_slot import (round_slot_due, round_slot_mark,
                                round_slot_release)
+
+# Имя столбца, годное к подстановке в SQL. Имена приходят из констант кода, а не
+# снаружи, но в запрос уезжают текстом — параметром имя столбца не передать.
+ROUND_COLUMN_RE = re.compile(r'^[a-z][a-z0-9_]*$')
 
 # ⚠ На уровне модуля, а не в точке входа — см. заголовок файла. Строки журнала
 # всех кругов начинаются с этого слова, по нему их отбирают в общем журнале.
@@ -48,7 +57,85 @@ round_prefix_set('dating')
 # неиспользованным импортом.
 __all__ = ['round_loop', 'round_offset_loop', 'round_mem_due', 'round_mem_mark',
            'round_slot_due', 'round_slot_mark', 'round_slot_release',
-           'round_sent_day', 'round_sites_run']
+           'round_sent_day', 'round_sites', 'round_sites_run']
+
+
+async def round_sites(*, flags: tuple = (), any_of: bool = False,
+                      schedule: str = '', extra: tuple = (),
+                      what: str = '') -> list[dict]:
+    """Сайты, которые обходит круг: живые и с поднятым выключателем занятия.
+
+    Args:
+        flags: столбцы-выключатели, которые должны стоять в `1`. Пусто — берём
+            все живые сайты.
+        any_of: как складывать выключатели. `False` — все разом (`AND`),
+            `True` — хоть один (`OR`): так ходят круги, у которых набор и
+            отправка включаются порознь, а работа есть при любом из двух.
+        schedule: столбец-расписание, который нужен шлюзу. Приезжает под именем
+            `schedule` — **как из базы, неразобранным** (см. ⚠⚠ ниже).
+        extra: прочие столбцы, нужные шлюзу, — приезжают под своими именами.
+        what: чьи сайты — словом, для строки журнала при отказе.
+
+    Returns:
+        Список словарей: `site_id` числом, плюс `schedule` и `extra`, если
+        просили. Отказ базы — пустой список и строка в журнал: круг пропустит
+        заход, а не упадёт.
+
+    ## ⚠⚠ Зачем это одной функцией
+
+    Этот запрос стоял **десятью копиями** — по одной в каждом круге, — и копии
+    успели разойтись. У `initiative_round` не было `is_gone = 0`: девять
+    братьев условие несли, десятый нет, и круг инициативы ходил по сайтам,
+    которые сосед уже погасил. Заметить это можно было только сравнив все десять
+    запросов рядом; правка одной копии ничего не лечила.
+
+    `is_gone = 0` здесь **не доводом, а всегда**: «обойти и погашенный сайт» —
+    не выбор, а недосмотр. Порядок по `site_id` тоже всегда: обход должен быть
+    повторяемым, иначе «первые два сайта» у двух заходов разные.
+
+    ## ⚠⚠ Расписание приезжает неразобранным, а разбирают его `json_column_list`
+
+    Здесь столбец только достаётся и кладётся под общим именем `schedule`;
+    разбор остаётся у того, кто смотрит на смены. Разбери мы его тут, пришлось
+    бы объявить, в каком виде он приезжает, — а в тестах круги подменяют
+    `_sites` и кладут смены **уже списком**, не строкой из базы.
+
+    Отсюда требование к разбору: он обязан быть **идемпотентным**, то есть
+    принимать и строку JSON, и готовый список. Этому отвечает
+    `json_column_list`, и только он: `json_column_load` на уже разобранном
+    списке отдаёт `{}` (она объявлена отдающей словарь, а расписание — массив).
+    Цена ошибки молчаливая: `{}` → `[]` → «смен нет», и круг замолкает без
+    единой строки в журнале. На это уже наступили — и в кругах, и внутри
+    `favorite_mail_shift_now`; все они переведены на `json_column_list`.
+    """
+    names = tuple(flags) + tuple(extra) + ((schedule,) if schedule else ())
+    for name in names:
+        assert ROUND_COLUMN_RE.match(str(name)), f'не имя столбца: {name!r}'
+
+    columns = ['site_id'] + [str(one) for one in extra]
+    if schedule:
+        columns.append(f'{schedule} AS schedule')
+
+    where = ['is_gone = 0']
+    if flags:
+        joined = ' OR '.join(f'{one} = 1' for one in flags) if any_of \
+            else ' AND '.join(f'{one} = 1' for one in flags)
+        where.append(f'({joined})' if any_of and len(flags) > 1 else joined)
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(f"SELECT {', '.join(columns)} FROM site"
+                             f" WHERE {' AND '.join(where)}"
+                             f" ORDER BY site_id")
+            rows = await db.fetchall()
+    except Exception as e:
+        logger_info(f'[dating] сайты{f" для {what}" if what else ""} '
+                    f'не спросились: {e}')
+
+        return []
+
+    return [{**dict(row), 'site_id': int(row['site_id'])}
+            for row in rows or []]
 
 
 async def round_sites_run(rows: list, *, work, gate=None, every=None,

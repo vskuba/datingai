@@ -48,8 +48,8 @@ import asyncio
 from logging_.logging_ import logger_info
 
 from src.dating.feed import feed_done, feed_write
-from src.dating.round import (round_sites_run, round_slot_due,
-                            round_slot_mark)
+from src.dating.round import (round_sites, round_sites_run, round_slot_due,
+                              round_slot_mark)
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.mail_in import DatingMailInError, mail_in_fetch
@@ -199,18 +199,7 @@ async def _work(site: dict, minutes: int) -> dict | None:
 
 async def _sites() -> list[dict]:
     """Сайты с включённым забором писем."""
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute('SELECT site_id FROM site'
-                             ' WHERE is_gone = 0 AND mail_check_on = 1'
-                             ' ORDER BY site_id')
-            rows = await db.fetchall()
-    except Exception as e:
-        logger_info(f'[dating] сайты для забора писем не спросились: {e}')
-
-        return []
-
-    return [dict(row) for row in rows or []]
+    return await round_sites(flags=('mail_check_on',), what='письмам')
 
 
 async def _profiles(site_id: int) -> list[dict]:

@@ -68,8 +68,8 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.ready import ready_online
-from src.dating.round import (round_sites_run, round_slot_due,
-                            round_slot_mark)
+from src.dating.round import (round_sites, round_sites_run, round_slot_due,
+                              round_slot_mark)
 from src.dating.favorite import (FAVORITE_ALREADY,
                                         FAVORITE_DONE,
                                         FAVORITE_REASON_MAIL,
@@ -262,17 +262,7 @@ async def _profile_run(profile: dict, base: str, password: str, left: int) -> di
 
 async def _sites() -> list[dict]:
     """Живые сайты. Включённость — настройкой, а не столбцом: спрашиваем отдельно."""
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute('SELECT site_id FROM site'
-                             ' WHERE is_gone = 0 ORDER BY site_id')
-            rows = await db.fetchall()
-    except Exception as e:
-        logger_info(f'[dating] сайты для избранных не спросились: {e}')
-
-        return []
-
-    return [dict(row) for row in rows or []]
+    return await round_sites(what='избранным')
 
 
 async def _profiles(site_id: int) -> list[dict]:

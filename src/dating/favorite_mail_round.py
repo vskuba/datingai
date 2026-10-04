@@ -39,12 +39,11 @@
 """
 
 from logging_.logging_ import logger_info
-from mysql_.mysql_ import mysql_get_db_async
 from redis_.redis_ import redis_conn_get
 
 from src.dating.feed import feed_write
-from src.dating.round import (round_sites_run, round_slot_due,
-                            round_slot_mark)
+from src.dating.round import (round_sites, round_sites_run, round_slot_due,
+                              round_slot_mark)
 from src.dating.pool import pool_sweep
 from src.dating.favorite_mail import (FAVORITE_MAIL_BATCH_DEFAULT,
                                              FAVORITE_MAIL_POOL_SETTING,
@@ -146,7 +145,7 @@ async def _gate(site: dict, minutes: int) -> bool:
     два снимка подряд дали бы два захода, а второму писать уже некому.
     """
     site_id = int(site['site_id'])
-    if not favorite_mail_shift_now(site.get('favorite_mail_schedule'), minutes):
+    if not favorite_mail_shift_now(site['schedule'], minutes):
         return False
 
     return _fresh_feed(site_id) or round_slot_due(
@@ -196,23 +195,10 @@ async def _work(site: dict, minutes: int) -> dict | None:
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 async def _sites() -> list[dict]:
-    """Сайты с включённой генерацией писем избранным — вместе со сменами.
-
-    ⚠ Расписание берём **тем же запросом**: вторым на каждый сайт он был бы
-    запросом на пустое место — у сайта без смен круг всё равно уйдёт ни с чем.
-    """
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                'SELECT site_id, favorite_mail_schedule FROM site'
-                ' WHERE is_gone = 0 AND favorite_mail_make_on = 1 ORDER BY site_id')
-            rows = await db.fetchall()
-    except Exception as e:
-        logger_info(f'[dating] сайты для писем избранным не спросились: {e}')
-
-        return []
-
-    return [dict(row) for row in rows or []]
+    """Сайты с включённой генерацией писем избранным — вместе со сменами."""
+    return await round_sites(flags=('favorite_mail_make_on',),
+                             schedule='favorite_mail_schedule',
+                             what='письмам избранным')
 
 
 async def _every(site_id: int) -> int:
