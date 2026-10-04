@@ -52,7 +52,7 @@ from datetime_.datetime_ import datetime_offset_hours
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating.pool import pool_sweep
+from src.dating.pool import pool_sweep, pool_sweep_mail_answered
 from src.dating.json_column import json_column_load
 from src.dating.mailing import (MAILING_BATCH_MAX,
                                        mailing_make,
@@ -273,6 +273,12 @@ async def _make(site_id: int) -> tuple[dict | None, bool]:
     # письмо от анкеты не в сети отправить некому (отправка ждёт её), а потолок
     # пула — **на сайт**, и такие письма держат его за всех (`pool.py`).
     await pool_sweep(site_id)
+
+    # ⚠⚠ И письма тем, кто за это время **ответил письмом**: отправка их больше не
+    # берёт (`send_round._oldest`), а место в пуле они держат — то есть сами по
+    # себе они и есть та мертвечина, из-за которой пул однажды встал «полным».
+    # Тоже **до** счёта места, и по той же причине.
+    await pool_sweep_mail_answered(site_id)
 
     # Сколько уже готово и сколько ещё нужно.
     have = await _pool_size(site_id)

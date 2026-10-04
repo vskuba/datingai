@@ -36,6 +36,12 @@
 У рассылки и ответов такого условия нет: первое уходит незнакомому, второе — тому,
 кто написал сам и ждёт, и ни то, ни другое не про «прямо сейчас».
 
+⚠⚠ **Рассылка не уходит тому, кто ответил письмом.** Холодное обращение кончается
+его письмом — дальше с ним работает «приставание» (`favorite_mail`). Проверяется
+здесь **второй раз** после набора пула, и это не перестраховка: между сочинением и
+отправкой у рассылки проходят часы, а письмо он мог прислать в любую из них.
+Правило одно на четыре места — `pool_pair.pool_mail_answered_where`.
+
 ⚠ **Неудача не повторяется тут же.** `mail_send.py` оставляет письмо в пуле
 с причиной в `error`; круг такое письмо пропускает до конца суток. Иначе один
 отказ сайта («слишком часто») превращался бы в бесконечный цикл ровно тогда, когда
@@ -56,6 +62,7 @@ from src.dating.mail_send import (MAIL_SEND_TALK_TABLES, DatingMailSendError,
                                   DatingMailWaitError, mail_send_fail,
                                   mail_send_one)
 from src.dating.mail_wait import mail_wait_uids
+from src.dating.pool_pair import pool_mail_answered_where
 from src.dating.schedule import schedule_now
 
 # Как часто круг просыпается. ⚠ Это **не** частота отправки: её задаёт каждый пул
@@ -265,6 +272,15 @@ async def _nothing_to_send(site_id: int, table: str) -> str:
     if left:
         return left
 
+    # ⚠ **Пятая причина простоя: все письма пула — тем, кто уже ответил письмом.**
+    # Такие рассылка не уносит вовсе (`_oldest`), а подметает их круг набора — то
+    # есть раз в свой срок, не раньше. До уборки пул выглядит полным и живым, и без
+    # этой строки молчание читалось бы как поломка.
+    if str(table) == 'mailing':
+        left = await _answered_wait(site_id)
+        if left:
+            return left
+
     # ⚠ **Третья причина простоя, и она появилась вместе с паузой.** Пул полон,
     # ошибок нет, а круг уходит ни с чем: каждая девушка недавно писала. Без
     # этой строки человек видел бы полный пул и молчащую отправку — состояние,
@@ -310,6 +326,33 @@ async def _cooling_wait(site_id: int, table: str) -> str:
     return (f'сайт сейчас не даёт писать ни одному адресату пула: у них выбран '
             f'предел входящих ({len(cooling)} чел. остывают). Письма целы — '
             f'уйдут, когда предел отпустит')
+
+
+async def _answered_wait(site_id: int) -> str:
+    """Все ли письма рассылки — тем, кто уже ответил письмом. Пусто — не все.
+
+    ⚠ Спрашивает **тем же условием**, которым отбирает круг
+    (`pool_mail_answered_where`): ответ «почему стоим» обязан считаться тем же
+    кодом, что решает за круг, иначе он объяснит не тот простой.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT COUNT(*) AS free FROM mailing m'
+                "  WHERE m.site_id = %s AND m.status = 'draft' AND m.error = ''"
+                + pool_mail_answered_where('m'), (int(site_id),))
+            row = dict((await db.fetchone()) or {})
+    except Exception as e:
+        logger_info(f'[dating] ответившие письмом не спросились: {e}')
+
+        return ''
+
+    if int(row.get('free') or 0):
+        return ''
+
+    return ('все письма пула — тем, кто уже ответил письмом: таким рассылка не '
+            'уходит, с ними работает «приставание». Черновики уберёт следующий '
+            'заход набора')
 
 
 async def _girls_wait(site_id: int) -> str:
@@ -447,6 +490,26 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     cool = (' AND m.uid NOT IN (%s)' % ', '.join(['%s'] * len(cooling))
             if cooling else '')
 
+    # ⚠⚠ **Рассылка не уходит тому, кто за это время ответил письмом.**
+    #
+    # Холодное обращение кончается его письмом: дальше разговор ведёт
+    # «приставание» (`favorite_mail`), которое пишет по переписке, а рассылка
+    # пишет как незнакомой. Набор пула это правило уже знает — и его одного мало
+    # **по устройству**: между сочинением и отправкой у рассылки проходят часы.
+    #
+    # Живой случай 04.10.2026, Yulia ↔ Riano: письмо сочинено в 13:21:33, его
+    # письмо пришло в 13:25:41, ответ на него ушёл в 13:30:54 — а рассылка уехала
+    # в 14:10:04, следом за ответом и в ту же нить.
+    #
+    # ⚠ **Условием в запросе, а не отсевом после.** Круг берёт из пула **одно**
+    # письмо за заход; отсей мы такое после выборки — заход кончился бы ничем, и
+    # сайт молчал бы весь срок, имея сорок девять писем незнакомым. Тот же довод и
+    # то же решение, что у остуды выше и паузы девушки.
+    #
+    # ⚠ Правило живёт в `pool_pair.py` и отсюда только спрашивается: его же читают
+    # набор пула, уборка и кнопка, и четыре копии разошлись бы на первой правке.
+    answered = pool_mail_answered_where('m') if table == 'mailing' else ''
+
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
@@ -456,7 +519,7 @@ async def _oldest(site_id: int, table: str) -> dict | None:
                 f'  JOIN profile p ON p.id = m.profile_id'
                 f'{reply_join}'
                 f" WHERE m.site_id = %s AND m.status = 'draft' AND m.error = ''"
-                f'   AND p.enabled = 1{online_only}{busy}{cool}'
+                f'   AND p.enabled = 1{online_only}{busy}{cool}{answered}'
                 f' ORDER BY m.id LIMIT 1',
                 (int(site_id), *cooling))
             row = await db.fetchone()

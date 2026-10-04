@@ -30,9 +30,10 @@ from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
 from src.dating.mail_reply import (mail_reply_delivery,
                                           mail_reply_delivery_scope)
 from src.dating.online import online_show
-from src.dating.pool_pair import (pool_delivery_where, pool_pair_girl,
-                                         pool_pair_joins, pool_pair_select,
-                                         pool_pick_where)
+from src.dating.pool_pair import (pool_delivery_where,
+                                         pool_mail_answered_where,
+                                         pool_pair_girl, pool_pair_joins,
+                                         pool_pair_select, pool_pick_where)
 from src.dating.send_round import send_why
 from src.dating.mailing import (MAILING_BATCH_DEFAULT,
                                        MAILING_BATCH_MAX,
@@ -467,10 +468,22 @@ async def mailing_send(mailing_id: int,
     остаётся `draft`, и попробовать можно ещё раз. Почему не `failed` — в
     `mail_send.py`.
 
+    ⚠⚠ **Ответившему письмом кнопка тоже отказывает — 409.** Рассылка это холодное
+    обращение, и его письмо обращение заканчивает: дальше работает «приставание»
+    (§3.7.7). Правило одно на круг и на кнопку (`pool_mail_answered_where`): дай мы
+    человеку послать то, что круг отвергает, — вторая дверь сделала бы ровно ту
+    беду, от которой закрыта первая, и ровно тогда, когда карточка полежала в пуле.
+
     Открыто всем вошедшим, как и правка письма: с пулом работает оператор, и это
     та самая работа, ради которой панель и открывают.
     """
     letter = await _row(mailing_id)
+
+    if await _answered(mailing_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='он уже ответил письмом: рассылка таким не уходит — '
+                   'с ним работает «приставание» на «Фаворитах»')
 
     profile = await _sender(int(letter['profile_id']))
     site_id = int(letter['site_id'])
@@ -589,6 +602,36 @@ async def _sender(profile_id: int) -> dict:
                             detail='анкета выключена — от неё не отправляем')
 
     return dict(row)
+
+
+async def _answered(mailing_id: int) -> bool:
+    """Ответил ли адресат этого письма — её же анкете, письмом.
+
+    ⚠⚠ **Спрашиваем тем же условием, которым отбирает круг**
+    (`pool_mail_answered_where`): правило одно, запрос другой. Круг спрашивает
+    «дай годные письма сайта», здесь вопрос «годно ли это» — и напиши мы его
+    своими словами, две проверки разошлись бы на первой правке. Тот же приём и тот
+    же довод, что у кнопки инвайта (`invite_send._answered`).
+
+    Запрос построен **от отрицания**: строка приходит, когда адресат письмом не
+    отвечал. Так условие остаётся дословно тем же, что в очереди, и его не
+    приходится переворачивать — перевёрнутая копия и есть второе правило.
+
+    ⚠ Сбой базы — **«отвечал»**, то есть отказ слать. Не зная, был ли ответ, мы
+    рискуем рассылкой поверх живой переписки; цена ошибки в другую сторону — одно
+    неотправленное письмо, которое человек пошлёт повторным нажатием.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT 1 AS free_ FROM mailing m WHERE m.id = %s'
+                             + pool_mail_answered_where('m'), (int(mailing_id),))
+
+            return not await db.fetchone()
+    except Exception as e:
+        logger_info(f'[dating] письмо #{mailing_id}: не спросить, '
+                    f'отвечал ли он: {e}')
+
+        return True
 
 
 async def _row(mailing_id: int) -> dict:
