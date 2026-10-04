@@ -18,7 +18,6 @@
 
 import inspect
 import pathlib
-import uuid
 
 import pytest
 
@@ -27,22 +26,6 @@ from mysql_.mysql_ import mysql_get_db_async
 pytestmark = pytest.mark.chat
 
 STAND_SITE = 999_343
-
-
-@pytest.fixture
-async def girl(auth_client):
-    profile_id = int((await auth_client.post('/api/dating/profile', json={
-        'site_id': STAND_SITE,
-        'login': f'keep-{uuid.uuid4().hex[:8]}@example.com',
-        'password': 'x'})).json()['result'])
-
-    yield profile_id
-
-    async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM invite WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM message WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
-        await db.connection.commit()
 
 
 async def _invite(profile_id: int, uid: str, body: str,

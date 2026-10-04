@@ -44,19 +44,6 @@ STAND_SITE = 999_343
 FOLDER = 'bogiladiana9021@bigmir.net'
 
 
-@pytest.fixture
-async def girl(auth_client):
-    """Анкета стенда. Убирается за собой."""
-    profile_id = int((await auth_client.post('/api/dating/profile', json={
-        'site_id': STAND_SITE,
-        'login': f'gallery-{uuid.uuid4().hex[:8]}@example.com',
-        'password': 'x'})).json()['result'])
-
-    yield profile_id
-
-    await profile_delete(profile_id, user=None)
-
-
 async def test_card_gives_empty_folder(girl):
     """У свежей анкеты поле есть и оно пустое — «как у всех», а не «нет поля»."""
     card = (await profile_view_card(girl, user=None))['result']

@@ -186,21 +186,6 @@ class TestTheChannelsAreApart:
     женщины этого возраста.
     """
 
-    @pytest.fixture
-    async def girl(self, auth_client):
-        made = (await auth_client.post('/api/dating/profile', json={
-            'site_id': STAND_SITE,
-            'login': f'chan-{uuid.uuid4().hex[:8]}@example.com',
-            'password': 'x'})).json()['result']
-
-        yield int(made)
-
-        async with mysql_get_db_async() as db:
-            await db.execute('DELETE FROM block WHERE profile_id = %s', (int(made),))
-            await db.connection.commit()
-
-        await auth_client.delete(f'/api/dating/profile/{made}')
-
     async def test_a_mail_block_is_invisible_to_chat(self, girl):
         """Набор инвайтов такую пару не видит — значит позовёт как обычно."""
         from src.dating.block import block_add, block_pairs

@@ -21,7 +21,6 @@
 уверяла, что его нет. Поэтому проверки ниже спрашивают **повод**, а не текст.
 """
 
-import uuid
 
 import pytest
 
@@ -33,22 +32,6 @@ from src.dating.site_setting import SITE_GROUPS, SITE_KNOWN, SITE_SUBGROUPS
 pytestmark = pytest.mark.chat
 
 STAND_SITE = 999_343
-
-
-@pytest.fixture
-async def girl(auth_client):
-    profile_id = int((await auth_client.post('/api/dating/profile', json={
-        'site_id': STAND_SITE,
-        'login': f'init-{uuid.uuid4().hex[:8]}@example.com',
-        'password': 'x'})).json()['result'])
-
-    yield profile_id
-
-    async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM chat_initiative WHERE profile_id = %s',
-                         (profile_id,))
-        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
-        await db.connection.commit()
 
 
 async def _card(profile_id: int, uid: str, body: str = 'как прошли выходные?',

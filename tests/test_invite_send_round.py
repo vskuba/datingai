@@ -50,6 +50,16 @@ def no_pause(monkeypatch):
 
 
 @pytest.fixture
+async def girl(girl_make):
+    """Анкета стенда, которая **в сети**: без этого круг её не берёт.
+
+    ⚠ Через общую фабрику (`conftest.girl_make`): своя копия заведения и уборки
+    здесь и стояла, а отличалась от соседних одной строкой — вот этой.
+    """
+    return await girl_make('inv', online=True)
+
+
+@pytest.fixture
 def site(monkeypatch):
     """⚠⚠ Сужает **отбор** круга до стенда — и не трогает флаг в базе.
 
@@ -72,24 +82,6 @@ def site(monkeypatch):
     monkeypatch.setattr(invite_send_round, '_sites', ours)
 
     return STAND_SITE
-
-
-@pytest.fixture
-async def girl(auth_client):
-    """Анкета стенда, которая **в сети**: без этого круг её не берёт."""
-    profile_id = int((await auth_client.post('/api/dating/profile', json={
-        'site_id': STAND_SITE,
-        'login': f'inv-{uuid.uuid4().hex[:8]}@example.com',
-        'password': 'x'})).json()['result'])
-
-    await _status(profile_id, 'online')
-
-    yield profile_id
-
-    async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM invite WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
-        await db.connection.commit()
 
 
 @pytest.fixture

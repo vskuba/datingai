@@ -35,24 +35,6 @@ pytestmark = pytest.mark.chat
 STAND_SITE = 999_343
 
 
-@pytest.fixture
-async def girl(auth_client):
-    profile_id = int((await auth_client.post('/api/dating/profile', json={
-        'site_id': STAND_SITE,
-        'login': f'draft-{uuid.uuid4().hex[:8]}@example.com',
-        'password': 'x'})).json()['result'])
-
-    yield profile_id
-
-    async with mysql_get_db_async() as db:
-        # ⚠ Черновики уходят каскадом за репликами, но анкету чистим явно:
-        # порядок удаления тут важнее краткости.
-        await db.execute('DELETE FROM chat_reply WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM message WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
-        await db.connection.commit()
-
-
 async def _said(profile_id: int, uid: str, text: str = 'привет',
                 direction: str = 'in') -> int:
     """Реплика в переписке. Возвращает её номер — он же повод написать."""

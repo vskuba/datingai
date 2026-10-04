@@ -23,6 +23,7 @@ RhapsodyAi: чужой перезапуск красил бы наши тест�
 import asyncio
 import os
 import socket
+import uuid
 
 # ⚠ **База: с хоста имя контейнера не резолвится.**
 #
@@ -201,13 +202,45 @@ TEST_MAIL_DOMAIN = '@example.com'
 TEST_SEED_PREFIX = 'seed-'
 
 # Таблицы, которые **не** уходят каскадом за анкетой: внешнего ключа на неё у них
-# нет вовсе (`stat_day`) либо он гасится в `NULL` (`scenario_run`). Их чистим сами
-# — до удаления анкет, пока номера ещё связывают строки с анкетой.
+# нет вовсе (`stat_day`, `favorite`, `gallery_file`) либо он гасится в `NULL`
+# (`scenario_run`). Их чистим сами — до удаления анкет, пока номера ещё связывают
+# строки с анкетой.
+#
+# ⚠⚠ **Список обязан совпадать с тем, что в схеме.** Пока в нём было две таблицы
+# из четырёх, `favorite` копила мусор прогон за прогоном: 825 строк от сюиты с
+# 28.09 по 04.10 — 85% всей таблицы, при том что живых там полторы сотни. Узнать
+# об этом было нечем: тесты зелёные, а строки лежат. Проверка, которая ловит
+# расхождение, — `test_sweep_knows_every_keyless_table` ниже; она спрашивает
+# **схему**, а не этот список.
 #
 # ⚠ `request` тут нет намеренно: сюита в журнал внешних запросов не пишет вовсе,
 # это обеспечивает `no_test_rows_in_request_log` выше. Строки, которые там лежат, —
 # от живого приложения, и уборке не подлежат.
-TEST_SWEEP_BY_PROFILE = ('scenario_run', 'stat_day')
+TEST_SWEEP_BY_PROFILE = ('scenario_run', 'stat_day', 'favorite', 'gallery_file')
+
+# Номер, с которого начинаются сайты сюиты. Живые ведёт сосед, и номера у него
+# автоинкрементные — сейчас это 19 и 343.
+#
+# ⚠⚠ Нужен затем, что уборка по `profile_id` **не находит осиротевшее**. Строка
+# переживает свою анкету (ключа-то нет), и если анкету снесли раньше — например,
+# сам тест удалил её ручкой, — связь с номером пропала, и уборка по живым
+# анкетам такую строку не увидит никогда. Отсюда второй проход: по стендовому
+# сайту **и** отсутствию анкеты.
+#
+# ⚠ Два условия, а не одно — ровно по той же причине, что у `seed-` выше.
+# «Сайт стендовый» в одиночку снесло бы строки живых анкет на стенде, которые
+# прямо сейчас нужны идущему тесту.
+TEST_STAND_SITE_FROM = 999_000
+
+# Сайт, на котором живут анкеты сюиты. ⚠ Он лежит `is_gone = 1` намеренно:
+# строка нужна, чтобы номер признавался заведённым, а не чтобы кормить круги —
+# ту же базу читает живой воркер в соседнем контейнере (`_STAND_SITES` ниже).
+TEST_STAND_SITE = 999_343
+
+# Из каких таблиц добираем осиротевшее. ⚠ Только те, где есть `site_id`:
+# `gallery_file` его не знает вовсе, и для неё второго прохода нет — её строки
+# заводят четыре теста галереи, и анкету они сносят сами, последней.
+TEST_SWEEP_ORPHANS = ('favorite', 'stat_day', 'scenario_run')
 
 # Снимает уборку целиком: `KEEP_TEST_DATA=1 python -m pytest …`
 TEST_SWEEP_KEEP = 'KEEP_TEST_DATA'
@@ -443,6 +476,91 @@ async def dating_client():
         yield http
 
 
+@pytest.fixture
+async def girl_make(auth_client):
+    """Фабрика анкет стенда: заводит и сносит за собой всё заведённое.
+
+    Yields:
+        `make(prefix='t', *, site_id=TEST_STAND_SITE, online=False)` — отдаёт
+        номер заведённой анкеты. Зовётся сколько угодно раз.
+
+    ## ⚠⚠ Зачем общая, если фикстура в три строки
+
+    Своя копия стояла в **29 файлах**, и копии разошлись не формой, а уборкой:
+    четырнадцать разных наборов `DELETE` на одно и то же дело. Одни сносили
+    `message` и `invite`, другие — `chat_reply` и `profile`, третьи не сносили
+    ничего.
+
+    Причём **большая часть этих `DELETE` была лишней**: у всех двенадцати таблиц
+    с `profile_id` стоит `ON DELETE CASCADE`, и снести анкету достаточно. А
+    меньшая — неполной: `favorite` каскад не уносит, ключа у неё нет вовсе, и
+    строки копились прогон за прогоном (825 штук за две недели).
+
+    То есть копии не экономили работу, а прятали её неверность.
+
+    ⚠ Логин с доменом `@example.com` — метка сюиты, по ней анкету найдёт и
+    сессионная уборка, если тест оборвётся на полуслове (`cleanup_test_profiles`).
+
+    ⚠ `online=True` ставится **запросом к базе**, а не полем заведения: ручка
+    анкеты статуса не принимает — он приходит от сайта.
+    """
+    made = []
+
+    async def make(prefix: str = 't', *, site_id: int = TEST_STAND_SITE,
+                   online: bool = False) -> int:
+        got = await auth_client.post('/api/dating/profile', json={
+            'site_id': int(site_id),
+            'login': f'{prefix}-{uuid.uuid4().hex[:8]}{TEST_MAIL_DOMAIN}',
+            'password': 'x'})
+        # ⚠ `201`, а не `200`: заведение отвечает «создано». Проверка нужна —
+        # без неё отказ ручки превращался бы в `KeyError` посреди теста, то есть
+        # в жалобу не на то.
+        assert got.status_code == 201, f'анкета не завелась: {got.text[:200]}'
+
+        profile_id = int(got.json()['result'])
+        made.append(profile_id)
+
+        if online:
+            async with mysql_get_db_async() as db:
+                await db.execute(
+                    "UPDATE profile SET status = 'online' WHERE id = %s",
+                    (profile_id,))
+                await db.connection.commit()
+
+        return profile_id
+
+    yield make
+
+    if not made:
+        return
+
+    holes = ','.join(['%s'] * len(made))
+    async with mysql_get_db_async() as db:
+        # ⚠ Сперва то, что каскадом не уйдёт: у `favorite`, `gallery_file` и
+        # `stat_day` ключа на анкету нет, у `scenario_run` он гасится в `NULL` —
+        # после удаления анкеты связь пропадает, и строки остаются ничьими.
+        for table in TEST_SWEEP_BY_PROFILE:
+            await db.execute(
+                f'DELETE FROM `{table}` WHERE `profile_id` IN ({holes})',
+                tuple(made))
+
+        # ⚠ А это одна строка на двенадцать таблиц: `message`, `invite`,
+        # `mailing`, `chat_reply` и прочие уходят каскадом сами.
+        await db.execute(f'DELETE FROM `profile` WHERE `id` IN ({holes})',
+                         tuple(made))
+        await db.connection.commit()
+
+
+@pytest.fixture
+async def girl(girl_make):
+    """Одна анкета стенда — самый частый случай.
+
+    ⚠ Нужны особенности (свой префикс в логине, `online`, другой сайт) — берут
+    `girl_make` и зовут его сами.
+    """
+    return await girl_make()
+
+
 def _net_allowed(address) -> bool:
     """Свой ли это адрес. Всё, что не своё, — запрещено."""
     if not isinstance(address, tuple) or len(address) < 2:
@@ -478,12 +596,39 @@ def _test_rows_drop() -> dict:
 
     Returns:
         `{имя таблицы: сколько удалено}`; пустой словарь — убирать было нечего.
+
+    ⚠⚠ **Ничьи строки убираются даже когда анкет сюиты в базе нет**, и это не
+    мелочь порядка. Прежде функция выходила на пустом списке анкет первой же
+    строкой — а осиротевшее как раз и остаётся **после** того, как анкеты
+    снесли. То есть ровно в том состоянии, где уборка нужна, она не делала
+    ничего.
     """
     from mysql_.mysql_query import mysql_query_run
 
+    counted = {}
     found = _test_profiles()
-    if not found:
-        return {}
+
+    if found:
+        counted.update(_test_rows_by_profile(found))
+
+    # ⚠ Последним и всегда: к этому мигу анкеты уже снесены, и у `scenario_run`
+    # номер погашен в `NULL` — то есть часть строк осиротела прямо сейчас.
+    for table, gone in _test_orphans_drop().items():
+        counted[f'{table} (ничьи)'] = gone
+
+    return counted
+
+
+def _test_rows_by_profile(found: list) -> dict:
+    """Снести анкеты сюиты и то, что за ними не уходит каскадом.
+
+    Args:
+        found: номера анкет сюиты — непустой список.
+
+    Returns:
+        `{имя таблицы: сколько удалено}`.
+    """
+    from mysql_.mysql_query import mysql_query_run
 
     holes = ','.join(['%s'] * len(found))
     counted = {}
@@ -503,6 +648,49 @@ def _test_rows_drop() -> dict:
     got = mysql_query_run(f'DELETE FROM `profile` WHERE `id` IN ({holes})',
                           tuple(found))
     counted['profile'] = int(got.get('affected') or 0)
+
+    return counted
+
+
+def _test_orphans_drop() -> dict:
+    """Снести строки, пережившие свою анкету: стендовый сайт и анкеты больше нет.
+
+    Returns:
+        `{имя таблицы: сколько удалено}`; пустой словарь — убирать было нечего.
+
+    ⚠⚠ **Проход второй, и без него уборка не полна.** У этих таблиц нет ключа на
+    анкету, и строка остаётся, когда анкету сносят. Уборка выше ищет по номерам
+    **живых** тестовых анкет — осиротевшую строку она не находит никогда, потому
+    что номер в ней больше ни на что не указывает.
+
+    Накопилось так 825 строк в `favorite` и 746 в `stat_day` — за две недели,
+    при зелёной сюите.
+
+    ⚠ Условия два, и оба обязательны: сайт стендовый **и** анкеты нет. Первое в
+    одиночку унесло бы строки живых анкет на стенде — тех, с которыми прямо
+    сейчас работает идущий тест.
+
+    ⚠⚠ «Анкеты нет» значит **два разных состояния**, и ловить надо оба. У
+    `favorite` и `stat_day` ключа нет вовсе, и номер остаётся указывать в
+    пустоту. А у `scenario_run` ключ есть, но гасится в `NULL` — там номер
+    пропадает совсем. `NOT IN` второго случая не видит: сравнение с `NULL` даёт
+    `NULL`, то есть «не выбрано». Накопилось так 1518 строк, и это при том, что
+    грабля была **описана** в соседней функции: «строки остались бы навсегда,
+    ничьи». Описана, а условие её не покрывало.
+    """
+    from mysql_.mysql_query import mysql_query_run
+
+    counted = {}
+    for table in TEST_SWEEP_ORPHANS:
+        got = mysql_query_run(
+            f'DELETE FROM `{table}`'
+            f' WHERE `site_id` >= %s'
+            f'   AND (`profile_id` IS NULL'
+            f'        OR `profile_id` NOT IN (SELECT `id` FROM `profile`))',
+            (TEST_STAND_SITE_FROM,))
+        gone = int(got.get('affected') or 0)
+        if gone:
+            counted[table] = gone
 
     return counted
 

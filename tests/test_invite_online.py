@@ -29,21 +29,6 @@ pytestmark = pytest.mark.chat
 STAND_SITE = 999_343
 
 
-@pytest.fixture
-async def girl(auth_client):
-    profile_id = int((await auth_client.post('/api/dating/profile', json={
-        'site_id': STAND_SITE,
-        'login': f'inv-live-{uuid.uuid4().hex[:8]}@example.com',
-        'password': 'x'})).json()['result'])
-
-    yield profile_id
-
-    async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM invite WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
-        await db.connection.commit()
-
-
 def _row(**more) -> dict:
     got = {'id': 1, 'site_id': STAND_SITE, 'profile_id': 1, 'uid': 'u-1',
            'name': 'Brian', 'photo': '', 'body': 'привет', 'status': 'draft',

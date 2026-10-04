@@ -29,22 +29,6 @@ STAND_SITE = 999_343
 UID = 'hist-424242'
 
 
-@pytest.fixture
-async def girl(auth_client):
-    profile_id = int((await auth_client.post('/api/dating/profile', json={
-        'site_id': STAND_SITE,
-        'login': f'hist-{uuid.uuid4().hex[:8]}@example.com',
-        'password': 'x'})).json()['result'])
-
-    yield profile_id
-
-    async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM message WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM invite WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
-        await db.connection.commit()
-
-
 class TestSendingDoesNotWrite:
     """⚠ Отправка инвайта переписку не трогает."""
 

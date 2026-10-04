@@ -27,22 +27,6 @@ UID = 'zz-talk'
 
 
 @pytest.fixture
-async def girl(auth_client):
-    """Анкета стенда. Убирает за собой переписку."""
-    profile_id = int((await auth_client.post('/api/dating/profile', json={
-        'site_id': STAND_SITE,
-        'login': f'talk-{uuid.uuid4().hex[:8]}@example.com',
-        'password': 'x'})).json()['result'])
-
-    yield profile_id
-
-    async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM message WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
-        await db.connection.commit()
-
-
-@pytest.fixture
 def feed(monkeypatch):
     """Перехваченная лента: список событий вместо Redis."""
     got = []

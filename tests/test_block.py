@@ -17,7 +17,6 @@ LLM, — и так до бесконечности.
 * **ответ на его письмо остаётся**: запрет отвечает на «писать ли первыми».
 """
 
-import uuid
 
 import pytest
 
@@ -39,24 +38,6 @@ UID = 'zz-block'
 # Ответ сайта целиком — как он и приходит.
 DENY = ('сайт ответил 200: {"IsSuccess":false,"Reason":"ERROR_MESSAGE_USER_DENY",'
         '"Message":"User ignore messages from you"}')
-
-
-@pytest.fixture
-async def girl(auth_client):
-    """Анкета стенда. Убирает за собой запреты и пулы."""
-    profile_id = int((await auth_client.post('/api/dating/profile', json={
-        'site_id': STAND_SITE,
-        'login': f'blk-{uuid.uuid4().hex[:8]}@example.com',
-        'password': 'x'})).json()['result'])
-
-    yield profile_id
-
-    async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM block WHERE profile_id = %s', (profile_id,))
-        for table in BLOCK_POOLS:
-            await db.execute(f'DELETE FROM {table} WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
-        await db.connection.commit()
 
 
 class TestDeny:

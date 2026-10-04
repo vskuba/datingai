@@ -20,7 +20,6 @@
 под спящей — ровно то, чем мы однажды заработали суточную блокировку.
 """
 
-import uuid
 
 import pytest
 from mysql_.mysql_ import mysql_get_db_async
@@ -29,23 +28,6 @@ pytestmark = pytest.mark.profile
 
 # Сайт стенда — тот же, что у соседних сюит.
 STAND_SITE = 999_343
-
-
-@pytest.fixture
-async def girl(auth_client):
-    """Анкета стенда в сети — её статус и двигают проверки ниже."""
-    profile_id = int((await auth_client.post('/api/dating/profile', json={
-        'site_id': STAND_SITE,
-        'login': f'chk-{uuid.uuid4().hex[:8]}@example.com',
-        'password': 'x'})).json()['result'])
-
-    await _status(profile_id, 'online')
-
-    yield profile_id
-
-    async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
-        await db.connection.commit()
 
 
 class TestTheCheckItself:
@@ -136,6 +118,12 @@ class TestRoundsAskBeforeGoing:
 
         assert 'FROM profile' in code
         assert 'httpx' not in code and 'rhapsody' not in code
+
+
+@pytest.fixture
+async def girl(girl_make):
+    """Анкета стенда **в сети**: проверка ленты идёт только под такой."""
+    return await girl_make('onl', online=True)
 
 
 async def _status(profile_id: int, status: str, enabled: int = 1) -> None:

@@ -14,7 +14,6 @@
 через неё. Поэтому чистим посайтно — у каждого свой срок.
 """
 
-import uuid
 
 import pytest
 
@@ -36,21 +35,6 @@ STAND_SITE = 999_343
 # чистка её не читала: срок она берёт из настройки. Копия умолчания в коде
 # читается как действующая и расходится с реестром молча.
 KEEP_HOURS = 72
-
-
-@pytest.fixture
-async def girl(auth_client):
-    profile_id = int((await auth_client.post('/api/dating/profile', json={
-        'site_id': STAND_SITE,
-        'login': f'sweep-{uuid.uuid4().hex[:8]}@example.com',
-        'password': 'x'})).json()['result'])
-
-    yield profile_id
-
-    async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM log WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
-        await db.connection.commit()
 
 
 async def _line(profile_id: int, text: str, hours_ago: int = 0) -> int:

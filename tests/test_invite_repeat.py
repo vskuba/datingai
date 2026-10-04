@@ -26,23 +26,6 @@ STAND_SITE = 999_343
 UID = 'zz-repeat'
 
 
-@pytest.fixture
-async def girl(auth_client):
-    """Анкета стенда. Убирает за собой переписку и инвайты."""
-    profile_id = int((await auth_client.post('/api/dating/profile', json={
-        'site_id': STAND_SITE,
-        'login': f'rep-{uuid.uuid4().hex[:8]}@example.com',
-        'password': 'x'})).json()['result'])
-
-    yield profile_id
-
-    async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM message WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM invite WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
-        await db.connection.commit()
-
-
 async def _message(profile_id: int, direction: str) -> None:
     """Реплика в переписке. ⚠ `message_uid` свой у каждой: пара «анкета + номер
     сообщения» уникальна в базе, и две реплики с пустым номером не лягут."""

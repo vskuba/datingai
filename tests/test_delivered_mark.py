@@ -25,23 +25,6 @@ pytestmark = pytest.mark.chat
 STAND_SITE = 999_343
 
 
-@pytest.fixture
-async def girl(auth_client):
-    """Анкета сюиты. Логин на `@example.com` — метка, по ней идёт уборка."""
-    profile_id = int((await auth_client.post('/api/dating/profile', json={
-        'site_id': STAND_SITE,
-        'login': f'deliver-{uuid.uuid4().hex[:8]}@example.com',
-        'password': 'x'})).json()['result'])
-
-    yield profile_id
-
-    async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM chat_reply WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM message WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
-        await db.connection.commit()
-
-
 async def _said(profile_id: int, uid: str = 'u-1') -> None:
     """Входящая реплика: без неё отвечать нечего и агент не зовётся."""
     async with mysql_get_db_async() as db:

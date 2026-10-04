@@ -22,29 +22,23 @@ from mysql_.mysql_ import mysql_get_db_async
 
 pytestmark = pytest.mark.chat
 
-STAND_SITE = 999_343
-
-
 @pytest.fixture
-async def girl(auth_client):
-    profile_id = int((await auth_client.post('/api/dating/profile', json={
-        'site_id': STAND_SITE,
-        'login': f'speed-{uuid.uuid4().hex[:8]}@example.com',
-        'password': 'x'})).json()['result'])
+async def girl(girl_make):
+    """Анкета стенда и **чистая история отправок** на нём.
 
-    # ⚠ Чистим отправленное по сайту: скорость считается по всей таблице, и
-    # чужие строки сдвинули бы счёт — тест ловил бы порядок запуска.
+    ⚠⚠ Второе обязательно и лежит здесь, а не в общей фабрике: скорость
+    считается по **ушедшим инвайтам сайта**, а сайт сюиты один на весь прогон.
+    Оставь мы чужие `sent` от соседних файлов — «60 в час» посчиталось бы по
+    ним, и тест мерил бы не свои карточки.
+    """
     async with mysql_get_db_async() as db:
         await db.execute("DELETE FROM invite WHERE site_id = %s AND status = 'sent'",
                          (STAND_SITE,))
         await db.connection.commit()
 
-    yield profile_id
+    return await girl_make('spd')
 
-    async with mysql_get_db_async() as db:
-        await db.execute('DELETE FROM invite WHERE profile_id = %s', (profile_id,))
-        await db.execute('DELETE FROM profile WHERE id = %s', (profile_id,))
-        await db.connection.commit()
+STAND_SITE = 999_343
 
 
 class TestCount:
