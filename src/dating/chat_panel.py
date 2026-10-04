@@ -276,71 +276,6 @@ async def chat_panel_import(site_id: int, days: int) -> dict:
             'from': date_from, 'to': date_to, 'error': '', **saved}
 
 
-async def _panel_ready(site_id: int) -> bool:
-    """Есть ли у сайта заведённая админ-панель. Она и решает, чем забирать."""
-    from src.dating.panel import PANEL_URL_SETTING
-    return bool(await site_setting(site_id, PANEL_URL_SETTING))
-
-
-async def _import_by_panel(site_id: int, profiles: dict, date_from: str, date_to: str,
-                           empty: dict) -> dict:
-    """Забор журнала чата ручкой панели: один GET и разбор таблицы.
-
-    ⚠ **Своего входа не делает.** Сессию держит круг панели
-    (`panel_round.py`), и вход отсюда означал бы два входа наперегонки,
-    когда за таблицами придут двое. Протухшая сессия — отказ с причиной: круг
-    поднимет её в свой срок, а мы скажем правду вместо тихой пустоты.
-    """
-    from src.dating.panel_fetch import (DatingPanelFetchError,
-                                               panel_fetch_html,
-                                               panel_fetch_table)
-
-    # `AccountId=0` — «все анкеты»: панель так и подписывает первый пункт селекта.
-    # Спрашивать по одной значило бы тринадцать запросов вместо одного.
-    params = {'AccountId': '0',
-              'DateFrom.DateValue': date_from,
-              'DateTo.DateValue': date_to}
-
-    try:
-        html = await panel_fetch_html(site_id, CHAT_PANEL_PATH, params)
-    except DatingPanelFetchError as e:
-        return {**empty, 'from': date_from, 'to': date_to, 'error': str(e)}
-
-    table = panel_fetch_table(html)
-    rows = chat_panel_rows({CHAT_PANEL_FIELD: _cells(table)}, profiles)
-    saved = await chat_panel_save(rows)
-
-    return {'status': 'ok', 'total': len(table), 'ours': len(rows),
-            'from': date_from, 'to': date_to, 'error': '', **saved}
-
-
-def _cells(table: list) -> list[dict]:
-    """Ячейки таблицы — в записи того же вида, что отдаёт сценарий.
-
-    ⚠ Вид общий намеренно: разбор строк (`chat_panel_rows`) один на оба
-    пути, и вторая его копия под ручку разошлась бы с первой на первой же правке.
-
-    Номера сторон берём из **ссылки** ячейки: панель пишет туда «181685 Semen
-    Gorbunkov», где номер — ссылка на карточку, а имя стоит рядом. Текст
-    сообщения — из подсказки `title`, потому что в самой ячейке он обрезан
-    шириной колонки.
-    """
-    out = []
-    for row in table:
-        one = {}
-        for at, name in enumerate(CHAT_PANEL_CELLS):
-            cell = row[at] if at < len(row) else {}
-            one[name] = cell.get('текст', '')
-            if name in ('от', 'кому'):
-                one[f'{name}_номер'] = cell.get('ссылка', '')
-            if name == 'текст':
-                one['текст_подсказка'] = cell.get('подсказка', '')
-
-        out.append(one)
-
-    return out
-
-
 async def chat_panel_profiles(site_id: int) -> dict:
     """`site_uid` анкет сайта → их номер у нас.
 
@@ -481,6 +416,12 @@ async def chat_panel_save(rows: list) -> dict:
 
     return {'added': added, 'fresh': fresh, 'same': len(rows) - added,
             'contacts': contacts}
+
+
+async def _panel_ready(site_id: int) -> bool:
+    """Есть ли у сайта заведённая админ-панель. Она и решает, чем забирать."""
+    from src.dating.panel import PANEL_URL_SETTING
+    return bool(await site_setting(site_id, PANEL_URL_SETTING))
 
 
 async def _talks_new(rows: list) -> set:
@@ -647,3 +588,62 @@ def _when(value) -> str:
         logger_info(f'[dating] время сообщения панели не разобралось: {text[:40]!r}')
 
     return ''
+
+
+async def _import_by_panel(site_id: int, profiles: dict, date_from: str, date_to: str,
+                           empty: dict) -> dict:
+    """Забор журнала чата ручкой панели: один GET и разбор таблицы.
+
+    ⚠ **Своего входа не делает.** Сессию держит круг панели
+    (`panel_round.py`), и вход отсюда означал бы два входа наперегонки,
+    когда за таблицами придут двое. Протухшая сессия — отказ с причиной: круг
+    поднимет её в свой срок, а мы скажем правду вместо тихой пустоты.
+    """
+    from src.dating.panel_fetch import (DatingPanelFetchError,
+                                               panel_fetch_html,
+                                               panel_fetch_table)
+
+    # `AccountId=0` — «все анкеты»: панель так и подписывает первый пункт селекта.
+    # Спрашивать по одной значило бы тринадцать запросов вместо одного.
+    params = {'AccountId': '0',
+              'DateFrom.DateValue': date_from,
+              'DateTo.DateValue': date_to}
+
+    try:
+        html = await panel_fetch_html(site_id, CHAT_PANEL_PATH, params)
+    except DatingPanelFetchError as e:
+        return {**empty, 'from': date_from, 'to': date_to, 'error': str(e)}
+
+    table = panel_fetch_table(html)
+    rows = chat_panel_rows({CHAT_PANEL_FIELD: _cells(table)}, profiles)
+    saved = await chat_panel_save(rows)
+
+    return {'status': 'ok', 'total': len(table), 'ours': len(rows),
+            'from': date_from, 'to': date_to, 'error': '', **saved}
+
+
+def _cells(table: list) -> list[dict]:
+    """Ячейки таблицы — в записи того же вида, что отдаёт сценарий.
+
+    ⚠ Вид общий намеренно: разбор строк (`chat_panel_rows`) один на оба
+    пути, и вторая его копия под ручку разошлась бы с первой на первой же правке.
+
+    Номера сторон берём из **ссылки** ячейки: панель пишет туда «181685 Semen
+    Gorbunkov», где номер — ссылка на карточку, а имя стоит рядом. Текст
+    сообщения — из подсказки `title`, потому что в самой ячейке он обрезан
+    шириной колонки.
+    """
+    out = []
+    for row in table:
+        one = {}
+        for at, name in enumerate(CHAT_PANEL_CELLS):
+            cell = row[at] if at < len(row) else {}
+            one[name] = cell.get('текст', '')
+            if name in ('от', 'кому'):
+                one[f'{name}_номер'] = cell.get('ссылка', '')
+            if name == 'текст':
+                one['текст_подсказка'] = cell.get('подсказка', '')
+
+        out.append(one)
+
+    return out

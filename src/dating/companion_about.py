@@ -196,39 +196,6 @@ def companion_about_text(fields: dict) -> str:
     return '\n'.join(lines)[:COMPANION_ABOUT_MAX]
 
 
-def _tail(value: str) -> str:
-    """Приводит значение поля в вид, годный для чтения человеком и агентом.
-
-    Две чистки, и обе — про мусор самого сайта:
-
-    ⚠ **Разметка.** Текст «о себе» сайт иногда отдаёт с тегами внутри — это следы
-    его встроенного переводчика:
-
-        <font style="vertical-align: inherit;">Mein Leben ist eine Achterbahn…
-
-    В описание они уходят как есть, и агент читает их как слова: вопрос про
-    интересы выходит про «vertical-align». Теги снимаем, текст оставляем.
-
-    ⚠ **Хвост «… More»** — это кнопка, а не слова человека. В описании она читается
-    как часть рассказа: «Looking for a girl to enjoy my nice life... More».
-    Раскрыть текст сценарий пока не умеет, но показывать обрубок с чужим словом
-    хуже, чем обрубок без него.
-    """
-    # Теги вырезаем, а не экранируем: содержимое между ними — тот самый текст.
-    value = re.sub(r'<[^>]{0,200}>', '', str(value or ''))
-
-    # ⚠ И **обрывок тега в конце**: сайт режет длинный текст по числу знаков, не
-    # разбирая разметку, и на срезе остаётся «…dem Tod zu stellen. </fo». Целые
-    # теги уже сняты, так что уцелевшая `<` в хвосте — всегда обрывок.
-    value = re.sub(r'<[^<>]{0,200}$', '', value)
-
-    # ⚠ Пробелы схлопываем **после** тегов: на их месте остаются пустые места, и
-    # без этого в описании зияли бы дыры по два-три пробела.
-    value = ' '.join(value.split())
-
-    return re.sub(r'\s*\.{2,}\s*More\s*$', '…', value).strip()
-
-
 def companion_about_head(head: str) -> tuple:
     """Имя и возраст из шапки анкеты. Пусто — сайт их не показал.
 
@@ -382,25 +349,6 @@ async def companion_about_http(profile: dict, uid: str) -> dict:
             'на странице нет блока анкеты — сессия протухла или сайт сменил вёрстку')
 
     return _from_blocks(blocks, uid)
-
-
-def _from_blocks(blocks: dict, uid: str) -> dict:
-    """Разбирает снятые блоки в поля. ⚠ Общий для GET и сценария.
-
-    Разбор один на оба пути намеренно: страница одна и та же, и второй его вид
-    разошёлся бы с первым на первой же правке подписей.
-    """
-    fields = companion_about_parse(blocks.get('анкета'))
-    city, country = companion_about_place(fields)
-    name, age = companion_about_head(blocks.get('шапка'))
-
-    got_uid = str(fields.get('Id:') or '').strip()
-    if got_uid and got_uid != str(uid):
-        raise DatingCompanionAboutError(
-            f'открылась чужая анкета: просили {uid}, а на странице {got_uid}')
-
-    return {'fields': fields, 'about': companion_about_text(fields),
-            'city': city, 'country': country, 'name': name, 'age': age}
 
 
 async def companion_about_fetch(profile: dict, uid: str) -> dict:
@@ -609,3 +557,55 @@ async def companion_about_collect(profile: dict, uid: str) -> dict:
         about_state='done' if about else 'empty', about_error='', **extra)
 
     return {'ok': True, 'about': about, 'error': ''}
+
+
+def _tail(value: str) -> str:
+    """Приводит значение поля в вид, годный для чтения человеком и агентом.
+
+    Две чистки, и обе — про мусор самого сайта:
+
+    ⚠ **Разметка.** Текст «о себе» сайт иногда отдаёт с тегами внутри — это следы
+    его встроенного переводчика:
+
+        <font style="vertical-align: inherit;">Mein Leben ist eine Achterbahn…
+
+    В описание они уходят как есть, и агент читает их как слова: вопрос про
+    интересы выходит про «vertical-align». Теги снимаем, текст оставляем.
+
+    ⚠ **Хвост «… More»** — это кнопка, а не слова человека. В описании она читается
+    как часть рассказа: «Looking for a girl to enjoy my nice life... More».
+    Раскрыть текст сценарий пока не умеет, но показывать обрубок с чужим словом
+    хуже, чем обрубок без него.
+    """
+    # Теги вырезаем, а не экранируем: содержимое между ними — тот самый текст.
+    value = re.sub(r'<[^>]{0,200}>', '', str(value or ''))
+
+    # ⚠ И **обрывок тега в конце**: сайт режет длинный текст по числу знаков, не
+    # разбирая разметку, и на срезе остаётся «…dem Tod zu stellen. </fo». Целые
+    # теги уже сняты, так что уцелевшая `<` в хвосте — всегда обрывок.
+    value = re.sub(r'<[^<>]{0,200}$', '', value)
+
+    # ⚠ Пробелы схлопываем **после** тегов: на их месте остаются пустые места, и
+    # без этого в описании зияли бы дыры по два-три пробела.
+    value = ' '.join(value.split())
+
+    return re.sub(r'\s*\.{2,}\s*More\s*$', '…', value).strip()
+
+
+def _from_blocks(blocks: dict, uid: str) -> dict:
+    """Разбирает снятые блоки в поля. ⚠ Общий для GET и сценария.
+
+    Разбор один на оба пути намеренно: страница одна и та же, и второй его вид
+    разошёлся бы с первым на первой же правке подписей.
+    """
+    fields = companion_about_parse(blocks.get('анкета'))
+    city, country = companion_about_place(fields)
+    name, age = companion_about_head(blocks.get('шапка'))
+
+    got_uid = str(fields.get('Id:') or '').strip()
+    if got_uid and got_uid != str(uid):
+        raise DatingCompanionAboutError(
+            f'открылась чужая анкета: просили {uid}, а на странице {got_uid}')
+
+    return {'fields': fields, 'about': companion_about_text(fields),
+            'city': city, 'country': country, 'name': name, 'age': age}
