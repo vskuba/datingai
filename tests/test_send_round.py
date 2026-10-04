@@ -16,6 +16,7 @@ import pytest
 
 from src.dating import send_round as round_
 from src.dating.send_round import send_round_run, send_why
+from src.dating.site_setting import SITE_KNOWN
 
 pytestmark = pytest.mark.mail
 # Выдуманный сайт: у соседа его нет, живую отправку задеть невозможно.
@@ -245,8 +246,6 @@ class TestOneAtATime:
     async def test_pause_has_no_floor_and_loses_to_options(self):
         """⚠ Предела константой больше нет: темп задан **набором**, а `site_seconds`
         значение вне набора не берёт — значит, «5» в базу не проедет вовсе."""
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         values = {int(v) for v, _ in SITE_KNOWN['send_every']['options']}
 
         assert min(values) >= 30
@@ -316,8 +315,6 @@ class TestValuesAreSiteSettings:
     async def test_registry_defaults_are_the_old_constants(self):
         """Умолчания лежат в реестре настроек: их видит страница и берёт круг,
         когда сайт ничего не задавал. Оба числа — ровно те, что жили в константах."""
-        from src.uvicorn.routers.dating.site_ import SITE_KNOWN
-
         assert SITE_KNOWN['send_every']['default'] == '180'
         assert SITE_KNOWN['send_max_day']['default'] == '40'
 

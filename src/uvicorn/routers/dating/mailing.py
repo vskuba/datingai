@@ -40,9 +40,8 @@ from src.dating.mailing import (MAILING_BATCH_DEFAULT,
                                        mailing_gaps, mailing_girls,
                                        mailing_make, mailing_people,
                                        mailing_templates)
+from src.dating.site_setting import site_seconds, site_setting
 from src.uvicorn.routers.setting import setting_timezone_hours
-from src.uvicorn.routers.dating.site_ import (site_seconds,
-                                                    site_setting)
 # ⚠ Сборка строки ответа берётся у соседа, а не повторяется здесь: журнал доставки
 # показывает ответы теми же полями, что «Письма → Входящие», и вторая сборка
 # разошлась бы с первой — у неё, например, лицо приходит из письма (`in_photo`).

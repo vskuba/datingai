@@ -61,6 +61,7 @@ from src.dating.schedule import schedule_now
 from datetime_.datetime_ import datetime_day_minutes
 from src.dating.round import (round_sites_run, round_slot_due,
                               round_slot_mark, round_slot_release)
+from src.dating.site_setting import site_seconds
 
 # Как часто круг просыпается. Минута — как у расписания анкет: смены заданы с
 # точностью до четверти часа, и чаще смотреть нечего.
@@ -241,8 +242,6 @@ async def _sites() -> list[dict]:
 
 async def _every(site_id: int) -> int:
     """Как часто добирать пул этому сайту, в секундах."""
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return int(await site_seconds(site_id, MAILING_EVERY_SETTING)
                or MAILING_EVERY_DEFAULT)
 
@@ -330,8 +329,6 @@ async def _make(site_id: int) -> tuple[dict | None, bool]:
 
 async def _pool_max(site_id: int) -> int:
     """Сколько неотправленных писем держим в пуле у этого сайта."""
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return min(int(await site_seconds(site_id, MAILING_POOL_SETTING)
                    or MAILING_POOL_MAX_DEFAULT), MAILING_POOL_MAX)
 

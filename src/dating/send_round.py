@@ -64,6 +64,7 @@ from src.dating.mail_send import (MAIL_SEND_TALK_TABLES, DatingMailSendError,
 from src.dating.mail_wait import mail_wait_uids
 from src.dating.pool_pair import pool_mail_answered_where
 from src.dating.schedule import schedule_now
+from src.dating.site_setting import site_seconds, site_setting
 
 # Как часто круг просыпается. ⚠ Это **не** частота отправки: её задаёт каждый пул
 # своим сроком (`_POOLS`), а круг лишь смотрит, кому из них пора.
@@ -542,8 +543,6 @@ async def _send(letter: dict, table: str) -> str:
     считалось неудачей — а это разные события: после `fail` письмо ждёт человека,
     после `wait` его унесёт следующий заход.
     """
-    from src.uvicorn.routers.dating.site_ import site_setting
-
     site_id = int(letter['site_id'])
     base = str(await site_setting(site_id, 'api_base')).strip()
     password = str(await site_setting(site_id, 'api_password')).strip()
@@ -592,15 +591,11 @@ async def _every(site_id: int, setting: str) -> int:
     ⚠ Предела поверх нет, и он не нужен: темп задан **набором** значений, а
     `site_seconds` чужое значение не берёт — возвращает реестровое умолчание.
     """
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return int(await site_seconds(site_id, setting))
 
 
 async def _max_day(site_id: int) -> int:
     """Сколько писем рассылки в сутки разрешено этому сайту."""
-    from src.uvicorn.routers.dating.site_ import site_seconds
-
     return int(await site_seconds(site_id, 'send_max_day'))
 
 
