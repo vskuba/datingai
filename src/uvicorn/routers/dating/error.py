@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
-from src.dating.error import ERROR_LIMIT, ERROR_TITLES, error_rows
+from src.dating.error import ERROR_LIMIT, error_rows, error_title
 from src.uvicorn.routers.dating.log import _NAME, _PHOTO, _run_text, feed_page
 
 router = APIRouter(prefix='/api/dating/error', tags=['dating'])
@@ -124,14 +124,20 @@ def _feed_row(row: dict) -> dict:
 
     Прогон говорит частями — имя сценария, шаг, причина, — и собирает их `_run_text`
     из `log.py`: третья копия правил о прогоне разошлась бы с двумя первыми на
-    первой же правке. Общий отказ зовёт ту же пару, что и страница «Ошибки»:
-    человек читает «Список сайтов: сосед не ответил», а не `sites_sync`.
+    первой же правке. Общий отказ зовёт ту же `error_title`, что и страница
+    «Ошибки»: человек читает «Список сайтов: сосед не ответил», а не `sites_sync`.
+
+    ⚠⚠ Именно `error_title`, а **не** `ERROR_TITLES.get`. Словарь отвечает лишь
+    на предметные источники, и сбой процесса в него не попадает: его `source`
+    несёт отпечаток (`crash:uvicorn:e39650de`), то есть всякий раз новый ключ.
+    Пока здесь стоял словарь, страница показывала «Сбой сервера», а эта же
+    строка в ленте — сырой ключ с отпечатком.
     """
     if row['source'] == 'scenario':
         row['text'] = _run_text({**row, 'level': 'fail'})
 
     if row['source'] == 'system':
-        title = ERROR_TITLES.get(row['scenario_name'], row['scenario_name'])
+        title = error_title(row['scenario_name'])
         row['text'] = f'{title}: {row["text"] or "причина неизвестна"}'
 
     return row

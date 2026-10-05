@@ -28,6 +28,7 @@
 утром. Кому мало — поднимет, и цена этого решения видна ему же по размеру базы.
 """
 
+from src.dating.error import error_crash_trim
 from src.dating.log import log_sweep
 from src.dating.request import request_sweep
 from src.dating.round import round_mem_due, round_mem_mark
@@ -71,6 +72,11 @@ async def request_round_run() -> dict:
     # ⚠ Журнал анкет — вторым, а не вместо: сроки у них разные и заданы в
     # разных местах (панель против сайта), а занятие одно.
     logs = await log_sweep()
+    # ⚠⚠ Сбои процессов — третьим, и только они. Предметный отказ живёт до
+    # своей удачи (`error_clear`), а у сбоя удачи не бывает: некому позвать
+    # её для случайного исключения в кронджобе, и без срока такие строки
+    # затопили бы страницу «что сломано сейчас» (`error.py`).
+    crashes = await error_crash_trim()
 
-    return {'ran': True, 'gone': requests + logs,
-            'requests': requests, 'logs': logs}
+    return {'ran': True, 'gone': requests + logs + crashes,
+            'requests': requests, 'logs': logs, 'crashes': crashes}

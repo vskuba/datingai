@@ -54,6 +54,49 @@ ERROR_LIMIT = 200
 # мегабайт чужой трассы, а человек читает первую строку.
 ERROR_MESSAGE_MAX = 2000
 
+# ── Сбои процессов: то, что прежде видел только файловый лог ─────────────────
+#
+# ⚠⚠ **Чего здесь не было.** Все источники выше — предметные: код поймал отказ и
+# сам о нём сказал. А `logger_exception` стоит в пяти местах (middleware ошибок
+# сервера, три кронджоба, страховка смены), и его записи не попадали **никуда**,
+# кроме `data/log/app.log` внутри контейнера. То есть упавший ночью кронджоб
+# узнавался от человека со словами «что-то не работает».
+#
+# Ловит их теперь застава на корневом логгере (`error_catch_install`), а пишет —
+# сюда же, в эту таблицу: второй журнал рядом с первым означал бы два места, где
+# искать пропавшее.
+ERROR_CRASH_PREFIX = 'crash:'
+
+# Как зовутся процессы, которые могут упасть. Ключ уезжает в `source`, подпись
+# показывает страница.
+ERROR_CRASH_TITLES = {'uvicorn': 'Сбой сервера',
+                      'worker': 'Сбой воркера',
+                      'cronjob': 'Сбой задания'}
+
+# Сколько знаков отпечатка кладём в `source`.
+#
+# ⚠⚠ **Отпечаток обязан быть в `source`, и вот почему.** Уникальный ключ таблицы
+# — пара `(source, site_id)`, а у сбоя процесса сайта нет (`site_id = 0`):
+# ошибка в воркере не знает, про какой сайт она. Положи мы в `source` просто
+# `crash:worker` — **все** ошибки воркера слились бы в одну строку, и вместо
+# списка сбоев вышел бы один счётчик без смысла.
+#
+# Восемь знаков — 4 млрд значений; сбоев на установке десятки, и столкновение
+# двух разных ошибок в одной строке практически исключено.
+ERROR_CRASH_KEY_LEN = 8
+
+# Сколько дней держим сбой.
+#
+# ⚠⚠ **Своя чистка нужна именно им, и это не прихоть.** Предметный отказ живёт
+# до **своей удачи**: сверка прошла — `error_clear` убрал строку. У сбоя процесса
+# удачи не бывает: некому позвать `error_clear` для случайного исключения в
+# кронджобе. Без срока такие строки жили бы вечно и затопили бы страницу, которая
+# отвечает на вопрос «что сломано **сейчас**».
+#
+# Неделя: разбираются с тем, что случилось на днях, а месячной давности сбой уже
+# не о текущем коде.
+ERROR_CRASH_KEEP_DAYS = 7
+
 
 async def error_write(source: str, message: str, site_id: int = 0) -> None:
     """Записывает отказ. Повтор того же источника — счётчик, а не новая строка.
@@ -118,9 +161,164 @@ async def error_rows(site_id: int = 0, limit: int = ERROR_LIMIT) -> list[dict]:
 
     return [{'id': int(row['id']),
              'source': row['source'],
-             'title': ERROR_TITLES.get(row['source'], row['source']),
+             'title': error_title(row['source']),
              'site_id': int(row['site_id']),
              'message': row['message'],
              'hits': int(row['hits']),
              'first_at': row['first_at'],
              'last_at': row['last_at']} for row in rows]
+
+
+def error_title(source: str) -> str:
+    """Как назвать источник человеку. Незнакомый — как есть.
+
+    ⚠ У сбоев процессов в `source` лежит ключ с отпечатком
+    (`crash:worker:a1b2c3d4`), и показывать его целиком незачем: читается он как
+    мусор. Подпись берётся по процессу, а отпечаток остаётся различать строки.
+    """
+    source = str(source or '')
+
+    if source.startswith(ERROR_CRASH_PREFIX):
+        process = source[len(ERROR_CRASH_PREFIX):].split(':', 1)[0]
+
+        return ERROR_CRASH_TITLES.get(process, f'Сбой: {process}')
+
+    return ERROR_TITLES.get(source, source)
+
+
+def error_catch_install(process: str):
+    """Ставит заставу: любая ошибка уровня ERROR ложится в эту таблицу.
+
+    Args:
+        process: чей процесс — ключ из `ERROR_CRASH_TITLES` (`uvicorn`,
+            `worker`, `cronjob`).
+
+    Returns:
+        Поставленный обработчик либо `None`, если он уже стоял.
+
+    Зовётся в каждой точке входа рядом с `logging_init()`: у сервера — в
+    lifespan, у смены — в начале работы, у кронджоба — после починки путей.
+
+    ## ⚠⚠ Зачем застава, если отказы и так пишутся
+
+    Все прочие источники этой таблицы предметные: код поймал отказ и **сам**
+    о нём сказал. Так наполняют журнал ровно до первой забытой ветки — пишущий
+    код занят своей работой, а строчку про журнал в нём надо помнить.
+
+    `logger_exception` же стоит в пяти местах, и его записи не попадали никуда,
+    кроме файла внутри контейнера. Застава закрывает именно это: новый код
+    попадает в журнал сам.
+
+    ## ⚠ Чего эта дверь не даёт
+
+    Трассировки и контекста: в таблице нет под них столбцов, а завести их
+    значило бы миграцию и вторую страницу рядом с работающей. Поэтому в причину
+    кладётся **первая строка плюс место** — то, что человек читает первым;
+    полная трассировка остаётся в `app.log`, и `trace_id` в причине связывает
+    одно с другим.
+    """
+    from journal_.journal_catch import journal_catch_install
+
+    # ⚠ Пропускаем сам журнал: он о своих неудачах говорит через `logger_info`
+    # (INFO до заставы не доходит), но пожалуйся он на ERROR — запись о
+    # недоступной базе пошла бы в ту же недоступную базу.
+    return journal_catch_install(process, _crash_write,
+                                 skip=('src.dating.error', 'journal'))
+
+
+async def error_crash_trim(keep_days: int = ERROR_CRASH_KEEP_DAYS) -> int:
+    """Убирает старые сбои процессов. Предметные отказы не трогает.
+
+    Returns:
+        Сколько строк убрали.
+
+    ⚠⚠ **Только сбои** (`crash:`), и это главное в этой функции. Предметный
+    отказ живёт до своей удачи: сверка прошла — `error_clear` убрал строку.
+    Срок ему не нужен и вреден — «список сайтов не обновляется неделю» обязан
+    висеть, пока не обновится. А у сбоя удачи не бывает: некому позвать
+    `error_clear` для случайного исключения в кронджобе.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            # ⚠ `NOW(3)`, а не `NOW()`: столбцы времени здесь `datetime(3)`, и
+            # секундный `NOW()` округляется **вниз** — запись, сделанную
+            # мгновение назад, он считает «из будущего» (`23.546 < 23.000`
+            # ложно). На сроке в неделю это незаметно, а на нуле — тихо не
+            # удаляет ничего; поймано пробой, где чистка убрала 0 вместо 2.
+            await db.execute(
+                'DELETE FROM error'
+                ' WHERE source LIKE %s AND last_at < NOW(3) - INTERVAL %s DAY',
+                (f'{ERROR_CRASH_PREFIX}%', int(keep_days)))
+            gone = int(db.rowcount or 0)
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] старые сбои не убрались: {e}')
+
+        return 0
+
+    if gone:
+        logger_info(f'[dating] сбоев убрано: {gone}')
+
+    return gone
+
+
+# ── Приватное ────────────────────────────────────────────────────────────────
+
+def _crash_write(source: str, message: str, level: str = 'ERROR',
+                 logger_name: str = '', traceback_text: str = '',
+                 context: dict | None = None) -> None:
+    """Пишет сбой процесса в таблицу. Зовёт её застава, больше никто.
+
+    ⚠⚠ **Синхронная, и это свойство двери, а не упущение.** Логгер зовут из
+    кронджоба, у которого цикл событий вот-вот закроется: асинхронная запись «в
+    фоне» там теряется молча — задача не успевает выполниться до конца процесса.
+    Поэтому запись идёт своим соединением (`journal_sink_write` слоя), а не
+    через пул приложения, до которого кронджобу и не дотянуться.
+
+    ⚠ Отпечаток считает слой (`journal_key`): он вычёркивает из текста номера и
+    адреса, иначе «задача 5219 не найдена» и «задача 5220 не найдена» заняли бы
+    две строки вместо одной со счётчиком.
+    """
+    from journal_.journal_key import journal_key
+    from journal_.journal_sink import journal_sink_write
+
+    message = str(message or '').strip()
+    if not message:
+        return
+
+    key = journal_key(source, logger_name, message=message)[:ERROR_CRASH_KEY_LEN]
+
+    # ⚠ Новая строка берётся псевдонимом (`AS fresh`), а не функцией
+    # `VALUES(col)`: с MySQL 8.0.20 та объявлена устаревшей и на каждую запись
+    # пишет предупреждение в журнал сервера. У соседней `error_write` форма
+    # старая — это не повод заводить новое; её правка отдельное дело.
+    journal_sink_write(
+        'INSERT INTO error (source, site_id, message) VALUES (%s, 0, %s) AS fresh'
+        ' ON DUPLICATE KEY UPDATE message = fresh.message, hits = hits + 1',
+        (f'{ERROR_CRASH_PREFIX}{source}:{key}'[:64],
+         _crash_text(message, logger_name, context or {})),
+        what='dating')
+
+
+def _crash_text(message: str, logger_name: str, context: dict) -> str:
+    """Причина для человека: первая строка, место и `trace_id`.
+
+    ⚠ Место берёт застава из **трассировки**, а не из полей записи: поля
+    показывают, кто позвал логгер, а зовут его через обёртку общего слоя — и у
+    каждой второй ошибки стояло бы одно и то же `logging_.py:49`.
+    """
+    head = message.split('\n', 1)[0]
+    where = str(context.get('file') or '').rsplit('/', 1)[-1]
+    line = context.get('line')
+
+    tail = []
+    if where:
+        tail.append(f'{where}:{line}' if line else where)
+    if logger_name:
+        tail.append(logger_name)
+    if context.get('trace_id'):
+        tail.append(f"trace {context['trace_id']}")
+
+    full = f"{head} — {', '.join(tail)}" if tail else head
+
+    return full[:ERROR_MESSAGE_MAX]

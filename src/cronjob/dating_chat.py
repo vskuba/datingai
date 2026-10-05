@@ -37,6 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from logging_.logging_ import logger_exception  # noqa: E402 — после починки пути
+from src.dating.error import error_catch_install  # noqa: E402
 from mysql_.mysql_ import mysql_pool_close  # noqa: E402
 
 from src.worker.dating.chat_worker import chat_worker_enqueue  # noqa: E402
@@ -49,6 +50,9 @@ async def main() -> None:
     Печатай мы «смена уже идёт» каждые пять минут, журнал Cronicle перестали
     бы читать — и пропустили бы ту единственную строку, ради которой он нужен.
     """
+    # ⚠ Застава журнала: падение задания прежде видел только `app.log`.
+    error_catch_install('cronjob')
+
     try:
         job = chat_worker_enqueue()
         if job:

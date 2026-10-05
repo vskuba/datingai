@@ -5,14 +5,14 @@
 по HTTP, как остальная сюита (`testing.md`, §1.2).
 
 ⚠ **Главное, что здесь сторожится: третья копия правил не завелась.** Текст строки
-про прогон собирает `_run_text` из `log.py`, заголовок общего отказа — тот же
-`ERROR_TITLES`, что и на странице «Ошибки». Появится своя копия — лента «Ошибок»
+про прогон собирает `_run_text` из `log.py`, заголовок общего отказа — та же
+`error_title`, что и на странице «Ошибки». Появится своя копия — лента «Ошибок»
 заговорила бы об одном событии не тем словом, что журнал анкеты.
 """
 
 import pytest
 
-from src.dating.error import ERROR_TITLES
+from src.dating.error import ERROR_TITLES, error_title
 from src.uvicorn.routers.dating.error import _feed_query, _feed_row
 
 def _flat(parts):
@@ -112,13 +112,29 @@ class TestRowText:
 
     def test_system_row_carries_the_page_title(self):
         """Человек читает «Список сайтов: сосед не ответил», а не `sites_sync` —
-        тот же словарь, что на странице «Ошибки» (`error_rows`)."""
+        та же подпись, что на странице «Ошибки» (`error_rows`)."""
         row = _feed_row({'source': 'system', 'scenario_name': 'sites_sync',
                         'text': 'сосед не ответил', 'hits': 7, 'first_at': '',
                         'created_at': ''})
 
         assert row['text'].startswith(ERROR_TITLES['sites_sync'])
         assert 'сосед не ответил' in row['text']
+
+    def test_a_crash_reads_the_same_here_as_on_the_page(self):
+        """⚠⚠ Подпись зовётся **функцией**, а не берётся из словаря.
+
+        У сбоя процесса в `source` лежит отпечаток — ключ всякий раз новый, и
+        словарь на него не отвечает. Пока здесь стоял `ERROR_TITLES.get`,
+        страница показывала «Сбой сервера», а эта же строка в ленте — сырой
+        `crash:uvicorn:e39650de`.
+        """
+        source = 'crash:uvicorn:e39650de'
+        row = _feed_row({'source': 'system', 'scenario_name': source,
+                        'text': 'задание не уложилось в срок', 'hits': 1,
+                        'first_at': '', 'created_at': ''})
+
+        assert row['text'].startswith(error_title(source))
+        assert source not in row['text'], 'в ленте виден ключ с отпечатком'
 
 
 class TestFeedHandler:

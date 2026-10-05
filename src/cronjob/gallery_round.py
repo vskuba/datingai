@@ -35,6 +35,7 @@
 import asyncio
 
 from logging_.logging_ import logger_exception, logger_info
+from src.dating.error import error_catch_install  # noqa: E402
 from mysql_.mysql_ import mysql_get_db_async, mysql_pool_close
 
 from src.dating.gallery import gallery_folder_name
@@ -74,6 +75,9 @@ async def gallery_round_run(batch: int = GALLERY_VISION_BATCH) -> dict:
 
 async def main() -> None:
     """Точка входа задания: прогон и строка в журнал, если было что делать."""
+    # ⚠ Застава журнала: падение задания прежде видел только `app.log`.
+    error_catch_install('cronjob')
+
     try:
         got = await gallery_round_run()
         # ⚠ Молчим на пустом заходе — см. шапку. Говорим, когда что-то

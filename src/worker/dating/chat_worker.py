@@ -41,6 +41,7 @@ from worker_.worker_shift import (worker_shift_enqueue, worker_shift_keep,
                                   worker_shift_keep_stop, worker_shift_run)
 
 from src.dating.chat_hold import chat_hold_run
+from src.dating.error import error_catch_install
 
 CHAT_WORKER_QUEUE_NAME = 'dating'
 
@@ -147,6 +148,12 @@ async def _hold(hold_sec: float) -> str:
     и пишет в базу. Мини-инфраструктуру (журнал, закрытие пула MySQL) заводит
     слой: отдельный процесс rq не получает lifespan uvicorn.
     """
+    # ⚠⚠ **Застава ставится здесь, а не в точке входа**, и это не прихоть:
+    # `logging_init()` у смены зовёт слой (`worker_shift_run`), и до него
+    # ставить заставу некуда — она подвешивается к логгеру, которого ещё нет.
+    # `_hold` же слой зовёт **после** него.
+    error_catch_install('worker')
+
     result = await chat_hold_run(hold_sec)
 
     return f"смена окончена: учёток {result['profiles']}, сообщений {result['saved']}"

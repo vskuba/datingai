@@ -32,6 +32,7 @@ from mysql_.migration.mysql_migration_up import mysql_migration_up
 from mysql_.mysql_ import mysql_pool_close, mysql_pool_get
 from uvicorn_.uvicorn_validation import uvicorn_validation_handler
 
+from src.dating.error import error_catch_install
 from src.auth.auth import AuthUser
 from src.auth.auth_seed import auth_seed_first_user, auth_seed_operator
 from src.uvicorn.routers import auth as auth_router
@@ -198,6 +199,15 @@ async def main_uvicorn_startup():
     """Журнал, схема, пул. Схема накатывается на старте — как у соседа: установка
     из чистого репозитория должна подниматься одной командой."""
     logging_init()
+
+    # ⚠⚠ **Застава журнала — сразу за `logging_init`, и до всего прочего.**
+    # Она ловит любую ошибку уровня ERROR и кладёт её в таблицу отказов
+    # (`error.py`): прежде `logger_exception` уходил только в `app.log` внутри
+    # контейнера, то есть упавшее узнавалось от человека со словами «что-то не
+    # работает». Ставится раньше схемы и пула намеренно: их собственный отказ —
+    # ровно то, что хочется увидеть на странице, а не в логе.
+    error_catch_install('uvicorn')
+
     mysql_migration_up()
     await mysql_pool_get()
     await auth_seed_first_user()
