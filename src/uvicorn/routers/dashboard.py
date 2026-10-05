@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.auth.auth import AuthUser, auth_admin_required, auth_required
 from src.uvicorn.routers.setting import setting_timezone_hours
-from src.uvicorn.uvicorn_base import uvicorn_base_path
+from uvicorn_.uvicorn_base import uvicorn_base_path
 
 router = APIRouter(tags=['pages'])
 

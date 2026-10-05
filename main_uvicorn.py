@@ -30,6 +30,7 @@ from config.config import config_get
 from logging_.logging_ import logger_exception, logger_info, logging_init
 from mysql_.migration.mysql_migration_up import mysql_migration_up
 from mysql_.mysql_ import mysql_pool_close, mysql_pool_get
+from panel_.panel_auth_api import panel_auth_api_router
 from panel_.panel_backup_api import panel_backup_api_router
 from panel_.panel_seed_api import panel_seed_api_router
 from panel_.panel_setting_api import panel_setting_api_router
@@ -39,7 +40,6 @@ from uvicorn_.uvicorn_validation import uvicorn_validation_handler
 from src.dating.error import error_catch_install
 from src.auth.auth import AuthUser
 from src.auth.auth_seed import auth_seed_first_user, auth_seed_operator
-from src.uvicorn.routers import auth as auth_router
 from src.uvicorn.routers import cronjob as cronjob_router
 from src.uvicorn.routers import dashboard
 from src.uvicorn.routers import site as site_router
@@ -75,7 +75,7 @@ from src.uvicorn.routers.dating import profile_
 from src.uvicorn.routers.dating import profile_action
 from src.uvicorn.routers.dating import profile_view
 from src.uvicorn.routers.dating import proxy as dating_proxy_router
-from src.uvicorn.uvicorn_base import uvicorn_base_path
+from uvicorn_.uvicorn_base import uvicorn_base_path
 from src.worker.dating.chat_worker import chat_worker_keep_stop, chat_worker_recover
 
 # Куда пускаем без входа. Список короткий и явный: всё остальное — под сессией,
@@ -324,7 +324,7 @@ def static_url(path: str) -> str:
 
 app.state.jinja2_template.env.globals['static_url'] = static_url
 
-app.include_router(auth_router.router)
+app.include_router(panel_auth_api_router())
 app.include_router(dashboard.router)
 app.include_router(site_router.router)
 app.include_router(panel_setting_api_router())

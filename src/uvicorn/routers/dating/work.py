@@ -42,7 +42,7 @@ from logging_.logging_ import logger_info
 from src.auth.auth import AuthUser, auth_required
 from src.dating.site_setting import site_setting
 from src.dating.site_snapshot import site_rows
-from src.uvicorn.uvicorn_base import uvicorn_base_path
+from uvicorn_.uvicorn_base import uvicorn_base_path
 
 router = APIRouter(prefix='/admin/dating/profile', tags=['pages'])
 
