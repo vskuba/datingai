@@ -170,71 +170,6 @@ async def initiative_make(site_id: int, limit: int = 0) -> dict:
     return {'made': made, 'skipped': skipped, 'errors': errors, 'why': ''}
 
 
-async def _one(profile: dict, agent: int, pair: dict) -> str:
-    """Одна пара: спросить агента и положить карточку. Исход — словами."""
-    profile_id = int(profile['id'])
-    uid = str(pair['uid'])
-    name = str(pair.get('name') or '')
-    who = f'{name} {uid}'.strip()
-
-    # ⚠ Карточка у пары уже лежит — второй не заводим. Ключ базы это и так
-    # запретит, но платить за вызов LLM перед отказом вставки незачем.
-    if await chat_initiative_waiting(profile_id, uid):
-        return 'есть'
-
-    language = str(pair.get('language') or 'en')
-
-    # ⚠⚠ `anyway=True` всегда. Инициатива, на которую агент промолчал, — заход,
-    # потраченный впустую: пара останется затихшей, а счётчик повторов не
-    # сдвинется. Судья при этом не перестаёт проверять текст, он лишь не вправе
-    # выбрать молчание (`wf_dating_talk_answer_anyway`).
-    # ⚠ Историю не спрашиваем: обе — чат и письма — берёт сам `_agent_ask`.
-    # ⚠⚠ **Вопрос пуст, и это правильно.** `prompt_user` у соседа означает «что
-    # сказал собеседник», а он ничего не говорил — потому мы и пишем. Задание
-    # «заговори первой, приёмом из жребия» целиком лежит в промпте ветки
-    # «Инициатива»; дублировать его вопросом значило бы спорить с промптом за
-    # внимание модели, а шаг записи положил бы нашу инструкцию в переписку от
-    # имени человека.
-    #
-    # ⚠ Ветку выбирает флаг `initiative`, а не текст вопроса.
-    text, error, message_id = await _agent_ask(agent, '', language, profile,
-                                               uid=uid, name=name,
-                                               anyway=True, initiative=True)
-
-    if error:
-        await log_write(profile_id, 'fail',
-                        f'Инициатива не сочинилась для {who}: {error}')
-
-        return f'ошибка:{who}: {error}'
-
-    if not text:
-        # Агент промолчал — значит разговор и вправду кончен. Это законный исход,
-        # и настаивать незачем: молчание тут решение, а не сбой.
-        return 'молчит'
-
-    # ⚠ Сторож чужого имени — тот же, что у ответов. Инициатива уходит живому
-    # человеку так же, как ответ, и цена ошибки та же.
-    alien = companion_ref_foreign(text, companion_title(name, uid))
-    if alien:
-        await log_write(profile_id, 'fail',
-                        f'Инициатива не взята для {who}: чужое имя «{alien}»')
-
-        return f'ошибка:{who}: в тексте чужое имя «{alien}»'
-
-    # ⚠⚠ Номер обмена кладём в строку пула: карточку сочиняет этот круг, а
-    # уносит отправкой другой (`initiative_round._send`), позже — когда
-    # собеседник окажется в сети. Без своего места в строке номер до отправки
-    # не дожил бы, и ушедшая инициатива осталась бы у соседа неотмеченной.
-    await chat_initiative_put(int(profile.get('site_id') or 0), profile_id, uid,
-                              name, text, int(pair.get('try_no') or 1),
-                              message_id)
-    await log_write(profile_id, 'info',
-                    f'Инициатива готова: {_me_name(profile)} → {who} '
-                    f'(заход {int(pair.get("try_no") or 1)})')
-
-    return 'made'
-
-
 def initiative_his_last_sql(profile: str, uid: str) -> str:
     """Его последнее слово — нижняя граница счёта «подряд», выражением SQL.
 
@@ -343,6 +278,71 @@ async def initiative_blocked(site_id: int,
         rows = await db.fetchall() or []
 
     return {(int(row['profile_id']), str(row['uid'])) for row in rows}
+
+
+async def _one(profile: dict, agent: int, pair: dict) -> str:
+    """Одна пара: спросить агента и положить карточку. Исход — словами."""
+    profile_id = int(profile['id'])
+    uid = str(pair['uid'])
+    name = str(pair.get('name') or '')
+    who = f'{name} {uid}'.strip()
+
+    # ⚠ Карточка у пары уже лежит — второй не заводим. Ключ базы это и так
+    # запретит, но платить за вызов LLM перед отказом вставки незачем.
+    if await chat_initiative_waiting(profile_id, uid):
+        return 'есть'
+
+    language = str(pair.get('language') or 'en')
+
+    # ⚠⚠ `anyway=True` всегда. Инициатива, на которую агент промолчал, — заход,
+    # потраченный впустую: пара останется затихшей, а счётчик повторов не
+    # сдвинется. Судья при этом не перестаёт проверять текст, он лишь не вправе
+    # выбрать молчание (`wf_dating_talk_answer_anyway`).
+    # ⚠ Историю не спрашиваем: обе — чат и письма — берёт сам `_agent_ask`.
+    # ⚠⚠ **Вопрос пуст, и это правильно.** `prompt_user` у соседа означает «что
+    # сказал собеседник», а он ничего не говорил — потому мы и пишем. Задание
+    # «заговори первой, приёмом из жребия» целиком лежит в промпте ветки
+    # «Инициатива»; дублировать его вопросом значило бы спорить с промптом за
+    # внимание модели, а шаг записи положил бы нашу инструкцию в переписку от
+    # имени человека.
+    #
+    # ⚠ Ветку выбирает флаг `initiative`, а не текст вопроса.
+    text, error, message_id = await _agent_ask(agent, '', language, profile,
+                                               uid=uid, name=name,
+                                               anyway=True, initiative=True)
+
+    if error:
+        await log_write(profile_id, 'fail',
+                        f'Инициатива не сочинилась для {who}: {error}')
+
+        return f'ошибка:{who}: {error}'
+
+    if not text:
+        # Агент промолчал — значит разговор и вправду кончен. Это законный исход,
+        # и настаивать незачем: молчание тут решение, а не сбой.
+        return 'молчит'
+
+    # ⚠ Сторож чужого имени — тот же, что у ответов. Инициатива уходит живому
+    # человеку так же, как ответ, и цена ошибки та же.
+    alien = companion_ref_foreign(text, companion_title(name, uid))
+    if alien:
+        await log_write(profile_id, 'fail',
+                        f'Инициатива не взята для {who}: чужое имя «{alien}»')
+
+        return f'ошибка:{who}: в тексте чужое имя «{alien}»'
+
+    # ⚠⚠ Номер обмена кладём в строку пула: карточку сочиняет этот круг, а
+    # уносит отправкой другой (`initiative_round._send`), позже — когда
+    # собеседник окажется в сети. Без своего места в строке номер до отправки
+    # не дожил бы, и ушедшая инициатива осталась бы у соседа неотмеченной.
+    await chat_initiative_put(int(profile.get('site_id') or 0), profile_id, uid,
+                              name, text, int(pair.get('try_no') or 1),
+                              message_id)
+    await log_write(profile_id, 'info',
+                    f'Инициатива готова: {_me_name(profile)} → {who} '
+                    f'(заход {int(pair.get("try_no") or 1)})')
+
+    return 'made'
 
 
 async def _quiet(profile_id: int, after_sec: int, after_max_sec: int,
