@@ -1,3 +1,6 @@
 [submodule "py_modules"]
 	path = py_modules
 	url = https://github.com/vskuba/py_modules
+[submodule "dashboard"]
+	path = dashboard
+	url = https://github.com/vskuba/dashboard.git

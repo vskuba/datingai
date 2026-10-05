@@ -30,7 +30,7 @@ from logging_.logging_ import logger_exception, logger_info, logging_init
 from mysql_.migration.mysql_migration_up import mysql_migration_up
 from mysql_.mysql_ import mysql_pool_close, mysql_pool_get
 from panel_.panel_auth_api import panel_auth_api_router
-from panel_.panel_static import panel_static_files
+from panel_.panel_static import panel_static_files, panel_static_url
 from panel_.panel_backup_api import panel_backup_api_router
 from panel_.panel_seed_api import panel_seed_api_router
 from panel_.panel_setting_api import panel_setting_api_router
@@ -251,7 +251,12 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 data_dir = os.path.join(current_dir, config_get('DATA_DIR', 'data'), config_get('UVICORN_DIR', 'uvicorn'))
 
 app.state.jinja2_template = Jinja2Templates(directory=os.path.join(data_dir, 'template'))
-app.mount('/static', panel_static_files(os.path.join(data_dir, 'public')),
+# ⚠ Общая статика — submodule `dashboard` рядом с `py_modules`: раздача ищет
+# файл сперва у нас, потом там. Свой файл с тем же именем перекрывает общий, и
+# это единственный способ отойти от общего вида, не ломая соседей.
+app.mount('/static',
+          panel_static_files(os.path.join(data_dir, 'public'),
+                             shared=os.path.join(current_dir, 'dashboard')),
           name='static')
 
 # Адрес phpMyAdmin в шапке. Читается здесь, а не в шаблоне: шаблон не должен
@@ -263,38 +268,12 @@ app.mount('/static', panel_static_files(os.path.join(data_dir, 'public')),
 app.state.jinja2_template.env.globals['PHPMYADMIN_URL'] = config_get('PHPMYADMIN_URL', '')
 
 
-def static_url(path: str) -> str:
-    """Адрес файла статики с меткой его правки: `/static/js/x.js?v=1756800000`.
-
-    ⚠ **Без метки браузер показывает вчерашний код.** `Cache-Control: no-cache`
-    (`panel_static_files`) заставляет перепроверять файл, но **только при новом
-    запросе**. ES-модуль, уже загруженный во вкладку, не перезапрашивается вовсе:
-    страница берёт его из памяти, и обычное обновление не помогает — нужно
-    очищать кэш вручную.
-
-    Так и было: страница грузила новый HTML со старым модулем и падала с «не
-    экспортирует timeFull», хотя экспорт на сервере был.
-
-    Метка — время правки файла. Правка меняет адрес, а другой адрес для браузера
-    другой модуль: старый он не подставит при всём желании. Гадать при этом не
-    приходится — метка меняется ровно тогда, когда меняется файл.
-
-    Читается на каждый показ, а не запоминается: правят статику руками, и
-    перезапуск ради подхвата новой версии — лишний повод. Файл на диске, чтение
-    дешевле объяснения, почему правка не видна.
-    """
-    full = os.path.join(data_dir, 'public', str(path).lstrip('/'))
-    try:
-        mark = int(os.path.getmtime(full))
-    except OSError:
-        # Файла нет — отдаём адрес как есть: пусть браузер получит честный 404, а
-        # не молчаливую подмену. Ошибка в имени должна быть видна.
-        return f'/static/{str(path).lstrip("/")}'
-
-    return f'/static/{str(path).lstrip("/")}?v={mark}'
-
-
-app.state.jinja2_template.env.globals['static_url'] = static_url
+# ⚠ Метка версии ищет файл в тех же каталогах и в том же порядке, что раздача
+# выше: разойдись они — у общего файла метки не будет, и ES-модуль из `dashboard`
+# застрянет в кэше вкладки (`docs-common/panel.md`, §11).
+app.state.jinja2_template.env.globals['static_url'] = lambda path: panel_static_url(
+    path, os.path.join(data_dir, 'public'),
+    shared=os.path.join(current_dir, 'dashboard'))
 
 app.include_router(panel_auth_api_router())
 app.include_router(dashboard.router)
