@@ -352,6 +352,50 @@ class TestTheCappedMarkInTheRow:
             'отбор круга перестал звать общее выражение'
 
 
+class TestTheReleaseIcon:
+    """⚠ Иконка сброса — в шапке разговора на «Чат → Диалоги», и только там."""
+
+    def _page(self, name: str) -> str:
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parents[1]
+
+        return (root / name).read_text(encoding='utf-8')
+
+    def test_the_markup_has_the_icon(self):
+        page = self._page(
+            'data/uvicorn/template/admin/dating/profile/site/_base.html')
+
+        assert page.count('data-slot="initiative-free"') == 1, \
+            'иконка либо не заведена, либо уехала не в одну шапку'
+
+    def test_it_stands_in_the_chat_tab_only(self):
+        """⚠⚠ Шапок «Разговор» в шаблоне три, и две чужие.
+
+        Вторая — «Фавориты → Диалоги», третья — «Письма»: у них своё занятие, и
+        инициатива к ним отношения не имеет. Копия иконки там предлагала бы
+        сбросить то, чего нет.
+        """
+        page = self._page(
+            'data/uvicorn/template/admin/dating/profile/site/_base.html')
+        before = page.split('data-slot="initiative-free"')[0]
+
+        assert before.count('{% block work_talk %}') == 1, \
+            'иконка стоит до блока «Чат → Диалоги»'
+        assert '{% block work_favorite_talks %}' not in before, \
+            'иконка уехала в шапку «Фаворитов»'
+        assert '{% block work_mail_sent %}' not in before, \
+            'иконка уехала в шапку «Писем»'
+
+    def test_the_page_reads_the_server_field(self):
+        page = self._page('data/uvicorn/template/admin/dating/profile.html')
+
+        assert 'initiative_blocked' in page, \
+            'страница не читает признак потолка с сервера'
+        assert 'initiative-reset' in page, \
+            'щелчок по иконке не зовёт ручку сброса'
+
+
 class TestTheResetHandle:
     """Ручка сброса: ею страница отпускает упёршуюся пару."""
 
