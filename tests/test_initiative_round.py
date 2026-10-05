@@ -248,6 +248,12 @@ class TestWhoIsQuiet:
         того же промежутка тишины. Ограничь счёт сутками, и трёхдневное молчание
         обнуляло бы его само, без всякого ответа: девушка звала бы молчащего
         каждый день по разу вечно.
+
+        ⚠⚠ Это по-прежнему верно для счёта самого по себе: окна у него нет, и
+        сутки его не обнуляют. «Звать молчащего каждый день по разу» теперь
+        возможно, но только когда человек **явно** задал срок повторного захода
+        (`chat_initiative_reset_after`), и не больше, чем разрешает потолок
+        `chat_initiative_repeat`. Без настройки — ровно как здесь: не зовём.
         """
         await _said(girl, 'u-1', direction='in', minutes_ago=4000)
         await _said(girl, 'u-1', direction='out', minutes_ago=3900)
@@ -998,6 +1004,95 @@ class TestThePauseBetweenSends:
         """
         assert not hasattr(round_mod, 'INITIATIVE_ROUND_SEND'), \
             'частота отправки снова в коде — её задаёт настройка сайта'
+
+
+class TestTheRepeatCallWaitsItsOwnTerm:
+    """⚠⚠ Первый заход меряется минутами, повторные — своим сроком в часах."""
+
+    async def test_the_first_call_ignores_the_reset_term(self, girl):
+        """⚠ Первому заходу новый срок не указ: его срок — минутный.
+
+        Иначе настройка превратилась бы в «через сколько вообще заговаривать», и
+        минутный срок перестал бы значить что-либо.
+        """
+        await _said(girl, 'u-1', direction='in', minutes_ago=200)
+        await _said(girl, 'u-1', direction='out', minutes_ago=180)
+
+        got = await initiative_mod._quiet(girl, 3600, 3600, 2,
+                                          reset_sec=24 * 3600)
+
+        assert [one['uid'] for one in got] == ['u-1'], \
+            'первый заход стал ждать суточный срок'
+
+    async def test_the_second_call_waits_the_hours(self, girl):
+        """⚠⚠ Заход уже был, он молчит — ждём суточный срок, а не минутный.
+
+        Тишина здесь три часа: минутный срок (час) вышел, суточный — нет.
+        """
+        await _said(girl, 'u-1', direction='in', minutes_ago=400)
+        await _said(girl, 'u-1', direction='out', minutes_ago=180)
+        await _card_sent(girl, 'u-1', minutes_ago=180)
+
+        assert await initiative_mod._quiet(girl, 3600, 3600, 2,
+                                           reset_sec=24 * 3600) == [], \
+            'повторный заход ушёл по минутному сроку'
+
+    async def test_the_second_call_goes_when_the_hours_run_out(self, girl):
+        """⚠ Суточный срок вышел — заход уходит, и это заход номер два."""
+        await _said(girl, 'u-1', direction='in', minutes_ago=4000)
+        await _said(girl, 'u-1', direction='out', minutes_ago=3000)
+        await _card_sent(girl, 'u-1', minutes_ago=3000)
+
+        got = await initiative_mod._quiet(girl, 3600, 3600, 2,
+                                          reset_sec=24 * 3600)
+
+        assert [one['uid'] for one in got] == ['u-1']
+        assert [one['try_no'] for one in got] == [2], \
+            'номер захода не вырос — счёт «подряд» не считает прошлый заход'
+
+    async def test_the_ceiling_still_holds(self, girl):
+        """⚠⚠ Срок говорит «когда», потолок — «сколько»; второго счётчика нет.
+
+        Два захода при пределе два: суточный срок вышел давно, и всё равно не
+        зовём. Иначе сброс стал бы способом обойти потолок.
+        """
+        await _said(girl, 'u-1', direction='in', minutes_ago=9000)
+        await _said(girl, 'u-1', direction='out', minutes_ago=8000)
+        await _card_sent(girl, 'u-1', minutes_ago=8000)
+        await _card_sent(girl, 'u-1', minutes_ago=4000)
+
+        assert await initiative_mod._quiet(girl, 3600, 3600, 2,
+                                           reset_sec=24 * 3600) == [], \
+            'третий заход при пределе два — потолок перестал держать'
+
+    async def test_zero_keeps_todays_behaviour(self, girl):
+        """⚠ Ноль — «сброса нет»: повторы идут по минутному сроку, как прежде."""
+        await _said(girl, 'u-1', direction='in', minutes_ago=400)
+        await _said(girl, 'u-1', direction='out', minutes_ago=180)
+        await _card_sent(girl, 'u-1', minutes_ago=180)
+
+        got = await initiative_mod._quiet(girl, 3600, 3600, 2, reset_sec=0)
+
+        assert [one['uid'] for one in got] == ['u-1'], \
+            'ноль в сроке изменил прежнее поведение'
+
+    async def test_his_answer_returns_the_pair_to_the_minute_term(self, girl):
+        """⚠⚠ Ответил — счёт обнулён, и следующий заход снова **первый**.
+
+        То есть меряется минутами, а не сутками: разговор жив, и ждать сутки,
+        чтобы вернуться к затихшей беседе, значило бы её потерять.
+        """
+        await _said(girl, 'u-1', direction='in', minutes_ago=400)
+        await _card_sent(girl, 'u-1', minutes_ago=350)
+        await _said(girl, 'u-1', direction='in', minutes_ago=300)
+        await _said(girl, 'u-1', direction='out', minutes_ago=180)
+
+        got = await initiative_mod._quiet(girl, 3600, 3600, 2,
+                                          reset_sec=24 * 3600)
+
+        assert [one['uid'] for one in got] == ['u-1'], \
+            'его ответ не вернул пару на минутный срок'
+        assert [one['try_no'] for one in got] == [1]
 
 
 class TestTheSelectionWindow:

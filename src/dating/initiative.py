@@ -20,8 +20,9 @@
 
 | Настройка | Что задаёт |
 |-----------|------------|
-| `chat_initiative_after` | через сколько минут тишины пишем — **от** |
+| `chat_initiative_after` | через сколько минут тишины пишем **впервые** — от |
 | `chat_initiative_after_max` | тот же срок — **до**; между ними жребий |
+| `chat_initiative_reset_after` | через сколько **часов** возвращаемся снова |
 | `chat_initiative_repeat` | сколько раз **подряд** возвращаемся, пока он молчит |
 | `chat_initiative_max_day` | предохранитель: сколько инициатив паре за сутки |
 
@@ -134,6 +135,7 @@ async def initiative_make(site_id: int, limit: int = 0) -> dict:
     after, after_max = await _after_range(site_id)
     repeat = await _repeat(site_id)
     max_day = await _max_day(site_id)
+    reset_sec = await _reset_after(site_id)
 
     # ⚠ Выключает занятие **нижняя** граница: ноль в ней значит «не возвращаться
     # к затихшим вовсе». Ноль в верхней — всего лишь «без разброса».
@@ -152,7 +154,7 @@ async def initiative_make(site_id: int, limit: int = 0) -> dict:
             continue
 
         for pair in await _quiet(int(profile['id']), after, after_max, repeat,
-                                 max_day):
+                                 max_day, reset_sec):
             if limit and made >= int(limit):
                 return {'made': made, 'skipped': skipped, 'errors': errors,
                         'why': ''}
@@ -325,6 +327,21 @@ async def _quiet(profile_id: int, after_sec: int, after_max_sec: int,
     ответили, и возвращаться к нему — работа инвайтов (`invite_repeat_after`), а
     не эта. Отсюда же следует, что `his_last` в счёте «подряд» всегда непуст.
 
+    ## ⚠⚠ Сроков два, и они о разных заходах
+
+    **Первый заход** меряется минутным сроком с жребием: разговор затих только
+    что, и вернуться к нему стоит быстро.
+
+    **Повторный** ждёт `chat_initiative_reset_after` (часы). Одним сроком на оба
+    случая занятие и встало: при пределе «один подряд» пара получала одну реплику
+    и замирала навсегда — счёт обнуляет только его ответ, а на 72 ушедшие
+    инициативы 33 парам не ответил никто.
+
+    ⚠ Ноль в сроке — «сброса нет»: повторы меряются минутным сроком, как прежде.
+
+    ⚠ Потолком остаётся `chat_initiative_repeat`: срок отвечает «когда», потолок
+    — «сколько». Второго счётчика нет намеренно.
+
     ## ⚠⚠ Срок у каждой пары свой
 
     В SQL уходит только **нижняя** граница — она отсекает дёшево и индексом. Выше
@@ -405,11 +422,16 @@ async def _quiet(profile_id: int, after_sec: int, after_max_sec: int,
             # зацикленный автоответчик обнуляет счёт «подряд» каждой репликой, и
             # без потолка пара получила бы сорок инициатив за сутки.
             '    AND cnt.in_day < %s'
+            # ⚠⚠ Повторный заход ждёт **свой** срок, в часах. Первому он не указ:
+            # его срок минутный, с жребием. Ноль в настройке — «сброса нет», и
+            # условие тогда не участвует вовсе.
+            '    AND (%s = 0 OR cnt.in_row = 0 OR q.quiet_sec >= %s)'
             # ⚠ Порядок «свежая тишина сверху»: разговор, затихший час назад, ещё
             # живой, и шансов на ответ у него больше. Окно теперь считает
             # **годные** строки, а не все подряд.
             '  ORDER BY q.last_at DESC LIMIT %s',
             (int(profile_id), int(after_sec), int(repeat_max), int(max_day),
+             int(reset_sec), int(reset_sec),
              INITIATIVE_PER_PROFILE * 10))
         rows = await db.fetchall() or []
 
