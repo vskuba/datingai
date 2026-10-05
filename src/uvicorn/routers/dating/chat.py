@@ -15,6 +15,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
+from src.dating.chat_initiative import chat_initiative_reset
 from src.dating.chat_panel import (CHAT_PANEL_DAYS,
                                           CHAT_PANEL_SCENARIO,
                                           chat_panel_import)
@@ -182,6 +183,36 @@ async def chat_dialog_read(profile_id: int, uid: str,
         await db.connection.commit()
 
     return {'result': {'read': read}}
+
+
+@router.post('/dialogs/{profile_id}/{uid}/initiative-reset',
+             include_in_schema=False)
+async def chat_dialog_initiative_reset(profile_id: int, uid: str,
+                                       user=Depends(auth_required)):
+    """Обнуляет счёт заходов инициативы у пары: её зовут снова с первого.
+
+    ## ⚠⚠ Зачем кнопка, если счёт обнуляет ответ
+
+    Счёт «подряд» обнуляет **входящая реплика**, и это верно по смыслу: молчание
+    тоже ответ. Но пара, упёршаяся в потолок, замирает тогда навсегда — если
+    человек не напишет сам, девушка к нему не вернётся никогда. На проде так и
+    вышло: 72 ушедшие инициативы 33 парам, ни одного ответа, пул пуст.
+
+    Кнопка — решение человека, а не кода: он прочитал разговор и решил, что стоит
+    попробовать снова.
+
+    ⚠ **По паре, а не по анкете**: отпускают один разговор, который видят.
+
+    ⚠ `{reset: false}` — законный ответ: инициатива этой паре не уходила, и
+    обнулять нечего. Ошибкой это делать нельзя — кнопка видна у любого разговора.
+
+    ⚠⚠ Дневного потолка (`chat_initiative_max_day`) кнопка **не** снимает: тот
+    сторожит не живого человека, а зацикленный автоответчик на той стороне. На
+    деле это видно так: нажал, а реплика ушла не сразу, если паре сегодня уже
+    писали сколько можно.
+    """
+    return {'result': {'reset': await chat_initiative_reset(int(profile_id),
+                                                            str(uid))}}
 
 
 @router.get('/dialogs', include_in_schema=False)

@@ -285,6 +285,46 @@ class TestDropNotEdit:
             'чистка пула унесла и ушедшее — а это часть переписки'
 
 
+class TestTheResetHandle:
+    """Ручка сброса: ею страница отпускает упёршуюся пару."""
+
+    async def test_it_resets(self, auth_client, girl):
+        await _card(girl, 'u-1', status='sent')
+
+        got = (await auth_client.post(
+            f'/api/dating/chat/dialogs/{girl}/u-1/initiative-reset')).json()
+
+        assert got['result'] == {'reset': True}
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT COUNT(*) AS n FROM chat_initiative'
+                ' WHERE profile_id = %s AND uid = %s AND reset_at IS NOT NULL',
+                (girl, 'u-1'))
+
+            assert int(((await db.fetchone()) or {})['n']) == 1, \
+                'отметка не легла'
+
+    async def test_nothing_to_reset_is_not_an_error(self, auth_client, girl):
+        """⚠ Инициатива этой паре не уходила — ответ «нечего», а не 404.
+
+        Кнопку видно у любого разговора, и нажатие на том, куда мы не писали, —
+        обычное дело, а не поломка.
+        """
+        got = await auth_client.post(
+            f'/api/dating/chat/dialogs/{girl}/u-none/initiative-reset')
+
+        assert got.status_code == 200
+        assert got.json()['result'] == {'reset': False}
+
+    async def test_a_stranger_is_turned_away(self, client, girl):
+        """⚠ Ручка за входом: сброс меняет работу круга, а не вид страницы."""
+        got = await client.post(
+            f'/api/dating/chat/dialogs/{girl}/u-1/initiative-reset')
+
+        assert got.status_code in (401, 403)
+
+
 # Настройки занятия: их читают вместе, и стоять им рядом — одним подразделом.
 INITIATIVE_SETTINGS = ('chat_initiative_after', 'chat_initiative_after_max',
                        'chat_initiative_reset_after',
