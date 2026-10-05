@@ -23,7 +23,6 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
 from config.config import config_get
@@ -31,6 +30,7 @@ from logging_.logging_ import logger_exception, logger_info, logging_init
 from mysql_.migration.mysql_migration_up import mysql_migration_up
 from mysql_.mysql_ import mysql_pool_close, mysql_pool_get
 from panel_.panel_auth_api import panel_auth_api_router
+from panel_.panel_static import panel_static_files
 from panel_.panel_backup_api import panel_backup_api_router
 from panel_.panel_seed_api import panel_seed_api_router
 from panel_.panel_setting_api import panel_setting_api_router
@@ -251,36 +251,8 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 data_dir = os.path.join(current_dir, config_get('DATA_DIR', 'data'), config_get('UVICORN_DIR', 'uvicorn'))
 
 app.state.jinja2_template = Jinja2Templates(directory=os.path.join(data_dir, 'template'))
-class StaticNoCache(StaticFiles):
-    """Статика с обязательной перепроверкой у сервера.
-
-    ⚠ **Без этого браузер держит старый файл неопределённо долго.** Starlette
-    отдаёт `ETag` и `Last-Modified`, но не `Cache-Control` — а без него браузер
-    решает сам и обычно кэширует эвристически, по возрасту файла. Для панели это
-    ломается на первой же правке: страница грузит новый HTML со старым модулем и
-    падает с «не экспортирует timeFull», хотя на сервере экспорт есть.
-
-    Больнее всего с ES-модулями: их браузер держит и в памяти вкладки, так что
-    обычное обновление страницы не помогает — нужно очищать кэш вручную.
-
-    `no-cache` — не «не кэшировать», а «перепроверить перед использованием». Файл
-    остаётся в кэше, но браузер спрашивает `ETag` и почти всегда получает 304 без
-    тела: расход — один короткий запрос, зато панель никогда не показывает
-    вчерашний код.
-
-    Цена приемлема, потому что панель внутренняя: десятки файлов, единицы
-    пользователей. Публичному сайту так делать не следует — там статику версионируют
-    в имени файла, и тогда её можно кэшировать навсегда.
-    """
-
-    def file_response(self, *args, **kwargs):
-        response = super().file_response(*args, **kwargs)
-        response.headers['Cache-Control'] = 'no-cache'
-
-        return response
-
-
-app.mount('/static', StaticNoCache(directory=os.path.join(data_dir, 'public')), name='static')
+app.mount('/static', panel_static_files(os.path.join(data_dir, 'public')),
+          name='static')
 
 # Адрес phpMyAdmin в шапке. Читается здесь, а не в шаблоне: шаблон не должен
 # знать про переменные окружения, а ссылка нужна на всех страницах сразу.
@@ -295,7 +267,7 @@ def static_url(path: str) -> str:
     """Адрес файла статики с меткой его правки: `/static/js/x.js?v=1756800000`.
 
     ⚠ **Без метки браузер показывает вчерашний код.** `Cache-Control: no-cache`
-    (см. `StaticNoCache`) заставляет перепроверять файл, но **только при новом
+    (`panel_static_files`) заставляет перепроверять файл, но **только при новом
     запросе**. ES-модуль, уже загруженный во вкладку, не перезапрашивается вовсе:
     страница берёт его из памяти, и обычное обновление не помогает — нужно
     очищать кэш вручную.
