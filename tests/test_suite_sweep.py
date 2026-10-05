@@ -4,6 +4,11 @@
 **каскадом** — `ON DELETE CASCADE` на `profile`, и достаточно снести анкету.
 Остальные приходится чистить руками, и список таких живёт в `conftest.py`.
 
+⚠⚠ Руками — это **три прохода, и они о разных видах строки**: по живым анкетам
+сюиты, по пережившим свою анкету (номер в строке больше ни на что не указывает) и
+по стендовому сайту — там, где `profile_id` в таблице нет вовсе. Третий вид
+двумя первыми не ловится ни при каком состоянии базы.
+
 ## ⚠⚠ Чем это кончилось, пока список вёлся на глаз
 
 В нём было две таблицы из четырёх. `favorite` копила мусор прогон за прогоном —
@@ -23,7 +28,8 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
 from tests.conftest import (TEST_STAND_SITE_FROM, TEST_SWEEP_BY_PROFILE,
-                            TEST_SWEEP_ORPHANS)
+                            TEST_SWEEP_BY_SITE, TEST_SWEEP_ORPHANS,
+                            TEST_SWEEP_SEEDED_TABLE, _STAND_SITES)
 
 pytestmark = pytest.mark.core
 
@@ -137,3 +143,95 @@ class TestOrphansAreSweptToo:
 
         assert not left, \
             f'после уборки остались ничьи строки сюиты: {left}'
+
+
+async def _site_only() -> list:
+    """Таблицы, у которых есть `site_id` и нет `profile_id` вовсе.
+
+    Returns:
+        Имена таблиц, которые ни один проход по номеру анкеты не находит: её
+        номера в них не существует.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute("""
+            SELECT TABLE_NAME AS name,
+                   MAX(COLUMN_NAME = 'site_id')    AS has_site,
+                   MAX(COLUMN_NAME = 'profile_id') AS has_profile
+              FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE()
+             GROUP BY TABLE_NAME
+            HAVING has_site = 1 AND has_profile = 0
+             ORDER BY TABLE_NAME""")
+        rows = await db.fetchall() or []
+
+    return [str(one['name']) for one in rows
+            if str(one['name']) not in SWEEP_NOT_OURS]
+
+
+class TestTablesWithoutAProfileAreSweptByTheirSite:
+    """⚠⚠ Третий вид строки: анкеты в таблице нет **вовсе**.
+
+    Два прохода выше стоят на номере анкеты — по живым и по пережившим свою. У
+    этих таблиц номера анкеты не существует, и оба прохода их не видели ни при
+    каком состоянии базы: `companion` накопила 309 строк сюиты из 1343.
+    """
+
+    async def test_every_site_only_table_is_swept(self):
+        """Таблица с `site_id` и без `profile_id` обязана быть в третьем проходе.
+
+        ⚠ Красный здесь означает «новая таблица копит мусор молча»: её строки не
+        привязаны ни к анкете, ни к каскаду, и убрать их нечем.
+        """
+        missed = [one for one in await _site_only()
+                  if one not in TEST_SWEEP_BY_SITE]
+
+        assert not missed, (
+            f'у таблиц {", ".join(missed)} нет `profile_id`, и уборка по анкете '
+            f'их не найдёт никогда — добавьте в `TEST_SWEEP_BY_SITE`')
+
+    async def test_the_third_pass_lists_no_ghosts(self):
+        """И обратное: лишнее имя уезжает в `DELETE` текстом.
+
+        ⚠ Опечатка в нём уронит уборку целиком, то есть прогон начнётся с
+        отказа — а уборка идёт **до** прогона.
+        """
+        known = set(await _site_only())
+        extra = [one for one in TEST_SWEEP_BY_SITE if one not in known]
+
+        assert not extra, (
+            f'в третьем проходе числятся {", ".join(extra)}, а `profile_id` у '
+            f'них есть (или `site_id` нет) — их убирают проходы по анкете')
+
+    async def test_nothing_on_a_stand_site_is_left_behind(self):
+        """После уборки на стендовых сайтах не остаётся строк.
+
+        ⚠ Проверка по **текущему** состоянию базы: уборка шла до прогона, и к
+        этому мигу стендовых строк быть не должно. Кроме посевных — см. ниже.
+        """
+        left = {}
+        async with mysql_get_db_async() as db:
+            for table in TEST_SWEEP_BY_SITE:
+                if table == TEST_SWEEP_SEEDED_TABLE:
+                    continue
+
+                await db.execute(f'SELECT COUNT(*) AS n FROM `{table}`'
+                                 f' WHERE `site_id` >= %s', (TEST_STAND_SITE_FROM,))
+                found = int(((await db.fetchone()) or {}).get('n') or 0)
+                if found:
+                    left[table] = found
+
+        assert not left, f'после уборки остались строки сюиты по сайту: {left}'
+
+    async def test_the_seeded_stand_site_survives(self):
+        """⚠⚠ А вот посевную строку `site` уборка щадить обязана.
+
+        На ней стоит заведение анкет: номер сайта должен признаваться
+        заведённым. Снеси её — и соседний прогон, уже решивший, что сеять нечего
+        (`_site_seeded`), получал бы отказ на каждой анкете.
+        """
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT COUNT(*) AS n FROM `site` WHERE `site_id` = %s',
+                             (_STAND_SITES[0][0],))
+            found = int(((await db.fetchone()) or {}).get('n') or 0)
+
+        assert found == 1, 'посевная строка стендового сайта не на месте'
