@@ -30,6 +30,9 @@ from config.config import config_get
 from logging_.logging_ import logger_exception, logger_info, logging_init
 from mysql_.migration.mysql_migration_up import mysql_migration_up
 from mysql_.mysql_ import mysql_pool_close, mysql_pool_get
+from panel_.panel_backup_api import panel_backup_api_router
+from panel_.panel_seed_api import panel_seed_api_router
+from panel_.panel_setting_api import panel_setting_api_router
 from panel_.panel_user_api import panel_user_api_router
 from uvicorn_.uvicorn_validation import uvicorn_validation_handler
 
@@ -37,11 +40,8 @@ from src.dating.error import error_catch_install
 from src.auth.auth import AuthUser
 from src.auth.auth_seed import auth_seed_first_user, auth_seed_operator
 from src.uvicorn.routers import auth as auth_router
-from src.uvicorn.routers import backup as backup_router
 from src.uvicorn.routers import cronjob as cronjob_router
 from src.uvicorn.routers import dashboard
-from src.uvicorn.routers import seed as seed_router
-from src.uvicorn.routers import setting as setting_router
 from src.uvicorn.routers import site as site_router
 from src.uvicorn.routers.dating import export
 from src.uvicorn.routers.dating import import_
@@ -90,6 +90,14 @@ MAIN_UVICORN_PUBLIC = ('/login', '/auth/login', '/auth/logout', '/static', '/hea
 # открытую панель на чужом экране, но час выгонял человека посреди работы —
 # переписку ведут дольше, и перелогин приходился на разговор.
 MAIN_UVICORN_SESSION_MAX_AGE = 4 * 3600
+
+# Таблицы, которые в списке seed **есть, но не отмечены**: их наполняет работа
+# панели, а не человек. Переписку и журнал переносят между установками редко и
+# осознанно — а вот случайно утащить в seed чужие диалоги легко.
+#
+# ⚠ Живёт здесь, а не в слое: какие таблицы рабочие, знает установка. Скелет
+# seed принимает это доводом и не гадает.
+MAIN_UVICORN_SEED_RUNTIME = ('contact', 'log', 'message')
 
 
 async def main_uvicorn_auth_middleware(request: Request, call_next):
@@ -319,7 +327,7 @@ app.state.jinja2_template.env.globals['static_url'] = static_url
 app.include_router(auth_router.router)
 app.include_router(dashboard.router)
 app.include_router(site_router.router)
-app.include_router(setting_router.router)
+app.include_router(panel_setting_api_router())
 app.include_router(profile_.router)
 app.include_router(profile_action.router)
 app.include_router(profile_view.router)
@@ -355,6 +363,7 @@ app.include_router(dating_chat_router.router)
 app.include_router(dating_chat_initiative_router.router)
 app.include_router(dating_work_router.router)
 app.include_router(people.router)
-app.include_router(seed_router.router)
-app.include_router(backup_router.router)
+app.include_router(panel_seed_api_router(
+    runtime_tables=MAIN_UVICORN_SEED_RUNTIME, title='DatingAi'))
+app.include_router(panel_backup_api_router())
 app.include_router(panel_user_api_router())

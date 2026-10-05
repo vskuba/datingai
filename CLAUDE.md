@@ -253,9 +253,7 @@
 | `src/uvicorn/routers/dating/work.py` | Шаблон работы с анкетой: выбор файла по сайту, сверка имени со списком Jinja |
 | `data/uvicorn/template/admin/dating/profile/site/_base.html` | Общий вид работы с анкетой; сайты расходятся переопределением блока |
 | `src/uvicorn/routers/dashboard.py` | Страницы панели |
-| `src/uvicorn/routers/seed.py` | Seed SQL: выгрузка таблиц и заливка обратно (⚠ литерал и разрезка — слоем: `sql_export_value`, `mysql_seed_split`) |
-| `src/uvicorn/routers/backup.py` | Бэкапы: ручки и правила имён; сам дамп и заливка — слоем (`mysql_/backup_engine.py`) |
-| `src/uvicorn/routers/setting.py` | Настройки панели: ключ → значение, только админу |
+| `src/uvicorn/routers/setting.py` | **Дверь** к `panel_setting_api.py` слоя: часовой пояс панели зовут четыре страницы раздела. ⚠⚠ Роутер при этом **не** проходит насквозь — его подключает `main_uvicorn` прямо из слоя: второй объект на тот же префикс дал бы задвоенные маршруты |
 | `data/uvicorn/template/base.html` | Шапка панели: разделы и подпункты |
 | `data/uvicorn/public/css/dating_page.css` | Общее оформление страниц раздела Dating (их четыре) |
 | `data/uvicorn/public/js/dating/view.js` | Общая отрисовка учётки: точка, бейджи, время, журнал |
