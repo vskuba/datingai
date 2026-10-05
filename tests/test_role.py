@@ -11,7 +11,7 @@ phpMyAdmin в шапке).
 
 import pytest
 
-from tests.conftest import ADMIN_USERNAME, DATING_USERNAME
+from tests.conftest import ADMIN_USERNAME, OPERATOR_USERNAME
 
 pytestmark = pytest.mark.core
 # Точки, до которых оператора пускать нельзя. Метод указан рядом: `GET` на
@@ -76,7 +76,7 @@ class TestRole:
         operator = (await dating_client.get('/auth/me')).json()['result']
 
         assert admin['username'] == ADMIN_USERNAME and admin['role'] == 'admin'
-        assert operator['username'] == DATING_USERNAME and operator['role'] == 'dating'
+        assert operator['username'] == OPERATOR_USERNAME and operator['role'] == 'operator'
 
     @pytest.mark.parametrize('method,path', ROLE_ADMIN_ONLY)
     async def test_operator_is_refused(self, dating_client, method, path):

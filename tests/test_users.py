@@ -28,7 +28,7 @@ async def user(auth_client):
     """Одноразовая учётка оператора. Убирается после теста, даже если он упал."""
     username = _name()
     response = await auth_client.post('/api/users', json={
-        'username': username, 'password': PASSWORD, 'role': 'dating'})
+        'username': username, 'password': PASSWORD, 'role': 'operator'})
     assert response.status_code == 201, response.text[:200]
     created = response.json()['result']
 
@@ -76,14 +76,14 @@ class TestUsersCreate:
     async def test_duplicate_name_is_refused(self, auth_client, user):
         """Имя занято — 422, а не вторая учётка с тем же логином."""
         response = await auth_client.post('/api/users', json={
-            'username': user['username'], 'password': PASSWORD, 'role': 'dating'})
+            'username': user['username'], 'password': PASSWORD, 'role': 'operator'})
 
         assert response.status_code == 422
 
     async def test_short_password_is_refused(self, auth_client):
         """Короткий пароль не принимается: панель торчит в интернет."""
         response = await auth_client.post('/api/users', json={
-            'username': _name(), 'password': 'x', 'role': 'dating'})
+            'username': _name(), 'password': 'x', 'role': 'operator'})
 
         assert response.status_code == 422
 
@@ -91,7 +91,7 @@ class TestUsersCreate:
     async def test_bad_name_is_refused(self, auth_client, username):
         """Имя уходит в журналы и списки, поэтому без пробелов и юникода."""
         response = await auth_client.post('/api/users', json={
-            'username': username, 'password': PASSWORD, 'role': 'dating'})
+            'username': username, 'password': PASSWORD, 'role': 'operator'})
 
         assert response.status_code == 422
 
@@ -159,7 +159,7 @@ class TestUsersSelfProtection:
         """
         me = (await auth_client.get('/auth/me')).json()['result']
 
-        response = await auth_client.put(f'/api/users/{me["id"]}', json={'role': 'dating'})
+        response = await auth_client.put(f'/api/users/{me["id"]}', json={'role': 'operator'})
 
         assert response.status_code == 422
 
@@ -189,7 +189,7 @@ class TestUsersDelete:
         """Удалённой учёткой не входят, и в списке её нет."""
         username = _name()
         created = (await auth_client.post('/api/users', json={
-            'username': username, 'password': PASSWORD, 'role': 'dating'})).json()['result']
+            'username': username, 'password': PASSWORD, 'role': 'operator'})).json()['result']
 
         assert (await auth_client.delete(f'/api/users/{created["id"]}')).status_code == 200
 
@@ -252,7 +252,7 @@ class TestUsersToken:
         Иначе выданный скрипту ключ пережил бы человека, которому принадлежал.
         """
         created = (await auth_client.post('/api/users', json={
-            'username': _name(), 'password': PASSWORD, 'role': 'dating'})).json()['result']
+            'username': _name(), 'password': PASSWORD, 'role': 'operator'})).json()['result']
         issued = (await auth_client.post(f'/api/users/{created["id"]}/token',
                                          json={'note': 'автотест'})).json()['result']
         headers = {'Authorization': f'Bearer {issued["token"]}'}

@@ -1,142 +1,45 @@
-"""Вход в панель и проверка «свой ли».
+"""Вход в панель: **дверь** к общему скелету `py_modules/panel_/`.
 
-Ролей две, и это не матрица прав, а один вопрос: пускать ли к устройству
-установки.
+Своей копии здесь больше нет. Вход, две роли, зависимости роутов и проверка
+пароля одинаковы у всех панелей — различается только предметная часть, ради
+которой панель открывают. Устройство и грабли — `.claude/docs-common/panel.md`.
 
-| Роль | Что доступно |
-|------|--------------|
-| `dating` | анкеты: список, чат, ответы, журнал — всё, ради чего панель открывают |
-| `admin` | то же плюс seed, бэкапы и веб-морда к базе |
+## ⚠ Почему дверь, а не прямой импорт слоя по месту
 
-Дробить дальше не надо: работа с анкетой неделима — кто видит переписку, тот на
-неё и отвечает. Разделение появилось ровно тогда, когда появился второй род
-работы: операции, которые правят или выносят базу целиком.
+Имена здесь зовут 393 раза: `auth_required` висит на каждой точке API,
+`AuthUser` — в объявлении почти каждого обработчика. Переименовать их все в
+`panel_auth_required`/`PanelUser` значило бы тронуть 393 строки ради того, чтобы
+имя стало длиннее, — и всё это в единственном месте, которое нельзя сломать
+незаметно: право доступа.
 
-Два способа представиться, как и у соседа:
+Дверь даёт то же самое дешевле: реализация одна, в слое, а строки вызова не
+трогаются вовсе. Тот же приём, которым здесь подключены круги
+(`src/dating/round.py`) и смена воркера.
 
-* **сессия** — кука админки, ею ходит человек со страницы;
-* **токен** — `Authorization: Bearer <token>` или `X-API-KEY`, им ходят скрипты и
-  проверки; сессии у них нет и быть не может.
+## ⚠⚠ Вторая роль переименована: `dating` → `operator`
 
-Пароли лежат хешем (`bcrypt`). Сравнение всегда идёт по хешу, даже когда логина
-нет в базе: иначе время ответа выдало бы, существует ли такой пользователь.
+Имя роли — не косметика: она лежит в столбце `user.role`, её кладёт в куку вход
+и сравнивает `PanelUser`. Пока здесь было своё имя, проект из общего скелета
+выпадал. Значения в базе переносит миграция
+`20261005120000_user_role_operator.sql`.
+
+⚠ Порядок миграции и выкладки не важен: `PanelUser` трактует незнакомое значение
+роли как **наименьшие права**, а это и есть оператор. Разбор — в шапке самой
+миграции.
+
+⚠ Переменные окружения посева сменились вместе с ролью:
+`DATING_USERNAME`/`DATING_PASSWORD` → `OPERATOR_USERNAME`/`OPERATOR_PASSWORD`.
 """
 
-import bcrypt
-from fastapi import Depends, HTTPException, Request, status
+from panel_.panel_auth import (PANEL_AUTH_ROLE_ADMIN as AUTH_ROLE_ADMIN,
+                               PANEL_AUTH_ROLE_OPERATOR as AUTH_ROLE_OPERATOR,
+                               PANEL_AUTH_ROLES as AUTH_ROLES,
+                               PanelUser as AuthUser,
+                               panel_auth_admin_required as auth_admin_required,
+                               panel_auth_required as auth_required,
+                               panel_auth_token_user as auth_token_user,
+                               panel_auth_user_check as auth_user_check)
 
-# Примитивы входа — из общего слоя: токен из заголовков, хеш-заглушка для
-# несуществующего логина. Здесь остаётся то, что знает **нашу** схему и наши
-# роли: кто такой `AuthUser`, в какой таблице искать и что значит `admin`.
-from auth_.auth_primitive import AUTH_DUMMY_HASH, auth_token_of
-from logging_.logging_ import logger_info
-from mysql_.mysql_ import mysql_get_db_async
-
-# Роли. `admin` — единственная, дающая доступ к устройству установки; всё
-# остальное считается работой с анкетами. Сравнение идёт с этой константой, а не
-# со строкой на месте: опечатка в строковом литерале открыла бы доступ молча.
-AUTH_ROLE_ADMIN = 'admin'
-AUTH_ROLE_DATING = 'dating'
-
-
-class AuthUser:
-    """Кто выполняет запрос. Ровно то, что нужно журналу, страницам и правам."""
-
-    def __init__(self, user_id: int, username: str, role: str = AUTH_ROLE_DATING):
-        self.user_id = int(user_id)
-        self.username = str(username)
-        # Неизвестное значение роли считается наименьшими правами: строка в базе
-        # может оказаться какой угодно, и трактовать «непонятно что» как админа
-        # означало бы открывать доступ по опечатке.
-        self.role = AUTH_ROLE_ADMIN if str(role) == AUTH_ROLE_ADMIN else AUTH_ROLE_DATING
-
-    @property
-    def is_admin(self) -> bool:
-        """Пускать ли к seed, бэкапам и прочему устройству установки."""
-        return self.role == AUTH_ROLE_ADMIN
-
-    def __repr__(self) -> str:
-        return f'#{self.user_id} {self.username} ({self.role})'
-
-
-async def auth_required(request: Request) -> AuthUser:
-    """Зависимость точек: пускает своего, чужому отвечает 401.
-
-    Одна на весь проект: новый способ представиться появляется сразу везде, а не
-    в тех точках, куда его не забыли добавить.
-    """
-    user_id = request.session.get('user_id', 0)
-    username = request.session.get('username', '')
-
-    if user_id and username:
-        # Роль читается из куки, а не из базы: `auth_required` висит на каждой
-        # точке, а страница опрашивает их пачками каждые пятнадцать секунд —
-        # запрос к базе на каждый вызов заметен. Плата за это одна: смена роли
-        # доезжает после перелогина, но не позже — кука живёт четыре часа
-        # (`MAIN_UVICORN_SESSION_MAX_AGE`).
-        return AuthUser(user_id, username, request.session.get('role', AUTH_ROLE_DATING))
-
-    token = auth_token_of(request)
-    if token:
-        user = await auth_token_user(token)
-        if user:
-            return user
-
-    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='нужен вход')
-
-
-async def auth_admin_required(user: AuthUser = Depends(auth_required)) -> AuthUser:
-    """Зависимость точек, которые правят или выносят установку: seed, бэкапы.
-
-    Отдельная зависимость, а не проверка в теле: право видно в объявлении роута,
-    и точку, где её забыли, находит чтение файла, а не разбор происшествия.
-
-    403, а не 404: скрывать существование страницы незачем — она есть, и человек
-    видит её у коллеги. «Нельзя» понятнее, чем «нет такой».
-    """
-    if not user.is_admin:
-        logger_info(f'[auth] отказано {user}: нужна роль {AUTH_ROLE_ADMIN}')
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail='нужна роль администратора')
-
-    return user
-
-
-async def auth_token_user(token: str) -> AuthUser | None:
-    """Владелец токена. Нет такого — None, решает вызывающий."""
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                'SELECT u.id, u.username, u.role FROM user_access_token t '
-                '  JOIN user u ON u.id = t.user_id WHERE t.token = %s', (str(token),))
-            row = await db.fetchone()
-    except Exception as e:
-        logger_info(f'[auth] токен не проверился: {e}')
-        return None
-
-    # У токена роль всегда свежая: он читается из базы на каждый запрос, сессии
-    # у скрипта нет и кэшировать нечего.
-    return AuthUser(int(row['id']), str(row['username']), str(row['role'])) if row else None
-
-
-async def auth_user_check(username: str, password: str) -> AuthUser | None:
-    """Проверяет пару логин-пароль. Не сошлось — None, без подробностей.
-
-    Почему именно не сошлось, наружу не уходит: «нет такого пользователя» и
-    «неверный пароль» — разные ответы только для того, кто перебирает логины.
-    """
-    async with mysql_get_db_async() as db:
-        await db.execute('SELECT id, username, password_hash, role FROM user WHERE username = %s',
-                         (str(username).strip(),))
-        row = await db.fetchone()
-
-    stored = str(row['password_hash']) if row else AUTH_DUMMY_HASH
-    try:
-        ok = bcrypt.checkpw(str(password).encode(), stored.encode())
-    except (ValueError, TypeError):
-        ok = False
-
-    if not row or not ok:
-        return None
-
-    return AuthUser(int(row['id']), str(row['username']), str(row['role']))
+__all__ = ['AUTH_ROLE_ADMIN', 'AUTH_ROLE_OPERATOR', 'AUTH_ROLES', 'AuthUser',
+           'auth_admin_required', 'auth_required', 'auth_token_user',
+           'auth_user_check']

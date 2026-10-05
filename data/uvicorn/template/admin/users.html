@@ -14,7 +14,7 @@
             font-size: 11px; padding: 2px 9px; border-radius: 10px; font-weight: 600;
         }
         .usr-role.admin { background: #fef3c7; color: #92400e; }
-        .usr-role.dating { background: #eef2ff; color: #3730a3; }
+        .usr-role.operator { background: #eef2ff; color: #3730a3; }
 
         .usr-me { font-size: 11px; color: #6b7280; margin-left: 6px; }
 
@@ -100,7 +100,7 @@
             <div>
                 <label for="addRole">Роль</label>
                 <select id="addRole" class="usr-select">
-                    <option value="dating">Оператор анкет</option>
+                    <option value="operator">Оператор анкет</option>
                     <option value="admin">Администратор</option>
                 </select>
             </div>
@@ -130,7 +130,7 @@
     // работающую панель за сломанную.
     const ME = {{ user.user_id }};
 
-    const ROLES = {admin: 'Администратор', dating: 'Оператор анкет'};
+    const ROLES = {admin: 'Администратор', operator: 'Оператор анкет'};
 
     const esc = (t) => String(t ?? '').replace(/[&<>"']/g,
         (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));

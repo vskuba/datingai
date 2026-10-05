@@ -90,8 +90,13 @@ ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'change-me')
 
 # Оператор анкет: вторая роль. Ему доступна страница анкет и её ручки, но не
 # seed, бэкапы и база.
-DATING_USERNAME = os.getenv('DATING_USERNAME', 'dating')
-DATING_PASSWORD = os.getenv('DATING_PASSWORD', 'change-me')
+#
+# ⚠ Имя переменной — `OPERATOR_*`, а её значение по умолчанию — `dating`: это
+# **логин**, а не роль. Роль переименована в `operator` вместе с переездом
+# скелета панели в слой, а логин у живой учётки остался прежним — сменить его
+# значило бы завести посевом второго человека рядом с первым.
+OPERATOR_USERNAME = os.getenv('OPERATOR_USERNAME', 'dating')
+OPERATOR_PASSWORD = os.getenv('OPERATOR_PASSWORD', 'change-me')
 
 # Сколько ждём ответа. Ручки, которые водят браузер соседа, сюда не входят —
 # их сюита не трогает: они стоят минуту и требуют живого сайта знакомств.
@@ -502,7 +507,7 @@ async def dating_client():
     войти — тест падает здесь: «оператор не может открыть бэкапы» одинаково
     выглядит и когда права работают, и когда учётки просто нет.
     """
-    cookies = await _login(DATING_USERNAME, DATING_PASSWORD)
+    cookies = await _login(OPERATOR_USERNAME, OPERATOR_PASSWORD)
 
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT,
                                  follow_redirects=False, cookies=cookies) as http:
