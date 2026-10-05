@@ -34,7 +34,7 @@
 // означала бы, что модуль знает про все четыре.
 
 import {deleteData} from '../api.js';
-import {showNotification} from '../notification.js';
+import {showNotification} from '/static/js/notification.js';
 
 // Чем кончилось удаление карточки.
 //
