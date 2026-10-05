@@ -260,3 +260,76 @@ class TestRedisFailure:
 
         assert chat_worker._LOCK_KEY not in worker.redis.store, \
             'ключ остался занят после сорванной постановки'
+
+
+class TestTheDeployDoor:
+    """⚠⚠ Дверь выкладки: чем она снимает замок прежней смены.
+
+    Выкладка пересоздаёт контейнеры, и оборванное задание держит замок ещё
+    минуты: смена мертва, а место занято. Восстановление на старте
+    (`chat_worker_recover`) видит занятый ключ и честно ничего не делает — живой
+    чат молчит до следующего перезапуска. Поэтому выкладка снимает замок сама.
+
+    ⚠ Сторож здесь не на поведение, а на **имя**: оба места выкладки зовут его
+    текстом внутри `docker exec`, и Python о такой «ссылке» ничего не знает.
+    Переименуй дверь — тесты останутся зелёными, а прод останется без держателя
+    сокетов. Ровно так и вышло 05.10: смена переехала в общий слой, функции
+    `chat_worker_flight_release` не стало, шаг падал `ImportError`, и выкладка
+    при этом докладывала «успех» всеми шагами до него.
+    """
+
+    def _text(self, name: str) -> str:
+        """Исполняемые строки файла — **без комментариев**.
+
+        ⚠ Комментарии выбрасываются намеренно: рядом с вызовом стоит объяснение,
+        почему прежнее имя исчезло, и в нём это имя названо. Сторожи мы весь
+        текст — он запрещал бы помнить собственную историю, и первая же правка
+        сняла бы объяснение вместо того, чтобы исправить вызов.
+        """
+        import pathlib
+
+        text = (pathlib.Path(__file__).resolve().parents[1] / name
+                ).read_text(encoding='utf-8')
+
+        return '\n'.join(line for line in text.splitlines()
+                         if not line.lstrip().startswith('#'))
+
+    async def test_it_releases_a_held_lock(self, worker):
+        worker.redis.set(chat_worker._LOCK_KEY, '1')
+
+        assert chat_worker.chat_worker_lock_release() is True, \
+            'замок был занят, а дверь говорит, что нет'
+        assert chat_worker.chat_worker_enqueue(), \
+            'после снятия замка смена не ставится'
+
+    async def test_a_free_lock_is_not_an_error(self, worker):
+        """⚠ Снимать было нечего — это законный исход, а не отказ."""
+        assert chat_worker.chat_worker_lock_release() is False
+
+    def test_both_deploys_call_the_door_by_name(self):
+        """⚠⚠ Оба места выкладки зовут **эту** дверь, и зовут её текстом.
+
+        Проверяется буквально имя в файлах: ссылки из `docker exec` не видит ни
+        импорт, ни один другой тест.
+        """
+        for name in ('deploy.sh', '.github/workflows/deploy.yml'):
+            text = self._text(name)
+
+            assert 'chat_worker_lock_release' in text, \
+                f'{name} не зовёт дверь снятия замка'
+            assert 'chat_worker_enqueue' in text, \
+                f'{name} не ставит смену после снятия замка'
+            assert 'chat_worker_flight' not in text, \
+                f'{name} зовёт функцию, которой больше нет'
+
+    def test_the_deploys_do_not_know_the_private_key(self):
+        """⚠ Ключ замка приватный и уже переживал переименование в слое.
+
+        Знай его выкладка — переезд ломал бы её молча, и чинить пришлось бы по
+        симптому «чат молчит после выкладки». Дверь на то и заведена.
+        """
+        for name in ('deploy.sh', '.github/workflows/deploy.yml'):
+            assert '_LOCK_KEY' not in self._text(name), \
+                f'{name} тянет приватный ключ замка вместо двери'
+            assert 'worker_shift_unlock' not in self._text(name), \
+                f'{name} зовёт слой напрямую, минуя дверь проекта'

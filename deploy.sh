@@ -118,11 +118,16 @@ fi
 # держали бы вторые соединения на те же анкеты, а сайт вышибает оба.
 echo
 echo "Поднимаю смену держателя сокетов…"
+#
+# ⚠⚠ Зовём **дверь проекта** `chat_worker_lock_release`, а не слой и не приватный
+# ключ замка. Прежде здесь стояли `chat_worker_flight_busy`/`…_release`, и при
+# переезде устройства смены в общий слой (`py_modules/worker_/`) их не стало: шаг
+# падал `ImportError`, смена не вставала, а всё до него докладывало «успех».
+# Поймано на живой выкладке 05.10.
 ssh "$HOST" "docker exec dating_uvicorn python3 -c \"
-from src.worker.dating.chat_worker import (chat_worker_enqueue, chat_worker_flight_busy,
-                                           chat_worker_flight_release)
-was = chat_worker_flight_busy()
-chat_worker_flight_release()
-print('  ключ от прежней смены:', 'снят' if was else 'уже был свободен',
+from src.worker.dating.chat_worker import (chat_worker_enqueue,
+                                           chat_worker_lock_release)
+print('  ключ от прежней смены:',
+      'снят' if chat_worker_lock_release() else 'уже был свободен',
       '| смена поставлена:', chat_worker_enqueue())\"" || \
     echo "  не вышло поставить смену — проверьте: ssh $HOST 'docker logs dating_worker --tail 20'"

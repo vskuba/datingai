@@ -37,8 +37,9 @@ single-flight, и лишний вызов просто ничего не дел�
 """
 import asyncio
 
-from worker_.worker_shift import (worker_shift_enqueue, worker_shift_keep,
-                                  worker_shift_keep_stop, worker_shift_run)
+from worker_.worker_shift import (worker_shift_busy, worker_shift_enqueue,
+                                  worker_shift_keep, worker_shift_keep_stop,
+                                  worker_shift_run, worker_shift_unlock)
 
 from src.dating.chat_hold import chat_hold_run
 from src.dating.error import error_catch_install
@@ -92,6 +93,37 @@ def chat_worker_enqueue() -> str | None:
                                 queue=CHAT_WORKER_QUEUE_NAME, key=_LOCK_KEY,
                                 what=CHAT_WORKER_WHAT,
                                 hold=CHAT_WORKER_HOLD_SEC)
+
+
+def chat_worker_lock_release() -> bool:
+    """Снять замок прежней смены. `True` — он был занят.
+
+    ## ⚠⚠ Звать это можно **только сразу после пересоздания воркера**
+
+    Пересоздание контейнеров обрывает идущее задание, но его замок живёт ещё
+    минуты: смена умерла, а место занято. Восстановление на старте
+    (`chat_worker_recover`) видит занятый ключ и честно ничего не делает —
+    живой чат молчит до следующего перезапуска. Ровно это и ловит выкладка.
+
+    В любом другом месте снятие замка **запрещено**: у работающей смены он
+    поднял бы вторую, и обе держали бы вторые соединения на те же анкеты — а
+    сайт вышибает оба.
+
+    ## ⚠ Зачем дверь, если в слое есть `worker_shift_unlock`
+
+    Чтобы ключ не уезжал в выкладку. Он приватный (`_LOCK_KEY`) и переживал уже
+    одно переименование в слое; знай его `deploy.sh` и `deploy.yml` — переезд
+    ломал бы их молча. Так и вышло: оба звали `chat_worker_flight_release`,
+    которой не стало при переезде смены в общий слой, и шаг падал `ImportError`
+    — смена не вставала, а выкладка докладывала «успех» всем предыдущим шагом.
+
+    Returns:
+        bool: был ли замок занят. Ложь — снимать было нечего, и это не ошибка.
+    """
+    was = worker_shift_busy(_LOCK_KEY)
+    worker_shift_unlock(_LOCK_KEY)
+
+    return bool(was)
 
 
 def chat_worker_job_run() -> str:

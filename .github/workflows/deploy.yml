@@ -94,11 +94,18 @@ jobs:
             #
             # Ключ снимаем: здесь это безопасно, воркер только что пересоздан и
             # прежняя смена его пережить не могла.
+            #
+            # ⚠⚠ Зовём **дверь проекта** `chat_worker_lock_release`, а не слой и
+            # не приватный ключ. Прежде здесь стояла `chat_worker_flight_release`,
+            # и при переезде смены в общий слой её не стало: шаг падал
+            # `ImportError`, смена не вставала, а выкладка до того докладывала
+            # «успех» — беда видна только в логе чужого шага.
             sleep 10
             docker exec dating_uvicorn python3 -c "
             from src.worker.dating.chat_worker import (chat_worker_enqueue,
-                                                       chat_worker_flight_release)
-            chat_worker_flight_release()
+                                                       chat_worker_lock_release)
+            print('ключ прежней смены:',
+                  'снят' if chat_worker_lock_release() else 'уже был свободен')
             print('смена поставлена:', chat_worker_enqueue())"
 
       - name: Проверяю панель
