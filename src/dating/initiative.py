@@ -257,7 +257,8 @@ def initiative_his_last_sql(profile: str, uid: str) -> str:
 def initiative_in_row_sql(profile: str, uid: str, his_last: str) -> str:
     """Счёт заходов **подряд** одним выражением SQL.
 
-    Сколько наших инициатив ушло паре после его последней реплики.
+    Сколько наших инициатив ушло паре после его последней реплики — либо после
+    ручного сброса, если он был позже (`chat_initiative.reset_at`).
 
     Args:
         profile: имя столбца анкеты у вызывающего.
@@ -272,8 +273,16 @@ def initiative_in_row_sql(profile: str, uid: str, his_last: str) -> str:
     диалога (`chat_dialogs` → `initiative_blocked`). Своя копия в ручке
     разошлась бы с кругом на первой правке, и иконка горела бы не тогда, когда
     круг молчит, — ровно та грабля, что уже была с `initiative_why`.
+
+    ⚠ `COALESCE` с «началом времён» обязателен: `GREATEST` с одним `NULL` отдаёт
+    `NULL`, и у пары без сброса счёт вышел бы пустым — то есть нулём, то есть
+    снятым потолком у всех, кого ни разу не отпускали руками.
     """
-    return ('(SELECT COALESCE(SUM(i.sent_at > ' + his_last + '), 0)'
+    return ('(SELECT COALESCE(SUM(i.sent_at > GREATEST(' + his_last + ','
+            '      COALESCE((SELECT MAX(r.reset_at) FROM chat_initiative r'
+            f'                WHERE r.profile_id = {profile}'
+            f'                  AND r.uid = {uid}),'
+            "               '1000-01-01 00:00:00'))), 0)"
             '   FROM chat_initiative i'
             f'  WHERE i.profile_id = {profile} AND i.uid = {uid}'
             "    AND i.status = 'sent')")

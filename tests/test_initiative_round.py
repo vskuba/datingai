@@ -1095,6 +1095,88 @@ class TestTheRepeatCallWaitsItsOwnTerm:
         assert [one['try_no'] for one in got] == [1]
 
 
+class TestTheManualReset:
+    """⚠⚠ Сброс руками: пара, упёршаяся в потолок, отпускается щелчком."""
+
+    async def test_a_capped_pair_is_released(self, girl):
+        """Заход был, он молчит, потолок один — сброс возвращает пару в отбор."""
+        from src.dating.chat_initiative import chat_initiative_reset
+
+        await _said(girl, 'u-1', direction='in', minutes_ago=4000)
+        await _said(girl, 'u-1', direction='out', minutes_ago=3900)
+        await _card_sent(girl, 'u-1', minutes_ago=3800)
+
+        assert await initiative_mod._quiet(girl, 3600, 3600, 1) == [], \
+            'пара не упёрлась в потолок — тест проверяет не то, что думает'
+
+        assert await chat_initiative_reset(girl, 'u-1') is True
+
+        got = await initiative_mod._quiet(girl, 3600, 3600, 1)
+
+        assert [one['uid'] for one in got] == ['u-1'], \
+            'сброс не вернул пару в отбор'
+        assert [one['try_no'] for one in got] == [1], \
+            'номер захода не начался заново'
+
+    async def test_a_pair_without_sent_cards_answers_false(self, girl):
+        """⚠ Обнулять нечего — это не ошибка, а ответ «нечего»."""
+        from src.dating.chat_initiative import chat_initiative_reset
+
+        await _said(girl, 'u-1', direction='in', minutes_ago=400)
+
+        assert await chat_initiative_reset(girl, 'u-1') is False
+
+    async def test_cards_after_the_reset_are_counted_again(self, girl):
+        """⚠⚠ Сброс сдвигает границу счёта, а не выключает его.
+
+        Иначе один щелчок снимал бы потолок с пары навсегда, и девушка звала бы
+        молчащего без конца.
+        """
+        from src.dating.chat_initiative import chat_initiative_reset
+
+        await _said(girl, 'u-1', direction='in', minutes_ago=4000)
+        await _said(girl, 'u-1', direction='out', minutes_ago=3900)
+        await _card_sent(girl, 'u-1', minutes_ago=3800)
+        await chat_initiative_reset(girl, 'u-1')
+
+        # ⚠ Отметка ложится на `NOW()`, а карточка ниже — тоже на «сейчас»;
+        # сдвигаем отметку в прошлое, чтобы порядок событий был настоящим:
+        # сперва человек нажал, потом круг отправил. Без сдвига обе встают в одну
+        # секунду, и строгое сравнение счёта их не различает — то есть тест
+        # проверял бы не то, что думает.
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'UPDATE chat_initiative SET reset_at = NOW() - INTERVAL 5 MINUTE'
+                ' WHERE profile_id = %s AND uid = %s AND reset_at IS NOT NULL',
+                (int(girl), 'u-1'))
+            await db.connection.commit()
+
+        # После сброса ушла ещё одна карточка — счёт обязан её увидеть.
+        await _card_sent(girl, 'u-1', minutes_ago=0)
+
+        assert await initiative_mod._quiet(girl, 3600, 3600, 1) == [], \
+            'карточка после сброса не посчитана — потолок снят навсегда'
+
+    async def test_the_daily_backstop_survives_the_reset(self, girl):
+        """⚠⚠ Сброс трогает только счёт «подряд», дневной потолок остаётся.
+
+        Тот сторожит не живого человека, а зацикленный автоответчик на той
+        стороне; снимать его щелчком значило бы остаться без предохранителя.
+        """
+        from src.dating.chat_initiative import chat_initiative_reset
+
+        await _said(girl, 'u-1', direction='in', minutes_ago=400)
+        await _said(girl, 'u-1', direction='out', minutes_ago=300)
+        for minutes in (200, 150):
+            await _card_sent(girl, 'u-1', minutes_ago=minutes)
+
+        await chat_initiative_reset(girl, 'u-1')
+
+        assert await initiative_mod._quiet(girl, 3600, 3600, 5,
+                                           max_day=2) == [], \
+            'сброс снял дневной потолок'
+
+
 class TestTheSelectionWindow:
     """⚠⚠ Окно отбора: `LIMIT` применяется **после** отбора, а не до него."""
 
