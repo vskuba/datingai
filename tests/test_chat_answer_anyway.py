@@ -325,11 +325,11 @@ class TestInitiativeSetting:
         модуле, и поиск подстроки краснел бы на объяснении (`pytest_guard.py`
         общего слоя — тот самый случай, он там и записан).
         """
-        from pytest_.pytest_guard import pytest_guard_calls
+        from tests_.tests_guard import tests_guard_calls
 
         from src.dating import initiative as module
 
-        called = pytest_guard_calls(module)
+        called = tests_guard_calls(module)
 
         assert 'hash' not in called, 'жребий съехал на солёный hash()'
         assert not {one for one in called if one.startswith('random.')}, \

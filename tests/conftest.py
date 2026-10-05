@@ -1,5 +1,13 @@
 """Общая обвязка тестов.
 
+⚠⚠ **Сама обвязка живёт в общем слое** (`py_modules/tests_/`, страница
+`.claude/docs-common/tests_panel.md`): вход и кэш сессий, клиенты, сторож сети,
+адрес базы, уборка после теста. Своей копии здесь больше нет — она была, и
+совпадала с PersonaAI на 91% строк, вместе с ⚠-пояснениями.
+
+Здесь остаётся предметное: анкеты сюиты и их уборка, стендовые сайты, заглушки
+соседа и сайта знакомств, запрет писать в живую переписку.
+
 Сюита ходит по HTTP в **запущенную** панель, а не поднимает приложение в памяти.
 Причина простая: половина того, что стоит проверять, живёт не в коде — сессия в
 куке, срез префикса прокси, права на странице. Тест против объекта `app` их не
@@ -25,46 +33,25 @@ import os
 import socket
 import uuid
 
-# ⚠ **База: с хоста имя контейнера не резолвится.**
+# ⚠⚠ **Адрес базы правится до всякого импорта из `src/`.** Слой читает его на
+# уровне модуля, то есть при первом же импорте чего угодно: поправь позже —
+# поправишь уже прочитанное. Там же читается `.env` поверх окружения.
 #
-# `MYSQL_HOST` в `.env` — имя в сети compose (`dating_mysql`), и внутри контейнера
-# оно верное. Тесты же гоняются с хоста, а там этого имени нет; наружу база выходит
-# опубликованным портом (`MYSQL_PORT_HOST`).
-#
-# Правится **до всякого импорта**: `mysql_.mysql_` читает адрес на уровне модуля,
-# то есть при первом же импорте чего угодно из `src/`. Поправь мы позже — поправили
-# бы уже прочитанное.
-#
-# Проверкой, а не безусловно: в контейнере (если сюиту однажды запустят там) имя
-# резолвится, и подменять его нечем и незачем.
-#
-# ⚠⚠ **Единственная приватная выше публичных, и это осознанное исключение из
-# `code_rules.md`, §3.** Правило требует все приватные в конец файла, и остальные
-# шесть там и лежат. Эта стоит здесь потому, что **зовётся строкой ниже** — до
-# импортов `httpx`, `pytest` и всего из `src/`. Перенеси её вниз, и вызов окажется
-# раньше определения: файл не прочитается вовсе.
-#
-# Проверка порядка (`function_/function_order.py`) этого не знает и показывает на
-# неё двадцатью находками «публичное после приватного» — все двадцать про эту одну
-# строку. Читать их надо как «исключение на месте», а не как беспорядок.
-def _mysql_reachable() -> None:
-    """Адрес базы, годный оттуда, откуда её зовут."""
-    host = os.getenv('MYSQL_HOST', 'mysql')
-    try:
-        socket.getaddrinfo(host, None)
-    except socket.gaierror:
-        os.environ['MYSQL_HOST'] = '127.0.0.1'
-        os.environ['MYSQL_PORT'] = os.getenv('MYSQL_PORT_HOST', '3313')
+# Устройство и грабли — `.claude/docs-common/tests_panel.md`, §3.
+from tests_.tests_db import tests_db_reachable  # noqa: E402
 
-
-_mysql_reachable()
+tests_db_reachable(os.getenv('MYSQL_PORT_HOST', '3313'))
 
 import httpx  # noqa: E402 — после правки адреса базы
 import pytest  # noqa: E402
 
 from http_.http_mock import http_mock_guard  # noqa: E402
+from tests_.tests_db import tests_db_after  # noqa: E402
+from tests_.tests_net import TESTS_NET_LOOPBACK, tests_net_guard  # noqa: E402
+from tests_.tests_panel import (tests_panel_as, tests_panel_client,  # noqa: E402
+                                tests_panel_port)
 from src.dating.request import request_off  # noqa: E402
-from mysql_.mysql_ import mysql_get_db_async, mysql_pool_close  # noqa: E402
+from mysql_.mysql_ import mysql_get_db_async  # noqa: E402
 
 # Поддельный сосед. Фикстура объявлена здесь, чтобы её было видно из любого теста
 # без импорта: то же удобство, что у `auth_client`.
@@ -122,10 +109,12 @@ TIMEOUT = 30.0
 #   * своя MySQL и свой Redis — база настоящая намеренно, подделка проверяла бы
 #     подделку.
 # Всё прочее — ошибка, даже если адрес выглядит безобидно.
-_NET_ALLOWED_PORTS = {3306, 3313, 6379}
-
-
-_BASE_PORT = int((BASE_URL.rsplit(':', 1) + ['80'])[1].split('/')[0])
+# ⚠ Опубликованный наружу порт базы: сторож пускает на него с **любого** хоста,
+# потому что адрес контейнера раздаёт compose и предсказать его нельзя. Сама
+# панель — парой «хост-порт»: «этот порт на любом хосте» означало бы, что чужая
+# машина с тем же номером считается своей.
+NET_PORTS = (int(os.getenv('MYSQL_PORT_HOST', '3313')),)
+NET_PAIRS = [(host, tests_panel_port(BASE_URL)) for host in TESTS_NET_LOOPBACK]
 
 
 # ── Запрет наружу на уровне HTTP ─────────────────────────────────────────────
@@ -152,8 +141,9 @@ def no_outside_http():
     Ставится один раз на прогон и не снимается: фоновые задачи переживают тест, и
     сторож, снятый вместе с тестом, их не видит.
     """
-    with http_mock_guard(allow=[(host, _BASE_PORT)
-                                for host in ('127.0.0.1', 'localhost', '::1')]):
+    # ⚠ Разрешение то же, что у сокетного сторожа, — одним списком: разойдись
+    # они, одна половина пускала бы туда, куда вторая не пускает.
+    with http_mock_guard(allow=NET_PAIRS):
         yield
 
 
@@ -324,29 +314,11 @@ def no_outside_calls(monkeypatch, request):
     записи в живую переписку: нарушение здесь **невидимо**. Забытая заглушка не
     красит тест — он проходит, только идёт к чужому проекту и делает там работу.
     """
-    real_connect = socket.socket.connect
-    real_connect_ex = socket.socket.connect_ex
-
-    def _check(address):
-        if not _net_allowed(address):
-            raise AssertionError(
-                f'тест «{request.node.name}» полез наружу: {address}. '
-                'Внешние вызовы обязаны идти через заглушку — `rhapsody_fake.py` '
-                'для соседа, `site_api_fake.py` для API сайта; свой транспорт '
-                'подменяется по образцу этих двух.')
-
-    def _connect(self, address):
-        _check(address)
-
-        return real_connect(self, address)
-
-    def _connect_ex(self, address):
-        _check(address)
-
-        return real_connect_ex(self, address)
-
-    monkeypatch.setattr(socket.socket, 'connect', _connect)
-    monkeypatch.setattr(socket.socket, 'connect_ex', _connect_ex)
+    tests_net_guard(
+        monkeypatch, request.node.name, ports=NET_PORTS, pairs=NET_PAIRS,
+        hint='Внешние вызовы обязаны идти через заглушку — `rhapsody_fake.py` '
+             'для соседа, `site_api_fake.py` для API сайта; свой транспорт '
+             'подменяется по образцу этих двух.')
 
 
 # Анкеты, чью переписку сюита не имеет права трогать. ⚠ **Все, что были в базе до
@@ -414,8 +386,7 @@ async def db_pool():
     """
     yield
 
-    await _tasks_stop()
-    await mysql_pool_close()
+    await tests_db_after()
 
 
 # ── Сайт в нашем снимке ──────────────────────────────────────────────────────
@@ -467,21 +438,10 @@ async def site_snapshot():
 @pytest.fixture
 async def client():
     """Клиент без входа — им проверяется, что закрытое закрыто."""
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT,
-                                 follow_redirects=False) as http:
+    async with tests_panel_client(base_url=BASE_URL) as http:
         yield http
 
 
-# Сессии, уже открытые в этом прогоне: `{логин: куки}`.
-#
-# ⚠ **Вход — самое дорогое, что делает сюита.** Замерено: `/auth/login` идёт 309 мс
-# против 10 мс у обычного запроса, потому что пароль проверяется намеренно медленным
-# хешем. Это правильно для прода и разорительно здесь: полторы тысячи тестов брали
-# сессию каждый заново, и одни только входы съедали почти всё время прогона —
-# ~470 секунд из 426 фактических (часть тестов входит не под всеми ролями).
-#
-# Сессию переиспользуем: она подписанная кука, живёт час, а прогон идёт минуты.
-_SESSIONS: dict[str, httpx.Cookies] = {}
 
 
 @pytest.fixture
@@ -492,10 +452,7 @@ async def auth_client():
     у него свой пул соединений, и один на все тесты держал бы его открытым между
     ними. А вот входить заново незачем — см. `_СЕССИИ`.
     """
-    cookies = await _login(ADMIN_USERNAME, ADMIN_PASSWORD)
-
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT,
-                                 follow_redirects=False, cookies=cookies) as http:
+    async with await tests_panel_as(ADMIN_USERNAME, ADMIN_PASSWORD, BASE_URL) as http:
         yield http
 
 
@@ -507,10 +464,8 @@ async def dating_client():
     войти — тест падает здесь: «оператор не может открыть бэкапы» одинаково
     выглядит и когда права работают, и когда учётки просто нет.
     """
-    cookies = await _login(OPERATOR_USERNAME, OPERATOR_PASSWORD)
-
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT,
-                                 follow_redirects=False, cookies=cookies) as http:
+    async with await tests_panel_as(OPERATOR_USERNAME, OPERATOR_PASSWORD,
+                                    BASE_URL) as http:
         yield http
 
 
@@ -597,24 +552,6 @@ async def girl(girl_make):
     `girl_make` и зовут его сами.
     """
     return await girl_make()
-
-
-def _net_allowed(address) -> bool:
-    """Свой ли это адрес. Всё, что не своё, — запрещено."""
-    if not isinstance(address, tuple) or len(address) < 2:
-        # Юникс-сокеты и прочее не сетевое: наружу по ним не уйти.
-        return True
-
-    host, port = str(address[0]), int(address[1] or 0)
-
-    if port in _NET_ALLOWED_PORTS:
-        return True
-
-    # Панель: порт из `BASE_URL`, хост только локальный.
-    if host in {'127.0.0.1', 'localhost', '::1'} and port == _BASE_PORT:
-        return True
-
-    return False
 
 
 def _test_profiles() -> list:
@@ -792,44 +729,3 @@ async def _live_messages() -> int:
                          tuple(_PROFILES_LIVE))
 
         return int(((await db.fetchone()) or {}).get('n') or 0)
-
-
-async def _tasks_stop() -> None:
-    """Отменяет всё, что тест оставил работать в фоне, и дожидается конца.
-
-    Ждать после отмены обязательно: отмена доходит до задачи только на следующем
-    шаге цикла, и без ожидания она успевает пожаловаться уже после того, как тест
-    прошёл.
-    """
-    mine = asyncio.current_task()
-    tasks = [task for task in asyncio.all_tasks() if task is not mine and not task.done()]
-    for task in tasks:
-        task.cancel()
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
-
-
-async def _login(username: str, password: str) -> httpx.Cookies:
-    """Куки роли: берём готовые, а нет — входим один раз на весь прогон.
-
-    ⚠ **Проверяем, что кука ещё жива**, дешёвым запросом (10 мс): она живёт час, и
-    длинный прогон мог её пережить. Протухла — входим заново; без этой проверки
-    сюита падала бы 401-ми на последних файлах, и причину искали бы в правках.
-    """
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT,
-                                 follow_redirects=False) as http:
-        cookies = _SESSIONS.get(username)
-        if cookies is not None:
-            http.cookies = cookies
-            if (await http.get('/api/dating/site')).status_code == 200:
-                return cookies
-
-        response = await http.post('/auth/login', json={'username': username,
-                                                        'password': password})
-        assert response.status_code == 200, (
-            f'не вышло войти под {username}: '
-            f'{response.status_code} {response.text[:200]}')
-
-        _SESSIONS[username] = http.cookies
-
-        return http.cookies

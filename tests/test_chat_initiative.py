@@ -186,11 +186,11 @@ class TestEmptinessExplainsItself:
         Своя копия правил разошлась бы с кругом на первой же правке отбора, и
         колонка объясняла бы простой, которого нет.
         """
-        from pytest_.pytest_guard import pytest_guard_calls
+        from tests_.tests_guard import tests_guard_calls
 
         from src.uvicorn.routers.dating import chat_initiative as handler
 
-        assert 'initiative_why' in pytest_guard_calls(handler)
+        assert 'initiative_why' in tests_guard_calls(handler)
 
     async def test_a_full_pool_says_nothing(self, auth_client, girl):
         """Есть карточки — объяснять нечего."""
