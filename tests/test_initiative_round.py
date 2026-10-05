@@ -998,3 +998,27 @@ class TestThePauseBetweenSends:
         """
         assert not hasattr(round_mod, 'INITIATIVE_ROUND_SEND'), \
             'частота отправки снова в коде — её задаёт настройка сайта'
+
+
+class TestTheResetTermIsRead:
+    """Срок повторного захода: часы настройки → секунды кода."""
+
+    async def test_zero_by_default(self):
+        """⚠ У стендового сайта настройка не стоит — значит «сброса нет»."""
+        assert await initiative_mod._reset_after(STAND_SITE) == 0
+
+    async def test_hours_become_seconds(self, auth_client):
+        """⚠ Настройка в часах, код считает в секундах: 24 → 86400."""
+        before = (await auth_client.get(
+            f'/api/dating/site/{STAND_SITE}')).json()['result']['settings']
+        try:
+            await auth_client.put(
+                f'/api/dating/site/{STAND_SITE}',
+                json={'settings': {**before,
+                                   'chat_initiative_reset_after': '24'}})
+
+            assert await initiative_mod._reset_after(STAND_SITE) == 24 * 3600, \
+                'код не видит срок, поставленный на странице'
+        finally:
+            await auth_client.put(f'/api/dating/site/{STAND_SITE}',
+                                  json={'settings': before})

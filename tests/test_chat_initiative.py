@@ -287,22 +287,25 @@ class TestDropNotEdit:
 
 # Настройки занятия: их читают вместе, и стоять им рядом — одним подразделом.
 INITIATIVE_SETTINGS = ('chat_initiative_after', 'chat_initiative_after_max',
+                       'chat_initiative_reset_after',
                        'chat_initiative_repeat', 'chat_initiative_max_day',
                        'chat_initiative_send_every')
 
 
 class TestTheSettings:
-    """Настройки инициативы — пятёрка, их читают вместе."""
+    """Настройки инициативы — шестёрка, их читают вместе."""
 
-    def test_all_five_are_registered(self):
+    def test_all_six_are_registered(self):
         after = SITE_KNOWN['chat_initiative_after']
         upto = SITE_KNOWN['chat_initiative_after_max']
+        again = SITE_KNOWN['chat_initiative_reset_after']
         times = SITE_KNOWN['chat_initiative_repeat']
         cap = SITE_KNOWN['chat_initiative_max_day']
         pause = SITE_KNOWN['chat_initiative_send_every']
 
-        assert after['title'] == 'Инициатива, проявить через минут (от)'
-        assert upto['title'] == 'Инициатива, проявить через минут (до)'
+        assert after['title'] == 'Инициатива, проявить впервые через минут (от)'
+        assert upto['title'] == 'Инициатива, проявить впервые через минут (до)'
+        assert again['title'] == 'Инициатива, сброс через часов'
         assert times['title'] == 'Инициатива, сколько раз подряд звать молчащего'
         assert cap['title'] == 'Инициатива, не больше этого в сутки на пару'
         assert pause['title'] == 'Инициатива, пауза между отправками, в мин'
@@ -312,9 +315,35 @@ class TestTheSettings:
             'ноль обязан быть допустим — это «без разброса»'
         assert pause['kind'] == 'number' and pause['min'] == 0, \
             'ноль обязан быть допустим — это «без паузы»'
+        assert again['kind'] == 'number' and again['min'] == 0, \
+            'ноль обязан быть допустим — это «сброса нет»'
         assert all(SITE_KNOWN[key]['group'] == 'invite'
                    for key in INITIATIVE_SETTINGS), \
             'настройки читают вместе — и стоять им рядом'
+
+    def test_the_reset_is_off_by_default(self):
+        """⚠⚠ Умолчание — ноль, и это не осторожность, а совместимость.
+
+        Настройка меняет **поведение** занятия, а не добавляет новое. Поставь
+        умолчанием сутки, и выкладка молча включила бы повторные заходы на всех
+        сайтах разом, в том числе там, где человек об этом не просил.
+        """
+        from src.dating.initiative import INITIATIVE_RESET_AFTER_DEFAULT
+
+        assert SITE_KNOWN['chat_initiative_reset_after']['default'] == '0'
+        assert INITIATIVE_RESET_AFTER_DEFAULT == 0, \
+            'умолчание кода разошлось с умолчанием реестра'
+
+    def test_the_note_says_what_zero_means(self):
+        """⚠ Ноль здесь значит «сброса нет», а не «занятие выключено».
+
+        Без этой строки человек, увидев ноль, читает его как выключатель и
+        начинает искать, почему инициатива «выключена», хотя она работает.
+        """
+        note = SITE_KNOWN['chat_initiative_reset_after']['note']
+
+        assert 'сброса нет' in note
+        assert 'Выключателем занятия она не является' in note
 
     def test_the_backstop_cannot_be_zeroed(self):
         """⚠⚠ Ноль у дневного потолка **запрещён**, и это не придирка.

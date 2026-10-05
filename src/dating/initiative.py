@@ -96,6 +96,14 @@ INITIATIVE_REPEAT_DEFAULT = 2
 INITIATIVE_MAX_DAY_SETTING = 'chat_initiative_max_day'
 INITIATIVE_MAX_DAY_DEFAULT = 5
 
+# Срок тишины для **повторного** захода, в часах. Ноль — «сброса нет»: повторы
+# меряются минутным сроком, как до появления настройки.
+#
+# ⚠ Умолчание ноль, а не сутки: настройка меняет поведение занятия, и выкладка не
+# должна включать повторные заходы там, где о них не просили.
+INITIATIVE_RESET_AFTER_SETTING = 'chat_initiative_reset_after'
+INITIATIVE_RESET_AFTER_DEFAULT = 0
+
 # Сколько пар берём у одной анкеты за заход. Каждая — вызов LLM; десяток разом
 # растянул бы круг на минуты и задержал бы остальные анкеты.
 INITIATIVE_PER_PROFILE = 2
@@ -501,3 +509,24 @@ async def _max_day(site_id: int) -> int:
         logger_info(f'[dating] дневной предел инициативы не прочитался: {e}')
 
         return INITIATIVE_MAX_DAY_DEFAULT
+
+
+async def _reset_after(site_id: int) -> int:
+    """Срок тишины повторного захода, в **секундах**. Настройка — в часах.
+
+    ⚠ Ноль — законное «сброса нет»: повторные заходы меряются минутным сроком,
+    ровно как до появления настройки. Это не выключатель занятия — за него
+    отвечает `chat_initiative_on` или ноль в `chat_initiative_repeat`.
+
+    ⚠ Не прочиталось — умолчание, а не ноль наугад: сторона ошибки выбрана так же,
+    как у `_max_day`, в пользу прежнего поведения.
+    """
+    try:
+        hours = int(await site_seconds(int(site_id or 0),
+                                       INITIATIVE_RESET_AFTER_SETTING))
+    except Exception as e:
+        logger_info(f'[dating] срок повторного захода не прочитался: {e}')
+
+        hours = INITIATIVE_RESET_AFTER_DEFAULT
+
+    return max(0, hours) * 3600
