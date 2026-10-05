@@ -288,6 +288,63 @@ def initiative_in_row_sql(profile: str, uid: str, his_last: str) -> str:
             "    AND i.status = 'sent')")
 
 
+async def initiative_blocked(site_id: int,
+                             pairs: list[tuple[int, str]]) -> set:
+    """Пары, чей счёт заходов упёрся в потолок сайта.
+
+    Args:
+        site_id: сайт-закладка — из него берётся потолок `chat_initiative_repeat`.
+        pairs: пары `(номер анкеты, собеседник)`, о которых спрашивают.
+
+    Returns:
+        set: подмножество `pairs` — те, которым инициатива больше не уйдёт, пока
+        он не ответит или человек не сбросит счёт руками.
+
+    ## ⚠⚠ Это про потолок, а не про «почему пул пуст»
+
+    Отбор круга спрашивает больше: срок тишины, дневной потолок, сторону
+    последней реплики. Здесь ответ на один вопрос — тот, который задаёт иконка в
+    шапке разговора: «к этой паре мы больше не вернёмся сами?»
+
+    Смешивать их нельзя: иконка, краснеющая от «сейчас не вышел срок», горела бы
+    почти всегда и ничего не значила.
+
+    ⚠ **Одним запросом на всю страницу**, а не по строке: диалогов на странице
+    до пятидесяти, и запрос на каждую стоил бы пятидесяти походов в базу ради
+    одного значка.
+
+    ⚠ Счёт берётся общим выражением (`initiative_in_row_sql`) — тем же, которым
+    отбирает круг.
+    """
+    pairs = [(int(one), str(two)) for one, two in (pairs or []) if int(one or 0)]
+    if not pairs:
+        return set()
+
+    repeat = await _repeat(int(site_id or 0))
+    # ⚠ Ноль в потолке — занятие выключено, и «упёрлась» бессмысленно: иконка
+    # горела бы у всех пар сразу, объясняя не потолок, а снятое занятие.
+    if repeat <= 0:
+        return set()
+
+    # ⚠ Спрошенные пары приезжают подзапросом `UNION ALL`, а не конструктором
+    # `VALUES`: тот есть только с MySQL 8.0.19, и выигрыша от него здесь нет.
+    asked = ' UNION ALL '.join(['SELECT %s AS profile_id, %s AS uid']
+                               + ['SELECT %s, %s'] * (len(pairs) - 1))
+    args = [value for pair in pairs for value in pair]
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT d.profile_id, d.uid FROM (' + asked + ') d WHERE '
+            + initiative_in_row_sql(
+                'd.profile_id', 'd.uid',
+                initiative_his_last_sql('d.profile_id', 'd.uid'))
+            + ' >= %s',
+            (*args, int(repeat)))
+        rows = await db.fetchall() or []
+
+    return {(int(row['profile_id']), str(row['uid'])) for row in rows}
+
+
 async def _quiet(profile_id: int, after_sec: int, after_max_sec: int,
                  repeat_max: int,
                  max_day: int = INITIATIVE_MAX_DAY_DEFAULT,

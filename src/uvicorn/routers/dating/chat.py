@@ -19,6 +19,7 @@ from src.dating.chat_initiative import chat_initiative_reset
 from src.dating.chat_panel import (CHAT_PANEL_DAYS,
                                           CHAT_PANEL_SCENARIO,
                                           chat_panel_import)
+from src.dating.initiative import initiative_blocked
 from src.dating.message_twin import message_twin_skip
 from src.dating.json_column import json_column_load
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_find
@@ -417,6 +418,21 @@ async def chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int = 1,
     # ⚠ Оба числа значка — **до** ответа, одним ходом: ответ уже собран, и
     # запрос после него дал бы список и значок с разных моментов времени.
     unread, last_in_at = await _unread_last_in(int(site_id), int(profile_id))
+
+    # ⚠ Упёрлась ли пара в потолок заходов инициативы — **одним запросом на всю
+    # страницу** и тем же правилом, которым отбирает круг
+    # (`initiative.initiative_blocked`). Своя копия счёта здесь разошлась бы с
+    # кругом на первой правке, и иконка горела бы не тогда, когда круг молчит.
+    #
+    # ⚠ Спрашивается **за** блоком соединения, рядом с `_unread_last_in`, а не
+    # внутри: функция берёт из пула своё соединение, и вложенный вызов держал бы
+    # два разом на каждый показ страницы.
+    capped = await initiative_blocked(
+        int(site_id), [(int(one['profile_id']), str(one['uid']))
+                       for one in contacts])
+    for contact in contacts:
+        contact['initiative_blocked'] = (
+            int(contact['profile_id']), str(contact['uid'])) in capped
 
     return {'result': {'contacts': contacts, 'contacts_total': total,
                        'page': page, 'pages': pages,

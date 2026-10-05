@@ -48,6 +48,31 @@ async def _card(profile_id: int, uid: str, body: str = 'как прошли вы
         return int(db.lastrowid)
 
 
+async def _said_in(profile_id: int, uid: str, minutes_ago: int = 60) -> None:
+    """Входящая реплика пары: без неё диалога нет вовсе (`chat_dialogs`).
+
+    ⚠ По умолчанию **час назад**, а не «сейчас»: счёт заходов сравнивает
+    `sent_at > his_last` строго, а `_card` ставит карточке `NOW()`. Положи мы
+    реплику в ту же секунду — карточка не посчиталась бы, и проверка потолка
+    мерила бы не то, что думает. В жизни инициатива уходит заметно позже его
+    слов, и время в тесте обязано это повторять.
+
+    ⚠ Время считает **база** (`NOW() - INTERVAL`): MySQL живёт по UTC, и
+    `datetime.now()` положил бы строку в будущее.
+    """
+    import uuid
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO message (profile_id, sender_uid, sender_name, text,'
+            '  message_uid, direction, created_at)'
+            " VALUES (%s, %s, 'Brian', 'привет', %s, 'in',"
+            '  NOW() - INTERVAL %s MINUTE)',
+            (int(profile_id), uid, f'zz-{uuid.uuid4().hex[:12]}',
+             int(minutes_ago)))
+        await db.connection.commit()
+
+
 def _awake(monkeypatch) -> None:
     """Показывает кругу стенд с поднятым набором — подменой отбора, а не базой.
 
@@ -283,6 +308,48 @@ class TestDropNotEdit:
 
         assert [row['status'] for row in rows] == ['sent'], \
             'чистка пула унесла и ушедшее — а это часть переписки'
+
+
+class TestTheCappedMarkInTheRow:
+    """⚠⚠ Строка диалога говорит, упёрлась ли пара в потолок заходов."""
+
+    async def test_a_free_pair_is_not_marked(self, auth_client, girl):
+        await _said_in(girl, 'u-1')
+
+        rows = (await auth_client.get(
+            f'/api/dating/chat/dialogs?site_id={STAND_SITE}'
+            f'&profile_id={girl}')).json()['result']['contacts']
+
+        assert [one['initiative_blocked'] for one in rows] == [False]
+
+    async def test_a_capped_pair_is_marked(self, auth_client, girl):
+        """⚠ Потолок у стендового сайта умолчанием два — значит две карточки."""
+        await _said_in(girl, 'u-1')
+        await _card(girl, 'u-1', status='sent')
+        await _card(girl, 'u-1', status='sent')
+
+        rows = (await auth_client.get(
+            f'/api/dating/chat/dialogs?site_id={STAND_SITE}'
+            f'&profile_id={girl}')).json()['result']['contacts']
+
+        assert [one['initiative_blocked'] for one in rows] == [True]
+
+    def test_the_rule_is_the_one_the_round_uses(self):
+        """⚠⚠ Правило одно, и проверяется это чтением кода, а не повторением.
+
+        Своя копия счёта в ручке разошлась бы с кругом на первой правке, и иконка
+        горела бы не тогда, когда круг молчит. Ровно так уже устарела подсказка
+        `initiative_why`, пережившая появление самого круга на две недели.
+        """
+        import inspect
+
+        from src.dating import initiative
+
+        assert 'initiative_in_row_sql' in inspect.getsource(
+            initiative.initiative_blocked), \
+            'ручка считает заходы своим выражением, а не общим'
+        assert 'initiative_in_row_sql' in inspect.getsource(initiative._quiet), \
+            'отбор круга перестал звать общее выражение'
 
 
 class TestTheResetHandle:
