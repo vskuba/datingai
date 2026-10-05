@@ -23,11 +23,14 @@
 ⚠ Поэтому тесты ходят в `INFORMATION_SCHEMA`, а не в заранее записанный набор
 имён: второй набор разошёлся бы с первым ровно так же.
 """
+import uuid
+
 import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
-from tests.conftest import (TEST_STAND_SITE_FROM, TEST_SWEEP_BY_PROFILE,
+from tests.conftest import (ADMIN_USERNAME, OPERATOR_USERNAME,
+                            TEST_STAND_SITE_FROM, TEST_SWEEP_BY_PROFILE,
                             TEST_SWEEP_BY_SITE, TEST_SWEEP_ORPHANS,
                             TEST_SWEEP_SEEDED_TABLE, _STAND_SITES)
 
@@ -120,29 +123,36 @@ class TestOrphansAreSweptToo:
         assert not missed, \
             f'у {", ".join(missed)} нет `site_id` — второй проход их не найдёт'
 
-    async def test_nothing_of_ours_is_left_behind(self):
-        """После уборки в стендовых таблицах не остаётся ничьих строк.
+    async def test_an_orphan_row_is_swept(self):
+        """Осиротевшую строку уборка находит и уносит.
 
-        ⚠ Проверка идёт по **текущему** состоянию базы: уборка шла до прогона
-        (`cleanup_test_profiles`), и к этому мигу ничьего быть не должно. Если
-        строки есть — либо условие уборки не покрывает их вид, либо что-то
-        завело их уже после неё.
+        ⚠⚠ Проверяется **механика**, а не состояние базы. Прежде тест смотрел,
+        пусто ли в таблицах сейчас, — и в полном прогоне падал на живой работе
+        соседних тестов: 18 строк `scenario_run`, которые завели идущие рядом
+        проверки, он считал пропущенным мусором. Ложная тревога на исправной
+        уборке хуже отсутствия теста: ей перестают верить.
+
+        Теперь строка заводится здесь, с заведомо чужим номером анкеты, и тест
+        убеждается, что проход её уносит. От порядка тестов это не зависит.
         """
-        left = {}
-        async with mysql_get_db_async() as db:
-            for table in TEST_SWEEP_ORPHANS:
-                await db.execute(
-                    f'SELECT COUNT(*) AS n FROM `{table}`'
-                    f' WHERE `site_id` >= %s'
-                    f'   AND (`profile_id` IS NULL'
-                    f'        OR `profile_id` NOT IN (SELECT `id` FROM `profile`))',
-                    (TEST_STAND_SITE_FROM,))
-                found = int(((await db.fetchone()) or {}).get('n') or 0)
-                if found:
-                    left[table] = found
+        from tests.conftest import _test_orphans_drop
 
-        assert not left, \
-            f'после уборки остались ничьи строки сюиты: {left}'
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO scenario_run (site_id, profile_id, scenario_id,'
+                ' scenario_name, status) VALUES (%s, NULL, 0, %s, %s)',
+                (TEST_STAND_SITE_FROM + 7, 'проба уборки', 'error'))
+            await db.connection.commit()
+            made = int(db.lastrowid)
+
+        _test_orphans_drop()
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT COUNT(*) AS n FROM scenario_run WHERE id = %s',
+                             (made,))
+            left = int(((await db.fetchone()) or {}).get('n') or 0)
+
+        assert left == 0, 'осиротевшая строка осталась: второй проход её не видит'
 
 
 async def _site_only() -> list:
@@ -202,25 +212,31 @@ class TestTablesWithoutAProfileAreSweptByTheirSite:
             f'в третьем проходе числятся {", ".join(extra)}, а `profile_id` у '
             f'них есть (или `site_id` нет) — их убирают проходы по анкете')
 
-    async def test_nothing_on_a_stand_site_is_left_behind(self):
-        """После уборки на стендовых сайтах не остаётся строк.
+    async def test_a_row_without_a_profile_is_swept(self):
+        """Строку без номера анкеты третий проход находит по стендовому сайту.
 
-        ⚠ Проверка по **текущему** состоянию базы: уборка шла до прогона, и к
-        этому мигу стендовых строк быть не должно. Кроме посевных — см. ниже.
+        ⚠⚠ Проверяется **механика**, а не состояние базы — по той же причине,
+        что и у прохода выше: в полном прогоне соседние тесты заводят свои
+        `companion` и `error`, и тест считал их пропущенным мусором.
         """
-        left = {}
+        from tests.conftest import _test_site_rows_drop
+
+        mark = TEST_STAND_SITE_FROM + 7
+
         async with mysql_get_db_async() as db:
-            for table in TEST_SWEEP_BY_SITE:
-                if table == TEST_SWEEP_SEEDED_TABLE:
-                    continue
+            await db.execute(
+                'INSERT INTO companion (site_id, uid, name) VALUES (%s, %s, %s)',
+                (mark, 'проба-уборки', 'Проба'))
+            await db.connection.commit()
 
-                await db.execute(f'SELECT COUNT(*) AS n FROM `{table}`'
-                                 f' WHERE `site_id` >= %s', (TEST_STAND_SITE_FROM,))
-                found = int(((await db.fetchone()) or {}).get('n') or 0)
-                if found:
-                    left[table] = found
+        _test_site_rows_drop()
 
-        assert not left, f'после уборки остались строки сюиты по сайту: {left}'
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT COUNT(*) AS n FROM companion WHERE site_id = %s', (mark,))
+            left = int(((await db.fetchone()) or {}).get('n') or 0)
+
+        assert left == 0, 'строка без анкеты осталась: третий проход её не видит'
 
     async def test_the_seeded_stand_site_survives(self):
         """⚠⚠ А вот посевную строку `site` уборка щадить обязана.
@@ -235,3 +251,63 @@ class TestTablesWithoutAProfileAreSweptByTheirSite:
             found = int(((await db.fetchone()) or {}).get('n') or 0)
 
         assert found == 1, 'посевная строка стендового сайта не на месте'
+
+
+class TestPanelUsersAreSweptByName:
+    """⚠⚠ Четвёртый вид строки: человек панели. Ни анкеты, ни сайта у него нет.
+
+    Три прохода выше отбирают по номеру анкеты и по стендовому сайту — учётку
+    панели они не видят ни при каком состоянии базы. Без этого прохода
+    накопилась одна учётка от 15.09, и копилась бы навсегда: каскада на людей
+    нет, а прогон, упавший до своей уборки, оставляет их в списке рядом с живыми.
+    """
+
+    async def test_a_suite_user_is_swept(self):
+        """Учётку с именем сюиты проход находит и уносит."""
+        from tests.conftest import _test_users_drop
+
+        name = f'test-{uuid.uuid4().hex[:10]}'
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO `user` (username, password_hash, role)'
+                " VALUES (%s, 'x', 'operator')", (name,))
+            await db.connection.commit()
+
+        _test_users_drop()
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT COUNT(*) AS n FROM `user` WHERE username = %s',
+                             (name,))
+            left = int(((await db.fetchone()) or {}).get('n') or 0)
+
+        assert left == 0, 'учётка сюиты осталась: четвёртый проход её не видит'
+
+    async def test_a_human_user_survives(self):
+        """⚠⚠ Живые учётки проход щадит, и это важнее, чем уборка.
+
+        Примета здесь — **имя**, а человек заводит учётки теми же буквами. Если
+        условие однажды расширят до `test-%`, упадёт этот тест, а не доверие к
+        панели: учётка с именем «test-отчёт» снеслась бы молча.
+        """
+        from tests.conftest import _test_users_drop
+
+        kept = f'test-отчёт-{uuid.uuid4().hex[:4]}'
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO `user` (username, password_hash, role)'
+                " VALUES (%s, 'x', 'operator')", (kept,))
+            await db.connection.commit()
+
+        _test_users_drop()
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT username FROM `user` WHERE username IN'
+                             ' (%s, %s, %s)',
+                             (kept, ADMIN_USERNAME, OPERATOR_USERNAME))
+            alive = {str(one['username']) for one in await db.fetchall() or []}
+
+            await db.execute('DELETE FROM `user` WHERE username = %s', (kept,))
+            await db.connection.commit()
+
+        assert kept in alive, 'уборка снесла учётку, похожую на тестовую'
+        assert ADMIN_USERNAME in alive, 'уборка снесла администратора'
