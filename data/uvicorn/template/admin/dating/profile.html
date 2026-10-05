@@ -4890,6 +4890,31 @@
         const initiativeReload = workEl.querySelector('[data-slot="initiative-reload"]');
         if (initiativeReload) initiativeReload.addEventListener('click', initiativeLoad);
 
+        // Отпустить пару: счёт заходов инициативы начинается заново.
+        //
+        // ⚠ Перечитываем **список диалогов**, а не только значок: признак потолка
+        // приходит в строке, и оставь мы список прежним, значок погас бы, а строка
+        // продолжала бы носить старое значение — следующий щелчок по ней вернул бы
+        // красный.
+        const initiativeFree = workEl.querySelector('[data-slot="initiative-free"]');
+        if (initiativeFree) initiativeFree.addEventListener('click', async () => {
+            const [profileId, uid] = String(chatTalkOpenKey || '').split('|');
+            if (!uid) return;
+
+            initiativeFree.disabled = true;
+            try {
+                await postData(`${BASE}/api/dating/chat/dialogs/`
+                    + `${profileId}/${encodeURIComponent(uid)}/initiative-reset`);
+                await chatLoad(true);
+                chatTalkPaint();
+            } catch (e) {
+                showNotification('Счёт заходов не сбросился: ' + e.message,
+                                 'error');
+            } finally {
+                initiativeFree.disabled = false;
+            }
+        });
+
         // Обновить список переписок.
         const favTalksReload = workEl.querySelector('[data-slot="fav-talks-reload"]');
         if (favTalksReload) favTalksReload.addEventListener('click', () => {
@@ -12511,6 +12536,19 @@
 
         fillSlot('chat-talk-who', found.uid
             ? `${found.profile_name || '—'} → ${found.name || found.uid}` : '');
+
+        // ⚠ Значок сброса: красный — инициатива упёрлась в потолок заходов, и
+        // сама девушка к паре больше не вернётся. Признак считает сервер тем же
+        // правилом, которым отбирает круг (`initiative_blocked`), — своей копии
+        // счёта здесь нет намеренно.
+        const free = slot('initiative-free');
+        if (free) {
+            free.hidden = !found.uid;
+            free.classList.toggle('capped', !!found.initiative_blocked);
+            free.title = found.initiative_blocked
+                ? 'Инициатива упёрлась в потолок заходов — сбросить счёт'
+                : 'Инициатива: счёт заходов не исчерпан';
+        }
     }
 
     // ── Окно переписки ───────────────────────────────────────────────────────

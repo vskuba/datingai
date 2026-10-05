@@ -248,6 +248,12 @@ class TestWhoIsQuiet:
         того же промежутка тишины. Ограничь счёт сутками, и трёхдневное молчание
         обнуляло бы его само, без всякого ответа: девушка звала бы молчащего
         каждый день по разу вечно.
+
+        ⚠⚠ Это по-прежнему верно для счёта самого по себе: окна у него нет, и
+        сутки его не обнуляют. «Звать молчащего каждый день по разу» теперь
+        возможно, но только когда человек **явно** задал срок повторного захода
+        (`chat_initiative_reset_after`), и не больше, чем разрешает потолок
+        `chat_initiative_repeat`. Без настройки — ровно как здесь: не зовём.
         """
         await _said(girl, 'u-1', direction='in', minutes_ago=4000)
         await _said(girl, 'u-1', direction='out', minutes_ago=3900)
@@ -998,3 +1004,225 @@ class TestThePauseBetweenSends:
         """
         assert not hasattr(round_mod, 'INITIATIVE_ROUND_SEND'), \
             'частота отправки снова в коде — её задаёт настройка сайта'
+
+
+class TestTheRepeatCallWaitsItsOwnTerm:
+    """⚠⚠ Первый заход меряется минутами, повторные — своим сроком в часах."""
+
+    async def test_the_first_call_ignores_the_reset_term(self, girl):
+        """⚠ Первому заходу новый срок не указ: его срок — минутный.
+
+        Иначе настройка превратилась бы в «через сколько вообще заговаривать», и
+        минутный срок перестал бы значить что-либо.
+        """
+        await _said(girl, 'u-1', direction='in', minutes_ago=200)
+        await _said(girl, 'u-1', direction='out', minutes_ago=180)
+
+        got = await initiative_mod._quiet(girl, 3600, 3600, 2,
+                                          reset_sec=24 * 3600)
+
+        assert [one['uid'] for one in got] == ['u-1'], \
+            'первый заход стал ждать суточный срок'
+
+    async def test_the_second_call_waits_the_hours(self, girl):
+        """⚠⚠ Заход уже был, он молчит — ждём суточный срок, а не минутный.
+
+        Тишина здесь три часа: минутный срок (час) вышел, суточный — нет.
+        """
+        await _said(girl, 'u-1', direction='in', minutes_ago=400)
+        await _said(girl, 'u-1', direction='out', minutes_ago=180)
+        await _card_sent(girl, 'u-1', minutes_ago=180)
+
+        assert await initiative_mod._quiet(girl, 3600, 3600, 2,
+                                           reset_sec=24 * 3600) == [], \
+            'повторный заход ушёл по минутному сроку'
+
+    async def test_the_second_call_goes_when_the_hours_run_out(self, girl):
+        """⚠ Суточный срок вышел — заход уходит, и это заход номер два."""
+        await _said(girl, 'u-1', direction='in', minutes_ago=4000)
+        await _said(girl, 'u-1', direction='out', minutes_ago=3000)
+        await _card_sent(girl, 'u-1', minutes_ago=3000)
+
+        got = await initiative_mod._quiet(girl, 3600, 3600, 2,
+                                          reset_sec=24 * 3600)
+
+        assert [one['uid'] for one in got] == ['u-1']
+        assert [one['try_no'] for one in got] == [2], \
+            'номер захода не вырос — счёт «подряд» не считает прошлый заход'
+
+    async def test_the_ceiling_still_holds(self, girl):
+        """⚠⚠ Срок говорит «когда», потолок — «сколько»; второго счётчика нет.
+
+        Два захода при пределе два: суточный срок вышел давно, и всё равно не
+        зовём. Иначе сброс стал бы способом обойти потолок.
+        """
+        await _said(girl, 'u-1', direction='in', minutes_ago=9000)
+        await _said(girl, 'u-1', direction='out', minutes_ago=8000)
+        await _card_sent(girl, 'u-1', minutes_ago=8000)
+        await _card_sent(girl, 'u-1', minutes_ago=4000)
+
+        assert await initiative_mod._quiet(girl, 3600, 3600, 2,
+                                           reset_sec=24 * 3600) == [], \
+            'третий заход при пределе два — потолок перестал держать'
+
+    async def test_zero_keeps_todays_behaviour(self, girl):
+        """⚠ Ноль — «сброса нет»: повторы идут по минутному сроку, как прежде."""
+        await _said(girl, 'u-1', direction='in', minutes_ago=400)
+        await _said(girl, 'u-1', direction='out', minutes_ago=180)
+        await _card_sent(girl, 'u-1', minutes_ago=180)
+
+        got = await initiative_mod._quiet(girl, 3600, 3600, 2, reset_sec=0)
+
+        assert [one['uid'] for one in got] == ['u-1'], \
+            'ноль в сроке изменил прежнее поведение'
+
+    async def test_his_answer_returns_the_pair_to_the_minute_term(self, girl):
+        """⚠⚠ Ответил — счёт обнулён, и следующий заход снова **первый**.
+
+        То есть меряется минутами, а не сутками: разговор жив, и ждать сутки,
+        чтобы вернуться к затихшей беседе, значило бы её потерять.
+        """
+        await _said(girl, 'u-1', direction='in', minutes_ago=400)
+        await _card_sent(girl, 'u-1', minutes_ago=350)
+        await _said(girl, 'u-1', direction='in', minutes_ago=300)
+        await _said(girl, 'u-1', direction='out', minutes_ago=180)
+
+        got = await initiative_mod._quiet(girl, 3600, 3600, 2,
+                                          reset_sec=24 * 3600)
+
+        assert [one['uid'] for one in got] == ['u-1'], \
+            'его ответ не вернул пару на минутный срок'
+        assert [one['try_no'] for one in got] == [1]
+
+
+class TestTheManualReset:
+    """⚠⚠ Сброс руками: пара, упёршаяся в потолок, отпускается щелчком."""
+
+    async def test_a_capped_pair_is_released(self, girl):
+        """Заход был, он молчит, потолок один — сброс возвращает пару в отбор."""
+        from src.dating.chat_initiative import chat_initiative_reset
+
+        await _said(girl, 'u-1', direction='in', minutes_ago=4000)
+        await _said(girl, 'u-1', direction='out', minutes_ago=3900)
+        await _card_sent(girl, 'u-1', minutes_ago=3800)
+
+        assert await initiative_mod._quiet(girl, 3600, 3600, 1) == [], \
+            'пара не упёрлась в потолок — тест проверяет не то, что думает'
+
+        assert await chat_initiative_reset(girl, 'u-1') is True
+
+        got = await initiative_mod._quiet(girl, 3600, 3600, 1)
+
+        assert [one['uid'] for one in got] == ['u-1'], \
+            'сброс не вернул пару в отбор'
+        assert [one['try_no'] for one in got] == [1], \
+            'номер захода не начался заново'
+
+    async def test_a_pair_without_sent_cards_answers_false(self, girl):
+        """⚠ Обнулять нечего — это не ошибка, а ответ «нечего»."""
+        from src.dating.chat_initiative import chat_initiative_reset
+
+        await _said(girl, 'u-1', direction='in', minutes_ago=400)
+
+        assert await chat_initiative_reset(girl, 'u-1') is False
+
+    async def test_cards_after_the_reset_are_counted_again(self, girl):
+        """⚠⚠ Сброс сдвигает границу счёта, а не выключает его.
+
+        Иначе один щелчок снимал бы потолок с пары навсегда, и девушка звала бы
+        молчащего без конца.
+        """
+        from src.dating.chat_initiative import chat_initiative_reset
+
+        await _said(girl, 'u-1', direction='in', minutes_ago=4000)
+        await _said(girl, 'u-1', direction='out', minutes_ago=3900)
+        await _card_sent(girl, 'u-1', minutes_ago=3800)
+        await chat_initiative_reset(girl, 'u-1')
+
+        # ⚠ Отметка ложится на `NOW()`, а карточка ниже — тоже на «сейчас»;
+        # сдвигаем отметку в прошлое, чтобы порядок событий был настоящим:
+        # сперва человек нажал, потом круг отправил. Без сдвига обе встают в одну
+        # секунду, и строгое сравнение счёта их не различает — то есть тест
+        # проверял бы не то, что думает.
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'UPDATE chat_initiative SET reset_at = NOW() - INTERVAL 5 MINUTE'
+                ' WHERE profile_id = %s AND uid = %s AND reset_at IS NOT NULL',
+                (int(girl), 'u-1'))
+            await db.connection.commit()
+
+        # После сброса ушла ещё одна карточка — счёт обязан её увидеть.
+        await _card_sent(girl, 'u-1', minutes_ago=0)
+
+        assert await initiative_mod._quiet(girl, 3600, 3600, 1) == [], \
+            'карточка после сброса не посчитана — потолок снят навсегда'
+
+    async def test_the_daily_backstop_survives_the_reset(self, girl):
+        """⚠⚠ Сброс трогает только счёт «подряд», дневной потолок остаётся.
+
+        Тот сторожит не живого человека, а зацикленный автоответчик на той
+        стороне; снимать его щелчком значило бы остаться без предохранителя.
+        """
+        from src.dating.chat_initiative import chat_initiative_reset
+
+        await _said(girl, 'u-1', direction='in', minutes_ago=400)
+        await _said(girl, 'u-1', direction='out', minutes_ago=300)
+        for minutes in (200, 150):
+            await _card_sent(girl, 'u-1', minutes_ago=minutes)
+
+        await chat_initiative_reset(girl, 'u-1')
+
+        assert await initiative_mod._quiet(girl, 3600, 3600, 5,
+                                           max_day=2) == [], \
+            'сброс снял дневной потолок'
+
+
+class TestTheSelectionWindow:
+    """⚠⚠ Окно отбора: `LIMIT` применяется **после** отбора, а не до него."""
+
+    async def test_an_old_pair_is_found_behind_a_crowd_of_unfit_ones(self, girl):
+        """⚠⚠ Негодные пары не должны съедать окно.
+
+        `_quiet` берёт пары порядком «свежая тишина сверху» и ограничивает их
+        числом. Пока счёт заходов стоил запроса на строку, окно наполнялось
+        **до** отбора — и годная пара, молчащая дольше всех, в него не попадала,
+        если свежих было больше окна. Со суточным сроком повторного захода это
+        ломало бы занятие молча: годные при нём — как раз самые старые пары.
+
+        Негодных здесь делаем неотвеченными инвайтами (ни одной входящей): они
+        проходят срок, но отбор их не берёт — ровно тот случай, что съедал окно.
+        """
+        for n in range(30):
+            await _said(girl, f'inv-{n}', direction='out', minutes_ago=10)
+
+        await _said(girl, 'u-old', direction='in', minutes_ago=4000)
+        await _said(girl, 'u-old', direction='out', minutes_ago=3900)
+
+        got = await initiative_mod._quiet(girl, 300, 300, 2)
+
+        assert [one['uid'] for one in got] == ['u-old'], \
+            'годная пара потерялась за толпой негодных — окно наполняется до отбора'
+
+
+class TestTheResetTermIsRead:
+    """Срок повторного захода: часы настройки → секунды кода."""
+
+    async def test_zero_by_default(self):
+        """⚠ У стендового сайта настройка не стоит — значит «сброса нет»."""
+        assert await initiative_mod._reset_after(STAND_SITE) == 0
+
+    async def test_hours_become_seconds(self, auth_client):
+        """⚠ Настройка в часах, код считает в секундах: 24 → 86400."""
+        before = (await auth_client.get(
+            f'/api/dating/site/{STAND_SITE}')).json()['result']['settings']
+        try:
+            await auth_client.put(
+                f'/api/dating/site/{STAND_SITE}',
+                json={'settings': {**before,
+                                   'chat_initiative_reset_after': '24'}})
+
+            assert await initiative_mod._reset_after(STAND_SITE) == 24 * 3600, \
+                'код не видит срок, поставленный на странице'
+        finally:
+            await auth_client.put(f'/api/dating/site/{STAND_SITE}',
+                                  json={'settings': before})

@@ -904,3 +904,24 @@
     .gallery-frame { order: -1; max-width: 100%; }
     .gallery-step { width: 56px; height: 44px; }
 }
+
+/* Значок сброса счёта заходов инициативы в шапке разговора («Чат → Диалоги»).
+   ⚠ Состояний два, и серое — обычное: «к паре мы ещё вернёмся сами». */
+.talk-free {
+    margin-left: auto;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    padding: 2px 4px;
+    color: var(--muted, #8a8a8a);
+}
+
+/* Упёрлась в потолок: сами больше не вернёмся, пока он не ответит. */
+.talk-free.capped {
+    color: var(--bad, #c0392b);
+}
+
+.talk-free:hover { filter: brightness(1.2); }
+.talk-free:disabled { opacity: .5; cursor: default; }

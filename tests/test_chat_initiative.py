@@ -48,6 +48,31 @@ async def _card(profile_id: int, uid: str, body: str = 'как прошли вы
         return int(db.lastrowid)
 
 
+async def _said_in(profile_id: int, uid: str, minutes_ago: int = 60) -> None:
+    """Входящая реплика пары: без неё диалога нет вовсе (`chat_dialogs`).
+
+    ⚠ По умолчанию **час назад**, а не «сейчас»: счёт заходов сравнивает
+    `sent_at > his_last` строго, а `_card` ставит карточке `NOW()`. Положи мы
+    реплику в ту же секунду — карточка не посчиталась бы, и проверка потолка
+    мерила бы не то, что думает. В жизни инициатива уходит заметно позже его
+    слов, и время в тесте обязано это повторять.
+
+    ⚠ Время считает **база** (`NOW() - INTERVAL`): MySQL живёт по UTC, и
+    `datetime.now()` положил бы строку в будущее.
+    """
+    import uuid
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO message (profile_id, sender_uid, sender_name, text,'
+            '  message_uid, direction, created_at)'
+            " VALUES (%s, %s, 'Brian', 'привет', %s, 'in',"
+            '  NOW() - INTERVAL %s MINUTE)',
+            (int(profile_id), uid, f'zz-{uuid.uuid4().hex[:12]}',
+             int(minutes_ago)))
+        await db.connection.commit()
+
+
 def _awake(monkeypatch) -> None:
     """Показывает кругу стенд с поднятым набором — подменой отбора, а не базой.
 
@@ -285,24 +310,153 @@ class TestDropNotEdit:
             'чистка пула унесла и ушедшее — а это часть переписки'
 
 
+class TestTheCappedMarkInTheRow:
+    """⚠⚠ Строка диалога говорит, упёрлась ли пара в потолок заходов."""
+
+    async def test_a_free_pair_is_not_marked(self, auth_client, girl):
+        await _said_in(girl, 'u-1')
+
+        rows = (await auth_client.get(
+            f'/api/dating/chat/dialogs?site_id={STAND_SITE}'
+            f'&profile_id={girl}')).json()['result']['contacts']
+
+        assert [one['initiative_blocked'] for one in rows] == [False]
+
+    async def test_a_capped_pair_is_marked(self, auth_client, girl):
+        """⚠ Потолок у стендового сайта умолчанием два — значит две карточки."""
+        await _said_in(girl, 'u-1')
+        await _card(girl, 'u-1', status='sent')
+        await _card(girl, 'u-1', status='sent')
+
+        rows = (await auth_client.get(
+            f'/api/dating/chat/dialogs?site_id={STAND_SITE}'
+            f'&profile_id={girl}')).json()['result']['contacts']
+
+        assert [one['initiative_blocked'] for one in rows] == [True]
+
+    def test_the_rule_is_the_one_the_round_uses(self):
+        """⚠⚠ Правило одно, и проверяется это чтением кода, а не повторением.
+
+        Своя копия счёта в ручке разошлась бы с кругом на первой правке, и иконка
+        горела бы не тогда, когда круг молчит. Ровно так уже устарела подсказка
+        `initiative_why`, пережившая появление самого круга на две недели.
+        """
+        import inspect
+
+        from src.dating import initiative
+
+        assert 'initiative_in_row_sql' in inspect.getsource(
+            initiative.initiative_blocked), \
+            'ручка считает заходы своим выражением, а не общим'
+        assert 'initiative_in_row_sql' in inspect.getsource(initiative._quiet), \
+            'отбор круга перестал звать общее выражение'
+
+
+class TestTheReleaseIcon:
+    """⚠ Иконка сброса — в шапке разговора на «Чат → Диалоги», и только там."""
+
+    def _page(self, name: str) -> str:
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parents[1]
+
+        return (root / name).read_text(encoding='utf-8')
+
+    def test_the_markup_has_the_icon(self):
+        page = self._page(
+            'data/uvicorn/template/admin/dating/profile/site/_base.html')
+
+        assert page.count('data-slot="initiative-free"') == 1, \
+            'иконка либо не заведена, либо уехала не в одну шапку'
+
+    def test_it_stands_in_the_chat_tab_only(self):
+        """⚠⚠ Шапок «Разговор» в шаблоне три, и две чужие.
+
+        Вторая — «Фавориты → Диалоги», третья — «Письма»: у них своё занятие, и
+        инициатива к ним отношения не имеет. Копия иконки там предлагала бы
+        сбросить то, чего нет.
+        """
+        page = self._page(
+            'data/uvicorn/template/admin/dating/profile/site/_base.html')
+        before = page.split('data-slot="initiative-free"')[0]
+
+        assert before.count('{% block work_talk %}') == 1, \
+            'иконка стоит до блока «Чат → Диалоги»'
+        assert '{% block work_favorite_talks %}' not in before, \
+            'иконка уехала в шапку «Фаворитов»'
+        assert '{% block work_mail_sent %}' not in before, \
+            'иконка уехала в шапку «Писем»'
+
+    def test_the_page_reads_the_server_field(self):
+        page = self._page('data/uvicorn/template/admin/dating/profile.html')
+
+        assert 'initiative_blocked' in page, \
+            'страница не читает признак потолка с сервера'
+        assert 'initiative-reset' in page, \
+            'щелчок по иконке не зовёт ручку сброса'
+
+
+class TestTheResetHandle:
+    """Ручка сброса: ею страница отпускает упёршуюся пару."""
+
+    async def test_it_resets(self, auth_client, girl):
+        await _card(girl, 'u-1', status='sent')
+
+        got = (await auth_client.post(
+            f'/api/dating/chat/dialogs/{girl}/u-1/initiative-reset')).json()
+
+        assert got['result'] == {'reset': True}
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT COUNT(*) AS n FROM chat_initiative'
+                ' WHERE profile_id = %s AND uid = %s AND reset_at IS NOT NULL',
+                (girl, 'u-1'))
+
+            assert int(((await db.fetchone()) or {})['n']) == 1, \
+                'отметка не легла'
+
+    async def test_nothing_to_reset_is_not_an_error(self, auth_client, girl):
+        """⚠ Инициатива этой паре не уходила — ответ «нечего», а не 404.
+
+        Кнопку видно у любого разговора, и нажатие на том, куда мы не писали, —
+        обычное дело, а не поломка.
+        """
+        got = await auth_client.post(
+            f'/api/dating/chat/dialogs/{girl}/u-none/initiative-reset')
+
+        assert got.status_code == 200
+        assert got.json()['result'] == {'reset': False}
+
+    async def test_a_stranger_is_turned_away(self, client, girl):
+        """⚠ Ручка за входом: сброс меняет работу круга, а не вид страницы."""
+        got = await client.post(
+            f'/api/dating/chat/dialogs/{girl}/u-1/initiative-reset')
+
+        assert got.status_code in (401, 403)
+
+
 # Настройки занятия: их читают вместе, и стоять им рядом — одним подразделом.
 INITIATIVE_SETTINGS = ('chat_initiative_after', 'chat_initiative_after_max',
+                       'chat_initiative_reset_after',
                        'chat_initiative_repeat', 'chat_initiative_max_day',
                        'chat_initiative_send_every')
 
 
 class TestTheSettings:
-    """Настройки инициативы — пятёрка, их читают вместе."""
+    """Настройки инициативы — шестёрка, их читают вместе."""
 
-    def test_all_five_are_registered(self):
+    def test_all_six_are_registered(self):
         after = SITE_KNOWN['chat_initiative_after']
         upto = SITE_KNOWN['chat_initiative_after_max']
+        again = SITE_KNOWN['chat_initiative_reset_after']
         times = SITE_KNOWN['chat_initiative_repeat']
         cap = SITE_KNOWN['chat_initiative_max_day']
         pause = SITE_KNOWN['chat_initiative_send_every']
 
-        assert after['title'] == 'Инициатива, проявить через минут (от)'
-        assert upto['title'] == 'Инициатива, проявить через минут (до)'
+        assert after['title'] == 'Инициатива, проявить впервые через минут (от)'
+        assert upto['title'] == 'Инициатива, проявить впервые через минут (до)'
+        assert again['title'] == 'Инициатива, сброс через часов'
         assert times['title'] == 'Инициатива, сколько раз подряд звать молчащего'
         assert cap['title'] == 'Инициатива, не больше этого в сутки на пару'
         assert pause['title'] == 'Инициатива, пауза между отправками, в мин'
@@ -312,9 +466,35 @@ class TestTheSettings:
             'ноль обязан быть допустим — это «без разброса»'
         assert pause['kind'] == 'number' and pause['min'] == 0, \
             'ноль обязан быть допустим — это «без паузы»'
+        assert again['kind'] == 'number' and again['min'] == 0, \
+            'ноль обязан быть допустим — это «сброса нет»'
         assert all(SITE_KNOWN[key]['group'] == 'invite'
                    for key in INITIATIVE_SETTINGS), \
             'настройки читают вместе — и стоять им рядом'
+
+    def test_the_reset_is_off_by_default(self):
+        """⚠⚠ Умолчание — ноль, и это не осторожность, а совместимость.
+
+        Настройка меняет **поведение** занятия, а не добавляет новое. Поставь
+        умолчанием сутки, и выкладка молча включила бы повторные заходы на всех
+        сайтах разом, в том числе там, где человек об этом не просил.
+        """
+        from src.dating.initiative import INITIATIVE_RESET_AFTER_DEFAULT
+
+        assert SITE_KNOWN['chat_initiative_reset_after']['default'] == '0'
+        assert INITIATIVE_RESET_AFTER_DEFAULT == 0, \
+            'умолчание кода разошлось с умолчанием реестра'
+
+    def test_the_note_says_what_zero_means(self):
+        """⚠ Ноль здесь значит «сброса нет», а не «занятие выключено».
+
+        Без этой строки человек, увидев ноль, читает его как выключатель и
+        начинает искать, почему инициатива «выключена», хотя она работает.
+        """
+        note = SITE_KNOWN['chat_initiative_reset_after']['note']
+
+        assert 'сброса нет' in note
+        assert 'Выключателем занятия она не является' in note
 
     def test_the_backstop_cannot_be_zeroed(self):
         """⚠⚠ Ноль у дневного потолка **запрещён**, и это не придирка.

@@ -15,9 +15,11 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
+from src.dating.chat_initiative import chat_initiative_reset
 from src.dating.chat_panel import (CHAT_PANEL_DAYS,
                                           CHAT_PANEL_SCENARIO,
                                           chat_panel_import)
+from src.dating.initiative import initiative_blocked
 from src.dating.message_twin import message_twin_skip
 from src.dating.json_column import json_column_load
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_find
@@ -182,6 +184,36 @@ async def chat_dialog_read(profile_id: int, uid: str,
         await db.connection.commit()
 
     return {'result': {'read': read}}
+
+
+@router.post('/dialogs/{profile_id}/{uid}/initiative-reset',
+             include_in_schema=False)
+async def chat_dialog_initiative_reset(profile_id: int, uid: str,
+                                       user=Depends(auth_required)):
+    """Обнуляет счёт заходов инициативы у пары: её зовут снова с первого.
+
+    ## ⚠⚠ Зачем кнопка, если счёт обнуляет ответ
+
+    Счёт «подряд» обнуляет **входящая реплика**, и это верно по смыслу: молчание
+    тоже ответ. Но пара, упёршаяся в потолок, замирает тогда навсегда — если
+    человек не напишет сам, девушка к нему не вернётся никогда. На проде так и
+    вышло: 72 ушедшие инициативы 33 парам, ни одного ответа, пул пуст.
+
+    Кнопка — решение человека, а не кода: он прочитал разговор и решил, что стоит
+    попробовать снова.
+
+    ⚠ **По паре, а не по анкете**: отпускают один разговор, который видят.
+
+    ⚠ `{reset: false}` — законный ответ: инициатива этой паре не уходила, и
+    обнулять нечего. Ошибкой это делать нельзя — кнопка видна у любого разговора.
+
+    ⚠⚠ Дневного потолка (`chat_initiative_max_day`) кнопка **не** снимает: тот
+    сторожит не живого человека, а зацикленный автоответчик на той стороне. На
+    деле это видно так: нажал, а реплика ушла не сразу, если паре сегодня уже
+    писали сколько можно.
+    """
+    return {'result': {'reset': await chat_initiative_reset(int(profile_id),
+                                                            str(uid))}}
 
 
 @router.get('/dialogs', include_in_schema=False)
@@ -386,6 +418,21 @@ async def chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int = 1,
     # ⚠ Оба числа значка — **до** ответа, одним ходом: ответ уже собран, и
     # запрос после него дал бы список и значок с разных моментов времени.
     unread, last_in_at = await _unread_last_in(int(site_id), int(profile_id))
+
+    # ⚠ Упёрлась ли пара в потолок заходов инициативы — **одним запросом на всю
+    # страницу** и тем же правилом, которым отбирает круг
+    # (`initiative.initiative_blocked`). Своя копия счёта здесь разошлась бы с
+    # кругом на первой правке, и иконка горела бы не тогда, когда круг молчит.
+    #
+    # ⚠ Спрашивается **за** блоком соединения, рядом с `_unread_last_in`, а не
+    # внутри: функция берёт из пула своё соединение, и вложенный вызов держал бы
+    # два разом на каждый показ страницы.
+    capped = await initiative_blocked(
+        int(site_id), [(int(one['profile_id']), str(one['uid']))
+                       for one in contacts])
+    for contact in contacts:
+        contact['initiative_blocked'] = (
+            int(contact['profile_id']), str(contact['uid'])) in capped
 
     return {'result': {'contacts': contacts, 'contacts_total': total,
                        'page': page, 'pages': pages,

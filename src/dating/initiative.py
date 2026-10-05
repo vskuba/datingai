@@ -20,8 +20,9 @@
 
 | Настройка | Что задаёт |
 |-----------|------------|
-| `chat_initiative_after` | через сколько минут тишины пишем — **от** |
+| `chat_initiative_after` | через сколько минут тишины пишем **впервые** — от |
 | `chat_initiative_after_max` | тот же срок — **до**; между ними жребий |
+| `chat_initiative_reset_after` | через сколько **часов** возвращаемся снова |
 | `chat_initiative_repeat` | сколько раз **подряд** возвращаемся, пока он молчит |
 | `chat_initiative_max_day` | предохранитель: сколько инициатив паре за сутки |
 
@@ -96,6 +97,14 @@ INITIATIVE_REPEAT_DEFAULT = 2
 INITIATIVE_MAX_DAY_SETTING = 'chat_initiative_max_day'
 INITIATIVE_MAX_DAY_DEFAULT = 5
 
+# Срок тишины для **повторного** захода, в часах. Ноль — «сброса нет»: повторы
+# меряются минутным сроком, как до появления настройки.
+#
+# ⚠ Умолчание ноль, а не сутки: настройка меняет поведение занятия, и выкладка не
+# должна включать повторные заходы там, где о них не просили.
+INITIATIVE_RESET_AFTER_SETTING = 'chat_initiative_reset_after'
+INITIATIVE_RESET_AFTER_DEFAULT = 0
+
 # Сколько пар берём у одной анкеты за заход. Каждая — вызов LLM; десяток разом
 # растянул бы круг на минуты и задержал бы остальные анкеты.
 INITIATIVE_PER_PROFILE = 2
@@ -126,6 +135,7 @@ async def initiative_make(site_id: int, limit: int = 0) -> dict:
     after, after_max = await _after_range(site_id)
     repeat = await _repeat(site_id)
     max_day = await _max_day(site_id)
+    reset_sec = await _reset_after(site_id)
 
     # ⚠ Выключает занятие **нижняя** граница: ноль в ней значит «не возвращаться
     # к затихшим вовсе». Ноль в верхней — всего лишь «без разброса».
@@ -144,7 +154,7 @@ async def initiative_make(site_id: int, limit: int = 0) -> dict:
             continue
 
         for pair in await _quiet(int(profile['id']), after, after_max, repeat,
-                                 max_day):
+                                 max_day, reset_sec):
             if limit and made >= int(limit):
                 return {'made': made, 'skipped': skipped, 'errors': errors,
                         'why': ''}
@@ -225,9 +235,120 @@ async def _one(profile: dict, agent: int, pair: dict) -> str:
     return 'made'
 
 
+def initiative_his_last_sql(profile: str, uid: str) -> str:
+    """Его последнее слово — нижняя граница счёта «подряд», выражением SQL.
+
+    Args:
+        profile: как вызывающий называет столбец анкеты (`d.profile_id`).
+        uid: как вызывающий называет столбец собеседника (`d.uid`).
+
+    Returns:
+        str: подзапрос-скаляр; `NULL`, если он не сказал ни слова.
+
+    ⚠ Собирается из **имён столбцов**, а не из значений: подстановок внутри нет,
+    и порядок доводов запроса от этой функции не зависит. Значения сюда не
+    попадают вовсе — склеивать SQL с ними было бы дырой.
+    """
+    return ('(SELECT MAX(h.created_at) FROM message h'
+            f'  WHERE h.profile_id = {profile} AND h.sender_uid = {uid}'
+            "    AND h.direction = 'in')")
+
+
+def initiative_in_row_sql(profile: str, uid: str, his_last: str) -> str:
+    """Счёт заходов **подряд** одним выражением SQL.
+
+    Сколько наших инициатив ушло паре после его последней реплики — либо после
+    ручного сброса, если он был позже (`chat_initiative.reset_at`).
+
+    Args:
+        profile: имя столбца анкеты у вызывающего.
+        uid: имя столбца собеседника у вызывающего.
+        his_last: выражение «его последнее слово» (обычно
+            `initiative_his_last_sql(...)` либо уже посчитанный столбец).
+
+    Returns:
+        str: подзапрос-скаляр; ноль, если заходов не было.
+
+    ⚠⚠ **Правило одно на два места.** Зовут его отбор круга (`_quiet`) и строка
+    диалога (`chat_dialogs` → `initiative_blocked`). Своя копия в ручке
+    разошлась бы с кругом на первой правке, и иконка горела бы не тогда, когда
+    круг молчит, — ровно та грабля, что уже была с `initiative_why`.
+
+    ⚠ `COALESCE` с «началом времён» обязателен: `GREATEST` с одним `NULL` отдаёт
+    `NULL`, и у пары без сброса счёт вышел бы пустым — то есть нулём, то есть
+    снятым потолком у всех, кого ни разу не отпускали руками.
+    """
+    return ('(SELECT COALESCE(SUM(i.sent_at > GREATEST(' + his_last + ','
+            '      COALESCE((SELECT MAX(r.reset_at) FROM chat_initiative r'
+            f'                WHERE r.profile_id = {profile}'
+            f'                  AND r.uid = {uid}),'
+            "               '1000-01-01 00:00:00'))), 0)"
+            '   FROM chat_initiative i'
+            f'  WHERE i.profile_id = {profile} AND i.uid = {uid}'
+            "    AND i.status = 'sent')")
+
+
+async def initiative_blocked(site_id: int,
+                             pairs: list[tuple[int, str]]) -> set:
+    """Пары, чей счёт заходов упёрся в потолок сайта.
+
+    Args:
+        site_id: сайт-закладка — из него берётся потолок `chat_initiative_repeat`.
+        pairs: пары `(номер анкеты, собеседник)`, о которых спрашивают.
+
+    Returns:
+        set: подмножество `pairs` — те, которым инициатива больше не уйдёт, пока
+        он не ответит или человек не сбросит счёт руками.
+
+    ## ⚠⚠ Это про потолок, а не про «почему пул пуст»
+
+    Отбор круга спрашивает больше: срок тишины, дневной потолок, сторону
+    последней реплики. Здесь ответ на один вопрос — тот, который задаёт иконка в
+    шапке разговора: «к этой паре мы больше не вернёмся сами?»
+
+    Смешивать их нельзя: иконка, краснеющая от «сейчас не вышел срок», горела бы
+    почти всегда и ничего не значила.
+
+    ⚠ **Одним запросом на всю страницу**, а не по строке: диалогов на странице
+    до пятидесяти, и запрос на каждую стоил бы пятидесяти походов в базу ради
+    одного значка.
+
+    ⚠ Счёт берётся общим выражением (`initiative_in_row_sql`) — тем же, которым
+    отбирает круг.
+    """
+    pairs = [(int(one), str(two)) for one, two in (pairs or []) if int(one or 0)]
+    if not pairs:
+        return set()
+
+    repeat = await _repeat(int(site_id or 0))
+    # ⚠ Ноль в потолке — занятие выключено, и «упёрлась» бессмысленно: иконка
+    # горела бы у всех пар сразу, объясняя не потолок, а снятое занятие.
+    if repeat <= 0:
+        return set()
+
+    # ⚠ Спрошенные пары приезжают подзапросом `UNION ALL`, а не конструктором
+    # `VALUES`: тот есть только с MySQL 8.0.19, и выигрыша от него здесь нет.
+    asked = ' UNION ALL '.join(['SELECT %s AS profile_id, %s AS uid']
+                               + ['SELECT %s, %s'] * (len(pairs) - 1))
+    args = [value for pair in pairs for value in pair]
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT d.profile_id, d.uid FROM (' + asked + ') d WHERE '
+            + initiative_in_row_sql(
+                'd.profile_id', 'd.uid',
+                initiative_his_last_sql('d.profile_id', 'd.uid'))
+            + ' >= %s',
+            (*args, int(repeat)))
+        rows = await db.fetchall() or []
+
+    return {(int(row['profile_id']), str(row['uid'])) for row in rows}
+
+
 async def _quiet(profile_id: int, after_sec: int, after_max_sec: int,
                  repeat_max: int,
-                 max_day: int = INITIATIVE_MAX_DAY_DEFAULT) -> list[dict]:
+                 max_day: int = INITIATIVE_MAX_DAY_DEFAULT,
+                 reset_sec: int = 0) -> list[dict]:
     """Затихшие пары этой анкеты: кому пора написать самим.
 
     ## ⚠⚠ Что считается затихшим
@@ -272,108 +393,131 @@ async def _quiet(profile_id: int, after_sec: int, after_max_sec: int,
     ответили, и возвращаться к нему — работа инвайтов (`invite_repeat_after`), а
     не эта. Отсюда же следует, что `his_last` в счёте «подряд» всегда непуст.
 
+    ## ⚠⚠ Сроков два, и они о разных заходах
+
+    **Первый заход** меряется минутным сроком с жребием: разговор затих только
+    что, и вернуться к нему стоит быстро.
+
+    **Повторный** ждёт `chat_initiative_reset_after` (часы). Одним сроком на оба
+    случая занятие и встало: при пределе «один подряд» пара получала одну реплику
+    и замирала навсегда — счёт обнуляет только его ответ, а на 72 ушедшие
+    инициативы 33 парам не ответил никто.
+
+    ⚠ Ноль в сроке — «сброса нет»: повторы меряются минутным сроком, как прежде.
+
+    ⚠ Потолком остаётся `chat_initiative_repeat`: срок отвечает «когда», потолок
+    — «сколько». Второго счётчика нет намеренно.
+
     ## ⚠⚠ Срок у каждой пары свой
 
     В SQL уходит только **нижняя** граница — она отсекает дёшево и индексом. Выше
     неё срок у каждой пары свой, жребием (`_due_sec`), и проверяется он здесь же,
     строкой: `quiet_sec` — сколько пара молчит.
 
-    ⚠ Жребий считается **раньше** дневного счёта намеренно: он бесплатный, а счёт
-    — отдельный запрос на пару. Поэтому и смотрим вдвое больше строк, чем раньше:
-    порядок `last_at DESC` даёт сперва самые свежие затихшие, то есть те, кому
-    срок скорее ещё не вышел.
+    ⚠⚠ **Отбор идёт целиком в запросе, и `LIMIT` применяется после него.** Прежде
+    счёт заходов стоил отдельного запроса на пару и потому брался **после** окна:
+    двадцать свежайших затихших пар набирались до отбора, а негодные —
+    неотвеченные инвайты, реплики, ждущие ответа, — съедали окно целиком. Годная
+    пара, молчащая дольше всех, в него не попадала вовсе.
+
+    ⚠ Жребий остаётся в Python: он выводится из пары (`blake2b` от
+    `profile_id:uid:last_at`), и повторить его в SQL значило бы завести второе
+    правило о том же. Порядок проверок — от частого отсева к редкому.
     """
     async with mysql_get_db_async() as db:
         # «Последняя реплика» считается по времени, а не по `MAX(id)`: импорт из
         # панели кладёт недельную историю сегодняшними номерами. Та же мерка, что
         # у автоответа и у списка диалогов — три места, и во всех правило одно.
         await db.execute(
-            'SELECT t.sender_uid AS uid, t.last_at,'
-            '       (SELECT c.name FROM companion c'
-            '         WHERE c.site_id = p.site_id AND c.uid = t.sender_uid) AS name,'
-            # Его последнее слово. ⚠ Заходы от него больше не считаются (счёт
-            # дневной), но сказал ли он хоть раз — решается им: без единого его
-            # слова это неотвеченный инвайт, а не затихший разговор.
-            '       (SELECT MAX(x.created_at) FROM message x'
-            '         WHERE x.profile_id = %s AND x.sender_uid = t.sender_uid'
-            "           AND x.direction = 'in') AS his_last,"
-            '       (SELECT m2.direction FROM message m2'
-            '         WHERE m2.profile_id = %s AND m2.sender_uid = t.sender_uid'
-            '         ORDER BY m2.created_at DESC, m2.id DESC LIMIT 1) AS last_side,'
+            'SELECT q.uid, q.name, q.last_at, q.quiet_sec, cnt.in_row'
+            '  FROM (SELECT t.profile_id, t.sender_uid AS uid, t.last_at,'
+            '               (SELECT c.name FROM companion c'
+            '                 WHERE c.site_id = p.site_id'
+            '                   AND c.uid = t.sender_uid) AS name,'
+            # Его последнее слово. ⚠ Нужно дважды: им решается, говорил ли он
+            # хоть раз (без единого слова это неотвеченный инвайт, а не затихший
+            # разговор), и от него же считается счёт «подряд».
+            '               ' + initiative_his_last_sql('t.profile_id',
+                                                        't.sender_uid')
+            + ' AS his_last,'
+            '               (SELECT m2.direction FROM message m2'
+            '                 WHERE m2.profile_id = t.profile_id'
+            '                   AND m2.sender_uid = t.sender_uid'
+            '                 ORDER BY m2.created_at DESC, m2.id DESC'
+            '                 LIMIT 1) AS last_side,'
             # ⚠ Решение молчать по **последней** реплике: оно и превращает
             # «неотвеченное» в «затихшее». Берём тем же порядком, что и сторону, —
             # иначе можно поймать метку от позапрошлой.
-            '       (SELECT m3.answer_silent_at FROM message m3'
-            '         WHERE m3.profile_id = %s AND m3.sender_uid = t.sender_uid'
-            '         ORDER BY m3.created_at DESC, m3.id DESC LIMIT 1) AS last_silent,'
+            '               (SELECT m3.answer_silent_at FROM message m3'
+            '                 WHERE m3.profile_id = t.profile_id'
+            '                   AND m3.sender_uid = t.sender_uid'
+            '                 ORDER BY m3.created_at DESC, m3.id DESC'
+            '                 LIMIT 1) AS last_silent,'
             # Сколько пара молчит — им и проверяется жребий срока. Считает база,
-            # а не мы: её `NOW()` и отобрал строку выше, и мерить одно и то же
+            # а не мы: её `NOW()` и отобрал строку ниже, и мерить одно и то же
             # двумя часами значило бы ловить расхождение в секундах.
-            '       TIMESTAMPDIFF(SECOND, t.last_at, NOW()) AS quiet_sec'
-            '  FROM (SELECT m.sender_uid, MAX(m.created_at) AS last_at'
-            '          FROM message m WHERE m.profile_id = %s'
-            '         GROUP BY m.sender_uid) t'
-            '  JOIN profile p ON p.id = %s'
-            ' WHERE t.last_at < NOW() - INTERVAL %s SECOND'
-            ' ORDER BY t.last_at DESC LIMIT %s',
-            (int(profile_id), int(profile_id), int(profile_id), int(profile_id),
-             int(profile_id), int(after_sec), INITIATIVE_PER_PROFILE * 10))
-        rows = await db.fetchall() or []
-
-        got = []
-        for row in rows:
-            # ⚠ Последним говорил он — берём, **только если решено молчать**.
-            # Пока решения нет, реплику ждёт автоответ, и это его работа.
-            if str(row.get('last_side') or '') != 'out' and not row.get('last_silent'):
-                continue
-
-            # ⚠ Он не сказал ни слова — это неотвеченный инвайт, не наша работа.
-            if not row.get('his_last'):
-                continue
-
-            # Срок этой пары — жребием между границами. Нижнюю уже проверил SQL;
-            # всё, что между границами, решается здесь.
-            due = _due_sec(profile_id, str(row['uid']), row.get('last_at'),
-                           int(after_sec), int(after_max_sec))
-            if int(row.get('quiet_sec') or 0) < due:
-                continue
-
-            # Два счёта одним запросом: сколько раз мы позвали **после его
-            # последней реплики** и сколько всего за скользящие сутки.
-            #
-            # ⚠ `sent_at > his_last` — то самое обнуление ответом: его реплика
-            # отсекает прошлые заходы, и пара начинает промежуток тишины с нуля.
+            '               TIMESTAMPDIFF(SECOND, t.last_at, NOW()) AS quiet_sec'
+            '          FROM (SELECT m.profile_id, m.sender_uid,'
+            '                       MAX(m.created_at) AS last_at'
+            '                  FROM message m WHERE m.profile_id = %s'
+            '                 GROUP BY m.profile_id, m.sender_uid) t'
+            '          JOIN profile p ON p.id = t.profile_id'
+            '         WHERE t.last_at < NOW() - INTERVAL %s SECOND) q'
+            # ⚠ `LATERAL`: счёту нужен `q.his_last`, посчитанный строкой выше.
+            # MySQL 8.0.14+; на проде и локально 8.0.46.
+            '  JOIN LATERAL (SELECT '
+            + initiative_in_row_sql('q.profile_id', 'q.uid', 'q.his_last')
+            + ' AS in_row,'
             # ⚠ Сутки скользящие, мерка та же, что у `invite_repeat_max_day`:
             # полночь ничего не значит для того, кто читает сообщения.
-            await db.execute(
-                'SELECT SUM(sent_at > %s) AS in_row,'
-                '       SUM(sent_at > NOW() - INTERVAL 1 DAY) AS in_day'
-                '  FROM chat_initiative'
-                " WHERE profile_id = %s AND uid = %s AND status = 'sent'",
-                (row['his_last'], int(profile_id), str(row['uid'])))
-            counted = dict((await db.fetchone()) or {})
-            in_row = int(counted.get('in_row') or 0)
-            in_day = int(counted.get('in_day') or 0)
-
-            # ⚠ «Подряд» — первым: он отсекает несравнимо чаще дневного, а стоят
-            # оба одинаково (запрос уже сделан). Порядок от частого к редкому.
-            if in_row >= int(repeat_max):
-                continue
-
+            '                       (SELECT COALESCE(SUM(j.sent_at >'
+            '                                 NOW() - INTERVAL 1 DAY), 0)'
+            '                          FROM chat_initiative j'
+            '                         WHERE j.profile_id = q.profile_id'
+            '                           AND j.uid = q.uid'
+            "                           AND j.status = 'sent') AS in_day"
+            '               ) cnt ON TRUE'
+            # ⚠ Последним говорил он — берём, **только если решено молчать**.
+            # Пока решения нет, реплику ждёт автоответ, и это его работа.
+            "  WHERE (q.last_side = 'out' OR q.last_silent IS NOT NULL)"
+            # ⚠ Он не сказал ни слова — это неотвеченный инвайт, не наша работа.
+            '    AND q.his_last IS NOT NULL'
+            # ⚠ «Подряд» — первым: он отсекает несравнимо чаще дневного.
+            '    AND cnt.in_row < %s'
             # ⚠⚠ Предохранитель. Сторожит не живого человека, а патологию:
             # зацикленный автоответчик обнуляет счёт «подряд» каждой репликой, и
             # без потолка пара получила бы сорок инициатив за сутки.
-            if in_day >= int(max_day):
-                continue
+            '    AND cnt.in_day < %s'
+            # ⚠⚠ Повторный заход ждёт **свой** срок, в часах. Первому он не указ:
+            # его срок минутный, с жребием. Ноль в настройке — «сброса нет», и
+            # условие тогда не участвует вовсе.
+            '    AND (%s = 0 OR cnt.in_row = 0 OR q.quiet_sec >= %s)'
+            # ⚠ Порядок «свежая тишина сверху»: разговор, затихший час назад, ещё
+            # живой, и шансов на ответ у него больше. Окно теперь считает
+            # **годные** строки, а не все подряд.
+            '  ORDER BY q.last_at DESC LIMIT %s',
+            (int(profile_id), int(after_sec), int(repeat_max), int(max_day),
+             int(reset_sec), int(reset_sec),
+             INITIATIVE_PER_PROFILE * 10))
+        rows = await db.fetchall() or []
 
-            # ⚠ Номер захода — по счёту **подряд**, а не дневному: «заход 2»
-            # значит «второй раз зову в эту тишину», и ровно это читает человек в
-            # журнале анкеты. Дневной счёт к номеру отношения не имеет.
-            got.append({'uid': str(row['uid']), 'name': row.get('name') or '',
-                        'try_no': in_row + 1})
+    got = []
+    for row in rows:
+        # Срок этой пары — жребием между границами. Нижнюю уже проверил SQL;
+        # всё, что между границами, решается здесь.
+        due = _due_sec(profile_id, str(row['uid']), row.get('last_at'),
+                       int(after_sec), int(after_max_sec))
+        if int(row.get('quiet_sec') or 0) < due:
+            continue
 
-            if len(got) >= INITIATIVE_PER_PROFILE:
-                break
+        # ⚠ Номер захода — по счёту **подряд**, а не дневному: «заход 2»
+        # значит «второй раз зову в эту тишину», и ровно это читает человек в
+        # журнале анкеты. Дневной счёт к номеру отношения не имеет.
+        got.append({'uid': str(row['uid']), 'name': row.get('name') or '',
+                    'try_no': int(row.get('in_row') or 0) + 1})
+
+        if len(got) >= INITIATIVE_PER_PROFILE:
+            break
 
     return got
 
@@ -501,3 +645,24 @@ async def _max_day(site_id: int) -> int:
         logger_info(f'[dating] дневной предел инициативы не прочитался: {e}')
 
         return INITIATIVE_MAX_DAY_DEFAULT
+
+
+async def _reset_after(site_id: int) -> int:
+    """Срок тишины повторного захода, в **секундах**. Настройка — в часах.
+
+    ⚠ Ноль — законное «сброса нет»: повторные заходы меряются минутным сроком,
+    ровно как до появления настройки. Это не выключатель занятия — за него
+    отвечает `chat_initiative_on` или ноль в `chat_initiative_repeat`.
+
+    ⚠ Не прочиталось — умолчание, а не ноль наугад: сторона ошибки выбрана так же,
+    как у `_max_day`, в пользу прежнего поведения.
+    """
+    try:
+        hours = int(await site_seconds(int(site_id or 0),
+                                       INITIATIVE_RESET_AFTER_SETTING))
+    except Exception as e:
+        logger_info(f'[dating] срок повторного захода не прочитался: {e}')
+
+        hours = INITIATIVE_RESET_AFTER_DEFAULT
+
+    return max(0, hours) * 3600

@@ -168,3 +168,47 @@ async def chat_initiative_stale(profile_id: int, uid: str) -> int:
         logger_info(f'[dating] протухшая инициатива не снялась: {e}')
 
         return 0
+
+
+async def chat_initiative_reset(profile_id: int, uid: str) -> bool:
+    """Обнуляет счёт заходов пары: отметка на её последней ушедшей карточке.
+
+    Args:
+        profile_id: наша анкета.
+        uid: собеседник на сайте.
+
+    Returns:
+        bool: `True` — отметка легла; `False` — у пары нет ушедших карточек, и
+        обнулять нечего. ⚠ Второе не ошибка: кнопку могли нажать на разговоре,
+        куда инициатива ещё не уходила.
+
+    ## ⚠⚠ Зачем отметка, а не правка статуса
+
+    Счёт «подряд» считает ушедшие карточки пары после его последней реплики
+    (`initiative.initiative_in_row_sql`). Обнулить его, не трогая журнал,
+    можно только сдвинув нижнюю границу счёта — это и делает `reset_at`.
+
+    Статус у ушедших карточек при этом не меняется: они часть переписки, и
+    переписать историю ради счётчика нельзя.
+
+    ⚠ Отметка **не выключает счёт**: карточки, ушедшие после неё, он видит.
+    Иначе щелчок снимал бы потолок с пары навсегда.
+
+    ⚠ Дневного потолка (`chat_initiative_max_day`) отметка не касается: тот
+    сторожит зацикленный автоответчик на той стороне, а не живого человека.
+    """
+    if not (int(profile_id or 0) and str(uid or '').strip()):
+        return False
+
+    async with mysql_get_db_async() as db:
+        # ⚠ Отметка на **последней** ушедшей карточке, одним запросом: выбери мы
+        # её отдельным, между выбором и записью успел бы встать круг отправки.
+        await db.execute(
+            'UPDATE chat_initiative SET reset_at = NOW()'
+            " WHERE profile_id = %s AND uid = %s AND status = 'sent'"
+            ' ORDER BY sent_at DESC, id DESC LIMIT 1',
+            (int(profile_id), str(uid)))
+        done = int(db.rowcount or 0)
+        await db.connection.commit()
+
+    return bool(done)
