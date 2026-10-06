@@ -437,6 +437,45 @@ async def profile_action_reply(profile_id: int, data: DatingProfileReply,
     return {'result': {'reply_on': data.reply_on}}
 
 
+class DatingProfileMailPhoto(BaseModel):
+    """Разрешена ли отправка фотографий в письмах от этой анкеты."""
+
+    mail_photo_on: bool = Field(..., description='Слать ли фотографии в письмах')
+
+
+@router.put('/{profile_id}/mail-photo', include_in_schema=False)
+async def profile_action_mail_photo(profile_id: int, data: DatingProfileMailPhoto,
+                                           user=Depends(auth_required)):
+    """Разрешает или запрещает отправку фотографий в письмах от этой анкеты.
+
+    ⚠ **Исполнителя у флага пока нет, и это не забытый баг.** Вложений в письмах
+    проект не шлёт вовсе: всё, что зовётся `photo` в почтовом коде, — аватарка
+    собеседника из списка сайта, а не снимок в письме. Ручка хранит решение
+    человека, чтобы оно не пропадало до того дня, когда отправку напишут. Тот же
+    порядок, которым заводился `mailing_on`.
+
+    ⚠ **У анкеты, а не у сайта.** Снимки лежат в галерее анкеты — её папке на
+    Google Диске, — и «этой девушке можно слать фото» решается по ней: у одной
+    папка собрана и проверена, у другой пуста. Понадобится общий запрет по сайту
+    — он встанет настройкой сайта **поверх** этого флага, как `reply_send_on`
+    стоит поверх `reply_on`, а не заменой одного другим.
+
+    Побочных действий нет: разбирать при включении нечего.
+    """
+    await profile_row(profile_id)
+
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE profile SET mail_photo_on = %s WHERE id = %s',
+                         (1 if data.mail_photo_on else 0, profile_id))
+        await db.connection.commit()
+
+    await log_write(profile_id, 'info',
+                           'Отправка фотографий в письмах разрешена' if data.mail_photo_on
+                           else 'Отправка фотографий в письмах запрещена')
+
+    return {'result': {'mail_photo_on': data.mail_photo_on}}
+
+
 @router.put('/{profile_id}/mailing', include_in_schema=False)
 async def profile_action_mailing(profile_id: int, data: DatingProfileMailing,
                                         user=Depends(auth_required)):
