@@ -43,8 +43,16 @@ router = APIRouter(prefix='/api/dating/gallery', tags=['dating'])
 GALLERY_CACHE_SECONDS = 3600
 
 GALLERY_DESCRIPTION_MAX = 4000
+
+# Сколько тегов принимаем в одной правке. ⚠ Это предел **формы**, а не словаря:
+# он стоит у `Field`, чтобы чужой запрос не прислал тысячу строк. Какие теги
+# вообще бывают, решает словарь (`GALLERY_VISION_TAGS`, их 42).
 GALLERY_TAGS_MAX = 40
-GALLERY_TAG_MAX = 60
+
+# ⚠⚠ `GALLERY_TAG_MAX` (длина одного тега) отсюда убран, и это не недосмотр:
+# обрезать теги больше нечего. Словарь закрытый, и всё, чего в нём нет,
+# отбрасывается целиком (`gallery_vision_tags_keep`) — обрезанный до шестидесяти
+# знаков чужой тег остался бы таким же чужим, только неузнаваемым.
 
 
 class GalleryFolderSave(BaseModel):
