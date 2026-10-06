@@ -2215,6 +2215,37 @@
         overflow-wrap: anywhere;
     }
 
+    /* ⚠⚠ Правила этого **не было вовсе**, а довод `bad` у `letterFact` стоял с
+       самого начала: причина неудачи в окне письма размечалась красной и
+       рисовалась обычной. Молчаливая потеря — разметка на месте, вид прежний.
+       Нашлось при заведении окна инициативы, которое на эту пометку опирается. */
+    .letter-val.bad { color: #b91c1c; }
+
+    /* ---------- Окно «что с инициативой у пары» ---------- */
+
+    /* Заголовок части окна: «Сейчас», «Заходы», «Правила сайта».
+
+       ⚠ Частей четыре, и порядок отвечает вопросам человека: пишут ли ей сейчас
+       → сколько уже было → по каким правилам → что уходило. Без заголовков два
+       десятка строк читаются как сплошной список чисел. */
+    .init-info-head {
+        margin: 10px 0 4px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: .04em;
+        text-transform: uppercase;
+        color: #94a3b8;
+    }
+
+    .init-info-head:first-child { margin-top: 0; }
+
+    /* Пояснение под строками: то, что человек иначе достроит сам и ошибётся —
+       «2 из 2» без слов про обнуление читается как «паре больше никогда». */
+    .init-info-note {
+        color: #64748b;
+        font-style: italic;
+    }
+
     /* Сторона разговора в строке окна письма. Та же раскладка, что у обеих
        сторон в журнале доставки (`.mail-sent-who.talk`) — вид один, потому что
        и вопрос один: кто кому пишет. */
@@ -4889,6 +4920,12 @@
         // будет класть круг — человек вернётся на вкладку, ничего не нажимая.
         const initiativeReload = workEl.querySelector('[data-slot="initiative-reload"]');
         if (initiativeReload) initiativeReload.addEventListener('click', initiativeLoad);
+
+        // Что с инициативой у этой пары — окном. ⚠ Ничего не меняет, только
+        // рассказывает: решение отпустить пару принимает соседний значок.
+        const initiativeInfo = workEl.querySelector('[data-slot="initiative-info"]');
+        if (initiativeInfo) initiativeInfo.addEventListener('click',
+                                                            initiativeInfoShow);
 
         // Отпустить пару: счёт заходов инициативы начинается заново.
         //
@@ -12541,6 +12578,13 @@
         // сама девушка к паре больше не вернётся. Признак считает сервер тем же
         // правилом, которым отбирает круг (`initiative_blocked`), — своей копии
         // счёта здесь нет намеренно.
+        // ⚠ Значок «что с инициативой» прячется и показывается **вместе со
+        // сбросом**: оба про одну пару, и один без другого читался бы как
+        // появившаяся кнопка. Цвета у него нет — он рассказывает, а не метит
+        // состояние, см. ⚠ у `.talk-info` в `dating_page.css`.
+        const info = slot('initiative-info');
+        if (info) info.hidden = !found.uid;
+
         const free = slot('initiative-free');
         if (free) {
             free.hidden = !found.uid;
@@ -12549,6 +12593,168 @@
                 ? 'Инициатива упёрлась в потолок заходов — сбросить счёт'
                 : 'Инициатива: счёт заходов не исчерпан';
         }
+    }
+
+    // ── Окно «что с инициативой у пары» ──────────────────────────────────────
+    //
+    // ⚠⚠ **Считает всё сервер** (`initiative_explain`), теми же выражениями, что
+    // и круг. Здесь только показ: своя арифметика на странице разошлась бы с
+    // кругом на первой правке, и окно объясняло бы занятие, которого нет. Та же
+    // грабля уже случалась дважды — с причиной пустого пула и со значком потолка.
+    //
+    // ⚠ Поэтому ниже нет ни одного «если счёт больше потолка»: вердикты приходят
+    // готовыми (`capped`, `day_capped`, `blockers`), а страница их расставляет.
+
+    async function initiativeInfoShow() {
+        const [profileId, uid] = String(chatTalkOpenKey || '').split('|');
+        if (!uid) return;
+
+        let got;
+        try {
+            got = (await getData(`${BASE}/api/dating/chat-initiative/explain`
+                + `?profile_id=${profileId}&uid=${encodeURIComponent(uid)}`)).result
+                || {};
+        } catch (e) {
+            showNotification('Не вышло спросить про инициативу: ' + e.message,
+                             'error');
+
+            return;
+        }
+
+        const found = (chatData.contacts || []).find(c =>
+            String(c.uid) === String(uid)
+            && String(c.profile_id) === String(profileId)) || {};
+
+        modalOpen({
+            title: `Инициатива: ${found.profile_name || '—'} → `
+                + `${found.name || uid}`,
+            body: initiativeInfoBody(got),
+        });
+    }
+
+    // Тело окна. ⚠ Разделено на три части, и порядок отвечает вопросам человека:
+    // «пишут ли ей сейчас» → «сколько уже было» → «по каким правилам».
+    function initiativeInfoBody(got) {
+        if (!got.known) {
+            return '<div class="letter-row"><span class="letter-val">'
+                + 'Переписки с этим собеседником нет — инициативе не от чего '
+                + 'отталкиваться.</span></div>';
+        }
+
+        return initiativeInfoNow(got) + initiativeInfoCounts(got)
+            + initiativeInfoRules(got) + initiativeInfoLog(got);
+    }
+
+    // Что сейчас: пойдёт ли инициатива и что мешает.
+    //
+    // ⚠⚠ Помехи показываем **все**, а не первую. Человек, увидев «срок не вышел»,
+    // подождёт час и вернётся к тому же молчанию, потому что под сроком лежал ещё
+    // и дневной потолок. Круг их тоже проверяет все — просто молча.
+    function initiativeInfoNow(got) {
+        const blockers = got.blockers || [];
+        const ok = !blockers.length;
+
+        return '<div class="init-info-head">Сейчас</div>'
+            // ⚠ Строки — общим `letterFact`, а не своей разметкой: правило одно
+            // на все окна панели, и своя копия разошлась бы с ним на первой
+            // правке. Довод `bad` красит значение — он же метит причины отказа в
+            // окнах писем.
+            + letterFact('Пойдёт ли',
+                         ok ? 'да — пара годна, ждёт своей очереди в круге' : 'нет',
+                         !ok)
+            + blockers.map(one => letterFact('Мешает', one, true)).join('')
+            // ⚠ Ждать показываем, только когда ждут времени: у пары, упёршейся в
+            // потолок, ожидание бессмысленно — её отпускают руками, а не ждут.
+            + (got.wait_sec > 0
+                ? letterFact('Ждать', initiativeInfoLeft(got.wait_sec)) : '')
+            // ⚠⚠ Минуту отправки не называем: уносит карточки свой круг со своей
+            // паузой на весь сайт (`chat_initiative_send_every`), и точное время
+            // здесь было бы выдумкой. Говорим про годность — это считается честно.
+            + (got.wait_sec > 0
+                ? '<div class="letter-row"><span class="letter-val init-info-note">'
+                  + 'Срок считается до годности пары. Когда именно уйдёт реплика, '
+                  + 'решает круг отправки: у него своя пауза на весь сайт.'
+                  + '</span></div>'
+                : '');
+    }
+
+    // Сколько заходов было: два счёта, и они о разном.
+    function initiativeInfoCounts(got) {
+        return '<div class="init-info-head">Заходы</div>'
+            + letterFact('Подряд', `${got.in_row} из ${got.repeat}`
+                + (got.capped ? ' — потолок исчерпан' : `, в запасе ${got.left}`),
+                got.capped)
+            + letterFact('За сутки', `${got.in_day} из ${got.max_day}`,
+                         got.day_capped)
+            + letterFact('Он сказал последнее', got.his_last
+                ? `${timeShift(got.his_last)} · ${timeAgo(got.his_last)}` : '')
+            + letterFact('Последняя реплика', got.last_at
+                ? `${timeShift(got.last_at)} · `
+                  + (got.last_side === 'out' ? 'наша' : 'его')
+                  + (got.silent ? ', решено промолчать' : '') : '')
+            + letterFact('Счёт сброшен руками', got.reset_at
+                ? `${timeShift(got.reset_at)} · ${timeAgo(got.reset_at)}` : '')
+            // ⚠⚠ Главное, что человек должен знать про «подряд»: счёт обнуляет
+            // **его ответ**, а не время. Без этой строки «2 из 2» читается как
+            // «паре больше никогда», хотя достаточно одной его реплики.
+            + '<div class="letter-row"><span class="letter-val init-info-note">'
+            + 'Счёт «подряд» обнуляет его ответ: напишет — и заходы начнутся '
+            + 'заново. Дневной потолок он не трогает.</span></div>';
+    }
+
+    // По каким правилам: настройки сайта, которые человек и правит, увидев окно.
+    function initiativeInfoRules(got) {
+        return '<div class="init-info-head">Правила сайта</div>'
+            + letterFact('Набор инициативы', got.on ? 'включён' : 'выключен')
+            + letterFact('Первый заход', `через ${initiativeInfoLeft(got.after_sec)}`
+                + (got.after_max_sec > got.after_sec
+                    ? `—${initiativeInfoLeft(got.after_max_sec)} тишины, жребием`
+                    : ' тишины'))
+            + letterFact('Срок этой пары', `${initiativeInfoLeft(got.due_sec)}`
+                + ` · молчит ${initiativeInfoLeft(got.quiet_sec)}`)
+            + letterFact('Повторный заход', got.reset_after_sec
+                ? `через ${initiativeInfoLeft(got.reset_after_sec)} тишины`
+                : 'своего срока нет — по минутному, как первый')
+            + letterFact('Потолок подряд', `${got.repeat}`)
+            + letterFact('Потолок за сутки', `${got.max_day}`);
+    }
+
+    // Последние заходы — вместе с теми, что не ушли.
+    //
+    // ⚠ Без них «подряд 0» читается как «занятие не работало», хотя карточки
+    // могли лечь в ошибки.
+    function initiativeInfoLog(got) {
+        const rows = got.sent || [];
+        if (!rows.length) return '';
+
+        return '<div class="init-info-head">Последние заходы</div>'
+            // ⚠⚠ Дата — общим `_sentWhen`: цепочка запасных полей
+            // (`sent_at → updated_at → created_at`) живёт **в одном месте**, и
+            // вторая копия знала бы свой набор полей. У неудачного захода
+            // `sent_at` пуст — отметку снимает сама неудача, — и своя цепочка
+            // показала бы время сочинения вместо времени ошибки.
+            + rows.map(one => letterFact(`Заход ${one.try_no || '—'}`,
+                one.status === 'sent'
+                    ? `ушёл · ${_sentWhen(one)}`
+                    : one.error
+                        ? `не ушёл: ${one.error}`
+                        : `в пуле · ${_sentWhen(one)}`,
+                !!one.error)).join('');
+    }
+
+    // Секунды словами: «2 ч 30 мин». ⚠ Своя, а не `timeAgoSec`: та говорит про
+    // прошлое («3 ч назад»), а здесь речь о длительности — «через 3 ч».
+    function initiativeInfoLeft(sec) {
+        const left = Math.max(0, Math.floor(Number(sec) || 0));
+        if (left < 60) return `${left} с`;
+        if (left < 3600) return `${Math.floor(left / 60)} мин`;
+
+        const hours = Math.floor(left / 3600);
+        const mins = Math.floor((left % 3600) / 60);
+
+        return hours < 24
+            ? `${hours} ч${mins ? ` ${mins} мин` : ''}`
+            : `${Math.floor(hours / 24)} дн${hours % 24 ? ` ${hours % 24} ч` : ''}`;
     }
 
     // ── Окно переписки ───────────────────────────────────────────────────────

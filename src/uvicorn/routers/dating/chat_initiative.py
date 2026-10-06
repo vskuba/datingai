@@ -30,11 +30,12 @@
 уходит тем же путём, что и всё в чат (`send.py`), кругом.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import AuthUser, auth_required
+from src.dating.initiative import initiative_explain
 from src.dating.initiative_round import initiative_why
 from src.dating.json_column import json_column_load
 from src.dating.online import online_show
@@ -109,6 +110,29 @@ async def chat_initiative_list(site_id: int = 0, status_: str = 'draft',
 #
 # ⚠ Не нравится черновик — его **удаляют** (`DELETE` ниже, поштучно и пулом), а
 # не переписывают. Круг сочинит новый.
+
+
+@router.get('/explain', include_in_schema=False)
+async def chat_initiative_explain(profile_id: int = 0, uid: str = '',
+                                  user: AuthUser = Depends(auth_required)):
+    """Что с инициативой у этой пары: счета, сроки, потолки и помехи.
+
+    ⚠ **Считает домен** (`initiative.initiative_explain`) теми же выражениями,
+    что и круг. Своя копия счёта в ручке разошлась бы с ним на первой правке —
+    ровно та грабля, что уже была с `initiative_why` и со значком потолка.
+
+    ⚠ Стоит **выше** `/{initiative_id}`, хотя тот и `DELETE`: соседний роутер уже
+    ловил на этом — путь-слово, объявленный ниже пути-числа, достаётся
+    преобразователю номера, и `explain` отвечал бы 422.
+
+    ⚠ Неизвестная пара — не ошибка, а обычный исход: человек открывает окно у
+    разговора, которого в `message` ещё нет. Отвечаем `known: false` со словами,
+    а не 404: 404 страница нарисовала бы красным.
+    """
+    if not int(profile_id or 0) or not str(uid or ''):
+        raise HTTPException(status_code=422, detail='нужны profile_id и uid')
+
+    return {'result': await initiative_explain(int(profile_id), str(uid))}
 
 
 @router.delete('', include_in_schema=False)

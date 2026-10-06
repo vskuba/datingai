@@ -109,6 +109,13 @@ INITIATIVE_RESET_AFTER_DEFAULT = 0
 # растянул бы круг на минуты и задержал бы остальные анкеты.
 INITIATIVE_PER_PROFILE = 2
 
+# Сколько последних заходов показывает окно «что с инициативой у пары».
+#
+# ⚠ Их немного по устройству занятия — потолок подряд единицы, — но у долгого
+# разговора с обнулениями набирается десяток. Берём свежие: вопрос окна «что с
+# парой сейчас», а не «вся её история».
+INITIATIVE_SENT_SHOWN = 10
+
 # ⚠⚠ **Приёма здесь больше нет, и это переезд, а не потеря.** Двенадцать приёмов
 # с весами жили константой `INITIATIVE_KINDS` и жребием `initiative_kind()`: панель
 # бросала и присылала готовое переменной `initiative_kind`.
@@ -278,6 +285,119 @@ async def initiative_blocked(site_id: int,
         rows = await db.fetchall() or []
 
     return {(int(row['profile_id']), str(row['uid'])) for row in rows}
+
+
+async def initiative_explain(profile_id: int, uid: str) -> dict:
+    """Всё об инициативе одной пары: счета, сроки, потолки и что мешает сейчас.
+
+    Args:
+        profile_id: анкета.
+        uid: собеседник на сайте.
+
+    Returns:
+        dict: настройки сайта, счета пары, сроки и `blockers` — список помех
+        словами, в том же порядке, в каком их проверяет круг. Пустой список
+        значит «пара годна прямо сейчас».
+
+    ## ⚠⚠ Зачем отдельная функция, а не «посчитать на странице»
+
+    Правил у занятия восемь, и семь из них невидимы: человек видит пустую колонку
+    либо красный значок и не знает, упёрлась пара в потолок, не вышел ли срок или
+    она не годится вовсе. Это тот же урок, что у `initiative_why` для колонки
+    пула, только про **пару**, а не про сайт.
+
+    ⚠ **Считает сервер теми же выражениями, что и круг** — счёт «подряд» берётся
+    `initiative_in_row_sql`, срок пары `_due_sec`, пределы теми же `_repeat` и
+    `_max_day`. Своя копия на странице разошлась бы с кругом на первой правке, и
+    окно объясняло бы занятие, которого нет.
+
+    ⚠⚠ **Условия годности здесь переписаны одной парой, и это цена.** Отбор круга
+    (`_quiet`) идёт по всем парам анкеты разом и выражен иначе; свести их в один
+    запрос не выходит. Поэтому за совпадением следит тест
+    (`test_initiative_explain.py`): он гоняет обе дороги по одним данным и ловит
+    расхождение, а не надеется на внимательность.
+
+    ⚠ Чего здесь **нет намеренно** — предсказания «когда уйдёт следующая».
+    Отправка идёт своим кругом со своей паузой (`chat_initiative_send_every`), и
+    зависит она от всего сайта: назвать минуту значило бы соврать точностью.
+    Окно отвечает «когда пара станет годной», а это честно считается.
+    """
+    profile_id, uid = int(profile_id or 0), str(uid or '')
+    if not profile_id or not uid:
+        return {}
+
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT site_id FROM profile WHERE id = %s', (profile_id,))
+        site_id = int(((await db.fetchone()) or {}).get('site_id') or 0)
+
+    on = await _on(site_id)
+    after, after_max = await _after_range(site_id)
+    repeat = await _repeat(site_id)
+    max_day = await _max_day(site_id)
+    reset_after = await _reset_after(site_id)
+
+    state = await _pair_state(profile_id, uid)
+    if not state:
+        return {'site_id': site_id, 'known': False, 'on': on,
+                'after_sec': after, 'after_max_sec': after_max,
+                'repeat': repeat, 'max_day': max_day,
+                'reset_after_sec': reset_after,
+                'blockers': ['переписки с этим собеседником нет вовсе']}
+
+    in_row = int(state.get('in_row') or 0)
+    in_day = int(state.get('in_day') or 0)
+    quiet = int(state.get('quiet_sec') or 0)
+    # Срок **этой** пары: жребий между границами, тот же, что бросает круг.
+    due = _due_sec(profile_id, uid, state.get('last_at'), after, after_max)
+
+    # ⚠ Порядок — тот же, что у круга: от решённого человеком к преходящему.
+    # Иначе окно называло бы главной помехой ту, что пройдёт сама через минуту.
+    blockers = []
+    if not on:
+        blockers.append('набор инициативы выключен у сайта')
+    if repeat <= 0:
+        blockers.append('потолок заходов обнулён: занятие выключено')
+    if not state.get('his_last'):
+        blockers.append('он не написал ни разу — это неотвеченный инвайт, '
+                        'и возвращаться к нему работа инвайтов')
+    if state.get('last_side') != 'out' and not state.get('last_silent'):
+        blockers.append('последним говорил он, и ответ ещё не решён — '
+                        'реплику ждёт автоответ')
+    if repeat > 0 and in_row >= repeat:
+        blockers.append(f'потолок заходов подряд исчерпан: {in_row} из {repeat}')
+    if in_day >= max_day:
+        blockers.append(f'дневной потолок исчерпан: {in_day} из {max_day} за сутки')
+    if quiet < due:
+        blockers.append(f'срок тишины не вышел: молчит {quiet // 60} мин '
+                        f'из нужных {due // 60}')
+    # ⚠⚠ Срок возврата спрашивается **только у повторного захода** (`in_row > 0`)
+    # и только когда он задан: ноль — «сброса нет», и условие тогда не участвует
+    # вовсе. То же `(%s = 0 OR cnt.in_row = 0 OR ...)`, что и в отборе круга.
+    if reset_after and in_row > 0 and quiet < reset_after:
+        blockers.append(f'повторный заход ждёт свой срок: молчит {quiet // 3600} ч '
+                        f'из нужных {reset_after // 3600}')
+
+    return {
+        'site_id': site_id, 'known': True, 'on': on,
+        # Настройки сайта — их человек и правит, увидев окно.
+        'after_sec': after, 'after_max_sec': after_max, 'repeat': repeat,
+        'max_day': max_day, 'reset_after_sec': reset_after,
+        # Счета пары.
+        'in_row': in_row, 'in_day': in_day, 'left': max(0, repeat - in_row),
+        'capped': bool(repeat > 0 and in_row >= repeat),
+        'day_capped': bool(in_day >= max_day),
+        # Время: что когда было и сколько ждать.
+        'last_at': state.get('last_at'), 'last_side': state.get('last_side'),
+        'his_last': state.get('his_last'), 'reset_at': state.get('reset_at'),
+        'silent': bool(state.get('last_silent')),
+        'quiet_sec': quiet, 'due_sec': due,
+        # Сколько осталось ждать годности. ⚠ Ноль — «срок вышел», а не «сейчас
+        # уйдёт»: мешать может и потолок, о нём говорит `blockers`.
+        'wait_sec': max(0, max(due, reset_after if (reset_after and in_row) else 0)
+                        - quiet),
+        'sent': state.get('sent') or [],
+        'blockers': blockers,
+    }
 
 
 async def _one(profile: dict, agent: int, pair: dict) -> str:
@@ -666,3 +786,100 @@ async def _reset_after(site_id: int) -> int:
         hours = INITIATIVE_RESET_AFTER_DEFAULT
 
     return max(0, hours) * 3600
+
+
+async def _on(site_id: int) -> bool:
+    """Поднят ли у сайта набор инициативы.
+
+    ⚠ Колонка сайта, а не настройка из реестра: выключатели занятий живут
+    отдельно от числовых настроек (`site_switch.SITE_FLAGS`).
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT chat_initiative_on FROM site WHERE site_id = %s',
+                         (int(site_id or 0),))
+        row = await db.fetchone()
+
+    return bool((row or {}).get('chat_initiative_on'))
+
+
+async def _pair_state(profile_id: int, uid: str) -> dict:
+    """Что известно об одной паре: счета, время последних реплик и заходы.
+
+    Returns:
+        dict: пусто — переписки с этим собеседником нет вовсе.
+
+    ⚠⚠ Счёт «подряд» берётся **общим выражением** `initiative_in_row_sql` — тем
+    же, которым отбирает круг и краснеет значок. Посчитай его здесь своим
+    запросом, и окно объясняло бы не то занятие, которое работает.
+
+    ⚠ «Последняя реплика» — по времени, а не по `MAX(id)`: импорт из панели
+    кладёт недельную историю сегодняшними номерами. Та же мерка, что у `_quiet`,
+    автоответа и списка диалогов.
+
+    ⚠ Последние заходы отдаём **списком с причинами неудач**: человек, открывший
+    окно у пары без единой ушедшей инициативы, должен видеть, не лежат ли они
+    все в ошибках, — иначе «заходов 0» читается как «занятие не работало».
+    """
+    profile_id, uid = int(profile_id or 0), str(uid or '')
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT t.last_at,'
+            '       TIMESTAMPDIFF(SECOND, t.last_at, NOW()) AS quiet_sec,'
+            '       ' + initiative_his_last_sql('t.profile_id', 't.sender_uid')
+            + ' AS his_last,'
+            '       (SELECT m2.direction FROM message m2'
+            '         WHERE m2.profile_id = t.profile_id'
+            '           AND m2.sender_uid = t.sender_uid'
+            '         ORDER BY m2.created_at DESC, m2.id DESC'
+            '         LIMIT 1) AS last_side,'
+            '       (SELECT m3.answer_silent_at FROM message m3'
+            '         WHERE m3.profile_id = t.profile_id'
+            '           AND m3.sender_uid = t.sender_uid'
+            '         ORDER BY m3.created_at DESC, m3.id DESC'
+            '         LIMIT 1) AS last_silent,'
+            '       (SELECT MAX(r.reset_at) FROM chat_initiative r'
+            '         WHERE r.profile_id = t.profile_id'
+            '           AND r.uid = t.sender_uid) AS reset_at,'
+            '       (SELECT COALESCE(SUM(j.sent_at > NOW() - INTERVAL 1 DAY), 0)'
+            '          FROM chat_initiative j'
+            '         WHERE j.profile_id = t.profile_id AND j.uid = t.sender_uid'
+            "           AND j.status = 'sent') AS in_day"
+            '  FROM (SELECT m.profile_id, m.sender_uid, MAX(m.created_at) AS last_at'
+            '          FROM message m'
+            '         WHERE m.profile_id = %s AND m.sender_uid = %s'
+            '         GROUP BY m.profile_id, m.sender_uid) t',
+            (profile_id, uid))
+        row = await db.fetchone()
+        if not row:
+            return {}
+
+        got = dict(row)
+
+        # ⚠ Счёт «подряд» — отдельным запросом, а не столбцом выше: выражению
+        # нужен уже посчитанный `his_last`, и в одном `SELECT` на него не
+        # сошлёшься. Круг решает это `JOIN LATERAL` по всем парам разом; ради
+        # одной пары второй дешёвый запрос честнее переусложнённого первого.
+        #
+        # ⚠⚠ Пара приезжает **подзапросом**, как в `initiative_blocked`, а не
+        # `%s` вместо имён столбцов. Своя первая попытка так и делала и падала
+        # «not enough arguments for format string»: выражение поминает анкету и
+        # собеседника по четыре раза, и считать эти вхождения глазами — работа,
+        # которая ломается от любой правки общего выражения.
+        await db.execute(
+            'SELECT ' + initiative_in_row_sql(
+                'd.profile_id', 'd.uid',
+                initiative_his_last_sql('d.profile_id', 'd.uid'))
+            + ' AS in_row FROM (SELECT %s AS profile_id, %s AS uid) d',
+            (profile_id, uid))
+        got['in_row'] = int(((await db.fetchone()) or {}).get('in_row') or 0)
+
+        await db.execute(
+            'SELECT try_no, status, error, sent_at, created_at'
+            '  FROM chat_initiative'
+            ' WHERE profile_id = %s AND uid = %s'
+            ' ORDER BY created_at DESC LIMIT %s',
+            (profile_id, uid, INITIATIVE_SENT_SHOWN))
+        got['sent'] = [dict(one) for one in (await db.fetchall() or [])]
+
+    return got
