@@ -242,3 +242,40 @@ def test_the_buttons_explain_what_they_do(page):
         'у «Обновить» нет подсказки'
     assert '<b>Сохранить</b>' in head and '<b>Обновить</b>' in head, \
         'под кнопками не сказано, чем они отличаются'
+
+
+def test_the_tag_click_rebuilds_the_field_in_dictionary_order(page):
+    """⚠⚠ Щелчок по тегу **пересобирает** поле, а не дописывает в конец.
+
+    Порядок держим словарный: так теги одного снимка сравнимы глазом с тегами
+    соседнего. Проверено живым нажатием — набор при двойном щелчке возвращается,
+    а строка нормализуется: `dress, indoor, smiling, studio` становится
+    `dress, indoor, studio, smiling` (место идёт раньше настроения).
+
+    ⚠ Дописывание в конец выглядело бы так же в коде и ломало бы именно это:
+    порядок стал бы порядком нажатий, разным у каждого снимка.
+    """
+    box = page[page.index('async function galleryTagBox'):]
+    box = box[:box.index('function galleryModal')]
+
+    assert 'flatMap' in box, 'поле не пересобирается по словарю'
+    assert 'now.has(one)' in box, 'выбранные отбираются не по словарю'
+    assert '+= ' not in box and 'push(tag)' not in box, \
+        'тег дописывается в конец — порядок станет порядком нажатий'
+
+
+def test_the_tag_box_repaints_after_a_click(page):
+    """⚠ После щелчка подсветка перерисовывается: иначе поле и слова разойдутся.
+
+    Проверено живым нажатием: горящих было 4, стало 5, после повторного щелчка
+    снова 4.
+    """
+    box = page[page.index('async function galleryTagBox'):]
+    box = box[:box.index('function galleryModal')]
+
+    # ⚠ Третий зов — ссылкой, без скобок (`addEventListener('input', paint)`),
+    # поэтому считать `paint()` мало: так выглядят только два первых.
+    assert box.count('paint()') >= 2, \
+        'перерисовка не зовётся ни после щелчка, ни при первом показе'
+    assert "field.addEventListener('input', paint)" in box, \
+        'правка руками не подсвечивает слова — набранное разойдётся с горящим'
