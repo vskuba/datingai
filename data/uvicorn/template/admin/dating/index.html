@@ -1037,11 +1037,22 @@
             + '<div class="gallery-pick">'
             + `<select id="galleryFolder"><option value="">— по логину анкеты —</option>`
             + `${options}</select>`
-            + '<button type="button" class="btn" id="gallerySave">Сохранить</button>'
-            + '<button type="button" class="btn" id="gallerySync">Обновить</button>'
+            // ⚠⚠ Кнопки делают **разное**, и по названиям это не читается.
+            // «Сохранить» запоминает выбранную папку у анкеты и ничего не
+            // снимает; «Обновить» идёт на Диск и пересобирает список файлов. Их
+            // путали: жали «Обновить», ожидая, что сохранится папка.
+            + '<button type="button" class="btn" id="gallerySave"'
+            + ' title="Запомнить выбранную папку у этой анкеты.'
+            + ' На Диск не ходит">Сохранить</button>'
+            + '<button type="button" class="btn" id="gallerySync"'
+            + ' title="Обойти папку на Диске и пересобрать список файлов.'
+            + ' Идёт секунды">Обновить</button>'
             + '</div>'
             + '<div class="var-note">Пусто — папка ищется по логину анкеты: так они '
-            + 'и названы на Диске. Выбирают здесь только исключение.</div>'
+            + 'и названы на Диске. Выбирают здесь только исключение.<br>'
+            + '<b>Сохранить</b> — запомнить папку у анкеты. '
+            + '<b>Обновить</b> — сходить на Диск и пересобрать список файлов: '
+            + 'плитки берутся из нашей базы, а наполняет её обход.</div>'
             + (galleryData.taken_at
                 ? `<div class="gallery-when">сверено ${timeShift(galleryData.taken_at)}</div>`
                 : '')
@@ -1084,35 +1095,97 @@
             + `${esc(file.name)}</div></div>`;
     }
 
+    // Кнопка на время работы: гаснет и говорит, чем занята. Возвращает функцию
+    // «освободить» — её зовут в `finally`, чтобы кнопка не осталась мёртвой.
+    //
+    // ⚠ Подпись меняем, а не только гасим: погасшая кнопка без слов читается как
+    // «сломалась», особенно когда работа идёт секундами, как обход Диска.
+    function galleryBusy(button, saying) {
+        const was = button.textContent;
+        button.disabled = true;
+        button.textContent = saying;
+
+        return () => {
+            // ⚠ Блок к этому времени мог быть перерисован (`galleryLoad`), и
+            // наша кнопка — уже не та, что на экране. Проверка на `isConnected`
+            // дешевле, чем искать её заново: вернуть состояние надо только той,
+            // что ещё жива.
+            if (!button.isConnected) return;
+
+            button.disabled = false;
+            button.textContent = was;
+        };
+    }
+
+    // Итог обхода словами. ⚠ Числа приходят с сервера (`gallery_index_profile`):
+    // `found` — сколько файлов застали, `added` — новых, `gone` — пропавших,
+    // `back` — вернувшихся. Пересказывать их молчанием нельзя: «ничего нового»
+    // и «обход не дошёл» для человека выглядят одинаково.
+    function galleryWalkSays(got) {
+        const found = Number(got.found) || 0;
+        const added = Number(got.added) || 0;
+        const gone = Number(got.gone) || 0;
+        const back = Number(got.back) || 0;
+
+        if (!found) return 'Обход прошёл: в папке нет ни одного файла';
+
+        const news = [];
+        if (added) news.push(`новых ${added}`);
+        if (gone) news.push(`пропало ${gone}`);
+        if (back) news.push(`вернулось ${back}`);
+
+        return `Обход прошёл: файлов ${found}`
+            + (news.length ? `, ${news.join(', ')}` : ', нового нет');
+    }
+
     function galleryBind() {
         const save = document.getElementById('gallerySave');
         const sync = document.getElementById('gallerySync');
         const pick = document.getElementById('galleryFolder');
 
+        // ⚠⚠ **Обе кнопки прежде молчали при удаче, и это читалось как поломка.**
+        // Отказ показывался `alert`, а успех — ничем: список перерисовывался тем
+        // же самым, и человек жал повторно, думая, что промахнулся. Обход Диска
+        // при этом идёт секундами, и всё это время кнопка выглядела нетронутой.
+        //
+        // ⚠ Сообщение — `showNotification`, как у соседних блоков этой же
+        // страницы («Переменные сохранены»): `alert` останавливает страницу и
+        // требует щелчка, а сказать надо об удаче, а не о беде.
         if (save) save.addEventListener('click', async () => {
             const was = currentId;
+            const folder = pick ? pick.value : '';
+            const busy = galleryBusy(save, 'Сохраняю…');
             try {
                 await putData(`${BASE}/api/dating/gallery/${was}/folder`,
-                              {folder: pick.value});
+                              {folder: folder});
+                showNotification(folder
+                    ? `Папка сохранена: ${folder}`
+                    : 'Папка сохранена: ищем по логину анкеты', 'success');
             } catch (e) {
-                alert('папку сохранить не вышло: ' + e.message);
+                showNotification('Папку сохранить не вышло: ' + e.message,
+                                 'error');
 
                 return;
+            } finally {
+                busy();
             }
-            if (currentId === was) galleryLoad(was, pick.value);
+            if (currentId === was) galleryLoad(was, folder);
         });
 
         if (sync) sync.addEventListener('click', async () => {
             const was = currentId;
-            sync.disabled = true;
+            const busy = galleryBusy(sync, 'Обхожу Диск…');
             try {
                 const got = (await postData(
                     `${BASE}/api/dating/gallery/${was}/sync`, {})).result;
-                if (!got.ok) alert(got.why);
+                // ⚠ Числа обхода показываем **всегда**, а не только когда что-то
+                // изменилось: «ничего нового» — это ответ, а молчание — нет.
+                if (got.ok) showNotification(galleryWalkSays(got), 'success');
+                else showNotification('Обход не вышел: ' + got.why, 'error');
             } catch (e) {
-                alert('обновить не вышло: ' + e.message);
+                showNotification('Обновить не вышло: ' + e.message, 'error');
             } finally {
-                sync.disabled = false;
+                busy();
             }
             if (currentId === was) galleryLoad(was, pick ? pick.value : '');
         });

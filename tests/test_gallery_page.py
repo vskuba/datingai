@@ -192,3 +192,53 @@ def test_info_button_is_not_buried_under_the_caption(page):
     strip = css[css.index('.gallery-name {'):css.index('}', css.index('.gallery-name {'))]
     assert 'pointer-events: none' in strip, (
         'подпись ловит нажатия, хотя это текст, а не кнопка')
+
+
+def test_the_buttons_say_they_are_working(page):
+    """⚠⚠ Нажатие обязано отзываться — молчание читается как поломка.
+
+    Обе кнопки прежде говорили только об отказе (`alert`), а об удаче — ничем:
+    список перерисовывался тем же самым, и человек жал повторно, думая, что
+    промахнулся. Обход Диска при этом идёт секундами, и всё это время кнопка
+    выглядела нетронутой.
+    """
+    assert 'galleryBusy(' in page, 'кнопки не показывают, что заняты'
+    assert 'Обхожу Диск…' in page, 'обход идёт молча'
+    assert 'Сохраняю…' in page, 'сохранение идёт молча'
+
+    walk = page[page.index('function galleryBind'):]
+    assert 'showNotification' in walk[:4000], \
+        'об удаче по-прежнему не сообщается'
+    assert 'alert(' not in walk[:4000], \
+        'alert останавливает страницу — об удаче так не говорят'
+
+
+def test_the_walk_result_is_spelled_out(page):
+    """⚠ Числа обхода показываются словами, а не теряются.
+
+    «Ничего нового» и «обход не дошёл» для человека выглядят одинаково, если не
+    сказать вслух: ручка возвращает `found`/`added`/`gone`/`back`, и они нужны
+    именно затем.
+    """
+    assert 'function galleryWalkSays' in page, 'итог обхода не пересказывается'
+
+    says = page[page.index('function galleryWalkSays'):]
+    for field in ('found', 'added', 'gone', 'back'):
+        assert field in says[:900], f'число «{field}» не показывается'
+
+
+def test_the_buttons_explain_what_they_do(page):
+    """⚠ «Сохранить» и «Обновить» делают разное, и по названиям это не читается.
+
+    Первая запоминает папку у анкеты и на Диск не ходит; вторая идёт на Диск и
+    пересобирает список файлов. Их путали.
+    """
+    head = page[page.index('function galleryHead'):]
+    head = head[:head.index('function galleryGroups')]
+
+    assert 'title="Запомнить выбранную папку' in head, \
+        'у «Сохранить» нет подсказки'
+    assert 'title="Обойти папку на Диске' in head, \
+        'у «Обновить» нет подсказки'
+    assert '<b>Сохранить</b>' in head and '<b>Обновить</b>' in head, \
+        'под кнопками не сказано, чем они отличаются'
