@@ -79,7 +79,7 @@ async def gallery_view(profile_id: int, folder: str = '') -> dict:
         seen = row.pop('updated_at', None)
         if seen and (taken_at is None or seen > taken_at):
             taken_at = seen
-        groups.setdefault(_group_of(row['path']), []).append(_file_of(row))
+        groups.setdefault(gallery_group_of(row['path']), []).append(_file_of(row))
 
     return {'folder': folder,
             'groups': [{'name': name, 'files': groups[name]}
@@ -88,12 +88,18 @@ async def gallery_view(profile_id: int, folder: str = '') -> dict:
             'taken_at': taken_at.isoformat() if taken_at else None}
 
 
-def _group_of(path: str) -> str:
+def gallery_group_of(path: str) -> str:
     """Имя группы из пути файла: последняя папка над ним.
 
     Берём именно последнюю, а не весь путь: `photo/public` и `photo/intim`
     человек читает как «public» и «intim», а приставка `photo/` у всех одна и
     ничего не различает.
+
+    ⚠⚠ **Публичная, и это не стиль.** Отбор снимков под отправку спрашивает тот
+    же вопрос («какой группы этот файл»), и своя копия правила разошлась бы с
+    показом: человек видел бы снимок в «public», а отбор считал бы его чужим.
+    Повторить это в SQL тем более нельзя — `SUBSTRING_INDEX(path, '/', 1)` даёт
+    приставку `photo`, а не группу.
     """
     where = path.rpartition('/')[0]
     return where.rpartition('/')[2] if where else ''
