@@ -854,13 +854,27 @@
 }
 .gallery-view img { max-width: 92vw; max-height: 92vh; object-fit: contain; }
 .gallery-modal { cursor: default; }
+/* ⚠ Окно описания **крупнее соседних**, и это не вкусовщина: в нём правят
+   абзац текста и строку тегов. В 560 пикселях описание шло в шесть строк с
+   прокруткой, а теги не помещались в поле целиком — человек правил вслепую,
+   прокручивая однострочный input. */
 .gallery-card {
-    width: min(560px, 92vw); max-height: 88vh; overflow: auto; padding: 16px;
+    width: min(860px, 94vw); max-height: 92vh; overflow: auto; padding: 20px;
     background: #fff; border-radius: 12px; display: flex; flex-direction: column; gap: 6px;
 }
 .gallery-card-head { font-size: 14px; font-weight: 700; color: #0f172a; }
 .gallery-card label { font-size: 11px; color: #64748b; margin-top: 6px; }
 .gallery-card textarea, .gallery-card input { width: 100%; box-sizing: border-box; }
+
+/* ⚠⚠ Высота — **здесь**, а не атрибутом `rows`. В общем слое
+   (`dashboard/css/common.css`) стоит `textarea { height: 60px }`, и оно бьёт
+   любой `rows`: описание в девять строк выходило в одну. Править общий файл
+   нельзя — он submodule, и правка уехала бы в соседние проекты.
+
+   ⚠ `resize: vertical` возвращает то, что общий слой запретил целиком
+   (`resize: none`): здесь правят абзац, и длина у него всякий раз своя. */
+.gallery-card #galleryText { height: 170px; resize: vertical; }
+.gallery-card #galleryTags { height: 52px; resize: vertical; }
 .gallery-card-foot {
     display: flex; align-items: center; justify-content: space-between;
     gap: 8px; margin-top: 10px;
@@ -925,3 +939,35 @@
 
 .talk-free:hover { filter: brightness(1.2); }
 .talk-free:disabled { opacity: .5; cursor: default; }
+
+/* ── Словарь тегов в окне правки снимка ──────────────────────────────────────
+   Теги выбираются щелчком: список закрытый, и набранное руками слово ручка
+   молча выбросит. Группы — для глаза, порядок внутри строки словарный. */
+.gallery-tagbox {
+    display: flex; flex-direction: column; gap: 6px; margin-top: 4px;
+    max-height: 34vh; overflow: auto;
+}
+
+.gallery-taggroup {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+}
+
+/* Имя группы постоянной ширины: теги соседних строк встают столбиком и
+   читаются как таблица, а не как сплошной поток слов. */
+.gallery-tagname {
+    flex: 0 0 86px; font-size: 11px; color: #64748b; text-transform: lowercase;
+}
+
+.gallery-tag {
+    border: 1px solid #e2e8f0; background: #f8fafc; color: #475569;
+    border-radius: 999px; padding: 2px 9px; font-size: 11px; cursor: pointer;
+    line-height: 1.6;
+}
+
+.gallery-tag:hover { border-color: #94a3b8; }
+
+/* Выбранный — заливкой, а не только рамкой: по рамке выбор не читается
+   беглым взглядом, а их на снимке до восьми из тридцати восьми. */
+.gallery-tag.on {
+    background: #2563eb; border-color: #2563eb; color: #fff;
+}

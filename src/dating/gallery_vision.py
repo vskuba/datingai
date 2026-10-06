@@ -60,6 +60,37 @@ GALLERY_VISION_WORKFLOW = 'dating_gallery_describe'
 # было видно среди сотен чужих у соседа.
 GALLERY_VISION_AGENT = 'gallery_describe_{site}'
 
+# ⚠⚠ **Словарь тегов закрытый, и в этом вся его польза.** Свободные теги модель
+# придумывала каждый раз заново: `lace dress`, `silver dress`, `white sweater` —
+# по таким снимок не отберёшь. Три слова об одном платье не сходятся между собой,
+# а отбор — единственное, ради чего теги вообще существуют: описание читает
+# человек, теги читает код.
+#
+# ⚠ Группы здесь для человека, модели уходит плоский список: разложи мы его по
+# полям JSON, пришлось бы держать соответствие «поле → колонка» в двух местах.
+#
+# ⚠ Теги английские, как и прежде: ими отбирают, а не показывают. Перевод для
+# глаза — дело страницы, если понадобится.
+GALLERY_VISION_TAGS = {
+    'одежда': ('dress', 'lingerie', 'swimsuit', 'casual', 'sportswear',
+               'evening-wear', 'coat', 'nude'),
+    'план': ('portrait', 'half-body', 'full-body', 'close-up', 'selfie'),
+    'место': ('indoor', 'outdoor', 'studio', 'bedroom', 'kitchen', 'bathroom',
+              'beach', 'nature', 'city', 'car', 'gym', 'cafe'),
+    'настроение': ('smiling', 'serious', 'sensual', 'playful', 'confident',
+                   'shy', 'dreamy'),
+    'свет': ('daylight', 'evening', 'night', 'studio-light'),
+    'прочее': ('group', 'with-pet', 'mirror', 'sitting', 'standing', 'lying'),
+}
+
+# Плоский список — он и уходит модели, и сверяется при записи.
+GALLERY_VISION_TAGS_ALL = tuple(
+    tag for group in GALLERY_VISION_TAGS.values() for tag in group)
+
+# Сколько тегов просим на снимок. ⚠ Не «сколько подойдёт»: без числа модель
+# ставит два-три и считает работу сделанной.
+GALLERY_VISION_TAGS_WANT = 8
+
 # Что просим у модели. ⚠ **Поля названы прямо здесь**: не назовёшь — модель
 # придумает свои, и каждый раз другие, а колонки заполнять будет нечем.
 GALLERY_VISION_PROMPT = (
@@ -67,10 +98,39 @@ GALLERY_VISION_PROMPT = (
     'Верни объект JSON с полями:\n'
     '  description — один абзац: кто в кадре, во что одета, где находится, '
     'какое настроение и план съёмки;\n'
-    '  tags — список коротких тегов на английском: одежда, место, настроение, '
-    'план съёмки, время суток.\n'
+    f'  tags — до {GALLERY_VISION_TAGS_WANT} тегов, и **только** из этого '
+    'списка, слово в слово:\n'
+    '    ' + ', '.join(GALLERY_VISION_TAGS_ALL) + '.\n'
+    'Тегов не из списка не придумывай — их отбросят. Подходящего нет — не ставь.\n'
     'Нечитаемого и неизвестного не выдумывай.'
 )
+
+
+def gallery_vision_tags_keep(tags) -> list:
+    """Оставляет только теги из словаря. Чужие и повторы выбрасывает.
+
+    Args:
+        tags: что прислала модель (или ввёл человек) — список чего угодно.
+
+    Returns:
+        list: теги словаря в порядке словаря, без повторов.
+
+    ## ⚠⚠ Промпта мало, и это проверено на живых ответах
+
+    Модель держит список, пока он короткий, и начинает дополнять его «близкими
+    по смыслу», как только снимок непривычный: на список из тридцати восьми слов
+    прилетало `lace dress` при наличии `dress`. Один такой тег не ломает ничего
+    заметно — он просто никогда не совпадёт в отборе, и снимок молча выпадет из
+    выборки. Поэтому сверка стоит **на записи**, а не на доверии.
+
+    ⚠ Порядок — словаря, а не ответа: так теги одного снимка сравнимы глазом с
+    тегами соседнего, и «одежда» всегда идёт раньше «света».
+
+    ⚠ Регистр и пробелы приводятся: модель иногда отвечает `Dress`.
+    """
+    seen = {str(tag).strip().lower() for tag in (tags or []) if str(tag).strip()}
+
+    return [tag for tag in GALLERY_VISION_TAGS_ALL if tag in seen]
 
 
 async def gallery_vision_due(limit: int = GALLERY_VISION_BATCH) -> list[dict]:
@@ -150,7 +210,7 @@ async def gallery_vision_one(row: dict) -> dict:
         raise RuntimeError(f'агент ответил не объектом JSON: {answer[:200]}')
 
     description = str(got.get('description') or '').strip()
-    tags = [str(tag).strip() for tag in (got.get('tags') or []) if str(tag).strip()]
+    tags = gallery_vision_tags_keep(got.get('tags'))
     if not description:
         raise RuntimeError('агент вернул объект без описания')
 

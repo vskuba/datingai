@@ -182,10 +182,10 @@ async def test_edit_marks_the_row_as_touched(tree, girl):
 
     got = await gallery_file_put(girl[0], 'file-1',
                                  GalleryFileSave(description='её платье',
-                                                 tags=['lace', ' ', 'indoor']),
+                                                 tags=['dress', ' ', 'indoor']),
                                  user=None)
 
-    assert got['result']['tags'] == ['lace', 'indoor'], 'пустой тег обязан отсеяться'
+    assert got['result']['tags'] == ['dress', 'indoor'], 'пустой тег обязан отсеяться'
 
     async with mysql_get_db_async() as db:
         await db.execute("SELECT description, edited_at FROM gallery_file "
@@ -205,3 +205,38 @@ async def test_edit_of_a_stranger_is_refused(tree, girl):
                                user=None)
 
     assert refused.value.status_code == 404
+
+
+async def test_tags_handle_gives_the_whole_dictionary(auth_client):
+    """⚠⚠ Словарь отдаёт **сервер**, а не своя копия на странице.
+
+    Список закрытый: тег не из него ручка правки молча выбросит. Держи страница
+    свою копию — она разошлась бы с кодом на первой правке, и человек выбирал бы
+    теги, которые не сохранятся. Та же грабля, что уже была с подразделами
+    настроек сайта.
+    """
+    from src.dating.gallery_vision import (GALLERY_VISION_TAGS,
+                                           GALLERY_VISION_TAGS_ALL)
+
+    got = (await auth_client.get('/api/dating/gallery/tags')).json()['result']
+    groups = got['groups']
+
+    assert len(groups) == len(GALLERY_VISION_TAGS)
+    assert [one['name'] for one in groups] == list(GALLERY_VISION_TAGS), \
+        'порядок групп разошёлся со словарём'
+
+    flat = [tag for one in groups for tag in one['tags']]
+    assert flat == list(GALLERY_VISION_TAGS_ALL), \
+        'ручка отдаёт не тот список, по которому идёт отсев'
+
+
+async def test_the_page_asks_the_server_for_tags():
+    """⚠ Страница ходит за словарём в ручку, а не носит его в себе."""
+    import pathlib
+
+    page = (pathlib.Path(__file__).resolve().parents[1]
+            / 'data/uvicorn/template/admin/dating/index.html'
+            ).read_text(encoding='utf-8')
+
+    assert '/api/dating/gallery/tags' in page, 'страница не спрашивает словарь'
+    assert 'gallery-tag' in page, 'теги не рисуются выбором'

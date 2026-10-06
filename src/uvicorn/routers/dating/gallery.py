@@ -31,6 +31,8 @@ from google_drive_.google_drive_bytes import (GOOGLE_DRIVE_THUMB_SIZES,
 from src.auth.auth import AuthUser, auth_required
 from src.dating.gallery import gallery_folder_name, gallery_view
 from src.dating.gallery_index import (gallery_index_folders, gallery_index_sync)
+from src.dating.gallery_vision import (GALLERY_VISION_TAGS,
+                                       gallery_vision_tags_keep)
 from src.uvicorn.routers.dating.profile_ import profile_row
 
 router = APIRouter(prefix='/api/dating/gallery', tags=['dating'])
@@ -56,6 +58,23 @@ class GalleryFileSave(BaseModel):
 
     description: str = Field('', max_length=GALLERY_DESCRIPTION_MAX)
     tags: list[str] = Field(default_factory=list, max_length=GALLERY_TAGS_MAX)
+
+
+@router.get('/tags', include_in_schema=False)
+async def gallery_tags(user: AuthUser = Depends(auth_required)):
+    """Словарь тегов группами — его показывает окно правки снимка.
+
+    ## ⚠⚠ С сервера, а не своим списком на странице
+
+    Словарь закрытый: тег не из него отбрасывается и при разборе, и при правке
+    руками. Держи страница свою копию — она разошлась бы с кодом на первой же
+    правке, и человек выбирал бы теги, которые ручка молча выбросит. Та же
+    грабля, что уже была с подразделами настроек сайта.
+
+    ⚠ Группы отдаём как есть: они для глаза, и порядок их — порядок словаря.
+    """
+    return {'result': {'groups': [{'name': name, 'tags': list(tags)}
+                                  for name, tags in GALLERY_VISION_TAGS.items()]}}
 
 
 @router.get('/folders', include_in_schema=False)
@@ -174,9 +193,14 @@ async def gallery_file_put(profile_id: int, file_id: str, payload: GalleryFileSa
     ⚠⚠ Проставляет `edited_at`, и с этого мгновения строку **не трогает
     разбор**. Иначе следующая пачка у модели затёрла бы исправленное, и человек,
     однажды это заметив, перестал бы править вовсе.
+
+    ⚠⚠ **Теги сверяются со словарём — тем же, что у разбора.** Форма не
+    единственный вход, и чужой тег здесь был бы ровно так же бесполезен, как
+    выдуманный моделью: он никогда не совпадёт в отборе, и снимок молча выпадет
+    из выборки. Правило одно на оба входа — `gallery_vision_tags_keep`.
     """
     await _file_row(profile_id, file_id)
-    tags = [tag.strip()[:GALLERY_TAG_MAX] for tag in payload.tags if tag.strip()]
+    tags = gallery_vision_tags_keep(payload.tags)
 
     async with mysql_get_db_async() as db:
         await db.execute(

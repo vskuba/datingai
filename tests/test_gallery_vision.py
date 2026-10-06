@@ -31,7 +31,7 @@ pytestmark = pytest.mark.profile
 STAND_SITE = 999_343
 
 ANSWER = json.dumps({'description': 'девушка в кружевном платье в гостиной',
-                     'tags': ['lace', 'indoor', 'smiling']}, ensure_ascii=False)
+                     'tags': ['dress', 'indoor', 'smiling']}, ensure_ascii=False)
 
 
 async def _mine(girl: int, limit: int = 50) -> list[dict]:
@@ -206,7 +206,7 @@ async def test_answer_lands_in_columns(tree, agent, girl):
         got = dict((await db.fetchone()) or {})
 
     assert got['description'] == 'девушка в кружевном платье в гостиной'
-    assert json.loads(got['tags']) == ['lace', 'indoor', 'smiling']
+    assert json.loads(got['tags']) == ['dress', 'indoor', 'smiling']
     assert got['described_at'] is not None
     assert got['described_md5'] == row['md5'], 'разобранная сумма обязана записаться'
     assert got['described_error'] == ''
@@ -300,3 +300,77 @@ def test_agent_without_workflow_is_refused_with_words():
 
     with pytest.raises(RuntimeError):
         _with_workflow({})
+
+
+class TestTheTagDictionary:
+    """⚠⚠ Словарь тегов закрытый — на том и держится отбор снимков."""
+
+    def test_it_is_big_enough_to_describe_a_photo(self):
+        """Тегов десятки, а не единицы: иначе снимки неразличимы."""
+        from src.dating.gallery_vision import (GALLERY_VISION_TAGS,
+                                               GALLERY_VISION_TAGS_ALL)
+
+        assert 30 <= len(GALLERY_VISION_TAGS_ALL) <= 60, \
+            f'тегов {len(GALLERY_VISION_TAGS_ALL)} — словарь вышел из берегов'
+        assert len(GALLERY_VISION_TAGS) >= 4, 'группы нужны человеку для чтения'
+
+    def test_no_tag_repeats_between_groups(self):
+        """⚠ Повтор тега в двух группах — молчаливая беда.
+
+        Отбор его найдёт дважды, а страница покажет дважды, и человек решит, что
+        выбрал один, а горят оба.
+        """
+        from src.dating.gallery_vision import (GALLERY_VISION_TAGS,
+                                               GALLERY_VISION_TAGS_ALL)
+
+        assert len(GALLERY_VISION_TAGS_ALL) == len(set(GALLERY_VISION_TAGS_ALL)), \
+            'тег повторяется в двух группах'
+        assert sum(len(one) for one in GALLERY_VISION_TAGS.values()) \
+            == len(GALLERY_VISION_TAGS_ALL), 'плоский список разошёлся с группами'
+
+    def test_the_prompt_carries_the_whole_dictionary(self):
+        """⚠⚠ Модели список уходит **целиком**, а не описанием.
+
+        «Теги про одежду и место» она понимает как «придумай про одежду и
+        место» — так и было: `lace dress`, `silver dress`, `white sweater`.
+        """
+        from src.dating.gallery_vision import (GALLERY_VISION_PROMPT,
+                                               GALLERY_VISION_TAGS_ALL)
+
+        for tag in GALLERY_VISION_TAGS_ALL:
+            assert tag in GALLERY_VISION_PROMPT, f'тега «{tag}» нет в промпте'
+
+        assert 'только' in GALLERY_VISION_PROMPT.lower(), \
+            'в промпте не сказано, что список закрытый'
+
+    def test_a_stranger_tag_is_dropped(self):
+        """⚠⚠ Промпта мало: сверка стоит **на записи**.
+
+        Модель держит список, пока он короткий, и дополняет его «близкими по
+        смыслу», как только снимок непривычный. Такой тег не ломает ничего
+        заметно — он просто никогда не совпадёт в отборе.
+        """
+        from src.dating.gallery_vision import gallery_vision_tags_keep
+
+        assert gallery_vision_tags_keep(['lace dress', 'indoor']) == ['indoor']
+        assert gallery_vision_tags_keep(['выдумка']) == []
+        assert gallery_vision_tags_keep(None) == []
+
+    def test_case_and_spaces_do_not_lose_a_tag(self):
+        """⚠ Модель отвечает то `Dress`, то ` dress ` — тег один и тот же."""
+        from src.dating.gallery_vision import gallery_vision_tags_keep
+
+        assert gallery_vision_tags_keep([' Dress ', 'INDOOR']) == ['dress', 'indoor']
+
+    def test_the_order_is_the_dictionary_one(self):
+        """⚠ Порядок словаря, а не ответа: так теги снимков сравнимы глазом."""
+        from src.dating.gallery_vision import gallery_vision_tags_keep
+
+        assert gallery_vision_tags_keep(['night', 'indoor', 'dress']) \
+            == ['dress', 'indoor', 'night']
+
+    def test_repeats_collapse(self):
+        """Один тег дважды — это один тег."""
+        from src.dating.gallery_vision import gallery_vision_tags_keep
+
+        assert gallery_vision_tags_keep(['dress', 'dress']) == ['dress']

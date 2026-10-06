@@ -1287,6 +1287,63 @@
         show(0);
     }
 
+    // Словарь тегов: один запрос на страницу, дальше из памяти. ⚠ Список
+    // закрытый и живёт на сервере (`/api/dating/gallery/tags`) — своей копии
+    // здесь нет намеренно: она разошлась бы с кодом, и человек выбирал бы теги,
+    // которые ручка молча выбросит.
+    let galleryTags = null;
+
+    async function galleryTagBox() {
+        const box = document.getElementById('galleryTagBox');
+        const field = document.getElementById('galleryTags');
+        if (!box || !field) return;
+
+        if (!galleryTags) {
+            try {
+                galleryTags = (await getData(`${BASE}/api/dating/gallery/tags`))
+                    .result.groups || [];
+            } catch (e) {
+                box.innerHTML = `<div class="gallery-why">словарь тегов не `
+                    + `пришёл: ${esc(e.message)}</div>`;
+
+                return;
+            }
+        }
+
+        const chosen = () => new Set(field.value.split(',')
+            .map(one => one.trim().toLowerCase()).filter(Boolean));
+
+        const paint = () => {
+            const on = chosen();
+            box.innerHTML = galleryTags.map(group =>
+                `<div class="gallery-taggroup"><span class="gallery-tagname">`
+                + `${esc(group.name)}</span>`
+                + group.tags.map(tag =>
+                    `<button type="button" class="gallery-tag${on.has(tag)
+                        ? ' on' : ''}" data-tag="${esc(tag)}">${esc(tag)}</button>`
+                  ).join('')
+                + '</div>').join('');
+
+            box.querySelectorAll('.gallery-tag').forEach(btn =>
+                btn.addEventListener('click', () => {
+                    const tag = btn.dataset.tag;
+                    const now = chosen();
+                    // ⚠ Порядок держим **словарный**, а не порядок нажатий: так
+                    // теги одного снимка сравнимы глазом с тегами соседнего.
+                    now.has(tag) ? now.delete(tag) : now.add(tag);
+                    field.value = galleryTags
+                        .flatMap(g => g.tags).filter(one => now.has(one))
+                        .join(', ');
+                    paint();
+                }));
+        };
+
+        paint();
+        // Правка руками в поле тоже подсвечивает слова — иначе человек видел бы
+        // расхождение между тем, что набрал, и тем, что горит.
+        field.addEventListener('input', paint);
+    }
+
     function galleryModal(id) {
         const file = galleryFile(id);
         if (!file) return;
@@ -1298,9 +1355,17 @@
             + (file.described_error
                 ? `<div class="gallery-why">${esc(file.described_error)}</div>` : '')
             + '<label>Что на снимке</label>'
-            + `<textarea id="galleryText" rows="6">${esc(file.description)}</textarea>`
-            + '<label>Теги через запятую</label>'
-            + `<input id="galleryTags" value="${esc((file.tags || []).join(', '))}">`
+            + `<textarea id="galleryText" rows="9">${esc(file.description)}</textarea>`
+            + '<label>Теги — щелчком по слову</label>'
+            // ⚠ Теги в `textarea`, а не в `input`: их бывает десяток, и в одну
+            // строку они не влезали — человек правил вслепую, прокручивая поле
+            // горизонтально. Читаются так же (`.value`), правило разбора то же.
+            + `<textarea id="galleryTags" rows="2">${esc((file.tags || []).join(', '))}</textarea>`
+            // ⚠⚠ Словарь — **с сервера**, и показывается прямо здесь. Он
+            // закрытый: тег не из него ручка молча выбросит, и человек, набрав
+            // своё слово, увидел бы, что правка «не сохранилась». Щелчок по
+            // слову добавляет и убирает его из поля.
+            + '<div class="gallery-tagbox" id="galleryTagBox"></div>'
             + '<div class="gallery-card-foot">'
             + `<span class="gallery-when">${file.edited ? 'правлено человеком'
                 : file.described ? 'разобрано моделью' : 'ещё не разбиралось'}</span>`
@@ -1309,6 +1374,7 @@
 
         back.addEventListener('click', () => back.remove());
         document.body.appendChild(back);
+        galleryTagBox();
 
         document.getElementById('galleryKeep').addEventListener('click', async () => {
             const was = currentId;
