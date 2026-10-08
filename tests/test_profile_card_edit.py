@@ -268,3 +268,112 @@ class TestWhy:
     def test_anything_else_keeps_the_text(self):
         """Незнакомую беду не прячем: иначе причина пропадёт и в журнале."""
         assert 'что-то своё' in profile_card_why(Exception('что-то своё'), 'a', '')
+
+
+class TestRace:
+    """⚠⚠ Чужая одновременная правка не исчезает.
+
+    Беда, от которой стоит этот класс, тиха и полна: прежде запись кладлась
+    безусловным `UPDATE` поверх снимка, снятого отдельным обращением к базе, и
+    уносила **всю** карточку вместе со списком отметок. Два человека, правящие
+    разные поля одной анкеты в одну секунду, теряли одну правку целиком.
+    """
+
+    async def test_open_and_save_unchanged_is_not_a_conflict(self, girl):
+        """⚠⚠ Самое обычное действие человека — открыл окно и сохранил, не правя.
+
+        Сторож именно на него: `rowcount = 0` приходит и когда строку увели, и
+        когда менять было нечего. Прими мы ноль за проигранную гонку — и это
+        действие отвечало бы отказом «вас опередили».
+        """
+        login = _login()
+        await profile_card_save(girl, {'login': login, 'name': 'Diana',
+                                       'city': 'Kyiv'})
+
+        # Второй раз ровно то же: писать нечего, но и отказывать не за что.
+        got = await profile_card_save(girl, {'login': login, 'name': 'Diana',
+                                             'city': 'Kyiv'})
+
+        assert got['card']['name'] == 'Diana'
+        assert got['card']['city'] == 'Kyiv'
+        assert set(got['edited']) == {'name', 'city'}, \
+            'повторное сохранение потеряло отметки'
+
+    async def test_a_rival_write_is_not_clobbered(self, girl, monkeypatch):
+        """⚠⚠ Главный сторож задачи: чужая правка переживает нашу.
+
+        «Кто-то ещё» правит описание ровно в ту щель, когда наш снимок уже на
+        руках, а запись ещё не ушла. Наш город обязан лечь, его описание —
+        остаться.
+        """
+        from src.dating import profile_card as mod
+        from src.dating.json_column import json_column_load
+
+        login = _login()
+        await profile_card_save(girl, {'login': login, 'city': 'Kyiv'})
+
+        real_read = mod._card_read
+        been = []
+
+        async def read_then_rival(profile_id):
+            row = await real_read(profile_id)
+            # Один раз: пока снимок на руках, строку правит кто-то ещё.
+            if not been:
+                been.append(1)
+                async with mysql_get_db_async() as db:
+                    await db.execute(
+                        "UPDATE profile"
+                        " SET profile = JSON_SET(profile, '$.about', %s)"
+                        " WHERE id = %s", ('чужая правка', int(profile_id)))
+                    await db.connection.commit()
+
+            return row
+
+        monkeypatch.setattr(mod, '_card_read', read_then_rival)
+
+        await profile_card_save(girl, {'login': login, 'city': 'Lviv'})
+
+        card = json_column_load((await _row(girl))['profile'])
+        assert card['city'] == 'Lviv', 'наша правка не легла'
+        assert card['about'] == 'чужая правка', \
+            'чужая правка затёрта — гонка не закрыта'
+
+    async def test_losing_every_try_refuses_with_words(self, girl, monkeypatch):
+        """⚠ Цикл обязан кончаться, и кончаться словами для человека.
+
+        Если строку правят в каждую щель, попытки исчерпываются — и отказ должен
+        быть предложением, которое человек поймёт, а не молчаливым проигрышем и
+        не вечным кругом.
+        """
+        from src.dating import profile_card as mod
+
+        login = _login()
+        # ⚠⚠ Карточку заводим **до** гонки, и это не украшение теста. У свежей
+        # анкеты столбец `profile` пуст, а `JSON_SET(NULL, …)` отдаёт `NULL` —
+        # соперничающая правка оказалась бы пустышкой, запись прошла бы с первой
+        # попытки, и тест сторожил бы несуществующее.
+        await profile_card_save(girl, {'login': login, 'city': 'Kyiv'})
+
+        real_read = mod._card_read
+        been = []
+
+        async def read_then_rival(profile_id):
+            row = await real_read(profile_id)
+            been.append(1)
+            async with mysql_get_db_async() as db:
+                await db.execute(
+                    "UPDATE profile"
+                    " SET profile = JSON_SET(profile, '$.about', %s)"
+                    " WHERE id = %s", (f'чужая правка {len(been)}', int(profile_id)))
+                await db.connection.commit()
+
+            return row
+
+        monkeypatch.setattr(mod, '_card_read', read_then_rival)
+
+        with pytest.raises(ValueError) as refusal:
+            await profile_card_save(girl, {'login': login, 'city': 'Lviv'})
+
+        assert 'правил' in str(refusal.value), str(refusal.value)
+        assert len(been) == mod.PROFILE_CARD_TRIES, \
+            'число попыток разошлось с PROFILE_CARD_TRIES'

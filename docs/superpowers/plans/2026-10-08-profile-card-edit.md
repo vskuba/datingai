@@ -489,10 +489,14 @@ class TestSave:
         assert (await _row(two))['profile_id'] is None
 
     async def test_changed_fields_are_marked(self, girl):
+        """⚠ Значение колонки читаем **через `profile_card_edited`**, а не как
+        список: драйвер отдаёт JSON-колонку **строкой**, и `set(строка)` перебрал
+        бы её буквы — тест прошёл бы или упал по причине, к делу не относящейся."""
         await profile_card_save(girl, {'login': _login(), 'name': 'Diana',
                                        'about': 'текст'})
 
-        assert set((await _row(girl))['profile_edited'] or []) == {'name', 'about'}
+        assert set(profile_card_edited((await _row(girl))['profile_edited'])) \
+            == {'name', 'about'}
 
     async def test_unchanged_save_marks_nothing(self, girl):
         """⚠⚠ Метится изменённое, а не присланное.
@@ -794,6 +798,412 @@ Expected: PASS (все, 23 passed).
 ```bash
 git add src/dating/profile_card.py tests/test_profile_card_edit.py
 git commit -m "Анкета: единственная дверь записи правки — карточка, две колонки и отметки
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 3a: запись правки не затирает чужую
+
+**Files:**
+- Modify: `src/dating/profile_card.py` (`profile_card_save` разбирается на три двери)
+- Test: `tests/test_profile_card_edit.py` (дописать класс `TestRace`)
+
+**Interfaces:**
+- Consumes: `PROFILE_CARD_FIELDS`, `PROFILE_CARD_EMPTY`, `profile_card_edited`,
+  `profile_card_why`, `_same` — всё уже в модуле от задач 2-3.
+- Produces (имена важны: на них патчится тест гонки):
+  - `PROFILE_CARD_TRIES: int` — сколько раз пробуем записать.
+  - `async _card_read(profile_id: int) -> dict` — строка анкеты; `LookupError`, если её нет.
+  - `_card_apply(row: dict, values: dict) -> tuple[str, dict, list[str]]` — чистая:
+    отдаёт `(login, card, marks)`.
+  - `async _card_claim(profile_id: int, row: dict, login: str, card: dict, marks: list) -> bool` —
+    условный `UPDATE`; `True` — легло, `False` — снимок устарел.
+  - `profile_card_save(profile_id, values) -> dict` — поведение и возврат **прежние**
+    (`{'login', 'card', 'edited'}`), внутри — цикл попыток.
+
+## Зачем эта задача
+
+Ревью задачи 3 нашло в `profile_card_save` потерянное обновление. Чтение строки и
+её запись идут **двумя** обращениями к базе, между ними карточка собирается в
+памяти, а `UPDATE` кладётся безусловным `WHERE id = %s`. Пул работает в
+`autocommit = True`, транзакция через щель не тянется.
+
+⚠⚠ Затирается при этом **вся карточка и весь список отметок**, а не спорное поле.
+Правь один человек «описание», другой «город» в ту же секунду — одна из двух
+правок исчезает целиком вместе со своей отметкой.
+
+## ⚠⚠ Почему условный `UPDATE`, а не транзакция с `FOR UPDATE`
+
+Потому что так делает этот проект, и записано это дважды:
+
+- `src/dating/invite_send.py:91` — «чтение и запись должны быть одним действием, и
+  здесь это условный `UPDATE`»; сама застава `_claim` (строка ~341) сверяет
+  состояние в `WHERE` и смотрит `rowcount`.
+- `src/dating/proxy.py:129` — «замок MySQL проще транзакции с `FOR UPDATE`».
+
+Сверено по коду: в проекте **нет ни одной** транзакции — ни `BEGIN`, ни
+`START TRANSACTION`, ни `connection.begin()`, — а пул заведён с `autocommit = True`
+(`py_modules/mysql_/mysql_.py:280`, и докстринг рядом говорит это прямо). При
+`autocommit` одиночный `SELECT … FOR UPDATE` отпускает замок сразу же, то есть не
+помогает вовсе; чтобы он работал, пришлось бы завести в проекте первую транзакцию
+ради правки, которую делает человек раз в неделю.
+
+## ⚠⚠ Ловушка, которую обязательно обойти: ноль значит две разные вещи
+
+`rowcount` после `UPDATE` у MySQL — число **изменённых** строк, а не совпавших.
+Значит ноль приходит в **двух** случаях:
+
+1. строку увели из-под нас — условие в `WHERE` не сошлось;
+2. мы записали **ровно то, что в ней и лежало** — менять оказалось нечего.
+
+Второй случай — это «человек открыл окно и нажал «Сохранить», ничего не правя», то
+есть самое обычное действие. Прими мы ноль за проигранную гонку, и оно отвечало бы
+отказом «вас опередили». Различить два случая можно только **повторным чтением**, и
+оно делается ровно тогда, когда пришёл ноль, — то есть почти никогда.
+
+⚠ Сравнение в `WHERE` идёт по столбцам `profile` и `profile_edited`, а не по
+`login`: решения о том, что считать правкой, принимаются **из них**, и устарел ли
+снимок — вопрос про них же. Правка одной почты при неизменной карточке проходит
+первым же заходом.
+
+- [ ] **Step 1: Write the failing tests**
+
+Допиши в `tests/test_profile_card_edit.py` (импорты — к верхним, `import asyncio`
+не нужен):
+
+```python
+class TestRace:
+    """⚠⚠ Чужая одновременная правка не исчезает.
+
+    Беда, от которой стоит этот класс, тиха и полна: прежде запись кладлась
+    безусловным `UPDATE` поверх снимка, снятого отдельным обращением к базе, и
+    уносила **всю** карточку вместе со списком отметок. Два человека, правящие
+    разные поля одной анкеты в одну секунду, теряли одну правку целиком.
+    """
+
+    async def test_open_and_save_unchanged_is_not_a_conflict(self, girl):
+        """⚠⚠ Самое обычное действие человека — открыл окно и сохранил, не правя.
+
+        Сторож именно на него: `rowcount = 0` приходит и когда строку увели, и
+        когда менять было нечего. Прими мы ноль за проигранную гонку — и это
+        действие отвечало бы отказом «вас опередили».
+        """
+        login = _login()
+        await profile_card_save(girl, {'login': login, 'name': 'Diana',
+                                       'city': 'Kyiv'})
+
+        # Второй раз ровно то же: писать нечего, но и отказывать не за что.
+        got = await profile_card_save(girl, {'login': login, 'name': 'Diana',
+                                             'city': 'Kyiv'})
+
+        assert got['card']['name'] == 'Diana'
+        assert got['card']['city'] == 'Kyiv'
+        assert set(got['edited']) == {'name', 'city'}, \
+            'повторное сохранение потеряло отметки'
+
+    async def test_a_rival_write_is_not_clobbered(self, girl, monkeypatch):
+        """⚠⚠ Главный сторож задачи: чужая правка переживает нашу.
+
+        «Кто-то ещё» правит описание ровно в ту щель, когда наш снимок уже на
+        руках, а запись ещё не ушла. Наш город обязан лечь, его описание —
+        остаться.
+        """
+        from src.dating import profile_card as mod
+        from src.dating.json_column import json_column_load
+
+        login = _login()
+        await profile_card_save(girl, {'login': login, 'city': 'Kyiv'})
+
+        real_read = mod._card_read
+        been = []
+
+        async def read_then_rival(profile_id):
+            row = await real_read(profile_id)
+            # Один раз: пока снимок на руках, строку правит кто-то ещё.
+            if not been:
+                been.append(1)
+                async with mysql_get_db_async() as db:
+                    await db.execute(
+                        "UPDATE profile"
+                        " SET profile = JSON_SET(profile, '$.about', %s)"
+                        " WHERE id = %s", ('чужая правка', int(profile_id)))
+                    await db.connection.commit()
+
+            return row
+
+        monkeypatch.setattr(mod, '_card_read', read_then_rival)
+
+        await profile_card_save(girl, {'login': login, 'city': 'Lviv'})
+
+        card = json_column_load((await _row(girl))['profile'])
+        assert card['city'] == 'Lviv', 'наша правка не легла'
+        assert card['about'] == 'чужая правка', \
+            'чужая правка затёрта — гонка не закрыта'
+
+    async def test_losing_every_try_refuses_with_words(self, girl, monkeypatch):
+        """⚠ Цикл обязан кончаться, и кончаться словами для человека.
+
+        Если строку правят в каждую щель, попытки исчерпываются — и отказ должен
+        быть предложением, которое человек поймёт, а не молчаливым проигрышем и
+        не вечным кругом.
+        """
+        from src.dating import profile_card as mod
+
+        login = _login()
+        real_read = mod._card_read
+        been = []
+
+        async def read_then_rival(profile_id):
+            row = await real_read(profile_id)
+            been.append(1)
+            async with mysql_get_db_async() as db:
+                await db.execute(
+                    "UPDATE profile"
+                    " SET profile = JSON_SET(profile, '$.about', %s)"
+                    " WHERE id = %s", (f'чужая правка {len(been)}', int(profile_id)))
+                await db.connection.commit()
+
+            return row
+
+        monkeypatch.setattr(mod, '_card_read', read_then_rival)
+
+        with pytest.raises(ValueError) as refusal:
+            await profile_card_save(girl, {'login': login, 'city': 'Lviv'})
+
+        assert 'правил' in str(refusal.value), str(refusal.value)
+        assert len(been) == mod.PROFILE_CARD_TRIES, \
+            'число попыток разошлось с PROFILE_CARD_TRIES'
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `pytest tests/test_profile_card_edit.py::TestRace -v`
+
+Expected: `test_open_and_save_unchanged_is_not_a_conflict` **проходит** (нынешний
+безусловный `UPDATE` его не нарушает), а два других падают — `AttributeError:
+module 'src.dating.profile_card' has no attribute '_card_read'`.
+
+⚠ Это и есть ожидаемое красное: двери `_card_read` ещё нет, патчить нечего.
+
+- [ ] **Step 3: Split `profile_card_save` into three doors**
+
+В `src/dating/profile_card.py` замени **только** тело и докстринг
+`profile_card_save` на нижеследующее и добавь три помощника рядом. Всё прочее в
+модуле (`PROFILE_CARD_FIELDS`, `PROFILE_CARD_EMPTY`, `profile_card_edited`,
+`profile_card_keep`, `profile_card_forget`, `profile_card_why`, `_same`) **не
+трогай**.
+
+Постоянную положи рядом с `PROFILE_CARD_KEY_LOGIN`/`PROFILE_CARD_KEY_UID`:
+
+```python
+# Сколько раз пробуем записать правку, если строку успели увести из-под нас.
+#
+# ⚠ Две, а не «до победы». Третья попытка значила бы, что по анкете идёт поток
+# записей, которого у правки руками не бывает, — и цикл крутился бы молча, держа
+# соединение. Две попытки закрывают единственный правдоподобный случай: человек и
+# круг (или двое людей) сошлись на одной анкете в одну секунду.
+PROFILE_CARD_TRIES = 2
+```
+
+`profile_card_save` целиком:
+
+```python
+async def profile_card_save(profile_id: int, values: dict) -> dict:
+    """Записать правку руками: карточка, две колонки и отметки одним заходом.
+
+    Args:
+        profile_id: наш номер анкеты.
+        values: что пришло из окна. `login` — почта; остальные ключи — имена из
+            `PROFILE_CARD_FIELDS`. Отсутствующий ключ значит «не трогать».
+
+    Returns:
+        dict: `login`, `card` и `edited` — что в итоге легло.
+
+    Raises:
+        LookupError: анкеты с таким номером нет.
+        ValueError: почта или номер на сайте уже заняты; либо строку правили
+            одновременно с нами и попытки исчерпались — причина словами.
+
+    ## ⚠⚠ Номер уезжает в оба написания
+
+    Колонка `profile_id` и ключ `id` карточки держат одну и ту же величину, и
+    читают их разные места: ключ фактов агента — колонку (`agent_site_uid`),
+    сведение переписки из панели и ссылка на сайт — карточку. Пишем их **одним
+    `UPDATE`**: разойдясь, они не уронят ни одной проверки — половина кода просто
+    увидит номер, а половина пустоту.
+
+    ## ⚠⚠ Метится изменённое, а не присланное
+
+    Поле попадает в отметки, только если значение разошлось с тем, что лежит.
+    Иначе человек, открывший окно поглядеть и нажавший «Сохранить», заморозил бы
+    все пять полей разом — и сайт больше не обновил бы ни одного.
+
+    ⚠ Стирание при этом — правка: вписанное пустым значит «неправда, не знаем», и
+    без отметки импорт вернул бы убранное.
+
+    ⚠ Совпало с тем, что лежит, — отметка **не ставится и не снимается**. Снять её
+    можно только «вернуть сайту» (`profile_card_forget`): это решение человека, и
+    угадывать его по совпадению значений нельзя — девушку могли переименовать в то
+    же самое.
+
+    ## ⚠⚠ Почему запись идёт попытками, а не одним `UPDATE`
+
+    Чтение строки и запись — два обращения к базе, и между ними карточка собирается
+    в памяти. Безусловный `UPDATE` в конце уносил бы **всю** карточку и весь список
+    отметок, записанные в эту щель кем-то ещё: двое, правящие разные поля одной
+    анкеты в одну секунду, теряли одну правку целиком, молча.
+
+    Закрыто условным `UPDATE` со сверкой снимка (`_card_claim`) — тем же приёмом,
+    которым заперта отправка инвайта (`invite_send._claim`), и по той же причине:
+    транзакций в проекте нет вовсе, а пул идёт с `autocommit = True`.
+    """
+    for _ in range(PROFILE_CARD_TRIES):
+        row = await _card_read(profile_id)
+        login, card, marks = _card_apply(row, values)
+
+        try:
+            if await _card_claim(profile_id, row, login, card, marks):
+                return {'login': login, 'card': card, 'edited': marks}
+        except Exception as error:
+            raise ValueError(
+                profile_card_why(error, login, str(card.get('id') or ''))) from error
+
+    raise ValueError('анкету правил кто-то ещё — откройте окно заново и повторите')
+
+
+async def _card_read(profile_id: int) -> dict:
+    """Строка анкеты: прежние значения и снимок столбцов для сверки.
+
+    Raises:
+        LookupError: анкеты нет. Правка несуществующей — ошибка вызывающего.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT login, profile, profile_edited FROM profile '
+                         ' WHERE id = %s', (int(profile_id),))
+        row = await db.fetchone()
+
+    if not row:
+        raise LookupError(f'анкеты #{int(profile_id)} нет')
+
+    return dict(row)
+
+
+def _card_apply(row: dict, values: dict) -> tuple[str, dict, list[str]]:
+    """Что должно лечь: почта, карточка и отметки. Чистая — базы не касается.
+
+    Отдельной функцией, потому что решение «что считать правкой» хочется читать и
+    проверять без базы, а попытка записи может повториться — считать то же самое
+    дважды внутри цикла незачем, но и прятать это в запрос нельзя.
+    """
+    before = json_column_load(row.get('profile'))
+    card = dict(before)
+    edited = set(profile_card_edited(row.get('profile_edited')))
+
+    for field in PROFILE_CARD_FIELDS:
+        if field not in values:
+            continue
+
+        if _same(field, before.get(field), values[field]):
+            continue
+
+        card[field] = values[field]
+        edited.add(field)
+
+    login = str(values.get('login') or '').strip() or str(row.get('login') or '')
+
+    return login, card, profile_card_edited(sorted(edited))
+
+
+async def _card_claim(profile_id: int, row: dict, login: str, card: dict,
+                      marks: list) -> bool:
+    """Записать, если строку не увели из-под нас.
+
+    Args:
+        profile_id: наш номер анкеты.
+        row: снимок, с которым считали — нужны его `profile` и `profile_edited`.
+        login: почта, которая должна лечь.
+        card: карточка, которая должна лечь.
+        marks: отметки, которые должны лечь.
+
+    Returns:
+        bool: `True` — легло либо класть было нечего; `False` — снимок устарел,
+        строку правил кто-то ещё.
+
+    ⚠ Пусто в номере ложится `NULL`, а не `''`: уникальный ключ считает пустые
+    строки одинаковыми, а `NULL`-ы — разными, и второй анкеты без номера не
+    завелось бы. То же правило у пустых отметок.
+
+    ## ⚠⚠ Ноль изменённых строк значит две разные вещи
+
+    `rowcount` у MySQL — число **изменённых** строк, а не совпавших. Ноль приходит
+    и когда условие в `WHERE` не сошлось (строку увели), и когда мы записали ровно
+    то, что в строке и лежало (менять было нечего). Второе — это «человек открыл
+    окно и сохранил, не правя», то есть обычнейшее действие; прими мы ноль за
+    проигранную гонку, оно отвечало бы отказом «вас опередили».
+
+    Различает их повторное чтение, и делается оно **только при нуле** — то есть
+    почти никогда.
+    """
+    uid = str(card.get('id') or '').strip() or None
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'UPDATE profile SET login = %s, profile_id = %s, profile = %s, '
+            '       profile_edited = %s '
+            ' WHERE id = %s AND profile <=> %s AND profile_edited <=> %s',
+            (login, uid, json.dumps(card, ensure_ascii=False),
+             json.dumps(marks) if marks else None, int(profile_id),
+             row.get('profile'), row.get('profile_edited')))
+        written = int(db.rowcount or 0)
+        await db.connection.commit()
+
+        if written:
+            return True
+
+        await db.execute('SELECT profile, profile_edited FROM profile '
+                         ' WHERE id = %s', (int(profile_id),))
+        now = dict(await db.fetchone() or {})
+
+    return (now.get('profile') == row.get('profile')
+            and now.get('profile_edited') == row.get('profile_edited'))
+```
+
+⚠ Сверь, что `json` и `json_column_load` уже импортированы в модуле от задачи 3 —
+новых импортов тут не нужно.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `pytest tests/test_profile_card_edit.py -v`
+Expected: PASS — 26 passed (23 прежних + 3 новых).
+
+- [ ] **Step 5: Prove the race test actually guards the race**
+
+⚠⚠ Это обязательный шаг, а не проверка для спокойствия. Тест гонки легко написать
+так, что он зелен и при незакрытой гонке, — и тогда он хуже отсутствующего.
+
+Убери **временно** сверку снимка из `_card_claim`: в `WHERE` оставь только
+`id = %s`, выбросив `AND profile <=> %s AND profile_edited <=> %s` и два
+соответствующих довода.
+
+Run: `pytest tests/test_profile_card_edit.py::TestRace -v`
+Expected: `test_a_rival_write_is_not_clobbered` **падает** на
+`'чужая правка затёрта — гонка не закрыта'`.
+
+Верни сверку на место и прогони снова — должно стать зелёным. **Вывод обоих
+прогонов положи в отчёт**: он и есть доказательство, что сторож сторожит.
+
+- [ ] **Step 6: Run the group**
+
+Run: `pytest -m profile -q`
+Expected: PASS — 729 passed (726 на момент старта задачи + 3 новых).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/dating/profile_card.py tests/test_profile_card_edit.py
+git commit -m "Анкета: правка не затирает чужую — условный UPDATE со сверкой снимка
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```

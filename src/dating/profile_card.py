@@ -92,6 +92,14 @@ def profile_card_keep(fresh: dict, edited) -> dict:
 PROFILE_CARD_KEY_LOGIN = 'uk_dating_profile_site_login'
 PROFILE_CARD_KEY_UID = 'uk_dating_profile_site_uid'
 
+# Сколько раз пробуем записать правку, если строку успели увести из-под нас.
+#
+# ⚠ Две, а не «до победы». Третья попытка значила бы, что по анкете идёт поток
+# записей, которого у правки руками не бывает, — и цикл крутился бы молча, держа
+# соединение. Две попытки закрывают единственный правдоподобный случай: человек и
+# круг (или двое людей) сошлись на одной анкете в одну секунду.
+PROFILE_CARD_TRIES = 2
+
 
 async def profile_card_save(profile_id: int, values: dict) -> dict:
     """Записать правку руками: карточка, две колонки и отметки одним заходом.
@@ -106,7 +114,8 @@ async def profile_card_save(profile_id: int, values: dict) -> dict:
 
     Raises:
         LookupError: анкеты с таким номером нет.
-        ValueError: почта или номер на сайте уже заняты — причина словами.
+        ValueError: почта или номер на сайте уже заняты; либо строку правили
+            одновременно с нами и попытки исчерпались — причина словами.
 
     ## ⚠⚠ Номер уезжает в оба написания
 
@@ -129,6 +138,37 @@ async def profile_card_save(profile_id: int, values: dict) -> dict:
     можно только «вернуть сайту» (`profile_card_forget`): это решение человека, и
     угадывать его по совпадению значений нельзя — девушку могли переименовать в то
     же самое.
+
+    ## ⚠⚠ Почему запись идёт попытками, а не одним `UPDATE`
+
+    Чтение строки и запись — два обращения к базе, и между ними карточка собирается
+    в памяти. Безусловный `UPDATE` в конце уносил бы **всю** карточку и весь список
+    отметок, записанные в эту щель кем-то ещё: двое, правящие разные поля одной
+    анкеты в одну секунду, теряли одну правку целиком, молча.
+
+    Закрыто условным `UPDATE` со сверкой снимка (`_card_claim`) — тем же приёмом,
+    которым заперта отправка инвайта (`invite_send._claim`), и по той же причине:
+    транзакций в проекте нет вовсе, а пул идёт с `autocommit = True`.
+    """
+    for _ in range(PROFILE_CARD_TRIES):
+        row = await _card_read(profile_id)
+        login, card, marks = _card_apply(row, values)
+
+        try:
+            if await _card_claim(profile_id, row, login, card, marks):
+                return {'login': login, 'card': card, 'edited': marks}
+        except Exception as error:
+            raise ValueError(
+                profile_card_why(error, login, str(card.get('id') or ''))) from error
+
+    raise ValueError('анкету правил кто-то ещё — откройте окно заново и повторите')
+
+
+async def _card_read(profile_id: int) -> dict:
+    """Строка анкеты: прежние значения и снимок столбцов для сверки.
+
+    Raises:
+        LookupError: анкеты нет. Правка несуществующей — ошибка вызывающего.
     """
     async with mysql_get_db_async() as db:
         await db.execute('SELECT login, profile, profile_edited FROM profile '
@@ -138,9 +178,19 @@ async def profile_card_save(profile_id: int, values: dict) -> dict:
     if not row:
         raise LookupError(f'анкеты #{int(profile_id)} нет')
 
-    before = json_column_load(row['profile'])
+    return dict(row)
+
+
+def _card_apply(row: dict, values: dict) -> tuple[str, dict, list[str]]:
+    """Что должно лечь: почта, карточка и отметки. Чистая — базы не касается.
+
+    Отдельной функцией, потому что решение «что считать правкой» хочется читать и
+    проверять без базы, а попытка записи может повториться — считать то же самое
+    дважды внутри цикла незачем, но и прятать это в запрос нельзя.
+    """
+    before = json_column_load(row.get('profile'))
     card = dict(before)
-    edited = set(profile_card_edited(row['profile_edited']))
+    edited = set(profile_card_edited(row.get('profile_edited')))
 
     for field in PROFILE_CARD_FIELDS:
         if field not in values:
@@ -152,24 +202,75 @@ async def profile_card_save(profile_id: int, values: dict) -> dict:
         card[field] = values[field]
         edited.add(field)
 
-    login = str(values.get('login') or '').strip() or str(row['login'] or '')
-    # ⚠ Пусто ложится `NULL`, а не `''`: уникальный ключ считает пустые строки
-    # одинаковыми, а `NULL`-ы — разными, и второй анкеты без номера не было бы.
+    login = str(values.get('login') or '').strip() or str(row.get('login') or '')
+
+    return login, card, profile_card_edited(sorted(edited))
+
+
+async def _card_claim(profile_id: int, row: dict, login: str, card: dict,
+                      marks: list) -> bool:
+    """Записать, если строку не увели из-под нас.
+
+    Args:
+        profile_id: наш номер анкеты.
+        row: снимок, с которым считали — нужны его `profile` и `profile_edited`.
+        login: почта, которая должна лечь.
+        card: карточка, которая должна лечь.
+        marks: отметки, которые должны лечь.
+
+    Returns:
+        bool: `True` — легло либо класть было нечего; `False` — снимок устарел,
+        строку правил кто-то ещё.
+
+    ⚠ Пусто в номере ложится `NULL`, а не `''`: уникальный ключ считает пустые
+    строки одинаковыми, а `NULL`-ы — разными, и второй анкеты без номера не
+    завелось бы. То же правило у пустых отметок.
+
+    ## ⚠⚠ Ноль изменённых строк значит две разные вещи
+
+    `rowcount` у MySQL — число **изменённых** строк, а не совпавших. Ноль приходит
+    и когда условие в `WHERE` не сошлось (строку увели), и когда мы записали ровно
+    то, что в строке и лежало (менять было нечего). Второе — это «человек открыл
+    окно и сохранил, не правя», то есть обычнейшее действие; прими мы ноль за
+    проигранную гонку, оно отвечало бы отказом «вас опередили».
+
+    Различает их повторное чтение, и делается оно **только при нуле** — то есть
+    почти никогда.
+
+    ## ⚠⚠ Сверка — `CAST(%s AS JSON)`, а не голый `%s`
+
+    Проверено прямым запросом: `profile <=> %s`, где `%s` — связанный параметр со
+    строкой, прочитанной тем же запросом секунду назад из той же колонки, **не
+    совпадает никогда** (`rowcount` неизменно 0, даже когда строку никто не
+    трогал) — MySQL сравнивает JSON-колонку со связанным параметром не как JSON, а
+    драйвер не приводит его к нужному типу сам. `CAST(%s AS JSON)` заставляет
+    сравнение идти по значению, а не по байтам параметра, и воспроизводимо даёт
+    `rowcount = 1` на совпавшем снимке и `0` на устаревшем — проверено той же
+    парой запросов на временной таблице до того, как лечь в код.
+    """
     uid = str(card.get('id') or '').strip() or None
-    marks = profile_card_edited(sorted(edited))
 
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                'UPDATE profile SET login = %s, profile_id = %s, profile = %s, '
-                '       profile_edited = %s WHERE id = %s',
-                (login, uid, json.dumps(card, ensure_ascii=False),
-                 json.dumps(marks) if marks else None, int(profile_id)))
-            await db.connection.commit()
-    except Exception as error:
-        raise ValueError(profile_card_why(error, login, str(uid or ''))) from error
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'UPDATE profile SET login = %s, profile_id = %s, profile = %s, '
+            '       profile_edited = %s '
+            ' WHERE id = %s AND profile <=> CAST(%s AS JSON) '
+            '       AND profile_edited <=> CAST(%s AS JSON)',
+            (login, uid, json.dumps(card, ensure_ascii=False),
+             json.dumps(marks) if marks else None, int(profile_id),
+             row.get('profile'), row.get('profile_edited')))
+        written = int(db.rowcount or 0)
+        await db.connection.commit()
 
-    return {'login': login, 'card': card, 'edited': marks}
+        if written:
+            return True
+
+        await db.execute('SELECT profile, profile_edited FROM profile '
+                         ' WHERE id = %s', (int(profile_id),))
+        now = dict(await db.fetchone() or {})
+
+    return (now.get('profile') == row.get('profile')
+            and now.get('profile_edited') == row.get('profile_edited'))
 
 
 async def profile_card_forget(profile_id: int, field: str) -> list[str]:
