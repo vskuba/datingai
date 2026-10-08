@@ -1525,7 +1525,7 @@ from src.dating.profile_card import profile_card_edited
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `pytest tests/test_profile_card_edit.py -v`
-Expected: PASS (все, 37 passed).
+Expected: PASS (все, 40 passed).
 
 Run: `pytest -m profile -q`
 Expected: PASS — ничего из соседнего не покраснело.
@@ -1621,7 +1621,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `src/dating/import_.py:137-182` (`import_plan`)
-- Modify: `src/uvicorn/routers/dating/import_.py:260-272` (`_profiles_known` — отдать отметки)
+- Modify: `src/uvicorn/routers/dating/import_.py:260-272` (`_profiles_index` — отдать отметки)
 - Modify: `src/dating/profile_page.py:40-131` (`_profile_save` сливает, а не заменяет)
 - Test: `tests/test_profile_card_edit.py` (дописать)
 
@@ -1773,7 +1773,7 @@ from src.dating.profile_card import profile_card_edited, profile_card_keep
 
 - [ ] **Step 4: Teach the import router to pass the marks**
 
-В `src/uvicorn/routers/dating/import_.py`, в функции `_profiles_known` (строка ~260):
+В `src/uvicorn/routers/dating/import_.py`, в функции `_profiles_index` (строка ~260):
 добавь `profile_edited` в список колонок запроса и в собираемую запись:
 
 ```python
@@ -1862,7 +1862,7 @@ async def _profile_save(profile_id: int, profile: dict) -> dict:
 - [ ] **Step 6: Run test to verify it passes**
 
 Run: `pytest tests/test_profile_card_edit.py -v`
-Expected: PASS (все, 42 passed).
+Expected: PASS (все, 45 passed).
 
 Run: `pytest -m profile -q && pytest -m chat -q`
 Expected: PASS — импорт и вход никого не задели.
