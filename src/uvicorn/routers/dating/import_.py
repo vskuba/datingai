@@ -257,14 +257,20 @@ async def _profiles_index(site_id: int) -> tuple[dict, dict]:
     Почему сперва ищут по номеру — в шапке `import.py`.
     """
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT id, login, profile FROM profile WHERE site_id = %s',
-                         (int(site_id),))
+        await db.execute(
+            'SELECT id, login, profile, profile_edited FROM profile '
+            ' WHERE site_id = %s', (int(site_id),))
         rows = await db.fetchall()
 
     by_uid, by_login = {}, {}
     for row in rows or []:
         card = json_column_load(row.get('profile'))
-        item = {'id': int(row['id']), 'login': str(row.get('login') or ''), 'card': card}
+        item = {'id': int(row['id']), 'login': str(row.get('login') or ''),
+                'card': card,
+                # ⚠ Отметки «правлено руками» — `import_plan`, иначе он затрёт
+                # правку человека. Колонка, а не ключ карточки: карточку
+                # перезаписывают целиком.
+                'edited': row.get('profile_edited')}
         by_login[item['login']] = item
         site_uid = str(card.get('id') or '')
         if site_uid:

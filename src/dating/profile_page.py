@@ -20,6 +20,8 @@ import json
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.json_column import json_column_load
+from src.dating.profile_card import profile_card_keep
 from src.dating.scenario import scenario_find
 
 from src.dating.role import ROLE_DEFAULT, role_scenario
@@ -76,9 +78,12 @@ async def profile_page_read(profile: dict, presence: dict, session_id: str,
     if not card.get('name'):
         return {'ok': False, 'profile': card, 'error': 'сценарий анкеты не вернул имя'}
 
-    await _profile_save(int(profile['id']), card)
+    # ⚠ Наверх уходит карточка, **как она легла**, а не как её собрал сценарий:
+    # правленые руками поля в ней остались прежними, и журнал обязан назвать то,
+    # что теперь лежит в базе, а не то, что отдал сайт.
+    stored = await _profile_save(int(profile['id']), card)
 
-    return {'ok': True, 'profile': card, 'error': ''}
+    return {'ok': True, 'profile': stored or card, 'error': ''}
 
 
 def _profile_build(extract: dict, profile: dict, presence: dict) -> dict:
@@ -121,12 +126,51 @@ def _photo_full(photo: str, presence: dict) -> str:
     return str(presence.get('base', '')).rstrip('/') + '/' + photo.lstrip('/')
 
 
-async def _profile_save(profile_id: int, profile: dict) -> None:
-    """Кладёт анкету. Не роняет вход: сессия уже открыта, и терять её незачем."""
+async def _profile_save(profile_id: int, profile: dict) -> dict:
+    """Кладёт анкету, не затирая правленого руками. Не роняет вход.
+
+    Args:
+        profile_id: наш номер анкеты.
+        profile: карточка, собранная из `extract` сценария.
+
+    Returns:
+        dict: карточка, как она **легла** — она же идёт в журнал и наверх. Пустой
+        словарь значит «записать не удалось»; вход из-за этого не падает: сессия
+        уже открыта, и терять её незачем.
+
+    ## ⚠⚠ Почему слияние, а не замена
+
+    Прежде здесь стоял один `UPDATE profile SET profile = %s` — то есть замена
+    карточки целиком. С появлением правки руками это стало затиранием: человек
+    вписывает описание анкете, у которой сайт его не отдал, и следующий вход
+    уносит вписанное.
+
+    ⚠ Случай не редкий, а ровно тот, ради которого правка и заводилась: чтение
+    карточки заходит **только при пустой карточке**, а признак пустоты — **имя**
+    (`login._card_empty`). Анкета, где впишут описание, но не впишут имя, попадает
+    сюда при каждом входе.
+
+    ## ⚠ Отметки читаются здесь, а не приезжают доводом
+
+    Словарь анкеты собирают шесть разных запросов, и половина перечисляет колонки
+    поимённо (`agent_site_uid` объясняет, чем это уже стоило). Спроси мы отметки у
+    вызывающего — забытая колонка в одном из запросов тихо вернула бы затирание.
+    Лишний `SELECT` случается не чаще раза на вход.
+    """
     try:
         async with mysql_get_db_async() as db:
+            await db.execute('SELECT profile, profile_edited FROM profile '
+                             ' WHERE id = %s', (int(profile_id),))
+            row = dict(await db.fetchone() or {})
+            before = json_column_load(row.get('profile'))
+            card = {**before, **profile_card_keep(profile, row.get('profile_edited'))}
+
             await db.execute('UPDATE profile SET profile = %s WHERE id = %s',
-                             (json.dumps(profile, ensure_ascii=False), int(profile_id)))
+                             (json.dumps(card, ensure_ascii=False), int(profile_id)))
             await db.connection.commit()
+
+        return card
     except Exception as e:
         logger_info(f'[dating] анкета не записалась: {e}')
+
+        return {}

@@ -37,6 +37,8 @@
 
 from datetime import datetime
 
+from src.dating.profile_card import profile_card_edited, profile_card_keep
+
 # Год, раньше которого рождения не бывает: страница отдаёт год строкой, и мусор
 # вроде «—» или «0» превратился бы в возраст в две тысячи лет.
 IMPORT_YEAR_MIN = 1930
@@ -146,7 +148,9 @@ def import_plan(row: dict, found: dict | None, base: str) -> dict:
 
     Args:
         row: разобранная запись — из списка либо дополненная карточкой.
-        found: наша учётка, если нашлась (`import_match`).
+        found: наша учётка, если нашлась: `id`, `login`, `card` и `edited` —
+            значение колонки `profile_edited`. ⚠ Ключа нет — отметок нет,
+            прежнее поведение.
         base: адрес сайта — им достраиваются относительные пути фотографий.
 
     Returns:
@@ -166,8 +170,12 @@ def import_plan(row: dict, found: dict | None, base: str) -> dict:
     # Сравниваем с тем, что уже лежит в кэше анкеты, а не с колонками учётки:
     # именно `profile` импорт и переписывает.
     before = dict(found.get('card') or {})
+    # ⚠⚠ Правленое руками импорт не трогает — ни в карточке, ни в отчёте. Правило
+    # одно на два писателя (`profile_card.py`): второй — чтение анкеты со
+    # страницы кабинета. Своя копия здесь разошлась бы с ним на первой правке.
+    edited = set(profile_card_edited(found.get('edited')))
     changed = [name for name in IMPORT_CARD_FIELDS
-               if _changed(before.get(name), card.get(name))]
+               if name not in edited and _changed(before.get(name), card.get(name))]
 
     # **Поверх кладём только непустое.** Иначе импорт без карточек стирал бы город
     # и описание, дочитанные импортом с карточками: список их не отдаёт вовсе, и
@@ -175,6 +183,10 @@ def import_plan(row: dict, found: dict | None, base: str) -> dict:
     # изменением, и `same` такую анкету не тронет; но стоит смениться имени, и тот
     # же прогон унёс бы вместе с ним всё, чего не было в списке.
     fresh = {name: value for name, value in card.items() if value not in (None, '', 0)}
+    # ⚠ Номер (`id`) в `IMPORT_CARD_FIELDS` не входит и в `changed` не попадал
+    # никогда — а в карточку импорт его всё равно кладёт. Отметка защищает и его:
+    # отсев идёт по `fresh`, а не по `changed`.
+    fresh = profile_card_keep(fresh, sorted(edited))
 
     return {'action': 'update' if changed else 'same',
             'login': str(found.get('login') or login),

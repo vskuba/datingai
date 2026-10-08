@@ -335,7 +335,9 @@ async def profile_card_put(profile_id: int, data: DatingProfileCard,
 
     Raises:
         HTTPException: 404 — анкеты нет; 409 — почта или номер заняты на этом
-            сайте; 422 — границы полей (их считает сама модель).
+            сайте, либо строку правили одновременно с нами и попытки
+            (`PROFILE_CARD_TRIES`) исчерпались; 422 — границы полей (их считает
+            сама модель).
     """
     await profile_row(profile_id)
 

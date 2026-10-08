@@ -506,3 +506,85 @@ class TestEndpoint:
             await profile_card_drop(99_999_999, 'about', user=None)
 
         assert refusal.value.status_code == 404
+
+
+from src.dating.import_ import import_plan
+
+
+class TestImportRespectsHand:
+    """⚠ Импорт — первый из двух писателей со стороны сайта."""
+
+    def test_edited_field_is_not_overwritten(self):
+        """Правленое описание переживает импорт, остальное обновляется."""
+        found = {'id': 1, 'login': 'a@example.com',
+                 'card': {'id': '77', 'name': 'Olga', 'about': 'мой текст'},
+                 'edited': ['about']}
+        row = {'site_uid': '77', 'name': 'Olga Petrova', 'about': 'с сайта',
+               'city': 'Kyiv'}
+
+        plan = import_plan(row, found, 'https://site.example')
+
+        assert plan['card']['about'] == 'мой текст', 'импорт затёр ручную правку'
+        assert plan['card']['name'] == 'Olga Petrova', 'неправленое обновляться должно'
+
+    def test_edited_field_is_not_reported_as_changed(self):
+        """⚠ Иначе импорт докладывал бы «Обновлена Olga: about», ничего не обновив."""
+        found = {'id': 1, 'login': 'a@example.com',
+                 'card': {'id': '77', 'name': 'Olga', 'about': 'мой текст'},
+                 'edited': ['about']}
+        row = {'site_uid': '77', 'name': 'Olga', 'about': 'с сайта'}
+
+        plan = import_plan(row, found, 'https://site.example')
+
+        assert 'about' not in plan['changed']
+        assert plan['action'] == 'same', 'единственная «перемена» была правленой'
+
+    def test_edited_uid_survives_too(self):
+        """⚠ Номер в `IMPORT_CARD_FIELDS` не входит и в `changed` не попадал
+        никогда — а в карточку импорт его всё равно кладёт. Отметка защищает и его."""
+        found = {'id': 1, 'login': 'a@example.com',
+                 'card': {'id': '643694', 'name': 'Diana'}, 'edited': ['id']}
+        row = {'site_uid': '999111', 'name': 'Diana'}
+
+        plan = import_plan(row, found, 'https://site.example')
+
+        assert plan['card']['id'] == '643694'
+
+    def test_no_marks_changes_nothing(self):
+        """Анкета без отметок обновляется ровно как прежде."""
+        found = {'id': 1, 'login': 'a@example.com',
+                 'card': {'id': '77', 'about': 'старое'}, 'edited': None}
+        row = {'site_uid': '77', 'about': 'с сайта'}
+
+        plan = import_plan(row, found, 'https://site.example')
+
+        assert plan['card']['about'] == 'с сайта'
+        assert 'about' in plan['changed']
+
+
+class TestCardReadRespectsHand:
+    """⚠⚠ Второй писатель, и без него защита неполная.
+
+    Чтение анкеты со страницы кабинета заходит только при пустой карточке, а
+    признак пустоты — **имя** (`login._card_empty`). То есть у анкеты, где человек
+    впишет описание, но не впишет имя, следующий вход затёр бы описание молча.
+    Такая анкета в базе есть — заведённая импортом без карточки, логин равен
+    номеру.
+    """
+
+    async def test_stored_card_keeps_edited_field(self, girl):
+        from src.dating.json_column import json_column_load
+        from src.dating.profile_page import _profile_save
+
+        await profile_card_save(girl, {'login': _login(), 'about': 'мой текст'})
+
+        stored = await _profile_save(girl, {'id': '77', 'name': 'Olga',
+                                            'about': 'со страницы', 'city': 'Kyiv',
+                                            'age': 30, 'photo': ''})
+
+        row = await _row(girl)
+        assert json_column_load(row['profile'])['about'] == 'мой текст', \
+            'чтение страницы затёрло ручную правку'
+        assert json_column_load(row['profile'])['name'] == 'Olga'
+        assert stored['about'] == 'мой текст', \
+            'вернулась карточка сценария, а не та, что легла'
