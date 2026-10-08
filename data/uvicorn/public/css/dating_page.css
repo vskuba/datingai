@@ -847,24 +847,51 @@
    «у девушки нет фото», и человек идёт заводить папки заново. */
 .gallery-why { margin-top: 4px; font-size: 12px; color: #b91c1c; }
 
-/* Кадр поверх страницы и окно правки — одна подложка на двоих. */
-.gallery-view {
-    position: fixed; inset: 0; z-index: 50; display: flex; cursor: zoom-out;
+/* ── Окна поверх страницы ────────────────────────────────────────────────────
+   Подложка и каркас — **одни на все окна раздела**: кадр галереи, правка снимка,
+   персональные данные анкеты.
+
+   ⚠ Имя общее намеренно. Класс `gallery-view` у окна с почтой и описанием
+   читался бы как ошибка, а вторая такая же подложка рядом разъехалась бы с
+   первой на первой правке фона или `z-index`. */
+.modal-back {
+    position: fixed; inset: 0; z-index: 50; display: flex;
     align-items: center; justify-content: center; background: rgba(15, 23, 42, .82);
 }
-.gallery-view img { max-width: 92vw; max-height: 92vh; object-fit: contain; }
-.gallery-modal { cursor: default; }
-/* ⚠ Окно описания **крупнее соседних**, и это не вкусовщина: в нём правят
-   абзац текста и строку тегов. В 560 пикселях описание шло в шесть строк с
-   прокруткой, а теги не помещались в поле целиком — человек правил вслепую,
-   прокручивая однострочный input. */
-.gallery-card {
-    width: min(860px, 94vw); max-height: 92vh; overflow: auto; padding: 20px;
+.modal-back img { max-width: 92vw; max-height: 92vh; object-fit: contain; }
+/* ⚠ `zoom-out` — только у карусели: щелчок по подложке там и правда уводит из
+   просмотра кадра. У окон правки курсор обычный, и прежний `.gallery-modal
+   { cursor: default }` был оговоркой к общему правилу, которого больше нет. */
+.gallery-carousel { cursor: zoom-out; }
+
+.modal-box {
+    width: min(560px, 94vw); max-height: 92vh; overflow: auto; padding: 20px;
     background: #fff; border-radius: 12px; display: flex; flex-direction: column; gap: 6px;
 }
-.gallery-card-head { font-size: 14px; font-weight: 700; color: #0f172a; }
-.gallery-card label { font-size: 11px; color: #64748b; margin-top: 6px; }
-.gallery-card textarea, .gallery-card input { width: 100%; box-sizing: border-box; }
+.modal-head { font-size: 14px; font-weight: 700; color: #0f172a; }
+.modal-box label { font-size: 11px; color: #64748b; margin-top: 6px; }
+.modal-box textarea, .modal-box input { width: 100%; box-sizing: border-box; }
+.modal-foot {
+    display: flex; align-items: center; justify-content: flex-end;
+    gap: 8px; margin-top: 10px;
+}
+/* Причина отказа — в подвале окна, а не подсказкой в шапке страницы: окно стоит
+   поверх, и подсказку под ним человек не увидит. */
+.modal-why { margin-right: auto; font-size: 12px; color: #b91c1c; }
+
+/* Поле окна: подпись, отметка, поле ввода, пояснение — одной колонкой.
+   ⚠ Цвета и размеры поля ввода заданы прямо, а не унаследованы от подписи:
+   подпись серая и мелкая, и наследование красило бы ввод её цветом. */
+.modal-field { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
+.modal-label { font-size: 11px; color: #64748b; }
+.modal-field input, .modal-field textarea { font-size: 13px; color: #0f172a; }
+.modal-hint { font-size: 11px; color: #94a3b8; line-height: 1.45; font-style: normal; }
+/* ⚠ Жёлтым метится **изменённое поле ключа**, и только пока оно изменено:
+   постоянно горящее предупреждение перестают читать. */
+.modal-hint-warn { color: #92400e; }
+.modal-hint-warn b { color: #b45309; }
+.modal-edited { font-style: normal; color: #b45309; }
+.modal-edited a { color: inherit; }
 
 /* ⚠⚠ Высота — **здесь**, а не атрибутом `rows`. В общем слое
    (`dashboard/css/common.css`) стоит `textarea { height: 60px }`, и оно бьёт
@@ -873,12 +900,26 @@
 
    ⚠ `resize: vertical` возвращает то, что общий слой запретил целиком
    (`resize: none`): здесь правят абзац, и длина у него всякий раз своя. */
+.modal-box #cardAbout { height: 150px; resize: vertical; }
+
+/* ⚠ Окно описания снимка **крупнее соседних**, и это не вкусовщина: в нём правят
+   абзац текста и строку тегов. В 560 пикселях описание шло в шесть строк с
+   прокруткой, а теги не помещались в поле целиком — человек правил вслепую,
+   прокручивая однострочный input. Ширина остаётся его собственной. */
+.gallery-card { width: min(860px, 94vw); }
 .gallery-card #galleryText { height: 170px; resize: vertical; }
 .gallery-card #galleryTags { height: 52px; resize: vertical; }
-.gallery-card-foot {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 8px; margin-top: 10px;
+
+/* Иконка правки в шапке карточки анкеты. ⚠ Прижата вправо и к верху: шапка —
+   флексовая строка с фотографией и тремя строками текста, и по центру иконка
+   встала бы напротив описания, а не напротив имени. */
+.card-edit {
+    margin-left: auto; align-self: flex-start; flex: 0 0 auto;
+    border: 0; background: none; cursor: pointer; padding: 2px 4px;
+    font-size: 14px; color: #94a3b8; line-height: 1;
 }
+.card-edit:hover { color: #4338ca; }
+.card-edit:focus-visible { outline: 2px solid #a5b4fc; outline-offset: 2px; }
 
 /* ── Карусель просмотра кадра ────────────────────────────────────────────────
    Листание фотографий поверх страницы: стрелки по бокам, подпись снизу.

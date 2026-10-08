@@ -89,8 +89,11 @@ def test_styles_live_in_the_shared_sheet(page):
     """Размеры — в общей таблице стилей раздела, а не в разметке."""
     css = CSS_FILE.read_text(encoding='utf-8')
 
+    # ⚠ Подложка и каркас окна зовутся общими именами: их делят кадр галереи,
+    # правка снимка и окно персональных данных анкеты. Своё у галереи осталось
+    # только то, что и правда её — ширина окна и высоты полей.
     for name in ('.gallery-grid', '.gallery-thumb', '.gallery-group',
-                 '.gallery-view', '.gallery-card', '.gallery-why'):
+                 '.modal-back', '.modal-box', '.gallery-card', '.gallery-why'):
         assert name in css, f'{name} нет в общей таблице стилей'
         assert f'{name} {{' not in page, f'{name} описан в разметке, а не в CSS'
 

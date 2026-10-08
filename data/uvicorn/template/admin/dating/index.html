@@ -914,7 +914,10 @@
                 <div class="card-meta">${ident}
                     ${p.age ? ' · ' + p.age : ''}${p.city ? ' · ' + esc(p.city) : ''}</div>
                 <div class="card-meta">${esc(p.about || 'описание профиля сайт не отдал')}</div>
-            </div></div>`;
+            </div>
+            <button type="button" class="card-edit" id="cardEditBtn"
+                    title="Править персональные данные: почту, номер на сайте, имя, возраст, город, описание">✎</button>
+            </div>`;
 
         // ⚠ **Собеседниц здесь больше нет.** Диалоги живут на «Профилях», в окне
         // переписки: тот же список в двух местах расходился в мелочах (порядок,
@@ -1239,7 +1242,7 @@
         if (at < 0) return;
 
         const back = document.createElement('div');
-        back.className = 'gallery-view gallery-carousel';
+        back.className = 'modal-back gallery-carousel';
         back.innerHTML =
             '<button type="button" class="gallery-step prev" aria-label="Предыдущее">‹</button>'
             + '<figure class="gallery-frame"><img alt=""><figcaption></figcaption></figure>'
@@ -1349,9 +1352,9 @@
         if (!file) return;
 
         const back = document.createElement('div');
-        back.className = 'gallery-view gallery-modal';
-        back.innerHTML = '<div class="gallery-card" onclick="event.stopPropagation()">'
-            + `<div class="gallery-card-head">${esc(file.name)}</div>`
+        back.className = 'modal-back';
+        back.innerHTML = '<div class="modal-box gallery-card" onclick="event.stopPropagation()">'
+            + `<div class="modal-head">${esc(file.name)}</div>`
             + (file.described_error
                 ? `<div class="gallery-why">${esc(file.described_error)}</div>` : '')
             + '<label>Что на снимке</label>'
@@ -1366,7 +1369,7 @@
             // своё слово, увидел бы, что правка «не сохранилась». Щелчок по
             // слову добавляет и убирает его из поля.
             + '<div class="gallery-tagbox" id="galleryTagBox"></div>'
-            + '<div class="gallery-card-foot">'
+            + '<div class="modal-foot">'
             + `<span class="gallery-when">${file.edited ? 'правлено человеком'
                 : file.described ? 'разобрано моделью' : 'ещё не разбиралось'}</span>`
             + '<button type="button" class="btn" id="galleryKeep">Сохранить</button>'
@@ -2230,11 +2233,170 @@
         const deleteBtn = document.getElementById('deleteBtn');
         if (deleteBtn) deleteBtn.addEventListener('click', () => profileDelete());
 
+        // ⚠ Вешается каждый раз: карточка перерисовывается фоновым опросом раз в
+        // пятнадцать секунд, и узел всякий раз новый.
+        const edit = document.getElementById('cardEditBtn');
+        if (edit) edit.addEventListener('click', () => cardEditModal());
+
         // Обработчики расписания: блок перерисовывается вместе с настройками,
         // поэтому вешаются каждый раз — узлы новые.
         passwordBind();
         proxyBind();
         scheduleBind(profileEl, row);
+    }
+
+    // ── Окно правки персональных данных ──────────────────────────────────────
+    //
+    // ⚠⚠ Шесть полей лежат в **трёх** разных местах: почта — колонкой `login`,
+    // номер на сайте — колонкой `profile_id` и ключом `id` карточки, остальные
+    // четыре — ключами карточки. Сводит их ручка; страница этого разделения не
+    // знает и знать не должна.
+    //
+    // ⚠⚠ Пояснения под номером и именем — **постоянные**, а не всплывающие по
+    // изменению: это две половины ключа, которым агент помнит эту девушку
+    // (`%girl_id%_%girl_name%`), и прочитать об этом человек должен **до** того,
+    // как начнёт править, а не узнать после. Переход («643694 → 999111») при этом
+    // называется только когда он есть: горящее всегда предупреждение не читают.
+    //
+    // ⚠ Отказ показывается **в подвале окна**, а не `say()` в шапке страницы:
+    // окно стоит поверх, и подсказку под ним человек не увидит. Набранное при
+    // этом остаётся в полях — ему ещё править.
+    function cardEditModal() {
+        const data = cardData || {};
+        const p = data.profile || {};
+        const row = profiles.find(g => g.id === currentId) || {};
+        const edited = new Set(data.edited || []);
+        const wasUid = String(p.id || '');
+        const wasName = String(p.name || '');
+
+        // Подпись поля плюс отметка «правлено руками».
+        // ⚠ Подписи здесь только литералами: пришедшее с сервера идёт через
+        // `esc()` — на этой странице уже была настоящая инъекция через
+        // неэкранированный атрибут.
+        const label = (key, text) => `<span class="modal-label">${text}`
+            + (edited.has(key)
+                ? ' <i class="modal-edited">· правлено руками · '
+                  + `<a href="#" data-forget="${key}">вернуть сайту</a></i>`
+                : '')
+            + '</span>';
+
+        const back = document.createElement('div');
+        back.className = 'modal-back';
+        back.innerHTML = '<div class="modal-box" onclick="event.stopPropagation()">'
+            + '<div class="modal-head">Персональные данные анкеты</div>'
+
+            + '<label class="modal-field">' + label('login', 'Почта')
+            + '<input type="text" id="cardLogin" maxlength="190" spellcheck="false"'
+            + ` autocomplete="off" value="${esc(String(row.login || ''))}">`
+            + '<i class="modal-hint">Ею анкета входит на сайт — пустой быть не может.'
+            + (data.gallery_folder ? ''
+                : ' ⚠ Папка галереи у этой анкеты не выбрана, а значит ищется по'
+                  + ' логину — вместе с почтой уедет и она.')
+            + '</i></label>'
+
+            + '<label class="modal-field">' + label('id', 'ID на сайте')
+            + '<input type="text" id="cardUid" maxlength="32" spellcheck="false"'
+            + ` autocomplete="off" value="${esc(wasUid)}">`
+            + '<i class="modal-hint" id="cardUidWhy"><b data-move></b>Номер анкеты на'
+            + ' сайте. Вместе с именем он — ключ, которым агент помнит эту девушку:'
+            + ' сменив его, вы делаете её незнакомой, и прежние факты останутся за'
+            + ' старым номером. Пусто — «не знаем», это законно.</i></label>'
+
+            + '<label class="modal-field">' + label('name', 'Имя')
+            + `<input type="text" id="cardName" maxlength="190" value="${esc(wasName)}">`
+            + '<i class="modal-hint" id="cardNameWhy"><b data-move></b>Как её зовут в'
+            + ' анкете. Вторая половина того же ключа фактов — она же уходит в'
+            + ' обращение, которым агент зовётся.</i></label>'
+
+            + '<label class="modal-field">' + label('age', 'Возраст')
+            + `<input type="number" id="cardAge" min="0" max="120" value="${esc(String(p.age || 0))}">`
+            + '<i class="modal-hint">0 — «не знаем»: карточка тогда возраст не'
+            + ' показывает вовсе.</i></label>'
+
+            + '<label class="modal-field">' + label('city', 'Город')
+            + `<input type="text" id="cardCity" maxlength="190" value="${esc(String(p.city || ''))}">`
+            + '</label>'
+
+            + '<label class="modal-field">' + label('about', 'Описание')
+            + `<textarea id="cardAbout" maxlength="2000">${esc(String(p.about || ''))}</textarea>`
+            + '<i class="modal-hint">Его читает агент и письма — «О себе».</i></label>'
+
+            + '<div class="modal-foot">'
+            + '<span class="modal-why" id="cardEditWhy"></span>'
+            + '<button type="button" class="dating-btn" id="cardEditOff">Отмена</button>'
+            + '<button type="button" class="dating-btn primary" id="cardEditKeep">Сохранить</button>'
+            + '</div></div>';
+
+        back.addEventListener('click', () => back.remove());
+        document.body.appendChild(back);
+
+        const why = document.getElementById('cardEditWhy');
+
+        // Переход называем словами и только когда он есть.
+        // ⚠ `textContent`, а не склейка разметки: значения набирает человек.
+        const watch = (input, box, before) => {
+            const move = box.querySelector('[data-move]');
+            const paint = () => {
+                const now = input.value.trim();
+                const other = now !== before;
+                box.classList.toggle('modal-hint-warn', other);
+                move.textContent = other
+                    ? `${before || 'пусто'} → ${now || 'пусто'}. ` : '';
+            };
+            input.addEventListener('input', paint);
+        };
+        watch(document.getElementById('cardUid'),
+              document.getElementById('cardUidWhy'), wasUid);
+        watch(document.getElementById('cardName'),
+              document.getElementById('cardNameWhy'), wasName);
+
+        back.querySelectorAll('[data-forget]').forEach(link =>
+            link.addEventListener('click', async event => {
+                event.preventDefault();
+                const was = currentId;
+                try {
+                    await deleteData(
+                        `${BASE}/api/dating/profile/${was}/card/${link.dataset.forget}`);
+                } catch (err) {
+                    why.textContent = 'отметка не снялась: ' + err.message;
+
+                    return;
+                }
+                back.remove();
+                say('поле вернулось сайту — обновит его следующий импорт');
+                if (currentId === was) await profileLoad();
+            }));
+
+        document.getElementById('cardEditOff')
+                .addEventListener('click', () => back.remove());
+
+        document.getElementById('cardEditKeep').addEventListener('click', async () => {
+            const was = currentId;
+            const send = {
+                login: document.getElementById('cardLogin').value.trim(),
+                profile_id: document.getElementById('cardUid').value.trim(),
+                name: document.getElementById('cardName').value.trim(),
+                age: Number(document.getElementById('cardAge').value || 0),
+                city: document.getElementById('cardCity').value.trim(),
+                about: document.getElementById('cardAbout').value,
+            };
+
+            try {
+                await putData(`${BASE}/api/dating/profile/${was}/card`, send);
+            } catch (err) {
+                why.textContent = 'не сохранилось: ' + err.message;
+
+                return;
+            }
+
+            back.remove();
+            say('персональные данные сохранены');
+            // ⚠ Перечитываем **и список, и карточку**: правка меняет строку списка
+            // (почта, имя, возраст, номер) не меньше, чем карточку, а список
+            // приходит своей ручкой. Ответ одной покрыл бы одну из двух.
+            await profilesLoad();
+            if (currentId === was) await profileLoad();
+        });
     }
 
     // Общая обвязка выключателя: запереть, сходить, отпустить, при отказе вернуть
