@@ -2002,10 +2002,14 @@ def test_backdrop_is_shared_not_copied(css, page):
 
 
 def test_gallery_window_uses_the_shared_shell(page):
-    """Окно галереи переехало на общий каркас, а не осталось своим."""
-    assert "className = 'modal-back gallery-modal'" in page \
-        or "'modal-back gallery-modal'" in page, 'окно галереи не на общей подложке'
+    """Окно галереи переехало на общий каркас, а не осталось своим.
+
+    ⚠ Прежнего `gallery-modal` в разметке больше нет намеренно: класс нёс
+    единственную строку `cursor: default`, и она стала умолчанием общей
+    подложки. Имя, за которым не стоит ни одного правила, сторожить нечем.
+    """
     assert 'modal-box gallery-card' in page, 'окно галереи не на общем каркасе'
+    assert 'gallery-modal' not in page, 'мёртвый класс остался в разметке'
 
 
 def test_about_height_is_in_css_not_rows(css):
@@ -2038,7 +2042,10 @@ def test_script_has_no_syntax_error(page):
     # ⚠ Выражения Jinja подменяются заглушкой: `node` их не понимает, а на
     # синтаксис JS они не влияют. Расширение `.mjs`, иначе `node --check` читает
     # файл как обычный скрипт и спотыкается на `import`.
-    source = re.sub(r"\{\{.*?\}\}", "''", body.group(1))
+    # ⚠ Подставляем голое слово, а не пару кавычек: вставки стоят **внутри**
+    # кавычек, и вторая пара поверх первой дала бы четыре кавычки подряд —
+    # ошибку разбора при любой реализации. Так же у соседа (`test_gallery_page.py:117`).
+    source = re.sub(r"\{\{.*?\}\}", 'stub', body.group(1))
     source = re.sub(r"\{#.*?#\}", '', source, flags=re.S)
     source = re.sub(r"\{%.*?%\}", '', source, flags=re.S)
 
