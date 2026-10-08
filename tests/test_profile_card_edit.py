@@ -16,13 +16,33 @@
 довод, что в `test_profile_mail_photo.py`.
 """
 
+import uuid
+
 import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 from src.dating.profile_card import (PROFILE_CARD_FIELDS, profile_card_edited,
-                                     profile_card_keep)
+                                     profile_card_forget, profile_card_keep,
+                                     profile_card_save, profile_card_why)
 
 pytestmark = pytest.mark.profile
+
+STAND_SITE = 999_343
+
+
+def _login() -> str:
+    """Логин тестовой анкеты. ⚠ Домен `@example.com` — метка сюиты, по ней
+    уборка находит мусор, если тест оборвётся на полуслове."""
+    return f'card-{uuid.uuid4().hex[:10]}@example.com'
+
+
+async def _row(profile_id: int) -> dict:
+    """Строка анкеты как она лежит: нужны обе записи номера и отметки."""
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT login, profile_id, profile, profile_edited '
+                         '  FROM profile WHERE id = %s', (profile_id,))
+
+        return dict(await db.fetchone() or {})
 
 
 async def test_column_is_there_and_empty(girl):
@@ -83,3 +103,168 @@ class TestKeepRule:
         assert set(PROFILE_CARD_EMPTY) == set(PROFILE_CARD_FIELDS)
         assert PROFILE_CARD_EMPTY['age'] == 0
         assert PROFILE_CARD_EMPTY['about'] == ''
+
+
+class TestSave:
+    """Запись правки: шесть полей, две колонки, одна карточка."""
+
+    async def test_all_six_fields_are_stored(self, girl):
+        login = _login()
+        got = await profile_card_save(girl, {
+            'login': login, 'id': '643694', 'name': 'Diana', 'age': 29,
+            'city': 'Kyiv', 'about': 'люблю шахматы'})
+
+        assert got['login'] == login
+        assert got['card']['name'] == 'Diana'
+        assert got['card']['age'] == 29
+        assert got['card']['city'] == 'Kyiv'
+        assert got['card']['about'] == 'люблю шахматы'
+
+    async def test_uid_reaches_both_writings(self, girl):
+        """⚠⚠ Главный сторож задачи: номер уезжает **и в колонку, и в ключ**.
+
+        Читают их разные места — ключ фактов агента берёт колонку
+        (`agent_site_uid`), сведение переписки из панели и ссылка на сайт берут
+        ключ карточки. Разойдись они, половина кода увидит номер, а половина
+        пустоту, и ни одна проверка не упадёт.
+        """
+        from src.dating.json_column import json_column_load
+
+        await profile_card_save(girl, {'login': _login(), 'id': '643694'})
+        row = await _row(girl)
+
+        assert row['profile_id'] == '643694', 'номер не лёг в колонку'
+        assert json_column_load(row['profile']).get('id') == '643694', \
+            'номер не лёг в ключ карточки'
+
+    async def test_empty_uid_is_null_not_empty_string(self, girl):
+        """⚠ Уникальный ключ `(site_id, profile_id)` считает пустые строки
+        одинаковыми, а `NULL`-ы — разными: с `''` вторая анкета без номера на том
+        же сайте не сохранилась бы вовсе."""
+        await profile_card_save(girl, {'login': _login(), 'id': ''})
+
+        assert (await _row(girl))['profile_id'] is None
+
+    async def test_two_profiles_may_both_have_no_uid(self, girl_make):
+        """Та же мысль, но проверенная тем, ради чего правило и стоит."""
+        one, two = await girl_make(), await girl_make()
+
+        await profile_card_save(one, {'login': _login(), 'id': ''})
+        await profile_card_save(two, {'login': _login(), 'id': ''})
+
+        assert (await _row(one))['profile_id'] is None
+        assert (await _row(two))['profile_id'] is None
+
+    async def test_changed_fields_are_marked(self, girl):
+        await profile_card_save(girl, {'login': _login(), 'name': 'Diana',
+                                       'about': 'текст'})
+
+        # ⚠ Колонка приезжает из базы строкой JSON, а не списком (так её отдаёт
+        # драйвер — см. `profile_card_edited`), поэтому сравниваем через него.
+        assert set(profile_card_edited((await _row(girl))['profile_edited'])) == \
+            {'name', 'about'}
+
+    async def test_unchanged_save_marks_nothing(self, girl):
+        """⚠⚠ Метится изменённое, а не присланное.
+
+        Иначе человек, открывший окно поглядеть и нажавший «Сохранить», заморозил
+        бы все пять полей разом — и сайт больше не обновил бы ни одного, без
+        единого признака того, что произошло.
+        """
+        await profile_card_save(girl, {'login': _login(), 'name': 'Diana'})
+        before = await _row(girl)
+
+        # Второй раз — ровно то же, что лежит: так выглядит «открыл и сохранил».
+        await profile_card_save(girl, {'login': before['login'], 'name': 'Diana',
+                                       'age': 0, 'city': '', 'about': '', 'id': ''})
+
+        assert profile_card_edited((await _row(girl))['profile_edited']) == ['name'], \
+            'сохранение без изменений пометило лишние поля'
+
+    async def test_clearing_is_a_change(self, girl):
+        """⚠ Стирание — тоже правка: вписанное пустым значит «неправда, не знаем».
+
+        Без отметки импорт вернул бы то, что человек только что убрал.
+        """
+        login = _login()
+        await profile_card_save(girl, {'login': login, 'about': 'текст'})
+        await profile_card_save(girl, {'login': login, 'about': ''})
+
+        row = await _row(girl)
+        assert 'about' in profile_card_edited(row['profile_edited'])
+
+    async def test_duplicate_login_says_why(self, girl_make):
+        one, two = await girl_make(), await girl_make()
+        taken = _login()
+        await profile_card_save(one, {'login': taken})
+
+        with pytest.raises(ValueError) as refusal:
+            await profile_card_save(two, {'login': taken})
+
+        assert 'уже заведена' in str(refusal.value), str(refusal.value)
+
+    async def test_duplicate_uid_says_which(self, girl_make):
+        """⚠ Два уникальных ключа, и путать их нельзя: «почта занята» вместо
+        «номер занят» отправляет человека править не то поле."""
+        one, two = await girl_make(), await girl_make()
+        await profile_card_save(one, {'login': _login(), 'id': '643694'})
+
+        with pytest.raises(ValueError) as refusal:
+            await profile_card_save(two, {'login': _login(), 'id': '643694'})
+
+        assert '643694' in str(refusal.value)
+        assert 'другой анкеты' in str(refusal.value), str(refusal.value)
+
+    async def test_unknown_profile_is_lookup_error(self):
+        with pytest.raises(LookupError):
+            await profile_card_save(99_999_999, {'login': _login()})
+
+
+class TestForget:
+    """«Вернуть сайту»: отметка снимается, значение остаётся."""
+
+    async def test_mark_goes_value_stays(self, girl):
+        """⚠ Стереть значение значило бы выбросить то, что человек видел в поле.
+        Обновит его следующий импорт, когда сайт отдаст своё."""
+        from src.dating.json_column import json_column_load
+
+        await profile_card_save(girl, {'login': _login(), 'about': 'мой текст'})
+
+        left = await profile_card_forget(girl, 'about')
+
+        row = await _row(girl)
+        assert left == []
+        assert row['profile_edited'] is None, 'пустые отметки обязаны лечь NULL'
+        assert json_column_load(row['profile']).get('about') == 'мой текст'
+
+    async def test_other_marks_survive(self, girl):
+        await profile_card_save(girl, {'login': _login(), 'about': 'текст',
+                                       'name': 'Diana'})
+
+        assert await profile_card_forget(girl, 'about') == ['name']
+
+    async def test_unknown_field_is_refused(self, girl):
+        with pytest.raises(ValueError):
+            await profile_card_forget(girl, 'password')
+
+
+class TestWhy:
+    """Причина словами, а не текстом драйвера."""
+
+    def test_uid_key_is_recognised_before_the_generic_1062(self):
+        """⚠ Порядок проверок важен: общий признак дубля (`1062`) стоит последним,
+        иначе занятый номер доложился бы как занятая почта."""
+        error = Exception("1062 (23000): Duplicate entry '343-643694' for key "
+                          "'uk_dating_profile_site_uid'")
+
+        assert 'другой анкеты' in profile_card_why(error, 'a@example.com', '643694')
+
+    def test_login_key_is_recognised(self):
+        error = Exception("1062 (23000): Duplicate entry '343-a@example.com' for key "
+                          "'uk_dating_profile_site_login'")
+
+        assert 'уже заведена' in profile_card_why(error, 'a@example.com', '')
+
+    def test_anything_else_keeps_the_text(self):
+        """Незнакомую беду не прячем: иначе причина пропадёт и в журнале."""
+        assert 'что-то своё' in profile_card_why(Exception('что-то своё'), 'a', '')
