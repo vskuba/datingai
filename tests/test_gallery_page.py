@@ -93,7 +93,8 @@ def test_styles_live_in_the_shared_sheet(page):
     # правка снимка и окно персональных данных анкеты. Своё у галереи осталось
     # только то, что и правда её — ширина окна и высоты полей.
     for name in ('.gallery-grid', '.gallery-thumb', '.gallery-group',
-                 '.modal-back', '.modal-box', '.gallery-card', '.gallery-why'):
+                 '.dating-modal-back', '.dating-modal-box', '.gallery-card',
+                 '.gallery-why'):
         assert name in css, f'{name} нет в общей таблице стилей'
         assert f'{name} {{' not in page, f'{name} описан в разметке, а не в CSS'
 

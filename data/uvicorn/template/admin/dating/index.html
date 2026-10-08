@@ -1242,7 +1242,7 @@
         if (at < 0) return;
 
         const back = document.createElement('div');
-        back.className = 'modal-back gallery-carousel';
+        back.className = 'dating-modal-back gallery-carousel';
         back.innerHTML =
             '<button type="button" class="gallery-step prev" aria-label="Предыдущее">‹</button>'
             + '<figure class="gallery-frame"><img alt=""><figcaption></figcaption></figure>'
@@ -1278,7 +1278,13 @@
             if (event.key === 'ArrowLeft') return show(-1);
         }
 
-        back.addEventListener('click', close);
+        // ⚠⚠ `mousedown` со сверкой цели, а не `click`: выделив текст в поле и
+        // отпустив кнопку за краем окна, человек получает `click` с целью
+        // «подложка» — и окно закрылось бы, унеся набранное. Так же устроено
+        // общее окно панели (`dashboard/js/modal.js`), и по той же причине.
+        back.addEventListener('mousedown', event => {
+            if (event.target === back) close();
+        });
         // Нажатия внутри кадра и по стрелкам не должны закрывать просмотр.
         back.querySelectorAll('.gallery-step, .gallery-frame').forEach(el =>
             el.addEventListener('click', e => e.stopPropagation()));
@@ -1352,9 +1358,9 @@
         if (!file) return;
 
         const back = document.createElement('div');
-        back.className = 'modal-back';
-        back.innerHTML = '<div class="modal-box gallery-card" onclick="event.stopPropagation()">'
-            + `<div class="modal-head">${esc(file.name)}</div>`
+        back.className = 'dating-modal-back';
+        back.innerHTML = '<div class="dating-modal-box gallery-card" onclick="event.stopPropagation()">'
+            + `<div class="dating-modal-head">${esc(file.name)}</div>`
             + (file.described_error
                 ? `<div class="gallery-why">${esc(file.described_error)}</div>` : '')
             + '<label>Что на снимке</label>'
@@ -1369,13 +1375,19 @@
             // своё слово, увидел бы, что правка «не сохранилась». Щелчок по
             // слову добавляет и убирает его из поля.
             + '<div class="gallery-tagbox" id="galleryTagBox"></div>'
-            + '<div class="modal-foot">'
+            + '<div class="dating-modal-foot">'
             + `<span class="gallery-when">${file.edited ? 'правлено человеком'
                 : file.described ? 'разобрано моделью' : 'ещё не разбиралось'}</span>`
             + '<button type="button" class="btn" id="galleryKeep">Сохранить</button>'
             + '</div></div>';
 
-        back.addEventListener('click', () => back.remove());
+        // ⚠⚠ `mousedown` со сверкой цели, а не `click`: выделив текст в поле и
+        // отпустив кнопку за краем окна, человек получает `click` с целью
+        // «подложка» — и окно закрылось бы, унеся набранное. Так же устроено
+        // общее окно панели (`dashboard/js/modal.js`), и по той же причине.
+        back.addEventListener('mousedown', event => {
+            if (event.target === back) back.remove();
+        });
         document.body.appendChild(back);
         galleryTagBox();
 
@@ -2273,61 +2285,80 @@
         // ⚠ Подписи здесь только литералами: пришедшее с сервера идёт через
         // `esc()` — на этой странице уже была настоящая инъекция через
         // неэкранированный атрибут.
-        const label = (key, text) => `<span class="modal-label">${text}`
+        const label = (key, text) => `<span class="dating-modal-label">${text}`
             + (edited.has(key)
-                ? ' <i class="modal-edited">· правлено руками · '
+                ? ' <i class="dating-modal-edited">· правлено руками · '
                   + `<a href="#" data-forget="${key}">вернуть сайту</a></i>`
                 : '')
             + '</span>';
 
         const back = document.createElement('div');
-        back.className = 'modal-back';
-        back.innerHTML = '<div class="modal-box" onclick="event.stopPropagation()">'
-            + '<div class="modal-head">Персональные данные анкеты</div>'
+        back.className = 'dating-modal-back';
+        back.innerHTML = '<div class="dating-modal-box" onclick="event.stopPropagation()">'
+            + '<div class="dating-modal-head">Персональные данные анкеты</div>'
 
-            + '<label class="modal-field">' + label('login', 'Почта')
+            + '<label class="dating-modal-field">' + label('login', 'Почта')
             + '<input type="text" id="cardLogin" maxlength="190" spellcheck="false"'
             + ` autocomplete="off" value="${esc(String(row.login || ''))}">`
-            + '<i class="modal-hint">Ею анкета входит на сайт — пустой быть не может.'
+            + '<i class="dating-modal-hint">Ею анкета входит на сайт — пустой быть не может.'
             + (data.gallery_folder ? ''
                 : ' ⚠ Папка галереи у этой анкеты не выбрана, а значит ищется по'
                   + ' логину — вместе с почтой уедет и она.')
             + '</i></label>'
 
-            + '<label class="modal-field">' + label('id', 'ID на сайте')
+            + '<label class="dating-modal-field">' + label('id', 'ID на сайте')
             + '<input type="text" id="cardUid" maxlength="32" spellcheck="false"'
             + ` autocomplete="off" value="${esc(wasUid)}">`
-            + '<i class="modal-hint" id="cardUidWhy"><b data-move></b>Номер анкеты на'
+            + '<i class="dating-modal-hint" id="cardUidWhy"><b data-move></b>Номер анкеты на'
             + ' сайте. Вместе с именем он — ключ, которым агент помнит эту девушку:'
             + ' сменив его, вы делаете её незнакомой, и прежние факты останутся за'
             + ' старым номером. Пусто — «не знаем», это законно.</i></label>'
 
-            + '<label class="modal-field">' + label('name', 'Имя')
+            + '<label class="dating-modal-field">' + label('name', 'Имя')
             + `<input type="text" id="cardName" maxlength="190" value="${esc(wasName)}">`
-            + '<i class="modal-hint" id="cardNameWhy"><b data-move></b>Как её зовут в'
+            + '<i class="dating-modal-hint" id="cardNameWhy"><b data-move></b>Как её зовут в'
             + ' анкете. Вторая половина того же ключа фактов — она же уходит в'
             + ' обращение, которым агент зовётся.</i></label>'
 
-            + '<label class="modal-field">' + label('age', 'Возраст')
+            + '<label class="dating-modal-field">' + label('age', 'Возраст')
             + `<input type="number" id="cardAge" min="0" max="120" value="${esc(String(p.age || 0))}">`
-            + '<i class="modal-hint">0 — «не знаем»: карточка тогда возраст не'
+            + '<i class="dating-modal-hint">0 — «не знаем»: карточка тогда возраст не'
             + ' показывает вовсе.</i></label>'
 
-            + '<label class="modal-field">' + label('city', 'Город')
+            + '<label class="dating-modal-field">' + label('city', 'Город')
             + `<input type="text" id="cardCity" maxlength="190" value="${esc(String(p.city || ''))}">`
             + '</label>'
 
-            + '<label class="modal-field">' + label('about', 'Описание')
+            + '<label class="dating-modal-field">' + label('about', 'Описание')
             + `<textarea id="cardAbout" maxlength="2000">${esc(String(p.about || ''))}</textarea>`
-            + '<i class="modal-hint">Его читает агент и письма — «О себе».</i></label>'
+            + '<i class="dating-modal-hint">Его читает агент и письма — «О себе».</i></label>'
 
-            + '<div class="modal-foot">'
-            + '<span class="modal-why" id="cardEditWhy"></span>'
+            + '<div class="dating-modal-foot">'
+            + '<span class="dating-modal-why" id="cardEditWhy"></span>'
             + '<button type="button" class="dating-btn" id="cardEditOff">Отмена</button>'
             + '<button type="button" class="dating-btn primary" id="cardEditKeep">Сохранить</button>'
             + '</div></div>';
 
-        back.addEventListener('click', () => back.remove());
+        // ⚠ Escape — первое, что пробует человек, не найдя кнопки закрытия.
+        // Слушатель снимается вместе с окном: иначе он переживёт его и будет
+        // ловить чужие нажатия до конца жизни страницы.
+        const onKey = event => {
+            if (event.key !== 'Escape') return;
+            shut();
+        };
+        document.addEventListener('keydown', onKey);
+
+        // ⚠ `shut` закрывает окно и снимает слушатель Escape разом — зовём её
+        // везде, где окно закрывается, а не только здесь.
+        const shut = () => { document.removeEventListener('keydown', onKey); back.remove(); };
+
+        // ⚠⚠ `mousedown` со сверкой цели, а не `click`: выделив текст в поле и
+        // отпустив кнопку за краем окна, человек получает `click` с целью
+        // «подложка» — и окно закрылось бы, унеся набранное. Так же устроено
+        // общее окно панели (`dashboard/js/modal.js`), и по той же причине.
+        back.addEventListener('mousedown', event => {
+            if (event.target === back) shut();
+        });
         document.body.appendChild(back);
 
         const why = document.getElementById('cardEditWhy');
@@ -2339,7 +2370,7 @@
             const paint = () => {
                 const now = input.value.trim();
                 const other = now !== before;
-                box.classList.toggle('modal-hint-warn', other);
+                box.classList.toggle('dating-modal-hint-warn', other);
                 move.textContent = other
                     ? `${before || 'пусто'} → ${now || 'пусто'}. ` : '';
             };
@@ -2362,13 +2393,13 @@
 
                     return;
                 }
-                back.remove();
+                shut();
                 say('поле вернулось сайту — обновит его следующий импорт');
                 if (currentId === was) await profileLoad();
             }));
 
         document.getElementById('cardEditOff')
-                .addEventListener('click', () => back.remove());
+                .addEventListener('click', () => shut());
 
         document.getElementById('cardEditKeep').addEventListener('click', async () => {
             const was = currentId;
@@ -2389,7 +2420,7 @@
                 return;
             }
 
-            back.remove();
+            shut();
             say('персональные данные сохранены');
             // ⚠ Перечитываем **и список, и карточку**: правка меняет строку списка
             // (почта, имя, возраст, номер) не меньше, чем карточку, а список

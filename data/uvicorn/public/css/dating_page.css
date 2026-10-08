@@ -848,17 +848,21 @@
 .gallery-why { margin-top: 4px; font-size: 12px; color: #b91c1c; }
 
 /* ── Окна поверх страницы ────────────────────────────────────────────────────
-   Подложка и каркас — **одни на все окна раздела**: кадр галереи, правка снимка,
+   Подложка и каркас — одни на все окна **раздела**: кадр галереи, правка снимка,
    персональные данные анкеты.
 
-   ⚠ Имя общее намеренно. Класс `gallery-view` у окна с почтой и описанием
-   читался бы как ошибка, а вторая такая же подложка рядом разъехалась бы с
-   первой на первой правке фона или `z-index`. */
-.modal-back {
+   ⚠⚠ Приставка `dating-` обязательна, и это не вкусовщина. `modal-*` — пласт
+   общего слоя (`dashboard/css/modal.css`), подключённый `base.html` каждой
+   странице панели; его шапка прямо говорит, что эти имена нигде больше не
+   используются. Наш файл грузится позже и при равной специфичности побеждает —
+   то есть свои `.modal-back` и `.modal-head` перекрашивали бы **чужие** окна на
+   «Профилях», где зовут общий `modal.js`. Так и вышло: подложка темнела с .45 до
+   .82, а `object-fit: contain` ломал круглые аватарки внутри чужих окон. */
+.dating-modal-back {
     position: fixed; inset: 0; z-index: 50; display: flex;
     align-items: center; justify-content: center; background: rgba(15, 23, 42, .82);
 }
-.modal-back img { max-width: 92vw; max-height: 92vh; object-fit: contain; }
+.dating-modal-back img { max-width: 92vw; max-height: 92vh; object-fit: contain; }
 /* ⚠ Курсор у подложки обычный, и оговорок к этому больше нет. Прежде подложка
    несла `cursor: zoom-out`, а `.gallery-modal { cursor: default }` его отменял —
    ради окон правки, где увеличительное стекло не к месту. Подложку делят трое,
@@ -870,41 +874,41 @@
    было бы мёртвым (позднее побеждает при равной специфичности), а комментарий
    рядом с мёртвым правилом обещал бы поведение, которого нет. */
 
-.modal-box {
+.dating-modal-box {
     width: min(560px, 94vw); max-height: 92vh; overflow: auto; padding: 20px;
     background: #fff; border-radius: 12px; display: flex; flex-direction: column; gap: 6px;
 }
-.modal-head { font-size: 14px; font-weight: 700; color: #0f172a; }
-.modal-box label { font-size: 11px; color: #64748b; margin-top: 6px; }
-.modal-box textarea, .modal-box input { width: 100%; box-sizing: border-box; }
-.modal-foot {
+.dating-modal-head { font-size: 14px; font-weight: 700; color: #0f172a; }
+.dating-modal-box label { font-size: 11px; color: #64748b; margin-top: 6px; }
+.dating-modal-box textarea, .dating-modal-box input { width: 100%; box-sizing: border-box; }
+.dating-modal-foot {
     display: flex; align-items: center; justify-content: flex-end;
     gap: 8px; margin-top: 10px;
 }
 /* Причина отказа — в подвале окна, а не подсказкой в шапке страницы: окно стоит
    поверх, и подсказку под ним человек не увидит. */
-.modal-why { margin-right: auto; font-size: 12px; color: #b91c1c; }
+.dating-modal-why { margin-right: auto; font-size: 12px; color: #b91c1c; }
 
 /* ⚠⚠ Подвал окна снимка расталкивает содержимое по краям, а общий — жмёт вправо.
    Это **специфика галереи поверх общего**, то же правило, по которому ей оставлены
    своя ширина и высоты полей. Без него строка «разобрано моделью» встала вплотную
    к кнопке «Сохранить», хотя годами стояла у левого края: у окна правки левый край
    держит `.modal-why` своим `margin-right: auto`, а у этой строки такого нет. */
-.gallery-card .modal-foot { justify-content: space-between; }
+.gallery-card .dating-modal-foot { justify-content: space-between; }
 
 /* Поле окна: подпись, отметка, поле ввода, пояснение — одной колонкой.
    ⚠ Цвета и размеры поля ввода заданы прямо, а не унаследованы от подписи:
    подпись серая и мелкая, и наследование красило бы ввод её цветом. */
-.modal-field { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
-.modal-label { font-size: 11px; color: #64748b; }
-.modal-field input, .modal-field textarea { font-size: 13px; color: #0f172a; }
-.modal-hint { font-size: 11px; color: #94a3b8; line-height: 1.45; font-style: normal; }
+.dating-modal-field { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
+.dating-modal-label { font-size: 11px; color: #64748b; }
+.dating-modal-field input, .dating-modal-field textarea { font-size: 13px; color: #0f172a; }
+.dating-modal-hint { font-size: 11px; color: #94a3b8; line-height: 1.45; font-style: normal; }
 /* ⚠ Жёлтым метится **изменённое поле ключа**, и только пока оно изменено:
    постоянно горящее предупреждение перестают читать. */
-.modal-hint-warn { color: #92400e; }
-.modal-hint-warn b { color: #b45309; }
-.modal-edited { font-style: normal; color: #b45309; }
-.modal-edited a { color: inherit; }
+.dating-modal-hint-warn { color: #92400e; }
+.dating-modal-hint-warn b { color: #b45309; }
+.dating-modal-edited { font-style: normal; color: #b45309; }
+.dating-modal-edited a { color: inherit; }
 
 /* ⚠⚠ Высота — **здесь**, а не атрибутом `rows`. В общем слое
    (`dashboard/css/common.css`) стоит `textarea { height: 60px }`, и оно бьёт
@@ -913,7 +917,7 @@
 
    ⚠ `resize: vertical` возвращает то, что общий слой запретил целиком
    (`resize: none`): здесь правят абзац, и длина у него всякий раз своя. */
-.modal-box #cardAbout { height: 150px; resize: vertical; }
+.dating-modal-box #cardAbout { height: 150px; resize: vertical; }
 
 /* ⚠ Окно описания снимка **крупнее соседних**, и это не вкусовщина: в нём правят
    абзац текста и строку тегов. В 560 пикселях описание шло в шесть строк с

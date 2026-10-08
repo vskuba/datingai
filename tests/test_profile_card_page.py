@@ -93,8 +93,8 @@ def test_backdrop_is_shared_not_copied(css, page):
     Класс `gallery-view` у окна с почтой и описанием читался бы как ошибка, а
     вторая такая же подложка рядом разъехалась бы с первой на первой правке фона.
     """
-    assert '.modal-back {' in css, 'общей подложки в CSS нет'
-    assert '.modal-box {' in css, 'общего каркаса окна в CSS нет'
+    assert '.dating-modal-back {' in css, 'общей подложки в CSS нет'
+    assert '.dating-modal-box {' in css, 'общего каркаса окна в CSS нет'
     assert '.gallery-view' not in css, 'прежнее имя подложки осталось'
     assert '.gallery-view' not in page, 'страница держится за прежнее имя подложки'
 
@@ -106,7 +106,7 @@ def test_gallery_window_uses_the_shared_shell(page):
     единственную строку `cursor: default`, и она стала умолчанием общей
     подложки. Имя, за которым не стоит ни одного правила, сторожить нечем.
     """
-    assert 'modal-box gallery-card' in page, 'окно галереи не на общем каркасе'
+    assert 'dating-modal-box gallery-card' in page, 'окно галереи не на общем каркасе'
     assert 'gallery-modal' not in page, 'мёртвый класс остался в разметке'
 
 
@@ -118,10 +118,61 @@ def test_about_height_is_in_css_not_rows(css):
 
 def test_styles_live_in_the_shared_sheet(css, page):
     """Размеры — в общей таблице стилей раздела, а не в разметке."""
-    for name in ('.modal-back', '.modal-box', '.modal-field', '.modal-hint',
-                 '.modal-edited', '.card-edit'):
+    for name in ('.dating-modal-back', '.dating-modal-box', '.dating-modal-field',
+                 '.dating-modal-hint', '.dating-modal-edited', '.card-edit'):
         assert name in css, f'{name} нет в общей таблице стилей'
         assert f'{name} {{' not in page, f'{name} описан в разметке, а не в CSS'
+
+
+def test_the_shared_modal_namespace_is_not_squatted(css, page):
+    """⚠⚠ `modal-*` — пласт общего слоя, и занимать его нельзя.
+
+    `dashboard/css/modal.css` подключён `base.html` **каждой** странице панели и
+    объявляет `.modal-back` и `.modal-head`. Наш `dating_page.css` грузится
+    позже и при равной специфичности побеждает — то есть правила раздела
+    перекрашивали бы общие окна на «Профилях», где зовут общий `modal.js`.
+
+    ⚠ Проверяем и разметку: класс, оставшийся в ней, тянет за собой правило
+    общего слоя, которого мы не заказывали.
+    """
+    import re
+
+    # Свои классы раздела — с приставкой `dating-`, как `.dating-btn` рядом.
+    assert '.dating-modal-back {' in css, 'подложка не переименована'
+    assert '.dating-modal-box {' in css, 'каркас окна не переименован'
+
+    # ⚠ Ищем объявления правил, а не любые вхождения: слово `modal-` законно
+    # встречается в комментариях, объясняющих, почему приставка нужна.
+    squatted = re.findall(r'^\.modal-[a-z-]*', css, re.M)
+    assert not squatted, f'правила в чужом пласте: {squatted}'
+
+    assert 'class="modal-' not in page, 'класс чужого пласта остался в разметке'
+    assert "'modal-back" not in page, 'класс чужого пласта остался в скрипте'
+
+
+def test_windows_close_on_mousedown_not_click(page):
+    """⚠⚠ Выделение текста не должно закрывать окно.
+
+    Отпустив кнопку мыши за краем окна после выделения, человек получает `click`
+    с целью «подложка» — и форма с шестью полями закрылась бы без вопроса.
+    Общий `modal.js` ловит `mousedown` и сверяет цель именно поэтому
+    (`dashboard/js/modal.js:77`).
+    """
+    assert "back.addEventListener('click'" not in page, \
+        'окно закрывается по click — выделение текста его схлопнет'
+
+    # Три окна раздела: карусель, описание снимка, правка персональных данных.
+    assert page.count("back.addEventListener('mousedown'") == 3, \
+        'не все окна переведены на mousedown со сверкой цели'
+    assert page.count('e.target === back') >= 3 \
+        or page.count('event.target === back') >= 3, \
+        'цель события не сверяется — закроется от щелчка внутри окна'
+
+
+def test_the_edit_window_closes_on_escape(page):
+    """⚠ Escape — то, что человек пробует первым, не найдя кнопки закрытия."""
+    keep = page[page.index('function cardEditModal'):]
+    assert "'Escape'" in keep[:6000], 'окно правки не закрывается по Escape'
 
 
 def test_script_has_no_syntax_error(page):

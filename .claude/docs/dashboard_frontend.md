@@ -2702,6 +2702,7 @@ living in Kyiv»). Шаблон уходит от всех анкет всем �
 | `.log-row`, `.log-time`, `.log-text`, `.log-empty` | журнал учётки; цвет по уровню — `ok`, `fail`, `in`, `out`, `info` |
 | `.profile-face`, `.dot`, `.pill`, `.profile-warn` | как выглядит учётка: лицо, точка статуса, бейджи работы, тревога |
 | `.card*`, `.contact*`, `.msg*`, `.need` | анкета с сайта, строка собеседницы и реплики переписки — их рисует вкладка «Чат» на «Профилях» |
+| `.dating-modal-back`, `.dating-modal-box`, `.dating-modal-head`, `.dating-modal-foot`, `.dating-modal-field`, `.dating-modal-label`, `.dating-modal-hint`, `.dating-modal-edited`, `.dating-modal-why` | подложка и каркас — одно окно на три места раздела: кадр галереи, правка снимка, персональные данные анкеты. ⚠ Приставка `dating-` обязательна: `modal-*` без нас — пласт общего слоя (`dashboard/css/modal.css`), подключённый `base.html` каждой странице панели, и его шапка прямо говорит, что эти имена нигде больше не используются. Без приставки наш файл, грузясь позже, перекрашивал бы чужие окна на «Профилях», где зовут общий `modal.js`, — так и было до правки |
 
 `view.js` — та же разметка, собранная кодом: `esc`, `statusTitle`,
 `statusDot`, `onlineDot`, `warnBadge`, `workPills`, `seenText`, `logStamp`,
