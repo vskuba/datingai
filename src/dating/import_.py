@@ -171,8 +171,10 @@ def import_plan(row: dict, found: dict | None, base: str) -> dict:
     # именно `profile` импорт и переписывает.
     before = dict(found.get('card') or {})
     # ⚠⚠ Правленое руками импорт не трогает — ни в карточке, ни в отчёте. Правило
-    # одно на два писателя (`profile_card.py`): второй — чтение анкеты со
-    # страницы кабинета. Своя копия здесь разошлась бы с ним на первой правке.
+    # одно на три писателя (`profile_card.py`): второй — чтение анкеты со
+    # страницы кабинета, третий — кэш анкеты по кнопке «Проверка»
+    # (`profile_cache._profile_save_card`). Своя копия здесь разошлась бы с
+    # ними на первой правке.
     edited = set(profile_card_edited(found.get('edited')))
     changed = [name for name in IMPORT_CARD_FIELDS
                if name not in edited and _changed(before.get(name), card.get(name))]

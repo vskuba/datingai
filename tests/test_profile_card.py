@@ -211,15 +211,28 @@ def _client(data):
 
 
 class _FakeDb:
-    """База, которая только запоминает, что и куда писали."""
+    """База, которая только запоминает, что и куда писали.
+
+    ⚠ `_profile_load` теперь пишет через `_profile_save_card` (находка 1, Task 7):
+    сперва `SELECT profile, profile_edited` — читает, нет ли ручной правки, — и
+    только потом `UPDATE`. Заглушка отдаёт на `SELECT` пустую строку (ни правки,
+    ни прежней карточки нет), и слияние в этом случае не меняет ничего — поэтому
+    прежние проверки `db.cards[0][...]` остаются верны без изменений.
+    """
 
     def __init__(self):
         self.where_id: list = []
         self.cards: list = []
 
     async def execute(self, sql, args=None):
+        if sql.strip().upper().startswith('SELECT'):
+            return
+
         self.cards.append(json.loads(args[0]))
         self.where_id.append(args[1])
+
+    async def fetchone(self):
+        return {'profile': None, 'profile_edited': None}
 
     @property
     def connection(self):

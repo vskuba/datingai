@@ -9,7 +9,9 @@
    `id` в карточке, — и читают их разные места: ключ фактов агента берёт колонку,
    сведение переписки из панели и ссылка на сайт берут карточку. Разойдись они, и
    половина кода увидит номер, а половина пустоту; ни одна проверка не упадёт.
-2. Правленое руками обязано переживать импорт и чтение анкеты со страницы. Иначе
+2. Правленое руками обязано переживать всех троих писателей со стороны сайта —
+   импорт, чтение анкеты со страницы и кэш анкеты по кнопке «Проверка»
+   (`profile_cache._profile_save_card`, пропущенный планом и спекой). Иначе
    человек увидит затёртую правку и перестанет править вовсе.
 
 База настоящая, сосед поддельный. Ручки зовутся в процессе, а не по HTTP: тот же
@@ -61,8 +63,9 @@ async def test_column_is_there_and_empty(girl):
 class TestKeepRule:
     """Правило слияния: что сайт имеет право положить поверх.
 
-    ⚠ Чистая функция и тесты без базы: правило читают **два** писателя карточки —
-    импорт и чтение страницы кабинета, — и своя копия в каждом разошлась бы на
+    ⚠ Чистая функция и тесты без базы: правило читают **три** писателя карточки —
+    импорт, чтение страницы кабинета и кэш анкеты по кнопке «Проверка»
+    (`profile_cache._profile_save_card`), — и своя копия в каждом разошлась бы на
     первой правке. Сторож стоит на самом правиле, а не на его применении.
     """
 
@@ -381,6 +384,44 @@ class TestRace:
         assert len(been) == mod.PROFILE_CARD_TRIES, \
             'число попыток разошлось с PROFILE_CARD_TRIES'
 
+    async def test_a_rival_login_change_is_not_clobbered(self, girl, monkeypatch):
+        """⚠⚠ Почта тоже под сверкой снимка, хотя её нет в карточке.
+
+        Прежде `WHERE` сверял только `profile` и `profile_edited`. Правь один
+        человек имя, другой почту — у второго карточка не менялась, запись
+        проходила, а первый возвращал прежнюю почту поверх: его снимок по двум
+        сверяемым столбцам всё ещё совпадал.
+        """
+        from src.dating import profile_card as mod
+        from src.dating.json_column import json_column_load
+
+        mine, rival = _login(), _login()
+        await profile_card_save(girl, {'login': mine, 'city': 'Kyiv'})
+
+        real_read = mod._card_read
+        been = []
+
+        async def read_then_rival(profile_id):
+            row = await real_read(profile_id)
+            if not been:
+                been.append(1)
+                # Пока снимок на руках, почту правит кто-то ещё.
+                async with mysql_get_db_async() as db:
+                    await db.execute('UPDATE profile SET login = %s WHERE id = %s',
+                                     (rival, int(profile_id)))
+                    await db.connection.commit()
+
+            return row
+
+        monkeypatch.setattr(mod, '_card_read', read_then_rival)
+
+        await profile_card_save(girl, {'login': mine, 'name': 'Diana'})
+
+        row = await _row(girl)
+        assert row['login'] == rival, 'чужая правка почты затёрта'
+        assert json_column_load(row['profile'])['name'] == 'Diana', \
+            'наша правка имени не легла'
+
 
 class TestEndpoint:
     """Ручка правки: что принимает, чем отказывает, что отдаёт."""
@@ -512,7 +553,7 @@ from src.dating.import_ import import_plan
 
 
 class TestImportRespectsHand:
-    """⚠ Импорт — первый из двух писателей со стороны сайта."""
+    """⚠ Импорт — первый из трёх писателей со стороны сайта."""
 
     def test_edited_field_is_not_overwritten(self):
         """Правленое описание переживает импорт, остальное обновляется."""
@@ -588,3 +629,47 @@ class TestCardReadRespectsHand:
         assert json_column_load(row['profile'])['name'] == 'Olga'
         assert stored['about'] == 'мой текст', \
             'вернулась карточка сценария, а не та, что легла'
+
+
+class TestProfileCacheRespectsHand:
+    """⚠⚠ Третий писатель карточки, пропущенный планом.
+
+    `profile_cache._profile_load` заменял карточку целиком ответом сайта — и
+    затирал правленое человеком, и выбрасывал ключи, которых сайт не прислал.
+    Нашло финальное ревью: план и спека говорили «писателей двое», а их трое.
+
+    ⚠ Путь живой — кнопка «Проверка» (`profile_action.py`). Сегодня запись
+    доходит только под мужской ролью, но обещание «сайт правленое не
+    перезаписывает» было дано без оговорок.
+    """
+
+    async def test_edited_field_survives_the_cache_write(self, girl):
+        """Правленое описание переживает запись кэша, остальное обновляется."""
+        from src.dating.json_column import json_column_load
+        from src.dating.profile_cache import _profile_save_card
+
+        await profile_card_save(girl, {'login': _login(), 'about': 'мой текст'})
+
+        await _profile_save_card(girl, {'id': '77', 'name': 'Olga',
+                                        'about': 'с сайта', 'city': 'Kyiv',
+                                        'age': 30, 'photo': ''})
+
+        card = json_column_load((await _row(girl))['profile'])
+        assert card['about'] == 'мой текст', 'кэш затёр ручную правку'
+        assert card['name'] == 'Olga', 'неправленое обновляться должно'
+
+    async def test_the_cache_write_keeps_what_the_site_did_not_send(self, girl):
+        """⚠ Ключи, которых в ответе сайта нет, остаются на месте.
+
+        Прежде запись была заменой: поле, которое сайт не прислал, исчезало из
+        карточки вовсе — даже не правленое руками.
+        """
+        from src.dating.json_column import json_column_load
+        from src.dating.profile_cache import _profile_save_card
+
+        await profile_card_save(girl, {'login': _login(), 'city': 'Kyiv'})
+
+        await _profile_save_card(girl, {'name': 'Olga'})
+
+        card = json_column_load((await _row(girl))['profile'])
+        assert card['city'] == 'Kyiv', 'запись кэша выбросила поле целиком'
