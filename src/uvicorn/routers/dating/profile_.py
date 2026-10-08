@@ -40,6 +40,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
+from src.dating.import_ import (IMPORT_ABOUT_MAX, IMPORT_CITY_MAX,
+                                IMPORT_LOGIN_MAX, IMPORT_NAME_MAX)
+from src.dating.profile_card import (PROFILE_CARD_FIELDS, profile_card_forget,
+                                     profile_card_save)
 from src.dating.site_snapshot import site_rows
 from src.mysql_.repository.profile_repository import DatingProfileRepository
 from src.dating.json_column import json_column_load
@@ -66,6 +70,42 @@ class DatingProfileSave(BaseModel):
     @field_validator('login', 'note')
     @classmethod
     def _trim(cls, value: str) -> str:
+        return value.strip()
+
+
+class DatingProfileCard(BaseModel):
+    """Тело правки персональных данных анкеты.
+
+    ⚠ Границы длин — **постоянные импорта**, а не числа рядом: те же колонки и те
+    же поля карточки, и два набора границ разошлись бы на первой правке схемы.
+
+    ⚠ Номер анкеты приезжает под именем `profile_id` (так зовётся колонка), а в
+    карточку ложится ключом `id`. Перевод делает ручка одной строкой: два имени
+    одной величины внутри домена развели бы её по смыслу.
+    """
+
+    login: str = Field(..., max_length=IMPORT_LOGIN_MAX,
+                       description='Почта, которой анкета входит на сайт')
+    profile_id: str = Field('', max_length=32,
+                            description='Номер анкеты на сайте; пусто — не знаем')
+    name: str = Field('', max_length=IMPORT_NAME_MAX)
+    age: int = Field(0, ge=0, le=120, description='0 — «не знаем», а не ошибка')
+    city: str = Field('', max_length=IMPORT_CITY_MAX)
+    about: str = Field('', max_length=IMPORT_ABOUT_MAX)
+
+    @field_validator('profile_id', 'name', 'city', 'about')
+    @classmethod
+    def _trim(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator('login')
+    @classmethod
+    def _login_needed(cls, value: str) -> str:
+        """⚠ Своим проверяющим, а не `min_length=1`: тот считает пробелы знаками, и
+        почта из трёх пробелов прошла бы границу, а потом легла пустой."""
+        if not value.strip():
+            raise ValueError('почта у анкеты обязательна: ею она входит на сайт')
+
         return value.strip()
 
 
@@ -275,6 +315,67 @@ async def profile_update(profile_id: int, data: DatingProfileSave,
         raise HTTPException(status_code=409, detail=_save_error(e, data.login))
 
     return {'status': 'success'}
+
+
+@router.put('/{profile_id}/card', include_in_schema=False)
+async def profile_card_put(profile_id: int, data: DatingProfileCard,
+                           user=Depends(auth_required)):
+    """Правка персональных данных анкеты: шесть полей одним нажатием.
+
+    Симметрична `GET /{profile_id}/card`, которая эту же карточку странице и
+    отдаёт.
+
+    ⚠ **Одной ручкой на шесть полей, а не шестью по одному.** Выключатели анкеты
+    устроены наоборот (`/enabled`, `/mail-photo`, `/password`), и правильно: там
+    щелчок и есть всё действие. Здесь человек правит шесть полей и нажимает
+    «Сохранить» один раз, и шесть запросов на одно нажатие оставили бы
+    половинчатое состояние при отказе второго.
+
+    ⚠ Отказ дубля — `409`, как у заведения: это не ошибка запроса, а занятое имя.
+
+    Raises:
+        HTTPException: 404 — анкеты нет; 409 — почта или номер заняты на этом
+            сайте; 422 — границы полей (их считает сама модель).
+    """
+    await profile_row(profile_id)
+
+    try:
+        got = await profile_card_save(profile_id, {
+            'login': data.login, 'id': data.profile_id, 'name': data.name,
+            'age': data.age, 'city': data.city, 'about': data.about})
+    except LookupError as err:
+        raise HTTPException(status_code=404, detail=str(err)) from err
+    except ValueError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+    return {'result': got}
+
+
+@router.delete('/{profile_id}/card/{field}', include_in_schema=False)
+async def profile_card_drop(profile_id: int, field: str,
+                            user=Depends(auth_required)):
+    """«Вернуть сайту»: снять отметку «правлено руками» с одного поля.
+
+    Значение остаётся прежним — обновит его следующий импорт.
+
+    ⚠ Имя поля сверяется со списком правимых, а не принимается на веру: оно
+    уезжает в колонку, и чужое имя лежало бы там, ничего не защищая.
+
+    Raises:
+        HTTPException: 404 — анкеты нет; 422 — такого поля среди правимых нет.
+    """
+    await profile_row(profile_id)
+
+    if field not in PROFILE_CARD_FIELDS:
+        raise HTTPException(status_code=422,
+                            detail=f'поля «{field}» в карточке анкеты нет')
+
+    try:
+        left = await profile_card_forget(profile_id, field)
+    except LookupError as err:
+        raise HTTPException(status_code=404, detail=str(err)) from err
+
+    return {'result': {'edited': left}}
 
 
 @router.delete('/{profile_id}', include_in_schema=False)

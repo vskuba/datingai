@@ -19,15 +19,18 @@
 import uuid
 
 import pytest
+from fastapi import HTTPException
 
 from mysql_.mysql_ import mysql_get_db_async
 from src.dating.profile_card import (PROFILE_CARD_FIELDS, profile_card_edited,
                                      profile_card_forget, profile_card_keep,
                                      profile_card_save, profile_card_why)
+from src.uvicorn.routers.dating.profile_ import (DatingProfileCard,
+                                                 profile_card_drop,
+                                                 profile_card_put)
+from src.uvicorn.routers.dating.profile_view import profile_view_card
 
 pytestmark = pytest.mark.profile
-
-STAND_SITE = 999_343
 
 
 def _login() -> str:
@@ -377,3 +380,129 @@ class TestRace:
         assert 'правил' in str(refusal.value), str(refusal.value)
         assert len(been) == mod.PROFILE_CARD_TRIES, \
             'число попыток разошлось с PROFILE_CARD_TRIES'
+
+
+class TestEndpoint:
+    """Ручка правки: что принимает, чем отказывает, что отдаёт."""
+
+    async def test_it_stores_and_answers(self, girl):
+        login = _login()
+        answer = await profile_card_put(girl, DatingProfileCard(
+            login=login, profile_id='643694', name='Diana', age=29,
+            city='Kyiv', about='люблю шахматы'), user=None)
+        got = answer['result']
+
+        assert got['login'] == login
+        assert got['card']['id'] == '643694'
+        assert set(got['edited']) == {'id', 'name', 'age', 'city', 'about'}
+
+    async def test_empty_login_is_refused(self):
+        """⚠ Пустая почта — отказ, а не «не трогать»: колонка `NOT NULL`, и она же
+        половина ключа входа на сайт. Пустыми законно бывают пять полей карточки,
+        почта — нет."""
+        with pytest.raises(Exception):
+            DatingProfileCard(login='   ')
+
+    async def test_long_about_is_refused(self):
+        """Границы — те же постоянные, что у импорта: `IMPORT_ABOUT_MAX = 2000`."""
+        with pytest.raises(Exception):
+            DatingProfileCard(login=_login(), about='я' * 2001)
+
+    async def test_age_out_of_range_is_refused(self):
+        with pytest.raises(Exception):
+            DatingProfileCard(login=_login(), age=121)
+
+    async def test_zero_age_is_fine(self):
+        """⚠ Ноль — законное «не знаем», а не ошибка: карточка показывает возраст
+        только непустым."""
+        assert DatingProfileCard(login=_login(), age=0).age == 0
+
+    async def test_unknown_profile_is_404(self):
+        with pytest.raises(HTTPException) as refusal:
+            await profile_card_put(99_999_999, DatingProfileCard(login=_login()),
+                                   user=None)
+
+        assert refusal.value.status_code == 404
+
+    async def test_taken_login_is_409(self, girl_make):
+        one, two = await girl_make(), await girl_make()
+        taken = _login()
+        await profile_card_put(one, DatingProfileCard(login=taken), user=None)
+
+        with pytest.raises(HTTPException) as refusal:
+            await profile_card_put(two, DatingProfileCard(login=taken), user=None)
+
+        assert refusal.value.status_code == 409
+        assert 'уже заведена' in refusal.value.detail
+
+    async def test_taken_uid_is_409(self, girl_make):
+        one, two = await girl_make(), await girl_make()
+        await profile_card_put(one, DatingProfileCard(login=_login(),
+                                                      profile_id='643694'), user=None)
+
+        with pytest.raises(HTTPException) as refusal:
+            await profile_card_put(two, DatingProfileCard(login=_login(),
+                                                          profile_id='643694'),
+                                   user=None)
+
+        assert refusal.value.status_code == 409
+        assert 'другой анкеты' in refusal.value.detail
+
+    async def test_everything_comes_back_through_the_card(self, rhapsody, girl):
+        """Круг замкнут: что записали ручкой, то и отдаёт карточка странице.
+
+        ⚠ Сторож именно на `GET /card`, а не на ответ самой правки: карточку
+        страница читает при каждом открытии анкеты, и поле, потерянное по дороге
+        (`response_model` молча выбрасывает всё, чего нет в схеме), всплыло бы
+        `undefined` только у человека. Так уже выходило с `age` и `proxy_ip`.
+        """
+        login = _login()
+        await profile_card_put(girl, DatingProfileCard(
+            login=login, profile_id='643694', name='Diana', age=29,
+            city='Kyiv', about='люблю шахматы'), user=None)
+
+        card = (await profile_view_card(girl, user=None))['result']
+
+        assert card['login'] == login
+        assert card['profile']['id'] == '643694'
+        assert card['profile']['name'] == 'Diana'
+        assert card['profile']['age'] == 29
+        assert card['profile']['city'] == 'Kyiv'
+        assert card['profile']['about'] == 'люблю шахматы'
+
+    async def test_card_handle_gives_edited(self, rhapsody, girl):
+        """⚠ Без `edited` в ответе карточки окно не нарисовало бы отметку
+        «правлено руками · вернуть сайту» — то есть человек не узнал бы, какие
+        поля сайт больше не обновляет."""
+        await profile_card_put(girl, DatingProfileCard(login=_login(), about='текст'),
+                               user=None)
+        card = (await profile_view_card(girl, user=None))['result']
+
+        assert card['edited'] == ['about']
+
+    async def test_fresh_card_gives_empty_edited(self, rhapsody, girl):
+        """Поле есть всегда: `undefined` на странице читался бы как «нет отметок»
+        случайно, а не по правилу."""
+        card = (await profile_view_card(girl, user=None))['result']
+
+        assert card['edited'] == []
+
+    async def test_drop_handle_removes_the_mark(self, girl):
+        await profile_card_put(girl, DatingProfileCard(login=_login(), about='текст',
+                                                       name='Diana'), user=None)
+
+        answer = await profile_card_drop(girl, 'about', user=None)
+
+        assert answer['result']['edited'] == ['name']
+
+    async def test_drop_unknown_field_is_422(self, girl):
+        with pytest.raises(HTTPException) as refusal:
+            await profile_card_drop(girl, 'password', user=None)
+
+        assert refusal.value.status_code == 422
+
+    async def test_drop_unknown_profile_is_404(self):
+        with pytest.raises(HTTPException) as refusal:
+            await profile_card_drop(99_999_999, 'about', user=None)
+
+        assert refusal.value.status_code == 404

@@ -23,6 +23,7 @@ from src.dating.chat_reply import chat_reply_pending
 from src.dating.message_twin import message_twin_skip
 from src.dating.json_column import json_column_load
 from src.dating.online import online_check
+from src.dating.profile_card import profile_card_edited
 from src.dating.profile_link import profile_link
 from src.dating.schedule import schedule_load, schedule_why_idle
 from src.uvicorn.routers.dating.log import log_feed
@@ -306,13 +307,21 @@ async def profile_view_card(profile_id: int, page: int = 1,
     # (кодирование номера, проверка схемы), одна из ссылок вела бы не туда.
     # Пустая строка — обычный исход: у сайта нет шаблона или у анкеты нет номера.
     card = json_column_load(profile.get('profile'))
+    # Какие поля человек правил руками — окну правки: у них стоит отметка
+    # «правлено руками · вернуть сайту».
+    #
+    # ⚠ Поле отдаётся **всегда**, пустым списком в обычном случае: `undefined` на
+    # странице читался бы как «отметок нет» случайно, а не по правилу. Та же
+    # грабля, что уже была с `age` и `proxy_ip` — `response_model` выбрасывал их
+    # молча, и страница получала `undefined`.
+    edited = profile_card_edited(profile.get('profile_edited'))
     site_url = await profile_link(int(profile.get('site_id') or 0),
                                          str(card.get('id') or ''))
 
     # `enabled` и `auto_answer` едут в карточку, потому что оба рисуются на ней
     # чекбоксами — на «Анкетах» справа и в окне переписки. Без них страница знала бы
     # состояние только из списка, а карточку открывают и по прямой ссылке.
-    return {'result': {'profile': card, 'site_url': site_url,
+    return {'result': {'profile': card, 'edited': edited, 'site_url': site_url,
                        'login': profile['login'], 'contacts': contacts,
                        'enabled': bool(profile.get('enabled', 1)),
                        # Расписание — в настройках анкеты на «Анкетах», рядом с
