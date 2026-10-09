@@ -190,77 +190,72 @@ async def profile_card_save(profile_id: int, values: dict) -> dict:
     raise ValueError('анкету правил кто-то ещё — откройте окно заново и повторите')
 
 
-async def _card_read(profile_id: int) -> dict:
-    """Строка анкеты: прежние значения и снимок столбцов для сверки.
-
-    Raises:
-        LookupError: анкеты нет. Правка несуществующей — ошибка вызывающего.
-    """
-    async with mysql_get_db_async() as db:
-        await db.execute('SELECT login, profile, profile_edited FROM profile '
-                         ' WHERE id = %s', (int(profile_id),))
-        row = await db.fetchone()
-
-    if not row:
-        raise LookupError(f'анкеты #{int(profile_id)} нет')
-
-    return dict(row)
-
-
-def _card_apply(row: dict, values: dict, first_login=None) -> tuple[str, dict, list[str]]:
-    """Что должно лечь: почта, карточка и отметки. Чистая — базы не касается.
+async def profile_card_forget(profile_id: int, field: str) -> list[str]:
+    """Снять отметку с поля — «вернуть сайту».
 
     Args:
-        row: снимок строки, с которым считаем на этой попытке.
-        values: что пришло из окна.
-        first_login: почта, какой она была на **самой первой** попытке этого
-            вызова `profile_card_save` — ориентир, не трогавшийся повтором.
-            `None` — считать, что текущая попытка и есть первая.
+        profile_id: наш номер анкеты.
+        field: имя поля карточки из `PROFILE_CARD_FIELDS`.
 
-    Отдельной функцией, потому что решение «что считать правкой» хочется читать и
-    проверять без базы, а попытка записи может повториться — считать то же самое
-    дважды внутри цикла незачем, но и прятать это в запрос нельзя.
+    Returns:
+        list: отметки, которые остались.
 
-    ## ⚠⚠ Почта решается не как поля карточки
+    Raises:
+        ValueError: такого поля среди правимых нет.
+        LookupError: анкеты нет.
 
-    У полей `PROFILE_CARD_FIELDS` отсутствие в `values` само по себе значит «не
-    трогать» — окно может прислать только изменённое. Почта обязательна
-    (`NOT NULL`, половина ключа входа), и окно присылает её всегда, правил
-    человек её или просто открыл и сохранил. Поэтому «значение не изменилось»
-    для почты узнаётся не присутствием ключа, а сравнением с `first_login`:
-    совпало с тем, что было на первой попытке, — это эхо формы, и в дело идёт
-    **свежая** строка (`row.get('login')`), какой бы она ни была к этой попытке;
-    разошлось — человек правит почту осознанно, и его значение побеждает, как
-    и для прочих полей при столкновении на одном и том же поле.
+    ⚠ **Значение остаётся на месте.** Стереть его значило бы выбросить то, что
+    человек видел в поле; обновит его следующий импорт, когда сайт отдаст своё.
 
-    ⚠ **Чего это не закрывает, и так было всегда.** `first_login` снят на первой
-    попытке **этого вызова**, а не в тот миг, когда человек открыл окно. Смени
-    кто-то почту между открытием окна и нажатием «Сохранить», и присланное
-    значение разойдётся с `first_login` — то есть будет принято за осознанную
-    правку и ляжет поверх чужой. Окно здесь шире, чем у прочих полей, и сузить
-    его можно только одним способом: присылать со страницы ту почту, что была
-    при открытии, и сверять уже с ней. Признак, по которому стоит это сделать:
-    появление второго места, откуда почту правят.
+    ⚠ Отметка нужна человеку именно снимаемой: без этого правило «сайт правленое
+    не трогает» становится ловушкой — поправивший имя однажды отрезал бы его от
+    сайта навсегда и узнал об этом только тем, что имя больше не обновляется.
     """
-    before = json_column_load(row.get('profile'))
-    card = dict(before)
-    edited = set(profile_card_edited(row.get('profile_edited')))
+    if field not in PROFILE_CARD_FIELDS:
+        raise ValueError(f'поля «{field}» в карточке анкеты нет')
 
-    for field in PROFILE_CARD_FIELDS:
-        if field not in values:
-            continue
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT profile_edited FROM profile WHERE id = %s',
+                         (int(profile_id),))
+        row = await db.fetchone()
+        if not row:
+            raise LookupError(f'анкеты #{int(profile_id)} нет')
 
-        if _same(field, before.get(field), values[field]):
-            continue
+        left = [one for one in profile_card_edited(row['profile_edited'])
+                if one != field]
+        # ⚠ Пустые отметки ложатся `NULL`, а не `'[]'`: «отметок нет» должно иметь
+        # одно написание — то же правило, что в миграции колонки.
+        await db.execute('UPDATE profile SET profile_edited = %s WHERE id = %s',
+                         (json.dumps(left) if left else None, int(profile_id)))
+        await db.connection.commit()
 
-        card[field] = values[field]
-        edited.add(field)
+    return left
 
-    submitted = str(values.get('login') or '').strip()
-    baseline = str(first_login if first_login is not None else row.get('login') or '')
-    login = submitted if submitted and submitted != baseline else str(row.get('login') or '')
 
-    return login, card, profile_card_edited(sorted(edited))
+def profile_card_why(error: Exception, login: str, uid: str) -> str:
+    """Причина отказа словами вместо текста драйвера.
+
+    Args:
+        error: исключение драйвера.
+        login: почта, которую пытались записать.
+        uid: номер на сайте, который пытались записать.
+
+    Returns:
+        str: предложение для человека.
+
+    ⚠ **Ключи различаются порознь, и общий признак дубля стоит последним.** У
+    таблицы два уникальных ключа, и «почта занята» вместо «номер занят» отправило
+    бы человека править не то поле.
+    """
+    text = str(error)
+
+    if PROFILE_CARD_KEY_UID in text:
+        return f'номер {uid} на этом сайте уже у другой анкеты'
+
+    if PROFILE_CARD_KEY_LOGIN in text or '1062' in text or 'Duplicate entry' in text:
+        return f'учётка «{login}» на этом сайте уже заведена'
+
+    return f'не удалось сохранить анкету: {text}'
 
 
 async def _card_claim(profile_id: int, row: dict, login: str, card: dict,
@@ -341,72 +336,77 @@ async def _card_claim(profile_id: int, row: dict, login: str, card: dict,
             and now.get('profile_edited') == row.get('profile_edited'))
 
 
-async def profile_card_forget(profile_id: int, field: str) -> list[str]:
-    """Снять отметку с поля — «вернуть сайту».
+def _card_apply(row: dict, values: dict, first_login=None) -> tuple[str, dict, list[str]]:
+    """Что должно лечь: почта, карточка и отметки. Чистая — базы не касается.
 
     Args:
-        profile_id: наш номер анкеты.
-        field: имя поля карточки из `PROFILE_CARD_FIELDS`.
+        row: снимок строки, с которым считаем на этой попытке.
+        values: что пришло из окна.
+        first_login: почта, какой она была на **самой первой** попытке этого
+            вызова `profile_card_save` — ориентир, не трогавшийся повтором.
+            `None` — считать, что текущая попытка и есть первая.
 
-    Returns:
-        list: отметки, которые остались.
+    Отдельной функцией, потому что решение «что считать правкой» хочется читать и
+    проверять без базы, а попытка записи может повториться — считать то же самое
+    дважды внутри цикла незачем, но и прятать это в запрос нельзя.
+
+    ## ⚠⚠ Почта решается не как поля карточки
+
+    У полей `PROFILE_CARD_FIELDS` отсутствие в `values` само по себе значит «не
+    трогать» — окно может прислать только изменённое. Почта обязательна
+    (`NOT NULL`, половина ключа входа), и окно присылает её всегда, правил
+    человек её или просто открыл и сохранил. Поэтому «значение не изменилось»
+    для почты узнаётся не присутствием ключа, а сравнением с `first_login`:
+    совпало с тем, что было на первой попытке, — это эхо формы, и в дело идёт
+    **свежая** строка (`row.get('login')`), какой бы она ни была к этой попытке;
+    разошлось — человек правит почту осознанно, и его значение побеждает, как
+    и для прочих полей при столкновении на одном и том же поле.
+
+    ⚠ **Чего это не закрывает, и так было всегда.** `first_login` снят на первой
+    попытке **этого вызова**, а не в тот миг, когда человек открыл окно. Смени
+    кто-то почту между открытием окна и нажатием «Сохранить», и присланное
+    значение разойдётся с `first_login` — то есть будет принято за осознанную
+    правку и ляжет поверх чужой. Окно здесь шире, чем у прочих полей, и сузить
+    его можно только одним способом: присылать со страницы ту почту, что была
+    при открытии, и сверять уже с ней. Признак, по которому стоит это сделать:
+    появление второго места, откуда почту правят.
+    """
+    before = json_column_load(row.get('profile'))
+    card = dict(before)
+    edited = set(profile_card_edited(row.get('profile_edited')))
+
+    for field in PROFILE_CARD_FIELDS:
+        if field not in values:
+            continue
+
+        if _same(field, before.get(field), values[field]):
+            continue
+
+        card[field] = values[field]
+        edited.add(field)
+
+    submitted = str(values.get('login') or '').strip()
+    baseline = str(first_login if first_login is not None else row.get('login') or '')
+    login = submitted if submitted and submitted != baseline else str(row.get('login') or '')
+
+    return login, card, profile_card_edited(sorted(edited))
+
+
+async def _card_read(profile_id: int) -> dict:
+    """Строка анкеты: прежние значения и снимок столбцов для сверки.
 
     Raises:
-        ValueError: такого поля среди правимых нет.
-        LookupError: анкеты нет.
-
-    ⚠ **Значение остаётся на месте.** Стереть его значило бы выбросить то, что
-    человек видел в поле; обновит его следующий импорт, когда сайт отдаст своё.
-
-    ⚠ Отметка нужна человеку именно снимаемой: без этого правило «сайт правленое
-    не трогает» становится ловушкой — поправивший имя однажды отрезал бы его от
-    сайта навсегда и узнал об этом только тем, что имя больше не обновляется.
+        LookupError: анкеты нет. Правка несуществующей — ошибка вызывающего.
     """
-    if field not in PROFILE_CARD_FIELDS:
-        raise ValueError(f'поля «{field}» в карточке анкеты нет')
-
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT profile_edited FROM profile WHERE id = %s',
-                         (int(profile_id),))
+        await db.execute('SELECT login, profile, profile_edited FROM profile '
+                         ' WHERE id = %s', (int(profile_id),))
         row = await db.fetchone()
-        if not row:
-            raise LookupError(f'анкеты #{int(profile_id)} нет')
 
-        left = [one for one in profile_card_edited(row['profile_edited'])
-                if one != field]
-        # ⚠ Пустые отметки ложатся `NULL`, а не `'[]'`: «отметок нет» должно иметь
-        # одно написание — то же правило, что в миграции колонки.
-        await db.execute('UPDATE profile SET profile_edited = %s WHERE id = %s',
-                         (json.dumps(left) if left else None, int(profile_id)))
-        await db.connection.commit()
+    if not row:
+        raise LookupError(f'анкеты #{int(profile_id)} нет')
 
-    return left
-
-
-def profile_card_why(error: Exception, login: str, uid: str) -> str:
-    """Причина отказа словами вместо текста драйвера.
-
-    Args:
-        error: исключение драйвера.
-        login: почта, которую пытались записать.
-        uid: номер на сайте, который пытались записать.
-
-    Returns:
-        str: предложение для человека.
-
-    ⚠ **Ключи различаются порознь, и общий признак дубля стоит последним.** У
-    таблицы два уникальных ключа, и «почта занята» вместо «номер занят» отправило
-    бы человека править не то поле.
-    """
-    text = str(error)
-
-    if PROFILE_CARD_KEY_UID in text:
-        return f'номер {uid} на этом сайте уже у другой анкеты'
-
-    if PROFILE_CARD_KEY_LOGIN in text or '1062' in text or 'Duplicate entry' in text:
-        return f'учётка «{login}» на этом сайте уже заведена'
-
-    return f'не удалось сохранить анкету: {text}'
+    return dict(row)
 
 
 def _same(field: str, before, after) -> bool:
@@ -421,3 +421,6 @@ def _same(field: str, before, after) -> bool:
     now = empty if after is None else after
 
     return str(was) == str(now)
+
+
+
