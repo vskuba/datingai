@@ -31,6 +31,7 @@ from logging_.logging_ import logger_exception, logger_info
 CRONJOB_JOBS = {
     'gallery_round': 'src/cronjob/gallery_round.py',
     'dating_chat': 'src/cronjob/dating_chat.py',
+    'e2e_run': 'src/cronjob/e2e_run.py',
 }
 
 # Сколько ждём задание по умолчанию. Пять минут: обход Диска по полусотне
