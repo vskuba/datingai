@@ -31,12 +31,15 @@ from mysql_.migration.mysql_migration_up import mysql_migration_up
 from mysql_.mysql_ import mysql_pool_close, mysql_pool_get
 from dashboard.src.panel.panel_auth_api import panel_auth_api_router
 from dashboard.src.panel.panel_static import panel_static_files, panel_static_url
+from dashboard.src.panel.panel_template import panel_template_env
 from dashboard.src.panel.panel_backup_api import panel_backup_api_router
 from dashboard.src.panel.panel_seed_api import panel_seed_api_router
+from dashboard.src.page.e2e.e2e_api import e2e_api_router
 from dashboard.src.panel.panel_setting_api import panel_setting_api_router
 from dashboard.src.panel.panel_user_api import panel_user_api_router
 from uvicorn_.uvicorn_validation import uvicorn_validation_handler
 
+from src.auth.auth_access import AuthPermission
 from src.dating.error import error_catch_install
 from src.auth.auth import AuthUser
 from src.auth.auth_seed import auth_seed_first_user, auth_seed_operator
@@ -250,7 +253,16 @@ async def main_uvicorn_health():
 current_dir = os.path.dirname(os.path.abspath(__file__))
 data_dir = os.path.join(current_dir, config_get('DATA_DIR', 'data'), config_get('UVICORN_DIR', 'uvicorn'))
 
-app.state.jinja2_template = Jinja2Templates(directory=os.path.join(data_dir, 'template'))
+# ⚠⚠ Шаблоны ищутся в ДВУХ каталогах: свой первым, общий (`dashboard/template`)
+# следом. Без этого общая страница каркаса просто не находится — положить её
+# туда можно, а взять оттуда нечем.
+#
+# ⚠ Свой первым — способ отойти от общего вида, не ломая соседей: положил у
+# себя файл с тем же именем, он и отдаётся. И поэтому же общая страница может
+# `{% extends "base.html" %}` — возьмётся base ЭТОГО проекта, со своим меню.
+app.state.jinja2_template = panel_template_env(
+    os.path.join(data_dir, 'template'),
+    shared=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dashboard', 'template'))
 # ⚠ Общая статика — submodule `dashboard` рядом с `py_modules`: раздача ищет
 # файл сперва у нас, потом там. Свой файл с тем же именем перекрывает общий, и
 # это единственный способ отойти от общего вида, не ломая соседей.
@@ -279,6 +291,13 @@ app.include_router(panel_auth_api_router())
 app.include_router(dashboard.router)
 app.include_router(site_router.router)
 app.include_router(panel_setting_api_router())
+# ⚠ Страница «Тесты → E2E» общая (submodule `dashboard`), а права — наши.
+# Каталог прав здесь крупный: `install:manage` это «отвечаешь ли ты за
+# установку», и E2E ровно про неё — прогон поднимает браузер и ходит по
+# страницам панели. Отдельного права под тесты не заводим: дробить каталог
+# ради одной страницы значит ломать его замысел.
+app.include_router(e2e_api_router(view=AuthPermission.INSTALL_MANAGE,
+                                  run=AuthPermission.INSTALL_MANAGE))
 app.include_router(profile_.router)
 app.include_router(profile_action.router)
 app.include_router(profile_view.router)

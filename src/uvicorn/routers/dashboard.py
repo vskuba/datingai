@@ -122,6 +122,14 @@ async def dashboard_setting(request: Request, user: AuthUser = Depends(auth_admi
     return await _dashboard_page(request, user, 'admin/setting.html')
 
 
+@router.get('/admin/e2e', response_class=HTMLResponse, include_in_schema=False)
+async def dashboard_e2e(request: Request, user: AuthUser = Depends(auth_admin_required)):
+    """E2E-проверки интерфейса: прогоны, кадры с рамками областей, выключатель
+    случая. Шаблон приходит из общего каркаса (`dashboard/template/admin/`) —
+    поиск идёт сперва по своему каталогу, потом по нему."""
+    return await _dashboard_page(request, user, 'admin/e2e.html')
+
+
 @router.get('/admin/seed', response_class=HTMLResponse, include_in_schema=False)
 async def dashboard_seed(request: Request, user: AuthUser = Depends(auth_admin_required)):
     """Seed SQL: выгрузка выбранных таблиц и заливка обратно. Только админу."""

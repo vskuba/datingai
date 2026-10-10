@@ -96,6 +96,10 @@
                 <a href="{{ base }}/admin/backup">💾 Backup</a>
                 <a href="{{ base }}/admin/users">👥 Пользователи</a>
                 <span class="tabnav-sep"></span>
+                {# Проверки интерфейса кадром и числами. Страница общая — из
+                   submodule `dashboard`; здесь только пункт меню и роут. #}
+                <a href="{{ base }}/admin/e2e">🧪 E2E</a>
+                <span class="tabnav-sep"></span>
             </div>
 
             <div class="tabnav-panel" data-group="tool">
@@ -161,6 +165,7 @@
             '/admin/dating/socket': 'dating',
             '/admin/setting': 'setting',
             '/admin/seed': 'setting',
+            '/admin/e2e': 'setting',
             '/admin/backup': 'setting',
             '/admin/users': 'setting',
         };
