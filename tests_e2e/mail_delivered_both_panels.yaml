@@ -1,0 +1,136 @@
+name: Доставка письма — одно событие на двух панелях
+description: >
+  Письмо избранному уходит отсюда, и мы отмечаем его доставленным; соседу
+  (RhapsodyAi) об этом говорит вызов /chat/message/delivered, который ставит
+  там companion_session.delivered_at. Случай снимает ДВА кадра одного события:
+  наш журнал «Фавориты → Доставка» со статусом и датой отправки — и ленту
+  соседа «Сессии → Чат» с чипом «✓ доставлено» и датой доставки. Разойдись
+  стороны — это видно сразу, рядом, а не сверкой двух вкладок глазами.
+
+page: /admin/dating/profile
+widths: [1440]
+
+steps:
+  # ⚠⚠ Сайт выбираем явно, и это не придирка. Журнал доставки — ПО САЙТУ, а
+  # открывается страница на том, что запомнен в браузере прогона. Без этого
+  # шага кадр снимался с пустого журнала чужого сайта и честно сообщал
+  # «писем с этого сайта не уходило» — то есть доказывал не то, про что случай.
+  #
+  # ⚠ По подписи, а не по значению: в `value` лежит номер сайта, он внешний и
+  # в случае ничего не объясняет.
+  - wait_for: |
+      return document.querySelectorAll('#siteSelect option').length > 0;
+    timeout: 20000
+
+  - set: '#siteSelect'
+    label: Ladadate
+
+  # Вкладка «Фавориты», внутри неё подвкладка «Доставка» — журнал ушедшего.
+  - click: '.page-tab[data-tab="fav"]'
+  - wait_for: |
+      return !!document.querySelector('[data-fav-tab="sent"]');
+    timeout: 20000
+
+  - click: '[data-fav-tab="sent"]'
+
+  # ⚠⚠ Ждём ПРИЗНАК журнала, а не секунды: строки приходят запросом, и пустой
+  # список от «ещё не пришло» неотличим от «писем не уходило» — кадр снялся бы
+  # на заглушке, и тест зеленел бы на непроверенной странице.
+  - wait_for: |
+      const box = document.querySelector('[data-slot="fav-sent"]');
+      return box && box.textContent.trim().length > 0
+             && !box.textContent.includes('Загрузка');
+    timeout: 25000
+
+areas:
+  - name: Журнал доставки писем
+    selector: '[data-slot="fav-sent"]'
+    rules: [visible, inside, filled]
+
+  - name: Счёт журнала
+    selector: '[data-slot="fav-sent-count"]'
+    rules: [visible, inside, filled]
+
+checks:
+  # Числа ниже — не вердикт о доставке, а защита кадра: он обязан быть снят с
+  # журнала, в котором что-то есть. Пустой журнал даёт красивый пустой кадр, и
+  # по нему не видно, что доказывать было нечего.
+  - name: журнал доставки пуст (1 — пуст)
+    expect: 0
+    js: |
+      const box = document.querySelector('[data-slot="fav-sent"]');
+      return box && box.querySelectorAll('.mail-sent-row, tr, li').length > 0 ? 0 : 1;
+
+# ───────────────────────────────────────────────────────────────────────────
+# Сторона соседа: та же доставка глазами RhapsodyAi.
+#
+# ⚠ Адрес и учётка здесь не пишутся — они приходят окружением установки
+# (`E2E_PEER_URL`, `E2E_PEER_USER`, `E2E_PEER_PASSWORD`): случай один на все
+# установки, а сосед у каждой свой.
+peer:
+  name: Доставка письма — лента соседа
+  description: >
+    Страница «Логи → Сессии» RhapsodyAi, вкладка «Чат»: канал mail, отбор
+    «Доставлен». На кадре — чип «✓ доставлено» и дата доставки у каждого
+    обмена: то же событие, что в нашем журнале, с его стороны.
+  page: /admin/session
+
+  steps:
+    - click: '.page-tab[data-tab="chat"]'
+
+    # ⚠⚠ Ждём КОНЕЦ первой загрузки, а не «вариантов больше нуля»: до ответа в
+    # списке лежит единственная заглушка «Загрузка...», и такое условие
+    # истинно мгновенно — на ней же.
+    - wait_for: |
+        const opts = [...document.querySelectorAll('#chatSessionSelect option')];
+        return opts.length > 0 && !opts.some(o => o.textContent.includes('Загрузка'));
+      timeout: 20000
+
+    - set: '#chatSessionKind'
+      value: mail
+    - set: '#chatSessionDelivered'
+      value: 'yes'
+
+    # ⚠ Отбор перезагружает список — выбор делаем ПОСЛЕ прихода новых строк.
+    # Сделай раньше, и пришедший список затрёт выбор, а лента останется от
+    # прежнего отбора: кадр будет снят не с того, что назван.
+    - wait_for: |
+        const opts = [...document.querySelectorAll('#chatSessionSelect option')];
+        return opts.length > 0 && !opts.some(o => o.textContent.includes('Загрузка'));
+      timeout: 20000
+
+    - set: '#chatSessionSelect'
+      index: 0
+
+    # ⚠ Признак готовой ленты — ИСЧЕЗЛА «Загрузка...»: заглушка сама лежит в
+    # потоке одним узлом, и счёт детей истинен на ней.
+    - wait_for: |
+        const box = document.querySelector('#chatSessionStream');
+        return box && box.children.length > 0 && !box.innerText.includes('Загрузка');
+      timeout: 25000
+
+  areas:
+    - name: Лента обменов
+      selector: '#chatSessionStream'
+      rules: [visible, inside, filled]
+
+    - name: Отбор доставки
+      selector: '#chatSessionDelivered'
+      rules: [visible, inside]
+
+  checks:
+    # Главное утверждение пары: под отбором «Доставлен» ни одного обмена без
+    # отметки. Разойдись отметка с показом — здесь это и всплывёт.
+    - name: обменов «не доставлено» под отбором «Доставлен»
+      expect: 0
+      js: |
+        return document.querySelectorAll(
+          '#chatSessionStream .chip-undelivered').length;
+
+    # Защита от ложной зелени: на пустой ленте проверка выше зеленеет, не
+    # проверив ничего, и кадр соседа оказался бы пустым доказательством.
+    - name: лента пуста, доказывать было нечего (1 — пуста)
+      expect: 0
+      js: |
+        return document.querySelectorAll(
+          '#chatSessionStream .chip-delivered').length > 0 ? 0 : 1;
