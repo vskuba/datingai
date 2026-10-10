@@ -14,7 +14,7 @@
 подключения.
 """
 
-from panel_.panel_setting_api import (PANEL_SETTING_KEY_MAX as SETTING_KEY_MAX,
+from dashboard.src.panel.panel_setting_api import (PANEL_SETTING_KEY_MAX as SETTING_KEY_MAX,
                                       PANEL_SETTING_TIMEZONE_DEFAULT
                                       as SETTING_TIMEZONE_DEFAULT,
                                       PANEL_SETTING_TIMEZONE_KEY

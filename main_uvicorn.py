@@ -29,12 +29,12 @@ from config.config import config_get
 from logging_.logging_ import logger_exception, logger_info, logging_init
 from mysql_.migration.mysql_migration_up import mysql_migration_up
 from mysql_.mysql_ import mysql_pool_close, mysql_pool_get
-from panel_.panel_auth_api import panel_auth_api_router
-from panel_.panel_static import panel_static_files, panel_static_url
-from panel_.panel_backup_api import panel_backup_api_router
-from panel_.panel_seed_api import panel_seed_api_router
-from panel_.panel_setting_api import panel_setting_api_router
-from panel_.panel_user_api import panel_user_api_router
+from dashboard.src.panel.panel_auth_api import panel_auth_api_router
+from dashboard.src.panel.panel_static import panel_static_files, panel_static_url
+from dashboard.src.panel.panel_backup_api import panel_backup_api_router
+from dashboard.src.panel.panel_seed_api import panel_seed_api_router
+from dashboard.src.panel.panel_setting_api import panel_setting_api_router
+from dashboard.src.panel.panel_user_api import panel_user_api_router
 from uvicorn_.uvicorn_validation import uvicorn_validation_handler
 
 from src.dating.error import error_catch_install

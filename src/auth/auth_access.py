@@ -28,7 +28,7 @@ seed, бэкапы, люди, настройки. Всё остальное не
 
 from enum import Enum
 
-from panel_.panel_access import PanelAccess
+from dashboard.src.panel.panel_access import PanelAccess
 
 # Как зовутся роли. ⚠ Имена уезжают в столбец `user.role` и в куку сессии: это
 # не ярлыки для страницы, а значения в базе.

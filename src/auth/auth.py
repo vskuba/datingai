@@ -37,8 +37,8 @@
 `DATING_USERNAME`/`DATING_PASSWORD` → `OPERATOR_USERNAME`/`OPERATOR_PASSWORD`.
 """
 
-from panel_.panel_access import panel_access_use
-from panel_.panel_auth import (PanelUser as AuthUser,
+from dashboard.src.panel.panel_access import panel_access_use
+from dashboard.src.panel.panel_auth import (PanelUser as AuthUser,
                                panel_auth_admin_required as auth_admin_required,
                                panel_auth_need as auth_need,
                                panel_auth_required as auth_required,

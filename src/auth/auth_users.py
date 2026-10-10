@@ -10,7 +10,7 @@
 старт приложения, а не страница.
 """
 
-from panel_.panel_user import (PANEL_USER_NAME_RE as AUTH_USERS_NAME_RE,
+from dashboard.src.panel.panel_user import (PANEL_USER_NAME_RE as AUTH_USERS_NAME_RE,
                                PANEL_USER_PASSWORD_MIN as AUTH_USERS_PASSWORD_MIN,
                                PANEL_USER_TOKEN_TAIL as AUTH_USERS_TOKEN_TAIL,
                                panel_user_create as auth_users_create,

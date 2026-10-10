@@ -9,7 +9,7 @@
 `.claude/docs-common/panel.md`, §4.
 """
 
-from panel_.panel_user import (PANEL_USER_SEED_TOKEN_NOTE as AUTH_SEED_TOKEN_NOTE,
+from dashboard.src.panel.panel_user import (PANEL_USER_SEED_TOKEN_NOTE as AUTH_SEED_TOKEN_NOTE,
                                panel_user_seed_admin as auth_seed_first_user,
                                panel_user_seed_operator as auth_seed_operator)
 
