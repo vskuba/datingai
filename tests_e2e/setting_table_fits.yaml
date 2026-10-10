@@ -32,9 +32,32 @@ areas:
 
 checks:
   # Число, а не «да/нет»: вердикт читается как «ожидали 0, получили 3».
-  - name: элементов за правым краем экрана
+  # ⚠⚠ Считаем тех, кто ТЯНЕТ СТРАНИЦУ, а не всех, кто правее вьюпорта.
+  # Разница по существу: элемент внутри горизонтального скроллера (лента меню,
+  # обёртка широкой таблицы) тоже лежит правее края — и это нормальный приём,
+  # а не дефект. Прежний счёт красил его как беду, и отличить «страницу увело
+  # вбок» от «широкое ездит внутри своей рамки» было нечем.
+  - name: элементов, тянущих страницу вбок
     expect: 0
     js: |
+      const free = (el) => {
+        let p = el.parentElement;
+        while (p && p !== document.body) {
+          if (getComputedStyle(p).overflowX !== 'visible') return false;
+          p = p.parentElement;
+        }
+        return true;
+      };
       return [...document.querySelectorAll('body *')]
         .filter(e => e.getBoundingClientRect().right > window.innerWidth + 1)
+        .filter(free)
         .length;
+
+  # ⚠ Прямой вопрос «уехала ли страница» — числом в пикселях. Проверка выше
+  # называет виновных, эта отвечает за итог: ноль значит, что горизонтальной
+  # прокрутки у страницы нет вовсе.
+  - name: на сколько пикселей страница шире экрана
+    expect: 0
+    js: |
+      return Math.max(0,
+        document.documentElement.scrollWidth - window.innerWidth);
