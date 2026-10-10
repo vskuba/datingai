@@ -33,14 +33,15 @@ steps:
 
   - click: '[data-fav-tab="sent"]'
 
-  # ⚠⚠ Ждём ПРИЗНАК журнала, а не секунды: строки приходят запросом, и пустой
-  # список от «ещё не пришло» неотличим от «писем не уходило» — кадр снялся бы
-  # на заглушке, и тест зеленел бы на непроверенной странице.
+  # ⚠⚠ Ждём СТРОКИ журнала, а не «появился текст». Пока запрос в пути, на
+  # месте журнала лежит заглушка «писем с этого сайта не уходило» — непустая и
+  # без слова «Загрузка». Условие по тексту отпускало на ней, кадр снимался с
+  # заглушки, и тест падал «журнал пуст» на установке, где писем 387.
+  # Поймано на проде кадром: числа при этом молчали.
   - wait_for: |
-      const box = document.querySelector('[data-slot="fav-sent"]');
-      return box && box.textContent.trim().length > 0
-             && !box.textContent.includes('Загрузка');
-    timeout: 25000
+      return document.querySelectorAll(
+        '[data-slot="fav-sent"] .mail-sent-row').length > 0;
+    timeout: 30000
 
 areas:
   - name: Журнал доставки писем
@@ -58,8 +59,19 @@ checks:
   - name: журнал доставки пуст (1 — пуст)
     expect: 0
     js: |
-      const box = document.querySelector('[data-slot="fav-sent"]');
-      return box && box.querySelectorAll('.mail-sent-row, tr, li').length > 0 ? 0 : 1;
+      return document.querySelectorAll(
+        '[data-slot="fav-sent"] .mail-sent-row').length > 0 ? 0 : 1;
+
+  # Статус у строк журнала проставлен: кадр без слов «доставлено»/«не
+  # доставлено» показывал бы строки, но не то, ради чего случай заведён.
+  - name: строк журнала без слова об исходе
+    expect: 0
+    js: |
+      const rows = document.querySelectorAll(
+        '[data-slot="fav-sent"] .mail-sent-row').length;
+      const states = document.querySelectorAll(
+        '[data-slot="fav-sent"] .mail-sent-state').length;
+      return rows - Math.min(rows, states);
 
 # ───────────────────────────────────────────────────────────────────────────
 # Сторона соседа: та же доставка глазами RhapsodyAi.
