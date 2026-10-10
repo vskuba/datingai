@@ -297,7 +297,8 @@ app.include_router(panel_setting_api_router())
 # страницам панели. Отдельного права под тесты не заводим: дробить каталог
 # ради одной страницы значит ломать его замысел.
 app.include_router(e2e_api_router(view=AuthPermission.INSTALL_MANAGE,
-                                  run=AuthPermission.INSTALL_MANAGE))
+                                  run=AuthPermission.INSTALL_MANAGE,
+                                  drop=AuthPermission.INSTALL_MANAGE))
 app.include_router(profile_.router)
 app.include_router(profile_action.router)
 app.include_router(profile_view.router)

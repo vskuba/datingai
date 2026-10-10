@@ -20,15 +20,15 @@ steps:
 areas:
   - name: Поиск по названию
     selector: '#search'
-    rules: [видна, не_вылезла]
+    rules: [visible, inside]
 
   - name: Кнопка заведения
     selector: '#addBtn'
-    rules: [видна, не_вылезла]
+    rules: [visible, inside]
 
   - name: Таблица значений
     selector: table
-    rules: [видна, не_вылезла, не_обрезана, непустая]
+    rules: [visible, inside, whole, filled]
 
 checks:
   # Число, а не «да/нет»: вердикт читается как «ожидали 0, получили 3».

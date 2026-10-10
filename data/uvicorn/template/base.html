@@ -52,6 +52,13 @@
                  веб-морды. Ссылка никуда не ведёт, нажатие только раскрывает
                  вторую строку (см. скрипт внизу). -->
             <a class="tabnav-group" data-group="tool" href="#">🔧 Инструменты</a>
+
+            {# Проверки раздел свой, а не подпункт «Настроек», и это не вкусовое.
+               Настройки — то, чем установку правят; тесты — то, чем её проверяют,
+               и смотрят в них в другой момент и с другим вопросом. Рядом с E2E
+               встанут соседние виды проверок (нагрузка, доступность) — каждый
+               своей страницей, потому что доказательство у каждого своё. #}
+            <a class="tabnav-group" data-group="test" href="{{ base }}/admin/e2e">🧪 Тесты</a>
             {% endif %}
 
             <div class="topbar-spacer"></div>
@@ -96,8 +103,13 @@
                 <a href="{{ base }}/admin/backup">💾 Backup</a>
                 <a href="{{ base }}/admin/users">👥 Пользователи</a>
                 <span class="tabnav-sep"></span>
-                {# Проверки интерфейса кадром и числами. Страница общая — из
-                   submodule `dashboard`; здесь только пункт меню и роут. #}
+            </div>
+
+            {# Тесты: сейчас одна подвкладка, E2E — проверка интерфейса кадром и
+               числами. Страница общая, из submodule `dashboard`; здесь только
+               пункт меню и роут. #}
+            <div class="tabnav-panel" data-group="test">
+                <span class="tabnav-sep"></span>
                 <a href="{{ base }}/admin/e2e">🧪 E2E</a>
                 <span class="tabnav-sep"></span>
             </div>
@@ -165,7 +177,7 @@
             '/admin/dating/socket': 'dating',
             '/admin/setting': 'setting',
             '/admin/seed': 'setting',
-            '/admin/e2e': 'setting',
+            '/admin/e2e': 'test',
             '/admin/backup': 'setting',
             '/admin/users': 'setting',
         };
