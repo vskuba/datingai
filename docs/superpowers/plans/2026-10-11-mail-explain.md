@@ -24,6 +24,24 @@
 - Анкеты в тестах заводятся **только** фикстурами `girl` / `girl_make` из
   `tests/conftest.py`. Своих `INSERT INTO profile` и своих `DELETE` не писать:
   каскад уносит двенадцать таблиц сам, а `favorite` фикстура чистит отдельно.
+- ⚠⚠ **Redis с хоста недоступен, и тесты его не трогают.** Проверено на месте:
+  `REDIS_URL=redis://dating_redis:6379` — имя сети compose, и наружу Redis
+  **не опубликован** (`6379/tcp` без привязки к хосту), в отличие от MySQL, у
+  которой есть `MYSQL_PORT_HOST` и подмена адреса в `conftest.py`. Сюита при этом
+  зелёная: весь код глотает сбой Redis молча (`online._snapshot`,
+  `mail_wait_left`, `round_slot_*`) — то есть живой Redis тест не проверяет, а
+  **маскирует**.
+
+  Поэтому Redis в тестах **подменяется**, как это уже сделано в семи файлах
+  сюиты: `monkeypatch.setattr(<модуль>, 'redis_conn_get', lambda: fake)`.
+  ⚠ Подменять надо **в том модуле, который им пользуется**: отметка захода живёт
+  в слое (`round_.round_slot`), и подмена в двери `src/dating/round.py`
+  переставила бы её ссылку, оставив код слоя при своей — тест зеленел бы, ничего
+  не проверяя (`tests/test_mailing_round.py:140-146`).
+
+  ⚠ Для счётчика это даже **лучше живого Redis**: подделка записывает, какой
+  ключ у неё спросили, и тест прямо требует `dating:…:999901` вместо исключения.
+  Живой Redis сказал бы только «ответ не `-1`».
 - Сайт-стенд сюиты — `site_id = 999343` (константа `STAND_SITE` в тестах).
 - Прогон группы: `pytest -m mail -q`. Полный прогон — только перед выкладкой.
 - Перед `Write`/`Edit` нового кода может сработать застава `claude_gate_tool.py`:
@@ -227,12 +245,16 @@ git -C py_modules push origin master
 То есть страница не показывала срок **нигде** — ни у приставания, ни у инвайтов,
 — и выглядело это как «данных нет», а не как поломка. Тест ставит отметку своими
 руками и требует, чтобы её увидели: иначе третья копия сломается так же.
+
+⚠ Redis здесь **подменён**, а не живой: с хоста он недоступен вовсе, и живой код
+глотает его сбой молча — то есть на живом Redis тест маскировал бы беду вместо
+того, чтобы её ловить. Подделка вдобавок записывает спрошенный ключ, а он тут и
+есть сломанное место.
 """
 
 import pytest
 
-from redis_.redis_ import redis_conn_get
-from round_.round_slot import round_slot_mark
+from round_ import round_slot as slot
 
 from src.dating.favorite_mail_round import (FAVORITE_MAIL_ROUND_KEY,
                                             favorite_mail_round_next)
@@ -241,69 +263,130 @@ from src.dating.reply_round import REPLY_ROUND_KEY, reply_round_next
 
 pytestmark = pytest.mark.mail
 
-# Свой номер сайта, которого нет ни у кого: тест трогает общую память, и чужая
-# отметка, снятая им, остановила бы живой круг на целый срок.
+# Номер сайта для проверок. Свой, которого нет ни у кого: ключ собирается из
+# него, и чужой номер в проверке ключа ничего бы не доказал.
 PROBE_SITE = 999_901
 
-# Срок отметки. Достаточно большой, чтобы не истечь между двумя строками теста.
+# Срок отметки, секунды.
 PROBE_EVERY = 120
 
 
+class _FakeRedis:
+    """Подделка Redis: помнит, какой ключ у неё спросили, и отвечает сроком.
+
+    ⚠⚠ **Записанный ключ — главное здесь, а не ответ.** Беда, ради которой
+    написан файл, случалась **до** похода в Redis: ключ собирали `.format`-ом с
+    чужой меткой, и `KeyError` глотал `except`. Живой Redis сказал бы только
+    «ответ не `-1`»; подделка говорит, **какой именно ключ** спросили, то есть
+    проверяет ровно сломанное место.
+    """
+
+    def __init__(self, ttl: int = PROBE_EVERY):
+        self.asked = []
+        self._ttl = int(ttl)
+
+    def ttl(self, key):
+        self.asked.append(str(key))
+
+        return self._ttl
+
+
 @pytest.fixture
-def slots():
-    """Ставит отметки трёх кругов пробному сайту и убирает их за собой."""
-    keys = (FAVORITE_MAIL_ROUND_KEY, INVITE_ROUND_KEY, REPLY_ROUND_KEY)
+def fake(monkeypatch):
+    """Подменяет Redis **в модуле слоя**, где его и зовут.
 
-    for key in keys:
-        round_slot_mark(key, PROBE_SITE, every=PROBE_EVERY, what='пробе')
+    ⚠ Не в двери `src/dating/round.py`: она лишь ре-экспортирует имена, и
+    подмена в ней переставила бы ссылку двери, оставив код слоя при своей —
+    тест зеленел бы, ничего не проверяя. Та же оговорка стоит у соседнего
+    `tests/test_mailing_round.py`.
+    """
+    conn = _FakeRedis()
+    monkeypatch.setattr(slot, 'redis_conn_get', lambda: conn)
 
-    yield
-
-    conn = redis_conn_get()
-    for key in keys:
-        conn.delete(key.replace('{id}', str(PROBE_SITE)))
+    return conn
 
 
 class TestNextSeesTheMark:
     """Отметка стоит — счётчик называет её срок, а не «не вышло»."""
 
-    def test_favorite_mail(self, slots):
-        got = favorite_mail_round_next(PROBE_SITE)
+    def test_favorite_mail(self, fake):
+        assert favorite_mail_round_next(PROBE_SITE) == PROBE_EVERY
 
-        assert got > 0, f'счётчик приставания не увидел отметку: {got}'
-        assert got <= PROBE_EVERY
+    def test_invite(self, fake):
+        assert invite_round_next(PROBE_SITE) == PROBE_EVERY
 
-    def test_invite(self, slots):
-        got = invite_round_next(PROBE_SITE)
-
-        assert got > 0, f'счётчик инвайтов не увидел отметку: {got}'
-        assert got <= PROBE_EVERY
-
-    def test_reply(self, slots):
-        got = reply_round_next(PROBE_SITE)
-
-        assert got > 0, f'счётчик ответов не увидел отметку: {got}'
-        assert got <= PROBE_EVERY
+    def test_reply(self, fake):
+        assert reply_round_next(PROBE_SITE) == PROBE_EVERY
 
 
-class TestNextWithoutMark:
-    """Отметки нет — это «пора», то есть ноль, а не отказ."""
+class TestKeyIsBuiltByTheLayer:
+    """⚠⚠ Ключ собирает слой, и метку в нём подставили правильно.
 
-    def test_no_mark_means_now(self):
-        # ⚠ Сайт, которому отметку не ставили вовсе: `-2` от Redis обязан
-        # читаться как «идти можно», иначе страница напишет «не вышло» там, где
-        # круг возьмётся на ближайшем тике.
-        assert favorite_mail_round_next(999_902) == 0
-        assert invite_round_next(999_902) == 0
-        assert reply_round_next(999_902) == 0
+    Это и есть та проверка, которой не было. Прежде каждая функция подставляла
+    единицу сама — `KEY.format(site_id=…)` на шаблоне с меткой `{id}`, — и
+    падала `KeyError`-ом ещё до Redis. Снаружи это выглядело как «данных нет».
+    """
+
+    def test_favorite_mail_key(self, fake):
+        favorite_mail_round_next(PROBE_SITE)
+
+        assert fake.asked == [FAVORITE_MAIL_ROUND_KEY.replace('{id}',
+                                                              str(PROBE_SITE))]
+        assert '{' not in fake.asked[0], 'метка осталась в ключе текстом'
+
+    def test_invite_key(self, fake):
+        invite_round_next(PROBE_SITE)
+
+        assert fake.asked == [INVITE_ROUND_KEY.replace('{id}', str(PROBE_SITE))]
+
+    def test_reply_key(self, fake):
+        reply_round_next(PROBE_SITE)
+
+        assert fake.asked == [REPLY_ROUND_KEY.replace('{id}', str(PROBE_SITE))]
+
+
+class TestNoMarkMeansNow:
+    """Отметки нет — это «пора», то есть ноль, а не отказ.
+
+    ⚠ `-2` от Redis значит «ключа нет». Прочти его страница как есть, она
+    написала бы «не вышло» там, где круг возьмётся на ближайшем тике.
+    """
+
+    def test_minus_two_is_zero(self, monkeypatch):
+        conn = _FakeRedis(ttl=-2)
+        monkeypatch.setattr(slot, 'redis_conn_get', lambda: conn)
+
+        assert favorite_mail_round_next(PROBE_SITE) == 0
+        assert invite_round_next(PROBE_SITE) == 0
+        assert reply_round_next(PROBE_SITE) == 0
+
+
+class TestRedisFailure:
+    """Redis молчит — `-1`, и врать сроком нельзя.
+
+    ⚠ Сторона ошибки здесь своя, не такая, как у `round_slot_due`: тот при сбое
+    отвечает «не пора» (лишний заход дороже пропущенного), а этот — «не знаю».
+    Выдуманный срок на странице хуже честного молчания.
+    """
+
+    def test_broken_redis_is_minus_one(self, monkeypatch):
+        def broken():
+            raise RuntimeError('redis лёг')
+
+        monkeypatch.setattr(slot, 'redis_conn_get', broken)
+
+        assert favorite_mail_round_next(PROBE_SITE) == -1
+        assert invite_round_next(PROBE_SITE) == -1
+        assert reply_round_next(PROBE_SITE) == -1
 ```
 
 - [ ] **Step 2: Запустить — падает**
 
 Run: `pytest tests/test_round_next.py -q`
-Expected: FAIL. `TestNextSeesTheMark::test_favorite_mail` и `test_invite` — на
-`assert got > 0` со значением `-1`; `test_reply` — на
-`ImportError: cannot import name 'reply_round_next'`.
+Expected: FAIL целиком на сборе — `ImportError: cannot import name
+'reply_round_next' from 'src.dating.reply_round'`. Убрав эту строку импорта
+временно, увидишь настоящую причину: `test_favorite_mail` и `test_invite` падают
+на `-1` вместо `120`, а проверки ключа — на пустом `fake.asked`.
 
 - [ ] **Step 3: Переписать `favorite_mail_round_next`**
 
@@ -413,7 +496,7 @@ from src.dating.round import (round_sites, round_sites_run, round_slot_due,
 - [ ] **Step 7: Запустить тест — проходит**
 
 Run: `pytest tests/test_round_next.py -q`
-Expected: `5 passed`
+Expected: `11 passed`
 
 - [ ] **Step 8: Коммит**
 
