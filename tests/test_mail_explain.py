@@ -708,3 +708,157 @@ class TestWhatIsNext:
 
         assert got['next'] == ''
         assert got['wait_sec'] == 0
+
+
+# ── Сторож согласия ──────────────────────────────────────────────────────────
+#
+# ⚠⚠ **Отбор круга приставания знает не про все помехи окна.** `_quiet` — это
+# один запрос по всем парам сайта, и в нём живут пять правил: звёздочка, анкета
+# в сети, чьё последнее слово, черновик анкеты, запрет. Выключатель и смену
+# спрашивает круг **уровнем выше**, а «он в сети», остуду и оба предела — цикл
+# набора **после** запроса.
+#
+# Сверять надо ровно переписанное. Прочее в окне не переписано, а **взято теми
+# же функциями** (`favorite_mail_person_soon`, `favorite_mail_girl_soon`,
+# `online_show`, `mail_wait_left`) — разойтись им не с чем.
+_QUIET_BLIND = (
+    'набор писем избранным выключен',   # спрашивает круг выше отбора
+    'сейчас не смена',                  # шлюз круга
+    'его нет в сети',                   # цикл набора, после запроса
+    'предел входящих',                  # остуда, цикл набора
+    'за сутки уже ушло',                # дневной предел получателя, цикл
+    'она писала',                       # пауза отправительницы, цикл
+)
+
+
+def _quiet_blockers(got: dict) -> list:
+    """Помехи приставания, про которые отбор круга и правда знает."""
+    return [one for one in got['favorite']['blockers']
+            if not any(word in one for word in _QUIET_BLIND)]
+
+
+class TestTheyAgree:
+    """⚠⚠ Окно и круги отвечают одинаково — на одних и тех же данных.
+
+    Сверяется **вердикт**, а не слова: у окна они человеческие и меняются, у
+    отбора их нет вовсе. Общее у них одно — «берём пару или нет», и ровно это
+    обязано совпадать.
+
+    Без сторожа окно разойдётся с кругами на первой правке и начнёт объяснять
+    занятие, которого нет. В проекте это случалось дважды — с `initiative_why`
+    и со значком потолка.
+    """
+
+    async def test_ripe_favorite_pair_is_seen_by_both(self, girl_make, fav_on,
+                                                      online_feed):
+        """Пара созрела для приставания: круг берёт, окно не находит помех."""
+        from src.dating.favorite_mail import _quiet
+
+        girl = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        online_feed([uid])
+
+        got = await mail_explain(girl, uid)
+        mine = {str(one['uid']) for one in await _quiet(STAND_SITE, girl)}
+
+        assert uid in mine, 'круг пару не взял — проверять согласие не на чем'
+        assert _quiet_blockers(got) == [], \
+            f'круг взял, а окно нашло помехи: {_quiet_blockers(got)}'
+
+    async def test_blocked_favorite_pair_is_skipped_by_both(self, girl_make,
+                                                            fav_on,
+                                                            online_feed):
+        """Запрет «не пишем»: круг пару не берёт, окно говорит почему."""
+        from src.dating.favorite_mail import _quiet
+
+        girl = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        await _block(girl, uid)
+        online_feed([uid])
+
+        got = await mail_explain(girl, uid)
+        mine = {str(one['uid']) for one in await _quiet(STAND_SITE, girl)}
+
+        assert uid not in mine, 'круг взял запрещённую пару — это другая беда'
+        assert _quiet_blockers(got), 'круг пару не взял, а окно помех не нашло'
+
+    async def test_he_spoke_last_is_skipped_by_both(self, girl_make, fav_on,
+                                                    online_feed):
+        """Последним говорил он: приставания нет ни у круга, ни у окна."""
+        from src.dating.favorite_mail import _quiet
+
+        girl = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        await _said_in(girl, uid, minutes_ago=5)
+        online_feed([uid])
+
+        got = await mail_explain(girl, uid)
+        mine = {str(one['uid']) for one in await _quiet(STAND_SITE, girl)}
+
+        assert uid not in mine
+        assert _quiet_blockers(got)
+
+    async def test_girl_draft_is_skipped_by_both(self, girl_make, fav_on,
+                                                 online_feed):
+        """Черновик анкеты занимает её очередь: не берут оба."""
+        from src.dating.favorite_mail import _quiet
+
+        girl = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        await _fav_draft(girl, f'other-{uuid.uuid4().hex[:8]}')
+        online_feed([uid])
+
+        got = await mail_explain(girl, uid)
+        mine = {str(one['uid']) for one in await _quiet(STAND_SITE, girl)}
+
+        assert uid not in mine
+        assert _quiet_blockers(got)
+
+    async def test_ripe_reply_is_seen_by_both(self, girl, reply_on):
+        """Письмо без ответа: круг берёт его, окно не находит помех.
+
+        ⚠ У ответов сверяется **весь** список: `_to_answer` знает и про
+        выключатель, и про включённость анкеты — слепых правил тут нет.
+        """
+        from src.dating.mail_reply import _to_answer
+
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _said_in(girl, uid, body='his letter')
+
+        got = await mail_explain(girl, uid)
+        mine = {str(one['uid']) for one in await _to_answer(STAND_SITE)}
+
+        assert uid in mine, 'круг письмо не взял — проверять согласие не на чем'
+        assert got['reply']['blockers'] == [], \
+            f"круг взял, а окно нашло помехи: {got['reply']['blockers']}"
+
+    async def test_answered_reply_is_skipped_by_both(self, girl, reply_on):
+        """Ответ уже написан: круг письмо не берёт, окно говорит почему."""
+        from src.dating.mail_reply import _to_answer
+
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        letter = await _said_in(girl, uid, body='his letter')
+        await _reply_draft(girl, uid, letter)
+
+        got = await mail_explain(girl, uid)
+        mine = {str(one['uid']) for one in await _to_answer(STAND_SITE)}
+
+        assert uid not in mine
+        assert got['reply']['blockers']
+
+    async def test_empty_body_is_skipped_by_both(self, girl, reply_on):
+        """Тело письма не забрали: не берут оба."""
+        from src.dating.mail_reply import _to_answer
+
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _said_in(girl, uid, body='')
+
+        got = await mail_explain(girl, uid)
+        mine = {str(one['uid']) for one in await _to_answer(STAND_SITE)}
+
+        assert uid not in mine
+        assert got['reply']['blockers']
