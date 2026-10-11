@@ -14,6 +14,10 @@ Workflow не меняли — ему добавили переменную `ans
 ведёт себя как раньше; единица закрывает судье путь молчания, **не отменяя
 проверки**: язык и суть он смотрит по-прежнему и при нужде переписывает ответ.
 
+⚠⚠ **Порог мерит её ответы, а не его реплики** (`TestTheCount`). Счёт по входящим
+отдавал порог собеседнику: на проде пара Diana ↔ Bruce при пороге 25 набрала 37
+его реплик при 21 её ответе — и девушка замолчала посреди живого разговора.
+
 ⚠ **Наружу сюита не ходит** (`testing.md`): агент подменяется, и проверяется то,
 что мы ему передали.
 """
@@ -32,13 +36,14 @@ pytestmark = pytest.mark.chat
 STAND_SITE = 999_343
 
 
-async def _said(profile_id: int, uid: str, direction: str = 'in') -> int:
+async def _said(profile_id: int, uid: str, direction: str = 'in',
+                source: str = 'socket', text: str = 'привет') -> int:
     async with mysql_get_db_async() as db:
         await db.execute(
             'INSERT INTO message (profile_id, sender_uid, sender_name, text,'
-            '  message_uid, direction) VALUES (%s, %s, %s, %s, %s, %s)',
-            (int(profile_id), uid, 'Brian', 'привет',
-             f'zz-{uuid.uuid4().hex[:12]}', direction))
+            '  message_uid, direction, source) VALUES (%s, %s, %s, %s, %s, %s, %s)',
+            (int(profile_id), uid, 'Brian', text,
+             f'zz-{uuid.uuid4().hex[:12]}', direction, source))
         await db.connection.commit()
 
         return int(db.lastrowid)
@@ -47,46 +52,80 @@ async def _said(profile_id: int, uid: str, direction: str = 'in') -> int:
 class TestTheCount:
     """Кого считаем обязательным — `_anyway_here`."""
 
-    async def test_his_first_reply_is_forced(self, girl):
+    async def test_before_the_first_answer_it_is_forced(self, girl):
         await _said(girl, 'u-1')
 
         assert await answer_mod._anyway_here(girl, 'u-1', 5) is True
 
     async def test_past_the_threshold_it_stops(self, girl):
-        for _ in range(6):
-            await _said(girl, 'u-1')
+        for _ in range(5):
+            await _said(girl, 'u-1', direction='out')
 
         assert await answer_mod._anyway_here(girl, 'u-1', 5) is False
 
-    async def test_the_boundary_is_inclusive(self, girl):
-        """Пятая реплика при пороге 5 — ещё обязательная, шестая уже нет."""
-        for _ in range(5):
-            await _said(girl, 'u-1')
+    async def test_the_boundary_counts_what_is_already_said(self, girl):
+        """⚠ Граница строгая: в момент вопроса её ответа ещё нет.
+
+        Четыре написанных ответа при пороге 5 — пятый ещё обязателен. Пять
+        написанных — шестой уже за обещанием.
+        """
+        for _ in range(4):
+            await _said(girl, 'u-1', direction='out')
 
         assert await answer_mod._anyway_here(girl, 'u-1', 5) is True
+
+        await _said(girl, 'u-1', direction='out')
+
+        assert await answer_mod._anyway_here(girl, 'u-1', 5) is False
 
     async def test_zero_turns_it_off(self, girl):
         await _said(girl, 'u-1')
 
         assert await answer_mod._anyway_here(girl, 'u-1', 0) is False
 
-    async def test_our_own_replies_do_not_count(self, girl):
-        """⚠⚠ Считаем **его** реплики.
+    async def test_his_replies_do_not_count(self, girl):
+        """⚠⚠ Считаем **её ответы**, а не его реплики.
 
-        Наших в паре бывает сколько угодно — инвайт, потом ещё инвайт, — а
-        разговором это становится с первого его слова. Считай мы всё подряд, порог
-        съедался бы нашими же сообщениями.
+        Собеседник пишет очередями по три-пять сообщений, и счёт по входящим
+        выбирал бы порог за нас. На проде пара Diana ↔ Bruce при пороге 25: его
+        реплик 37, её ответов 21 — девушка замолчала посреди живого разговора.
         """
         for _ in range(9):
-            await _said(girl, 'u-1', direction='out')
-        await _said(girl, 'u-1')
+            await _said(girl, 'u-1')
 
         assert await answer_mod._anyway_here(girl, 'u-1', 5) is True
 
+    async def test_invites_do_not_count(self, girl):
+        """⚠ Инвайт разговор **открывает**, а не продолжает.
+
+        Перенесённые в историю приглашения (`chat_invites_to_history`) лежат
+        исходящими с `source = 'invite'`. Считай мы их, настройка «отвечать на
+        инвайты» тратилась бы на сам инвайт.
+        """
+        for _ in range(5):
+            await _said(girl, 'u-1', direction='out', source='invite')
+
+        assert await answer_mod._anyway_here(girl, 'u-1', 5) is True
+
+    async def test_a_panel_twin_is_not_a_second_answer(self, girl):
+        """⚠⚠ Своя реплика, вернувшаяся из журнала сайта, — та же реплика.
+
+        Наше исходящее лежит в `message` дважды: своей строкой от отправки и
+        отражением из панели (`message_twin.py`). Считай мы обе, порог выбирался
+        бы тем быстрее, чем дольше живёт пара, — и объяснить это человеку было бы
+        нечем: в диалоге близнец спрятан, он его не видит.
+        """
+        for n in range(4):
+            await _said(girl, 'u-1', direction='out', text=f'ответ {n}')
+        await _said(girl, 'u-1', direction='out', source='panel', text='ответ 0')
+
+        assert await answer_mod._anyway_here(girl, 'u-1', 5) is True, \
+            'близнец сосчитан вторым ответом — порог съелся вдвое быстрее'
+
     async def test_each_pair_counts_apart(self, girl):
         """⚠ По паре, а не по анкете: у каждого собеседника свой счёт."""
-        for _ in range(6):
-            await _said(girl, 'u-old')
+        for _ in range(5):
+            await _said(girl, 'u-old', direction='out')
         await _said(girl, 'u-new')
 
         assert await answer_mod._anyway_here(girl, 'u-old', 5) is False
@@ -371,7 +410,10 @@ class TestAlwaysMeansAlways:
             == [message_id]
 
     async def test_and_it_is_mandatory(self, girl):
-        """⚠ И она же обязательна: первая из пяти. Оба правила наконец сходятся."""
+        """⚠ И ответ на неё обязателен: он будет первым из пяти.
+
+        Оба правила наконец сходятся: отбор пару берёт, и молчать на ней нельзя.
+        """
         await self._panel_said(girl, 'u-1', hours_ago=49)
 
         assert await answer_mod._anyway_here(girl, 'u-1', 5) is True
