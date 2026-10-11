@@ -42,7 +42,7 @@ from logging_.logging_ import logger_info
 
 from src.dating.feed import feed_write
 from src.dating.round import (round_sites, round_sites_run, round_slot_due,
-                              round_slot_left, round_slot_mark)
+                              round_slot_left)
 from src.dating.pool import pool_sweep
 from src.dating.favorite_mail import (FAVORITE_MAIL_BATCH_DEFAULT,
                                              FAVORITE_MAIL_POOL_SETTING,

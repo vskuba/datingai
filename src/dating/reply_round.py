@@ -32,7 +32,7 @@ from logging_.logging_ import logger_info
 
 from src.dating.feed import feed_write
 from src.dating.round import (round_sites, round_sites_run, round_slot_due,
-                              round_slot_left, round_slot_mark)
+                              round_slot_left)
 
 from src.dating.mail_reply import mail_reply_make
 from src.dating.site_setting import site_seconds
@@ -126,6 +126,8 @@ async def _work(site: dict, minutes: int) -> dict | None:
                           f"Готовы ответы на письма: {result['made']}")
 
     return result
+
+
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 async def _sites() -> list[dict]:

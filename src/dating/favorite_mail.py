@@ -90,7 +90,6 @@ Redis, пределы — запросом к базе, и только пото
 почты сайта. Второе расписание отвечало бы на тот же вопрос вторым голосом.
 """
 
-import random
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
@@ -100,14 +99,12 @@ from src.dating.favorite import (FAVORITE_STATES,
                                         favorite_sync)
 from src.dating.ready import password_pick
 from datetime_.datetime_ import datetime_day_minutes
-from src.dating.percent import percent_share
 from src.dating.answer import answer_mail_write
 from src.dating.mail_agent import DatingMailAgentError
 from src.dating.json_column import json_column_list
 from src.dating.mail_wait import mail_wait_left, mail_wait_skip
 from src.dating.online import online_show
 from src.dating.schedule import schedule_now
-from src.dating.people import people_name_usable
 from src.dating.site_setting import site_seconds, site_setting
 
 # Сколько писем набирает один заход, если настройки нет.
@@ -171,20 +168,6 @@ FAVORITE_MAIL_GAP_DEFAULT_MIN = 240
 # ⚠ Список пулов свой здесь **не заводится**: он один на проект и лежит там, где
 # отправка (`MAIL_SEND_TABLES`). Вторая копия того же списка разошлась бы с
 # первой ровно тогда, когда появится четвёртый пул, — и молча.
-
-# ── Каким выходит письмо: три доли и две оси жребия ──────────────────────────
-#
-
-
-# Сколько прошлых писем показываем модели со словами «так уже было». Тот же
-# десяток и тот же довод, что у инвайтов: больше раздувает промпт, меньше не
-# перекрывает суточную работу пула.
-FAVORITE_MAIL_AVOID_MAX = 10
-
-# Откуда девушки сайта — настройка сайта, общая с инвайтами. ⚠ Сайта, а не
-# анкеты: шаблон один на всех девушек, и страна конкретной была бы враньём для
-# остальных.
-FAVORITE_MAIL_COUNTRY_SETTING = 'girl_country'
 
 # Почему пара пропущена. Строки уезжают на страницу, и человек по ним понимает,
 # что делать.
@@ -774,9 +757,61 @@ async def favorite_mail_person_soon(site_id: int, uid: str, per_day: int) -> str
     ⚠ **Сбой базы — не пишем.** Непрочитанный счёт означает неизвестный предел, а
     лишнее письмо живому человеку отменить нельзя. Та же сторона ошибки, что у
     дневного потолка отправки.
+
+    ⚠ Сам счёт живёт в `favorite_mail_person_sent`, здесь только вердикт и
+    слова: число нужно и окну «почему этой паре не пишут», а второй такой запрос
+    разошёлся бы с этим на первой правке — окно показывало бы одно число, а
+    предел считал по другому.
     """
-    # ⚠ `site_id`, а не `profile_id`: предел на человека, и неважно, которая из
-    # наших девушек ему написала. Все три таблицы этот столбец несут.
+    got = await favorite_mail_person_sent(site_id, uid)
+    if got is None:
+        return 'не удалось посчитать, сколько ему уже написали'
+
+    day_sent = int(got['count'])
+    when = got['last_at']
+    since = await _since(when) if when is not None else None
+
+    # ⚠ **Дневной предел называет, когда он отпустит.** «Ушло два — предел два»
+    # отвечает на «почему», но не на «и что теперь»: человек у экрана решает,
+    # ждать ему или поднимать настройку, а для этого нужен срок. Сутки считаются
+    # скользящим окном, поэтому освободится оно тогда, когда из окна выпадет самое
+    # давнее письмо, — но проще и честнее сказать про ближайшее.
+    if day_sent >= int(per_day):
+        count_word = f'{day_sent} {_letters_word(day_sent)}'
+
+        return (f'за сутки уже ушло {count_word} — предел {int(per_day)} в сутки'
+                + (f', последнее {_ago_word(since)}' if since is not None else ''))
+
+    return ''
+
+
+async def favorite_mail_person_sent(site_id: int, uid: str):
+    """Сколько писем ушло этому человеку за сутки и когда последнее.
+
+    Args:
+        site_id: сайт-закладка.
+        uid: собеседник на сайте.
+
+    Returns:
+        dict: `count` — писем за скользящие сутки, `last_at` — время последнего
+        (`None`, если писем не было). `None` целиком — спросить не удалось, и
+        решает это вызывающий: предел отказывает в письме, окно молчит числом.
+
+    ⚠⚠ **Единственное место, где письма получателю считаются.** Знание тут в
+    трёх частях — ключ (`site_id`, а не анкета: предел на человека), набор
+    таблиц (`mail_sent_union` — все три пула, в одну почту ему приходят и
+    рассылка, и ответ, и приставание) и окно в сутки. Разъедься копии, и окно
+    показывало бы одно число, а предел считал по другому — причём молча.
+
+    ⚠ Цена прежней копии известна: пока ключом был `profile_id`, один человек
+    получил четыре письма от четырёх девушек за одиннадцать минут при пределе
+    два.
+
+    ⚠ Сутки **скользящие**, а не календарные: полночь ничего не значит для
+    того, кто читает почту.
+    """
+    # ⚠ Все три таблицы несут `site_id`, и условие подставляется **в каждую**
+    # ветку союза — отсюда доводов втрое больше, чем подстановок в тексте.
     from src.dating.mail_send import MAIL_SEND_TABLES, mail_sent_union
 
     sql = ('SELECT COUNT(*) AS per_day_count, MAX(sent_at) AS last_at FROM ('
@@ -792,24 +827,10 @@ async def favorite_mail_person_soon(site_id: int, uid: str, per_day: int) -> str
         logger_info(f'[dating] счёт писем {uid} на сайте #{site_id} '
                     f'не спросился: {e}')
 
-        return 'не удалось посчитать, сколько ему уже написали'
+        return None
 
-    day_sent = int((row or {}).get('per_day_count') or 0)
-    when = (row or {}).get('last_at')
-    since = await _since(when) if when is not None else None
-
-    # ⚠ **Дневной предел называет, когда он отпустит.** «Ушло два — предел два»
-    # отвечает на «почему», но не на «и что теперь»: человек у экрана решает,
-    # ждать ему или поднимать настройку, а для этого нужен срок. Сутки считаются
-    # скользящим окном, поэтому освободится оно тогда, когда из окна выпадет самое
-    # давнее письмо, — но проще и честнее сказать про ближайшее.
-    if day_sent >= int(per_day):
-        count_word = f'{day_sent} {_letters_word(day_sent)}'
-
-        return (f'за сутки уже ушло {count_word} — предел {int(per_day)} в сутки'
-                + (f', последнее {_ago_word(since)}' if since is not None else ''))
-
-    return ''
+    return {'count': int((row or {}).get('per_day_count') or 0),
+            'last_at': (row or {}).get('last_at')}
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
@@ -1127,46 +1148,6 @@ async def _language(site_id: int) -> str:
     from src.dating.mail_agent import mail_agent_language
 
     return await mail_agent_language(int(site_id))
-
-
-async def _country(site_id: int) -> str:
-    """Откуда девушки сайта — настройка `girl_country`. Пусто — законно.
-
-    ⚠ **Настройка сайта, а не анкеты**, и вынужденно: шаблон один на всех
-    девушек, и страна конкретной была бы враньём для остальных. Зная место, агент
-    не напишет про чужой сезон или чужой праздник.
-    """
-    return str(await site_setting(int(site_id), FAVORITE_MAIL_COUNTRY_SETTING) or '')
-
-
-async def _avoid(site_id: int) -> list[str]:
-    """Что уже писали избранным этого сайта — чтобы не повторяться.
-
-    ⚠ **Берём `GROUP BY body`, а не строки пула.** Пул набирается одним шаблоном
-    на десятки писем: возьми мы строки как есть, список оказался бы десятком копий
-    одного текста, и модель увидела бы один пример вместо десяти.
-
-    ⚠ **По сайту, а не по анкете.** Собеседники у сайта общие, и человек, которому
-    вчера писала Диана, сегодня получит письмо от Елены — повтор заметит он, а не
-    мы.
-
-    Сбой базы отвечает пустым списком: шаблон выйдет чуть более похожим на
-    прошлые, и это несравнимо лучше пустого пула.
-    """
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                'SELECT body FROM favorite_mail'
-                ' WHERE site_id = %s AND body <> %s'
-                ' GROUP BY body ORDER BY MAX(id) DESC LIMIT %s',
-                (int(site_id), '', FAVORITE_MAIL_AVOID_MAX))
-            rows = await db.fetchall()
-    except Exception as e:
-        logger_info(f'[dating] прошлые письма избранным не спросились: {e}')
-
-        return []
-
-    return [str(row['body']) for row in rows or []]
 
 
 async def _seconds(site_id: int, key: str, fallback: int) -> int:

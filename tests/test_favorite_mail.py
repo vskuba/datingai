@@ -28,6 +28,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.dating import favorite_mail
 from src.dating.favorite_mail import (_quiet, favorite_mail_girl_free_sql,
                                       favorite_mail_girl_soon,
+                                      favorite_mail_person_sent,
                                       favorite_mail_person_soon)
 from src.dating.site_setting import SITE_KNOWN
 
@@ -756,8 +757,13 @@ class TestTheLimitIsPerPersonNotPerPair:
         строкой `profile_id = %s AND uid = %s` в тексте. Проверка по всему
         исходнику нашла бы её там и объявила поломкой — то есть запрещала бы
         объяснять, почему так делать нельзя.
+
+        ⚠ Смотрим на `favorite_mail_person_sent`, а не на `..._soon`: сам счёт
+        уехал туда, когда число понадобилось ещё и окну «почему этой паре не
+        пишут». Вердикт и слова остались в `..._soon`, а ключ отбора — здесь,
+        и сторожить надо его.
         """
-        code = _source_without_doc(favorite_mail_person_soon)
+        code = _source_without_doc(favorite_mail_person_sent)
 
         assert "site_id = %s AND uid = %s" in code, \
             'дневной предел больше не считает по человеку'
@@ -773,7 +779,7 @@ class TestTheLimitIsPerPersonNotPerPair:
         """
         from src.dating.mail_send import MAIL_SEND_TABLES, mail_sent_union
 
-        code = _source_without_doc(favorite_mail_person_soon)
+        code = _source_without_doc(favorite_mail_person_sent)
 
         assert 'mail_sent_union' in code, \
             'дневной предел снова перечисляет таблицы сам'
@@ -977,7 +983,11 @@ class TestTheRoundKeepsToItsShifts:
         # ⚠ Отметка «недавно ходили» живёт в Redis и переживает тесты: без снятия
         # второй заход в том же прогоне молчал бы по чужой причине.
         monkeypatch.setattr(round_, 'round_slot_due', lambda key, site_id, what: True)
-        monkeypatch.setattr(round_, 'round_slot_mark', lambda *a: None)
+        # ⚠ Отметку круг **не ставит сам** — её ставит обвязка слоя внутри
+        # `round_sites_run`. Здесь стояла подмена `round_slot_mark` у модуля, и
+        # она ничего не отменяла: модуль этого имени не зовёт. Держалась она на
+        # том, что имя было импортировано — то есть на мёртвом импорте, который
+        # и выглядел живым только из-за этой строки.
         monkeypatch.setattr(round_, '_fresh_feed', lambda site_id: False)
 
         # Только наш стенд: у соседних сайтов свои смены и свои анкеты.

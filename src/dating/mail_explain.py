@@ -48,13 +48,14 @@ from src.dating.favorite_mail import (FAVORITE_MAIL_PER_DAY_DEFAULT,
                                       FAVORITE_MAIL_PER_DAY_SETTING,
                                       favorite_mail_gap_sec,
                                       favorite_mail_girl_soon,
+                                      favorite_mail_person_sent,
                                       favorite_mail_person_soon,
                                       favorite_mail_shift_site)
 from src.dating.favorite_mail_round import (FAVORITE_MAIL_ROUND_EVERY_DEFAULT,
                                             FAVORITE_MAIL_ROUND_EVERY_SETTING,
                                             favorite_mail_round_next)
 from src.dating.json_column import json_column_list
-from src.dating.mail_send import MAIL_SEND_TABLES, mail_sent_union
+from src.dating.mail_send import mail_sent_union
 from src.dating.mail_wait import mail_wait_left, mail_wait_skip
 from src.dating.online import online_show
 from src.dating.schedule import schedule_now
@@ -124,6 +125,12 @@ async def mail_explain(profile_id: int, uid: str,
                                          favorite['wait_sec']) if one] or [0]),
     }
 
+
+# ── Приватное ────────────────────────────────────────────────────────────────
+#
+# ⚠ Публичная функция в файле одна (`mail_explain`), всё дальше — её части.
+# Подразделы ниже — для глаза, по занятиям: порядок чтения тот же, в каком
+# окно и собирается.
 
 # ── Отправка: общая часть обоих занятий ──────────────────────────────────────
 
@@ -342,6 +349,10 @@ async def _favorite(site_id: int, profile_id: int, uid: str, pair: dict,
     # ⚠ Черновик пары и черновик **анкеты** — разные вопросы: ближайшую очередь
     # девушки занимает любой её черновик, кому бы он ни был написан.
     girl_draft = await _girl_draft(profile_id)
+    # ⚠ Число и вердикт по нему — из одного места (`favorite_mail`): свой
+    # запрос здесь показывал бы человеку одно число, а предел считал по
+    # другому, и разошлись бы они молча.
+    sent = await favorite_mail_person_sent(site_id, uid)
     person = await favorite_mail_person_soon(site_id, uid, per_day)
     girl_soon = await favorite_mail_girl_soon(profile_id, gap)
 
@@ -384,7 +395,7 @@ async def _favorite(site_id: int, profile_id: int, uid: str, pair: dict,
                          or FAVORITE_MAIL_ROUND_EVERY_DEFAULT),
         'next_sec': next_sec,
         'gap_sec': gap, 'per_day': per_day,
-        'day_sent': await _day_sent(site_id, uid),
+        'day_sent': int((sent or {}).get('count') or 0),
         'him_online': bool(online.get('online')),
         'him_known': bool(online.get('known')),
         'draft': draft,
@@ -398,7 +409,7 @@ async def _favorite(site_id: int, profile_id: int, uid: str, pair: dict,
     }
 
 
-# ── Приватное ────────────────────────────────────────────────────────────────
+# ── Общее: база и настройки ──────────────────────────────────────────────────
 
 async def _flags(site_id: int) -> dict:
     """Выключатели занятий и расписание отправки — одним запросом.
@@ -471,30 +482,6 @@ async def _girl_draft(profile_id: int) -> bool:
         logger_info(f'[dating] черновики анкеты #{profile_id} не спросились: {e}')
 
         return False
-
-
-async def _day_sent(site_id: int, uid: str) -> int:
-    """Сколько писем ушло этому человеку за скользящие сутки — по всему сайту.
-
-    ⚠ Ключ — `site_id`, а не анкета: предел на человека. Тем же перечислением
-    таблиц, каким считает его `favorite_mail_person_soon`; оно же объясняет,
-    почему доводов втрое больше, чем подстановок в тексте.
-    """
-    sql = ('SELECT COUNT(*) AS n FROM ('
-           + mail_sent_union("site_id = %s AND uid = %s AND status = 'sent'")
-           + ') AS sent'
-             ' WHERE sent_at IS NOT NULL AND sent_at > NOW() - INTERVAL 1 DAY')
-
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute(sql,
-                             (int(site_id), str(uid)) * len(MAIL_SEND_TABLES))
-
-            return int(((await db.fetchone()) or {}).get('n') or 0)
-    except Exception as e:
-        logger_info(f'[dating] счёт писем {uid} не спросился: {e}')
-
-        return 0
 
 
 async def _pair(profile_id: int, uid: str) -> dict:
