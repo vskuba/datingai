@@ -227,10 +227,6 @@ INVITE_POOL_DEFAULT = 20
 # до потолка, и это число — уже `invite_pool_max`. Вторая настройка о том же
 # означала бы два места, где заводят одно и то же.
 INVITE_POOL_SETTING = 'invite_pool_max'
-# Откуда девушки сайта. Уезжает агенту вместе с текущим временем: время без места
-# половинчато — чужой праздник или чужой сезон выдают так же, как перепутанный
-# вечер.
-INVITE_COUNTRY_SETTING = 'girl_country'
 
 # Сколько последних инвайтов пары **показываем в диалоге**, когда собеседник
 # ответил (`chat.chat_invites_to_history`).
@@ -734,20 +730,6 @@ async def _templates(site_id: int, language: str, how_many: int) -> list[str]:
         await error_clear(ERROR_INVITE_TEMPLATES, int(site_id))
 
     return texts
-
-
-async def _country(site_id: int) -> str:
-    """Откуда девушки сайта — настройка `girl_country`. Пусто — законно.
-
-    ⚠ **Настройка сайта, а не анкеты, и это вынужденно.** Шаблон один на всех
-    девушек сайта, и страна конкретной анкеты была бы враньём для остальных
-    сорока девяти. Агентство и так держит анкеты одной страны.
-
-    Уезжает агенту рядом со временем: зная место, он не напишет про чужой
-    праздник или чужой сезон. Пусто — агент про место молчит, и это лучше
-    догадки.
-    """
-    return str(await site_setting(int(site_id), INVITE_COUNTRY_SETTING))
 
 
 async def _avoid(site_id: int) -> list[str]:
