@@ -69,11 +69,10 @@
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
-from redis_.redis_ import redis_conn_get
 
 from src.dating.feed import feed_write
 from src.dating.round import (round_sites, round_sites_run, round_slot_due,
-                              round_slot_mark)
+                              round_slot_left, round_slot_mark)
 from src.dating.pool import pool_sweep, pool_sweep_answered, pool_sweep_away
 from src.dating.invite import (INVITE_POOL_DEFAULT,
                                       INVITE_POOL_SETTING,
@@ -155,17 +154,13 @@ def invite_round_next(site_id: int) -> int:
         int: секунды до следующего захода. `0` — отметки нет, круг возьмётся за
         сайт на ближайшем тике (в пределах минуты). `-1` — спросить не вышло, и
         врать сроком нельзя.
+
+    ⚠⚠ **Ключ собирает слой**, а не эта функция. Своя подстановка здесь и была
+    той ошибкой, из-за которой обещание без срока так и осталось без срока:
+    `.format(site_id=…)` на шаблоне с меткой `{id}` падал `KeyError`-ом, его
+    глотал `except`, и ответом всегда было `-1` (`tests/test_round_next.py`).
     """
-    try:
-        left = redis_conn_get().ttl(INVITE_ROUND_KEY.format(site_id=int(site_id)))
-    except Exception as e:
-        logger_info(f'[dating] срок инвайтов не спросился: {e}')
-
-        return -1
-
-    # `-2` — ключа нет, `-1` — есть без срока. Первое значит «пора», второе у нас
-    # невозможно (ставим только `setex`), но отвечать на него сроком нельзя.
-    return 0 if int(left) == -2 else max(0, int(left))
+    return round_slot_left(INVITE_ROUND_KEY, int(site_id), 'инвайтам')
 
 
 async def _gate(site: dict, minutes: int) -> bool:

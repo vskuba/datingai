@@ -39,11 +39,10 @@
 """
 
 from logging_.logging_ import logger_info
-from redis_.redis_ import redis_conn_get
 
 from src.dating.feed import feed_write
 from src.dating.round import (round_sites, round_sites_run, round_slot_due,
-                              round_slot_mark)
+                              round_slot_left, round_slot_mark)
 from src.dating.pool import pool_sweep
 from src.dating.favorite_mail import (FAVORITE_MAIL_BATCH_DEFAULT,
                                              FAVORITE_MAIL_POOL_SETTING,
@@ -114,18 +113,15 @@ def favorite_mail_round_next(site_id: int) -> int:
         int: секунды до следующего захода. `0` — отметки нет, круг возьмётся за
         сайт на ближайшем тике (в пределах минуты). `-1` — спросить не вышло, и
         врать сроком нельзя.
+
+    ⚠⚠ **Ключ собирает слой** (`round_slot_left` → `round_slot_key`), а не эта
+    функция. Прежде она подставляла единицу сама — `.format(site_id=…)` на
+    шаблоне с меткой `{id}`, — и ответ был `-1` **всегда**: `KeyError` глотал
+    `except`. Счётчик на странице молчал месяцами, и выглядело это как «данных
+    нет», а не как поломка (`tests/test_round_next.py`).
     """
-    try:
-        left = redis_conn_get().ttl(
-            FAVORITE_MAIL_ROUND_KEY.format(site_id=int(site_id)))
-    except Exception as e:
-        logger_info(f'[dating] срок писем избранным не спросился: {e}')
-
-        return -1
-
-    # `-2` — ключа нет, `-1` — есть без срока. Первое значит «пора», второе у нас
-    # невозможно (ставим только `setex`), но отвечать на него сроком нельзя.
-    return 0 if int(left) == -2 else max(0, int(left))
+    return round_slot_left(FAVORITE_MAIL_ROUND_KEY, int(site_id),
+                           'письмам избранным')
 
 
 async def _gate(site: dict, minutes: int) -> bool:

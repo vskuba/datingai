@@ -42,7 +42,7 @@ from round_.round_ import round_loop, round_offset_loop, round_prefix_set
 from round_.round_day import round_day_count
 from round_.round_mem import round_mem_due, round_mem_mark
 from round_.round_pass import round_pass_run
-from round_.round_slot import (round_slot_due, round_slot_mark,
+from round_.round_slot import (round_slot_due, round_slot_left, round_slot_mark,
                                round_slot_release)
 
 # Имя столбца, годное к подстановке в SQL. Имена приходят из констант кода, а не
@@ -56,8 +56,9 @@ round_prefix_set('dating')
 # Круги зовут слой через этот модуль, и `ruff` иначе счёл бы ре-экспорт
 # неиспользованным импортом.
 __all__ = ['round_loop', 'round_offset_loop', 'round_mem_due', 'round_mem_mark',
-           'round_slot_due', 'round_slot_mark', 'round_slot_release',
-           'round_sent_day', 'round_sites', 'round_sites_run']
+           'round_slot_due', 'round_slot_left', 'round_slot_mark',
+           'round_slot_release', 'round_sent_day', 'round_sites',
+           'round_sites_run']
 
 
 async def round_sites(*, flags: tuple = (), any_of: bool = False,

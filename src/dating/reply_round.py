@@ -32,7 +32,7 @@ from logging_.logging_ import logger_info
 
 from src.dating.feed import feed_write
 from src.dating.round import (round_sites, round_sites_run, round_slot_due,
-                              round_slot_mark)
+                              round_slot_left, round_slot_mark)
 
 from src.dating.mail_reply import mail_reply_make
 from src.dating.site_setting import site_seconds
@@ -75,6 +75,26 @@ async def reply_round_run() -> dict:
         logger_info(f'[dating] круг ответов: сайтов {ran}, написано {made}')
 
     return {'sites': ran, 'made': made}
+
+
+def reply_round_next(site_id: int) -> int:
+    """Через сколько секунд круг ответов вернётся к этому сайту. `0` — сейчас.
+
+    Returns:
+        int: секунды до следующего захода. `0` — отметки нет, круг возьмётся на
+        ближайшем тике (в пределах минуты). `-1` — спросить не вышло, и врать
+        сроком нельзя.
+
+    ⚠ **Заведена ради окна «почему паре не пишут».** Между приходом письма и
+    черновиком ответа лежит этот срок, и он же — главная доля ожидания: снято на
+    проде 11.10.2026, из шести минут до ответа пять заняло ожидание захода, а
+    вызов модели — шестнадцать секунд. Человеку у экрана это ожидание ничем не
+    объяснялось.
+
+    ⚠ Ключ собирает слой. Двум соседним счётчикам своя подстановка стоила
+    молчания длиной в месяцы (`tests/test_round_next.py`).
+    """
+    return round_slot_left(REPLY_ROUND_KEY, int(site_id), 'ответам')
 
 
 async def _gate(site: dict, minutes: int) -> bool:
