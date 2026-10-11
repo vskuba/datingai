@@ -862,3 +862,58 @@ class TestTheyAgree:
 
         assert uid not in mine
         assert got['reply']['blockers']
+
+
+class TestHandle:
+    """Ручка окна: доводы обязательны, незнакомая пара — не ошибка."""
+
+    async def test_needs_both_arguments(self):
+        """Без пары отвечать нечем — 422, а не пустой словарь.
+
+        ⚠ Умолчания нет намеренно: пара, взятая молча, была бы чужой.
+        """
+        from fastapi import HTTPException
+
+        from src.uvicorn.routers.dating.favorite_mail import (
+            favorite_mail_explain)
+
+        with pytest.raises(HTTPException) as refusal:
+            await favorite_mail_explain(profile_id=0, uid='', user=None)
+
+        assert refusal.value.status_code == 422
+
+    async def test_unknown_pair_is_known_false(self):
+        """Пары нет — `known: false` со словами, а не 404.
+
+        ⚠ 404 страница нарисовала бы красным там, где всё в порядке: человек
+        открыл окно у разговора, которого в наших таблицах ещё нет.
+        """
+        from src.uvicorn.routers.dating.favorite_mail import (
+            favorite_mail_explain)
+
+        got = (await favorite_mail_explain(profile_id=999_999_999,
+                                           uid='nobody', user=None))['result']
+
+        assert got['known'] is False
+
+    async def test_known_pair_answers_both_occupations(self, girl, reply_on):
+        """Пара известна — в ответе обе части и выбор следующего."""
+        from src.uvicorn.routers.dating.favorite_mail import (
+            favorite_mail_explain)
+
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _said_in(girl, uid, body='his letter')
+
+        got = (await favorite_mail_explain(profile_id=girl, uid=uid,
+                                           user=None))['result']
+
+        assert got['known'] is True
+        assert 'reply' in got and 'favorite' in got
+        assert 'next' in got and 'wait_sec' in got
+
+    async def test_closed_without_login(self, client):
+        """Без входа ручка не отвечает — как все соседние."""
+        got = await client.get('/api/dating/favorite-mail/explain'
+                               '?profile_id=1&uid=x')
+
+        assert got.status_code in (401, 403), got.text[:200]

@@ -32,6 +32,7 @@ from src.dating.favorite_mail import (FAVORITE_MAIL_BATCH_DEFAULT,
                                              favorite_mail_why)
 from src.dating.favorite_mail_round import favorite_mail_round_next
 from src.dating.json_column import json_column_load
+from src.dating.mail_explain import mail_explain
 from src.dating.mail_reply import (mail_reply_delivery,
                                           mail_reply_delivery_scope,
                                           mail_reply_thread)
@@ -584,6 +585,36 @@ async def favorite_mail_thread(profile_id: int, uid: str,
     """
     return {'result': await mail_reply_thread(int(profile_id), str(uid),
                                               with_favorite=True)}
+
+
+@router.get('/explain', include_in_schema=False)
+async def favorite_mail_explain(profile_id: int = 0, uid: str = '',
+                                user: AuthUser = Depends(auth_required)):
+    """Что с почтой у этой пары: что уйдёт следующим и что мешает сейчас.
+
+    ⚠ **Считает домен** (`mail_explain.mail_explain`) теми же выражениями, что и
+    круги. Своя копия счёта в ручке разошлась бы с ними на первой правке — ровно
+    та грабля, что уже была с `initiative_why` и со значком потолка.
+
+    ⚠ Стоит **выше** путей с номером (`/{mail_id}/send`, `/{mail_id}`): соседний
+    роутер уже ловил на этом — путь-слово, объявленный ниже пути-числа,
+    достаётся преобразователю номера, и `explain` отвечал бы 422. Методы у них
+    сейчас разные, но порядок надёжнее совпадения методов.
+
+    ⚠ Незнакомая пара — не ошибка, а обычный исход: человек открывает окно у
+    разговора, которого в наших таблицах ещё нет. Отвечаем `known: false` со
+    словами, а не 404: 404 страница нарисовала бы красным.
+
+    ⚠ Сдвиг нужен: первый вопрос обоих занятий — «идёт ли смена», а смены
+    заданы местным временем панели, не UTC.
+    """
+    if not int(profile_id or 0) or not str(uid or ''):
+        raise HTTPException(status_code=422, detail='нужны profile_id и uid')
+
+    got = await mail_explain(int(profile_id), str(uid),
+                             await setting_timezone_hours())
+
+    return {'result': got or {'known': False}}
 
 
 @router.post('/generate', include_in_schema=False)
