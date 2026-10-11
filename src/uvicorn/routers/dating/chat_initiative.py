@@ -21,9 +21,9 @@
 поломка**, а пауза `chat_initiative_send_every`: карточки набираются сразу всем
 анкетам сайта, и без паузы включённая инициатива уходила бы залпом.
 
-⚠ **Пустоту объясняет сервер** (`answer.why`), и повод считает сам круг
-(`initiative_why`): он решает, брать ли пару, и причина простоя обязана
-спрашиваться теми же вопросами.
+⚠ **Пустоту объясняет сервер** (`answer.why`), и повод считает сам отбор
+(`initiative.initiative_why`): он решает, брать ли пару, и причина простоя
+обязана спрашиваться теми же вопросами и теми же функциями.
 
 Ручки повторяют пул инвайтов (`invite.py`): чтение, удаление. Правки текста
 здесь нет намеренно — см. ⚠⚠ ниже. Отправки своей ручки тоже нет: карточка
@@ -35,8 +35,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import AuthUser, auth_required
-from src.dating.initiative import initiative_explain
-from src.dating.initiative_round import initiative_why
+from src.dating.initiative import initiative_explain, initiative_why
 from src.dating.json_column import json_column_load
 from src.dating.online import online_show
 from src.dating.pool_pair import pool_pair_girl
@@ -163,10 +162,11 @@ async def _why(site_id: int, pool: int) -> str:
     видит пустоту и не знает: набор снят, настройка обнулена, девушки спят или
     сломалось.
 
-    ⚠ **Считает это круг, а не ручка** (`initiative_why`): он же и решает, брать
-    ли пару, и повод обязан спрашиваться теми же вопросами. Своя копия правил
-    здесь разошлась бы с кругом на первой же правке — ровно так эта подсказка и
-    устарела в прошлый раз, пережив появление самого круга.
+    ⚠ **Считает это модуль занятия, а не ручка** (`initiative.initiative_why`):
+    там же решается, брать ли пару, и повод обязан спрашиваться теми же
+    вопросами. Своя копия правил здесь разошлась бы с отбором на первой же
+    правке — ровно так эта подсказка и устарела в прошлый раз, пережив
+    появление самого круга.
     """
     if pool:
         return ''

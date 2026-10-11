@@ -10,11 +10,16 @@
 пару. Человек читает его до отправки, как в трёх соседних пулах; правки текста
 здесь нет намеренно.
 
-## ⚠⚠ Пустоту объясняет сервер, и повод считает круг
+## ⚠⚠ Пустоту объясняет сервер, и повод считает сам отбор
 
 Набирает пул круг инициативы, он же уносит готовое в чат. Пустая колонка без
 причины читается как поломка — поэтому ответ несёт `answer.why`, а считает его
-`initiative_why`: тот же код, что решает за круг.
+`initiative_why` **теми же функциями, которыми отбирает круг**: выключатель,
+сроки, потолок, анкеты в сети.
+
+⚠ Живёт он в `initiative.py`, а не у круга: все четыре вопроса — про устройство
+отбора. Пока подсказка стояла у круга, она тянула приватные соседа отложенным
+импортом, и правка любого из них молча меняла её смысл.
 
 ⚠ Прежде здесь стояла одна фраза на все случаи — «круга инициативы ещё не
 сделан», — и она **пережила сам круг** на две недели: занятие работало, а колонка
@@ -25,8 +30,7 @@
 import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
-from src.dating import initiative_round
-from src.dating.initiative_round import initiative_why
+from src.dating.initiative import initiative_why
 from src.dating.site_setting import SITE_GROUPS, SITE_KNOWN, SITE_SUBGROUPS
 
 pytestmark = pytest.mark.chat
@@ -73,32 +77,29 @@ async def _said_in(profile_id: int, uid: str, minutes_ago: int = 60) -> None:
         await db.connection.commit()
 
 
-def _awake(monkeypatch) -> None:
-    """Показывает кругу стенд с поднятым набором — подменой отбора, а не базой.
-
-    ⚠⚠ **Поднимать флаг в базе здесь нельзя, и это не предосторожность.** Строка
-    стенда лежит `is_gone = 1` (`conftest.py`) именно затем, чтобы круги её не
-    видели: ту же базу читает **живой воркер в соседнем контейнере**. Подними мы
-    `chat_initiative_on` у видимой кругу строки — он взял бы стенд в работу и
-    пошёл писать первым живым людям, а его отправку никакой `monkeypatch` не
-    подменяет: это другой процесс. Правило общее, и у отправки инвайтов оно
-    записано теми же словами (`test_invite_send_round.py`, фикстура `site`).
-
-    ⚠ Прежде эти два теста поднимали флаг в базе и ходили в ручку по HTTP.
-    Работало это лишь потому, что отбор круга инициативы **не спрашивал
-    `is_gone`** — единственный из десяти, кто его не спрашивал. Дыра закрыта
-    (`round_sites`), и тесты переведены на прямой вызов: проверяют они повод
-    словами, а он считается здесь же, в процессе.
-    """
-    async def ours():
-        return [{'site_id': STAND_SITE, 'chat_initiative_on': 1,
-                 'chat_initiative_send_on': 0}]
-
-    monkeypatch.setattr(initiative_round, '_sites', ours)
-
-
 async def _switch(make: bool) -> None:
-    """Выключатель набора у сайта сюиты — им и решается, пуст ли пул законно."""
+    """Выключатель набора у сайта сюиты — им и решается, пуст ли пул законно.
+
+    ## ⚠⚠ Поднимать флаг безопасно ровно потому, что стенд `is_gone`
+
+    Ту же базу читает **живой воркер в соседнем контейнере**, и его отправку
+    никакой `monkeypatch` не подменяет: это другой процесс. Спасает здесь одно —
+    строка стенда лежит `is_gone = 1` (`conftest.py`), а обход сайтов идёт
+    `round_sites`, который гасшие не отдаёт. Поднятый флаг круг попросту не
+    увидит. Правило общее, и у отправки инвайтов оно записано теми же словами
+    (`test_invite_send_round.py`, фикстура `site`).
+
+    ⚠ Отсюда и граница: флаг — да, а вот поднимать его у **видимой кругу**
+    строки нельзя ни в одном тесте; и снимать за собой обязательно
+    (`_keep_the_switch`), иначе соседние файлы увидят включённое занятие там,
+    где его никто не включал.
+
+    ⚠ Прежде рядом стояла вторая дорога — `_awake(monkeypatch)`, подменявшая
+    `initiative_round._sites`. Она родилась, когда повод пустоты считался у
+    круга и спрашивал выключатель его отбором. Теперь повод считает сам модуль
+    занятия (`initiative.initiative_why`) и читает колонку сайта (`_on`) —
+    подменять стало нечего, а два способа сказать «набор поднят» разошлись бы.
+    """
     async with mysql_get_db_async() as db:
         await db.execute('UPDATE site SET chat_initiative_on = %s'
                          ' WHERE site_id = %s',
@@ -153,9 +154,10 @@ class TestThePool:
 class TestEmptinessExplainsItself:
     """⚠⚠ Пустое место не отличается от поломки.
 
-    Повод считает круг (`initiative_why`), и проверяем мы **повод**, а не
-    заученный текст: прежняя проверка стерегла фразу «круга инициативы ещё не
-    сделан» и честно её сторожила, пока круг две недели работал.
+    Повод считает сам отбор (`initiative.initiative_why`), и проверяем мы
+    **повод**, а не заученный текст: прежняя проверка стерегла фразу «круга
+    инициативы ещё не сделан» и честно её сторожила, пока круг две недели
+    работал.
     """
 
     @pytest.fixture(autouse=True)
@@ -186,18 +188,18 @@ class TestEmptinessExplainsItself:
         assert 'набор инициативы выключен' in got['answer']['why'], \
             got['answer']['why']
 
-    async def test_a_sleeping_site_is_named(self, girl, monkeypatch):
+    async def test_a_sleeping_site_is_named(self, girl):
         """⚠ Набор поднят, но ни одной анкеты в сети — инициатива уходит в чат."""
-        _awake(monkeypatch)
+        await _switch(make=True)
 
         assert 'не в сети' in await initiative_why(STAND_SITE)
 
-    async def test_nothing_in_the_way_is_said_out_loud(self, girl, monkeypatch):
+    async def test_nothing_in_the_way_is_said_out_loud(self, girl):
         """⚠⚠ Мешать некому — это **утверждение**, а не пустая строка.
 
         Молчание здесь читалось бы как поломка ровно так же, как пустая колонка.
         """
-        _awake(monkeypatch)
+        await _switch(make=True)
         async with mysql_get_db_async() as db:
             await db.execute("UPDATE profile SET status = 'online' WHERE id = %s",
                              (girl,))
@@ -340,16 +342,49 @@ class TestTheCappedMarkInTheRow:
         Своя копия счёта в ручке разошлась бы с кругом на первой правке, и иконка
         горела бы не тогда, когда круг молчит. Ровно так уже устарела подсказка
         `initiative_why`, пережившая появление самого круга на две недели.
+
+        ⚠ Смотрим **все три** места, которые спрашивают о заходах: отбор круга,
+        вердикт значка и окно пары. Пока проверялись двое, третье (`_pair_state`)
+        считало дневной предел своим выражением — и считало не то.
         """
         import inspect
 
         from src.dating import initiative
 
-        assert 'initiative_in_row_sql' in inspect.getsource(
-            initiative.initiative_blocked), \
-            'ручка считает заходы своим выражением, а не общим'
-        assert 'initiative_in_row_sql' in inspect.getsource(initiative._quiet), \
-            'отбор круга перестал звать общее выражение'
+        for where in (initiative.initiative_blocked, initiative._quiet,
+                      initiative._pair_state):
+            assert '_in_row_sql' in inspect.getsource(where), \
+                f'{where.__name__} считает заходы своим выражением, а не общим'
+
+        for where in (initiative._quiet, initiative._pair_state):
+            assert '_in_day_sql' in inspect.getsource(where), \
+                f'{where.__name__} считает сутки своим выражением, а не общим'
+
+    def test_both_counts_share_one_body(self):
+        """⚠⚠ Пределы отличаются ровно окном — значит тело у них одно.
+
+        Что считается заходом (таблица, `status = 'sent'`, граница `_since_sql`)
+        живёт в единственном числе. Напиши счета порознь — и правка «что
+        считать» задела бы один: разойдясь, они не уронили бы ни одной
+        проверки, зато дневной предел снова мерил бы не то, что «подряд».
+        """
+        import inspect
+
+        from src.dating import initiative
+
+        for build in (initiative._in_row_sql, initiative._in_day_sql):
+            assert '_sent_count_sql' in inspect.getsource(build), \
+                f'{build.__name__} собирает запрос сам, в обход общего тела'
+
+        both = initiative._in_row_sql('p', 'u', 'h'), initiative._in_day_sql(
+            'p', 'u', 'h')
+        assert both[0] != both[1], 'счета вышли одинаковыми — окно потерялось'
+        assert 'INTERVAL 1 DAY' in both[1] and 'INTERVAL 1 DAY' not in both[0], \
+            'окно суток встало не тому счёту'
+        assert initiative._since_sql('p', 'u', 'h') in both[0], \
+            'счёт «подряд» потерял нижнюю границу'
+        assert initiative._since_sql('p', 'u', 'h') in both[1], \
+            'дневной счёт потерял нижнюю границу — его ответ его не обнулит'
 
 
 class TestTheReleaseIcon:
@@ -511,17 +546,30 @@ class TestTheSettings:
             'умолчание реестра разошлось с умолчанием кода'
 
     def test_the_backstop_is_above_the_row_limit(self):
-        """⚠ Потолок не должен мешать живому разговору.
+        """⚠⚠ Умолчание дневного предела значит «не вмешиваться».
 
-        Он сторожит зацикленный автоответчик, а не человека, — и умолчание у
-        него поэтому выше, чем у счёта «подряд». Сравняй их, и предохранитель
-        начал бы отвечать на тот же вопрос, что «подряд», то есть стал бы вторым
-        пределом об одном.
+        Счёт за сутки — **часть** счёта «подряд»: граница у них одна, его
+        последняя реплика. Значит число выше «подряд» не участвует вовсе, и
+        умолчание выбрано именно таким: выкладка не должна менять поведение
+        занятия там, где о дневном пределе не просили. Опусти его ниже
+        «подряд» — и заходы растянутся по дням.
         """
         from src.dating.initiative import (INITIATIVE_MAX_DAY_DEFAULT,
                                            INITIATIVE_REPEAT_DEFAULT)
 
         assert INITIATIVE_MAX_DAY_DEFAULT > INITIATIVE_REPEAT_DEFAULT
+
+    def test_the_backstop_note_says_his_answer_clears_it(self):
+        """⚠⚠ Обнуление ответом — в подписи **дневного** предела тоже.
+
+        Без этой строки число читается как «столько в сутки, и точка» — ровно
+        так его и понимали, пока счёт и вправду мерился от «сутки назад»:
+        ответившая пара стояла с «за сутки 1 из 1» до завтра.
+        """
+        note = SITE_KNOWN['chat_initiative_max_day']['note']
+
+        assert 'обнуляет и этот счёт' in note, \
+            'подпись молчит о том, что его ответ снимает и дневной предел'
 
     def test_they_stand_in_one_subsection(self):
         """⚠⚠ Все четыре — подразделом «Инициатива», а не вразброс по вкладке.

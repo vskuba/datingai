@@ -62,6 +62,31 @@ async def pair(girl):
     return girl, uid
 
 
+@pytest.fixture
+async def day_cap():
+    """Ставит дневной предел у сайта стенда и убирает за собой.
+
+    ⚠ Нужен ровно одному случаю. Умолчания (5 против «подряд» 2) хватает всем
+    прочим, а упереться в дневной предел при нём нельзя вовсе: счёт за сутки —
+    часть счёта «подряд», и первым упрётся тот.
+    """
+    async def _set(value):
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'UPDATE site SET settings = JSON_SET(COALESCE(settings,'
+                ' JSON_OBJECT()), %s, %s) WHERE site_id = %s',
+                ('$.chat_initiative_max_day', str(value), STAND_SITE))
+            await db.connection.commit()
+
+    yield _set
+
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE site SET settings = JSON_REMOVE(settings, %s)'
+                         ' WHERE site_id = %s',
+                         ('$.chat_initiative_max_day', STAND_SITE))
+        await db.connection.commit()
+
+
 class TestTheyAgree:
     """⚠⚠ Окно и круг отвечают одинаково — на одних и тех же данных.
 
@@ -179,11 +204,13 @@ class TestTheCounts:
         assert got['in_day'] == 1
         assert got['left'] == got['repeat'] - 1
 
-    async def test_his_answer_resets_the_row(self, pair):
-        """⚠⚠ Его ответ обнуляет счёт «подряд» — разговор жив.
+    async def test_his_answer_resets_both_counts(self, pair):
+        """⚠⚠ Его ответ обнуляет **оба** счёта — разговор жив.
 
-        Дневной счёт при этом остаётся: он сторожит не человека, а зацикленный
-        автоответчик, который обнуляет первый каждой репликой.
+        Граница у них одна (`_since_sql`). Прежде дневной мерился от
+        «сутки назад» и ответа не замечал: Diana ↔ Bruce — заход в 08:02, его
+        ответ в 11:02, а окно отвечало «подряд 0 из 7» и рядом «за сутки 1 из
+        1». Живой разговор замирал до завтра.
         """
         profile_id, uid = pair
         await _card(profile_id, uid, status='sent', minutes_ago=120)
@@ -192,12 +219,14 @@ class TestTheCounts:
         got = await initiative_explain(profile_id, uid)
 
         assert got['in_row'] == 0, 'его ответ не обнулил счёт подряд'
-        assert got['in_day'] == 1, 'его ответ обнулил и дневной счёт'
+        assert got['in_day'] == 0, 'его ответ не обнулил дневной счёт'
 
     async def test_a_manual_reset_frees_the_pair(self, pair):
         """Сброс руками двигает нижнюю границу счёта — пара отпущена.
 
-        ⚠ Дневной потолок он не трогает: это разные пределы о разном.
+        ⚠⚠ Граница одна на оба предела, значит отметка снимает **и дневной**.
+        Иначе кнопка «отпустить пару» пару не отпускает: счёт «подряд»
+        обнулялся, а окно по-прежнему отвечало «за сутки 1 из 1».
         """
         profile_id, uid = pair
         for _ in range(REPEAT):
@@ -211,22 +240,29 @@ class TestTheCounts:
 
         assert after['capped'] is False, 'сброс не отпустил пару'
         assert after['in_row'] == 0
-        assert after['in_day'] == REPEAT, 'сброс обнулил и дневной счёт'
+        assert after['in_day'] == 0, 'сброс не обнулил дневной счёт'
 
-    async def test_the_day_cap_speaks_for_itself(self, pair):
-        """Дневной потолок исчерпан — окно называет и его.
+    async def test_the_day_cap_speaks_for_itself(self, pair, day_cap):
+        """Дневной предел исчерпан — окно называет и его.
 
-        ⚠ Он поверх обнуления: счёт «подряд» тут нулевой, а писать всё равно
-        нельзя — ровно тот случай, который без окна выглядит необъяснимым.
+        ⚠⚠ Предел ставим **ниже «подряд»**, иначе проверять нечего: счёт за
+        сутки — часть счёта «подряд», и при умолчании (5 против 2) упереться в
+        него нельзя. В этом и смысл настройки — растянуть заходы по дням.
+
+        ⚠ Он молчит с самого начала: ответь он, обнулились бы оба счёта, и
+        случай вышел бы про обнуление, а не про предел.
         """
         profile_id, uid = pair
-        for _ in range(MAX_DAY):
-            await _card(profile_id, uid, status='sent', minutes_ago=120)
-        await _said_in(profile_id, uid, minutes_ago=1)
+        await day_cap(1)
+        await _card(profile_id, uid, status='sent', minutes_ago=120)
 
         got = await initiative_explain(profile_id, uid)
+        mine = {one['uid'] for one in await _quiet(profile_id, AFTER, AFTER_MAX,
+                                                   REPEAT, 1)}
 
-        assert got['in_row'] == 0, 'его ответ не обнулил счёт подряд'
+        assert uid not in mine, 'круг взял пару, упёршуюся в дневной предел'
+        assert got['in_row'] == 1 and got['in_day'] == 1
+        assert got['capped'] is False, 'пару остановил «подряд», а не сутки'
         assert got['day_capped'] is True
         assert any('дневной потолок' in one for one in got['blockers'])
 

@@ -211,8 +211,8 @@ class TestWhoIsQuiet:
         дневной («отвечающий через раз получит инициативу двадцать раз в сутки»)
         верен буквально, но описывает не беду: двадцать раз ответивший человек —
         это разговор, а не писание в пустоту. От выливания реплик в молчание
-        защищает сам счёт: новый заход требует **его реплики**, а сверху стоит
-        дневной предохранитель (`TestTheDailyBackstop`).
+        защищает сам счёт: новый заход требует **его реплики**, а сколько из
+        заходов уместится в сутки, говорит дневной предел (`TestTheDailyWindow`).
         """
         await _said(girl, 'u-1', direction='in', minutes_ago=400)
         await _card_sent(girl, 'u-1', minutes_ago=350)
@@ -263,13 +263,13 @@ class TestWhoIsQuiet:
             'сутки обнулили счёт «подряд» — молчащего зовут бесконечно'
 
 
-class TestTheDailyBackstop:
-    """⚠⚠ Дневной потолок на пару — предохранитель поверх обнуления.
+class TestTheDailyWindow:
+    """⚠⚠ Дневной предел — **окно у того же счёта**, а не второй предел об одном.
 
-    Обнуление ответом сверху ничем не ограничено: пара, где на той стороне
-    зацикленный автоответчик, обнуляла бы счёт «подряд» каждой репликой и
-    получала бы инициативы без конца. Потолок сторожит **эту** патологию, а не
-    живого человека, — потому его умолчание и выше, чем «подряд».
+    Считает он те же ушедшие карточки, что «подряд», и от той же границы — его
+    последней реплики (`_since_sql`). Значит предел не отнимает
+    заходы, а растягивает их по дням: при «подряд 5» и «в сутки 1» молчащего
+    позовут пять раз, но по разу в сутки.
     """
 
     @staticmethod
@@ -283,43 +283,69 @@ class TestTheDailyBackstop:
         # Мы ответили ему в чате, и разговор затих на нашей реплике.
         await _said(girl, 'u-1', direction='out', minutes_ago=100)
 
-    async def test_it_stops_an_endless_reset(self, girl):
-        """Он ответил на каждую — счёт «подряд» нулевой, а потолок держит."""
-        await self._answered_twice(girl)
+    async def test_his_answer_clears_the_day_too(self, girl):
+        """⚠⚠ Он ответил — обнулились **оба** счёта, и пара снова годна.
 
-        assert await initiative_mod._quiet(girl, 3600, 3600, 1, 2) == [], \
-            'потолок на пару не держит — обнуление стало бесконечным'
+        Прежде дневной мерился просто от «сутки назад» и его ответа не замечал:
+        Diana ↔ Bruce — заход в 08:02, его ответ в 11:02, а отбор молчал, потому
+        что «за сутки 1 из 1». Живой разговор замирал до завтра.
 
-    async def test_a_high_cap_lets_the_talk_live(self, girl):
-        """⚠ Тот же разговор при высоком потолке идёт дальше.
-
-        Отличие от соседнего теста ровно одно — число потолка; значит пару
-        остановил именно он, а не срок и не счёт «подряд».
+        ⚠ Потолок здесь единица, то есть самый тесный: пару пропустил не запас,
+        а именно обнуление.
         """
         await self._answered_twice(girl)
 
-        got = await initiative_mod._quiet(girl, 3600, 3600, 1, 5)
+        got = await initiative_mod._quiet(girl, 3600, 3600, 5, 1)
 
-        assert [one['uid'] for one in got] == ['u-1']
+        assert [one['uid'] for one in got] == ['u-1'], \
+            'его ответ не обнулил дневной счёт — пара ждёт суток'
         assert [one['try_no'] for one in got] == [1], \
             'номер захода идёт от счёта «подряд», а он обнулён его ответом'
 
-    async def test_yesterdays_cards_fall_out_of_the_day(self, girl):
-        """⚠ Сутки **скользящие**: заход позавчерашний в потолок не идёт.
+    async def test_it_spreads_the_repeats_over_days(self, girl):
+        """⚠ Внутри одной тишины предел держит: заход был, суток не прошло.
 
+        Отличие от соседнего теста ровно одно — он не ответил, и потому заход
+        считается. При «подряд 5» и «в сутки 1» второй уйдёт завтра.
+        """
+        await _said(girl, 'u-1', direction='in', minutes_ago=400)
+        await _said(girl, 'u-1', direction='out', minutes_ago=300)
+        await _card_sent(girl, 'u-1', minutes_ago=200)
+
+        assert await initiative_mod._quiet(girl, 3600, 3600, 5, 1) == [], \
+            'дневной предел не держит — заходы уйдут пачкой в один день'
+
+    async def test_yesterdays_card_falls_out_of_the_day(self, girl):
+        """⚠ Сутки **скользящие**: вчерашний заход место в сутках освободил.
+
+        Он так и не ответил — счёт «подряд» заход помнит, а дневной уже нет.
         Мерка та же, что у инвайтов (`invite_repeat_max_day`): полночь ничего не
         значит для того, кто читает сообщения, а 24 часа значат.
         """
-        await _said(girl, 'u-1', direction='in', minutes_ago=1900)
+        await _said(girl, 'u-1', direction='in', minutes_ago=2000)
+        await _said(girl, 'u-1', direction='out', minutes_ago=1900)
         await _card_sent(girl, 'u-1', minutes_ago=30 * 60)
-        # Он ответил уже после того захода — счёт «подряд» обнулён им.
-        await _said(girl, 'u-1', direction='in', minutes_ago=29 * 60)
-        await _said(girl, 'u-1', direction='out', minutes_ago=28 * 60)
 
-        got = await initiative_mod._quiet(girl, 3600, 3600, 1, 1)
+        got = await initiative_mod._quiet(girl, 3600, 3600, 5, 1)
 
         assert [one['uid'] for one in got] == ['u-1'], \
             'заход тридцатичасовой давности держит пару вечно'
+        assert [one['try_no'] for one in got] == [2], \
+            'счёт «подряд» потерял вчерашний заход вместе с дневным'
+
+    async def test_a_cap_above_the_row_limit_does_nothing(self, girl):
+        """⚠ Число выше «подряд» не участвует: первым упирается «подряд».
+
+        Счёт за сутки — часть счёта «подряд», и такое число означает «не
+        вмешиваться». Данные те же, что у соседнего теста, — различает их
+        только расстановка пределов.
+        """
+        await _said(girl, 'u-1', direction='in', minutes_ago=400)
+        await _said(girl, 'u-1', direction='out', minutes_ago=300)
+        await _card_sent(girl, 'u-1', minutes_ago=200)
+
+        assert await initiative_mod._quiet(girl, 3600, 3600, 1, 5) == [], \
+            'пару остановил не «подряд» — тест проверяет не то, что думает'
 
 
 class TestTheTermIsDrawnPerPair:
@@ -1157,11 +1183,12 @@ class TestTheManualReset:
         assert await initiative_mod._quiet(girl, 3600, 3600, 1) == [], \
             'карточка после сброса не посчитана — потолок снят навсегда'
 
-    async def test_the_daily_backstop_survives_the_reset(self, girl):
-        """⚠⚠ Сброс трогает только счёт «подряд», дневной потолок остаётся.
+    async def test_the_reset_clears_the_day_too(self, girl):
+        """⚠⚠ Сброс двигает границу **обоих** счётов — отпущено, так отпущено.
 
-        Тот сторожит не живого человека, а зацикленный автоответчик на той
-        стороне; снимать его щелчком значило бы остаться без предохранителя.
+        Прежде дневной мерился от «сутки назад» и отметки не видел: человек
+        нажимал «отпустить пару», счёт «подряд» обнулялся, а пара стояла дальше
+        — «за сутки 1 из 1». Кнопка, которая не отпускает, хуже отсутствующей.
         """
         from src.dating.chat_initiative import chat_initiative_reset
 
@@ -1170,11 +1197,16 @@ class TestTheManualReset:
         for minutes in (200, 150):
             await _card_sent(girl, 'u-1', minutes_ago=minutes)
 
-        await chat_initiative_reset(girl, 'u-1')
-
         assert await initiative_mod._quiet(girl, 3600, 3600, 5,
                                            max_day=2) == [], \
-            'сброс снял дневной потолок'
+            'пара не упёрлась в дневной предел — проверять нечего'
+
+        await chat_initiative_reset(girl, 'u-1')
+
+        got = await initiative_mod._quiet(girl, 3600, 3600, 5, max_day=2)
+
+        assert [one['uid'] for one in got] == ['u-1'], \
+            'сброс не снял дневной предел — пара стоит до завтра'
 
 
 class TestTheSelectionWindow:
