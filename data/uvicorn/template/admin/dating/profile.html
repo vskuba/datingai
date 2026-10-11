@@ -4959,6 +4959,11 @@
             favTalksShow();
         });
 
+        // Что с письмами у этой пары — окном. ⚠ Ничего не меняет, только
+        // рассказывает: ни одной кнопки действия в нём нет.
+        const favMailInfo = workEl.querySelector('[data-slot="fav-mail-info"]');
+        if (favMailInfo) favMailInfo.addEventListener('click', mailInfoShow);
+
         // Галочка «с ответами» в шапке разговора: отбирает список слева.
         //
         // ⚠ Слушаем **все** узлы с этим именем: шаблон работы у сайтов свой, и
@@ -7422,6 +7427,16 @@
 
         fillSlot('fav-talk-who', picked
             ? `${picked.profile_name || '—'} → ${picked.name || picked.uid}` : '');
+
+        // ⚠ Значок прячется, пока пара не выбрана: кнопка, ведущая в пустоту,
+        // читается как поломка. Та же пара строк, что у значков инициативы.
+        //
+        // ⚠⚠ Условие — по `favTalkOpen`, а **не** по `picked`: пару открывают и
+        // карточкой из пула ответов, а её строка может лежать на другой странице
+        // списка — в `favTalks` её тогда нет вовсе, и значок пропадал бы ровно
+        // там, где он нужнее всего.
+        const mailInfo = slot('fav-mail-info');
+        if (mailInfo) mailInfo.hidden = !favTalkOpen;
 
         if (!picked) {
             wrap.innerHTML = '<span class="reply-thread-wait">Выберите переписку '
@@ -12746,12 +12761,17 @@
                   + (got.silent ? ', решено промолчать' : '') : '')
             + letterFact('Счёт сброшен руками', got.reset_at
                 ? `${timeShift(got.reset_at)} · ${timeAgo(got.reset_at)}` : '')
-            // ⚠⚠ Главное, что человек должен знать про «подряд»: счёт обнуляет
+            // ⚠⚠ Главное, что человек должен знать про счета: обнуляет их
             // **его ответ**, а не время. Без этой строки «2 из 2» читается как
             // «паре больше никогда», хотя достаточно одной его реплики.
+            //
+            // ⚠ Про оба счёта одной фразой: прежде здесь стояло «дневной
+            // потолок он не трогает», и это было правдой — ровно той, из-за
+            // которой ответившая пара стояла с «за сутки 1 из 1».
             + '<div class="letter-row"><span class="letter-val init-info-note">'
-            + 'Счёт «подряд» обнуляет его ответ: напишет — и заходы начнутся '
-            + 'заново. Дневной потолок он не трогает.</span></div>';
+            + 'Оба счёта обнуляет его ответ: напишет — и заходы начнутся '
+            + 'заново. Дневной считает те же заходы, только за сутки.'
+            + '</span></div>';
     }
 
     // По каким правилам: настройки сайта, которые человек и правит, увидев окно.
@@ -12807,6 +12827,185 @@
         return hours < 24
             ? `${hours} ч${mins ? ` ${mins} мин` : ''}`
             : `${Math.floor(hours / 24)} дн${hours % 24 ? ` ${hours % 24} ч` : ''}`;
+    }
+
+    // ── Окно «что с письмами у пары» ─────────────────────────────────────────
+    //
+    // ⚠⚠ **Считает всё сервер** (`mail_explain`), теми же выражениями, что и
+    // круги. Здесь только показ: своя арифметика на странице разошлась бы с ними
+    // на первой правке, и окно объясняло бы занятие, которого нет. Та же грабля
+    // уже случалась дважды — с причиной пустого пула и со значком потолка.
+    //
+    // ⚠ Поэтому ниже нет ни одного «если ушло больше предела»: вердикты приходят
+    // готовыми (`blockers`, `send_blockers`, `next`), а страница их расставляет.
+
+    async function mailInfoShow() {
+        const [profileId, uid] = String(favTalkOpen || '').split('|');
+        if (!uid) return;
+
+        let got;
+        try {
+            got = (await getData(`${BASE}/api/dating/favorite-mail/explain`
+                + `?profile_id=${profileId}&uid=${encodeURIComponent(uid)}`)).result
+                || {};
+        } catch (e) {
+            showNotification('Не вышло спросить про письма: ' + e.message,
+                             'error');
+
+            return;
+        }
+
+        // ⚠ `favTalkRow` первым: пару открывают и карточкой из пула ответов, а её
+        // строки может не быть на открытой странице списка вовсе.
+        const found = favTalkRow || (favTalks || []).find(one =>
+            String(one.uid) === String(uid)
+            && String(one.profile_id) === String(profileId)) || {};
+
+        modalOpen({
+            title: `Письма: ${found.profile_name || '—'} → `
+                + `${found.name || uid}`,
+            body: mailInfoBody(got),
+        });
+    }
+
+    // Тело окна. ⚠ Порядок частей отвечает вопросам человека: «что будет
+    // дальше» → «что с ответом» → «что с приставанием» → «по каким правилам».
+    function mailInfoBody(got) {
+        if (!got.known) {
+            return '<div class="letter-row"><span class="letter-val">'
+                + 'Этой пары в наших таблицах нет — рассказывать не о чем.'
+                + '</span></div>';
+        }
+
+        return mailInfoNow(got) + mailInfoReply(got) + mailInfoFavorite(got)
+            + mailInfoRules(got);
+    }
+
+    // Что сейчас: что уйдёт следующим и что мешает.
+    //
+    // ⚠⚠ Помехи показываем **все**, а не первую. Человек, увидев «пауза не
+    // вышла», подождёт четыре часа и вернётся к тому же молчанию, потому что под
+    // паузой лежал дневной предел получателя. Круги их тоже проверяют все —
+    // просто молча.
+    //
+    // ⚠ Одинаковые строки двух занятий схлопываем: запрет и остуда общие на оба,
+    // и дважды повторённая помеха читается как две разных.
+    function mailInfoNow(got) {
+        const names = {reply: 'ответ на его письмо', favorite: 'приставание'};
+        const all = [...(got.reply.blockers || []),
+                     ...(got.reply.send_blockers || []),
+                     ...(got.favorite.blockers || []),
+                     ...(got.favorite.send_blockers || [])];
+
+        return '<div class="init-info-head">Сейчас</div>'
+            + letterFact('Следующее письмо', got.next
+                ? names[got.next]
+                : 'нечего — оба занятия упёрлись', !got.next)
+            + [...new Set(all)].map(
+                one => letterFact('Мешает', one, true)).join('')
+            + (got.wait_sec > 0
+                ? letterFact('Ждать', initiativeInfoLeft(got.wait_sec)) : '')
+            // ⚠⚠ Минуту отправки не называем: уносит письма общий круг со своей
+            // паузой на весь сайт, и очередь делится со всеми анкетами.
+            + '<div class="letter-row"><span class="letter-val init-info-note">'
+            + 'Срок считается до годности пары. Когда именно уйдёт письмо, '
+            + 'решает круг отправки: у него своя пауза на весь сайт.'
+            + '</span></div>';
+    }
+
+    function mailInfoReply(got) {
+        const one = got.reply;
+
+        return '<div class="init-info-head">Ответ на его письмо</div>'
+            + letterFact('Генерация', one.make_on ? 'включена' : 'выключена',
+                         !one.make_on)
+            + letterFact('Отправка', one.send_on ? 'включена' : 'выключена',
+                         !one.send_on)
+            + letterFact('Его последнее письмо', one.his_last
+                ? `${timeShift(one.his_last.at)} · ${timeAgo(one.his_last.at)}`
+                  + (one.his_last.empty ? ' · тело ещё не забрали' : '')
+                : 'он не писал')
+            + letterFact('Черновик', mailInfoDraft(one.draft))
+            + letterFact('Круг ответов', mailInfoEvery(one));
+    }
+
+    function mailInfoFavorite(got) {
+        const one = got.favorite;
+
+        return '<div class="init-info-head">Приставание</div>'
+            + letterFact('Набор', one.make_on ? 'включён' : 'выключен',
+                         !one.make_on)
+            + letterFact('Отправка', one.send_on ? 'включена' : 'выключена',
+                         !one.send_on)
+            + letterFact('В избранных', one.star
+                ? `да${mailInfoStar(one.star_state)}` : 'нет', !one.star)
+            + letterFact('Смена сочинения', one.shift_now ? 'идёт' : 'не идёт',
+                         !one.shift_now)
+            // ⚠ «Не знаем» и «нет» — разные ответы: снимок ленты бывает не снят,
+            // и круг такую пару пропускает именно по незнанию.
+            + letterFact('Он в сети', one.him_known
+                ? (one.him_online ? 'да' : 'нет')
+                : 'не знаем — ленту не снимали', !one.him_online)
+            + letterFact('Писем ему за сутки',
+                         `${one.day_sent} из ${one.per_day}`,
+                         one.day_sent >= one.per_day)
+            + letterFact('Черновик', mailInfoDraft(one.draft))
+            + letterFact('Круг приставания', mailInfoEvery(one));
+    }
+
+    // По каким правилам: настройки сайта, которые человек и правит, увидев окно.
+    function mailInfoRules(got) {
+        return '<div class="init-info-head">Правила сайта</div>'
+            + letterFact('Пауза между письмами анкеты', got.favorite.gap_sec
+                ? initiativeInfoLeft(got.favorite.gap_sec) : 'без паузы')
+            + letterFact('Предел писем получателю',
+                         `${got.favorite.per_day} в сутки`)
+            + letterFact('Остуда его ящика', got.cooling_sec
+                ? initiativeInfoLeft(got.cooling_sec) : '')
+            // ⚠ Канал запрета показываем словами: «только письма» и «оба канала»
+            // — разного охвата, и путать их нельзя.
+            + letterFact('Запрет «не пишем»', got.block.is
+                ? `${got.block.mark} · ${got.block.channel === 'mail'
+                    ? 'только письма' : 'оба канала'}` : '', got.block.is);
+    }
+
+    // Откуда взялась звезда — словами.
+    //
+    // ⚠ Состояние лежит в базе по-английски (`done`, `already`), и показывать
+    // его как есть нельзя: «да · already» человек читает как недоделку. Поймано
+    // кадром — в коде строка выглядела безобидно.
+    //
+    // ⚠ Незнакомое состояние не прячем: пустая подпись соврала бы, что звезду
+    // поставили мы. Показываем как есть — так видно, что список пополнился.
+    function mailInfoStar(state) {
+        const said = {done: 'поставили мы', already: 'стояла и раньше'};
+
+        return state ? ` · ${said[state] || state}` : '';
+    }
+
+    // Черновик словами: его состояние важнее номера.
+    function mailInfoDraft(draft) {
+        if (!draft || draft.status !== 'draft') return 'нет';
+
+        return draft.error
+            ? `лежит с ошибкой: ${draft.error}`
+            : 'лежит, ждёт отправки';
+    }
+
+    // Срок круга тремя ответами, и третий — не мелочь.
+    //
+    // ⚠ `-1` значит «спросить не вышло»: врать сроком нельзя.
+    //
+    // ⚠⚠ `0` значит «отметки нет, круг возьмётся на ближайшем тике», а **не**
+    // «ноль секунд». Поймано кадром: строка «вернётся через 0 с» читается как
+    // сбой счётчика — ровно то состояние, которое окно и заводилось объяснять.
+    function mailInfoEvery(one) {
+        const every = `раз в ${initiativeInfoLeft(one.every_sec)}`;
+
+        if (one.next_sec < 0) return `${every} · когда вернётся — не спросилось`;
+        if (!one.next_sec) return `${every} · возьмётся на ближайшем тике`;
+
+        return `${every} · вернётся через ${initiativeInfoLeft(one.next_sec)}`;
     }
 
     // ── Окно переписки ───────────────────────────────────────────────────────
