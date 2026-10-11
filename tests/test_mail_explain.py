@@ -25,17 +25,61 @@
 не проверяя.
 """
 
+import time
 import uuid
 
 import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating import mail_explain as explain
+from src.dating import online as online_module
 from src.dating.mail_explain import mail_explain
 
 pytestmark = pytest.mark.mail
 
 STAND_SITE = 999_343
+
+# Смена на целые сутки: без неё первой помехой всегда ловилось бы «не смена», и
+# каждая проверка проверяла бы расписание вместо своего правила.
+ALL_DAY = '[{"from": "00:00", "to": "23:59"}]'
+
+
+# ── Подмены ──────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def online_feed(monkeypatch):
+    """Кладёт людей в снимок «кто в сети» сайта стенда.
+
+    ⚠⚠ Подменяется `online._snapshot`, а не Redis: с хоста Redis недоступен
+    вовсе, и `_snapshot` при сбое отвечает `None` — то есть «не знаем». На живом
+    Redis проверка «он в сети» зеленела бы, ничего не проверяя.
+
+    ⚠ Форма снимка — та, которую ждёт `online._check`: `at` (метка времени) и
+    `people` со списком `uid`.
+    """
+    def _set(uids: list) -> None:
+        monkeypatch.setattr(
+            online_module, '_snapshot',
+            lambda site_id: {'at': time.time(),
+                             'people': [{'uid': str(one)} for one in uids]})
+
+    return _set
+
+
+@pytest.fixture
+def cooling(monkeypatch):
+    """Ставит остуду получателю: сайт просит подождать.
+
+    ⚠ Подменяется имя **в `mail_explain`**, а не в `mail_wait`: модуль
+    импортировал функцию к себе, и подмена по прежнему месту его ссылку не
+    трогает — тест зеленел бы молча.
+    """
+    def _set(seconds: int) -> None:
+        monkeypatch.setattr(explain, 'mail_wait_left',
+                            lambda site_id, uid: int(seconds))
+
+    return _set
 
 
 # ── Посев ────────────────────────────────────────────────────────────────────
@@ -90,6 +134,58 @@ async def _fav_sent(profile_id: int, uid: str, *, minutes_ago: int = 10) -> None
             '         NOW() - INTERVAL %s MINUTE)',
             (STAND_SITE, int(profile_id), str(uid), int(minutes_ago)))
         await db.connection.commit()
+
+
+async def _fav_draft(profile_id: int, uid: str) -> None:
+    """Черновик приставания в пуле."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO favorite_mail'
+            ' (site_id, profile_id, uid, name, body, status)'
+            " VALUES (%s, %s, %s, 'He', 'hi', 'draft')",
+            (STAND_SITE, int(profile_id), str(uid)))
+        await db.connection.commit()
+
+
+async def _site_flag(name: str, value: int) -> None:
+    """Выключатель занятия у сайта стенда.
+
+    ⚠ Имя столбца уезжает текстом — параметром его не передать; приходит оно из
+    самих тестов, снаружи взяться неоткуда.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute(f'UPDATE site SET {name} = %s WHERE site_id = %s',
+                         (int(value), STAND_SITE))
+        await db.connection.commit()
+
+
+@pytest.fixture
+async def fav_on():
+    """Приставание включено, смена сочинения идёт круглые сутки.
+
+    Убирает за собой: сайт стенда общий на всю сюиту, и оставленный поднятым
+    выключатель менял бы ответы соседних файлов.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'UPDATE site SET favorite_mail_make_on = 1,'
+            ' favorite_mail_send_on = 1, favorite_mail_schedule = %s'
+            ' WHERE site_id = %s', (ALL_DAY, STAND_SITE))
+        await db.connection.commit()
+
+    yield
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'UPDATE site SET favorite_mail_make_on = 0,'
+            ' favorite_mail_send_on = 0, favorite_mail_schedule = NULL'
+            ' WHERE site_id = %s', (STAND_SITE,))
+        await db.connection.commit()
+
+
+def _has(got: dict, part: str, needle: str) -> bool:
+    """Есть ли среди помех занятия строка с этими словами."""
+    return any(needle in one for one in got[part]['blockers'])
 
 
 # ── Проверки ─────────────────────────────────────────────────────────────────
@@ -166,3 +262,220 @@ class TestCommon:
         got = await mail_explain(girl, f'ex-{uuid.uuid4().hex[:10]}')
 
         assert got['block'] == {'is': False, 'mark': '', 'channel': ''}
+
+
+class TestFavoriteBlockers:
+    """Одиннадцать помех приставания — в порядке, в каком их проверяет круг."""
+
+    async def test_make_off(self, girl, fav_on):
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        await _site_flag('favorite_mail_make_on', 0)
+
+        got = await mail_explain(girl, uid)
+
+        assert _has(got, 'favorite', 'набор писем избранным выключен')
+
+    async def test_not_a_shift(self, girl, fav_on):
+        """Смена в прошлом — круг не наберёт ничего, сколько бы пар ни ждало."""
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'UPDATE site SET favorite_mail_schedule = %s WHERE site_id = %s',
+                ('[{"from": "00:00", "to": "00:01"}]', STAND_SITE))
+            await db.connection.commit()
+
+        got = await mail_explain(girl, uid)
+
+        assert _has(got, 'favorite', 'не смена')
+
+    async def test_no_star(self, girl, fav_on):
+        """Звёздочки нет — приставание не про эту пару."""
+        got = await mail_explain(girl, f'ex-{uuid.uuid4().hex[:10]}')
+
+        assert got['favorite']['star'] is False
+        assert _has(got, 'favorite', 'нет в избранных')
+
+    async def test_girl_offline(self, girl, fav_on):
+        """Анкета не в сети: письмо уходит от её имени, и отправка её ждёт."""
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+
+        got = await mail_explain(girl, uid)
+
+        assert _has(got, 'favorite', 'анкета не в сети')
+
+    async def test_he_spoke_last(self, girl_make, fav_on):
+        """Последним говорил он — отвечать должен круг ответов, не этот."""
+        girl = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        await _said_in(girl, uid, minutes_ago=10)
+
+        got = await mail_explain(girl, uid)
+
+        assert _has(got, 'favorite', 'последним говорил он')
+
+    async def test_draft_already_waits(self, girl_make, fav_on):
+        """У анкеты уже лежит черновик — второй был бы вторым письмом подряд.
+
+        ⚠ Условие **по анкете**, а не по паре: черновик занимает ближайшую
+        очередь девушки целиком, кому бы он ни был написан.
+        """
+        girl = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        await _fav_draft(girl, f'other-{uuid.uuid4().hex[:8]}')
+
+        got = await mail_explain(girl, uid)
+
+        assert _has(got, 'favorite', 'уже лежит черновик')
+
+    async def test_block_stops_favorite(self, girl_make, fav_on):
+        """Запрет «не пишем» гасит приставание и называет примету."""
+        girl = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        await _block(girl, uid, channel='all')
+
+        got = await mail_explain(girl, uid)
+
+        assert _has(got, 'favorite', 'запрещено')
+        assert _has(got, 'favorite', 'он закрылся от вас')
+
+    async def test_he_is_offline(self, girl_make, fav_on):
+        """Его нет в сети — и оговорка, что ленту могли не снимать.
+
+        ⚠ «Не знаем» здесь читается как «не сейчас», в отличие от чата: письмо
+        стоит вызова модели и одного из двух писем в сутки.
+        """
+        girl = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+
+        got = await mail_explain(girl, uid)
+
+        assert got['favorite']['him_online'] is False
+        assert got['favorite']['him_known'] is False
+        assert _has(got, 'favorite', 'нет в сети')
+        assert _has(got, 'favorite', 'ленту ещё не снимали')
+
+    async def test_cooling(self, girl_make, fav_on, online_feed, cooling):
+        """Сайт сам просит подождать — выбран предел входящих у получателя."""
+        girl = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        online_feed([uid])
+        cooling(1800)
+
+        got = await mail_explain(girl, uid)
+
+        assert got['cooling_sec'] == 1800
+        assert _has(got, 'favorite', 'предел входящих')
+
+    async def test_person_day_cap(self, girl_make, fav_on, online_feed):
+        """Дневной предел считает **получатель**, а не пара.
+
+        ⚠ Письма шлёт другая анкета — и всё равно считаются: пока ключом был
+        `profile_id`, тринадцать девушек давали одному человеку до 26 писем.
+        """
+        girl = await girl_make(online=True)
+        other = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        online_feed([uid])
+        for _ in range(2):
+            await _fav_sent(other, uid, minutes_ago=600)
+
+        got = await mail_explain(girl, uid)
+
+        assert got['favorite']['day_sent'] >= 2
+        assert _has(got, 'favorite', 'за сутки')
+
+    async def test_girl_gap(self, girl_make, fav_on, online_feed):
+        """Пауза считает **отправительницу**: кому она писала — неважно."""
+        girl = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        online_feed([uid])
+        await _fav_sent(girl, f'other-{uuid.uuid4().hex[:8]}', minutes_ago=5)
+
+        got = await mail_explain(girl, uid)
+
+        assert _has(got, 'favorite', 'пауза')
+
+
+class TestFavoriteNotBlockers:
+    """Чего в помехах быть не должно."""
+
+    async def test_round_pass_is_not_a_blocker(self, girl_make, fav_on,
+                                               online_feed):
+        """Срок круга — поле `next_sec`, а не помеха.
+
+        ⚠ Помеха — то, что мешает **паре** быть годной. Срок круга мешает не
+        паре, а всем сразу, и назови мы его помехой — человек стал бы искать,
+        что эта пара нарушила.
+        """
+        girl = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        online_feed([uid])
+
+        got = await mail_explain(girl, uid)
+
+        assert not _has(got, 'favorite', 'вернётся через')
+        assert isinstance(got['favorite']['next_sec'], int)
+
+    async def test_batch_rules_are_absent(self, girl_make, fav_on, online_feed):
+        """Внутрисходовых правил в окне нет вовсе.
+
+        ⚠⚠ «Ему уже пишет другая анкета этим заходом» и «эта анкета уже написала
+        этим заходом» — про **заход**, а не про пару: к следующему заходу их нет.
+        Назови их окно помехой, человек ждал бы снятия того, что уже снято.
+        """
+        girl = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        online_feed([uid])
+
+        got = await mail_explain(girl, uid)
+
+        assert not _has(got, 'favorite', 'этим заходом')
+
+
+class TestOrder:
+    """Помехи идут в том же порядке, в каком их проверяет круг.
+
+    ⚠⚠ **Порядок — не украшение.** Человек читает первую строку и по ней решает,
+    ждать ему или править настройку. Встань преходящая помеха («он не в сети»,
+    пройдёт за минуту) выше решённой человеком («набор выключен»), и он пошёл бы
+    ждать вместо того, чтобы поднять выключатель.
+    """
+
+    async def test_switch_stands_above_online(self, girl, fav_on):
+        """Выключатель выше «его нет в сети»: первое решает человек, второе — время."""
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        await _site_flag('favorite_mail_make_on', 0)
+
+        rows = (await mail_explain(girl, uid))['favorite']['blockers']
+        switch = next(i for i, one in enumerate(rows) if 'выключен' in one)
+        online = next(i for i, one in enumerate(rows) if 'нет в сети' in one)
+
+        assert switch < online
+
+    async def test_star_stands_above_limits(self, girl_make, fav_on, online_feed):
+        """Звёздочка выше пределов: без неё занятие к паре не относится вовсе."""
+        girl = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        online_feed([uid])
+        # Звёздочки нет — и при этом выбран дневной предел получателя.
+        for _ in range(2):
+            await _fav_sent(girl, uid, minutes_ago=600)
+
+        rows = (await mail_explain(girl, uid))['favorite']['blockers']
+        star = next(i for i, one in enumerate(rows) if 'в избранных' in one)
+        day = next(i for i, one in enumerate(rows) if 'за сутки' in one)
+
+        assert star < day

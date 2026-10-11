@@ -42,8 +42,24 @@
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating.mail_send import mail_sent_union
-from src.dating.mail_wait import mail_wait_left
+from src.dating.favorite import FAVORITE_STATES
+from src.dating.favorite_mail import (FAVORITE_MAIL_PER_DAY_DEFAULT,
+                                      FAVORITE_MAIL_PER_DAY_SETTING,
+                                      favorite_mail_gap_sec,
+                                      favorite_mail_girl_soon,
+                                      favorite_mail_person_soon,
+                                      favorite_mail_shift_site)
+from src.dating.favorite_mail_round import (FAVORITE_MAIL_ROUND_EVERY_DEFAULT,
+                                            FAVORITE_MAIL_ROUND_EVERY_SETTING,
+                                            favorite_mail_round_next)
+from src.dating.mail_send import MAIL_SEND_TABLES, mail_sent_union
+from src.dating.mail_wait import mail_wait_left, mail_wait_skip
+from src.dating.online import online_show
+from src.dating.site_setting import site_seconds
+
+# Таблицы пулов, из которых окно читает черновик пары. ⚠ Имя таблицы уезжает в
+# SQL текстом — параметром его не передать, — поэтому только отсюда.
+MAIL_EXPLAIN_POOLS = ('favorite_mail', 'mail_reply')
 
 
 async def mail_explain(profile_id: int, uid: str,
@@ -74,6 +90,7 @@ async def mail_explain(profile_id: int, uid: str,
 
     site_id = int(pair['site_id'])
     last = await _last(profile_id, uid)
+    flags = await _flags(site_id)
     # ⚠ Остуда спрашивается **один раз**: её читают обе части, и два чтения ради
     # одного числа дали бы два разных мгновения.
     cooling = mail_wait_left(site_id, uid)
@@ -86,10 +103,194 @@ async def mail_explain(profile_id: int, uid: str,
                   'mark': str(pair.get('block_mark') or ''),
                   'channel': str(pair.get('block_channel') or '')},
         'cooling_sec': cooling,
+        'favorite': await _favorite(site_id, profile_id, uid, pair, last,
+                                    flags, cooling, offset_hours),
+    }
+
+
+# ── Приставание ──────────────────────────────────────────────────────────────
+
+async def _favorite(site_id: int, profile_id: int, uid: str, pair: dict,
+                    last: dict, flags: dict, cooling: int,
+                    offset_hours: int) -> dict:
+    """Что с приставанием у этой пары: помехи в порядке проверки круга.
+
+    ⚠⚠ **Порядок — тот же, что у круга**, от решённого человеком к преходящему:
+    выключатель → смена → звёздочка → анкета в сети → чьё последнее слово →
+    черновик → запрет → он в сети → остуда → дневной предел получателя → пауза
+    отправительницы. Переставь их — и окно назовёт главной ту помеху, что пройдёт
+    сама через минуту, а человек уйдёт ждать вместо того, чтобы поправить
+    настройку.
+
+    ⚠ **Двух внутрисходовых правил здесь нет намеренно**: «ему уже пишет другая
+    анкета этим заходом» и «эта анкета уже написала этим заходом» — про заход, а
+    не про пару. К следующему заходу их нет, и назови их окно помехой, человек
+    ждал бы снятия того, что уже снято.
+
+    ⚠ Срок круга помехой тоже не считается: он мешает не паре, а всем сразу.
+    Идёт своим полем `next_sec`.
+    """
+    gap = await favorite_mail_gap_sec(site_id)
+    per_day = int(await site_seconds(site_id, FAVORITE_MAIL_PER_DAY_SETTING)
+                  or FAVORITE_MAIL_PER_DAY_DEFAULT)
+    online = online_show(site_id, uid)
+    star_state = str(pair.get('star_state') or '')
+    star = star_state in FAVORITE_STATES
+    shift = await favorite_mail_shift_site(site_id, offset_hours)
+    draft = await _draft(site_id, 'favorite_mail', profile_id, uid)
+    # ⚠ Черновик пары и черновик **анкеты** — разные вопросы: ближайшую очередь
+    # девушки занимает любой её черновик, кому бы он ни был написан.
+    girl_draft = await _girl_draft(profile_id)
+    person = await favorite_mail_person_soon(site_id, uid, per_day)
+    girl_soon = await favorite_mail_girl_soon(profile_id, gap)
+
+    blockers = []
+    if not flags.get('favorite_mail_make_on'):
+        blockers.append('набор писем избранным выключен у сайта')
+    if not shift:
+        blockers.append('сейчас не смена: письма сочиняются по часам, '
+                        'заданным у сайта')
+    if not star:
+        blockers.append('его нет в избранных этой анкеты')
+    if str(pair.get('status') or '') != 'online':
+        blockers.append('анкета не в сети — письмо уходит от её имени')
+    if str(last.get('side') or '') == 'him':
+        blockers.append('последним говорил он — ответить должен круг ответов')
+    if girl_draft:
+        blockers.append('у этой анкеты уже лежит черновик приставания')
+    if pair.get('block_mark') is not None:
+        blockers.append(f'паре запрещено писать: {pair["block_mark"]}')
+    if not online.get('online'):
+        blockers.append(
+            'его нет в сети'
+            + ('' if online.get('known') else ' (ленту ещё не снимали)'))
+    if cooling:
+        blockers.append(mail_wait_skip(cooling))
+    if person:
+        blockers.append(person)
+    if girl_soon:
+        blockers.append(girl_soon)
+
+    next_sec = favorite_mail_round_next(site_id)
+
+    return {
+        'make_on': bool(flags.get('favorite_mail_make_on')),
+        'send_on': bool(flags.get('favorite_mail_send_on')),
+        'star': star, 'star_state': star_state,
+        'shift_now': bool(shift),
+        'every_sec': int(await site_seconds(site_id,
+                                            FAVORITE_MAIL_ROUND_EVERY_SETTING)
+                         or FAVORITE_MAIL_ROUND_EVERY_DEFAULT),
+        'next_sec': next_sec,
+        'gap_sec': gap, 'per_day': per_day,
+        'day_sent': await _day_sent(site_id, uid),
+        'him_online': bool(online.get('online')),
+        'him_known': bool(online.get('known')),
+        'draft': draft,
+        'blockers': blockers,
+        # Отправка — своей частью, следующей задачей.
+        'send_blockers': [], 'wait_sec': 0,
     }
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+async def _flags(site_id: int) -> dict:
+    """Выключатели занятий и расписание отправки — одним запросом.
+
+    ⚠ Расписание отправки **одно на всю почту сайта** (`mailing_schedule`): у
+    занятий свои часы сочинения, а уносит письма общий круг.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT favorite_mail_make_on, favorite_mail_send_on,'
+                ' reply_make_on, reply_send_on, mailing_schedule'
+                ' FROM site WHERE site_id = %s', (int(site_id),))
+            row = await db.fetchone()
+    except Exception as e:
+        logger_info(f'[dating] выключатели сайта #{site_id} не спросились: {e}')
+
+        return {}
+
+    return dict(row or {})
+
+
+async def _draft(site_id: int, table: str, profile_id: int, uid: str):
+    """Последняя строка пары в этом пуле. `None` — строки нет вовсе.
+
+    ⚠ Имя таблицы уезжает в SQL текстом — параметром его не передать. Приходит
+    оно из `MAIL_EXPLAIN_POOLS`, снаружи взяться неоткуда, и свериться со
+    списком всё равно дешевле, чем однажды об этом пожалеть.
+    """
+    if str(table) not in MAIL_EXPLAIN_POOLS:
+        return None
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                f'SELECT id, status, error, created_at, sent_at FROM {table}'
+                ' WHERE site_id = %s AND profile_id = %s AND uid = %s'
+                ' ORDER BY id DESC LIMIT 1',
+                (int(site_id), int(profile_id), str(uid)))
+            row = await db.fetchone()
+    except Exception as e:
+        logger_info(f'[dating] черновик пары #{profile_id} не спросился: {e}')
+
+        return None
+
+    if not row:
+        return None
+
+    return {'id': int(row['id']), 'status': str(row['status'] or ''),
+            'error': str(row['error'] or ''),
+            'at': row['sent_at'] or row['created_at']}
+
+
+async def _girl_draft(profile_id: int) -> bool:
+    """Лежит ли у анкеты **любой** черновик приставания.
+
+    ⚠ По анкете, а не по паре: пауза считает отправительницу, и лежащий черновик
+    занимает её ближайшую очередь целиком — всё набранное сверх него пролежит до
+    вечера и протухнет. То же условие, что в `favorite_mail._quiet`.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT 1 FROM favorite_mail'
+                " WHERE profile_id = %s AND status = 'draft' LIMIT 1",
+                (int(profile_id),))
+
+            return bool(await db.fetchone())
+    except Exception as e:
+        logger_info(f'[dating] черновики анкеты #{profile_id} не спросились: {e}')
+
+        return False
+
+
+async def _day_sent(site_id: int, uid: str) -> int:
+    """Сколько писем ушло этому человеку за скользящие сутки — по всему сайту.
+
+    ⚠ Ключ — `site_id`, а не анкета: предел на человека. Тем же перечислением
+    таблиц, каким считает его `favorite_mail_person_soon`; оно же объясняет,
+    почему доводов втрое больше, чем подстановок в тексте.
+    """
+    sql = ('SELECT COUNT(*) AS n FROM ('
+           + mail_sent_union("site_id = %s AND uid = %s AND status = 'sent'")
+           + ') AS sent'
+             ' WHERE sent_at IS NOT NULL AND sent_at > NOW() - INTERVAL 1 DAY')
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(sql,
+                             (int(site_id), str(uid)) * len(MAIL_SEND_TABLES))
+
+            return int(((await db.fetchone()) or {}).get('n') or 0)
+    except Exception as e:
+        logger_info(f'[dating] счёт писем {uid} не спросился: {e}')
+
+        return 0
+
 
 async def _pair(profile_id: int, uid: str) -> dict:
     """Анкета, звёздочка и запрет — одним запросом.
