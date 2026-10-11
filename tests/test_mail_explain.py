@@ -583,3 +583,128 @@ class TestReplyBlockers:
         got = await mail_explain(girl, uid)
 
         assert got['reply']['blockers'] == []
+
+
+@pytest.fixture
+async def day_long():
+    """Смена **отправки** — круглые сутки (`mailing_schedule`, одна на почту).
+
+    Без неё «не смена» ловилось бы первой помехой отправки в каждой проверке.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'UPDATE site SET mailing_schedule = %s WHERE site_id = %s',
+            (ALL_DAY, STAND_SITE))
+        await db.connection.commit()
+
+    yield
+
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE site SET mailing_schedule = NULL'
+                         ' WHERE site_id = %s', (STAND_SITE,))
+        await db.connection.commit()
+
+
+def _sent_has(got: dict, part: str, needle: str) -> bool:
+    """Есть ли среди помех **отправки** строка с этими словами."""
+    return any(needle in one for one in got[part]['send_blockers'])
+
+
+class TestSendBlockers:
+    """Четыре помехи отправки — у каждого занятия своя часть."""
+
+    async def test_send_off(self, girl, reply_on, day_long):
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        letter = await _said_in(girl, uid)
+        await _reply_draft(girl, uid, letter)
+        await _site_flag('reply_send_on', 0)
+
+        got = await mail_explain(girl, uid)
+
+        assert _sent_has(got, 'reply', 'отправка ответов выключена')
+
+    async def test_not_a_send_shift(self, girl, reply_on):
+        """Смены отправки нет вовсе — письмо лежит до её часов."""
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        letter = await _said_in(girl, uid)
+        await _reply_draft(girl, uid, letter)
+
+        got = await mail_explain(girl, uid)
+
+        assert _sent_has(got, 'reply', 'не смена')
+
+    async def test_draft_with_error_is_not_taken(self, girl, reply_on, day_long):
+        """Письмо с прежней ошибкой круг не берёт — его досылают кнопкой."""
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        letter = await _said_in(girl, uid)
+        await _reply_draft(girl, uid, letter, error='сайт отказал')
+
+        got = await mail_explain(girl, uid)
+
+        assert _sent_has(got, 'reply', 'прежняя ошибка')
+
+    async def test_cooling_stops_sending(self, girl, reply_on, day_long,
+                                         cooling):
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        letter = await _said_in(girl, uid)
+        await _reply_draft(girl, uid, letter)
+        cooling(900)
+
+        got = await mail_explain(girl, uid)
+
+        assert _sent_has(got, 'reply', 'предел входящих')
+
+    async def test_clean_draft_has_no_send_blockers(self, girl, reply_on,
+                                                    day_long):
+        """Выключатель поднят, смена идёт, ошибки нет — помех отправки нет."""
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        letter = await _said_in(girl, uid)
+        await _reply_draft(girl, uid, letter)
+
+        got = await mail_explain(girl, uid)
+
+        assert got['reply']['send_blockers'] == []
+
+
+class TestWhatIsNext:
+    """Что уйдёт паре следующим — считает сервер, а не страница."""
+
+    async def test_reply_draft_wins(self, girl, reply_on, day_long):
+        """Черновик ответа лежит и уйти может — следующим уйдёт он."""
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        letter = await _said_in(girl, uid)
+        await _reply_draft(girl, uid, letter)
+
+        got = await mail_explain(girl, uid)
+
+        assert got['next'] == 'reply'
+
+    async def test_blocked_draft_does_not_win(self, girl, reply_on):
+        """Черновик есть, но отправка стоит — следующим он не считается.
+
+        ⚠ Иначе окно обещало бы письмо, которое никуда не уйдёт: смены
+        отправки нет, и круг его не возьмёт.
+        """
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        letter = await _said_in(girl, uid)
+        await _reply_draft(girl, uid, letter)
+
+        got = await mail_explain(girl, uid)
+
+        assert got['next'] != 'reply'
+
+    async def test_ripe_reply_is_next(self, girl, reply_on, day_long):
+        """Письмо без ответа — следующим будет ответ, его сочинит круг."""
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _said_in(girl, uid, body='his letter')
+
+        got = await mail_explain(girl, uid)
+
+        assert got['next'] == 'reply'
+
+    async def test_nothing_when_both_blocked(self, girl):
+        """Оба занятия упёрлись — честное «нечего», а не выдуманное занятие."""
+        got = await mail_explain(girl, f'ex-{uuid.uuid4().hex[:10]}')
+
+        assert got['next'] == ''
+        assert got['wait_sec'] == 0

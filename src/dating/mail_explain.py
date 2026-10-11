@@ -39,6 +39,7 @@
 ответ про чужое письмо — ровно то, ради чего окно и заводится.
 """
 
+from datetime_.datetime_ import datetime_day_minutes
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
@@ -52,9 +53,11 @@ from src.dating.favorite_mail import (FAVORITE_MAIL_PER_DAY_DEFAULT,
 from src.dating.favorite_mail_round import (FAVORITE_MAIL_ROUND_EVERY_DEFAULT,
                                             FAVORITE_MAIL_ROUND_EVERY_SETTING,
                                             favorite_mail_round_next)
+from src.dating.json_column import json_column_list
 from src.dating.mail_send import MAIL_SEND_TABLES, mail_sent_union
 from src.dating.mail_wait import mail_wait_left, mail_wait_skip
 from src.dating.online import online_show
+from src.dating.schedule import schedule_now
 from src.dating.reply_round import (REPLY_EVERY_DEFAULT, REPLY_EVERY_SETTING,
                                     reply_round_next)
 from src.dating.site_setting import site_seconds
@@ -97,6 +100,13 @@ async def mail_explain(profile_id: int, uid: str,
     # одного числа дали бы два разных мгновения.
     cooling = mail_wait_left(site_id, uid)
 
+    # ⚠ Обе части — **локальными переменными до словаря**: `_next` сравнивает их
+    # между собой, и ему нужны обе готовыми.
+    reply = await _reply(site_id, profile_id, uid, pair, flags, cooling,
+                         offset_hours)
+    favorite = await _favorite(site_id, profile_id, uid, pair, last, flags,
+                               cooling, offset_hours)
+
     return {
         'site_id': site_id,
         'known': True,
@@ -105,11 +115,100 @@ async def mail_explain(profile_id: int, uid: str,
                   'mark': str(pair.get('block_mark') or ''),
                   'channel': str(pair.get('block_channel') or '')},
         'cooling_sec': cooling,
-        'reply': await _reply(site_id, profile_id, uid, pair, flags, cooling,
-                              offset_hours),
-        'favorite': await _favorite(site_id, profile_id, uid, pair, last,
-                                    flags, cooling, offset_hours),
+        'reply': reply,
+        'favorite': favorite,
+        'next': _next(reply, favorite),
+        # ⚠ Меньший из двух ненулевых: ждать паре до **ближайшего** из занятий.
+        # Ноль — ждать нечего, и что именно мешает, говорят `blockers`.
+        'wait_sec': min([one for one in (reply['wait_sec'],
+                                         favorite['wait_sec']) if one] or [0]),
     }
+
+
+# ── Отправка: общая часть обоих занятий ──────────────────────────────────────
+
+def _send_blockers(*, flag: bool, said: str, shift: bool, draft,
+                   cooling: int) -> list:
+    """Почему готовое письмо сейчас не уходит. Четыре вопроса, порядок круга.
+
+    Args:
+        flag: поднят ли выключатель отправки этого занятия.
+        said: как занятие зовётся в строке («ответов», «писем избранным»).
+        shift: идёт ли смена отправки (`mailing_schedule` — одна на всю почту).
+        draft: строка пула этой пары либо `None`.
+        cooling: сколько секунд получателю ещё не пишем.
+
+    ⚠ **`send_why` целиком не зовём**: она отвечает про сайт («пул пуст», «все
+    письма с ошибкой»), а окно — про пару. Подмешай мы её строку, человек
+    получил бы ответ про чужое письмо. Берём те же два предиката, из которых
+    она складывает вопрос о смене.
+
+    ⚠ Минуту отправки не называем ни при каких условиях: уносит письма общий
+    круг со своей паузой на весь сайт, и очередь делится со всеми анкетами.
+    """
+    blockers = []
+    if not flag:
+        blockers.append(f'отправка {said} выключена')
+    if not shift:
+        blockers.append('сейчас не смена: письма уходят по часам, '
+                        'заданным у сайта')
+    if draft and str(draft.get('status')) == 'draft' and draft.get('error'):
+        blockers.append('у письма прежняя ошибка — круг такие не берёт, '
+                        'досылают кнопкой')
+    if cooling:
+        blockers.append(mail_wait_skip(cooling))
+
+    return blockers
+
+
+def _send_shift(flags: dict, offset_hours: int) -> bool:
+    """Идёт ли смена отправки. ⚠ Она **одна на всю почту сайта**.
+
+    У занятий свои часы сочинения (`favorite_mail_schedule`), а уносит письма
+    общий круг — по `mailing_schedule`. Второе расписание отвечало бы на тот же
+    вопрос вторым голосом.
+    """
+    return schedule_now(json_column_list(flags.get('mailing_schedule')),
+                        datetime_day_minutes(int(offset_hours)))
+
+
+def _wait(blockers: list, next_sec: int) -> int:
+    """Сколько ждать годности. Ноль — ждать нечего.
+
+    ⚠ Ждать показываем, только когда ждут **времени**: у пары, упёршейся в
+    предел, ожидание бессмысленно — предел снимают настройкой или его ответом,
+    а не терпением. Ноль здесь значит «ждать нечего», а не «уйдёт сейчас».
+    """
+    return int(next_sec) if not blockers and int(next_sec) > 0 else 0
+
+
+def _next(reply: dict, favorite: dict) -> str:
+    """Что уйдёт этой паре следующим письмом. Пусто — нечего.
+
+    ⚠⚠ **Считает сервер, а не страница.** Это сравнение двух занятий по их
+    помехам, и своя арифметика в браузере разошлась бы с кругами на первой
+    правке — ровно та грабля, что уже была дважды (`initiative_why`, значок
+    потолка).
+
+    ⚠ **Лежащий черновик старше годной пары.** Он уже сочинён, за него заплачено
+    вызовом модели, и уносит его ближайший круг отправки; годная пара ещё только
+    дождётся захода набора.
+
+    ⚠ Ответ старше приставания при прочих равных: он отвечает на заданный
+    вопрос, а приставание напоминает о себе молчащему. Круги и так не
+    пересекутся — «последним говорил он» отнимает приставание, — но при
+    рассинхроне данных правило должно быть названо, а не выведено из случая.
+    """
+    for name, part in (('reply', reply), ('favorite', favorite)):
+        draft = part.get('draft') or {}
+        if str(draft.get('status')) == 'draft' and not part['send_blockers']:
+            return name
+
+    for name, part in (('reply', reply), ('favorite', favorite)):
+        if not part['blockers']:
+            return name
+
+    return ''
 
 
 # ── Ответ на его письмо ──────────────────────────────────────────────────────
@@ -142,16 +241,21 @@ async def _reply(site_id: int, profile_id: int, uid: str, pair: dict,
     elif his.get('empty'):
         blockers.append('у письма нет текста — тело ещё не забрали с сайта')
 
+    next_sec = reply_round_next(site_id)
+
     return {
         'make_on': bool(flags.get('reply_make_on')),
         'send_on': bool(flags.get('reply_send_on')),
         'every_sec': int(await site_seconds(site_id, REPLY_EVERY_SETTING)
                          or REPLY_EVERY_DEFAULT),
-        'next_sec': reply_round_next(site_id),
+        'next_sec': next_sec,
         'his_last': his, 'draft': draft,
         'blockers': blockers,
-        # Отправка — своей частью, следующей задачей.
-        'send_blockers': [], 'wait_sec': 0,
+        'send_blockers': _send_blockers(
+            flag=bool(flags.get('reply_send_on')), said='ответов',
+            shift=_send_shift(flags, offset_hours), draft=draft,
+            cooling=cooling),
+        'wait_sec': _wait(blockers, next_sec),
     }
 
 
@@ -285,8 +389,12 @@ async def _favorite(site_id: int, profile_id: int, uid: str, pair: dict,
         'him_known': bool(online.get('known')),
         'draft': draft,
         'blockers': blockers,
-        # Отправка — своей частью, следующей задачей.
-        'send_blockers': [], 'wait_sec': 0,
+        'send_blockers': _send_blockers(
+            flag=bool(flags.get('favorite_mail_send_on')),
+            said='писем избранным',
+            shift=_send_shift(flags, offset_hours), draft=draft,
+            cooling=cooling),
+        'wait_sec': _wait(blockers, next_sec),
     }
 
 
