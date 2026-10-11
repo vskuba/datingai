@@ -152,6 +152,39 @@ async def _hers(profile_id: int, uid: str, when: str,
         await db.connection.commit()
 
 
+async def _reply_sent(profile_id: int, uid: str, when: str) -> None:
+    """Наш **ответ на его письмо** — ушедший.
+
+    ⚠ Отдельно от `_hers`: у ответа своя роль в пределе навязчивости — он её
+    не тратит, — и тест, кладущий его как «просто письмо», проверял бы не то.
+
+    ⚠ Ответ цепляется к **настоящему** входящему: `mail_in_id` в таблице
+    обязателен, и это правильно — ответа без письма не бывает. Берём последнее
+    его письмо; нет ни одного — заводим, иначе посев соврал бы о природе строки.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT id FROM mail_in WHERE profile_id = %s AND uid = %s'
+            ' ORDER BY id DESC LIMIT 1', (int(profile_id), str(uid)))
+        row = await db.fetchone()
+
+    if not row:
+        await _his(profile_id, uid, when)
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT id FROM mail_in WHERE profile_id = %s AND uid = %s'
+                ' ORDER BY id DESC LIMIT 1', (int(profile_id), str(uid)))
+            row = await db.fetchone()
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO mail_reply'
+            ' (site_id, profile_id, mail_in_id, uid, name, body, status, sent_at)'
+            " VALUES (%s, %s, %s, %s, 'X', 'hi', 'sent', %s)",
+            (STAND_SITE, int(profile_id), int(row['id']), str(uid), when))
+        await db.connection.commit()
+
+
 async def _draft(profile_id: int, uid: str) -> None:
     """Черновик в пуле: такому человеку второй не готовим."""
     async with mysql_get_db_async() as db:
@@ -1276,3 +1309,159 @@ class TestMessageIdReachesThePool:
         assert got['made'] == 1
         assert rows and rows[0]['message_id'] is None, \
             'отсутствие номера легло нулём, а не NULL'
+
+
+class TestHisLetterResetsTheDailyCap:
+    """⚠⚠ Дневной предел получателя обнуляет **его письмо**.
+
+    Прежде счёт шёл просто «за последние сутки», и письма, ушедшие **до** его
+    ответа, держали пару до конца суток. Поймано на проде 11.10.2026: Diana ↔
+    Bruce — два письма ушли, он ответил в 10:16, и приставание молчало с
+    «за сутки уже ушло 2 письма — предел 1 в сутки», хотя оба ушли раньше его
+    ответа.
+
+    Довод тот же, по которому неделей раньше чинили инициативу: его ответ —
+    ровно то событие, ради которого занятие и работает, и наказывать за прошлое
+    живой разговор нельзя.
+
+    ⚠ Граница **двойная**: `GREATEST(сутки назад, его последнее письмо)`.
+    Настройка зовётся «в сутки», и суточное окно никуда не делось — его письмо
+    лишь поднимает нижний край.
+    """
+
+    async def test_his_letter_clears_what_went_before(self, girl):
+        """Письма ушли до его ответа — счёт их больше не держит."""
+        uid = f'cap-{uuid.uuid4().hex[:8]}'
+        await _hers(girl, uid, _now_minus_hours(5))
+        await _hers(girl, uid, _now_minus_hours(4), table='favorite_mail')
+        await _his(girl, uid, _now_minus_hours(3))
+
+        got = await favorite_mail_person_sent(STAND_SITE, uid)
+
+        assert got['count'] == 0, 'его письмо не обнулило счёт'
+        assert await favorite_mail_person_soon(STAND_SITE, uid, 1) == '', \
+            'предел держит пару, которая только что ответила'
+
+    async def test_letters_after_his_reply_do_count(self, girl):
+        """А ушедшее **после** его письма считается — предел не снят совсем."""
+        uid = f'cap-{uuid.uuid4().hex[:8]}'
+        await _his(girl, uid, _now_minus_hours(3))
+        await _hers(girl, uid, _now_minus_hours(2), table='favorite_mail')
+
+        got = await favorite_mail_person_sent(STAND_SITE, uid)
+
+        assert got['count'] == 1
+        assert await favorite_mail_person_soon(STAND_SITE, uid, 1) != '', \
+            'предел перестал держать вовсе'
+
+    async def test_without_his_letters_the_day_window_stands(self, girl):
+        """Он не писал ни разу — прежнее поведение, счёт за сутки.
+
+        ⚠ Это и есть случай, ради которого в `GREATEST` нужен `COALESCE`: без
+        него граница вышла бы `NULL`, счёт — нулём, и предел снялся бы у всех,
+        кто нам не писал, то есть у большинства.
+        """
+        uid = f'cap-{uuid.uuid4().hex[:8]}'
+        await _hers(girl, uid, _now_minus_hours(5))
+
+        got = await favorite_mail_person_sent(STAND_SITE, uid)
+
+        assert got['count'] == 1
+        assert await favorite_mail_person_soon(STAND_SITE, uid, 1) != ''
+
+    async def test_the_day_window_still_cuts(self, girl):
+        """Сутки режут и при давнем его письме: настройка зовётся «в сутки».
+
+        ⚠ Его письмо **поднимает** нижний край, а не заменяет его. Иначе счёт
+        шёл бы от начала времён, и предел стал бы вечным вместо суточного.
+        """
+        uid = f'cap-{uuid.uuid4().hex[:8]}'
+        await _his(girl, uid, _now_minus_hours(72))
+        await _hers(girl, uid, _now_minus_hours(48), table='favorite_mail')
+
+        got = await favorite_mail_person_sent(STAND_SITE, uid)
+
+        assert got['count'] == 0, 'письмо двухдневной давности попало в сутки'
+
+    async def test_the_border_keys_on_the_person_not_the_pair(self, girl_make):
+        """⚠⚠ Сбрасывает его письмо **любой** нашей девушке.
+
+        Предел считает получатель, а не пара, — и граница обязана считать так
+        же. Разойдись они, письмо Диане снимало бы счёт только у Дианы, а
+        Елена держала бы его до конца суток, хотя предел у них общий.
+        """
+        one = await girl_make()
+        two = await girl_make()
+        uid = f'cap-{uuid.uuid4().hex[:8]}'
+        await _hers(one, uid, _now_minus_hours(5), table='favorite_mail')
+        # Написал он **второй** анкете — предел общий, значит сброс общий.
+        await _his(two, uid, _now_minus_hours(3))
+
+        got = await favorite_mail_person_sent(STAND_SITE, uid)
+
+        assert got['count'] == 0, 'граница посчитала пару, а не человека'
+
+
+class TestOurReplyDoesNotEatTheCap:
+    """⚠⚠ Ответ на **его** письмо предел навязчивости не тратит.
+
+    Предел сторожит навязчивость, а ответ на его письмо — вежливость: считать
+    его значит наказывать за ответ.
+
+    Поймано на проде 11.10.2026, числами. При пределе «1 письмо» после его
+    ответа счёт показывал ровно 1 — и это был **наш же ответ ему**. Выходил
+    замкнутый круг: он пишет → мы отвечаем → предел исчерпан → приставание
+    молчит → разговор затихает навсегда. У Bruce и Brian Ritter остаток
+    состоял из ответа целиком.
+
+    ⚠ Рассылка в счёте остаётся: она обращение к тому, кто нас не звал, и она
+    как раз то, от чего предел защищает.
+    """
+
+    async def test_a_reply_is_not_counted(self, girl):
+        """Наш ответ ему не тратит предел."""
+        uid = f'cap-{uuid.uuid4().hex[:8]}'
+        await _his(girl, uid, _now_minus_hours(3))
+        await _reply_sent(girl, uid, _now_minus_hours(2))
+
+        got = await favorite_mail_person_sent(STAND_SITE, uid)
+
+        assert got['count'] == 0, 'ответ на его письмо съел предел'
+        assert await favorite_mail_person_soon(STAND_SITE, uid, 1) == '', \
+            'после ответа приставанию по-прежнему нельзя'
+
+    async def test_a_mailing_is_counted(self, girl):
+        """А рассылка тратит: это холодное обращение."""
+        uid = f'cap-{uuid.uuid4().hex[:8]}'
+        await _his(girl, uid, _now_minus_hours(3))
+        await _hers(girl, uid, _now_minus_hours(2))
+
+        got = await favorite_mail_person_sent(STAND_SITE, uid)
+
+        assert got['count'] == 1
+        assert await favorite_mail_person_soon(STAND_SITE, uid, 1) != ''
+
+    async def test_a_nudge_is_counted(self, girl):
+        """И приставание тратит — оно и есть то, что предел считает."""
+        uid = f'cap-{uuid.uuid4().hex[:8]}'
+        await _his(girl, uid, _now_minus_hours(3))
+        await _hers(girl, uid, _now_minus_hours(2), table='favorite_mail')
+
+        got = await favorite_mail_person_sent(STAND_SITE, uid)
+
+        assert got['count'] == 1
+
+    async def test_the_prod_case_unblocks(self, girl):
+        """⚠ Случай с прода целиком: два письма, его ответ, наш ответ на него.
+
+        При пределе 1 пара обязана стать годной — ровно то, чего не хватало
+        Diana ↔ Bruce.
+        """
+        uid = f'cap-{uuid.uuid4().hex[:8]}'
+        await _hers(girl, uid, _now_minus_hours(8))
+        await _hers(girl, uid, _now_minus_hours(7), table='favorite_mail')
+        await _his(girl, uid, _now_minus_hours(4))
+        await _reply_sent(girl, uid, _now_minus_hours(3))
+
+        assert await favorite_mail_person_soon(STAND_SITE, uid, 1) == '', \
+            'пара всё ещё заперта пределом после его ответа'

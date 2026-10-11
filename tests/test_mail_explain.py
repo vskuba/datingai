@@ -917,3 +917,86 @@ class TestHandle:
                                '?profile_id=1&uid=x')
 
         assert got.status_code in (401, 403), got.text[:200]
+
+
+class TestTheDailyCapResetsOnHisLetter:
+    """⚠ Окно показывает **ту же** границу, по которой считает предел.
+
+    Число и вердикт берутся из одного места (`favorite_mail_person_sent`), но
+    границу окно ещё и называет человеку — значит она обязана приезжать полем,
+    а не вычисляться на странице заново.
+    """
+
+    async def test_count_starts_from_his_letter(self, girl, fav_on):
+        """Письма до его ответа в счёт не идут, и окно это показывает."""
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        await _fav_sent(girl, uid, minutes_ago=300)
+        await _said_in(girl, uid, minutes_ago=180)
+
+        got = await mail_explain(girl, uid)
+
+        assert got['favorite']['day_sent'] == 0, \
+            'окно считает письма, ушедшие до его ответа'
+        assert not _has(got, 'favorite', 'за сутки'), \
+            'окно держит пару пределом, который его ответ уже снял'
+
+    async def test_the_border_is_named(self, girl, fav_on):
+        """Граница приезжает полем — странице её не вычислить самой."""
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        await _said_in(girl, uid, minutes_ago=120)
+
+        got = await mail_explain(girl, uid)
+
+        assert got['favorite']['day_since_his'] is not None
+
+    async def test_no_letters_from_him_leaves_the_day_window(self, girl, fav_on):
+        """Он не писал — граница суточная, и поле пустое.
+
+        ⚠ Это случай, ради которого в границе стоит `COALESCE`: без него счёт
+        обнулился бы у всех, кто нам не писал, то есть предел снялся бы молча.
+        """
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        await _fav_sent(girl, uid, minutes_ago=300)
+
+        got = await mail_explain(girl, uid)
+
+        assert got['favorite']['day_since_his'] is None
+        assert got['favorite']['day_sent'] == 1, 'суточный счёт перестал считать'
+
+
+class TestTheyAgreeOnTheResetCap:
+    """⚠⚠ Сброс предела виден **обеим дорогам** — окну и отбору круга.
+
+    Правило живёт в одном месте (`favorite_mail_person_sent`), но дорог к нему
+    две, и обе выражены по-разному. Сторож гоняет их по одним данным: иначе
+    окно показало бы «предел снят», а круг пару не взял бы — и человек пошёл
+    бы искать поломку там, где её нет.
+    """
+
+    async def test_his_letter_lets_the_round_take_the_pair(self, girl_make,
+                                                           fav_on, online_feed):
+        """Письма ушли до его ответа: берут оба — и круг, и окно."""
+        from src.dating.favorite_mail import _quiet
+
+        girl = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        online_feed([uid])
+        # Два письма ушли, потом он ответил — и снова замолчал.
+        await _fav_sent(girl, uid, minutes_ago=400)
+        await _fav_sent(girl, uid, minutes_ago=380)
+        await _said_in(girl, uid, minutes_ago=300)
+        await _fav_sent(girl, uid, minutes_ago=200)
+
+        got = await mail_explain(girl, uid)
+        mine = {str(one['uid']) for one in await _quiet(STAND_SITE, girl)}
+
+        # ⚠ Последним говорили мы — значит отбор пару берёт, и предел её не
+        # держит: с его письма ушло одно при пределе два.
+        assert uid in mine, 'круг не взял пару, которой предел уже не мешает'
+        assert got['favorite']['day_sent'] == 1
+        assert not _has(got, 'favorite', 'предел'), \
+            'окно держит пару пределом, а круг её берёт'

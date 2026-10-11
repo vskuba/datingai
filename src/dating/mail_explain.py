@@ -396,6 +396,11 @@ async def _favorite(site_id: int, profile_id: int, uid: str, pair: dict,
         'next_sec': next_sec,
         'gap_sec': gap, 'per_day': per_day,
         'day_sent': int((sent or {}).get('count') or 0),
+        # ⚠ Граница счёта — его письмо, если оно позже суточного края. Окно
+        # обязано её называть: «1 из 1» без неё читается как «за сутки», а
+        # считалось «с его ответа», и человек пошёл бы искать пропажу в журнале
+        # доставки.
+        'day_since_his': (sent or {}).get('his_last'),
         'him_online': bool(online.get('online')),
         'him_known': bool(online.get('known')),
         'draft': draft,
