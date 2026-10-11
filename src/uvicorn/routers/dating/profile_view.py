@@ -257,14 +257,36 @@ async def profile_view_card(profile_id: int, page: int = 1,
             # сообщение больше не спросит (`dating.md`, §5.9.3).
             "       (last.direction = 'in' AND last.is_answered = 0 "
             "        AND last.answer_silent_at IS NULL) AS needs_answer "
+            # ⚠⚠ **Отсев близнецов нужен и счётчику, а не только показу.**
+            #
+            # Окно переписки прячет отражение реплики из панели (строка 76), а
+            # `COUNT(*)` считал всё подряд — и число на карточке расходилось с
+            # тем, что человек насчитает глазами. На проде у пары Diana ↔ Bruce
+            # значок говорил 61 при шестидесяти видимых репликах, и разойтись они
+            # могут на сколько угодно: близнецы копятся, пока идёт импорт.
+            #
+            # ⚠ Сторож `TestBothPagesUseIt` этого не ловил: он смотрит, есть ли
+            # `message_twin_skip` **в модуле**, а здесь два запроса, и правило
+            # стояло в одном из них.
             '  FROM (SELECT sender_uid AS uid, COUNT(*) AS messages, '
             '               MAX(created_at) AS last_at '
-            '          FROM message WHERE profile_id = %s GROUP BY sender_uid) d '
+            '          FROM message WHERE profile_id = %s'
+            # ⚠ Отсев внутри группировки задевает и `last_at`, и это к лучшему:
+            # «последняя реплика» перестаёт попадать на спрятанного близнеца, то
+            # есть строка списка и окно показывают одно и то же.
+            + message_twin_skip() +
+            '        GROUP BY sender_uid) d '
             '  JOIN message last '
             '    ON last.profile_id = %s AND last.sender_uid = d.uid '
             '   AND last.id = (SELECT MAX(m.id) FROM message m '
             '                   WHERE m.profile_id = %s AND m.sender_uid = d.uid '
-            '                     AND m.created_at = d.last_at) '
+            '                     AND m.created_at = d.last_at'
+            # ⚠⚠ **И здесь тоже, иначе отсев в группировке ничего не даёт.**
+            # Время у близнеца и у нашей строки совпадает секунда в секунду
+            # сплошь и рядом, а `MAX(id)` выбирает из них больший — то есть
+            # привезённый из панели позже. Строка списка указывала бы на
+            # реплику, которой в окне нет.
+            + message_twin_skip('m') + ') '
             '  LEFT JOIN contact c ON c.profile_id = %s AND c.uid = d.uid '
             ' ORDER BY needs_answer DESC, d.last_at DESC, last.id DESC '
             ' LIMIT %s OFFSET %s',

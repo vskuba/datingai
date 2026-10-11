@@ -173,7 +173,15 @@ class TestItHidesOnlyTwins:
 
 
 class TestBothPagesUseIt:
-    """⚠⚠ Оба места показа зовут общий отсев, а не свою копию условия."""
+    """⚠ Оба места показа зовут общий отсев, а не свою копию условия.
+
+    ⚠⚠ **Этого сторожа мало, и он уже промолчал.** Он смотрит, встречается ли имя
+    `message_twin_skip` **в модуле**, а запросов в модуле несколько: правило
+    стояло у показа реплик и не стояло у счётчика на карточке — сторож был
+    зелёным, а значок говорил 61 при шестидесяти видимых репликах. Поведение
+    стережёт `TestTheCounterAgreesWithTheWindow` ниже; эти два остаются дешёвой
+    проверкой «имя не выпало из файла целиком».
+    """
 
     def test_the_dialog_window_uses_it(self):
         import inspect
@@ -190,6 +198,87 @@ class TestBothPagesUseIt:
 
         assert 'message_twin_skip' in inspect.getsource(mod), \
             'предпросмотр в списке диалогов показывает близнецов'
+
+
+class TestTheCounterAgreesWithTheWindow:
+    """⚠⚠ Значок на карточке диалога и число видимых реплик — одно число.
+
+    Окно прятало близнеца, а `COUNT(*)` считал его: на проде у пары Diana ↔ Bruce
+    карточка говорила **61** при шестидесяти видимых строках. Разойтись они могут
+    на сколько угодно — близнецы копятся, пока идёт импорт из панели, — и человек
+    не может ни проверить число, ни объяснить разницу.
+
+    ⚠ Счёт здесь сверяется **с показом**, а не с ожидаемым числом: разъехаться
+    они могут в обе стороны, и тест, знающий только «должно быть два», не заметил
+    бы, если спрячется лишнее.
+    """
+
+    async def _said_with_a_twin(self, profile_id: str, uid: str) -> None:
+        """Входящая, наш ответ и его отражение из панели — то же, что на проде."""
+        await _put(profile_id, uid, 'how are you?', 'panel:900001', 'panel',
+                   '2026-09-21 14:30:00', direction='in')
+        await _put(profile_id, uid, 'glitch lol', '01M32609Q1K2A0MXW21PWYQ58Q',
+                   'http', '2026-09-21 14:30:30')
+        await _put(profile_id, uid, 'glitch lol', 'panel:900002', 'panel',
+                   '2026-09-21 14:30:30')
+
+    async def test_the_profile_card_counts_what_is_visible(self, pair):
+        from src.uvicorn.routers.dating.profile_view import profile_view_card
+
+        profile_id, uid = pair
+        await self._said_with_a_twin(profile_id, uid)
+
+        card = (await profile_view_card(profile_id, user=None))['result']
+        row = [one for one in card['contacts'] if one['uid'] == uid]
+
+        assert row, 'пара пропала из карточки анкеты'
+        assert row[0]['messages'] == len(await _seen(profile_id, uid)), \
+            'значок на карточке считает не то, что видно в окне'
+        assert row[0]['messages'] == 2, 'близнец сосчитан отдельной репликой'
+
+    async def test_the_site_dialogs_count_what_is_visible(self, pair):
+        """⚠ Второй список — по всему сайту, и запрос у него свой."""
+        from src.uvicorn.routers.dating.chat import chat_dialogs
+
+        profile_id, uid = pair
+        await self._said_with_a_twin(profile_id, uid)
+
+        got = await chat_dialogs(site_id=TWIN_SITE, profile_id=profile_id,
+                                        user=None)
+        row = [one for one in got['result']['contacts'] if one['uid'] == uid]
+
+        assert row, 'пара пропала из диалогов сайта'
+        assert row[0]['messages'] == len(await _seen(profile_id, uid)), \
+            'значок в диалогах сайта считает не то, что видно в окне'
+        assert row[0]['messages'] == 2, 'близнец сосчитан отдельной репликой'
+
+    async def test_the_last_message_is_not_the_hidden_twin(self, pair):
+        """⚠⚠ «Последняя реплика» тоже обязана быть видимой.
+
+        Отсева в группировке для этого мало: время у близнеца и у нашей строки
+        совпадает секунда в секунду сплошь и рядом, а `MAX(id)` выбирает из них
+        больший — то есть привезённый из панели позже. Строка списка указывала бы
+        на реплику, которой в окне нет; поймано этим тестом при первой редакции
+        правки.
+        """
+        from src.uvicorn.routers.dating.chat import chat_dialogs
+        from src.uvicorn.routers.dating.profile_view import profile_view_card
+
+        profile_id, uid = pair
+        await self._said_with_a_twin(profile_id, uid)
+        seen = await _seen(profile_id, uid)
+
+        got = await chat_dialogs(site_id=TWIN_SITE, profile_id=profile_id,
+                                        user=None)
+        site_row = [one for one in got['result']['contacts'] if one['uid'] == uid][0]
+
+        card = (await profile_view_card(profile_id, user=None))['result']
+        card_row = [one for one in card['contacts'] if one['uid'] == uid][0]
+
+        assert site_row['last_id'] == seen[-1]['id'], \
+            'строка диалогов сайта указывает на спрятанную реплику'
+        assert card_row['last_id'] == seen[-1]['id'], \
+            'строка карточки анкеты указывает на спрятанную реплику'
 
 
 def _row(profile_id, uid, text, uid_key, at, direction='out', name='Henry'):

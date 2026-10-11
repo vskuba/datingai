@@ -340,6 +340,13 @@ async def chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int = 1,
             '          FROM message m'
             '          JOIN profile p2 ON p2.id = m.profile_id'
             '         WHERE p2.site_id = %s AND (%s = 0 OR m.profile_id = %s)'
+            # ⚠⚠ **Тот же отсев, что у предпросмотра ниже.** Считай счётчик всё
+            # подряд, число на карточке расходилось бы с числом видимых реплик —
+            # на проде у пары Diana ↔ Bruce значок говорил 61 при шестидесяти
+            # видимых. ⚠ Цена замерена на живой базе (41 797 реплик, 37 пар
+            # сайта): 9,5 мс против 21,5 — тот же порядок, что уже принят выше
+            # ради верного порядка диалогов.
+            + message_twin_skip('m') +
             '         GROUP BY m.profile_id, m.sender_uid'
             # ⚠ Пары без единой входящей реплики — не диалоги (см. выше).
             "        HAVING SUM(m.direction = 'in') > 0) d"
@@ -348,7 +355,12 @@ async def chat_dialogs(site_id: int = 0, profile_id: int = 0, page: int = 1,
             '   AND last.id = (SELECT MAX(m2.id) FROM message m2'
             '                   WHERE m2.profile_id = d.profile_id'
             '                     AND m2.sender_uid = d.uid'
-            '                     AND m2.created_at = d.last_at)'
+            '                     AND m2.created_at = d.last_at'
+            # ⚠⚠ **И здесь тоже, иначе отсев в группировке ничего не даёт.**
+            # Время у близнеца и у нашей строки совпадает секунда в секунду
+            # сплошь и рядом, а `MAX(id)` берёт больший — привезённый из панели
+            # позже. Строка списка указывала бы на реплику, которой в окне нет.
+            + message_twin_skip('m2') + ')'
             '  JOIN profile p ON p.id = d.profile_id'
             '  LEFT JOIN contact c'
             '    ON c.profile_id = d.profile_id AND c.uid = d.uid'
