@@ -129,6 +129,10 @@ peer:
       selector: '#chatSessionDelivered'
       rules: [visible, inside]
 
+    - name: Список разговоров
+      selector: '#chatSessionSelect'
+      rules: [visible, inside, filled]
+
   checks:
     # Главное утверждение пары: под отбором «Доставлен» ни одного обмена без
     # отметки. Разойдись отметка с показом — здесь это и всплывёт.
@@ -145,3 +149,16 @@ peer:
       js: |
         return document.querySelectorAll(
           '#chatSessionStream .chip-delivered').length > 0 ? 0 : 1;
+
+    # ⚠ Канал ленты — тот, про который случай. Отбор по каналу мог перестать
+    # действовать, и тогда проверки выше мерили бы чат, а не почту: чипы
+    # доставки там те же, и подмену не видно ничем. Та же мысль, что у сторожа
+    # «карточек чужого отбора» в случае трасс.
+    - name: обменов не почтового канала в ленте
+      expect: 0
+      js: |
+        const all = document.querySelectorAll(
+          '#chatSessionStream .chip-channel').length;
+        const mail = document.querySelectorAll(
+          '#chatSessionStream .chip-channel-mail').length;
+        return all - mail;
