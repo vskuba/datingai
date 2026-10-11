@@ -70,12 +70,6 @@ MESSAGE_TWIN_WINDOW_OUT = 60
 MESSAGE_TWIN_WINDOW_IN = 0
 
 
-def _window(direction: str) -> int:
-    """Допуск по времени для этого направления, секунды."""
-    return (MESSAGE_TWIN_WINDOW_OUT if str(direction) == 'out'
-            else MESSAGE_TWIN_WINDOW_IN)
-
-
 def message_twin_skip(table: str = 'message') -> str:
     """Кусок `WHERE`, прячущий отражение реплики из панели.
 
@@ -145,3 +139,9 @@ def message_twin_absent(direction: str) -> str:
         f'           - INTERVAL {window} SECOND'
         "        AND COALESCE(NULLIF(%s, ''), NOW())"
         f'           + INTERVAL {window} SECOND)')
+
+
+def _window(direction: str) -> int:
+    """Допуск по времени для этого направления, секунды."""
+    return (MESSAGE_TWIN_WINDOW_OUT if str(direction) == 'out'
+            else MESSAGE_TWIN_WINDOW_IN)
