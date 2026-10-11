@@ -124,21 +124,42 @@ class TestNobodyKeepsAPrivateCopy:
     """⚠ Сторож от возврата: копия вернётся — разойдётся снова."""
 
     def test_no_module_defines_its_own(self):
+        """⚠ Список шире, чем у соседней проверки, и намеренно.
+
+        Там — кто долю читает сегодня; здесь — кому **нельзя заводить свою**,
+        и `favorite_mail` остаётся в списке, хотя сам больше не читает: копия
+        вернётся именно туда, откуда уехала.
+        """
         import pathlib
 
-        for name in ('invite', 'mail_agent', 'favorite_mail'):
+        for name in ('invite', 'mail_agent', 'answer', 'favorite_mail'):
             text = pathlib.Path(f'src/dating/{name}.py').read_text(encoding='utf-8')
 
             assert 'async def _percent(' not in text, \
                 f'{name}.py снова держит свою копию доли'
 
     def test_all_three_use_the_shared_one(self):
+        """⚠ Проверяются те, кто долю **читает сегодня**, и обе её выдачи.
+
+        Список был `invite`, `mail_agent`, `favorite_mail`, и третий в нём
+        устарел: жребий приставания переехал к соседу, а доли ему отдаёт
+        `answer._dice_percents` — через `percent_value`, вторую выдачу того же
+        общего модуля. В `favorite_mail.py` от этого остался **импорт без
+        единого вызова**, и сторож держал его живым: убери импорт — краснеет,
+        хотя правило («своей копии доли нет») соблюдено.
+
+        ⚠ Поэтому проверяется не имя `percent_share`, а обращение к общему
+        модулю любой из двух дверей. Само правило от этого не слабеет: копию
+        ловит соседний `test_no_module_defines_its_own`, и он смотрит ровно на
+        то, что запрещено.
+        """
         import pathlib
 
-        for name in ('invite', 'mail_agent', 'favorite_mail'):
+        for name in ('invite', 'mail_agent', 'answer'):
             text = pathlib.Path(f'src/dating/{name}.py').read_text(encoding='utf-8')
 
-            assert 'percent_share' in text, f'{name}.py не зовёт общую долю'
+            assert 'percent_share' in text or 'percent_value' in text, \
+                f'{name}.py не зовёт общую долю'
 
 
 class TestTheEdgesMeanWhatTheySay:
