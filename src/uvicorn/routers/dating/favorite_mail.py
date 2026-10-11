@@ -403,12 +403,19 @@ async def favorite_mail_threads(site_id: int = 0, profile_id: int = 0,
         dict: `result` — по записи на пару: `profile_id`, `profile_name`, `uid`,
         `name`, `photo`, `letters` (сколько писем в переписке), `last_at` (когда
         последнее), `last_side` (`him` — ждёт нашего ответа, `her` — ждём его),
-        `in_pool` (лежит ли ему черновик). Рядом `total`, `page`, `pages` — ими
-        страница рисует пейджер.
+        `in_pool` (лежит ли ему черновик), `is_online` (запасной признак «в
+        сети», см. ниже). Рядом `total`, `page`, `pages` — ими страница рисует
+        пейджер.
 
     ⚠ **Переписка — это письма, а не звёздочка.** В списке только те избранные, с
     кем письма были; добавленный в избранные и молчащий сюда не попадает —
     показывать пустой разговор незачем.
+
+    ⚠⚠ **`is_online` здесь не ответ, а слагаемое.** «В сети ли он» решает лента
+    онлайна, и считает это **одно правило страницы** на оба списка разговоров
+    (`talkOnline`); поле из `contact` — запасное, для сайтов без ленты. Отдаём мы
+    его затем, что правило одно: приезжай слагаемые в две ручки по-разному, один
+    и тот же человек вышел бы зелёным в «Чате» и серым здесь.
 
     ⚠ **Считаем по всем трём источникам**: входящие, наши ответы и оба пула
     ушедшего (рассылка и возобновление). Смотри мы только входящие, переписка, где
@@ -513,6 +520,16 @@ async def favorite_mail_threads(site_id: int = 0, profile_id: int = 0,
             # выглядит собеседник» один на весь раздел.
             + pool_pair_select('f', own_name=False, own_photo=False) +
             '       p.login AS profile_login, p.profile AS profile_card,'
+            # ⚠ «В сети» — тем же полем, что у диалогов чата (`chat_dialogs`).
+            # Решает его не оно, а лента онлайна: страница считает признак одним
+            # правилом на оба списка (`talkOnline`), и поле там запасное — для
+            # сайтов, у которых ленты нет. Но слагаемые правила обязаны приезжать
+            # в обе ручки, иначе один и тот же человек выйдет зелёным в «Чате» и
+            # серым в «Фаворитах», а объяснить разницу будет нечем.
+            #
+            # ⚠ Лишнего соединения не стоит: `contact c` уже присоединён ради
+            # имени и лица (`pairs_card`).
+            '       c.is_online,'
             '       talk.letters, talk.last_at, talk.last_side,'
             '       EXISTS (SELECT 1 FROM favorite_mail d'
             '                WHERE d.profile_id = f.profile_id AND d.uid = f.uid'
@@ -539,6 +556,9 @@ async def favorite_mail_threads(site_id: int = 0, profile_id: int = 0,
         got['letters'] = int(got.get('letters') or 0)
         got['last_at'] = str(got['last_at']) if got.get('last_at') else ''
         got['in_pool'] = bool(got.get('in_pool'))
+        # ⚠ К `bool` здесь же: у пары без карточки в `contact` поле приезжает
+        # `None`, и страница получила бы третье состояние там, где их два.
+        got['is_online'] = bool(got.get('is_online'))
         threads.append(got)
 
     return {'result': threads, 'total': total, 'page': page, 'pages': pages}

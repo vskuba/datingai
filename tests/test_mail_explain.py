@@ -479,3 +479,107 @@ class TestOrder:
         day = next(i for i, one in enumerate(rows) if 'за сутки' in one)
 
         assert star < day
+
+
+@pytest.fixture
+async def reply_on():
+    """Генерация и отправка ответов включены — убирается за собой."""
+    await _site_flag('reply_make_on', 1)
+    await _site_flag('reply_send_on', 1)
+
+    yield
+
+    await _site_flag('reply_make_on', 0)
+    await _site_flag('reply_send_on', 0)
+
+
+async def _reply_draft(profile_id: int, uid: str, mail_in_id: int, *,
+                       error: str = '') -> int:
+    """Черновик ответа в пуле."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO mail_reply (site_id, profile_id, mail_in_id, uid,'
+            " name, body, status, error)"
+            " VALUES (%s, %s, %s, %s, 'He', 'reply body', 'draft', %s)",
+            (STAND_SITE, int(profile_id), int(mail_in_id), str(uid),
+             str(error)))
+        await db.connection.commit()
+        await db.execute('SELECT LAST_INSERT_ID() AS id')
+
+        return int((await db.fetchone())['id'])
+
+
+class TestReplyBlockers:
+    """Пять помех ответа — в порядке `mail_reply._to_answer`."""
+
+    async def test_make_off(self, girl, reply_on):
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _said_in(girl, uid)
+        await _site_flag('reply_make_on', 0)
+
+        got = await mail_explain(girl, uid)
+
+        assert _has(got, 'reply', 'генерация ответов выключена')
+
+    async def test_profile_disabled(self, girl, reply_on):
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _said_in(girl, uid)
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE profile SET enabled = 0 WHERE id = %s',
+                             (int(girl),))
+            await db.connection.commit()
+
+        got = await mail_explain(girl, uid)
+
+        assert _has(got, 'reply', 'анкета выключена')
+
+    async def test_he_never_wrote(self, girl, reply_on):
+        """Писем от него нет — отвечать не на что, и это не поломка."""
+        got = await mail_explain(girl, f'ex-{uuid.uuid4().hex[:10]}')
+
+        assert got['reply']['his_last'] is None
+        assert _has(got, 'reply', 'не писал ни разу')
+
+    async def test_answer_already_written(self, girl, reply_on):
+        """На последнее письмо ответ уже есть — второй был бы двумя подряд."""
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        letter = await _said_in(girl, uid)
+        await _reply_draft(girl, uid, letter)
+
+        got = await mail_explain(girl, uid)
+
+        assert _has(got, 'reply', 'ответ уже написан')
+
+    async def test_old_answer_does_not_block_a_new_letter(self, girl, reply_on):
+        """⚠ Ответ на **позапрошлое** письмо новому не мешает.
+
+        Ключ — номер письма, а не пара: спроси окно «есть ли ответ этой паре»,
+        оно запрещало бы отвечать на каждое второе письмо подряд.
+        """
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        old = await _said_in(girl, uid, minutes_ago=120)
+        await _reply_draft(girl, uid, old)
+        await _said_in(girl, uid, minutes_ago=5)
+
+        got = await mail_explain(girl, uid)
+
+        assert not _has(got, 'reply', 'ответ уже написан')
+
+    async def test_empty_body(self, girl, reply_on):
+        """Тело письма ещё не забрали — отвечать нечем."""
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _said_in(girl, uid, body='')
+
+        got = await mail_explain(girl, uid)
+
+        assert got['reply']['his_last']['empty'] is True
+        assert _has(got, 'reply', 'нет текста')
+
+    async def test_ripe_pair_has_no_blockers(self, girl, reply_on):
+        """Письмо есть, текст есть, ответа нет — помех быть не должно."""
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _said_in(girl, uid, body='his letter')
+
+        got = await mail_explain(girl, uid)
+
+        assert got['reply']['blockers'] == []

@@ -55,6 +55,8 @@ from src.dating.favorite_mail_round import (FAVORITE_MAIL_ROUND_EVERY_DEFAULT,
 from src.dating.mail_send import MAIL_SEND_TABLES, mail_sent_union
 from src.dating.mail_wait import mail_wait_left, mail_wait_skip
 from src.dating.online import online_show
+from src.dating.reply_round import (REPLY_EVERY_DEFAULT, REPLY_EVERY_SETTING,
+                                    reply_round_next)
 from src.dating.site_setting import site_seconds
 
 # Таблицы пулов, из которых окно читает черновик пары. ⚠ Имя таблицы уезжает в
@@ -103,9 +105,104 @@ async def mail_explain(profile_id: int, uid: str,
                   'mark': str(pair.get('block_mark') or ''),
                   'channel': str(pair.get('block_channel') or '')},
         'cooling_sec': cooling,
+        'reply': await _reply(site_id, profile_id, uid, pair, flags, cooling,
+                              offset_hours),
         'favorite': await _favorite(site_id, profile_id, uid, pair, last,
                                     flags, cooling, offset_hours),
     }
+
+
+# ── Ответ на его письмо ──────────────────────────────────────────────────────
+
+async def _reply(site_id: int, profile_id: int, uid: str, pair: dict,
+                 flags: dict, cooling: int, offset_hours: int) -> dict:
+    """Что с ответом на его письмо: помехи в порядке `mail_reply._to_answer`.
+
+    ⚠ **Срок круга помехой не считается.** Он мешает не паре, а всем сразу, и
+    назови мы его помехой — человек стал бы искать, что эта пара нарушила. Срок
+    идёт своим полем `next_sec`.
+
+    ⚠ Доводы `cooling` и `offset_hours` этой части пока не нужны — их берёт
+    отправка, следующей задачей. Сигнатура сразу конечная: менять её задним
+    числом значило бы править уже проверенный вызов.
+    """
+    his = await _his_last(profile_id, uid)
+    draft = await _draft(site_id, 'mail_reply', profile_id, uid)
+    answered = await _answered(his)
+
+    blockers = []
+    if not flags.get('reply_make_on'):
+        blockers.append('генерация ответов выключена у сайта')
+    if not int(pair.get('enabled') or 0):
+        blockers.append('анкета выключена')
+    if not his:
+        blockers.append('он не писал ни разу — отвечать не на что')
+    elif answered:
+        blockers.append('на его последнее письмо ответ уже написан')
+    elif his.get('empty'):
+        blockers.append('у письма нет текста — тело ещё не забрали с сайта')
+
+    return {
+        'make_on': bool(flags.get('reply_make_on')),
+        'send_on': bool(flags.get('reply_send_on')),
+        'every_sec': int(await site_seconds(site_id, REPLY_EVERY_SETTING)
+                         or REPLY_EVERY_DEFAULT),
+        'next_sec': reply_round_next(site_id),
+        'his_last': his, 'draft': draft,
+        'blockers': blockers,
+        # Отправка — своей частью, следующей задачей.
+        'send_blockers': [], 'wait_sec': 0,
+    }
+
+
+async def _his_last(profile_id: int, uid: str):
+    """Его последнее письмо: номер, время и есть ли у него текст.
+
+    ⚠ **Последнее, а не каждое.** Он мог написать три подряд, не дождавшись
+    ответа; отвечает круг на последнее, прежние идут в историю. Тот же порядок,
+    что у `_to_answer`: по `date_post`, при равенстве — по номеру.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT id, body, date_post FROM mail_in'
+                ' WHERE profile_id = %s AND uid = %s'
+                ' ORDER BY date_post DESC, id DESC LIMIT 1',
+                (int(profile_id), str(uid)))
+            row = await db.fetchone()
+    except Exception as e:
+        logger_info(f'[dating] письма пары #{profile_id} не спросились: {e}')
+
+        return None
+
+    if not row:
+        return None
+
+    return {'id': int(row['id']), 'at': row['date_post'],
+            'empty': not str(row['body'] or '').strip()}
+
+
+async def _answered(his) -> bool:
+    """Есть ли уже ответ на **это** письмо.
+
+    ⚠ Ключ — `mail_in_id`, а не пара: ответ один на письмо, и уникальный ключ
+    `mail_reply` стоит именно на нём. Спроси мы «есть ли ответ этой паре»,
+    старый ответ на позапрошлое письмо запретил бы отвечать на новое.
+    """
+    if not his:
+        return False
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT 1 FROM mail_reply WHERE mail_in_id = %s'
+                             ' LIMIT 1', (int(his['id']),))
+
+            return bool(await db.fetchone())
+    except Exception as e:
+        logger_info(f'[dating] ответ на письмо #{his["id"]} '
+                    f'не спросился: {e}')
+
+        return False
 
 
 # ── Приставание ──────────────────────────────────────────────────────────────
