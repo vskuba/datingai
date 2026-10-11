@@ -7,7 +7,7 @@
 * `_quiet` — кого берём. Цена ошибки высока в обе стороны: пропустим — разговор
   так и останется затихшим, возьмём лишнего — напишем тому, кто ждёт ответа на
   своё письмо, и наше «а расскажи ещё» придёт вместо ответа.
-* `_too_soon` — сколько писем в сутки получает **человек**: считается всё
+* `favorite_mail_person_soon` — сколько писем в сутки получает **человек**: считается всё
   ушедшее ему **от любой нашей анкеты** и из любого пула. Письма считает
   получатель, а не наши таблицы и не наши девушки.
 * `favorite_mail_girl_soon` — как часто пишет **девушка**, неважно кому. Ключ у
@@ -26,9 +26,9 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating import favorite_mail
-from src.dating.favorite_mail import (_quiet, _too_soon,
-                                      favorite_mail_girl_free_sql,
-                                      favorite_mail_girl_soon)
+from src.dating.favorite_mail import (_quiet, favorite_mail_girl_free_sql,
+                                      favorite_mail_girl_soon,
+                                      favorite_mail_person_soon)
 from src.dating.site_setting import SITE_KNOWN
 
 pytestmark = pytest.mark.mail
@@ -573,7 +573,7 @@ class TestHowOften:
         await _hers(girl, uid, _now_minus_hours(5))
         await _hers(girl, uid, _now_minus_hours(6), 'favorite_mail')
 
-        why = await _too_soon(STAND_SITE, uid, per_day=2)
+        why = await favorite_mail_person_soon(STAND_SITE, uid, per_day=2)
 
         assert 'за сутки' in why, why
         # ⚠ Склонение — не украшение: «ушло 2 писем» читается как сбой
@@ -584,11 +584,11 @@ class TestHowOften:
         uid = f'u{uuid.uuid4().hex[:8]}'
         await _hers(girl, uid, _now_minus_hours(30))
 
-        assert await _too_soon(STAND_SITE, uid, per_day=2) == ''
+        assert await favorite_mail_person_soon(STAND_SITE, uid, per_day=2) == ''
 
     async def test_the_daily_cap_does_not_answer_for_the_pause(self, girl):
         """⚠ Сторож разделения: письмо часовой давности дневного предела не
-        трогает, и `_too_soon` обязан пропустить.
+        трогает, и `favorite_mail_person_soon` обязан пропустить.
 
         Прежде пауза стояла здесь же и ловила такой случай сама. Теперь её
         считает `favorite_mail_girl_soon`, и если она снова заведётся тут —
@@ -597,7 +597,7 @@ class TestHowOften:
         uid = f'u{uuid.uuid4().hex[:8]}'
         await _hers(girl, uid, _now_minus_hours(1))
 
-        assert await _too_soon(STAND_SITE, uid, per_day=5) == '', \
+        assert await favorite_mail_person_soon(STAND_SITE, uid, per_day=5) == '', \
             'дневной предел снова считает паузу — это разные правила'
 
 
@@ -701,7 +701,7 @@ class TestTheLimitIsPerPersonNotPerPair:
         await _hers(girl, uid, _now_minus_hours(6), 'favorite_mail')
 
         try:
-            why = await _too_soon(STAND_SITE, uid, per_day=2)
+            why = await favorite_mail_person_soon(STAND_SITE, uid, per_day=2)
 
             assert 'за сутки' in why, \
                 f'письма другой девушки в счёт не попали: {why!r}'
@@ -724,7 +724,7 @@ class TestTheLimitIsPerPersonNotPerPair:
         await _hers(girl, uid, _now_minus_hours(2))
 
         try:
-            why = await _too_soon(STAND_SITE, uid, per_day=2)
+            why = await favorite_mail_person_soon(STAND_SITE, uid, per_day=2)
 
             assert 'за сутки' in why, \
                 f'письма другой девушки в счёт получателя не попали: {why!r}'
@@ -741,7 +741,7 @@ class TestTheLimitIsPerPersonNotPerPair:
         await _hers(girl, busy, _now_minus_hours(0))
         await _hers(girl, busy, _now_minus_hours(1))
 
-        assert await _too_soon(STAND_SITE, free, per_day=2) == '', \
+        assert await favorite_mail_person_soon(STAND_SITE, free, per_day=2) == '', \
             'предел одного человека закрыл дорогу к другому'
 
     def test_the_query_keys_on_the_site_not_the_profile(self):
@@ -757,7 +757,7 @@ class TestTheLimitIsPerPersonNotPerPair:
         исходнику нашла бы её там и объявила поломкой — то есть запрещала бы
         объяснять, почему так делать нельзя.
         """
-        code = _source_without_doc(_too_soon)
+        code = _source_without_doc(favorite_mail_person_soon)
 
         assert "site_id = %s AND uid = %s" in code, \
             'дневной предел больше не считает по человеку'
@@ -773,7 +773,7 @@ class TestTheLimitIsPerPersonNotPerPair:
         """
         from src.dating.mail_send import MAIL_SEND_TABLES, mail_sent_union
 
-        code = _source_without_doc(_too_soon)
+        code = _source_without_doc(favorite_mail_person_soon)
 
         assert 'mail_sent_union' in code, \
             'дневной предел снова перечисляет таблицы сам'
