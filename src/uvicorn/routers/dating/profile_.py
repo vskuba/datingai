@@ -42,6 +42,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.auth.auth import auth_required
 from src.dating.import_ import (IMPORT_ABOUT_MAX, IMPORT_CITY_MAX,
                                 IMPORT_LOGIN_MAX, IMPORT_NAME_MAX)
+from src.dating.agent import agent_bio
 from src.dating.profile_card import (PROFILE_CARD_FIELDS, profile_card_forget,
                                      profile_card_save)
 from src.dating.profile_param import profile_param_max
@@ -345,6 +346,39 @@ async def profile_update(profile_id: int, data: DatingProfileSave,
         raise HTTPException(status_code=409, detail=_save_error(e, data.login))
 
     return {'status': 'success'}
+
+
+@router.post('/{profile_id}/card/bio', include_in_schema=False)
+async def profile_card_bio(profile_id: int, data: DatingProfileCard,
+                           user=Depends(auth_required)):
+    """Собрать био из присланных полей — **не записывая ничего**.
+
+    Кнопка «Обновить био» на вкладке «Информация»: человек правит поля и хочет
+    увидеть, что из них соберётся для агента, **до** сохранения.
+
+    ## ⚠⚠ Собирает сервер, и это не формальность
+
+    Био собирает `agent_bio` — та самая функция, чей результат уезжает агенту при
+    каждом ответе в чате. Собери страница сама, и предпросмотр разошёлся бы с
+    настоящим био на первой же правке сборки: человек сверял бы ответ агента с
+    текстом, которого агент не видел. Поэтому поля едут сюда, а назад едет итог.
+
+    ## ⚠ Ничего не пишет, и тело у неё то же, что у `PUT /card`
+
+    Своя модель с теми же шестью полями плюс параметры была бы вторым описанием
+    одного и того же. Отсюда и `POST` при отсутствии записи: тело нужно, а `GET`
+    с телом — не договор HTTP.
+
+    Returns:
+        dict: `bio` — собранный текст. Пустая строка законна: у анкеты без
+        описания, города и возраста агенту нечего рассказать.
+    """
+    await profile_row(profile_id)
+
+    return {'result': {'bio': agent_bio({
+        'id': data.profile_id, 'name': data.name, 'age': data.age,
+        'city': data.city, 'about': data.about,
+        'parameters': data.parameters})}}
 
 
 @router.put('/{profile_id}/card', include_in_schema=False)

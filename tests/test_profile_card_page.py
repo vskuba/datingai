@@ -75,12 +75,21 @@ def test_window_has_all_six_fields(page):
         assert f'id="{name}"' in page, f'поля {name} в окне нет'
 
 
-def test_window_calls_the_handle(page):
-    """Ручка та, и тело несёт имена, которые она принимает."""
-    assert '/card`, send)' in page or "/card`, send)" in page, \
-        'окно не зовёт PUT …/card'
-    for key in ('login:', 'profile_id:', 'name:', 'age:', 'city:', 'about:'):
-        assert key in page, f'в теле запроса нет {key}'
+def test_the_tab_calls_the_handle(page):
+    """Ручка та, и тело несёт имена, которые она принимает.
+
+    ⚠ Тело собирает **одна** функция `fields()` — её шлют и «Сохранить», и
+    «Обновить био». Две копии сборки разошлись бы на первой же новой строке
+    формы, и предпросмотр показывал бы не то, что сохранится.
+    """
+    assert '/card`, fields())' in page, 'вкладка не зовёт PUT …/card'
+    assert '/card/bio`, fields())' in page, 'кнопка «Обновить био» не зовёт ручку'
+    assert page.count('const fields = () => ({') == 1, \
+        'тело запроса собирается не одной функцией'
+
+    for key in ('login:', 'profile_id:', 'name:', 'age:', 'city:', 'about:',
+                'parameters:'):
+        assert key in page, f'в теле запроса нет {key}' 
 
 
 def test_success_reloads_both_lists(page):
@@ -429,3 +438,36 @@ def test_bio_comes_assembled_from_the_server():
                .read_text(encoding='utf-8'))
 
     assert "'bio': agent_bio(card)" in handler, 'ручка не отдаёт собранное био'
+
+
+def test_the_bio_button_asks_the_server(page):
+    """⚠⚠ Кнопка «Обновить био» шлёт поля **на сервер**, а не собирает текст сама.
+
+    Био собирает `agent_bio` — та же функция, чей результат уезжает агенту. Своя
+    сборка на странице разошлась бы с настоящей молча, и человек сверял бы ответ
+    агента с текстом, которого агент не видел.
+
+    ⚠ Кнопка ничего не записывает: это предпросмотр «как будет выглядеть био с
+    тем, что я сейчас набрал». Сохраняет по-прежнему «Сохранить».
+    """
+    assert 'id="cardBioGet"' in page, 'кнопки «Обновить био» нет'
+    assert '/card/bio`, fields())' in page, 'кнопка не зовёт ручку сборки'
+
+    keep = page[page.index("getElementById('cardBioGet')"):]
+    keep = keep[:keep.index('});')]
+    assert 'putData' not in keep and 'deleteData' not in keep, \
+        'предпросмотр что-то записывает — он должен только показывать'
+
+
+def test_the_bio_preview_handler_does_not_write():
+    """⚠ Ручка собирает и отвечает, но в базу не пишет: `profile_row` только
+    проверяет, что анкета есть."""
+    from pathlib import Path
+
+    src = Path('src/uvicorn/routers/dating/profile_.py').read_text(encoding='utf-8')
+    start = src.index('async def profile_card_bio(')
+    body = src[start:src.index('@router.put', start)]
+
+    assert 'agent_bio(' in body, 'ручка собирает био не общей функцией'
+    for word in ('profile_card_save', 'UPDATE', 'db.execute'):
+        assert word not in body, f'предпросмотр пишет в базу: {word}'

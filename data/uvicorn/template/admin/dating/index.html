@@ -2408,10 +2408,12 @@
             // второй источник правды, и «почему агент говорит не то, что в поле»
             // стало бы вопросом без ответа. Меняют его поля слева.
             + '<div class="info-right">'
-            + '<div class="info-head">Bio</div>'
+            + '<div class="info-head">Bio'
+            + '<button type="button" class="dating-btn info-get" id="cardBioGet">'
+            + 'Обновить био</button></div>'
             + '<i class="info-hint">То, что <b>уезжает агенту</b>: проза из имени,'
             + ' возраста, города и описания, ниже — параметры строками. Собирается'
-            + ' из полей слева, обновляется при сохранении.</i>'
+            + ' из полей слева — кнопкой или при сохранении.</i>'
             + '<textarea class="info-bio" id="cardBio" readonly'
             + ` spellcheck="false">${esc(String(data.bio || ''))}</textarea>`
             + (data.bio ? ''
@@ -2481,6 +2483,49 @@
                 if (currentId === was) await profileLoad();
             }));
 
+        // Что набрано в полях прямо сейчас. ⚠ Одной функцией на обе кнопки:
+        // «Сохранить» и «Обновить био» шлют одно и то же тело, и две копии
+        // сборки разошлись бы на первой же новой строке формы.
+        //
+        // ⚠ Берётся **из разметки**, а не из `data`: в поле лежит то, что человек
+        // набрал, и второй источник правды означал бы молча потерянную правку.
+        const fields = () => ({
+            login: document.getElementById('cardLogin').value.trim(),
+            profile_id: document.getElementById('cardUid').value.trim(),
+            name: document.getElementById('cardName').value.trim(),
+            age: Number(document.getElementById('cardAge').value || 0),
+            city: document.getElementById('cardCity').value.trim(),
+            about: document.getElementById('cardAbout').value,
+            parameters: Object.fromEntries(
+                [...pane.querySelectorAll('[data-param]')]
+                    .map(el => [el.dataset.param, el.value.trim()])),
+        });
+
+        // ⚠⚠ Собирает био **сервер**, той же функцией, что уезжает агенту: своя
+        // сборка на странице разошлась бы с настоящей молча, и человек сверял бы
+        // ответ агента с текстом, которого агент не видел.
+        //
+        // ⚠ Кнопка ничего не записывает — это предпросмотр. Сохраняет «Сохранить».
+        document.getElementById('cardBioGet').addEventListener('click', async () => {
+            const button = document.getElementById('cardBioGet');
+            const was = button.textContent;
+            button.disabled = true;
+            button.textContent = 'собираю…';
+            why.textContent = '';
+
+            try {
+                const got = await postData(
+                    `${BASE}/api/dating/profile/${currentId}/card/bio`, fields());
+                document.getElementById('cardBio').value =
+                    (got && got.result && got.result.bio) || '';
+            } catch (err) {
+                why.textContent = 'био не собралось: ' + err.message;
+            } finally {
+                button.disabled = false;
+                button.textContent = was;
+            }
+        });
+
         // ⚠ Кнопка **только читает** панель. Набранное в полях она перезаписывает
         // тем, что отдал сайт, — и это ожидаемо: человек нажал «обновить с сайта».
         // Правленое руками сайт не трогает, об этом говорит отметка у строки.
@@ -2511,23 +2556,8 @@
 
         document.getElementById('cardEditKeep').addEventListener('click', async () => {
             const was = currentId;
-            const send = {
-                login: document.getElementById('cardLogin').value.trim(),
-                profile_id: document.getElementById('cardUid').value.trim(),
-                name: document.getElementById('cardName').value.trim(),
-                age: Number(document.getElementById('cardAge').value || 0),
-                city: document.getElementById('cardCity').value.trim(),
-                about: document.getElementById('cardAbout').value,
-                // ⚠ Собираем **из разметки**, а не из `data.parameters`: в поле
-                // лежит то, что человек набрал, и второй источник правды здесь
-                // означал бы молча потерянную правку.
-                parameters: Object.fromEntries(
-                    [...pane.querySelectorAll('[data-param]')]
-                        .map(el => [el.dataset.param, el.value.trim()])),
-            };
-
             try {
-                await putData(`${BASE}/api/dating/profile/${was}/card`, send);
+                await putData(`${BASE}/api/dating/profile/${was}/card`, fields());
             } catch (err) {
                 why.textContent = 'не сохранилось: ' + err.message;
 
