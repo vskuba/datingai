@@ -297,26 +297,41 @@ class TestTable:
         rows = panel_fetch_table(PAGE)
 
         assert len(rows) == 2
-        assert rows[0][0]['текст'] == '37641085'
+        assert rows[0][0]['text'] == '37641085'
 
     def test_cell_keeps_both_link_and_text(self):
         """Панель пишет в ячейку «181685 Semen Gorbunkov»: номер ссылкой, имя рядом."""
         cell = panel_fetch_table(PAGE)[0][2]
 
-        assert cell['ссылка'] == '181685'
-        assert cell['текст'] == '181685 Semen Gorbunkov'
+        assert cell['link'] == '181685'
+        assert cell['text'] == '181685 Semen Gorbunkov'
 
     def test_full_text_comes_from_the_title(self):
         """⚠ Полный текст лежит в подсказке: в самой ячейке он обрезан шириной."""
         cell = panel_fetch_table(PAGE)[1][4]
 
-        assert cell['подсказка'] == 'pretty chill honestly. just watching a series'
+        assert cell['title'] == 'pretty chill honestly. just watching a series'
+
+    def test_cell_keys_are_latin(self):
+        """⚠ Ячейки — **наше** изобретение, и ключи у них латиницей.
+
+        Кириллица в ключе требует переключения раскладки в `grep` и в поиске
+        редактора, а похожие начертания (`с`/`c`, `о`/`o`) дают ключи, различимые
+        только байтами (`code_rules.md`, §1.2). Поля справа от `_cells` — другое
+        дело: их имена задал сценарий у соседа.
+        """
+        cell = panel_fetch_table(PAGE)[0][0]
+
+        assert set(cell) == {'text', 'link', 'title'}
 
     def test_cells_are_named_as_the_scenario_named_them(self):
         """⚠ Имена полей те же, что у сценария: разбор строк общий на оба пути.
 
         Разойдись они — и забор ручкой однажды стал бы читать таблицу иначе, чем
         забор сценарием, а заметить это было бы нечем.
+
+        ⚠ Потому эти имена и остались русскими, когда ключи ячеек стали
+        латинскими: они **не наши**. Перевод делает `_cells`, в одном месте.
         """
         from src.dating.chat_panel import _cells
 

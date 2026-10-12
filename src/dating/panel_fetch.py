@@ -171,13 +171,26 @@ def panel_fetch_table(html: str) -> list[list[dict]]:
     """Строки первой таблицы разметки: список строк, в строке — ячейки.
 
     Returns:
-        list: `[[{текст, ссылка, подсказка}, …], …]`. `ссылка` — текст первой
-        ссылки ячейки, `подсказка` — атрибут `title` первого элемента, у которого
-        он есть.
+        list: `[[{'text', 'link', 'title'}, …], …]`. `link` — текст первой ссылки
+        ячейки, `title` — атрибут `title` первого элемента, у которого он есть.
 
     ⚠ **Берём строки `tbody`, а не все `tr`.** Иначе заголовок таблицы приезжал бы
     первой записью — с текстом «ID», «Date UTC» вместо номера и даты, — и разбор
     честно превращал бы его в сообщение неизвестно от кого.
+
+    ## ⚠⚠ Ключи латиницей, хотя читатель зовёт их по-русски
+
+    Ячейки здесь — **наше** изобретение: таблицу разбираем мы, и имена полей ничем
+    снаружи не заданы. Поэтому они латиницей, как и всякий ключ в коде
+    (`code_rules.md`, §1.2): кириллица в ключе требует переключения раскладки в
+    `grep` и в поиске редактора, а похожие начертания (`с`/`c`, `о`/`o`) дают
+    ключи, различимые только байтами.
+
+    ⚠ Читатель (`chat_panel._cells`) раскладывает их в поля с **русскими**
+    именами, и это не противоречие: те имена — не наши, а шагов `extract` в
+    сценарии у соседа, и общий разбор строк (`chat_panel_rows`) обязан совпадать с
+    ними буква в букву. Граница двух словарей проходит ровно по `_cells`, в одном
+    месте и видимо.
     """
     parser = _Table()
     try:
@@ -256,7 +269,7 @@ class _Table(HTMLParser):
         if tag == 'tr':
             self._row = []
         elif tag in ('td', 'th') and self._row is not None:
-            self._cell = {'текст': '', 'ссылка': '', 'подсказка': ''}
+            self._cell = {'text': '', 'link': '', 'title': ''}
         elif tag == 'a' and self._cell is not None:
             self._in_link = True
 
@@ -264,8 +277,8 @@ class _Table(HTMLParser):
         # и полный текст сообщения лежит именно там — в самой ячейке он обрезан.
         if self._cell is not None:
             title = dict(attrs).get('title')
-            if title and not self._cell['подсказка']:
-                self._cell['подсказка'] = str(title)
+            if title and not self._cell['title']:
+                self._cell['title'] = str(title)
 
     def handle_endtag(self, tag: str) -> None:
         if self._done:
@@ -279,8 +292,8 @@ class _Table(HTMLParser):
         elif tag == 'a':
             self._in_link = False
         elif tag in ('td', 'th') and self._cell is not None and self._row is not None:
-            self._cell['текст'] = ' '.join(self._cell['текст'].split())
-            self._cell['ссылка'] = ' '.join(self._cell['ссылка'].split())
+            self._cell['text'] = ' '.join(self._cell['text'].split())
+            self._cell['link'] = ' '.join(self._cell['link'].split())
             self._row.append(self._cell)
             self._cell = None
         elif tag == 'tr' and self._row is not None:
@@ -292,9 +305,9 @@ class _Table(HTMLParser):
         if self._cell is None:
             return
 
-        self._cell['текст'] += data
+        self._cell['text'] += data
         if self._in_link:
-            self._cell['ссылка'] += data
+            self._cell['link'] += data
 
 
 class _Form(HTMLParser):
