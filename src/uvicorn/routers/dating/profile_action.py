@@ -51,6 +51,7 @@ from src.dating.login import (DatingLoginError, login_run,
 from src.dating.panel_fetch import DatingPanelFetchError
 from src.dating.presence import presence_probe, presence_ready
 from src.dating.profile_panel import (DatingProfilePanelError,
+                                      DatingProfilePanelMarkupError,
                                       profile_panel_read)
 from src.dating.status import status_probe_site, status_write
 from src.dating.profile_cache import profile_cache_refresh
@@ -855,14 +856,18 @@ async def profile_action_parameters(profile_id: int,
         # Отказ самой панели: не ответила, увела на вход, ответила кодом ошибки.
         await log_write(profile_id, 'fail', f'Параметры не снялись: {e}')
         raise HTTPException(status_code=502, detail=str(e))
-    except DatingProfilePanelError as e:
-        # ⚠ Три исхода под одним исключением, и коды у них разные: «нет номера» и
-        # «панель читать нечем» — ошибка запроса (422), «разметка сменилась» —
-        # отказ чужой стороны (502). Различаем по тексту, потому что это один
-        # отказ домена, а два исключения ради кода HTTP учили бы домен про HTTP.
-        code = 502 if 'разметка' in str(e) else 422
+    except DatingProfilePanelMarkupError as e:
+        # Страница пришла, но сайт её перевёрстал — отказ чужой стороны.
+        #
+        # ⚠ Ловится **до** родителя: порядок `except` здесь и есть вся разница
+        # между 502 и 422, и переставленные блоки увели бы оба исхода в один.
         await log_write(profile_id, 'fail', f'Параметры не снялись: {e}')
-        raise HTTPException(status_code=code, detail=str(e))
+        raise HTTPException(status_code=502, detail=str(e))
+    except DatingProfilePanelError as e:
+        # Нет номера анкеты или панели у сайта — поправимо у нас, то есть ошибка
+        # запроса.
+        await log_write(profile_id, 'fail', f'Параметры не снялись: {e}')
+        raise HTTPException(status_code=422, detail=str(e))
 
     said = sum(1 for one in (result.get('parameters') or {}).values() if one)
     await log_write(profile_id, 'ok',

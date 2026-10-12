@@ -18,6 +18,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.dating import panel_fetch as panel_fetch_module
 from src.dating.json_column import json_column_load
 from src.dating.profile_panel import (DatingProfilePanelError,
+                                      DatingProfilePanelMarkupError,
                                       profile_panel_read)
 from tests.panel_fake import PANEL_FAKE_STATE, PANEL_FAKE_URL
 
@@ -154,15 +155,38 @@ class TestTheMarkupGuard:
     """⚠⚠ Пустой разбор — отказ, а не пустой результат."""
 
     async def test_a_changed_markup_is_refused(self, site, page, girl_make):
+        """⚠ Своим типом, а не текстом: по нему ручка и отличает 502 от 422.
+
+        Разбирай она исходы подстрокой в сообщении, перефразировка текста молча
+        сменила бы код ответа.
+        """
         one = await girl_make(site_id=SITE)
         row = await _profile(one, {'id': '100001',
                                    'parameters': {'eyes': 'Hazel'}})
         page.html = '<form><input name="СовсемДругое" value="1"></form>'
 
-        with pytest.raises(DatingProfilePanelError) as got:
+        with pytest.raises(DatingProfilePanelMarkupError) as got:
             await profile_panel_read(row, PRESENCE)
 
         assert 'разметка' in str(got.value)
+
+    async def test_the_markup_error_is_a_child_of_the_common_one(self):
+        """⚠ Наследник, а не сосед: кому разница не нужна — ловит родителя."""
+        assert issubclass(DatingProfilePanelMarkupError, DatingProfilePanelError)
+
+    async def test_a_missing_number_is_not_a_markup_error(self, site, page,
+                                                          girl_make):
+        """⚠⚠ Обратная сторона наследования: родителем ловится и потомок, поэтому
+        «нет номера» обязано быть проверяемо **не**-перевёрсткой — иначе ручка
+        ответила бы на него 502 вместо 422."""
+        one = await girl_make(site_id=SITE)
+        row = await _profile(one, {'name': 'Olga'})
+        row['profile_id'] = None
+
+        with pytest.raises(DatingProfilePanelError) as got:
+            await profile_panel_read(row, PRESENCE)
+
+        assert not isinstance(got.value, DatingProfilePanelMarkupError)
 
     async def test_nothing_is_written_when_refused(self, site, page, girl_make):
         one = await girl_make(site_id=SITE)

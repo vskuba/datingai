@@ -9,10 +9,10 @@
    `id` в карточке, — и читают их разные места: ключ фактов агента берёт колонку,
    сведение переписки из панели и ссылка на сайт берут карточку. Разойдись они, и
    половина кода увидит номер, а половина пустоту; ни одна проверка не упадёт.
-2. Правленое руками обязано переживать всех троих писателей со стороны сайта —
-   импорт, чтение анкеты со страницы и кэш анкеты по кнопке «Проверка»
-   (`profile_cache._profile_save_card`, пропущенный планом и спекой). Иначе
-   человек увидит затёртую правку и перестанет править вовсе.
+2. Правленое руками обязано переживать всех писателей со стороны сайта — импорт,
+   чтение анкеты со страницы, кэш анкеты по кнопке «Проверка» (пропущенный планом
+   и спекой) и чтение параметров с админ-панели. Иначе человек увидит затёртую
+   правку и перестанет править вовсе.
 
 База настоящая, сосед поддельный. Ручки зовутся в процессе, а не по HTTP: тот же
 довод, что в `test_profile_mail_photo.py`.
@@ -63,10 +63,10 @@ async def test_column_is_there_and_empty(girl):
 class TestKeepRule:
     """Правило слияния: что сайт имеет право положить поверх.
 
-    ⚠ Чистая функция и тесты без базы: правило читают **три** писателя карточки —
-    импорт, чтение страницы кабинета и кэш анкеты по кнопке «Проверка»
-    (`profile_cache._profile_save_card`), — и своя копия в каждом разошлась бы на
-    первой правке. Сторож стоит на самом правиле, а не на его применении.
+    ⚠ Чистая функция и тесты без базы: правило читают **все** писатели со стороны
+    сайта — импорт зовёт его сам, прочие приходят через `profile_card_merge`, — и
+    своя копия в каждом разошлась бы на первой правке. Сторож стоит на самом
+    правиле, а не на его применении.
     """
 
     def test_untouched_card_passes_whole(self):
@@ -611,73 +611,55 @@ class TestImportRespectsHand:
         assert 'about' in plan['changed']
 
 
-class TestCardReadRespectsHand:
-    """⚠⚠ Второй писатель, и без него защита неполная.
+class TestCardWriteFromSiteRespectsHand:
+    """⚠⚠ Писатели со стороны сайта: чтение страницы кабинета и кэш анкеты.
 
-    Чтение анкеты со страницы кабинета заходит только при пустой карточке, а
-    признак пустоты — **имя** (`login._card_empty`). То есть у анкеты, где человек
-    впишет описание, но не впишет имя, следующий вход затёр бы описание молча.
-    Такая анкета в базе есть — заведённая импортом без карточки, логин равен
-    номеру.
+    Прежде их было двое и они стояли **копиями слово в слово** — отсюда и две
+    копии этих проверок. Теперь обе дороги идут одной дверью
+    (`profile_card.profile_card_merge`), и проверка у правила одна.
+
+    Чем это было оплачено, помнить стоит: чтение анкеты со страницы кабинета
+    заходит только при **пустой** карточке, а признак пустоты — имя
+    (`login._card_empty`). У анкеты, где человек впишет описание, но не впишет
+    имя, следующий вход затирал бы описание молча — и такая анкета в базе есть,
+    заведённая импортом без карточки. Кэш анкеты («Проверка») был найден
+    финальным ревью третьим: план и спека говорили «писателей двое».
+
+    ⚠ Что дверь и вправду зовут обе дороги, держат их собственные проверки
+    (`test_profile_card.py` — кэш, `test_profile_panel.py` — панель); здесь
+    проверяется само правило.
     """
 
     async def test_stored_card_keeps_edited_field(self, girl):
+        """Правленое переживает запись, неправленое обновляется, и наверх уходит
+        **то, что легло**, а не то, что отдал сайт."""
         from src.dating.json_column import json_column_load
-        from src.dating.profile_page import _profile_save
+        from src.dating.profile_card import profile_card_merge
 
         await profile_card_save(girl, {'login': _login(), 'about': 'мой текст'})
 
-        stored = await _profile_save(girl, {'id': '77', 'name': 'Olga',
-                                            'about': 'со страницы', 'city': 'Kyiv',
-                                            'age': 30, 'photo': ''})
-
-        row = await _row(girl)
-        assert json_column_load(row['profile'])['about'] == 'мой текст', \
-            'чтение страницы затёрло ручную правку'
-        assert json_column_load(row['profile'])['name'] == 'Olga'
-        assert stored['about'] == 'мой текст', \
-            'вернулась карточка сценария, а не та, что легла'
-
-
-class TestProfileCacheRespectsHand:
-    """⚠⚠ Третий писатель карточки, пропущенный планом.
-
-    `profile_cache._profile_load` заменял карточку целиком ответом сайта — и
-    затирал правленое человеком, и выбрасывал ключи, которых сайт не прислал.
-    Нашло финальное ревью: план и спека говорили «писателей двое», а их трое.
-
-    ⚠ Путь живой — кнопка «Проверка» (`profile_action.py`). Сегодня запись
-    доходит только под мужской ролью, но обещание «сайт правленое не
-    перезаписывает» было дано без оговорок.
-    """
-
-    async def test_edited_field_survives_the_cache_write(self, girl):
-        """Правленое описание переживает запись кэша, остальное обновляется."""
-        from src.dating.json_column import json_column_load
-        from src.dating.profile_cache import _profile_save_card
-
-        await profile_card_save(girl, {'login': _login(), 'about': 'мой текст'})
-
-        await _profile_save_card(girl, {'id': '77', 'name': 'Olga',
-                                        'about': 'с сайта', 'city': 'Kyiv',
-                                        'age': 30, 'photo': ''})
+        stored = await profile_card_merge(
+            girl, {'id': '77', 'name': 'Olga', 'about': 'со страницы',
+                   'city': 'Kyiv', 'age': 30, 'photo': ''}, 'тест')
 
         card = json_column_load((await _row(girl))['profile'])
-        assert card['about'] == 'мой текст', 'кэш затёр ручную правку'
+        assert card['about'] == 'мой текст', 'запись с сайта затёрла ручную правку'
         assert card['name'] == 'Olga', 'неправленое обновляться должно'
+        assert stored['about'] == 'мой текст', \
+            'вернулась карточка сайта, а не та, что легла'
 
-    async def test_the_cache_write_keeps_what_the_site_did_not_send(self, girl):
+    async def test_the_write_keeps_what_the_site_did_not_send(self, girl):
         """⚠ Ключи, которых в ответе сайта нет, остаются на месте.
 
         Прежде запись была заменой: поле, которое сайт не прислал, исчезало из
         карточки вовсе — даже не правленое руками.
         """
         from src.dating.json_column import json_column_load
-        from src.dating.profile_cache import _profile_save_card
+        from src.dating.profile_card import profile_card_merge
 
         await profile_card_save(girl, {'login': _login(), 'city': 'Kyiv'})
 
-        await _profile_save_card(girl, {'name': 'Olga'})
+        await profile_card_merge(girl, {'name': 'Olga'}, 'тест')
 
         card = json_column_load((await _row(girl))['profile'])
-        assert card['city'] == 'Kyiv', 'запись кэша выбросила поле целиком'
+        assert card['city'] == 'Kyiv', 'запись с сайта выбросила поле целиком'

@@ -213,7 +213,7 @@ def _client(data):
 class _FakeDb:
     """База, которая только запоминает, что и куда писали.
 
-    ⚠ `_profile_load` пишет через `_profile_save_card`: сперва
+    ⚠ `_profile_load` пишет через `profile_card.profile_card_merge`: сперва
     `SELECT profile, profile_edited` — читает, нет ли ручной правки, — и только
     потом `UPDATE`. Заглушка отдаёт на `SELECT` пустую строку (ни правки, ни
     прежней карточки нет), и слияние в этом случае не меняет ничего — поэтому

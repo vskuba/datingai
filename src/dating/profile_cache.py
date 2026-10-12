@@ -98,7 +98,10 @@ async def _profile_load(client, profile: dict, presence: dict) -> bool:
     # посеянные.
     card = site_registry_profile(presence).card_parse(user, str(profile.get('login') or ''))
 
-    await _profile_save_card(int(profile['id']), card)
+    # ⚠⚠ Слиянием, а не заменой. Прежде здесь стоял `UPDATE profile SET profile`
+    # целиком: он затирал вписанное человеком и **выбрасывал ключи**, которых сайт
+    # не прислал. Правило живёт одной дверью на всех писателей со стороны сайта.
+    await profile_card_merge(int(profile['id']), card, 'кэш анкеты не записался')
 
     return True
 
@@ -202,27 +205,3 @@ async def _note(profile: dict, method: str, path: str, response, started: float)
         status=status, ok=status < 400,
         error='' if status < 400 else f'сайт ответил {status}',
         ms=request_ms(started), proxy_ip=str(profile.get('proxy_ip') or ''))
-
-
-async def _profile_save_card(profile_id: int, card: dict) -> dict:
-    """Кладёт карточку, не затирая правленого руками.
-
-    Args:
-        profile_id: наш номер анкеты.
-        card: карточка, разобранная из ответа сайта.
-
-    Returns:
-        dict: карточка, как она легла. Пустой словарь — записать не удалось.
-
-    ## ⚠ Само слияние живёт не здесь
-
-    Прежде здесь стоял `UPDATE profile SET profile = %s` — замена целиком, и с
-    появлением правки руками это стало затиранием: человек вписывает описание,
-    которого сайт не отдал, и ближайшая «Проверка» уносит вписанное. Хуже того,
-    замена **выбрасывала ключи**, которых сайт не прислал.
-
-    Чинилось это слиянием, но слияние было написано **дважды**: здесь и в
-    `profile_page._profile_save`, слово в слово. Теперь оно одно —
-    `profile_card.profile_card_merge`, и объяснение правила лежит там же.
-    """
-    return await profile_card_merge(profile_id, card, 'кэш анкеты не записался')
