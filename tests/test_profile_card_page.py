@@ -339,28 +339,23 @@ def test_the_columns_collapse_on_a_narrow_screen(css):
         'на узком экране разделитель остаётся висеть между блоками'
 
 
-def test_long_texts_live_in_the_left_column(page):
-    """⚠⚠ Делит колонки **длина поля**, а не происхождение значения.
+def test_the_left_column_holds_all_the_fields(page):
+    """⚠⚠ Слева **все** поля — учётки и с сайта, справа только Bio.
 
-    Увлечения и «о партнёре» — параметры с сайта, как рост и цвет глаз, но
-    читаются абзацем: среди коротких полей они растягивали правую колонку вниз, а
-    левая ниже описания пустовала. Теперь слева всё, что читается абзацем
-    (описание, увлечения, о партнёре), справа — значения в одну строку.
-
-    ⚠ Своего заголовка у них нет: длинные тексты идут сразу за описанием, одним
-    списком. Подпись рвала колонку надвое там, где поля и так читаются подряд.
+    Прежде параметры стояли справа, а Bio не было вовсе. Теперь правая колонка
+    отдана итогу: человек правит слева и тут же видит, что из этого соберётся для
+    агента. Делить поля между колонками больше незачем — делить надо ввод и
+    результат.
     """
-    assert "fields.filter(one => one.kind !== 'area')" in page, \
-        'правая колонка берёт не только короткие поля'
-    assert "fields.filter(one => one.kind === 'area')" in page, \
-        'длинные поля не отобраны в свою группу'
-
     left = page[page.index("'<div class=\"info-left\">'"):page.index("'<div class=\"split info-split\"")]
-    assert 'paramLong' in left, 'длинные тексты не попали в левую колонку'
+    assert 'paramShort' in left, 'короткие параметры не в левой колонке'
+    assert 'paramLong' in left, 'длинные тексты не в левой колонке'
+    assert 'cardLogin' in left and 'cardAbout' in left, 'поля учётки не слева'
 
     right = page[page.index("'<div class=\"info-right\">'"):page.index("'<div class=\"info-foot\">'")]
-    assert 'paramShort' in right, 'правая колонка рисует не короткие поля'
-    assert 'paramLong' not in right, 'длинные тексты остались справа'
+    assert 'cardBio' in right, 'Bio не в правой колонке'
+    assert 'paramShort' not in right and 'paramLong' not in right, \
+        'параметры остались справа — там только итог'
 
 
 def test_the_refresh_button_lives_in_the_card_header(page, css):
@@ -392,3 +387,36 @@ def test_the_header_is_cleared_with_the_card(page):
     keep = page[page.index('анкета «${profile.login || currentId}» удалена'):]
     assert "getElementById('profileHeadRight').innerHTML = ''" in keep, \
         'правая часть шапки не чистится вместе с карточкой'
+
+
+def test_bio_is_shown_but_not_editable(page, css):
+    """⚠⚠ Bio — **итог полей слева**, а не отдельное поле.
+
+    Его собирает `agent_bio`, и он же уезжает агенту при каждом ответе в чате и
+    при заведении агента у соседа. Правка здесь завела бы второй источник правды:
+    «почему агент говорит не то, что в поле» стало бы вопросом без ответа.
+
+    ⚠ `readonly`, а не `disabled`: из отключённого поля нельзя скопировать текст,
+    а скопировать его — первое, что делают, сверяя с ответом агента.
+    """
+    assert 'id="cardBio"' in page, 'поля Bio нет'
+    assert 'class="info-bio" id="cardBio" readonly' in page, \
+        'Bio можно править — появится второй источник правды'
+    assert '.info-bio' in css, 'Bio не описан в стиле'
+
+    send = page[page.index('const send = {'):page.index('putData(`${BASE}')]
+    assert 'cardBio' not in send, 'Bio уезжает в сохранение — его никто не ждёт'
+
+
+def test_bio_comes_assembled_from_the_server():
+    """⚠ Собирает его **сервер** тем же `agent_bio`, что уезжает агенту.
+
+    Своя сборка на странице разошлась бы с настоящей на первой правке — и человек
+    сверял бы ответ агента с текстом, которого агент не видел.
+    """
+    from pathlib import Path
+
+    handler = (Path('src/uvicorn/routers/dating/profile_view.py')
+               .read_text(encoding='utf-8'))
+
+    assert "'bio': agent_bio(card)" in handler, 'ручка не отдаёт собранное био'

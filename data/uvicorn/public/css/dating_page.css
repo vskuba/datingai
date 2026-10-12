@@ -994,6 +994,19 @@
     outline: none; border-color: #a5b4fc;
 }
 .info-wide textarea { height: 64px; resize: vertical; }
+
+/* Bio — одно большое поле на всю правую колонку: его читают целиком, а не по
+   строке. ⚠ Высота от экрана (`vh`), а не числом пикселей: слева колонка растёт
+   с числом параметров, и фиксированные 400 px на ноутбуке ушли бы за край.
+   ⚠ `readonly`, а не `disabled`: из отключённого нельзя скопировать текст, а
+   скопировать его — первое, что делают, сверяя с ответом агента. */
+.info-bio {
+    width: 100%; box-sizing: border-box;
+    height: min(62vh, 720px); min-height: 220px; resize: vertical;
+    padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px;
+    font-family: inherit; font-size: 13px; line-height: 1.5; color: #334155;
+    background: #f8fafc;
+}
 .info-hint { font-size: 11px; color: #94a3b8; line-height: 1.4; font-style: normal; }
 /* ⚠ Жёлтым метится **изменённое поле ключа**, и только пока оно изменено:
    постоянно горящее предупреждение перестают читать. */

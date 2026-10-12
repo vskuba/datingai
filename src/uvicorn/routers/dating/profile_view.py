@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
+from src.dating.agent import agent_bio
 from src.dating.chat_reply import chat_reply_pending
 from src.dating.message_twin import message_twin_skip
 from src.dating.json_column import json_column_load
@@ -361,6 +362,18 @@ async def profile_view_card(profile_id: int, page: int = 1,
                        # странице разошлась бы с кодом молча. То же правило, что у
                        # словаря тегов галереи.
                        'parameter_fields': profile_param_fields(),
+                       # Био, собранное **тем же** `agent_bio`, что уезжает агенту
+                       # на каждом ответе в чате и при заведении агента у соседа.
+                       #
+                       # ⚠⚠ Не хранится и не правится: это **итог** полей слева, и
+                       # собирается он на лету. Заведи мы ему колонку — появился бы
+                       # второй источник правды, и «почему агент говорит не то, что
+                       # в поле» стало бы вопросом без ответа.
+                       #
+                       # ⚠ Отдаётся всегда, пустой строкой у анкеты без описания:
+                       # `undefined` на странице читался бы как «не собралось»
+                       # случайно, а не по правилу.
+                       'bio': agent_bio(card),
                        'login': profile['login'], 'contacts': contacts,
                        'enabled': bool(profile.get('enabled', 1)),
                        # Расписание — в настройках анкеты на «Анкетах», рядом с
