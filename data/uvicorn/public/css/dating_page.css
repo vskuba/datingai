@@ -1047,11 +1047,7 @@
     display: flex; align-items: center; justify-content: flex-end; gap: 8px;
     margin-top: 14px; padding-top: 10px; border-top: 1px solid #f1f5f9;
 }
-.info-why { margin-right: auto; font-size: 12px; color: #b91c1c; }
-/* Та же строка подвала служит и подтверждением. ⚠ Цветом, а не вторым узлом:
-   два места под один ответ — это вопрос «а что показано в другом», и рано или
-   поздно они разойдутся. */
-.info-why.info-why-ok { color: #15803d; }
+
 
 /* ⚠ Окно описания снимка **крупнее соседних**, и это не вкусовщина: в нём правят
    абзац текста и строку тегов. В 560 пикселях описание шло в шесть строк с

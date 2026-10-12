@@ -486,22 +486,43 @@ def test_the_save_message_names_what_changed(page):
     keep = keep[:keep.index('\n    }')]
 
     assert 'result.changed' in keep, 'страница не берёт список изменённого у сервера'
-    assert "'сохранено: '" in keep, 'подтверждение не называет изменённое'
-    assert 'изменений не было' in keep, 'нет ответа на «сохранил, не правя»'
+    assert "'Сохранено: '" in keep, 'подтверждение не называет изменённое'
+    assert 'Изменений не было' in keep, 'нет ответа на «сохранил, не правя»'
 
 
-def test_the_save_message_is_shown_next_to_the_button(page, css):
-    """⚠ Форма длинная, кнопка внизу, а подсказка в шапке страницы — за экраном:
-    нажавший её попросту не увидит. Поэтому итог ещё и в подвале формы.
+def test_the_tab_uses_real_notifications(page):
+    """⚠⚠ Вкладка говорит `showNotification`, а не `say()`.
 
-    ⚠ Цветом в той же строке, а не вторым узлом: два места под один ответ — это
-    вопрос «а что показано в другом», и рано или поздно они разойдутся.
+    `say()` пишет серую строчку в шапке страницы: при форме на экран высотой её
+    попросту не видно, и человек не знает, сохранилось ли. Соседние блоки этой же
+    страницы («Переменные», галерея) давно на уведомлениях — форма отставала.
+
+    ⚠ И не строкой в подвале формы: сразу за сохранением идёт `profileLoad()`, он
+    перерисовывает вкладку, и узел с текстом заменяется пустым — сообщение
+    исчезало через миг после появления. Так это и было поймано.
     """
-    keep = page[page.index("getElementById('cardEditKeep')"):]
-    keep = keep[:keep.index('\n    }')]
+    keep = page[page.index('function infoBind'):]
+    keep = keep[:keep.index('\n    }\n')]
 
-    assert 'why.textContent = said' in keep, 'итог не показан рядом с кнопкой'
-    assert 'info-why-ok' in keep, 'подтверждение не отличается от отказа'
-    assert '.info-why.info-why-ok' in css, 'цвет подтверждения не задан'
-    assert "why.classList.remove('info-why-ok')" in keep, \
-        'класс не снимается — отказ после удачи останется зелёным'
+    assert 'showNotification(' in keep, 'вкладка не показывает уведомлений'
+    # ⚠ Ищем **вызов**, а не слово: `say()` законно упомянут в комментарии,
+    # объясняющем, почему от него ушли.
+    import re
+
+    assert not re.search(r'^\s*say\(', keep, re.M), \
+        'вкладка пишет в серую строку шапки'
+    assert 'cardEditWhy' not in keep and 'info-why' not in keep, \
+        'в подвале остался узел сообщения — его стирает перерисовка'
+
+
+def test_every_tab_action_reports_its_outcome(page):
+    """⚠ Исход называют **все** три кнопки вкладки, а не одна.
+
+    Молчащая кнопка читается как сломанная: человек нажал, ничего не произошло, и
+    понять, дошло ли до сервера, нечем.
+    """
+    keep = page[page.index('function infoBind'):]
+    keep = keep[:keep.index('\n    }\n')]
+
+    assert keep.count('showNotification(') >= 4, \
+        'не все действия вкладки сообщают исход (сохранение, био, панель, отметка)'

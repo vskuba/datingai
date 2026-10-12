@@ -2422,7 +2422,6 @@
             + '</div>'
 
             + '<div class="info-foot">'
-            + '<span class="info-why" id="cardEditWhy"></span>'
             + '<button type="button" class="dating-btn primary" id="cardEditKeep">'
             + 'Сохранить</button>'
             + '</div></div>';
@@ -2433,9 +2432,8 @@
         const p = (data || {}).profile || {};
         const wasUid = String(p.id || '');
         const wasName = String(p.name || '');
-        const why = document.getElementById('cardEditWhy');
         const pane = document.querySelector('.info-pane');
-        if (!pane || !why) return;
+        if (!pane) return;
 
         // Разделитель колонок. ⚠ Вешается заново при каждой отрисовке: вкладка
         // перерисовывается при смене анкеты, и узел всякий раз новый.
@@ -2475,11 +2473,12 @@
                     await deleteData(
                         `${BASE}/api/dating/profile/${was}/card/${link.dataset.forget}`);
                 } catch (err) {
-                    why.textContent = 'отметка не снялась: ' + err.message;
+                    showNotification('Отметка не снялась: ' + err.message, 'error');
 
                     return;
                 }
-                say('поле вернулось сайту — обновит его следующий импорт');
+                showNotification('Поле вернулось сайту — обновит его'
+                                 + ' следующее чтение панели', 'success');
                 if (currentId === was) await profileLoad();
             }));
 
@@ -2511,7 +2510,6 @@
             const was = button.textContent;
             button.disabled = true;
             button.textContent = 'собираю…';
-            why.textContent = '';
 
             try {
                 const got = await postData(
@@ -2519,7 +2517,7 @@
                 document.getElementById('cardBio').value =
                     (got && got.result && got.result.bio) || '';
             } catch (err) {
-                why.textContent = 'био не собралось: ' + err.message;
+                showNotification('Био не собралось: ' + err.message, 'error');
             } finally {
                 button.disabled = false;
                 button.textContent = was;
@@ -2534,7 +2532,6 @@
             const was = button.textContent;
             button.disabled = true;
             button.textContent = 'читаю панель…';
-            why.textContent = '';
 
             try {
                 const got = await postData(
@@ -2547,7 +2544,7 @@
                 document.getElementById('cardParamsWhen').textContent =
                     at ? `снято ${timeShift(at)}` : 'с сайта ещё не снимали';
             } catch (err) {
-                why.textContent = 'с сайта не снялось: ' + err.message;
+                showNotification('С сайта не снялось: ' + err.message, 'error');
             } finally {
                 button.disabled = false;
                 button.textContent = was;
@@ -2556,12 +2553,11 @@
 
         document.getElementById('cardEditKeep').addEventListener('click', async () => {
             const was = currentId;
-            why.classList.remove('info-why-ok');
             let got;
             try {
                 got = await putData(`${BASE}/api/dating/profile/${was}/card`, fields());
             } catch (err) {
-                why.textContent = 'не сохранилось: ' + err.message;
+                showNotification('Не сохранилось: ' + err.message, 'error');
 
                 return;
             }
@@ -2574,14 +2570,19 @@
             // Своя сверка на странице дала бы второй ответ на тот же вопрос, и при
             // расхождении верным оказался бы не тот, что показан.
             const changed = (got && got.result && got.result.changed) || [];
-            const said = changed.length
-                ? 'сохранено: ' + changed.join(', ')
-                : 'изменений не было — всё и так совпадало';
-            say(said);
-            // ⚠ И рядом с кнопкой: форма длинная, кнопка внизу, а подсказка в
-            // шапке страницы — за экраном. Нажавший её попросту не увидит.
-            why.textContent = said;
-            why.classList.add('info-why-ok');
+
+            // ⚠⚠ `showNotification`, а не `say()`. `say()` пишет серую строчку в
+            // шапке страницы: при форме на экран высотой её попросту не видно, и
+            // человек не знает, сохранилось ли. Соседние блоки этой же страницы
+            // («Переменные», галерея) давно на уведомлениях — форма отставала.
+            //
+            // ⚠ И не строкой в подвале формы: сразу за этим идёт `profileLoad()`,
+            // он перерисовывает вкладку, и узел с текстом заменяется пустым —
+            // сообщение исчезало через миг после появления.
+            showNotification(changed.length
+                ? 'Сохранено: ' + changed.join(', ')
+                : 'Изменений не было — всё и так совпадало',
+                changed.length ? 'success' : 'info');
             // ⚠ Перечитываем **и список, и карточку**: правка меняет строку списка
             // (почта, имя, возраст, номер) не меньше, чем карточку, а список
             // приходит своей ручкой. Ответ одной покрыл бы одну из двух.
