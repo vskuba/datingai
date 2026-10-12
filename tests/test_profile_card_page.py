@@ -40,10 +40,32 @@ def css() -> str:
     return CSS_FILE.read_text(encoding='utf-8')
 
 
-def test_card_head_has_the_edit_icon(page):
-    """Иконка стоит в шапке карточки — там, где показано правимое."""
-    assert 'id="cardEditBtn"' in page, 'иконки правки в шапке карточки нет'
-    assert 'cardEditModal()' in page, 'иконка ни к чему не привязана'
+def test_the_edit_lives_in_its_own_tab(page):
+    """⚠⚠ Правка — **вкладка**, а не окно по иконке.
+
+    Полей стало 27, и в окне они шли двумя узкими колонками с прокруткой:
+    половина параметров была не видна без неё. Вкладке достаётся вся ширина
+    карточки.
+
+    ⚠ Иконки ✎ в шапке больше нет намеренно: два входа в одно и то же место
+    расходятся в поведении на первой же правке.
+    """
+    assert "data-tab=\"info\">Информация</button>" in page, 'вкладки «Информация» нет'
+    assert "cardTab === 'info' ? infoBlock(data)" in page, 'вкладка ничего не рисует'
+    assert 'infoBind(data)' in page, 'поля вкладки ни к чему не привязаны'
+    assert 'id="cardEditBtn"' not in page, 'иконка осталась — вход должен быть один'
+    assert 'cardEditModal' not in page, 'окно правки осталось в коде'
+
+
+def test_the_background_probe_leaves_the_form_alone(page):
+    """⚠⚠ Фоновый опрос идёт раз в пятнадцать секунд и собирает карточку заново.
+
+    На вкладке это стёрло бы набранное **прямо под руками** и без следа: поля
+    строятся из ответа ручки. У окна такой беды не было — оно жило отдельно от
+    карточки, и перерисовка его не касалась.
+    """
+    assert "if (cardTab !== 'info') await profileLoad();" in page, \
+        'перерисовка по таймеру затрёт набранное в полях вкладки'
 
 
 def test_window_has_all_six_fields(page):
@@ -76,9 +98,12 @@ def test_key_warning_names_both_halves(page):
     `%girl_id%_%girl_name%`. Предупреди мы только про номер, человек поправил бы
     регистр имени и получил то же последствие, не узнав о нём.
     """
-    assert 'id="cardUidWhy"' in page, 'под номером пояснения нет'
-    assert 'id="cardNameWhy"' in page, 'под именем пояснения нет'
-    assert 'незнакомой' in page, 'пояснение не говорит, что произойдёт'
+    keep = page[page.index('function infoBlock'):page.index('function infoBind')]
+
+    assert keep.count('<b data-move></b>') == 2, \
+        'переход называется не у обоих полей ключа'
+    assert 'незнакомой' in keep, 'пояснение не говорит, что произойдёт'
+    assert 'ключа фактов' in keep, 'про вторую половину ключа не сказано'
 
 
 def test_forget_link_is_wired(page):
@@ -161,28 +186,26 @@ def test_windows_close_on_mousedown_not_click(page):
     assert "back.addEventListener('click'" not in page, \
         'окно закрывается по click — выделение текста его схлопнет'
 
-    # Три окна раздела: карусель, описание снимка, правка персональных данных.
-    assert page.count("back.addEventListener('mousedown'") == 3, \
+    # ⚠ Два окна раздела: карусель и описание снимка. Правка персональных данных
+    # окном быть перестала — она вкладка, и закрывать там нечего.
+    assert page.count("back.addEventListener('mousedown'") == 2, \
         'не все окна переведены на mousedown со сверкой цели'
-    assert page.count('e.target === back') >= 3 \
-        or page.count('event.target === back') >= 3, \
+    assert page.count('e.target === back') >= 2 \
+        or page.count('event.target === back') >= 2, \
         'цель события не сверяется — закроется от щелчка внутри окна'
 
 
-def test_the_edit_window_closes_on_escape(page):
+def test_the_carousel_closes_on_escape(page):
     """⚠ Escape — то, что человек пробует первым, не найдя кнопки закрытия.
 
-    ⚠ Ищем **в теле функции**, а не в первых N знаках после её начала. Прежде
-    стояло `keep[:6000]`, и мерка сломалась ровно так, как такие мерки и ломаются:
-    окно получило вторую колонку, обработчик Escape уехал на 6100-й знак, и
-    проверка закричала «не закрывается по Escape» про живой, ничем не тронутый
-    код. Граница функции — следующее объявление того же уровня отступа.
-    """
-    body = page[page.index('function cardEditModal'):]
-    end = body.find('\n    function ', 1)
-    keep = body[:end] if end > 0 else body
+    ⚠ Окно правки персональных данных сюда больше не входит: оно стало вкладкой,
+    и закрывать там нечего. Осталась карусель — у неё Escape есть.
 
-    assert "'Escape'" in keep, 'окно правки не закрывается по Escape'
+    ⚠ Окно описания снимка Escape не ловит, и так было до этой правки: оно
+    закрывается щелчком по подложке и кнопкой. Записано как факт, а не как
+    требование — чинить это отдельно от своей задачи я не стал.
+    """
+    assert "event.key === 'Escape'" in page, 'карусель не закрывается по Escape'
 
 
 def test_script_has_no_syntax_error(page):
@@ -241,16 +264,27 @@ def test_the_icon_class_is_not_stretched_by_the_window(css):
              'окно правки зовётся `.cardbox-*`')
 
 
-def test_the_window_classes_live_in_the_css(page, css):
-    """⚠ Классы окна объявлены в стиле, а не придуманы в разметке.
+def test_the_tab_classes_live_in_the_css(page, css):
+    """⚠ Классы вкладки объявлены в стиле, а не придуманы в разметке.
 
-    Разъехавшись, они дают окно без раскладки: колонки встают одна под другой, и
-    выглядит это как «вёрстка поехала», а не как опечатка в имени.
+    Разъехавшись, они дают форму без раскладки: 27 полей встают одно под другим
+    в одну колонку, и выглядит это как «вёрстка поехала», а не как опечатка.
     """
     import re
 
-    used = set(re.findall(r'cardbox-[a-z-]+', page))
-    assert used, 'в разметке окна нет ни одного класса `cardbox-*`'
+    used = set(re.findall(r'info-[a-z-]+', page))
+    assert used, 'в разметке вкладки нет ни одного класса `info-*`'
 
     for one in sorted(used):
         assert f'.{one}' in css, f'класс `{one}` есть в разметке, но не в стиле'
+
+
+def test_the_tab_grid_is_not_a_fixed_column_count(css):
+    """⚠ Колонки считает сетка (`auto-fill`), а не человек числом.
+
+    Карточку открывают и на ноутбуке, и на широком мониторе: «три колонки» на
+    первом дали бы поля шириной в 120 пикселей, где не читается ни подпись, ни
+    значение.
+    """
+    assert 'repeat(auto-fill, minmax(' in css, \
+        'сетка полей задана фиксированным числом колонок'

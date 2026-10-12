@@ -919,36 +919,64 @@
    (`resize: none`): здесь правят абзац, и длина у него всякий раз своя. */
 .dating-modal-box #cardAbout { height: 150px; resize: vertical; }
 
-/* Окно персональных данных — **шире соседних и в две колонки**: слева шесть полей
-   учётки, справа 21 параметр с сайта. Ширина своим классом, а не правкой
-   `.dating-modal-box`: её делят трое. Так же сделано у окна описания снимка.
+/* ── Вкладка «Информация»: 27 полей анкеты ──────────────────────────────────
+   Прежде это было модальное окно, и поля шли двумя узкими колонками с
+   прокруткой — половина параметров не помещалась. Вкладке достаётся вся ширина
+   карточки, и колонки считает сетка, а не человек.
 
-   ⚠⚠ Приставка `cardbox-`, а не `card-edit`: класс `.card-edit` **уже занят** —
-   это иконка ✎ в шапке карточки (правило ниже). Назвав окно так же, я выдал ей
-   `width: min(980px, 94vw)`, и кнопка растянулась на всю шапку: содержимое
-   выдавило, а сама иконка стала невидимой полосой. Нашлось глазами на живой
-   странице, сюита молчала — она читает разметку, а не считает ширины. */
-.cardbox-edit { width: min(980px, 94vw); }
-.cardbox-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; align-items: start;
+   ⚠⚠ Классы с приставкой `info-`, а не `card-`: `.card-edit` уже занят (это была
+   иконка ✎), и одно совпадение имени уже стоило растянутой на 980 px кнопки.
+   Сторож на это стоит в `test_profile_card_page.py`. */
+.info-pane { padding: 4px 2px 12px; }
+.info-head {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin: 14px 0 6px;
+    font-size: 12px; font-weight: 700; color: #64748b;
+    text-transform: uppercase; letter-spacing: .04em;
 }
-/* ⚠ На узком экране колонки встают друг под друга: 980 пикселей не помещаются в
-   телефон, а окно правки открывают и с него. */
-@media (max-width: 760px) {
-    .cardbox-edit { width: 94vw; }
-    .cardbox-grid { grid-template-columns: 1fr; }
+.info-head:first-child { margin-top: 4px; }
+
+/* ⚠ `auto-fill` с минимумом, а не фиксированное число колонок: карточку открывают
+   и на ноутбуке, и на широком мониторе, и «три колонки» на первом дали бы поля в
+   120 пикселей. Минимум 210 — ширина, на которой читается и подпись, и значение. */
+.info-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 8px 14px; align-items: start;
 }
-.cardbox-side { display: flex; flex-direction: column; }
-.cardbox-head {
-    font-size: 12px; font-weight: 700; color: #0f172a; margin-top: 8px;
+/* Текстовые поля (описание, увлечения, о партнёре) — на всю ширину: в колонке
+   210 пикселей абзац идёт лесенкой по два слова. */
+.info-wide { grid-column: 1 / -1; }
+
+.info-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.info-label { font-size: 11px; color: #64748b; }
+.info-field input, .info-field textarea {
+    width: 100%; box-sizing: border-box; font-size: 13px; color: #0f172a;
+    padding: 4px 7px; border: 1px solid #d1d5db; border-radius: 6px;
+    font-family: inherit;
 }
-/* Параметры — поля помельче: их 21, и в полный рост колонка уходила бы в
-   прокрутку даже на большом экране. */
-.cardbox-side textarea { height: 70px; resize: vertical; }
-.cardbox-side .dating-modal-field { margin-top: 6px; }
-/* Кнопка чтения панели и отметка о съёме — подвалом правой колонки. */
-.cardbox-get { margin-top: 12px; align-self: flex-start; }
-.cardbox-when { font-size: 11px; color: #94a3b8; margin-top: 6px; }
+.info-field input:focus, .info-field textarea:focus {
+    outline: none; border-color: #a5b4fc;
+}
+.info-wide textarea { height: 64px; resize: vertical; }
+.info-hint { font-size: 11px; color: #94a3b8; line-height: 1.4; font-style: normal; }
+/* ⚠ Жёлтым метится **изменённое поле ключа**, и только пока оно изменено:
+   постоянно горящее предупреждение перестают читать. */
+.info-hint-warn .info-hint { color: #92400e; }
+.info-hint-warn .info-hint b { color: #b45309; }
+.info-edited { font-style: normal; color: #b45309; }
+.info-edited a { color: inherit; }
+
+/* Кнопка чтения панели и отметка о съёме — в строке заголовка параметров. */
+.info-get { margin-left: 4px; }
+.info-when { font-size: 11px; color: #94a3b8; text-transform: none; letter-spacing: 0; font-weight: 400; }
+
+/* Подвал: причина отказа слева, «Сохранить» справа. ⚠ Прижат к правому краю, как
+   у прочих форм раздела, и не уезжает за край на узкой колонке. */
+.info-foot {
+    display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+    margin-top: 14px; padding-top: 10px; border-top: 1px solid #f1f5f9;
+}
+.info-why { margin-right: auto; font-size: 12px; color: #b91c1c; }
 
 /* ⚠ Окно описания снимка **крупнее соседних**, и это не вкусовщина: в нём правят
    абзац текста и строку тегов. В 560 пикселях описание шло в шесть строк с
