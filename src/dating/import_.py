@@ -106,25 +106,25 @@ def import_card(extract: dict, now: datetime) -> dict:
     if not isinstance(extract, dict) or not extract:
         return {}
 
-    site_uid = _text(extract.get('id'))
-    login = _text(extract.get('login'))
+    site_uid = _text(scenario_field(extract, 'id'))
+    login = _text(scenario_field(extract, 'login'))
     if not site_uid and not login:
         return {}
 
     # Занятие дописываем к описанию, а не заводим своё поле: в карточке панели это
     # одна строка про человека, а колонки под неё в `profile_.profile` нет —
     # заводить её ради одного сайта значило бы менять форму кэша всем остальным.
-    about = _text(extract.get('about'))
-    occupation = _text(extract.get('occupation'))
+    about = _text(scenario_field(extract, 'about'))
+    occupation = _text(scenario_field(extract, 'occupation'))
     if occupation and occupation.lower() not in about.lower():
         about = f'{occupation}. {about}'.strip('. ').strip() if about else occupation
 
     return {'site_uid': site_uid[:IMPORT_LOGIN_MAX],
             'login': login[:IMPORT_LOGIN_MAX],
-            'name': _text(extract.get('name'))[:IMPORT_NAME_MAX],
-            'city': _text(extract.get('city'))[:IMPORT_CITY_MAX],
-            'photo_path': _text(extract.get('photo')),
-            'age': _age(extract.get('birth_year'), now),
+            'name': _text(scenario_field(extract, 'name'))[:IMPORT_NAME_MAX],
+            'city': _text(scenario_field(extract, 'city'))[:IMPORT_CITY_MAX],
+            'photo_path': _text(scenario_field(extract, 'photo')),
+            'age': _age(scenario_field(extract, 'birth_year'), now),
             'about': about[:IMPORT_ABOUT_MAX]}
 
 

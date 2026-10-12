@@ -16,6 +16,7 @@
 """
 
 from src.dating.profile_card import profile_card_merge
+from src.dating.scenario_field import scenario_field
 from src.dating.scenario import scenario_find
 
 from src.dating.role import ROLE_DEFAULT, role_scenario
@@ -92,7 +93,7 @@ def _profile_build(extract: dict, profile: dict, presence: dict) -> dict:
     """Собирает анкету из того, что вернули шаги `extract`."""
     card = {}
     for field in PROFILE_PAGE_FIELDS:
-        value = str(extract.get(field) or '').strip()
+        value = str(scenario_field(extract, field) or '').strip()
         if field in PROFILE_PAGE_FIRST:
             value = _first_real(value)
         card[field] = value

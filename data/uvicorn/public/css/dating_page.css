@@ -1045,17 +1045,6 @@
 .gallery-card #galleryText { height: 170px; resize: vertical; }
 .gallery-card #galleryTags { height: 52px; resize: vertical; }
 
-/* Иконка правки в шапке карточки анкеты. ⚠ Прижата вправо и к верху: шапка —
-   флексовая строка с фотографией и тремя строками текста, и по центру иконка
-   встала бы напротив описания, а не напротив имени. */
-.card-edit {
-    margin-left: auto; align-self: flex-start; flex: 0 0 auto;
-    border: 0; background: none; cursor: pointer; padding: 2px 4px;
-    font-size: 14px; color: #94a3b8; line-height: 1;
-}
-.card-edit:hover { color: #4338ca; }
-.card-edit:focus-visible { outline: 2px solid #a5b4fc; outline-offset: 2px; }
-
 /* ── Карусель просмотра кадра ────────────────────────────────────────────────
    Листание фотографий поверх страницы: стрелки по бокам, подпись снизу.
    ⚠ Видео сюда не попадает — его полный кадр отдаёт просмотрщик Диска.

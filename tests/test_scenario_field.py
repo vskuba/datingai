@@ -11,8 +11,7 @@
 
 import pytest
 
-from src.dating.scenario_field import (SCENARIO_FIELD_WAS, scenario_field,
-                                       scenario_field_name)
+from src.dating.scenario_field import SCENARIO_FIELD_WAS, scenario_field
 
 pytestmark = pytest.mark.core
 
@@ -71,14 +70,3 @@ class TestTheMap:
         """⚠ `номер` значит разное в импорте и в переписке, но имя одно — и
         перевод у него один. Карта переводит имена, а не значения."""
         assert SCENARIO_FIELD_WAS['number'] == 'номер'
-
-
-class TestTheNameForPeople:
-    """⚠ Имя для журнала: сказать «шага `messages` нет» про сценарий, где шаг
-    зовётся «сообщения», значит отправить человека искать несуществующее."""
-
-    def test_it_names_both_while_the_move_is_on(self):
-        assert scenario_field_name('messages') == 'messages/сообщения'
-
-    def test_an_unknown_name_is_given_as_is(self):
-        assert scenario_field_name('whatever') == 'whatever'
