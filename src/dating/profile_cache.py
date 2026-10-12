@@ -23,12 +23,10 @@ import time
 import httpx
 
 from http_.http_pool import http_pool_transport
-from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating.json_column import json_column_load
 from src.dating.presence import DATING_PRESENCE_TIMEOUT, DATING_PRESENCE_UA
-from src.dating.profile_card import profile_card_keep
+from src.dating.profile_card import profile_card_merge
 from src.dating.proxy import proxy_url
 from src.dating.site.site_registry import site_registry_profile
 from src.dating.people import people_name_case
@@ -216,35 +214,15 @@ async def _profile_save_card(profile_id: int, card: dict) -> dict:
     Returns:
         dict: карточка, как она легла. Пустой словарь — записать не удалось.
 
-    ## ⚠⚠ Слияние, а не замена
+    ## ⚠ Само слияние живёт не здесь
 
-    Прежде здесь стоял `UPDATE profile SET profile = %s` — замена целиком. С
+    Прежде здесь стоял `UPDATE profile SET profile = %s` — замена целиком, и с
     появлением правки руками это стало затиранием: человек вписывает описание,
-    которого сайт не отдал, и ближайшая «Проверка» уносит вписанное.
+    которого сайт не отдал, и ближайшая «Проверка» уносит вписанное. Хуже того,
+    замена **выбрасывала ключи**, которых сайт не прислал.
 
-    ⚠ Хуже того, замена **выбрасывала ключи**, которых сайт не прислал: у
-    `card_parse` их шесть, и поле, отсутствующее в ответе, исчезало из карточки
-    вовсе — даже не правленое человеком.
-
-    ⚠ Отметки читаются **своим `SELECT` по месту**, а не приезжают доводом:
-    словарь анкеты собирают разные запросы, половина перечисляет колонки
-    поимённо, и забытая колонка в одном из них тихо вернула бы затирание. Тот же
-    довод, что у `profile_page._profile_save`.
+    Чинилось это слиянием, но слияние было написано **дважды**: здесь и в
+    `profile_page._profile_save`, слово в слово. Теперь оно одно —
+    `profile_card.profile_card_merge`, и объяснение правила лежит там же.
     """
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute('SELECT profile, profile_edited FROM profile '
-                             ' WHERE id = %s', (int(profile_id),))
-            row = dict(await db.fetchone() or {})
-            before = json_column_load(row.get('profile'))
-            kept = {**before, **profile_card_keep(card, row.get('profile_edited'))}
-
-            await db.execute('UPDATE profile SET profile = %s WHERE id = %s',
-                             (json.dumps(kept, ensure_ascii=False), int(profile_id)))
-            await db.connection.commit()
-
-        return kept
-    except Exception as e:
-        logger_info(f'[dating] кэш анкеты не записался: {e}')
-
-        return {}
+    return await profile_card_merge(profile_id, card, 'кэш анкеты не записался')

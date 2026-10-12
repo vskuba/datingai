@@ -50,6 +50,7 @@
 
 import json
 
+from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.json_column import json_column_list, json_column_load
@@ -260,6 +261,78 @@ async def profile_card_forget(profile_id: int, field: str) -> list[str]:
         await db.connection.commit()
 
     return left
+
+
+async def profile_card_merge(profile_id: int, fresh: dict, note: str) -> dict:
+    """Положить пришедшее с сайта, не затирая правленого руками.
+
+    Args:
+        profile_id: наш номер анкеты.
+        fresh: карточка или её часть, как её отдал сайт. Ключа нет — поле не
+            трогается вовсе.
+        note: чем назвать неудачу в журнале — у каждого вызывающего своя фраза.
+
+    Returns:
+        dict: карточка, как она **легла**. Пустой словарь значит «записать не
+        удалось»; вызывающие на это не падают.
+
+    ## ⚠⚠ Одна дверь вместо двух близнецов
+
+    Этот путь был написан дважды и слово в слово — `profile_page._profile_save` и
+    `profile_cache._profile_save_card` отличались только фразой в журнале, и в
+    докстринге обоих стояло «правятся парой». Чтение панели стало бы третьей
+    копией, то есть ровно той граблёй, что уже стоила проекту пропущенного
+    третьего писателя карточки.
+
+    ⚠ Импорт анкет сюда **не входит**, и это не упущение: у него решение
+    (`import_.import_plan`) и запись (роутер импорта) разведены намеренно, а
+    отметки он уважает своим путём, тем же `profile_card_keep`.
+
+    ## ⚠⚠ Слияние `parameters` — глубокое, и это не придирка
+
+    `profile_card_keep` выбрасывает из пришедшего помеченные подключи. У анкеты,
+    где человек правил **все** 21 поле, она вернёт `{'parameters': {}}` — и
+    плоское `{**before, **kept}` положило бы пустой словарь поверх полного,
+    стерев правленое руками целиком. У той самой анкеты, которую заполняли
+    дольше всех.
+
+    ⚠ Это **единственное** место с глубоким слиянием, и держится оно на том, что
+    вложенный ключ в карточке один. Появится второй — правило придётся обобщать,
+    а не копировать строкой ниже.
+
+    ## ⚠ Сверки снимка здесь нет
+
+    Её не было и у обоих близнецов. Безусловный `UPDATE` уносит то, что записали в
+    щель между чтением и записью; у писателей со стороны сайта это маловероятно
+    (круги по одной анкете парами не ходят), а у правки руками сверка есть
+    (`_card_claim`). Признак завести её и здесь: второй круг, пишущий карточку.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT profile, profile_edited FROM profile '
+                             ' WHERE id = %s', (int(profile_id),))
+            row = dict(await db.fetchone() or {})
+            if not row:
+                raise LookupError(f'анкеты #{int(profile_id)} нет')
+
+            before = json_column_load(row.get('profile'))
+            kept = profile_card_keep(fresh, row.get('profile_edited'))
+            card = {**before, **kept}
+
+            if 'parameters' in kept:
+                card['parameters'] = {**(before.get('parameters') or {}),
+                                      **kept['parameters']}
+
+            await db.execute('UPDATE profile SET profile = %s WHERE id = %s',
+                             (json.dumps(card, ensure_ascii=False),
+                              int(profile_id)))
+            await db.connection.commit()
+
+        return card
+    except Exception as e:
+        logger_info(f'[dating] {note}: {e}')
+
+        return {}
 
 
 def profile_card_why(error: Exception, login: str, uid: str) -> str:

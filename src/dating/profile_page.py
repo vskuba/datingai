@@ -15,13 +15,7 @@
 и отдельный заход не нужен. Опрос присутствия (раз в 15 секунд) сюда не заходит.
 """
 
-import json
-
-from logging_.logging_ import logger_info
-from mysql_.mysql_ import mysql_get_db_async
-
-from src.dating.json_column import json_column_load
-from src.dating.profile_card import profile_card_keep
+from src.dating.profile_card import profile_card_merge
 from src.dating.scenario import scenario_find
 
 from src.dating.role import ROLE_DEFAULT, role_scenario
@@ -150,35 +144,17 @@ async def _profile_save(profile_id: int, profile: dict) -> dict:
     (`login._card_empty`). Анкета, где впишут описание, но не впишут имя, попадает
     сюда при каждом входе.
 
-    ⚠⚠ **У этой функции есть близнец — `profile_cache._profile_save_card`**, и
-    устроен он так же: `SELECT` отметок, слияние правилом, `UPDATE`, отказ в
-    журнал. Они не слиты в одну нарочно — разные модули пишут карточку по разным
-    поводам (вход читает страницу кабинета, кэш отвечает кнопке «Проверка»), — но
-    **правятся парой**: заведи здесь сверку снимка, как у `_card_claim`, и там её
-    придётся завести тем же заходом. Иначе одна дорога защищена, другая нет, и
-    узнается это молча.
+    ## ⚠ Само слияние живёт не здесь
 
-    ## ⚠ Отметки читаются здесь, а не приезжают доводом
+    Правило «положить пришедшее, не затирая правленого руками» написано один раз —
+    `profile_card.profile_card_merge`. Прежде оно стояло здесь и в
+    `profile_cache._profile_save_card` **двумя копиями слово в слово**, и в
+    докстринге обоих было написано «правятся парой»; третьей копии потребовало
+    чтение панели, и копий не стало вовсе.
 
-    Словарь анкеты собирают шесть разных запросов, и половина перечисляет колонки
-    поимённо (`agent_site_uid` объясняет, чем это уже стоило). Спроси мы отметки у
+    ⚠ Отметки читает сама дверь, а не получает доводом: словарь анкеты собирают
+    шесть разных запросов, и половина перечисляет колонки поимённо
+    (`agent_site_uid` объясняет, чем это уже стоило). Спроси она отметки у
     вызывающего — забытая колонка в одном из запросов тихо вернула бы затирание.
-    Лишний `SELECT` случается не чаще раза на вход.
     """
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute('SELECT profile, profile_edited FROM profile '
-                             ' WHERE id = %s', (int(profile_id),))
-            row = dict(await db.fetchone() or {})
-            before = json_column_load(row.get('profile'))
-            card = {**before, **profile_card_keep(profile, row.get('profile_edited'))}
-
-            await db.execute('UPDATE profile SET profile = %s WHERE id = %s',
-                             (json.dumps(card, ensure_ascii=False), int(profile_id)))
-            await db.connection.commit()
-
-        return card
-    except Exception as e:
-        logger_info(f'[dating] анкета не записалась: {e}')
-
-        return {}
+    return await profile_card_merge(profile_id, profile, 'анкета не записалась')
