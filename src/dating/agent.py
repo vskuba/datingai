@@ -55,7 +55,10 @@ from logging_.logging_ import logger_info
 
 import re
 
+from text_.text_trim_lines import text_trim_lines
+
 from src.dating.log import log_write
+from src.dating.profile_param import PROFILE_PARAM_BIO_MAX, profile_param_bio
 from src.dating.role import ROLE_DEFAULT
 from src.dating.site_setting import site_setting
 from src.dating.site_snapshot import site_rows
@@ -375,6 +378,10 @@ def agent_bio(card: dict) -> str:
     биографию ждёт `dating_girl_create`.
 
     Язык английский: узел Dating объявляет `en`, и на нём же ведётся переписка.
+
+    ⚠ Параметры анкеты (рост, волосы, увлечения — реестр `profile_param.py`) идут
+    **вторым абзацем**, строками «Label: value», и только непустые: «Hair: —»
+    модель читает как факт и может об этом заговорить.
     """
     name = str(card.get('name') or '').strip()
     city = str(card.get('city') or '').strip()
@@ -397,10 +404,25 @@ def agent_bio(card: dict) -> str:
 
     # Одно имя — ещё не биография: фактов из него не добыть, и агент вышел бы
     # пустым. Пусть лучше журнал скажет «сначала прочитайте анкету».
+    #
+    # ⚠ Параметры в это условие **не входят**: оно про анкету, прочитанную с
+    # сайта, а параметры снимаются отдельной кнопкой и бывают у анкеты, которую
+    # ещё ни разу не читали.
     if not about and not city and not age:
         return ''
 
-    return ' '.join(parts)
+    prose = ' '.join(parts)
+
+    # Справка по полям анкеты — вторым абзацем, пустой строкой от прозы: модель
+    # должна видеть границу между рассказом от первого лица и перечнем.
+    #
+    # ⚠⚠ Предел применяется **только к блоку**, а не ко всему тексту. Проза
+    # собрана в одну строку, и обрезка по границе строки унесла бы её целиком —
+    # агент остался бы без имени. Первая строка блока короткая при любой анкете.
+    block = text_trim_lines('\n'.join(profile_param_bio(card.get('parameters'))),
+                            PROFILE_PARAM_BIO_MAX)
+
+    return f'{prose}\n\n{block}' if block else prose
 
 
 async def agent_site(site_id: int) -> str:
