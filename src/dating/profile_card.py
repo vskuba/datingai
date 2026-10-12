@@ -53,15 +53,29 @@ import json
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.json_column import json_column_list, json_column_load
+from src.dating.profile_param import (PROFILE_PARAM_KEYS, PROFILE_PARAM_PREFIX,
+                                      profile_param_frame)
 
-# Поля карточки, которые правят руками. ⚠ Имена — ключи самой карточки, а не
-# подписи окна: по ним же ложится отметка, и второе написание развело бы их.
-PROFILE_CARD_FIELDS = ('id', 'name', 'age', 'city', 'about')
+# Поля карточки верхнего уровня, которые правят руками. ⚠ Имена — ключи самой
+# карточки, а не подписи окна: по ним же ложится отметка, и второе написание
+# развело бы их.
+PROFILE_CARD_OWN = ('id', 'name', 'age', 'city', 'about')
 
-# Чем «пусто» у каждого поля. ⚠ Нужно потому, что карточку собирают разные
-# писатели и ключа может не быть вовсе: без этого «возраст 0 там, где ключа нет»
-# читалось бы как правка, и окно, открытое поглядеть и сохранённое без изменений,
-# заморозило бы возраст навсегда.
+# Всё правимое разом: свои поля плюс параметры составными именами.
+#
+# ⚠⚠ Составное имя (`parameters.height`), а не своя колонка отметок: механизм
+# `profile_edited` уже есть, и вторая колонка рядом отвечала бы на тот же вопрос
+# дважды. На этом списке стоят три проверки — отсев чужих имён в
+# `profile_card_edited`, сверка в `profile_card_forget` и сверка в ручке.
+PROFILE_CARD_FIELDS = PROFILE_CARD_OWN + tuple(
+    PROFILE_PARAM_PREFIX + key for key in PROFILE_PARAM_KEYS)
+
+# Чем «пусто» у каждого **своего** поля. ⚠ Нужно потому, что карточку собирают
+# разные писатели и ключа может не быть вовсе: без этого «возраст 0 там, где ключа
+# нет» читалось бы как правка, и окно, открытое поглядеть и сохранённое без
+# изменений, заморозило бы возраст навсегда.
+#
+# ⚠ Параметров здесь нет: пусто у них у всех одно — пустая строка.
 PROFILE_CARD_EMPTY = {'id': '', 'name': '', 'age': 0, 'city': '', 'about': ''}
 
 
@@ -96,10 +110,26 @@ def profile_card_keep(fresh: dict, edited) -> dict:
 
     Returns:
         dict: копия `fresh` без правленых ключей. Отметок нет — копия целиком.
+
+    ⚠ Вложенный `parameters` разбирается **поключево**: отметка `parameters.height`
+    роняет только его, соседние остаются. Сам ключ при этом не исчезает никогда.
     """
     skip = set(profile_card_edited(edited))
+    got = fresh or {}
 
-    return {name: value for name, value in (fresh or {}).items() if name not in skip}
+    out = {name: value for name, value in got.items()
+           if name not in skip and name != 'parameters'}
+
+    # ⚠⚠ Ключ `parameters` остаётся **даже когда из него выброшено всё**: пустой
+    # словарь говорит «параметры пришли, но все правлены руками», и на этом стоит
+    # глубокое слияние в `profile_card_merge`. Исчезни он — слияние не узнало бы,
+    # что параметры вообще приходили, и положило бы прежние поверх.
+    if 'parameters' in got:
+        inner = dict(got.get('parameters') or {})
+        out['parameters'] = {key: value for key, value in inner.items()
+                             if PROFILE_PARAM_PREFIX + key not in skip}
+
+    return out
 
 
 # Имена уникальных ключей таблицы. ⚠ Нужны **оба и порознь**: по ним причина
@@ -375,7 +405,7 @@ def _card_apply(row: dict, values: dict, first_login=None) -> tuple[str, dict, l
     card = dict(before)
     edited = set(profile_card_edited(row.get('profile_edited')))
 
-    for field in PROFILE_CARD_FIELDS:
+    for field in PROFILE_CARD_OWN:
         if field not in values:
             continue
 
@@ -384,6 +414,27 @@ def _card_apply(row: dict, values: dict, first_login=None) -> tuple[str, dict, l
 
         card[field] = values[field]
         edited.add(field)
+
+    # ⚠ Параметры — своим проходом, потому что лежат вложенным словарём, а правило
+    # то же: метится **изменённое**, а не присланное. Ключа `parameters` в
+    # присланном нет вовсе — не трогаем ничего, как и у прочих полей.
+    if 'parameters' in values:
+        was = dict(before.get('parameters') or {})
+        now = dict(was)
+        for key, value in (values.get('parameters') or {}).items():
+            if key not in PROFILE_PARAM_KEYS:
+                continue
+
+            if str(was.get(key) or '').strip() == str(value or '').strip():
+                continue
+
+            now[key] = value
+            edited.add(PROFILE_PARAM_PREFIX + key)
+
+        # ⚠ Каркас восстанавливается на **каждой** записи руками: анкета, у которой
+        # параметров не было вовсе, получает их здесь — и окно с био дальше видят
+        # одно и то же у всех.
+        card['parameters'] = profile_param_frame(now)
 
     submitted = str(values.get('login') or '').strip()
     baseline = str(first_login if first_login is not None else row.get('login') or '')

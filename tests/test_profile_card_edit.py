@@ -99,16 +99,24 @@ class TestKeepRule:
         assert profile_card_edited('{не json') == []
 
     def test_every_field_has_its_empty(self):
-        """⚠ У каждого правимого поля объявлено, чем у него «пусто».
+        """⚠ У каждого своего правимого поля объявлено, чем у него «пусто».
 
         Без этого «возраст 0 там, где ключа нет вовсе» считалось бы правкой, и
         открытое окно, сохранённое без изменений, пометило бы возраст правленым.
-        """
-        from src.dating.profile_card import PROFILE_CARD_EMPTY
 
-        assert set(PROFILE_CARD_EMPTY) == set(PROFILE_CARD_FIELDS)
+        ⚠ Сверяется с `PROFILE_CARD_OWN`, а не со всем `PROFILE_CARD_FIELDS`:
+        последний несёт ещё и параметры (`parameters.height`), а их `_same` не
+        сравнивает вовсе — у них свой проход и одно «пусто» на всех, пустая
+        строка. Запись в этот словарь для параметра была бы мёртвой.
+        """
+        from src.dating.profile_card import (PROFILE_CARD_EMPTY,
+                                             PROFILE_CARD_OWN)
+
+        assert set(PROFILE_CARD_EMPTY) == set(PROFILE_CARD_OWN)
         assert PROFILE_CARD_EMPTY['age'] == 0
         assert PROFILE_CARD_EMPTY['about'] == ''
+        assert not [one for one in PROFILE_CARD_EMPTY if one.startswith('parameters.')], \
+            'у параметра появилось своё «пусто» — его никто не читает'
 
 
 class TestSave:
