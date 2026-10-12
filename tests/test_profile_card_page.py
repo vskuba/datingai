@@ -170,9 +170,19 @@ def test_windows_close_on_mousedown_not_click(page):
 
 
 def test_the_edit_window_closes_on_escape(page):
-    """⚠ Escape — то, что человек пробует первым, не найдя кнопки закрытия."""
-    keep = page[page.index('function cardEditModal'):]
-    assert "'Escape'" in keep[:6000], 'окно правки не закрывается по Escape'
+    """⚠ Escape — то, что человек пробует первым, не найдя кнопки закрытия.
+
+    ⚠ Ищем **в теле функции**, а не в первых N знаках после её начала. Прежде
+    стояло `keep[:6000]`, и мерка сломалась ровно так, как такие мерки и ломаются:
+    окно получило вторую колонку, обработчик Escape уехал на 6100-й знак, и
+    проверка закричала «не закрывается по Escape» про живой, ничем не тронутый
+    код. Граница функции — следующее объявление того же уровня отступа.
+    """
+    body = page[page.index('function cardEditModal'):]
+    end = body.find('\n    function ', 1)
+    keep = body[:end] if end > 0 else body
+
+    assert "'Escape'" in keep, 'окно правки не закрывается по Escape'
 
 
 def test_script_has_no_syntax_error(page):

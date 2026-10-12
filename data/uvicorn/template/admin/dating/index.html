@@ -2292,10 +2292,36 @@
                 : '')
             + '</span>';
 
+        // Строки параметров — **по реестру с сервера**, а не по своему списку:
+        // своя копия подписей и порядка разошлась бы с кодом молча. Та же грабля
+        // уже закрыта у словаря тегов галереи.
+        //
+        // ⚠ Отметка «правлено руками» у каждой строки — тем же `label`, что у шести
+        // полей слева: имя поля составное (`parameters.height`), и ссылка «вернуть
+        // сайту» работает без единой правки.
+        //
+        // ⚠ Подпись идёт через `esc()`, в отличие от литералов слева: она приходит
+        // с сервера, а на этой странице уже была настоящая инъекция через
+        // неэкранированный атрибут.
+        const params = data.parameters || {};
+        const paramRows = () => (data.parameter_fields || []).map(one => {
+            const key = String(one.key || '');
+            const value = String(params[key] || '');
+            const field = one.kind === 'area'
+                ? `<textarea data-param="${esc(key)}" maxlength="2000">${esc(value)}</textarea>`
+                : `<input type="text" data-param="${esc(key)}" maxlength="190"`
+                  + ` value="${esc(value)}">`;
+
+            return '<label class="dating-modal-field">'
+                + label('parameters.' + key, esc(String(one.title || key)))
+                + field + '</label>';
+        }).join('');
+
         const back = document.createElement('div');
         back.className = 'dating-modal-back';
-        back.innerHTML = '<div class="dating-modal-box" onclick="event.stopPropagation()">'
+        back.innerHTML = '<div class="dating-modal-box card-edit" onclick="event.stopPropagation()">'
             + '<div class="dating-modal-head">Персональные данные анкеты</div>'
+            + '<div class="card-edit-grid"><div>'
 
             + '<label class="dating-modal-field">' + label('login', 'Почта')
             + '<input type="text" id="cardLogin" maxlength="190" spellcheck="false"'
@@ -2332,6 +2358,21 @@
             + '<label class="dating-modal-field">' + label('about', 'Описание')
             + `<textarea id="cardAbout" maxlength="2000">${esc(String(p.about || ''))}</textarea>`
             + '<i class="dating-modal-hint">Его читает агент и письма — «О себе».</i></label>'
+
+            + '</div><div class="card-edit-side">'
+            + '<div class="card-edit-head">Параметры с сайта</div>'
+            + '<i class="dating-modal-hint">Их читает агент в чате — всё, что он'
+            + ' знает о девушке, кроме описания. ⚠ Правка здесь меняет <b>нашу</b>'
+            + ' карточку: на сайт ничего не пишется.</i>'
+            + paramRows()
+            + '<button type="button" class="dating-btn card-edit-get"'
+            + ' id="cardParamsGet">Обновить с сайта</button>'
+            + '<div class="card-edit-when" id="cardParamsWhen">'
+            + (data.parameters_at
+                ? `снято ${esc(timeShift(data.parameters_at))}`
+                : 'с сайта ещё не снимали')
+            + '</div>'
+            + '</div></div>'
 
             + '<div class="dating-modal-foot">'
             + '<span class="dating-modal-why" id="cardEditWhy"></span>'
@@ -2401,6 +2442,37 @@
         document.getElementById('cardEditOff')
                 .addEventListener('click', () => shut());
 
+        // ⚠ Кнопка **только читает** панель. Набранное в полях она перезаписывает
+        // тем, что отдал сайт, — и это ожидаемо: человек нажал «обновить с сайта».
+        // Правленое руками сайт не трогает, об этом говорит отметка у строки.
+        //
+        // ⚠ Окно не закрывается: человек смотрит, что приехало, и решает, править
+        // ли дальше. Записано уже всё — ручка кладёт параметры сама.
+        document.getElementById('cardParamsGet').addEventListener('click', async () => {
+            const button = document.getElementById('cardParamsGet');
+            const was = button.textContent;
+            button.disabled = true;
+            button.textContent = 'читаю панель…';
+            why.textContent = '';
+
+            try {
+                const got = await postData(
+                    `${BASE}/api/dating/profile/${currentId}/card/parameters`);
+                const fresh = (got && got.result && got.result.parameters) || {};
+                back.querySelectorAll('[data-param]').forEach(el => {
+                    el.value = String(fresh[el.dataset.param] || '');
+                });
+                const at = (got && got.result && got.result.parameters_at) || '';
+                document.getElementById('cardParamsWhen').textContent =
+                    at ? `снято ${timeShift(at)}` : 'с сайта ещё не снимали';
+            } catch (err) {
+                why.textContent = 'с сайта не снялось: ' + err.message;
+            } finally {
+                button.disabled = false;
+                button.textContent = was;
+            }
+        });
+
         document.getElementById('cardEditKeep').addEventListener('click', async () => {
             const was = currentId;
             const send = {
@@ -2410,6 +2482,12 @@
                 age: Number(document.getElementById('cardAge').value || 0),
                 city: document.getElementById('cardCity').value.trim(),
                 about: document.getElementById('cardAbout').value,
+                // ⚠ Собираем **из разметки**, а не из `data.parameters`: в поле
+                // лежит то, что человек набрал, и второй источник правды здесь
+                // означал бы молча потерянную правку.
+                parameters: Object.fromEntries(
+                    [...back.querySelectorAll('[data-param]')]
+                        .map(el => [el.dataset.param, el.value.trim()])),
             };
 
             try {
