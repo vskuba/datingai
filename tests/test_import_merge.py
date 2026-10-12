@@ -34,13 +34,13 @@ BASE = 'https://ladadate.com'
 # Ответ сценария списка — в том виде, в каком его отдаёт `extract_rows` соседа.
 # Снято с живого прогона, а не выдумано: имена полей русские, потому что так
 # названы шаги сценария.
-LIST_EXTRACT = {'анкеты': [
-    {'имя': 'Diana', 'город': 'Kyiv, UA', 'номер': '643694',
-     'ссылка': '/partner/agency/userprofile/edit/643694',
-     'фото': '/content/photos/9a5770f8-s.jpg'},
-    {'имя': 'Ekaterina', 'город': 'Kyiv, UA', 'номер': '622715',
-     'ссылка': '/partner/agency/userprofile/edit/622715',
-     'фото': '/content/photos/6b98b24b-s.jpg'},
+LIST_EXTRACT = {'profiles': [
+    {'name': 'Diana', 'city': 'Kyiv, UA', 'number': '643694',
+     'link': '/partner/agency/userprofile/edit/643694',
+     'photo': '/content/photos/9a5770f8-s.jpg'},
+    {'name': 'Ekaterina', 'city': 'Kyiv, UA', 'number': '622715',
+     'link': '/partner/agency/userprofile/edit/622715',
+     'photo': '/content/photos/6b98b24b-s.jpg'},
 ]}
 
 # Ответ сценария карточки — тоже с живого прогона.
@@ -63,7 +63,7 @@ class TestImportRows:
     def test_row_without_number_skipped(self):
         """Без номера запись пропускается: по нему ищут анкету, и пустой склеил бы
         разные в одну."""
-        rows = import_rows({'анкеты': [{'имя': 'Без номера', 'номер': ''}]})
+        rows = import_rows({'profiles': [{'name': 'Без номера', 'number': ''}]})
 
         assert rows == []
 
@@ -71,8 +71,8 @@ class TestImportRows:
         """Мусор вместо списка — пустой результат, а не исключение: ответ приходит
         из сети, и одна кривая строка не должна ронять импорт целиком."""
         assert import_rows({}) == []
-        assert import_rows({'анкеты': 'строка'}) == []
-        assert import_rows({'анкеты': [None, 42]}) == []
+        assert import_rows({'profiles': 'строка'}) == []
+        assert import_rows({'profiles': [None, 42]}) == []
 
 
 class TestImportCard:
@@ -198,14 +198,14 @@ class TestImportPlan:
         """Сайт не отдал город — это не «город стёрли». Иначе импорт без карточек
         затирал бы то, что дочитал импорт с карточками."""
         known = import_plan({'site_uid': '1', 'name': 'Diana', 'city': 'Kyiv',
-                                    'about': 'текст'}, None, BASE)['card']
+                                    'about': 'text'}, None, BASE)['card']
         found = {'id': 3, 'login': '1', 'card': known}
 
         plan = import_plan({'site_uid': '1', 'name': 'Diana'}, found, BASE)
 
         assert plan['action'] == 'same'
         assert plan['card']['city'] == 'Kyiv', 'известное осталось на месте'
-        assert plan['card']['about'] == 'текст'
+        assert plan['card']['about'] == 'text'
 
     def test_known_survives_a_real_update(self):
         """И то же самое, когда обновление всё-таки идёт.
@@ -216,7 +216,7 @@ class TestImportPlan:
         это только человек, открывший анкету через неделю.
         """
         known = import_plan({'site_uid': '1', 'name': 'Diana', 'city': 'Kyiv',
-                                    'about': 'текст'}, None, BASE)['card']
+                                    'about': 'text'}, None, BASE)['card']
         found = {'id': 3, 'login': '1', 'card': known}
 
         plan = import_plan({'site_uid': '1', 'name': 'Дарья'}, found, BASE)
@@ -224,7 +224,7 @@ class TestImportPlan:
         assert plan['action'] == 'update' and plan['changed'] == ['name']
         assert plan['card']['name'] == 'Дарья', 'имя обновилось'
         assert plan['card']['city'] == 'Kyiv', 'город не стёрт пустотой из списка'
-        assert plan['card']['about'] == 'текст'
+        assert plan['card']['about'] == 'text'
 
     def test_login_of_found_profile_is_kept(self):
         """Логин найденной анкеты не переписывается **никогда**: его правит человек

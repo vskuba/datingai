@@ -38,6 +38,7 @@
 from datetime import datetime
 
 from src.dating.profile_card import profile_card_edited, profile_card_keep
+from src.dating.scenario_field import scenario_field
 
 # Год, раньше которого рождения не бывает: страница отдаёт год строкой, и мусор
 # вроде «—» или «0» превратился бы в возраст в две тысячи лет.
@@ -55,19 +56,21 @@ IMPORT_ABOUT_MAX = 2000
 IMPORT_CARD_FIELDS = ('name', 'photo', 'age', 'city', 'about')
 
 
-def import_rows(extract: dict, field: str = 'анкеты') -> list[dict]:
+def import_rows(extract: dict, field: str = 'profiles') -> list[dict]:
     """Строки списка из ответа сценария — в наш вид.
 
     Args:
         extract: `extract` прогона; под `field` лежит список записей
             (`extract_rows` у соседа отдаёт именно список, а не склейку строк).
-        field: имя шага, под которым сосед вернул записи.
+        field: имя шага, под которым сосед вернул записи. Новое, латиницей —
+            старое сценарий отдаёт до своей выкладки, и его подставит
+            `scenario_field`.
 
     Returns:
         list: записи `{site_uid, name, city, photo_path}`. Без номера запись
         пропускается — по нему ищут анкету, и пустой склеил бы разные в одну.
     """
-    rows = (extract or {}).get(field)
+    rows = scenario_field(extract, field)
     if not isinstance(rows, list):
         return []
 
@@ -76,14 +79,14 @@ def import_rows(extract: dict, field: str = 'анкеты') -> list[dict]:
         if not isinstance(row, dict):
             continue
 
-        site_uid = _text(row.get('номер'))  # cyrillic-key: имя шага extract в сценарии у соседа
+        site_uid = _text(scenario_field(row, 'number'))
         if not site_uid:
             continue
 
         found.append({'site_uid': site_uid[:IMPORT_LOGIN_MAX],
-                      'name': _text(row.get('имя'))[:IMPORT_NAME_MAX],  # cyrillic-key: имя шага extract в сценарии у соседа
-                      'city': _text(row.get('город'))[:IMPORT_CITY_MAX],  # cyrillic-key: имя шага extract в сценарии у соседа
-                      'photo_path': _text(row.get('фото'))})  # cyrillic-key: имя шага extract в сценарии у соседа
+                      'name': _text(scenario_field(row, 'name'))[:IMPORT_NAME_MAX],
+                      'city': _text(scenario_field(row, 'city'))[:IMPORT_CITY_MAX],
+                      'photo_path': _text(scenario_field(row, 'photo'))})
 
     return found
 

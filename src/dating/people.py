@@ -34,6 +34,8 @@
 from text_.text_emoji import text_emoji_same
 import re
 
+from src.dating.scenario_field import scenario_field
+
 # Номер анкеты в ссылке. Два вида, потому что списки сняты с разных страниц:
 # `/profile/812886-men-from-france` в кабинете и `/chat#181685` в чате.
 PEOPLE_UID_RE = re.compile(r'/profile/(\d+)|#(\d+)')
@@ -113,13 +115,15 @@ def people_rows(extract: dict, field: str) -> list[dict]:
 
     Args:
         extract: `extract` прогона сценария.
-        field: имя шага, под которым лежат записи («избранные», «мужчины»).
+        field: имя шага, под которым лежат записи (`favorites`, `men`). Новое,
+            латиницей — старое подставит `scenario_field`, пока сценарии не
+            переименованы.
 
     Returns:
         list: записи `{uid, name, age, photo, online, is_new, link}`. Запись без
         номера пропускается: по нему её узнают, и пустой склеил бы разных в одну.
     """
-    rows = (extract or {}).get(field)
+    rows = scenario_field(extract, field)
     if not isinstance(rows, list):
         return []
 
@@ -128,9 +132,9 @@ def people_rows(extract: dict, field: str) -> list[dict]:
         if not isinstance(row, dict):
             continue
 
-        link = str(row.get('ссылка') or '').strip()  # cyrillic-key: имя шага extract в сценарии у соседа
-        photo = _photo(row.get('фото'))  # cyrillic-key: имя шага extract в сценарии у соседа
-        name, age = _name_age(row.get('имя'))  # cyrillic-key: имя шага extract в сценарии у соседа
+        link = str(scenario_field(row, 'link') or '').strip()
+        photo = _photo(scenario_field(row, 'photo'))
+        name, age = _name_age(scenario_field(row, 'name'))
 
         # Шаблон разметки, а не человек: сайт держит в списке скрытую строку-образец
         # и заполняет её скриптом. Отсекаем по тексту — своего признака у неё нет.
@@ -160,8 +164,10 @@ def people_rows(extract: dict, field: str) -> list[dict]:
                       # страница сводит человека из кабинета с ним же из чата:
                       # номера у них разные (в чате его нет вовсе), а файл один.
                       'photo_uid': people_photo_uid(photo),
-                      'online': PEOPLE_ONLINE_MARK in str(row.get('статус_класс') or ''),  # cyrillic-key: имя шага extract в сценарии у соседа
-                      'is_new': bool(str(row.get('новый') or '').strip()),  # cyrillic-key: имя шага extract в сценарии у соседа
+                      'online': PEOPLE_ONLINE_MARK in str(
+                          scenario_field(row, 'status_class') or ''),
+                      'is_new': bool(str(
+                          scenario_field(row, 'is_new') or '').strip()),
                       'link': link})
 
     return found

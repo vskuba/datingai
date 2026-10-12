@@ -54,13 +54,13 @@ class TestBlocks:
     def test_both_blocks_come_out(self):
         got = DatingSiteAbout().parse(PAGE)
 
-        assert 'Occupation' in got['анкета']
-        assert 'Villacis' in got['шапка']
+        assert 'Occupation' in got['profile']
+        assert 'Villacis' in got['head']
 
     def test_a_missing_block_is_empty_not_a_crash(self):
         """Блока нет — пустая строка: сайт сменил вёрстку либо отдал форму входа."""
         assert DatingSiteAbout().parse('<html><body>ничего</body></html>') \
-            == {'анкета': '', 'шапка': ''}
+            == {'profile': '', 'head': ''}
 
     def test_nesting_is_counted_not_guessed(self):
         """⚠⚠ Блок берётся по балансу тегов, а не «до конца строки».
@@ -108,7 +108,7 @@ class TestHeader:
     """Шапка: имя и возраст."""
 
     def test_name_and_age(self):
-        name, age = companion_about_head(DatingSiteAbout().parse(PAGE)['шапка'])
+        name, age = companion_about_head(DatingSiteAbout().parse(PAGE)['head'])
 
         assert (name, age) == ('Edison Gustavo Solís Villacis', 66)
 
@@ -129,7 +129,7 @@ class TestFields:
     """Поля анкеты — разбор общий с прежним, сценарным."""
 
     def test_the_same_parser_reads_http_text(self):
-        fields = companion_about_parse(DatingSiteAbout().parse(PAGE)['анкета'])
+        fields = companion_about_parse(DatingSiteAbout().parse(PAGE)['profile'])
 
         assert fields.get('Id:') == '706079'
         assert fields.get('Occupation') == 'driver'
@@ -154,11 +154,11 @@ class TestDriverRegistry:
         """Сайту с другой вёрсткой класса не нужно — хватит `presence.about`."""
         driver = site_registry_about({'about': {
             'path': '/men/{uid}',
-            'blocks': {'анкета': 'x-info'},
+            'blocks': {'profile': 'x-info'},
             'drop': ['Показать ещё']}})
 
         assert driver.url('https://site.tld/', '77') == 'https://site.tld/men/77'
-        assert driver.blocks == {'анкета': 'x-info'}
+        assert driver.blocks == {'profile': 'x-info'}
         assert driver.text('<p>текст</p><a>Показать ещё</a>') == 'текст'
 
 

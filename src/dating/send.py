@@ -41,6 +41,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.dating.online import online_check
 from src.dating.ready import password_pick
 from src.dating.scenario import scenario_run
+from src.dating.scenario_field import scenario_field
 from src.dating.site_setting import site_setting
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
                                        rhapsody_api_site_variable)
@@ -302,7 +303,7 @@ async def _send_scenario(profile: dict, to_uid: str, text: str, message_uid: str
         return _fail(f"сценарий встал на шаге {run.get('step_no')}: {run.get('error')}")
 
     return {'ok': True, 'error': '', 'offline': False,
-            'response': str((run.get('extract') or {}).get('отправлено') or ''),  # cyrillic-key: имя шага extract в сценарии у соседа
+            'response': str(scenario_field(run.get('extract'), 'sent') or ''),
             'message_uid': message_uid}
 
 

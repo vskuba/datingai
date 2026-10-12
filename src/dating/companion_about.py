@@ -45,6 +45,7 @@ from logging_.logging_ import logger_info
 from src.dating.json_column import json_column_load
 from src.dating.ready import password_pick
 from src.dating.scenario import scenario_run
+from src.dating.scenario_field import scenario_field
 from src.dating.site.site_registry import site_registry_about
 from src.dating.site_setting import site_seconds, site_setting
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
@@ -341,7 +342,7 @@ async def companion_about_http(profile: dict, uid: str) -> dict:
 
     blocks = driver.parse(answer.text)
 
-    if not blocks.get('анкета'):  # cyrillic-key: имя шага extract в сценарии у соседа
+    if not scenario_field(blocks, 'profile'):
         # ⚠ Пустой блок — это не «у человека ничего не написано», а «страница не
         # та»: сессия протухла и нас увели на вход, либо сайт поменял вёрстку.
         # Отличить важно: первое лечится входом, второе — правкой класса.
@@ -424,9 +425,9 @@ async def companion_about_fetch(profile: dict, uid: str) -> dict:
             f"сценарий встал на шаге {run.get('step_no')}: {run.get('error')}")
 
     extract = run.get('extract') or {}
-    fields = companion_about_parse(extract.get('анкета'))  # cyrillic-key: имя шага extract в сценарии у соседа
+    fields = companion_about_parse(scenario_field(extract, 'profile'))
     city, country = companion_about_place(fields)
-    name, age = companion_about_head(extract.get('шапка'))  # cyrillic-key: имя шага extract в сценарии у соседа
+    name, age = companion_about_head(scenario_field(extract, 'head'))
 
     # ⚠ Номер сверяем с тем, что просили. Сайт мог увести на чужую анкету — по
     # опечатке в номере или редиректом, — и записать чужие сведения человеку было
@@ -598,9 +599,9 @@ def _from_blocks(blocks: dict, uid: str) -> dict:
     Разбор один на оба пути намеренно: страница одна и та же, и второй его вид
     разошёлся бы с первым на первой же правке подписей.
     """
-    fields = companion_about_parse(blocks.get('анкета'))  # cyrillic-key: имя шага extract в сценарии у соседа
+    fields = companion_about_parse(scenario_field(blocks, 'profile'))
     city, country = companion_about_place(fields)
-    name, age = companion_about_head(blocks.get('шапка'))  # cyrillic-key: имя шага extract в сценарии у соседа
+    name, age = companion_about_head(scenario_field(blocks, 'head'))
 
     got_uid = str(fields.get('Id:') or '').strip()
     if got_uid and got_uid != str(uid):

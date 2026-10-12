@@ -125,17 +125,17 @@ PEOPLE_FLOOR_SEC = 15
 # заводится строкой здесь, без нового кода.
 PEOPLE_KINDS = {
     'favorite': {'scenario': 'избранные собеседники: список',
-                 'field': 'избранные',
+                 'field': 'favorites',
                  'variables': {'favorites_side': 'favorites'}},
     'online': {'scenario': 'анкеты мужчин: список',
-               'field': 'мужчины',
+               'field': 'men',
                'variables': {'status_filter': 'online'}},
     # Диалоги снимаются со страницы чата, а не из кабинета: там список тех, с кем
     # переписка уже есть. Отдельного класса у строк на той странице нет вовсе —
     # сценарий отбирает их по наличию фотографии внутри (`li:has(img)`), чем и
     # отсекает вкладки «ONLINE MEN» и «FAVORITES».
     'dialog': {'scenario': 'чат: список диалогов',
-               'field': 'диалоги',
+               'field': 'dialogs',
                'variables': {}},
 }
 

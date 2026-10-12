@@ -30,14 +30,14 @@ PROFILES = {'643694': 849, '486221': 853}
 
 # Строка панели — ровно в том виде, в каком её отдаёт сценарий. Снята с живой
 # страницы `userchatmessages`, поэтому и поля, и склейка «номер + имя» настоящие.
-ROW = {'номер': '36594474', 'когда': '2026-09-01 13:11:28',
-       'от_номер': '181685', 'от': '181685 Semen Gorbunkov',
-       'кому_номер': '643694', 'кому': '643694 Diana',
-       'текст': 'helo', 'текст_подсказка': 'helo'}
+ROW = {'number': '36594474', 'when': '2026-09-01 13:11:28',
+       'from_uid': '181685', 'from': '181685 Semen Gorbunkov',
+       'to_uid': '643694', 'to': '643694 Diana',
+       'text': 'helo', 'text_title': 'helo'}
 
 
 def _extract(*rows):
-    return {'сообщения': list(rows)}
+    return {'messages': list(rows)}
 
 
 def _row(**over):
@@ -64,8 +64,8 @@ class TestDirection:
         отдельный «диалог с самим собой».
         """
         rows = chat_panel_rows(_extract(_row(
-            **{'от_номер': '643694', 'от': '643694 Diana',
-               'кому_номер': '181685', 'кому': '181685 Semen Gorbunkov'})), PROFILES)
+            **{'from_uid': '643694', 'from': '643694 Diana',
+               'to_uid': '181685', 'to': '181685 Semen Gorbunkov'})), PROFILES)
 
         assert rows[0]['direction'] == 'out'
         assert rows[0]['sender_uid'] == '181685', 'в исходящем записан автор вместо собеседника'
@@ -78,14 +78,14 @@ class TestDirection:
         бы куда хуже.
         """
         rows = chat_panel_rows(_extract(_row(
-            **{'кому_номер': '999999', 'кому': '999999 Чужая'})), PROFILES)
+            **{'to_uid': '999999', 'to': '999999 Чужая'})), PROFILES)
 
         assert rows == []
 
     def test_both_sides_ours_counts_as_incoming(self):
         """Обе стороны наши — считаем входящим: получателю оно и пришло."""
         rows = chat_panel_rows(_extract(_row(
-            **{'от_номер': '486221', 'от': '486221 Elena'})), PROFILES)
+            **{'from_uid': '486221', 'from': '486221 Elena'})), PROFILES)
 
         assert rows[0]['direction'] == 'in' and rows[0]['profile_id'] == 849
 
@@ -115,7 +115,7 @@ class TestFields:
         обрезана вёрсткой. Какая длиннее, заранее не известно."""
         long_text = 'полный текст, который в теле обрезан'
         rows = chat_panel_rows(_extract(_row(
-            **{'текст': 'полный текст…', 'текст_подсказка': long_text})), PROFILES)
+            **{'text': 'полный текст…', 'text_title': long_text})), PROFILES)
 
         assert rows[0]['text'] == long_text
 
@@ -128,13 +128,13 @@ class TestFields:
     def test_unreadable_time_does_not_lose_the_message(self):
         """Формат даты сменился — сообщение всё равно наше. Запись ляжет со
         временем импорта: потерять её хуже, чем показать не тем часом."""
-        rows = chat_panel_rows(_extract(_row(**{'когда': 'вчера вечером'})), PROFILES)
+        rows = chat_panel_rows(_extract(_row(**{'when': 'вчера вечером'})), PROFILES)
 
         assert len(rows) == 1 and rows[0]['sent_at'] == ''
 
     def test_uid_falls_back_to_the_cell(self):
         """Ссылки в ячейке может не оказаться — номер тогда берётся из текста."""
-        rows = chat_panel_rows(_extract(_row(**{'от_номер': ''})), PROFILES)
+        rows = chat_panel_rows(_extract(_row(**{'from_uid': ''})), PROFILES)
 
         assert rows[0]['sender_uid'] == '181685'
 
@@ -144,12 +144,12 @@ class TestRefuses:
 
     def test_row_without_id_is_skipped(self):
         """Без номера сообщения нечем ловить повторы: каждый прогон плодил бы копии."""
-        assert chat_panel_rows(_extract(_row(**{'номер': ''})), PROFILES) == []
+        assert chat_panel_rows(_extract(_row(**{'number': ''})), PROFILES) == []
 
     def test_empty_text_is_skipped(self):
         """Пустая строка в ленте неотличима от сбоя разбора."""
         assert chat_panel_rows(_extract(
-            _row(**{'текст': '', 'текст_подсказка': ''})), PROFILES) == []
+            _row(**{'text': '', 'text_title': ''})), PROFILES) == []
 
     def test_repeat_inside_one_batch_is_dropped(self):
         """Один номер — одна запись, даже если панель показала строку дважды."""
@@ -158,7 +158,7 @@ class TestRefuses:
         assert len(rows) == 1
 
     def test_junk_extract_is_empty(self):
-        for extract in ({}, {'сообщения': None}, {'сообщения': ['строка']}, None):
+        for extract in ({}, {'messages': None}, {'messages': ['строка']}, None):
             assert chat_panel_rows(extract, PROFILES) == []
 
 

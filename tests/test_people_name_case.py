@@ -80,15 +80,15 @@ class TestDoors:
     def test_scenario_list(self):
         """Список собеседников сценарием — `people_rows`."""
         rows = people_rows({'все': [
-            {'имя': 'VINCENT PITCHEN\n,\xa0\n49',
-             'ссылка': 'https://ladadate.com/profile/812886-men-from-france',
-             'фото': '', 'статус_класс': '', 'новый': ''}]}, 'все')
+            {'name': 'VINCENT PITCHEN\n,\xa0\n49',
+             'link': 'https://ladadate.com/profile/812886-men-from-france',
+             'photo': '', 'status_class': '', 'is_new': ''}]}, 'все')
 
         assert rows[0]['name'] == 'Vincent Pitchen'
 
     @pytest.mark.parametrize('module, place', [
         ('src.dating.people_api', 'списки собеседников через API сайта'),
-        ('src.dating.favorite', 'избранные'),
+        ('src.dating.favorite', 'favorites'),
         ('src.dating.profile_cache', 'снимок собеседников кабинета'),
         ('src.dating.chat_panel', 'переписка из панели агентства'),
         ('src.dating.dialog', 'переписка со страницы чата'),

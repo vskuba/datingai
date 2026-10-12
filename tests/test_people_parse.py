@@ -17,17 +17,17 @@ from src.dating.people import people_rows
 
 pytestmark = pytest.mark.profile
 # Ответ сценария «избранные собеседники: список», как он пришёл с LadaDate.
-ROWS = {'избранные': [
-    {'имя': 'Vincent pitchen\n,\xa0\n49',
-     'ссылка': 'https://ladadate.com/profile/812886-men-from-france',
-     'фото': 'https://ladadate.com/content/photos/7f23711d.jpg',
-     'статус_класс': 'people__item-content people__item-offline',
-     'новый': 'new'},
-    {'имя': 'Mot\n,\xa0\n65',
-     'ссылка': 'https://ladadate.com/profile/102348-men-from-australia',
-     'фото': '/images/placeholder-loading.svg',
-     'статус_класс': 'people__item-content people__item-online',
-     'новый': ''},
+ROWS = {'favorites': [
+    {'name': 'Vincent pitchen\n,\xa0\n49',
+     'link': 'https://ladadate.com/profile/812886-men-from-france',
+     'photo': 'https://ladadate.com/content/photos/7f23711d.jpg',
+     'status_class': 'people__item-content people__item-offline',
+     'is_new': 'new'},
+    {'name': 'Mot\n,\xa0\n65',
+     'link': 'https://ladadate.com/profile/102348-men-from-australia',
+     'photo': '/images/placeholder-loading.svg',
+     'status_class': 'people__item-content people__item-online',
+     'is_new': ''},
 ]}
 
 
@@ -35,7 +35,7 @@ class TestPeopleRows:
     """Разбор списка целиком."""
 
     def test_rows_parsed(self):
-        rows = people_rows(ROWS, 'избранные')
+        rows = people_rows(ROWS, 'favorites')
 
         assert [row['uid'] for row in rows] == ['812886', '102348']
         assert rows[0]['name'] == 'Vincent Pitchen'
@@ -44,20 +44,20 @@ class TestPeopleRows:
     def test_uid_comes_from_link(self):
         """Номер анкеты берётся **из ссылки**: отдельного поля под него сайт не
         отдаёт, а без номера человека нечем отличить."""
-        rows = people_rows(ROWS, 'избранные')
+        rows = people_rows(ROWS, 'favorites')
 
         assert rows[1]['uid'] == '102348'
 
     def test_online_read_from_class(self):
         """«В сети» — по подстройке в классе карточки, а не по точному значению:
         рядом стоит `people__item-content`, и порядок сайт не гарантирует."""
-        rows = people_rows(ROWS, 'избранные')
+        rows = people_rows(ROWS, 'favorites')
 
         assert rows[0]['online'] is False
         assert rows[1]['online'] is True
 
     def test_new_mark(self):
-        rows = people_rows(ROWS, 'избранные')
+        rows = people_rows(ROWS, 'favorites')
 
         assert rows[0]['is_new'] is True
         assert rows[1]['is_new'] is False
@@ -69,7 +69,7 @@ class TestPeopleRows:
         `placeholder-loading.svg`. Оставь мы её — страница показала бы сломанную
         картинку вместо буквы имени.
         """
-        rows = people_rows(ROWS, 'избранные')
+        rows = people_rows(ROWS, 'favorites')
 
         assert rows[0]['photo'].endswith('7f23711d.jpg')
         assert rows[1]['photo'] == '', 'заглушка должна отбрасываться'
@@ -82,15 +82,15 @@ class TestPeopleRows:
         именно те диалоги, ради которых кнопку и нажимают; поймано на живом
         кабинете, где из тринадцати терялись двое.
         """
-        rows = people_rows({'избранные': [{'имя': 'Без ссылки', 'ссылка': ''}]},
-                                  'избранные')
+        rows = people_rows({'favorites': [{'name': 'Без ссылки', 'link': ''}]},
+                                  'favorites')
 
         assert len(rows) == 1
         assert rows[0]['uid'] == 'name:без ссылки'
 
     def test_row_without_anything_skipped(self):
         """Ни ссылки, ни фото, ни имени — записывать нечего."""
-        assert people_rows({'избранные': [{'имя': '', 'ссылка': ''}]}, 'избранные') == []
+        assert people_rows({'favorites': [{'name': '', 'link': ''}]}, 'favorites') == []
 
     def test_template_row_skipped(self):
         """Скрытая строка-образец не человек.
@@ -100,7 +100,7 @@ class TestPeopleRows:
         собеседник по имени «Name, age».
         """
         rows = people_rows(
-            {'избранные': [{'имя': 'Name, age', 'ссылка': '/chat#'}]}, 'избранные')
+            {'favorites': [{'name': 'Name, age', 'link': '/chat#'}]}, 'favorites')
 
         assert rows == []
 
@@ -112,11 +112,11 @@ class TestPeopleRows:
         бы в колонках дважды, а значок «есть переписка» не нашёл бы себе пару.
         """
         cabinet = people_rows({'x': [
-            {'имя': 'Semen', 'ссылка': '/profile/181685-men',
-             'фото': 'https://ladadate.com/content/photos/5fd22e8755dc4a8199d3570e9406bc4a.jpg'}]}, 'x')
+            {'name': 'Semen', 'link': '/profile/181685-men',
+             'photo': 'https://ladadate.com/content/photos/5fd22e8755dc4a8199d3570e9406bc4a.jpg'}]}, 'x')
         chat = people_rows({'x': [
-            {'имя': 'Semen', 'ссылка': '/chat#',
-             'фото': 'https://ladadate.com/content/photos/5fd22e8755dc4a8199d3570e9406bc4a-s.jpg'}]}, 'x')
+            {'name': 'Semen', 'link': '/chat#',
+             'photo': 'https://ladadate.com/content/photos/5fd22e8755dc4a8199d3570e9406bc4a-s.jpg'}]}, 'x')
 
         assert cabinet[0]['photo_uid'] == chat[0]['photo_uid']
         assert cabinet[0]['uid'] == '181685', 'из кабинета берётся настоящий номер'
@@ -127,17 +127,17 @@ class TestPeopleRows:
         Карточка попадает в съёмку дважды, и показать одного человека двумя
         строками хуже, чем потерять дубль.
         """
-        one = ROWS['избранные'][0]
-        rows = people_rows({'избранные': [one, dict(one)]}, 'избранные')
+        one = ROWS['favorites'][0]
+        rows = people_rows({'favorites': [one, dict(one)]}, 'favorites')
 
         assert len(rows) == 1
 
     def test_garbage_is_empty_list(self):
         """Мусор вместо списка — пустой результат, а не исключение: ответ приходит
         из сети, и одна кривая запись не должна ронять колонку целиком."""
-        assert people_rows({}, 'избранные') == []
-        assert people_rows({'избранные': 'строка'}, 'избранные') == []
-        assert people_rows({'избранные': [None, 42]}, 'избранные') == []
+        assert people_rows({}, 'favorites') == []
+        assert people_rows({'favorites': 'строка'}, 'favorites') == []
+        assert people_rows({'favorites': [None, 42]}, 'favorites') == []
         assert people_rows(ROWS, 'не-тот-шаг') == []
 
 
@@ -146,7 +146,7 @@ class TestNameAge:
 
     def _one(self, name: str) -> dict:
         rows = people_rows(
-            {'x': [{'имя': name, 'ссылка': '/profile/1-men-from-x'}]}, 'x')
+            {'x': [{'name': name, 'link': '/profile/1-men-from-x'}]}, 'x')
 
         return rows[0]
 
@@ -174,3 +174,38 @@ class TestNameAge:
 
     def test_empty_name(self):
         assert self._one('')['name'] == ''
+
+
+class TestTheOldNamesStillWork:
+    """⚠⚠ Сторож переходного периода: живые сценарии ещё шлют старые имена.
+
+    Переезд трёхзаходный — сперва выкладывается этот код, потом миграция
+    переименовывает шаги у соседа. Между двумя выкладками приходит **старое**
+    написание, и не пойми мы его, на это время встали бы все списки собеседников
+    разом.
+
+    ⚠ Этот класс уходит вместе с третьим заходом — когда из `SCENARIO_FIELD_WAS`
+    уберут старые имена. Пока таблица жива, жив и он.
+    """
+
+    def test_a_row_with_old_names_is_parsed(self):
+        got = people_rows(
+            {'избранные': [{'имя': 'Semen, 44',
+                            'ссылка': '/profile/181685-men-from-france',
+                            'фото': 'https://site.test/p.jpg',
+                            'статус_класс': 'people__item-online',
+                            'новый': 'NEW'}]},
+            'favorites')
+
+        assert len(got) == 1
+        assert got[0]['uid'] == '181685'
+        assert got[0]['name'] == 'Semen'
+        assert got[0]['age'] == 44
+        assert got[0]['online'] is True
+        assert got[0]['is_new'] is True
+
+    def test_the_old_field_name_is_found_too(self):
+        """⚠ Старым бывает и имя **шага**, а не только полей внутри записи."""
+        got = people_rows({'мужчины': [{'ссылка': '/profile/1-men'}]}, 'men')
+
+        assert len(got) == 1

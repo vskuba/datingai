@@ -48,6 +48,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.dating.chat import chat_invites_to_history
 from src.dating.feed import feed_write
 from src.dating.people import people_name_case
+from src.dating.scenario_field import scenario_field
 
 from src.dating.message_twin import message_twin_absent
 from src.dating.json_column import json_column_load
@@ -60,7 +61,7 @@ from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_find
 CHAT_PANEL_SCENARIO = 'чат: сообщения из панели'
 
 # Имя шага, под которым сценарий отдаёт строки таблицы.
-CHAT_PANEL_FIELD = 'сообщения'
+CHAT_PANEL_FIELD = 'messages'
 
 # Приставка к номеру сообщения. ⚠ Не украшение: `message_uid` общий с сокетом, и
 # без неё числовой номер панели однажды сойдётся с чужим значением.
@@ -99,7 +100,7 @@ CHAT_PANEL_PATH = 'userchatmessages'
 # Ячейки таблицы по порядку. Панель отдаёт пять столбцов: ID, дата UTC, от, кому,
 # текст. ⚠ Имена те же, что у сценария, — разбор строк (`chat_panel_rows`)
 # общий на оба пути, и расходиться им нельзя.
-CHAT_PANEL_CELLS = ('номер', 'когда', 'от', 'кому', 'текст')
+CHAT_PANEL_CELLS = ('number', 'when', 'from', 'to', 'text')
 
 # Какое сообщение считаем свежим. Час: круг ходит от пяти минут, и привезённое за
 # последний час — это то, что человек и правда мог пропустить, пока не смотрел.
@@ -135,7 +136,7 @@ def chat_panel_rows(extract: dict, profiles: dict) -> list[dict]:
     (`profile_view.py`). Здесь это значит «с кем разговор», и исходящее
     сообщение попадает в тот же диалог, что и входящее.
     """
-    rows = (extract or {}).get(CHAT_PANEL_FIELD)
+    rows = scenario_field(extract, CHAT_PANEL_FIELD)
     if not isinstance(rows, list):
         return []
 
@@ -144,28 +145,31 @@ def chat_panel_rows(extract: dict, profiles: dict) -> list[dict]:
         if not isinstance(row, dict):
             continue
 
-        message_uid = _digits(row.get('номер'))  # cyrillic-key: имя шага extract в сценарии у соседа
+        message_uid = _digits(scenario_field(row, 'number'))
         if not message_uid or message_uid in seen:
             continue
 
-        from_uid = _digits(row.get('от_номер')) or _digits(row.get('от'))  # cyrillic-key: имя шага extract в сценарии у соседа
-        to_uid = _digits(row.get('кому_номер')) or _digits(row.get('кому'))  # cyrillic-key: имя шага extract в сценарии у соседа
+        from_uid = (_digits(scenario_field(row, 'from_uid'))
+                    or _digits(scenario_field(row, 'from')))
+        to_uid = (_digits(scenario_field(row, 'to_uid'))
+                  or _digits(scenario_field(row, 'to')))
 
         # Чья это переписка и в какую сторону. Обе стороны могут оказаться нашими
         # анкетами — панель показывает и такое; считаем это входящим для
         # получателя: именно ему сообщение и пришло.
         if to_uid in profiles:
             profile_id, direction = profiles[to_uid], 'in'
-            partner_uid, partner_cell = from_uid, row.get('от')  # cyrillic-key: имя шага extract в сценарии у соседа
+            partner_uid, partner_cell = from_uid, scenario_field(row, 'from')
         elif from_uid in profiles:
             profile_id, direction = profiles[from_uid], 'out'
-            partner_uid, partner_cell = to_uid, row.get('кому')  # cyrillic-key: имя шага extract в сценарии у соседа
+            partner_uid, partner_cell = to_uid, scenario_field(row, 'to')
         else:
             # Строка не про наши анкеты: панель агентства показывает всех, а
             # заводим мы у себя не всех. Это не ошибка разбора.
             continue
 
-        text = _text(row.get('текст'), row.get('текст_подсказка'))  # cyrillic-key: имя шага extract в сценарии у соседа
+        text = _text(scenario_field(row, 'text'),
+                     scenario_field(row, 'text_title'))
         if not text:
             continue
 
@@ -179,7 +183,7 @@ def chat_panel_rows(extract: dict, profiles: dict) -> list[dict]:
             'message_uid': (CHAT_PANEL_PREFIX
                             + message_uid)[:CHAT_PANEL_MSG_UID_MAX],
             'direction': direction,
-            'sent_at': _when(row.get('когда')),  # cyrillic-key: имя шага extract в сценарии у соседа
+            'sent_at': _when(scenario_field(row, 'when')),
         })
 
     return found
@@ -271,7 +275,7 @@ async def chat_panel_import(site_id: int, days: int) -> dict:
     saved = await chat_panel_save(rows)
 
     return {'status': 'ok',
-            'total': len(extract.get('сообщения') or []),  # cyrillic-key: имя шага extract в сценарии у соседа
+            'total': len(scenario_field(extract, CHAT_PANEL_FIELD) or []),
             'ours': len(rows),
             'from': date_from, 'to': date_to, 'error': '', **saved}
 
@@ -633,17 +637,16 @@ def _cells(table: list) -> list[dict]:
     сообщения — из подсказки `title`, потому что в самой ячейке он обрезан
     шириной колонки.
 
-    ## ⚠⚠ Здесь проходит граница двух словарей, и она одна на весь проект
+    ## ⚠ Имена полей те же, что у сценария — и теперь оба набора латиницей
 
-    Слева — ячейки **нашего** разбора таблицы (`panel_fetch_table`): ключи
-    латиницей, как всякий ключ в коде. Справа — поля, имена которых задал
-    **сценарий у соседа** (`CHAT_PANEL_CELLS`, `'текст_подсказка'`): они
-    по-русски, и переименовать их у нас в одиночку нельзя — забор сценарием
-    перестал бы совпадать с забором ручкой, а заметить это было бы нечем.
+    Запись собирается под теми же именами, которыми зовёт свои шаги сценарий
+    (`CHAT_PANEL_CELLS`), потому что разбор строк общий на оба пути. Прежде эти
+    имена были русскими, и здесь проходила граница двух алфавитов; сейчас
+    переименованы и шаги сценария, и ячейки разбора, так что переводить нечего.
 
-    Перевод делается ровно здесь, одной функцией. Признак, по которому кириллицу
-    можно будет убрать совсем: переименованные шаги `extract` в сценариях
-    RhapsodyAi — тогда правятся обе стороны одним заходом.
+    ⚠ Чтение при этом всё равно идёт через `scenario_field`: ответ **живого**
+    сценария до его выкладки приходит со старыми именами, и `chat_panel_rows`
+    обязан понимать оба. Здесь же имена кладутся новые — эта запись наша.
     """
     out = []
     for row in table:
@@ -651,10 +654,10 @@ def _cells(table: list) -> list[dict]:
         for at, name in enumerate(CHAT_PANEL_CELLS):
             cell = row[at] if at < len(row) else {}
             one[name] = cell.get('text', '')
-            if name in ('от', 'кому'):
-                one[f'{name}_номер'] = cell.get('link', '')
-            if name == 'текст':
-                one['текст_подсказка'] = cell.get('title', '')  # cyrillic-key: имя шага extract в сценарии у соседа
+            if name in ('from', 'to'):
+                one[f'{name}_uid'] = cell.get('link', '')
+            if name == 'text':
+                one['text_title'] = cell.get('title', '')
 
         out.append(one)
 

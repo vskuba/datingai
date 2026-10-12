@@ -337,11 +337,11 @@ class TestTable:
 
         one = _cells(panel_fetch_table(PAGE))[0]
 
-        assert one['номер'] == '37641085'
-        assert one['когда'] == '2026-09-02 19:12:09'
-        assert one['от_номер'] == '181685'
-        assert one['кому_номер'] == '643694'
-        assert one['текст_подсказка'] == 'I am too'
+        assert one['number'] == '37641085'
+        assert one['when'] == '2026-09-02 19:12:09'
+        assert one['from_uid'] == '181685'
+        assert one['to_uid'] == '643694'
+        assert one['text_title'] == 'I am too'
 
     def test_rows_turn_into_messages(self):
         """Сквозная проверка: таблица → записи `dating_message`.

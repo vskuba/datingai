@@ -80,6 +80,7 @@ from src.dating.log import log_write
 from src.dating.people import PEOPLE_NAME_MAX, PEOPLE_UID_MAX
 from src.dating.ready import password_pick
 from src.dating.scenario import scenario_run
+from src.dating.scenario_field import scenario_field
 from src.dating.request import REQUEST_PEOPLE
 from src.dating.site_api import DatingSiteApiError, site_api_call
 from src.dating.site_setting import site_setting
@@ -601,7 +602,8 @@ async def favorite_add(profile: dict, uid: str, site_password: str = '',
         return {'state': FAVORITE_FAIL, 'error': str(e)}
 
     extract = run.get('extract') or {}
-    state, error = favorite_state(extract.get('до'), extract.get('после'))  # cyrillic-key: имя шага extract в сценарии у соседа
+    state, error = favorite_state(scenario_field(extract, 'before'),
+                                  scenario_field(extract, 'after'))
 
     await favorite_mark(site_id, profile_id, uid, state, error, reason)
 
@@ -669,7 +671,8 @@ async def favorite_forget(profile: dict, uid: str,
         return {'state': FAVORITE_FAIL, 'error': str(e)}
 
     extract = run.get('extract') or {}
-    state, error = favorite_state(extract.get('до'), extract.get('после'), on=False)  # cyrillic-key: имя шага extract в сценарии у соседа
+    state, error = favorite_state(scenario_field(extract, 'before'),
+                                  scenario_field(extract, 'after'), on=False)
 
     if state == FAVORITE_FAIL:
         await log_write(profile_id, 'fail', f'Снятие избранного {uid}: {error}')
