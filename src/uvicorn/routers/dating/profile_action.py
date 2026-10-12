@@ -48,7 +48,10 @@ from src.dating.log import log_write
 from src.dating.login import (DatingLoginError, login_run,
                                      login_session_all, login_session_close,
                                      login_session_close_old, login_ws_capture)
+from src.dating.panel_fetch import DatingPanelFetchError
 from src.dating.presence import presence_probe, presence_ready
+from src.dating.profile_panel import (DatingProfilePanelError,
+                                      profile_panel_read)
 from src.dating.status import status_probe_site, status_write
 from src.dating.profile_cache import profile_cache_refresh
 from src.dating.proxy import (proxy_countries, proxy_forget,
@@ -820,6 +823,50 @@ async def profile_action_listen(profile_id: int, seconds: int = 30,
     if result.get('error'):
         await rhapsody_api_error_write('dating', f"чат-сокет: {result['error']}",
                                   context={'profile_id': profile_id})
+
+    return {'result': result}
+
+
+@router.post('/{profile_id}/card/parameters', include_in_schema=False)
+async def profile_action_parameters(profile_id: int,
+                                    user=Depends(auth_required)):
+    """Снять параметры анкеты с админ-панели агентства.
+
+    Кнопка «Обновить с сайта» во второй колонке окна правки карточки.
+
+    ⚠ **Наружу не пишет ничего.** Страница панели только читается; правленое
+    руками при записи не трогается (`profile_card_merge`).
+
+    ⚠ Своего круга у занятия нет намеренно: анкета меняется раз в месяцы, и
+    сторож, будящийся ради «ничего нового», — сторож без предмета.
+
+    Raises:
+        HTTPException: 404 — анкеты нет; 422 — у анкеты нет номера на сайте либо
+            у сайта нет панели; 502 — панель не ответила, увела на вход или
+            сменила разметку.
+    """
+    profile = await profile_row(profile_id)
+    site = await profile_site(int(profile['site_id']))
+
+    try:
+        result = await profile_panel_read(
+            profile, json_column_load(site.get('presence')))
+    except DatingPanelFetchError as e:
+        # Отказ самой панели: не ответила, увела на вход, ответила кодом ошибки.
+        await log_write(profile_id, 'fail', f'Параметры не снялись: {e}')
+        raise HTTPException(status_code=502, detail=str(e))
+    except DatingProfilePanelError as e:
+        # ⚠ Три исхода под одним исключением, и коды у них разные: «нет номера» и
+        # «панель читать нечем» — ошибка запроса (422), «разметка сменилась» —
+        # отказ чужой стороны (502). Различаем по тексту, потому что это один
+        # отказ домена, а два исключения ради кода HTTP учили бы домен про HTTP.
+        code = 502 if 'разметка' in str(e) else 422
+        await log_write(profile_id, 'fail', f'Параметры не снялись: {e}')
+        raise HTTPException(status_code=code, detail=str(e))
+
+    said = sum(1 for one in (result.get('parameters') or {}).values() if one)
+    await log_write(profile_id, 'ok',
+                    f'Параметры сняты с панели: заполнено {said} из 21')
 
     return {'result': result}
 

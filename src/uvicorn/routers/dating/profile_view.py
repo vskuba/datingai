@@ -24,6 +24,7 @@ from src.dating.message_twin import message_twin_skip
 from src.dating.json_column import json_column_load
 from src.dating.online import online_check
 from src.dating.profile_card import profile_card_edited
+from src.dating.profile_param import profile_param_fields, profile_param_frame
 from src.dating.profile_link import profile_link
 from src.dating.schedule import schedule_load, schedule_why_idle
 from src.uvicorn.routers.dating.log import log_feed
@@ -344,6 +345,22 @@ async def profile_view_card(profile_id: int, page: int = 1,
     # чекбоксами — на «Анкетах» справа и в окне переписки. Без них страница знала бы
     # состояние только из списка, а карточку открывают и по прямой ссылке.
     return {'result': {'profile': card, 'edited': edited, 'site_url': site_url,
+                       # Параметры анкеты — второй колонкой окна правки.
+                       #
+                       # ⚠ Каркас отдаётся **всегда и целиком**: окно рисует одни и
+                       # те же строки у любой анкеты, а `undefined` на странице
+                       # читался бы как «параметров нет» случайно, а не по правилу.
+                       #
+                       # ⚠⚠ Собирается `profile_param_frame`, а не отдаётся как
+                       # прочитано: MySQL пересортировывает ключи объекта внутри
+                       # JSON-колонки, и порядок из базы — не наш. Порядок строк
+                       # окна задаёт реестр, и взять его больше негде.
+                       'parameters': profile_param_frame(card.get('parameters')),
+                       'parameters_at': str(card.get('parameters_at') or ''),
+                       # ⚠ Подписи и вид поля — **с сервера**: своя копия списка на
+                       # странице разошлась бы с кодом молча. То же правило, что у
+                       # словаря тегов галереи.
+                       'parameter_fields': profile_param_fields(),
                        'login': profile['login'], 'contacts': contacts,
                        'enabled': bool(profile.get('enabled', 1)),
                        # Расписание — в настройках анкеты на «Анкетах», рядом с

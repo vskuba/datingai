@@ -44,6 +44,7 @@ from src.dating.import_ import (IMPORT_ABOUT_MAX, IMPORT_CITY_MAX,
                                 IMPORT_LOGIN_MAX, IMPORT_NAME_MAX)
 from src.dating.profile_card import (PROFILE_CARD_FIELDS, profile_card_forget,
                                      profile_card_save)
+from src.dating.profile_param import profile_param_max
 from src.dating.site_snapshot import site_rows
 from src.mysql_.repository.profile_repository import DatingProfileRepository
 from src.dating.json_column import json_column_load
@@ -82,6 +83,9 @@ class DatingProfileCard(BaseModel):
     ⚠ Номер анкеты приезжает под именем `profile_id` (так зовётся колонка), а в
     карточку ложится ключом `id`. Перевод делает ручка одной строкой: два имени
     одной величины внутри домена развели бы её по смыслу.
+
+    ⚠ `parameters` приезжает **словарём целиком**, а не полем на каждый ключ: их
+    21, и двадцать одно поле модели повторяло бы реестр вторым написанием.
     """
 
     login: str = Field(..., max_length=IMPORT_LOGIN_MAX,
@@ -92,6 +96,32 @@ class DatingProfileCard(BaseModel):
     age: int = Field(0, ge=0, le=120, description='0 — «не знаем», а не ошибка')
     city: str = Field('', max_length=IMPORT_CITY_MAX)
     about: str = Field('', max_length=IMPORT_ABOUT_MAX)
+    parameters: dict[str, str] = Field(
+        default_factory=dict,
+        description='Параметры анкеты: ключи реестра `profile_param.py`. '
+                    'Ключа нет — поле не трогается')
+
+    @field_validator('parameters')
+    @classmethod
+    def _parameters_known(cls, value: dict) -> dict:
+        """⚠ Чужой ключ — отказ, а не молчаливый отсев.
+
+        Молчаливый отсев прошёл бы незамеченным у страницы, которая разошлась с
+        реестром: человек правит поле, панель отвечает «сохранено», значение не
+        ложится. Пусть лучше `422` скажет, что страница устарела.
+
+        ⚠ Предел длины берётся из реестра по виду поля (`profile_param_max`): свой
+        набор границ здесь разошёлся бы с ним на первой правке.
+        """
+        for key, one in (value or {}).items():
+            limit = profile_param_max(key)
+            if not limit:
+                raise ValueError(f'параметра «{key}» в реестре анкеты нет')
+
+            if len(str(one or '')) > limit:
+                raise ValueError(f'параметр «{key}» длиннее {limit} знаков')
+
+        return {key: str(one or '').strip() for key, one in (value or {}).items()}
 
     @field_validator('profile_id', 'name', 'city', 'about')
     @classmethod
@@ -342,9 +372,13 @@ async def profile_card_put(profile_id: int, data: DatingProfileCard,
     await profile_row(profile_id)
 
     try:
+        # ⚠ `parameters` присылается всегда (у поля умолчание `{}`), и пустой
+        # словарь значит «параметров не правили»: `_card_apply` обходит присланные
+        # ключи, и пустой словарь не меняет ни одного.
         got = await profile_card_save(profile_id, {
             'login': data.login, 'id': data.profile_id, 'name': data.name,
-            'age': data.age, 'city': data.city, 'about': data.about})
+            'age': data.age, 'city': data.city, 'about': data.about,
+            'parameters': data.parameters})
     except LookupError as err:
         raise HTTPException(status_code=404, detail=str(err)) from err
     except ValueError as err:
