@@ -337,3 +337,30 @@ def test_the_columns_collapse_on_a_narrow_screen(css):
     assert narrow, 'медиазапроса для узкого экрана нет'
     assert '.info-split { display: none; }' in narrow.group(1), \
         'на узком экране разделитель остаётся висеть между блоками'
+
+
+def test_long_texts_live_in_the_left_column(page):
+    """⚠⚠ Делит колонки **длина поля**, а не происхождение значения.
+
+    Увлечения и «о партнёре» — параметры с сайта, как рост и цвет глаз, но
+    читаются абзацем: среди коротких полей они растягивали правую колонку вниз, а
+    левая ниже описания пустовала. Теперь слева всё, что читается абзацем
+    (описание, увлечения, о партнёре), справа — значения в одну строку.
+
+    ⚠ Кнопка «Обновить с сайта» перезаписывает и их: они остаются параметрами.
+    Поэтому над ними стоит своя подпись — иначе правка слева выглядела бы
+    независимой от неё.
+    """
+    assert "fields.filter(one => one.kind !== 'area')" in page, \
+        'правая колонка берёт не только короткие поля'
+    assert "fields.filter(one => one.kind === 'area')" in page, \
+        'длинные поля не отобраны в свою группу'
+
+    left = page[page.index("'<div class=\"info-left\">'"):page.index("'<div class=\"split info-split\"")]
+    assert 'paramLong' in left, 'длинные тексты не попали в левую колонку'
+    assert 'Тексты с сайта' in left, \
+        'над ними нет подписи — не видно, что их тоже перезапишет кнопка'
+
+    right = page[page.index("'<div class=\"info-right\">'"):page.index("'<div class=\"info-foot\">'")]
+    assert 'paramShort' in right, 'правая колонка рисует не короткие поля'
+    assert 'paramLong' not in right, 'длинные тексты остались справа'

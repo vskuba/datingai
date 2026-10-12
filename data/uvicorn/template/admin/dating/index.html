@@ -2304,7 +2304,7 @@
         // ⚠ Подпись идёт через `esc()`, в отличие от литералов выше: она приходит
         // с сервера.
         const params = data.parameters || {};
-        const paramRows = (data.parameter_fields || []).map(one => {
+        const paramRow = one => {
             const key = String(one.key || '');
             const value = String(params[key] || '');
             const wide = one.kind === 'area';
@@ -2315,7 +2315,20 @@
 
             return field('parameters.' + key, esc(String(one.title || key)),
                          input, '', wide);
-        }).join('');
+        };
+
+        // ⚠⚠ Длинные тексты (`kind: area` — увлечения, о партнёре) уходят в
+        // **левую** колонку, к описанию. Делит их не происхождение, а длина:
+        // абзацу нужна ширина, и среди коротких полей он растягивал правую
+        // колонку вниз, оставляя левую пустой ниже описания. Слева теперь всё,
+        // что читается абзацем, справа — значения в одну строку.
+        //
+        // ⚠ Они всё равно **параметры с сайта**, и кнопка «Обновить с сайта»
+        // перезаписывает их вместе с прочими. Чтобы это не выглядело неожиданным,
+        // над ними стоит своя подпись.
+        const fields = data.parameter_fields || [];
+        const paramShort = fields.filter(one => one.kind !== 'area').map(paramRow).join('');
+        const paramLong = fields.filter(one => one.kind === 'area').map(paramRow).join('');
 
         return '<div class="info-pane">'
             + '<div class="info-left">'
@@ -2351,7 +2364,16 @@
                 `<textarea id="cardAbout" maxlength="2000">${esc(String(p.about || ''))}</textarea>`,
                 'Его читает агент и письма — «О себе».', true)
 
-            + '</div></div>'
+            + '</div>'
+
+            + (paramLong
+                ? '<div class="info-head">Тексты с сайта</div>'
+                  + '<i class="info-hint">Приезжают с панели вместе с параметрами'
+                  + ' справа — кнопка «Обновить с сайта» перезаписывает и их.</i>'
+                  + '<div class="info-grid">' + paramLong + '</div>'
+                : '')
+
+            + '</div>'
 
             // ⚠ Разделитель между колонками — тот же `.split`, что делит список и
             // карточку на странице, и двигает его тот же `splitDrag`. Своего
@@ -2371,7 +2393,7 @@
             + '<i class="info-hint">Их читает агент в чате — всё, что он знает о'
             + ' девушке, кроме описания. ⚠ Правка здесь меняет <b>нашу</b> карточку:'
             + ' на сайт ничего не пишется.</i>'
-            + '<div class="info-grid">' + paramRows + '</div>'
+            + '<div class="info-grid">' + paramShort + '</div>'
             + '</div>'
 
             + '<div class="info-foot">'
