@@ -214,16 +214,25 @@ async def test_tags_handle_gives_the_whole_dictionary(auth_client):
     свою копию — она разошлась бы с кодом на первой правке, и человек выбирал бы
     теги, которые не сохранятся. Та же грабля, что уже была с подразделами
     настроек сайта.
+
+    ⚠ `name` в ответе — **подпись человеку**, а не ключ группы: ключ латиницей
+    (`clothes`), подпись лежит в `GALLERY_VISION_GROUP_TITLES`. Прежде здесь
+    сверялись ключи, потому что ключ и был подписью — одно значение работало
+    обоими сразу, что правило §1.2 и запрещает. Порядок проверяется по-прежнему.
     """
-    from src.dating.gallery_vision import (GALLERY_VISION_TAGS,
+    from src.dating.gallery_vision import (GALLERY_VISION_GROUP_TITLES,
+                                           GALLERY_VISION_TAGS,
                                            GALLERY_VISION_TAGS_ALL)
 
     got = (await auth_client.get('/api/dating/gallery/tags')).json()['result']
     groups = got['groups']
 
     assert len(groups) == len(GALLERY_VISION_TAGS)
-    assert [one['name'] for one in groups] == list(GALLERY_VISION_TAGS), \
-        'порядок групп разошёлся со словарём'
+    assert [one['name'] for one in groups] \
+        == list(GALLERY_VISION_GROUP_TITLES.values()), \
+        'порядок или подписи групп разошлись со словарём'
+    assert all(one['name'] for one in groups), \
+        'группа приехала без подписи — окно покажет человеку пустую строку'
 
     flat = [tag for one in groups for tag in one['tags']]
     assert flat == list(GALLERY_VISION_TAGS_ALL), \
