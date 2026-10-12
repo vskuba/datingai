@@ -927,7 +927,43 @@
    ⚠⚠ Классы с приставкой `info-`, а не `card-`: `.card-edit` уже занят (это была
    иконка ✎), и одно совпадение имени уже стоило растянутой на 980 px кнопки.
    Сторож на это стоит в `test_profile_card_page.py`. */
-.info-pane { padding: 4px 2px 12px; }
+/* ⚠⚠ Две колонки с перетаскиваемым разделителем: слева данные учётки, справа
+   параметры с сайта. Ширину держит переменная `--info`, и двигает её тот же
+   `splitDrag`, что делит список и карточку на самой странице, — своего второго
+   механизма перетаскивания здесь нет и быть не должно.
+
+   ⚠ Сетка `minmax(0, …)`, а не просто `var(--info)`: без нижней границы длинное
+   слово в поле распирает колонку шире заданного, и разделитель уезжает. */
+.info-pane {
+    display: grid;
+    grid-template-columns: minmax(0, var(--info, 1fr)) 6px minmax(0, 1fr);
+    gap: 0 10px; align-items: start;
+    padding: 4px 2px 12px;
+}
+.info-left { grid-column: 1; min-width: 0; }
+.info-right { grid-column: 3; min-width: 0; }
+/* Разделитель — та же узкая полоса, что делит список и карточку: заметна только
+   под курсором. Класс `.split` общий, здесь только место и высота. */
+.info-split {
+    grid-column: 2; align-self: stretch; cursor: col-resize;
+    /* ⚠ Минимальная высота обязательна: у пустой анкеты правая колонка короткая,
+       и полоса схлопнулась бы в точку, за которую нечем взяться. */
+    min-height: 60px;
+    /* ⚠⚠ Видна **всегда**, в отличие от разделителей страницы. Те стоят между
+       белыми панелями с рамками: граница там и так нарисована, и полоса лишь
+       подсказывает, что её можно тянуть. Здесь по обе стороны пустое поле формы,
+       и невидимый разделитель — это возможность, о которой никто не узнает. */
+    background: #e5e7eb;
+}
+.info-split:hover, .info-split.drag { background: #c7d2fe; }
+
+/* ⚠ Под 1000 пикселей колонки встают друг под друга, а разделитель прячется:
+   делить нечего, а полоса между блоками читалась бы как линейка. */
+@media (max-width: 1000px) {
+    .info-pane { grid-template-columns: minmax(0, 1fr); }
+    .info-left, .info-right { grid-column: 1; }
+    .info-split { display: none; }
+}
 .info-head {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     margin: 14px 0 6px;
@@ -940,7 +976,7 @@
    и на ноутбуке, и на широком мониторе, и «три колонки» на первом дали бы поля в
    120 пикселей. Минимум 210 — ширина, на которой читается и подпись, и значение. */
 .info-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
     gap: 8px 14px; align-items: start;
 }
 /* Текстовые поля (описание, увлечения, о партнёре) — на всю ширину: в колонке
@@ -973,6 +1009,7 @@
 /* Подвал: причина отказа слева, «Сохранить» справа. ⚠ Прижат к правому краю, как
    у прочих форм раздела, и не уезжает за край на узкой колонке. */
 .info-foot {
+    grid-column: 1 / -1;
     display: flex; align-items: center; justify-content: flex-end; gap: 8px;
     margin-top: 14px; padding-top: 10px; border-top: 1px solid #f1f5f9;
 }

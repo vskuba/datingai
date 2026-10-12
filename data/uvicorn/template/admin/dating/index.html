@@ -2318,6 +2318,7 @@
         }).join('');
 
         return '<div class="info-pane">'
+            + '<div class="info-left">'
             + '<div class="info-head">Персональные данные</div>'
             + '<div class="info-grid">'
 
@@ -2350,8 +2351,15 @@
                 `<textarea id="cardAbout" maxlength="2000">${esc(String(p.about || ''))}</textarea>`,
                 'Его читает агент и письма — «О себе».', true)
 
-            + '</div>'
+            + '</div></div>'
 
+            // ⚠ Разделитель между колонками — тот же `.split`, что делит список и
+            // карточку на странице, и двигает его тот же `splitDrag`. Своего
+            // второго механизма перетаскивания здесь нет.
+            + '<div class="split info-split" id="splitInfo"'
+            + ' title="Потяните, чтобы изменить ширину колонок"></div>'
+
+            + '<div class="info-right">'
             + '<div class="info-head">Параметры с сайта'
             + '<button type="button" class="dating-btn info-get" id="cardParamsGet">'
             + 'Обновить с сайта</button>'
@@ -2364,6 +2372,7 @@
             + ' девушке, кроме описания. ⚠ Правка здесь меняет <b>нашу</b> карточку:'
             + ' на сайт ничего не пишется.</i>'
             + '<div class="info-grid">' + paramRows + '</div>'
+            + '</div>'
 
             + '<div class="info-foot">'
             + '<span class="info-why" id="cardEditWhy"></span>'
@@ -2380,6 +2389,19 @@
         const why = document.getElementById('cardEditWhy');
         const pane = document.querySelector('.info-pane');
         if (!pane || !why) return;
+
+        // Разделитель колонок. ⚠ Вешается заново при каждой отрисовке: вкладка
+        // перерисовывается при смене анкеты, и узел всякий раз новый.
+        //
+        // ⚠ Отсчёт от левого края **самой вкладки**, а не страницы: слева от неё
+        // список анкет, и его ширину человек двигает отдельным разделителем.
+        // Считай мы от края страницы, колонки прыгали бы при каждой его правке.
+        const split = document.getElementById('splitInfo');
+        if (split) {
+            splitDrag(split, '--info', 260,
+                      Math.max(300, Math.round(pane.getBoundingClientRect().width - 280)),
+                      (e) => e.clientX - pane.getBoundingClientRect().left);
+        }
 
         // Переход называем словами и только когда он есть.
         // ⚠ `textContent`, а не склейка разметки: значения набирает человек.
@@ -2676,6 +2698,7 @@
         const style = pageEl.style;
         localStorage.setItem(SIZE_KEY, JSON.stringify({
             col: style.getPropertyValue('--col'),
+            info: style.getPropertyValue('--info'),
         }));
     }
 
@@ -2683,6 +2706,7 @@
         let saved;
         try { saved = JSON.parse(localStorage.getItem(SIZE_KEY) || '{}'); } catch (e) { return; }
         if (saved.col) pageEl.style.setProperty('--col', saved.col);
+        if (saved.info) pageEl.style.setProperty('--info', saved.info);
     }
 
     // Границы разумного: колонка уже 240 px нечитаема, шире 40% экрана бессмысленна.

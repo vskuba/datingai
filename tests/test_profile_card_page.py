@@ -288,3 +288,52 @@ def test_the_tab_grid_is_not_a_fixed_column_count(css):
     """
     assert 'repeat(auto-fill, minmax(' in css, \
         'сетка полей задана фиксированным числом колонок'
+
+
+def test_the_tab_has_a_draggable_splitter(page, css):
+    """⚠⚠ Разделитель колонок двигает **тот же** `splitDrag`, что делит список и
+    карточку на странице.
+
+    Своего второго механизма перетаскивания здесь нет и быть не должно: два
+    обработчика `pointerdown` на одно дело разъехались бы в мелочах — в границах,
+    в сохранении, в том, снимается ли захват указателя.
+    """
+    assert 'id="splitInfo"' in page, 'разделителя колонок нет'
+    assert "splitDrag(split, '--info'" in page, \
+        'разделитель не привязан к общему механизму перетаскивания'
+    assert '.info-split' in css, 'разделитель не описан в стиле'
+
+
+def test_the_splitter_is_visible_without_hover(css):
+    """⚠⚠ Видна **всегда**, в отличие от разделителей страницы.
+
+    Те стоят между белыми панелями с рамками — граница и так нарисована. Здесь по
+    обе стороны пустое поле формы, и невидимый разделитель это возможность, о
+    которой никто не узнает.
+    """
+    import re
+
+    block = re.search(r'\.info-split\s*\{([^}]*)\}', css)
+    assert block, 'правила `.info-split` в стиле нет'
+    assert 'background' in block.group(1), \
+        'у разделителя нет фона — его не видно, пока на него не наведут'
+
+
+def test_the_splitter_position_is_remembered(page):
+    """Ширина колонок переживает перезагрузку: её кладут туда же, где ширина
+    списка анкет, — в один ключ раскладки, а не во второй рядом."""
+    keep = page[page.index('function layoutSave'):]
+    assert "info: style.getPropertyValue('--info')" in keep, \
+        'ширина колонок не сохраняется'
+    assert "saved.info" in keep, 'сохранённая ширина не восстанавливается'
+
+
+def test_the_columns_collapse_on_a_narrow_screen(css):
+    """⚠ Под 1000 пикселей колонки встают друг под друга, а разделитель прячется:
+    делить нечего, а полоса между блоками читалась бы как линейка."""
+    import re
+
+    narrow = re.search(r'@media \(max-width: 1000px\)\s*\{(.*?)\n\}', css, re.S)
+    assert narrow, 'медиазапроса для узкого экрана нет'
+    assert '.info-split { display: none; }' in narrow.group(1), \
+        'на узком экране разделитель остаётся висеть между блоками'
