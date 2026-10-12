@@ -2319,9 +2319,9 @@
 
         const back = document.createElement('div');
         back.className = 'dating-modal-back';
-        back.innerHTML = '<div class="dating-modal-box card-edit" onclick="event.stopPropagation()">'
+        back.innerHTML = '<div class="dating-modal-box cardbox-edit" onclick="event.stopPropagation()">'
             + '<div class="dating-modal-head">Персональные данные анкеты</div>'
-            + '<div class="card-edit-grid"><div>'
+            + '<div class="cardbox-grid"><div>'
 
             + '<label class="dating-modal-field">' + label('login', 'Почта')
             + '<input type="text" id="cardLogin" maxlength="190" spellcheck="false"'
@@ -2359,15 +2359,15 @@
             + `<textarea id="cardAbout" maxlength="2000">${esc(String(p.about || ''))}</textarea>`
             + '<i class="dating-modal-hint">Его читает агент и письма — «О себе».</i></label>'
 
-            + '</div><div class="card-edit-side">'
-            + '<div class="card-edit-head">Параметры с сайта</div>'
+            + '</div><div class="cardbox-side">'
+            + '<div class="cardbox-head">Параметры с сайта</div>'
             + '<i class="dating-modal-hint">Их читает агент в чате — всё, что он'
             + ' знает о девушке, кроме описания. ⚠ Правка здесь меняет <b>нашу</b>'
             + ' карточку: на сайт ничего не пишется.</i>'
             + paramRows()
-            + '<button type="button" class="dating-btn card-edit-get"'
+            + '<button type="button" class="dating-btn cardbox-get"'
             + ' id="cardParamsGet">Обновить с сайта</button>'
-            + '<div class="card-edit-when" id="cardParamsWhen">'
+            + '<div class="cardbox-when" id="cardParamsWhen">'
             + (data.parameters_at
                 ? `снято ${esc(timeShift(data.parameters_at))}`
                 : 'с сайта ещё не снимали')

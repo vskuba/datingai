@@ -921,28 +921,34 @@
 
 /* Окно персональных данных — **шире соседних и в две колонки**: слева шесть полей
    учётки, справа 21 параметр с сайта. Ширина своим классом, а не правкой
-   `.dating-modal-box`: её делят трое. Так же сделано у окна описания снимка. */
-.card-edit { width: min(980px, 94vw); }
-.card-edit-grid {
+   `.dating-modal-box`: её делят трое. Так же сделано у окна описания снимка.
+
+   ⚠⚠ Приставка `cardbox-`, а не `card-edit`: класс `.card-edit` **уже занят** —
+   это иконка ✎ в шапке карточки (правило ниже). Назвав окно так же, я выдал ей
+   `width: min(980px, 94vw)`, и кнопка растянулась на всю шапку: содержимое
+   выдавило, а сама иконка стала невидимой полосой. Нашлось глазами на живой
+   странице, сюита молчала — она читает разметку, а не считает ширины. */
+.cardbox-edit { width: min(980px, 94vw); }
+.cardbox-grid {
     display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; align-items: start;
 }
 /* ⚠ На узком экране колонки встают друг под друга: 980 пикселей не помещаются в
    телефон, а окно правки открывают и с него. */
 @media (max-width: 760px) {
-    .card-edit { width: 94vw; }
-    .card-edit-grid { grid-template-columns: 1fr; }
+    .cardbox-edit { width: 94vw; }
+    .cardbox-grid { grid-template-columns: 1fr; }
 }
-.card-edit-side { display: flex; flex-direction: column; }
-.card-edit-head {
+.cardbox-side { display: flex; flex-direction: column; }
+.cardbox-head {
     font-size: 12px; font-weight: 700; color: #0f172a; margin-top: 8px;
 }
 /* Параметры — поля помельче: их 21, и в полный рост колонка уходила бы в
    прокрутку даже на большом экране. */
-.card-edit-side textarea { height: 70px; resize: vertical; }
-.card-edit-side .dating-modal-field { margin-top: 6px; }
+.cardbox-side textarea { height: 70px; resize: vertical; }
+.cardbox-side .dating-modal-field { margin-top: 6px; }
 /* Кнопка чтения панели и отметка о съёме — подвалом правой колонки. */
-.card-edit-get { margin-top: 12px; align-self: flex-start; }
-.card-edit-when { font-size: 11px; color: #94a3b8; margin-top: 6px; }
+.cardbox-get { margin-top: 12px; align-self: flex-start; }
+.cardbox-when { font-size: 11px; color: #94a3b8; margin-top: 6px; }
 
 /* ⚠ Окно описания снимка **крупнее соседних**, и это не вкусовщина: в нём правят
    абзац текста и строку тегов. В 560 пикселях описание шло в шесть строк с
