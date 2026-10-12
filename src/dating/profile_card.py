@@ -83,6 +83,14 @@ PROFILE_CARD_OWN = ('id', 'name', 'age', 'city', 'about')
 PROFILE_CARD_FIELDS = PROFILE_CARD_OWN + tuple(
     PROFILE_PARAM_PREFIX + key for key in PROFILE_PARAM_KEYS)
 
+# Как своё поле зовётся для человека. ⚠ Нужно затем, чтобы запись могла сказать,
+# **что** она изменила: «сохранено: Имя, Город». Ключ человеку не говорит ничего.
+#
+# ⚠ Подписи параметров сюда не дублируются — они в реестре (`profile_param.py`),
+# и второй их набор разошёлся бы с ним на первой правке.
+PROFILE_CARD_TITLES = {'id': 'ID на сайте', 'name': 'Имя', 'age': 'Возраст',
+                       'city': 'Город', 'about': 'Описание', 'login': 'Почта'}
+
 # Чем «пусто» у каждого **своего** поля. ⚠ Нужно потому, что карточку собирают
 # разные писатели и ключа может не быть вовсе: без этого «возраст 0 там, где ключа
 # нет» читалось бы как правка, и окно, открытое поглядеть и сохранённое без
@@ -112,6 +120,36 @@ def profile_card_edited(value) -> list[str]:
     said = {str(one) for one in json_column_list(value)}
 
     return [name for name in PROFILE_CARD_FIELDS if name in said]
+
+
+def profile_card_titles(fields) -> list[str]:
+    """Имена полей — подписями для человека. Неизвестное выбрасывается.
+
+    Args:
+        fields: ключи карточки (`name`) и параметров (`parameters.height`).
+
+    Returns:
+        list: подписи в том же порядке, в каком пришли ключи.
+
+    ⚠ Подписи параметров берутся **из реестра**, а не из своего второго списка:
+    там они уже есть, и вторая копия разошлась бы с ним на первой правке. Свои
+    шесть полей — `PROFILE_CARD_TITLES` рядом, их в реестре нет.
+    """
+    from src.dating.profile_param import profile_param_fields
+
+    params = {one['key']: one['title'] for one in profile_param_fields()}
+
+    out = []
+    for name in (fields or []):
+        if name.startswith(PROFILE_PARAM_PREFIX):
+            title = params.get(name[len(PROFILE_PARAM_PREFIX):], '')
+        else:
+            title = PROFILE_CARD_TITLES.get(name, '')
+
+        if title:
+            out.append(title)
+
+    return out
 
 
 def profile_card_keep(fresh: dict, edited) -> dict:
@@ -221,11 +259,12 @@ async def profile_card_save(profile_id: int, values: dict) -> dict:
         row = await _card_read(profile_id)
         if first_login is None:
             first_login = row.get('login')
-        login, card, marks = _card_apply(row, values, first_login)
+        login, card, marks, changed = _card_apply(row, values, first_login)
 
         try:
             if await _card_claim(profile_id, row, login, card, marks):
-                return {'login': login, 'card': card, 'edited': marks}
+                return {'login': login, 'card': card, 'edited': marks,
+                        'changed': profile_card_titles(changed)}
         except Exception as error:
             raise ValueError(
                 profile_card_why(error, login, str(card.get('id') or ''))) from error
@@ -455,8 +494,15 @@ async def _card_claim(profile_id: int, row: dict, login: str, card: dict,
             and now.get('profile_edited') == row.get('profile_edited'))
 
 
-def _card_apply(row: dict, values: dict, first_login=None) -> tuple[str, dict, list[str]]:
-    """Что должно лечь: почта, карточка и отметки. Чистая — базы не касается.
+def _card_apply(row: dict, values: dict,
+                first_login=None) -> tuple[str, dict, list[str], list[str]]:
+    """Что должно лечь: почта, карточка, отметки и что из этого изменилось.
+
+    Четвёртым возвращается **список изменённого в этот раз** — отметки на это не
+    годятся: они накапливаются за всю жизнь анкеты, и по ним не сказать, что
+    поменялось сейчас. Его показывает человеку страница («сохранено: Имя,
+    Город»), и без него подтверждение звучит одинаково, правил он одно поле или
+    двадцать.
 
     Args:
         row: снимок строки, с которым считаем на этой попытке.
@@ -493,6 +539,9 @@ def _card_apply(row: dict, values: dict, first_login=None) -> tuple[str, dict, l
     before = json_column_load(row.get('profile'))
     card = dict(before)
     edited = set(profile_card_edited(row.get('profile_edited')))
+    # ⚠ Список, а не множество: порядок полей — порядок формы, и «Имя, Город»
+    # читается, а «Город, Имя» заставляет искать глазами.
+    changed = []
 
     for field in PROFILE_CARD_OWN:
         if field not in values:
@@ -503,6 +552,7 @@ def _card_apply(row: dict, values: dict, first_login=None) -> tuple[str, dict, l
 
         card[field] = values[field]
         edited.add(field)
+        changed.append(field)
 
     # ⚠ Параметры — своим проходом, потому что лежат вложенным словарём, а правило
     # то же: метится **изменённое**, а не присланное. Ключа `parameters` в
@@ -519,6 +569,7 @@ def _card_apply(row: dict, values: dict, first_login=None) -> tuple[str, dict, l
 
             now[key] = value
             edited.add(PROFILE_PARAM_PREFIX + key)
+            changed.append(PROFILE_PARAM_PREFIX + key)
 
         # ⚠ Каркас восстанавливается на **каждой** записи руками: анкета, у которой
         # параметров не было вовсе, получает их здесь — и окно с био дальше видят
@@ -528,8 +579,10 @@ def _card_apply(row: dict, values: dict, first_login=None) -> tuple[str, dict, l
     submitted = str(values.get('login') or '').strip()
     baseline = str(first_login if first_login is not None else row.get('login') or '')
     login = submitted if submitted and submitted != baseline else str(row.get('login') or '')
+    if login != str(row.get('login') or ''):
+        changed.insert(0, 'login')
 
-    return login, card, profile_card_edited(sorted(edited))
+    return login, card, profile_card_edited(sorted(edited)), changed
 
 
 async def _card_read(profile_id: int) -> dict:

@@ -147,3 +147,68 @@ class TestSavingParameters:
         assert 'parameters.eyes' not in left
         assert (await _card(girl))['parameters']['eyes'] == 'Hazel', \
             'значение должно остаться — обновит его следующее чтение панели'
+
+
+class TestItSaysWhatChanged:
+    """⚠⚠ Запись сообщает, **что** она изменила — подтверждение иначе одинаково
+    звучит и когда правку приняли, и когда ничего не поменялось.
+
+    ⚠ Отметки (`edited`) на это не годятся: они копятся за всю жизнь анкеты, и по
+    ним не сказать, что поменялось в этот раз.
+    """
+
+    async def test_changed_fields_are_named(self, girl):
+        """⚠ Почту задаём дважды: первый раз она меняется (фикстура завела анкету
+        со своим логином), и считать её «изменением» верно. Проверяем вторую
+        запись — ту, где меняются только названные поля."""
+        login = f'kept-{girl}@example.com'
+        await profile_card_save(girl, {'login': login})
+
+        got = await profile_card_save(girl, {'login': login, 'city': 'Lviv',
+                                             'parameters': {'height': '180 cm'}})
+
+        assert got['changed'] == ['Город', 'Рост'], \
+            'названы не те поля или не в порядке формы'
+
+    async def test_saving_the_same_twice_changes_nothing(self, girl):
+        """⚠ «Открыл и сохранил, не правя» обязано отличаться от настоящей правки."""
+        login = f'kept-{girl}@example.com'
+        values = {'login': login, 'city': 'Lviv'}
+        await profile_card_save(girl, values)
+
+        assert (await profile_card_save(girl, values))['changed'] == []
+
+    async def test_a_changed_login_is_named_first(self, girl):
+        """Почта идёт первой: она первая и в форме."""
+        got = await profile_card_save(girl, {'login': f'other-{girl}@example.com',
+                                             'city': 'Lviv'})
+
+        assert got['changed'][0] == 'Почта'
+
+
+class TestTheTitles:
+    def test_every_own_field_has_a_title(self):
+        from src.dating.profile_card import (PROFILE_CARD_OWN,
+                                             PROFILE_CARD_TITLES)
+
+        for name in PROFILE_CARD_OWN:
+            assert PROFILE_CARD_TITLES.get(name), f'у поля «{name}» нет подписи'
+        assert PROFILE_CARD_TITLES.get('login'), 'у почты нет подписи'
+
+    def test_parameter_titles_come_from_the_registry(self):
+        """⚠ Не второй список: подписи параметров уже есть в реестре, и копия
+        разошлась бы с ним на первой правке."""
+        from src.dating.profile_card import (PROFILE_CARD_TITLES,
+                                             profile_card_titles)
+        from src.dating.profile_param import PROFILE_PARAMS
+
+        title = dict((one[0], one[1]) for one in PROFILE_PARAMS)['height']
+
+        assert profile_card_titles(['parameters.height']) == [title]
+        assert not [one for one in PROFILE_CARD_TITLES if one.startswith('parameters')], \
+            'подписи параметров продублированы в карточке'
+
+    def test_an_unknown_key_is_dropped(self):
+        from src.dating.profile_card import profile_card_titles
+
+        assert profile_card_titles(['шпион', 'parameters.шпион']) == []
