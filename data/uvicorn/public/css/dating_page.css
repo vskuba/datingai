@@ -1002,9 +1002,18 @@
 .info-edited { font-style: normal; color: #b45309; }
 .info-edited a { color: inherit; }
 
-/* Кнопка чтения панели и отметка о съёме — в строке заголовка параметров. */
-.info-get { margin-left: 4px; }
-.info-when { font-size: 11px; color: #94a3b8; text-transform: none; letter-spacing: 0; font-weight: 400; }
+/* Кнопка чтения панели и отметка о съёме — **в шапке карточки**, справа.
+   В заголовке «Параметры с сайта» кнопка наезжала на отметку времени, и та
+   читалась наполовину. ⚠ `margin-left: auto` прижимает группу к правому краю:
+   слева в шапке имя анкеты, справа — действие над ней. */
+.pane-head-right {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 8px;
+    /* ⚠ Шапка набрана прописными и разрежена (`letter-spacing`) — для заголовка
+       это к месту, для кнопки и даты нет: «ОБНОВИТЬ С САЙТА» читается как ещё
+       один заголовок, а не как то, что можно нажать. */
+    text-transform: none; letter-spacing: 0; font-weight: 400;
+}
+.info-when { font-size: 11px; color: #94a3b8; white-space: nowrap; }
 
 /* Подвал: причина отказа слева, «Сохранить» справа. ⚠ Прижат к правому краю, как
    у прочих форм раздела, и не уезжает за край на узкой колонке. */

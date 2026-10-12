@@ -542,7 +542,8 @@
 
     <div class="dating-right">
         <div class="pane">
-            <div class="pane-head">Анкета<span id="profileWho"></span></div>
+            <div class="pane-head">Анкета<span id="profileWho"></span>
+                <span class="pane-head-right" id="profileHeadRight"></span></div>
             <div class="pane-body" id="profile"></div>
         </div>
 
@@ -944,6 +945,23 @@
             + ' data-tab="gallery">Галерея</button>'
             + '</div>' + body;
         profileEl.scrollTop = scroll;
+
+        // ⚠⚠ Кнопка чтения панели живёт **в шапке карточки**, а не в теле
+        // вкладки: в заголовке «Параметры с сайта» она наезжала на отметку
+        // времени съёма, и та читалась наполовину.
+        //
+        // ⚠ Рисуется **только на своей вкладке** и стирается на прочих: на
+        // «Галерее» или «Переменных» кнопка про параметры анкеты бессмысленна, а
+        // шапка у всех вкладок одна.
+        const headRight = document.getElementById('profileHeadRight');
+        headRight.innerHTML = cardTab !== 'info' ? ''
+            : '<span class="info-when" id="cardParamsWhen">'
+              + (data.parameters_at
+                  ? `снято ${esc(timeShift(data.parameters_at))}`
+                  : 'с сайта ещё не снимали')
+              + '</span>'
+              + '<button type="button" class="dating-btn" id="cardParamsGet">'
+              + 'Обновить с сайта</button>';
 
         profileEl.querySelectorAll('.card-tab').forEach(btn =>
             btn.addEventListener('click', () => {
@@ -2382,14 +2400,7 @@
             + ' title="Потяните, чтобы изменить ширину колонок"></div>'
 
             + '<div class="info-right">'
-            + '<div class="info-head">Параметры с сайта'
-            + '<button type="button" class="dating-btn info-get" id="cardParamsGet">'
-            + 'Обновить с сайта</button>'
-            + '<span class="info-when" id="cardParamsWhen">'
-            + (data.parameters_at
-                ? `снято ${esc(timeShift(data.parameters_at))}`
-                : 'с сайта ещё не снимали')
-            + '</span></div>'
+            + '<div class="info-head">Параметры с сайта</div>'
             + '<i class="info-hint">Их читает агент в чате — всё, что он знает о'
             + ' девушке, кроме описания. ⚠ Правка здесь меняет <b>нашу</b> карточку:'
             + ' на сайт ничего не пишется.</i>'
@@ -2608,6 +2619,9 @@
             currentId = 0;
             profileEl.innerHTML = '<div class="empty">выберите анкету слева</div>';
             document.getElementById('profileWho').textContent = '';
+            // ⚠ Правую часть шапки тоже: иначе кнопка «Обновить с сайта» висела
+            // бы над «выберите анкету слева» и жала панель несуществующей.
+            document.getElementById('profileHeadRight').innerHTML = '';
             await profilesLoad();
         } catch (e) {
             btn.disabled = false;

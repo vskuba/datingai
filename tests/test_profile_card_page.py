@@ -364,3 +364,34 @@ def test_long_texts_live_in_the_left_column(page):
     right = page[page.index("'<div class=\"info-right\">'"):page.index("'<div class=\"info-foot\">'")]
     assert 'paramShort' in right, 'правая колонка рисует не короткие поля'
     assert 'paramLong' not in right, 'длинные тексты остались справа'
+
+
+def test_the_refresh_button_lives_in_the_card_header(page, css):
+    """⚠⚠ Кнопка чтения панели — **в шапке карточки**, а не в теле вкладки.
+
+    В заголовке «Параметры с сайта» она стояла вплотную к отметке времени съёма и
+    наезжала на неё: дата читалась наполовину.
+    """
+    assert 'id="profileHeadRight"' in page, 'в шапке карточки нет места под кнопку'
+    assert '.pane-head-right' in css, 'правая часть шапки не описана в стиле'
+
+    body = page[page.index('function infoBlock'):page.index('function infoBind')]
+    assert 'cardParamsGet' not in body, 'кнопка осталась в теле вкладки'
+
+
+def test_the_button_shows_only_on_its_own_tab(page):
+    """⚠ Шапка одна на все вкладки, а кнопка — про параметры анкеты.
+
+    На «Галерее» или «Переменных» она обещала бы действие, которого там нет; хуже
+    того, нажатая оттуда она записала бы параметры, не показав результата.
+    """
+    assert "cardTab !== 'info' ? ''" in page, \
+        'кнопка рисуется независимо от вкладки'
+
+
+def test_the_header_is_cleared_with_the_card(page):
+    """⚠ Иначе кнопка висит над «выберите анкету слева» и жмёт панель
+    несуществующей анкеты."""
+    keep = page[page.index('анкета «${profile.login || currentId}» удалена'):]
+    assert "getElementById('profileHeadRight').innerHTML = ''" in keep, \
+        'правая часть шапки не чистится вместе с карточкой'
