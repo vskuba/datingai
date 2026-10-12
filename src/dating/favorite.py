@@ -601,7 +601,7 @@ async def favorite_add(profile: dict, uid: str, site_password: str = '',
         return {'state': FAVORITE_FAIL, 'error': str(e)}
 
     extract = run.get('extract') or {}
-    state, error = favorite_state(extract.get('до'), extract.get('после'))
+    state, error = favorite_state(extract.get('до'), extract.get('после'))  # cyrillic-key: имя шага extract в сценарии у соседа
 
     await favorite_mark(site_id, profile_id, uid, state, error, reason)
 
@@ -669,7 +669,7 @@ async def favorite_forget(profile: dict, uid: str,
         return {'state': FAVORITE_FAIL, 'error': str(e)}
 
     extract = run.get('extract') or {}
-    state, error = favorite_state(extract.get('до'), extract.get('после'), on=False)
+    state, error = favorite_state(extract.get('до'), extract.get('после'), on=False)  # cyrillic-key: имя шага extract в сценарии у соседа
 
     if state == FAVORITE_FAIL:
         await log_write(profile_id, 'fail', f'Снятие избранного {uid}: {error}')

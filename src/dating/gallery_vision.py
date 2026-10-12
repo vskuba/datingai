@@ -71,16 +71,35 @@ GALLERY_VISION_AGENT = 'gallery_describe_{site}'
 #
 # ⚠ Теги английские, как и прежде: ими отбирают, а не показывают. Перевод для
 # глаза — дело страницы, если понадобится.
+# ⚠ Ключ группы — **латиницей**, как всякий ключ в коде (`code_rules.md`, §1.2);
+# подпись человеку лежит рядом, в `GALLERY_VISION_GROUP_TITLES`. Прежде ключ был
+# русским и уезжал подписью прямо в ручку — то есть одно значение работало и
+# ключом, и текстом для глаза. Разъехаться им негде, за этим следит сторож
+# `TestTheyAgree` в сюите.
 GALLERY_VISION_TAGS = {
-    'одежда': ('dress', 'lingerie', 'swimsuit', 'casual', 'sportswear',
-               'evening-wear', 'coat', 'nude'),
-    'план': ('portrait', 'half-body', 'full-body', 'close-up', 'selfie'),
-    'место': ('indoor', 'outdoor', 'studio', 'bedroom', 'kitchen', 'bathroom',
+    'clothes': ('dress', 'lingerie', 'swimsuit', 'casual', 'sportswear',
+                'evening-wear', 'coat', 'nude'),
+    'shot': ('portrait', 'half-body', 'full-body', 'close-up', 'selfie'),
+    'place': ('indoor', 'outdoor', 'studio', 'bedroom', 'kitchen', 'bathroom',
               'beach', 'nature', 'city', 'car', 'gym', 'cafe'),
-    'настроение': ('smiling', 'serious', 'sensual', 'playful', 'confident',
-                   'shy', 'dreamy'),
-    'свет': ('daylight', 'evening', 'night', 'studio-light'),
-    'прочее': ('group', 'with-pet', 'mirror', 'sitting', 'standing', 'lying'),
+    'mood': ('smiling', 'serious', 'sensual', 'playful', 'confident',
+             'shy', 'dreamy'),
+    'light': ('daylight', 'evening', 'night', 'studio-light'),
+    'other': ('group', 'with-pet', 'mirror', 'sitting', 'standing', 'lying'),
+}
+
+# Как группа называется для человека: её показывает окно правки снимка.
+#
+# ⚠ Порядок и состав обязаны совпадать с `GALLERY_VISION_TAGS` — это один список,
+# записанный дважды, и второго источника правды здесь быть не должно. Сторож в
+# сюите гоняет оба набора ключей друг против друга.
+GALLERY_VISION_GROUP_TITLES = {
+    'clothes': 'Одежда',
+    'shot': 'План',
+    'place': 'Место',
+    'mood': 'Настроение',
+    'light': 'Свет',
+    'other': 'Прочее',
 }
 
 # Плоский список — он и уходит модели, и сверяется при записи.

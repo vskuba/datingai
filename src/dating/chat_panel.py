@@ -144,28 +144,28 @@ def chat_panel_rows(extract: dict, profiles: dict) -> list[dict]:
         if not isinstance(row, dict):
             continue
 
-        message_uid = _digits(row.get('номер'))
+        message_uid = _digits(row.get('номер'))  # cyrillic-key: имя шага extract в сценарии у соседа
         if not message_uid or message_uid in seen:
             continue
 
-        from_uid = _digits(row.get('от_номер')) or _digits(row.get('от'))
-        to_uid = _digits(row.get('кому_номер')) or _digits(row.get('кому'))
+        from_uid = _digits(row.get('от_номер')) or _digits(row.get('от'))  # cyrillic-key: имя шага extract в сценарии у соседа
+        to_uid = _digits(row.get('кому_номер')) or _digits(row.get('кому'))  # cyrillic-key: имя шага extract в сценарии у соседа
 
         # Чья это переписка и в какую сторону. Обе стороны могут оказаться нашими
         # анкетами — панель показывает и такое; считаем это входящим для
         # получателя: именно ему сообщение и пришло.
         if to_uid in profiles:
             profile_id, direction = profiles[to_uid], 'in'
-            partner_uid, partner_cell = from_uid, row.get('от')
+            partner_uid, partner_cell = from_uid, row.get('от')  # cyrillic-key: имя шага extract в сценарии у соседа
         elif from_uid in profiles:
             profile_id, direction = profiles[from_uid], 'out'
-            partner_uid, partner_cell = to_uid, row.get('кому')
+            partner_uid, partner_cell = to_uid, row.get('кому')  # cyrillic-key: имя шага extract в сценарии у соседа
         else:
             # Строка не про наши анкеты: панель агентства показывает всех, а
             # заводим мы у себя не всех. Это не ошибка разбора.
             continue
 
-        text = _text(row.get('текст'), row.get('текст_подсказка'))
+        text = _text(row.get('текст'), row.get('текст_подсказка'))  # cyrillic-key: имя шага extract в сценарии у соседа
         if not text:
             continue
 
@@ -179,7 +179,7 @@ def chat_panel_rows(extract: dict, profiles: dict) -> list[dict]:
             'message_uid': (CHAT_PANEL_PREFIX
                             + message_uid)[:CHAT_PANEL_MSG_UID_MAX],
             'direction': direction,
-            'sent_at': _when(row.get('когда')),
+            'sent_at': _when(row.get('когда')),  # cyrillic-key: имя шага extract в сценарии у соседа
         })
 
     return found
@@ -271,7 +271,7 @@ async def chat_panel_import(site_id: int, days: int) -> dict:
     saved = await chat_panel_save(rows)
 
     return {'status': 'ok',
-            'total': len(extract.get('сообщения') or []),
+            'total': len(extract.get('сообщения') or []),  # cyrillic-key: имя шага extract в сценарии у соседа
             'ours': len(rows),
             'from': date_from, 'to': date_to, 'error': '', **saved}
 
@@ -654,7 +654,7 @@ def _cells(table: list) -> list[dict]:
             if name in ('от', 'кому'):
                 one[f'{name}_номер'] = cell.get('link', '')
             if name == 'текст':
-                one['текст_подсказка'] = cell.get('title', '')
+                one['текст_подсказка'] = cell.get('title', '')  # cyrillic-key: имя шага extract в сценарии у соседа
 
         out.append(one)
 

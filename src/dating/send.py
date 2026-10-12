@@ -302,7 +302,7 @@ async def _send_scenario(profile: dict, to_uid: str, text: str, message_uid: str
         return _fail(f"сценарий встал на шаге {run.get('step_no')}: {run.get('error')}")
 
     return {'ok': True, 'error': '', 'offline': False,
-            'response': str((run.get('extract') or {}).get('отправлено') or ''),
+            'response': str((run.get('extract') or {}).get('отправлено') or ''),  # cyrillic-key: имя шага extract в сценарии у соседа
             'message_uid': message_uid}
 
 

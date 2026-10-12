@@ -128,9 +128,9 @@ def people_rows(extract: dict, field: str) -> list[dict]:
         if not isinstance(row, dict):
             continue
 
-        link = str(row.get('ссылка') or '').strip()
-        photo = _photo(row.get('фото'))
-        name, age = _name_age(row.get('имя'))
+        link = str(row.get('ссылка') or '').strip()  # cyrillic-key: имя шага extract в сценарии у соседа
+        photo = _photo(row.get('фото'))  # cyrillic-key: имя шага extract в сценарии у соседа
+        name, age = _name_age(row.get('имя'))  # cyrillic-key: имя шага extract в сценарии у соседа
 
         # Шаблон разметки, а не человек: сайт держит в списке скрытую строку-образец
         # и заполняет её скриптом. Отсекаем по тексту — своего признака у неё нет.
@@ -160,8 +160,8 @@ def people_rows(extract: dict, field: str) -> list[dict]:
                       # страница сводит человека из кабинета с ним же из чата:
                       # номера у них разные (в чате его нет вовсе), а файл один.
                       'photo_uid': people_photo_uid(photo),
-                      'online': PEOPLE_ONLINE_MARK in str(row.get('статус_класс') or ''),
-                      'is_new': bool(str(row.get('новый') or '').strip()),
+                      'online': PEOPLE_ONLINE_MARK in str(row.get('статус_класс') or ''),  # cyrillic-key: имя шага extract в сценарии у соседа
+                      'is_new': bool(str(row.get('новый') or '').strip()),  # cyrillic-key: имя шага extract в сценарии у соседа
                       'link': link})
 
     return found

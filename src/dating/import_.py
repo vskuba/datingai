@@ -76,14 +76,14 @@ def import_rows(extract: dict, field: str = 'анкеты') -> list[dict]:
         if not isinstance(row, dict):
             continue
 
-        site_uid = _text(row.get('номер'))
+        site_uid = _text(row.get('номер'))  # cyrillic-key: имя шага extract в сценарии у соседа
         if not site_uid:
             continue
 
         found.append({'site_uid': site_uid[:IMPORT_LOGIN_MAX],
-                      'name': _text(row.get('имя'))[:IMPORT_NAME_MAX],
-                      'city': _text(row.get('город'))[:IMPORT_CITY_MAX],
-                      'photo_path': _text(row.get('фото'))})
+                      'name': _text(row.get('имя'))[:IMPORT_NAME_MAX],  # cyrillic-key: имя шага extract в сценарии у соседа
+                      'city': _text(row.get('город'))[:IMPORT_CITY_MAX],  # cyrillic-key: имя шага extract в сценарии у соседа
+                      'photo_path': _text(row.get('фото'))})  # cyrillic-key: имя шага extract в сценарии у соседа
 
     return found
 

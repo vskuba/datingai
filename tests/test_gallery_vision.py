@@ -314,6 +314,36 @@ class TestTheTagDictionary:
             f'тегов {len(GALLERY_VISION_TAGS_ALL)} — словарь вышел из берегов'
         assert len(GALLERY_VISION_TAGS) >= 4, 'группы нужны человеку для чтения'
 
+    def test_group_keys_are_latin(self):
+        """⚠ Ключ группы — ключ в коде, значит латиницей (`code_rules.md` §1.2).
+
+        Прежде он был русским и уезжал **подписью** прямо в ответ ручки: одно
+        значение работало и ключом, и текстом для глаза. Подпись теперь своя.
+        """
+        import re
+
+        from src.dating.gallery_vision import GALLERY_VISION_TAGS
+
+        for key in GALLERY_VISION_TAGS:
+            assert re.fullmatch(r'[a-z][a-z0-9_-]*', key), \
+                f'ключ группы «{key}» не латиницей'
+
+    def test_every_group_has_a_title_and_no_stranger_has_one(self):
+        """⚠⚠ Сторож согласия: два словаря про одно и то же расходятся молча.
+
+        Забыл подпись — окно покажет человеку `clothes`; забыл группу — подпись
+        лежит мёртвой и никто об этом не узнает.
+        """
+        from src.dating.gallery_vision import (GALLERY_VISION_GROUP_TITLES,
+                                               GALLERY_VISION_TAGS)
+
+        assert set(GALLERY_VISION_GROUP_TITLES) == set(GALLERY_VISION_TAGS), \
+            'подписи групп разошлись с самими группами'
+        assert list(GALLERY_VISION_GROUP_TITLES) == list(GALLERY_VISION_TAGS), \
+            'порядок подписей разошёлся с порядком групп'
+        assert all(one.strip() for one in GALLERY_VISION_GROUP_TITLES.values()), \
+            'у группы пустая подпись'
+
     def test_no_tag_repeats_between_groups(self):
         """⚠ Повтор тега в двух группах — молчаливая беда.
 

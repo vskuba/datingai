@@ -31,7 +31,8 @@ from google_drive_.google_drive_bytes import (GOOGLE_DRIVE_THUMB_SIZES,
 from src.auth.auth import AuthUser, auth_required
 from src.dating.gallery import gallery_folder_name, gallery_view
 from src.dating.gallery_index import (gallery_index_folders, gallery_index_sync)
-from src.dating.gallery_vision import (GALLERY_VISION_TAGS,
+from src.dating.gallery_vision import (GALLERY_VISION_GROUP_TITLES,
+                                       GALLERY_VISION_TAGS,
                                        gallery_vision_tags_keep)
 from src.uvicorn.routers.dating.profile_ import profile_row
 
@@ -80,9 +81,15 @@ async def gallery_tags(user: AuthUser = Depends(auth_required)):
     грабля, что уже была с подразделами настроек сайта.
 
     ⚠ Группы отдаём как есть: они для глаза, и порядок их — порядок словаря.
+
+    ⚠ `name` — **подпись человеку**, а не ключ: ключ латиницей (`clothes`), и
+    страница показывает именно подпись. Прежде ключ был русским и работал обоими
+    сразу; разводить их пришлось по правилу §1.2, и ответ ручки от этого не
+    изменился ни на поле.
     """
-    return {'result': {'groups': [{'name': name, 'tags': list(tags)}
-                                  for name, tags in GALLERY_VISION_TAGS.items()]}}
+    return {'result': {'groups': [
+        {'name': GALLERY_VISION_GROUP_TITLES.get(key, key), 'tags': list(tags)}
+        for key, tags in GALLERY_VISION_TAGS.items()]}}
 
 
 @router.get('/folders', include_in_schema=False)

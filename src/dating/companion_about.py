@@ -341,7 +341,7 @@ async def companion_about_http(profile: dict, uid: str) -> dict:
 
     blocks = driver.parse(answer.text)
 
-    if not blocks.get('анкета'):
+    if not blocks.get('анкета'):  # cyrillic-key: имя шага extract в сценарии у соседа
         # ⚠ Пустой блок — это не «у человека ничего не написано», а «страница не
         # та»: сессия протухла и нас увели на вход, либо сайт поменял вёрстку.
         # Отличить важно: первое лечится входом, второе — правкой класса.
@@ -424,9 +424,9 @@ async def companion_about_fetch(profile: dict, uid: str) -> dict:
             f"сценарий встал на шаге {run.get('step_no')}: {run.get('error')}")
 
     extract = run.get('extract') or {}
-    fields = companion_about_parse(extract.get('анкета'))
+    fields = companion_about_parse(extract.get('анкета'))  # cyrillic-key: имя шага extract в сценарии у соседа
     city, country = companion_about_place(fields)
-    name, age = companion_about_head(extract.get('шапка'))
+    name, age = companion_about_head(extract.get('шапка'))  # cyrillic-key: имя шага extract в сценарии у соседа
 
     # ⚠ Номер сверяем с тем, что просили. Сайт мог увести на чужую анкету — по
     # опечатке в номере или редиректом, — и записать чужие сведения человеку было
@@ -598,9 +598,9 @@ def _from_blocks(blocks: dict, uid: str) -> dict:
     Разбор один на оба пути намеренно: страница одна и та же, и второй его вид
     разошёлся бы с первым на первой же правке подписей.
     """
-    fields = companion_about_parse(blocks.get('анкета'))
+    fields = companion_about_parse(blocks.get('анкета'))  # cyrillic-key: имя шага extract в сценарии у соседа
     city, country = companion_about_place(fields)
-    name, age = companion_about_head(blocks.get('шапка'))
+    name, age = companion_about_head(blocks.get('шапка'))  # cyrillic-key: имя шага extract в сценарии у соседа
 
     got_uid = str(fields.get('Id:') or '').strip()
     if got_uid and got_uid != str(uid):
