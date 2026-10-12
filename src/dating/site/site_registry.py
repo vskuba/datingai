@@ -15,6 +15,8 @@ from src.dating.site.site_about import (DatingSiteAbout,
 from src.dating.site.site_base import DatingSiteChat
 from src.dating.site.site_goldenbride import (DatingSiteChatGoldenbride,
                                               DatingSiteProfileGoldenbride)
+from src.dating.site.site_panel import (DatingSitePanel,
+                                        DatingSitePanelLadadate)
 from src.dating.site.site_profile import DatingSiteProfile
 
 # Известные драйверы чата: имя из `presence.driver` → класс.
@@ -40,6 +42,17 @@ DATING_SITE_PROFILE_DRIVERS = {
 DATING_SITE_ABOUT_DRIVERS = {
     DatingSiteAboutLadadate.name: DatingSiteAboutLadadate,
     DatingSiteAbout.name: DatingSiteAbout,
+}
+
+# Драйверы админ-панели агентства — по тем же именам, четвёртая таблица.
+#
+# ⚠ **Своя таблица, а не поле в прежних.** Панель отвечает на четвёртый вопрос: чат
+# — про кадры сокета, анкета девушки — про имена полей JSON, разбор страницы
+# собеседника — про классы вёрстки, эта — про имена полей формы панели. Сайт может
+# совпасть с соседом в трёх и разойтись в четвёртом.
+DATING_SITE_PANEL_DRIVERS = {
+    DatingSitePanelLadadate.name: DatingSitePanelLadadate,
+    DatingSitePanel.name: DatingSitePanel,
 }
 
 # Чем разговаривать, когда сайт не назвал драйвер.
@@ -97,6 +110,25 @@ def site_registry_about(presence: dict | None = None) -> DatingSiteAbout:
     name = str(presence.get('driver') or '').strip()
 
     return DATING_SITE_ABOUT_DRIVERS.get(name, DatingSiteAbout)(presence)
+
+
+def site_registry_panel(presence: dict | None = None) -> DatingSitePanel:
+    """Чем читать страницу анкеты в админ-панели агентства этого сайта.
+
+    Четвёртая половина драйвера: панель отвечает на свой вопрос — как зовутся поля
+    её формы и в каком виде она пишет рост, вес и дату рождения.
+
+    ⚠ **Умолчание — базовый драйвер с пустым путём**, то есть «панель этого сайта
+    читать нечем», и ручка говорит это словами. Подставлять сюда чужой разбор
+    нельзя: имена полей у панелей свои, и чужая карта дала бы пустые параметры,
+    неотличимые от «анкета не заполнена».
+    """
+    if not isinstance(presence, dict):
+        return DatingSitePanel()
+
+    name = str(presence.get('driver') or '').strip()
+
+    return DATING_SITE_PANEL_DRIVERS.get(name, DatingSitePanel)(presence)
 
 
 def _driver_of(drivers: dict, presence: dict | None):
