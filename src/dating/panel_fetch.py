@@ -190,6 +190,37 @@ def panel_fetch_table(html: str) -> list[list[dict]]:
     return parser.rows
 
 
+def panel_fetch_form(html: str) -> dict:
+    """Значения формы панели: имя поля → то, что в нём стоит.
+
+    Returns:
+        dict: `{имя: значение}` строками. Поля без `name` пропускаются; поле без
+        значения даёт пустую строку, а не отсутствует вовсе.
+
+    ⚠ **Пусто и «нет вовсе» — разные вещи, и обе нужны.** Пустое поле значит «у
+    анкеты это не заполнено», отсутствие имени — «разметка сменилась», и второе
+    обязано отличаться от первого: на нём стоит отказ читателя параметров
+    (`profile_panel.py`).
+
+    ⚠ У `select` берётся **текст** выбранного `option`, а не его `value`:
+    `value="208"` — внутренний номер сайта, человеку и модели он не говорит
+    ничего, а текст «Ukraine» говорит.
+
+    ⚠ Значения не обрезаются по краям здесь: это делает `profile_param_frame`, и
+    две обрезки в двух местах разошлись бы на первой правке.
+
+    ⚠ Разбор свой, а не библиотекой: в образе нет ни `bs4`, ни `lxml`, и тянуть их
+    ради одной формы незачем. Та же причина, что у `panel_fetch_table`.
+    """
+    parser = _Form()
+    try:
+        parser.feed(str(html or ''))
+    except Exception as e:
+        logger_info(f'[dating] форма панели не разобралась: {e}')
+
+    return parser.fields
+
+
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 class _Table(HTMLParser):
@@ -264,6 +295,63 @@ class _Table(HTMLParser):
         self._cell['текст'] += data
         if self._in_link:
             self._cell['ссылка'] += data
+
+
+class _Form(HTMLParser):
+    """Разбор формы страницы: значения `input`, `select` и `textarea`.
+
+    ⚠ Состояние — два указателя: в каком поле мы сейчас собираем текст и в каком
+    `select` находимся. Полный разбор DOM без библиотеки стоил бы вчетверо больше
+    кода ради возможностей, которых здесь не спрашивают, — то же решение, что у
+    `_Table` выше.
+
+    ⚠⚠ `convert_charrefs=True` обязателен: панель пишет рост сущностями
+    (`5&#39;8&quot; - 172 cm`), и без разворота значение уехало бы в био как есть.
+    """
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.fields: dict[str, str] = {}
+        # Имя поля, текст которого собираем: `textarea` либо выбранный `option`.
+        self._name = ''
+        self._take = False
+        # Имя текущего `select`: выбранный `option` пишется под ним.
+        self._select = ''
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        got = dict(attrs)
+        name = str(got.get('name') or '').strip()
+
+        if tag == 'input':
+            if name:
+                self.fields[name] = str(got.get('value') or '')
+        elif tag == 'select':
+            self._select = name
+            if name:
+                # ⚠ Заводим пустым сразу: `select` без выбранного варианта обязан
+                # дать пустую строку, а не исчезнуть из ответа.
+                self.fields[name] = ''
+        elif tag == 'option':
+            if self._select and 'selected' in got:
+                self._name, self._take = self._select, True
+                self.fields[self._name] = ''
+        elif tag == 'textarea':
+            if name:
+                self._name, self._take = name, True
+                self.fields[name] = ''
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ('option', 'textarea'):
+            self._take = False
+            self._name = ''
+        elif tag == 'select':
+            self._select = ''
+
+    def handle_data(self, data: str) -> None:
+        if not self._take or not self._name:
+            return
+
+        self.fields[self._name] += data
 
 
 async def _session(site_id: int) -> tuple[str, dict]:
