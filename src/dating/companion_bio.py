@@ -46,6 +46,7 @@
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
+from text_.text_trim_lines import text_trim_lines
 
 # Сколько знаков анкеты отдаём. ⚠ Не ради экономии токенов, а ради внимания
 # модели: полторы тысячи знаков это уже «простыня», в которой тонет сама реплика
@@ -123,16 +124,9 @@ def companion_bio_build(card: dict) -> str:
 
     # ⚠ Режем **по границе строки**, а не по знаку: оборванная на полуслове
     # анкета выглядит как сбой и провоцирует модель её «досочинить».
-    if len(text) > COMPANION_BIO_MAX:
-        kept = []
-        left = COMPANION_BIO_MAX
-        for line in text.split('\n'):
-            if len(line) + 1 > left:
-                break
-
-            kept.append(line)
-            left -= len(line) + 1
-
-        text = '\n'.join(kept).strip()
-
-    return text
+    #
+    # ⚠ Правило общее с био девушки (`agent.agent_bio`) и потому живёт в общем
+    # слое: две копии «как резать текст» разошлись бы ровно там, где это не
+    # видно. Здесь оно безопасно ещё и потому, что `lines` — строки «Поле:
+    # значение», а не один абзац: первая из них короткая при любой карточке.
+    return text_trim_lines(text, COMPANION_BIO_MAX)
