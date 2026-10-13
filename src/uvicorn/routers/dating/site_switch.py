@@ -24,6 +24,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.auth.auth import AuthUser, auth_admin_required, auth_required
 # Смены — те же, что у анкеты, и разбирает их тот же код: второй набор правил
 # разошёлся бы с первым (`schedule.py`).
+from src.dating.chat_intention import chat_intention_do_allowed
 from src.dating.schedule import (schedule_check, schedule_dump,
                                         schedule_load)
 from src.dating.site_setting import site_seconds
@@ -503,15 +504,18 @@ async def site_chat_answer_on(site_id: int, payload: DatingSiteChatAnswerOn,
 @router.get('/{site_id}/chat-intention-do', include_in_schema=False)
 async def site_chat_intention_do_get(site_id: int,
                                      user: AuthUser = Depends(auth_required)):
-    """Исполняются ли намерения этого сайта. Нет строки — выключено, а не 404."""
-    async with mysql_get_db_async() as db:
-        await db.execute('SELECT chat_intention_do_on FROM site WHERE site_id = %s',
-                         (int(site_id),))
-        row = await db.fetchone()
+    """Исполняются ли намерения этого сайта. Нет строки — выключено, а не 404.
 
+    ⚠⚠ **Читает доменной дверью, а не своим `SELECT`.** Тот же вопрос задаёт
+    будущий исполнитель (`chat_intention_do_allowed`), и два места, читающие один
+    столбец, разошлись бы на первой же правке — например, когда к разрешению
+    добавится второе условие. Соседние ручки этого файла читают флаги своим
+    запросом, но у них так вышло исторически: у `chat_answer_on` второй читатель
+    уже живёт в `auto.py`, и это ровно та развилка, которую здесь не повторяем.
+    """
     return {'result': {'site_id': int(site_id),
                        'chat_intention_do_on':
-                           bool((row or {}).get('chat_intention_do_on'))}}
+                           await chat_intention_do_allowed(site_id)}}
 
 
 @router.put('/{site_id}/chat-intention-do-on', include_in_schema=False)
