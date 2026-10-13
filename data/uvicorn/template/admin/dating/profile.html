@@ -4921,6 +4921,19 @@
         const initiativeReload = workEl.querySelector('[data-slot="initiative-reload"]');
         if (initiativeReload) initiativeReload.addEventListener('click', initiativeLoad);
 
+        // ⚠ Колонки намерений не перечитываются сами, а строки в них кладёт
+        // прогон агента: человек вернётся на вкладку, ничего не нажимая, и
+        // увидит прежнее. Тот же довод, что у пула инициативы выше.
+        const intentionPairsReload = workEl.querySelector(
+            '[data-slot="intention-pairs-reload"]');
+        if (intentionPairsReload)
+            intentionPairsReload.addEventListener('click', intentionPairsLoad);
+
+        const intentionPoolReload = workEl.querySelector(
+            '[data-slot="intention-pool-reload"]');
+        if (intentionPoolReload)
+            intentionPoolReload.addEventListener('click', intentionPoolLoad);
+
         // Что с инициативой у этой пары — окном. ⚠ Ничего не меняет, только
         // рассказывает: решение отпустить пару принимает соседний значок.
         const initiativeInfo = workEl.querySelector('[data-slot="initiative-info"]');
@@ -5654,7 +5667,7 @@
     // ⚠ Порядок — порядок разговора: сперва зовём, смотрим, ушло ли, потом
     // говорим. Он же и умолчание: первая подвкладка та, с которой начинают день, —
     // пул инвайтов набирается кругом ночью, а утром его разбирают.
-    const CHAT_TABS = ['invite', 'sent', 'talk', 'block'];
+    const CHAT_TABS = ['invite', 'sent', 'talk', 'block', 'intention'];
 
     let chatTab = CHAT_TABS.includes(localStorage.getItem(CHAT_TAB_KEY))
         ? localStorage.getItem(CHAT_TAB_KEY) : 'invite';
@@ -5694,6 +5707,7 @@
             chatInitiativeLoad();
         }
         if (chatTab === 'block') inviteBlockShow();
+        if (chatTab === 'intention') intentionShow();
     }
 
     // ── Автоответ в чате: один выключатель на сайт ──────────────────────────
@@ -6440,6 +6454,260 @@
 
         showNotification('Запрет снят — паре снова можно писать', 'success');
         inviteBlockLoad();
+    }
+
+    // ── Намерения и действия: что агент наобещал ────────────────────────────
+    //
+    // ⚠ Три колонки, и связаны они по-разному. Выбор **анкеты** в левом списке
+    // страницы сужает все три — общее правило раздела. Выбор **пары** внутри
+    // вкладки сужает только среднюю: правая отвечает на вопрос «что вообще ждёт
+    // работы», и сузь мы её щелчком по паре, вкладка лишилась бы единственного
+    // места, где этот вопрос задаётся.
+    let intentionPairs = [];
+    let intentionPairsPage = 0, intentionPairsPages = 1, intentionPairsTotal = 0;
+    // Открытая пара строкой «анкета:номер»: номер у пары один на двоих, и по
+    // нему её не найти. Тот же приём, что у `favTalkOpen`.
+    let intentionOpen = '';
+    let intentionDone = [];
+    let intentionDonePage = 0, intentionDonePages = 1, intentionDoneTotal = 0;
+    let intentionPool = [];
+    let intentionPoolPage = 0, intentionPoolPages = 1, intentionPoolTotal = 0;
+
+    const intentionKey = (row) => `${row.profile_id}:${row.uid}`;
+
+    function intentionShow() {
+        intentionPairsLoad();
+        intentionPoolLoad();
+        intentionDonePaint();
+    }
+
+    async function intentionPairsLoad() {
+        const site = siteId();
+        if (!site) {
+            intentionPairs = [];
+            intentionPairsPaint();
+
+            return;
+        }
+
+        try {
+            const got = (await getData(
+                `${BASE}/api/dating/chat-intention/pairs?site_id=${site}`
+                + `&profile_id=${openId || 0}&page=${intentionPairsPage + 1}`)) || {};
+
+            intentionPairs = got.result || [];
+            intentionPairsPages = Math.max(1, Number(got.pages) || 1);
+            intentionPairsTotal = Number(got.total) || 0;
+            intentionPairsPage = Math.max(0, (Number(got.page) || 1) - 1);
+        } catch (e) {
+            intentionPairs = [];
+            showNotification('Пары намерений не пришли: ' + e.message, 'error');
+        }
+
+        intentionPairsPaint();
+    }
+
+    function intentionPairsPaint() {
+        const box = slot('intention-pairs-list');
+        if (!box) return;
+
+        fillSlot('intention-pairs-count',
+                 intentionPairsTotal ? `пар: ${intentionPairsTotal}` : '');
+
+        if (!intentionPairs.length) {
+            box.innerHTML = '<div class="in-empty">Намерений пока нет.<br>'
+                + 'Их помечает агент, когда в разговоре что-то обещано — '
+                + 'например, прислать фото.</div>';
+            intentionPagerPaint('intention-pairs-pager', intentionPairsPages,
+                                intentionPairsPage,
+                                (pick) => { intentionPairsPage = pick;
+                                            intentionPairsLoad(); }, '');
+
+            return;
+        }
+
+        // ⚠ Класс карточки — `contact`, а выбранная метится `open`: так устроен
+        // общий вид `talk-cards`, которым рисуют списки пар и в чате, и у
+        // фаворитов. Свой класс остался бы без стилей, и список вышел бы голым
+        // столбцом текста.
+        box.innerHTML = intentionPairs.map(row =>
+            `<div class="contact${intentionKey(row) === intentionOpen ? ' open' : ''}"`
+            + ` data-pair="${esc(intentionKey(row))}">`
+            + '<span class="mail-sent-who talk">'
+            + talkSide(row.profile_name, row.profile_photo, row.profile_uid,
+                       'анкета, которая обещала')
+            + '<span class="talk-swap">→</span>'
+            + talkSide(row.name, row.photo, row.uid, 'кому обещано')
+            + '</span>'
+            // ⚠ Два числа и подписи к ним: голые «1 · 0» читались бы как номер.
+            + `<span class="in-count">открыто ${Number(row.open_count) || 0}`
+            + ` · сделано ${Number(row.done_count) || 0}</span>`
+            + '</div>').join('');
+
+        // ⚠ Обработчик вешаем после отрисовки: строки переписываются целиком на
+        // каждое чтение, и повешенный до неё не пережил бы первого обновления.
+        box.querySelectorAll('.contact').forEach(card =>
+            card.addEventListener('click', () => {
+                intentionOpen = card.dataset.pair;
+                intentionDonePage = 0;
+                intentionPairsPaint();
+                intentionDoneLoad();
+            }));
+
+        intentionPagerPaint('intention-pairs-pager', intentionPairsPages,
+                            intentionPairsPage,
+                            (pick) => { intentionPairsPage = pick;
+                                        intentionPairsLoad(); },
+                            `пар: ${intentionPairsTotal}`);
+    }
+
+    async function intentionDoneLoad() {
+        const site = siteId();
+        const [pid, uid] = (intentionOpen || '').split(':');
+
+        if (!site || !uid) {
+            intentionDone = [];
+            intentionDonePaint();
+
+            return;
+        }
+
+        try {
+            const got = (await getData(
+                `${BASE}/api/dating/chat-intention?site_id=${site}`
+                + `&profile_id=${pid}&uid=${encodeURIComponent(uid)}`
+                + `&status=done&page=${intentionDonePage + 1}`)) || {};
+
+            intentionDone = got.result || [];
+            intentionDonePages = Math.max(1, Number(got.pages) || 1);
+            intentionDoneTotal = Number(got.total) || 0;
+            intentionDonePage = Math.max(0, (Number(got.page) || 1) - 1);
+        } catch (e) {
+            intentionDone = [];
+            showNotification('Исполненные намерения не пришли: ' + e.message,
+                             'error');
+        }
+
+        intentionDonePaint();
+    }
+
+    function intentionDonePaint() {
+        const box = slot('intention-done-list');
+        if (!box) return;
+
+        const picked = intentionPairs.find(
+            row => intentionKey(row) === intentionOpen);
+
+        fillSlot('intention-done-who',
+                 picked ? `${picked.profile_name} → ${picked.name}` : '');
+
+        if (!intentionOpen) {
+            box.innerHTML = '<div class="in-empty">Выберите пару слева.</div>';
+            intentionPagerPaint('intention-done-pager', 1, 0, () => {}, '');
+
+            return;
+        }
+
+        if (!intentionDone.length) {
+            // ⚠⚠ Пока нет исполнителя, колонка пуста ВСЕГДА — закрывать строки
+            // некому. Сказать это надо прямо, иначе человек решит, что вкладка
+            // сломана, и будет искать поломку там, где её нет.
+            box.innerHTML = '<div class="in-empty">Исполненных намерений нет: '
+                + 'занятия, которое их исполняет, пока не существует — '
+                + 'все намерения ждут в пуле справа.</div>';
+            intentionPagerPaint('intention-done-pager', 1, 0, () => {}, '');
+
+            return;
+        }
+
+        box.innerHTML = intentionDone.map(row =>
+            '<div class="mail-sent-row plain">'
+            + `<span class="mail-sent-when first">`
+            + `${esc(row.done_at ? timeShift(row.done_at) : '')}</span>`
+            + `<span class="mail-sent-state">${esc(row.intention)}</span>`
+            // ⚠ Заметка исполнителя — тем же весом, что метка: ради неё колонку
+            // и открывают. Пусто — говорим словами, а не пустым местом.
+            + '<span class="mail-sent-text">'
+            + `${esc(row.done_note || 'чем исполнили — не записано')}</span>`
+            + '</div>').join('');
+
+        intentionPagerPaint('intention-done-pager', intentionDonePages,
+                            intentionDonePage,
+                            (pick) => { intentionDonePage = pick;
+                                        intentionDoneLoad(); },
+                            `сделано: ${intentionDoneTotal}`);
+    }
+
+    async function intentionPoolLoad() {
+        const site = siteId();
+        if (!site) {
+            intentionPool = [];
+            intentionPoolPaint();
+
+            return;
+        }
+
+        try {
+            const got = (await getData(
+                `${BASE}/api/dating/chat-intention?site_id=${site}`
+                + `&profile_id=${openId || 0}&status=open`
+                + `&page=${intentionPoolPage + 1}`)) || {};
+
+            intentionPool = got.result || [];
+            intentionPoolPages = Math.max(1, Number(got.pages) || 1);
+            intentionPoolTotal = Number(got.total) || 0;
+            intentionPoolPage = Math.max(0, (Number(got.page) || 1) - 1);
+        } catch (e) {
+            intentionPool = [];
+            showNotification('Пул намерений не пришёл: ' + e.message, 'error');
+        }
+
+        intentionPoolPaint();
+    }
+
+    function intentionPoolPaint() {
+        const box = slot('intention-pool-list');
+        if (!box) return;
+
+        fillSlot('intention-pool-count',
+                 intentionPoolTotal ? `намерений: ${intentionPoolTotal}` : '');
+
+        if (!intentionPool.length) {
+            box.innerHTML = '<div class="in-empty">Пул пуст.<br>'
+                + 'Намерения кладёт сюда прогон агента — на каждом ответе в '
+                + 'чате и в письмах.</div>';
+            intentionPagerPaint('intention-pool-pager', 1, 0, () => {}, '');
+
+            return;
+        }
+
+        box.innerHTML = intentionPool.map(row =>
+            '<div class="mail-sent-row plain">'
+            + `<span class="mail-sent-when first">`
+            + `${esc(row.created_at ? timeShift(row.created_at) : '')}</span>`
+            + '<span class="mail-sent-who talk">'
+            + talkSide(row.profile_name, row.profile_photo, row.profile_uid,
+                       'анкета, которая обещала')
+            + '<span class="talk-swap">→</span>'
+            + talkSide(row.name, row.photo, row.uid, 'кому обещано')
+            + '</span>'
+            + `<span class="mail-sent-state">${esc(row.intention)}</span>`
+            + '</div>').join('');
+
+        intentionPagerPaint('intention-pool-pager', intentionPoolPages,
+                            intentionPoolPage,
+                            (pick) => { intentionPoolPage = pick;
+                                        intentionPoolLoad(); },
+                            `намерений: ${intentionPoolTotal}`);
+    }
+
+    // ⚠ Одна обёртка на три пейджера: разница между ними — имя узла и что делать
+    // при выборе страницы, и три копии `pagerRender` разошлись бы на первой правке.
+    function intentionPagerPaint(name, pages, current, pick, count) {
+        const foot = slot(name);
+        if (!foot) return;
+
+        pagerRender(foot, pages, current, pick, count);
     }
 
     // ── Инвайты: пул первых реплик в чат ─────────────────────────────────────

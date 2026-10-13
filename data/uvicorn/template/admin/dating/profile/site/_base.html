@@ -128,6 +128,17 @@
            Заходят сюда реже всего: список пополняется сам, и открывают его, чтобы
            понять, почему паре ничего не уходит, либо чтобы снять запрет. #}
         <button type="button" class="page-tab" data-chat-tab="block">Не пишем</button>
+        {# ⚠ «Намерения и действия» — за «Не пишем», и это продолжение того же
+           пути: позвали → посмотрели, ушло ли → поговорили → с этими не
+           разговариваем → а вот что в разговорах наобещано.
+
+           ⚠ Намерения рождаются и в чате, и в письмах — их пишет одна точка
+           `_agent_ask`. Вкладка стоит здесь, а не в «Фаворитах», потому что
+           намерение про **разговор**: среди «Приставания» и «Доставки» оно
+           читалось бы как «намерение по письмам». Второго места показа нет
+           намеренно — отбор был бы тот же самый, то есть два одинаковых экрана. #}
+        <button type="button" class="page-tab"
+                data-chat-tab="intention">Намерения и действия</button>
 
         {# ⚠ Правый край полосы — **настройки открытой подвкладки**, как у почты.
            У каждой панели свои, и место у них общее: человек ищет «где это
@@ -497,6 +508,56 @@
         {# ⚠ Пейджер тот же, что у журнала доставки: список копится сам и не
            убывает — запрет не истекает, и каждый отказ сайта добавляет строку. #}
         <div class="pane-foot" data-slot="invite-block-pager"></div>
+        {% endblock %}
+    </div>
+
+    {# ⚠ Колонок три, и порядок в них — порядок работы: кому обещали → что
+       сделано → что ещё ждёт. Раскладка общая с «Диалогами» (`in-cols-3`), и
+       разделители те же классы (`split-reply`, `split-initiative`): их
+       перетаскивание уже привязано обходом по всей панели работы, и своего кода
+       новой вкладке не нужно. #}
+    <div class="chat-pane off" data-chat-pane="intention">
+        {% block work_chat_intention %}
+        <div class="in-cols in-cols-3">
+            <div class="in-col">
+                <div class="in-head">
+                    <span class="in-count" data-slot="intention-pairs-count"></span>
+                    <button type="button" class="people-reload"
+                            data-slot="intention-pairs-reload"
+                            title="Перечитать пары">⟳</button>
+                </div>
+                <div class="in-list talk-cards"
+                     data-slot="intention-pairs-list"></div>
+                <div class="pane-foot" data-slot="intention-pairs-pager"></div>
+            </div>
+
+            <div class="split split-reply"
+                 title="Потяните, чтобы изменить ширину"></div>
+
+            <div class="in-col">
+                <div class="in-head">
+                    <span>Сделано</span>
+                    <span class="in-count" data-slot="intention-done-who"></span>
+                </div>
+                <div class="in-list" data-slot="intention-done-list"></div>
+                <div class="pane-foot" data-slot="intention-done-pager"></div>
+            </div>
+
+            <div class="split split-initiative"
+                 title="Потяните, чтобы изменить ширину"></div>
+
+            <div class="in-col in-col-pool">
+                <div class="in-head">
+                    <span>В пуле</span>
+                    <span class="in-count" data-slot="intention-pool-count"></span>
+                    <button type="button" class="people-reload"
+                            data-slot="intention-pool-reload"
+                            title="Перечитать пул">⟳</button>
+                </div>
+                <div class="in-list" data-slot="intention-pool-list"></div>
+                <div class="pane-foot" data-slot="intention-pool-pager"></div>
+            </div>
+        </div>
         {% endblock %}
     </div>
 </div>
