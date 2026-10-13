@@ -19,6 +19,12 @@
 иметь первые сотни обещаний без следа. Тем же доводом живёт
 `companion_gallery.py`.
 
+⚠ Отдельной «двери для исполнителя» здесь **нет и заводить её не надо**: открытые
+намерения он возьмёт тем же `chat_intention_rows(site_id, status='open')`, что и
+вкладка. Такая дверь была написана заранее и три дня простояла без единого
+вызывающего, повторяя чужой отбор, — то есть ровно тем, что правила зовут
+размазанным знанием.
+
 ## ⚠ Пара — это «сайт и человек»
 
 Номер собеседника уникален в пределах сайта, а не вообще, и ключ уникальности —
@@ -45,6 +51,10 @@ CHAT_INTENTION_LENGTH_MAX = 100
 # ошибкой, и закрытие намерения сорвалось бы из-за того, что исполнитель написал
 # в заметке лишнего. Дело уже сделано — терять отметку из-за текста нельзя.
 CHAT_INTENTION_NOTE_MAX = 500
+
+# Строк на странице по умолчанию. Столько же, сколько у чёрного списка: списки
+# соседние по виду, и разная высота читалась бы как разная важность.
+CHAT_INTENTION_PAGE = 50
 
 
 async def chat_intention_put(profile_id: int, site_id: int, uid: str,
@@ -100,56 +110,6 @@ async def chat_intention_put(profile_id: int, site_id: int, uid: str,
     return put
 
 
-async def chat_intention_open(site_id: int, profile_id: int = 0, uid: str = '',
-                              limit: int = 0) -> list[dict]:
-    """Намерения, которые ещё не исполнены. Пусто — законный исход.
-
-    Args:
-        site_id: сайт. Ноль — отдаём пусто (см. ⚠ ниже).
-        profile_id: отбор по анкете. Ноль — все анкеты сайта.
-        uid: отбор по собеседнику. Пусто — все.
-        limit: сколько строк вернуть. Ноль — все.
-
-    Returns:
-        list[dict]: `id`, `profile_id`, `site_id`, `uid`, `intention`,
-        `created_at`; старые первыми.
-
-    ⚠ **Сайт обязателен.** Круги панели обходят сайты поодиночке
-    (`round_sites`), и отбор «по всем сразу» здесь не нужен ни одному
-    вызывающему. Ноль молча отдаёт пусто, а не всю таблицу: вторая форма
-    однажды уехала бы в круг и унесла чужие строки.
-
-    ⚠ Порядок — по номеру строки, то есть по времени: старое обещание исполняют
-    раньше нового.
-    """
-    if not int(site_id or 0):
-        return []
-
-    sql = ('SELECT id, profile_id, site_id, uid, intention, created_at'
-           '  FROM chat_intention'
-           " WHERE status = 'open' AND site_id = %s")
-    args = [int(site_id)]
-
-    if int(profile_id or 0):
-        sql += ' AND profile_id = %s'
-        args.append(int(profile_id))
-
-    if str(uid or '').strip():
-        sql += ' AND uid = %s'
-        args.append(str(uid).strip())
-
-    sql += ' ORDER BY id'
-
-    if int(limit or 0) > 0:
-        sql += ' LIMIT %s'
-        args.append(int(limit))
-
-    async with mysql_get_db_async() as db:
-        await db.execute(sql, tuple(args))
-
-        return [dict(row) for row in (await db.fetchall() or [])]
-
-
 async def chat_intention_done(intention_id: int, note: str = '') -> bool:
     """Отмечает намерение исполненным.
 
@@ -192,9 +152,184 @@ async def chat_intention_done(intention_id: int, note: str = '') -> bool:
     return bool(done)
 
 
-# Строк на странице по умолчанию. Столько же, сколько у чёрного списка: списки
-# соседние по виду, и разная высота читалась бы как разная важность.
-CHAT_INTENTION_PAGE = 50
+async def chat_intention_rows(site_id: int, profile_id: int = 0, uid: str = '',
+                              status: str = '', page: int = 1,
+                              per: int = 0) -> dict:
+    """Намерения страницей, с именами обеих сторон.
+
+    Единственный способ прочитать намерения: им пользуются обе колонки вкладки
+    («что сделано» и «что в пуле») и им же возьмёт работу будущий исполнитель —
+    `status='open'`.
+
+    Args:
+        site_id: сайт. Ноль — пусто, а не намерения всех сайтов.
+        profile_id: сузить до анкеты. Ноль — все анкеты сайта.
+        uid: сузить до собеседника. Пусто — все.
+        status: `open` или `done`. Пусто — и те, и другие.
+        page: страница, с единицы. За концом — поправится сама.
+        per: строк на странице. Ноль — `CHAT_INTENTION_PAGE`.
+
+    Returns:
+        dict: `rows`, `page`, `pages`, `total`.
+
+    ⚠ **Сайт обязателен.** Круги панели обходят сайты поодиночке (`round_sites`),
+    и отбор «по всем сразу» не нужен ни одному вызывающему. Ноль молча отдаёт
+    пусто, а не всю таблицу: вторая форма однажды уехала бы в круг и унесла
+    чужие строки.
+
+    ⚠ **Страницы считает сервер.** Список копится сам и не убывает — намерение не
+    истекает. Отданный целиком, он кончается молча, и конец прокрутки читается как
+    конец списка.
+
+    ⚠ Порядок зависит от отбора: исполненные — свежие сверху (человек смотрит,
+    что сделано последним), открытые — старые сверху (старое обещание исполняют
+    раньше нового).
+    """
+    site_id = int(site_id or 0)
+
+    if not site_id:
+        return _empty()
+
+    pid, who = int(profile_id or 0), str(uid or '').strip()
+    what = str(status or '').strip()
+    where = (_WHERE_SITE + "   AND (%s = '' OR i.uid = %s)"
+                           "   AND (%s = '' OR i.status = %s)")
+    args = (site_id, pid, pid, who, who, what, what)
+
+    order = (' ORDER BY i.done_at DESC, i.id DESC' if what == 'done'
+             else ' ORDER BY i.id')
+    per = max(1, int(per or 0) or CHAT_INTENTION_PAGE)
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT COUNT(*) AS n FROM chat_intention i' + where,
+                             args)
+            total = int(((await db.fetchone()) or {}).get('n') or 0)
+            page, pages = _page_clamp(total, page, per)
+
+            await db.execute(
+                'SELECT i.id, i.profile_id, i.site_id, i.uid, i.intention,'
+                '       i.status, i.created_at, i.done_at, i.done_note,'
+                '       comp.name, comp.photo,'
+                '       p.profile AS profile_card, p.login AS profile_login'
+                + _SOURCE + where + order + ' LIMIT %s OFFSET %s',
+                (*args, per, (page - 1) * per))
+            rows = await db.fetchall()
+    except Exception as e:
+        logger_info(f'[dating] намерения сайта #{site_id} не прочитались: {e}')
+
+        return _empty()
+
+    return {'rows': [_intention_row(row) for row in (rows or [])],
+            'page': page, 'pages': pages, 'total': total}
+
+
+async def chat_intention_pairs(site_id: int, profile_id: int = 0, page: int = 1,
+                               per: int = 0) -> dict:
+    """Пары, у которых есть намерения: по строке на пару, свежие сверху.
+
+    Args:
+        site_id: сайт. Ноль — пусто.
+        profile_id: сузить до анкеты. Ноль — все анкеты сайта.
+        page: страница, с единицы. За концом — поправится сама.
+        per: строк на странице. Ноль — `CHAT_INTENTION_PAGE`.
+
+    Returns:
+        dict: `rows`, `page`, `pages`, `total`. В строке — обе стороны,
+        `open_count`, `done_count` и `last_at` (время последнего намерения).
+
+    ⚠ **Пары без намерений сюда не попадают по построению**: группировка идёт по
+    самой таблице намерений. Вкладка отвечает на вопрос «что агент наобещал», и
+    пары, где он не обещал ничего, — шум; их на живом сайте сотни.
+
+    ⚠⚠ Счётчики приводятся к `int` **здесь**: `SUM()` в MySQL отдаёт `Decimal`,
+    и ручка упала бы не на запросе, а на сериализации ответа в JSON — то есть
+    жаловалась бы не на то.
+    """
+    site_id = int(site_id or 0)
+
+    if not site_id:
+        return _empty()
+
+    pid = int(profile_id or 0)
+    args = (site_id, pid, pid)
+    per = max(1, int(per or 0) or CHAT_INTENTION_PAGE)
+
+    try:
+        async with mysql_get_db_async() as db:
+            # ⚠ Счёт **пар**, а не строк: `COUNT(DISTINCT …)` по двум столбцам
+            # считает именно их, и подзапрос ради этого не нужен.
+            await db.execute(
+                'SELECT COUNT(DISTINCT i.profile_id, i.uid) AS n'
+                '  FROM chat_intention i' + _WHERE_SITE, args)
+            total = int(((await db.fetchone()) or {}).get('n') or 0)
+            page, pages = _page_clamp(total, page, per)
+
+            await db.execute(
+                'SELECT i.profile_id, i.site_id, i.uid,'
+                "       SUM(i.status = 'open') AS open_count,"
+                "       SUM(i.status = 'done') AS done_count,"
+                '       MAX(i.created_at) AS last_at,'
+                '       comp.name, comp.photo,'
+                '       p.profile AS profile_card, p.login AS profile_login'
+                + _SOURCE + _WHERE_SITE +
+                ' GROUP BY i.profile_id, i.site_id, i.uid,'
+                '          comp.name, comp.photo, p.profile, p.login'
+                ' ORDER BY last_at DESC, i.profile_id, i.uid'
+                ' LIMIT %s OFFSET %s',
+                (*args, per, (page - 1) * per))
+            rows = await db.fetchall()
+    except Exception as e:
+        logger_info(f'[dating] пары намерений сайта #{site_id} не прочитались: {e}')
+
+        return _empty()
+
+    out = []
+    for row in rows or []:
+        got = _intention_row(row)
+        got['open_count'] = int(got.get('open_count') or 0)
+        got['done_count'] = int(got.get('done_count') or 0)
+        got['last_at'] = str(got['last_at']) if got.get('last_at') else ''
+        out.append(got)
+
+    return {'rows': out, 'page': page, 'pages': pages, 'total': total}
+
+
+# ── детали реализации ──────────────────────────────────────────────────────
+
+# Источник строк: сама таблица плюс обе стороны пары. ⚠ Один текст на оба
+# читателя: разойдись их `JOIN`, список намерений и колонка пар показывали бы
+# разные имена для одной и той же строки.
+_SOURCE = ('  FROM chat_intention i'
+           '  JOIN profile p ON p.id = i.profile_id'
+           '  LEFT JOIN companion comp'
+           '    ON comp.site_id = i.site_id AND comp.uid = i.uid')
+
+# Начало отбора, общее обоим читателям: сайт обязателен, анкета — фильтр.
+# ⚠ Ноль в `profile_id` значит «все анкеты сайта», и выражено это **в запросе**,
+# а не ветвлением на стороне Python: одна форма строки на оба случая.
+_WHERE_SITE = ' WHERE i.site_id = %s AND (%s = 0 OR i.profile_id = %s)'
+
+
+def _empty() -> dict:
+    """Ответ «читать нечего» в той же форме, что и удачный.
+
+    ⚠ Функцией, а не константой: словарь изменяем, и вызывающий, дописавший в
+    него поле, испортил бы ответ всем следующим.
+    """
+    return {'rows': [], 'page': 1, 'pages': 1, 'total': 0}
+
+
+def _page_clamp(total: int, page: int, per: int) -> tuple:
+    """Номер страницы и сколько их всего.
+
+    ⚠ Страница за концом **правится, а не отвергается**: строку могли закрыть с
+    последней страницы, пока человек на неё смотрел, и отказ вместо предыдущей
+    читался бы как поломка. То же правило, что у журнала доставки.
+    """
+    pages = max(1, -(-int(total) // int(per)))
+
+    return min(max(int(page or 1), 1), pages), pages
 
 
 def _intention_row(row: dict) -> dict:
@@ -227,161 +362,3 @@ def _intention_row(row: dict) -> dict:
         got[key] = str(got[key]) if got.get(key) else ''
 
     return got
-
-
-async def chat_intention_rows(site_id: int, profile_id: int = 0, uid: str = '',
-                              status: str = '', page: int = 1,
-                              per: int = 0) -> dict:
-    """Намерения для показа: страницей, с именами обеих сторон.
-
-    Args:
-        site_id: сайт. Ноль — пусто, как у `chat_intention_open`.
-        profile_id: сузить до анкеты. Ноль — все анкеты сайта.
-        uid: сузить до собеседника. Пусто — все.
-        status: `open` или `done`. Пусто — и те, и другие.
-        page: страница, с единицы. За концом — поправится сама.
-        per: строк на странице. Ноль — `CHAT_INTENTION_PAGE`.
-
-    Returns:
-        dict: `rows`, `page`, `pages`, `total`.
-
-    ## ⚠ Это не дубль `chat_intention_open`, у них разные договоры
-
-    `chat_intention_open` — дверь **для исполнителя**: минимум полей, без имён и
-    страниц, зато с `limit`. Здесь показ: имена, лица, счёт и страницы. Слей их,
-    и исполнитель платил бы двумя присоединениями за то, чего не читает.
-
-    ⚠ **Страницы считает сервер.** Список копится сам и не убывает — намерение не
-    истекает. Отданный целиком, он кончается молча, и конец прокрутки читается как
-    конец списка.
-
-    ⚠ Порядок зависит от отбора: исполненные — свежие сверху (человек смотрит,
-    что сделано последним), открытые — старые сверху (старое обещание исполняют
-    раньше нового).
-    """
-    site_id = int(site_id or 0)
-    empty = {'rows': [], 'page': 1, 'pages': 1, 'total': 0}
-
-    if not site_id:
-        return empty
-
-    where = (' WHERE i.site_id = %s'
-             '   AND (%s = 0 OR i.profile_id = %s)'
-             "   AND (%s = '' OR i.uid = %s)"
-             "   AND (%s = '' OR i.status = %s)")
-    pid = int(profile_id or 0)
-    who = str(uid or '').strip()
-    what = str(status or '').strip()
-    args = (site_id, pid, pid, who, who, what, what)
-
-    order = (' ORDER BY i.done_at DESC, i.id DESC' if what == 'done'
-             else ' ORDER BY i.id')
-    per = max(1, int(per or 0) or CHAT_INTENTION_PAGE)
-
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute('SELECT COUNT(*) AS n FROM chat_intention i' + where,
-                             args)
-            total = int(((await db.fetchone()) or {}).get('n') or 0)
-
-            pages = max(1, -(-total // per))
-            page = min(max(int(page or 1), 1), pages)
-
-            await db.execute(
-                'SELECT i.id, i.profile_id, i.site_id, i.uid, i.intention,'
-                '       i.status, i.created_at, i.done_at, i.done_note,'
-                '       comp.name, comp.photo,'
-                '       p.profile AS profile_card, p.login AS profile_login'
-                '  FROM chat_intention i'
-                '  JOIN profile p ON p.id = i.profile_id'
-                '  LEFT JOIN companion comp'
-                '    ON comp.site_id = i.site_id AND comp.uid = i.uid'
-                + where + order + ' LIMIT %s OFFSET %s',
-                (*args, per, (page - 1) * per))
-            rows = await db.fetchall()
-    except Exception as e:
-        logger_info(f'[dating] намерения сайта #{site_id} не прочитались: {e}')
-
-        return empty
-
-    return {'rows': [_intention_row(row) for row in (rows or [])],
-            'page': page, 'pages': pages, 'total': total}
-
-
-async def chat_intention_pairs(site_id: int, profile_id: int = 0, page: int = 1,
-                               per: int = 0) -> dict:
-    """Пары, у которых есть намерения: по строке на пару, свежие сверху.
-
-    Args:
-        site_id: сайт. Ноль — пусто.
-        profile_id: сузить до анкеты. Ноль — все анкеты сайта.
-        page: страница, с единицы. За концом — поправится сама.
-        per: строк на странице. Ноль — `CHAT_INTENTION_PAGE`.
-
-    Returns:
-        dict: `rows`, `page`, `pages`, `total`. В строке — обе стороны,
-        `open_count`, `done_count` и `last_at` (время последнего намерения).
-
-    ⚠ **Пары без намерений сюда не попадают по построению**: группировка идёт по
-    самой таблице намерений. Вкладка отвечает на вопрос «что агент наобещал», и
-    пары, где он не обещал ничего, — шум; их на живом сайте сотни.
-
-    ⚠⚠ Счётчики приводятся к `int` **здесь**: `SUM()` в MySQL отдаёт `Decimal`,
-    и ручка упала бы не на запросе, а на сериализации ответа в JSON — то есть
-    жаловалась бы не на то.
-    """
-    site_id = int(site_id or 0)
-    empty = {'rows': [], 'page': 1, 'pages': 1, 'total': 0}
-
-    if not site_id:
-        return empty
-
-    where = ' WHERE i.site_id = %s AND (%s = 0 OR i.profile_id = %s)'
-    pid = int(profile_id or 0)
-    args = (site_id, pid, pid)
-    per = max(1, int(per or 0) or CHAT_INTENTION_PAGE)
-
-    try:
-        async with mysql_get_db_async() as db:
-            # ⚠ Счёт **пар**, а не строк: `COUNT(DISTINCT …)` по двум столбцам
-            # считает именно их, и подзапрос ради этого не нужен.
-            await db.execute(
-                'SELECT COUNT(DISTINCT i.profile_id, i.uid) AS n'
-                '  FROM chat_intention i' + where, args)
-            total = int(((await db.fetchone()) or {}).get('n') or 0)
-
-            pages = max(1, -(-total // per))
-            page = min(max(int(page or 1), 1), pages)
-
-            await db.execute(
-                'SELECT i.profile_id, i.site_id, i.uid,'
-                "       SUM(i.status = 'open') AS open_count,"
-                "       SUM(i.status = 'done') AS done_count,"
-                '       MAX(i.created_at) AS last_at,'
-                '       comp.name, comp.photo,'
-                '       p.profile AS profile_card, p.login AS profile_login'
-                '  FROM chat_intention i'
-                '  JOIN profile p ON p.id = i.profile_id'
-                '  LEFT JOIN companion comp'
-                '    ON comp.site_id = i.site_id AND comp.uid = i.uid'
-                + where +
-                ' GROUP BY i.profile_id, i.site_id, i.uid,'
-                '          comp.name, comp.photo, p.profile, p.login'
-                ' ORDER BY last_at DESC, i.profile_id, i.uid'
-                ' LIMIT %s OFFSET %s',
-                (*args, per, (page - 1) * per))
-            rows = await db.fetchall()
-    except Exception as e:
-        logger_info(f'[dating] пары намерений сайта #{site_id} не прочитались: {e}')
-
-        return empty
-
-    out = []
-    for row in rows or []:
-        got = _intention_row(row)
-        got['open_count'] = int(got.get('open_count') or 0)
-        got['done_count'] = int(got.get('done_count') or 0)
-        got['last_at'] = str(got['last_at']) if got.get('last_at') else ''
-        out.append(got)
-
-    return {'rows': out, 'page': page, 'pages': pages, 'total': total}

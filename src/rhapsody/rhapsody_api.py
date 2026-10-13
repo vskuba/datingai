@@ -522,24 +522,6 @@ async def rhapsody_api_agent_find(name: str) -> dict:
     return data.get('result') or {}
 
 
-def _intentions(data: dict) -> list:
-    """Намерения прогона списком строк. Что приехало не списком — пусто.
-
-    ⚠ Разбор не доверяет чужой форме: ключ кладёт движок соседа по ответу
-    инструмента `chat_intention_add`, и форма у него может смениться раньше,
-    чем мы узнаем. Пустые метки выбрасываются здесь, длинные — у двери к
-    таблице (`src/dating/chat_intention.py`): предел принадлежит столбцу.
-
-    ⚠ Повторы внутри пачки не схлопываются — это дело ключа базы.
-    """
-    got = (data or {}).get('intentions')
-
-    if not isinstance(got, (list, tuple)):
-        return []
-
-    return [str(one).strip() for one in got if str(one or '').strip()]
-
-
 async def rhapsody_api_chat_talk(agent_id: int, question: str,
                                  variables: dict = None) -> dict:
     """Спрашивает агента и отдаёт ответ вместе с номером обмена разговора.
@@ -765,6 +747,24 @@ async def rhapsody_api_llm_usage(node: str, days: int = RHAPSODY_API_LLM_DAYS) -
 # по-разному, поэтому списки, а не одно имя.
 RHAPSODY_API_LOGIN_KEYS = ('login', 'username', 'email', 'user')
 RHAPSODY_API_PASSWORD_KEYS = ('password', 'pass', 'pwd')
+
+
+def _intentions(data: dict) -> list:
+    """Намерения прогона списком строк. Что приехало не списком — пусто.
+
+    ⚠ Разбор не доверяет чужой форме: ключ кладёт движок соседа по ответу
+    инструмента `chat_intention_add`, и форма у него может смениться раньше,
+    чем мы узнаем. Пустые метки выбрасываются здесь, длинные — у двери к
+    таблице (`src/dating/chat_intention.py`): предел принадлежит столбцу.
+
+    ⚠ Повторы внутри пачки не схлопываются — это дело ключа базы.
+    """
+    got = (data or {}).get('intentions')
+
+    if not isinstance(got, (list, tuple)):
+        return []
+
+    return [str(one).strip() for one in got if str(one or '').strip()]
 
 
 async def _request(method: str, path: str, payload: dict = None,

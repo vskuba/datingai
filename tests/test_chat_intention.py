@@ -14,8 +14,8 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.dating import answer as answer_module
 from src.dating.answer import _agent_ask
 from src.dating.chat_intention import (chat_intention_done,
-                                       chat_intention_open, chat_intention_pairs,
-                                       chat_intention_put, chat_intention_rows)
+                                       chat_intention_pairs, chat_intention_put,
+                                       chat_intention_rows)
 from tests.conftest import TEST_STAND_SITE
 
 pytestmark = pytest.mark.chat
@@ -37,6 +37,27 @@ async def _rows(profile_id: int) -> list:
             (int(profile_id),))
 
         return [dict(row) for row in (await db.fetchall() or [])]
+
+
+async def _open(profile_id: int) -> list:
+    """Открытые намерения анкеты — тем же чтением, что у вкладки.
+
+    ⚠ Своей двери «дай открытые» у домена больше нет: она повторяла этот отбор
+    и не имела ни одного вызывающего в бою.
+    """
+    got = await chat_intention_rows(TEST_STAND_SITE, profile_id=int(profile_id),
+                                    status='open', per=1000)
+
+    return got['rows']
+
+
+async def _profile_row(profile_id: int) -> dict:
+    """Настоящая строка `profile` — её и получает `_agent_ask` в бою."""
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT * FROM profile WHERE id = %s',
+                         (int(profile_id),))
+
+        return dict(await db.fetchone())
 
 
 class TestThePut:
@@ -121,68 +142,12 @@ class TestWhatIsNotWritten:
                                         [PROMISE]) == 0
 
 
-class TestTheOpenOnes:
-    """Отбор того, что ещё не исполнено."""
-
-    async def test_it_gives_the_open_row(self, girl):
-        uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, [PROMISE])
-
-        got = await chat_intention_open(TEST_STAND_SITE, profile_id=girl)
-
-        assert [one['intention'] for one in got] == [PROMISE]
-        assert got[0]['uid'] == uid
-
-    async def test_the_done_one_is_gone_from_it(self, girl):
-        uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, [PROMISE])
-        one = (await chat_intention_open(TEST_STAND_SITE, profile_id=girl))[0]
-
-        await chat_intention_done(one['id'])
-
-        assert await chat_intention_open(TEST_STAND_SITE, profile_id=girl) == []
-
-    async def test_it_filters_by_companion(self, girl):
-        mine, other = _uid(), _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, mine, [PROMISE])
-        await chat_intention_put(girl, TEST_STAND_SITE, other, [PROMISE])
-
-        got = await chat_intention_open(TEST_STAND_SITE, profile_id=girl,
-                                        uid=mine)
-
-        assert [one['uid'] for one in got] == [mine]
-
-    async def test_it_filters_by_profile(self, girl, girl_make):
-        """Анкета — отбор, а не условие показа: у соседки свои намерения."""
-        other = await girl_make()
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
-        await chat_intention_put(other, TEST_STAND_SITE, _uid(), [PROMISE])
-
-        got = await chat_intention_open(TEST_STAND_SITE, profile_id=other)
-
-        assert [one['profile_id'] for one in got] == [other]
-
-    async def test_the_limit_cuts_it(self, girl):
-        uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid,
-                                 [PROMISE, 'he_asked_not_to_write'])
-
-        got = await chat_intention_open(TEST_STAND_SITE, profile_id=girl,
-                                        limit=1)
-
-        assert len(got) == 1
-
-    async def test_without_a_site_it_gives_nothing(self):
-        """⚠ Отбор по сайту обязателен: круги ходят по сайтам поодиночке."""
-        assert await chat_intention_open(0) == []
-
-
 class TestTheDoneMark:
     """Отметка «исполнено»."""
 
     async def test_it_lands(self, girl):
         await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
-        one = (await chat_intention_open(TEST_STAND_SITE, profile_id=girl))[0]
+        one = (await _open(girl))[0]
 
         assert await chat_intention_done(one['id']) is True
 
@@ -193,7 +158,7 @@ class TestTheDoneMark:
     async def test_the_second_mark_is_not_ours(self, girl):
         """⚠ Условный UPDATE: два исполнителя не отметят одну строку дважды."""
         await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
-        one = (await chat_intention_open(TEST_STAND_SITE, profile_id=girl))[0]
+        one = (await _open(girl))[0]
         await chat_intention_done(one['id'])
 
         assert await chat_intention_done(one['id']) is False
@@ -202,7 +167,7 @@ class TestTheDoneMark:
         """⚠⚠ Второе обещание фото законно — но только после первого."""
         uid = _uid()
         await chat_intention_put(girl, TEST_STAND_SITE, uid, [PROMISE])
-        one = (await chat_intention_open(TEST_STAND_SITE, profile_id=girl))[0]
+        one = (await _open(girl))[0]
         await chat_intention_done(one['id'])
 
         assert await chat_intention_put(girl, TEST_STAND_SITE, uid,
@@ -211,15 +176,6 @@ class TestTheDoneMark:
 
     async def test_a_missing_row_is_not_ours(self):
         assert await chat_intention_done(0) is False
-
-
-async def _profile_row(profile_id: int) -> dict:
-    """Настоящая строка `profile` — её и получает `_agent_ask` в бою."""
-    async with mysql_get_db_async() as db:
-        await db.execute('SELECT * FROM profile WHERE id = %s',
-                         (int(profile_id),))
-
-        return dict(await db.fetchone())
 
 
 class TestTheWritingPoint:
@@ -238,8 +194,7 @@ class TestTheWritingPoint:
 
         assert (text, error, message_id) == ('ок', '', 7)
         assert [one['intention'] for one
-                in await chat_intention_open(TEST_STAND_SITE,
-                                             profile_id=girl)] == [PROMISE]
+                in await _open(girl)] == [PROMISE]
 
     async def test_an_empty_list_writes_nothing(self, girl, monkeypatch):
         async def _talk(*args, **kwargs):
@@ -286,7 +241,7 @@ class TestTheDoneNote:
 
     async def test_the_note_lands(self, girl):
         await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
-        one = (await chat_intention_open(TEST_STAND_SITE, profile_id=girl))[0]
+        one = (await _open(girl))[0]
 
         assert await chat_intention_done(
             one['id'], note='отправлено фото public/a.png') is True
@@ -295,7 +250,7 @@ class TestTheDoneNote:
     async def test_without_a_note_the_old_contract_holds(self, girl):
         """⚠ Довод необязательный: прежние вызовы и их тесты целы."""
         await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
-        one = (await chat_intention_open(TEST_STAND_SITE, profile_id=girl))[0]
+        one = (await _open(girl))[0]
 
         assert await chat_intention_done(one['id']) is True
         assert await _note(one['id']) == ''
@@ -305,7 +260,7 @@ class TestTheDoneNote:
         строгом режиме MySQL такая вставка падает ошибкой, и закрытие намерения
         сорвалось бы из-за длинного текста исполнителя."""
         await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
-        one = (await chat_intention_open(TEST_STAND_SITE, profile_id=girl))[0]
+        one = (await _open(girl))[0]
 
         assert await chat_intention_done(one['id'], note='x' * 600) is True
         assert len(await _note(one['id'])) == 500
@@ -313,7 +268,7 @@ class TestTheDoneNote:
     async def test_the_second_mark_leaves_the_first_note(self, girl):
         """Закрыли дважды — вторая отметка не наша, и заметку она не трогает."""
         await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
-        one = (await chat_intention_open(TEST_STAND_SITE, profile_id=girl))[0]
+        one = (await _open(girl))[0]
         await chat_intention_done(one['id'], note='первое')
 
         assert await chat_intention_done(one['id'], note='второе') is False
@@ -359,7 +314,7 @@ class TestTheRows:
         uid = _uid()
         await chat_intention_put(girl, TEST_STAND_SITE, uid,
                                  [PROMISE, 'he_asked_not_to_write'])
-        one = (await chat_intention_open(TEST_STAND_SITE, profile_id=girl))[0]
+        one = (await _open(girl))[0]
         await chat_intention_done(one['id'], note='сделано')
 
         done = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
@@ -437,7 +392,7 @@ class TestThePairs:
         uid = _uid()
         await chat_intention_put(girl, TEST_STAND_SITE, uid,
                                  [PROMISE, 'he_asked_not_to_write'])
-        one = (await chat_intention_open(TEST_STAND_SITE, profile_id=girl))[0]
+        one = (await _open(girl))[0]
         await chat_intention_done(one['id'], note='сделано')
 
         got = await chat_intention_pairs(TEST_STAND_SITE, profile_id=girl)
