@@ -89,3 +89,87 @@ async def chat_intention_put(profile_id: int, site_id: int, uid: str,
                     f'(анкета {int(profile_id)}, собеседник {str(uid).strip()})')
 
     return put
+
+
+async def chat_intention_open(site_id: int, profile_id: int = 0, uid: str = '',
+                              limit: int = 0) -> list[dict]:
+    """Намерения, которые ещё не исполнены. Пусто — законный исход.
+
+    Args:
+        site_id: сайт. Ноль — отдаём пусто (см. ⚠ ниже).
+        profile_id: отбор по анкете. Ноль — все анкеты сайта.
+        uid: отбор по собеседнику. Пусто — все.
+        limit: сколько строк вернуть. Ноль — все.
+
+    Returns:
+        list[dict]: `id`, `profile_id`, `site_id`, `uid`, `intention`,
+        `created_at`; старые первыми.
+
+    ⚠ **Сайт обязателен.** Круги панели обходят сайты поодиночке
+    (`round_sites`), и отбор «по всем сразу» здесь не нужен ни одному
+    вызывающему. Ноль молча отдаёт пусто, а не всю таблицу: вторая форма
+    однажды уехала бы в круг и унесла чужие строки.
+
+    ⚠ Порядок — по номеру строки, то есть по времени: старое обещание исполняют
+    раньше нового.
+    """
+    if not int(site_id or 0):
+        return []
+
+    sql = ('SELECT id, profile_id, site_id, uid, intention, created_at'
+           '  FROM chat_intention'
+           " WHERE status = 'open' AND site_id = %s")
+    args = [int(site_id)]
+
+    if int(profile_id or 0):
+        sql += ' AND profile_id = %s'
+        args.append(int(profile_id))
+
+    if str(uid or '').strip():
+        sql += ' AND uid = %s'
+        args.append(str(uid).strip())
+
+    sql += ' ORDER BY id'
+
+    if int(limit or 0) > 0:
+        sql += ' LIMIT %s'
+        args.append(int(limit))
+
+    async with mysql_get_db_async() as db:
+        await db.execute(sql, tuple(args))
+
+        return [dict(row) for row in (await db.fetchall() or [])]
+
+
+async def chat_intention_done(intention_id: int) -> bool:
+    """Отмечает намерение исполненным.
+
+    Args:
+        intention_id: номер строки `chat_intention`.
+
+    Returns:
+        bool: `True` — отметка наша; `False` — строки нет либо её уже закрыли,
+        и это не ошибка.
+
+    ## ⚠⚠ Условный `UPDATE`, а не вопрос «ещё открыта?» отдельным запросом
+
+    Исполнителей может быть несколько — круг и кнопка, два воркера, — и между
+    вопросом и записью они разошлись бы: оба увидели бы открытую строку и оба
+    сделали бы дело. Условие стоит **внутри** записи, а `rowcount` отвечает,
+    чья это отметка. Тем же приёмом живёт `invite_send`.
+
+    ⚠ Отметка **отпускает ключ**: `open_intention` гаснет в `NULL`, и следующее
+    такое же обещание той же паре ложится своей строкой.
+    """
+    if int(intention_id or 0) <= 0:
+        return False
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            "UPDATE chat_intention SET status = 'done', done_at = NOW()"
+            " WHERE id = %s AND status = 'open'",
+            (int(intention_id),))
+        done = int(db.rowcount or 0)
+        await db.connection.commit()
+
+    return bool(done)
