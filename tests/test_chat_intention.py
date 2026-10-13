@@ -14,8 +14,8 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.dating import answer as answer_module
 from src.dating.answer import _agent_ask
 from src.dating.chat_intention import (chat_intention_done,
-                                       chat_intention_open, chat_intention_put,
-                                       chat_intention_rows)
+                                       chat_intention_open, chat_intention_pairs,
+                                       chat_intention_put, chat_intention_rows)
 from tests.conftest import TEST_STAND_SITE
 
 pytestmark = pytest.mark.chat
@@ -428,3 +428,79 @@ class TestTheRows:
         assert isinstance(got['rows'][0]['created_at'], str)
         assert got['rows'][0]['created_at']
         assert got['rows'][0]['done_at'] == ''
+
+
+class TestThePairs:
+    """Колонка пар: по строке на пару, со счётчиками."""
+
+    async def test_one_row_per_pair_with_counts(self, girl):
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+                                 [PROMISE, 'he_asked_not_to_write'])
+        one = (await chat_intention_open(TEST_STAND_SITE, profile_id=girl))[0]
+        await chat_intention_done(one['id'], note='сделано')
+
+        got = await chat_intention_pairs(TEST_STAND_SITE, profile_id=girl)
+
+        assert got['total'] == 1
+        assert got['rows'][0]['uid'] == uid
+        assert got['rows'][0]['open_count'] == 1
+        assert got['rows'][0]['done_count'] == 1
+
+    async def test_counts_are_numbers_not_decimals(self, girl):
+        """⚠ `SUM()` в MySQL отдаёт `Decimal`, а JSON его не переживёт: ручка
+        упала бы на сериализации, а не на запросе."""
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
+
+        got = await chat_intention_pairs(TEST_STAND_SITE, profile_id=girl)
+
+        assert isinstance(got['rows'][0]['open_count'], int)
+        assert isinstance(got['rows'][0]['done_count'], int)
+
+    async def test_two_companions_are_two_rows(self, girl):
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
+
+        got = await chat_intention_pairs(TEST_STAND_SITE, profile_id=girl)
+
+        assert got['total'] == 2
+
+    async def test_a_pair_without_intentions_is_not_listed(self, girl):
+        """Вкладка отвечает на «что агент наобещал». Пары без намерений — шум."""
+        got = await chat_intention_pairs(TEST_STAND_SITE, profile_id=girl)
+
+        assert got['rows'] == []
+        assert got['total'] == 0
+
+    async def test_a_profile_of_zero_means_all_of_them(self, girl, girl_make):
+        other = await girl_make()
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
+        await chat_intention_put(other, TEST_STAND_SITE, _uid(), [PROMISE])
+
+        got = await chat_intention_pairs(TEST_STAND_SITE, per=1000)
+
+        assert {row['profile_id'] for row in got['rows']} >= {girl, other}
+
+    async def test_the_companion_name_comes_through(self, girl):
+        uid = _uid()
+        await _companion(uid, 'Mike')
+        await chat_intention_put(girl, TEST_STAND_SITE, uid, [PROMISE])
+
+        got = await chat_intention_pairs(TEST_STAND_SITE, profile_id=girl)
+
+        assert got['rows'][0]['name'] == 'Mike'
+
+    async def test_pages_are_counted_by_the_server(self, girl):
+        for _ in range(3):
+            await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
+
+        got = await chat_intention_pairs(TEST_STAND_SITE, profile_id=girl, per=2)
+
+        assert got['total'] == 3
+        assert got['pages'] == 2
+        assert len(got['rows']) == 2
+
+    async def test_without_a_site_it_gives_nothing(self):
+        got = await chat_intention_pairs(0)
+
+        assert got == {'rows': [], 'page': 1, 'pages': 1, 'total': 0}
