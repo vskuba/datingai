@@ -52,6 +52,7 @@ SITE_FLAGS = (
     'favorite_mail_make_on', 'favorite_mail_send_on',
     'reply_make_on', 'reply_send_on', 'mail_check_on',
     'chat_answer_on', 'chat_initiative_on', 'chat_initiative_send_on',
+    'chat_intention_do_on',
 )
 
 # Столбцы-расписания: `json`, значение — список смен.
@@ -184,6 +185,14 @@ class DatingSiteChatAnswerOn(BaseModel):
 
     chat_answer_on: bool = Field(..., description='Автоответ в чате: ответы уходят '
                                                   'живым людям')
+
+
+class DatingSiteChatIntentionDoOn(BaseModel):
+    """Исполнять ли намерения разговора за анкеты сайта."""
+
+    chat_intention_do_on: bool = Field(..., description='Разрешение исполнять '
+                                                        'намерения: действие уходит '
+                                                        'живому человеку')
 
 
 class DatingSiteChatInitiativeOn(BaseModel):
@@ -489,6 +498,42 @@ async def site_chat_answer_on(site_id: int, payload: DatingSiteChatAnswerOn,
     включённым.
     """
     return await site_flag_put(site_id, 'chat_answer_on', payload.chat_answer_on)
+
+
+@router.get('/{site_id}/chat-intention-do', include_in_schema=False)
+async def site_chat_intention_do_get(site_id: int,
+                                     user: AuthUser = Depends(auth_required)):
+    """Исполняются ли намерения этого сайта. Нет строки — выключено, а не 404."""
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT chat_intention_do_on FROM site WHERE site_id = %s',
+                         (int(site_id),))
+        row = await db.fetchone()
+
+    return {'result': {'site_id': int(site_id),
+                       'chat_intention_do_on':
+                           bool((row or {}).get('chat_intention_do_on'))}}
+
+
+@router.put('/{site_id}/chat-intention-do-on', include_in_schema=False)
+async def site_chat_intention_do_on(site_id: int,
+                                    payload: DatingSiteChatIntentionDoOn,
+                                    user: AuthUser = Depends(auth_required)):
+    """Разрешает и запрещает исполнять намерения разговора.
+
+    ⚠⚠ **Занятия, которое их исполняет, пока не существует.** Галочка заведена
+    заранее — вместе со столбцом, — чтобы инструмент воткнулся в готовое место.
+    Поднятая сейчас, она ничего не запускает, и подсказка у неё об этом говорит.
+
+    ⚠ **Набор пула галочка не трогает.** Намерения пишет прогон агента, и запрет
+    исполнять не означает запрет замечать: снятая галочка откладывает работу, а
+    не стирает историю обещаний.
+
+    ⚠ **Умолчание — снято.** Действие по намерению уходит живому человеку (сейчас
+    это обещанная фотография), и накат, разрешивший такое сам, был бы худшим из
+    сюрпризов.
+    """
+    return await site_flag_put(site_id, 'chat_intention_do_on',
+                               payload.chat_intention_do_on)
 
 
 @router.get('/{site_id}/panel', include_in_schema=False)
