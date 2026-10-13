@@ -11,6 +11,8 @@ import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating import answer as answer_module
+from src.dating.answer import _agent_ask
 from src.dating.chat_intention import (chat_intention_done,
                                        chat_intention_open, chat_intention_put)
 from tests.conftest import TEST_STAND_SITE
@@ -208,3 +210,62 @@ class TestTheDoneMark:
 
     async def test_a_missing_row_is_not_ours(self):
         assert await chat_intention_done(0) is False
+
+
+async def _profile_row(profile_id: int) -> dict:
+    """Настоящая строка `profile` — её и получает `_agent_ask` в бою."""
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT * FROM profile WHERE id = %s',
+                         (int(profile_id),))
+
+        return dict(await db.fetchone())
+
+
+class TestTheWritingPoint:
+    """`_agent_ask` — одна точка записи на чат, инициативу и оба письма."""
+
+    async def test_it_writes_what_the_run_returned(self, girl, monkeypatch):
+        uid = _uid()
+
+        async def _talk(*args, **kwargs):
+            return {'text': 'ок', 'message_id': 7, 'intentions': [PROMISE]}
+
+        monkeypatch.setattr(answer_module, 'rhapsody_api_chat_talk', _talk)
+
+        text, error, message_id = await _agent_ask(
+            1, 'вопрос', 'en', await _profile_row(girl), uid=uid, name='Bob')
+
+        assert (text, error, message_id) == ('ок', '', 7)
+        assert [one['intention'] for one
+                in await chat_intention_open(TEST_STAND_SITE,
+                                             profile_id=girl)] == [PROMISE]
+
+    async def test_an_empty_list_writes_nothing(self, girl, monkeypatch):
+        async def _talk(*args, **kwargs):
+            return {'text': 'ок', 'message_id': 7, 'intentions': []}
+
+        monkeypatch.setattr(answer_module, 'rhapsody_api_chat_talk', _talk)
+
+        await _agent_ask(1, 'вопрос', 'en', await _profile_row(girl),
+                         uid=_uid(), name='Bob')
+
+        assert await _rows(girl) == []
+
+    async def test_a_broken_write_does_not_break_the_answer(self, girl,
+                                                            monkeypatch):
+        """⚠⚠ Реплика уже сочинена и сейчас уйдёт человеку: уронить её из-за
+        ненаписавшейся отметки значит отменить дорогую работу ради дешёвой."""
+        async def _talk(*args, **kwargs):
+            return {'text': 'ок', 'message_id': 7, 'intentions': [PROMISE]}
+
+        async def _boom(*args, **kwargs):
+            raise RuntimeError('база легла')
+
+        monkeypatch.setattr(answer_module, 'rhapsody_api_chat_talk', _talk)
+        monkeypatch.setattr(answer_module, 'chat_intention_put', _boom)
+
+        text, error, message_id = await _agent_ask(
+            1, 'вопрос', 'en', await _profile_row(girl), uid=_uid(),
+            name='Bob')
+
+        assert (text, error, message_id) == ('ок', '', 7)

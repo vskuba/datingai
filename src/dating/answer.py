@@ -49,6 +49,7 @@ from src.dating.site_setting import site_seconds
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_chat_delivered,
                                        rhapsody_api_chat_talk)
 from src.dating.log import log_write
+from src.dating.chat_intention import chat_intention_put
 from src.dating.chat_reply import (chat_reply_failed, chat_reply_put,
                                    chat_reply_sent, chat_reply_waiting)
 from src.dating.companion_ref import (companion_ref_foreign, companion_title,
@@ -616,6 +617,26 @@ async def _agent_ask(agent_id: int, question: str, language: str,
                        **agent_vars(profile, card or {})})
     except RhapsodyError as e:
         return '', str(e), 0
+
+    # ⚠⚠ **Намерения прогона — одной точкой на все каналы.** Сюда приходят чат,
+    # инициатива, письмо первым и ответ на письмо; отдай мы `intentions` наверх
+    # четвёртым значением, правило «запиши намерения» встало бы тремя копиями —
+    # ровно грабля `delivered_at`, где дорог оказалось пять и четвёртую забыли.
+    #
+    # ⚠ Строка заводится **по ответу прогона**, то есть до отправки: у писем
+    # между сочинением и отправкой проходят часы. Размен назван в спеке —
+    # лечится позже отметкой доставки по номеру обмена.
+    #
+    # ⚠⚠ Отказ записи ответ **не роняет**. Реплика к этому мигу сочинена и
+    # сейчас уйдёт человеку; уронить её из-за ненаписавшейся отметки значит
+    # отменить дорогую работу ради дешёвой. Тот же довод, по которому молчит
+    # `rhapsody_api_chat_delivered`.
+    try:
+        await chat_intention_put(int(profile.get('id') or 0),
+                                 int(profile.get('site_id') or 0),
+                                 uid, got.get('intentions') or [])
+    except Exception as e:
+        logger_info(f'[dating] намерения прогона не записались: {e}')
 
     return got['text'], '', int(got.get('message_id') or 0)
 
