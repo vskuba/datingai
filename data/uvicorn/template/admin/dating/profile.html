@@ -5106,6 +5106,13 @@
             chatAnswer.addEventListener('change', () => chatAnswerSet(chatAnswer));
         }
 
+        const chatIntentionDo = workEl.querySelector(
+            '[data-slot="chat-intention-do-on"]');
+        if (chatIntentionDo && CAN_EDIT_SITE) {
+            chatIntentionDo.addEventListener('change',
+                                             () => chatIntentionDoSet(chatIntentionDo));
+        }
+
         // Обновить журнал доставки инвайтов. Кнопка нужна потому, что список не
         // обновляется сам: отправляют реплики из соседней подвкладки, и вернуться
         // сюда человек может, не переключая сайт.
@@ -5730,7 +5737,13 @@
             chatInitiativeLoad();
         }
         if (chatTab === 'block') inviteBlockShow();
-        if (chatTab === 'intention') intentionShow();
+        if (chatTab === 'intention') {
+            intentionShow();
+            // ⚠ Состояние галочки грузим здесь же: она видна только на этой
+            // подвкладке, и спрашивать её при каждом заходе в чат значило бы
+            // платить лишним запросом за то, чего человек не смотрит.
+            chatIntentionDoLoad();
+        }
     }
 
     // ── Автоответ в чате: один выключатель на сайт ──────────────────────────
@@ -5857,6 +5870,61 @@
             words: ['Агент будет отвечать в чате за все включённые анкеты сайта',
                     'Автоответ в чате выключен'],
             save: (on, site) => chatAnswerOn.set(site, on),
+        });
+    }
+
+    // ── Намерения: разрешено ли их исполнять ────────────────────────────────
+    //
+    // ⚠⚠ Занятия, которое исполняет намерения, пока нет вовсе: галочка заведена
+    // заранее, чтобы инструмент воткнулся в готовое место. Об этом говорит её
+    // подсказка — иначе поднятая галочка обещала бы работу, которой не будет.
+    //
+    // ⚠ По сайтам, как прочие такие флаги: переключение сайта не должно
+    // показывать чужое значение, пока едет ответ.
+    const chatIntentionDoOn = new Map();
+
+    async function chatIntentionDoLoad() {
+        const site = siteId();
+        if (!site || chatIntentionDoOn.has(site)) {
+            chatIntentionDoPaint();
+
+            return;
+        }
+
+        let on = false;
+        try {
+            on = !!(await getData(`${BASE}/api/dating/site/${site}/chat-intention-do`))
+                .result.chat_intention_do_on;
+        } catch (e) {
+            // Молча: выключатель — не то, ради чего открыли вкладку, и всплывающее
+            // сообщение на каждый заход было бы шумом. Снятая галочка здесь —
+            // верная сторона ошибки: действие уходит живому человеку.
+            on = false;
+        }
+
+        chatIntentionDoOn.set(site, on);
+        chatIntentionDoPaint();
+    }
+
+    function chatIntentionDoPaint() {
+        const box = slot('chat-intention-do-on');
+        if (!box) return;
+
+        box.checked = !!chatIntentionDoOn.get(siteId());
+        // ⚠ Только админу: ручка отвечает ему 403, и галочка, возвращающаяся на
+        // место, хуже запертой.
+        box.disabled = !CAN_EDIT_SITE;
+    }
+
+    async function chatIntentionDoSet(box) {
+        await siteFlagToggle(box, {
+            path: 'chat-intention-do-on', flag: 'chat_intention_do_on',
+            // ⚠ Слова честные: поднятая галочка **не** означает «сейчас
+            // начнётся». Занятия нет, и «Намерения исполняются» врало бы ровно
+            // так же, как подсказка без оговорки.
+            words: ['Намерения будут исполняться, когда занятие появится',
+                    'Намерения не исполняются — пул копится'],
+            save: (on, site) => chatIntentionDoOn.set(site, on),
         });
     }
 

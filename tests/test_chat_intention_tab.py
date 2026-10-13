@@ -123,10 +123,14 @@ class TestThePageKnowsTheTab:
             in page, 'имя вкладки не попало в CHAT_TABS'
 
     async def test_the_loader_is_wired(self, auth_client):
+        """⚠ Сторожим **наличие ветки и вызова**, а не их форму в одну строку:
+        ветка обросла вторым вызовом (состояние галочки), и тест на точное
+        совпадение строки покраснел бы на верной правке."""
         page = (await auth_client.get(PAGE)).text
 
-        assert "if (chatTab === 'intention') intentionShow();" in page, \
+        assert "if (chatTab === 'intention')" in page, \
             'подвкладка не наполняется — ветки в chatSubShow нет'
+        assert 'intentionShow();' in page, 'колонки вкладки не загружаются'
 
     async def test_the_reload_buttons_are_wired(self, auth_client):
         """Кнопки ⟳ нарисованы в шаблоне работы, а слушает их страница: без
@@ -135,3 +139,38 @@ class TestThePageKnowsTheTab:
 
         assert 'data-slot="intention-pairs-reload"' in page
         assert 'data-slot="intention-pool-reload"' in page
+
+
+class TestTheDoCheckbox:
+    """Галочка «выполнять действия» в полосе «Чата»."""
+
+    async def test_it_is_in_the_strip(self, work):
+        assert 'data-slot="chat-intention-do-on"' in work, 'галочки нет'
+        assert 'выполнять действия' in work, 'подписи нет'
+
+    async def test_it_shows_only_on_its_own_subtab(self, work):
+        """⚠ `data-for="intention"` — настройки видны на своей подвкладке, как у
+        соседей: на «Инвайтах» эта галочка не нужна и путала бы."""
+        start = work.find('data-slot="chat-intention-do-on"')
+        box = work.rfind('data-for="intention"', 0, start)
+        other = work.rfind('data-for="talk"', 0, start)
+
+        assert box != -1, 'галочка стоит вне блока data-for="intention"'
+        assert box > other, 'галочка попала в блок соседней подвкладки'
+
+    async def test_the_hint_says_nobody_executes_yet(self, work):
+        """⚠⚠ Подсказка здесь важнее обычного: у трёх соседних галочек снятие
+        что-то останавливает, а здесь поднятие пока не запускает ничего. Не
+        сказать об этом — повторить ту ложь, от которой защищает умолчание 0."""
+        start = work.find('data-slot="chat-intention-do-on"')
+        head = work.rfind('<label', 0, start)
+        label = work[head:start]
+
+        assert 'не существует' in label, 'подсказка не говорит про отсутствие занятия'
+
+    async def test_the_page_wires_it(self, auth_client):
+        page = (await auth_client.get(PAGE)).text
+
+        assert "slot('chat-intention-do-on')" in page, 'страница её не рисует'
+        assert 'chatIntentionDoSet' in page, 'переключение не привязано'
+        assert "path: 'chat-intention-do-on'" in page, 'адрес ручки не тот'
