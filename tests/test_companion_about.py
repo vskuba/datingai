@@ -88,8 +88,8 @@ class TestAbout:
         читает агент — лишнее в нём соревнуется за внимание с полезным."""
         about = companion_about_text(companion_about_parse(LIVE))
 
-        assert 'Занятие: Musician' in about
-        assert 'Увлечения:' in about
+        assert 'Occupation: Musician' in about
+        assert 'Hobby:' in about
         assert 'Height' not in about and '140 cm' not in about
         assert 'Eyes' not in about
 
@@ -118,9 +118,9 @@ class TestAbout:
         не повод терять соседей."""
         about = companion_about_text(companion_about_parse(EMPTY))
 
-        assert 'Занятие' not in about, 'пустое занятие попало в описание'
-        assert 'О себе' not in about
-        assert 'Семейное положение: Widowed' in about
+        assert 'Occupation' not in about, 'пустое занятие попало в описание'
+        assert 'About Myself' not in about
+        assert 'Marital Status: Widowed' in about
 
     def test_nothing_at_all_gives_nothing(self):
         """Совсем пустой ответ — законный исход, а не сбой: страница могла не
@@ -128,17 +128,48 @@ class TestAbout:
         assert companion_about_text(companion_about_parse('')) == ''
 
 
-class TestEnglishLabels:
-    """⚠⚠ Описание хранится по-русски, а агенту уезжает по-английски.
+class TestFreshDescriptionsAreEnglish:
+    """⚠⚠ Снятое сегодня ложится в базу **сразу английским**.
 
-    Поле «Описание» в карточке читает и правит человек, и панель у нас русская
-    целиком; промпт же у соседа английский — узел Dating объявляет `en`, и рядом в
-    том же вызове лежит английский `girl_bio`.
-
-    ⚠ Перевод стоит **при сборке био**, а не при записи в базу. Иначе «починено»
-    значило бы «починено у новых»: карточек на живом сайте 1636, а переснимаются
-    они раз в две недели.
+    Описание читают двое, и обоим нужен английский: агент — потому что текст
+    уезжает в английский промпт, человек — потому что поле «Описание» стоит на
+    вкладке напротив собранного Bio, и две подписи у одной строки заставляют
+    переводить глазами туда и обратно.
     """
+
+    def test_labels_are_the_site_ones(self):
+        about = companion_about_text(companion_about_parse(LIVE))
+
+        assert 'About Myself: Hi, I' in about
+        assert 'Hobby: music, Composing' in about
+        assert 'Occupation: Musician' in about
+
+    def test_nothing_russian_is_written(self):
+        about = companion_about_text(companion_about_parse(LIVE))
+
+        for was in ('О себе:', 'Увлечения:', 'Занятие:', 'Образование:',
+                    'Семейное положение:', 'Дети:', 'Религия:'):
+            assert was not in about, f'в базу легла русская подпись: {was}'
+
+
+class TestOldDescriptionsStillTranslate:
+    """⚠⚠ Накопленное переводится на лету — пока не переснимется.
+
+    Карточек на живом сайте 1636, а срок обновления — две недели
+    (`companion_about_every`). Накопленное правит миграция
+    `20261013120000_companion_about_english.sql`, но перевод остаётся: он
+    страхует и строку, до которой миграция не дотянулась, и вписанное руками.
+
+    ⚠ Уйдёт он третьим заходом, вместе с правой колонкой
+    `COMPANION_ABOUT_FIELDS`, — как уходили старые имена шагов сценария.
+    """
+
+    def test_english_text_passes_through_untouched(self):
+        """⚠⚠ Главное у переходной функции: на новом тексте она **ничего не
+        делает**. Иначе свежий снимок портился бы на каждой сборке био."""
+        fresh = companion_about_text(companion_about_parse(LIVE))
+
+        assert companion_about_english(fresh) == fresh
 
     def test_known_labels_turn_into_the_site_ones(self):
         """⚠ Английская подпись не выдумана и не записана вторым списком — это
@@ -172,6 +203,33 @@ class TestEnglishLabels:
     def test_empty_in_empty_out(self):
         assert companion_about_english('') == ''
         assert companion_about_english(None) == ''
+
+    def test_the_migration_lists_the_same_pairs_as_the_code(self):
+        """⚠⚠ Сторож на расхождение двух мест: карта перевода в коде и те же
+        семь пар, выписанные в SQL миграции.
+
+        Разойдись они — непереведённая строка осталась бы в базе навсегда:
+        миграцию не перезапускают, а `companion_about_english` подхватит её
+        только если пара есть **в коде**. Тихо при этом будет в обоих местах.
+        """
+        import pathlib
+        import re
+
+        from src.dating.companion_about import COMPANION_ABOUT_ENGLISH
+
+        sql = pathlib.Path(
+            'migrations/20261013120000_companion_about_english.sql'
+        ).read_text(encoding='utf-8')
+
+        # Пары берём из самой замены, а не из комментария: комментарий можно
+        # поправить, не тронув запрос, и сторож бы этого не заметил.
+        pairs = dict(re.findall(r"'\\n([^']+): ',\s*'\\n([^']+): '", sql))
+
+        assert pairs, 'в миграции не нашлось ни одной пары замены'
+        assert pairs == COMPANION_ABOUT_ENGLISH, (
+            'миграция и код расходятся: '
+            f'только в SQL {set(pairs) - set(COMPANION_ABOUT_ENGLISH)}, '
+            f'только в коде {set(COMPANION_ABOUT_ENGLISH) - set(pairs)}')
 
     def test_every_label_the_writer_puts_has_a_translation(self):
         """⚠⚠ Сторож на расхождение: подписи ставит `companion_about_text`, а
@@ -254,7 +312,7 @@ class TestJunk:
         без этого в описании зияли бы дыры."""
         got = companion_about_text({'Hobby': 'Ich   habe  <b>viele</b>  Hobbys'})
 
-        assert got == 'Увлечения: Ich habe viele Hobbys'
+        assert got == 'Hobby: Ich habe viele Hobbys'
 
 
 class TestPlace:
