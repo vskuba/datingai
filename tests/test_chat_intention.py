@@ -12,10 +12,11 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating import answer as answer_module
+from src.dating import chat_intention as intention_module
 from src.dating.answer import _agent_ask
-from src.dating.chat_intention import (chat_intention_done,
-                                       chat_intention_pairs, chat_intention_put,
-                                       chat_intention_rows)
+from src.dating.chat_intention import (chat_intention_do_allowed,
+                                       chat_intention_done, chat_intention_pairs,
+                                       chat_intention_put, chat_intention_rows)
 from tests.conftest import TEST_STAND_SITE
 
 pytestmark = pytest.mark.chat
@@ -459,3 +460,50 @@ class TestThePairs:
         got = await chat_intention_pairs(0)
 
         assert got == {'rows': [], 'page': 1, 'pages': 1, 'total': 0}
+
+
+async def _do_flag(site_id: int, on: bool) -> None:
+    """Поднять или снять выключатель сайта напрямую — минуя ручку."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO site (site_id, chat_intention_do_on) VALUES (%s, %s)'
+            ' ON DUPLICATE KEY UPDATE chat_intention_do_on = VALUES(chat_intention_do_on)',
+            (int(site_id), 1 if on else 0))
+        await db.connection.commit()
+
+
+class TestTheDoFlag:
+    """Разрешение исполнять намерения — дверь для будущего исполнителя."""
+
+    async def test_it_is_off_by_default(self):
+        """⚠ Умолчание снято: поднятая галочка у работы, которой нет, — ложь."""
+        await _do_flag(TEST_STAND_SITE, False)
+
+        assert await chat_intention_do_allowed(TEST_STAND_SITE) is False
+
+    async def test_it_is_on_when_raised(self):
+        await _do_flag(TEST_STAND_SITE, True)
+        try:
+            assert await chat_intention_do_allowed(TEST_STAND_SITE) is True
+        finally:
+            await _do_flag(TEST_STAND_SITE, False)
+
+    async def test_a_site_without_a_row_is_not_allowed(self):
+        """Строки сайта может не быть вовсе — это обычное состояние, не поломка."""
+        assert await chat_intention_do_allowed(999_111) is False
+
+    async def test_a_zero_site_is_not_allowed(self):
+        assert await chat_intention_do_allowed(0) is False
+
+    async def test_a_broken_read_is_not_allowed(self, monkeypatch):
+        """⚠⚠ Сбой чтения даёт `False`, а не исключение и не `True`.
+
+        Исполнение уходит живому человеку, и «на всякий случай сделал» отменить
+        нельзя. Тем же правилом живёт `chat_answer_on` в `auto.py`.
+        """
+        def _boom(*args, **kwargs):
+            raise RuntimeError('база легла')
+
+        monkeypatch.setattr(intention_module, 'mysql_get_db_async', _boom)
+
+        assert await chat_intention_do_allowed(TEST_STAND_SITE) is False
