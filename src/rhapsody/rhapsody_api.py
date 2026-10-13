@@ -522,6 +522,24 @@ async def rhapsody_api_agent_find(name: str) -> dict:
     return data.get('result') or {}
 
 
+def _intentions(data: dict) -> list:
+    """Намерения прогона списком строк. Что приехало не списком — пусто.
+
+    ⚠ Разбор не доверяет чужой форме: ключ кладёт движок соседа по ответу
+    инструмента `chat_intention_add`, и форма у него может смениться раньше,
+    чем мы узнаем. Пустые метки выбрасываются здесь, длинные — у двери к
+    таблице (`src/dating/chat_intention.py`): предел принадлежит столбцу.
+
+    ⚠ Повторы внутри пачки не схлопываются — это дело ключа базы.
+    """
+    got = (data or {}).get('intentions')
+
+    if not isinstance(got, (list, tuple)):
+        return []
+
+    return [str(one).strip() for one in got if str(one or '').strip()]
+
+
 async def rhapsody_api_chat_talk(agent_id: int, question: str,
                                  variables: dict = None) -> dict:
     """Спрашивает агента и отдаёт ответ вместе с номером обмена разговора.
@@ -530,6 +548,8 @@ async def rhapsody_api_chat_talk(agent_id: int, question: str,
         dict: `text` — ответ агента (пустой законен: он может промолчать),
         `message_id` — номер строки `companion_session` у соседа. Ноль значит
         «обмена нет»: агент смолчал, прогон ушёл в «Тишину».
+        `intentions` — метки намерений прогона (`she_promised_send_photo`).
+        Пустой список законен и означает «агент ничего не пометил».
 
     ## ⚠⚠ Номер нужен, чтобы отметить доставку
 
@@ -540,6 +560,16 @@ async def rhapsody_api_chat_talk(agent_id: int, question: str,
     ⚠ Зовут это только дороги `dating_talk` — чат и два пула писем. Галерея и
     почтовые агенты номера не получают: их workflow в `companion_session` не
     пишут, и спрашивать его там было бы враньём.
+
+    ## ⚠ Намерения отдаются всегда, пустым списком в том числе
+
+    По той же причине, по какой их всегда отдаёт сосед: принимающая сторона
+    сворачивает «пусто» и «ключа нет» в одно, и пропажа стала бы неотличима от
+    штатной тишины. Ровно так поломка `message_id` прожила шесть дней
+    незамеченной.
+
+    ⚠ Что с ними делать — не её дело: записывает их `_agent_ask` в
+    `src/dating/answer.py`, одной точкой на все четыре канала.
     """
     payload = {'question': str(question), 'agent_id': int(agent_id),
                'variables': {'chat_timeout': RHAPSODY_API_CHAT_TIMEOUT, **(variables or {})}}
@@ -551,7 +581,8 @@ async def rhapsody_api_chat_talk(agent_id: int, question: str,
     except (TypeError, ValueError):
         number = 0
 
-    return {'text': str(data.get('result') or ''), 'message_id': number}
+    return {'text': str(data.get('result') or ''), 'message_id': number,
+            'intentions': _intentions(data)}
 
 
 async def rhapsody_api_chat_ask(agent_id: int, question: str,

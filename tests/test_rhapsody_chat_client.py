@@ -60,7 +60,7 @@ class TestChatTalk:
 
         got = await rhapsody_api_chat_talk(7, 'вопрос')
 
-        assert got == {'text': 'привет', 'message_id': 777}
+        assert got == {'text': 'привет', 'message_id': 777, 'intentions': []}
 
     async def test_the_question_and_agent_travel_in_the_payload(self, requested):
         """⚠ Таймаут агента и номер агента — не на словах, а в самом запросе."""
@@ -82,7 +82,7 @@ class TestChatTalk:
 
         got = await rhapsody_api_chat_talk(7, 'вопрос')
 
-        assert got == {'text': '', 'message_id': 0}
+        assert got == {'text': '', 'message_id': 0, 'intentions': []}
 
     @pytest.mark.parametrize('raw', [None, '', 'не число', [], {}])
     async def test_a_missing_or_unreadable_number_is_zero(self, requested, raw):
@@ -97,7 +97,7 @@ class TestChatTalk:
 
         got = await rhapsody_api_chat_talk(7, 'вопрос')
 
-        assert got == {'text': 'ответ', 'message_id': 0}
+        assert got == {'text': 'ответ', 'message_id': 0, 'intentions': []}
 
     async def test_the_key_is_simply_absent(self, requested):
         """Соседний случай «ключа нет вовсе» — не то же самое, что `None`,
@@ -106,7 +106,42 @@ class TestChatTalk:
 
         got = await rhapsody_api_chat_talk(7, 'вопрос')
 
-        assert got == {'text': 'ответ', 'message_id': 0}
+        assert got == {'text': 'ответ', 'message_id': 0, 'intentions': []}
+
+    async def test_intentions_come_through(self, requested):
+        requested['answers'].append(
+            {'result': 'ок', 'message_id': 1,
+             'intentions': ['she_promised_send_photo']})
+
+        got = await rhapsody_api_chat_talk(1, 'вопрос')
+
+        assert got['intentions'] == ['she_promised_send_photo']
+
+    async def test_no_intentions_key_is_an_empty_list(self, requested):
+        """⚠ Ключ отдаётся всегда: «пусто» и «ключа нет» зовущий сольёт в одно,
+        и пропажа стала бы неотличима от штатной тишины."""
+        requested['answers'].append({'result': 'ок', 'message_id': 1})
+
+        got = await rhapsody_api_chat_talk(1, 'вопрос')
+
+        assert got['intentions'] == []
+
+    async def test_a_strange_intentions_shape_is_an_empty_list(self, requested):
+        requested['answers'].append(
+            {'result': 'ок', 'message_id': 1, 'intentions': 'не список'})
+
+        got = await rhapsody_api_chat_talk(1, 'вопрос')
+
+        assert got['intentions'] == []
+
+    async def test_blank_intentions_are_dropped(self, requested):
+        requested['answers'].append(
+            {'result': 'ок', 'message_id': 1,
+             'intentions': ['  promised_photo  ', '', '   ']})
+
+        got = await rhapsody_api_chat_talk(1, 'вопрос')
+
+        assert got['intentions'] == ['promised_photo']
 
     async def test_numeric_string_is_accepted(self, requested):
         """Сосед вправе отдать номер строкой — `int()` должен его принять."""
@@ -114,7 +149,7 @@ class TestChatTalk:
 
         got = await rhapsody_api_chat_talk(7, 'вопрос')
 
-        assert got == {'text': 'ответ', 'message_id': 777}
+        assert got == {'text': 'ответ', 'message_id': 777, 'intentions': []}
 
     async def test_refusal_is_not_swallowed(self, requested):
         """⚠ В отличие от «доставки», отказ в самом вопросе **не гасится**: тут
