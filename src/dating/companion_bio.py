@@ -30,23 +30,36 @@
 неизвестен») и может об этом заговорить. Молчание честнее: чего нет, о том не
 сказано.
 
+## ⚠⚠ Язык английский — тот же, что у `girl_bio`
+
+Узел Dating у соседа объявляет `en`, на английском ведётся переписка и написан
+промпт. Русский абзац внутри него модель читает как чужой кусок и подстраивает под
+него язык ответа — а рядом в том же вызове лежит английский `girl_bio`.
+
+При этом в базе и в поле «Описание» на странице подписи остаются **русскими**: их
+читает и правит человек. Разделение то же, что у параметров девушки
+(`profile_param.py`): русская подпись вкладке, английская агенту.
+
 ## Как выглядит
 
-    Имя: James
-    Возраст: 67
-    Живёт: christchurch, New Zealand
-    О себе: single have 10 year old son…
-    Увлечения: cars trucks buses…
-    Занятие: engineer
+    Name: James
+    Age: 67
+    Lives in: christchurch, New Zealand
+    About Myself: single have 10 year old son…
+    Hobby: cars trucks buses…
+    Occupation: engineer
 
 Первые три строки собираются здесь, остальное приходит готовым из `about` — его
-разбирает и подписывает `companion_about.py`, и переписывать те подписи тут
-значило бы завести второй их набор.
+разбирает и подписывает `companion_about.py`, оттуда же берётся перевод подписей
+(`companion_about_english`). Переписывать те подписи тут значило бы завести второй
+их набор.
 """
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 from text_.text_trim_lines import text_trim_lines
+
+from src.dating.companion_about import companion_about_english
 
 # Сколько знаков анкеты отдаём. ⚠ Не ради экономии токенов, а ради внимания
 # модели: полторы тысячи знаков это уже «простыня», в которой тонет сама реплика
@@ -87,8 +100,15 @@ async def companion_bio_text(site_id: int, uid: str) -> str:
     return companion_bio_build(dict(row or {}))
 
 
-def companion_bio_build(card: dict) -> str:
+def companion_bio_build(card: dict, limit: int = COMPANION_BIO_MAX) -> str:
     """Собирает текст из готовой строки карточки. Отдельно — ради проверяемости.
+
+    Args:
+        card: строка карточки — `name`, `age`, `city`, `country`, `about`.
+        limit: сколько знаков отдаём. ⚠ Доводом, а не одной константой на всех:
+            сборщик один на чат и на письма, а бюджет контекста у них разный —
+            письмо везёт **две** биографии, и у ноды Dating стоит маленькая модель
+            (`mail_agent.MAIL_COMPANION_BIO_MAX`).
 
     ⚠ **Чистая функция, без базы**: правила «что показываем и как подписываем»
     проверяются на словаре, а не на живой строке. Тот же приём, что у разбора
@@ -98,12 +118,12 @@ def companion_bio_build(card: dict) -> str:
 
     name = str(card.get('name') or '').strip()
     if name:
-        lines.append(f'Имя: {name}')
+        lines.append(f'Name: {name}')
 
     # ⚠ Ноль — это «не знаем», а не «ноль лет»: столбец `NOT NULL DEFAULT 0`.
     age = int(card.get('age') or 0)
     if age:
-        lines.append(f'Возраст: {age}')
+        lines.append(f'Age: {age}')
 
     # Город и страна — **одной строкой**: порознь они читаются как два разных
     # факта, а это один ответ на вопрос «откуда он».
@@ -111,12 +131,15 @@ def companion_bio_build(card: dict) -> str:
                                       str(card.get('country') or '').strip())
                       if one)
     if place:
-        lines.append(f'Живёт: {place}')
+        lines.append(f'Lives in: {place}')
 
     # Рассказ с сайта приходит уже подписанным («О себе:», «Увлечения:»…) —
     # разбирает и подписывает его `companion_about.py`. Свой набор подписей здесь
     # разошёлся бы с тем при первой же правке.
-    about = str(card.get('about') or '').strip()
+    #
+    # ⚠ Там же и перевод подписей на английский: хранится описание по-русски — его
+    # читает человек на странице, — а уезжает агенту по-английски.
+    about = companion_about_english(str(card.get('about') or '').strip())
     if about:
         lines.append(about)
 
@@ -129,4 +152,7 @@ def companion_bio_build(card: dict) -> str:
     # слое: две копии «как резать текст» разошлись бы ровно там, где это не
     # видно. Здесь оно безопасно ещё и потому, что `lines` — строки «Поле:
     # значение», а не один абзац: первая из них короткая при любой карточке.
-    return text_trim_lines(text, COMPANION_BIO_MAX)
+    #
+    # ⚠ Режем **после перевода подписей**: английские короче русских, и предел
+    # мерился бы не по тому тексту, который уедет.
+    return text_trim_lines(text, int(limit or COMPANION_BIO_MAX))

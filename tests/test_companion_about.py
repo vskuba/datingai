@@ -11,7 +11,8 @@
 
 import pytest
 
-from src.dating.companion_about import (companion_about_head,
+from src.dating.companion_about import (companion_about_english,
+                                               companion_about_head,
                                                companion_about_parse,
                                                companion_about_place,
                                                companion_about_text)
@@ -125,6 +126,64 @@ class TestAbout:
         """Совсем пустой ответ — законный исход, а не сбой: страница могла не
         открыться, и описание останется пустым."""
         assert companion_about_text(companion_about_parse('')) == ''
+
+
+class TestEnglishLabels:
+    """⚠⚠ Описание хранится по-русски, а агенту уезжает по-английски.
+
+    Поле «Описание» в карточке читает и правит человек, и панель у нас русская
+    целиком; промпт же у соседа английский — узел Dating объявляет `en`, и рядом в
+    том же вызове лежит английский `girl_bio`.
+
+    ⚠ Перевод стоит **при сборке био**, а не при записи в базу. Иначе «починено»
+    значило бы «починено у новых»: карточек на живом сайте 1636, а переснимаются
+    они раз в две недели.
+    """
+
+    def test_known_labels_turn_into_the_site_ones(self):
+        """⚠ Английская подпись не выдумана и не записана вторым списком — это
+        левая колонка `COMPANION_ABOUT_FIELDS`, то есть подпись на самом сайте."""
+        got = companion_about_english('О себе: likes sailing\n'
+                                      'Увлечения: chess\n'
+                                      'Семейное положение: Divorced')
+
+        assert got == ('About Myself: likes sailing\n'
+                       'Hobby: chess\n'
+                       'Marital Status: Divorced')
+
+    def test_the_value_is_never_touched(self):
+        """⚠ Меняется только подпись: в хвосте слова человека, и нормализовать их
+        по дороге здесь нечем и незачем."""
+        got = companion_about_english('Занятие:   IT: поддержка серверов  ')
+
+        assert got == 'Occupation:   IT: поддержка серверов  '
+
+    def test_an_unknown_line_passes_as_it_is(self):
+        """⚠ Описание правят свободным текстом, и выбросить непонятое значило бы
+        потерять написанное человеком."""
+        got = companion_about_english('Говорит, что был в Киеве\n'
+                                      'Дети: None')
+
+        assert got == 'Говорит, что был в Киеве\nChildren: None'
+
+    def test_a_line_without_a_colon_is_left_alone(self):
+        assert companion_about_english('просто строка') == 'просто строка'
+
+    def test_empty_in_empty_out(self):
+        assert companion_about_english('') == ''
+        assert companion_about_english(None) == ''
+
+    def test_every_label_the_writer_puts_has_a_translation(self):
+        """⚠⚠ Сторож на расхождение: подписи ставит `companion_about_text`, а
+        переводит их карта рядом. Появись поле в одной и не появись в другой —
+        агент молча перестал бы понимать именно его.
+        """
+        about = companion_about_text(companion_about_parse(LIVE))
+        assert about, 'образец перестал разбираться — проверять нечего'
+
+        for line in companion_about_english(about).split('\n'):
+            title = line.partition(':')[0]
+            assert title.isascii(), f'подпись осталась без перевода: {title}'
 
 
 class TestHead:

@@ -9,6 +9,10 @@
 извлекаются из переписки. В начале разговора переписки нет — и агент писал, не
 зная о собеседнике ничего, хотя его карточка у нас лежала. На проде из 736
 карточек рассказ о себе снят у 537, имя и возраст — у всех.
+
+⚠⚠ **Текст английский, а в базе русский.** Описание лежит подписанным по-русски —
+его читает и правит человек в карточке, — а агенту уезжает с подписями сайта.
+Поэтому `FULL` ниже русский намеренно: он изображает строку базы, а не ответ.
 """
 
 import pytest
@@ -34,24 +38,47 @@ class TestWhatTheAgentSees:
     def test_a_full_card_gives_every_line(self):
         got = companion_bio_build(FULL)
 
-        assert 'Имя: James coakley' in got
-        assert 'Возраст: 67' in got
-        assert 'Занятие: engineer' in got
+        assert 'Name: James coakley' in got
+        assert 'Age: 67' in got
+        assert 'Occupation: engineer' in got
 
     def test_city_and_country_are_one_line(self):
         """⚠ Порознь они читаются как два разных факта, а это один ответ на
         вопрос «откуда он»."""
         got = companion_bio_build(FULL)
 
-        assert 'Живёт: christchurch, New Zealand' in got
-        assert 'Город:' not in got and 'Страна:' not in got
+        assert 'Lives in: christchurch, New Zealand' in got
+        assert 'City:' not in got and 'Country:' not in got
 
-    def test_the_about_text_keeps_its_own_labels(self):
-        """⚠ Подписи внутри рассказа ставит `companion_about.py`, и свой их набор
-        здесь разошёлся бы с тем при первой же правке."""
+    def test_the_about_labels_come_out_in_english(self):
+        """⚠⚠ В базе описание лежит с русскими подписями — их читает человек в
+        поле «Описание», — а агенту уезжает с английскими.
+
+        Перевод живёт там же, где реестр подписей (`companion_about_english`):
+        свой их набор здесь разошёлся бы с тем при первой же правке.
+        """
         got = companion_bio_build(FULL)
 
-        assert 'Увлечения: cars trucks buses' in got
+        assert 'Hobby: cars trucks buses' in got
+        assert 'About Myself: single have 10 year old son' in got
+
+    def test_nothing_russian_leaves_for_the_agent(self):
+        """⚠⚠ Узел Dating у соседа объявляет `en`: рядом в том же вызове лежит
+        английский `girl_bio`, и один русский абзац модель читает как чужой кусок
+        и подстраивает под него язык ответа."""
+        got = companion_bio_build(FULL)
+
+        for label in ('Имя:', 'Возраст:', 'Живёт:', 'О себе:', 'Увлечения:',
+                      'Занятие:'):
+            assert label not in got, f'подпись осталась русской: {label}'
+
+    def test_a_handwritten_line_survives_untranslated(self):
+        """⚠ Описание правят свободным текстом, и выбросить непонятое значило бы
+        потерять написанное человеком."""
+        got = companion_bio_build({'name': 'Ivo',
+                                   'about': 'Пишет про рыбалку и внуков'})
+
+        assert 'Пишет про рыбалку и внуков' in got
 
 
 class TestWhatIsLeftOut:
@@ -63,14 +90,14 @@ class TestWhatIsLeftOut:
         got = companion_bio_build({'name': 'Luis', 'age': 46, 'city': '',
                                    'country': 'Mexico', 'about': ''})
 
-        assert got == 'Имя: Luis\nВозраст: 46\nЖивёт: Mexico'
+        assert got == 'Name: Luis\nAge: 46\nLives in: Mexico'
 
     def test_zero_age_means_unknown(self):
         """⚠ Столбец `NOT NULL DEFAULT 0`: ноль — это «не знаем», а не «ноль лет».
         Напиши мы «Возраст: 0», агент получил бы прямую неправду."""
         got = companion_bio_build({'name': 'Bjorn', 'age': 0})
 
-        assert 'Возраст' not in got, got
+        assert 'Age' not in got, got
 
     def test_an_empty_card_gives_nothing(self):
         """Пустой текст промпт не вставит вовсе — `[<if companion_bio>]` его гасит.
@@ -119,8 +146,21 @@ class TestTheTextIsBounded:
 
         assert got.startswith(whole)
         for line in got.split('\n'):
-            assert line.endswith('я') or line.startswith(('Имя', 'Возраст')), \
+            assert line.endswith('я') or line.startswith(('Name', 'Age')), \
                 f'строка оборвана посреди: {line[-30:]!r}'
+
+    def test_the_caller_may_ask_for_a_tighter_budget(self):
+        """⚠⚠ Сборщик один на чат и на письма, а бюджет контекста у них разный.
+
+        Письмо везёт **две** биографии, и у ноды Dating стоит маленькая модель:
+        живой прогон уже упирался в «request (3940 tokens) exceeds the available
+        context size». Отдай мы почте чатовские 1200, отказ вернулся бы.
+        """
+        long = {'name': 'X', 'age': 30,
+                'about': '\n'.join(f'Line {n}: ' + 'a' * 60 for n in range(60))}
+
+        assert len(companion_bio_build(long, 500)) <= 500
+        assert len(companion_bio_build(long)) > 500, 'умолчание осталось чатовским'
 
 
 class TestTheGirlSendsHerOwnBio:

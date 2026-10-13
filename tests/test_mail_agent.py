@@ -14,6 +14,7 @@ import uuid
 import pytest
 
 from src.dating.mail_agent import (MAIL_AGENT_VALUE_MAX,
+                                          MAIL_COMPANION_BIO_MAX,
                                           MAIL_QUESTION_MAX, _card,
                                           _companion_card, _json_chunk, _letter,
                                           _question, _values, _wanted_text)
@@ -145,18 +146,46 @@ class TestCompanionCard:
 
     def test_card_is_text_with_labels(self):
         card = _companion_card({'name': 'John', 'age': 52, 'country': 'Denmark',
-                                'about': 'Ходит под парусом'})
+                                'about': 'О себе: Ходит под парусом'})
 
-        assert 'Имя: John' in card
-        assert 'Страна: Denmark' in card
-        assert 'О нём: Ходит под парусом' in card
+        assert 'Name: John' in card
+        assert 'Lives in: Denmark' in card
+        assert 'About Myself: Ходит под парусом' in card
+
+    def test_it_is_the_same_builder_the_chat_uses(self):
+        """⚠⚠ Переменная зовётся `companion_bio` и в почте, и в чате.
+
+        Пока текст собирали два места, содержимое у них было разное: свой набор
+        подписей, свой предел и двойная подпись у описания («О нём: О себе: …» —
+        `about` приходит уже подписанным). Расхождение видно только в журнале
+        прогонов у соседа, то есть не видно.
+        """
+        from src.dating.companion_bio import companion_bio_build
+
+        companion = {'name': 'John', 'age': 52, 'country': 'Denmark',
+                     'about': 'Увлечения: chess'}
+
+        assert _companion_card(companion) == companion_bio_build(companion, 500)
+
+    def test_the_budget_stays_tighter_than_the_chat_one(self):
+        """⚠⚠ Сборщик общий, бюджет — нет. Письмо везёт **две** биографии, и у
+        ноды Dating маленькая модель: живой прогон упирался в «request (3940
+        tokens) exceeds the available context size»."""
+        long = {'name': 'John',
+                'about': '\n'.join(f'Hobby {n}: ' + 'a' * 60 for n in range(60))}
+
+        assert len(_companion_card(long)) <= MAIL_COMPANION_BIO_MAX
 
     @pytest.mark.parametrize('companion', [None, {}, {'name': '', 'age': 0}])
     def test_no_card_says_so(self, companion):
         """⚠ Пустой блок промпта хуже честного «ничего не известно»: во втором
         случае агент напишет общее письмо, в первом — начнёт выдумывать
-        несуществующие увлечения."""
-        assert _companion_card(companion) == 'о собеседнике ничего не известно'
+        несуществующие увлечения.
+
+        ⚠ Фраза по-английски, как и само био: один русский абзац внутри
+        английского промпта модель читает как чужой кусок.
+        """
+        assert _companion_card(companion) == 'Nothing is known about this person.'
 
 
 class TestLetter:
