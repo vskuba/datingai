@@ -6511,8 +6511,12 @@
         const box = slot('intention-pairs-list');
         if (!box) return;
 
-        fillSlot('intention-pairs-count',
-                 intentionPairsTotal ? `пар: ${intentionPairsTotal}` : '');
+        // ⚠ Счёт пишется **всегда**, и ноль в том числе. Пока он прятался на
+        // пустом списке, шапка первой колонки состояла из одной кнопки ⟳:
+        // колонка без имени рядом с «Сделано» и «В пуле» читается как обрезок
+        // разметки. Кадр показал и второе следствие — ряд шапок дрожал, 29
+        // пикселей против 32: текста в первой не было вовсе.
+        fillSlot('intention-pairs-count', `пары: ${intentionPairsTotal}`);
 
         if (!intentionPairs.length) {
             box.innerHTML = '<div class="in-empty">Намерений пока нет.<br>'
@@ -6530,19 +6534,26 @@
         // общий вид `talk-cards`, которым рисуют списки пар и в чате, и у
         // фаворитов. Свой класс остался бы без стилей, и список вышел бы голым
         // столбцом текста.
+        // ⚠⚠ Обёртка `.contact-bar` обязательна, и это не украшение. На ней
+        // держится раскладка строки в ряд и подсветка выбранной
+        // (`.contact.open .contact-bar`). Без неё кадр показал карточку, у
+        // которой счёт свалился на вторую строку, а выбор не подсвечивался
+        // вовсе.
+        //
+        // ⚠ Счёт — `contact-id`, мелкий бейдж, как «✉ 10» у диалогов. Стоял
+        // `in-count` — класс **заголовка колонки**: крупный синий текст под
+        // карточкой читался как подпись к списку, а не как её счётчик.
         box.innerHTML = intentionPairs.map(row =>
             `<div class="contact${intentionKey(row) === intentionOpen ? ' open' : ''}"`
             + ` data-pair="${esc(intentionKey(row))}">`
-            + '<span class="mail-sent-who talk">'
+            + '<div class="contact-bar">'
             + talkSide(row.profile_name, row.profile_photo, row.profile_uid,
                        'анкета, которая обещала')
             + '<span class="talk-swap">→</span>'
             + talkSide(row.name, row.photo, row.uid, 'кому обещано')
-            + '</span>'
-            // ⚠ Два числа и подписи к ним: голые «1 · 0» читались бы как номер.
-            + `<span class="in-count">открыто ${Number(row.open_count) || 0}`
-            + ` · сделано ${Number(row.done_count) || 0}</span>`
-            + '</div>').join('');
+            + '<span class="contact-id" title="открытых намерений и исполненных">'
+            + `${Number(row.open_count) || 0} / ${Number(row.done_count) || 0}</span>`
+            + '</div></div>').join('');
 
         // ⚠ Обработчик вешаем после отрисовки: строки переписываются целиком на
         // каждое чтение, и повешенный до неё не пережил бы первого обновления.
@@ -6669,8 +6680,10 @@
         const box = slot('intention-pool-list');
         if (!box) return;
 
-        fillSlot('intention-pool-count',
-                 intentionPoolTotal ? `намерений: ${intentionPoolTotal}` : '');
+        // ⚠ Тоже всегда: у этой колонки есть подпись «В пуле», но число рядом с
+        // ней должно стоять в обоих состояниях — иначе шапка прыгает при первом
+        // же наполнении.
+        fillSlot('intention-pool-count', `намерений: ${intentionPoolTotal}`);
 
         if (!intentionPool.length) {
             box.innerHTML = '<div class="in-empty">Пул пуст.<br>'
