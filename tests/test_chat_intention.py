@@ -269,3 +269,51 @@ class TestTheWritingPoint:
             name='Bob')
 
         assert (text, error, message_id) == ('ок', '', 7)
+
+
+async def _note(intention_id: int) -> str:
+    """Заметка об исполнении у этой строки."""
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT done_note FROM chat_intention WHERE id = %s',
+                         (int(intention_id),))
+
+        return str(dict(await db.fetchone())['done_note'])
+
+
+class TestTheDoneNote:
+    """Чем намерение исполнили — словами, в той же строке."""
+
+    async def test_the_note_lands(self, girl):
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
+        one = (await chat_intention_open(TEST_STAND_SITE, profile_id=girl))[0]
+
+        assert await chat_intention_done(
+            one['id'], note='отправлено фото public/a.png') is True
+        assert await _note(one['id']) == 'отправлено фото public/a.png'
+
+    async def test_without_a_note_the_old_contract_holds(self, girl):
+        """⚠ Довод необязательный: прежние вызовы и их тесты целы."""
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
+        one = (await chat_intention_open(TEST_STAND_SITE, profile_id=girl))[0]
+
+        assert await chat_intention_done(one['id']) is True
+        assert await _note(one['id']) == ''
+
+    async def test_a_long_note_is_cut_to_the_column(self, girl):
+        """⚠ Пятьсот знаков — предел столбца. Обрезаем **мы**, а не база: в
+        строгом режиме MySQL такая вставка падает ошибкой, и закрытие намерения
+        сорвалось бы из-за длинного текста исполнителя."""
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
+        one = (await chat_intention_open(TEST_STAND_SITE, profile_id=girl))[0]
+
+        assert await chat_intention_done(one['id'], note='x' * 600) is True
+        assert len(await _note(one['id'])) == 500
+
+    async def test_the_second_mark_leaves_the_first_note(self, girl):
+        """Закрыли дважды — вторая отметка не наша, и заметку она не трогает."""
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
+        one = (await chat_intention_open(TEST_STAND_SITE, profile_id=girl))[0]
+        await chat_intention_done(one['id'], note='первое')
+
+        assert await chat_intention_done(one['id'], note='второе') is False
+        assert await _note(one['id']) == 'первое'

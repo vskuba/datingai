@@ -37,6 +37,13 @@ from mysql_.mysql_ import mysql_get_db_async
 # модулю. Полагаться на чужой предел нельзя — он правится у соседа.
 CHAT_INTENTION_LENGTH_MAX = 100
 
+# Предел заметки об исполнении, знаков — длина столбца `done_note`.
+#
+# ⚠⚠ Режем **мы**, а не база. MySQL в строгом режиме отвергает длинную вставку
+# ошибкой, и закрытие намерения сорвалось бы из-за того, что исполнитель написал
+# в заметке лишнего. Дело уже сделано — терять отметку из-за текста нельзя.
+CHAT_INTENTION_NOTE_MAX = 500
+
 
 async def chat_intention_put(profile_id: int, site_id: int, uid: str,
                              intentions: list) -> int:
@@ -141,11 +148,13 @@ async def chat_intention_open(site_id: int, profile_id: int = 0, uid: str = '',
         return [dict(row) for row in (await db.fetchall() or [])]
 
 
-async def chat_intention_done(intention_id: int) -> bool:
+async def chat_intention_done(intention_id: int, note: str = '') -> bool:
     """Отмечает намерение исполненным.
 
     Args:
         intention_id: номер строки `chat_intention`.
+        note: чем исполнили, словами — «отправлено фото public/a.png». Пусто
+            законно: исполнитель может не иметь что сказать.
 
     Returns:
         bool: `True` — отметка наша; `False` — строки нет либо её уже закрыли,
@@ -160,15 +169,21 @@ async def chat_intention_done(intention_id: int) -> bool:
 
     ⚠ Отметка **отпускает ключ**: `open_intention` гаснет в `NULL`, и следующее
     такое же обещание той же паре ложится своей строкой.
+
+    ⚠ Заметка не нашей отметки никуда не пишется: условие одно на все столбцы, и
+    второй исполнитель, опоздавший на миг, не затирает рассказ первого.
     """
     if int(intention_id or 0) <= 0:
         return False
 
+    said = str(note or '').strip()[:CHAT_INTENTION_NOTE_MAX]
+
     async with mysql_get_db_async() as db:
         await db.execute(
-            "UPDATE chat_intention SET status = 'done', done_at = NOW()"
+            "UPDATE chat_intention"
+            "   SET status = 'done', done_at = NOW(), done_note = %s"
             " WHERE id = %s AND status = 'open'",
-            (int(intention_id),))
+            (said, int(intention_id)))
         done = int(db.rowcount or 0)
         await db.connection.commit()
 
