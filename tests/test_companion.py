@@ -247,6 +247,59 @@ class TestCompanionAbout:
         assert answer.status_code == 404
 
 
+class TestCompanionBio:
+    """Что уезжает агенту вместо фактов, пока фактов о человеке ещё нет."""
+
+    async def test_bio_is_built_from_the_card(self, auth_client, companion):
+        """⚠⚠ Собирает **сервер**, той же функцией, что уходит в чат и в письма:
+        своя сборка на странице разошлась бы с настоящей молча, и человек сверял бы
+        ответ агента с текстом, которого агент не видел."""
+        answer = await auth_client.post(
+            f"/api/dating/companion/{companion['id']}/bio",
+            json={'about': 'О себе: любит парусный спорт'})
+        assert answer.status_code == 200, answer.text
+        bio = answer.json()['result']['bio']
+
+        assert 'Name: Julian' in bio
+        assert 'Age: 75' in bio
+        assert 'Lives in: Rudkobing, Denmark' in bio
+        assert 'About Myself: любит парусный спорт' in bio, \
+            'подпись описания не переведена'
+
+    async def test_it_shows_what_is_typed_not_what_is_stored(self, auth_client,
+                                                             companion):
+        """⚠ Кнопка показывает, во что сложится **набранное**, а не сохранённое:
+        её затем и нажимают, что текст ещё не сохранён."""
+        await auth_client.put(f"/api/dating/companion/{companion['id']}",
+                              json={'about': 'О себе: старое'})
+
+        bio = (await auth_client.post(
+            f"/api/dating/companion/{companion['id']}/bio",
+            json={'about': 'О себе: новое'})).json()['result']['bio']
+
+        assert 'новое' in bio and 'старое' not in bio
+
+    async def test_it_writes_nothing(self, auth_client, companion):
+        """⚠ Это предпросмотр. Записывает `PUT /{id}`, и перепутать их значило бы
+        сохранять набранное при каждом взгляде на Bio."""
+        await auth_client.put(f"/api/dating/companion/{companion['id']}",
+                              json={'about': 'О себе: сохранённое'})
+        await auth_client.post(f"/api/dating/companion/{companion['id']}/bio",
+                               json={'about': 'О себе: мимолётное'})
+
+        row = (await auth_client.get(
+            f"/api/dating/companion?site_id={SITE}&find={companion['uid']}")
+               ).json()['result'][0]
+
+        assert row['about'] == 'О себе: сохранённое', 'предпросмотр записал текст'
+
+    async def test_missing_card_is_404(self, auth_client):
+        answer = await auth_client.post('/api/dating/companion/999999/bio',
+                                        json={'about': 'x'})
+
+        assert answer.status_code == 404
+
+
 class TestCompanionFind:
     """Поиск режет на сервере: карточек накопятся сотни."""
 
@@ -531,17 +584,47 @@ class TestCompanionPages:
         assert 'id="companionWho"' in page, 'нет шапки выбранного'
         assert 'id="companion"' in page, 'нет места под карточку'
 
-    async def test_companion_card_has_two_tabs(self, auth_client):
-        """Карточка делится на «Общую информацию» и «Переменные» — как у анкеты.
+    async def test_companion_card_has_three_tabs(self, auth_client):
+        """Карточка делится на «Общую информацию», «Информацию» и «Переменные».
 
-        Разное по природе: первое — что мы о человеке знаем, второе — что из этого
-        попадёт в письмо.
+        Те же вкладки и в том же порядке, что у анкеты девушки. Разное по природе:
+        первое — кто он и что с ним делаем, второе — что мы о нём знаем и что из
+        этого видит агент, третье — чем подставятся письма.
         """
         page = (await auth_client.get('/admin/dating')).text
 
         assert 'compTab' in page, 'нет состояния вкладок карточки'
+        assert 'companionInfo' in page, 'нет вкладки «Информация»'
         assert 'compVarsLoad' in page, 'нет загрузки переменных адресата'
         assert '/var`)).result' in page or "/var'" in page
+
+    async def test_bio_lives_on_the_info_tab(self, auth_client):
+        """⚠⚠ Bio — тот текст, что уезжает переменной `companion_bio` вместо
+        фактов, пока фактов о человеке нет. Посмотреть на него человеку было негде.
+
+        ⚠ Собирает его **сервер**: своя сборка на странице разошлась бы с
+        настоящей молча, и человек сверял бы ответ агента с текстом, которого агент
+        не видел.
+        """
+        page = (await auth_client.get('/admin/dating')).text
+
+        assert 'id="compBio"' in page, 'поля Bio на вкладке нет'
+        assert 'id="compBioGet"' in page, 'кнопки «Обновить био» нет'
+        assert '/bio`' in page, 'страница собирает био сама, а не ручкой'
+
+    async def test_editing_moved_off_the_main_tab(self, auth_client):
+        """⚠⚠ Почта и описание **переехали** на «Информацию», а не скопированы.
+
+        Два поля правки на один текст — это два его состояния на экране разом, и
+        вопрос «какое из них сохранится» не имеет хорошего ответа.
+        """
+        page = (await auth_client.get('/admin/dating')).text
+        main = page.split('function companionMain(row)', 1)[1] \
+                   .split('function companionInfo(row)', 1)[0]
+
+        assert 'data-field="about"' not in main, 'описание осталось на «Общей»'
+        assert 'data-field="email"' not in main, 'почта осталась на «Общей»'
+        assert 'data-flag="priority"' in main, '«Приоритет» ушёл с «Общей»'
 
     async def test_delete_is_in_the_list(self, auth_client):
         """⚠ Крестик — в **строке списка**, а не на карточке справа.

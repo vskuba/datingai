@@ -243,14 +243,10 @@
         .state-word-big { font-size: 11px; font-weight: 400; color: #16a34a; }
         .state-word-big.off { color: #94a3b8; }
 
-        /* Поля правки. ⚠ Раскрытыми, а не за кнопкой: в правой колонке место есть,
-           и прятать два поля за щелчком тут значило бы беречь пустоту. В списке
-           было наоборот — там десяток раскрытых форм превращался в частокол. */
-        .comp-field { display: flex; flex-direction: column; gap: 3px; }
-        .comp-field-label {
-            font-size: 10px; font-weight: 700; color: #94a3b8;
-            text-transform: uppercase; letter-spacing: .04em;
-        }
+        /* ⚠ Своих `.comp-field` здесь больше нет: почта и описание уехали на
+           вкладку «Информация» и одеваются её общими `.info-field` из
+           `dating_page.css` — теми же, что у анкеты девушки. Два набора стилей на
+           одну форму разошлись бы при первой правке одного из них. */
         .comp-hint { font-size: 10px; color: #94a3b8; line-height: 1.4; }
         /* Дата съёма — в подписи поля, но приглушённее её: это уточнение к
            описанию, а не отдельная мысль. */
@@ -259,19 +255,6 @@
         /* Срок обновления вышел. ⚠ Цветом предупреждения, а не красным: анкета
            старая — это повод обновить, а не поломка. */
         .comp-when-old { color: #b26b00; }
-
-        .comp-field input, .comp-field textarea {
-            width: 100%; box-sizing: border-box; padding: 6px 9px;
-            border: 1px solid #d1d5db; border-radius: 6px;
-            font-family: inherit; font-size: 12px; color: #1f2937;
-        }
-        /* ⚠ Описание пишут абзацами, и тянуть его вручную человек не должен:
-           поле растёт по вертикали, но не по горизонтали — иначе оно выломало бы
-           колонку. */
-        .comp-field textarea { resize: vertical; min-height: 90px; line-height: 1.45; }
-        .comp-field input:focus, .comp-field textarea:focus {
-            outline: none; border-color: #a5b4fc; box-shadow: 0 0 0 3px #eef2ff;
-        }
 
         /* Переменные адресата: имя, чем подставится и откуда взято. */
         .comp-vars { display: flex; flex-direction: column; gap: 7px; }
@@ -2819,8 +2802,9 @@
     // сотни, а на сайте тысячи; строка появляется, когда о человеке спросили — с
     // «Профилей», из ленты «Все онлайн». Здесь их только показывают и правят.
     //
-    // Описание и почту сейчас вписывают руками: API сайта их не отдаёт (проверено
-    // живьём), а сценария «карточка мужчины» у соседа ещё нет.
+    // Описание снимает со страницы анкеты `companion_about`, а почту вписывают
+    // руками: API сайта её не отдаёт (проверено живьём). Правят и то и другое на
+    // вкладке «Информация», там же видно собранное из них Bio.
 
     const companionPaneEl = document.getElementById('companionPane');
     const companionsEl = document.getElementById('companions');
@@ -3255,9 +3239,10 @@
 
     // ── Карточка выбранного собеседника ──────────────────────────────────────
     //
-    // ⚠ Вкладки те же, что у анкеты: «Общая информация» и «Переменные». Разное по
-    // природе: первое — что мы о человеке знаем, второе — что из этого попадёт в
-    // письмо. Одной простынёй переменные тонули бы под описанием.
+    // ⚠ Вкладки те же, что у анкеты: «Общая информация», «Информация» и
+    // «Переменные», и в том же порядке. Разное по природе: первое — кто он и что с
+    // ним делаем, второе — что мы о нём знаем и что из этого видит агент, третье —
+    // чем подставятся письма. Одной простынёй всё это тонуло бы друг под другом.
 
     const openCompanion = () => companions.find(row => row.id === companionId) || null;
 
@@ -3277,10 +3262,13 @@
             '<div class="card-tabs">'
             + `<button type="button" class="card-tab${compTab === 'main' ? ' on' : ''}"`
             + ' data-tab="main">Общая информация</button>'
+            + `<button type="button" class="card-tab${compTab === 'info' ? ' on' : ''}"`
+            + ' data-tab="info">Информация</button>'
             + `<button type="button" class="card-tab${compTab === 'var' ? ' on' : ''}"`
             + ' data-tab="var">Переменные</button>'
             + '</div>'
-            + (compTab === 'var' ? '<div id="compVarBox"></div>' : companionMain(row));
+            + (compTab === 'var' ? '<div id="compVarBox"></div>'
+                : compTab === 'info' ? companionInfo(row) : companionMain(row));
         companionEl.scrollTop = scroll;
 
         companionEl.querySelectorAll('.card-tab').forEach(btn =>
@@ -3293,6 +3281,12 @@
         if (compTab === 'var') {
             compVarsPaint();
             compVarsLoad(row.id);
+
+            return;
+        }
+
+        if (compTab === 'info') {
+            companionInfoBind(row);
 
             return;
         }
@@ -3324,9 +3318,9 @@
             + (meta ? `<span class="comp-meta">${esc(meta)}</span>` : '')
             + '</span></div>'
 
-            // ⚠ **Приоритет — первым полем, до почты.** Это не сведение о человеке,
-            // а решение о нём: остальное в карточке отвечает «кто он», а галочка —
-            // «что с ним делаем». Решение читают раньше подробностей.
+            // ⚠ **Приоритет остался здесь, а не уехал на «Информацию».** Это не
+            // сведение о человеке, а решение о нём: вкладка рядом отвечает «кто
+            // он», а галочка — «что мы с ним делаем». Разные вопросы.
             + '<label class="comp-priority" title="Пул писем набирается до потолка и '
             + 'обрывается на полпути по ленте. Отмеченные попадут в него раньше '
             + 'прочих — но прочие никуда не деваются">'
@@ -3337,18 +3331,61 @@
             + 'очередь. Это порядок, а не отбор: неотмеченные остаются в рассылке.'
             + '</div>'
 
-            // ⚠ Почта и описание — **раскрытыми полями**, а не за кнопкой
-            // «Править»: в правой колонке место есть, и прятать два поля за
-            // щелчком тут значило бы беречь пустоту. В списке было наоборот —
-            // там десяток раскрытых форм превращался в частокол.
-            + '<div class="comp-field">'
-            + '<span class="comp-field-label">Почта</span>'
-            + `<input type="text" data-field="email" value="${esc(row.email)}"`
-            + ' placeholder="почта" spellcheck="false" autocomplete="off">'
+            // ⚠⚠ Почта и описание **уехали на «Информацию»** — вместе с собранным
+            // из них Bio. Копии здесь нет и быть не должно: два поля правки на
+            // один текст это два его состояния на экране разом, и вопрос «какое
+            // из них сохранится» не имеет хорошего ответа.
+            + '</div>';
+    }
+
+    // ── Вкладка «Информация»: что мы о человеке знаем и что видит агент ──────
+    //
+    // ⚠⚠ **Правая колонка — Bio, то есть итог левой.** Это тот самый текст,
+    // который уезжает переменной `companion_bio`: промпт подставляет его вместо
+    // фактов, пока фактов о человеке ещё нет. Собирается он **сервером**, тем же
+    // `companion_bio_build`, что уходит в чат и в письма, — своя сборка на
+    // странице разошлась бы с настоящей молча, и человек сверял бы ответ агента с
+    // текстом, которого агент не видел. То же правило, что у Bio девушки.
+    //
+    // ⚠ Подписи в Bio **английские**, а в поле «Описание» слева русские, и это не
+    // рассогласование: в базе описание лежит по-русски для человека, а узел Dating
+    // у соседа объявляет `en` — перевод стоит при сборке (`companion_about_english`).
+    function companionInfo(row) {
+        // Имя, возраст, город и страна — **только показ**. Они приходят с сайта, а
+        // механизма «правлено руками» (у девушек это `profile_edited` плюс
+        // `profile_card_keep`) у карточек собеседников нет: сделай их полями, и
+        // первое же снятие анкеты молча затёрло бы правку.
+        const shown = (title, value) =>
+            '<label class="info-field">'
+            + `<span class="info-label">${title}</span>`
+            + `<input type="text" value="${esc(String(value || ''))}" readonly>`
+            + '</label>';
+
+        return '<div class="info-pane">'
+            + '<div class="info-left">'
+            + '<div class="info-head">Сведения с сайта</div>'
+            + '<i class="info-hint">Приходят со страницы анкеты и правятся только'
+            + ' там: отметки «правлено руками» у карточек собеседников нет, и'
+            + ' вписанное здесь стёрло бы следующее чтение.</i>'
+            + '<div class="info-grid">'
+            + shown('Имя', row.name)
+            + shown('ID на сайте', row.uid)
+            + shown('Возраст', row.age ? row.age : '')
+            + shown('Город', row.city)
+            + shown('Страна', row.country)
             + '</div>'
 
-            + '<div class="comp-field">'
-            + '<span class="comp-field-label">Описание — про что спросит письмо'
+            + '<div class="info-head">Правится здесь</div>'
+            + '<div class="info-grid">'
+
+            + '<label class="info-field">'
+            + '<span class="info-label">Почта</span>'
+            + `<input type="text" data-field="email" value="${esc(row.email)}"`
+            + ' placeholder="почта" spellcheck="false" autocomplete="off">'
+            + '</label>'
+
+            + '<label class="info-field info-wide info-tall">'
+            + '<span class="info-label">Описание — про что спросит письмо'
             // ⚠ Когда сведения сняты — рядом с самим описанием, а не в подвале:
             // читая текст, человек первым делом спрашивает «насколько это свежо».
             // Показываем только когда ходили: у вписанного руками даты нет.
@@ -3364,14 +3401,36 @@
             + '<textarea data-field="about" rows="8"'
             + ' placeholder="полезный текст из профиля: чем занимается, что любит">'
             + `${esc(row.about)}</textarea>`
-            + '<span class="comp-hint">'
+            + '<i class="info-hint">'
             + (row.has_about
                 ? 'Сохраняется, когда уходите из поля.'
                 : 'Пока пусто — письмо не спросит про интересы, и вопрос выйдет '
                   + 'общим. Сохраняется, когда уходите из поля.')
-            + '</span>'
-            + '</div>'
-            + '</div>';
+            + '</i>'
+            + '</label>'
+
+            + '</div></div>'
+
+            // ⚠ Разделитель и ключ раскладки — те же, что у вкладки девушки:
+            // одновременно эти вкладки не видны (это разные вкладки страницы), и
+            // две ширины «колонки информации» отвечали бы на один вопрос дважды.
+            + '<div class="split info-split" id="splitCompInfo"'
+            + ' title="Потяните, чтобы изменить ширину колонок"></div>'
+
+            + '<div class="info-right">'
+            + '<div class="info-head">Companion bio'
+            + '<button type="button" class="dating-btn info-get" id="compBioGet">'
+            + 'Обновить био</button></div>'
+            // ⚠ «из полей слева» не пишем: под 1000 пикселей колонки встают друг
+            // под друга, и «слева» становится неправдой ровно там, где подсказка
+            // нужнее всего.
+            + '<i class="info-hint">То, что <b>уезжает агенту</b> вместо фактов,'
+            + ' пока фактов о человеке ещё нет. Собирается из описания и сведений'
+            + ' карточки — кнопкой или при сохранении. По-английски: на нём промпт'
+            + ' и переписка.</i>'
+            + '<textarea class="info-bio" id="compBio" readonly spellcheck="false"'
+            + ' placeholder="собираю…"></textarea>'
+            + '</div></div>';
     }
 
     // Переключает приоритет собеседника в рассылке.
@@ -3400,24 +3459,79 @@
         }
     }
 
-    // Правка полей: сохраняем по уходу из поля, а не по кнопке «Сохранить».
-    // ⚠ Полей два, и кнопка рядом с ними спорила бы за смысл с вкладками сверху.
+    // Обработчики «Общей информации»: здесь остался один переключатель.
     function companionBind(row) {
         const priority = companionEl.querySelector('[data-flag="priority"]');
         if (priority) {
             priority.addEventListener('change', () => companionPriority(row, priority));
         }
+    }
 
-        companionEl.querySelectorAll('[data-field]').forEach(el => {
+    // Обработчики «Информации». ⚠ Вешаются заново при каждой отрисовке: узлы новые.
+    function companionInfoBind(row) {
+        const pane = companionEl.querySelector('.info-pane');
+        if (!pane) return;
+
+        // Разделитель колонок — тот же `splitDrag` и тот же ключ `--info`, что у
+        // вкладки девушки. ⚠ Отсчёт от левого края **самой вкладки**, а не
+        // страницы: слева от неё список собеседников со своим разделителем, и
+        // считай мы от края страницы, колонки прыгали бы при каждой его правке.
+        const split = document.getElementById('splitCompInfo');
+        if (split) {
+            splitDrag(split, '--info', 260,
+                      Math.max(300, Math.round(pane.getBoundingClientRect().width - 280)),
+                      (e) => e.clientX - pane.getBoundingClientRect().left);
+        }
+
+        // Что набрано в полях прямо сейчас. ⚠ Берётся **из разметки**, а не из
+        // `row`: в поле лежит то, что человек напечатал, и второй источник правды
+        // означал бы молча потерянную правку.
+        const field = name => (pane.querySelector(`[data-field=${name}]`) || {}).value || '';
+
+        // ⚠⚠ Собирает Bio **сервер**, той же функцией, что уезжает агенту: своя
+        // сборка на странице разошлась бы с настоящей молча. Кнопка при этом
+        // ничего не записывает — это предпросмотр; записывает уход из поля.
+        const bioShow = async () => {
+            const box = document.getElementById('compBio');
+            if (!box) return;
+
+            try {
+                const got = await postData(
+                    `${BASE}/api/dating/companion/${row.id}/bio`, {about: field('about')});
+                // Гонка: пока шёл запрос, могли выбрать другого человека или вкладку.
+                if (companionId !== row.id || compTab !== 'info') return;
+                box.value = (got && got.result && got.result.bio) || '';
+                box.placeholder = 'Пусто: у человека нет ни имени, ни возраста, ни'
+                                + ' описания — агенту нечего рассказать.';
+            } catch (err) {
+                // ⚠ «собираю…» в пустом поле после отказа читается как «всё ещё
+                // идёт»: человек ждёт того, чего не будет.
+                box.placeholder = 'не собралось — нажмите «Обновить био»';
+                say('био не собралось: ' + err.message, true);
+            }
+        };
+
+        document.getElementById('compBioGet').addEventListener('click', async () => {
+            const button = document.getElementById('compBioGet');
+            const was = button.textContent;
+            button.disabled = true;
+            button.textContent = 'собираю…';
+            try {
+                await bioShow();
+            } finally {
+                button.disabled = false;
+                button.textContent = was;
+            }
+        });
+
+        // Правка полей: сохраняем по уходу из поля, а не по кнопке «Сохранить».
+        // ⚠ Полей два, и кнопка рядом с ними спорила бы за смысл с вкладками сверху.
+        pane.querySelectorAll('[data-field]').forEach(el => {
             el.addEventListener('change', async () => {
-                const send = {
-                    email: (companionEl.querySelector('[data-field=email]') || {}).value || '',
-                    about: (companionEl.querySelector('[data-field=about]') || {}).value || '',
-                };
-
                 let answer;
                 try {
-                    answer = await putData(`${BASE}/api/dating/companion/${row.id}`, send);
+                    answer = await putData(`${BASE}/api/dating/companion/${row.id}`,
+                                           {email: field('email'), about: field('about')});
                 } catch (err) {
                     say('не сохранилось: ' + err.message, true);
 
@@ -3433,8 +3547,14 @@
                 // печатает, и перерисовка дёрнула бы текст под руками. А в списке
                 // меняется признак «есть описание», и он должен догнать правку.
                 companionsPaint();
+
+                // Bio — итог сохранённого, и устаревшее рядом с правленым полем
+                // читается как «правка не применилась».
+                bioShow();
             });
         });
+
+        bioShow();
     }
 
     // Точка состояния на аватарке. Три случая, и третий — молчание.

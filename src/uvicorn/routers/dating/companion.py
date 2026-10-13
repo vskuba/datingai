@@ -36,6 +36,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.companion_about import (COMPANION_ABOUT_EVERY_DEFAULT,
                                         COMPANION_ABOUT_EVERY_SETTING)
+from src.dating.companion_bio import companion_bio_build
 from src.dating.companion_card import companion_save
 
 from src.auth.auth import AuthUser, auth_required
@@ -239,6 +240,49 @@ async def companion_edit(companion_id: int, payload: DatingCompanionEdit,
         await db.connection.commit()
 
     return {'result': await _row(companion_id)}
+
+
+class DatingCompanionBio(BaseModel):
+    """Что набрано в поле «Описание» прямо сейчас.
+
+    ⚠ Только оно: имя, возраст, город и страну у собеседника руками не правят —
+    они приходят с сайта, а отметок «правлено руками» у этих карточек нет.
+    """
+
+    about: str = Field('', max_length=COMPANION_ABOUT_MAX)
+
+
+@router.post('/{companion_id}/bio', include_in_schema=False)
+async def companion_bio_make(companion_id: int, payload: DatingCompanionBio,
+                                    user: AuthUser = Depends(auth_required)):
+    """Собирает био собеседника — то, что уезжает агенту вместо фактов.
+
+    ⚠ Имя обработчика — `companion_bio_make`, а не `companion_bio`: так зовётся
+    модуль-сборщик, и одноимённый обработчик рядом читался бы как он. Та же
+    грабля, что уже стоила `500` у `companion_add`.
+
+    Returns:
+        dict: `result.bio` — готовый текст. Пустая строка — законный исход:
+        карточка без имени, возраста и описания агенту ничего не рассказывает.
+
+    Raises:
+        HTTPException: 404 — такой карточки нет.
+
+    ⚠⚠ **Собирает сервер, тем же `companion_bio_build`**, что уходит в чат и в
+    письма. Своя сборка на странице разошлась бы с настоящей молча, и человек
+    сверял бы ответ агента с текстом, которого агент не видел. То же правило, что
+    у био девушки (`POST /api/dating/profile/{id}/card/bio`).
+
+    ⚠ **Ничего не записывает.** Это предпросмотр: кнопка «Обновить био» показывает,
+    во что сложится набранное. Записывает `PUT /{companion_id}`.
+    """
+    row = await _row(companion_id)
+
+    # ⚠ Поверх карточки кладём **набранное**, а не прочитанное: человек нажимает
+    # кнопку, чтобы увидеть, во что сложится то, что он напечатал, — и ещё не
+    # сохранил. Прочитай мы `about` из базы, кнопка показывала бы вчерашнее.
+    return {'result': {'bio': companion_bio_build({**row,
+                                                   'about': payload.about})}}
 
 
 class DatingCompanionPriority(BaseModel):
