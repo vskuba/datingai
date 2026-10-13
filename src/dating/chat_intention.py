@@ -29,6 +29,8 @@
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.json_column import json_column_load
+
 # Предел длины метки, знаков — ровно тот, что у соседа
 # (`CHAT_INTENTION_LENGTH_MAX` в его `chat_intention.py`): длиннее он не
 # принимает, значит приехать не может.
@@ -188,3 +190,119 @@ async def chat_intention_done(intention_id: int, note: str = '') -> bool:
         await db.connection.commit()
 
     return bool(done)
+
+
+# Строк на странице по умолчанию. Столько же, сколько у чёрного списка: списки
+# соседние по виду, и разная высота читалась бы как разная важность.
+CHAT_INTENTION_PAGE = 50
+
+
+def _intention_row(row: dict) -> dict:
+    """Строка базы → строка для страницы: имена, лица, даты строками.
+
+    ## ⚠ Имя анкеты выводится здесь, а не выражением в SQL
+
+    В списках панели так заведено везде (`block_rows`, `mail_reply`, `mailing`,
+    `chat.py`): запрос берёт `p.profile` целиком, а имя, лицо и номер на сайте
+    достаёт Python. Выражение `JSON_EXTRACT` в запросе стояло бы пятой копией, и
+    ради него пришлось бы ещё и присоединять карточку второй раз.
+
+    ⚠ Собеседник без карточки в `companion` отдаётся **номером**, а не пустотой:
+    карточка заводится по требованию, и по пустому месту человека не узнать.
+    """
+    got = dict(row)
+    card = json_column_load(got.pop('profile_card', None)) or {}
+
+    got['profile_name'] = str(card.get('name')
+                              or got.pop('profile_login', '') or '')
+    got.pop('profile_login', None)
+    got['profile_photo'] = str(card.get('photo') or '')
+    got['profile_uid'] = str(card.get('id') or '')
+
+    got['name'] = str(got.get('name') or '') or str(got.get('uid') or '')
+    got['photo'] = str(got.get('photo') or '')
+    got['done_note'] = str(got.get('done_note') or '')
+
+    for key in ('created_at', 'done_at'):
+        got[key] = str(got[key]) if got.get(key) else ''
+
+    return got
+
+
+async def chat_intention_rows(site_id: int, profile_id: int = 0, uid: str = '',
+                              status: str = '', page: int = 1,
+                              per: int = 0) -> dict:
+    """Намерения для показа: страницей, с именами обеих сторон.
+
+    Args:
+        site_id: сайт. Ноль — пусто, как у `chat_intention_open`.
+        profile_id: сузить до анкеты. Ноль — все анкеты сайта.
+        uid: сузить до собеседника. Пусто — все.
+        status: `open` или `done`. Пусто — и те, и другие.
+        page: страница, с единицы. За концом — поправится сама.
+        per: строк на странице. Ноль — `CHAT_INTENTION_PAGE`.
+
+    Returns:
+        dict: `rows`, `page`, `pages`, `total`.
+
+    ## ⚠ Это не дубль `chat_intention_open`, у них разные договоры
+
+    `chat_intention_open` — дверь **для исполнителя**: минимум полей, без имён и
+    страниц, зато с `limit`. Здесь показ: имена, лица, счёт и страницы. Слей их,
+    и исполнитель платил бы двумя присоединениями за то, чего не читает.
+
+    ⚠ **Страницы считает сервер.** Список копится сам и не убывает — намерение не
+    истекает. Отданный целиком, он кончается молча, и конец прокрутки читается как
+    конец списка.
+
+    ⚠ Порядок зависит от отбора: исполненные — свежие сверху (человек смотрит,
+    что сделано последним), открытые — старые сверху (старое обещание исполняют
+    раньше нового).
+    """
+    site_id = int(site_id or 0)
+    empty = {'rows': [], 'page': 1, 'pages': 1, 'total': 0}
+
+    if not site_id:
+        return empty
+
+    where = (' WHERE i.site_id = %s'
+             '   AND (%s = 0 OR i.profile_id = %s)'
+             "   AND (%s = '' OR i.uid = %s)"
+             "   AND (%s = '' OR i.status = %s)")
+    pid = int(profile_id or 0)
+    who = str(uid or '').strip()
+    what = str(status or '').strip()
+    args = (site_id, pid, pid, who, who, what, what)
+
+    order = (' ORDER BY i.done_at DESC, i.id DESC' if what == 'done'
+             else ' ORDER BY i.id')
+    per = max(1, int(per or 0) or CHAT_INTENTION_PAGE)
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT COUNT(*) AS n FROM chat_intention i' + where,
+                             args)
+            total = int(((await db.fetchone()) or {}).get('n') or 0)
+
+            pages = max(1, -(-total // per))
+            page = min(max(int(page or 1), 1), pages)
+
+            await db.execute(
+                'SELECT i.id, i.profile_id, i.site_id, i.uid, i.intention,'
+                '       i.status, i.created_at, i.done_at, i.done_note,'
+                '       comp.name, comp.photo,'
+                '       p.profile AS profile_card, p.login AS profile_login'
+                '  FROM chat_intention i'
+                '  JOIN profile p ON p.id = i.profile_id'
+                '  LEFT JOIN companion comp'
+                '    ON comp.site_id = i.site_id AND comp.uid = i.uid'
+                + where + order + ' LIMIT %s OFFSET %s',
+                (*args, per, (page - 1) * per))
+            rows = await db.fetchall()
+    except Exception as e:
+        logger_info(f'[dating] намерения сайта #{site_id} не прочитались: {e}')
+
+        return empty
+
+    return {'rows': [_intention_row(row) for row in (rows or [])],
+            'page': page, 'pages': pages, 'total': total}

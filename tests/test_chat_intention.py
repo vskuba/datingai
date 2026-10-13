@@ -14,7 +14,8 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.dating import answer as answer_module
 from src.dating.answer import _agent_ask
 from src.dating.chat_intention import (chat_intention_done,
-                                       chat_intention_open, chat_intention_put)
+                                       chat_intention_open, chat_intention_put,
+                                       chat_intention_rows)
 from tests.conftest import TEST_STAND_SITE
 
 pytestmark = pytest.mark.chat
@@ -317,3 +318,113 @@ class TestTheDoneNote:
 
         assert await chat_intention_done(one['id'], note='второе') is False
         assert await _note(one['id']) == 'первое'
+
+
+async def _companion(uid: str, name: str, photo: str = '') -> None:
+    """Карточка собеседника на стендовом сайте: её заводят по требованию."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO companion (site_id, uid, name, photo)'
+            ' VALUES (%s, %s, %s, %s)',
+            (TEST_STAND_SITE, uid, name, photo))
+        await db.connection.commit()
+
+
+class TestTheRows:
+    """Строки для показа: с именами, страницами и счётом."""
+
+    async def test_it_gives_the_row_with_names(self, girl):
+        uid = _uid()
+        await _companion(uid, 'Bruce', 'http://x/b.jpg')
+        await chat_intention_put(girl, TEST_STAND_SITE, uid, [PROMISE])
+
+        got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl)
+
+        assert got['total'] == 1
+        assert got['rows'][0]['name'] == 'Bruce'
+        assert got['rows'][0]['photo'] == 'http://x/b.jpg'
+        assert got['rows'][0]['intention'] == PROMISE
+
+    async def test_a_companion_without_a_card_is_not_empty(self, girl):
+        """⚠ Карточка заводится по требованию — её может не быть. Тогда в строке
+        остаётся номер, а не пустое место: по пустому собеседника не узнать."""
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid, [PROMISE])
+
+        got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl)
+
+        assert got['rows'][0]['name'] == uid
+
+    async def test_it_filters_by_status(self, girl):
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+                                 [PROMISE, 'he_asked_not_to_write'])
+        one = (await chat_intention_open(TEST_STAND_SITE, profile_id=girl))[0]
+        await chat_intention_done(one['id'], note='сделано')
+
+        done = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
+                                         status='done')
+        waiting = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
+                                            status='open')
+
+        assert [row['done_note'] for row in done['rows']] == ['сделано']
+        assert done['total'] == 1 and waiting['total'] == 1
+
+    async def test_it_filters_by_companion(self, girl):
+        mine = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, mine, [PROMISE])
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
+
+        got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
+                                        uid=mine)
+
+        assert got['total'] == 1
+        assert got['rows'][0]['uid'] == mine
+
+    async def test_a_profile_of_zero_means_all_of_them(self, girl, girl_make):
+        """⚠ Анкета — фильтр, а не условие показа. Общее правило раздела."""
+        other = await girl_make()
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
+        await chat_intention_put(other, TEST_STAND_SITE, _uid(), [PROMISE])
+
+        got = await chat_intention_rows(TEST_STAND_SITE, per=1000)
+
+        assert {row['profile_id'] for row in got['rows']} >= {girl, other}
+
+    async def test_pages_are_counted_by_the_server(self, girl):
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+                                 ['a_one', 'a_two', 'a_three'])
+
+        got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl, per=2)
+
+        assert got['total'] == 3
+        assert got['pages'] == 2
+        assert len(got['rows']) == 2
+
+    async def test_a_page_past_the_end_is_fixed_not_refused(self, girl):
+        """⚠ Строку могли закрыть с последней страницы: отказ вместо предыдущей
+        читался бы как поломка. То же правило, что у журнала доставки."""
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
+
+        got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
+                                        page=99)
+
+        assert got['page'] == 1
+        assert len(got['rows']) == 1
+
+    async def test_without_a_site_it_gives_nothing(self):
+        got = await chat_intention_rows(0)
+
+        assert got == {'rows': [], 'page': 1, 'pages': 1, 'total': 0}
+
+    async def test_dates_come_as_strings(self, girl):
+        """Страница сдвигает время сама (`time.js`), и ей нужна строка, а не
+        объект, который JSON не переживёт."""
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
+
+        got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl)
+
+        assert isinstance(got['rows'][0]['created_at'], str)
+        assert got['rows'][0]['created_at']
+        assert got['rows'][0]['done_at'] == ''
