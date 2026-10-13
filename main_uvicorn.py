@@ -63,6 +63,7 @@ from src.uvicorn.routers.dating import heartbeat as dating_heartbeat_router
 from src.uvicorn.routers.dating import favorite as dating_favorite_router
 from src.uvicorn.routers.dating import favorite_mail as dating_favorite_mail_router
 from src.uvicorn.routers.dating import block as dating_block_router
+from src.uvicorn.routers.dating import chat_intention as dating_chat_intention_router
 from src.uvicorn.routers.dating import invite as dating_invite_router
 from src.uvicorn.routers.dating import stats as dating_stats_router
 from src.uvicorn.routers.dating import mailing as dating_mailing_router
@@ -320,6 +321,7 @@ app.include_router(dating_mail_in_router.router)
 app.include_router(dating_mailing_router.router)
 app.include_router(dating_invite_router.router)
 app.include_router(dating_block_router.router)
+app.include_router(dating_chat_intention_router.router)
 app.include_router(dating_favorite_router.router)
 app.include_router(dating_favorite_mail_router.router)
 app.include_router(dating_stats_router.router)
