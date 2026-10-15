@@ -108,23 +108,31 @@ def import_card(extract: dict, now: datetime) -> dict:
 
     site_uid = _text(scenario_field(extract, 'id'))
     login = _text(scenario_field(extract, 'login'))
-    if not site_uid and not login:
+    name = _text(scenario_field(extract, 'name'))
+    city = _text(scenario_field(extract, 'city'))
+    birth_year = _text(scenario_field(extract, 'birth_year'))
+    occupation = _text(scenario_field(extract, 'occupation'))
+    about = _text(scenario_field(extract, 'about'))
+    photo = _text(scenario_field(extract, 'photo'))
+    # ⚠ Карточка полна и без ключей: панель Luxee отдаёт на карточке только
+    # содержимое, без номера и почты. Номер уже несёт строка из списка, а пустые
+    # `site_uid` и `login` гаснут на `if value` у читающего их роутера.
+    if not (site_uid or login or name or city or birth_year or
+            occupation or about or photo):
         return {}
 
     # Занятие дописываем к описанию, а не заводим своё поле: в карточке панели это
     # одна строка про человека, а колонки под неё в `profile_.profile` нет —
     # заводить её ради одного сайта значило бы менять форму кэша всем остальным.
-    about = _text(scenario_field(extract, 'about'))
-    occupation = _text(scenario_field(extract, 'occupation'))
     if occupation and occupation.lower() not in about.lower():
         about = f'{occupation}. {about}'.strip('. ').strip() if about else occupation
 
     return {'site_uid': site_uid[:IMPORT_LOGIN_MAX],
             'login': login[:IMPORT_LOGIN_MAX],
-            'name': _text(scenario_field(extract, 'name'))[:IMPORT_NAME_MAX],
-            'city': _text(scenario_field(extract, 'city'))[:IMPORT_CITY_MAX],
-            'photo_path': _text(scenario_field(extract, 'photo')),
-            'age': _age(scenario_field(extract, 'birth_year'), now),
+            'name': name[:IMPORT_NAME_MAX],
+            'city': city[:IMPORT_CITY_MAX],
+            'photo_path': photo,
+            'age': _age(birth_year, now),
             'about': about[:IMPORT_ABOUT_MAX]}
 
 
@@ -255,8 +263,13 @@ def _changed(before, after) -> bool:
 
 def _age(birth_year, now: datetime) -> int:
     """Возраст из года рождения. Мусор и будущее дают ноль, а не отрицательное."""
+    raw = str(birth_year or '').strip()
+    # ⚠ Панель может отдать дату целиком, а не год (Luxee: «1971-06-08»).
+    # Год — первые четыре знака, остальное отсекается здесь же.
+    if len(raw) >= 4 and raw[:4].isdigit() and not raw.isdigit():
+        raw = raw[:4]
     try:
-        year = int(str(birth_year or '').strip())
+        year = int(raw)
     except (TypeError, ValueError):
         return 0
 

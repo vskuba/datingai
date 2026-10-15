@@ -125,6 +125,59 @@ class DatingSitePanelLadadate(DatingSitePanel):
         return profile_param_frame(values)
 
 
+class DatingSitePanelLuxee(DatingSitePanel):
+    """Панель Luxee: `luxee.io/profile/update/{ID}/`, поля `FakeProfileModel[...]`.
+
+    ⚠ Дата рождения приезжает **одним полем** и сразу ISO (`1971-06-08`): тройки
+    дней-месяцев-года Ladadate здесь нет, сборка и не нужна. Рост и вес панель
+    пишет обеими системами сразу, но не через черточку, а в скобках:
+    `5'7.4&quot; (175 cm)`.
+    """
+
+    name = 'luxee'
+
+    path = 'profile/update/{uid}/'
+
+    FIELDS = {
+        'FakeProfileModel[birthday]': 'birthday',
+        'FakeProfileModel[country_id]': 'country',
+        'FakeProfileModel[occupation]': 'occupation',
+        'FakeProfileModel[education_level]': 'education',
+        'FakeProfileModel[religion]': 'religion',
+        'FakeProfileModel[marital_status]': 'marital_state',
+        'FakeProfileModel[children]': 'children',
+        'FakeProfileModel[body_type]': 'body',
+        'FakeProfileModel[height]': 'height',
+        'FakeProfileModel[weight]': 'weight',
+        'FakeProfileModel[smoke]': 'smoke',
+        'FakeProfileModel[drink]': 'drink',
+        'FakeProfileModel[interests][]': 'hobby',
+    }
+
+    def params(self, form: dict) -> dict:
+        """То же, что у базового, плюс рост и вес: метрическое — в скобках."""
+        got = form or {}
+        values = {our: got.get(theirs, '') for theirs, our in self.FIELDS.items()}
+
+        values['height'] = _bracket_metric(values.get('height'))
+        values['weight'] = _bracket_metric(values.get('weight'))
+
+        return profile_param_frame(values)
+
+
+def _bracket_metric(value) -> str:
+    """Метрическая половина меры Luxee: `5'7.4&quot; (175 cm)` → `175 cm`.
+
+    ⚠ Имперская половина **до** скобок, метрическая — **в** них. Скобок нет —
+    возвращаем как есть, по той же причине, что у `_metric`.
+    """
+    said = str(value or '').strip()
+    if not said.endswith(')') or '(' not in said:
+        return said
+
+    return said[said.rindex('(') + 1:-1].strip()
+
+
 def _metric(value) -> str:
     """Метрическая половина меры: `5'8" - 172 cm` → `172 cm`.
 

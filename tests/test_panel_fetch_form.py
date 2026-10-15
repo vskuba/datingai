@@ -57,6 +57,16 @@ class TestTheEdges:
 
         assert got == {}
 
+    def test_a_multiple_select_keeps_every_selected_option(self):
+        """⚠ `select multiple` (интересы Luxee): взяли бы последнюю выбранную
+        строку — список интересов ужался бы до одной молча, поле-то непустое."""
+        got = panel_fetch_form(
+            '<select name="I[]" multiple><option value="1" selected>Food</option>'
+            '<option value="2">Drink</option>'
+            '<option value="3" selected>Fitness</option></select>')
+
+        assert got['I[]'] == 'Food, Fitness'
+
     def test_a_select_without_a_selected_option_is_empty(self):
         got = panel_fetch_form(
             '<select name="A"><option value="1">one</option></select>')

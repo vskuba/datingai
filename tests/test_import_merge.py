@@ -104,7 +104,11 @@ class TestImportCard:
 
     def test_empty_card_is_empty(self):
         assert import_card({}, NOW) == {}
-        assert import_card({'name': 'Без номера и почты'}, NOW) == {}
+        # ⚠ Карточка без ключей, но с содержимым — полна: номер уже несёт
+        # строка из списка, пустые ключи роутер не сольёт.
+        assert import_card({'name': 'Без номера и почты'}, NOW) == {
+            'site_uid': '', 'login': '', 'name': 'Без номера и почты',
+            'city': '', 'photo_path': '', 'age': 0, 'about': ''}
 
 
 class TestImportPhoto:

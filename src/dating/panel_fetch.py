@@ -217,7 +217,8 @@ def panel_fetch_form(html: str) -> dict:
 
     ⚠ У `select` берётся **текст** выбранного `option`, а не его `value`:
     `value="208"` — внутренний номер сайта, человеку и модели он не говорит
-    ничего, а текст «Ukraine» говорит.
+    ничего, а текст «Ukraine» говорит. Выбранных строк может быть несколько
+    (`multiple` — интересы Luxee): тогда значения сливаются через запятую.
 
     ⚠ Значения не обрезаются по краям здесь: это делает `profile_param_frame`, и
     две обрезки в двух местах разошлись бы на первой правке.
@@ -347,7 +348,12 @@ class _Form(HTMLParser):
         elif tag == 'option':
             if self._select and 'selected' in got:
                 self._name, self._take = self._select, True
-                self.fields[self._name] = ''
+                # ⚠ В `select multiple` выбранных строк несколько (интересы Luxee):
+                # поле уже заведено пустым на `select`, здесь только дописываем
+                # через запятую — иначе от списка интересов осталась бы последняя
+                # строка.
+                if self.fields[self._name]:
+                    self.fields[self._name] += ', '
         elif tag == 'textarea':
             if name:
                 self._name, self._take = name, True

@@ -16,7 +16,8 @@ from src.dating.site.site_base import DatingSiteChat
 from src.dating.site.site_goldenbride import (DatingSiteChatGoldenbride,
                                               DatingSiteProfileGoldenbride)
 from src.dating.site.site_panel import (DatingSitePanel,
-                                        DatingSitePanelLadadate)
+                                        DatingSitePanelLadadate,
+                                        DatingSitePanelLuxee)
 from src.dating.site.site_profile import DatingSiteProfile
 
 # Известные драйверы чата: имя из `presence.driver` → класс.
@@ -52,6 +53,7 @@ DATING_SITE_ABOUT_DRIVERS = {
 # совпасть с соседом в трёх и разойтись в четвёртом.
 DATING_SITE_PANEL_DRIVERS = {
     DatingSitePanelLadadate.name: DatingSitePanelLadadate,
+    DatingSitePanelLuxee.name: DatingSitePanelLuxee,
     DatingSitePanel.name: DatingSitePanel,
 }
 
