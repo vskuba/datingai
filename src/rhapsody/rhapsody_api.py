@@ -153,6 +153,13 @@ async def rhapsody_api_scenario_find(site_id: int, name: str) -> dict:
     ⚠ **Промахи не кэшируются.** «Такого сценария нет» — обычно значит, что его
     сейчас заводят у соседа; запомни мы пустоту на десять минут, кнопка осталась
     бы мёртвой после того, как её настроили.
+
+    ⚠ Имя узнаётся и **под меткой сайта**: индекс имени у соседа один на всю
+    таблицу и без сайта, поэтому второму сайту, заведшему сценарий, достаётся
+    «имя (Метка)» — так освобождали голые имена под новый сайт. Точное сравнение
+    с голым именем молча глушило кнопку первому владельцу имени в тот день,
+    когда имя уходило под метку: зелёная кнопка становилась красной без единой
+    строчки в её журнале.
     """
     key = (int(site_id), str(name))
     hit = _scenario_cache.get(key)
@@ -161,11 +168,21 @@ async def rhapsody_api_scenario_find(site_id: int, name: str) -> dict:
 
     scenarios = await _request('GET', '/api/browser/scenario')
     for row in scenarios.get('result') or []:
-        if int(row.get('site_id') or 0) == int(site_id) and str(row.get('name') or '') == str(name):
+        if int(row.get('site_id') or 0) == int(site_id) and _scenario_named(str(row.get('name') or ''), str(name)):
             _scenario_cache[key] = (time.monotonic(), row)
             return row
 
     return {}
+
+
+def _scenario_named(got: str, want: str) -> bool:
+    """Имя сценария — искомое: голое или под меткой своего сайта.
+
+    Метку в скобках носит сам сайт («импорт анкет (Ladadate)»), а ряд уже отобран
+    по номеру сайта — значит любое «want (...)» в этом ряду и есть «want» этого
+    сайта, кем бы ни была метка.
+    """
+    return got == want or got.startswith(f'{want} (')
 
 
 def rhapsody_api_scenario_forget(site_id: int = 0, name: str = '') -> None:

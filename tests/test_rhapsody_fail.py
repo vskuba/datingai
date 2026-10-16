@@ -159,3 +159,42 @@ class TestScenarioCache:
         await rhapsody_api_scenario_find(343, 'чат: список диалогов')
 
         assert calls['n'] == 2
+
+
+class TestScenarioUnderLabel:
+    """Имя под меткой сайта — тот же сценарий этого сайта.
+
+    Индекс имени у соседа один на всю таблицу и без сайта: второму сайту с тем
+    же занятием достаётся «имя (Метка)». Точное сравнение с голым именем молча
+    глушило кнопку первому владельцу — так Ladadate лишился зелёной кнопки
+    «Импортировать профили» в тот день, когда его голые имена ушли под метку,
+    чтобы освободить место под строки Luxee.
+    """
+
+    def setup_method(self):
+        rhapsody_api_scenario_forget()
+
+    def teardown_method(self):
+        rhapsody_api_scenario_forget()
+
+    @pytest.fixture
+    def labeled(self, monkeypatch):
+        """Сосед, у которого имя ушло под метку: 135 «импорт анкет (Ladadate)»."""
+
+        async def _fake(method, path, *args, **kwargs):
+            return {'result': [{'id': 135, 'site_id': 343, 'name': 'импорт анкет (Ladadate)'}]}
+
+        monkeypatch.setattr(rhapsody_api, '_request', _fake)
+
+    async def test_labeled_name_is_found_by_the_bare_one(self, labeled):
+        """Кнопка смотрит в голые имена — и обязана видеть свой сценарий, когда
+        имя уехало под метку сайта."""
+        found = await rhapsody_api_scenario_find(343, 'импорт анкет')
+
+        assert found['id'] == 135, 'кнопка покраснела: имя под меткой не узналось'
+
+    async def test_bare_name_of_another_site_does_not_leak(self, labeled):
+        """Чужое помеченное имя не притворяется нашим: ряд отсекается по номеру
+        сайта до сравнения, и Luxee со своим голым «импорт анкет» здесь ни при
+        чём — его строка в чужой ряд не попадёт."""
+        assert await rhapsody_api_scenario_find(999344, 'импорт анкет') == {}
