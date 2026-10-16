@@ -224,14 +224,19 @@ async def mailing_make(site_id: int, templates: list, limit: int,
 
 
 async def mailing_templates(site_id: int, mail_ids: list = None) -> list[dict]:
-    """Шаблоны сайта: заданные номерами или все включённые.
+    """Шаблоны сайта: заданные номерами или все включённые. Наружу — с владелицей.
 
     Args:
         mail_ids: какие брать. ⚠ **Пусто — берём все включённые**, и это не
             вольность: так набирает круг по расписанию, где выбирать некому.
             Человек же выбирает сам, и пустой выбор для него — отказ, а не «все».
+
+    Каждой анкете из этого списка живёт только её полоса: `_pairs` берёт девушке
+    шаблоны с её `profile_id` — чужой текст ей не письмо. Строки без владелицы
+    (`profile_id IS NULL`, заведённые до правила 2026-10-16) не достаются никому.
     """
-    sql = 'SELECT id, name, body FROM mail WHERE site_id = %s AND enabled = 1'
+    sql = 'SELECT id, profile_id, name, body FROM mail'
+    sql += ' WHERE site_id = %s AND enabled = 1'
     args = [int(site_id)]
 
     ids = [int(one) for one in (mail_ids or []) if int(one) > 0]
@@ -245,7 +250,10 @@ async def mailing_templates(site_id: int, mail_ids: list = None) -> list[dict]:
         await db.execute(sql, tuple(args))
         rows = await db.fetchall()
 
-    return [{'id': int(row['id']), 'name': str(row['name']), 'body': str(row['body'])}
+    return [{'id': int(row['id']),
+             'profile_id': (int(row['profile_id']) if row['profile_id'] is not None
+                            else None),
+             'name': str(row['name']), 'body': str(row['body'])}
             for row in rows]
 
 
@@ -273,10 +281,11 @@ async def mailing_gaps(site_id: int) -> dict[int, list[str]]:
     от анкеты, и «не хватает» про них было бы неправдой ровно так же, как в
     `_body`. Здесь отвечаем на вопрос про **анкету**: она-то готова?
 
-    ⚠ **Нехватка хотя бы в одном включённом шаблоне** — это уже повод сказать. Не
-    «во всех»: шаблоны выбираются наугад, и анкета, годная для двух из шести,
-    четыре раза из шести пропустит письмо. Показать её здоровой значило бы
-    объяснять потом, почему писем вчетверо меньше ожидаемого.
+    ⚠ **Нехватка хотя бы в одном из её включённых шаблонов** — это уже повод
+    сказать. Не «во всех её»: шаблоны выбираются наугад, и анкета, годная для двух
+    из шести, четыре раза из шести пропустит письмо. Показать её здоровой значило
+    бы объяснять потом, почему писем вчетверо меньше ожидаемого. Чужие строки не
+    считаются вовсе: они её письмом и не были бы.
 
     Returns:
         dict: только про анкеты с нехваткой; у кого всё на месте — ключа нет.
@@ -303,7 +312,11 @@ async def mailing_gaps(site_id: int) -> dict[int, list[str]]:
         values = dict(later, **await profile_var_values(girl['id']))
 
         missing = set()
+        # Считаем по **её** шаблонам: чужой текст ей не письмо, и чужая метка —
+        # тоже (`_pairs` берёт девушке только её строки).
         for template in templates:
+            if template['profile_id'] != girl['id']:
+                continue
             missing.update(mail_missing(template['body'], values))
 
         if missing:
@@ -499,6 +512,13 @@ def _pairs(girls: list, people: list, templates: list, taken: set,
             пара, и тоже целиком: холодного обращения от этой девушки больше не
             бывает, каким бы шаблоном оно ни было.
 
+    ## ⚠⚠ Шаблон принадлежит анкете — и берётся только её
+
+    С 2026-10-16 у каждого текста своя владелица (`mail.profile_id`), и чужой
+    текст девушке не письмо: Диана пишет своими `diana_template_…`, а не общим
+    сайтовым. У прежних строк, написанных на весь сайт, владелицы нет вовсе, и
+    они не достаются никому; такие доживают свой срок и уходят уборкой.
+
     ## ⚠⚠ Один шаблон уходит человеку ровно раз, кем бы ни была девушка
 
     Прежде ключом была тройка «анкета — адресат — шаблон», и одно это правило
@@ -533,7 +553,10 @@ def _pairs(girls: list, people: list, templates: list, taken: set,
 
     for person in people:
         free = [(girl, template) for girl in girls for template in templates
-                if (girl['id'], person['uid'], template['id']) not in taken
+                # Шаблон принадлежит анкете: ей — только её строки, чужой текст
+                # и текст без владелицы из выбора вон (документировано выше).
+                if template['profile_id'] == girl['id']
+                and (girl['id'], person['uid'], template['id']) not in taken
                 and (person['uid'], template['id']) not in spent
                 and (girl['id'], person['uid']) not in blocked
                 and (girl['id'], person['uid']) not in answered

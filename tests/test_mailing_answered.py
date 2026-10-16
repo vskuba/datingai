@@ -334,7 +334,8 @@ class TestThePoolIsNotFilledForHim:
 
     GIRLS = [{'id': 1}, {'id': 2}]
     PEOPLE = [{'uid': 'riano'}]
-    TEMPLATES = [{'id': 10}, {'id': 20}]
+    # ⚠ С 2026-10-16 шаблон принадлежит анкете: у каждой своя копия узора.
+    TEMPLATES = [{'id': tid, 'profile_id': g['id']} for g in GIRLS for tid in (10, 20)]
 
     def test_the_answered_girl_is_taken_away(self):
         """Ему отвечала анкета №1 — от неё писем больше нет, ни одним шаблоном."""

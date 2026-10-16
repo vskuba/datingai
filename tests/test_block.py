@@ -166,7 +166,9 @@ class TestPairsObeyIt:
 
     GIRLS = [{'id': 849, 'login': 'a@example.com'}, {'id': 850, 'login': 'b@example.com'}]
     PEOPLE = [{'uid': '111', 'name': 'Brian'}]
-    TEMPLATES = [{'id': 7}]
+    # ⚠ С 2026-10-16 шаблон принадлежит анкете: у каждой своя копия, иначе ни
+    # одна анкета не владела бы общим текстом и набор молчал бы целиком.
+    TEMPLATES = [{'id': 7, 'profile_id': 849}, {'id': 7, 'profile_id': 850}]
 
     def test_invites_skip_the_blocked_girl(self):
         """⚠ Запрет отнимает **анкету**, а не человека: вторая его не знает."""

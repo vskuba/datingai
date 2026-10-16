@@ -328,6 +328,57 @@ class TestMailStorage:
             'site_id': SITE, 'name': 'x', 'body': 'y'})).status_code == 404
 
 
+class TestMailDropAll:
+    """Корзинка у расписания: удаляет список целиком — тем же отбором, чем он
+    собран, и отвечает числом, человек сверит его с тем, что видел на экране."""
+
+    async def test_everything_of_the_site_leaves_at_once(self, auth_client):
+        ids = []
+        try:
+            for name in ('первый', 'второй'):
+                made = await auth_client.post('/api/dating/mail', json={
+                    'site_id': SITE, 'name': f'тест — {name}', 'body': 'Hi!'})
+                ids.append(made.json()['result']['id'])
+
+            answer = await auth_client.delete(f'/api/dating/mail?site_id={SITE}')
+
+            assert answer.json()['result']['deleted'] == len(ids)
+            assert (await auth_client.get(
+                f'/api/dating/mail?site_id={SITE}')).json()['result'] == []
+        finally:
+            for mail_id in ids:
+                await auth_client.delete(f'/api/dating/mail/{mail_id}')
+
+    async def test_other_questionnaire_not_touched(self, auth_client):
+        """⚠ Список вкладки показывает тексты выбранной анкеты — уходят только
+        они. Свой второй отбор ручка имела бы шанс разойтись со списком."""
+        mine = (await auth_client.post('/api/dating/mail', json={
+            'site_id': SITE, 'profile_id': 555_001, 'name': 'её', 'body': 'Hi!'}
+        )).json()['result']['id']
+        other = (await auth_client.post('/api/dating/mail', json={
+            'site_id': SITE, 'profile_id': 555_002, 'name': 'чужой', 'body': 'Hi!'}
+        )).json()['result']['id']
+
+        try:
+            answer = await auth_client.delete(
+                f'/api/dating/mail?site_id={SITE}&profile_id=555001')
+
+            assert answer.json()['result']['deleted'] == 1
+            rows = (await auth_client.get(
+                f'/api/dating/mail?site_id={SITE}&profile_id=555002')).json()['result']
+            assert [row['id'] for row in rows] == [other]
+        finally:
+            for mail_id in (mine, other):
+                await auth_client.delete(f'/api/dating/mail/{mail_id}')
+
+    async def test_site_without_trash_nothing(self, auth_client):
+        """Без выбранного сайта нечего удалять — как и в списке: пустой ответ,
+        а не всё содержимое всех сайтов разом."""
+        answer = await auth_client.delete('/api/dating/mail')
+
+        assert answer.json()['result']['deleted'] == 0
+
+
 class TestMailIsChecked:
     """Ручка пользуется той же проверкой — и на заведении, и на правке."""
 

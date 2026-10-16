@@ -184,7 +184,10 @@ class TestTheSelectionTakesTheFittingGirl:
         from src.dating.mailing import _pairs
 
         girls = [_girl(31, 1), _girl(45, 2)]
-        got = list(_pairs(girls, self._people(), [{'id': 7}], set()))
+        # ⚠ У каждой своя копия шаблона (2026-10-16): чужим текстом анкета не пишет.
+        got = list(_pairs(girls, self._people(),
+                          [{'id': 7, 'profile_id': 1}, {'id': 7, 'profile_id': 2}],
+                          set()))
 
         assert len(got) == 1, 'адресат выпал, хотя одна анкета подходит'
         assert got[0][0]['id'] == 2, 'письмо досталось анкете вне окна'
@@ -192,15 +195,16 @@ class TestTheSelectionTakesTheFittingGirl:
     def test_nobody_fitting_drops_the_person(self):
         from src.dating.mailing import _pairs
 
-        got = list(_pairs([_girl(31, 1)], self._people(), [{'id': 7}], set()))
+        got = list(_pairs([_girl(31, 1)], self._people(),
+                          [{'id': 7, 'profile_id': 1}], set()))
 
         assert got == [], 'письмо готовится тому, кто его не получит'
 
     def test_the_talked_pair_survives(self):
         from src.dating.mailing import _pairs
 
-        got = list(_pairs([_girl(31, 1)], self._people(), [{'id': 7}], set(),
-                          talked={(1, '1')}))
+        got = list(_pairs([_girl(31, 1)], self._people(),
+                          [{'id': 7, 'profile_id': 1}], set(), talked={(1, '1')}))
 
         assert len(got) == 1, 'начатый разговор отсечён возрастом'
 

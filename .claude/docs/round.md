@@ -65,7 +65,7 @@
 | рассылка | 60 | да | слот, `mailing_every` | `mailing_schedule_on` |
 | ответы на письма | 60 | — | слот, `reply_every` | `reply_make_on` |
 | забор писем | 60 | — | слот, `mail_check_every` | `mail_check_on` |
-| шаблоны писем | 60 | да | слот, час константой | `template_schedule_on` |
+| шаблоны писем | 60 | да | слот, час константой; норма **на каждую анкету** (§3.7) | `template_schedule_on` |
 | избранные | 60 | — | слот, `favorite_every` | `favorite_on` |
 | письма избранным | 60 | да | слот, `favorite_mail_every` | `favorite_mail_make_on` |
 | инициатива | 60 | — | набор — срок считает пара; отправка — темп в памяти, `chat_initiative_send_every` | `chat_initiative_on`, `chat_initiative_send_on` |

@@ -649,7 +649,10 @@ class TestOncePerTemplate:
     """
 
     GIRLS = [{'id': 1}, {'id': 2}]
-    TEMPLATES = [{'id': 10}, {'id': 20}]
+    # ⚠ С 2026-10-16 шаблон принадлежит одной анкете: тот же узор лежит у каждой
+    # своей копией, потому чужой текстом анкета писать не станет.
+    TEMPLATES = [{'id': 10, 'profile_id': 1}, {'id': 20, 'profile_id': 1},
+                 {'id': 10, 'profile_id': 2}, {'id': 20, 'profile_id': 2}]
     PEOPLE = [{'uid': 'a'}, {'uid': 'b'}]
 
     def test_taken_triple_never_comes_back(self):
@@ -781,7 +784,8 @@ class TestGapsAreNamed:
             'site_id': SITE, 'name': 'tstGap', 'title': 'Имя',
             'default_value': ''})).json()['result']['id']
         mail = (await auth_client.post('/api/dating/mail', json={
-            'site_id': SITE, 'name': f'gap-{uuid.uuid4().hex[:6]}',
+            'site_id': SITE, 'profile_id': mailing_girl,
+            'name': f'gap-{uuid.uuid4().hex[:6]}',
             'body': 'Привет, [[tstGap]]!', 'enabled': True})).json()['result']['id']
 
         try:
@@ -801,7 +805,8 @@ class TestGapsAreNamed:
             'site_id': SITE, 'name': 'tstGap', 'title': 'Имя',
             'default_value': ''})).json()['result']['id']
         mail = (await auth_client.post('/api/dating/mail', json={
-            'site_id': SITE, 'name': f'gap-{uuid.uuid4().hex[:6]}',
+            'site_id': SITE, 'profile_id': mailing_girl,
+            'name': f'gap-{uuid.uuid4().hex[:6]}',
             'body': 'Привет, [[tstGap]]!', 'enabled': True})).json()['result']['id']
 
         try:
@@ -829,7 +834,8 @@ class TestGapsAreNamed:
             'site_id': SITE, 'name': 'tstHis', 'title': 'Его имя',
             'source': 'companion', 'default_value': ''})).json()['result']['id']
         mail = (await auth_client.post('/api/dating/mail', json={
-            'site_id': SITE, 'name': f'gap-{uuid.uuid4().hex[:6]}',
+            'site_id': SITE, 'profile_id': mailing_girl,
+            'name': f'gap-{uuid.uuid4().hex[:6]}',
             'body': 'Привет, [[tstHis]]!', 'enabled': True})).json()['result']['id']
 
         try:
@@ -852,10 +858,12 @@ class TestGapsAreNamed:
             'site_id': SITE, 'name': 'tstGap', 'title': 'Имя',
             'default_value': ''})).json()['result']['id']
         plain = (await auth_client.post('/api/dating/mail', json={
-            'site_id': SITE, 'name': f'gap-{uuid.uuid4().hex[:6]}',
+            'site_id': SITE, 'profile_id': mailing_girl,
+            'name': f'gap-{uuid.uuid4().hex[:6]}',
             'body': 'Привет!', 'enabled': True})).json()['result']['id']
         with_var = (await auth_client.post('/api/dating/mail', json={
-            'site_id': SITE, 'name': f'gap-{uuid.uuid4().hex[:6]}',
+            'site_id': SITE, 'profile_id': mailing_girl,
+            'name': f'gap-{uuid.uuid4().hex[:6]}',
             'body': 'Привет, [[tstGap]]!', 'enabled': True})).json()['result']['id']
 
         try:
@@ -878,7 +886,8 @@ class TestGapsAreNamed:
             'site_id': SITE, 'name': 'tstGap', 'title': 'Имя',
             'default_value': 'Дорогой друг'})).json()['result']['id']
         mail = (await auth_client.post('/api/dating/mail', json={
-            'site_id': SITE, 'name': f'gap-{uuid.uuid4().hex[:6]}',
+            'site_id': SITE, 'profile_id': mailing_girl,
+            'name': f'gap-{uuid.uuid4().hex[:6]}',
             'body': 'Привет, [[tstGap]]!', 'enabled': True})).json()['result']['id']
 
         try:
@@ -921,7 +930,8 @@ class TestGapsHandle:
             'site_id': SITE, 'name': 'tstGap', 'title': 'Имя',
             'default_value': ''})).json()['result']['id']
         mail = (await auth_client.post('/api/dating/mail', json={
-            'site_id': SITE, 'name': f'gap-{uuid.uuid4().hex[:6]}',
+            'site_id': SITE, 'profile_id': mailing_girl,
+            'name': f'gap-{uuid.uuid4().hex[:6]}',
             'body': 'Привет, [[tstGap]]!', 'enabled': True})).json()['result']['id']
 
         try:

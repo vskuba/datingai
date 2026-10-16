@@ -4,11 +4,18 @@
 Здесь только шаблоны, то есть работа с нашей строкой в нашей базе; переменные,
 подстановка и проверка — в `src/dating/mail.py`.
 
-## Шаблоны у сайтов свои
+## Шаблоны у сайтов свои, и у каждой анкеты — свои
 
 `site_id` в каждой строке, и список на странице отбирается по нему — как и всё
 в разделе. У сайтов разная аудитория и разные правила модерации, и текст,
 написанный под один, на другом может не пройти вовсе.
+
+С 2026-10-16 у строки есть и владелица — `profile_id`, номер анкеты. Круг пишет
+заготовки каждой включённой анкете своей рукой и зовёт их числом
+(`template_1`), а владелицу строки показывает аватарка в списке; список на
+«Шаблонах» показывает **выбранную анкету**: ручка принимает `profile_id` и по
+нему сужает выборку. Без номера страница показала бы весь сайт — и человек
+читал бы чужие тексты как её.
 
 ## Права: и читают, и правят все вошедшие
 
@@ -56,50 +63,67 @@ class DatingMailSave(BaseModel):
     """Тело заведения и правки шаблона."""
 
     site_id: int = Field(..., gt=0, description='Сайт, которому принадлежит шаблон')
+    profile_id: int = Field(0, ge=0,
+                            description='Чья это заготовка (profile.id); заводится '
+                                        'с 2026-10-16 всегда с анкетой — круг пишет '
+                                        'каждой включённой своей рукой')
     name: str = Field(..., min_length=1, max_length=MAIL_NAME_MAX,
-                      description='Название для списка в панели, на сайт не уходит')
+                      description='Название для списка в панели, на сайт не уходит; '
+                                  'имя только считает место в норме анкеты '
+                                  '(template_1), владелицу показывает аватарка')
     body: str = Field(..., min_length=1, max_length=MAIL_BODY_MAX,
                       description='Текст письма с переменными вида {{firstName}}')
     enabled: bool = Field(True, description='Участвует ли шаблон в рассылке')
 
 
 @router.get('', include_in_schema=False)
-async def mail_list(site_id: int = 0, user: AuthUser = Depends(auth_required)):
-    """Шаблоны сайта, свежие сверху.
+async def mail_list(site_id: int = 0, profile_id: int = 0,
+                    user: AuthUser = Depends(auth_required)):
+    """Шаблоны сайта, свежие сверху; если названа анкета — только её.
 
     Args:
         site_id: сайт-закладка. Ноль — пустой список, а не все шаблоны всех
             сайтов: страница без выбранного сайта не должна показывать чужое.
+        profile_id: анкета, чьи тексты смотрят. Вкладка «Шаблоны» на «Профилях»
+            приходит с выбранной анкетой всегда: у текста теперь есть владелица,
+            и человек смотрит, что написано **ей**. Ноль — весь сайт: так зовёт
+            форма генерации на «Рассылке», где выбирают из всех текстов сразу.
 
     Returns:
         dict: `result` — список шаблонов. У каждого, помимо полей строки, `vars` —
-        какие переменные он использует.
+        какие переменные он использует, и `profile_id` — чей он (пусто — общий,
+        заведённый до правила 2026-10-16).
     """
     if not int(site_id or 0):
         return {'result': []}
 
+    sql = ('SELECT id, site_id, profile_id, name, body, enabled,'
+           ' created_at, updated_at FROM mail WHERE site_id = %s')
+    args = [int(site_id)]
+    if int(profile_id or 0):
+        sql += ' AND profile_id = %s'
+        args.append(int(profile_id))
+    sql += ' ORDER BY id DESC'
+
     async with mysql_get_db_async() as db:
-        await db.execute(
-            'SELECT id, site_id, name, body, enabled, created_at, updated_at'
-            ' FROM mail WHERE site_id = %s ORDER BY id DESC',
-            (int(site_id),))
+        await db.execute(sql, tuple(args))
         rows = await db.fetchall()
 
     return {'result': [_answer(row) for row in rows]}
 
 
 class DatingMailDraft(BaseModel):
-    """Чего просят у агента, когда жмут «AI сгенерировать».
+    """Что просят у агента, когда жмут «AI сгенерировать».
 
-    ⚠ **Ни анкеты, ни собеседника здесь нет, и это главное.** Шаблон — заготовка
-    **для всех**: одним и тем же текстом напишут разные девушки разным мужчинам.
-    Сведения о конкретных участниках в нём превратились бы в зашитую конкретику —
-    так и было: агент возвращал «Diana here! I'm a choreographer living in Kyiv»,
-    и такой шаблон годился одной анкете из сорока.
-
-    Кто напишет и кому — выяснится при генерации пула, где переменные и
-    подставятся. Про интересы адресата спросит `question_to_companion` — тоже
-    тогда, а не сейчас.
+    ⚠ **Собеседника здесь нет, и это главное.** Тело шаблона — метки, а не
+    конкретика: одним текстом напишут разным мужчинам, и сведения о конкретном
+    адресате превратились бы в зашитую правду — так и было: агент возвращал
+    «Diana here! I'm a choreographer living in Kyiv», и такой шаблон годился
+    одной анкете из сорока. Кто получит письмо — решает страница: она зовёт ручку
+    с выбранной анкетой, назовёт поле «Название» числом (`template_2`), а её саму
+    покажет аватаркой в списке; в самом тексте анкета всё равно остаётся метками,
+    а подставятся они только при генерации пула. Про интересы адресата спросит
+    `question_to_companion` — тоже тогда, а не сейчас.
     """
 
     site_id: int = Field(..., gt=0, description='Сайт: его переменные')
@@ -124,10 +148,9 @@ async def mail_draft(payload: DatingMailDraft,
     доверять ему больше, чем стоит. Сохранение — обычным `POST`, со всеми
     проверками.
 
-    ⚠ **Анкета для этого не нужна вовсе.** Прежде ручка искала любую анкету сайта
-    и отказывала, если их нет: письмо, дескать, «не от кого писать». Это было
-    неверно — шаблон пишется до того, как известно, кто им воспользуется, и
-    заготовку можно готовить на пустом сайте.
+    ⚠ **Анкета здесь не спрашивается.** Тело шаблона от неё не зависит: анкета в
+    тексте живёт метками, а поле «Название» страница подставит сама — числом и
+    аватаркой владелицы — и сохранит уже `POST` с `profile_id`.
     """
     known = await mail_var_rows(int(payload.site_id))
 
@@ -142,8 +165,10 @@ async def mail_draft(payload: DatingMailDraft,
     names = {row['name'] for row in known}
 
     return {'result': {'body': body,
-                       # ⚠ Название придумывает агент — оно про сам текст. Страница
-                       # подставит его в поле имени, если человек своего не вписал.
+                       # ⚠ Название поля «Название» страница берёт по узору со
+                       # своих чисел (`template_{номер}`), а не отсюда: `title`
+                       # остаётся про сам текст и годится только подсказкой в
+                       # подсказке поля.
                        'title': str((drafted or {}).get('title') or ''),
                        'vars': found,
                        # ⚠ Выдуманные имена называем сразу, а не ждём отказа при
@@ -157,6 +182,10 @@ async def mail_create(payload: DatingMailSave,
                              user: AuthUser = Depends(auth_required)):
     """Заводит шаблон.
 
+    ⚠ **Владелица — из формы.** Страница «Шаблоны» зовёт ручку с выбранной анкетой,
+    и её номер ложится в строку: с этого дня шаблон чей-то. `profile_id` ноль —
+    общий текст без владелицы, как было до правила; рассылка такое не берёт.
+
     Returns:
         dict: `result` — заведённый шаблон целиком, а не один номер: страница
         рисует его в списке сразу, не перечитывая всё заново.
@@ -169,10 +198,10 @@ async def mail_create(payload: DatingMailSave,
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO mail (site_id, name, body, enabled)'
-            ' VALUES (%s, %s, %s, %s)',
-            (int(payload.site_id), payload.name.strip(), payload.body,
-             1 if payload.enabled else 0))
+            'INSERT INTO mail (site_id, profile_id, name, body, enabled)'
+            ' VALUES (%s, %s, %s, %s, %s)',
+            (int(payload.site_id), int(payload.profile_id) or None,
+             payload.name.strip(), payload.body, 1 if payload.enabled else 0))
         await db.connection.commit()
         mail_id = db.lastrowid
 
@@ -187,10 +216,10 @@ async def mail_update(mail_id: int, payload: DatingMailSave,
     Raises:
         HTTPException: 404 — такого шаблона нет; 422 — шаблон негодный.
 
-    ⚠ **Сайт шаблона не меняется.** Переезд на другой сайт — не правка текста, а
+    ⚠ **Ни сайт, ни владелица шаблона не меняются.** Переезд — не правка текста, а
     другое действие: у журнала отправок сайт свой, и уехавший шаблон рассорил бы
-    его с историей. Поле в теле есть (форма одна на заведение и правку), но здесь
-    оно не читается.
+    его с историей. Поля в теле есть (форма одна на заведение и правку), но здесь
+    они не читаются: правят текст, имя и галочку, а чей текст — решает заведение.
     """
     await _row(mail_id)
     await _checked(payload)
@@ -230,6 +259,44 @@ async def mail_delete(mail_id: int,
     return {'result': {'id': int(mail_id)}}
 
 
+@router.delete('', include_in_schema=False)
+async def mail_delete_all(site_id: int = 0, profile_id: int = 0,
+                          user: AuthUser = Depends(auth_required)):
+    """Удаляет все шаблоны разом — корзинка в шапке списка.
+
+    Args:
+        site_id: сайт; ноль — нечего удалять, как и в списке.
+        profile_id: анкета; названа — уходят только её тексты.
+
+    Returns:
+        dict: `result.deleted` — сколько строк ушло. Человек сверит число с тем,
+        что видел в списке; молча промолчать было бы соврать, если шаблон успел
+        уехать или исчезнуть, пока вкладка открыта.
+
+    ⚠ **Отбор — тот же, что у списка**, сайт и анкета теми же условиями: что
+    человек видел на экране, то и исчезло. Свой второй отбор ручка имела бы шанс
+    разойтись со списком на первой же правке.
+
+    Журнал отправок остаётся, как и при удалении одного шаблона
+    (`ON DELETE SET NULL`): ушедшие письма хранят текст в себе и от шаблона не
+    зависят.
+    """
+    if not int(site_id or 0):
+        return {'result': {'deleted': 0}}
+
+    where, params = 'WHERE site_id = %s', [int(site_id)]
+    if int(profile_id or 0):
+        where += ' AND profile_id = %s'
+        params.append(int(profile_id))
+
+    async with mysql_get_db_async() as db:
+        await db.execute(f'DELETE FROM mail {where}', tuple(params))
+        deleted = int(db.rowcount or 0)
+        await db.connection.commit()
+
+    return {'result': {'deleted': deleted}}
+
+
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 async def _checked(payload: DatingMailSave) -> None:
@@ -253,8 +320,8 @@ async def _row(mail_id: int) -> dict:
     """Шаблон по номеру или 404."""
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT id, site_id, name, body, enabled, created_at, updated_at'
-            ' FROM mail WHERE id = %s', (int(mail_id),))
+            'SELECT id, site_id, profile_id, name, body, enabled,'
+            ' created_at, updated_at FROM mail WHERE id = %s', (int(mail_id),))
         row = await db.fetchone()
 
     if not row:
@@ -281,6 +348,9 @@ def _answer(row: dict) -> dict:
     """
     return {'id': int(row['id']),
             'site_id': int(row['site_id']),
+            # Чей это текст; пусто — общий, заведённый до правила 2026-10-16.
+            'profile_id': (int(row['profile_id'])
+                           if row.get('profile_id') is not None else None),
             'name': str(row['name']),
             'body': str(row['body']),
             'enabled': bool(row['enabled']),

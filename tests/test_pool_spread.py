@@ -28,7 +28,10 @@ GIRLS = [{'id': 1, 'login': 'a@example.com'},
 
 PEOPLE = [{'uid': str(100 + n), 'name': f'Man{n}'} for n in range(30)]
 
-TEMPLATES = [{'id': 7}, {'id': 8}]
+# ⚠ С 2026-10-16 шаблон принадлежит анкете: у каждой своя копия узора, потому
+# число кандидатов у карточки — это уже все копии всех анкет, а не пара «девушка
+# × общий шаблон».
+TEMPLATES = [{'id': tid, 'profile_id': g['id']} for g in GIRLS for tid in (7, 8)]
 
 
 class TestEveryCardPicksAnew:
@@ -87,7 +90,8 @@ class TestEveryCardPicksAnew:
 
         list(mailing_pairs(GIRLS, PEOPLE, TEMPLATES, set()))
 
-        assert {len(one) for one in seen} == {len(GIRLS) * len(TEMPLATES)}
+        # Копии уже с владелицами: у карточки в выборе все шесть её строк.
+        assert {len(one) for one in seen} == {len(TEMPLATES)}
 
 
 class TestItActuallySpreads:

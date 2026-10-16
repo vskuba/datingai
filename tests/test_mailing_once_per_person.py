@@ -27,7 +27,9 @@ pytestmark = pytest.mark.mail
 
 GIRLS = [{'id': 1}, {'id': 2}, {'id': 3}]
 PEOPLE = [{'uid': 'a'}, {'uid': 'b'}]
-TEMPLATES = [{'id': 10}, {'id': 20}]
+# ⚠ С 2026-10-16 шаблон принадлежит анкете: у каждой своя копия узора — чужим
+# текстом анкета не пишет, и набор без владелиц молчал бы целиком.
+TEMPLATES = [{'id': tid, 'profile_id': g['id']} for g in GIRLS for tid in (10, 20)]
 
 
 class TestOneTemplatePerPerson:
@@ -73,14 +75,17 @@ class TestTheOldRuleStillHolds:
     def test_a_taken_triple_is_still_skipped(self):
         """Тройка «анкета — адресат — шаблон» по-прежнему тратится."""
         taken = {(1, 'a', 10), (2, 'a', 10), (3, 'a', 10)}
-        got = list(_pairs(GIRLS, [{'uid': 'a'}], [{'id': 10}], taken))
+        got = list(_pairs(GIRLS, [{'uid': 'a'}],
+                          [{'id': 10, 'profile_id': g['id']} for g in GIRLS],
+                          taken))
 
         assert got == []
 
     def test_a_block_takes_the_girl_not_the_person(self):
         """⚠ Закрылся от одной — от остальных письмо уйдёт: они ему не писали."""
-        got = list(_pairs(GIRLS, [{'uid': 'a'}], [{'id': 10}], set(),
-                          blocked={(1, 'a')}))
+        got = list(_pairs(GIRLS, [{'uid': 'a'}],
+                          [{'id': 10, 'profile_id': g['id']} for g in GIRLS],
+                          set(), blocked={(1, 'a')}))
 
         assert got and all(girl['id'] != 1 for girl, _, _ in got), got
 
