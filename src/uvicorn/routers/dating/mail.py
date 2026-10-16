@@ -97,13 +97,9 @@ async def mail_list(site_id: int = 0, profile_id: int = 0,
     if not int(site_id or 0):
         return {'result': []}
 
+    where, args = _where(site_id, profile_id)
     sql = ('SELECT id, site_id, profile_id, name, body, enabled,'
-           ' created_at, updated_at FROM mail WHERE site_id = %s')
-    args = [int(site_id)]
-    if int(profile_id or 0):
-        sql += ' AND profile_id = %s'
-        args.append(int(profile_id))
-    sql += ' ORDER BY id DESC'
+           ' created_at, updated_at FROM mail ' + where + ' ORDER BY id DESC')
 
     async with mysql_get_db_async() as db:
         await db.execute(sql, tuple(args))
@@ -273,9 +269,9 @@ async def mail_delete_all(site_id: int = 0, profile_id: int = 0,
         что видел в списке; молча промолчать было бы соврать, если шаблон успел
         уехать или исчезнуть, пока вкладка открыта.
 
-    ⚠ **Отбор — тот же, что у списка**, сайт и анкета теми же условиями: что
-    человек видел на экране, то и исчезло. Свой второй отбор ручка имела бы шанс
-    разойтись со списком на первой же правке.
+    ⚠ **Отбор — общий со списком, одна `_where`**: что человек видел на экране,
+    то и исчезло. Своя вторая копия условий разошлась бы со списком на первой
+    же правке — грабля, на которую уже наступали в рассылке.
 
     Журнал отправок остаётся, как и при удалении одного шаблона
     (`ON DELETE SET NULL`): ушедшие письма хранят текст в себе и от шаблона не
@@ -284,10 +280,7 @@ async def mail_delete_all(site_id: int = 0, profile_id: int = 0,
     if not int(site_id or 0):
         return {'result': {'deleted': 0}}
 
-    where, params = 'WHERE site_id = %s', [int(site_id)]
-    if int(profile_id or 0):
-        where += ' AND profile_id = %s'
-        params.append(int(profile_id))
+    where, params = _where(site_id, profile_id)
 
     async with mysql_get_db_async() as db:
         await db.execute(f'DELETE FROM mail {where}', tuple(params))
@@ -298,6 +291,21 @@ async def mail_delete_all(site_id: int = 0, profile_id: int = 0,
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+def _where(site_id: int, profile_id: int) -> tuple[str, list]:
+    """Кусок WHERE для списка и корзинки: сайт всегда, анкета — если названа.
+
+    Отбор один на список и на удаление разом: ручка корзинки обязана убрать
+    ровно то, что человек видит на экране, а не второй раз угадать, что это.
+    Вторая копия условий разошлась бы с первой на первой же правке.
+    """
+    where, params = 'WHERE site_id = %s', [int(site_id)]
+    if int(profile_id or 0):
+        where += ' AND profile_id = %s'
+        params.append(int(profile_id))
+
+    return where, params
+
 
 async def _checked(payload: DatingMailSave) -> None:
     """Отказ с причиной словами, если шаблон негодный.
