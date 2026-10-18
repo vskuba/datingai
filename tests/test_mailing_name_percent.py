@@ -52,7 +52,8 @@ def caught(monkeypatch):
     async def _ask(site_id, agent_id=0, question='', variables=None, **kw):
         seen.update(variables or {})
 
-        return '{"body": "Hi there", "title": "X"}'
+        # ответ workflow — только текст письма, без названия (2026-10-17).
+        return 'Hi there [[companion_name]]'
 
     async def _agent(site_id, name, workflow):
         return 1
@@ -112,8 +113,9 @@ class TestTheGreetingsAreSplit:
     """
 
     def test_the_name_list_always_mentions_the_name(self):
+        """Список зовёт по имени — словом «имя» или прямо («назови его»)."""
         for one in MAILING_GREETINGS_NAME:
-            assert 'имен' in one or 'имя' in one, one
+            assert 'имен' in one or 'имя' in one or 'зови' in one, one
 
     def test_the_plain_list_never_asks_for_a_name(self):
         for one in MAILING_GREETINGS:

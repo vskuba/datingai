@@ -33,6 +33,15 @@ VARS = [
     {'name': 'question_to_companion', 'source': 'live', 'title': 'вопрос', 'uses': {}},
 ]
 
+# Владелица шаблона — в том виде, в каком её читает `_card`: карточка в колонке
+# `profile`, логин рядом. Её сведения — якорь рассказа о себе.
+GIRL = {'id': 90_001, 'login': 'elena@example.com',
+        'profile': {'name': 'Елена', 'age': 29, 'city': 'Киев',
+                    'about': 'хореограф, ставлю танцы детям'}}
+
+# Та же анкета одним номером: `_mail_avoid` спрашивает у карточки только его.
+GIRL_90001 = {'id': 90_001}
+
 
 @pytest.fixture
 async def share():
@@ -57,6 +66,34 @@ async def share():
 
 
 @pytest.fixture
+async def drafts():
+    """Кладёт прошлые заготовки владелицам и убирает их за собой.
+
+    ⚠ Номера анкет выдуманные, и это законно: ключа на анкету у `mail.profile_id`
+    нет вовсе — наследие «до правила» живёт там с `NULL`, и внешний ключ запретил
+    бы такую строку.
+    """
+    made = []
+
+    async def _put(profile_id, body):
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO mail (site_id, profile_id, name, body)'
+                ' VALUES (%s, %s, %s, %s)',
+                (STAND_SITE, int(profile_id), f'template_{len(made) + 1}', body))
+            await db.connection.commit()
+            await db.execute('SELECT LAST_INSERT_ID() AS id')
+            made.append(int((await db.fetchone())['id']))
+
+    yield _put
+
+    async with mysql_get_db_async() as db:
+        for one in made:
+            await db.execute('DELETE FROM mail WHERE id = %s', (one,))
+        await db.connection.commit()
+
+
+@pytest.fixture
 def agent(monkeypatch):
     """Подменяет агента и отдаёт то, что ему уехало."""
     seen = {}
@@ -64,7 +101,8 @@ def agent(monkeypatch):
     async def _ask(site_id, **kwargs):
         seen.update(kwargs.get('variables') or {})
 
-        return '{"letter": "текст", "letter_title": "Short and direct"}'
+        # ответ workflow — тоже только текст: с 2026-10-17 без названия.
+        return 'текст'
 
     monkeypatch.setattr(mail_agent, '_chat_ask', _ask)
     monkeypatch.setattr(mail_agent, '_agent_id', _one(1))
@@ -259,8 +297,46 @@ class TestTheStoriesStayOurs:
             assert not any(mark.lower() in story.lower() for mark in concrete), story
 
 
+class TestTheOwnerIsTheAnchor:
+    """⚠⚠ Карточка владелицы уезжает агенту, карточка адресата — нет.
+
+    С 2026-10-16 шаблон принадлежит одной анкете, и с этого дня молчать о ней
+    значило бы писать ей вслепую: три заготовки одной владелицы выходили одним
+    текстом — модель брала первую пришедшую фразу. Но входит карточка **якорем**,
+    а не цитатой: приём выбирает, какой факт нужен, слова модель берёт свои.
+
+    ⚠ Про получателя по-прежнему не говорим ничего — его поля приедут метками при
+    сборке пула. Отдав их здесь, мы получали «Diana here! I'm a choreographer
+    living in Kyiv»: шаблон, годный одному адресату из ста.
+    """
+
+    async def test_the_owner_card_travels(self, agent, share):
+        await mail_write(STAND_SITE, VARS, girl=GIRL)
+
+        assert 'Елена' in agent['mail_anchor']
+        assert 'хореограф' in agent['mail_anchor']
+
+    async def test_no_owner_means_an_empty_section(self, agent, share):
+        """⚠ Кнопка без открытой анкеты — **пустая строка**, а не «об анкете ничего
+        не известно»: пустая гасит секцию у соседа, а фраза учила бы модель, что
+        владелицу знать необязательно.
+        """
+        await mail_write(STAND_SITE, VARS)
+
+        assert agent['mail_anchor'] == ''
+
+    async def test_the_companion_card_never_travels(self, agent, share):
+        """⚠ Имена переменных сторожатся у соседа: присылка необъявленной роняет
+        весь вызов `400`-м, то есть одна лишняя карточка останавливает занятие.
+        """
+        await mail_write(STAND_SITE, VARS, girl=GIRL)
+
+        assert 'companion_bio' not in agent
+        assert 'companion_card' not in agent
+
+
 class TestAvoid:
-    """«Так уже было» — десяток прошлых шаблонов сайта."""
+    """«Так уже было» — десяток прошлых шаблонов, и с 2026-10-16 **её собственных**."""
 
     def test_the_avoid_list_is_asked_for(self):
         code = inspect.getsource(mail_write)
@@ -276,6 +352,32 @@ class TestAvoid:
         code = inspect.getsource(mail_agent._mail_avoid)
 
         assert 'GROUP BY body' in code
+
+    async def test_the_owner_sees_only_her_own(self, drafts):
+        """⚠ Свои прошлые тексты, а не чужие: дважды один оборот адресат встречает
+        именно от неё, и повторяется владелица в первую очередь собой. Чужая
+        заготовка в списке «так уже было» отнимала бы у неё приём, которым она не
+        писала ни разу.
+        """
+        await drafts(90_001, 'её прошлое письмо')
+        await drafts(90_002, 'чужое прошлое письмо')
+
+        got = await mail_agent._mail_avoid(STAND_SITE, GIRL_90001)
+
+        assert 'её прошлое письмо' in got
+        assert 'чужое прошлое письмо' not in got
+
+    async def test_without_an_owner_the_whole_site_is_asked(self, drafts):
+        """Анкеты нет (кнопка без открытой) — как раньше, по всему сайту: сузить
+        отбор нечем, а молчать о прошлом хуже, чем показать чужое.
+        """
+        await drafts(90_001, 'её прошлое письмо')
+        await drafts(90_002, 'чужое прошлое письмо')
+
+        got = await mail_agent._mail_avoid(STAND_SITE)
+
+        assert 'её прошлое письмо' in got
+        assert 'чужое прошлое письмо' in got
 
 
 def _one(value):

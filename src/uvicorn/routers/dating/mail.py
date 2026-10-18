@@ -49,6 +49,7 @@ from pydantic import BaseModel, Field
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import AuthUser, auth_required
+from src.dating.json_column import json_column_load
 from src.dating.mail import (MAIL_BODY_MAX, MAIL_NAME_MAX,
                                     mail_check,
                                     mail_vars_found)
@@ -111,20 +112,24 @@ async def mail_list(site_id: int = 0, profile_id: int = 0,
 class DatingMailDraft(BaseModel):
     """Что просят у агента, когда жмут «AI сгенерировать».
 
-    ⚠ **Собеседника здесь нет, и это главное.** Тело шаблона — метки, а не
-    конкретика: одним текстом напишут разным мужчинам, и сведения о конкретном
-    адресате превратились бы в зашитую правду — так и было: агент возвращал
-    «Diana here! I'm a choreographer living in Kyiv», и такой шаблон годился
-    одной анкете из сорока. Кто получит письмо — решает страница: она зовёт ручку
-    с выбранной анкетой, назовёт поле «Название» числом (`template_2`), а её саму
-    покажет аватаркой в списке; в самом тексте анкета всё равно остаётся метками,
-    а подставятся они только при генерации пула. Про интересы адресата спросит
-    `question_to_companion` — тоже тогда, а не сейчас.
+    ⚠ **Собеседника здесь нет — он и не был.** Тело шаблона — метки, а не
+    конкретика про адресата: сведения о живом человеке превратились бы в зашитую
+    правду — так и было: агент возвращал «Diana here! I'm a choreographer living
+    in Kyiv». Про интересы получателя спросит `question_to_companion` — при
+    сборке пула, а не сейчас.
+
+    ⚠ **А владелица — здесь, и это перемена 2026-10-17.** С тех пор как шаблон
+    принадлежит анкете, её карточка — якорь рассказа о себе: круг зовёт
+    `mail_write` с ней, и кнопка, стоящая на открытой анкете, обязана звать так
+    же — иначе кнопка писала бы владелице вслепую, вразрез с кругом.
     """
 
     site_id: int = Field(..., gt=0, description='Сайт: его переменные')
     hint: str = Field('', max_length=500,
                       description='Пожелание: о чём письмо, какой тон')
+    profile_id: int = Field(0, ge=0,
+                            description='Открытая анкета: её карточка — основа '
+                            'рассказа о себе. Ноль — анкета не спрашивается')
 
 
 @router.post('/draft', include_in_schema=False)
@@ -144,28 +149,28 @@ async def mail_draft(payload: DatingMailDraft,
     доверять ему больше, чем стоит. Сохранение — обычным `POST`, со всеми
     проверками.
 
-    ⚠ **Анкета здесь не спрашивается.** Тело шаблона от неё не зависит: анкета в
-    тексте живёт метками, а поле «Название» страница подставит сама — числом и
-    аватаркой владелицы — и сохранит уже `POST` с `profile_id`.
+    ⚠ **Карточка открытой анкеты — якорь, а не цитата.** Поле «Название» страница
+    подставит сама — числом и аватаркой владелицы — и сохранит уже `POST` с
+    `profile_id`; сам текст модель пишет своими словами, сверяясь с карточкой.
     """
     known = await mail_var_rows(int(payload.site_id))
+    girl = await _girl(payload.profile_id)
 
     try:
-        drafted = await mail_write(int(payload.site_id), known, payload.hint)
+        drafted = await mail_write(int(payload.site_id), known, payload.hint,
+                                   girl=girl)
     except DatingMailAgentError as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
                             detail=str(e)) from e
 
-    body = str((drafted or {}).get('body') or '')
+    body = drafted or ''
     found = mail_vars_found(body)
     names = {row['name'] for row in known}
 
     return {'result': {'body': body,
-                       # ⚠ Название поля «Название» страница берёт по узору со
-                       # своих чисел (`template_{номер}`), а не отсюда: `title`
-                       # остаётся про сам текст и годится только подсказкой в
-                       # подсказке поля.
-                       'title': str((drafted or {}).get('title') or ''),
+                       # ⚠ Названия в ответе нет: поле «Название» страница берёт
+                       # по узору со своих чисел (`template_{номер}`) — ответ
+                       # агента про сам текст, не про имя.
                        'vars': found,
                        # ⚠ Выдуманные имена называем сразу, а не ждём отказа при
                        # сохранении: человек увидит их в тексте и поправит, пока
@@ -307,6 +312,24 @@ def _where(site_id: int, profile_id: int) -> tuple[str, list]:
     return where, params
 
 
+async def _girl(profile_id: int) -> dict | None:
+    """Карточка владелицы для черновика — тем же видом, что у круга."""
+    if not int(profile_id or 0):
+        return None
+
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT id, profile FROM profile WHERE id = %s',
+                         (int(profile_id),))
+        row = await db.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f'анкеты #{profile_id} нет')
+    row['profile'] = json_column_load(row['profile'])
+
+    return row
+
+
 async def _checked(payload: DatingMailSave) -> None:
     """Отказ с причиной словами, если шаблон негодный.
 
@@ -365,3 +388,4 @@ def _answer(row: dict) -> dict:
             'vars': mail_vars_found(row['body']),
             'created_at': row['created_at'],
             'updated_at': row['updated_at']}
+

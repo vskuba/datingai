@@ -15,8 +15,8 @@
 съесть норму друг друга.
 
 **Имя.** Заготовку не зовут — её считают: `template_1`, `template_2`, `template_3`.
-Владелицу строки показывает аватарка в списке, а не буква в имени. Агентский `title`
-на имя не влияет.
+Владелицу строки показывает аватарка в списке, а не буква в имени. Ответ агента —
+только текст, и в имя он не просится вовсе.
 
 **Порядок.** Уборка идёт после написания. Обратный порядок неверен по счёту: свежая
 заготовка, написанная в этом же заходе, попадала бы в «самые свежие», которые уборка
@@ -89,17 +89,16 @@ async def clean():
 def agent(monkeypatch):
     """Подменяет агента: считает вызовы вместо походов к LLM.
 
-    ⚠ Возвращает **словарь**, как настоящий: `body` и `title`. Отдавай заглушка
-    строку — тесты проходили бы на форме ответа, которой в жизни нет. Имя строит
-    круг из ключа владелицы, а не из `title` — заглушка это честно переживает.
+    ⚠ Возвращает **только текст**, как настоящий: с 2026-10-17 ответ агента
+    имени не несёт вовсе. Имя строит круг из ключа владелицы — заглушка это
+    честно переживает.
     """
     calls = []
 
-    async def fake(site_id, variables, hint=''):
+    async def fake(site_id, variables, hint='', girl=None):
         calls.append(int(site_id))
 
-        return {'title': f'Draft title {len(calls)}',
-                'body': f'Hi [[companion_name]]! Draft #{len(calls)}'}
+        return f'Hi [[companion_name]]! Draft #{len(calls)}'
 
     monkeypatch.setattr(round_, 'mail_write', fake)
 
@@ -466,7 +465,7 @@ class TestWrite:
         gid = await _girl('Елена')
         calls = []
 
-        async def broken(site_id, variables, hint=''):
+        async def broken(site_id, variables, hint='', girl=None):
             calls.append(1)
             raise DatingMailAgentError('браузер соседа занят')
 
@@ -484,8 +483,8 @@ class TestWrite:
 
     async def test_empty_answer_is_not_saved(self, auth_client, clean, monkeypatch):
         """Агент ответил пусто — пустой шаблон в список не кладём."""
-        async def empty(site_id, variables, hint=''):
-            return {'title': '', 'body': '   '}
+        async def empty(site_id, variables, hint='', girl=None):
+            return ''
 
         await _girl('Вера')
         monkeypatch.setattr(round_, 'mail_write', empty)
@@ -535,7 +534,7 @@ class TestOrder:
         for n in range(4):
             await _put(f'вчерашний{n}', days_ago=9, profile_id=gid)
 
-        async def broken(site_id, variables, hint=''):
+        async def broken(site_id, variables, hint='', girl=None):
             raise DatingMailAgentError('браузер соседа занят')
 
         monkeypatch.setattr(round_, 'mail_write', broken)
@@ -766,17 +765,17 @@ class TestNameCounts:
 
     Прежнее правило (с 2026-10-16) звало анкету (`elena_template_2`) — и в списке
     однофамилиц имена не различали ровно ничего, только сбивали: владелицу
-    показывает аватарка строки. Агентский `title` на имя не влияет — он остался
-    подсказкой страницы, не больше.
+    показывает аватарка строки. С 2026-10-17 ответ агента и вовсе только текст:
+    в имя не просится ни одна его строчка.
     """
 
-    async def test_agent_title_is_not_the_name(self, auth_client, clean, monkeypatch):
-        """`title` ответа — не имя: имя остаётся числом, каким бы тёплым ни был
-        ответ агента."""
+    async def test_response_text_is_all_the_round_counts(self, auth_client, clean,
+                                                         monkeypatch):
+        """Ответ — только текст: имя остаётся числом, каким бы ни был ответ."""
         gid = await _girl('Соня')
 
-        async def named(site_id, variables, hint=''):
-            return {'title': 'Warm and curious', 'body': 'Hi [[companion_name]]!'}
+        async def named(site_id, variables, hint='', girl=None):
+            return 'Hi [[companion_name]]!'
 
         monkeypatch.setattr(round_, 'mail_write', named)
 
@@ -787,46 +786,3 @@ class TestNameCounts:
             await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
 
         assert await _names(gid) == ['template_1']
-
-
-class TestAnswerShape:
-    """Разбор ответа агента: название и текст приходят одной строкой.
-
-    ⚠ Разделитель — **строка `TITLE:`**, а не JSON: в письме есть переносы строк, и
-    упаковка его в JSON на последнем шаге workflow потребовала бы экранирования,
-    которого шаблонизатор `%letter%` не делает — первый же перенос порвал бы разбор.
-    """
-
-    def test_title_and_body_are_split(self):
-        from src.dating.mail_agent import _letter_named
-
-        got = _letter_named('TITLE: Short and direct\n\nHi [[companion_name]],\n\nHow are you?')
-
-        assert got['title'] == 'Short and direct'
-        assert got['body'] == 'Hi [[companion_name]],\n\nHow are you?'
-
-    def test_missing_mark_is_not_a_failure(self):
-        """Метки нет — текст целиком остаётся телом, а имя пустое."""
-        from src.dating.mail_agent import _letter_named
-
-        got = _letter_named('Hi [[companion_name]],\n\nNo title here')
-
-        assert got['title'] == ''
-        assert got['body'].startswith('Hi [[companion_name]]')
-
-    def test_quotes_are_stripped(self):
-        """LLM берёт название в кавычки при первой возможности."""
-        from src.dating.mail_agent import _letter_named
-
-        assert _letter_named('TITLE: "Warm and playful"\n\nТекст')['title'] \
-            == 'Warm and playful'
-
-    def test_thinking_is_cut_before_the_mark(self):
-        """⚠ Размышления модели снимаются **до** разбора метки: иначе `TITLE:`
-        оказывается не в начале, и название теряется вместе с ним."""
-        from src.dating.mail_agent import _letter_named
-
-        got = _letter_named('<think>подумаю…</think>TITLE: Short\n\nТекст письма')
-
-        assert got['title'] == 'Short'
-        assert got['body'] == 'Текст письма'

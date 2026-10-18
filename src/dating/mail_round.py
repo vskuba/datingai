@@ -221,7 +221,8 @@ async def _write(site_id: int, offset_hours: int) -> int:
     ⚠ **Имя не придумывают и не выводят из её имени — оно считает место в её
     норме**: `template_1`, `template_2`. Владелицу строки показывает аватарка в
     списке страницы, а не буква в имени: однофамилиц в именах не различить.
-    Агентский `title` ответа — не имя: по нему не понять, чей текст.
+    Ответ агента — только текст: по нему не понять, чей текст, — и в имя он не
+    просится вовсе.
 
     ⚠ **Норма считается по суткам**, и потому повторный заход в тот же день ничего
     не делает, а неполный — добирает: её строки за сегодня считаются вместе с
@@ -250,7 +251,7 @@ async def _write(site_id: int, offset_hours: int) -> int:
 
         for n in range(already, per_day):
             try:
-                drafted = await mail_write(site_id, known)
+                drafted = await mail_write(site_id, known, girl=girl)
             except DatingMailAgentError as e:
                 # ⚠ Отказ агента обрывает **весь заход**, а не одну заготовку:
                 # сосед занят для всех одинаково, и следующие упрутся в то же
@@ -259,7 +260,7 @@ async def _write(site_id: int, offset_hours: int) -> int:
 
                 return made
 
-            body = str((drafted or {}).get('body') or '').strip()
+            body = (drafted or '').strip()
             if not body:
                 logger_info(f'[dating] шаблон сайта #{site_id}: агент ответил пусто')
                 break
