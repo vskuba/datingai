@@ -51,6 +51,14 @@ tar czf "$ARCHIVE" \
     --exclude='data/*.log*' \
     --exclude='data/backups' \
     --exclude='data/seeds' \
+    `# ⚠⚠ Черновики и подпорки одной работы. Они закрыты в .gitignore, но tar` \
+    `# про него не знает вовсе — список исключений здесь свой, и разойтись им` \
+    `# нельзя: в .tmp_dating_docs лежали выгрузки девяти живых переписок, и на` \
+    `# прод они уехали бы вместе с кодом. Та же причина, что у data/backups` \
+    `# строкой выше.` \
+    --exclude='.scratch' \
+    --exclude='.tmp_dating_docs' \
+    --exclude='scratchpad' \
     --exclude='.env.prod' \
     --exclude='.env.local' \
     --exclude='.env' \
