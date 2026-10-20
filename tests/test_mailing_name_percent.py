@@ -11,16 +11,20 @@
 
 ## ⚠⚠ Что здесь легко сломать
 
-Жребий имени управляет **тремя** вещами разом, и разойдись они — настройка
+Жребий имени управляет **двумя** вещами разом, и разойдись они — настройка
 перестанет работать молча:
 
-1. **зачин** берётся из своего списка (`MAILING_GREETINGS_NAME` или обычного);
-2. **`mail_var_must`** — список обязательных меток: останься там
+1. **`mail_var_must`** — список обязательных меток: останься там
    `companion_name`, судья у соседа завернёт безымянный шаблон как неполный;
-3. **`mail_vars` и `mail_var_names`** — то, что видит модель: покажи ей имя, и
+2. **`mail_vars` и `mail_var_names`** — то, что видит модель: покажи ей имя, и
    она впишет его, даже когда не просили.
 
-Тест проверяет все три: сломай одно — покраснеет.
+Тест проверяет обе: сломай одну — покраснеет.
+
+⚠ Третьей был **зачин**: списки делились по наличию имени, чтобы приём не просил
+имени там, где метки нет. С 2026-10-20 зачин бросает сосед
+(`dice_mail_greeting`), и панель его не шлёт вовсе — согласовывать больше
+нечего.
 """
 
 import random
@@ -28,8 +32,7 @@ import random
 import pytest
 
 from src.dating import mail_agent
-from src.dating.mail import (MAILING_GREETINGS, MAILING_GREETINGS_NAME,
-                             MAILING_NAME_CHANCE, MAILING_NAME_SETTING)
+from src.dating.mail import MAILING_NAME_CHANCE, MAILING_NAME_SETTING
 from src.dating.site_setting import SITE_KNOWN
 
 pytestmark = pytest.mark.mail
@@ -102,29 +105,6 @@ class TestTheSettingIsWiredUp:
         бы, и никакой ошибки при этом не случилось бы."""
         assert (float(SITE_KNOWN[MAILING_NAME_SETTING]['default']) / 100
                 == MAILING_NAME_CHANCE)
-
-
-class TestTheGreetingsAreSplit:
-    """⚠⚠ Два списка зачинов, и делит их наличие имени.
-
-    Приём «приветствие с именем» при невыпавшем жребии заставил бы модель
-    выбирать между просьбой панели и отсутствием метки — а она, как показала
-    живая работа, выбирает просьбу и пишет имя словами.
-    """
-
-    def test_the_name_list_always_mentions_the_name(self):
-        """Список зовёт по имени — словом «имя» или прямо («назови его»)."""
-        for one in MAILING_GREETINGS_NAME:
-            assert 'имен' in one or 'имя' in one or 'зови' in one, one
-
-    def test_the_plain_list_never_asks_for_a_name(self):
-        for one in MAILING_GREETINGS:
-            assert 'с именем' not in one, one
-            assert 'имя прямо' not in one, one
-
-    def test_neither_list_is_empty(self):
-        """⚠ Пустой список уронил бы `random.choice` — и уронил бы набор пула."""
-        assert MAILING_GREETINGS_NAME and MAILING_GREETINGS
 
 
 class TestTheDiceDrivesEverything:

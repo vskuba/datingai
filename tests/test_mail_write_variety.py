@@ -16,7 +16,6 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating import mail_agent
-from src.dating.mail import MAILING_GREETINGS, MAILING_GREETINGS_NAME
 from src.dating.mail_agent import mail_write
 from src.dating.percent import percent_share
 
@@ -161,72 +160,50 @@ class TestTheQuestionLivesInTheRegistry:
             'флаг снова уезжает — значит жребий вернулся в шаблон'
 
 
-class TestTheGreetingIsALotToo:
-    """⚠⚠ Зачин — третья ось, и заведена по живому пулу.
+class TestTheGreetingIsGoneToo:
+    """⚠⚠ Зачин уехал к соседу (2026-10-20) — панель его больше не шлёт.
 
-    Восемь шаблонов подряд начинались словом «Hi» с новой строки: приём разный,
-    длина разная, рассказ разный — а первое, что видит человек, одно и то же во
-    всех письмах сайта. Модель зачин не выбирает: берёт первый попавшийся и
-    повторяет, пока её не попросят иначе.
+    Объявление `mail_greeting` у соседа снято, и присылка роняет **весь** вызов
+    `400`-м: занятие встанет целиком, а не испортит один текст. Бросает зачин
+    теперь шаг «Жребий» самого `dating_mail_write` (`dice_mail_greeting`).
+
+    ⚠⚠ Вместе с переездом из набора ушёл приём «начни с признания, что писать
+    первой было неловко» — и это починка, а не потеря. Он **дублировал** приёмы
+    соседа (`honesty about the site`, `the second letter problem`), но весил
+    15,9% против их 3%, и доли складывались. Живой разбор двадцати заготовок:
+    таким зачином начиналось **9 из 20** при ожидании 3,7.
     """
 
-    async def test_the_opening_is_drawn(self, agent, share):
-        """⚠ Списков зачинов **два**, и выбирает между ними жребий имени.
-
-        Приёмы с именем («приветствие с именем», «имя в первой фразе») годятся
-        только когда метка в шаблоне есть. Достанься такой приём безымянному
-        шаблону — модель выбрала бы между просьбой панели и отсутствием метки, а
-        она, как показала живая работа, выбирает просьбу и пишет имя словами.
-        """
-        await share('mailing_no_greeting_percent', 0)
+    async def test_the_greeting_is_not_sent(self, agent, share):
+        """Имени переменной нет в запросе вовсе — иначе сосед отвергнет вызов."""
         await mail_write(STAND_SITE, VARS)
 
-        assert agent['mail_greeting'] in MAILING_GREETINGS + MAILING_GREETINGS_NAME
+        assert 'mail_greeting' not in agent, \
+            'зачин уезжает соседу — он ответит 400 и шаблон не сочинится'
 
-    async def test_the_opening_matches_the_name_dice(self, agent, share):
-        """⚠⚠ Приём обязан соответствовать жребию, а не просто быть из списка."""
-        await share('mailing_no_greeting_percent', 0)
+    def test_the_lists_are_gone(self):
+        """Списки зачинов сняты: держать их здесь значило бы хранить второй,
+        расходящийся с соседским набор приёмов."""
+        import src.dating.mail as mail
 
-        await share('mailing_name_percent', 100)
-        await mail_write(STAND_SITE, VARS)
-        assert agent['mail_greeting'] in MAILING_GREETINGS_NAME, \
-            'имя в шаблоне есть, а зачин его не зовёт'
-
-        await share('mailing_name_percent', 0)
-        await mail_write(STAND_SITE, VARS)
-        assert agent['mail_greeting'] in MAILING_GREETINGS, \
-            'зачин просит имя, которого в шаблоне нет'
-
-    async def test_no_greeting_is_an_empty_section(self, agent, share):
-        """Пусто — промпт гасит секцию и запрещает приветствие прямо.
-
-        ⚠ Запрет формулируется **прямо**, а не молчанием: на вопросе мы уже
-        обожглись — секция исчезла, а модель дописала вопрос сама.
-        """
-        await share('mailing_no_greeting_percent', 100)
-        await mail_write(STAND_SITE, VARS)
-
-        assert agent['mail_greeting'] == ''
-
-    def test_the_openings_describe_a_way_not_a_word(self):
-        """⚠ Описываем **приём**, а не текст.
-
-        Дай образец («начни с Hey») — получишь «Hey» во всех письмах, где выпал
-        этот пункт, то есть ту же беду в профиль.
-        """
-        for one in MAILING_GREETINGS:
-            assert 'Hi' not in one and 'Hey' not in one and 'Hello' not in one, one
+        for name in ('MAILING_GREETINGS', 'MAILING_GREETINGS_NAME',
+                     'MAILING_NO_GREETING_SETTING', 'MAILING_NO_GREETING_CHANCE'):
+            assert not hasattr(mail, name), f'{name} вернулась в панель'
 
 
 class TestPercent:
     """Доли: в настройке проценты, в коде — доля от единицы."""
 
     async def test_zero_is_a_decision_not_an_absence(self, share):
-        """⚠⚠ Ноль означает «никогда», а не «настройки нет»."""
-        await share('mailing_no_greeting_percent', 0)
+        """⚠⚠ Ноль означает «никогда», а не «настройки нет».
 
-        assert await percent_share(STAND_SITE, 'mailing_no_greeting_percent',
-                                  0.15) == 0.0
+        ⚠ Проверяем на живой доле (`mailing_name_percent`): доля «без
+        приветствия» снята вместе с зачином — его бросает сосед.
+        """
+        await share('mailing_name_percent', 0)
+
+        assert await percent_share(STAND_SITE, 'mailing_name_percent',
+                                  1.0) == 0.0
 
     async def test_an_absent_setting_gives_the_default(self, share):
         assert await percent_share(STAND_SITE, 'mailing_question_percent', 0.25) == 0.25

@@ -70,12 +70,8 @@ from src.dating.agent import (AGENT_NODE, agent_site)
 from src.dating.percent import percent_share
 from src.dating.mail import (MAIL_VAR_RE,
                                    MAILING_AVOID_MAX,
-                                   MAILING_GREETINGS,
-                                   MAILING_GREETINGS_NAME,
                                    MAILING_NAME_CHANCE,
-                                   MAILING_NAME_SETTING,
-                                   MAILING_NO_GREETING_CHANCE,
-                                   MAILING_NO_GREETING_SETTING)
+                                   MAILING_NAME_SETTING)
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_agent_create,
                                        rhapsody_api_agent_find, rhapsody_api_chat_ask)
 
@@ -436,14 +432,12 @@ async def mail_write(site_id: int, variables: list[dict],
     must = ([row for row in known if row['name'] != INVITE_SLOT_MAN]
             if not man_name else known)
 
-    # ⚠ Зачин выбирается **после** жребия имени и из своего списка: приёмы с
-    # именем и без него разведены, иначе панель просила бы имя там, где метки
-    # нет (`MAILING_GREETINGS_NAME`).
-    greeting = ('' if random.random() < await percent_share(
-                    int(site_id), MAILING_NO_GREETING_SETTING,
-                    MAILING_NO_GREETING_CHANCE)
-                else random.choice(MAILING_GREETINGS_NAME if man_name
-                                   else MAILING_GREETINGS))
+    # ⚠⚠ **Зачина здесь больше нет: с 2026-10-20 его бросает сосед.** Объявление
+    # `mail_greeting` у него снято, и присылка роняет весь вызов `400`-м — как
+    # приём, длина, подпись и тема рассказа до неё.
+    #
+    # ⚠ Жребий имени (`man_name`) при этом **остался и нужен**: он решает не
+    # зачин, а состав `mail_var_must` — требовать ли от шаблона метку имени.
 
     answer = await _chat_ask(
         int(site_id),
@@ -483,10 +477,10 @@ async def mail_write(site_id: int, variables: list[dict],
                    # `text_marks_inline` у соседа.
                    'mail_var_live': ','.join(row['name'] for row in must
                                              if row.get('source') == 'live'),
-                   # ⚠⚠ **Темы рассказа, угла, длины и подписи здесь больше нет:
+                   # ⚠⚠ **Темы рассказа, угла, длины, подписи и зачина здесь нет:
                    # их бросает шаг «Жребий» этого же workflow** (позиция 0) —
                    # `dice_mail_story`, `dice_mail_angle`, `dice_mail_length`,
-                   # `dice_mail_sign`. Объявления входящими сняты, и присылка
+                   # `dice_mail_sign`, `dice_mail_greeting`. Объявления сняты, и присылка
                    # любой из них роняет **весь** вызов: сторож отвечает `400`.
                    #
                    # ⚠ Довод, ради которого оси заводили, в силе — разнообразие
@@ -494,9 +488,6 @@ async def mail_write(site_id: int, variables: list[dict],
                    # «будь разной» их не ломает. Шаблон рассылки живёт сутками и
                    # уходит сотням людей. Переехало **место** броска, а не решение
                    # бросать, и возвращать его сюда не надо.
-                   # Пусто — письмо начинается сразу с мысли; промпт гасит секцию
-                   # и запрещает приветствие прямо (`[<if mail_greeting>]`).
-                   'mail_greeting': greeting,
                    # Карточка владелицы — тем же приёмом, что био вопроса
                    # (`_card` одна на оба): «кто пишет», не цитата. Пуста —
                    # секция гасится у соседа.
