@@ -1001,7 +1001,12 @@ class TestPoolHitScroll:
 
 
 class TestPoolFirstUid:
-    """Выбранный в ленте уходит первым в очереди набора — обоими кнопками."""
+    """Кнопок генерации на странице больше нет — ни у инвайтов, ни у писем.
+
+    Выбранный в ленте по-прежнему уходит первым, но решает это **сервер** по
+    приоритету карточки (`companion.priority`): круг о выборе в браузере не
+    знает вовсе.
+    """
 
     async def test_the_invite_button_is_gone(self, auth_client):
         """⚠ У инвайтов кнопки генерации больше нет: пул набирает круг.
@@ -1015,11 +1020,21 @@ class TestPoolFirstUid:
         assert '/api/dating/invite/generate' not in page, \
             'кнопка генерации инвайтов вернулась на страницу'
 
-    async def test_mailing_button_sends_the_choice(self, auth_client):
-        page = (await auth_client.get(PAGE)).text
-        start = page.index('/api/dating/mailing/generate')
+    async def test_the_mailing_button_is_gone(self, auth_client):
+        """⚠ И у рассылки кнопки генерации больше нет — по той же дороге, что
+        ушла кнопка инвайтов: письма стали индивидуальными, пул набирает круг.
 
-        assert 'first_uid: openUid' in page[start:start + 400]
+        Ручка `/mailing/generate` при этом жива — ею пользуется круг; ушла
+        только кнопка со страницы.
+        """
+        page = (await auth_client.get(PAGE)).text
+
+        # ⚠ Сторожим **приметы разметки и вызова**, а не слова «Генерировать
+        # письма»: они остались в комментариях кода — там, где объясняют, почему
+        # кнопки больше нет. Запрети их, и тест запретил бы объяснение.
+        for mark in ('mail-make-btn', 'mail-make-pick', 'mail-make-size',
+                     "postData(`${BASE}/api/dating/mailing/generate`"):
+            assert mark not in page, f'заготовка писем вернулась: {mark}'
 
 
 class TestOnlineCardPriority:

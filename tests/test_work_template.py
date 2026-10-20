@@ -397,24 +397,19 @@ class TestWorkTemplate:
 
         assert 'data-slot="mail-pool-clear"' in html, 'нет кнопки очистки пула'
 
-    async def test_make_has_reset(self, work):
-        """⚠ Сброс выбора шаблонов — над списком, справа.
+    async def test_the_make_block_is_gone(self, work):
+        """⚠ Блока «Заготовка писем» больше нет: письма стали индивидуальными,
+        и пул набирает круг.
 
-        Нужен потому, что снять выбор в `multiple` мышью трудно: щелчок всегда
-        что-нибудь отмечает, а отпустить последнее выбранное можно лишь
-        Ctrl-щелчком по нему же — и это знают не все.
+        Сторожим пустоту, а не наличие, — тем же приёмом, что у исчезнувшей
+        кнопки инвайтов: вернись разметка копипастом, её ловит этот тест, а не
+        человек, увидевший на странице кнопку, которой нечем работать.
         """
         html = await work(LADA)
 
-        assert 'data-slot="mail-make-reset"' in html, 'нет сброса выбора шаблонов'
-
-    async def test_make_has_size_select(self, work):
-        """⚠ Сколько писем за нажатие — **рядом с кнопкой**, а не в настройках
-        сайта: число выбирают перед каждым нажатием, и ходить за этим на другую
-        страницу значило бы менять настройку по три раза за вечер."""
-        html = await work(LADA)
-
-        assert 'data-slot="mail-make-size"' in html, 'нет выбора количества'
+        for mark in ('mail-make-reset', 'mail-make-size', 'mail-make-btn',
+                     'mail-make-pick', 'Генерировать письма'):
+            assert mark not in html, f'разметка заготовки вернулась: {mark}'
 
     async def test_online_split_is_a_class_not_an_id(self, work):
         """Разделитель высоты ленты — классом, а не `id`.

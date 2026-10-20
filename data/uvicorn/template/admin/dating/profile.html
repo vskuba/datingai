@@ -880,67 +880,6 @@
 
     /* ---------- Заготовка писем ---------- */
 
-    .mail-make {
-        max-width: 520px;
-        padding: 4px 0 8px;
-        border-top: 1px solid #f1f5f9;
-        margin-top: 12px;
-    }
-
-    .mail-make-field {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        margin: 8px 0;
-    }
-
-    .mail-make-label {
-        font-size: 10px;
-        font-weight: 700;
-        color: #94a3b8;
-        text-transform: uppercase;
-        letter-spacing: .04em;
-    }
-
-    .mail-make select {
-        width: 100%;
-        box-sizing: border-box;
-        padding: 5px 7px;
-        border: 1px solid #d1d5db;
-        border-radius: 6px;
-        font-family: inherit;
-        font-size: 12px;
-        color: #1e293b;
-    }
-
-    .mail-make select:focus {
-        outline: none;
-        border-color: #c7d2fe;
-    }
-
-    .mail-make-foot {
-        display: flex;
-        align-items: center;
-        gap: 9px;
-        margin-top: 8px;
-    }
-
-    .mail-make-note {
-        flex: 1 1 auto;
-        min-width: 0;
-        font-size: 11px;
-        color: #94a3b8;
-        line-height: 1.35;
-    }
-
-    .mail-make-note.bad {
-        color: #b91c1c;
-    }
-
-    .mail-make-note.good {
-        color: #166534;
-    }
-
     /* ---------- Пул писем ---------- */
 
     .mail-pool-head {
@@ -1518,40 +1457,9 @@
     }
 
     /* Строка над списком шаблонов: подпись слева, сброс справа. */
-    .mail-make-head {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-
-    .mail-make-head .mail-make-label {
-        flex: 1 1 auto;
-    }
-
     /* Сброс — значком, а не словом: рядом уже стоит подпись, и второе слово в
        строке спорило бы с ней за внимание. Приглушён, пока на него не навели:
        это отмена, а не действие, ради которого сюда пришли. */
-    .mail-make-reset {
-        padding: 1px 6px;
-        border: 1px solid #e2e8f0;
-        border-radius: 6px;
-        background: #fff;
-        color: #94a3b8;
-        font-size: 13px;
-        line-height: 1.2;
-        cursor: pointer;
-    }
-
-    .mail-make-reset:hover:not(:disabled) {
-        color: #4338ca;
-        border-color: #c7d2fe;
-    }
-
-    .mail-make-reset:disabled {
-        opacity: .4;
-        cursor: default;
-    }
-
     /* Текст справки: заголовки разделов мельче обычных, абзацы плотнее —
        окно читают целиком, и воздух между строками растянул бы его на два
        экрана. */
@@ -1607,20 +1515,6 @@
 
     /* Сколько писем за нажатие — рядом с кнопкой, ею же и читается.
        Узкий: три значения в два знака, и растягивать его не на что. */
-    .mail-make-size select {
-        padding: 4px 6px;
-        border: 1px solid #e2e8f0;
-        border-radius: 6px;
-        background: #fff;
-        color: #475569;
-        font-size: 11px;
-        cursor: pointer;
-    }
-
-    .mail-make-size select:hover {
-        border-color: #c7d2fe;
-    }
-
     /* ---------- Подвкладки «Рассылка» / «Доставка» ---------- */
 
     /* Полоса вкладок прижата влево и отделена от ленты: она делит панель, а не
@@ -4919,26 +4813,8 @@
         }
 
         // Форму не отправляют — Enter в ней не должен перезагружать страницу.
-        workEl.querySelectorAll('[data-form="mail-schedule"], [data-form="mail-make"]')
+        workEl.querySelectorAll('[data-form="mail-schedule"]')
             .forEach(form => form.addEventListener('submit', (e) => e.preventDefault()));
-
-        // Заготовка писем и выключатель отправки — узлы шаблона, живут до смены
-        // сайта. ⚠ В отличие от карточек пула: те пересобираются на каждую
-        // отрисовку, и их обработчики вешаются там же.
-        const makeBtn = workEl.querySelector('[data-slot="mail-make-btn"]');
-        if (makeBtn && CAN_EDIT_SITE) makeBtn.addEventListener('click', mailMake);
-
-        // Сброс выбора шаблонов. Узел шаблона, живёт до смены сайта — в отличие от
-        // самих строк списка, которые пересобираются вместе с пулом.
-        const makeReset = workEl.querySelector('[data-slot="mail-make-reset"]');
-        if (makeReset) makeReset.addEventListener('click', mailMakeReset);
-
-        // ⚠ Состояние сброса меняется **от выбора в списке**, а не только от
-        // перерисовки пула: отметив шаблон, человек должен сразу увидеть, что
-        // отмену теперь есть чем сделать. Без этого кнопка оживала лишь при
-        // следующей загрузке пула — то есть выглядела сломанной.
-        const makePick = workEl.querySelector('[data-slot="mail-make-pick"]');
-        if (makePick) makePick.addEventListener('change', mailMakeResetPaint);
 
         const sendOn = workEl.querySelector('[data-slot="mail-send-on"]');
         if (sendOn && CAN_EDIT_SITE) {
@@ -10435,11 +10311,6 @@
                 </div>`.repeat(Math.max(1, n));
     }
 
-    // «письмо / письма / писем» после числа — с пробелом впереди.
-    function _lettersDoneWord(n) {
-        return ' ' + _lettersWord(n);
-    }
-
     // Растёт ли пул прямо сейчас — по прибавке черновиков за последние минуты.
     function mailPoolGrows() {
         return mailPoolGrewAt > 0 && Date.now() - mailPoolGrewAt < MAIL_POOL_GREW_MS;
@@ -10467,10 +10338,6 @@
     // человек двадцать минут смотрел бы на пустой пул без единого признака, что
     // рассылка вообще включена. Ровно это он и увидел.
     function mailPoolFilling() {
-        // Своё нажатие «Генерировать» — набор идёт заведомо, и он не смотрит на
-        // потолок: сколько попросили, столько и сделает.
-        if (mailMakeBusy) return true;
-
         const cap = Number((mailSaved.get(siteId()) || {}).mailing_pool_max || 0);
         const drafts = mailPool.filter(row => row.status === 'draft').length;
 
@@ -10495,19 +10362,17 @@
         fillSlot('mail-pool-count', poolCount(
             mailPool.length, (mailSaved.get(siteId()) || {}).mailing_pool_max));
 
-        // ⚠ Ход генерации — **в шапке пула**: она видна всегда, даже когда список
-        // прокручен вниз. Считаем прибавку, а не общее число: человек спрашивает,
-        // сколько сделано этим нажатием.
+        // ⚠ Ход набора — **в шапке пула**: она видна всегда, даже когда список
+        // прокручен вниз.
+        //
+        // ⚠ Своего нажатия здесь больше нет: пул набирает только круг, и двух
+        // состояний («готовлю» от кнопки и «набирается» от круга) не стало —
+        // осталось одно.
         const busy = slot('mail-pool-busy');
         if (busy) {
             busy.hidden = !mailPoolFilling();
 
-            if (mailMakeBusy) {
-                const done = Math.max(0, mailPool.length - mailMakeFrom);
-                fillSlot('mail-pool-busy-text',
-                    done ? `готово ${done}${_lettersDoneWord(done)}…`
-                        : 'готовлю…');
-            } else if (mailPoolGrows()) {
+            if (mailPoolGrows()) {
                 fillSlot('mail-pool-busy-text', 'набирается…');
             } else {
                 // Смена идёт, место в пуле есть — круг придёт и доберёт. Говорим
@@ -10519,14 +10384,9 @@
 
         // Гасим кнопку, когда убирать нечего: нажатие на пустом пуле ничего бы не
         // сделало, а человек прочитал бы это как отказ.
-        //
-        // ⚠ И на время генерации тоже: очистка посреди неё унесла бы письма, которые
-        // только что появились, а генерация продолжила бы класть новые — человек
-        // получил бы пул, который он «очистил», но который не пуст.
         const clear = slot('mail-pool-clear');
         if (clear) {
-            clear.disabled = mailMakeBusy
-                || !mailPool.some(row => row.status === 'draft');
+            clear.disabled = !mailPool.some(row => row.status === 'draft');
         }
 
         // Выключатель отправки — состояние сайта, а не страницы: решение «рассылка
@@ -10534,16 +10394,14 @@
         const send = slot('mail-send-on');
         if (send) send.checked = !!(mailSaved.get(siteId()) || {}).mailing_send_on;
 
-        mailMakePaint();
-
-        // ⚠ Пустой пул во время генерации — **не «пул пуст»**. Прежняя подпись
-        // звала нажать кнопку, которая в этот самый миг и работает: человек читал
-        // «выберите шаблоны и нажмите» ровно тогда, когда уже нажал.
+        // ⚠ Подпись больше не зовёт нажимать: кнопки «Генерировать письма» нет,
+        // и пул набирает круг. Пустой пул при включённом наборе — это «ещё не
+        // дошли руки», а при выключенном — «и не дойдут»; про это и говорим.
         if (!mailPool.length) {
-            box.innerHTML = mailMakeBusy
+            box.innerHTML = mailPoolFilling()
                 ? mailGhostCards(3)
-                : '<div class="mail-pool-empty">Пул пуст. Выберите шаблоны '
-                + 'слева и нажмите «Генерировать письма».</div>';
+                : '<div class="mail-pool-empty">Пул пуст. Письма набирает круг — '
+                + 'включите «генерацию писем» в шапке.</div>';
 
             return;
         }
@@ -10551,7 +10409,7 @@
         // ⚠ Заготовка **впереди списка**, а не в конце: свежие письма ложатся
         // сверху, и место, где появится следующее, — там же. Одна, а не три: под
         // готовыми письмами три серых карточки читались бы как «ещё три уже есть».
-        box.innerHTML = (mailMakeBusy ? mailGhostCards(1) : '')
+        box.innerHTML = (mailPoolFilling() ? mailGhostCards(1) : '')
             + mailPool.map((row, index) =>
                 `<div class="mail-card${row.status === 'sent' ? ' sent' : ''}`
                 + `${poolHit(row.uid) ? ' hit' : ''}" data-index="${index}"`
@@ -10663,195 +10521,6 @@
                 + '</ul>'
                 + '</div>',
         });
-    }
-
-    // Снимает выбор шаблонов: письма снова пойдут любым из включённых.
-    //
-    // ⚠ Нужен именно потому, что выбор в `multiple` снять мышью трудно: щелчок
-    // всегда что-нибудь отмечает, а отпустить последнее выбранное можно лишь
-    // Ctrl-щелчком по нему же — и это знают не все.
-    function mailMakeReset() {
-        const pick = slot('mail-make-pick');
-        if (!pick) return;
-
-        [...pick.options].forEach(one => {
-            one.selected = false;
-        });
-        mailMakePaint();
-    }
-
-    // Селект шаблонов и кнопка. ⚠ Перерисовываем вместе с пулом: список шаблонов
-    // приходит тем же запросом, и разъехаться им нельзя.
-    function mailMakePaint() {
-        // От кого пойдут письма — словами под кнопкой. ⚠ Иначе выбор анкеты в
-        // списке слева влиял бы на генерацию молча: человек выделил строку, чтобы
-        // посмотреть её чат, а письма ушли только от неё.
-        const who = slot('mail-make-who');
-        if (who) {
-            const row = openRow();
-            who.textContent = row
-                ? `Письма пойдут только от анкеты ${row.name || row.login}.`
-                : 'Письма пойдут от всех анкет с рассылкой. Выберите анкету слева, '
-                + 'чтобы писать только от неё.';
-        }
-
-        const pick = slot('mail-make-pick');
-        if (!pick) return;
-
-        // Выбранное сохраняем: перерисовка пула не должна сбрасывать то, что
-        // человек уже отметил.
-        const chosen = [...pick.selectedOptions].map(one => one.value);
-
-        // ⚠ «Шаблонов нет» говорит **само поле**, а не подпись под кнопкой.
-        //
-        // Прежде это сообщение писалось в подпись — и оставалось там навсегда:
-        // список приходит вторым запросом, и к моменту его прихода надпись уже
-        // стояла, а убрать её было некому. Человек видел полный селект и «шаблонов
-        // нет» под ним.
-        //
-        // Заодно подпись освободилась под то, ради чего она и есть, — итог
-        // генерации. Два разных сообщения в одном месте затирали бы друг друга.
-        pick.innerHTML = mailTemplates.length
-            ? mailTemplates.map(row =>
-                `<option value="${row.id}"${chosen.includes(String(row.id)) ? ' selected' : ''}>`
-                + `${esc(row.name)}</option>`).join('')
-            : '<option disabled>шаблонов нет — заведите их на «Письмах»</option>';
-
-        pick.disabled = !mailTemplates.length;
-
-        // Сброс гаснет, когда сбрасывать нечего: кнопка, которая ничего не делает,
-        // читается как отказ.
-        mailMakeResetPaint();
-    }
-
-    // Гасит сброс, когда сбрасывать нечего: кнопка, которая ничего не делает,
-    // читается как отказ.
-    //
-    // ⚠ Считаем по **самому полю**, а не по списку, снятому до перерисовки: сброс
-    // снимает отметки и зовёт отрисовку заново, и по старому списку кнопка
-    // осталась бы включённой, отменяя уже отменённое.
-    function mailMakeResetPaint() {
-        const pick = slot('mail-make-pick');
-        const reset = slot('mail-make-reset');
-
-        if (pick && reset) reset.disabled = !pick.selectedOptions.length;
-    }
-
-    // Идёт ли генерация прямо сейчас и сколько писем было в пуле, когда её завели.
-    //
-    // ⚠ Начальное число нужно, чтобы сказать «готово 7», а не «в пуле 43»: человек
-    // спрашивает, сколько сделано **этим** нажатием, а не сколько лежит всего.
-    let mailMakeBusy = false;
-    let mailMakeFrom = 0;
-
-    // ⚠ Флаг и круг обновления — **разные вещи**, и это не мелочь.
-    //
-    // Круг был заведён под нажатие кнопки: пока идёт генерация, перечитывать пул
-    // каждые пять секунд. И этого оказалось мало ровно в том случае, ради которого
-    // расписание и заводили: письма набирает **круг воркера**, кнопку при этом никто
-    // не нажимал, — и страница не узнавала о них до перезагрузки. Человек это и
-    // увидел: «письма появляются, только если я обновляю страницу».
-    //
-    // Поэтому круг теперь идёт **всё время, пока смотрят на пул**, а флаг лишь
-    // ускоряет его и включает подписи о ходе работы.
-    function mailMakeWatch() {
-        mailMakeBusy = true;
-        mailMakeFrom = mailPool.length;
-        mailPoolPaint();
-    }
-
-    function mailMakeWatchStop() {
-        mailMakeBusy = false;
-        mailPoolPaint();
-    }
-
-    async function mailMake() {
-        const pick = slot('mail-make-pick');
-        const button = slot('mail-make-btn');
-        const note = slot('mail-make-note');
-        // ⚠ **Пустой выбор — не ошибка.** Прежде здесь стоял отказ «выберите хотя
-        // бы один шаблон», и выбирать приходилось перед каждым нажатием, хотя
-        // обычно всё равно, каким шаблоном писать. Теперь выбор **сужает**: ничего
-        // не отмечено — сервер берёт любой из включённых.
-        const ids = [...(pick ? pick.selectedOptions : [])].map(one => Number(one.value));
-
-        // ⚠ Долгое действие: шаблон с вопросом требует вызова LLM на каждое
-        // письмо. Кнопку запираем и говорим об этом словами — иначе её нажмут
-        // второй раз, и второй проход пойдёт поверх первого.
-        const site = siteId();
-        if (button) {
-            button.disabled = true;
-            button.innerHTML = '<span class="dating-spin"></span>Готовлю…';
-        }
-        if (note) {
-            // ⚠ Говорим, что идёт, до первого письма: пустая строка под запертой
-            // кнопкой ничем не отличается от неё же перед нажатием.
-            note.textContent = 'Готовлю письма — пул пополняется по мере готовности…';
-            note.classList.remove('bad', 'good');
-        }
-
-        // Сколько за нажатие — с селекта рядом с кнопкой. ⚠ Ноль на сервере
-        // означает «сколько задано настройкой сайта», так что даже пропавший
-        // селект не сломает генерацию, а вернёт её к прежнему порядку.
-        const size = Number((slot('mail-make-size') || {}).value || 0);
-
-        // ⚠ **Выбранная анкета сужает набор**, как и выбранные шаблоны: письма
-        // пойдут только от неё. Никого не выбрали — от всех, у кого включена
-        // рассылка, и каждому адресату достанется случайная.
-        //
-        // `openId` — та самая строка, что подсвечена слева: вкладка «Письма
-        // рассылка» живёт и без выбранной анкеты, и это по-прежнему так.
-        const girl = openId || 0;
-
-        // ⚠ Круг заводим **до** запроса, а не после: запрос и есть та минута, ради
-        // которой всё затевалось, и заведи мы его следом — обновлять было бы уже
-        // нечего.
-        mailMakeWatch();
-
-        let answer;
-        try {
-            // Выбранный в ленте — первым, тем же правилом, что у инвайтов.
-            answer = await postData(`${BASE}/api/dating/mailing/generate`,
-                {
-                    site_id: site, mail_ids: ids, limit: size,
-                    profile_id: girl, first_uid: openUid || ''
-                });
-        } catch (e) {
-            if (note) {
-                note.textContent = e.message;
-                note.classList.add('bad');
-            }
-
-            return;
-        } finally {
-            // ⚠ Останавливаем и при отказе тоже: круг, переживший неудачу, стучал
-            // бы в сервер до перезагрузки страницы.
-            mailMakeWatchStop();
-            if (button) {
-                button.disabled = false;
-                button.textContent = 'Генерировать письма';
-            }
-        }
-
-        if (siteId() !== site) return;
-
-        const made = answer.result || {};
-        // ⚠ Говорим и про пропущенные, и про оставшиеся: молчание про них
-        // читалось бы как «сделано всё, что можно».
-        const parts = [`готово: ${made.made}`];
-        if (made.skipped) parts.push(`пропущено: ${made.skipped}`);
-        if (made.left) parts.push(`осталось на потом: ${made.left}`);
-
-        if (note) {
-            note.textContent = parts.join(' · ')
-                + (made.reasons && made.reasons.length
-                    ? ' — ' + made.reasons.join('; ') : '');
-            note.classList.toggle('good', made.made > 0);
-            note.classList.toggle('bad', !made.made);
-        }
-
-        mailPoolFor = 0;
-        await mailPoolLoad();
     }
 
     // Включает и выключает отправку писем из пула.
@@ -14651,7 +14320,7 @@
         // бы пачками по шесть — то есть «по мере готовности» превращалось бы в
         // «иногда». Признак роста гаснет через две минуты после последней прибавки,
         // и шаг сам возвращается к спокойному.
-        const period = (mailMakeBusy || mailPoolGrows())
+        const period = mailPoolGrows()
             ? MAIL_POOL_TICK_MS : MAIL_POOL_IDLE_MS;
         if (Date.now() - mailPoolAt < period - 500) return;
 
