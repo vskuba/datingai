@@ -55,8 +55,8 @@ round_prefix_set('dating')
 
 # Круги зовут слой через этот модуль, и `ruff` иначе счёл бы ре-экспорт
 # неиспользованным импортом.
-__all__ = ['round_loop', 'round_offset_loop', 'round_mem_due', 'round_mem_mark',
-           'round_slot_due', 'round_slot_left', 'round_slot_mark',
+__all__ = ['round_day_count', 'round_loop', 'round_offset_loop', 'round_mem_due',
+           'round_mem_mark', 'round_slot_due', 'round_slot_left', 'round_slot_mark',
            'round_slot_release', 'round_sent_day', 'round_sites',
            'round_sites_run']
 

@@ -42,7 +42,7 @@ from round_.round_slot import round_slot_key
 from src.dating import round as engine
 from src.dating.mail_round import (MAIL_ROUND_KEY,
                                           mail_round_run, _made_today,
-                                          _sweep, _today, _write)
+                                          _sweep, _write)
 
 pytestmark = pytest.mark.mail
 
@@ -503,9 +503,14 @@ class TestWrite:
         await _put('свой', days_ago=0, profile_id=gid)
         await _put('чужой', days_ago=0, profile_id=other)
 
-        assert await _made_today(SITE, gid, _today(0)) == 1, \
+        assert await _made_today(SITE, gid, 0) == 1, \
             'норма посчитана по всему сайту, а не по анкете'
-        assert await _made_today(SITE, gid, '1999-01-01') == 0
+        # ⚠ метка лежит в UTC, сутки местные: без сдвига на пояс строка ночи
+        # (21:00–23:59 UTC) осталась бы вчерашним местным днём, и норму писалось
+        # бы заново каждый час. Проверка в тёмном окне живая, вне него — тоже
+        # истина, но ровно потому, что сдвиг нечего было показать.
+        assert await _made_today(SITE, gid, 3) == 1, \
+            'сутки считаются без часового пояса анкеты'
 
 
 class TestOrder:

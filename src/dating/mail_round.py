@@ -97,13 +97,12 @@ DELETE SET NULL`: готовое письмо помнит свой текст �
 """
 
 
-from datetime_.datetime_ import datetime_offset_now
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.json_column import json_column_list, json_column_load
-from src.dating.round import (round_sites, round_sites_run, round_slot_due,
-                              round_slot_mark)
+from src.dating.round import (round_day_count, round_sites, round_sites_run,
+                              round_slot_due, round_slot_mark)
 from src.dating.mail_agent import DatingMailAgentError, mail_write
 from src.dating.schedule import schedule_now
 from src.dating.site_setting import site_seconds
@@ -236,7 +235,6 @@ async def _write(site_id: int, offset_hours: int) -> int:
     from src.uvicorn.routers.dating.mail_var import mail_var_rows
     per_day = int(await site_seconds(site_id, MAIL_ROUND_PER_DAY_SETTING)
                   or MAIL_ROUND_PER_DAY)
-    day = _today(offset_hours)
     girls = await _profiles(site_id)
 
     known = await mail_var_rows(site_id)
@@ -244,7 +242,7 @@ async def _write(site_id: int, offset_hours: int) -> int:
 
     for girl in girls:
         gid = int(girl['id'])
-        already = await _made_today(site_id, gid, day)
+        already = await _made_today(site_id, gid, offset_hours)
 
         if already >= per_day:
             continue
@@ -374,8 +372,12 @@ async def _profiles(site_id: int) -> list[dict]:
     return rows
 
 
-async def _made_today(site_id: int, gid: int, day: str) -> int:
+async def _made_today(site_id: int, gid: int, offset_hours: int) -> int:
     """Сколько заготовок **этой анкеты** завели сегодня — по местным суткам.
+
+    Правило общее — `round_day_count`: метка лежит в UTC, а сутки местные; без
+    сдвига на пояс строки ночи (до полуночи UTC) остались бы вчерашним днём, и
+    круг дописывал бы норму заново каждый час.
 
     ⚠ **Считаем по базе, а не в памяти.** Смена держателя перезапускается (свой
     срок, деплой, падение), и счётчик в памяти обнулялся бы вместе с ней: за день
@@ -385,24 +387,15 @@ async def _made_today(site_id: int, gid: int, day: str) -> int:
     кругом. Предел про то, сколько новых текстов появляется в сутки у анкеты, а
     откуда они — вопрос второй: человек, написавший ей три руками, уже сделал её
     дневную норму.
+
+    ⚠ Не сосчитали — молчим (потолок): недозаписанный круг допишет в следующий
+    слот, а лишние тройки съели бы норму и место в пуле — ровно тот почасовой
+    самозаписанный поток, что устроил починенный здесь сдвиг.
     """
-    async with mysql_get_db_async() as db:
-        await db.execute(
-            'SELECT COUNT(*) AS n FROM mail'
-            ' WHERE site_id = %s AND profile_id = %s AND DATE(created_at) = %s',
-            (int(site_id), int(gid), day))
-        row = await db.fetchone()
-
-    return int((row or {}).get('n') or 0)
-
-
-def _today(offset_hours: int) -> str:
-    """Сегодняшняя дата по часам панели, `YYYY-MM-DD`.
-
-    ⚠ **По часам панели, а не сервера.** Человек, поставивший «три в сутки», имеет
-    в виду свой день; на границе полуночи UTC разница в сутки — не мелочь, а лишняя
-    дневная норма.
-    """
-    return datetime_offset_now(int(offset_hours)).strftime('%Y-%m-%d')
+    return await round_day_count('mail', {'site_id': int(site_id),
+                                          'profile_id': int(gid)},
+                                 date_column='created_at',
+                                 offset_hours=offset_hours,
+                                 unknown=10 ** 6, what='шаблонам')
 
 
