@@ -3700,6 +3700,35 @@
         letter-spacing: .03em;
     }
 
+    /* Крестик удаления прямо в строке. ⚠ Нужен потому, что заготовки пишет круг,
+       и бракованную выбирают **глазами по списку**: без него человек открывал бы
+       каждую, чтобы добраться до кнопки «Удалить» в форме.
+
+       ⚠ Виден всегда, а не по наведению: знак, который надо сперва найти мышью,
+       на списке из семи строк ищется семь раз. */
+    .mail-del {
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        padding: 0;
+        border: 0;
+        border-radius: 50%;
+        background: #fee2e2;
+        color: #b91c1c;
+        cursor: pointer;
+    }
+
+    /* Под курсором знак наливается цветом. До наведения он держится тише бейджей
+       рядом (та же пара #fee2e2/#b91c1c, что у «сгорит»), а в момент, когда на
+       него целятся, говорит в полный голос: удаление необратимо. */
+    .mail-del:hover {
+        background: #dc2626;
+        color: #fff;
+    }
+
     /* Имя переменной — моноширинным: его читают как код, а не как текст, и
        отличать `firstName` от `firstname` приходится глазами. */
     .var-name {
@@ -15112,6 +15141,17 @@
             // имён вытеснил бы само название.
             + `<span class="mail-vars" title="переменных в письме">${row.vars.length}</span>`
             + mailLife(row, index)
+            // Крестик удаления — последним в строке, у самого края. Знак рисуем
+            // инлайновым svg, а не символом «×» и не эмодзи: тем же приёмом, что
+            // корзинка расписания, и по той же причине — у шрифтовых значков вид
+            // свой на каждой машине.
+            + (CAN_EDIT_SITE
+                ? '<button type="button" class="mail-del" title="Удалить шаблон">'
+                  + '<svg width="10" height="10" viewBox="0 0 24 24" fill="none"'
+                  + ' stroke="currentColor" aria-hidden="true"><path'
+                  + ' stroke-linecap="round" stroke-width="3"'
+                  + ' d="M6 6l12 12M18 6L6 18"/></svg></button>'
+                : '')
             + '</div>';
         }).join('');
 
@@ -15123,6 +15163,20 @@
                 tmplOpenId = id === tmplOpenId ? 0 : id;
                 listPaint();
                 editPaint();
+            });
+        });
+
+        slot('list').querySelectorAll('.mail-del').forEach(el => {
+            el.addEventListener('click', (event) => {
+                // ⚠ Крестик лежит **внутри** строки, и без остановки всплытия
+                // щелчок по нему заодно открывал бы её: человек нажал «удалить»,
+                // а получил открытую форму — и это в лучшем случае, потому что
+                // при отказе от удаления форма так и осталась бы открытой.
+                event.stopPropagation();
+
+                const id = Number(el.closest('.mail-row').dataset.id);
+
+                mailDrop(mails.find(one => Number(one.id) === id));
             });
         });
 
@@ -15348,7 +15402,9 @@
         if (ai) ai.addEventListener('click', mailTextByAi);
 
         const drop = slot('dropBtn');
-        if (drop) drop.addEventListener('click', mailDrop);
+        // ⚠ Явный вызов, а не `mailDrop` обработчиком: у неё теперь есть довод,
+        // и привязка напрямую отдала бы ей `MouseEvent` вместо шаблона.
+        if (drop) drop.addEventListener('click', () => mailDrop());
     }
 
     async function mailSave() {
@@ -15539,8 +15595,14 @@
         }
     }
 
-    async function mailDrop() {
-        const mail = openMail();
+    // ⚠ **Одна дверь на оба способа удалить**: кнопку «Удалить» в форме и крестик
+    // в строке списка. Без довода берётся открытый шаблон — так зовёт форма.
+    //
+    // ⚠ Звать её обработчиком напрямую (`addEventListener('click', mailDrop)`)
+    // больше нельзя: первым доводом прилетит `MouseEvent`, и удаляться начнёт
+    // «шаблон» без имени и номера. Поэтому у формы стоит явный вызов.
+    async function mailDrop(mail) {
+        mail = mail || openMail();
         if (!mail) return;
 
         // Спрашиваем, потому что удаление необратимо. ⚠ Про журнал говорим сразу:
@@ -15559,7 +15621,11 @@
             return;
         }
 
-        tmplOpenId = 0;
+        // ⚠ Выбор снимаем, **только если удалили открытый**: крестиком убирают
+        // соседнюю строку, и закрывать из-за неё чужую форму — значит терять
+        // текст, который человек в этот момент читает.
+        if (Number(tmplOpenId) === Number(mail.id)) tmplOpenId = 0;
+
         showNotification('Шаблон удалён', 'info');
         await everythingLoad();
     }
