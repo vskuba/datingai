@@ -97,12 +97,15 @@ DELETE SET NULL`: готовое письмо помнит свой текст �
 """
 
 
+from datetime_.datetime_ import datetime_offset_hours, datetime_offset_now
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
+from round_.round_ import ROUND_TIMEZONE_SETTING
+from setting_.setting_ import setting_get
 
 from src.dating.json_column import json_column_list, json_column_load
 from src.dating.round import (round_day_count, round_sites, round_sites_run,
-                              round_slot_due, round_slot_mark)
+                              round_slot_due, round_slot_left, round_slot_mark)
 from src.dating.mail_agent import DatingMailAgentError, mail_write
 from src.dating.schedule import schedule_now
 from src.dating.site_setting import site_seconds
@@ -171,6 +174,63 @@ async def mail_round_run(offset_hours: int = 0) -> dict:
         logger_info(f'[dating] круг шаблонов: написано {made}, убрано старых {gone}')
 
     return {'checked': len(sites), 'made': made, 'gone': gone}
+
+
+async def mail_round_state(site_id: int) -> dict:
+    """Что круг шаблонов сделает дальше — словами для страницы.
+
+    Args:
+        site_id: сайт-закладка.
+
+    Returns:
+        dict: `on` — исполняется ли расписание, `shift` — идёт ли смена **сейчас**,
+        `next_in` — секунд до следующего захода (`0` — возьмётся на ближайшем тике,
+        `-1` — спросить не вышло), `made` и `norm` — сколько заготовок у сайта за
+        сегодня и сколько положено.
+
+    ⚠⚠ **Отвечает сервер теми же выражениями, что решают за круг.** Та же
+    `schedule_now` на смену, тот же `round_slot_left` на срок, тот же
+    `round_day_count` на сутки. Своя арифметика на странице разошлась бы с кругом
+    на первой правке — грабля, которая в этом проекте случалась дважды (причина
+    пустого пула и значок потолка инициативы).
+
+    ⚠ **Нужно потому, что ожидание круга невидимо.** После захода сайт ждёт час
+    (`MAIL_ROUND_EVERY_SEC`), и всё это время список выглядит так же, как при
+    поломке: пусто и молча. 20.10.2026 на этом ушёл разбор — заготовки удалили
+    сразу после захода, и час до следующего читался как «круг сломался».
+    """
+    site_id = int(site_id)
+    # ⚠ Пояс читаем **сами и тем же выражением**, что `round_offset_loop`: он и
+    # есть то, чем круг меряет сутки и смены. Приди он доводом от ручки — у
+    # страницы появился бы свой способ его узнать, и разойтись им ничто не мешает.
+    offset_hours = datetime_offset_hours(
+        await setting_get(ROUND_TIMEZONE_SETTING, '+0'))
+    rows = await round_sites(flags=('template_schedule_on',),
+                             schedule='template_schedule', what='шаблонам')
+    mine = next((row for row in rows if int(row['site_id']) == site_id), None)
+
+    # ⚠ Сайта нет в списке — это «расписание выключено», а не поломка: отбор тот
+    # же самый, которым круг и берёт сайты в работу.
+    if mine is None:
+        return {'on': False, 'shift': False, 'next_in': -1, 'made': 0, 'norm': 0}
+
+    now = datetime_offset_now(int(offset_hours))
+    per_day = int(await site_seconds(site_id, MAIL_ROUND_PER_DAY_SETTING)
+                  or MAIL_ROUND_PER_DAY)
+
+    return {
+        'on': True,
+        'shift': schedule_now(json_column_list(mine['schedule']),
+                              now.hour * 60 + now.minute),
+        'next_in': round_slot_left(MAIL_ROUND_KEY, site_id, 'шаблонам'),
+        'made': await round_day_count('mail', {'site_id': site_id},
+                                      date_column='created_at',
+                                      offset_hours=int(offset_hours),
+                                      unknown=-1, what='шаблонам'),
+        # Норма сайта — дневная норма анкеты, умноженная на число включённых:
+        # круг обходит каждую своей рукой.
+        'norm': per_day * len(await _profiles(site_id)),
+    }
 
 
 async def _gate(site: dict, minutes: int) -> bool:

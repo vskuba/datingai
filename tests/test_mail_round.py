@@ -791,3 +791,89 @@ class TestNameCounts:
             await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
 
         assert await _names(gid) == ['template_1']
+
+
+class TestRoundState:
+    """Что круг сделает дальше — отвечает **он сам**, а не страница.
+
+    ⚠⚠ Заведено по живому разбору 20.10.2026. Заготовки удалили сразу после
+    захода, и час до следующего читался как поломка: список пуст, к соседу
+    ничего не идёт, и никакого способа узнать, что круг просто держит паузу.
+    Разбор занял час и кончился тем, что всё работало.
+
+    ⚠ Сторожим главное — что считает **сервер теми же выражениями**, какими
+    работает круг. Повтори страница этот расчёт, он разошёлся бы с кругом на
+    первой правке: грабля, которая здесь уже случалась дважды (причина пустого
+    пула и значок потолка инициативы).
+    """
+
+    async def test_the_state_comes_from_the_round_itself(self):
+        """Счёт суток, смену и срок берём у круга, а не считаем заново."""
+        import inspect
+
+        from src.dating.mail_round import mail_round_state
+
+        code = inspect.getsource(mail_round_state)
+
+        for mark in ('round_sites(', 'schedule_now(', 'round_slot_left(',
+                     'round_day_count('):
+            assert mark in code, f'состояние считает своё, а не круговое: {mark}'
+
+    async def test_schedule_off_is_not_a_breakage(self, auth_client, clean):
+        """Расписание выключено — это `on: False`, а не отказ и не пустота.
+
+        Отбор тот же самый, которым круг берёт сайты в работу (`_sites`), и
+        «сайта в списке нет» значит ровно «не работаем», а не «что-то сломалось».
+        """
+        from src.dating.mail_round import mail_round_state
+
+        before = (await auth_client.get(
+            f'/api/dating/site/{SITE}/template-schedule')).json()['result']
+        try:
+            await auth_client.put(f'/api/dating/site/{SITE}/template-schedule-on',
+                                  json={'template_schedule_on': False})
+
+            got = await mail_round_state(SITE)
+
+            assert got['on'] is False
+            assert got['made'] == 0 and got['norm'] == 0
+        finally:
+            await auth_client.put(
+                f'/api/dating/site/{SITE}/template-schedule-on',
+                json={'template_schedule_on': before['template_schedule_on']})
+
+    async def test_the_norm_counts_every_enabled_girl(self, auth_client, clean):
+        """Норма сайта — дневная норма анкеты, умноженная на число включённых.
+
+        ⚠ Круг обходит **каждую своей рукой**, и норма сайта без этого множителя
+        показывала бы три там, где он напишет пятьдесят семь.
+        """
+        from src.dating.mail_round import mail_round_state
+
+        await _girl('Аня')
+        await _girl('Вера')
+        await _girl('Зоя', enabled=0)
+        await _revive()
+
+        was = await _settings(auth_client, template_per_day='3')
+        try:
+            await auth_client.put(f'/api/dating/site/{SITE}/template-schedule-on',
+                                  json={'template_schedule_on': True})
+            await _revive()
+
+            got = await mail_round_state(SITE)
+
+            # Выключенная в норму не идёт: круг её не берёт вовсе.
+            assert got['norm'] == 6, got
+        finally:
+            await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
+
+    async def test_the_handle_carries_the_state(self, auth_client, clean):
+        """Состояние приезжает **тем же ответом**, что расписание: страница
+        рисует их одной строкой, и второй запрос ради трёх чисел был бы лишним."""
+        got = (await auth_client.get(
+            f'/api/dating/site/{SITE}/template-schedule')).json()['result']
+
+        assert 'round' in got, 'ручка расписания больше не несёт состояние круга'
+        for key in ('on', 'shift', 'next_in', 'made', 'norm'):
+            assert key in got['round'], f'в состоянии нет {key}'

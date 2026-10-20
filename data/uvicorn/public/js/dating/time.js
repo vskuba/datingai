@@ -124,3 +124,21 @@ export function timeAgoSec(sec) {
 
     return `${Math.floor(left / 86400)} дн назад`;
 }
+
+// Сколько ждать — словами: «через 36 мин». Зеркало `timeAgoSec` и **с той же
+// лесенкой**: секунды, минуты, часы, дни. Два разных порога на один вопрос
+// («много это или мало») читались бы как две разные меры времени.
+//
+// ⚠ Меньше десяти секунд — «вот-вот», а не «через 3 с»: столько же идёт сам
+// запрос, и точность здесь обещала бы больше, чем есть.
+export function timeLeftSec(sec) {
+    const left = Math.floor(Number(sec) || 0);
+
+    if (left <= 0) return 'вот-вот';
+    if (left < 10) return 'вот-вот';
+    if (left < 60) return `через ${left} с`;
+    if (left < 3600) return `через ${Math.floor(left / 60)} мин`;
+    if (left < 86400) return `через ${Math.floor(left / 3600)} ч`;
+
+    return `через ${Math.floor(left / 86400)} дн`;
+}

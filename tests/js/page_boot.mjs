@@ -66,7 +66,7 @@ const timeShift = esc, logStamp = esc;
 // функции. Ровно это стенд и поймал при первой правке.
 // ⚠ Обратных кавычек здесь быть не может — заглушка сама лежит в шаблонной
 // строке, и первая же кавычка обрывает её (поймано этой же правкой).
-const timeAgo = esc, timeAgoSec = esc;
+const timeAgo = esc, timeAgoSec = esc, timeLeftSec = esc;
 const showNotification = () => {};
 `.trim();
 

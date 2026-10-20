@@ -25,6 +25,10 @@ from src.auth.auth import AuthUser, auth_admin_required, auth_required
 # Смены — те же, что у анкеты, и разбирает их тот же код: второй набор правил
 # разошёлся бы с первым (`schedule.py`).
 from src.dating.chat_intention import chat_intention_do_allowed
+# ⚠ Состояние круга спрашивается у самого круга, а не считается здесь: ручка
+# только отдаёт. Импорт **на уровне модуля** — круга «домен → роутер → домен»
+# он не даёт: `mail_round` зовёт роутер переменных отложенно, внутри функции.
+from src.dating.mail_round import mail_round_state
 from src.dating.schedule import (schedule_check, schedule_dump,
                                         schedule_load)
 from src.dating.site_setting import site_seconds
@@ -698,14 +702,22 @@ async def site_template_schedule_get(site_id: int,
 
     Returns:
         dict: `schedule` — смены, `template_schedule_on` — исполнять ли их,
-        `template_per_day` — сколько заготовок в сутки (настройка сайта).
+        `template_per_day` — сколько заготовок в сутки (настройка сайта),
+        `round` — что круг сделает дальше (`mail_round_state`).
 
     ⚠ Число в сутки приходит **здесь же**: страница показывает расписание и селект
     одной строкой, и второй запрос ради одного числа был бы лишним.
+
+    ⚠⚠ Состояние круга — **тоже здесь, и считает его круг**, а не страница. После
+    захода сайт ждёт час, и всё это время список выглядит ровно как при поломке:
+    пусто и молча. Своя арифметика «когда же он придёт» на странице разошлась бы
+    с кругом на первой правке — та же грабля, что уже была с причиной пустого
+    пула и значком потолка инициативы.
     """
     found = await site_template_schedule(int(site_id))
+    state = await mail_round_state(int(site_id))
 
-    return {'result': {'site_id': int(site_id), **found}}
+    return {'result': {'site_id': int(site_id), **found, 'round': state}}
 
 
 @router.put('/{site_id}/template-schedule', include_in_schema=False)
