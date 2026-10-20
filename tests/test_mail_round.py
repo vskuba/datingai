@@ -69,6 +69,12 @@ async def clean():
 
     ⚠ **Анкеты тоже.** С 2026-10-16 норма считается на анкету, и чужая строка
     `profile` с прошлого теста была бы чужой нормой в этом.
+
+    ⚠⚠ **И реестр переменных — он сайту нужен.** С 20.10.2026 круг проверяет
+    заготовку тем же `mail_check`, что и правка руками, а тот отвергает метку,
+    которой нет в реестре. Сайт без единой переменной — условие, в котором
+    годной заготовки с меткой не бывает вовсе: у живого сайта реестр есть, и
+    стенд обязан его повторять, иначе проверяется небывалое.
     """
     from mysql_.mysql_ import mysql_get_db_async
 
@@ -76,9 +82,21 @@ async def clean():
         async with mysql_get_db_async() as db:
             await db.execute('DELETE FROM mail WHERE site_id = %s', (SITE,))
             await db.execute('DELETE FROM profile WHERE site_id = %s', (SITE,))
+            await db.execute('DELETE FROM mail_var WHERE site_id = %s', (SITE,))
+            await db.connection.commit()
+
+    async def registry():
+        async with mysql_get_db_async() as db:
+            for name, source in (('girl_name', 'profile'),
+                                 ('companion_name', 'companion'),
+                                 ('question_to_companion', 'live')):
+                await db.execute(
+                    'INSERT INTO mail_var (site_id, name, source, title)'
+                    ' VALUES (%s, %s, %s, %s)', (SITE, name, source, name))
             await db.connection.commit()
 
     await wipe()
+    await registry()
 
     yield
 
@@ -877,3 +895,58 @@ class TestRoundState:
         assert 'round' in got, 'ручка расписания больше не несёт состояние круга'
         for key in ('on', 'shift', 'next_in', 'made', 'norm'):
             assert key in got['round'], f'в состоянии нет {key}'
+
+
+class TestTheRoundChecksTheDraft:
+    """⚠⚠ Круг проверяет заготовку **тем же `mail_check`**, что и правка руками.
+
+    Писал он прямым `INSERT`, то есть мимо проверки, — и это стоило двум анкетам
+    всей рассылки. 20.10.2026 агент выдумал метку `[[recipient_name]]` вместо
+    `companion_name`; круг записал, а пул по такому шаблону не собирается вовсе
+    («не заполнено — recipient_name»), и письма от этих анкет просто перестали
+    готовиться.
+
+    ⚠ Судья у соседа на это не опора: у него предел проб, и после него он
+    отдаёт что есть. Проверка нужна **на нашей стороне**, у самой записи.
+    """
+
+    async def test_an_invented_mark_is_not_saved(self, auth_client, clean,
+                                                 monkeypatch):
+        """Метки нет в реестре — заготовка не ложится в базу."""
+        gid = await _girl('Ника')
+
+        async def invented(site_id, variables, girl=None):
+            return 'Good evening, [[recipient_name]]. How was your day?'
+
+        monkeypatch.setattr(round_, 'mail_write', invented)
+
+        was = await _settings(auth_client, template_per_day='2')
+        try:
+            made = await _write(SITE, 0)
+        finally:
+            await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
+
+        assert made == 0, 'негодная заготовка всё-таки записана'
+        assert await _names(gid) == [], 'в списке анкеты появился брак'
+
+    async def test_a_good_draft_still_passes(self, auth_client, clean, monkeypatch):
+        """⚠ Проверка не должна отвергать годное: метка из реестра проходит.
+
+        Сторож нужен в паре с первым — иначе «ничего не сохраняем» выглядело бы
+        как исправная проверка.
+        """
+        gid = await _girl('Злата')
+
+        async def fine(site_id, variables, girl=None):
+            return 'Hello! [[question_to_companion]]'
+
+        monkeypatch.setattr(round_, 'mail_write', fine)
+
+        was = await _settings(auth_client, template_per_day='1')
+        try:
+            made = await _write(SITE, 0)
+        finally:
+            await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
+
+        assert made == 1, 'годная заготовка не сохранилась'
+        assert await _names(gid) == ['template_1']

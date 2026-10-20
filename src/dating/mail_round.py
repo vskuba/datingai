@@ -106,6 +106,7 @@ from setting_.setting_ import setting_get
 from src.dating.json_column import json_column_list, json_column_load
 from src.dating.round import (round_day_count, round_sites, round_sites_run,
                               round_slot_due, round_slot_left, round_slot_mark)
+from src.dating.mail import mail_check
 from src.dating.mail_agent import DatingMailAgentError, mail_write
 from src.dating.schedule import schedule_now
 from src.dating.site_setting import site_seconds
@@ -342,6 +343,22 @@ async def _write(site_id: int, offset_hours: int) -> int:
             # аватарка в списке, а имя с ключом лишь сбивало (три Елены — три
             # пары одинаковых `elena_` в одном списке).
             name = f'{MAIL_ROUND_NAME_HEAD}{n + 1}'
+
+            # ⚠⚠ **Проверяем тем же `mail_check`, что и правка руками.** Круг
+            # писал прямым `INSERT`, то есть мимо проверки, — и это стоило двум
+            # анкетам всей рассылки: 20.10.2026 агент выдумал метку
+            # `[[recipient_name]]` вместо `companion_name`, круг записал, а пул
+            # по такому шаблону не собирается вовсе («не заполнено —
+            # recipient_name»). Судья у соседа брак пропустил: у него предел
+            # проб, и после него он отдаёт что есть.
+            #
+            # ⚠ Негодную заготовку **не сохраняем и не переписываем**: вторая
+            # попытка стоит вызова LLM и упрётся в ту же склонность модели.
+            # Недостающее доберёт следующий заход — предел про сутки.
+            why = mail_check(name, body, {row['name'] for row in known})
+            if why:
+                logger_info(f'[dating] шаблон анкеты #{gid} забракован: {why}')
+                break
 
             async with mysql_get_db_async() as db:
                 await db.execute(
