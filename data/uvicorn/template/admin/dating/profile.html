@@ -4017,16 +4017,17 @@
         cursor: pointer;
     }
 
-    .tmpl-per-day select {
-        margin-left: auto;
-        /* ⚠ Не шире содержимого. На «Шаблонах» колонка узкая, и растянуться было
-           некуда; в «Переписке» она вдвое шире — и селект с «2» занимал всю
-           строку, читаясь как поле ввода, а не как выбор из четырёх. */
-        flex: 0 0 auto;
-        max-width: 55%;
-    }
+    /* Норма заготовок в сутки — поле ввода. ⚠ Было два правила на один селектор
+       подряд; слиты в одно заодно с переводом на `input`.
 
-    .tmpl-per-day select {
+       ⚠ Ширина по числу, а не по доле строки: прежний `max-width: 55%` был про
+       селект, которому надо вместить самый длинный пункт набора. Здесь внутри
+       одно-два знака плюс стрелки, и доля от ширины колонки растягивала бы поле
+       там, где колонка шире. */
+    .tmpl-per-day input {
+        margin-left: auto;
+        flex: 0 0 auto;
+        width: 58px;
         padding: 1px 4px;
         border: 1px solid #e5e7eb;
         border-radius: 5px;
@@ -16170,15 +16171,37 @@
 
         slot('tmplPerDay').addEventListener('change', async () => {
             const site = siteId();
+
+            // ⚠ **Набор проверял себя сам, поле — нет.** Из трёх пунктов нельзя
+            // было выбрать ноль или пустоту, а набрать их в поле так же легко,
+            // как тройку. Граница здесь та же, что в реестре (`min: 1`), и это не
+            // придирка: ноль прошёл бы в настройку молча и выключил занятие
+            // **вторым** способом — а выключают его галочкой расписания рядом.
+            //
+            // ⚠ Проверку дублирует сервер (`_number_check` по границам реестра),
+            // и это правильно: форма не единственный вход. Здесь она ради ответа
+            // словами — отказ ручки человек увидел бы как «не сохранилось».
+            const perDay = Number(slot('tmplPerDay').value);
+            if (!Number.isInteger(perDay) || perDay < 1) {
+                showNotification('Заготовок в сутки — целое число, не меньше 1',
+                    'error');
+                await tmplScheduleLoad();
+
+                return;
+            }
+
             try {
                 // ⚠ Настройка живёт в общем наборе сайта, и переписывается он целиком:
                 // шлём то, что есть, с заменённым одним ключом.
                 const now = (await getData(`${BASE}/api/dating/site/${site}`))
                     .result.settings || {};
+                // ⚠ Уезжает **проверенное число**, а не сырая строка поля: иначе
+                // «007» и « 3 » легли бы в настройку как есть. У набора такого
+                // вопроса не было — там значения задавала сама разметка.
                 await putData(`${BASE}/api/dating/site/${site}`,
-                    {settings: {...now, template_per_day: slot('tmplPerDay').value}});
-                if (tmplSaved) tmplSaved.template_per_day = Number(slot('tmplPerDay').value);
-                showNotification(`В сутки будет ${slot('tmplPerDay').value} новых заготовок`,
+                    {settings: {...now, template_per_day: String(perDay)}});
+                if (tmplSaved) tmplSaved.template_per_day = perDay;
+                showNotification(`В сутки будет ${perDay} новых заготовок`,
                     'success');
             } catch (e) {
                 showNotification('Не сохранилось: ' + e.message, 'error');
