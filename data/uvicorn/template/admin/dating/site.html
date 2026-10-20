@@ -543,12 +543,20 @@
         const shown = new Set();
 
         let html = groups.map(group => {
-            // ⚠ `kind: 'hidden'` — настройка есть, а строки у неё нет: её правят
-            // не полем, а чем-то на той же вкладке (отбор выходов — галочками в
-            // пуле). В `shown` она всё равно попадает, иначе уехала бы в «Прочее».
+            // ⚠ Строки нет у двух родов настроек, и поводы у них разные:
+            //
+            // `kind: 'hidden'` — правится не полем, а чем-то на **этой же**
+            // вкладке (отбор выходов — галочками в пуле);
+            // `hidden: true` — правится на **другой странице** и здесь не
+            // показывается вовсе (`template_per_day` живёт у расписания
+            // шаблонов). Два поля на одно значение — это два места, где его
+            // правят, и вечный вопрос, какое главное.
+            //
+            // ⚠ В `shown` обе всё равно попадают, иначе уехали бы в «Прочее».
+            const noRow = (spec) => spec.kind === 'hidden' || spec.hidden;
             const rows = known.filter(spec => spec.group === group.key
-                                              && spec.kind !== 'hidden');
-            known.filter(spec => spec.group === group.key && spec.kind === 'hidden')
+                                              && !noRow(spec));
+            known.filter(spec => spec.group === group.key && noRow(spec))
                  .forEach(spec => shown.add(spec.key));
             rows.forEach(spec => shown.add(spec.key));
 

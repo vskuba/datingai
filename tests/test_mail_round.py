@@ -950,3 +950,40 @@ class TestTheRoundChecksTheDraft:
 
         assert made == 1, 'годная заготовка не сохранилась'
         assert await _names(gid) == ['template_1']
+
+
+class TestTheNormLivesInOnePlace:
+    """⚠⚠ Норма заготовок правится **у расписания шаблонов**, а не в двух местах.
+
+    Поле стояло и на «Настройках сайтов», и рядом со списком шаблонов — одно
+    значение с двумя полями. Это два места, где его правят, и вечный вопрос,
+    какое главное; расходятся такие пары молча.
+
+    ⚠ Запись из реестра при этом **не убрана**: `site_seconds` берёт оттуда
+    умолчание, а `_number_check` — границы. Снятая запись сняла бы и проверку,
+    и значение стало бы любым.
+    """
+
+    def test_the_setting_is_hidden_from_the_settings_page(self):
+        """Признак `hidden` стоит, а `kind` остался числовым."""
+        from src.dating.site_setting import SITE_KNOWN
+
+        spec = SITE_KNOWN['template_per_day']
+
+        assert spec.get('hidden') is True, 'норма вернулась на страницу настроек'
+        assert spec['kind'] == 'number', 'поле перестало быть числовым'
+        assert spec['min'] == 1, 'у нормы пропала нижняя граница'
+
+    async def test_the_registry_still_carries_it(self, auth_client):
+        """⚠ Странице ключ всё равно отдаётся — с пометкой.
+
+        Не отдай мы его вовсе, страница сочла бы ключ чужим и показала в «Своих
+        настройках»: он не исчез бы, а переехал на соседнюю вкладку.
+        """
+        known = (await auth_client.get('/api/dating/site')).json()['result']['known']
+        mine = {row['key']: row for row in known}
+
+        assert 'template_per_day' in mine, 'ключ пропал из реестра страницы'
+        assert mine['template_per_day']['hidden'] is True
+        # Соседняя настройка рядом — рисуется как обычно.
+        assert mine['template_every']['hidden'] is False
