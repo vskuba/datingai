@@ -55,6 +55,9 @@ const timeFull = esc, logRender = () => '', pagerRender = () => {};
 // верхнем уровне. datingSiteFill — первый же await стартового IIFE: без заглушки
 // вызов не доходит до await, и модуль падает с «tab before initialization».
 const DATING_SITE_KEY = 'x', datingSiteFill = async () => {}, face = () => '';
+// Заглушка лиц: обе страницы раздела ставят перехват НА ВЕРХНЕМ УРОВНЕ, рядом с
+// layoutRestore, — иначе первые же картинки успели бы промахнуться до него.
+const faceFallback = () => {};
 const datingPanelPaint = () => {};
 const timeShift = esc, logStamp = esc;
 // Возраст словами из dating_time.js. ⚠ Нужны здесь потому, что страница берёт

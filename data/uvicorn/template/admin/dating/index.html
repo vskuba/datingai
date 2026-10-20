@@ -566,7 +566,7 @@
     // показывает лицо, имя и почту — точке состояния, бейджам работы и значку
     // тревоги места в ней нет; журнала на странице нет вовсе, и `logRender` с
     // `logStamp` ей больше не нужны. Всё это осталось на «Профилях».
-    import {esc, pagerRender} from '{{ static_url('js/dating/view.js') }}';
+    import {esc, faceFallback, pagerRender} from '{{ static_url('js/dating/view.js') }}';
     // Расписание сменами — общее с вкладкой «Письма рассылка» на «Профилях»: вид
     // и правила ввода там те же, а вопросы разные (`schedule.js`).
     import {scheduleBandBind, scheduleBodyHtml, scheduleCheck, scheduleSort}
@@ -772,8 +772,11 @@
             // «Профилях»: одна учётка должна выглядеть одинаково на обеих
             // страницах.
             el.innerHTML = '<span class="prof-who">'
-                + `<img class="profile-face" src="${esc(row.photo || '')}" alt="" referrerpolicy="no-referrer"`
-                + ' onerror="this.style.visibility=\'hidden\'">'
+                // ⚠ Имя в `alt` — из него `faceFallback` берёт букву заглушки,
+                // когда фотография не загрузилась; правило одно на обе страницы
+                // и живёт в `view.js`.
+                + `<img class="profile-face" src="${esc(row.photo || '')}"`
+                + ` alt="${esc(row.name || row.login || '')}" referrerpolicy="no-referrer">`
                 + '<span class="prof-who-text">'
                 // Имя режется многоточием в узкой колонке — полное отдаём подсказкой.
                 // ⚠ Возраст — **рядом с именем, а не внутри него**: у имени
@@ -3704,6 +3707,9 @@
     });
 
     layoutRestore();
+    // ⚠ До первой отрисовки списка: перехват ловит промах загрузки картинки, а
+    // грузиться они начинают в тот же миг, как попали в DOM.
+    faceFallback();
     pageTabPaint();
     sitesLoad();
 

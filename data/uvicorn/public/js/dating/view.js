@@ -38,6 +38,48 @@ export function face(photo, cls = 'profile-face') {
         + ' referrerpolicy="no-referrer">';
 }
 
+// Классы лиц, которым положена заглушка. ⚠ Список закрытый, и `work-who-face`
+// в него не входит намеренно: лицо в шапке — **один переиспользуемый узел** с
+// `id`, его адрес меняют на каждую выбранную анкету. Подмени его на `span`, и
+// следующей анкете менять было бы нечего. Здесь только те лица, что строятся
+// заново на каждую отрисовку списка.
+const FACE_STUB_CLASSES = ['profile-face', 'mail-face'];
+
+export function faceFallback(root = document) {
+    // Фотографию отдаёт **сам сайт знакомств**, у нас лежит только адрес; между
+    // браузером оператора и его Cloudflare случается всё — VPN, проверка,
+    // залежавшийся неудачный ответ (`max-age` там год). Прежде такой промах
+    // прятал картинку (`onerror` → `visibility: hidden`), и строка выходила
+    // безликой: «фотографии нет» и «фотография не доехала» выглядели одинаково.
+    //
+    // ⚠ Слушаем **на перехвате** (`true`): `error` у картинки не всплывает, и
+    // обычный слушатель на документе не сработал бы вовсе.
+    root.addEventListener('error', (event) => {
+        const el = event.target;
+        if (!(el instanceof HTMLImageElement)) return;
+        if (!FACE_STUB_CLASSES.some(cls => el.classList.contains(cls))) return;
+
+        faceStub(el);
+    }, true);
+}
+
+function faceStub(el) {
+    // Имя берём из `alt`: там ему и место — это подпись к картинке, а не наша
+    // выдумка ради заглушки. Нет имени — остаётся пустая клетка прежнего
+    // размера, то есть ровно прежнее поведение.
+    const name = String(el.getAttribute('alt') || '').trim();
+    const stub = document.createElement('span');
+
+    stub.className = `${el.className} face-stub`;
+    stub.textContent = name ? name[0].toUpperCase() : '';
+    // ⚠ Подсказка обязательна: буква сама по себе читается как «фотографии
+    // нет», а это другое состояние — и лечится оно другим.
+    stub.title = name ? `${name}: фотография не загрузилась`
+        : 'фотография не загрузилась';
+
+    el.replaceWith(stub);
+}
+
 export function statusTitle(row) {
     if (row.status === 'online') {
         return 'вход подтверждён ' + String(row.last_seen_at || '').slice(0, 19).replace('T', ' ')
