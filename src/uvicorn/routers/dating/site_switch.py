@@ -882,18 +882,17 @@ async def site_template_schedule(site_id: int) -> dict:
         row = await db.fetchone()
 
     per_day = await site_seconds(site_id, 'template_per_day')
-    # ⚠ Срок жизни приходит здесь же: список шаблонов подписывает каждой строке,
-    # сколько ей осталось, и второй запрос ради одного числа был бы лишним.
-    keep = await site_seconds(site_id, 'template_keep')
 
+    # ⚠ Срока жизни здесь больше нет: шаблоны не устаревают, и `template_keep`
+    # снята вместе с уборкой (`mail_round`, 20.10.2026). На повтор отвечает ключ
+    # `(profile_id, uid, mail_id)`, а не сутки.
     if not row:
         return {'schedule': [], 'template_schedule_on': False,
-                'template_per_day': per_day, 'template_keep': keep}
+                'template_per_day': per_day}
 
     return {'schedule': schedule_load(row['template_schedule']),
             'template_schedule_on': bool(row['template_schedule_on']),
-            'template_per_day': per_day,
-            'template_keep': keep}
+            'template_per_day': per_day}
 
 
 async def site_mailing_schedule(site_id: int) -> dict:

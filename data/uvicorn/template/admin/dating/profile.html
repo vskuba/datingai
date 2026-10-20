@@ -3559,29 +3559,6 @@
        глядя на десяток строк, человек не понимает, почему часть из них не
        рассылается, — и лезет искать поломку. Тот же довод, что у бейджа
        «выкл» у анкеты. */
-    /* Срок жизни шаблона. ⚠ Не украшение: заготовки пишутся сами и убираются
-       сами, и без этой подписи человек не знает, доживёт ли текст, который он
-       только что поправил, до завтра. */
-    .mail-life {
-        flex: 0 0 auto;
-        font-size: 10px;
-        color: #94a3b8;
-        padding: 0 5px;
-        border-radius: 8px;
-        background: #f1f5f9;
-    }
-
-    .mail-life.keep {
-        color: #166534;
-        background: #dcfce7;
-    }
-
-    .mail-life.gone {
-        color: #b91c1c;
-        background: #fee2e2;
-        font-weight: 600;
-    }
-
     .mail-off {
         flex: 0 0 auto;
         padding: 1px 5px;
@@ -9908,7 +9885,7 @@
             return;
         }
 
-        box.innerHTML = mailIn.map((row, index) => {
+        box.innerHTML = mailIn.map((row) => {
             const place = [row.age ? `${row.age}` : '', row.place]
                 .filter(Boolean).join(' · ');
 
@@ -14672,69 +14649,6 @@
         }
     }
 
-    // Сколько шаблону осталось жить — строкой в списке.
-    //
-    // ⚠ **Считаем по тому же правилу, по какому убирает круг** (`_sweep` в
-    // `mail_round.py`): срок из настройки сайта, плюс предохранитель —
-    // самые свежие числом в дневную норму не трогаются даже старыми. Расходись эти
-    // два правила, список обещал бы удаление, которого не будет, или наоборот.
-    //
-    // ⚠ Настройка «не удалять» — не пустая строка, а прямой ответ: «не удаляется».
-    // Пустое место человек прочитал бы как «не посчитали».
-    function mailLife(row, index) {
-        const keep = Number((tmplSaved || {}).template_keep || 0);
-        if (!keep) {
-            return '<span class="mail-life" title="настройка сайта «Удалять шаблоны'
-                + ' письма старше» — не удалять">живёт</span>';
-        }
-
-        if (mailLifeSafe.includes(row.id)) {
-            return '<span class="mail-life keep" title="самые свежие шаблоны уборка'
-                + ' не трогает, даже старые: список не должен пустеть">запас</span>';
-        }
-
-        const days = mailLifeDays(row.created_at);
-        if (days === null) return '';
-
-        const left = keep - days;
-        if (left <= 0) {
-            return '<span class="mail-life gone" title="старше срока — уйдёт'
-                + ' ближайшим заходом круга">уходит</span>';
-        }
-
-        return `<span class="mail-life" title="шаблон уйдёт через ${left}`
-            + ` ${_daysWord(left)}: срок из настроек сайта">${left}`
-            + ` ${_daysWord(left)}</span>`;
-    }
-
-    // Кого уборка бережёт как запас — считается в `listPaint`, а здесь читается:
-    // список нужен целиком, а `mailLife` вызывается по строке.
-    let mailLifeSafe = [];
-
-    // Сколько полных суток шаблону. `null` — даты нет, и говорить нечего.
-    function mailLifeDays(created) {
-        const raw = String(created || '').replace('T', ' ');
-        if (raw.length < 10) return null;
-
-        // ⚠ Разбираем как UTC: с сервера всё приходит в UTC, и `new Date` без «Z»
-        // счёл бы метку местной — сутки на границе поясов уехали бы.
-        const at = Date.parse(raw.slice(0, 19).replace(' ', 'T') + 'Z');
-        if (Number.isNaN(at)) return null;
-
-        return Math.floor((Date.now() - at) / 86400000);
-    }
-
-    function _daysWord(n) {
-        const two = n % 100;
-        if (two >= 11 && two <= 14) return 'дней';
-
-        const one = n % 10;
-        if (one === 1) return 'день';
-        if (one >= 2 && one <= 4) return 'дня';
-
-        return 'дней';
-    }
-
     // Оба списка грузим разом, а не по переключению вкладки. ⚠ Не из лени:
     // шаблоны показывают, сколько в них переменных, и подсвечивают незнакомые —
     // им нужен реестр; а список переменных показывает, сколько шаблонов каждую
@@ -14798,14 +14712,6 @@
             return;
         }
 
-        // ⚠ Порядок для расчёта срока — **тот же, что у уборки**: свежие первыми.
-        // Считай мы по порядку списка, «бережём свежие N» указывало бы не на тех.
-        const fresh = [...mails]
-            .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
-            .slice(0, Number((tmplSaved || {}).template_per_day || 0))
-            .map(one => one.id);
-        mailLifeSafe = fresh;
-
         // Номер страницы правим здесь, а не при смене анкеты: страниц могло
         // стать меньше — и та, на которой человек стоял, показала бы пустоту.
         const pages = Math.ceil(mails.length / TMPL_PAGE);
@@ -14814,7 +14720,7 @@
 
         slot('list').innerHTML = mails
             .slice(tmplPage * TMPL_PAGE, (tmplPage + 1) * TMPL_PAGE)
-            .map((row, index) => {
+            .map((row) => {
             // Владелицу строки показывает аватарка: имя теперь только число, и
             // чей это текст — различают по лицу. Имена однофамилиц различить
             // глазами нечем, в том и смысл.
@@ -14836,7 +14742,6 @@
             // Число переменных, а не их список: в колонке 320 пикселей перечень
             // имён вытеснил бы само название.
             + `<span class="mail-vars" title="переменных в письме">${row.vars.length}</span>`
-            + mailLife(row, index)
             // Крестик удаления — последним в строке, у самого края. Знак рисуем
             // инлайновым svg, а не символом «×» и не эмодзи: тем же приёмом, что
             // корзинка расписания, и по той же причине — у шрифтовых значков вид
