@@ -987,3 +987,52 @@ class TestTheNormLivesInOnePlace:
         assert mine['template_per_day']['hidden'] is True
         # Соседняя настройка рядом — рисуется как обычно.
         assert mine['template_every']['hidden'] is False
+
+
+class TestTheNormIsAProduct:
+    """⚠⚠ Максимум заготовок — **произведение**, и оба множителя видны.
+
+    «Сколько включённых анкет, столько заготовок и пишем»: максимум сайта это
+    дневная норма анкеты, умноженная на число включённых. По паре «22 / 57»
+    видно, все ли шаблоны на месте; голое «57» не отвечает на вопрос «почему
+    столько» и не говорит, что менять, если мало.
+
+    ⚠ Считает **сервер** тем же `_profiles`, которым круг отбирает анкеты в
+    работу: выключенная в норму не идёт. Посчитай страница сама — она считала бы
+    по своему списку, а он отобран иначе (вкладка, страница, фильтр).
+    """
+
+    async def test_the_norm_multiplies_by_enabled_girls(self, auth_client, clean):
+        """Норма = «на анкету» × «включённых», и множители приходят рядом."""
+        from src.dating.mail_round import mail_round_state
+
+        await _girl('Ада')
+        await _girl('Бэлла')
+        await _girl('Вита', enabled=0)
+        await _revive()
+
+        was = await _settings(auth_client, template_per_day='4')
+        try:
+            await auth_client.put(f'/api/dating/site/{SITE}/template-schedule-on',
+                                  json={'template_schedule_on': True})
+            await _revive()
+
+            got = await mail_round_state(SITE)
+        finally:
+            await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
+
+        assert got['per_day'] == 4, got
+        assert got['girls'] == 2, 'выключенная анкета попала в число множителей'
+        assert got['norm'] == 8, 'норма перестала быть произведением'
+
+    async def test_the_multipliers_come_with_the_product(self, auth_client, clean):
+        """⚠ Множители обязаны приезжать **вместе** с произведением.
+
+        Иначе страница посчитает их сама — и разойдётся с кругом на первой же
+        правке отбора анкет.
+        """
+        got = (await auth_client.get(
+            f'/api/dating/site/{SITE}/template-schedule')).json()['result']['round']
+
+        for key in ('per_day', 'girls', 'norm', 'made'):
+            assert key in got, f'в состоянии нет {key}'

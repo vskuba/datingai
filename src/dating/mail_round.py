@@ -194,7 +194,8 @@ async def mail_round_state(site_id: int) -> dict:
         dict: `on` — исполняется ли расписание, `shift` — идёт ли смена **сейчас**,
         `next_in` — секунд до следующего захода (`0` — возьмётся на ближайшем тике,
         `-1` — спросить не вышло), `made` и `norm` — сколько заготовок у сайта за
-        сегодня и сколько положено.
+        сегодня и сколько положено, `per_day` и `girls` — множители нормы
+        (на анкету и сколько включённых).
 
     ⚠⚠ **Отвечает сервер теми же выражениями, что решают за круг.** Та же
     `schedule_now` на смену, тот же `round_slot_left` на срок, тот же
@@ -220,11 +221,14 @@ async def mail_round_state(site_id: int) -> dict:
     # ⚠ Сайта нет в списке — это «расписание выключено», а не поломка: отбор тот
     # же самый, которым круг и берёт сайты в работу.
     if mine is None:
-        return {'on': False, 'shift': False, 'next_in': -1, 'made': 0, 'norm': 0}
+        return {'on': False, 'shift': False, 'next_in': -1,
+                'made': 0, 'norm': 0, 'per_day': 0, 'girls': 0}
 
     now = datetime_offset_now(int(offset_hours))
     per_day = int(await site_seconds(site_id, MAIL_ROUND_PER_DAY_SETTING)
                   or MAIL_ROUND_PER_DAY)
+    # ⚠ Спрашиваем **один раз**: ниже число нужно и множителем, и произведением.
+    girls = len(await _profiles(site_id))
 
     return {
         'on': True,
@@ -235,9 +239,17 @@ async def mail_round_state(site_id: int) -> dict:
                                       date_column='created_at',
                                       offset_hours=int(offset_hours),
                                       unknown=-1, what='шаблонам'),
-        # Норма сайта — дневная норма анкеты, умноженная на число включённых:
+        # ⚠ Норма сайта — дневная норма анкеты, умноженная на число включённых:
         # круг обходит каждую своей рукой.
-        'norm': per_day * len(await _profiles(site_id)),
+        #
+        # ⚠⚠ Множители отдаются **рядом с произведением**, а не считаются
+        # страницей: «57» без «3 × 19» не отвечает на вопрос «почему столько»,
+        # а посчитай их страница сама — у неё появился бы свой способ узнать,
+        # кого круг берёт в работу, и разойтись с `_profiles` ему ничто не
+        # мешает (выключенная анкета в норму не идёт).
+        'norm': per_day * girls,
+        'per_day': per_day,
+        'girls': girls,
     }
 
 
