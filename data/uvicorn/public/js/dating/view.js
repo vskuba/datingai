@@ -63,23 +63,6 @@ export function faceFallback(root = document) {
     }, true);
 }
 
-function faceStub(el) {
-    // Имя берём из `alt`: там ему и место — это подпись к картинке, а не наша
-    // выдумка ради заглушки. Нет имени — остаётся пустая клетка прежнего
-    // размера, то есть ровно прежнее поведение.
-    const name = String(el.getAttribute('alt') || '').trim();
-    const stub = document.createElement('span');
-
-    stub.className = `${el.className} face-stub`;
-    stub.textContent = name ? name[0].toUpperCase() : '';
-    // ⚠ Подсказка обязательна: буква сама по себе читается как «фотографии
-    // нет», а это другое состояние — и лечится оно другим.
-    stub.title = name ? `${name}: фотография не загрузилась`
-        : 'фотография не загрузилась';
-
-    el.replaceWith(stub);
-}
-
 export function statusTitle(row) {
     if (row.status === 'online') {
         return 'вход подтверждён ' + String(row.last_seen_at || '').slice(0, 19).replace('T', ' ')
@@ -371,6 +354,23 @@ export function pagerPages(pages, current, around = PAGER_AROUND) {
 // Счёт строк в подвале. Узлом с `textContent`, а не разметкой: строку собирает
 // вызывающий из имени предмета, и вставлять её как HTML значило бы без нужды
 // доверять ей разметку.
+function faceStub(el) {
+    // Имя берём из `alt`: там ему и место — это подпись к картинке, а не наша
+    // выдумка ради заглушки. Нет имени — остаётся пустая клетка прежнего
+    // размера, то есть ровно прежнее поведение.
+    const name = String(el.getAttribute('alt') || '').trim();
+    const stub = document.createElement('span');
+
+    stub.className = `${el.className} face-stub`;
+    stub.textContent = name ? name[0].toUpperCase() : '';
+    // ⚠ Подсказка обязательна: буква сама по себе читается как «фотографии
+    // нет», а это другое состояние — и лечится оно другим.
+    stub.title = name ? `${name}: фотография не загрузилась`
+        : 'фотография не загрузилась';
+
+    el.replaceWith(stub);
+}
+
 function pagerCount(text) {
     const el = document.createElement('span');
     el.className = 'pane-count';
