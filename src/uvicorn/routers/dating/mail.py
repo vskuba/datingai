@@ -125,8 +125,6 @@ class DatingMailDraft(BaseModel):
     """
 
     site_id: int = Field(..., gt=0, description='Сайт: его переменные')
-    hint: str = Field('', max_length=500,
-                      description='Пожелание: о чём письмо, какой тон')
     profile_id: int = Field(0, ge=0,
                             description='Открытая анкета: её карточка — основа '
                             'рассказа о себе. Ноль — анкета не спрашивается')
@@ -157,8 +155,7 @@ async def mail_draft(payload: DatingMailDraft,
     girl = await _girl(payload.profile_id)
 
     try:
-        drafted = await mail_write(int(payload.site_id), known, payload.hint,
-                                   girl=girl)
+        drafted = await mail_write(int(payload.site_id), known, girl=girl)
     except DatingMailAgentError as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
                             detail=str(e)) from e

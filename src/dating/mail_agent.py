@@ -75,10 +75,7 @@ from src.dating.mail import (MAIL_VAR_RE,
                                    MAILING_NAME_CHANCE,
                                    MAILING_NAME_SETTING,
                                    MAILING_NO_GREETING_CHANCE,
-                                   MAILING_NO_GREETING_SETTING,
-                                   MAILING_STORIES,
-                                   MAILING_STORY_CHANCE,
-                                   MAILING_STORY_SETTING)
+                                   MAILING_NO_GREETING_SETTING)
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_agent_create,
                                        rhapsody_api_agent_find, rhapsody_api_chat_ask)
 
@@ -342,19 +339,18 @@ async def mail_agent_fill(profile: dict, site_id: int,
 
 
 async def mail_write(site_id: int, variables: list[dict],
-                            hint: str = '', girl: dict = None) -> str:
+                            girl: dict = None) -> str:
     """Просит агента написать черновик шаблона письма.
 
     Args:
         site_id: сайт-закладка: по нему заводится агент и берётся реестр.
         variables: реестр сайта — все переменные, **включая `companion`** и
             `live`: в шаблоне нужны все, ими и подставится конкретика.
-        hint: пожелание человека: о чём письмо, какой тон.
         girl: анкета-владелица шаблона — её карточка едет агенту как
-            `mail_anchor`, рассказ о себе пишется ею. Ноль анкет — ноль anchor.
+            `girl_bio`, рассказ о себе пишется ею. Ноль анкет — ноль рассказа.
 
-    ⚠ **Анкета-владелица на входе — с 2026-10-17, и это якорь, а не слова письма.**
-    С 2026-10-16 шаблон принадлежит одной анкете, и с этого дня молчать о ней
+    ⚠ **Анкета-владелица на входе — с 2026-10-17, и это опора рассказа, а не
+    слова письма.** С 2026-10-16 шаблон принадлежит одной анкете, и с этого дня молчать о ней
     значило бы писать ей вслепую: три заготовки одной владелицы выходили одним
     текстом, потому что модель брала первую пришедшую фразу. Карточка её — основа
     рассказа о себе; в текст она входит своими словами, не цитатой, и вразрез с
@@ -449,16 +445,12 @@ async def mail_write(site_id: int, variables: list[dict],
                 else random.choice(MAILING_GREETINGS_NAME if man_name
                                    else MAILING_GREETINGS))
 
-    story = (random.choice(MAILING_STORIES)
-             if random.random() < await percent_share(
-                 int(site_id), MAILING_STORY_SETTING, MAILING_STORY_CHANCE)
-             else '')
-
     answer = await _chat_ask(
         int(site_id),
         agent_id=agent_id,
         question='Напиши шаблон письма.',
-        # ⚠ **Карточка владелицы — якорь, карточки собеседника — нет вовсе.**
+        # ⚠ **Карточка владелицы — опора рассказа (`girl_bio`), карточки
+        # собеседника — нет вовсе.**
         # С тех пор как шаблон принадлежит одной анкете, её сведения — не беда,
         # а опора: без них модель писала «я люблю своё дело» там, где у владелицы
         # хореография, и молчала там, где есть о чём сказать. Но входит она как
@@ -491,10 +483,10 @@ async def mail_write(site_id: int, variables: list[dict],
                    # `text_marks_inline` у соседа.
                    'mail_var_live': ','.join(row['name'] for row in must
                                              if row.get('source') == 'live'),
-                   'mail_hint': str(hint or '').strip() or 'обычное первое письмо',
-                   # ⚠⚠ **Приёма и длины здесь больше нет: обе оси бросает шаг
-                   # «Жребий» этого же workflow** (позиция 0) — `dice_mail_angle`
-                   # и `dice_mail_length`. Объявления входящими сняты, и присылка
+                   # ⚠⚠ **Темы рассказа, угла, длины и подписи здесь больше нет:
+                   # их бросает шаг «Жребий» этого же workflow** (позиция 0) —
+                   # `dice_mail_story`, `dice_mail_angle`, `dice_mail_length`,
+                   # `dice_mail_sign`. Объявления входящими сняты, и присылка
                    # любой из них роняет **весь** вызов: сторож отвечает `400`.
                    #
                    # ⚠ Довод, ради которого оси заводили, в силе — разнообразие
@@ -505,12 +497,10 @@ async def mail_write(site_id: int, variables: list[dict],
                    # Пусто — письмо начинается сразу с мысли; промпт гасит секцию
                    # и запрещает приветствие прямо (`[<if mail_greeting>]`).
                    'mail_greeting': greeting,
-                   # ⚠ Пустая строка гасит секцию у соседа (`[<if mail_story>]`):
-                   # «рассказа не нужно» промптом не говорят, его просто не просят.
-                   'mail_story': story,
                    # Карточка владелицы — тем же приёмом, что био вопроса
-                   # (`_card` одна на оба). Пуста — секция гасится у соседа.
-                   'mail_anchor': _card(girl) if girl else '',
+                   # (`_card` одна на оба): «кто пишет», не цитата. Пуста —
+                   # секция гасится у соседа.
+                   'girl_bio': _card(girl) if girl else '',
                    # Её собственные прошлые письма, не весь сайт: повторяется
                    # владелица для адресата в первую очередь собой.
                    'mail_avoid': _avoid_text(

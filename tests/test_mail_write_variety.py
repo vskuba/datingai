@@ -16,8 +16,7 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating import mail_agent
-from src.dating.mail import (MAILING_GREETINGS, MAILING_GREETINGS_NAME,
-                             MAILING_STORIES)
+from src.dating.mail import MAILING_GREETINGS, MAILING_GREETINGS_NAME
 from src.dating.mail_agent import mail_write
 from src.dating.percent import percent_share
 
@@ -34,7 +33,7 @@ VARS = [
 ]
 
 # Владелица шаблона — в том виде, в каком её читает `_card`: карточка в колонке
-# `profile`, логин рядом. Её сведения — якорь рассказа о себе.
+# `profile`, логин рядом. Её сведения — опора рассказа о себе (`girl_bio`).
 GIRL = {'id': 90_001, 'login': 'elena@example.com',
         'profile': {'name': 'Елена', 'age': 29, 'city': 'Киев',
                     'about': 'хореограф, ставлю танцы детям'}}
@@ -113,46 +112,25 @@ def agent(monkeypatch):
 
 
 class TestTheLotIsOurs:
-    """⚠⚠ Рассказ о себе приходит готовым, а не просьбой «будь разной».
+    """⚠⚠ Разнообразие задаёт жребий, а не просьба «будь разной».
 
-    ⚠ Приёма и длины здесь больше нет: обе оси бросает шаг «Жребий» самого
-    `dating_mail_write` (`dice_mail_angle`, `dice_mail_length`), объявления
-    входящими сняты — присылка любой роняет весь вызов `400`-м.
+    ⚠ С 2026-10-19 **все оси сочинения писем бросает шаг «Жребий»** самого
+    `dating_mail_write` (`dice_mail_angle`, `dice_mail_length`, `dice_mail_sign`,
+    `dice_mail_story`), объявления входящими сняты — присылка любой роняет весь
+    вызов `400`-м. Панель от жребия держит только зачин и имя (тесты ниже).
     """
 
-    async def test_neither_angle_nor_length_is_sent(self, agent, share):
-        """⚠⚠ Имён нет в запросе вовсе — сосед отвергнет весь вызов.
+    async def test_the_rolled_axes_are_not_sent(self, agent, share):
+        """⚠⚠ Имён снятых переменных нет в запросе вовсе — сосед отвергнет вызов.
 
         Сторож считает **имена** присланного, а не значения, и отвергает запрос
         целиком: одна забытая переменная останавливает занятие, а не портит его.
         """
         await mail_write(STAND_SITE, VARS)
 
-        assert 'mail_angle' not in agent, \
-            'приём уезжает соседу — он ответит 400 и шаблон не сочинится'
-        assert 'mail_length' not in agent, \
-            'длина уезжает соседу — он ответит 400 и шаблон не сочинится'
-
-    async def test_the_story_is_a_topic_not_a_plea(self, agent, share):
-        """Выпал рассказ — приходит **тема**, а не «расскажи что-нибудь о себе».
-
-        Дай модели список и попроси выбрать — она возьмёт первый пункт, ровно как
-        брала «you're trouble» из всех приёмов флирта.
-        """
-        await share('mailing_story_percent', 100)
-        await mail_write(STAND_SITE, VARS)
-
-        assert agent['mail_story'] in MAILING_STORIES
-
-    async def test_no_story_means_an_empty_section(self, agent, share):
-        """⚠ Пустая строка гасит секцию у соседа (`[<if mail_story>]`).
-
-        «Рассказа не нужно» промптом не говорят — его просто не просят.
-        """
-        await share('mailing_story_percent', 0)
-        await mail_write(STAND_SITE, VARS)
-
-        assert agent['mail_story'] == ''
+        for gone in ('mail_angle', 'mail_length', 'mail_story', 'mail_hint'):
+            assert gone not in agent, \
+                f'{gone} уезжает соседу — он ответит 400 и шаблон не сочинится'
 
 
 class TestTheQuestionLivesInTheRegistry:
@@ -245,9 +223,10 @@ class TestPercent:
 
     async def test_zero_is_a_decision_not_an_absence(self, share):
         """⚠⚠ Ноль означает «никогда», а не «настройки нет»."""
-        await share('mailing_story_percent', 0)
+        await share('mailing_no_greeting_percent', 0)
 
-        assert await percent_share(STAND_SITE, 'mailing_story_percent', 0.4) == 0.0
+        assert await percent_share(STAND_SITE, 'mailing_no_greeting_percent',
+                                  0.15) == 0.0
 
     async def test_an_absent_setting_gives_the_default(self, share):
         assert await percent_share(STAND_SITE, 'mailing_question_percent', 0.25) == 0.25
@@ -277,33 +256,14 @@ class TestTheNameIsMandatoryUntilAskedOtherwise:
         assert 'companion_name' in agent['mail_var_must']
 
 
-class TestTheStoriesStayOurs:
-    """⚠ Рассказ о себе — последняя ось, которую выбираем мы.
-
-    Приём и длина уехали в шаг «Жребий» самого `dating_mail_write`, и число их
-    граней стережёт теперь сюита соседа: оно видно только там, где брошен жребий.
-    """
-
-    def test_the_stories_fit_any_girl(self):
-        """⚠⚠ Рассказ обязан подходить **любой** анкете — их сорок.
-
-        «После репетиции» годится одной, «варила кофе» — каждой. Проверка грубая,
-        по словам-приметам, и это нарочно: тонкой проверки тут не бывает, а забыть
-        правило, дописывая восьмую тему, — дело одной минуты.
-        """
-        concrete = ('хореограф', 'репетици', 'Киев', 'лаборатор', 'офис')
-
-        for story in MAILING_STORIES:
-            assert not any(mark.lower() in story.lower() for mark in concrete), story
-
-
-class TestTheOwnerIsTheAnchor:
-    """⚠⚠ Карточка владелицы уезжает агенту, карточка адресата — нет.
+class TestTheOwnerCardTravels:
+    """⚠⚠ Карточка владелицы уезжает агенту (`girl_bio`), карточка адресата — нет.
 
     С 2026-10-16 шаблон принадлежит одной анкете, и с этого дня молчать о ней
     значило бы писать ей вслепую: три заготовки одной владелицы выходили одним
-    текстом — модель брала первую пришедшую фразу. Но входит карточка **якорем**,
-    а не цитатой: приём выбирает, какой факт нужен, слова модель берёт свои.
+    текстом — модель брала первую пришедшую фразу. Но входит карточка **опорой
+    рассказа**, а не цитатой: приём выбирает, какой факт нужен, слова модель
+    берёт свои.
 
     ⚠ Про получателя по-прежнему не говорим ничего — его поля приедут метками при
     сборке пула. Отдав их здесь, мы получали «Diana here! I'm a choreographer
@@ -313,8 +273,8 @@ class TestTheOwnerIsTheAnchor:
     async def test_the_owner_card_travels(self, agent, share):
         await mail_write(STAND_SITE, VARS, girl=GIRL)
 
-        assert 'Елена' in agent['mail_anchor']
-        assert 'хореограф' in agent['mail_anchor']
+        assert 'Елена' in agent['girl_bio']
+        assert 'хореограф' in agent['girl_bio']
 
     async def test_no_owner_means_an_empty_section(self, agent, share):
         """⚠ Кнопка без открытой анкеты — **пустая строка**, а не «об анкете ничего
@@ -323,7 +283,7 @@ class TestTheOwnerIsTheAnchor:
         """
         await mail_write(STAND_SITE, VARS)
 
-        assert agent['mail_anchor'] == ''
+        assert agent['girl_bio'] == ''
 
     async def test_the_companion_card_never_travels(self, agent, share):
         """⚠ Имена переменных сторожатся у соседа: присылка необъявленной роняет

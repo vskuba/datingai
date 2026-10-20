@@ -23,11 +23,12 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.percent import percent_share
+from src.dating.site_setting import SITE_KNOWN
 
 pytestmark = pytest.mark.mail
 
 STAND_SITE = 999_343
-KEY = 'mailing_story_percent'
+KEY = 'mailing_question_percent'
 
 
 @pytest.fixture
@@ -70,9 +71,20 @@ class TestItReadsTheSetting:
     """Перевод процентов в долю и умолчание."""
 
     async def test_an_unset_key_gives_the_fallback(self, site_set):
+        """⚠ Ключ в реестре — молчит реестр, а не fallback звонящего.
+
+        Ключ выехал из реестра (`mailing_story_percent`) — вот тогда и только
+        тогда заговорит довод звонящего: реестру сказать нечего.
+        """
         await site_set(KEY, None)
 
-        assert await percent_share(STAND_SITE, KEY, 0.4) == pytest.approx(0.4)
+        assert await percent_share(STAND_SITE, KEY, 0.4) == pytest.approx(
+            int(SITE_KNOWN[KEY]['default']) / 100)
+
+        await site_set('mailing_story_percent', None)
+
+        assert await percent_share(STAND_SITE, 'mailing_story_percent',
+                                   0.4) == pytest.approx(0.4)
 
     async def test_a_number_becomes_a_share(self, site_set):
         await site_set(KEY, 25)

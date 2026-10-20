@@ -95,7 +95,7 @@ def agent(monkeypatch):
     """
     calls = []
 
-    async def fake(site_id, variables, hint='', girl=None):
+    async def fake(site_id, variables, girl=None):
         calls.append(int(site_id))
 
         return f'Hi [[companion_name]]! Draft #{len(calls)}'
@@ -465,7 +465,7 @@ class TestWrite:
         gid = await _girl('Елена')
         calls = []
 
-        async def broken(site_id, variables, hint='', girl=None):
+        async def broken(site_id, variables, girl=None):
             calls.append(1)
             raise DatingMailAgentError('браузер соседа занят')
 
@@ -483,7 +483,7 @@ class TestWrite:
 
     async def test_empty_answer_is_not_saved(self, auth_client, clean, monkeypatch):
         """Агент ответил пусто — пустой шаблон в список не кладём."""
-        async def empty(site_id, variables, hint='', girl=None):
+        async def empty(site_id, variables, girl=None):
             return ''
 
         await _girl('Вера')
@@ -539,7 +539,7 @@ class TestOrder:
         for n in range(4):
             await _put(f'вчерашний{n}', days_ago=9, profile_id=gid)
 
-        async def broken(site_id, variables, hint='', girl=None):
+        async def broken(site_id, variables, girl=None):
             raise DatingMailAgentError('браузер соседа занят')
 
         monkeypatch.setattr(round_, 'mail_write', broken)
@@ -779,7 +779,7 @@ class TestNameCounts:
         """Ответ — только текст: имя остаётся числом, каким бы ни был ответ."""
         gid = await _girl('Соня')
 
-        async def named(site_id, variables, hint='', girl=None):
+        async def named(site_id, variables, girl=None):
             return 'Hi [[companion_name]]!'
 
         monkeypatch.setattr(round_, 'mail_write', named)

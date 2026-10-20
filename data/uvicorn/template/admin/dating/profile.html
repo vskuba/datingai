@@ -15219,7 +15219,7 @@
                 + 'AI сгенерировать шаблон письма</button>'
                 + '<span class="mail-found">Агент напишет заготовку с '
                 + 'переменными — без имён и городов: кто кому пишет, выяснится '
-                + 'при рассылке. Название письма он читает как пожелание.</span>'
+                + 'при рассылке.</span>'
                 + '</div>'
                 + '</div>'
                 : '')
@@ -15414,18 +15414,10 @@
             note.classList.remove('bad');
         }
 
-        // Пожелание берём из названия шаблона, **если оно написано человеком**:
-        // он уже написал там, о чём письмо («Первое знакомство»), и спрашивать то
-        // же второй раз незачем. Имя по узору (`template_2`) — не пожелание: в нём
-        // только номер, агенту от него только шум. Строки старого узора
-        // (`elena_template_2`) считаются узором тоже.
-        const written = (slot('mailName') || {}).value || '';
-        const hint = /^(?:.*_)?template_\d+$/.test(written.trim()) ? '' : written;
-
         let answer;
         try {
             answer = await postData(`${BASE}/api/dating/mail/draft`,
-                {site_id: siteId(), hint, profile_id: openId || 0});
+                {site_id: siteId(), profile_id: openId || 0});
         } catch (e) {
             if (note) {
                 note.textContent = 'агент не ответил: ' + e.message;
@@ -15498,8 +15490,7 @@
 
         try {
             const draft = (await postData(`${BASE}/api/dating/mail/draft`,
-                {site_id: siteId(), hint: '',
-                 profile_id: openId || 0})).result || {};
+                {site_id: siteId(), profile_id: openId || 0})).result || {};
 
             if (!(draft.body || '').trim()) {
                 showNotification('Агент ответил пусто — попробуйте ещё раз', 'error');
