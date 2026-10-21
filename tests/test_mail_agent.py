@@ -15,8 +15,8 @@ import pytest
 
 from src.dating.mail_agent import (MAIL_AGENT_VALUE_MAX,
                                           MAIL_COMPANION_BIO_MAX,
-                                          MAIL_QUESTION_MAX, _card,
-                                          _companion_card, _json_chunk, _letter,
+                                          MAIL_QUESTION_MAX, _companion_card,
+                                          _girl_bio, _json_chunk, _letter,
                                           _question, _values, _wanted_text)
 
 pytestmark = pytest.mark.mail
@@ -25,42 +25,54 @@ pytestmark = pytest.mark.mail
 WANTED = {'girl_name', 'girl_city'}
 
 
-class TestCard:
-    """Сведения об анкете — то, из чего агент берёт ответы."""
+class TestGirlBio:
+    """Сведения об анкете — то, из чего агент берёт ответы.
 
-    def test_card_is_text_with_labels(self):
-        """⚠ Текстом, а не JSON: промпт читает LLM, и подпись «Имя» отвечает на
-        вопрос «что это», а ключ `site_uid` — нет."""
-        card = _card({'login': 'lena@mail.ru',
-                      'profile': {'name': 'Diana', 'age': 36, 'city': 'Kyiv'}})
+    ⚠⚠ С 21.10.2026 собирает их **общий с чатом** `agent_bio`, а не свой `_card`.
+    Отсюда и английская проза от первого лица вместо строк «Имя: …»: прежняя
+    форма была второй, и она отстала — параметры анкеты до писем не доезжали.
+    """
 
-        assert 'Имя: Diana' in card
-        assert 'Возраст: 36' in card
-        assert 'Город: Kyiv' in card
+    def test_it_is_prose_in_english(self):
+        """⚠ Проза, а не перечень: в таком виде биографию ждёт workflow соседа,
+        и на этом же языке ведётся переписка."""
+        got = _girl_bio({'login': 'lena@mail.ru',
+                         'profile': {'name': 'Diana', 'age': 36, 'city': 'Kyiv'}})
+
+        assert 'My name is Diana.' in got, got
+        assert 'I am 36 years old.' in got, got
+        assert 'I live in Kyiv.' in got, got
 
     def test_missing_fields_are_skipped(self):
-        """⚠ Строка «Город: » учит модель, что пустое значение допустимо, и она
-        начинает возвращать такие же."""
-        card = _card({'login': 'x@mail.ru', 'profile': {'name': 'Diana'}})
+        """⚠ Пустое поле не упоминается вовсе: строка «Город: » учит модель, что
+        пустое значение допустимо, и она начинает возвращать такие же."""
+        got = _girl_bio({'login': 'x@mail.ru',
+                         'profile': {'name': 'Diana', 'city': 'Kyiv'}})
 
-        assert 'Город' not in card
-        assert 'Возраст' not in card
+        assert 'years old' not in got, got
 
     def test_zero_age_is_not_a_fact(self):
         """Ноль в возрасте значит «не знаем» — так его кладёт разбор карточки."""
-        assert 'Возраст' not in _card({'login': 'x', 'profile': {'age': 0}})
+        got = _girl_bio({'login': 'x', 'profile': {'age': 0, 'city': 'Kyiv',
+                                                   'about': 'x'}})
+
+        assert 'years old' not in got, got
 
     def test_long_about_is_cut(self):
-        """Биография бывает на две страницы, а нужны из неё имя, город и род
-        занятий: остальное раздувает промпт, не добавляя ответов."""
-        card = _card({'login': 'x', 'profile': {'about': 'я' * 5000}})
+        """Биография бывает на две страницы, а раздувает она промпт больше, чем
+        добавляет ответов. ⚠ Предел у писем **свой**, ниже чатовского."""
+        got = _girl_bio({'login': 'x', 'profile': {'about': 'я' * 5000}})
 
-        assert len(card) < 2000
+        assert len(got) < 2000, len(got)
 
-    def test_empty_profile_says_so(self):
-        """Пустой промпт хуже честного «ничего не известно»: во втором случае
-        агент промолчит, в первом — начнёт выдумывать."""
-        assert 'ничего не известно' in _card({'login': '', 'profile': None})
+    def test_empty_profile_is_empty(self):
+        """⚠⚠ Пустая строка, а не фраза «ничего не известно».
+
+        Прежний сборщик возвращал такую фразу, и она уезжала агенту как данные.
+        У соседа секция `girl_bio` гасится **по пустоте**: пустая строка молчит,
+        а фраза занимала бы место в контексте, ничего не сообщая.
+        """
+        assert _girl_bio({'login': '', 'profile': None}) == ''
 
 
 class TestWanted:
@@ -557,3 +569,111 @@ class TestNothingIsMandatory:
 
         assert "allowed = ([row for row in known if row['name'] != INVITE_SLOT_MAN]" in code, \
             'жребий имени перестал править списком разрешённых'
+
+
+class TestTheBioIsBuiltOnce:
+    """⚠⚠⚠ Сведения об анкете собирает **один** сборщик — общий с чатом.
+
+    Здесь стоял свой `_card`: четыре строки с русскими подписями. Параллельно
+    `agent_bio` нарастили параметрами анкеты (21 ключ реестра), и письма об этом
+    не узнали — их сборщик остался прежним с сентября.
+
+    Цена была двойная. **Писатель не видел того, ради чего `girl_bio`
+    заводили**: у анкеты в параметрах хореография и джиу-джитсу, а в письмо шла
+    одна проза «о себе» — выходило «я люблю своё дело» там, где есть о чём
+    сказать. И **страница врала**: вкладка «Информация» показывает `agent_bio`
+    под подписью «то, что уезжает агенту», а уезжало другое.
+
+    ⚠ Расхождение было не решением, а расползанием: одну функцию улучшили,
+    вторую забыли.
+    """
+
+    def test_the_bio_comes_from_the_shared_builder(self):
+        """⚠ Своего сборщика у писем нет: `_girl_bio` — тонкая дверь к общему."""
+        import inspect
+
+        from src.dating import mail_agent
+
+        code = inspect.getsource(mail_agent._girl_bio)
+
+        assert 'agent_bio(' in code, 'письма снова собирают био сами'
+
+    def test_every_letter_agent_uses_it(self):
+        """Все три занятия почты зовут одну дверь, а не каждое своё."""
+        import inspect
+        import re
+
+        from src.dating import mail_agent
+
+        code = re.sub(r'#.*', '', inspect.getsource(mail_agent))
+        sends = re.findall(r"'girl_bio':\s*([a-zA-Z_]+)\(", code)
+
+        assert sends, 'girl_bio больше никуда не уезжает — проверка устарела'
+        assert set(sends) == {'_girl_bio'}, f'био собирают разные функции: {set(sends)}'
+
+    def test_the_params_are_there(self):
+        """⚠ Ради этого всё и сводилось: писатель видит параметры анкеты."""
+        from src.dating.mail_agent import _girl_bio
+
+        got = _girl_bio({'profile': {
+            'name': 'Diana', 'age': 36, 'city': 'Kyiv', 'about': 'choreographer.',
+            'parameters': {'height': '172 cm', 'hobby': 'Jiu Jitsu'}}})
+
+        assert 'Height: 172 cm' in got, got
+        assert 'Hobby: Jiu Jitsu' in got, got
+        assert 'My name is Diana' in got, got
+
+
+class TestTheLetterBudgetIsItsOwn:
+    """⚠⚠ Сборщик общий, а бюджет **свой** — тот же размен, что у `companion_bio`.
+
+    В чате контекст держит одну биографию, у вопроса получателю — две, и за ними
+    ещё правила письма. У ноды Dating стоит `qwen-small`, и живой прогон уже
+    упирался: «request (3940 tokens) exceeds the available context size».
+
+    ⚠⚠⚠ Режется **по частям**: проза собрана в одну строку, и `text_trim_lines`
+    по общему тексту унёс бы её целиком — анкета осталась бы без имени.
+    """
+
+    def test_the_prose_survives_a_long_about(self):
+        """⚠⚠ Главная проверка: длинное «о себе» не уносит имя."""
+        from src.dating.mail_agent import _girl_bio
+
+        got = _girl_bio({'profile': {
+            'name': 'Diana', 'age': 36, 'city': 'Kyiv',
+            'about': 'очень длинная проза. ' * 200,
+            'parameters': {'height': '172 cm'}}})
+
+        assert got.startswith('My name is Diana.'), got[:80]
+        assert 'I live in Kyiv.' in got, 'город потерялся при обрезке'
+
+    def test_the_params_block_is_capped(self):
+        """Перечень режется своим пределом, строками целиком."""
+        from src.dating.mail_agent import MAIL_AGENT_PARAM_MAX, _girl_bio
+        from src.dating.profile_param import PROFILE_PARAM_KEYS
+
+        got = _girl_bio({'profile': {
+            'name': 'Diana', 'age': 36, 'city': 'Kyiv', 'about': 'x',
+            'parameters': {key: f'значение {key} подлиннее для предела'
+                           for key in PROFILE_PARAM_KEYS}}})
+        _, _, block = got.partition('\n\n')
+
+        assert block, 'перечень пропал вовсе'
+        assert len(block) <= MAIL_AGENT_PARAM_MAX, len(block)
+        assert not block.endswith('…'), 'строка обрезана посередине'
+
+    def test_the_budget_is_smaller_than_the_chat_one(self):
+        """⚠ Предел письма обязан быть **ниже** чатовского: иначе вернётся тот
+        самый отказ по контексту."""
+        from src.dating.mail_agent import MAIL_AGENT_PARAM_MAX
+        from src.dating.profile_param import PROFILE_PARAM_BIO_MAX
+
+        assert MAIL_AGENT_PARAM_MAX < PROFILE_PARAM_BIO_MAX, \
+            'почта получила чатовский бюджет — контекст qwen-small его не держит'
+
+    def test_an_empty_card_is_empty(self):
+        """⚠ Пустая строка законна: у соседа секция `girl_bio` тогда гасится."""
+        from src.dating.mail_agent import _girl_bio
+
+        assert _girl_bio({'profile': {}}) == ''
+        assert _girl_bio({}) == ''
