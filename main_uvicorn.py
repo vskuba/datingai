@@ -36,6 +36,8 @@ from dashboard.src.panel.panel_backup_api import panel_backup_api_router
 from dashboard.src.panel.panel_seed_api import panel_seed_api_router
 from dashboard.src.page.e2e.e2e_api import e2e_api_router
 from dashboard.src.panel.panel_setting_api import panel_setting_api_router
+from dashboard.src.panel.panel_translate_api import panel_translate_api_router
+from src.rhapsody.rhapsody_api import rhapsody_api_translate
 from dashboard.src.panel.panel_user_api import panel_user_api_router
 from uvicorn_.uvicorn_validation import uvicorn_validation_handler
 
@@ -292,6 +294,9 @@ app.include_router(panel_auth_api_router())
 app.include_router(dashboard.router)
 app.include_router(site_router.router)
 app.include_router(panel_setting_api_router())
+# Перевод куска текста: флаги у полей панели. ⚠ Переводчик — доводом: каркас не
+# знает, чем переводят, а у нас это служебный агент за стеной соседа.
+app.include_router(panel_translate_api_router(translate=rhapsody_api_translate))
 # ⚠ Страница «Тесты → E2E» общая (submodule `dashboard`), а права — наши.
 # Каталог прав здесь крупный: `install:manage` это «отвечаешь ли ты за
 # установку», и E2E ровно про неё — прогон поднимает браузер и ходит по

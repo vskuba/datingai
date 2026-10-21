@@ -584,6 +584,39 @@ async def rhapsody_api_chat_talk(agent_id: int, question: str,
             'intentions': _intentions(data)}
 
 
+async def rhapsody_api_translate(text: str, language_from: str = 'ru',
+                                 language_to: str = 'en') -> str:
+    """Переводит кусок текста служебным агентом соседа. Пусто — пустая строка.
+
+    ⚠ Ручка **вне узла** и доступна всякому вошедшему: у соседа она держится на
+    агенте `translator`, своего узла не спрашивает и в разговоры не пишет.
+    Поэтому здесь нет ни `agent_id`, ни номера обмена — переводу нечего помнить.
+
+    ⚠⚠ Метки заслоняет **вызывающий**, а не эта дверь. У агента `translator`
+    правила про них нет (четыре: только перевод, сохранять стиль, не переводить
+    имена собственные, уже на целевом — вернуть как есть), и переведи он
+    `[[companion_name]]` — письмо сломается **без единой ошибки**: метка не
+    подставится, а уедет в текст словами. Но какие метки бывают, знает предметная
+    область, а не дверь: у нас это `[[имя]]`, у соседа — ещё `%имя%` и
+    `[<if …>]`. Заслонка живёт в `src/dating/translate.py`.
+
+    ⚠ Срок — агентский (`RHAPSODY_API_TIMEOUT_AGENT`): за ручкой стоит прогон
+    workflow с вызовом модели, а не чтение таблицы. Сам сосед ждёт шестьдесят
+    секунд и отвечает `504`.
+    """
+    body = str(text or '').strip()
+    if not body:
+        return ''
+
+    data = await _request('POST', '/translate',
+                          {'text': body,
+                           'language_from': str(language_from or 'ru').strip(),
+                           'language_to': str(language_to or 'en').strip()},
+                          timeout=RHAPSODY_API_TIMEOUT_AGENT)
+
+    return str(data.get('result') or '')
+
+
 async def rhapsody_api_chat_ask(agent_id: int, question: str,
                                 variables: dict = None) -> str:
     """Спрашивает агента и отдаёт его ответ строкой.

@@ -3655,6 +3655,16 @@
         gap: 4px;
     }
 
+    /* Строка подписи: сама подпись слева, действия над полем справа.
+       ⚠ Флаги перевода стоят в строке подписи, а не под полем: действие над
+       текстом должно быть видно там, где текст, и не отодвигать само поле. */
+    .mail-label-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+    }
+
     .mail-label {
         font-size: 10px;
         font-weight: 700;
@@ -4134,6 +4144,7 @@
 <script type="module">
     import {getData, postData, putData, deleteData} from '{{ static_url('js/api.js') }}';
     import {showNotification} from '{{ static_url('js/notification.js') }}';
+    import {textTranslateSection} from '{{ static_url('js/text_translate.js') }}';
     // Модальное окно — общее для всех страниц панели (`modal.js`).
     import {modalClose, modalOpen} from '{{ static_url('js/modal.js') }}';
     import {esc, faceFallback, onlineDot, warnBadge, seenText, timeShort, timeFull,
@@ -15444,7 +15455,13 @@
             + '</div>'
 
             + '<div class="mail-field">'
+            // ⚠ Подпись и флаги перевода — одной строкой: действие над текстом
+            // стоит там, где текст. Флаги вешает `varTitleFlags` после
+            // отрисовки — разметку им строит общий модуль каркаса.
+            + '<div class="mail-label-row">'
             + '<span class="mail-label">Подпись — для человека и подсказка агенту</span>'
+            + '<span data-slot="varTitleFlags"></span>'
+            + '</div>'
             + `<input type="text" data-slot="varTitle" maxlength="190" value="${esc(item.title)}"`
             + ` placeholder="Имя девушки"${CAN_EDIT_SITE ? '' : ' disabled'}>`
             + '</div>'
@@ -15483,6 +15500,38 @@
 
         const drop = slot('varDropBtn');
         if (drop) drop.addEventListener('click', varDrop);
+
+        varTitleFlags();
+    }
+
+    // Флаги перевода у подписи переменной.
+    //
+    // ⚠⚠ Разметку и все правила строит **общий модуль каркаса**
+    // (`dashboard/js/text_translate.js`): заслонка меток, сверка «все ли
+    // вернулись», отделение краевых пробелов и отмена через `Ctrl+Z`. Здесь
+    // только три довода, которые знает наш проект, а каркас знать не должен.
+    //
+    // ⚠ `whole: true` — поле однострочное, и выделять в нём нечего: «перевести
+    // всё» и есть смысл кнопки. Большому полю так давать нельзя — нажатие не
+    // глядя стоило бы целого текста, — потому это довод, а не догадка по виду.
+    //
+    // ⚠⚠ Метка у нас одна — `[[имя]]`, и заслонять её обязательно: переведи
+    // модель `[[companion_name]]`, и письмо сломается **без единой ошибки** —
+    // метка не подставится, а уедет в текст словами.
+    function varTitleFlags() {
+        const box = slot('varTitleFlags');
+        const field = slot('varTitle');
+        if (!box || !field || !CAN_EDIT_SITE) return;
+
+        box.innerHTML = '';
+        box.appendChild(textTranslateSection(field, {
+            translate: async (text, from, to) => (await postData(
+                `${BASE}/api/panel/translate`,
+                {text, language_from: from, language_to: to})).result,
+            marks: /\[\[[^\]]+\]\]/g,
+            notify: showNotification,
+            whole: true,
+        }));
     }
 
     // ── Где переменная участвует ─────────────────────────────────────────────

@@ -68,6 +68,7 @@ const timeShift = esc, logStamp = esc;
 // строке, и первая же кавычка обрывает её (поймано этой же правкой).
 const timeAgo = esc, timeAgoSec = esc, timeLeftSec = esc;
 const showNotification = () => {};
+const textTranslateSection = () => ({});
 `.trim();
 
 // Импорты модуля заменяем заглушками: настоящих файлов в node нет.
