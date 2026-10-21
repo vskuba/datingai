@@ -175,16 +175,6 @@ async def rhapsody_api_scenario_find(site_id: int, name: str) -> dict:
     return {}
 
 
-def _scenario_named(got: str, want: str) -> bool:
-    """Имя сценария — искомое: голое или под меткой своего сайта.
-
-    Метку в скобках носит сам сайт («импорт анкет (Ladadate)»), а ряд уже отобран
-    по номеру сайта — значит любое «want (...)» в этом ряду и есть «want» этого
-    сайта, кем бы ни была метка.
-    """
-    return got == want or got.startswith(f'{want} (')
-
-
 def rhapsody_api_scenario_forget(site_id: int = 0, name: str = '') -> None:
     """Забыть найденный сценарий — после отказа, похожего на «его больше нет».
 
@@ -797,6 +787,16 @@ async def rhapsody_api_llm_usage(node: str, days: int = RHAPSODY_API_LLM_DAYS) -
 # по-разному, поэтому списки, а не одно имя.
 RHAPSODY_API_LOGIN_KEYS = ('login', 'username', 'email', 'user')
 RHAPSODY_API_PASSWORD_KEYS = ('password', 'pass', 'pwd')
+
+
+def _scenario_named(got: str, want: str) -> bool:
+    """Имя сценария — искомое: голое или под меткой своего сайта.
+
+    Метку в скобках носит сам сайт («импорт анкет (Ladadate)»), а ряд уже отобран
+    по номеру сайта — значит любое «want (...)» в этом ряду и есть «want» этого
+    сайта, кем бы ни была метка.
+    """
+    return got == want or got.startswith(f'{want} (')
 
 
 def _intentions(data: dict) -> list:
