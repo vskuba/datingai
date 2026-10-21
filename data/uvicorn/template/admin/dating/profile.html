@@ -15526,8 +15526,16 @@
     }
 
     async function varSave() {
+        // ⚠⚠ Галочки ищем от `workEl`, как вся страница, а не от выдуманной
+        // опоры: здесь стоял `profileEl`, которого на странице нет вовсе — и
+        // `varSave` падала `ReferenceError` на **первом же** действии, до
+        // `try`. Отсюда и вид беды: ни сохранения, ни уведомления, ни
+        // красной строки — нажатие не делало ничего и молчало об этом.
+        //
+        // ⚠ Молчало именно потому, что бросок случался **до** `try`: внутри
+        // его поймала бы ветка `catch` и написала бы причину под формой.
         const uses = {};
-        (profileEl.querySelectorAll('.var-uses input[data-use]') || [])
+        workEl.querySelectorAll('.var-uses input[data-use]')
             .forEach(box => {
                 uses[box.dataset.use] = box.checked;
             });

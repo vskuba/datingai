@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<style>
+  :root{
+    --ink:#1f2430; --muted:#6b7280; --line:#cbd5e1; --bg:#f5f7fb;
+    --draft:#2f6df6; --draftbg:#eaf1ff;
+    --send:#0f9d76; --sendbg:#e6f7f0;
+    --guard:#b45309; --guardbg:#fff4e2;
+    --kill:#c0392b; --killbg:#fdeaE7;
+    --ok:#1a7f37;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:28px;background:var(--bg);color:var(--ink);
+       font:14px/1.45 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 22px;font-size:13px}
+  .lane{border-radius:14px;padding:16px 18px;margin:0 0 18px;position:relative}
+  .lane.assemble{background:var(--draftbg);border:2px solid var(--draft)}
+  .lane.deliver{background:var(--sendbg);border:2px solid var(--send)}
+  .lane>h2{margin:0 0 14px;font-size:16px;letter-spacing:.2px}
+  .lane>h2 .code{font-weight:400;color:var(--muted);font-size:12px;margin-left:8px}
+  .sw{display:inline-block;font-size:12px;font-weight:700;padding:2px 9px;
+      border-radius:20px;margin-left:8px;vertical-align:2px}
+  .sw.on{background:var(--ok);color:#fff}
+  .sw.off{background:#94a3b8;color:#fff}
+  .row{display:flex;flex-wrap:wrap;gap:12px;align-items:stretch}
+  .box{background:#fff;border:1.5px solid var(--line);border-radius:10px;
+       padding:10px 12px;min-width:150px;flex:1}
+  .box b{display:block;font-size:13px;margin-bottom:2px}
+  .box .f{color:var(--muted);font-size:11px;font-family:ui-monospace,Menlo,monospace}
+  .box .d{font-size:12px;margin-top:3px}
+  .gate{border-color:var(--guard);background:var(--guardbg)}
+  .gate b{color:var(--guard)}
+  .db{border-color:var(--draft)}
+  .arrow{align-self:center;color:var(--muted);font-size:20px;font-weight:700;padding:0 2px}
+  .down{display:flex;justify-content:center;color:var(--muted);font-size:22px;margin:-2px 0 4px;font-weight:700}
+  .guards{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .g{background:#fff;border:1.5px dashed var(--guard);color:var(--guard);
+     border-radius:8px;padding:6px 10px;font-size:12px}
+  .g b{font-size:12px}
+  .g .f{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--muted);display:block}
+  .kill{background:#fff;border:1.5px solid var(--kill);color:var(--kill);
+        border-radius:8px;padding:6px 10px;font-size:12px}
+  .pace{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  .pchip{background:#fff;border:1px solid var(--line);border-radius:8px;
+         padding:6px 10px;font-size:12px}
+  .pchip b{color:var(--draft)}
+  .deliver .pchip b{color:var(--send)}
+  .pchip .f{font-family:ui-monospace,Menlo,monospace;color:var(--muted);font-size:10.5px}
+  .status{border-radius:10px;padding:10px 14px;margin-top:6px;font-size:12.5px;
+          border:1.5px solid var(--send);background:#fff}
+  .legend{margin-top:8px;color:var(--muted);font-size:12px}
+  .cols{display:flex;gap:12px;flex-wrap:wrap}
+  .col{flex:1;min-width:280px}
+  .note{background:#fff;border-left:4px solid var(--guard);padding:8px 12px;
+        margin-top:6px;font-size:12.5px;border-radius:0 8px 8px 0}
+  .title-sw{position:absolute;top:14px;right:16px;font-size:12px}
+  code{font-family:ui-monospace,Menlo,monospace;background:#eef2f7;padding:1px 5px;border-radius:5px;font-size:11.5px}
+</style>
+</head>
+<body>
+  <h1>Массовая рассылка: как набрать и как отправить</h1>
+  <p class="sub">Две независимые половины — набор пула и доставка. У каждой свой тумблер.
+     Код: <code>mailing_round.py</code> → <code>mailing.py</code> (набор) ·
+     <code>send_round.py</code> → <code>mail_send.py</code> (отправка)</p>
+
+  <!-- ================= НАБОР ================= -->
+  <div class="lane assemble">
+    <span class="title-sw">расписание:
+      <span class="sw off">mailing_schedule_on</span></span>
+    <h2>① Набор пула <span class="code">— кто кому пишет и чем подставляется</span></h2>
+
+    <div class="row">
+      <div class="box"><b>Круг рассылки</b><span class="f">mailing_round.run · тик 60с</span>
+        <div class="d">Проверяет смену и слот <code>every=1800с</code></div></div>
+      <div class="arrow">→</div>
+      <div class="box gate"><b>Страж входа <span class="f">_gate</span></b>
+        <div class="d">Вне смены — молчит. Слот занят — не лезет. Пустое расписание = выключено</div></div>
+      <div class="arrow">→</div>
+      <div class="box"><b>Добрать пул до потолка</b><span class="f">_make · mailing_pool_max=50</span>
+        <div class="d">need = потолок − черновики; <code>limit=min(need, 200)</code></div></div>
+    </div>
+
+    <div class="down">↓ <span style="font-size:12px">mailing_make()</span></div>
+
+    <div class="row">
+      <div class="box"><b>Анкеты</b><span class="f">_girls</span><div class="d">включены и <b>в сети</b></div></div>
+      <div class="box"><b>Адресаты</b><span class="f">_people</span><div class="d">лента «онлайн» из кэша, приоритет первыми</div></div>
+      <div class="box"><b>Шаблоны</b><span class="f">mailing_templates</span><div class="d">все включённые; у каждого своя владелица</div></div>
+    </div>
+
+    <div class="note">⚠ <b>Выбор пары и шаблона — <code>_pairs</code>.</b> Каждому адресату
+       <b>одно</b> письмо за заход; анкета+шаблон берутся <b>наугад</b>
+       (<code>random.choice</code>) из свободных <b>своих</b> троек (<code>template.profile_id == girl.id</code>).
+       Не по кругу и не перебором всех пар.</div>
+
+    <div class="guards">
+      <div class="g"><b>не занят</b><span class="f">girl+uid+tpl ∉ taken (все состояния)</span></div>
+      <div class="g"><b>шаблон не потрачен</b><span class="f">uid+tpl ∉ spent (от любой)</span></div>
+      <div class="g"><b>не закрылся</b><span class="f">(girl,uid) ∉ blocked</span></div>
+      <div class="g"><b>не ответил письмом</b><span class="f">(girl,uid) ∉ answered</span></div>
+      <div class="g"><b>возраст в окне</b><span class="f">mail_age_fits · отнимает анкету</span></div>
+    </div>
+
+    <div class="down">↓ <span style="font-size:12px">_body(): подстановка переменных, жребий вопроса 25%</span></div>
+
+    <div class="row">
+      <div class="box"><b>Текст готов?</b>
+        <div class="d">дешёвые переменные первыми; <code>live</code>-вопрос — жребием на письмо</div></div>
+      <div class="arrow">→</div>
+      <div class="box kill-box"><span class="kill"><b>не хватило переменных</b> → пропуск <span class="f">MAILING_SKIP_FREE</span> (бесплатно)</span></div>
+      <div class="arrow">→</div>
+      <div class="box db"><b>Кладём в <code>mailing</code></b><span class="f">_put · status='draft'</span>
+        <div class="d"><code>INSERT IGNORE</code> — ключ <code>uq_mailing_once</code> ловит гонку</div></div>
+    </div>
+
+    <div class="pace">
+      <div class="pchip"><b>темп</b> <span class="f">mailing_every=1800с</span> — раз в полчаса, только в смену</div>
+      <div class="pchip"><b>потолок</b> <span class="f">mailing_pool_max=50</span> черновиков</div>
+      <div class="pchip"><b>за проход</b> до <span class="f">200</span> попыток</div>
+    </div>
+  </div>
+
+  <!-- ================= ОТПРАВКА ================= -->
+  <div class="lane deliver">
+    <span class="title-sw">доставка:
+      <span class="sw off">mailing_send_on</span></span>
+    <h2>② Отправка живым людям <span class="code">— единственная дверь наружу</span></h2>
+
+    <div class="row">
+      <div class="box"><b>Круг отправки</b><span class="f">send_round.run · тик 30с</span>
+        <div class="d">Обходит 4 пула; рассылка — последняя. Между пулами пауза 2с</div></div>
+      <div class="arrow">→</div>
+      <div class="box gate"><b>Три стража захода</b>
+        <div class="d">смена · <b>пауза</b> <code>send_every=180с</code> · <b>норма</b> <code>send_max_day=40</code></div></div>
+      <div class="arrow">→</div>
+      <div class="box"><b>Старейший черновик</b><span class="f">_oldest · ORDER BY id LIMIT 1</span>
+        <div class="d">draft, error='', анкета enabled и в сети</div></div>
+    </div>
+
+    <div class="guards">
+      <div class="g"><b>свежесть остуды</b><span class="f">NOT IN mail_wait_uids (в SQL)</span></div>
+      <div class="g"><b>не ответил письмом</b><span class="f">pool_mail_answered_where</span></div>
+      <div class="g"><b>анкета в сети</b><span class="f">p.status='online'</span></div>
+    </div>
+
+    <div class="down">↓ <span style="font-size:12px">mail_send_two.step(): check-send → send (CheckId свеж 10с)</span></div>
+
+    <div class="cols">
+      <div class="box" style="border-color:var(--send)"><b>Ушло ✓</b>
+        <div class="d"><code>status='sent'</code> + время. Факт окончателен</div></div>
+      <div class="box" style="border-color:var(--guard)"><b>Временный отказ (403 ×5)</b>
+        <div class="d">остаётся <code>draft</code> + <code>error</code>; остуда на получателя — <b>повтор законен</b></div></div>
+      <div class="box kill-box"><span class="kill"><b>«закрыла» (final)</b> → гасится парой навсегда</span></div>
+    </div>
+
+    <div class="pace">
+      <div class="pchip"><b>темп</b> <span class="f">send_every=180с</span> — одно письмо на пул</div>
+      <div class="pchip"><b>норма</b> <span class="f">send_max_day=40</span> писем/сайт/сутки</div>
+      <div class="pchip"><b>частота ≈</b> ~1 письмо / 3 мин (20/час) при живом пуле</div>
+    </div>
+  </div>
+
+  <div class="status" style="border-color:#94a3b8;background:#fff">
+    <b>Сейчас на сайте 343:</b>
+    <span class="sw off">mailing_schedule_on = ВЫКЛ</span>
+    <span class="sw off">mailing_send_on = ВЫКЛ</span>
+    &nbsp; 9 шаблонов (3× на анкету) готовы, в пуле <b>57 черновиков</b> ждут.
+    Ничего не набирается и не уходит, пока не включишь нужные тумблеры.
+    Шаблоны наработал <b>генератор</b> (<code>mail_round</code>, норма 3/анкету/сутки) — у него отдельный «создавать шаблоны», и он включён.
+  </div>
+
+  <div class="legend">Ключ БД: <code>uq_mailing_once (site_id, uid, mail_id)</code> — одним шаблоном человек получает письмо ровно раз на всём сайте.</div>
+</body>
+</html>

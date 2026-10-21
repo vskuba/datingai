@@ -216,3 +216,47 @@ class TestTheSelectionTakesTheFittingGirl:
         code = inspect.getsource(mailing_make)
 
         assert 'mail_age_nobody' in code, 'набор снова теряет адресатов молча'
+
+
+class TestCoverageCountsOnlyWriters:
+    """⚠ Покрытие возрастом считают те, **кому есть чем писать**.
+
+    Анкету без шаблона `_pairs` не берёт вовсе — её возраст не строит письмо.
+    Учтём его — и человек, подходящий лишь безшаблонной, исчезнет из набора
+    молча, а «никому не подошёл» наврёт числами.
+    """
+
+    @staticmethod
+    def _stub(value):
+        """Корутина, отдающая `value`: базы и походов наружу здесь нет ни одного."""
+        async def one(*args, **kwargs):
+            return value
+
+        return one
+
+    async def test_the_only_fitting_girl_without_templates_is_named(self,
+                                                                    monkeypatch):
+        from src.dating import mailing
+        from src.uvicorn.routers.dating import mail_var
+
+        # Диане 45, она под окно 40–70 — но шаблонов нет. Виктории 31, шаблон
+        # есть — но она мимо окна. Прежний код видел покрытие в Диане и молчал.
+        monkeypatch.setattr(mailing, '_girls', self._stub([_girl(45, 1), _girl(31, 2)]))
+        monkeypatch.setattr(mailing, '_people', self._stub([_man(40, 70)]))
+        monkeypatch.setattr(mailing, 'mailing_people_first',
+                            lambda people, first: people)
+        monkeypatch.setattr(mailing, '_taken', self._stub(set()))
+        monkeypatch.setattr(mailing, '_talked', self._stub(set()))
+        monkeypatch.setattr(mailing, '_mail_answered', self._stub(set()))
+        monkeypatch.setattr(mailing, 'block_pairs', self._stub(set()))
+        monkeypatch.setattr(mailing, 'mail_wait_uids', lambda site_id: [])
+        monkeypatch.setattr(mail_var, 'mail_var_rows', self._stub([]))
+
+        done = await mailing.mailing_make(
+            999_777, [{'id': 7, 'profile_id': 2}], 50)
+
+        assert done['made'] == 0
+        assert done['skipped'] == 1, 'безшаблонная анкета снова притворилась покрытием'
+        assert '40' in done['reasons'][0], done['reasons']
+        assert '45' not in done['reasons'][0], \
+            'в причине светится возраст той, кто писать не станет'
