@@ -403,3 +403,58 @@ class TestDraftEndpoint:
         assert 'id="mailWho"' not in page, 'выбор собеседника вернулся'
         assert 'companion_uid' not in page, 'адресат снова уходит в ручку'
 
+
+
+class TestTheNamesGoAsMarksToTheWriter:
+    """⚠⚠ Список переменных читают **два** агента, и нужно им разное.
+
+    **Писателю шаблона** имя нужно меткой: он эту метку в текст и вставляет, и
+    `[[girl_name]]` показывает её ровно в том виде, в каком писать. Голое имя
+    заставляло выводить форму скобок откуда-то ещё — на этом он и изобретал
+    `[[recipient_name]]`, которого нет ни в одном реестре: такой шаблон не
+    уходит никогда, и анкета остаётся без рассылки.
+
+    **Агенту значений** имя нужно голым: он отвечает JSON, и имя у него ключ, а
+    не метка. Рядом едет заготовка ответа `mail_vars_json` с настоящими ключами,
+    и скобки при голых ключах были бы двумя написаниями одного имени в одном
+    вызове — а `_values` отбросил бы `[[girl_name]]` **молча**, как чужой ключ.
+    """
+
+    def test_the_writer_sees_marks(self):
+        from src.dating.mail_agent import _wanted_text
+
+        got = _wanted_text([{'name': 'girl_name', 'title': 'The name'}], marked=True)
+
+        assert got == '[[girl_name]] — The name', got
+
+    def test_the_values_agent_sees_bare_names(self):
+        from src.dating.mail_agent import _wanted_text
+
+        got = _wanted_text([{'name': 'girl_name', 'title': 'The name'}])
+
+        assert got == 'girl_name — The name', got
+        assert '[[' not in got, 'агенту значений поехали скобки — ключ JSON сломается'
+
+    def test_a_nameless_row_still_works(self):
+        """⚠ Подписи может не быть — тогда строка это одно имя, и скобки на нём
+        всё равно стоят: метка нужна писателю независимо от подписи."""
+        from src.dating.mail_agent import _wanted_text
+
+        assert _wanted_text([{'name': 'girl_name'}], marked=True) == '[[girl_name]]'
+        assert _wanted_text([{'name': 'girl_name'}]) == 'girl_name'
+
+    def test_the_checks_never_get_brackets(self):
+        """⚠⚠ Голые имена для сверок собираются **мимо** `_wanted_text`: их
+        читает регулярка у соседа, и скобку она приняла бы за часть имени."""
+        import inspect
+
+        from src.dating import mail_agent
+
+        code = inspect.getsource(mail_agent)
+
+        for key in ('mail_var_names', 'mail_var_must', 'mail_var_live'):
+            at = code.index(f"'{key}':")
+            line = code[at:code.index('\n', at)]
+
+            assert '_wanted_text' not in line, f'{key} собирается через _wanted_text'
+            assert '[[' not in line, f'{key} поехал со скобками — регулярка соседа их не ждёт'
