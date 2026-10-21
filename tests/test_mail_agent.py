@@ -555,11 +555,13 @@ class TestNothingIsMandatory:
         assert 'весь реестр как обязательный' not in code, 'правило вернулось'
         assert "_wanted_map(allowed)" in code, 'список снова зовётся обязательным'
 
-    def test_the_dice_still_shapes_what_is_offered(self):
-        """⚠ Жребий имени остался и работает **умолчанием, а не запретом**: не
-        выпало — метку не предлагаем, и модель о ней не знает.
+    def test_the_list_is_not_filtered_here(self):
+        """⚠⚠ Жребий имени **уехал к соседу** (22.10.2026): ось `dice_mail_name`
+        стоит у шага «Жребий», и она же правит списком разрешённых в промпте.
 
-        На этом держится доля `mailing_name_percent`.
+        Панель шлёт список целиком. Отбери она — появился бы второй источник
+        правды о том, что разрешено, и он разошёлся бы с правилом промпта: ровно
+        так и появилось «Olga, it's me» (разбор — `test_mailing_name_percent`).
         """
         import inspect
 
@@ -567,8 +569,8 @@ class TestNothingIsMandatory:
 
         code = inspect.getsource(mail_agent.mail_write)
 
-        assert "allowed = ([row for row in known if row['name'] != INVITE_SLOT_MAN]" in code, \
-            'жребий имени перестал править списком разрешённых'
+        assert 'allowed = known' in code, \
+            'панель снова отбирает переменные — решать должен жребий у соседа'
 
 
 class TestTheBioIsBuiltOnce:

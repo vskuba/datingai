@@ -1,162 +1,107 @@
-"""Доля шаблонов с обращением по имени — настройкой сайта.
+"""⚠⚠⚠ Жребий имени собеседника бросает **сосед**, а не панель.
 
-## ⚠⚠ Зачем настройка
+## Как было и почему сломалось
 
-Прежде долей не управляли вовсе. Имя появлялось **случайно** — через зачин: из
-шести приёмов два были с именем, да и те лишь когда приветствие вообще выпало.
-Выходило около трети, и подвинуть её было нечем.
+Долю бросала панель (настройка `mailing_name_percent`): выпало — метка
+`companion_name` оставалась в `mail_vars`, не выпало — вычёркивалась, и модель
+про неё не знала.
 
-Имя в каждом письме читается как рассылка; совсем без имени письмо безадресно.
-Поэтому долю сделали настройкой, а умолчанием взяли ту самую треть.
+Это сломалось о правила промпта. Строка «о получателе **только** через
+`[[companion_name]]`» стояла у соседа **безусловно**, а метки в разрешённых не
+было. Модель читала разом «разрешены только girl_name и question_to_companion» и
+«обращайся через companion_name» — и выкручивалась, ставя в обращение
+единственное имя, какое видела: **имя самой анкеты**.
 
-## ⚠⚠ Что здесь легко сломать
+    #524 на проде: «Olga, it's me — [[girl_name]]. I'm writing from…»
 
-Жребий имени управляет **двумя** вещами разом, и разойдись они — настройка
-перестанет работать молча:
+Olga — это имя анкеты. Письмо обращено к ней же и подписано меткой отправителя:
+роли вывернуты наизнанку. Все пять таких писем были без метки имени; среди 42
+писем с меткой — ни одного.
 
-1. **столбец `name`** переменной `mail_vars` — из него сосед выводит список
-   обязательных меток (`text_marks_missing`): останься там
-   `companion_name`, судья у соседа завернёт безымянный шаблон как неполный;
-2. **она же целиком** — то, что видит модель: покажи ей имя, и
-   она впишет его, даже когда не просили.
+## Как стало
 
-Тест проверяет обе: сломай одну — покраснеет.
+Ось `dice_mail_name` у шага «Жребий», рядом с приёмом, длиной, подписью, темой и
+зачином — последними, кто уехал туда же. Веса 25/75. Один бросок правит **и
+правилом, и списком разрешённых**:
 
-⚠ Третьей был **зачин**: списки делились по наличию имени, чтобы приём не просил
-имени там, где метки нет. С 2026-10-20 зачин бросает сосед
-(`dice_mail_greeting`), и панель его не шлёт вовсе — согласовывать больше
-нечего.
+    allowed variables only: [<for k,v in mail_vars>]
+        [<if k != 'companion_name' or dice_mail_name == 'yes'>][[%k%]] — %v%[<endif>]
+    [<endfor>]
+
+⚠ Решение и правило живут рядом. Разнеси их, и они разойдутся молча — ровно так,
+как разошлись.
+
+## Что стережёт этот файл
+
+Панель больше не решает: ни броска, ни настройки, ни фильтра списка. Вернись
+любое — вернётся и «Olga, it's me», потому что правило о получателе у соседа
+останется под жребием.
 """
 
-import random
-
-import json
+import inspect
+import re
 
 import pytest
 
-
 from src.dating import mail_agent
-from src.dating.mail import MAILING_NAME_CHANCE, MAILING_NAME_SETTING
 from src.dating.site_setting import SITE_KNOWN
 
 pytestmark = pytest.mark.mail
 
-STAND_SITE = 999_343
 
-# Реестр сайта в том виде, в каком его получает `mail_write`.
-VARS = [
-    {'name': 'companion_name', 'source': 'companion', 'title': 'Имя получателя'},
-    {'name': 'girl_name', 'source': 'profile', 'title': 'Имя девушки'},
-    {'name': 'question_to_companion', 'source': 'live', 'title': 'Вопрос'},
-]
+class TestThePanelDoesNotRoll:
+    """⚠⚠ Броска в панели нет: его место — у соседа, рядом с правилом."""
 
+    def test_no_dice_in_the_writer(self):
+        code = inspect.getsource(mail_agent.mail_write)
 
-@pytest.fixture
-def caught(monkeypatch):
-    """Перехватывает переменные, ушедшие агенту, — к соседу не ходим."""
-    seen = {}
+        assert 'man_name' not in code, 'бросок имени вернулся в панель'
+        assert 'MAILING_NAME' not in code, 'панель снова читает долю имени'
+        assert not re.search(r'percent_share\([^)]*NAME', code), \
+            'панель снова спрашивает долю обращения по имени'
 
-    async def _ask(site_id, agent_id=0, question='', variables=None, **kw):
-        seen.update(variables or {})
+    def test_the_setting_is_gone(self):
+        """⚠ Настройки сайта тоже нет: доля задаётся весами оси у соседа.
 
-        # ответ workflow — только текст письма, без названия (2026-10-17).
-        return 'Hi there [[companion_name]]'
-
-    async def _agent(site_id, name, workflow):
-        return 1
-
-    async def _language(site_id):
-        return 'английском'
-
-    monkeypatch.setattr(mail_agent, '_chat_ask', _ask)
-    monkeypatch.setattr(mail_agent, '_agent_id', _agent)
-    monkeypatch.setattr(mail_agent, 'mail_agent_language', _language)
-    # ⚠ Отбор по занятию — не предмет этой проверки: берём реестр целиком.
-    monkeypatch.setattr('src.uvicorn.routers.dating.mail_var.mail_var_used',
-                        lambda row, use: True)
-
-    return seen
-
-
-def _fix_dice(monkeypatch, *, name: bool):
-    """Заставляет выпасть (или не выпасть) именно жребий имени.
-
-    ⚠ Подменяем **настройку**, а не `random`: так проверяется вся цепочка —
-    чтение доли, сравнение, ветвление, — а не одна её середина.
-    """
-    async def _percent(site_id, key, fallback):
-        if key == MAILING_NAME_SETTING:
-            return 1.0 if name else 0.0
-
-        return 0.0
-
-    monkeypatch.setattr(mail_agent, 'percent_share', _percent)
-
-
-
-# ⚠⚠ Прежде `mail_var_must` и `mail_var_names` уезжали отдельными переменными
-# и собирались побайтово одинаково; с 2026-10-21 сосед выводит обоих из
-# `mail_vars` циклом по ключам. Поведение то же, носитель другой — и сторожа
-# смотрят туда же, куда посмотрит он.
-def _names(caught) -> str:
-    """Ключи `mail_vars` — прежние `mail_var_must`/`mail_var_names`.
-
-    ⚠ Ровно то, что выведет сосед циклом `[<for k,v in mail_vars>]%k%,[<endfor>]`.
-    """
-    return ','.join(json.loads(caught['mail_vars']))
-
-
-class TestTheDiceDrivesEverything:
-    """⚠⚠ Главное: выпавший жребий меняет все три вещи разом."""
-
-    async def test_the_name_is_required_when_it_wins(self, caught, monkeypatch):
-        _fix_dice(monkeypatch, name=True)
-
-        await mail_agent.mail_write(STAND_SITE, VARS)
-
-        assert 'companion_name' in _names(caught)
-        assert 'companion_name' in _names(caught)
-
-    async def test_the_name_is_dropped_when_it_loses(self, caught, monkeypatch):
-        """⚠⚠ Тот самый случай, ради которого всё и делалось.
-
-        Останься имя в обязательных — судья завернул бы безымянный шаблон, и
-        доля не работала бы вовсе: панель просит имя, судья требует имя, жребий
-        ни при чём.
+        Останься она в реестре — человек правил бы число, которое ни на что не
+        влияет, и это хуже отсутствия настройки.
         """
-        _fix_dice(monkeypatch, name=False)
+        assert 'mailing_name_percent' not in SITE_KNOWN, \
+            'настройка доли имени вернулась, а решает её сосед'
 
-        await mail_agent.mail_write(STAND_SITE, VARS)
+    def test_the_constants_are_gone(self):
+        """Константы снятой настройки не должны пережить её."""
+        from src.dating import mail
 
-        assert 'companion_name' not in _names(caught), \
-            'имя осталось обязательным — судья завернёт шаблон без него'
-        assert 'companion_name' not in _names(caught), \
-            'имя показано модели — она впишет его, хотя не просили'
+        for name in ('MAILING_NAME_SETTING', 'MAILING_NAME_CHANCE'):
+            assert not hasattr(mail, name), f'{name} осиротела, но осталась'
 
-    async def test_other_variables_survive_either_way(self, caught, monkeypatch):
-        """⚠ Убираем **только имя**: прочие метки нужны всегда."""
-        _fix_dice(monkeypatch, name=False)
 
-        await mail_agent.mail_write(STAND_SITE, VARS)
+class TestTheListTravelsWhole:
+    """⚠⚠ Список переменных уезжает **целиком**: отбирает сосед.
 
-        assert 'girl_name' in _names(caught)
-        assert 'question_to_companion' in _names(caught)
+    Отбери панель — появился бы второй источник правды о том, что разрешено, и
+    он разошёлся бы с правилом промпта. Это и была прежняя беда.
+    """
 
-    async def test_no_service_key_travels(self, caught, monkeypatch):
-        """⚠⚠ Служебного в списке нет: жребий правит **переменными**, и ничего,
-        кроме них, соседу не уезжает.
+    def test_nothing_is_filtered_out(self):
+        code = inspect.getsource(mail_agent.mail_write)
 
-        Был ключ `@live` со списком тех, чьё значение — целое предложение. Снят
-        20.10.2026 вместе с предметным инструментом: признак переехал в шаг
-        workflow константой.
-        """
+        assert 'allowed = known' in code, \
+            'панель снова отбирает переменные — решать должен жребий у соседа'
+        assert "!= INVITE_SLOT_MAN" not in code, \
+            'имя собеседника снова вычёркивается панелью'
+
+    def test_the_whole_registry_reaches_the_agent(self):
+        """Все включённые переменные доезжают до `mail_vars`, включая имя."""
         import json
 
-        _fix_dice(monkeypatch, name=False)
+        from src.dating.mail_agent import _wanted_map
 
-        await mail_agent.mail_write(STAND_SITE, VARS)
+        got = json.loads(_wanted_map([
+            {'name': 'girl_name', 'title': 'x'},
+            {'name': 'companion_name', 'title': 'y'},
+            {'name': 'question_to_companion', 'title': 'z'},
+        ]))
 
-        keys = json.loads(caught['mail_vars'])
-
-        assert all(not key.startswith('@') for key in keys), \
-            f'в список вернулся служебный ключ: {sorted(keys)}'
+        assert set(got) == {'girl_name', 'companion_name', 'question_to_companion'}, got
