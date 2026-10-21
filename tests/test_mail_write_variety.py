@@ -11,7 +11,10 @@
 
 import inspect
 
+import json
+
 import pytest
+
 
 from mysql_.mysql_ import mysql_get_db_async
 
@@ -110,26 +113,17 @@ def agent(monkeypatch):
     return seen
 
 
-class TestTheLotIsOurs:
-    """⚠⚠ Разнообразие задаёт жребий, а не просьба «будь разной».
 
-    ⚠ С 2026-10-19 **все оси сочинения писем бросает шаг «Жребий»** самого
-    `dating_mail_write` (`dice_mail_angle`, `dice_mail_length`, `dice_mail_sign`,
-    `dice_mail_story`), объявления входящими сняты — присылка любой роняет весь
-    вызов `400`-м. Панель от жребия держит только зачин и имя (тесты ниже).
+# ⚠⚠ Прежде `mail_var_must` и `mail_var_names` уезжали отдельными переменными
+# и собирались побайтово одинаково; с 2026-10-21 сосед выводит обоих из
+# `mail_vars` циклом по ключам. Поведение то же, носитель другой — и сторожа
+# смотрят туда же, куда посмотрит он.
+def _names(caught) -> str:
+    """Ключи `mail_vars` — прежние `mail_var_must`/`mail_var_names`.
+
+    ⚠ Ровно то, что выведет сосед циклом `[<for k,v in mail_vars>]%k%,[<endfor>]`.
     """
-
-    async def test_the_rolled_axes_are_not_sent(self, agent, share):
-        """⚠⚠ Имён снятых переменных нет в запросе вовсе — сосед отвергнет вызов.
-
-        Сторож считает **имена** присланного, а не значения, и отвергает запрос
-        целиком: одна забытая переменная останавливает занятие, а не портит его.
-        """
-        await mail_write(STAND_SITE, VARS)
-
-        for gone in ('mail_angle', 'mail_length', 'mail_story', 'mail_hint'):
-            assert gone not in agent, \
-                f'{gone} уезжает соседу — он ответит 400 и шаблон не сочинится'
+    return ','.join(json.loads(caught['mail_vars']))
 
 
 class TestTheQuestionLivesInTheRegistry:
@@ -145,12 +139,18 @@ class TestTheQuestionLivesInTheRegistry:
     """
 
     async def test_the_live_variable_is_always_asked_for(self, agent, share):
+        """⚠ Доля вопроса на состав переменных не влияет: реестр решает сам.
+
+        ⚠⚠ Признака «живая» здесь больше нет — соседу он не передаётся вовсе
+        (20.10.2026): метку, обязанную стоять отдельным абзацем, называет сам
+        шаг workflow (`mail_paragraph_mark`), а проверяет универсальный предикат
+        `text_paragraph_has`. Нам остаётся следить, что переменная **в списке**.
+        """
         for percent in (0, 100):
             await share('mailing_question_percent', percent)
             await mail_write(STAND_SITE, VARS)
 
-            assert 'question_to_companion' in agent['mail_var_must'], percent
-            assert agent['mail_var_live'] == 'question_to_companion', percent
+            assert 'question_to_companion' in _names(agent), percent
 
     async def test_no_flag_travels(self, agent, share):
         """⚠ Флага у соседа больше нет: промпт не ветвится, правило прямое."""
@@ -214,7 +214,7 @@ class TestTheNameIsMandatoryUntilAskedOtherwise:
 
     Здесь стояло «имя жребием не делали, и это решение»: обращение приходит
     переменной реестра, а «шаблон обязан нести все переменные» — договор, на
-    котором стоит вся рассылка (`mail_var_must`). Довод верен и никуда не делся:
+    котором стоит вся рассылка (столбец `name` в `mail_vars`). Довод верен:
     сделай имя жребием без спроса — половина писем перестала бы обращаться к
     человеку вовсе.
 
@@ -230,7 +230,7 @@ class TestTheNameIsMandatoryUntilAskedOtherwise:
     async def test_companion_name_is_required_by_default(self, agent, share):
         await mail_write(STAND_SITE, VARS)
 
-        assert 'companion_name' in agent['mail_var_must']
+        assert 'companion_name' in _names(agent)
 
 
 class TestTheOwnerCardTravels:

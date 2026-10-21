@@ -16,6 +16,9 @@
 
 import uuid
 
+import json
+
+
 import pytest
 
 from src.dating.mail_agent import MAIL_VAR_USE_WRITE
@@ -155,11 +158,12 @@ class TestAgentSees:
              'uses': {MAIL_VAR_USE_WRITE: False}},
         ])
 
-        names = asked['variables']['mail_var_names']
-        must = asked['variables']['mail_var_must']
+        # ⚠ С 2026-10-21 едет одна `mail_vars`, а прежние списки сосед выводит
+        # из неё циклом по ключам. Смотрим туда же, куда посмотрит он — то есть
+        # мимо служебного `@live`.
+        names = ','.join(json.loads(asked['variables']['mail_vars']))
 
         assert names == 'a', f'выключенная переменная уехала агенту: {names}'
-        assert must == 'a', f'выключенная переменная объявлена обязательной: {must}'
 
 
 def _answer(value):

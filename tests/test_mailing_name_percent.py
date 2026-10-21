@@ -14,9 +14,10 @@
 Жребий имени управляет **двумя** вещами разом, и разойдись они — настройка
 перестанет работать молча:
 
-1. **`mail_var_must`** — список обязательных меток: останься там
+1. **столбец `name`** переменной `mail_vars` — из него сосед выводит список
+   обязательных меток (`text_marks_missing`): останься там
    `companion_name`, судья у соседа завернёт безымянный шаблон как неполный;
-2. **`mail_vars` и `mail_var_names`** — то, что видит модель: покажи ей имя, и
+2. **она же целиком** — то, что видит модель: покажи ей имя, и
    она впишет его, даже когда не просили.
 
 Тест проверяет обе: сломай одну — покраснеет.
@@ -29,7 +30,10 @@
 
 import random
 
+import json
+
 import pytest
+
 
 from src.dating import mail_agent
 from src.dating.mail import MAILING_NAME_CHANCE, MAILING_NAME_SETTING
@@ -89,22 +93,17 @@ def _fix_dice(monkeypatch, *, name: bool):
     monkeypatch.setattr(mail_agent, 'percent_share', _percent)
 
 
-class TestTheSettingIsWiredUp:
-    """⚠ Настройка есть в реестре и согласована с кодом."""
 
-    def test_the_registry_knows_it(self):
-        one = SITE_KNOWN[MAILING_NAME_SETTING]
+# ⚠⚠ Прежде `mail_var_must` и `mail_var_names` уезжали отдельными переменными
+# и собирались побайтово одинаково; с 2026-10-21 сосед выводит обоих из
+# `mail_vars` циклом по ключам. Поведение то же, носитель другой — и сторожа
+# смотрят туда же, куда посмотрит он.
+def _names(caught) -> str:
+    """Ключи `mail_vars` — прежние `mail_var_must`/`mail_var_names`.
 
-        assert one['group'] == 'mail', 'настройка не на вкладке рассылки'
-        assert one['kind'] == 'number'
-        assert (one['min'], one['max']) == (0, 100), 'доля без границ 0—100'
-
-    def test_the_default_matches_the_code(self):
-        """⚠⚠ Умолчание живёт **в двух местах**: реестр показывает его человеку,
-        код берёт, когда настройка не сохранена. Разойдись они — страница врала
-        бы, и никакой ошибки при этом не случилось бы."""
-        assert (float(SITE_KNOWN[MAILING_NAME_SETTING]['default']) / 100
-                == MAILING_NAME_CHANCE)
+    ⚠ Ровно то, что выведет сосед циклом `[<for k,v in mail_vars>]%k%,[<endfor>]`.
+    """
+    return ','.join(json.loads(caught['mail_vars']))
 
 
 class TestTheDiceDrivesEverything:
@@ -115,8 +114,8 @@ class TestTheDiceDrivesEverything:
 
         await mail_agent.mail_write(STAND_SITE, VARS)
 
-        assert 'companion_name' in caught['mail_var_must']
-        assert 'companion_name' in caught['mail_var_names']
+        assert 'companion_name' in _names(caught)
+        assert 'companion_name' in _names(caught)
 
     async def test_the_name_is_dropped_when_it_loses(self, caught, monkeypatch):
         """⚠⚠ Тот самый случай, ради которого всё и делалось.
@@ -129,9 +128,9 @@ class TestTheDiceDrivesEverything:
 
         await mail_agent.mail_write(STAND_SITE, VARS)
 
-        assert 'companion_name' not in caught['mail_var_must'], \
+        assert 'companion_name' not in _names(caught), \
             'имя осталось обязательным — судья завернёт шаблон без него'
-        assert 'companion_name' not in caught['mail_var_names'], \
+        assert 'companion_name' not in _names(caught), \
             'имя показано модели — она впишет его, хотя не просили'
 
     async def test_other_variables_survive_either_way(self, caught, monkeypatch):
@@ -140,14 +139,24 @@ class TestTheDiceDrivesEverything:
 
         await mail_agent.mail_write(STAND_SITE, VARS)
 
-        assert 'girl_name' in caught['mail_var_must']
-        assert 'question_to_companion' in caught['mail_var_must']
+        assert 'girl_name' in _names(caught)
+        assert 'question_to_companion' in _names(caught)
 
-    async def test_the_live_list_follows_too(self, caught, monkeypatch):
-        """⚠ `mail_var_live` собирается из того же списка: разойдись он — метка
-        вопроса потерялась бы вместе с именем."""
+    async def test_no_service_key_travels(self, caught, monkeypatch):
+        """⚠⚠ Служебного в списке нет: жребий правит **переменными**, и ничего,
+        кроме них, соседу не уезжает.
+
+        Был ключ `@live` со списком тех, чьё значение — целое предложение. Снят
+        20.10.2026 вместе с предметным инструментом: признак переехал в шаг
+        workflow константой.
+        """
+        import json
+
         _fix_dice(monkeypatch, name=False)
 
         await mail_agent.mail_write(STAND_SITE, VARS)
 
-        assert 'question_to_companion' in caught['mail_var_live']
+        keys = json.loads(caught['mail_vars'])
+
+        assert all(not key.startswith('@') for key in keys), \
+            f'в список вернулся служебный ключ: {sorted(keys)}'

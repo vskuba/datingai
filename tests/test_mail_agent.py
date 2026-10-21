@@ -405,56 +405,101 @@ class TestDraftEndpoint:
 
 
 
-class TestTheNamesGoAsMarksToTheWriter:
-    """⚠⚠ Список переменных читают **два** агента, и нужно им разное.
+class TestOneVariableInsteadOfFour:
+    """⚠⚠⚠ Писателю едет **одна** переменная вместо четырёх.
 
-    **Писателю шаблона** имя нужно меткой: он эту метку в текст и вставляет, и
-    `[[girl_name]]` показывает её ровно в том виде, в каком писать. Голое имя
-    заставляло выводить форму скобок откуда-то ещё — на этом он и изобретал
-    `[[recipient_name]]`, которого нет ни в одном реестре: такой шаблон не
-    уходит никогда, и анкета остаётся без рассылки.
+    Прежде: `mail_vars` (список с подписями — его читает модель) и три голых
+    списка имён под инструменты соседа — `mail_var_names` (разрешённые),
+    `mail_var_must` (обязательные), `mail_var_live` (только отдельным абзацем).
+    Два из них собирались **побайтово одинаковым** выражением из одного списка.
 
-    **Агенту значений** имя нужно голым: он отвечает JSON, и имя у него ключ, а
-    не метка. Рядом едет заготовка ответа `mail_vars_json` с настоящими ключами,
-    и скобки при голых ключах были бы двумя написаниями одного имени в одном
-    вызове — а `_values` отбросил бы `[[girl_name]]` **молча**, как чужой ключ.
+    Теперь всё в одной: объект «имя → подпись» плюс ключ `@live` со списком
+    живых. Workflow выводит из неё все три списка циклом по ключам, без единого
+    инструмента — проверено прогоном `ai_workflow_text_render` на коде соседа.
     """
 
-    def test_the_writer_sees_marks(self):
-        from src.dating.mail_agent import _wanted_text
-
-        got = _wanted_text([{'name': 'girl_name', 'title': 'The name'}], marked=True)
-
-        assert got == '[[girl_name]] — The name', got
-
-    def test_the_values_agent_sees_bare_names(self):
-        from src.dating.mail_agent import _wanted_text
-
-        got = _wanted_text([{'name': 'girl_name', 'title': 'The name'}])
-
-        assert got == 'girl_name — The name', got
-        assert '[[' not in got, 'агенту значений поехали скобки — ключ JSON сломается'
-
-    def test_a_nameless_row_still_works(self):
-        """⚠ Подписи может не быть — тогда строка это одно имя, и скобки на нём
-        всё равно стоят: метка нужна писателю независимо от подписи."""
-        from src.dating.mail_agent import _wanted_text
-
-        assert _wanted_text([{'name': 'girl_name'}], marked=True) == '[[girl_name]]'
-        assert _wanted_text([{'name': 'girl_name'}]) == 'girl_name'
-
-    def test_the_checks_never_get_brackets(self):
-        """⚠⚠ Голые имена для сверок собираются **мимо** `_wanted_text`: их
-        читает регулярка у соседа, и скобку она приняла бы за часть имени."""
+    def test_only_mail_vars_goes_to_the_writer(self):
+        """Трёх голых списков в вызове писателя больше нет."""
         import inspect
 
         from src.dating import mail_agent
 
-        code = inspect.getsource(mail_agent)
+        code = inspect.getsource(mail_agent.mail_write)
 
-        for key in ('mail_var_names', 'mail_var_must', 'mail_var_live'):
-            at = code.index(f"'{key}':")
-            line = code[at:code.index('\n', at)]
+        for gone in ('mail_var_names', 'mail_var_must', 'mail_var_live'):
+            assert f"'{gone}':" not in code, f'{gone} снова уезжает писателю'
 
-            assert '_wanted_text' not in line, f'{key} собирается через _wanted_text'
-            assert '[[' not in line, f'{key} поехал со скобками — регулярка соседа их не ждёт'
+        assert "'mail_vars': _wanted_map(must)" in code, 'список уехал не объектом'
+
+    def test_the_payload_is_a_flat_map(self):
+        """⚠⚠⚠ Плоский объект: по массиву объектов цикл печатает `repr` словаря —
+        доступа к полям у него нет."""
+        import json
+
+        from src.dating.mail_agent import _wanted_map
+
+        got = json.loads(_wanted_map([
+            {'name': 'girl_name', 'title': 'The name', 'source': 'profile'},
+            {'name': 'question_to_companion', 'title': 'A question', 'source': 'live'},
+        ]))
+
+        assert got == {'girl_name': 'The name',
+                       'question_to_companion': 'A question'}, got
+        assert all(isinstance(one, str) for one in got.values()), \
+            'значение не строка — цикл промпта напечатает repr'
+
+    def test_the_order_follows_the_registry(self):
+        """⚠⚠ Порядок ключей — порядок реестра: он же задаёт порядок строк в
+        промпте. `@live` последним: он не переменная."""
+        import json
+
+        from src.dating.mail_agent import _wanted_map
+
+        rows = [{'name': 'zebra', 'title': 'z'}, {'name': 'alpha', 'title': 'a'}]
+        keys = list(json.loads(_wanted_map(rows)))
+
+        assert keys == ['zebra', 'alpha'], keys
+
+    def test_names_stay_bare(self):
+        """⚠ Скобки дописывает промпт (`[[%k%]]`): инструменты ждут голые имена."""
+        import json
+
+        from src.dating.mail_agent import _wanted_map
+
+        got = json.loads(_wanted_map([{'name': 'girl_name', 'title': 'x'}]))
+
+        assert 'girl_name' in got, 'имя уехало со скобками — инструмент не узнает'
+
+    def test_nothing_but_variables_travels(self):
+        """⚠⚠ В списке только настоящие переменные — служебного ключа нет.
+
+        Был `@live` со списком тех, чьё значение — целое предложение. Снят
+        20.10.2026: признак переехал в **шаг workflow** константой, а проверку
+        делает универсальный предикат `text_paragraph_has`. Знание «эта метка —
+        целая фраза» принадлежит автору промпта и видно в графе, а не едет
+        служебным ключом внутри списка, который читает модель.
+        """
+        import json
+
+        from src.dating.mail_agent import _wanted_map
+
+        got = json.loads(_wanted_map([
+            {'name': 'girl_name', 'title': 'x', 'source': 'profile'},
+            {'name': 'question_to_companion', 'title': 'y', 'source': 'live'},
+        ]))
+
+        assert all(not key.startswith('@') for key in got), \
+            f'в список переменных вернулся служебный ключ: {sorted(got)}'
+        assert set(got) == {'girl_name', 'question_to_companion'}, got
+
+    def test_the_values_agent_is_untouched(self):
+        """⚠ У агента значений своя нужда: он отвечает JSON, имя у него ключ, и
+        список ему по-прежнему уходит строками с голыми именами."""
+        import inspect
+
+        from src.dating import mail_agent
+
+        code = inspect.getsource(mail_agent.mail_agent_fill)
+
+        assert "'mail_vars': _wanted_text(wanted)" in code, \
+            'агенту значений поехал объект — его промпт ждёт строки'
