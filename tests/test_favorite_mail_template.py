@@ -26,8 +26,10 @@
 десятки вызовов в день, а не тысячи. Персональное письмо нельзя написать, не
 прочитав переписку.
 
-⚠ Проверки доли (`percent_share`) остались: они про общий механизм процентов и
-живут своей жизнью. Остальное здесь — про новый способ.
+⚠ Проверок доли здесь больше нет: три настройки, ради которых они тут стояли
+(`favorite_mail_*_percent`), сняты 22.10.2026 — доли переехали числами в шаг
+«Жребий» у соседа. Общий механизм процентов стережёт `test_percent_share.py`,
+на живом ключе реестра; второй копии на ключах, которых больше нет, не надо.
 """
 
 import inspect
@@ -35,39 +37,8 @@ import inspect
 import pytest
 
 from src.dating import answer, favorite_mail
-from src.dating.percent import percent_share
 
 pytestmark = pytest.mark.mail
-
-STAND_SITE = 999_343
-
-
-@pytest.fixture
-async def share():
-    """Кладёт долю в настройки стенда и убирает её за собой."""
-    from mysql_.mysql_ import mysql_get_db_async
-
-    keys = []
-
-    async def _share(key: str, value) -> None:
-        keys.append(key)
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                'INSERT INTO site (site_id, settings) VALUES (%s, JSON_OBJECT(%s, %s))'
-                ' ON DUPLICATE KEY UPDATE'
-                ' settings = JSON_SET(COALESCE(settings, JSON_OBJECT()),'
-                "                     CONCAT('$.', %s), %s)",
-                (STAND_SITE, key, str(value), key, str(value)))
-            await db.connection.commit()
-
-    yield _share
-
-    async with mysql_get_db_async() as db:
-        for key in keys:
-            await db.execute(
-                "UPDATE site SET settings = JSON_REMOVE(settings, CONCAT('$.', %s))"
-                ' WHERE site_id = %s', (key, STAND_SITE))
-        await db.connection.commit()
 
 
 class TestTheLetterKnowsTheMan:
@@ -231,44 +202,6 @@ class TestTheAgentIsItsOwn:
 
         assert 'if not agent_id:' in code, \
             'агент спрашивается на каждое письмо — лишние походы к соседу'
-
-
-class TestPercent:
-    """Доли: в настройке проценты, в коде — доля от единицы.
-
-    ⚠ Переехало сюда из проверок шаблона и остаётся в силе: механизм процентов
-    общий на инвайты, рассылку и письма.
-    """
-
-    async def test_an_absent_setting_gives_the_default(self):
-        import uuid
-
-        assert await percent_share(
-            STAND_SITE, f'net-{uuid.uuid4().hex[:6]}', 0.4) == 0.4
-
-    async def test_zero_is_a_decision_not_an_absence(self, share):
-        """⚠⚠ Ноль означает «никогда», а не «настройки нет».
-
-        Отличать обязательно: проверь код истинность вместо пустоты — и ноль
-        молча превратился бы в умолчание, то есть в «каждое четвёртое».
-        """
-        await share('favorite_mail_question_percent', 0)
-
-        assert await percent_share(
-            STAND_SITE, 'favorite_mail_question_percent', 0.25) == 0.0
-
-    async def test_percents_become_a_share(self, share):
-        await share('favorite_mail_story_percent', 40)
-
-        assert await percent_share(
-            STAND_SITE, 'favorite_mail_story_percent', 0.1) == 0.4
-
-    async def test_nonsense_falls_back(self, share):
-        """Не-число не роняет заход: пул важнее точности доли."""
-        await share('favorite_mail_name_percent', 'пятнадцать')
-
-        assert await percent_share(
-            STAND_SITE, 'favorite_mail_name_percent', 0.1) == 0.1
 
 
 class TestTheLengthIsNotOursToSend:

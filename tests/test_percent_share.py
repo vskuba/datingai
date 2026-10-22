@@ -106,6 +106,22 @@ class TestItReadsTheSetting:
 
         assert await percent_share(STAND_SITE, KEY, 0.4) == pytest.approx(1.0)
 
+    async def test_nonsense_reads_as_the_registry_default(self, site_set):
+        """⚠ Не-число не роняет заход и не значит «никогда».
+
+        ⚠⚠ Умолчание здесь **реестра**, а не довода звонящего: ключ в реестре
+        есть, и сказать, каким ему быть, — его дело. Жило это в проверках письма
+        избранным на ключе `favorite_mail_name_percent`, где умолчание реестра
+        (10) и довод звонящего (0.1) совпадали **числом** — то есть проверка
+        читалась как «вернётся довод», не проверяя этого. Ключ снят вместе с
+        тремя долями, переехавшими к соседу; правило осталось и проверяется там,
+        где числа расходятся.
+        """
+        await site_set(KEY, 'пятнадцать')
+
+        assert await percent_share(STAND_SITE, KEY, 0.4) == pytest.approx(
+            int(SITE_KNOWN[KEY]['default']) / 100)
+
 
 class TestTheBoundsComeFromTheRegistry:
     """⚠⚠ То самое различие, что копии скрывали.
@@ -153,12 +169,12 @@ class TestNobodyKeepsAPrivateCopy:
     def test_all_three_use_the_shared_one(self):
         """⚠ Проверяются те, кто долю **читает сегодня**, и обе её выдачи.
 
-        Список был `invite`, `mail_agent`, `favorite_mail`, и третий в нём
-        устарел: жребий приставания переехал к соседу, а доли ему отдаёт
-        `answer._dice_percents` — через `percent_value`, вторую выдачу того же
-        общего модуля. В `favorite_mail.py` от этого остался **импорт без
-        единого вызова**, и сторож держал его живым: убери импорт — краснеет,
-        хотя правило («своей копии доли нет») соблюдено.
+        Список был `invite`, `mail_agent`, `favorite_mail`, потом `answer`, и
+        каждый раз устаревал одинаково: жребий уезжал к соседу, а имя оставалось
+        в списке. `favorite_mail` держал **импорт без единого вызова** (сторож не
+        давал его убрать), `answer` отдавал соседу три доли
+        (`_dice_percents`) — 22.10.2026 уехали и они, числами в сам шаг
+        «Жребий».
 
         ⚠ Поэтому проверяется не имя `percent_share`, а обращение к общему
         модулю любой из двух дверей. Само правило от этого не слабеет: копию
@@ -167,7 +183,7 @@ class TestNobodyKeepsAPrivateCopy:
         """
         import pathlib
 
-        for name in ('invite', 'mail_agent', 'answer'):
+        for name in ('invite', 'mail_agent'):
             text = pathlib.Path(f'src/dating/{name}.py').read_text(encoding='utf-8')
 
             assert 'percent_share' in text or 'percent_value' in text, \

@@ -471,19 +471,27 @@ class TestTheKindIsNotOursAnymore:
             'ветку больше нечем выбрать: без флага заход уйдёт в ответ на реплику'
 
 
-class TestTheSiteSettingsReachTheDice:
-    """⚠⚠ Доли разнообразия крутит человек на странице сайта, а бросает сосед.
+class TestTheDiceSharesAreNotOursToSend:
+    """⚠⚠ Доли разнообразия уехали к соседу целиком, и слать их нам больше нельзя.
 
-    Три настройки — имя, вопрос, рассказ — уже однажды перестали работать молча:
-    переезд писем на `dating_talk` унёс код, который их читал, а ручки на
-    странице остались и крутились впустую. Заметить это можно было только по
-    десятку одинаковых писем.
+    Три доли — имя, вопрос, рассказ — жили настройками сайта
+    (`favorite_mail_*_percent`) и ехали переменными `dice_mail_*_percent`, а
+    подставлял их в описание жребия движок соседа. 22.10.2026 числа переехали в
+    сам шаг «Жребий», а настройки сняты с реестра.
 
-    ⚠ Проверяем **отправку**, а не жребий: жребий у соседа, и его правильность
-    стережёт его же сюита. Здесь вопрос один — доехало ли число.
+    ⚠ Класс стережёт не жребий, а **молчание**: объявления входящих у соседа
+    сняты, и его сторож (`chat.py:_variables_allowed`) отвечает `400` на любое
+    необъявленное имя. Один раз это уже стоило прода — 91 отказ за 35 минут,
+    встали все четыре ветки `dating_talk`, включая обычный ответ в чат.
     """
 
-    async def test_the_percents_are_sent(self, monkeypatch, girl):
+    # Имена, которых в запросе быть не должно ни с каким значением.
+    GONE = ('dice_mail_name_percent', 'dice_mail_question_percent',
+            'dice_mail_story_percent')
+
+    async def test_the_panel_sends_no_shares(self, monkeypatch, girl):
+        """⚠⚠ Проверяем живой вызов, а не исходник: доли уезжали россыпью
+        (`**await _dice_percents(...)`), и по тексту такую отправку не видно."""
         from src.dating import answer as answer_mod
 
         got = {}
@@ -501,34 +509,20 @@ class TestTheSiteSettingsReachTheDice:
 
         await answer_mod._agent_ask(7, 'вопрос', 'en', profile)
 
-        for _, name, share in answer_mod.ANSWER_DICE_PERCENTS:
-            assert name in got, f'доля «{name}» не уехала соседу'
-            # ⚠ Проценты, а не доля: у соседа жребий считает в сотнях, и `0.4`
-            # вместо `40` выпадал бы раз в двести пятьдесят писем.
-            assert got[name] == str(int(share * 100)), \
-                f'«{name}» уехала как {got[name]!r}, а не процентами'
+        for name in self.GONE:
+            assert name not in got, \
+                f'доля «{name}» снова уехала соседу — это `400` на весь вызов'
 
-    async def test_a_broken_setting_falls_back_to_the_default(self, monkeypatch,
-                                                              girl):
-        """⚠⚠ Не прочиталось — шлём умолчание, а не ноль.
+    def test_the_settings_are_gone_from_the_registry(self):
+        """⚠ Ручка без читателя — хуже отсутствующей: человек крутит её и ждёт
+        перемен. Ровно это и было, пока переезд писем на `dating_talk` унёс код,
+        а три настройки остались на странице сайта."""
+        from src.dating.site_setting import SITE_KNOWN
 
-        Ноль значит «никогда», и принять такое решение молча из-за недоступной
-        базы нельзя: письма пошли бы все на одно лицо, а причину искали бы в
-        промпте.
-        """
-        from src.dating import answer as answer_mod
-        from src.dating import percent as percent_mod
-
-        async def _boom(site_id, key):
-            raise RuntimeError('база недоступна')
-
-        monkeypatch.setattr(
-            'src.dating.percent.site_seconds', _boom)
-
-        got = await percent_mod.percent_value(343, 'favorite_mail_name_percent',
-                                              0.10)
-
-        assert got == '10', f'вместо умолчания уехало {got!r}'
+        for key in ('favorite_mail_name_percent', 'favorite_mail_question_percent',
+                    'favorite_mail_story_percent'):
+            assert key not in SITE_KNOWN, \
+                f'настройка «{key}» вернулась в реестр, а читать её некому'
 
 
 class TestItReachesTheAgent:
