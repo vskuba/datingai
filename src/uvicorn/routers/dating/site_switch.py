@@ -883,9 +883,9 @@ async def site_template_schedule(site_id: int) -> dict:
 
     per_day = await site_seconds(site_id, 'template_per_day')
 
-    # ⚠ Срока жизни здесь больше нет: шаблоны не устаревают, и `template_keep`
-    # снята вместе с уборкой (`mail_round`, 20.10.2026). На повтор отвечает ключ
-    # `(profile_id, uid, mail_id)`, а не сутки.
+    # ⚠ Срока жизни в ответе нет: подписей «сколько шаблону осталось» со списка
+    # сняты и обратно не просились. Чистка по `template_keep_hours` работает в
+    # круге (`mail_round._clean`), показывать тут нечего.
     if not row:
         return {'schedule': [], 'template_schedule_on': False,
                 'template_per_day': per_day}

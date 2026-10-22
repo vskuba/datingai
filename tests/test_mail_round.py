@@ -18,14 +18,15 @@
 Владелицу строки показывает аватарка в списке, а не буква в имени. Ответ агента —
 только текст, и в имя он не просится вовсе.
 
-**Порядок.** Уборка идёт после написания. Обратный порядок неверен по счёту: свежая
-заготовка, написанная в этом же заходе, попадала бы в «самые свежие», которые уборка
-бережёт, — и вытесняла бы оттуда вчерашнюю, оставляя список без запаса.
+**Порядок.** Уборка живёт в шлюзе, **до** проверки смен (тот же порядок, что у
+круга инвайтов): шаблоны стареют круглые сутки, а смены и `template_every`
+говорят только о том, когда писать. Сторож `_clean` — свой фьюз в Redis на десять
+минут, чтобы не читать настройку каждый тик.
 
 **Предохранитель.** Уборка никогда не оставляет анкету без текстов: самые свежие
 **каждой** числом в дневную норму не трогаются даже старыми. Без него первое же
-включение расписания опустошало бы списки — у живого сайта пять шаблонов недельной
-давности при сроке в двое суток.
+включение срока снесло бы список недельной давности целиком — у живого сайта
+пять шаблонов накопилось за неделю при норме в три.
 
 **Дневная норма.** Считается по базе, а не в памяти: **по строкам самой анкеты** за
 сегодня, и перезапуск смены держателя не должен давать вторую норму за день.
@@ -41,7 +42,8 @@ from round_ import round_slot as slot
 from round_.round_slot import round_slot_key
 from src.dating import round as engine
 from src.dating.mail_round import (MAIL_ROUND_KEY,
-                                          mail_round_run, _made_today, _write)
+                                          mail_round_run, _made_today, _write,
+                                          _clean, _gate)
 
 pytestmark = pytest.mark.mail
 
@@ -142,21 +144,36 @@ async def _girl(name: str, enabled: int = 1) -> int:
         return int((await db.fetchone())['id'])
 
 
-async def _put(name: str, days_ago: int = 0, enabled: int = 1,
+async def _put(name: str, days_ago: int = 0, hours_ago: int = 0, enabled: int = 1,
                profile_id: int = None) -> int:
-    """Кладёт шаблон с заданным возрастом (и владелицей). Возвращает номер."""
+    """Кладёт шаблон с заданным возрастом (и владелицей). Возвращает номер.
+
+    ⚠ Возраст считает **база** (`NOW() - INTERVAL`), а не Python: MySQL живёт по
+    UTC, и `datetime.now()` положил бы строку в будущее. Часы — отдельным
+    слагаемым: срок жизни меряется часами, и сутки для него слишком крупная линейка.
+    """
     from mysql_.mysql_ import mysql_get_db_async
 
     async with mysql_get_db_async() as db:
         await db.execute(
             'INSERT INTO mail (site_id, profile_id, name, body, enabled, created_at)'
-            ' VALUES (%s, %s, %s, %s, %s, NOW() - INTERVAL %s DAY)',
+            ' VALUES (%s, %s, %s, %s, %s, NOW() - INTERVAL (%s * 24 + %s) HOUR)',
             (SITE, int(profile_id) if profile_id else None,
-             f'{name}-{uuid.uuid4().hex[:6]}', 'Текст', int(enabled), int(days_ago)))
+             f'{name}-{uuid.uuid4().hex[:6]}', 'Текст', int(enabled),
+             int(days_ago), int(hours_ago)))
         await db.connection.commit()
         await db.execute('SELECT LAST_INSERT_ID() AS id')
 
         return int((await db.fetchone())['id'])
+
+
+async def _alive(mail_id: int) -> bool:
+    from mysql_.mysql_ import mysql_get_db_async
+
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT id FROM mail WHERE id = %s', (int(mail_id),))
+
+        return bool(await db.fetchone())
 
 
 async def _names(gid: int = None) -> list[str]:
@@ -366,31 +383,143 @@ class TestWrite:
             'сутки считаются без часового пояса анкеты'
 
 
-class TestNothingIsSwept:
-    """⚠⚠ Круг **ничего не удаляет**: шаблоны не устаревают.
+class TestSweep:
+    """⚠⚠ Чистка по сроку жизни `template_keep_hours` — единственное удаление круга.
 
-    Срок жизни (`template_keep`) и предохранитель «свежие не трогаем» сняты
-    20.10.2026 вместе с самой уборкой. На повтор отвечает не срок, а уникальный
-    ключ `(profile_id, uid, mail_id)` таблицы `mailing`: один шаблон уходит
-    одному человеку ровно раз, и пока текст не ушёл **этому** собеседнику, он
-    для него новый — сколько бы дней ни пролежал.
+    Срок уже был (`template_keep`, в сутках) и был снят 20.10.2026; вернул его
+    владелец 23.10.2026 — в часах и **с умолчанием «не удалять»**. На повтор при
+    этом по-прежнему отвечает ключ `(profile_id, uid, mail_id)` таблицы `mailing`:
+    срок — про размер списка, а не про уникальность.
 
-    ⚠ Сторожим пустоту, а не поведение: вернись уборка копипастом, она унесла бы
-    накопленное молча, и заметили бы это по пустому списку через сутки.
+    ⚠ Сторожим два края: что включённая чистка **унесла** истёкшее и что
+    выключенная — **не тронула** ничего. Верни кто умолчание на «включено»,
+    первая же настройка сайта снесла бы списки молча.
     """
 
-    def test_the_round_deletes_nothing(self):
-        import inspect
+    @pytest.fixture
+    def no_fuse(self, monkeypatch):
+        """Снимает фьюз чистки: отметка живёт в Redis и переживала бы тест.
 
-        code = inspect.getsource(round_)
+        Здесь зовём `_clean` напрямую, а не кругом, — фьюз проверяется отдельно,
+        `test_the_fuse_lets_once`.
+        """
+        monkeypatch.setattr(round_, 'round_slot_due',
+                            lambda key, site_id, what: True)
+        monkeypatch.setattr(round_, 'round_slot_mark', lambda *a: None)
 
-        assert '_sweep' not in code, 'уборка шаблонов вернулась в круг'
-        assert 'DELETE FROM mail' not in code, 'круг снова удаляет шаблоны'
-        assert 'template_keep' not in code.replace('`template_keep`', ''), \
-            'срок жизни вернулся в круг'
+    def test_the_setting_is_off_by_default(self):
+        """Умолчание — ноль: настройка, сама стирающая тексты, была бы худшим
+        из сюрпризов. Цифровой инпут с нулём внутри вкладки «Рассылка писем»."""
+        from src.dating import site_setting
 
-    async def test_old_drafts_survive(self, auth_client, clean, agent):
-        """Заход не трогает старое: девятидневные заготовки остаются на месте."""
+        spec = site_setting.SITE_KNOWN['template_keep_hours']
+
+        assert spec['group'] == 'mail', 'настройка ушла с вкладки рассылки'
+        assert spec['kind'] == 'number', 'значение должно быть цифровым инпутом'
+        assert spec['min'] == 0 and str(spec['default']) == '0', \
+            'выключатель «не удалять» снялся'
+
+    async def test_the_fuse_lets_once(self, auth_client, clean, agent, monkeypatch):
+        """Свой фьюз в Redis: второй зход в те же десять минут не ходит к базе.
+
+        ⚠ Redis подменяется **в модуле слоя**: отметку ставит `round_.round_slot`,
+        а `src/dating/round.py` её лишь ре-экспортирует.
+        """
+        class _Redis:
+            def __init__(self):
+                self.store = {}
+
+            def get(self, key):
+                return self.store.get(key)
+
+            def setex(self, key, seconds, value):
+                self.store[key] = value
+
+        monkeypatch.setattr(slot, 'redis_conn_get', lambda: _Redis())
+
+        gid = await _girl('Вера')
+        was = await _settings(auth_client, template_keep_hours='1',
+                              template_per_day='1')
+        try:
+            for n in range(4):
+                await _put(f'старый{n}', days_ago=3, profile_id=gid)
+
+            assert await _clean(SITE) == 3, 'первый заход не почистил'
+            assert await _clean(SITE) == 0, 'фьюз пропустил второй заход'
+        finally:
+            await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
+
+    async def test_expired_gone_fresh_stays(self, auth_client, clean, agent,
+                                            no_fuse):
+        """Старше срока уходит, свежее — на месте; уходит ровно истёкшее."""
+        gid = await _girl('Ольга')
+        was = await _settings(auth_client, template_keep_hours='24',
+                              template_per_day='1')
+        try:
+            old = await _put('старый', hours_ago=30, profile_id=gid)
+            fresh = await _put('свежий', hours_ago=2, profile_id=gid)
+
+            assert await _clean(SITE) == 1, 'ушёл не только истёкший'
+            assert not await _alive(old), 'истёкший шаблон остался'
+            assert await _alive(fresh), 'свежий шаблон ушёл'
+        finally:
+            await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
+
+    async def test_zero_deletes_nothing(self, auth_client, clean, agent, no_fuse):
+        """⚠ Ноль в настройке — ни одна строка не уходит, даже девяностодневная."""
+        gid = await _girl('Ирина')
+        was = await _settings(auth_client, template_keep_hours='0')
+        try:
+            ancient = await _put('вечный', days_ago=99, profile_id=gid)
+
+            assert await _clean(SITE) == 0
+            assert await _alive(ancient), 'ноль удаляет — он значит «не удалять»'
+        finally:
+            await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
+
+    async def test_guard_keeps_the_norm(self, auth_client, clean, agent, no_fuse):
+        """⚠⚠ Ни одна анкета не пустеет: даже при сроке в час каждой остаётся
+        свежие тексты числом в её норму — и окно это **своё у каждой**.
+        """
+        first = await _girl('Дина')
+        second = await _girl('Зоя')
+        was = await _settings(auth_client, template_keep_hours='1',
+                              template_per_day='1')
+        try:
+            for n in range(2):
+                await _put(f'своё{n}', days_ago=9, profile_id=first)
+                await _put(f'чужое{n}', days_ago=9, profile_id=second)
+
+            gone = await _clean(SITE)
+
+            # Из четырёх древних ушли два: по одному у каждой, запас при каждой свой.
+            assert gone == 2, 'окно запаса посчитано не по каждой анкете'
+            assert len(await _names(first)) == 1, 'первая анкета осталась без запаса'
+            assert len(await _names(second)) == 1, 'запас второй съеден общей выборкой'
+        finally:
+            await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
+
+    async def test_clean_runs_outside_shift(self, auth_client, clean, agent,
+                                            no_fuse):
+        """⚠ Чистка идёт **до проверки смен** (как у инвайтов): строки стареют
+        круглые сутки, а смены говорят только о написании.
+        """
+        gid = await _girl('Нина')
+        was = await _settings(auth_client, template_keep_hours='1',
+                              template_per_day='1')
+        try:
+            for n in range(2):
+                await _put(f'старый{n}', days_ago=5, profile_id=gid)
+
+            # Смен нет вовсе — шлюз честно говорит «не пишем», а почистил.
+            assert await _gate({'site_id': SITE, 'schedule': []}, 600) is False
+            assert len(await _names(gid)) == 1, 'вне смены чистка не пошла'
+        finally:
+            await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
+
+    async def test_old_drafts_survive_when_unset(self, auth_client, clean, agent):
+        """Настройка не выставлена (умолчание — ноль): заход написания не трогает
+        девятидневные заготовки — заход круга их тоже."""
         gid = await _girl('Ольга')
         for n in range(4):
             await _put(f'древний{n}', days_ago=9, profile_id=gid)
@@ -440,14 +569,14 @@ class TestWhoIsTaken:
     ⚠⚠ **Список сайтов подменяется, и это не удобство, а защита.**
 
     Круг обходит **все** сайты с включённым расписанием — включая живые. А делает он
-    среди прочего `_sweep`, то есть **удаляет шаблоны**. На живом прогоне так и
-    вышло: у сайта, где человек включил расписание, круг снёс пять написанных
-    руками текстов и положил на их место три поддельных, которые вернул подменённый
-    агент. Восстанавливать пришлось из binlog.
+    среди прочего чистку `_clean`, то есть **удаляет шаблоны**, когда у сайта включён
+    срок жизни. На живом прогоне так и вышло: у сайта, где человек включил расписание,
+    круг снёс пять написанных руками текстов и положил на их место три поддельных,
+    которые вернул подменённый агент. Восстанавливать пришлось из binlog.
 
-    Подмена агента от этого не спасает: она отвечает за то, что **пишется**, а
-    уборка не спрашивает агента вовсе. Значит ограничивать надо не то, что круг
-    делает, а то, **над чем** он это делает.
+    Подмена агента от этого не спасает: она отвечает за то, что **пишется**, а чистка
+    не спрашивает агента вовсе. Значит ограничивать надо не то, что круг делает, а то,
+    **над чем** он это делает.
     """
 
     @pytest.fixture

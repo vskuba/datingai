@@ -232,6 +232,10 @@ class TestKnownGroups:
         ('reply_batch', 'favorite'),
         ('send_every', 'mail'),
         ('send_max_day', 'mail'),
+        # ⚠ Срок жизни шаблона — тоже на «Рассылке писем»: его читает круг
+        # шаблонов, а не страница расписания (норма `template_per_day` — та
+        # спрятана и правится у расписания, эта — обычное поле здесь).
+        ('template_keep_hours', 'mail'),
     ])
     async def test_setting_is_in_its_group(self, rhapsody, monkeypatch, key, group):
         """Разбивка, которую просили: доступ к API отдельно, частота онлайна
