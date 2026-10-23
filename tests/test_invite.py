@@ -842,7 +842,7 @@ class TestVariety:
 
             return 'текст'
 
-        async def _avoid(site_id):
+        async def _avoid(site_id, lang=''):
             return []
 
         monkeypatch.setattr(invite, 'invite_template', _template)
