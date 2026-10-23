@@ -98,8 +98,7 @@ def _agent(monkeypatch, *texts, raises: Exception = None):
     """
     calls = []
 
-    async def _template(site_id, language, avoid=None, name_percent='0',
-                        girl_name_percent='0', how_many=1):
+    async def _template(site_id, language, avoid=None, how_many=1):
         calls.append({'how_many': int(how_many), 'avoid': avoid})
         if raises:
             raise raises

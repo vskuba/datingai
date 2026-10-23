@@ -212,9 +212,8 @@ def _quiet(monkeypatch, agent) -> list:
     monkeypatch.setattr(invite, 'block_pairs', _answer(set()))
     monkeypatch.setattr(invite, '_language', _answer('en'))
     monkeypatch.setattr(invite, '_avoid', _answer([]))
-    # ⚠ Доля имени — **строка процентов**, и подменяется она потому, что читает
-    # настройку сайта. Прежних `_country` и `_time_chance` больше нет: страна и
-    # время из инвайта убраны, а жребий приёма и длины бросает сосед.
-    monkeypatch.setattr(invite, '_man_percent', _answer('0'))
+    # ⚠ Подмен чтения долей здесь больше нет: `_country`, `_time_chance` и
+    # `_man_percent` ушли — страна и время из инвайта убраны, а доли имён с
+    # 23.10.2026 лежат числами в жребии у соседа.
 
     return put

@@ -336,35 +336,27 @@ class TestInviteLanguage:
         assert (await _asked_with(language='')).get('user_language') \
                == INVITE_LANGUAGE
 
-    async def test_the_shares_are_sent_not_the_dice(self, monkeypatch):
-        """⚠⚠ Панель шлёт **доли**, а жребий бросает сосед.
+    async def test_the_shares_are_gone_too(self, monkeypatch):
+        """⚠⚠ Панель не шлёт **ни жребия, ни долей** — и с 23.10.2026 уже ничего.
 
         «Вставляй имя изредка» модель понимает как «вставляй всегда»: вероятность у
         неё стилистическая, и выбирать должен кто-то снаружи. С 26.09.2026 это шаг
-        `dice` в `dating_invite_one`, а отсюда едут проценты из настроек сайта.
+        `dice` в `dating_invite_one`, а отсюда ехали проценты из настроек сайта.
+        23.10.2026 доли уехали **внутрь** описания жребия числами
+        (`dice_invite_man_name` 10, `dice_invite_girl_name` 0) — тем же поездом,
+        каким 22.10 уехали почтовые.
 
-        ⚠ Готовые значения присылать **нельзя**: у соседа `invite_slots`,
-        `invite_angle`, `invite_length` больше не объявлены, и ручка отвергает вызов
-        целиком — «Переменные … не объявлены».
+        ⚠ Прежние переменные присылать **нельзя**: у соседа они не объявлены, а
+        ручка отвергает вызов целиком — «Переменные … не объявлены».
         """
-        got = await _asked_with(language='en', name_percent=30,
-                                girl_name_percent=5)
+        got = await _asked_with(language='en')
 
-        assert got.get('invite_name_percent') == '30'
-        assert got.get('invite_girl_name_percent') == '5'
         for gone in ('invite_slots', 'invite_angle', 'invite_length',
                      'invite_time', 'invite_country', 'invite_time_percent',
-                     'datetime_current_get_zone'):
+                     'datetime_current_get_zone', 'invite_name_percent',
+                     'invite_girl_name_percent'):
             assert gone not in got, \
                 f'панель снова шлёт {gone} — у соседа он не объявлен, вызов упадёт'
-
-    async def test_the_shares_are_numbers_as_text(self, monkeypatch):
-        """⚠ Проценты уезжают **строкой с целым числом**: у соседа они попадают
-        прямо в описание жребия, где доли заданы числами. Пришли «0.3» — жребий
-        отказал бы, а «30%» прочитались бы как 30."""
-        got = await _asked_with(language='en', name_percent=10)
-
-        assert got.get('invite_name_percent') == '10'
 
     async def test_no_cards_go_to_the_agent(self, monkeypatch):
         """⚠⚠ Ни карточки девушки, ни карточки мужчины: шаблон общий.
@@ -377,13 +369,12 @@ class TestInviteLanguage:
         assert 'girl_card' not in got and 'companion_card' not in got
 
 
-async def _asked_with(language: str, name_percent: int = 0,
-                      girl_name_percent: int = 0) -> dict:
+async def _asked_with(language: str) -> dict:
     """Какие переменные ушли бы агенту. Транспорт подменён: проверяется вызов.
 
-    ⚠⚠ Доводы — **доли в процентах**, а не готовые значения. Жребий (приём, длина,
-    метки имён) бросает теперь шаг `dice` у соседа; панель присылает только
-    проценты из настроек сайта.
+    ⚠⚠ Панель не присылает ни доводов, ни долей: жребий (приём, длина, метки
+    имён) и веса его живут у соседа в шаге `dice` — доли имён доехали туда числами
+    23.10.2026.
     """
     from src.dating import mail_agent as agent
 
@@ -403,8 +394,7 @@ async def _asked_with(language: str, name_percent: int = 0,
     try:
         # ⚠ Именованно, а не по порядку: новый аргумент в середине сигнатуры
         # сдвинул бы позиционные молча — так и вышло с `with_time`.
-        await agent.invite_template(343, language, name_percent=name_percent,
-                                    girl_name_percent=girl_name_percent)
+        await agent.invite_template(343, language)
     finally:
         agent._agent_id = real_id
         agent.rhapsody_api_chat_ask = real_ask
@@ -727,12 +717,10 @@ class TestOneCallPerPool:
     async def test_agent_is_asked_once(self, monkeypatch):
         calls = []
 
-        # ⚠ Подпись повторяет живую целиком, включая жребий на приём и длину:
-        # заглушка, не принявшая их, ловила бы `TypeError` вместо проверяемого
-        # правила.
-        async def _template(site_id, language, avoid=None,
-                            name_percent=0, girl_name_percent=0,
-                            how_many=1):
+        # ⚠ Подпись повторяет живую целиком: заглушка, не принявшая лишний
+        # аргумент, ловила бы `TypeError` вместо проверяемого правила — и ровно
+        # так же ловит теперь попытку передать ей снятую долю имени.
+        async def _template(site_id, language, avoid=None, how_many=1):
             calls.append(site_id)
 
             # ⚠ Список, а не строка: агент теперь присылает столько текстов,
@@ -760,9 +748,7 @@ async def _made_with(monkeypatch, template, people=None) -> dict:
     from src.dating import invite
 
     if template is not None:
-        async def _template(site_id, language, avoid=None,
-                            name_percent=0, girl_name_percent=0,
-                            how_many=1):
+        async def _template(site_id, language, avoid=None, how_many=1):
             # Заглушке дают строку — превращаем в список, как отвечает живой
             # агент. ⚠ Пустая строка значит «агент промолчал»: у живого это
             # пустой список, а не список с пустым текстом.
@@ -821,24 +807,24 @@ class TestVariety:
     """
 
     async def test_the_dice_moved_to_the_neighbour(self, monkeypatch):
-        """⚠⚠ Приём и длину бросает **сосед**, а панель их не выбирает вовсе.
+        """⚠⚠ Приём, длину и **доли имён** бросает сосед, а панель не выбирает ничего.
 
-        Прежде выбирала она (`INVITE_ANGLES`, `INVITE_LENGTHS`) и присылала готовое
-        значение. Теперь списки лежат в описании жребия у соседа — там же, где
-        промпт, который ими пользуется, — и новая грань разнообразия стоит правки
-        одного места, а не четырёх.
+        Прежде она выбирала приём и длину (`INVITE_ANGLES`, `INVITE_LENGTHS`), с
+        26.09 — ещё и доли имён, которые для этого читала. Всё уехало в описание
+        жребия у соседа, там же, где промпт, который ими пользуется; 23.10.2026
+        числами уехали и последние доли — `dice_invite_man_name` 10,
+        `dice_invite_girl_name` 0.
 
-        Здесь стережётся, что панель к этому не вернулась: уехать должны **доли**,
-        а готовых значений у соседа никто не ждёт.
+        Здесь стережётся, что панель к этому не вернулась: заглушка повторяет
+        живую сигнатуру целиком, и попытка передать ей долю кончается
+        `TypeError`, а не тестом.
         """
         from src.dating import invite
 
         sent = {}
 
-        async def _template(site_id, language, avoid=None,
-                            name_percent=0, girl_name_percent=0, how_many=1):
-            sent.update({'avoid': avoid, 'name_percent': name_percent,
-                         'girl_name_percent': girl_name_percent})
+        async def _template(site_id, language, avoid=None, how_many=1):
+            sent.update({'avoid': avoid})
 
             return 'текст'
 
@@ -850,12 +836,8 @@ class TestVariety:
 
         await invite._templates(STAND_SITE, 'en', 1)
 
-        assert 'name_percent' in sent, 'доля имени не уехала — жребий получит метку'
-        # ⚠ Строка с целым числом: переменные вызова уходят строками, а у соседа
-        # значение попадает прямо в описание жребия, где доли заданы числами.
-        # «0.3» жребий отверг бы, «30%» прочитал бы как 30.
-        assert str(sent['name_percent']).isdigit(), \
-            f'доля не целое число строкой: {sent["name_percent"]!r}'
+        assert set(sent) == {'avoid'}, \
+            f'заход снова везёт лишнее: {sorted(set(sent) - {"avoid"})}'
 
     async def test_the_lists_are_gone_from_the_panel(self):
         """⚠ Списков приёмов и длин в панели больше нет — они у соседа.
@@ -1109,13 +1091,16 @@ class TestTimeAndPlaceAreGone:
         """
         assert 'invite_time_percent' not in SITE_KNOWN
 
-    async def test_the_name_share_stays(self):
-        """⚠⚠ А доля имени **осталась**, и это граница правила.
+    async def test_the_name_share_is_gone_too(self):
+        """⚠⚠ Настройка имени **снята**, и это та же граница правила.
 
-        Её читает жребий у соседа (метка `%invite_name_percent%` в описании), то
-        есть влияние настоящее. Читает не промпт, а инструмент — и этого довольно.
+        Доля лежит числами в описании жребия у соседа, переменная вызова там больше
+        не объявлена. Оставь настройку в реестре — человек задал бы долю и не
+        понял, почему ничего не меняется. Это то же правило, по которому сняты
+        нечитаемые переменные.
         """
-        assert 'invite_name_percent' in SITE_KNOWN
+        assert 'invite_name_percent' not in SITE_KNOWN
+        assert 'invite_girl_name_percent' not in SITE_KNOWN
 
 
 def _async(value):

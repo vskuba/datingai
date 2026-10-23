@@ -61,7 +61,6 @@
 """
 
 import json
-import random
 import re
 
 from logging_.logging_ import logger_info
@@ -69,7 +68,6 @@ from mysql_.mysql_ import mysql_get_db_async
 from text_.text_trim_lines import text_trim_lines
 
 from src.dating.agent import (AGENT_NODE, agent_bio, agent_site)
-from src.dating.percent import percent_share
 from src.dating.mail import (MAIL_VAR_RE, MAILING_AVOID_MAX)
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_agent_create,
                                        rhapsody_api_agent_find, rhapsody_api_chat_ask)
@@ -570,9 +568,8 @@ async def mail_question(profile: dict, site_id: int,
 
 
 async def invite_template(site_id: int, language: str = INVITE_LANGUAGE,
-                                 avoid: list = None, how_many: int = 1,
-                                 name_percent: str = '0',
-                                 girl_name_percent: str = '0') -> list[str]:
+                                 avoid: list = None,
+                                 how_many: int = 1) -> list[str]:
     """Сочиняет **шаблон** первой реплики в чат — один на весь пул инвайтов.
 
     Args:
@@ -581,13 +578,6 @@ async def invite_template(site_id: int, language: str = INVITE_LANGUAGE,
         avoid: что уже писали этому сайту; модель получает список со словами «так
             уже было».
         how_many: сколько **разных** текстов просим — по числу девушек в сети.
-        name_percent: доля реплик с обращением к нему по имени, **целые проценты
-            строкой** (`'10'`) — настройка сайта `invite_name_percent`. Строкой
-            потому, что переменные вызова уходят строками, и превращать число по
-            дороге значило бы делать это там, где не видно.
-        girl_name_percent: доля реплик, где девушка называет своё имя — тоже
-            проценты строкой. Настройки сайта под неё нет, и ноль — решение: «Я
-            Diana, и мне скучно» в первой реплике звучит как визитка бота.
 
     Returns:
         list: тексты шаблонов, от одного до `how_many`. Пустой список — агент
@@ -617,9 +607,10 @@ async def invite_template(site_id: int, language: str = INVITE_LANGUAGE,
     подо что. Это и делает вызов дешёвым — просить у модели персонализацию, а
     потом раздавать её пятидесяти разным людям, было бы обманом самих себя.
 
-    ⚠ **Метки просим мы, а не модель решает.** Вероятности заданы снаружи (5% на
-    имя девушки, 30% на имя мужчины), и «вставляй имя иногда» модель понимает как
-    «вставляй всегда». Здесь она получает прямое указание: метка нужна или нет.
+    ⚠ **Метки — жребием, не решением модели.** «Вставляй имя иногда» модель
+    понимает как «вставляй всегда»: вероятность она не считает, она
+    стилистическая. Выбирает поэтому шаг `dice` у соседа — см. ниже, что именно
+    от нас для этого уезжает.
 
     ⚠⚠ **Тем же приёмом добывается и разнообразие.** Один и тот же промпт модель
     отвечает похоже: у неё сильные притяжения, и «будь разной» их не ломает —
@@ -642,22 +633,23 @@ async def invite_template(site_id: int, language: str = INVITE_LANGUAGE,
         int(site_id),
         agent_id=agent_id,
         question='Напиши шаблон первой реплики в чат.',
-        # ⚠⚠ **Доли, а не готовые значения.** Приём, длину, метки имён и «показать
-        # ли время» бросает теперь **шаг жребия** у соседа (`dice`, workflow
-        # `dating_invite_one`), а панель присылает только проценты — настройки
-        # сайта, которыми эти доли заданы.
+        # ⚠⚠ **Ни долей, ни готовых значений.** Приём, длину и метки имён бросает
+        # **шаг жребия** у соседа (`dice`, workflow `dating_invite_one`), и с
+        # 23.10.2026 доли лежат **числами в самом шаге** (`dice_invite_man_name`
+        # 10, `dice_invite_girl_name` 0) — тот же переезд, что у письма 22.10.
+        # Панель не решает уже ничего: ни броска, ни настройки, ни переменной.
         #
         # Так каждая грань разнообразия живёт в одном месте: раньше новая стоила
         # четырёх — настройка в реестре, жребий здесь, объявление переменной у
         # соседа и правка промпта.
         #
         # ⚠ Прежние `invite_angle`, `invite_length`, `invite_slots`, `invite_time`,
-        # `invite_country` присылать **нельзя**: у соседа они больше не объявлены, а
-        # ручка отвергает вызов с незнакомой переменной («Переменные … не
-        # объявлены») — то есть заход упал бы целиком, а не молча потерял бы доводы.
+        # `invite_country`, а с 23.10.2026 `invite_name_percent` и
+        # `invite_girl_name_percent` присылать **нельзя**: у соседа они больше не
+        # объявлены, а ручка отвергает вызов с незнакомой переменной («Переменные …
+        # не объявлены») — то есть заход упал бы целиком, а не молча потерял бы
+        # доводы.
         variables={'invite_avoid': _avoid_text(avoid),
-                   'invite_name_percent': str(name_percent or '0'),
-                   'invite_girl_name_percent': str(girl_name_percent or '0'),
                    # ⚠⚠ **Времени в инвайте больше нет вовсе** — ни секции в
                    # промпте, ни шага `datetime_current_get`, ни часового пояса.
                    # Решение человека (26.09.2026): показывать время оказалось

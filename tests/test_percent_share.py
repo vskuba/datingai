@@ -166,28 +166,27 @@ class TestNobodyKeepsAPrivateCopy:
             assert 'async def _percent(' not in text, \
                 f'{name}.py снова держит свою копию доли'
 
-    def test_all_three_use_the_shared_one(self):
-        """⚠ Проверяются те, кто долю **читает сегодня**, и обе её выдачи.
+    def test_the_last_reader_uses_the_shared_one(self):
+        """⚠ Проверяется тот, кто долю читает **сегодня**, — осталась рассылка.
 
         Список был `invite`, `mail_agent`, `favorite_mail`, потом `answer`, и
         каждый раз устаревал одинаково: жребий уезжал к соседу, а имя оставалось
         в списке. `favorite_mail` держал **импорт без единого вызова** (сторож не
         давал его убрать), `answer` отдавал соседу три доли
-        (`_dice_percents`) — 22.10.2026 уехали и они, числами в сам шаг
-        «Жребий».
+        (`_dice_percents`) — 22.10.2026 уехали они, 23.10.2026 — имя инвайта
+        (`invite._man_percent` снят вместе с настройкой), и мёртвый импорт
+        погас в `mail_agent`. Гнать список за уехавшими — то самое старение;
+        теперь в нём только читатель.
 
-        ⚠ Поэтому проверяется не имя `percent_share`, а обращение к общему
-        модулю любой из двух дверей. Само правило от этого не слабеет: копию
-        ловит соседний `test_no_module_defines_its_own`, и он смотрит ровно на
-        то, что запрещено.
+        ⚠ Проверяется обращение к общему модулю: копию ловит соседний
+        `test_no_module_defines_its_own`, и он смотрит ровно на то, что запрещено.
         """
         import pathlib
 
-        for name in ('invite', 'mail_agent'):
+        for name in ('mailing',):
             text = pathlib.Path(f'src/dating/{name}.py').read_text(encoding='utf-8')
 
-            assert 'percent_share' in text or 'percent_value' in text, \
-                f'{name}.py не зовёт общую долю'
+            assert 'percent_share' in text, f'{name}.py не зовёт общую долю'
 
 
 class TestTheEdgesMeanWhatTheySay:

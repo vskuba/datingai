@@ -1,18 +1,23 @@
-"""Имя собеседника в инвайте — жребием, а доля задаётся настройкой сайта.
+"""⚠⚠⚠ Жребий имени в инвайтах бросает **сосед**, и панель к нему не причём.
 
-## ⚠⚠ Жребий бросает СОСЕД, а доля живёт настройкой сайта
+## Как было и что уехало 23.10.2026
 
 «Вставляй имя изредка» LLM понимает как «вставляй всегда»: вероятность у неё не
-считается, она стилистическая. Значит выбирать должен кто-то снаружи её — и с
-26.09.2026 это шаг `dice` в workflow `dating_invite_one`, а не панель.
+считается, она стилистическая — выбирать должен кто-то снаружи. С 26.09.2026 это
+шаг `dice` в workflow `dating_invite_one`, но доли ему ещё присылала панель:
+настройка сайта `invite_name_percent` читалась здесь (`invite._man_percent`) и
+уезжала переменными вызова `invite_name_percent` / `invite_girl_name_percent`.
 
-Панель отдаёт **долю в процентах**, и проверяется здесь именно она: настройка
-прочитана, границы соблюдены, ноль отличён от «не задано». Что дальше по ней
-бросают жребий — предмет LLM-тестов у соседа
-(`tests_llm/dating_invite_write/test_prompt.py`).
+Тем же поездом, каким 22.10 уехали почтовые доли, 23.10.2026 уехали последние
+две: веса лежат **числами в самом `spec` жребия** — `dice_invite_man_name` 10,
+`dice_invite_girl_name` 0. Переменные у соседа больше не объявлены, и прислать их
+значит поймать отказ «Переменные … не объявлены» на весь вызов.
 
-⚠ Проценты **строкой**: значение уезжает в описание жребия, где доли заданы
-числами, и превращать его по дороге значило бы делать это там, где не видно.
+## Что стережёт этот файл
+
+Ни настройки, ни констант, ни чтения, ни переменных в пути. Возвращаются они
+**только вместе** (объявление у соседа, ссылка в `spec`, запись в реестре, чтение
+в коде) — поодиночке любое место бесполезно или ломает заход.
 
 ## ⚠ Имя — первое слово
 
@@ -24,106 +29,75 @@
 черновиках из тридцати шести у людей осталось сырое `[[companion_name]]`.
 """
 
-import uuid
-
 import pytest
-from mysql_.mysql_ import mysql_get_db_async
+
 from src.dating.site_setting import SITE_KNOWN
 
 pytestmark = pytest.mark.chat
 
-STAND_SITE = 999_343
 
+class TestThePanelDoesNotRoll:
+    """⚠⚠ Броска и долей в панели нет: их место — в `spec` жребия у соседа."""
 
-@pytest.fixture
-async def percent():
-    """Ставит долю у сайта стенда и убирает за собой."""
-    async def _set(value):
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                'UPDATE site SET settings = JSON_SET(COALESCE(settings, JSON_OBJECT()),'
-                ' %s, %s) WHERE site_id = %s',
-                ('$.invite_name_percent', str(value), STAND_SITE))
-            await db.connection.commit()
+    def test_the_settings_are_gone(self):
+        """⚠ Настроек сайта нет: доля задаётся весами оси у соседа.
 
-    yield _set
-
-    async with mysql_get_db_async() as db:
-        await db.execute('UPDATE site SET settings = JSON_REMOVE(settings, %s)'
-                         ' WHERE site_id = %s', ('$.invite_name_percent', STAND_SITE))
-        await db.connection.commit()
-
-
-class TestTheShare:
-    """Проценты из формы → проценты для жребия у соседа."""
-
-    async def test_the_default_is_ten_percent(self, percent):
-        from src.dating.invite import _man_percent
-
-        assert await _man_percent(STAND_SITE) == '10'
-
-    async def test_the_setting_wins(self, percent):
-        from src.dating.invite import _man_percent
-
-        await percent(30)
-
-        assert await _man_percent(STAND_SITE) == '30' 
-
-    async def test_zero_means_no_names(self, percent):
-        """⚠⚠ Ноль — законное значение, а не «настройки нет».
-
-        Человек выбрал это в форме; подмени мы его умолчанием, имена появлялись
-        бы там, где их запретили.
+        Останься они в реестре — человек правил бы число, которое ни на что не
+        влияет, и это хуже отсутствия настройки.
         """
-        from src.dating.invite import _man_percent
+        for key in ('invite_name_percent', 'invite_girl_name_percent'):
+            assert key not in SITE_KNOWN, \
+                f'настройка {key} вернулась, а решает её сосед'
 
-        await percent(0)
-
-        assert await _man_percent(STAND_SITE) == '0' 
-
-    @pytest.mark.parametrize('value', [7, 23, 100])
-    async def test_any_number_works(self, percent, value):
-        """⚠⚠ Любое число, а не выбор из набора.
-
-        Набор отвечает на вопрос «какие значения осмысленны», и для сроков это
-        верно: «15 секунд или 5 минут» — разные решения, а «17 секунд» не значит
-        ничего. Здесь же осмысленна **любая** доля: 7% так же законны, как 10%.
-        """
-        from src.dating.invite import _man_percent
-
-        await percent(value)
-
-        assert await _man_percent(STAND_SITE) == str(value)
-
-    async def test_the_share_never_exceeds_a_hundred(self, percent):
-        """⚠ Вторая страховка — в самом чтении, а не только в форме.
-
-        Правило проекта: границы числа проверяет и чтение, форма не единственный
-        вход. Сотня — предел: доля больше неё у соседа означала бы «всегда», то
-        есть тихо выключенный жребий вместо отказа.
-        """
-        from src.dating.invite import _man_percent
-
-        await percent(100)
-
-        assert await _man_percent(STAND_SITE) == '100' 
-
-    async def test_a_broken_database_gives_the_default(self, monkeypatch):
-        """⚠ «Имён не будет вовсе» — решение, и принимать его из-за недоступной
-        базы нельзя."""
+    def test_the_constants_are_gone(self):
+        """Константы снятой настройки не должны пережить её."""
         from src.dating import invite
 
-        def _broken(*args, **kwargs):
-            raise RuntimeError('база отвалилась')
+        for name in ('INVITE_MAN_NAME_SETTING', 'INVITE_MAN_NAME_PERCENT',
+                     'INVITE_GIRL_NAME_PERCENT'):
+            assert not hasattr(invite, name), f'{name} осиротела, но осталась'
 
-        monkeypatch.setattr('src.dating.percent.site_seconds', _broken)
+    def test_the_reader_is_gone(self):
+        """Чтения доли тоже нет: переменной, которой оно кормилось, больше нет."""
+        from src.dating import invite
 
-        assert await invite._man_percent(STAND_SITE) == \
-            str(invite.INVITE_MAN_NAME_PERCENT)
+        assert not hasattr(invite, '_man_percent'), \
+            'чтение вернулось — переменной у соседа больше не объявляют'
+
+
+class TestNothingTravels:
+    """⚠⚠ Ни одна дорога не везёт прежних переменных.
+
+    Вызов с необъявленной переменной — отказ на весь заход, а не молчаливая
+    потеря довода: уедет обратно то, что переехало к соседу.
+    """
+
+    def test_the_template_sends_no_name_percents(self):
+        import inspect
+
+        from src.dating import mail_agent
+
+        code = inspect.getsource(mail_agent.invite_template)
+
+        # ⚠ Ключ словаря, а не голое имя: в этом же коде стоит памятный
+        # комментарий, какие переменные присылать нельзя, — он не passing.
+        for key in ("'invite_name_percent'", "'invite_girl_name_percent'"):
+            assert key not in code, \
+                f'панель снова шлёт {key} — у соседа она не объявлена'
+
+    def test_the_round_passes_no_name_args(self):
+        import inspect
+
+        from src.dating import invite
+
+        code = inspect.getsource(invite._templates)
+
+        assert 'name_percent' not in code, \
+            'заход снова передаёт доли — их некому принимать'
 
 
 class TestTheName:
-    """Что именно подставляется вместо метки."""
+    """Что именно подставляется вместо метки — это по-прежнему наша работа."""
 
     def test_only_the_first_word(self):
         from src.dating.invite import _first_word
@@ -153,85 +127,6 @@ class TestTheName:
         got = _fill('Привет, [[companion_name]]!', {'profile': '{}'}, {'name': ''})
 
         assert '[[' not in got and ']]' not in got
-
-
-class TestTheSetting:
-    """Настройка живёт на странице «Сайты», вкладка «Инвайты и чат»."""
-
-    async def test_the_key_is_registered(self, auth_client):
-        got = (await auth_client.get('/api/dating/site')).json()['result']
-        known = {row['key']: row for row in got['known']}
-
-        assert 'invite_name_percent' in known
-        assert known['invite_name_percent']['default'] == '10'
-
-    async def test_it_lives_with_invites(self, auth_client):
-        got = (await auth_client.get('/api/dating/site')).json()['result']
-        group = {row['key']: row['group'] for row in got['known']}
-
-        assert group['invite_name_percent'] == group['invite_pool_max']
-
-    def test_the_maker_asks_the_setting(self):
-        """Набор пула читает настройку, а не константу."""
-        import inspect
-
-        from src.dating import invite
-
-        assert 'await _man_percent(site_id)' in inspect.getsource(invite._templates)
-
-
-class TestTheFieldIsANumber:
-    """⚠⚠ Поле числовое, с границами, и границы держит сервер.
-
-    У поля стоят `min` и `max` — браузер не пустит «-5» и «101». Но браузер не
-    единственный источник запроса: ручка открыта тому, у кого есть токен, и без
-    серверной проверки «-500» прошло бы молча. Для доли это не мелочь:
-    отрицательная сравнится с `random.random()` как «никогда», то есть человек
-    получил бы тихо выключенную настройку вместо отказа.
-    """
-
-    async def test_the_field_says_number(self, auth_client):
-        got = (await auth_client.get('/api/dating/site')).json()['result']
-        spec = next(r for r in got['known'] if r['key'] == 'invite_name_percent')
-
-        assert spec['kind'] == 'number'
-        assert spec['min'] == 0 and spec['max'] == 100
-        assert spec['options'] == [], 'набор остался — поле нарисуется списком'
-
-    async def test_a_number_is_saved(self, auth_client):
-        answer = await auth_client.put(f'/api/dating/site/{STAND_SITE}',
-                                        json={'settings': {'invite_name_percent': '7'}})
-
-        assert answer.status_code == 200
-        assert answer.json()['result']['settings']['invite_name_percent'] == '7'
-
-    @pytest.mark.parametrize('bad', ['-5', '101', 'много', '3.5'])
-    async def test_nonsense_is_refused(self, auth_client, bad):
-        """Отказ, а не тихое умолчание: человек должен узнать, что не сохранилось."""
-        answer = await auth_client.put(f'/api/dating/site/{STAND_SITE}',
-                                        json={'settings': {'invite_name_percent': bad}})
-
-        assert answer.status_code == 422, f'«{bad}» приняли'
-
-    async def test_the_refusal_names_the_setting(self, auth_client):
-        """⚠ В отказе — название настройки и границы: без них человек ищет глазами,
-        какое из полей формы он испортил."""
-        answer = await auth_client.put(f'/api/dating/site/{STAND_SITE}',
-                                        json={'settings': {'invite_name_percent': '900'}})
-
-        detail = answer.json()['detail']
-
-        assert 'имени' in detail and '100' in detail, detail
-
-    async def test_other_settings_are_not_touched(self, auth_client):
-        """⚠ Проверка только для числовых: остальные бывают строками, JSON и
-        расписанием, и «не число» для них — обычное дело."""
-        answer = await auth_client.put(
-            f'/api/dating/site/{STAND_SITE}',
-            json={'settings': {'admin_mark': 'Выход из кабинета'}})
-
-        assert answer.status_code == 200
-
 
 
 class TestTimeIsGone:

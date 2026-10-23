@@ -228,7 +228,6 @@ def _quiet(monkeypatch, agent) -> list:
     monkeypatch.setattr(invite, 'block_pairs', _answer(set()))
     monkeypatch.setattr(invite, '_language', _answer('en'))
     monkeypatch.setattr(invite, '_avoid', _answer([]))
-    monkeypatch.setattr(invite, '_man_percent', _answer('0'))
     monkeypatch.setattr(invite, 'error_write', _nothing())
     monkeypatch.setattr(invite, 'error_clear', _nothing())
 
