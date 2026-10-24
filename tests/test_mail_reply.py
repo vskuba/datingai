@@ -79,7 +79,7 @@ def agent(monkeypatch):
     """
     calls = []
 
-    async def fake(agent_id, profile, uid, language, name=''):
+    async def fake(agent_id, profile, uid, language, name='', letter=''):
         calls.append({'uid': str(uid), 'language': str(language),
                       'name': str(name),
                       'profile_id': int(profile.get('id') or 0)})
@@ -287,7 +287,7 @@ class TestRefusal:
         """
         calls = []
 
-        async def broken(agent_id, profile, uid, language, name=''):
+        async def broken(agent_id, profile, uid, language, name='', letter=''):
             calls.append(1)
 
             return '', 'браузер соседа занят', 0
@@ -320,7 +320,7 @@ class TestRefusal:
         assert got['reasons'], 'причина не названа'
 
     async def test_empty_answer_is_not_saved(self, profile, monkeypatch):
-        async def empty(agent_id, profile, uid, language, name=''):
+        async def empty(agent_id, profile, uid, language, name='', letter=''):
             return '   ', '', 0
 
         monkeypatch.setattr(mod, 'answer_mail_reply', empty)
@@ -551,7 +551,7 @@ class TestMessageIdReachesThePool:
     async def test_message_id_lands_in_the_pool_row(self, profile, monkeypatch):
         """Агент отдал ненулевой номер обмена — он обязан лежать в столбце, а не
         потеряться между сочинением ответа и записью в пул."""
-        async def fake(agent_id, profile, uid, language, name=''):
+        async def fake(agent_id, profile, uid, language, name='', letter=''):
             return 'Ответ про мотоциклы', '', 4242
 
         monkeypatch.setattr(mod, 'answer_mail_reply', fake)
@@ -580,3 +580,36 @@ class TestMessageIdReachesThePool:
         assert got['made'] == 1
         assert rows[0]['message_id'] is None, \
             'отсутствие номера легло нулём, а не NULL'
+
+
+class TestTheLetterTravelsAsQuestion:
+    """⚠⚠ Различие двух почтовых дорог — **сам вопрос**, с 24.10.2026.
+
+    `mail_kind` стал у соседа внутренней переменной (`type='workflow'`), и
+    прислать его отсюда теперь значит поймать `400` на весь заход: в сборку
+    `_variables_allowed` пропускает только `input` (та же грабля, что стоила
+    91 отказа при снятии долей жребия). Ветку сосед вычисляет сам по непустому
+    `prompt_user` — значит ответ на письмо обязан везти его текст вопросом, а
+    письмо молчащему — пустой вопрос.
+
+    ⚠ Без сторожа ответ уедет **веткой молчащего молча**: сосед посчитает
+    `write`, модель вместо ответа напишет «я вспомнила о тебе» — без единой
+    ошибки в логах, ровно та тишина, которую письмо и лечит.
+    """
+
+    def test_the_door_sends_no_undeclared_name(self):
+        """Из двери соседу `mail_kind` вынесен — и вопрос везёт письмо."""
+        import inspect
+
+        from src.dating import answer
+
+        asked = inspect.getsource(answer._agent_ask)
+        assert "'mail_kind'" not in asked, \
+            'необъявленное имя уезжает к соседу — это 400 на весь заход'
+
+        replied = inspect.getsource(answer.answer_mail_reply)
+        assert "int(agent_id), str(letter or '')" in replied, \
+            'ответ на письмо везёт пустой вопрос: сосед сочтёт его письмом молчащему'
+
+        assert 'letter=str(' in inspect.getsource(mod), \
+            'круг перестал класть тело его письма в вызов'

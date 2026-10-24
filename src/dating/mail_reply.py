@@ -114,9 +114,15 @@ async def mail_reply_make(site_id: int, limit: int = 0) -> dict:
         # ⚠⚠ Переписку сюда не передаём: обе истории — чат и письма — берёт сам
         # `answer_mail_reply`. Прежде круг собирал её своим запросом, знавшим про
         # три таблицы из четырёх и не знавшим про чат вовсе.
+        #
+        # ⚠ Его письмо едет **вопросом**: у соседа `mail_kind` стал внутренней
+        # переменной, и ветку «ответ на письмо» он узнаёт по непустому
+        # `prompt_user`. Без текста письма заход ушёл бы веткой письма
+        # молчащему.
         body, error, message_id = await answer_mail_reply(
             agent_id, profile, str(letter['uid']), language,
-            str(letter.get('name') or ''))
+            str(letter.get('name') or ''),
+            letter=str(letter.get('body') or ''))
 
         if error:
             # ⚠ Отказ агента обрывает **весь заход**: сосед занят, и следующие
