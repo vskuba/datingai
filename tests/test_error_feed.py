@@ -93,7 +93,7 @@ class TestQueryFilters:
             assert params[:1] == [SITE]
 
     def test_search_covers_text_and_profile(self):
-        """Ищут и по причине, и по анкете — помняют обычно одно из двух."""
+        """Ищут и по причине, и по анкете — помнят обычно одно из двух."""
         sql, params = _flat(_feed_query(SITE, 'profile', 'Diana'))
 
         assert 'l.text LIKE %s' in sql
