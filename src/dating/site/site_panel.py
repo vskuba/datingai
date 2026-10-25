@@ -165,6 +165,40 @@ class DatingSitePanelLuxee(DatingSitePanel):
         return profile_param_frame(values)
 
 
+class DatingSitePanelStep2Love(DatingSitePanel):
+    """Панель Step2Love: `my_profiles.php?com=edit_user&id_user={ID}`.
+
+    ⚠ **Страница анкеты здесь — форма заведения**, а не профиль параметров: имя,
+    пароль, страна и город сервисными числами, да дата рождения тремя скрытыми
+    полями. Роста, волос и увлечений панель не знает вовсе — в карточке им взяться
+    негде, и драйвер честно снимает только дату. Числа `country` и `city` не
+    разворачиваются: рядом с полем страница пишет название текстом, а `form` —
+    имена и значения, текста рядом в нём нет.
+
+    ⚠ Месяц панель пишет **цифрой** (`02`), а не `Feb`, как Ladadate; `_birthday`
+    понимает обе записи с этих пор.
+    """
+
+    name = 'step2love'
+
+    # Страница панели зовётся запросом, а не путём — черта здесь часть адреса.
+    path = 'my_profiles.php?com=edit_user&id_user={uid}'
+
+    FIELDS: dict = {}
+
+    BUILT = ('birthday',)
+
+    SOURCES = ('b_day', 'b_month', 'b_year')
+
+    def params(self, form: dict) -> dict:
+        """Каркас из одной даты: прочих полей реестра эта форма не знает."""
+        got = form or {}
+
+        return profile_param_frame({'birthday': _birthday(got.get('b_day'),
+                                                          got.get('b_month'),
+                                                          got.get('b_year'))})
+
+
 def _bracket_metric(value) -> str:
     """Метрическая половина меры Luxee: `5'7.4&quot; (175 cm)` → `175 cm`.
 
@@ -194,10 +228,15 @@ def _metric(value) -> str:
 def _birthday(day, month, year) -> str:
     """Дата рождения из трёх полей панели: `21`, `Jan`, `1990` → `1990-01-21`.
 
+    Месяц — английской тройкой (`Jan`) **или цифрой** (`02`, так пишет Step2Love).
+
     ⚠ **Неполная тройка и незнакомый месяц дают пустоту.** Половина даты хуже её
     отсутствия: `1990-00-21` уехало бы в био настоящей датой.
     """
-    at = SITE_PANEL_MONTHS.get(str(month or '').strip().lower()[:3], 0)
+    said = str(month or '').strip()
+    at = SITE_PANEL_MONTHS.get(said.lower()[:3], 0)
+    if not at and said.isdigit() and 1 <= int(said) <= 12:
+        at = int(said)
 
     try:
         one, four = int(str(day or '').strip()), int(str(year or '').strip())

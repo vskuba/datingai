@@ -63,7 +63,8 @@ async def status_probe_site(site_id: int, presence: dict = None) -> dict:
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT id, login, site_id, status, storage_state FROM profile'
+            'SELECT id, login, profile_id, site_id, status, storage_state'
+            ' FROM profile'
             ' WHERE site_id = %s AND enabled = 1 AND storage_state IS NOT NULL',
             (site_id,))
         profiles = [dict(row) for row in (await db.fetchall() or [])]

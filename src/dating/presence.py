@@ -64,7 +64,8 @@ async def presence_probe(profile: dict, presence: dict = None) -> dict:
 
     client = http_heartbeat_client()
     try:
-        return await http_heartbeat_check(client, _cookies(profile, config), config)
+        return await http_heartbeat_check(client, _cookies(profile, config), config,
+                                          _values(profile))
     finally:
         await client.aclose()
 
@@ -82,7 +83,8 @@ async def presence_beat(profile: dict, presence: dict = None) -> bool:
 
     client = http_heartbeat_client()
     try:
-        return await http_heartbeat_send(client, _cookies(profile, config), config)
+        return await http_heartbeat_send(client, _cookies(profile, config), config,
+                                         _values(profile))
     finally:
         await client.aclose()
 
@@ -138,6 +140,13 @@ def _cookies(profile: dict, config: dict) -> dict:
     """Cookie сайта из снятого состояния входа."""
     return http_heartbeat_cookies(json_column_load(profile.get('storage_state')),
                                   str(config.get('base') or ''))
+
+
+def _values(profile: dict) -> dict:
+    """Значения `{меток}` адреса — одной функцией с кругом, без своей копии."""
+    from src.dating.heartbeat import heartbeat_profile_values
+
+    return heartbeat_profile_values(profile)
 
 
 def _from_neighbour(presence) -> dict:

@@ -92,7 +92,12 @@ async def panel_fetch_html(site_id: int, path: str, params: dict = None) -> str:
     started = time.monotonic()
     try:
         answer = await client.get(f"{base}/{str(path or '').lstrip('/')}",
-                                  params=params or {}, cookies=cookies,
+                                  # ⚠ Пустой словарь запроса httpx 0.28 **срезает**
+                                  # строку запроса с конца URL: путь с `?com=…`
+                                  # доезжал до панели без него, и панель отдавала
+                                  # список вместо страницы. Ноль — значит «запроса
+                                  # нет», его уносит только `None`.
+                                  params=params or None, cookies=cookies,
                                   follow_redirects=False,
                                   timeout=PANEL_FETCH_TIMEOUT)
     except Exception as e:

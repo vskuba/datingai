@@ -60,6 +60,10 @@ IMPORT_CARD_LIMIT = 60
 # profiles». Мужская учётка появляется здесь только руками.
 IMPORT_ROLE = 'lady'
 
+# Ширина колонки `profile.profile_id` — номер на сайте. Срезаем по ней, как
+# логин по своей: обрезок в адресе удара лучше вставки, которую база отвергнет.
+IMPORT_UID_MAX = 32
+
 
 @router.get('/ready', include_in_schema=False)
 async def import_ready(site_id: int = 0, user=Depends(auth_required)):
@@ -287,11 +291,17 @@ async def _profile_create(site_id: int, plan: dict) -> int:
     нельзя, пока пароль не впишут руками; страница это и показывает, гася кнопку.
     """
     try:
+        # Номер на сайте кладём в **два места сразу** — колонку и ключ карточки
+        # (`profile_card_keep`, §3.14): удар присутствия собирает адрес из
+        # колонки, и анкета, заведённая без неё, била бы в пустоту молча.
+        site_uid = str((plan.get('card') or {}).get('id') or '').strip()
         async with mysql_get_db_async() as db:
             await db.execute(
-                'INSERT INTO profile (site_id, login, password, note, role, profile) '
-                'VALUES (%s, %s, %s, %s, %s, %s)',
-                (int(site_id), plan['login'], '', 'заведена импортом', IMPORT_ROLE,
+                'INSERT INTO profile (site_id, login, profile_id, password,'
+                ' note, role, profile) '
+                'VALUES (%s, %s, %s, %s, %s, %s, %s)',
+                (int(site_id), plan['login'], site_uid[:IMPORT_UID_MAX] or None,
+                 '', 'заведена импортом', IMPORT_ROLE,
                  json.dumps(plan['card'], ensure_ascii=False)))
             profile_id = db.lastrowid
             await db.connection.commit()

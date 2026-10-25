@@ -28,6 +28,7 @@ from http_.http_heartbeat import (http_heartbeat_check, http_heartbeat_client,
 from src.auth.auth import AuthUser, auth_required
 from src.dating.heartbeat import (heartbeat_config,
                                          heartbeat_every,
+                                         heartbeat_profile_values,
                                          heartbeat_sessions)
 from src.dating.json_column import json_column_load
 
@@ -103,7 +104,8 @@ async def heartbeat_check_run(payload: DatingHeartbeatAsk,
 
     client = http_heartbeat_client()
     try:
-        result = await http_heartbeat_check(client, cookies, config)
+        result = await http_heartbeat_check(client, cookies, config,
+                                           heartbeat_profile_values(profile))
     finally:
         await client.aclose()
 
@@ -141,7 +143,8 @@ async def heartbeat_beat_run(payload: DatingHeartbeatAsk,
 
     client = http_heartbeat_client()
     try:
-        sent = await http_heartbeat_send(client, cookies, config)
+        sent = await http_heartbeat_send(client, cookies, config,
+                                        heartbeat_profile_values(profile))
     finally:
         await client.aclose()
 
@@ -153,7 +156,7 @@ async def heartbeat_beat_run(payload: DatingHeartbeatAsk,
 async def _profile(profile_id: int) -> dict:
     """Анкета со всем, что нужно для удара. 404 — если её нет."""
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT id, site_id, login, storage_state'
+        await db.execute('SELECT id, site_id, login, profile_id, storage_state'
                          ' FROM profile WHERE id = %s', (int(profile_id),))
         row = await db.fetchone()
 

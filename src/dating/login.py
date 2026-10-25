@@ -467,7 +467,8 @@ async def _verify(profile: dict, site: dict) -> dict:
     from http_.http_heartbeat import (http_heartbeat_check, http_heartbeat_client,
                                       http_heartbeat_cookies, http_heartbeat_ready)
 
-    from src.dating.heartbeat import heartbeat_config
+    from src.dating.heartbeat import (heartbeat_config,
+                                             heartbeat_profile_values)
 
     config = await heartbeat_config(int(site.get('id') or profile['site_id']))
     if not http_heartbeat_ready(config):
@@ -481,7 +482,8 @@ async def _verify(profile: dict, site: dict) -> dict:
                                      str(config.get('base') or ''))
     client = http_heartbeat_client()
     try:
-        return await http_heartbeat_check(client, cookies, config)
+        return await http_heartbeat_check(client, cookies, config,
+                                         heartbeat_profile_values(profile))
     finally:
         await client.aclose()
 

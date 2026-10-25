@@ -167,6 +167,51 @@ async def heartbeat_proxies(site_id: int, profile_ids: list = None) -> dict:
     return {int(row['id']): str(row['proxy_url'] or '') for row in rows or []}
 
 
+def heartbeat_profile_values(profile: dict) -> dict:
+    """Значения `{меток}` в адресе удара для одной анкеты.
+
+    Движок меток не толкует — толкуем здесь, один раз на все дороги: опрос
+    (`presence.py`) и круг (`heartbeat_round.py`) собирают их этой функцией, и
+    расхождение между ними означало бы «кнопка видит онлайн, круг — нет».
+
+    Токены названы колонками таблицы: `{profile_id}` — номер на сайте, `{login}`.
+    Пустое значение — метки нет, и шаг откажет словами, а не пошлёт пустоту:
+    сайт ждёт номер в адресе, пустота там читается как чужой пользователь.
+    """
+    found = {}
+    for key in ('profile_id', 'login'):
+        if profile.get(key) not in (None, ''):
+            found[key] = str(profile[key])
+
+    return found
+
+
+async def heartbeat_values(site_id: int, profile_ids: list = None) -> dict:
+    """Значения меток для круга: `{номер анкеты: {...}}`.
+
+    Отдельным вопросом, как `heartbeat_proxies`: круг уже держит словарь cookie
+    на анкету, а форма `{id: cookie}` — общий контракт движка, и приделывать к
+    ней второе значение ради меток — правка в общей библиотеке на один проект.
+    """
+    sql = 'SELECT id, profile_id, login FROM profile WHERE site_id = %s'
+    args = [int(site_id)]
+
+    if profile_ids:
+        sql += ' AND id IN (%s)' % ', '.join(['%s'] * len(profile_ids))
+        args.extend(int(one) for one in profile_ids)
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(sql, tuple(args))
+            rows = await db.fetchall()
+    except Exception as e:
+        logger_info(f'[dating] значения меток присутствия не спросились: {e}')
+
+        return {}
+
+    return {int(row['id']): heartbeat_profile_values(row) for row in rows or []}
+
+
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 async def _presence_of(site_id: int) -> dict:

@@ -41,7 +41,8 @@ from http_.http_heartbeat import (http_heartbeat_client, http_heartbeat_ready,
 from src.dating.heartbeat import (heartbeat_config,
                                          heartbeat_every,
                                          heartbeat_proxies,
-                                         heartbeat_sessions)
+                                         heartbeat_sessions,
+                                         heartbeat_values)
 from src.dating.json_column import json_column_load
 from src.dating.request import request_ms
 from src.dating.proxy import (proxy_enabled,
@@ -111,6 +112,12 @@ async def heartbeat_round_run(offset_hours: int = 0) -> dict:
             if not sessions:
                 continue
 
+            # Метки адреса (`{profile_id}` в ударах сайтов, где «я здесь» читается
+            # из query, а не из cookie) спрашиваем базой только у таких сайтов:
+            # сайтам на cookie-присутствии второй запрос на круг не нужен.
+            values_map = (await heartbeat_values(site_id, list(sessions))
+                          if _tokens_in(config) else {})
+
             # Выходы читаем кэшем и разбиваем сессии по ним: у каждой анкеты
             # свой адрес, а бить надо пачками — по клиенту на адрес.
             proxies = await heartbeat_proxies(site_id, list(sessions))
@@ -138,7 +145,8 @@ async def heartbeat_round_run(offset_hours: int = 0) -> dict:
                     client = clients[url] = http_heartbeat_client(url)
 
                 started = time.monotonic()
-                done = await http_heartbeat_send_many(client, group, config)
+                done = await http_heartbeat_send_many(client, group, config,
+                                      values_map)
                 beaten += sum(1 for ok in done.values() if ok)
                 failed += sum(1 for ok in done.values() if not ok)
 
@@ -165,6 +173,16 @@ async def heartbeat_round_run(offset_hours: int = 0) -> dict:
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+def _tokens_in(config: dict) -> bool:
+    """Есть ли в настройке `{метки}` — то есть нужен ли вопрос базе про номера."""
+    steps = [config.get('beat'), config.get('unread')]
+    alive = config.get('alive')
+
+    return any('{' in str(step.get('path') or '') + str(step.get('body') or '')
+               for step in steps + (alive if isinstance(alive, list) else [alive])
+               if step)
+
 
 async def _note(site_id: int, group: dict, done: dict, url: str, proxies: dict,
                 ms: int, config: dict) -> None:

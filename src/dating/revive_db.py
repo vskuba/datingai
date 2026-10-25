@@ -75,7 +75,7 @@ async def revive_db_profiles_kept() -> list[dict]:
         # разных часов — `TZ` не задан ни в одном compose, а прод-MySQL стоит на
         # чужом сервере. Наружу уходит число секунд, момент времени тут не нужен.
         await db.execute(
-            'SELECT id, login, site_id, storage_state, status, last_error, '
+            'SELECT id, login, profile_id, site_id, storage_state, status, last_error, '
             '       relogin_since, relogin_tries, relogin_next_at, '
             '       schedule, schedule_on, login_fail_tries, '
             '       TIMESTAMPDIFF(SECOND, logged_in_at, NOW()) AS login_age_sec '
