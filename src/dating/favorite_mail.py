@@ -189,14 +189,22 @@ FAVORITE_MAIL_GAP_MAX_DEFAULT_MIN = 0
 # выставленное человеком; смени мы ключ — сайт молча вернулся бы к умолчанию, и
 # правка, сделанная ради предела, начала бы с того, что предел потеряла.
 #
-# ⚠⚠ **Часы считают все три пула, а запрещает пауза только письма избранным.**
-# Отправила девушка ответ или письмо рассылки — для сайта это её письмо, и
-# молчать после него надо ровно так же. Но сама пауза — настройка избранных, и
-# распоряжаться чужими пулами ей не по чину: у рассылки и ответов свои правила.
+# ⚠⚠ **Часы считают два пула из трёх: рассылки в счёте нет.**
 #
-# ⚠ Список пулов свой здесь **не заводится**: он один на проект и лежит там, где
-# отправка (`MAIL_SEND_TABLES`). Вторая копия того же списка разошлась бы с
-# первой ровно тогда, когда появится четвёртый пул, — и молча.
+# Считали все три — по доводу «для сайта письмо есть письмо, и молчать после
+# него надо одинаково». Довод верен, но цену назначал занятию, которое им не
+# распоряжается: рассылка уходит раз в три минуты по сайту и выбирала паузу
+# каждой девушки раньше, чем до неё доберётся приставание. Замер прода
+# 25.10.2026 — 122 письма рассылки против 15 приставаний за сутки, и у 18 анкет
+# из 19 паузу держало письмо рассылки. Занятие молчало не по своему правилу.
+#
+# ⚠ Цена размена: девушка может отправить рассылку и следом письмо избранному —
+# для сайта это два письма подряд от неё. Держат это теперь свои сроки рассылки
+# (`send_every`, `send_max_day`), а не чужая пауза.
+#
+# ⚠ Список пулов свой здесь **не заводится**: он лежит там, где отправка
+# (`MAIL_SEND_GAP_TABLES`), рядом с остальными такими же. Вторая копия
+# разошлась бы с первой ровно тогда, когда появится четвёртый пул, — и молча.
 #
 # ⚠⚠ **Срок теперь не число, а промежуток** (`favorite_mail_gap` — «от»,
 # `favorite_mail_gap_max` — «до»), и каждой анкете он **бросается жребием**
@@ -636,7 +644,10 @@ async def favorite_mail_girl_wait(profile_id: int, low: int, high: int,
     лишнее письмо живому человеку отменить нельзя. Та же сторона ошибки, что у
     дневного потолка.
     """
-    from src.dating.mail_send import MAIL_SEND_TABLES
+    # ⚠ Число подстановок — по **тому же** списку, что строит союз: условие
+    # повторяется в каждой ветке, и разойдись эти два места, запрос получил бы
+    # не столько доводов, сколько ждёт.
+    from src.dating.mail_send import MAIL_SEND_GAP_TABLES
 
     profile_id = int(profile_id or 0)
     low, high = int(low or 0), int(high or 0)
@@ -652,7 +663,7 @@ async def favorite_mail_girl_wait(profile_id: int, low: int, high: int,
             await db.execute(
                 f'SELECT MAX(sent_at) AS last_at'
                 f'  FROM ({_girl_sent_union("%s")}) AS sent',
-                (profile_id,) * len(MAIL_SEND_TABLES))
+                (profile_id,) * len(MAIL_SEND_GAP_TABLES))
             row = await db.fetchone()
     except Exception as e:
         logger_info(f'[dating] когда анкета #{profile_id} писала в последний раз '
@@ -1327,7 +1338,7 @@ def _pair_row(row) -> dict:
 
 
 def _girl_sent_union(key: str) -> str:
-    """Все ушедшие письма одной девушки — тремя пулами, одним списком.
+    """Ушедшие письма одной девушки — те, что считает её пауза, одним списком.
 
     Args:
         key: чем подставляется её номер. `%s` — для отдельного запроса,
@@ -1338,13 +1349,20 @@ def _girl_sent_union(key: str) -> str:
     получает условием. Разойдись они — пул набирал бы то, чего отправка не
     берёт, либо отправка уносила бы то, чего набор не считает готовым.
 
-    ⚠ Перечисляет таблицы `mail_sent_union`, а не эта функция: список пулов один
-    на проект.
+    ⚠⚠ **Пулы — `MAIL_SEND_GAP_TABLES`, а не все подряд: рассылка не в счёте.**
+    Она уходит раз в три минуты по сайту и выбирала паузу каждой девушки раньше,
+    чем до той доберётся приставание: 122 письма рассылки против 15 приставаний
+    за сутки, и у 18 анкет из 19 паузу держало чужое письмо. Довод и цена размена
+    — у самого списка, в `mail_send.py`.
+
+    ⚠ Перечисляет таблицы `mail_sent_union`, а не эта функция: списки пулов живут
+    там, где отправка, и своё перечисление здесь было бы их второй копией.
     """
-    from src.dating.mail_send import mail_sent_union
+    from src.dating.mail_send import MAIL_SEND_GAP_TABLES, mail_sent_union
 
     return mail_sent_union(
-        f"profile_id = {key} AND status = 'sent' AND sent_at IS NOT NULL")
+        f"profile_id = {key} AND status = 'sent' AND sent_at IS NOT NULL",
+        tables=MAIL_SEND_GAP_TABLES)
 
 
 async def _girls_busy(site_id: int) -> dict[int, dict]:
@@ -1364,7 +1382,7 @@ async def _girls_busy(site_id: int) -> dict[int, dict]:
     второй вопрос бросил бы жребий заново по другому письму — и человек увидел
     бы «пауза 9 часов, ждать 10».
     """
-    from src.dating.mail_send import MAIL_SEND_TABLES
+    from src.dating.mail_send import MAIL_SEND_GAP_TABLES
 
     site_id = int(site_id or 0)
     low, high = await favorite_mail_gap_range(site_id)
@@ -1379,7 +1397,7 @@ async def _girls_busy(site_id: int) -> dict[int, dict]:
                 f' MAX(sent.sent_at) AS last_at'
                 f'  FROM ({_site_sent_union()}) AS sent'
                 f' GROUP BY sent.profile_id',
-                (site_id,) * len(MAIL_SEND_TABLES))
+                (site_id,) * len(MAIL_SEND_GAP_TABLES))
             rows = await db.fetchall()
     except Exception as e:
         logger_info(f'[dating] паузы анкет сайта #{site_id} не спросились: {e}')
@@ -1407,12 +1425,18 @@ def _site_sent_union() -> str:
     ⚠ Отбор по сайту, а не по списку анкет: номера анкет в запрос пришлось бы
     везти самим, а сайт у письма записан своей колонкой — тот же `site_id`, по
     которому письма выбирает отправка.
+
+    ⚠⚠ **Список пулов тот же, что у `_girl_sent_union`**, и это обязательно:
+    оба отвечают на один вопрос — «когда она писала в последний раз», — только
+    один по анкете, другой по сайту. Разойдись они, значок на странице называл бы
+    один срок, а круг ждал бы другой; число таблиц в запросе на правду не влияет,
+    он просто считает иначе.
     """
-    from src.dating.mail_send import mail_sent_union
+    from src.dating.mail_send import MAIL_SEND_GAP_TABLES, mail_sent_union
 
     return mail_sent_union(
         "site_id = %s AND status = 'sent' AND sent_at IS NOT NULL",
-        select='profile_id, sent_at')
+        select='profile_id, sent_at', tables=MAIL_SEND_GAP_TABLES)
 
 
 

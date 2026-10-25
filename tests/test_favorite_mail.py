@@ -664,8 +664,14 @@ class TestThePauseBelongsToTheGirl:
     """
 
     async def test_her_letter_to_someone_else_holds_the_pause(self, girl):
-        """Тот самый случай: написала одному — второму сейчас нельзя."""
-        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
+        """Тот самый случай: написала одному — второму сейчас нельзя.
+
+        ⚠ Письмо кладём **в свой пул**: рассылку пауза не считает (см.
+        `TestTheGapIgnoresMailing` ниже), и на ней тест проверял бы не правило,
+        а список таблиц.
+        """
+        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0),
+                    'favorite_mail')
 
         why = await favorite_mail_girl_soon(girl, 4 * 3600, 4 * 3600)
 
@@ -676,7 +682,8 @@ class TestThePauseBelongsToTheGirl:
         assert 'можно через' in why, why
 
     async def test_a_long_silence_frees_her(self, girl):
-        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(30))
+        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(30),
+                    'favorite_mail')
 
         assert await favorite_mail_girl_soon(girl, 4 * 3600, 4 * 3600) == ''
 
@@ -684,7 +691,8 @@ class TestThePauseBelongsToTheGirl:
         """⚠ Пауза считается от последнего ушедшего **за любой срок**, а не за
         сутки: письмо 25-часовой давности в дневной счёт не попадает, и считай
         мы паузу тем же окном — она отсчитывалась бы от пустоты."""
-        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(25))
+        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(25),
+                    'favorite_mail')
 
         why = await favorite_mail_girl_soon(girl, 48 * 3600, 48 * 3600)
 
@@ -700,7 +708,8 @@ class TestThePauseBelongsToTheGirl:
         запирала бы всех остальных.
         """
         other = await _profile(auth_client, 'fav2')
-        await _hers(other, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
+        await _hers(other, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0),
+                    'favorite_mail')
 
         try:
             assert await favorite_mail_girl_soon(girl, 4 * 3600, 4 * 3600) == '', \
@@ -708,20 +717,81 @@ class TestThePauseBelongsToTheGirl:
         finally:
             await auth_client.delete(f'/api/dating/profile/{other}')
 
-    async def test_every_pool_counts(self, girl):
-        """⚠ Для сайта письмо есть письмо: ответ и рассылка держат паузу так же,
-        как возобновление. Иначе девушка, ответившая минуту назад, тут же ушла
-        бы со вторым письмом — и сайт увидел бы от неё пачку."""
+    async def test_her_own_pool_counts(self, girl):
+        """⚠ Своё письмо паузу держит — иначе правила не было бы вовсе."""
         await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0),
                     'favorite_mail')
 
         assert await favorite_mail_girl_soon(girl, 4 * 3600, 4 * 3600), \
             'письмо из пула избранных паузу не удержало'
 
+    async def test_a_reply_counts_too(self, girl):
+        """⚠ И ответ: девушка пишет его в том же разговорном ритме, и уходит он
+        тому же человеку в ту же почту.
+
+        ⚠ Кладём настоящим ответом (`_reply_sent`), а не строкой «просто
+        письмо»: у ответа своя роль в пределе навязчивости, и посев мимо неё
+        проверял бы не ту природу строки.
+        """
+        await _reply_sent(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
+
+        assert await favorite_mail_girl_soon(girl, 4 * 3600, 4 * 3600), \
+            'ответ паузу не удержал'
+
+
+class TestTheGapIgnoresMailing:
+    """⚠⚠ Рассылка паузу приставания больше не держит.
+
+    Пауза считала все три пула по доводу «для сайта письмо есть письмо». Довод
+    верен, но цену назначал занятию, которое им не распоряжается: рассылка
+    уходит раз в три минуты по сайту и выбирала паузу каждой девушки раньше,
+    чем до неё доберётся приставание.
+
+    Замер прода 25.10.2026: **122 письма рассылки против 15 приставаний** за
+    сутки, и у 18 анкет из 19 паузу держало письмо рассылки — занятие молчало не
+    по своему правилу, а по чужому потоку.
+
+    ⚠ Цена размена названа в `mail_send.MAIL_SEND_GAP_TABLES`: девушка может
+    отправить рассылку и следом письмо избранному, и держат это теперь её
+    собственные сроки, а не эта пауза.
+    """
+
+    async def test_a_mailing_letter_does_not_hold_her(self, girl):
+        """Письмо рассылки ушло минуту назад — приставанию это не мешает."""
+        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
+
+        assert await favorite_mail_girl_soon(girl, 4 * 3600, 4 * 3600) == '', \
+            'рассылка снова держит паузу приставания'
+
+    async def test_the_list_lives_next_to_sending(self):
+        """⚠ Список пулов — у отправки, рядом с остальными такими же: своё
+        перечисление в `favorite_mail.py` было бы его второй копией."""
+        from src.dating.mail_send import (MAIL_SEND_GAP_TABLES,
+                                          MAIL_SEND_TABLES)
+
+        assert 'mailing' not in MAIL_SEND_GAP_TABLES
+        assert set(MAIL_SEND_GAP_TABLES) < set(MAIL_SEND_TABLES), \
+            'пауза считает пул, которого нет среди отправляемых'
+
+    async def test_both_queries_use_the_same_list(self, girl):
+        """⚠⚠ Счёт по анкете и счёт по сайту обязаны брать **один** список.
+
+        Первый отвечает значку на странице, второй — очереди круга отправки;
+        разойдись они, человек видел бы один срок, а круг ждал бы другой. Число
+        таблиц в запросе на правду не влияет — он просто считает иначе.
+        """
+        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
+
+        busy = await favorite_mail.favorite_mail_girls_busy_sql(STAND_SITE)
+
+        assert str(girl) not in busy, \
+            'по сайту рассылка держит, а по анкете нет — списки разошлись'
+
     async def test_zero_means_no_pause(self, girl, monkeypatch):
         """⚠ Ноль — законное значение, а не «настройки нет»: человек выбрал
         «без паузы», и выдумывать за него умолчание нельзя."""
-        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
+        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0),
+                    'favorite_mail')
 
         assert await favorite_mail_girl_soon(girl, 0, 0) == ''
 
@@ -749,7 +819,8 @@ class TestTheReasonNamesTheGirl:
 
     async def test_the_pause_reason_says_her_name(self, girl):
         """Имя передали — оно и стоит в причине вместо «она»."""
-        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
+        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0),
+                    'favorite_mail')
 
         why = await favorite_mail_girl_soon(girl, 4 * 3600, 4 * 3600,
                                             'STELA 643694')
@@ -763,7 +834,8 @@ class TestTheReasonNamesTheGirl:
         Так бывает у анкеты без карточки с сайта, и у вызывающих, которым имя
         взять неоткуда (окно пары — там анкета видна в шапке разговора).
         """
-        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
+        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0),
+                    'favorite_mail')
 
         assert (await favorite_mail_girl_soon(girl, 4 * 3600,
                                               4 * 3600)).startswith('она писала')
@@ -828,7 +900,9 @@ class TestTheQueueTellsWhenSheWrites:
         uid = f'u{uuid.uuid4().hex[:8]}'
         await _star(girl, uid)
         await _online(girl)
-        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
+        # ⚠ Своим пулом: рассылку пауза не считает (`TestTheGapIgnoresMailing`).
+        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0),
+                    'favorite_mail')
 
         got = (await favorite_mail.favorite_mail_queue(STAND_SITE)).get(girl)
 
@@ -1030,7 +1104,8 @@ class TestWhyThePoolIsEmpty:
         await _star(girl, uid)
         await _his(girl, uid, '2026-09-01 10:00:00')
         # Последнее слово наше — пара в отборе; письмо час назад — пауза держит.
-        await _hers(girl, uid, _now_minus_hours(1))
+        # ⚠ Своим пулом: рассылку пауза не считает (`TestTheGapIgnoresMailing`).
+        await _hers(girl, uid, _now_minus_hours(1), 'favorite_mail')
 
         why = await favorite_mail_why(STAND_SITE)
 
@@ -1118,7 +1193,8 @@ class TestOneLetterPerGirlPerPass:
 
         uid = f'u{uuid.uuid4().hex[:8]}'
         await _star(girl, uid)
-        await _hers(girl, uid, _now_minus_hours(1))
+        # ⚠ Своим пулом: рассылку пауза не считает (`TestTheGapIgnoresMailing`).
+        await _hers(girl, uid, _now_minus_hours(1), 'favorite_mail')
 
         monkeypatch.setattr(mod, 'answer_mail_write',
                             _answer('Давно не общались, как ты?'))
