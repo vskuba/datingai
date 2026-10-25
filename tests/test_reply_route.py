@@ -231,7 +231,12 @@ async def _settings(client, more: dict) -> None:
     """
     await client.put(f'/api/dating/site/{SITE}', json={'settings': {
         'admin_url': PANEL_FAKE_URL, 'admin_mark': 'Ladies profiles',
-        'api_base': API_BASE, 'reply_send_source': 'panel', **more}})
+        'api_base': API_BASE, 'reply_send_source': 'panel',
+        # ⚠ Задержка ответа по длине текста — ноль: файл про **дорогу** письма
+        # (панель или ручка API) и про номер, на который оно отвечает. Входящее
+        # стенда стоит временем `NOW()`, и при умолчании очередь честно держала бы
+        # ответ — тесты краснели бы по чужой причине (`reply_delay.py`).
+        'reply_delay_per_10_words': '0', **more}})
 
 
 def _letter(stand: dict) -> dict:

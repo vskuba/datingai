@@ -59,6 +59,15 @@ async def site(auth_client, monkeypatch):
 
     monkeypatch.setattr(round_, '_max_day', _fixed(10 ** 6))
 
+    # ⚠⚠ **И снимает задержку ответа по длине текста.** Умолчание — 30 секунд на
+    # десять слов, а входящие письма фикстур стоят временем `NOW()`: любой ответ
+    # оказывался бы «ещё не дописанным», и тесты про выключатели, сроки и нормы
+    # краснели бы по чужой причине.
+    #
+    # ⚠ Само правило при этом проверяется — `TestReplyWaitsItsLength` ниже
+    # включает коэффициент себе обратно, как это делают тесты про потолок.
+    monkeypatch.setattr('src.dating.reply_delay.reply_delay_per10', _fixed(0))
+
     before = (await auth_client.get(
         f'/api/dating/site/{SITE}/mailing-schedule')).json()['result']
 
@@ -575,6 +584,83 @@ def _utc_hour() -> int:
     import time
 
     return time.gmtime().tm_hour
+
+
+class TestReplyWaitsItsLength:
+    """⚠⚠ Ответ уходит не раньше, чем его написал бы человек.
+
+    Собеседник видит два времени рядом — своё письмо и наш ответ. Olena ↔ Benoit,
+    25.10.2026: четыреста слов через четыре минуты. Столько не печатает никто, и
+    разбирать текст для этого не нужно.
+
+    ⚠ Держит это **круг отправки**: набор пула про задержку не знает — ответ
+    сочиняется тогда, когда пришло письмо, а ждёт он уже готовым.
+    """
+
+    async def _delay(self, monkeypatch, per10: int) -> None:
+        """Коэффициент себе обратно: фикстура сайта снимает его для всех прочих."""
+        monkeypatch.setattr('src.dating.reply_delay.reply_delay_per10',
+                            _fixed(int(per10)))
+
+    async def _long_reply(self, profile_id: int, ago_min: int) -> int:
+        """Длинный ответ на письмо заданной давности."""
+        from mysql_.mysql_ import mysql_get_db_async
+
+        uid = f'snd-delay-{uuid.uuid4().hex[:8]}'
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO mail_in (site_id, profile_id, message_id, uid,'
+                " name, body, date_post) VALUES (%s, %s, %s, %s, 'Тест', 'Письмо',"
+                ' NOW() - INTERVAL %s MINUTE)',
+                (SITE, int(profile_id), int(uuid.uuid4().int % 1_000_000_000),
+                 uid, int(ago_min)))
+            await db.connection.commit()
+            await db.execute('SELECT LAST_INSERT_ID() AS id')
+            mail_in_id = int((await db.fetchone())['id'])
+
+            await db.execute(
+                'INSERT INTO mail_reply (site_id, profile_id, mail_in_id, uid,'
+                ' name, body, status, error)'
+                " VALUES (%s, %s, %s, %s, 'Тест', %s, 'draft', '')",
+                (SITE, int(profile_id), mail_in_id, uid,
+                 ' '.join(['word'] * 300)))
+            await db.connection.commit()
+            await db.execute('SELECT LAST_INSERT_ID() AS id')
+
+            return int((await db.fetchone())['id'])
+
+    async def test_a_fresh_long_reply_does_not_go(self, site, profile, post,
+                                                  monkeypatch):
+        """Триста слов при тридцати секундах — четверть часа, и заход уходит ни
+        с чем, хотя ответ готов и ошибок у него нет."""
+        await self._delay(monkeypatch, 30)
+        await self._long_reply(profile, ago_min=0)
+
+        await send_round_run(0)
+
+        assert not post, 'длинный ответ ушёл сразу после входящего письма'
+
+    async def test_an_old_letter_lets_it_go(self, site, profile, post,
+                                            monkeypatch):
+        """⚠ Прошедшее засчитывается: письмо часовой давности снимает задержку —
+        эти минуты человек и потратил бы на чтение и печать."""
+        await self._delay(monkeypatch, 30)
+        await self._long_reply(profile, ago_min=60)
+
+        await send_round_run(0)
+
+        assert len(post) == 1, 'ответ держат, хотя время на него давно вышло'
+
+    async def test_the_idle_names_the_delay(self, site, profile, monkeypatch):
+        """⚠ Пул полон, ошибок нет, отправка включена — и тишина. Без строки
+        словами это читается как поломка: так уже было с паузой и остудой."""
+        await self._delay(monkeypatch, 30)
+        await self._long_reply(profile, ago_min=0)
+
+        said = await send_why(SITE, 'mail_reply', 0)
+
+        assert 'ещё пишется' in said, said
 
 
 class TestThePauseBelongsToTheGirl:

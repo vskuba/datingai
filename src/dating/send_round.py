@@ -292,7 +292,54 @@ async def _nothing_to_send(site_id: int, table: str) -> str:
         if left:
             return left
 
+    # ⚠ **Шестая причина, и она про ответы: они ещё «пишутся».** Задержка по
+    # длине текста держит готовый ответ, пока не наберётся время, которое человек
+    # потратил бы на эти слова. Пул при этом полон и без ошибок — то есть снова
+    # состояние, неотличимое от поломки, пока оно не названо.
+    if str(table) == 'mail_reply':
+        left = await _replies_wait(site_id)
+        if left:
+            return left
+
     return ''
+
+
+async def _replies_wait(site_id: int) -> str:
+    """Все ли ответы пула ещё пишутся. Пусто — не все.
+
+    ⚠ Спрашивает **тем же счётом**, которым отбирает круг (`reply_delay_hold`):
+    ответ «почему стоим» обязан считаться тем же кодом, что решает за круг,
+    иначе он объяснит не тот простой.
+
+    ⚠ Называет **ближайший** срок, а не самый длинный: человек ждёт первого
+    ушедшего ответа, а не последнего.
+    """
+    from src.dating.reply_delay import reply_delay_hold, reply_delay_why
+
+    hold = await reply_delay_hold(site_id)
+    if not hold:
+        return ''
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT COUNT(*) AS ready FROM mail_reply'
+                " WHERE site_id = %s AND status = 'draft' AND error = ''",
+                (int(site_id),))
+            row = dict((await db.fetchone()) or {})
+    except Exception as e:
+        logger_info(f'[dating] задержка ответов не спросилась: {e}')
+
+        return ''
+
+    # ⚠ Считаем **вычитанием**, а не вторым запросом с `NOT IN`: держащий список
+    # уже в руках, и в нём ровно те же черновики, что считает этот `COUNT` —
+    # отбор у них один (`reply_delay_hold`). Свободен хоть один — объяснять
+    # нечего, круг унесёт его тем же заходом.
+    if int(row.get('ready') or 0) > len(hold):
+        return ''
+
+    return reply_delay_why(min(hold.values()))
 
 
 async def _cooling_wait(site_id: int, table: str) -> str:
@@ -452,6 +499,23 @@ async def _oldest(site_id: int, table: str) -> dict | None:
         from src.dating.favorite_mail import favorite_mail_girls_busy_sql
 
         busy = await favorite_mail_girls_busy_sql(site_id)
+
+    # ⚠⚠ **Ответ ждёт столько, сколько его писал бы человек.**
+    #
+    # Собеседник видит два времени рядом — своё письмо и наш ответ, — и четыреста
+    # слов через четыре минуты выдают автомат вернее любого текста. Срок считает
+    # `reply_delay.py` по длине письма и отсчитывает его **от входящего**.
+    #
+    # ⚠ Условием в запросе, а не отсевом после: круг берёт **одно** письмо за
+    # заход, и отсев после выборки оставил бы сайт молчать всю задержку, хотя
+    # следующий ответ давно готов. Тот же довод, что у паузы строкой выше.
+    #
+    # ⚠ Только этот пул: рассылка и приставание пишутся первыми, входящего у них
+    # нет, и сравнивать собеседнику нечего.
+    if table == 'mail_reply':
+        from src.dating.reply_delay import reply_delay_hold_sql
+
+        busy = await reply_delay_hold_sql(site_id)
 
     # ⚠⚠⚠ **Номер письма, на которое отвечаем, — у ответов обязателен.**
     #

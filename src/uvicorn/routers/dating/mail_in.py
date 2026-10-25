@@ -19,6 +19,7 @@ from src.dating.favorite import (FAVORITE_STATES,
                                         FAVORITE_STATES_SQL)
 from src.dating.mail_in import (DatingMailInError, mail_in_fetch,
                                        mail_in_unread)
+from src.dating.reply_delay import reply_delay_per10
 from src.dating.mail_reply import (mail_reply_answer, mail_reply_make,
                                           mail_reply_thread)
 from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
@@ -275,7 +276,14 @@ async def mail_reply_list(site_id: int = 0, status_: str = 'draft',
            # ⚠ Номер письма **на сайте**: он уедет в `ReplyForMessageId` при
            # отправке. Без него сайт покажет ответ отдельным письмом, и собеседник
            # не поймёт, на что ему отвечают.
-           ' i.message_id AS in_message_id, i.photo AS in_photo'
+           ' i.message_id AS in_message_id, i.photo AS in_photo,'
+           # ⚠⚠ Сколько прошло с **его** письма — столбцом, а не разницей по
+           # часам процесса: от этой метки отсчитывается задержка ответа
+           # (`reply_delay.py`), и считай её панель своими часами, таймер на
+           # карточке расходился бы с кругом отправки. Нет письма — считаем от
+           # сочинения черновика, как и круг.
+           ' TIMESTAMPDIFF(SECOND, COALESCE(i.date_post, r.created_at),'
+           '                NOW()) AS since'
            ' FROM mail_reply r'
            ' LEFT JOIN profile p ON p.id = r.profile_id'
            ' LEFT JOIN mail_in i ON i.id = r.mail_in_id'
@@ -305,7 +313,12 @@ async def mail_reply_list(site_id: int = 0, status_: str = 'draft',
         await db.execute(sql, tuple(args))
         rows = await db.fetchall()
 
-    return {'result': [mail_reply_answer(row) for row in rows or []]}
+    # ⚠ Коэффициент задержки спрашивается **один раз на пул**, а не на карточку:
+    # он про сайт, и вопрос к базе на каждую строку был бы платой за одно и то же
+    # число.
+    per10 = await reply_delay_per10(int(site_id))
+
+    return {'result': [mail_reply_answer(row, per10) for row in rows or []]}
 
 
 @router.post('/reply/make', include_in_schema=False)
@@ -519,7 +532,11 @@ async def _reply_row(reply_id: int) -> dict:
             ' r.body, r.status, r.error, r.sent_at, r.created_at, r.message_id,'
             ' p.login AS profile_login, p.profile AS profile_card,'
             ' i.body AS in_body, i.date_post AS in_at,'
-            ' i.message_id AS in_message_id, i.photo AS in_photo'
+            ' i.message_id AS in_message_id, i.photo AS in_photo,'
+            # ⚠ Тот же столбец и по той же причине, что в списке пула: от метки
+            # его письма отсчитывается задержка ответа.
+            ' TIMESTAMPDIFF(SECOND, COALESCE(i.date_post, r.created_at),'
+            '                NOW()) AS since'
             ' FROM mail_reply r'
             ' LEFT JOIN profile p ON p.id = r.profile_id'
             ' LEFT JOIN mail_in i ON i.id = r.mail_in_id'
@@ -530,7 +547,7 @@ async def _reply_row(reply_id: int) -> dict:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail=f'ответа #{reply_id} нет')
 
-    return mail_reply_answer(row)
+    return mail_reply_answer(row, await reply_delay_per10(int(row['site_id'])))
 
 
 async def _profile(profile_id: int) -> dict:

@@ -306,7 +306,7 @@ class TestMailMarksDelivery:
 
 
 class TestTheNumberSurvivesTheQuery:
-    async def test_the_round_selects_the_number(self, girl):
+    async def test_the_round_selects_the_number(self, girl, monkeypatch):
         """⚠⚠ Круг обязан выбирать номер обмена из строки пула.
 
         Не выбери он поле — `mail_send_mark` прочитает пустоту, и отметка не
@@ -314,6 +314,15 @@ class TestTheNumberSurvivesTheQuery:
         передавала, запрос круга не выбирал, и всё ушедшее кругом шло не ответом.
         """
         import src.dating.send_round as send_round_mod
+
+        # ⚠ Задержка ответа по длине текста здесь ни при чём: вопрос теста — довёз
+        # ли запрос круга номер обмена. Входящее письмо стоит временем `NOW()`, и
+        # при умолчании в тридцать секунд на десять слов очередь честно держала бы
+        # ответ — тест краснел бы по чужой причине (`reply_delay.py`).
+        async def _no_delay(site_id):
+            return 0
+
+        monkeypatch.setattr('src.dating.reply_delay.reply_delay_per10', _no_delay)
 
         in_id = await _in_row(girl, uid='u-2', name='Oleg')
 
