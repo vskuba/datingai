@@ -46,8 +46,8 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.dating.favorite import FAVORITE_STATES
 from src.dating.favorite_mail import (FAVORITE_MAIL_PER_DAY_DEFAULT,
                                       FAVORITE_MAIL_PER_DAY_SETTING,
-                                      favorite_mail_gap_sec,
-                                      favorite_mail_girl_soon,
+                                      favorite_mail_gap_range,
+                                      favorite_mail_girl_wait,
                                       favorite_mail_person_sent,
                                       favorite_mail_person_soon,
                                       favorite_mail_shift_site)
@@ -338,7 +338,7 @@ async def _favorite(site_id: int, profile_id: int, uid: str, pair: dict,
     ⚠ Срок круга помехой тоже не считается: он мешает не паре, а всем сразу.
     Идёт своим полем `next_sec`.
     """
-    gap = await favorite_mail_gap_sec(site_id)
+    gap_low, gap_high = await favorite_mail_gap_range(site_id)
     per_day = int(await site_seconds(site_id, FAVORITE_MAIL_PER_DAY_SETTING)
                   or FAVORITE_MAIL_PER_DAY_DEFAULT)
     online = online_show(site_id, uid)
@@ -354,7 +354,9 @@ async def _favorite(site_id: int, profile_id: int, uid: str, pair: dict,
     # другому, и разошлись бы они молча.
     sent = await favorite_mail_person_sent(site_id, uid)
     person = await favorite_mail_person_soon(site_id, uid, per_day)
-    girl_soon = await favorite_mail_girl_soon(profile_id, gap)
+    # ⚠ Срок и помеха — **одним чтением**: окно показывает оба, и спроси оно их
+    # порознь, второй вопрос бросил бы жребий заново по новому письму.
+    gap, girl_soon = await favorite_mail_girl_wait(profile_id, gap_low, gap_high)
 
     blockers = []
     if not flags.get('favorite_mail_make_on'):
@@ -394,7 +396,12 @@ async def _favorite(site_id: int, profile_id: int, uid: str, pair: dict,
                                             FAVORITE_MAIL_ROUND_EVERY_SETTING)
                          or FAVORITE_MAIL_ROUND_EVERY_DEFAULT),
         'next_sec': next_sec,
-        'gap_sec': gap, 'per_day': per_day,
+        # ⚠ Пауза отдаётся **выпавшей этой анкете**, а границы — рядом: окно
+        # называет и то, сколько ждать ей, и то, из чего это число взялось.
+        # Одно без другого читается как поломка — «пауза 5 часов» при
+        # выставленных четырёх выглядит ошибкой, пока не видно «до 6».
+        'gap_sec': gap, 'gap_low_sec': gap_low, 'gap_high_sec': gap_high,
+        'per_day': per_day,
         'day_sent': int((sent or {}).get('count') or 0),
         # ⚠ Граница счёта — его письмо, если оно позже суточного края. Окно
         # обязано её называть: «1 из 1» без неё читается как «за сутки», а

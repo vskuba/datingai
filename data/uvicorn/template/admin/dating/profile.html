@@ -8277,7 +8277,8 @@
         fillSlot('fav-mail-limits', saved.favorite_mail_per_day
             ? `Одному человеку не больше ${saved.favorite_mail_per_day} писем в `
             + `сутки. Одна анкета пишет не чаще, чем раз в `
-            + `${favMailGapWords(saved.favorite_mail_gap)}, — кому угодно. `
+            + `${favMailGapWords(saved.favorite_mail_gap, saved.favorite_mail_gap_max)}, `
+            + '— кому угодно. '
             + 'Меняют это в настройках сайта.'
             : '');
 
@@ -8605,7 +8606,21 @@
     //
     // ⚠ Меньше часа называем минутами: пауза бывает в 45 минут, и «1 час» вместо
     // них отправил бы человека ждать лишнее.
-    function favMailGapWords(minutes) {
+    //
+    // ⚠⚠ **Пауза — промежуток, и называется он целиком**: срок каждой анкете
+    // бросается жребием между «от» и «до». Назови подпись одну нижнюю границу,
+    // человек счёл бы настройку сломанной — ждать-то приходится дольше.
+    // Верхняя пуста или не больше нижней — разброса нет, и говорим одно число.
+    function favMailGapWords(minutes, upto) {
+        const low = Math.max(0, Math.round(Number(minutes || 0)));
+        const high = Math.max(0, Math.round(Number(upto || 0)));
+
+        return high > low ? `${favMailGapOne(low)} — ${favMailGapOne(high)}`
+                          : favMailGapOne(low);
+    }
+
+    // Одна граница словами: «45 мин», «1 час», «4 часа».
+    function favMailGapOne(minutes) {
         const value = Math.max(0, Math.round(Number(minutes || 0)));
 
         if (value < 60) return `${value} мин`;
@@ -13099,11 +13114,29 @@
             : 'Писем ему за сутки';
     }
 
+    // Пауза этой анкеты — и то, из чего она взялась.
+    //
+    // ⚠⚠ Срок **выпал жребием** между «от» и «до» (настройки сайта), и назови
+    // окно одно выпавшее число, оно читалось бы как ошибка: в форме стоит «240»,
+    // а здесь «5 часов». Границы рядом отвечают на этот вопрос сразу.
+    //
+    // ⚠ Разброса нет (верхняя пуста или не больше нижней) — границ не называем:
+    // число и так равно настройке, и скобка повторяла бы его.
+    function mailInfoGap(fav) {
+        if (!fav.gap_sec) return 'без паузы';
+
+        const spread = fav.gap_high_sec > fav.gap_low_sec
+            ? ` (жребий ${initiativeInfoLeft(fav.gap_low_sec)} — `
+              + `${initiativeInfoLeft(fav.gap_high_sec)})`
+            : '';
+
+        return initiativeInfoLeft(fav.gap_sec) + spread;
+    }
+
     // По каким правилам: настройки сайта, которые человек и правит, увидев окно.
     function mailInfoRules(got) {
         return '<div class="init-info-head">Правила сайта</div>'
-            + letterFact('Пауза между письмами анкеты', got.favorite.gap_sec
-                ? initiativeInfoLeft(got.favorite.gap_sec) : 'без паузы')
+            + letterFact('Пауза между письмами анкеты', mailInfoGap(got.favorite))
             + letterFact('Предел писем получателю',
                          `${got.favorite.per_day} в сутки`)
             + letterFact('Остуда его ящика', got.cooling_sec

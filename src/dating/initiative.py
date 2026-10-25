@@ -75,8 +75,6 @@ Bruce — заход в 08:02, его ответ в 11:02, человек вдо
 """
 
 
-import hashlib
-
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
@@ -85,6 +83,7 @@ from src.dating.answer import _agent_ask, _me_name
 from src.dating.chat_initiative import (chat_initiative_put,
                                         chat_initiative_waiting)
 from src.dating.companion_ref import companion_ref_foreign, companion_title
+from src.dating.dice import dice_steady
 from src.dating.json_column import json_column_load
 from src.dating.log import log_write
 from src.dating.site_setting import site_seconds
@@ -772,19 +771,13 @@ def _due_sec(profile_id: int, uid: str, last_at, low: int, high: int) -> int:
     бросок новым на каждый новый промежуток тишины: ответил он или ушла наша
     инициатива — время сдвинулось, и следующая пауза будет другой длины.
 
-    ⚠⚠ **Не `hash()` и не `random`.** Встроенный `hash()` солится на каждый
-    процесс (`PYTHONHASHSEED`), а воркеров несколько и перезапускаются они часто:
-    пара получала бы новый срок от каждого процесса и после каждой выкладки — то
-    есть ровно тот же развал, от которого жребий и уводится в устойчивый.
+    ⚠⚠ **Сам бросок — в `dice.py`, и своей копии здесь больше нет.** Второй
+    потребитель устойчивого жребия — пауза между письмами избранным
+    (`favorite_mail`), и две копии шести строк разошлись бы молча: обе дают
+    правдоподобное число. Здесь остаётся **ключ**, а он и есть всё содержание
+    правила: что именно делает бросок новым.
     """
-    if high <= low:
-        return low
-
-    key = f'{int(profile_id)}:{uid}:{last_at}'
-    digest = hashlib.blake2b(key.encode('utf-8'), digest_size=8).digest()
-    share = int.from_bytes(digest, 'big') / float(1 << 64)
-
-    return low + int(share * (high - low + 1))
+    return dice_steady(f'{int(profile_id)}:{uid}:{last_at}', low, high)
 
 
 async def _repeat(site_id: int) -> int:

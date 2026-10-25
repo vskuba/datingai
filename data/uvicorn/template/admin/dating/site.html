@@ -46,6 +46,14 @@
            одинаково, и человек уходит со страницы в уверенности, что сохранил. */
         .set-value.dirty { border-color: #f59e0b; background: #fffbeb; }
 
+        /* Промежуток «от … до …» — два поля одной строкой.
+
+           ⚠ Подпись у каждого своя и стоит слева от поля: без неё два одинаковых
+           числовых поля подряд не различить, а заголовок строки один на оба. */
+        .set-pair { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .set-pair-half { display: flex; align-items: center; gap: 6px; }
+        .set-pair-label { font-size: 12px; color: #64748b; }
+
         .set-drop {
             border: 0; background: none; cursor: pointer; color: #cbd5e1;
             font-size: 15px; line-height: 1; padding: 0 4px;
@@ -553,7 +561,10 @@
             // правят, и вечный вопрос, какое главное.
             //
             // ⚠ В `shown` обе всё равно попадают, иначе уехали бы в «Прочее».
-            const noRow = (spec) => spec.kind === 'hidden' || spec.hidden;
+            // ⚠ Третий род без своей строки — **ведомая половина промежутка**
+            // (`paired`): её поле стоит рядом с ведущей, в её же строке.
+            const noRow = (spec) => spec.kind === 'hidden' || spec.hidden
+                                    || spec.paired;
             const rows = known.filter(spec => spec.group === group.key
                                               && !noRow(spec));
             known.filter(spec => spec.group === group.key && noRow(spec))
@@ -1040,12 +1051,45 @@
             + (spec.note ? `<span class="set-note">${noteHtml(spec.note)}</span>` : '')
             + '</td>'
             + '<td>'
-            + (spec.options.length ? knownSelect(spec, chosen) : knownInput(spec, chosen))
+            + (spec.pair ? pairInputs(site, spec)
+                : (spec.options.length ? knownSelect(spec, chosen)
+                                       : knownInput(spec, chosen)))
             + (saved || !spec.options.length
                 ? '' : '<span class="set-note">умолчание — пока не сохраняли</span>')
             + '</td>'
             + (CAN_EDIT ? '<td class="set-col-act"></td>' : '')
             + '</tr>';
+    }
+
+    // Промежуток «от … до …»: два поля в одной ячейке, под одним заголовком.
+    //
+    // ⚠ Границы — **один вопрос, заданный двумя числами**, и порознь они
+    // бессмысленны: «до» без «от» не значит ничего. Двумя строками таблицы они
+    // читались бы как две независимые настройки, а стоять рядом им мешала бы
+    // сортировка реестра.
+    //
+    // ⚠ **Ведомой может не оказаться** — старый ответ сервера, опечатка в
+    // `pair`. Тогда рисуем ведущую обычным полем: потерять настройку хуже, чем
+    // показать её без пары. Тот же довод, что у «Прочего» и неизвестных
+    // подразделов.
+    function pairInputs(site, spec) {
+        const mate = known.find(one => one.key === spec.pair);
+        if (!mate) return pairHalf(site, spec);
+
+        return '<span class="set-pair">'
+            + pairHalf(site, spec) + pairHalf(site, mate)
+            + '</span>';
+    }
+
+    // Половина промежутка: своя подпись и своё поле со своим ключом.
+    function pairHalf(site, spec) {
+        const value = (site.settings || {})[spec.key];
+        const chosen = value === undefined ? spec.default : value;
+
+        return '<span class="set-pair-half">'
+            + (spec.label ? `<span class="set-pair-label">${esc(spec.label)}</span>` : '')
+            + knownInput(spec, chosen)
+            + '</span>';
     }
 
     function knownSelect(spec, chosen) {
@@ -1080,8 +1124,12 @@
               + ' step="1" inputmode="numeric"'
             : '';
 
+        // ⚠ Ключ стоит **у поля**, а не только у строки: в строке промежутка
+        // полей два, и ключ строки назвал бы оба одним — «до» сохранялось бы
+        // поверх «от».
         const field = `<input type="${число ? 'number' : (spec.secret ? 'password' : 'text')}"`
             + ` class="set-value${число ? ' set-number' : ''}"${границы}`
+            + ` data-key="${esc(spec.key)}"`
             + ` autocomplete="off"${CAN_EDIT ? '' : ' disabled'}`
             + ` placeholder="${esc(spec.default || 'не задано у этого сайта')}"`
             + ` value="${esc(chosen)}">`;
@@ -1179,9 +1227,14 @@
             });
         });
 
-        bodyEl.querySelectorAll('tr[data-key]:not([data-known]), tr[data-free]').forEach(tr => {
-            const key = tr.dataset.key;
-            const input = tr.querySelector('.set-value');
+        // ⚠ Перебираем **поля**, а не строки: в строке промежутка их два, и
+        // обработчик на строку взял бы первое, а правку второго потерял бы
+        // молча. Ключ при этом берётся у поля (`data-key`) и только для
+        // незнакомых ключей — у строки: там поле одно и ключа не несёт.
+        bodyEl.querySelectorAll('tr[data-key]:not([data-known]) .set-value,'
+                                + ' tr[data-free] .set-value').forEach(input => {
+            const tr = input.closest('tr');
+            const key = input.dataset.key || tr.dataset.key;
             input.dataset.saved = input.value;
 
             input.addEventListener('input', () => {
@@ -1197,11 +1250,16 @@
                 }
             });
             input.addEventListener('change', () => save({[key]: input.value}, input));
+        });
 
-            // Кнопки «убрать» у известной настройки нет: её не заводили руками, и
-            // убирать нечего — пустое значение и так означает «нет настройки».
-            const dropBtn = tr.querySelector('.set-drop');
-            if (dropBtn) dropBtn.addEventListener('click', () => drop(key));
+        // Кнопки «убрать» у известной настройки нет: её не заводили руками, и
+        // убирать нечего — пустое значение и так означает «нет настройки».
+        //
+        // ⚠ Своим циклом, а не внутри полей: перебор идёт по полям, и у строки с
+        // двумя полями обработчик повесился бы дважды.
+        bodyEl.querySelectorAll('.set-drop').forEach(dropBtn => {
+            const key = dropBtn.closest('tr').dataset.key;
+            dropBtn.addEventListener('click', () => drop(key));
         });
 
         const form = document.getElementById('addForm');

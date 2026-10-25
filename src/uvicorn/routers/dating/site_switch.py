@@ -599,7 +599,8 @@ async def site_favorite_mail_get(site_id: int,
 
     Returns:
         dict: `favorite_mail_make_on`, `favorite_mail_send_on`,
-        `favorite_mail_per_day`, `favorite_mail_gap`.
+        `favorite_mail_per_day`, `favorite_mail_gap` и его верхняя граница
+        `favorite_mail_gap_max`.
 
     ⚠ **Одной ручкой, а не четырьмя.** Подвкладка показывает их одним блоком, и
     четыре запроса на её открытие дали бы четыре момента времени там, где нужен
@@ -622,7 +623,12 @@ async def site_favorite_mail_get(site_id: int,
         'schedule': schedule_load((row or {}).get('favorite_mail_schedule')),
         'favorite_mail_per_day': await site_seconds(site_id,
                                                            'favorite_mail_per_day'),
+        # ⚠ Пауза — **промежуток**: число у неё одно только тогда, когда верхняя
+        # граница пуста. Отдаём обе, и подпись на странице называет обе; одна
+        # нижняя читалась бы как «пауза ровно столько», а ждать приходится дольше.
         'favorite_mail_gap': await site_seconds(site_id, 'favorite_mail_gap'),
+        'favorite_mail_gap_max': await site_seconds(site_id,
+                                                    'favorite_mail_gap_max'),
         # Потолок пула — странице, для счётчика «сколько из скольких». Без него
         # число в шапке отвечало бы только на половину вопроса: «17» не говорит,
         # много это или пора останавливаться.

@@ -26,8 +26,10 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating import favorite_mail
-from src.dating.favorite_mail import (_quiet, favorite_mail_girl_free_sql,
+from src.dating.favorite_mail import (_quiet, favorite_mail_gap_of,
+                                      favorite_mail_gap_words,
                                       favorite_mail_girl_soon,
+                                      favorite_mail_girls_busy_sql,
                                       favorite_mail_person_sent,
                                       favorite_mail_person_soon)
 from src.dating.site_setting import SITE_KNOWN
@@ -653,7 +655,7 @@ class TestThePauseBelongsToTheGirl:
         """Тот самый случай: написала одному — второму сейчас нельзя."""
         await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
 
-        why = await favorite_mail_girl_soon(girl, 4 * 3600)
+        why = await favorite_mail_girl_soon(girl, 4 * 3600, 4 * 3600)
 
         # ⚠ Проверяем **суть, а не слова**: причина идёт человеку на экран, её
         # переписывают, и тест, приколоченный к формулировке, падал бы на каждой
@@ -664,7 +666,7 @@ class TestThePauseBelongsToTheGirl:
     async def test_a_long_silence_frees_her(self, girl):
         await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(30))
 
-        assert await favorite_mail_girl_soon(girl, 4 * 3600) == ''
+        assert await favorite_mail_girl_soon(girl, 4 * 3600, 4 * 3600) == ''
 
     async def test_yesterdays_letter_still_counts(self, girl):
         """⚠ Пауза считается от последнего ушедшего **за любой срок**, а не за
@@ -672,7 +674,7 @@ class TestThePauseBelongsToTheGirl:
         мы паузу тем же окном — она отсчитывалась бы от пустоты."""
         await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(25))
 
-        why = await favorite_mail_girl_soon(girl, 48 * 3600)
+        why = await favorite_mail_girl_soon(girl, 48 * 3600, 48 * 3600)
 
         assert why, 'вчерашнее письмо не попало в счёт паузы'
         assert 'можно через' in why, why
@@ -689,7 +691,7 @@ class TestThePauseBelongsToTheGirl:
         await _hers(other, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
 
         try:
-            assert await favorite_mail_girl_soon(girl, 4 * 3600) == '', \
+            assert await favorite_mail_girl_soon(girl, 4 * 3600, 4 * 3600) == '', \
                 'письмо соседней анкеты заперло девушку, которая молчала'
         finally:
             await auth_client.delete(f'/api/dating/profile/{other}')
@@ -701,16 +703,22 @@ class TestThePauseBelongsToTheGirl:
         await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0),
                     'favorite_mail')
 
-        assert await favorite_mail_girl_soon(girl, 4 * 3600), \
+        assert await favorite_mail_girl_soon(girl, 4 * 3600, 4 * 3600), \
             'письмо из пула избранных паузу не удержало'
 
-    async def test_zero_means_no_pause(self, girl):
+    async def test_zero_means_no_pause(self, girl, monkeypatch):
         """⚠ Ноль — законное значение, а не «настройки нет»: человек выбрал
         «без паузы», и выдумывать за него умолчание нельзя."""
         await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
 
-        assert await favorite_mail_girl_soon(girl, 0) == ''
-        assert favorite_mail_girl_free_sql(0) == '', \
+        assert await favorite_mail_girl_soon(girl, 0, 0) == ''
+
+        async def _no_pause(site_id):
+            return 0, 0
+
+        monkeypatch.setattr(favorite_mail, 'favorite_mail_gap_range', _no_pause)
+
+        assert await favorite_mail_girls_busy_sql(STAND_SITE) == '', \
             'условие без паузы всё равно строится — оно всегда истинно'
 
 
@@ -1151,7 +1159,7 @@ class TestTheGapIsInMinutes:
         monkeypatch.setattr(
             'src.dating.favorite_mail.site_seconds', _site_seconds)
 
-        assert await favorite_mail.favorite_mail_gap_sec(1) == 3600, \
+        assert await favorite_mail.favorite_mail_gap_range(1) == (3600, 3600), \
             'шестьдесят минут это ровно час'
 
     async def test_the_default_is_four_hours(self, monkeypatch):
@@ -1165,7 +1173,41 @@ class TestTheGapIsInMinutes:
             'src.dating.favorite_mail.site_seconds', _nothing)
 
         assert favorite_mail.FAVORITE_MAIL_GAP_DEFAULT_MIN == 240
-        assert await favorite_mail.favorite_mail_gap_sec(1) == 240 * 60
+        assert await favorite_mail.favorite_mail_gap_range(1) == (240 * 60,
+                                                                  240 * 60)
+
+    async def test_the_upper_bound_falls_back_to_the_lower(self, monkeypatch):
+        """⚠⚠ «До» ниже «от» — описка, и работать по ней нельзя.
+
+        Ноль здесь законен и значит «без разброса» — это умолчание, то есть
+        прежнее поведение. Меньшее числом — уже описка, и взять её значило бы
+        писать **чаще**, чем человек велел: нижняя граница перестала бы держать.
+        """
+        from src.dating import favorite_mail
+
+        async def _site_seconds(site_id, key):
+            return {favorite_mail.FAVORITE_MAIL_GAP_SETTING: 240,
+                    favorite_mail.FAVORITE_MAIL_GAP_MAX_SETTING: 60}.get(key, 0)
+
+        monkeypatch.setattr(
+            'src.dating.favorite_mail.site_seconds', _site_seconds)
+
+        assert await favorite_mail.favorite_mail_gap_range(1) == (240 * 60,
+                                                                  240 * 60)
+
+    async def test_the_range_reaches_the_reader(self, monkeypatch):
+        """Обе настройки прочитаны и обе в минутах."""
+        from src.dating import favorite_mail
+
+        async def _site_seconds(site_id, key):
+            return {favorite_mail.FAVORITE_MAIL_GAP_SETTING: 240,
+                    favorite_mail.FAVORITE_MAIL_GAP_MAX_SETTING: 360}.get(key, 0)
+
+        monkeypatch.setattr(
+            'src.dating.favorite_mail.site_seconds', _site_seconds)
+
+        assert await favorite_mail.favorite_mail_gap_range(1) == (240 * 60,
+                                                                  360 * 60)
 
     def test_the_setting_is_a_number_not_a_choice(self):
         """⚠ Числовое поле, а не набор: осмысленна любая пауза.
@@ -1198,6 +1240,106 @@ class TestTheGapIsInMinutes:
             FAVORITE_MAIL_GAP_DEFAULT_MIN
 
 
+class TestTheGapIsARange:
+    """⚠⚠ Пауза — промежуток, и срок каждой анкете бросается жребием.
+
+    Одно число на сайт значило бы, что письма уходят от девушки с ровно
+    одинаковым шагом: сайт видит не только частоту, но и ровность, а ровность у
+    живого человека не встречается. Второе число — «до», и жребий между ними.
+    """
+
+    def test_the_upper_bound_is_a_second_setting(self):
+        """⚠ Своя настройка, числовая, с нулём в нижней границе: ноль — «ровно
+        от», то есть законное «без разброса»."""
+        known = SITE_KNOWN['favorite_mail_gap_max']
+
+        assert known.get('kind') == 'number'
+        assert known.get('min') == 0, 'ноль здесь значит «без разброса»'
+        assert known.get('group') == SITE_KNOWN['favorite_mail_gap']['group'], \
+            'границы одной паузы разъехались по разным вкладкам'
+
+    def test_the_default_keeps_the_old_behaviour(self):
+        """⚠⚠ Умолчание ноль — выкладка не удлиняет паузы молча.
+
+        Нижнюю границу сайты выставили руками; добавь мы к ней разброс вверх по
+        умолчанию, письма пошли бы реже там, где об этом не просили.
+        """
+        from src.dating.favorite_mail import FAVORITE_MAIL_GAP_MAX_DEFAULT_MIN
+
+        assert int(SITE_KNOWN['favorite_mail_gap_max']['default']) == \
+            FAVORITE_MAIL_GAP_MAX_DEFAULT_MIN == 0
+
+    def test_both_halves_stand_in_one_row(self):
+        """⚠⚠ Две границы — один вопрос, и строка в таблице у них одна.
+
+        Ведущая называет ключ ведомой (`pair`), ведомая помечена `paired` —
+        своей строки у неё нет. Разойдись эти два поля, страница показала бы
+        либо две независимые настройки, либо потеряла бы вторую вовсе.
+        """
+        low = SITE_KNOWN['favorite_mail_gap']
+        high = SITE_KNOWN['favorite_mail_gap_max']
+
+        assert low.get('pair') == 'favorite_mail_gap_max'
+        assert high.get('paired') is True
+        assert low.get('label') and high.get('label'), \
+            'поля пары без подписей «от» и «до» не различить'
+
+    async def test_the_pair_reaches_the_page(self, auth_client):
+        """⚠ Признаки пары доезжают **ручкой**: страница рисует два поля в одной
+        строке по ним, и своего списка парных настроек у неё быть не должно.
+
+        ⚠⚠ Ведомую отдаём тоже — иначе страница сочтёт ключ чужим и покажет его
+        в «Своих настройках»: он не исчезнет, а переедет на соседнюю вкладку.
+        Тот же довод, что у `hidden` (`test_mail_round.py`).
+        """
+        known = (await auth_client.get('/api/dating/site')).json()['result']['known']
+        mine = {row['key']: row for row in known}
+
+        assert mine['favorite_mail_gap']['pair'] == 'favorite_mail_gap_max'
+        assert mine['favorite_mail_gap_max']['paired'] is True
+        assert mine['favorite_mail_gap']['label'] == 'от'
+        assert mine['favorite_mail_gap_max']['label'] == 'до'
+        # Соседняя настройка рядом — обычная, без пары.
+        assert mine['favorite_mail_per_day']['pair'] == ''
+        assert mine['favorite_mail_per_day']['paired'] is False
+
+    def test_the_dice_is_steady_within_the_bounds(self):
+        """⚠⚠ Жребий устойчив: пока письмо то же, срок тот же.
+
+        Круг отправки просыпается раз в минуту; бросай он случай на каждом тике,
+        письмо уходило бы на первом низком выпадении — работала бы одна «от».
+        """
+        low, high = 4 * 3600, 6 * 3600
+
+        first = favorite_mail_gap_of(7, '2026-10-25 10:00:00', low, high)
+        again = favorite_mail_gap_of(7, '2026-10-25 10:00:00', low, high)
+
+        assert first == again, 'срок той же анкеты и того же письма переменился'
+        assert low <= first <= high, 'жребий вышел за границы промежутка'
+
+    def test_a_new_letter_rolls_a_new_term(self):
+        """⚠ Время последнего письма — часть ключа: без него у анкеты была бы
+        одна пауза навсегда, и разброс был бы между девушками, а не между
+        письмами."""
+        low, high = 1 * 3600, 20 * 3600
+
+        terms = {favorite_mail_gap_of(7, f'2026-10-25 1{n}:00:00', low, high)
+                 for n in range(10)}
+
+        assert len(terms) > 1, 'срок не меняется с новым письмом'
+
+    def test_no_spread_means_exactly_the_lower_bound(self):
+        """⚠ «До» не больше «от» — пауза ровно «от», прежнее поведение."""
+        assert favorite_mail_gap_of(7, '2026-10-25 10:00:00',
+                                    4 * 3600, 0) == 4 * 3600
+
+    def test_the_words_name_the_whole_range(self):
+        """⚠ Подпись называет промежуток целиком: «4 часа» при выставленных «до
+        6» отправило бы человека искать поломку — ждать-то дольше."""
+        assert favorite_mail_gap_words(4 * 3600, 6 * 3600) == '4–6 часов'
+        assert favorite_mail_gap_words(4 * 3600, 0) == '4 часа'
+
+
 class TestTheGapLabelReadsMinutes:
     """⚠⚠ Подпись под формой и число в форме обязаны говорить одно.
 
@@ -1224,17 +1366,25 @@ class TestTheGapLabelReadsMinutes:
         page = open('data/uvicorn/template/admin/dating/profile.html',
                     encoding='utf-8').read()
 
-        found = re.search(r'function favMailGapWords\(minutes\) \{.*?\n    \}',
-                          page, re.S)
+        # ⚠ Функций две: одна называет промежуток, вторая — одну границу. Берём
+        # обе: подпись собирается из них вместе, и проверять половину значило бы
+        # не проверять ничего.
+        found = re.search(r'function favMailGapWords\(minutes, upto\) \{.*?'
+                          r'\n    \}.*?function favMailGapOne\(minutes\) \{.*?'
+                          r'\n    \}', page, re.S)
         assert found, 'функция подписи паузы не нашлась на странице'
 
+        # ⚠ Последние два случая — про промежуток: подпись обязана назвать обе
+        # границы, а «до» ниже «от» читать как «без разброса», ровно как сервер.
         probe = (found.group(0) + '\n'
-                 + 'const cases = [[45, "45 мин"], [59, "59 мин"], [60, "1 час"],'
-                 + ' [240, "4 часа"], [600, "10 часов"], [0, "0 мин"]];\n'
-                 + 'for (const [value, want] of cases) {\n'
-                 + '  const got = favMailGapWords(value);\n'
+                 + 'const cases = [[45, 0, "45 мин"], [59, 0, "59 мин"],'
+                 + ' [60, 0, "1 час"], [240, 0, "4 часа"], [600, 0, "10 часов"],'
+                 + ' [0, 0, "0 мин"], [240, 360, "4 часа — 6 часов"],'
+                 + ' [240, 60, "4 часа"]];\n'
+                 + 'for (const [value, upto, want] of cases) {\n'
+                 + '  const got = favMailGapWords(value, upto);\n'
                  + '  if (got !== want) {\n'
-                 + '    console.log(`${value} → ${got}, ждали ${want}`);\n'
+                 + '    console.log(`${value}/${upto} → ${got}, ждали ${want}`);\n'
                  + '    process.exit(1);\n'
                  + '  }\n'
                  + '}\n')

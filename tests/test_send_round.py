@@ -610,8 +610,12 @@ class TestThePauseBelongsToTheGirl:
         from mysql_.mysql_ import mysql_get_db_async
         from src.dating import favorite_mail
 
-        monkeypatch.setattr(favorite_mail, 'favorite_mail_gap_sec',
-                            _fixed(int(gap)))
+        # ⚠ Пауза — **промежуток**, и здесь он вырожденный: обе границы равны,
+        # то есть жребию нечего бросать. Тестам паузы разброс и не нужен — они
+        # про то, держится ли срок вообще; сам жребий стережёт
+        # `test_favorite_mail.py`.
+        monkeypatch.setattr(favorite_mail, 'favorite_mail_gap_range',
+                            _fixed((int(gap), int(gap))))
 
         async with mysql_get_db_async() as db:
             await db.execute('UPDATE site SET favorite_mail_send_on = 1,'

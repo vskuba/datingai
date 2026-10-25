@@ -16,8 +16,9 @@
 (`mailing_schedule`): письмо в четыре утра выдаёт робота вернее любого текста.
 
 **Каждый пул меряется своим сроком.** Ответы — `reply_every`, рассылку —
-`send_every`, письма избранным — их собственное условие выборки
-(`favorite_mail_gap`, см. `_oldest`). Полсотни писем, ушедшие залпом, — рассылка
+`send_every`, письма избранным — их собственное условие выборки (пауза анкеты,
+жребий между `favorite_mail_gap` и `favorite_mail_gap_max`, см. `_oldest`).
+Полсотни писем, ушедшие залпом, — рассылка
 робота, чем она и является; пауза делает поток похожим на человека, который сидит
 и пишет. Но чужой темп пул не держит: ответ ждёт свой срок, а не рассылочный —
 человек написал и ждёт ответа, пока массовая рассылка копится в своей очереди.
@@ -87,7 +88,7 @@ SEND_ROUND_GAP_SEC = 2.0
 # Пулы круга: выключатель, таблица, настройка своего темпа и слово для шапки.
 # ⚠ Порядок — порядок обхода, не приоритет: пулы независимы, и каждый, кому пора,
 # уходит своим кругом, не дожидаясь соседей. Тем, у кого срок сайтный; у избранных
-# `None` — их время живёт в условии выборки (`favorite_mail_girl_free_sql`
+# `None` — их время живёт в условии выборки (`favorite_mail_girls_busy_sql`
 # в `_oldest`), а не в замке на сайт.
 _POOLS = (
     ('reply_send_on', 'mail_reply', 'reply_every', 'ответов'),
@@ -360,14 +361,13 @@ async def _girls_wait(site_id: int) -> str:
     """Все ли девушки пула избранных сейчас в паузе. Пусто — не все.
 
     ⚠ Спрашивает **тем же условием**, которым отбирает круг
-    (`favorite_mail_girl_free_sql`): ответ «почему стоим» обязан считаться тем
+    (`favorite_mail_girls_busy_sql`): ответ «почему стоим» обязан считаться тем
     же кодом, что решает за круг, иначе он объяснит не тот простой.
     """
-    from src.dating.favorite_mail import (favorite_mail_gap_sec,
-                                          favorite_mail_girl_free_sql)
+    from src.dating.favorite_mail import (favorite_mail_gap_range,
+                                          favorite_mail_girls_busy_sql)
 
-    gap = await favorite_mail_gap_sec(site_id)
-    free = favorite_mail_girl_free_sql(gap)
+    free = await favorite_mail_girls_busy_sql(site_id)
     if not free:
         return ''
 
@@ -386,10 +386,15 @@ async def _girls_wait(site_id: int) -> str:
     if int(row.get('free') or 0):
         return ''
 
-    from src.dating.favorite_mail import _hours_word
+    from src.dating.favorite_mail import favorite_mail_gap_words
+
+    # ⚠ Называем **промежуток**, а не выпавшую кому-то паузу: анкет здесь много,
+    # и срок у каждой свой. «Пауза 4–6 часов» отвечает на вопрос «долго ли
+    # стоим», а чужая выпавшая пятёрка только сбила бы с толку.
+    low, high = await favorite_mail_gap_range(site_id)
 
     return (f'все анкеты недавно писали — пауза между письмами '
-            f'{_hours_word(gap)}')
+            f'{favorite_mail_gap_words(low, high)}')
 
 
 async def _sites() -> list[dict]:
@@ -425,10 +430,15 @@ async def _oldest(site_id: int, table: str) -> dict | None:
 
     # ⚠⚠ **Пауза между письмами одной девушки — здесь, а не только в наборе.**
     #
-    # Настройка `favorite_mail_gap` говорит: от одной анкеты уходит одно письмо за
-    # срок, кому угодно. Проверяй её только набор пула — правило осталось бы на
+    # Настройки `favorite_mail_gap` и `favorite_mail_gap_max` говорят: от одной
+    # анкеты уходит одно письмо за срок, кому угодно, а сам срок ей бросается
+    # жребием между ними. Проверяй его только набор пула — правило осталось бы на
     # бумаге: черновики лежат готовыми, а уносит их этот круг по письму за раз.
     # Так и вышло 21 сентября — четыре письма от Елены четверым за восемь минут.
+    #
+    # ⚠ Приезжает оно **списком занятых анкет**, а не сроком в условии: жребий
+    # бросается в одном месте и на Python, второй его записи на языке MySQL быть
+    # не должно (`favorite_mail_girls_busy_sql`).
     #
     # ⚠ **Условием в запросе, а не отсевом после.** Круг берёт из пула **одно**
     # письмо за заход; отсей мы занятую девушку после выборки, заход кончился бы
@@ -439,10 +449,9 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     # его читает набор пула, и две копии разошлись бы на первой правке.
     busy = ''
     if table == 'favorite_mail':
-        from src.dating.favorite_mail import (favorite_mail_gap_sec,
-                                              favorite_mail_girl_free_sql)
+        from src.dating.favorite_mail import favorite_mail_girls_busy_sql
 
-        busy = favorite_mail_girl_free_sql(await favorite_mail_gap_sec(site_id))
+        busy = await favorite_mail_girls_busy_sql(site_id)
 
     # ⚠⚠⚠ **Номер письма, на которое отвечаем, — у ответов обязателен.**
     #

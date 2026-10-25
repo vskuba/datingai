@@ -16,7 +16,7 @@
 | **анкета в сети** (`status = 'online'`) | письмо уходит от её имени, и уносит его отправка — а та тоже ждёт, пока девушка на сайте |
 | **собеседник в сети** | письмо застаёт его на сайте; написанное в отсутствие уйдёт в груду непрочитанного, а предел в два письма будет потрачен |
 | последним говорил **не он** | он молчит — это и есть повод; ответить ему должен круг ответов, а не этот |
-| прошло не меньше `favorite_mail_gap` | два письма подряд за час выдают робота |
+| прошла её пауза — жребий между `favorite_mail_gap` и `favorite_mail_gap_max` | два письма подряд за час выдают робота, а ровный шаг между ними — автомат |
 | с его письма ему ушло меньше `favorite_mail_per_day` | предел на человека; счёт обнуляет его ответ, наш ответ ему не считается |
 | в пуле нет его черновика | второй черновик тому же человеку — это два письма подряд, отложенных на потом |
 | ему не пишет другая наша анкета этим заходом | шаблон общий: два одинаковых письма от двух женщин выдают агентство |
@@ -101,6 +101,7 @@ from src.dating.favorite import (FAVORITE_STATES,
 from src.dating.ready import password_pick
 from datetime_.datetime_ import datetime_day_minutes
 from src.dating.answer import answer_mail_write
+from src.dating.dice import dice_steady
 from src.dating.mail_agent import DatingMailAgentError
 from src.dating.json_column import json_column_list
 from src.dating.mail_wait import mail_wait_left, mail_wait_skip
@@ -161,6 +162,16 @@ FAVORITE_MAIL_HIS_LAST_SQL = ('(SELECT MAX(date_post) FROM mail_in'
 # сравнивается с отметками времени, а те в секундах.
 FAVORITE_MAIL_GAP_DEFAULT_MIN = 240
 
+# Верхняя граница той же паузы: срок каждой анкете бросается жребием между «от» и
+# «до» (`favorite_mail_gap_of`).
+#
+# ⚠⚠ **Умолчание ноль, и значит оно «ровно от», то есть прежнее поведение.**
+# Нижняя граница у сайтов выставлена руками, и выкладка, молча добавившая к ней
+# разброс вверх, удлинила бы паузы там, где о них не просили. Разброс включают,
+# вписав «до».
+FAVORITE_MAIL_GAP_MAX_SETTING = 'favorite_mail_gap_max'
+FAVORITE_MAIL_GAP_MAX_DEFAULT_MIN = 0
+
 # ── Пауза между письмами: про девушку, а не про получателя ───────────────────
 #
 # ⚠⚠ **Здесь пауза считалась по получателю, и от этого она не работала.**
@@ -186,6 +197,14 @@ FAVORITE_MAIL_GAP_DEFAULT_MIN = 240
 # ⚠ Список пулов свой здесь **не заводится**: он один на проект и лежит там, где
 # отправка (`MAIL_SEND_TABLES`). Вторая копия того же списка разошлась бы с
 # первой ровно тогда, когда появится четвёртый пул, — и молча.
+#
+# ⚠⚠ **Срок теперь не число, а промежуток** (`favorite_mail_gap` — «от»,
+# `favorite_mail_gap_max` — «до»), и каждой анкете он **бросается жребием**
+# (`favorite_mail_gap_of`). Одно число на сайт значило бы, что все её письма
+# уходят по линейке с одинаковым шагом: сайт видит не только частоту, но и
+# ровность — а ровность у живого человека не встречается.
+#
+# ⚠ Ноль в «до» — прежнее поведение, пауза ровно «от».
 
 # Почему пара пропущена. Строки уезжают на страницу, и человек по ним понимает,
 # что делать.
@@ -244,7 +263,7 @@ async def favorite_mail_make(site_id: int, limit: int = 0,
 
     per_day = await _seconds(site_id, FAVORITE_MAIL_PER_DAY_SETTING,
                              FAVORITE_MAIL_PER_DAY_DEFAULT)
-    gap = await favorite_mail_gap_sec(site_id)
+    gap_low, gap_high = await favorite_mail_gap_range(site_id)
 
     cap = min(int(limit) or FAVORITE_MAIL_BATCH_DEFAULT,
               FAVORITE_MAIL_BATCH_MAX)
@@ -346,7 +365,7 @@ async def favorite_mail_make(site_id: int, limit: int = 0,
         # ⚠ **Пауза девушки — второй предел и с другим ключом.** Дневной считает
         # получатель, этот — отправительница: сайт видит поток писем от неё, а не
         # пары «она — он», и разбирать наши пулы за него никто не будет.
-        why = await favorite_mail_girl_soon(profile_id_, gap)
+        why = await favorite_mail_girl_soon(profile_id_, gap_low, gap_high)
         if why:
             skipped += 1
             _reason(reasons, f'{_addressee(pair)}: {why}')
@@ -502,34 +521,94 @@ async def favorite_mail_pool_left(site_id: int, ready_only: bool = False) -> int
     return int((row or {}).get('n') or 0)
 
 
-def favorite_mail_girl_free_sql(gap: int, key: str = 'm.profile_id') -> str:
-    """Условие «этой девушке сейчас можно писать» — куском `WHERE`.
+def favorite_mail_gap_of(profile_id: int, last_at, low: int, high: int) -> int:
+    """Пауза **этой** анкеты после **этого** письма: жребий между границами.
 
-    Пустая строка, если паузы нет: ноль — законное значение, человек выбрал
-    «без паузы», и городить условие, которое всегда истинно, незачем.
+    Args:
+        profile_id: анкета, от чьего имени ушло письмо.
+        last_at: время её последнего ушедшего письма — то, от чего идёт отсчёт.
+        low: нижняя граница в секундах (`favorite_mail_gap`).
+        high: верхняя (`favorite_mail_gap_max`). Не больше нижней — пауза ровно
+            нижняя, и это законное «без разброса».
 
-    ⚠ Срок подставляется **числом**, а не `%s`: кусок уезжает в чужой запрос,
-    где своя очередь подстановок, и лишний `%s` в середине сдвинул бы все
-    остальные. Значение приходит из настройки через `int()` — строке взяться
-    неоткуда.
+    Returns:
+        int: секунды.
+
+    ## ⚠⚠ Жребий устойчив, и в этом весь смысл
+
+    Круг отправки просыпается раз в минуту и спрашивает одно и то же: «прошла ли
+    пауза?». Бросай мы случай на каждом тике, письмо уходило бы на первом низком
+    выпадении — то есть почти сразу после «от», и «до» не значила бы ничего. Та
+    же грабля, что у инициативы, и то же лекарство: число выводится **из самой
+    анкеты и времени её последнего письма** (`dice.py`).
+
+    ⚠ Время в ключе — не украшение: оно делает бросок новым после каждого
+    ушедшего письма. Без него анкета получила бы одну паузу на всю жизнь, и
+    разброс был бы между девушками, а не между письмами, — то есть сайт видел бы
+    от каждой ровную сетку, только со своим шагом.
     """
-    gap = int(gap or 0)
-    if gap <= 0:
+    return dice_steady(f'{int(profile_id or 0)}:{last_at}', low, high)
+
+
+async def favorite_mail_girls_busy_sql(site_id: int,
+                                       key: str = 'm.profile_id') -> str:
+    """Условие «эти девушки сейчас в паузе» — куском `WHERE`. Пусто — все свободны.
+
+    Args:
+        site_id: сайт-закладка: письма считаем по его анкетам.
+        key: чем в чужом запросе зовётся номер анкеты.
+
+    Returns:
+        str: ` AND m.profile_id NOT IN (12, 34)` либо пустая строка.
+
+    ## ⚠⚠ Почему список анкет, а не срок в условии
+
+    Пока пауза была одним числом на сайт, условие писалось прямо в SQL:
+    «нет её письма свежее, чем `INTERVAL N SECOND`». Теперь срок у каждой анкеты
+    **свой** — жребий между границами, — и выразить его в запросе значило бы
+    написать формулу жребия второй раз, на языке MySQL. Две записи одного
+    броска разошлись бы молча: запрос не падает оттого, что считает иначе.
+
+    Поэтому жребий бросается в одном месте (`favorite_mail_gap_of`), а в запрос
+    уезжает уже решённое — номера занятых анкет. Их десятки, и это один запрос на
+    сайт, а не на анкету.
+
+    ⚠ Номера подставляются **числами**, а не `%s`: кусок уезжает в чужой запрос,
+    где своя очередь подстановок, и лишний `%s` в середине сдвинул бы все
+    остальные. Тот же приём и тот же довод, что у остуды получателей
+    (`send_round._oldest`), только та идёт `%s`-ами — там строки, а здесь целые.
+
+    ⚠ **Сбой базы — молчим про паузу, а не запрещаем всё.** Пустое условие
+    означает «паузу не считали»; письма при этом всё равно проходят второй
+    проверкой у набора (`favorite_mail_girl_soon`), и та на сбое отвечает «не
+    пишем».
+    """
+    busy = await _girls_busy(site_id)
+    if not busy:
         return ''
 
-    return (f' AND NOT EXISTS (SELECT 1 FROM ({_girl_sent_union(key)}) AS sent'
-            f'  WHERE sent.sent_at > NOW() - INTERVAL {gap} SECOND)')
+    return f' AND {key} NOT IN ({", ".join(str(int(one)) for one in busy)})'
 
-async def favorite_mail_girl_soon(profile_id: int, gap: int) -> str:
-    """Рано ли **этой девушке** писать письмо. Пустая строка — можно.
+
+async def favorite_mail_girl_wait(profile_id: int, low: int,
+                                  high: int) -> tuple[int, str]:
+    """Пауза **этой девушки** и причина ждать. Одно чтение — два ответа.
 
     Args:
         profile_id: анкета, от чьего имени письмо уйдёт.
-        gap: пауза в секундах (`favorite_mail_gap`). Ноль — паузы нет.
+        low: нижняя граница паузы в секундах. Ноль — паузы нет.
+        high: верхняя граница.
 
     Returns:
-        str: причина словами — с тем, сколько ещё ждать. «Прошло меньше четырёх
-        часов» человек читать умеет, но считать в уме не обязан.
+        tuple: `(пауза этой анкеты в секундах, причина словами)`. Причина пуста —
+        писать можно. Пауза — та, что выпала ей после её последнего письма;
+        писем не было вовсе — нижняя граница, потому что иного ключа у жребия
+        ещё нет.
+
+    ⚠ **Два ответа одним чтением, а не двумя вызовами.** Окно «почему паре не
+    пишут» показывает и срок, и помеху (`mail_explain`); спроси оно их порознь,
+    это был бы второй поход в базу за уже прочитанным — и, хуже, второй бросок
+    жребия по другому времени, если письмо ушло между вопросами.
 
     ⚠ **Кому она писала — неважно.** В этом и состоит правило: сайт видит поток
     писем от одной девушки, а не пары «она — он», и разбирать наши пулы за него
@@ -541,9 +620,10 @@ async def favorite_mail_girl_soon(profile_id: int, gap: int) -> str:
     """
     from src.dating.mail_send import MAIL_SEND_TABLES
 
-    profile_id, gap = int(profile_id or 0), int(gap or 0)
-    if not profile_id or gap <= 0:
-        return ''
+    profile_id = int(profile_id or 0)
+    low, high = int(low or 0), int(high or 0)
+    if not profile_id or low <= 0:
+        return 0, ''
 
     try:
         async with mysql_get_db_async() as db:
@@ -556,18 +636,28 @@ async def favorite_mail_girl_soon(profile_id: int, gap: int) -> str:
         logger_info(f'[dating] когда анкета #{profile_id} писала в последний раз '
                     f'— не спросилось: {e}')
 
-        return 'не удалось посчитать, когда она писала в последний раз'
+        return low, 'не удалось посчитать, когда она писала в последний раз'
 
     when = (row or {}).get('last_at')
     if when is None:
-        return ''
+        return low, ''
 
+    gap = favorite_mail_gap_of(profile_id, when, low, high)
     since = await _since(when)
     if since >= gap:
-        return ''
+        return gap, ''
 
-    return (f'она писала {_ago_word(since)}, пауза {_hours_word(gap)} — '
-            f'можно через {_left_word(gap - since)}')
+    return gap, (f'она писала {_ago_word(since)}, пауза {_hours_word(gap)} — '
+                 f'можно через {_left_word(gap - since)}')
+
+
+async def favorite_mail_girl_soon(profile_id: int, low: int, high: int) -> str:
+    """Рано ли **этой девушке** писать письмо. Пустая строка — можно.
+
+    ⚠ Половина `favorite_mail_girl_wait` — та, что нужна набору пула: ему срок
+    без помехи не говорит ничего, а причина уезжает человеку в `reasons`.
+    """
+    return (await favorite_mail_girl_wait(profile_id, low, high))[1]
 
 def favorite_mail_shift_now(shifts, minutes: int) -> bool:
     """Идёт ли сейчас смена набора. Пустые смены — «нет», а не «всегда».
@@ -616,21 +706,47 @@ async def favorite_mail_shift_site(site_id: int, offset_hours: int = 0) -> bool:
     return favorite_mail_shift_now((row or {}).get('favorite_mail_schedule'),
                                    datetime_day_minutes(int(offset_hours)))
 
-async def favorite_mail_gap_sec(site_id: int) -> int:
-    """Пауза между письмами одной девушки, **секундами**. Одно чтение на всех.
+async def favorite_mail_gap_range(site_id: int) -> tuple[int, int]:
+    """Границы паузы между письмами одной девушки, **секундами**: `(от, до)`.
 
-    ⚠⚠ **Настройка хранится в минутах, наружу отдаём секунды.** Перевод стоит
-    здесь, в единственном чтении: спрашивающих двое — круг отправки и набор пула,
-    — и умножь каждый сам, первый же забывший сравнивал бы минуты с секундами.
-    Разница в шестьдесят раз: пауза в четыре часа стала бы четырьмя минутами.
+    ⚠⚠ **Настройки хранятся в минутах, наружу отдаём секунды.** Перевод стоит
+    здесь, в единственном чтении: спрашивающих трое — круг отправки, набор пула и
+    окно «почему паре не пишут», — и умножь каждый сам, первый же забывший
+    сравнивал бы минуты с секундами. Разница в шестьдесят раз: пауза в четыре
+    часа стала бы четырьмя минутами.
 
-    ⚠ Умолчание живёт здесь, а не у каждого спрашивающего: круг отправки и круг
+    ⚠ Верхняя приводится к нижней, если меньше её или ноль: «до» ниже «от» — не
+    настройка, а описка, и работать по ней значило бы писать чаще, чем человек
+    велел. Ноль в «до» — законное «без разброса», и это умолчание: верхняя
+    граница заведена позже нижней, и выкладка не должна молча удлинять паузы там,
+    где о разбросе не просили. То же правило и те же слова, что у инициативы
+    (`initiative._after_range`).
+
+    ⚠ Умолчания живут здесь, а не у каждого спрашивающего: круг отправки и круг
     набора обязаны понимать «настройки нет» одинаково.
     """
-    minutes = await _seconds(site_id, FAVORITE_MAIL_GAP_SETTING,
-                             FAVORITE_MAIL_GAP_DEFAULT_MIN)
+    low = int(await _seconds(site_id, FAVORITE_MAIL_GAP_SETTING,
+                             FAVORITE_MAIL_GAP_DEFAULT_MIN)) * 60
+    high = int(await _seconds(site_id, FAVORITE_MAIL_GAP_MAX_SETTING,
+                              FAVORITE_MAIL_GAP_MAX_DEFAULT_MIN)) * 60
 
-    return int(minutes) * 60
+    low = max(0, low)
+
+    return low, max(low, high)
+
+
+def favorite_mail_gap_words(low: int, high: int) -> str:
+    """Пауза словами: «4 часа» без разброса, «4–6 часов» с ним.
+
+    ⚠ Промежуток называется **целиком**, а не одной нижней границей: человек,
+    читающий «пауза 4 часа» при выставленном «до 6», решит, что настройка не
+    действует, — ждать-то приходится дольше названного.
+    """
+    low, high = int(low or 0), int(high or 0)
+    if high <= low:
+        return _hours_word(low)
+
+    return f'{_hours_count(low)}–{_hours_word(high)}'
 
 # ⚠ Забывания отметки сверки здесь нет. Функция была и обещала, что правка срока на
 # странице «Сайты» подействует сразу, — но её не звал ни обработчик настроек, ни круг:
@@ -692,7 +808,7 @@ async def favorite_mail_why(site_id: int, offset_hours: int = 0) -> str:
 
     per_day = await _seconds(site_id, FAVORITE_MAIL_PER_DAY_SETTING,
                              FAVORITE_MAIL_PER_DAY_DEFAULT)
-    gap = await favorite_mail_gap_sec(site_id)
+    gap_low, gap_high = await favorite_mail_gap_range(site_id)
 
     # ⚠ Пауза спрашивается **по анкете**, и анкет в паре списков меньше, чем пар:
     # тринадцать девушек против сотни пар. Спроси мы её на каждую пару, вопрос
@@ -703,7 +819,8 @@ async def favorite_mail_why(site_id: int, offset_hours: int = 0) -> str:
     for pair in pairs:
         profile_id_ = int(pair['profile_id'])
         if profile_id_ not in soon:
-            soon[profile_id_] = await favorite_mail_girl_soon(profile_id_, gap)
+            soon[profile_id_] = await favorite_mail_girl_soon(
+                profile_id_, gap_low, gap_high)
 
         why = (await favorite_mail_person_soon(site_id, str(pair['uid']), per_day)
                or soon[profile_id_])
@@ -1136,6 +1253,67 @@ def _girl_sent_union(key: str) -> str:
         f"profile_id = {key} AND status = 'sent' AND sent_at IS NOT NULL")
 
 
+async def _girls_busy(site_id: int) -> dict[int, int]:
+    """Анкеты сайта, которым сейчас писать рано: номер → сколько ещё ждать, сек.
+
+    ⚠ Спрашивает **все** анкеты одним запросом: письма у них лежат в трёх пулах,
+    и вопрос «когда она писала в последний раз» стоит одного `UNION ALL` на сайт
+    вместо трёх запросов на каждую девушку.
+
+    ⚠ Анкеты без единого ушедшего письма в ответе нет вовсе: ей можно писать, и
+    паузе не от чего отсчитываться.
+    """
+    from src.dating.mail_send import MAIL_SEND_TABLES
+
+    site_id = int(site_id or 0)
+    low, high = await favorite_mail_gap_range(site_id)
+    if not site_id or low <= 0:
+        return {}
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                f'SELECT sent.profile_id,'
+                f' TIMESTAMPDIFF(SECOND, MAX(sent.sent_at), NOW()) AS since,'
+                f' MAX(sent.sent_at) AS last_at'
+                f'  FROM ({_site_sent_union()}) AS sent'
+                f' GROUP BY sent.profile_id',
+                (site_id,) * len(MAIL_SEND_TABLES))
+            rows = await db.fetchall()
+    except Exception as e:
+        logger_info(f'[dating] паузы анкет сайта #{site_id} не спросились: {e}')
+
+        return {}
+
+    busy = {}
+    for row in rows or []:
+        profile_id = int(row.get('profile_id') or 0)
+        since = int(row.get('since') or 0)
+        gap = favorite_mail_gap_of(profile_id, row.get('last_at'), low, high)
+        if profile_id and since < gap:
+            busy[profile_id] = gap - since
+
+    return busy
+
+
+def _site_sent_union() -> str:
+    """То же, но по **сайту**: ушедшие письма всех его анкет, с номером анкеты.
+
+    ⚠ Нужен ровно одному спрашивающему — списку занятых анкет
+    (`_girls_busy`): ему вопрос «когда писала каждая» стоит одного
+    запроса на сайт, а через `_girl_sent_union` вышло бы по запросу на девушку.
+
+    ⚠ Отбор по сайту, а не по списку анкет: номера анкет в запрос пришлось бы
+    везти самим, а сайт у письма записан своей колонкой — тот же `site_id`, по
+    которому письма выбирает отправка.
+    """
+    from src.dating.mail_send import mail_sent_union
+
+    return mail_sent_union(
+        "site_id = %s AND status = 'sent' AND sent_at IS NOT NULL",
+        select='profile_id, sent_at')
+
+
 
 def _letters_word(n: int) -> str:
     """Склонение: «1 письмо», «2 письма», «5 писем».
@@ -1150,9 +1328,14 @@ def _letters_word(n: int) -> str:
     return {1: 'письмо', 2: 'письма', 3: 'письма', 4: 'письма'}.get(tail % 10, 'писем')
 
 
+def _hours_count(seconds: int) -> int:
+    """Часы числом: меньше часа — всё равно час, иначе срок читался бы как ноль."""
+    return max(1, round(int(seconds) / 3600))
+
+
 def _hours_word(seconds: int) -> str:
     """Срок словами: «4 часа». Настройка в секундах, человек думает часами."""
-    hours = max(1, round(int(seconds) / 3600))
+    hours = _hours_count(seconds)
 
     tail = hours % 100
     if 11 <= tail <= 14:
