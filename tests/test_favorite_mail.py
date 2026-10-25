@@ -120,6 +120,18 @@ async def _star(profile_id: int, uid: str, state: str = 'done') -> None:
         await db.connection.commit()
 
 
+async def _online(profile_id: int) -> None:
+    """Анкета в сети и включена — без этого отбор её не видит вовсе.
+
+    ⚠ Оба поля сразу: `_quiet` требует и `enabled = 1`, и `status = 'online'`, и
+    проверка порознь даёт пустой отбор по причине, которую тест не называет.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute("UPDATE profile SET status = 'online', enabled = 1"
+                         ' WHERE id = %s', (int(profile_id),))
+        await db.connection.commit()
+
+
 async def _his(profile_id: int, uid: str, when: str) -> None:
     """Его письмо: последнее слово за ним."""
     async with mysql_get_db_async() as db:
@@ -720,6 +732,137 @@ class TestThePauseBelongsToTheGirl:
 
         assert await favorite_mail_girls_busy_sql(STAND_SITE) == '', \
             'условие без паузы всё равно строится — оно всегда истинно'
+
+
+class TestTheReasonNamesTheGirl:
+    """⚠⚠ Причина про анкету обязана называть анкету.
+
+    Подпись у причины — **адресат**, потому что причин про него большинство. Но
+    пауза — про отправительницу, и в шапке пула выходило так:
+
+        Richie (514296): она писала 6 ч 14 мин назад, пауза 9 часов
+
+    «Она» читается как про Richie: он единственный названный в строке. Спрошено
+    человеком, глядящим на прод: «кто это она?» — ответом оказалась STELA,
+    которой Richie в строке даже не был виден.
+    """
+
+    async def test_the_pause_reason_says_her_name(self, girl):
+        """Имя передали — оно и стоит в причине вместо «она»."""
+        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
+
+        why = await favorite_mail_girl_soon(girl, 4 * 3600, 4 * 3600,
+                                            'STELA 643694')
+
+        assert why.startswith('STELA 643694 писала'), why
+        assert 'она писала' not in why, 'имя не вытеснило местоимение'
+
+    async def test_without_a_name_it_falls_back_to_the_pronoun(self, girl):
+        """⚠ Имени нет — прежнее «она»: строка без подлежащего хуже неточной.
+
+        Так бывает у анкеты без карточки с сайта, и у вызывающих, которым имя
+        взять неоткуда (окно пары — там анкета видна в шапке разговора).
+        """
+        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
+
+        assert (await favorite_mail_girl_soon(girl, 4 * 3600,
+                                              4 * 3600)).startswith('она писала')
+
+    def test_the_name_comes_from_the_card(self):
+        """⚠ Имя собирается **тем же** `_me_name`, которым анкету называет чат:
+        свой разбор карточки был бы третьей копией правила «как зовут нашу
+        девушку», а оно уже разъезжалось."""
+        from src.dating.favorite_mail import _girl_said
+
+        said = _girl_said({'profile': {'profile': '{"name": "STELA",'
+                                                  ' "id": "643694"}'}})
+
+        assert said == 'STELA 643694'
+        # ⚠ Карточки нет — остаётся логин: он есть всегда, и строка не теряет
+        # подлежащего.
+        assert _girl_said({'profile': {'login': 'x@example.com'}}) \
+            == 'x@example.com'
+
+    def test_the_batch_reason_has_no_dangling_pronoun(self):
+        """⚠ «Эта анкета уже написала…» — то же указательное рядом с чужим
+        именем. Теперь строка начинается с имени, и местоимения в ней нет."""
+        from src.dating.favorite_mail import FAVORITE_MAIL_SKIP_BUSY
+
+        assert 'эта анкета' not in FAVORITE_MAIL_SKIP_BUSY.lower()
+        assert FAVORITE_MAIL_SKIP_BUSY.startswith('уже написала')
+
+
+class TestTheQueueTellsWhenSheWrites:
+    """⚠⚠ Значок в списке анкет отвечает на «почему она молчит».
+
+    Пул приставания пуст, генерация включена, анкеты в сети — и ничего не
+    происходит. Причина законная: у каждой девушки идёт её пауза между письмами,
+    — но видно её было только в одной строке шапки, и то про первую пару из ста
+    сорока. Очередь (`favorite_mail_queue`) даёт ответ по каждой анкете.
+
+    ⚠ Считается **теми же** выражениями, что решают за круг: паузой `_girls_busy`
+    и отбором пар `_quiet`. Своя копия на странице разошлась бы с ним на первой
+    правке — грабля, случавшаяся дважды.
+    """
+
+    async def test_a_free_girl_waits_nothing(self, girl, auth_client):
+        """Писем от неё не было — ждать нечего, и первый в очереди назван."""
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _online(girl)
+
+        got = await favorite_mail.favorite_mail_queue(STAND_SITE)
+
+        assert girl in got, 'анкеты с избранным нет в очереди'
+        assert got[girl]['wait_sec'] == 0
+        assert got[girl]['next_uid'] == uid
+        assert got[girl]['ready'] >= 1
+
+    async def test_a_recent_letter_puts_her_in_the_queue(self, girl):
+        """Она только что писала — очередь называет остаток её паузы.
+
+        ⚠ Срок и пауза приезжают **из одного жребия**: спроси их страница
+        порознь, второй вопрос бросил бы его заново по другому письму — и
+        человек увидел бы «пауза 9 часов, ждать 10».
+        """
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _online(girl)
+        await _hers(girl, f'u{uuid.uuid4().hex[:8]}', _now_minus_hours(0))
+
+        got = (await favorite_mail.favorite_mail_queue(STAND_SITE)).get(girl)
+
+        assert got and got['wait_sec'] > 0, 'пауза не попала в очередь'
+        assert got['wait_sec'] <= got['gap_sec'], \
+            'ждать дольше самой паузы — значит числа из разных жребиев'
+
+    async def test_a_girl_with_nobody_to_write_is_absent(self, girl):
+        """⚠ Писать некому — записи нет вовсе: значок «0 в очереди» сообщал бы
+        пустоту у каждой второй строки списка."""
+        await _online(girl)
+
+        assert girl not in await favorite_mail.favorite_mail_queue(STAND_SITE)
+
+    async def test_the_route_answers_by_site(self, girl, auth_client):
+        """⚠ Ручка отдаёт **весь сайт разом**: значок стоит у каждой строки, и
+        запрос на анкету означал бы сорок запросов на одну отрисовку."""
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _star(girl, uid)
+        await _online(girl)
+
+        got = (await auth_client.get('/api/dating/favorite-mail/queue'
+                                     f'?site_id={STAND_SITE}')).json()['result']
+
+        assert str(girl) in got, 'ручка не назвала анкету с избранным'
+        assert got[str(girl)]['next_uid'] == uid
+
+    async def test_the_route_without_a_site_is_empty_not_an_error(self,
+                                                                 auth_client):
+        """⚠ Сайт не выбран — пустой ответ, а не 422: страница зовёт ручку на
+        каждой перерисовке списка, и до выбора сайта это обычное состояние."""
+        got = await auth_client.get('/api/dating/favorite-mail/queue')
+
+        assert got.status_code == 200 and got.json()['result'] == {}
 
 
 class TestTheLimitIsPerPersonNotPerPair:

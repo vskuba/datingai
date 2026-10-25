@@ -212,7 +212,10 @@ FAVORITE_MAIL_SKIP_SILENT = 'агент не прислал шаблон пис�
 
 
 FAVORITE_MAIL_SKIP_TWICE = 'ему уже пишет другая анкета этим заходом'
-FAVORITE_MAIL_SKIP_BUSY = 'эта анкета уже написала письмо этим заходом'
+# ⚠ «Эта анкета» ушло из строки: подпись у причины — **адресат**, и указательное
+# местоимение рядом с его именем читалось как про него. Имя подставляет
+# вызывающий (`_girl_said`), и начинается строка теперь с него.
+FAVORITE_MAIL_SKIP_BUSY = 'уже написала письмо этим заходом'
 
 
 async def favorite_mail_make(site_id: int, limit: int = 0,
@@ -365,7 +368,11 @@ async def favorite_mail_make(site_id: int, limit: int = 0,
         # ⚠ **Пауза девушки — второй предел и с другим ключом.** Дневной считает
         # получатель, этот — отправительница: сайт видит поток писем от неё, а не
         # пары «она — он», и разбирать наши пулы за него никто не будет.
-        why = await favorite_mail_girl_soon(profile_id_, gap_low, gap_high)
+        #
+        # ⚠ Имя анкеты уезжает в причину: строку подписывает адресат, и без
+        # имени «она писала 6 ч назад» читается как про него (`_girl_said`).
+        why = await favorite_mail_girl_soon(profile_id_, gap_low, gap_high,
+                                            _girl_said(pair))
         if why:
             skipped += 1
             _reason(reasons, f'{_addressee(pair)}: {why}')
@@ -374,7 +381,8 @@ async def favorite_mail_make(site_id: int, limit: int = 0,
         # Она уже получила письмо этим заходом — см. `girls` выше.
         if profile_id_ in girls:
             skipped += 1
-            _reason(reasons, f'{_addressee(pair)}: {FAVORITE_MAIL_SKIP_BUSY}')
+            _reason(reasons, f'{_addressee(pair)}: {_girl_said(pair)} '
+                             f'{FAVORITE_MAIL_SKIP_BUSY}')
             continue
 
         # Ему уже пишет другая наша девушка этим заходом — см. `written` выше.
@@ -590,14 +598,24 @@ async def favorite_mail_girls_busy_sql(site_id: int,
     return f' AND {key} NOT IN ({", ".join(str(int(one)) for one in busy)})'
 
 
-async def favorite_mail_girl_wait(profile_id: int, low: int,
-                                  high: int) -> tuple[int, str]:
+async def favorite_mail_girl_wait(profile_id: int, low: int, high: int,
+                                  name: str = '') -> tuple[int, str]:
     """Пауза **этой девушки** и причина ждать. Одно чтение — два ответа.
 
     Args:
         profile_id: анкета, от чьего имени письмо уйдёт.
         low: нижняя граница паузы в секундах. Ноль — паузы нет.
         high: верхняя граница.
+        name: как назвать анкету в причине. Пусто — «она».
+
+            ⚠⚠ **Имя тут не украшение.** Строка уезжает в шапку пула, где её
+            подписывают **адресатом**: выходило «Richie (514296): она писала
+            6 ч назад» — и «она» читалось как про Richie, хотя речь про анкету,
+            которой писать рано. Спрошено человеком с экрана: «кто это она?».
+
+            ⚠ Имя передаёт вызывающий, а не читает эта функция: у набора пула и
+            у шапки оно уже в руках (карточка приезжает тем же запросом), и
+            лишний поход в базу на каждую девушку был бы платой за известное.
 
     Returns:
         tuple: `(пауза этой анкеты в секундах, причина словами)`. Причина пуста —
@@ -622,6 +640,10 @@ async def favorite_mail_girl_wait(profile_id: int, low: int,
 
     profile_id = int(profile_id or 0)
     low, high = int(low or 0), int(high or 0)
+    # ⚠ Имя подставляется **один раз**, здесь: ниже оно идёт в две строки — в
+    # сбой чтения и в саму паузу, — и вторая запись «кого называем» разошлась бы
+    # с первой ровно тогда, когда имя у кого-то окажется пустым.
+    who = str(name or '').strip() or 'она'
     if not profile_id or low <= 0:
         return 0, ''
 
@@ -636,7 +658,7 @@ async def favorite_mail_girl_wait(profile_id: int, low: int,
         logger_info(f'[dating] когда анкета #{profile_id} писала в последний раз '
                     f'— не спросилось: {e}')
 
-        return low, 'не удалось посчитать, когда она писала в последний раз'
+        return low, f'не удалось посчитать, когда {who} писала в последний раз'
 
     when = (row or {}).get('last_at')
     if when is None:
@@ -647,17 +669,18 @@ async def favorite_mail_girl_wait(profile_id: int, low: int,
     if since >= gap:
         return gap, ''
 
-    return gap, (f'она писала {_ago_word(since)}, пауза {_hours_word(gap)} — '
+    return gap, (f'{who} писала {_ago_word(since)}, пауза {_hours_word(gap)} — '
                  f'можно через {_left_word(gap - since)}')
 
 
-async def favorite_mail_girl_soon(profile_id: int, low: int, high: int) -> str:
+async def favorite_mail_girl_soon(profile_id: int, low: int, high: int,
+                                  name: str = '') -> str:
     """Рано ли **этой девушке** писать письмо. Пустая строка — можно.
 
     ⚠ Половина `favorite_mail_girl_wait` — та, что нужна набору пула: ему срок
     без помехи не говорит ничего, а причина уезжает человеку в `reasons`.
     """
-    return (await favorite_mail_girl_wait(profile_id, low, high))[1]
+    return (await favorite_mail_girl_wait(profile_id, low, high, name))[1]
 
 def favorite_mail_shift_now(shifts, minutes: int) -> bool:
     """Идёт ли сейчас смена набора. Пустые смены — «нет», а не «всегда».
@@ -733,6 +756,77 @@ async def favorite_mail_gap_range(site_id: int) -> tuple[int, int]:
     low = max(0, low)
 
     return low, max(low, high)
+
+
+async def favorite_mail_queue(site_id: int) -> dict:
+    """Очередь приставания по анкетам сайта: когда ей можно и кому она напишет.
+
+    Args:
+        site_id: сайт-закладка.
+
+    Returns:
+        dict: `{номер анкеты: {wait_sec, gap_sec, ready, next_name, next_uid}}`.
+        `wait_sec` — сколько ещё держит её пауза (ноль — писать может сейчас),
+        `gap_sec` — вся её пауза, `ready` — сколько её избранных стоят в очереди,
+        `next_*` — кто из них первый.
+
+    ## ⚠⚠ Зачем это ручкой, а не счётом на странице
+
+    Вопрос «почему эта анкета молчит» человек задаёт, глядя на список слева, и
+    ответ на него считается теми же выражениями, что решают за круг: паузой
+    (`_girls_busy`) и отбором пар (`_quiet`). Своя арифметика на странице
+    разошлась бы с кругом на первой правке — грабля, уже случавшаяся дважды, с
+    причиной пустого пула и со значком потолка.
+
+    ## ⚠ Два запроса на весь сайт, а не по запросу на пару
+
+    Пауза приезжает одним `UNION ALL` по сайту, пары — одним отбором. Спроси мы
+    дневной предел получателя (`favorite_mail_person_soon`), вышел бы запрос на
+    каждую из полутора сотен пар — и ради значка это слишком дорого.
+
+    ⚠ **Отсюда честность счёта `ready`**: это «стоят в очереди», а не
+    «гарантированно получат». Кому письмо уйдёт на самом деле, решит круг — он
+    посмотрит и дневной предел человека, и кто из них в ту минуту на сайте.
+    Подсказка на странице обязана говорить это словами.
+    """
+    site_id = int(site_id or 0)
+    if not site_id:
+        return {}
+
+    low, high = await favorite_mail_gap_range(site_id)
+    busy = await _girls_busy(site_id)
+
+    try:
+        pairs = await _quiet(site_id)
+    except Exception as e:
+        logger_info(f'[dating] очередь приставания сайта #{site_id} '
+                    f'не спросилась: {e}')
+
+        return {}
+
+    queue: dict[int, dict] = {}
+    for pair in pairs:
+        profile_id = int(pair['profile_id'])
+        one = queue.get(profile_id)
+        if one is None:
+            # ⚠ Первая пара анкеты и есть ближайшая: `_quiet` отдаёт их по
+            # давности разговора, и этот же порядок потом берёт круг.
+            #
+            # ⚠ Нет анкеты в `busy` — пауза у неё прошла (или её нет вовсе), и
+            # срок ожидания нулевой. Саму паузу тогда называем нижней границей:
+            # жребию не от чего бросаться, пока не ушло первое письмо.
+            held = busy.get(profile_id) or {}
+            one = queue[profile_id] = {
+                'wait_sec': int(held.get('left') or 0),
+                'gap_sec': int(held.get('gap') or low),
+                'ready': 0,
+                'next_name': str(pair.get('name') or ''),
+                'next_uid': str(pair.get('uid') or ''),
+            }
+
+        one['ready'] += 1
+
+    return queue
 
 
 def favorite_mail_gap_words(low: int, high: int) -> str:
@@ -820,7 +914,7 @@ async def favorite_mail_why(site_id: int, offset_hours: int = 0) -> str:
         profile_id_ = int(pair['profile_id'])
         if profile_id_ not in soon:
             soon[profile_id_] = await favorite_mail_girl_soon(
-                profile_id_, gap_low, gap_high)
+                profile_id_, gap_low, gap_high, _girl_said(pair))
 
         why = (await favorite_mail_person_soon(site_id, str(pair['uid']), per_day)
                or soon[profile_id_])
@@ -1253,8 +1347,10 @@ def _girl_sent_union(key: str) -> str:
         f"profile_id = {key} AND status = 'sent' AND sent_at IS NOT NULL")
 
 
-async def _girls_busy(site_id: int) -> dict[int, int]:
-    """Анкеты сайта, которым сейчас писать рано: номер → сколько ещё ждать, сек.
+async def _girls_busy(site_id: int) -> dict[int, dict]:
+    """Анкеты сайта, которым сейчас писать рано: номер → `{left, gap}`, секунды.
+
+    `left` — сколько ещё ждать, `gap` — вся выпавшая ей пауза.
 
     ⚠ Спрашивает **все** анкеты одним запросом: письма у них лежат в трёх пулах,
     и вопрос «когда она писала в последний раз» стоит одного `UNION ALL` на сайт
@@ -1262,6 +1358,11 @@ async def _girls_busy(site_id: int) -> dict[int, int]:
 
     ⚠ Анкеты без единого ушедшего письма в ответе нет вовсе: ей можно писать, и
     паузе не от чего отсчитываться.
+
+    ⚠⚠ **Пауза отдаётся вместе с остатком, а не считается вторым вызовом.** Оба
+    числа выпадают здесь из одного жребия; спроси их значок на странице порознь,
+    второй вопрос бросил бы жребий заново по другому письму — и человек увидел
+    бы «пауза 9 часов, ждать 10».
     """
     from src.dating.mail_send import MAIL_SEND_TABLES
 
@@ -1291,7 +1392,7 @@ async def _girls_busy(site_id: int) -> dict[int, int]:
         since = int(row.get('since') or 0)
         gap = favorite_mail_gap_of(profile_id, row.get('last_at'), low, high)
         if profile_id and since < gap:
-            busy[profile_id] = gap - since
+            busy[profile_id] = {'left': gap - since, 'gap': gap}
 
     return busy
 
@@ -1446,6 +1547,34 @@ def _addressee(pair: dict) -> str:
     name = str((pair or {}).get('name') or '').strip()
 
     return f'{name} ({uid})' if name else uid
+
+
+def _girl_said(pair: dict) -> str:
+    """Как назвать **анкету** в причине пропуска. Пусто — назвать нечем.
+
+    ## ⚠⚠ Зачем имя, если подпись и так есть
+
+    Подпись у причины — **адресат** (`_addressee`), потому что причин про него
+    большинство: не в сети, остыл ящик, исчерпан дневной предел. Но две причины
+    говорят про **отправительницу**, и в её строках выходило так:
+
+        Richie (514296): она писала 6 ч 14 мин назад, пауза 9 часов
+
+    «Она» читается как про Richie — единственное имя в строке. Спрошено
+    человеком, глядящим на экран: «кто это она?»; ответом оказалась STELA,
+    которой Richie даже не был виден. Теперь имя стоит в самой причине, и
+    подпись остаётся адресату.
+
+    ⚠ Берётся **тем же `_me_name`**, которым анкету называет чат и инициатива:
+    имя плюс её номер на сайте. Свой разбор карточки здесь был бы третьей копией
+    правила «как зовут нашу девушку», а оно уже разъезжалось.
+
+    ⚠ Карточка приезжает тем же запросом, что и пара (`_pair_row`): похода в
+    базу за именем нет.
+    """
+    from src.dating.answer import _me_name
+
+    return _me_name((pair or {}).get('profile') or {})
 
 
 def _reason(reasons: list, text: str) -> None:

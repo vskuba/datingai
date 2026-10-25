@@ -29,6 +29,7 @@ from src.dating.favorite_mail import (FAVORITE_MAIL_BATCH_DEFAULT,
                                              FAVORITE_MAIL_BATCH_MAX,
                                              favorite_mail_make,
                                              favorite_mail_pool_left,
+                                             favorite_mail_queue,
                                              favorite_mail_why)
 from src.dating.favorite_mail_round import favorite_mail_round_next
 from src.dating.json_column import json_column_load
@@ -585,6 +586,32 @@ async def favorite_mail_thread(profile_id: int, uid: str,
     """
     return {'result': await mail_reply_thread(int(profile_id), str(uid),
                                               with_favorite=True)}
+
+
+@router.get('/queue', include_in_schema=False)
+async def favorite_mail_queue_get(site_id: int = 0,
+                                  user: AuthUser = Depends(auth_required)):
+    """Очередь приставания по анкетам сайта — под значок в списке слева.
+
+    Returns:
+        dict: `{номер анкеты: {wait_sec, gap_sec, ready, next_name, next_uid}}`.
+        Анкеты, которой писать некому, в ответе нет вовсе — значка у неё тоже
+        не будет.
+
+    ⚠ **Считает домен** (`favorite_mail_queue`) теми же выражениями, что и круг:
+    паузой и отбором пар. Своя копия счёта в ручке разошлась бы с ним на первой
+    правке — та же грабля, что у `explain` строкой ниже.
+
+    ⚠ **Пул общий на сайт**, и ответ тоже: значок стоит у каждой строки списка,
+    и запрос на анкету означал бы сорок запросов на отрисовку одной страницы.
+
+    ⚠ Стоит **выше** путей с номером — тот же довод, что у `explain`.
+    """
+    if not int(site_id or 0):
+        return {'result': {}}
+
+    return {'result': {str(key): value for key, value
+                       in (await favorite_mail_queue(int(site_id))).items()}}
 
 
 @router.get('/explain', include_in_schema=False)
