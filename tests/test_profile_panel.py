@@ -27,6 +27,8 @@ pytestmark = pytest.mark.profile
 SITE = 999_783
 SAMPLE = (Path(__file__).parent / 'frames' / 'ladadate_lady_edit.html'
           ).read_text(encoding='utf-8')
+STEP2LOVE = (Path(__file__).parent / 'frames' / 'step2love_edit_user.html'
+             ).read_text(encoding='utf-8')
 PRESENCE = {'driver': 'ladadate'}
 
 
@@ -72,9 +74,13 @@ def page(monkeypatch):
         def __init__(self):
             self.html = SAMPLE
             self.paths = []
+            self.queries: list[str] = []
 
         def answer(self, request: httpx.Request) -> httpx.Response:
+            # ⚠ Запрос — путь **и** строка адреса: у Step2Love вкладки
+            # различаются только `cmd=`, путь три раза один и тот же.
             self.paths.append(request.url.path)
+            self.queries.append(request.url.query.decode())
 
             return httpx.Response(200, text=self.html)
 
@@ -220,3 +226,55 @@ class TestTheRefusals:
             await profile_panel_read(row, {'driver': 'goldenbride'})
 
         assert 'читать нечем' in str(got.value)
+
+
+class TestTheTabs:
+    """⚠ Анкета Step2Love разложена по вкладкам панели: прочитав одну страницу,
+    кнопка записала бы дату рождения и обнулила остальное — под честную отметку
+    `parameters_at`. Вкладки различает строка адреса, а не путь."""
+
+    PRESENCE = {'driver': 'step2love'}
+
+    async def test_every_tab_page_is_fetched(self, site, page, girl_make):
+        one = await girl_make(site_id=SITE)
+        row = await _profile(one, {'id': '1803186'})
+        page.html = STEP2LOVE
+
+        await profile_panel_read(row, self.PRESENCE)
+
+        assert len(page.queries) == 3, 'страница анкеты прочитана не вся'
+        assert 'cmd=3' in page.queries[1] and 'cmd=5' in page.queries[2]
+
+    async def test_card_fields_land_with_the_parameters(self, site, page,
+                                                       girl_make):
+        """Город и описание — не параметры, но едут **тем же** `UPDATE`:
+        разойтись с отметкой им нечем."""
+        one = await girl_make(site_id=SITE)
+        row = await _profile(one, {'id': '1803186', 'city': 'Полтава'})
+        page.html = STEP2LOVE
+
+        await profile_panel_read(row, self.PRESENCE)
+
+        got = await _card(one)
+
+        assert got['parameters']['height'] == '165 cm'
+        assert got['city'] == 'Kyiv'
+        assert got['about'].startswith('I am a creative')
+        assert got['age'] in (35, 36)
+
+    async def test_a_field_the_panel_leaves_blank_does_not_erase_the_card(
+            self, site, page, girl_make):
+        """⚠ Панель кое-чего не пишет вовсе — пустой строкой стирать
+        импортированное незачем: у карточки едут только непустые поля."""
+        one = await girl_make(site_id=SITE)
+        row = await _profile(one, {'id': '1803186', 'city': 'Полтава'})
+        page.html = ('<form><input type="hidden" name="b_day" value="04">'
+                     '<input type="hidden" name="b_month" value="05">'
+                     '<input type="hidden" name="b_year" value="1990"></form>')
+
+        await profile_panel_read(row, self.PRESENCE)
+
+        got = await _card(one)
+
+        assert got['city'] == 'Полтава', 'пустое поле стёрло импортированный город'
+        assert 'about' not in got or not got['about'], 'пустое описание все же легло?'

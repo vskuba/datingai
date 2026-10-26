@@ -28,6 +28,8 @@
 имён в форме нашлось, а решение «отказ» принимает `profile_panel.py`.
 """
 
+from datetime_.datetime_ import datetime_utc_now
+
 from src.dating.profile_param import profile_param_frame
 
 # Месяцы, как их пишет панель в `BirthdayMonth`. ⚠ Трёхбуквенные и по-английски —
@@ -37,6 +39,10 @@ SITE_PANEL_MONTHS = {'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
 
 # Чем панель разделяет две системы мер в росте и весе: `5'8" - 172 cm`.
 SITE_PANEL_UNIT_SPLIT = ' - '
+
+# Английский в списке языков: по-английски и по-русски. ⚠ Интерфейс панели
+# переводной, и галка может приехать любой из двух подписей.
+SITE_PANEL_ENGLISH = ('english', 'английский')
 
 # Раньше этого года рождения не бывает. ⚠ Та же граница, что у импорта анкет
 # (`IMPORT_YEAR_MIN`): мусор вроде «0» превратился бы в дату двухтысячелетней
@@ -63,6 +69,14 @@ class DatingSitePanel:
     # одной только датой рождения считалась бы незнакомой.
     SOURCES: tuple = ()
 
+    # Хвосты к пути страницы анкеты: у сайтов, разложивших анкету по вкладкам,
+    # одной страницы не хватает. Читатель берёт каждую и сливает в одну форму.
+    PAGES: tuple = ()
+
+    # Имя поля формы → ключ карточки, один к одному. Параметры живут своим
+    # каркасом, здесь — то, что лежит у карточки самой: город, описание.
+    CARD: dict = {}
+
     def __init__(self, presence: dict | None = None):
         self.presence = presence or {}
 
@@ -83,9 +97,15 @@ class DatingSitePanel:
     def known(self, form: dict) -> int:
         """Сколько наших имён нашлось в форме. Ноль — разметка сменилась."""
         got = form or {}
-        names = tuple(self.FIELDS) + tuple(self.SOURCES)
+        names = tuple(self.FIELDS) + tuple(self.SOURCES) + tuple(self.CARD)
 
         return sum(1 for name in names if name in got)
+
+    def card(self, form: dict) -> dict:
+        """Поля карточки помимо параметров: пустой набор у базовой панели."""
+
+        return {key: str((form or {}).get(field) or '').strip()
+                for field, key in self.CARD.items()}
 
 
 class DatingSitePanelLadadate(DatingSitePanel):
@@ -166,14 +186,22 @@ class DatingSitePanelLuxee(DatingSitePanel):
 
 
 class DatingSitePanelStep2Love(DatingSitePanel):
-    """Панель Step2Love: `my_profiles.php?com=edit_user&id_user={ID}`.
+    """Панель Step2Love: `my_profiles.php?com=edit_user&cmd=…&id_user={ID}`.
 
-    ⚠ **Страница анкеты здесь — форма заведения**, а не профиль параметров: имя,
-    пароль, страна и город сервисными числами, да дата рождения тремя скрытыми
-    полями. Роста, волос и увлечений панель не знает вовсе — в карточке им взяться
-    негде, и драйвер честно снимает только дату. Числа `country` и `city` не
-    разворачиваются: рядом с полем страница пишет название текстом, а `form` —
-    имена и значения, текста рядом в нём нет.
+    ⚠ **Страница анкеты здесь разложена по вкладкам**: форма заведения (cmd=1)
+    знает только имя, город, страну и дату рождения, параметры живут на вкладке
+    `cmd=3`, все тексты — на `cmd=5`. Читатель берёт три страницы и сливает в
+    одну форму (`PAGES`); по одной странице судить о сайте было бы «не знает»
+    там, где он знает всё.
+
+    ⚠ Параметры здесь — группы `radio` `info[N][]` с **числовыми** `value`:
+    текст отмеченного варианта стоит сразу за тегом, и общий разбор формы
+    (`panel_fetch.py`) берёт его значением — тем же движком, что разворачивает
+    название города после скрытого `city`. Числа `info[7]` (дети у партнёра),
+    `info[8]`–`info[10]` (доход, жильё, жизненные приоритеты) на форме есть,
+    но ключей под них в реестре нет — в карточку им не попасть.
+
+    ⚠ Религии у панели нет вовсе: ключ `religion` законно пуст.
 
     ⚠ Месяц панель пишет **цифрой** (`02`), а не `Feb`, как Ladadate; `_birthday`
     понимает обе записи с этих пор.
@@ -184,19 +212,65 @@ class DatingSitePanelStep2Love(DatingSitePanel):
     # Страница панели зовётся запросом, а не путём — черта здесь часть адреса.
     path = 'my_profiles.php?com=edit_user&id_user={uid}'
 
-    FIELDS: dict = {}
+    # Вкладка параметров и вкладка текстов. Прочие (документы, контакты,
+    # фотографии) ничего реестрового не содержат.
+    PAGES = ('&cmd=3', '&cmd=5')
 
-    BUILT = ('birthday',)
+    FIELDS = {
+        # Группы радио вкладки параметров; подписи — как на публичной анкете.
+        'info[0][]': 'body',             # Body type
+        'info[1][]': 'hair',             # Hair color
+        'info[2][]': 'hair_style',       # Hair length
+        'info[3][]': 'eyes',             # Eye color
+        'info[4][]': 'ethnicity',        # Ethnicity
+        'info[5][]': 'marital_state',    # Marital status
+        'info[6][]': 'children',         # Children
+        'info[11][]': 'smoke',           # Smoking
+        'info[12][]': 'drink',           # Drinking
+        'id_height': 'height',
+        'id_weight': 'weight',
+        'id_education_list': 'education',
+        'country': 'country',            # скрытое поле, название — текстом за тегом
+        # Вкладка «кого ищет»: окно возраста и блок «О себе» из её текстов.
+        'age_min': 'age_from',
+        'age_max': 'age_to',
+        'info[400]': 'occupation',
+        'info[192]': 'about_partner',    # LOOKING FOR
+        'info[205]': 'hobby',            # hobbies
+    }
 
-    SOURCES = ('b_day', 'b_month', 'b_year')
+    CARD = {'city': 'city', 'info[193]': 'about'}   # ABOUT ME
+
+    BUILT = ('birthday', 'english')
+
+    SOURCES = ('b_day', 'b_month', 'b_year', 'lang_sel[5]')
 
     def params(self, form: dict) -> dict:
-        """Каркас из одной даты: прочих полей реестра эта форма не знает."""
+        """То же, что у базового, плюс меры, дата и английский: мера у этого
+        сайта в метрах, дата в трёх полях, языки — галками."""
         got = form or {}
+        values = {our: got.get(theirs, '') for theirs, our in self.FIELDS.items()}
 
-        return profile_param_frame({'birthday': _birthday(got.get('b_day'),
-                                                          got.get('b_month'),
-                                                          got.get('b_year'))})
+        values['height'] = _meters_cm(got.get('id_height'))
+        values['weight'] = _kilos(got.get('id_weight'))
+        values['education'] = (values.get('education')
+                               or str(got.get('id_education_type') or '').strip())
+        values['birthday'] = _birthday(got.get('b_day'),
+                                       got.get('b_month'),
+                                       got.get('b_year'))
+        values['english'] = 'Yes' if _speaks_english(got) else ''
+
+        return profile_param_frame(values)
+
+    def card(self, form: dict) -> dict:
+        """Город и описание — плюс возраст, собранный из даты рождения."""
+        card = super().card(form)
+        born = _birthday((form or {}).get('b_day'), (form or {}).get('b_month'),
+                         (form or {}).get('b_year'))
+        if born:
+            card['age'] = _years(born)
+
+        return card
 
 
 def _bracket_metric(value) -> str:
@@ -210,6 +284,65 @@ def _bracket_metric(value) -> str:
         return said
 
     return said[said.rindex('(') + 1:-1].strip()
+
+
+def _meters_cm(value) -> str:
+    """Метры из скобок — в сантиметры: `5'5&quot; (1.65m)` → `165 cm`.
+
+    ⚠ Та же скобка, что у Luxee, но внутри метры, а не сантиметры; био и
+    агенту нужен единый `165 cm`. Метров нет — возвращаем как есть, по той же
+    причине, что у `_metric`.
+    """
+    said = _bracket_metric(value)
+    if not said.lower().endswith('m'):
+        return said
+
+    try:
+        hundred = round(float(said[:-1].strip().replace(',', '.')) * 100)
+    except ValueError:
+        return said
+
+    return f'{hundred} cm'
+
+
+def _kilos(value) -> str:
+    """Килограммы из скобок: `120 lbs. (54kg.)` → `54 kg`.
+
+    ⚠ Точка после числа — часть записи сайта (`54kg.`), к весу она отношения не
+    имеет. Килограммов нет — возвращаем как есть.
+    """
+    said = _bracket_metric(value)
+    if 'kg' not in said.lower():
+        return said
+
+    number = said.lower().partition('kg')[0].strip().replace(',', '.').rstrip('.')
+
+    return f'{number} kg' if number else said
+
+
+def _speaks_english(form: dict) -> bool:
+    """Отмечена ли галка английского в списке языков `lang_sel[NN]`."""
+
+    return any(str(value).strip().lower() in SITE_PANEL_ENGLISH
+               for key, value in (form or {}).items()
+               if str(key).startswith('lang_sel['))
+
+
+def _years(birthday: str) -> int:
+    """Полных лет от даты рождения: `1990-05-04` → `36`.
+
+    ⚠ По календарю, а не разницей суток: не наступивший день рождения в возраст
+    не входит — так же считает сайт.
+    """
+    try:
+        four, at, one = (int(part) for part in str(birthday).split('-'))
+    except ValueError:
+        return 0
+
+    today = datetime_utc_now()
+    years = today.year - four - ((today.month, today.day) < (at, one))
+
+    return years if years > 0 else 0
 
 
 def _metric(value) -> str:

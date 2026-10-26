@@ -225,6 +225,16 @@ def panel_fetch_form(html: str) -> dict:
     ничего, а текст «Ukraine» говорит. Выбранных строк может быть несколько
     (`multiple` — интересы Luxee): тогда значения сливаются через запятую.
 
+    ⚠ Отмеченный `radio`/`checkbox` и числовой `hidden` берут **текст, стоящий
+    сразу за тегом**: Step2Love пишет `value="156" checked>` и «Athletic» рядом,
+    а город — `value="10126">` и «Kyiv» рядом. Номер здесь — тот же случай, что
+    невыбранный `select`: человеку он не говорит ничего. За первым же текстом
+    номер стирается; не придёт вовсе — значение остаётся как есть.
+
+    ⚠ Немаркированный `radio` заводит имя **пустой строкой**, а не своим
+    `value`: до отмеченного дело не дойдёт, а «ключа нет» обязано отличаться
+    от «пусто»: группа в разметке есть, значение пустое.
+
     ⚠ Значения не обрезаются по краям здесь: это делает `profile_param_frame`, и
     две обрезки в двух местах разошлись бы на первой правке.
 
@@ -319,10 +329,10 @@ class _Table(HTMLParser):
 class _Form(HTMLParser):
     """Разбор формы страницы: значения `input`, `select` и `textarea`.
 
-    ⚠ Состояние — два указателя: в каком поле мы сейчас собираем текст и в каком
-    `select` находимся. Полный разбор DOM без библиотеки стоил бы вчетверо больше
-    кода ради возможностей, которых здесь не спрашивают, — то же решение, что у
-    `_Table` выше.
+    ⚠ Состояние — три указателя: в каком поле мы сейчас собираем текст, в каком
+    `select` находимся и у какого поля ждём текст сразу за тегом. Полный разбор
+    DOM без библиотеки стоил бы вчетверо больше кода ради возможностей, которых
+    здесь не спрашивают, — то же решение, что у `_Table` выше.
 
     ⚠⚠ `convert_charrefs=True` обязателен: панель пишет рост сущностями
     (`5&#39;8&quot; - 172 cm`), и без разворота значение уехало бы в био как есть.
@@ -336,14 +346,39 @@ class _Form(HTMLParser):
         self._take = False
         # Имя текущего `select`: выбранный `option` пишется под ним.
         self._select = ''
+        # Имя поля, текст которого ждём **сразу за тегом**: отмеченный
+        # `radio`/`checkbox` или числовой `hidden`. Первый же непустой текст
+        # стирает номер (`_over`); любой следующий тег закрывает сбор.
+        self._after = ''
+        self._over = False
 
     def handle_starttag(self, tag: str, attrs: list) -> None:
+        self._after = ''
         got = dict(attrs)
         name = str(got.get('name') or '').strip()
 
         if tag == 'input':
             if name:
-                self.fields[name] = str(got.get('value') or '')
+                kind = str(got.get('type') or '').lower()
+                value = str(got.get('value') or '')
+                if kind in ('radio', 'checkbox'):
+                    if 'checked' in got:
+                        # Отмеченных одной группы может быть несколько
+                        # (галки «ценности»): заводимся пустым и дописываем
+                        # через запятую — тот же узор, что у `select multiple`.
+                        # Числа стирать нечем (`_over` снят): слот уже пуст
+                        # или уже до ждущего текста кончается запятой.
+                        if self.fields.get(name):
+                            self.fields[name] += ', '
+                        else:
+                            self.fields[name] = ''
+                        self._after = name
+                    elif name not in self.fields:
+                        self.fields[name] = ''
+                else:
+                    self.fields[name] = value
+                    if kind == 'hidden' and value.isdigit():
+                        self._after, self._over = name, True
         elif tag == 'select':
             self._select = name
             if name:
@@ -365,6 +400,7 @@ class _Form(HTMLParser):
                 self.fields[name] = ''
 
     def handle_endtag(self, tag: str) -> None:
+        self._after = ''
         if tag in ('option', 'textarea'):
             self._take = False
             self._name = ''
@@ -372,6 +408,17 @@ class _Form(HTMLParser):
             self._select = ''
 
     def handle_data(self, data: str) -> None:
+        if self._after and data.strip():
+            # За первым же текстом номер стирается: «10126» → «Kyiv», а не
+            # «10126Kyiv». Пустой пробел между тегом и подписью не считается.
+            if self._over:
+                self.fields[self._after] = ''
+                self._over = False
+
+            self.fields[self._after] += data
+
+            return
+
         if not self._take or not self._name:
             return
 

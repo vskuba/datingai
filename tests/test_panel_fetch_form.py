@@ -88,3 +88,64 @@ class TestTheEdges:
     def test_empty_input_is_legal(self):
         assert panel_fetch_form('') == {}
         assert panel_fetch_form(None) == {}
+
+
+class TestTheMarkedFields:
+    """Отмеченные `radio`/`checkbox` и числовые `hidden`: Step2Love пишет в
+    `value` нумерацию сайта, а то, что человек видит на странице, стоит
+    **текстом сразу за тегом**. Тот же случай, что невыбранный `select`: номер
+    человеку не говорит ничего.
+
+    ⚠ Текста нет — значение остаётся как есть: разметка вправе нести подпись в
+    другом месте, и потерять тогда значение было бы хуже, чем взять номер.
+    """
+
+    def test_a_checked_radio_lands_as_its_label(self):
+        got = panel_fetch_form(
+            '<input type="radio" name="i[0][]" value="156"> Ordinary'
+            '<input type="radio" name="i[0][]" value="157" checked> Athletic')
+
+        assert got['i[0][]'] == ' Athletic'
+
+    def test_an_untouched_group_is_empty_not_the_first_option(self):
+        """⚠ До отмеченного дело не дошло — но имя обязано быть заведено
+        пустой строкой: «ключ есть, пусто» и «ключа нет» решают разное."""
+        got = panel_fetch_form(
+            '<input type="radio" name="i[7][]" value="201"> one'
+            '<input type="radio" name="i[7][]" value="202"> two')
+
+        assert got == {'i[7][]': ''}
+
+    def test_checked_checkboxes_land_together(self):
+        """Галки одной группы (ценности Step2Love): потерялась бы любая —
+        поле-то непустое."""
+        got = panel_fetch_form(
+            '<input type="checkbox" name="v[]" value="1" checked> Family'
+            '<input type="checkbox" name="v[]" value="2"> Money'
+            '<input type="checkbox" name="v[]" value="3" checked> Travel')
+
+        assert got['v[]'] == ' Family,  Travel'
+
+    def test_a_numeric_hidden_lands_as_the_text_beside_it(self):
+        """Скрытый `city` с номером города; рядом, в той же ячейке, — само
+        название. Без текста остался бы номер: `10126`."""
+        got = panel_fetch_form('<input type="hidden" name="city" value="10126">'
+                               '&nbsp;Kyiv\t\t    ')
+
+        assert got['city'].strip() == 'Kyiv'
+
+    def test_a_numeric_hidden_without_text_keeps_its_number(self):
+        """Между тегом и следующим тегом только пробелы — брать нечего,
+        номер остаётся: `AccountId` из образца именно таков."""
+        got = panel_fetch_form('<input type="hidden" value="100001" '
+                               'name="AccountId" />\n<tr>')
+
+        assert got['AccountId'] == '100001'
+
+    def test_a_word_hidden_is_never_replaced_by_the_text_after_it(self):
+        """Не числовой `hidden` — обычное значение: текст за тегом это вёрстка
+        таблицы, а не подпись поля."""
+        got = panel_fetch_form('<input type="hidden" name="key" value="ok">'
+                               'extra text')
+
+        assert got['key'] == 'ok'

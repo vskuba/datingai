@@ -393,6 +393,7 @@ curl -s -X POST https://goldenbride.net/goldenbride/services/login \
 | `src/dating/site/site_profile.py` | анкета и собеседницы: имена полей по настройке |
 | `src/dating/site/site_goldenbride.py` | Goldenbride: умолчания обоих разговоров и ULID |
 | `src/dating/site/site_registry.py` | выбор драйвера по `presence.driver` |
+| `src/dating/site/site_panel.py` | чтение админ-панели: карта имён формы, вкладки (`PAGES`) и нормализация меры; у Step2Love ещё и поля карточки (`card`) |
 
 **Разговоров с сайтом два, и классы под них разные.** Чат идёт кадрами по сокету и
 различается формой; анкета приходит обычным JSON и различается **именами полей**.

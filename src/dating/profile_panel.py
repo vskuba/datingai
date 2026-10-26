@@ -91,9 +91,13 @@ async def profile_panel_read(profile: dict, presence: dict) -> dict:
     if not driver.path:
         raise DatingProfilePanelError('панель этого сайта читать нечем')
 
-    html = await panel_fetch_html(int(profile['site_id']),
-                                  driver.path.format(uid=uid))
-    form = panel_fetch_form(html)
+    # Страниц анкеты может быть несколько: у Step2Love форма разложена по
+    # вкладкам и по одной странице сайт выглядел бы «ничего не знает».
+    url = driver.path.format(uid=uid)
+    form = panel_fetch_form(await panel_fetch_html(int(profile['site_id']), url))
+    for suffix in driver.PAGES:
+        form.update(panel_fetch_form(
+            await panel_fetch_html(int(profile['site_id']), url + suffix)))
 
     if not driver.known(form):
         raise DatingProfilePanelMarkupError(
@@ -101,10 +105,17 @@ async def profile_panel_read(profile: dict, presence: dict) -> dict:
             'похоже, разметка сменилась')
 
     at = datetime_utc_now().strftime(PROFILE_PANEL_AT_FORMAT)
+    # ⚠ Поля карточки едут рядом с параметрами, но **только непустые**: панель
+    # кое-чего не пишет вовсе (нет города текстом рядом с полем), а стирать
+    # импортированное пустой строкой незачем. Правленое руками не перезапишется
+    # и при непустом значении — правило `profile_card_keep` внутри
+    # `profile_card_merge`.
+    card_fields = {key: value for key, value in driver.card(form).items()
+                   if str(value or '').strip()}
     # ⚠ Отметка уезжает **тем же** `UPDATE`, что и значения: разойтись им нечем.
     stored = await profile_card_merge(
         int(profile['id']), {'parameters': driver.params(form),
-                             'parameters_at': at},
+                             'parameters_at': at, **card_fields},
         'параметры анкеты не записались')
 
     return {'parameters': stored.get('parameters') or {},
