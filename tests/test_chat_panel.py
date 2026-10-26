@@ -165,12 +165,26 @@ class TestRefuses:
 class TestHandler:
     """Ручка импорта: что она делает до прогона и как отказывает."""
 
-    async def test_ready_says_no_without_a_scenario(self, rhapsody):
+    async def test_ready_says_no_without_a_scenario(self, rhapsody, monkeypatch):
+        """Сценарный путь: без сценария — не готов. Панель заглушена, иначе
+        сайт уедет панельной дорогой, где сценарий не спрашивается вовсе.
+        """
+        _by_scenario(monkeypatch)
         rhapsody.forget_scenarios()
 
         result = (await chat_ready(343, user=None))['result']
 
         assert result['ready'] is False and 'сценар' in result['why'].lower()
+
+    async def test_panel_site_is_ready_without_a_scenario(self, rhapsody):
+        """⚠ Панельная дорога сценария не требует: на сайте с рабочей панелью
+        кнопка гасла по сценарию, хотя импорт ручкой ходил исправно.
+        """
+        rhapsody.forget_scenarios()
+
+        result = (await chat_ready(343, user=None))['result']
+
+        assert result['ready'] is True and not rhapsody.calls
 
     async def test_ready_says_no_without_a_site(self, rhapsody):
         result = (await chat_ready(user=None))['result']
@@ -178,8 +192,13 @@ class TestHandler:
         assert result['ready'] is False
         assert not rhapsody.calls, 'к соседу пошли, не зная сайта'
 
-    async def test_busy_neighbour_is_not_ready_either(self, rhapsody):
-        """Отказ соседа гасит кнопку, но подсказка другая: чинить человеку разное."""
+    async def test_busy_neighbour_is_not_ready_either(self, rhapsody, monkeypatch):
+        """Отказ соседа гасит кнопку, но подсказка другая: чинить человеку разное.
+
+        Проверяется на **сценарном** пути: у панельного сайта сосед не спрашивается,
+        и гасить кнопку по его отказу значило бы врать про импорт, который идёт.
+        """
+        _by_scenario(monkeypatch)
         rhapsody.refuse(409, 'предел сессий исчерпан: 25')
 
         result = (await chat_ready(343, user=None))['result']

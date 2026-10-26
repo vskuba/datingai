@@ -1,8 +1,12 @@
 """Сообщения чата из панели агентства: журнал сайта в нашу базу.
 
-У панели есть страница `userchatmessages` — список сообщений анкет за диапазон
-дат: номер, время (UTC), кто, кому, текст. Сценарий у соседа (`чат: сообщения из
-панели`) заходит туда и снимает таблицу; здесь — разбор и запись.
+Где у конкретного сайта лежит журнал и каким форматом дат он говорит — **вопрос
+драйвера сайта** (`site/site_import.py`, пятая грань): у панелей сети Goldenbride
+это страница `userchatmessages` — список сообщений за диапазон: номер, время,
+кто, кому, текст; у Step2Love такой страницы нет вовсе, и журнал разложен
+ссылками на странице задач. Здесь — выбор драйвера, разбор приведённых строк и
+запись. Сценарий у соседа (`чат: сообщения из панели` — имя тоже у драйвера)
+остался дорогой для сайтов без заведённой панели.
 
 ## Зачем это, если сообщения ловит сокет
 
@@ -53,14 +57,13 @@ from src.dating.scenario_field import scenario_field
 from src.dating.message_twin import message_twin_absent
 from src.dating.json_column import json_column_load
 from src.dating.scenario import scenario_run
+from src.dating.site_presence import site_presence
+from src.dating.site.site_registry import site_registry_import
 from src.dating.site_setting import site_setting
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_find
 
-# Имя сценария у соседа. По имени, а не по номеру: номера у разных установок свои,
-# а имя — то же правило, что у прочих сценариев (`people.py`).
-CHAT_PANEL_SCENARIO = 'чат: сообщения из панели'
-
-# Имя шага, под которым сценарий отдаёт строки таблицы.
+# Имя шага, под которым сценарий отдаёт строки таблицы. Имя сценария у соседа —
+# теперь у драйвера сайта (`site_import.py`): у разных сайтов сценарии разные.
 CHAT_PANEL_FIELD = 'messages'
 
 # Приставка к номеру сообщения. ⚠ Не украшение: `message_uid` общий с сокетом, и
@@ -70,10 +73,6 @@ CHAT_PANEL_PREFIX = 'panel:'
 # Сколько дней забираем по умолчанию. Неделя: панель отдаёт диапазон целиком, и
 # запрашивать месяц ради вчерашних сообщений незачем — прогон стоит браузера.
 CHAT_PANEL_DAYS = 7
-
-# Формат даты в форме панели — `дд.мм.гггг`. Проверено на живой странице: этот же
-# формат она принимает строкой запроса и им же заполняет поля.
-CHAT_PANEL_DATE_FMT = '%d.%m.%Y'
 
 # Предел диапазона в днях. Шире незачем: панель отдаёт таблицу целиком, и месяц
 # переписки — это минуты прогона и десятки тысяч строк разбора.
@@ -92,15 +91,6 @@ CHAT_PANEL_ROUND_DAYS = 1
 CHAT_PANEL_UID_MAX = 32
 CHAT_PANEL_NAME_MAX = 190
 CHAT_PANEL_MSG_UID_MAX = 64
-
-# Страница панели с журналом чата и её поля. ⚠ Путь тот же, на который ходил
-# сценарий: разметка читается ручкой, а не браузером (`panel_fetch.py`).
-CHAT_PANEL_PATH = 'userchatmessages'
-
-# Ячейки таблицы по порядку. Панель отдаёт пять столбцов: ID, дата UTC, от, кому,
-# текст. ⚠ Имена те же, что у сценария, — разбор строк (`chat_panel_rows`)
-# общий на оба пути, и расходиться им нельзя.
-CHAT_PANEL_CELLS = ('number', 'when', 'from', 'to', 'text')
 
 # Какое сообщение считаем свежим. Час: круг ходит от пяти минут, и привезённое за
 # последний час — это то, что человек и правда мог пропустить, пока не смотрел.
@@ -227,29 +217,44 @@ async def chat_panel_import(site_id: int, days: int) -> dict:
         return {**empty,
                 'error': 'у сайта нет анкет с номером на сайте — сперва импортируйте анкеты'}
 
-    today = datetime_utc_now()
-    date_from = (today - timedelta(days=days)).strftime(CHAT_PANEL_DATE_FMT)
-    date_to = today.strftime(CHAT_PANEL_DATE_FMT)
+    # Драйвер сайта отвечает и за формат дат (панели понимают свои: Goldenbride —
+    # `дд.мм.гггг`, Step2Love — `гггг-мм-дд`; на чужой формат панель молча
+    # подставляет свой срок), и за то, где у неё журнал, и за имя сценария.
+    driver = site_registry_import(await site_presence(site_id))
 
-    # ⚠ **Панель настроена — читаем ручкой, а не сценарием.** Разница замерена:
-    # 0,3 секунды против сорока, и главное — без вкладки Chromium у соседа. Круг
-    # ходит от пяти минут, и сорок секунд браузера на заход означали бы, что пул
-    # вкладок занят нами почти всё время (`panel_fetch.py`).
+    today = datetime_utc_now()
+    date_from = (today - timedelta(days=days)).strftime(driver.date_fmt())
+    date_to = today.strftime(driver.date_fmt())
+
+    # ⚠ **Панель настроена, и драйвер знает, где в ней журнал — читаем ручкой, а
+    # не сценарием.** Разница замерена: 0,3 секунды против сорока, и главное — без
+    # вкладки Chromium у соседа. Круг ходит от пяти минут, и сорок секунд браузера
+    # на заход означали бы, что пул вкладок занят нами почти всё время
+    # (`panel_fetch.py`).
     #
     # ⚠ Это **не запасной путь, а выбор по настройке**. Сайт без `admin_url`
     # (панель не заведена) идёт сценарием, как и раньше, — и молчаливого перехода
     # с одного на другой нет: иначе сломанная сессия выглядела бы медленной
     # работой, а не поломкой.
-    if await _panel_ready(site_id):
-        return await _import_by_panel(site_id, profiles, date_from, date_to, empty)
+    #
+    # ⚠ **`has_journal()` — вторая половина условия, и она родилась из 404.**
+    # Панель Step2Love была заведена и жива, а страницы журнала у неё нет вовсе:
+    # прежнее условие ходило за ней каждые пять минут и получало 404 там, где
+    # панель была права. Панель без понятной драйверу страницы — теперь сценарий,
+    # а не выдуманный путь.
+    if await chat_panel_journal_ready(site_id, driver):
+        return await _import_by_driver(driver, site_id, profiles,
+                                       date_from, date_to, empty)
+
+    scenario_name = driver.scenario_name()
 
     try:
-        scenario = await rhapsody_api_scenario_find(site_id, CHAT_PANEL_SCENARIO)
+        scenario = await rhapsody_api_scenario_find(site_id, scenario_name)
     except RhapsodyError as e:
         return {**empty, 'error': str(e)}
 
     if not scenario:
-        return {**empty, 'error': f'у сайта нет сценария «{CHAT_PANEL_SCENARIO}»'}
+        return {**empty, 'error': f'у сайта нет сценария «{scenario_name}»'}
 
     # Общей дверью (`scenario_run`): она пишет прогон в журнал прогонов.
     # Анкеты у импорта нет — он идёт по сайту целиком, и приписывать прогон одной
@@ -278,6 +283,22 @@ async def chat_panel_import(site_id: int, days: int) -> dict:
             'total': len(scenario_field(extract, CHAT_PANEL_FIELD) or []),
             'ours': len(rows),
             'from': date_from, 'to': date_to, 'error': '', **saved}
+
+
+async def chat_panel_journal_ready(site_id: int, driver=None) -> bool:
+    """Идёт ли сайт панельной дорогой: драйвер знает её журнал, панель заведена.
+
+    ⚠ **Одна читалка на импорт и на ручку `chat/ready`**: кнопка и дело должны
+    решать одинаково, и вторая копия условия разъехалась бы с первой в тот день,
+    когда у сайта поменяется `admin_url`.
+
+    ⚠ `has_journal()` — не вежливость: панель может быть заведена и жива, а
+    журнал в ней — тот, что драйвер не умеет читать (базовый), и без этой
+    половины кнопка зажигалась бы над дорогой, по которой импорт идёт в отказ.
+    """
+    driver = driver or site_registry_import(await site_presence(site_id))
+
+    return driver.has_journal() and await _panel_ready(site_id)
 
 
 async def chat_panel_profiles(site_id: int) -> dict:
@@ -594,71 +615,28 @@ def _when(value) -> str:
     return ''
 
 
-async def _import_by_panel(site_id: int, profiles: dict, date_from: str, date_to: str,
-                           empty: dict) -> dict:
-    """Забор журнала чата ручкой панели: один GET и разбор таблицы.
+async def _import_by_driver(driver, site_id: int, profiles: dict, date_from: str,
+                            date_to: str, empty: dict) -> dict:
+    """Забор журнала панельной дорогой: страницу читает драйвер, пишем мы.
 
-    ⚠ **Своего входа не делает.** Сессию держит круг панели
+    ⚠ **Своего входа не делает и драйвер тоже.** Сессию держит круг панели
     (`panel_round.py`), и вход отсюда означал бы два входа наперегонки,
     когда за таблицами придут двое. Протухшая сессия — отказ с причиной: круг
     поднимет её в свой срок, а мы скажем правду вместо тихой пустоты.
-    """
-    from src.dating.panel_fetch import (DatingPanelFetchError,
-                                               panel_fetch_html,
-                                               panel_fetch_table)
 
-    # `AccountId=0` — «все анкеты»: панель так и подписывает первый пункт селекта.
-    # Спрашивать по одной значило бы тринадцать запросов вместо одного.
-    params = {'AccountId': '0',
-              'DateFrom.DateValue': date_from,
-              'DateTo.DateValue': date_to}
+    Где страница, какие у неё параметры и как зовутся столбцы — у драйвера сайта
+    (`site/site_import.py`): здесь только привод строк к записи `message`.
+    """
+    from src.dating.panel_fetch import DatingPanelFetchError
 
     try:
-        html = await panel_fetch_html(site_id, CHAT_PANEL_PATH, params)
+        total, cells = await driver.journal_rows(site_id, profiles,
+                                                 date_from, date_to)
     except DatingPanelFetchError as e:
         return {**empty, 'from': date_from, 'to': date_to, 'error': str(e)}
 
-    table = panel_fetch_table(html)
-    rows = chat_panel_rows({CHAT_PANEL_FIELD: _cells(table)}, profiles)
+    rows = chat_panel_rows({CHAT_PANEL_FIELD: cells}, profiles)
     saved = await chat_panel_save(rows)
 
-    return {'status': 'ok', 'total': len(table), 'ours': len(rows),
+    return {'status': 'ok', 'total': total, 'ours': len(rows),
             'from': date_from, 'to': date_to, 'error': '', **saved}
-
-
-def _cells(table: list) -> list[dict]:
-    """Ячейки таблицы — в записи того же вида, что отдаёт сценарий.
-
-    ⚠ Вид общий намеренно: разбор строк (`chat_panel_rows`) один на оба
-    пути, и вторая его копия под ручку разошлась бы с первой на первой же правке.
-
-    Номера сторон берём из **ссылки** ячейки: панель пишет туда «181685 Semen
-    Gorbunkov», где номер — ссылка на карточку, а имя стоит рядом. Текст
-    сообщения — из подсказки `title`, потому что в самой ячейке он обрезан
-    шириной колонки.
-
-    ## ⚠ Имена полей те же, что у сценария — и теперь оба набора латиницей
-
-    Запись собирается под теми же именами, которыми зовёт свои шаги сценарий
-    (`CHAT_PANEL_CELLS`), потому что разбор строк общий на оба пути. Прежде эти
-    имена были русскими, и здесь проходила граница двух алфавитов; сейчас
-    переименованы и шаги сценария, и ячейки разбора, так что переводить нечего.
-
-    ⚠ Чтение при этом всё равно идёт через `scenario_field`: ответ **живого**
-    сценария до его выкладки приходит со старыми именами, и `chat_panel_rows`
-    обязан понимать оба. Здесь же имена кладутся новые — эта запись наша.
-    """
-    out = []
-    for row in table:
-        one = {}
-        for at, name in enumerate(CHAT_PANEL_CELLS):
-            cell = row[at] if at < len(row) else {}
-            one[name] = cell.get('text', '')
-            if name in ('from', 'to'):
-                one[f'{name}_uid'] = cell.get('link', '')
-            if name == 'text':
-                one['text_title'] = cell.get('title', '')
-
-        out.append(one)
-
-    return out

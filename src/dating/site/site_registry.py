@@ -15,6 +15,9 @@ from src.dating.site.site_about import (DatingSiteAbout,
 from src.dating.site.site_base import DatingSiteChat
 from src.dating.site.site_goldenbride import (DatingSiteChatGoldenbride,
                                               DatingSiteProfileGoldenbride)
+from src.dating.site.site_import import DatingSiteImport
+from src.dating.site.site_import_goldenbride import DatingSiteImportGoldenbride
+from src.dating.site.site_import_step2love import DatingSiteImportStep2Love
 from src.dating.site.site_panel import (DatingSitePanel,
                                         DatingSitePanelLadadate,
                                         DatingSitePanelLuxee,
@@ -57,6 +60,20 @@ DATING_SITE_PANEL_DRIVERS = {
     DatingSitePanelLuxee.name: DatingSitePanelLuxee,
     DatingSitePanelStep2Love.name: DatingSitePanelStep2Love,
     DatingSitePanel.name: DatingSitePanel,
+}
+
+# Драйверы забора переписки — по тем же именам, пятая таблица.
+#
+# ⚠ **Своя таблица, а не поле в прежних.** Забор отвечает на пятый вопрос: где у
+# этого сайта лежит журнал переписки и каким форматом дат он говорит. У панелей
+# сети Goldenbride это одна страница `userchatmessages`; у Step2Love такой страницы
+# нет вовсе (запрос к ней отвечает `404` живой панели), и журнал разложен
+# ссылками на странице задач. Прежнее зашитое чтение одной страницы и породило
+# сотню 404 за день на пустом месте.
+DATING_SITE_IMPORT_DRIVERS = {
+    DatingSiteImportGoldenbride.name: DatingSiteImportGoldenbride,
+    DatingSiteImportStep2Love.name: DatingSiteImportStep2Love,
+    DatingSiteImport.name: DatingSiteImport,
 }
 
 # Чем разговаривать, когда сайт не назвал драйвер.
@@ -133,6 +150,21 @@ def site_registry_panel(presence: dict | None = None) -> DatingSitePanel:
     name = str(presence.get('driver') or '').strip()
 
     return DATING_SITE_PANEL_DRIVERS.get(name, DatingSitePanel)(presence)
+
+
+def site_registry_import(presence: dict | None = None) -> DatingSiteImport:
+    """Чем забирать переписку у этого сайта: страница журнала, формат дат, сценарий.
+
+    Пятая половина драйвера: панель анкеты знает имена её **формы**, эта знает, где
+    в той же панели лежат **строки переписки**. Разведены потому, что у Step2Love
+    панель анкеты читается отлично (четвёртая таблица его знает), а журнала чата в
+    панельном смысле нет — ходили бы за ним той же картой, ходили бы в 404.
+
+    ⚠ **Умолчание то же переходное, что у чата** (`_driver_of`): сайт без ключа
+    `driver` читает goldenbride-образную страницу, как читал всегда. Сайту с
+    другой раскладкой нужен ключ — как остальным граням.
+    """
+    return _driver_of(DATING_SITE_IMPORT_DRIVERS, presence)
 
 
 def _driver_of(drivers: dict, presence: dict | None):

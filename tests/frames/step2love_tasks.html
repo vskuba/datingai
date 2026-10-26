@@ -1,0 +1,308 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <title>Affiliate Program. Online dating.</title>
+    <meta http-equiv="Content-Language" content="en-us" />
+    <meta name="Description" content="Get own dating site. International dating affiliate program offer free hosting,  tools for job and widely customizable tools for each dating site. We offer convenient way to monetize international entertainment traffic for webmasters and make all to take off language barrier between members of our dating network."/>
+    <meta name="Keywords" content="affiliate program, dating affiliate, dating affiliate program, get dating site, dating earnings, dating profit, dating partnership, dating webmaster"/>
+    <meta name="robots" content="INDEX,FOLLOW" />
+    <meta http-equiv="content-type" content="TEXT/HTML; CHARSET=utf-8" />
+    <script language="JavaScript" type="text/javascript" src="https://agency.step2love.com/templates/partnertheme/js/jquery-1.8.3.min.js?version=4.00.183"></script>
+    <script language="JavaScript" type="text/javascript" src="https://agency.step2love.com/templates/defaults/plugins/jquery-ui/jquery-ui-1.9.2.custom.min@25dbdac30d059f262c343c1daaac6173.js"></script>
+    <script language="JavaScript" type="text/javascript" src="https://agency.step2love.com/templates/partnertheme/js/jquery.json-2.3.min.js?version=4.00.183"></script>
+    <script type="text/javascript" src="https://agency.step2love.com/templates/defaults/js/helpers@354a9b0cfec07988af9d7088cffb1e1e.js"></script>
+    <script language="JavaScript" type="text/javascript" src="https://agency.step2love.com/templates/partnertheme/js/help.js?version=4.00.183"></script>
+    <script language="JavaScript" type="text/javascript" src="https://agency.step2love.com/templates/partnertheme/js/globals.js?version=4.00.183"></script>
+    <script language="JavaScript" type="text/javascript" src="https://agency.step2love.com/templates/partnertheme/js/jquery.colorbox.js?version=4.00.183"></script>
+    <script language="JavaScript" type="text/javascript" src="https://agency.step2love.com/templates/defaults/js/globals@27ba9428ea74caf31d7231dba38e1cf4.js"></script>
+            <script language="JavaScript" type="text/javascript" src="https://agency.step2love.com/templates/defaults/plugins/sweetalert/sweetalert2@0ae3459f8bede8166c91143b8ca2a338.js"></script>
+        <link rel="Stylesheet" type="text/css" href="https://agency.step2love.com/templates/defaults/plugins/sweetalert/sweetalert2.min@bfc461e60e5fe63718c231344e26a1bf.css" />
+    <link rel="Stylesheet" type="text/css" href="https://agency.step2love.com/templates/defaults/plugins/datetimepicker/datetimepicker@ae9ee8d42033cd3aca3410a476eb2d2d.css" />
+          
+      <script type="text/javascript" src="https://agency.step2love.com/templates/defaults/js/helpers.min@fe5f34c82868c44c49938876e754c747.js"></script>
+      <script type="text/javascript" src="https://agency.step2love.com/templates/defaults/js/helpers.min@fe5f34c82868c44c49938876e754c747.js" data-cookieconsent="preferences" data-cookieyes="preferences"></script>
+<script type="text/javascript" src="https://agency.step2love.com/templates/defaults/js/onlineSDK.min@e7b02f792c1ad37b9d0302350b210c22.js" data-cookieconsent="preferences" data-cookieyes="preferences"></script>
+<script type="text/javascript" src="https://agency.step2love.com/templates/defaults/js/streamSDK.min@0431c7dd9e18749fa42e13a57d53e3a2.js" defer data-cookieconsent="preferences" data-cookieyes="preferences"></script>
+
+<script type="text/javascript" data-cookieconsent="preferences" data-cookieyes="preferences">
+        var setting = new Object();
+    setting['userID'] = 1762610;
+    setting['sessionID'] = "a4u9tfhfk7ttduo63uneq2qc20";
+    setting['socketServer'] = "wss://chat.step2love.com";
+    setting['streamServer'] = "wss://chat.step2love.com/stream";
+    
+    try{
+        window.$online$ = new onlineObject(setting);
+        window.$online$.getMasterUserObjectReady().then(function (userObject) {
+
+            userObject.on('transport|editDom', function(params) {
+                if(!$helpers$.isFunction($) || !$helpers$.isString(params['selector']) || !$helpers$.isArray(params['actions'])) return;
+                var selectorEl = $(params['selector']);
+                if(!selectorEl.length) return;
+                var actions = params['actions'];
+                for(var i in actions){
+                    if($helpers$.isObject(actions[i]) && $helpers$.isString(actions[i]['method']) && $helpers$.isString(actions[i]['key']) && $helpers$.isString(actions[i]['value'])){
+                        switch (actions[i]['method']) {
+                            case 'append':
+                                selectorEl.append($(actions[i]['value']));
+                                break;
+                            case 'html':
+                                selectorEl.html(actions[i]['value']);
+                                break;
+                            case 'text':
+                                selectorEl.text(actions[i]['value']);
+                                break;
+                            case 'appendText':
+                                selectorEl.text(selectorEl.text() + actions[i]['value']);
+                                break;
+                            case 'attr':
+                                selectorEl.attr(String(actions[i]['key'] || ''), actions[i]['value']);
+                                break;
+                            case 'addClass':
+                                selectorEl.addClass(String(actions[i]['value']));
+                                break;
+                            case 'removeClass':
+                                selectorEl.removeClass(String(actions[i]['value']));
+                                break;
+                            case 'remove':
+                                selectorEl.remove();
+                                break;
+                        }
+                    }
+                }
+            });
+            userObject.on('userOnline|update', function (userOnlineObject) {
+                if(!$helpers$.isFunction($)) return;
+                var userEl = $('[data-dynamic="user"][data-id="'+userOnlineObject.getID()+'"]');
+                if(!userEl.length) return;
+                userEl.attr('data-statusid', userOnlineObject.getOnlineID());
+                userEl.attr('data-favorite', userObject.isFavorite(userOnlineObject.getID()));
+                userEl.attr('data-stream', userOnlineObject.getStreamID() === 0 ? 0 : 1);
+                userEl.find('[data-dynamic-field="name"]').html(userOnlineObject.getName());
+                userEl.find('[data-dynamic-field="age"]').html(userOnlineObject.getAge());
+                userEl.find('[data-dynamic-field="city"]').html(userOnlineObject.getCityName());
+                userEl.find('[data-dynamic-field="country"]').html(userOnlineObject.getCountryName());
+            });
+            userObject.on('favorite', function (id) {
+                if(!$helpers$.isFunction($)) return;
+                var userEl = $('[data-dynamic="user"][data-id="'+id+'"]');
+                if(!userEl.length) return;
+                userEl.attr('data-favorite', userObject.isFavorite(id));
+            });
+            userObject.on('privateData|promoChat', function (ID) {
+                if (!$helpers$.isFunction($)) return;
+                var userEl = $('[data-dynamic="user"][data-id="'+ID+'"]');
+                if(!userEl.length) return;
+                if(userObject.getCountPromoChat(ID)){
+                    userEl.attr('data-promo-chat', 'true');
+                }else{
+                    userEl.removeAttr('data-promo-chat');
+                }
+            });
+        })['catch'](function () {});
+    }catch (e) {
+        console.error('Online Error:', e);
+    }
+    
+</script>
+      <script language="JavaScript" type="text/javascript" src="https://agency.step2love.com/templates/partnertheme/js/autologinsettoken.js?version=4.00.183"></script>
+              <script language="JavaScript" type="text/javascript" src="https://agency.step2love.com/templates/partnertheme/js/location.js?version=4.00.183"></script>
+        <link href="https://agency.step2love.com/templates/partnertheme/css/jquery-ui-1.10.2.custom.css?version=4.01.185" rel="stylesheet" type="text/css" />
+    <link href="https://agency.step2love.com/templates/partnertheme/css/screen.css?version=4.01.185" rel="stylesheet" type="text/css" />
+    <link href="https://agency.step2love.com/templates/partnertheme/css/gallery.css?version=4.01.185" rel="stylesheet" type="text/css" />
+    <link href="https://agency.step2love.com/templates/defaults/plugins/jquery-ui/jquery-ui-1.9.2.custom.min@803b87e8715530bed4e15370f4c240b2.css" rel="stylesheet" type="text/css" />
+    <link href="https://agency.step2love.com/templates/defaults/loading@da75d2103ef9b37ccbc657922f510a56.css" rel="stylesheet" type="text/css" />
+    <link rel="shortcut icon" type="image/ico" href="https://agency.step2love.com/templates/partnertheme/images/favicon.ico" />
+    
+    <style>
+      .streamBox:after,
+      .streamPlayer:after,
+      .streamPlayer *:after{
+        display: none!important;
+      }
+      .streamPlayer .streamPlayer_video *{
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%!important;
+        height: 100%!important;
+      }
+    </style>
+    
+    
+    </head>
+
+    <body>
+    <div id="technicalWorkNotification" style="display: none; position:fixed; bottom:0; width: 100%; background-color: #1d4e6d; padding: 10px; text-align: center; z-index: 1000;">
+  <div>
+    <span style="vertical-align: middle; color: #FFFFFF;">Dear members, on February 8 from 1 pm to 1:30 pm Ukrainian time (11:00 - 11:30 UTC), technical work will be carried out on the site.<br>
+      The site will function in standard mode, the only thing that may be difficult is using video streaming.</span>
+    <button id="notify_close_button" onclick="closeNotification(); return false;" style="vertical-align: middle; display: inline;">Close</button>
+  </div>
+</div>
+
+<script>
+  
+    $(function () {
+      var dateTimeStart = new Date(Date.UTC(2024, 1, 7, 0, 0, 0, 0)).getTime();
+      var dateTimeEnd =   new Date(Date.UTC(2024, 1, 8, 11, 30, 0, 0)).getTime();
+      var dateTimeNow = new Date().getTime();
+      /*console.log(dateTimeNow > dateTimeEnd);*/
+      if(dateTimeNow > dateTimeEnd || dateTimeNow < dateTimeStart) {
+        return false;
+      }
+      if(!getCookie("hide_technical_work_notice2024_02")) {
+        $("#technicalWorkNotification").show();
+      }
+    });
+
+    function closeNotification() {
+      setCookie("hide_technical_work_notice2024_02", '1', {'expires' : 1209600});
+      $("#technicalWorkNotification").hide();
+    }
+  
+</script>
+      <div id="wrap">
+        
+        <div id="header">
+                      <div class="android_app">
+              <a style="display: block; text-align: center" href="/uploades/apps/app-step2loveWomen-release.apk" target="_blank">
+                <img src="https://agency.step2love.com/templates/partnertheme/images/icon-android-32x32.png" alt="Android app" />
+                <span style="display: block;">Android App</span>
+              </a>
+            </div>     
+                                  <div style="position:absolute;top:80px;right:30px;z-index:1;">
+                <span><a title="Exit" href="/index.php?com=logout" style="font-weight:bold;">Exit</a></span>
+                <br><br>
+                    <a href="https://agency.step2love.com/support.php" style="font-weight: bold; color:#FFFFFF; font-size: 14px;">Письма от администрации (2)                      <br /><br /><a href="https://agency.step2love.com/user_agreement.php"><b>Соглашение</b></a>              </div>
+                            <a href="index.php" style="border:0px;"><h1>Агентства<span>Affiliate Program for Agency</span></h1></a>
+
+                  <div id="loginform">
+                                          <div style="padding:5px;">
+                      Welcome, <b>Star Agency</b>                      <br /><br />
+                                           <div style="font-size:80%;">
+                        <table border="0" width="260"><tr><td align="right">Your ID-number:</td><td> <b>A-4913343</b></td></tr>
+
+                                                      <tr><td align="right">
+                                                                                          </td></tr>
+                          <tr>
+                            <td align="center" colspan="2">
+                              <a href="https://agency.step2love.com/homepage.php">Личная информация</a>
+                            </td>
+                          </tr>
+                        </table>
+                      </div>
+                                        </div>
+                                  </div>
+
+                <div id="couple"></div>
+
+                                  <div><a class="icon_notify" href="/notify.php">&nbsp;</a><a class="icon_preferents" title="Операторы агенства" href="/operator.php">&nbsp;</a></div>
+                  <ul id="menu" style="left:10px; top:4px;">
+                    <li><a href="https://agency.step2love.com/tasks.php">Задачи</a></li>
+                    <li><a href="https://agency.step2love.com/my_profiles.php">Анкеты</a></li>
+                    <li><a href="https://agency.step2love.com/billing.php?filter[summ]=1">Статистика</a>
+                      <ul>
+                        <li><a href="https://agency.step2love.com/billing.php">Бонусы (по девушкам)</a></li>
+                        <li><a href="https://agency.step2love.com/billing.php?com=balance">Баланс (по сервисам)</a></li>
+                        <li><a href="https://agency.step2love.com/billing.php?com=payments">Начисления и выплаты</a></li>
+                        <li><a href="https://agency.step2love.com/timecounter.php">Статистика онлайна</a></li>
+                                                <li><a href="https://agency.step2love.com/timecountervideo_v4.php">Статистика видео-онлайна</a></li>
+                                                                            <li><a href="https://agency.step2love.com/intro_statistics.php">Статистика интро</a></li>
+                                                                        <li><a href="https://agency.step2love.com/hello_static.php">Статистика Hello видео</a></li>
+                        <li><a href="https://agency.step2love.com/request_stat.php">Статистика приглашений в чат</a></li>
+                      </ul>
+                    </li>
+                    <li><a href="https://agency.step2love.com/mailbox.php">Переписка</a>
+                      <ul>
+                        <li><a href="https://agency.step2love.com/mailbox.php">Переписка</a></li>
+                        <li><a href="https://agency.step2love.com/mailer.php">Рассылка</a></li>
+                        <li><a href="https://agency.step2love.com/chat/">История чата</a></li>
+                                                </ul>
+                    </li>
+                    <li><a href='https://agency.step2love.com/dateme.php'>Встречи </a></li>
+                    <li><a href="https://agency.step2love.com/gifts.php?com=sent_present">Подарки</a>
+                      <ul>
+                        <li><a href="https://agency.step2love.com/gifts.php?com=gifts_list">Список подарков</a></li>
+                        <li><a href="https://agency.step2love.com/gifts.php?com=add">Добавить подарок</a></li>
+                        <li><a href="/virtual_gifts.php">Виртуальные подарки</a></li>
+                      </ul>
+                    </li>
+                              <li><a href="https://agency.step2love.com/calls.php">Звонки</a>
+                      <ul>
+                        <li><a href="https://agency.step2love.com/calls.php?com=close">Закрытые</a></li>
+                      </ul>
+                   </li>
+                                        <li><a href="https://agency.step2love.com/terms.php">Правила</a></li>
+                                          <li><a class="blink" href="https://agency.step2love.com/online_v4.php" target="setonline" style="margin-top: -1px;border: 1px #fff solid; padding: 2px 2px 0px 2px;border-radius: 5px;" ><span class="blink"  style="color: #F89; font-weight: bold;">Вывод онлайн!</span></a></li>
+                                          <li><a href="https://agency.step2love.com/request.php">Запрос контактов </a></li>
+                    <li><a href="#" onClick="return false;">Рефералы</a>
+                      <ul>
+                        <li><a href="https://agency.step2love.com/referal.php">Приглашения</a></li>
+                        <li><a href="https://agency.step2love.com/referal.php?com=stats">Статистика</a></li>
+                                                </ul>
+                    </li>
+
+                    <li><a href="https://agency.step2love.com/contest/">Конкурсы</a></li>
+
+                  </ul>
+                    <div><a></a></div>
+                
+                                </div>
+                <div style="clear: both;"></div>
+                <div style="position: absolute; z-index: 2; top: 44px;left: 0px;font-size: 11px;"><span style="color: #F00">Время на данной странице указано в часовом поясе <b>UTC</b> (текущее время: <b>20:31:51</b>)</span></div>
+                <div style="clear: both;"></div>
+                                <div id="topcontent">
+                </div>
+<div id="content">
+  <h2>Задачи</h2>
+  <div id="wide2" style="text-align:justify;">
+
+    <div style="text-align:left; margin-top:20px;">
+                  <div style="margin-bottom:10px;">
+                              <a href="/mailbox.php?date_from=2026-09-27&filter=9" target="unreadMessages">Непрочитанные сообщения (0)</a>
+                        </div>
+                  <div style="margin-bottom:10px;">
+                              <a href="/mailbox.php?date_from=2026-09-27&filter=2" target="unansweredMessages">Неотвеченные сообщения (0)</a>
+                        </div>
+                  <div style="margin-bottom:10px;">
+                              <a href="/chat/?from_date=2026-09-27&chatfilter=3&com=detailed" target="unansweredRequest">Пропущенные запросы чата (0)</a>
+                        </div>
+                  <div style="margin-bottom:10px;">
+                              <a href="/virtual_gifts.php" target="unansweredVP">Непросмотренные виртуальные подарки (0)</a>
+                        </div>
+            </div>
+
+  </div>
+
+  <div id="bot_content">
+  </div>
+
+<div id="footer">
+
+</div>
+		</div>
+	</div>
+
+
+
+
+
+<script type="text/javascript" src="https://agency.step2love.com/templates/defaults/plugins/datetimepicker/datetimepicker@057506bd0e89c6266192a355ba005678.js"></script>
+  
+<script type="text/javascript">
+        $('.date_mask_js').focus(function(){
+        $(this).datetimepicker({
+	mask:'99.99.9999 99:99',
+	format:'d.m.Y H:i',
+         minDate:'+1970/01/03',
+         maxDate:'+1970/01/17',
+    });});
+</script>
+ 
+</body>
+
+</html>
+
+
+mailbox9 200 35724

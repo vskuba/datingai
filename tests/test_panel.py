@@ -333,9 +333,10 @@ class TestTable:
         ⚠ Потому эти имена и остались русскими, когда ключи ячеек стали
         латинскими: они **не наши**. Перевод делает `_cells`, в одном месте.
         """
-        from src.dating.chat_panel import _cells
+        from src.dating.site.site_import_goldenbride import \
+            DatingSiteImportGoldenbride
 
-        one = _cells(panel_fetch_table(PAGE))[0]
+        one = DatingSiteImportGoldenbride()._cells(panel_fetch_table(PAGE))[0]
 
         assert one['number'] == '37641085'
         assert one['when'] == '2026-09-02 19:12:09'
@@ -349,10 +350,12 @@ class TestTable:
         ⚠ Здесь и видно, ради чего имена общие: `chat_panel_rows` не знает,
         откуда пришли строки, и разбирает их одинаково.
         """
-        from src.dating.chat_panel import _cells, chat_panel_rows
+        from src.dating.chat_panel import chat_panel_rows
+        from src.dating.site.site_import_goldenbride import \
+            DatingSiteImportGoldenbride
 
-        got = chat_panel_rows({'сообщения': _cells(panel_fetch_table(PAGE))},
-                                     {'643694': 77})
+        got = chat_panel_rows({'сообщения': DatingSiteImportGoldenbride()._cells(
+            panel_fetch_table(PAGE))}, {'643694': 77})
 
         assert [one['direction'] for one in got] == ['in', 'out']
         # ⚠ Собеседник, а не автор: так же устроен сокет, и на этом держится

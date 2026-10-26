@@ -16,12 +16,13 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
 from src.dating.chat_initiative import chat_initiative_reset
-from src.dating.chat_panel import (CHAT_PANEL_DAYS,
-                                          CHAT_PANEL_SCENARIO,
-                                          chat_panel_import)
+from src.dating.chat_panel import (CHAT_PANEL_DAYS, chat_panel_import,
+                                          chat_panel_journal_ready)
 from src.dating.initiative import initiative_blocked
 from src.dating.message_twin import message_twin_skip
 from src.dating.json_column import json_column_load
+from src.dating.site_presence import site_presence
+from src.dating.site.site_registry import site_registry_import
 from src.rhapsody.rhapsody_api import RhapsodyError, rhapsody_api_scenario_find
 
 router = APIRouter(prefix='/api/dating/chat', tags=['dating'])
@@ -79,10 +80,15 @@ def chat_dialogs_size(size: int, default: int = 0) -> int:
 
 @router.get('/ready', include_in_schema=False)
 async def chat_ready(site_id: int = 0, user=Depends(auth_required)):
-    """Настроен ли импорт переписки у сайта — есть ли у него сценарий.
+    """Настроен ли импорт переписки у сайта — есть ли чем забирать.
 
-    Признак берётся у соседа, а не из своей настройки: сценарий заводят там, и
-    своя галочка разъехалась бы с ним в день, когда его переименуют.
+    Дороги две, иReady — по любой. **Панельная**: драйвер сайта знает её журнал и
+    панель заведена (`admin_url`) — сценарий для такого сайта не нужен вовсе.
+    **Сценарная**: признак берётся у соседа, а не из своей настройки: сценарий
+    заводят там, и своя галочка разъехалась бы с ним в день, когда его переименуют.
+
+    ⚠ Гашена была только сценарная, и на сайте с живой панелью без журнала
+    (Step2Love) кнопка выглядела настроенной, а импорт ходил в 404.
 
     Отказ соседа — не «не настроено», а `ready: false` с причиной: кнопку гасим в
     обоих случаях, но чинить человеку разное.
@@ -90,14 +96,20 @@ async def chat_ready(site_id: int = 0, user=Depends(auth_required)):
     if not int(site_id or 0):
         return {'result': {'ready': False, 'why': 'сайт не выбран'}}
 
+    if await chat_panel_journal_ready(int(site_id)):
+        return {'result': {'ready': True, 'why': ''}}
+
+    driver = site_registry_import(await site_presence(int(site_id)))
+
     try:
-        scenario = await rhapsody_api_scenario_find(int(site_id), CHAT_PANEL_SCENARIO)
+        scenario = await rhapsody_api_scenario_find(int(site_id),
+                                                    driver.scenario_name())
     except RhapsodyError as e:
         return {'result': {'ready': False, 'why': str(e)}}
 
     if not scenario:
         return {'result': {'ready': False,
-                           'why': f'у сайта нет сценария «{CHAT_PANEL_SCENARIO}» — '
+                           'why': f'у сайта нет сценария «{driver.scenario_name()}» — '
                                   f'заведите его в RhapsodyAi на вкладке «Сценарии»'}}
 
     return {'result': {'ready': True, 'why': ''}}
