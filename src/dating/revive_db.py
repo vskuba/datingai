@@ -62,6 +62,15 @@ async def revive_db_profiles_kept() -> list[dict]:
     смены**. Вне смены она обязана быть не в сети — это и есть смысл расписания,
     а «присмотр» здесь означал бы «расписание не действует».
 
+    ⚠ **Выключенную анкету не восстанавливаем**, и это не мелочь. `keep_online`
+    переживает выключение: его ставит удачный вход (`login`), а выключатель анкеты
+    — «воркер не трогает» — про него не помнил. Круг восстановления про галочку не
+    спрашивает и водит выключенную анкету вечно: поймано живьём на Ladadate, где
+    «вход под анкетой» шёл круглые сутки по 19 выключенным анкетам — вход ставил
+    `keep_online`, круг расписания выходил и стирал сессию, через минуту вход
+    возвращался. Та же болезнь, что с расписанием выше, и то же лечение: отбор
+    спрашивает `enabled`.
+
     ⚠ Отбор по сменам идёт в питоне, а не запросом: смены лежат JSON-полем, и
     вопрос «попадает ли минута в интервал» SQL не задать. Правило одно на всех —
     `schedule_now`, тот же, по которому решает круг расписания и по
@@ -79,7 +88,7 @@ async def revive_db_profiles_kept() -> list[dict]:
             '       relogin_since, relogin_tries, relogin_next_at, '
             '       schedule, schedule_on, login_fail_tries, '
             '       TIMESTAMPDIFF(SECOND, logged_in_at, NOW()) AS login_age_sec '
-            '  FROM profile WHERE keep_online = 1 ORDER BY id')
+            '  FROM profile WHERE keep_online = 1 AND enabled = 1 ORDER BY id')
         rows = await db.fetchall()
 
     return [dict(row) for row in (rows or []) if await _on_duty(row)]

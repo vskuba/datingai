@@ -382,6 +382,15 @@ async def profile_action_enabled(profile_id: int, data: DatingProfileEnabled,
     Ничего не разбирает по включении — в отличие от автоответа. Включение анкеты
     само по себе не поручение отвечать: за это отвечает свой флаг, и если он снят,
     анкету ведут руками.
+
+    ⚠ **Выключение снимает и присмотр автомата** (`keep_online`) — тем же
+    движением, что и снятие исполнения расписания (`/{id}/schedule-on`). Без этого
+    круг восстановления считает анкету без расписания дежурящей круглосуточно
+    (`revive_db._on_duty`) и вечно вводит её заново, не спрашивая, включена ли она
+    вовсе. Поймано живьём: на выключенных анкетах Ladadate «вход под анкетой» шёл
+    круглые сутки, а под выключенной анкетой Step2Love круг ленты снимал «кто в
+    сети» каждые две минуты — выключенная анкета продолжала торчать в сети и
+    тратить браузерные входы.
     """
     await profile_row(profile_id)
 
@@ -389,6 +398,11 @@ async def profile_action_enabled(profile_id: int, data: DatingProfileEnabled,
         await db.execute('UPDATE profile SET enabled = %s WHERE id = %s',
                          (1 if data.enabled else 0, profile_id))
         await db.connection.commit()
+
+    if not data.enabled:
+        # Флаг расписания уже записан, и из-за отказа присмотра падать отказом
+        # человеку незачем: `_keep_online_clear` сам не бросает.
+        await _keep_online_clear(profile_id)
 
     await log_write(profile_id, 'info',
                            'Анкета включена' if data.enabled

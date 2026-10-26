@@ -47,16 +47,6 @@ PROFILE_ID = 999_849
 UID = '999181685'
 
 
-class _FakeRedis:
-    """Redis настолько, насколько его читает проверка онлайна."""
-
-    def __init__(self):
-        self.value = None
-
-    def get(self, key):
-        return self.value
-
-
 @pytest.fixture
 def saved(monkeypatch):
     """Перехватывает запись отправленного в переписку.
@@ -319,6 +309,16 @@ class TestNoDoubleSend:
         assert (await self._send('привет'))['ok'] is True
 
 
+class _FakeRedis:
+    """Redis настолько, насколько его читает проверка онлайна."""
+
+    def __init__(self):
+        self.value = None
+
+    def get(self, key):
+        return self.value
+
+
 def _scenario_ok(monkeypatch):
     """Подменяет всё, что нужно удачному прогону сценария: сосед, настройки, прогон.
 
@@ -490,6 +490,29 @@ class TestEnabledEndpoint:
 
         assert await _enabled(profile) is True
 
+    async def test_disabling_drops_the_watch(self, profile):
+        """⚠ Выключение анкеты снимает и присмотр автомата (`keep_online`).
+
+        Снятая галочка значит «перестань водить её сама», а круг восстановления
+        про галочку не знает: он берёт всех с `keep_online = 1` и анкету без
+        расписания считает дежурящей круглосуточно (`revive_db._on_duty`). Поймано
+        живьём дважды за день: на выключенных анкетах Ladadate «вход под анкетой»
+        шёл круглые сутки, а под выключенной анкетой Step2Love круг ленты входил
+        на сайт каждые две минуты. Та же болезнь и то же лечение, что у снятия
+        исполнения расписания (`test_schedule.py`).
+        """
+        from mysql_.mysql_ import mysql_get_db_async
+
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE profile SET keep_online = 1 WHERE id = %s',
+                             (profile,))
+            await db.connection.commit()
+
+        await _set(profile, False)
+
+        assert await _keep_online(profile) == 0, \
+            'анкету выключили, а присмотр остался — круг вернёт её в сеть'
+
     async def test_flag_reaches_the_list(self, rhapsody, profile):
         """Список рисует значок выключенной — значит флаг должен в нём быть.
 
@@ -541,3 +564,14 @@ async def _set(profile_id: int, enabled: bool) -> None:
 
 async def _enabled(profile_id: int) -> bool:
     return bool((await profile_row(profile_id))['enabled'])
+
+
+async def _keep_online(profile_id: int) -> int:
+    """Присмотр автомата из живой базы: роутер его правит, не показывая на странице."""
+    from mysql_.mysql_ import mysql_get_db_async
+
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT keep_online FROM profile WHERE id = %s', (profile_id,))
+        row = await db.fetchone()
+
+    return int(row['keep_online'])
