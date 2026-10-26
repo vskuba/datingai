@@ -252,6 +252,53 @@ class TestTablesWithoutAProfileAreSweptByTheirSite:
 
         assert found == 1, 'посевная строка стендового сайта не на месте'
 
+    async def test_a_live_synced_site_survives(self):
+        """⚠⚠ Строка настоящего сайта из тестового ряда обязана пережить уборку.
+
+        Тем и кончился прогон ночи 26.10.2026: автонумерация соседнего
+        `browser_site` дошла до `999344`, и уборка снесла живую закладку вместе
+        с настройками сайта — кнопка «Обновить с сайта» умерла молча. Примета
+        живой строки не номер, а синк: `synced_at` у неё есть, у придуманного
+        тестом сайта строки в `site` нет вовсе. Пробу заводим свои номерами и
+        ими же убираем — под защитой синка обычный проход их не возьмёт.
+        """
+        from tests.conftest import _test_site_rows_drop
+
+        mark = TEST_STAND_SITE_FROM + 8
+
+        async with mysql_get_db_async() as db:
+            await db.execute('DELETE FROM companion WHERE `site_id` = %s', (mark,))
+            await db.execute('DELETE FROM `site` WHERE `site_id` = %s', (mark,))
+            await db.execute(
+                'INSERT INTO `site` (site_id, name, url, is_gone, synced_at)'
+                ' VALUES (%s, %s, %s, 0, NOW())', (mark, 'проба-синка',
+                                                   'http://stand.invalid'))
+            await db.execute(
+                'INSERT INTO companion (site_id, uid, name) VALUES (%s, %s, %s)',
+                (mark, 'проба-живая', 'Проба'))
+            await db.connection.commit()
+
+        try:
+            _test_site_rows_drop()
+
+            async with mysql_get_db_async() as db:
+                await db.execute('SELECT COUNT(*) AS n FROM `site`'
+                                 ' WHERE `site_id` = %s', (mark,))
+                site_left = int(((await db.fetchone()) or {}).get('n') or 0)
+                await db.execute('SELECT COUNT(*) AS n FROM companion'
+                                 ' WHERE `site_id` = %s', (mark,))
+                rows_left = int(((await db.fetchone()) or {}).get('n') or 0)
+        finally:
+            async with mysql_get_db_async() as db:
+                await db.execute('DELETE FROM companion WHERE `site_id` = %s',
+                                 (mark,))
+                await db.execute('DELETE FROM `site` WHERE `site_id` = %s',
+                                 (mark,))
+                await db.connection.commit()
+
+        assert site_left == 1, 'синкованная строка `site` не пережила уборку'
+        assert rows_left == 1, 'строка живого сайта в `companion` не пережила уборку'
+
 
 class TestPanelUsersAreSweptByName:
     """⚠⚠ Четвёртый вид строки: человек панели. Ни анкеты, ни сайта у него нет.
