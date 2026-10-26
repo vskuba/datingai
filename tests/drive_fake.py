@@ -35,6 +35,7 @@
 вход), `silent` (500). Что спросили — `calls` и `queries`.
 """
 
+import contextlib
 import json
 import re
 
@@ -211,8 +212,8 @@ def drive(monkeypatch, tmp_path) -> DriveFake:
         'private_key': _key_get(),
     }), encoding='utf-8')
 
-    monkeypatch.setattr(drive_module, 'httpx', _Httpx(fake))
-    monkeypatch.setattr(bytes_module, 'httpx', _Httpx(fake))
+    monkeypatch.setattr(drive_module, 'http_pool_client', _pool(fake))
+    monkeypatch.setattr(bytes_module, 'http_pool_client', _pool(fake))
     monkeypatch.setattr(drive_module, 'config_get',
                         lambda name, default='': (str(key) if name == 'GOOGLE_DRIVE_KEY'
                                                   else default))
@@ -223,22 +224,26 @@ def drive(monkeypatch, tmp_path) -> DriveFake:
     return fake
 
 
-class _Httpx:
-    """Подставной `httpx` для модуля: тот же, но клиент — с заглушкой."""
+def _pool(fake: DriveFake):
+    """Подставной `http_pool_client`: тот же клиент, но транспорт — заглушка.
 
-    HTTPError = httpx.HTTPError
+    ⚠ С переезда общего слоя (`http_`) модуль ходит не своим `httpx`, а этой
+    ручкой, и подменять надо **её**: старая подмена атрибута `httpx` молчала бы
+    промахом — атрибута в модуле уже нет, а тест ушёл бы на живой Диск.
+    Заглушка транспорта — не «ещё один клиент»: общий пул тут как раз лишний,
+    тесту нужен ответ из руки, а не соединение.
+    """
 
-    def __init__(self, fake: DriveFake):
-        self._fake = fake
+    @contextlib.asynccontextmanager
+    async def client(*, timeout: float = 10, proxy: str = '', **kw):
+        kw.pop('transport', None)
+        kw.pop('follow_redirects', None)
 
-    def AsyncClient(self, **kwargs) -> httpx.AsyncClient:  # noqa: N802 — имя из httpx
-        kwargs.pop('transport', None)
-        kwargs.pop('follow_redirects', None)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(fake.answer),
+                                     timeout=timeout, **kw) as one:
+            yield one
 
-        return httpx.AsyncClient(transport=httpx.MockTransport(self._answer), **kwargs)
-
-    async def _answer(self, request: httpx.Request) -> httpx.Response:
-        return self._fake.answer(request)
+    return client
 
 
 def _json(payload: dict) -> httpx.Response:
