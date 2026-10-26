@@ -86,11 +86,11 @@ class TestTheFieldsForThePage:
             assert one['title'], f'у {one["key"]} нет подписи окна'
             assert one['kind'] in ('text', 'area')
 
-    def test_two_fields_are_areas(self):
+    def test_three_fields_are_areas(self):
         areas = [one['key'] for one in profile_param_fields()
                  if one['kind'] == 'area']
 
-        assert areas == ['hobby', 'about_partner']
+        assert areas == ['occupation', 'hobby', 'about_partner']
 
 
 class TestTheLengthLimits:
@@ -99,6 +99,14 @@ class TestTheLengthLimits:
 
     def test_area_field_limit(self):
         assert profile_param_max('hobby') == PROFILE_PARAM_AREA_MAX
+
+    def test_occupation_holds_the_panel_paragraph(self):
+        """⚠ Step2Love снимает занятие из своей текстареи `info[400]` (карта
+        драйвера): предел реестра обязан покрывать 400 знаков. Ниже — кнопка
+        «Обновить с сайта» запишет в базу значение, которое «Сохранить» не
+        пропустит своей моделью, и анкета перестанет сохраняться целиком.
+        """
+        assert profile_param_max('occupation') >= 400
 
     def test_stranger_has_no_limit(self):
         """Ноль — «такого поля нет»; вызывающий решает, что с этим делать."""
