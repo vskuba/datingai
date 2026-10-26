@@ -108,7 +108,8 @@ async def _gate(site: dict, minutes: int) -> bool:
     заходы подозрением. Отметку обвязка ставит до обхода: он идёт секундами на
     анкету, и следующий тик завёл бы второй обход, пока идёт первый.
     """
-    return round_slot_due(MAIL_IN_ROUND_KEY, int(site['site_id']), 'письмам')
+    return round_slot_due(MAIL_IN_ROUND_KEY, int(site['site_id']), 'письмам',
+                          every=await _every(int(site['site_id'])))
 
 
 async def _work(site: dict, minutes: int) -> dict | None:

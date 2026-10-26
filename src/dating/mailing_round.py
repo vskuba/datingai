@@ -137,7 +137,8 @@ async def _gate(site: dict, minutes: int) -> bool:
     if not schedule_now(json_column_list(site['schedule']), minutes):
         return False
 
-    return round_slot_due(MAILING_ROUND_KEY, int(site['site_id']), 'рассылке')
+    return round_slot_due(MAILING_ROUND_KEY, int(site['site_id']), 'рассылке',
+                          every=await _every(int(site['site_id'])))
 
 
 async def _work(site: dict, minutes: int) -> dict | None:

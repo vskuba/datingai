@@ -907,7 +907,7 @@ def _chat_due(site_id: int, every: int) -> bool:
     видно только тому, кто её откроет.
     """
     return round_slot_due(CHAT_IMPORT_KEY, site_id, 'импорта переписки',
-                          unknown=True)
+                          unknown=True, every=every)
 
 
 def _chat_mark(site_id: int, every: int) -> None:
@@ -915,7 +915,8 @@ def _chat_mark(site_id: int, every: int) -> None:
 
     Отметкой с истечением, а не временем в значении: срок и есть настройка, и Redis
     сам погасит ключ, когда придёт пора. Считать разницу дат было бы тем же самым,
-    только руками — и с риском разойтись, когда настройку поменяют.
+    только руками. Прежний риск — что отметка додержит старую настройку до своего
+    гашения, — закрыт на слое: `_chat_due` меряет срок от захода (`round_slot.py`).
     """
     round_slot_mark(CHAT_IMPORT_KEY, site_id, every, 'импорта переписки')
 

@@ -182,7 +182,7 @@ async def _gate(site: dict, minutes: int) -> bool:
     shifts = json_column_list(site['schedule']) or []
 
     return bool(shifts) and schedule_now(shifts, minutes) and round_slot_due(
-        INVITE_ROUND_KEY, site_id, 'инвайтам')
+        INVITE_ROUND_KEY, site_id, 'инвайтам', every=await _every(site_id))
 
 
 async def _work(site: dict, minutes: int) -> dict | None:

@@ -103,7 +103,8 @@ async def _gate(site: dict, minutes: int) -> bool:
     ⚠ Сбой — молчим (правило общее в `round_slot_due`): лишний заход —
     вызовы LLM на каждый ответ.
     """
-    return round_slot_due(REPLY_ROUND_KEY, int(site['site_id']), 'ответам')
+    return round_slot_due(REPLY_ROUND_KEY, int(site['site_id']), 'ответам',
+                          every=await _every(int(site['site_id'])))
 
 
 async def _work(site: dict, minutes: int) -> dict | None:

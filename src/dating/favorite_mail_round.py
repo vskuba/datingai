@@ -145,7 +145,8 @@ async def _gate(site: dict, minutes: int) -> bool:
         return False
 
     return _fresh_feed(site_id) or round_slot_due(
-        FAVORITE_MAIL_ROUND_KEY, site_id, 'письмам избранным')
+        FAVORITE_MAIL_ROUND_KEY, site_id, 'письмам избранным',
+        every=await _every(site_id))
 
 
 async def _work(site: dict, minutes: int) -> dict | None:

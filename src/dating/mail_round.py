@@ -251,7 +251,8 @@ async def mail_round_state(site_id: int) -> dict:
         'on': True,
         'shift': schedule_now(json_column_list(mine['schedule']),
                               now.hour * 60 + now.minute),
-        'next_in': round_slot_left(MAIL_ROUND_KEY, site_id, 'шаблонам'),
+        'next_in': round_slot_left(MAIL_ROUND_KEY, site_id, 'шаблонам',
+                                   every=await _every(site_id)),
         'made': await round_day_count('mail', {'site_id': site_id},
                                       date_column='created_at',
                                       offset_hours=int(offset_hours),
@@ -286,7 +287,8 @@ async def _gate(site: dict, minutes: int) -> bool:
     if not schedule_now(json_column_list(site['schedule']), minutes):
         return False
 
-    return round_slot_due(MAIL_ROUND_KEY, int(site['site_id']), 'шаблонам')
+    return round_slot_due(MAIL_ROUND_KEY, int(site['site_id']), 'шаблонам',
+                          every=await _every(int(site['site_id'])))
 
 
 async def _every(site_id: int) -> int:

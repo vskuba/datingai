@@ -20,11 +20,17 @@ SITE, OTHER = 343, 19
 
 
 class _FakeRedis:
-    """Redis настолько, насколько его читает круг: `get` и `setex`."""
+    """Redis настолько, насколько его читает круг: `get`, `setex` и `ttl`.
+
+    ⚠ `ttl` появился с правкой, где отметка хранит свой срок значением:
+    `round_slot_due` с доводом `every` спрашивает остаток. Без этого метода
+    подделка бросала бы `TypeError` прямо в путь «сбой — идём» (`unknown=True`):
+    тот же сбой в бою значит «пора», и круг забирал бы переписку каждым тиком.
+    """
 
     def __init__(self):
         self.store: dict[str, str] = {}
-        self.ttl: dict[str, int] = {}
+        self.expires: dict[str, int] = {}
         self.broken = False
 
     def get(self, key):
@@ -38,7 +44,15 @@ class _FakeRedis:
             raise RuntimeError('redis лёг')
 
         self.store[key] = value
-        self.ttl[key] = int(seconds)
+        self.expires[key] = int(seconds)
+
+    def ttl(self, key):
+        if self.broken:
+            raise RuntimeError('redis лёг')
+
+        # Часы подделки не идут: остаток — поставленная выдержка как есть.
+        # `-2` — ключа нет, ровно как у живого Redis.
+        return int(self.expires.get(key, -2))
 
 
 @pytest.fixture
@@ -108,8 +122,8 @@ class TestSchedule:
         """
         await hold._chat_import_round()
 
-        assert round_['redis'].ttl[round_slot_key(hold.CHAT_IMPORT_KEY, SITE)] == 300
-        assert round_['redis'].ttl[round_slot_key(hold.CHAT_IMPORT_KEY, OTHER)] == 3600
+        assert round_['redis'].expires[round_slot_key(hold.CHAT_IMPORT_KEY, SITE)] == 300
+        assert round_['redis'].expires[round_slot_key(hold.CHAT_IMPORT_KEY, OTHER)] == 3600
 
     async def test_expired_mark_lets_it_through(self, round_):
         """Отметка погасла — забираем снова. Так круг и работает: ключа нет
@@ -287,4 +301,6 @@ class TestFailuresDoNotStopTheRound:
 
         await hold._chat_import_round()
 
-        assert seen[SITE] == '1', 'отметку поставили после прогона'
+        # Значение отметки — теперь сама выдержка (слой хранит срок в значении),
+        # для сторожа важен факт: к моменту прогона ключ уже стоит.
+        assert seen[SITE] is not None, 'отметку поставили после прогона'

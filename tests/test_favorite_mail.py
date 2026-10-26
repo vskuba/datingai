@@ -1243,7 +1243,8 @@ class TestTheRoundKeepsToItsShifts:
 
         # ⚠ Отметка «недавно ходили» живёт в Redis и переживает тесты: без снятия
         # второй заход в том же прогоне молчал бы по чужой причине.
-        monkeypatch.setattr(round_, 'round_slot_due', lambda key, site_id, what: True)
+        monkeypatch.setattr(round_, 'round_slot_due',
+                            lambda key, site_id, what, every=None: True)
         # ⚠ Отметку круг **не ставит сам** — её ставит обвязка слоя внутри
         # `round_sites_run`. Здесь стояла подмена `round_slot_mark` у модуля, и
         # она ничего не отменяла: модуль этого имени не зовёт. Держалась она на

@@ -135,7 +135,8 @@ async def _gate(site: dict, minutes: int) -> bool:
     второй обход, пока идёт первый.
     """
     return await _on(int(site['site_id'])) and round_slot_due(
-        FAVORITE_ROUND_KEY, int(site['site_id']), 'избранным')
+        FAVORITE_ROUND_KEY, int(site['site_id']), 'избранным',
+        every=await _every(int(site['site_id'])))
 
 
 async def _work(site: dict, minutes: int) -> dict | None:

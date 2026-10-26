@@ -84,7 +84,8 @@ async def _alive(invite_id: int) -> bool:
 @pytest.fixture(autouse=True)
 def now(monkeypatch):
     """Снимает отметку «чистили недавно»: она живёт в Redis и переживает тест."""
-    monkeypatch.setattr(invite_round, 'round_slot_due', lambda key, site_id, what: True)
+    monkeypatch.setattr(invite_round, 'round_slot_due',
+                        lambda key, site_id, what, every=None: True)
     monkeypatch.setattr(invite_round, 'round_slot_mark', lambda *a: None)
 
 

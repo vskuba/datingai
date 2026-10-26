@@ -52,7 +52,8 @@ async def panel_round_run() -> dict:
 
     for site_id in await panel_sites():
         # ⚠ Сбой — молчим: лишний заход может кончиться вкладкой Chromium.
-        if not round_slot_due(PANEL_ROUND_KEY, site_id, 'панели'):
+        if not round_slot_due(PANEL_ROUND_KEY, site_id, 'панели',
+                              every=await panel_every(site_id)):
             continue
 
         # ⚠ Отметку ставим **до** захода: вход сценарием идёт десятками секунд, и
