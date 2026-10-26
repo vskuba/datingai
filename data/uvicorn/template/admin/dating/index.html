@@ -2520,15 +2520,22 @@
             button.textContent = 'читаю панель…';
 
             try {
-                const got = await postData(
+                await postData(
                     `${BASE}/api/dating/profile/${currentId}/card/parameters`);
-                const fresh = (got && got.result && got.result.parameters) || {};
-                pane.querySelectorAll('[data-param]').forEach(el => {
-                    el.value = String(fresh[el.dataset.param] || '');
-                });
-                const at = (got && got.result && got.result.parameters_at) || '';
-                document.getElementById('cardParamsWhen').textContent =
-                    at ? `снято ${timeShift(at)}` : 'с сайта ещё не снимали';
+
+                // ⚠⚠ После панели перерисовываем **всё окно**, а не только поля
+                // параметров: кнопка пишет в базу и возраст, и город, и
+                // описание — а на экране без перезагрузки они остаются старыми.
+                // «Сохранить» после этого уносит обратно устаревший возраст — и
+                // `profile_card_save` записывает это как правку руками: поле
+                // бронируется, и сайт больше не вправе вернуть ему настоящее
+                // значение. Кнопка при этом сама по себе верна — «ноль» в окне
+                // рождения потом не выводит ничто, кроме этой ловушки.
+                //
+                // Тот же путь, что после «вернуть сайту»: форма обязана показывать
+                // то, что легло, — иначе её поля становятся вторым источником
+                // правды.
+                await profileLoad();
             } catch (err) {
                 showNotification('С сайта не снялось: ' + err.message, 'error');
             } finally {
