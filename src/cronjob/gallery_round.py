@@ -94,6 +94,29 @@ async def gallery_round_run() -> dict:
     return out
 
 
+async def main() -> None:
+    """Точка входа задания: прогон и строка в журнал, если было что делать."""
+    # ⚠ Застава журнала: падение задания прежде видел только `app.log`.
+    error_catch_install('cronjob')
+
+    try:
+        got = await gallery_round_run()
+        # ⚠ Молчим на пустом заходе — см. шапку. Говорим, когда что-то
+        # появилось, пропало или разобрано: это и есть новости.
+        if got['added'] or got['gone'] or got['vision']['done'] or got['failed']:
+            logger_info(f"галерея: сайтов {got['sites']}, анкет {got['profiles']}, "
+                        f"файлов {got['found']}, "
+                        f"новых {got['added']}, ушло {got['gone']}, "
+                        f"разобрано {got['vision']['done']}, "
+                        f"неудач {got['failed'] + got['vision']['failed']}")
+    except Exception as err:  # noqa: BLE001 — заданию нельзя падать молча
+        logger_exception(f'галерея: заход не удался: {err}')
+    finally:
+        # Пул закрываем сами: задание живёт один прогон, и оставленные
+        # соединения копились бы по одному на каждый час.
+        await mysql_pool_close()
+
+
 async def _site_work(row, minutes: int) -> dict:
     """Заход по одному сайту: его анкеты, затем его же пачка разбора.
 
@@ -124,29 +147,6 @@ async def _site_work(row, minutes: int) -> dict:
 async def _every(site_id: int) -> int:
     """Срок сайта в секундах: как редко обходить его папки."""
     return await site_seconds(int(site_id), GALLERY_EVERY_KEY)
-
-
-async def main() -> None:
-    """Точка входа задания: прогон и строка в журнал, если было что делать."""
-    # ⚠ Застава журнала: падение задания прежде видел только `app.log`.
-    error_catch_install('cronjob')
-
-    try:
-        got = await gallery_round_run()
-        # ⚠ Молчим на пустом заходе — см. шапку. Говорим, когда что-то
-        # появилось, пропало или разобрано: это и есть новости.
-        if got['added'] or got['gone'] or got['vision']['done'] or got['failed']:
-            logger_info(f"галерея: сайтов {got['sites']}, анкет {got['profiles']}, "
-                        f"файлов {got['found']}, "
-                        f"новых {got['added']}, ушло {got['gone']}, "
-                        f"разобрано {got['vision']['done']}, "
-                        f"неудач {got['failed'] + got['vision']['failed']}")
-    except Exception as err:  # noqa: BLE001 — заданию нельзя падать молча
-        logger_exception(f'галерея: заход не удался: {err}')
-    finally:
-        # Пул закрываем сами: задание живёт один прогон, и оставленные
-        # соединения копились бы по одному на каждый час.
-        await mysql_pool_close()
 
 
 async def _profiles(site_id: int) -> list[dict]:
