@@ -653,6 +653,24 @@ class TestCompanionPages:
         assert 'compRowsFit' in page, 'число строк не подгоняется под высоту'
         assert 'companionsPage = 0' in page, 'страница не сбрасывается на новом списке'
 
+    async def test_empty_list_drops_the_pager(self, auth_client):
+        """⚠ Пустой список вычищает и подвал.
+
+        Пейджер рисуют **ниже** пустой ветки, а та выходит из функции раньше, —
+        и под словами «собеседников пока нет» оставался счёт прежнего списка:
+        «2070 собеседников · страница 1 из 414». Тот же прежний список под новой
+        вывеской, что чистили в шапке и теле, только забытый в подвале; с пустым
+        поиском — тот же промах.
+        """
+        page = (await auth_client.get('/admin/dating')).text
+
+        start = page.find('function companionsPaint(')
+        assert start != -1, 'отрисовка списка не найдена'
+        branch = page[start:page.find('return;', start)]
+
+        assert 'pagerRender(companionsPagerEl' in branch, \
+            'пустой список выходит, не сбросив подвал: счёт прежнего висит над пустотой'
+
     async def test_page_tab_survives_reload(self, auth_client):
         """⚠ Вкладка страницы переживает перезагрузку.
 
