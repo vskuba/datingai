@@ -32,6 +32,7 @@ from src.dating.gallery import GALLERY_ROUND_JOB
 from src.dating.gallery_index import gallery_index_profile
 from src.uvicorn.routers.dating.gallery import (GalleryFileSave,
                                                 GalleryFolderSave,
+                                                gallery_file_delete,
                                                 gallery_file_put,
                                                 gallery_folder_put,
                                                 gallery_folders, gallery_image,
@@ -294,6 +295,91 @@ async def test_edit_of_a_stranger_is_refused(tree, girl):
                                user=None)
 
     assert refused.value.status_code == 404
+
+
+class TestTheTrashCan:
+    """Корзинка на плитке: единственное место, где строка удаляется насовсем."""
+
+    async def test_the_row_is_gone_for_good(self, tree, girl):
+        """Удаление — именно `DELETE`, а не гашение: плитка должна исчезнуть.
+
+        ⚠ Гашение (`is_gone`) здесь не ответ: погашенная строка и так не
+        показывается, а человек убирает **видимую**.
+        """
+        await gallery_index_profile(girl[0], GIRL_FOLDER)
+
+        got = (await gallery_file_delete(girl[0], 'file-1', user=None))['result']
+
+        assert got == {'dropped': 1}
+        async with mysql_get_db_async() as db:
+            await db.execute("SELECT COUNT(*) AS n FROM gallery_file "
+                             " WHERE file_id = 'file-1'")
+            assert int(((await db.fetchone()) or {}).get('n') or 0) == 0, \
+                'строка осталась — значит её погасили, а не убрали'
+
+    async def test_a_stranger_is_refused(self, tree, girl):
+        """⚠⚠ Чужой файл не удаляется — та же проверка, что у байтов и правки.
+
+        Номер приходит из адреса: без проверки одна анкета чистила бы галерею
+        другой, и любой вошедший мог бы это сделать.
+        """
+        await gallery_index_profile(girl[0], GIRL_FOLDER)
+
+        with pytest.raises(HTTPException) as refused:
+            await gallery_file_delete(girl[1], 'file-1', user=None)
+
+        assert refused.value.status_code == 404
+        async with mysql_get_db_async() as db:
+            await db.execute("SELECT COUNT(*) AS n FROM gallery_file "
+                             " WHERE file_id = 'file-1'")
+            assert int(((await db.fetchone()) or {}).get('n') or 0) == 1, \
+                'чужую строку всё-таки удалили'
+
+    async def test_the_second_time_says_it_is_already_gone(self, tree, girl):
+        """Повтор отвечает `404`, а не молчаливой удачей.
+
+        На этом стоит разбор на странице: 404 там — рассинхрон («унесли, пока
+        человек смотрел»), и показывается зелёным, а не красным.
+        """
+        await gallery_index_profile(girl[0], GIRL_FOLDER)
+        await gallery_file_delete(girl[0], 'file-1', user=None)
+
+        with pytest.raises(HTTPException) as refused:
+            await gallery_file_delete(girl[0], 'file-1', user=None)
+
+        assert refused.value.status_code == 404
+
+    async def test_a_live_file_comes_back_on_the_next_walk(self, tree, girl):
+        """⚠⚠ Удалённый файл, оставшийся в папке, **возвращается** обходом.
+
+        Это записанное поведение, а не дефект: индекс отражает Диск, и помнить
+        «эту строку человек удалял» значило бы завести у файла третье
+        состояние. Тест держит обещание, которое даёт вопрос перед удалением, —
+        разойдись они, кнопка врала бы человеку.
+        """
+        await gallery_index_profile(girl[0], GIRL_FOLDER)
+        await gallery_file_delete(girl[0], 'file-1', user=None)
+
+        again = await gallery_index_profile(girl[0], GIRL_FOLDER)
+
+        assert again['added'] == 1, 'файл обязан вернуться — он всё ещё на Диске'
+
+    async def test_a_vanished_file_stays_deleted(self, tree, girl):
+        """А вот строка без файла не возвращается — ради неё корзинка и нужна.
+
+        Снятый Диск, сменившаяся папка, брошенная раскладка: такие строки
+        висели бы вечно, потому что гасить их обходу нечем — он их не видит.
+        """
+        await gallery_index_profile(girl[0], GIRL_FOLDER)
+        tree.children['public-1'].remove('file-1')
+
+        await gallery_file_delete(girl[0], 'file-1', user=None)
+        await gallery_index_profile(girl[0], GIRL_FOLDER)
+
+        async with mysql_get_db_async() as db:
+            await db.execute("SELECT COUNT(*) AS n FROM gallery_file "
+                             " WHERE file_id = 'file-1'")
+            assert int(((await db.fetchone()) or {}).get('n') or 0) == 0
 
 
 async def test_tags_handle_gives_the_whole_dictionary(auth_client):

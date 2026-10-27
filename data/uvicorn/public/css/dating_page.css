@@ -875,6 +875,26 @@
 .gallery-thumb.described .gallery-info,
 .gallery-thumb.failed .gallery-info,
 .gallery-thumb.edited .gallery-info { opacity: 1; }
+
+/* Корзинка — тем же ростом и на той же высоте, что кнопка описания, но у
+   левого края. ⚠⚠ Разносить их по углам обязательно: действия разной цены
+   рядом — это промах, который здесь стоит вызова модели заново.
+
+   ⚠ Видна **только под курсором**, в отличие от кнопки описания: ту ищут
+   глазами по сетке, а эту — нет, и постоянно горящая корзинка на сорока
+   плитках звала бы нажать. */
+.gallery-drop {
+    position: absolute; left: 4px; z-index: 2;
+    bottom: calc(var(--gallery-name-h) + 4px);
+    width: 26px; height: 26px;
+    border: 0; border-radius: 6px; cursor: pointer; padding: 0;
+    background: rgba(15, 23, 42, .72); color: #fff;
+    font: 13px/26px system-ui, sans-serif; text-align: center;
+    opacity: 0; transition: opacity .12s linear;
+}
+.gallery-thumb:hover .gallery-drop { opacity: 1; }
+.gallery-drop:hover { background: #b91c1c; }
+.gallery-drop:focus-visible { outline: 2px solid #fca5a5; outline-offset: 2px; }
 .gallery-info:hover { background: #4f46e5; }
 .gallery-info:focus-visible { outline: 2px solid #a5b4fc; outline-offset: 2px; }
 

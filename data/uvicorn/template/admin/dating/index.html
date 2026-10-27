@@ -1136,6 +1136,12 @@
             + `<img src="${src}" alt="${esc(file.name)}" loading="lazy">`
             + (file.kind === 'video' ? '<span class="gallery-video">видео</span>' : '')
             + `<span class="gallery-state" title="${esc(why)}">${mark.sign}</span>`
+            // ⚠ Корзинка **слева**, напротив кнопки описания: действия разной
+            // цены не должны стоять рядом — промах по соседней кнопке здесь
+            // стоит вызова модели заново.
+            + '<button type="button" class="gallery-drop"'
+            + ' title="Убрать запись об этом снимке из базы"'
+            + ` data-drop="${esc(file.id)}">🗑</button>`
             + `<button type="button" class="gallery-info" title="${esc(why)}"`
             + ` data-info="${esc(file.id)}">i</button>`
             + `<div class="gallery-name" title="${esc(file.name)}">`
@@ -1268,6 +1274,14 @@
                 galleryModal(btn.dataset.info);
             }));
 
+        document.querySelectorAll('.gallery-drop').forEach(btn =>
+            btn.addEventListener('click', event => {
+                // ⚠ Щелчок не должен дойти до плитки: та открывает кадр, и
+                // поверх вопроса об удалении распахнулась бы карусель.
+                event.stopPropagation();
+                galleryDrop(btn);
+            }));
+
         document.querySelectorAll('.gallery-thumb').forEach(tile =>
             tile.addEventListener('click', () => {
                 // Видео открывает просмотрщик Диска: гонять десятки мегабайт
@@ -1279,6 +1293,48 @@
                 }
                 galleryFrame(tile.dataset.id);
             }));
+    }
+
+    // Убрать запись о снимке из базы. ⚠⚠ Вопрос задаётся **всегда** и называет
+    // не только «исчезнет», но и возврат: файл, который всё ещё лежит в
+    // индексируемой папке, вернёт ближайший обход — уже без описания и тегов,
+    // то есть за них заплатят модели второй раз. Скажи кнопка только
+    // «исчезнет» — человек счёл бы возврат поломкой, а повторную трату на
+    // модель не заметил бы вовсе.
+    async function galleryDrop(btn) {
+        const id = btn.dataset.drop;
+        const file = galleryFile(id);
+        const name = file ? file.name : id;
+
+        if (!confirm(`Убрать запись о «${name}» из базы?\n\n`
+                   + 'Плитка исчезнет. Сам файл на Диске остаётся: если он лежит '
+                   + 'в индексируемой папке, обход вернёт его — уже без описания '
+                   + 'и тегов.')) return;
+
+        const was = currentId;
+        const busy = galleryBusy(btn, '…');
+        try {
+            await deleteData(`${BASE}/api/dating/gallery/${was}/file/${id}`);
+            showNotification(`Запись о «${name}» убрана`, 'success');
+        } catch (e) {
+            // ⚠ Строки уже нет — это **рассинхрон, а не отказ**: её могли унести
+            // обход или соседняя вкладка, пока человек смотрел на сетку. Тот же
+            // разбор, что у карточек пула (`pool.js`).
+            //
+            // ⚠⚠ Признак — **код ошибки, а не её текст**: `api.js` кладёт его
+            // полем `status` именно затем, и примета по словам рассыпалась бы
+            // от первой правки формулировки в роутере.
+            if (e.status === 404) {
+                showNotification('Этой записи уже нет — список устарел', 'success');
+            } else {
+                showNotification('Убрать не вышло: ' + e.message, 'error');
+
+                return;
+            }
+        } finally {
+            busy();
+        }
+        if (currentId === was) galleryLoad(was, galleryData.folder || '');
     }
 
     function galleryFile(id) {

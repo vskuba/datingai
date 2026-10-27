@@ -94,7 +94,7 @@ def test_styles_live_in_the_shared_sheet(page):
     # только то, что и правда её — ширина окна и высоты полей.
     for name in ('.gallery-grid', '.gallery-thumb', '.gallery-group',
                  '.dating-modal-back', '.dating-modal-box', '.gallery-card',
-                 '.gallery-why'):
+                 '.gallery-why', '.gallery-drop'):
         assert name in css, f'{name} нет в общей таблице стилей'
         assert f'{name} {{' not in page, f'{name} описан в разметке, а не в CSS'
 
@@ -283,3 +283,62 @@ def test_the_tag_box_repaints_after_a_click(page):
         'перерисовка не зовётся ни после щелчка, ни при первом показе'
     assert "field.addEventListener('input', paint)" in box, \
         'правка руками не подсвечивает слова — набранное разойдётся с горящим'
+
+
+def test_the_trash_can_asks_before_it_deletes(page):
+    """⚠⚠ Удаление записи необратимо, и вопрос задаётся **всегда**.
+
+    Та же договорённость, что у очистки пула (`pool.js`): необратимое без
+    вопроса — это промах мышью ценой чужой работы. Здесь цена измеримая:
+    у снимка с описанием повторный разбор стоит вызова модели.
+    """
+    box = page[page.index('async function galleryDrop'):]
+    box = box[:box.index('function galleryFile')]
+
+    assert 'confirm(' in box, 'запись удаляется без вопроса'
+    assert 'deleteData(' in box, 'строка убирается не своей дверью'
+
+
+def test_the_question_warns_that_the_file_comes_back(page):
+    """⚠⚠ Вопрос обязан назвать возврат, а не только «исчезнет».
+
+    Файл, оставшийся в индексируемой папке, вернёт ближайший обход — уже без
+    описания и тегов. Скажи кнопка только «исчезнет» — человек счёл бы возврат
+    поломкой, а повторную трату на модель не заметил бы вовсе. Обещание кнопки
+    держит тест двери `test_a_live_file_comes_back_on_the_next_walk`.
+    """
+    box = page[page.index('async function galleryDrop'):]
+    box = box[:box.index('function galleryFile')]
+    question = box[box.index('confirm('):box.index(')) return')]
+
+    assert 'вернёт' in question, 'вопрос молчит о возврате файла обходом'
+    assert 'описания' in question, 'вопрос молчит о потере описания'
+
+
+def test_the_trash_can_does_not_open_the_frame(page):
+    """⚠ Щелчок по корзинке не доходит до плитки — иначе поверх вопроса
+    распахнулась бы карусель.
+
+    Тот же приём, что у кнопки описания: `stopPropagation` на своей кнопке.
+    """
+    box = page[page.index(".querySelectorAll('.gallery-drop')"):]
+    box = box[:box.index('async function galleryDrop')]
+
+    assert 'stopPropagation' in box, 'щелчок дойдёт до плитки и откроет кадр'
+
+
+def test_the_trash_can_is_opposite_the_info_button(page):
+    """⚠⚠ Корзинка и кнопка описания — в разных углах, и это не вкусовщина.
+
+    Действия разной цены рядом — промах, который здесь стоит вызова модели
+    заново. Проверяем по сторонам в стилях: одна у левого края, другая у
+    правого, высота у обеих от той же переменной полосы имени.
+    """
+    css = CSS_FILE.read_text(encoding='utf-8')
+    drop = css[css.index('.gallery-drop {'):css.index('}', css.index('.gallery-drop {'))]
+    info = css[css.index('.gallery-info {'):css.index('}', css.index('.gallery-info {'))]
+
+    assert 'left:' in drop and 'right:' not in drop, 'корзинка не у левого края'
+    assert 'right:' in info and 'left:' not in info, 'кнопка описания не у правого'
+    assert 'calc(var(--gallery-name-h)' in drop, \
+        'корзинка уедет под подпись — отступ задан мимо переменной'
