@@ -19,10 +19,15 @@ import os
 
 import pathlib
 
+import re
+
 import pytest
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
+from fastapi.templating import Jinja2Templates
+from starlette.requests import Request
 
+from src.dating.site_setting import site_boxes_values
 from src.uvicorn.routers.dating import work as work_module
 from src.uvicorn.routers.dating.work import _slug, work_template
 
@@ -36,22 +41,49 @@ GOLD = 19
 UNKNOWN = 999_777
 
 
+# Где лежат ленты «Писем рассылки»: от начала пуловой панели до её колонок.
+# Разделитель берём с зазором (`.*?`), а не с жёстким соседством: между рядом и
+# ручкой высоты правки мелочи, а тест должен падать на переезде ленты, а не на
+# перестановке отступов.
+_MAIL_FEEDS = re.compile(r'data-mail-pane="pool".*?(?=<div class="mail-cols">)',
+                        re.S)
+
+
+def _mail_feeds(html: str) -> str:
+    """Разметка лент «Писем рассылка» — то, что решается настройкой.
+
+    Окно берём **одно на все проверки**: считать ленты по всему документу
+    нельзя — такой же ряд стоит на «Инвайтах», и проверка «онлайна нет»
+    проваливалась бы на чужой вкладке.
+    """
+    pane = _MAIL_FEEDS.search(html)
+    assert pane, 'панели «Письма рассылка» с лентами нет'
+
+    return pane.group(0)
+
+
 @pytest.fixture
 def work(rhapsody, monkeypatch):
     """Зовёт ручку шаблона так, как это делает браузер, но в процессе.
 
     Настройка `template` задаётся тестом: она из базы, а базой тут ничего не
-    проверяется.
+    проверяется. С ней же — «Активные ленты»: разбор берётся настоящий
+    (`site_boxes_values`), а чтение настройки подменено, как и `template`.
     """
-    chosen = {'value': ''}
+    chosen = {'template': '', 'feeds': ''}
 
     async def _setting(site_id, key, default=''):
-        return chosen['value']
+        return chosen['template']
+
+    async def _boxes(site_id, key):
+        return site_boxes_values(key, chosen['feeds'])
 
     monkeypatch.setattr(work_module, 'site_setting', _setting)
+    monkeypatch.setattr(work_module, 'site_boxes', _boxes)
 
-    async def _call(site_id: int, template: str = '') -> str:
-        chosen['value'] = template
+    async def _call(site_id: int, template: str = '', feeds: str = '') -> str:
+        chosen['template'] = template
+        chosen['feeds'] = feeds
         answer = await work_template(_request(), site_id=site_id, user=None)
 
         return answer.body.decode()
@@ -427,6 +459,96 @@ class TestWorkTemplate:
         assert html.count('split-online') == html.count('data-strip="online"'), \
             'у ленты есть копия без разделителя — её нечем тянуть'
         assert 'id="splitOnline"' not in html
+
+    async def test_feeds_default_shows_only_online(self, work):
+        """⚠ Сайту, который настройку не сохранял, на «Письмах рассылка» — только
+        «Все онлайн».
+
+        Умолчание решает, какая лента у нового сайта с первой минуты: заведи мы
+        по умолчанию обе, новый Step2Love показывал бы пустую «Гости» там, где
+        его наполнения ещё нет.
+        """
+        html = await work(LADA)
+        pane = _mail_feeds(html)
+
+        assert 'data-strip="online"' in pane, 'нет ленты «Все онлайн»'
+        assert 'data-strip="guests"' not in pane, '«Гости» показаны без включения'
+
+    async def test_feeds_both_keep_the_registry_order(self, work):
+        """⚠ Включены обе — на вкладке обе, и в порядке реестра: сначала «Все
+        онлайн», потом «Гости».
+
+        Порядок задаёт **реестр, а не приехавшее значение**, — тогда вид лент не
+        зависит от того, каким запросом настройка была сохранена. Разделитель —
+        **один на все ленты**: высота у рядов общая, тянуть её проще одной
+        ручкой.
+        """
+        html = await work(LADA, feeds='guests,online')   # порядок приехавший — наоборот
+        pane = _mail_feeds(html)
+
+        assert 'data-strip="online"' in pane and 'data-strip="guests"' in pane, \
+            'включённая лента не показана'
+        assert pane.index('data-strip="online"') < pane.index('data-strip="guests"'), \
+            'порядок лент уехал за порядком запроса'
+        assert pane.count('split-online') == 1, 'у лент не одна общая ручка высоты'
+
+    async def test_feed_guests_strip_is_live(self, work):
+        """⚠ Лента «Гости» — **живой ряд**, как онлайн: со своей кнопкой снятия
+        и стрелками листать.
+
+        С 27.10.2026 наполнение у неё есть — круг снимает визиты со всех анкет
+        сайта, включая выключенные, и ряд просит список (`peopleKinds` его
+        знает). Кнопка ⟳ заводит съём всех анкет разом, а не одной чужой
+        учёткой. Пустота при этом объяснена словами — ряд до первого круга
+        читается как готовый, а не как сломанный.
+        """
+        html = await work(LADA, feeds='guests')
+        pane = _mail_feeds(html)
+
+        assert 'data-strip="guests"' in pane, 'включённой ленты «Гости» нет'
+        assert 'data-strip="online"' not in pane, 'снятая вернулась на вкладку'
+        assert 'data-kind="guests"' in pane, 'у ленты нет кнопки снятия'
+        assert 'guests-left' in pane and 'guests-right' in pane, \
+            'у ленты нет стрелок листать ленту'
+        assert 'people-empty' in pane, 'пустота ленты не объяснена словами'
+
+    async def test_feed_off_shows_no_strip_and_no_split(self, work):
+        """Сняты обе ленты — на вкладке нет ни ряда, ни ручки высоты.
+
+        Ручка у пустоты тянула бы вверх-вниз ничего, и человек решил бы, что
+        панель сломалась; панель начинается сразу с колонок.
+        """
+        html = await work(LADA, feeds='none')
+        pane = _mail_feeds(html)
+
+        assert 'data-strip' not in pane, 'на вкладке остался ряд снятой ленты'
+        assert 'split-online' not in pane, 'над пустотой осталась ручка высоты'
+
+    async def test_site_with_empty_block_drops_both_feeds(self, work):
+        """⚠ Сайт, опустивший блок, не показывает ни одной ленты — и «Гостей»
+        тоже.
+
+        У Goldenbride блока нет вовсе: forget про второй ряд (как было однажды с
+        онлайном) показал бы им ленту, которой у сайта нет. Настройка на это не
+        влияет: она решает, что показывать **из того, что разрешил шаблон**.
+        """
+        html = await work(GOLD, feeds='online,guests')
+        pane = _mail_feeds(html)
+
+        assert 'data-strip' not in pane, 'пустой блок сайта вернул ленты'
+
+    async def test_feed_gating_does_not_touch_other_tabs(self, work):
+        """⚠ Настройка решает **только за «Письмами рассылка»**.
+
+        Ряд онлайна на «Инвайтах» — та же лента того же сайта, и снять её
+        настройкой рассылки означало бы снять её там, где её никогда не
+        спрашивали.
+        """
+        for feeds in ('none', 'guests'):
+            html = await work(LADA, feeds=feeds)
+
+            assert html.count('data-strip="online"') == 1, \
+                f'настройка {feeds!r} тронула ряд онлайна вне рассылки'
 
     async def test_site_without_own_template_gets_default(self, work):
         """Новый сайт должен открыться и работать до того, как под него напишут

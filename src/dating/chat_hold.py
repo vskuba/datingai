@@ -49,6 +49,8 @@ from src.dating.heartbeat_round import (HEARTBEAT_ROUND_TICK_SEC,
                                                heartbeat_round_run)
 from src.dating.online_round import (ONLINE_ROUND_TICK_SEC,
                                             online_round_run)
+from src.dating.guests_round import (GUESTS_ROUND_TICK_SEC,
+                                            guests_round_run)
 from src.dating.mail_in_round import (MAIL_IN_ROUND_TICK_SEC,
                                              mail_in_round_run)
 from src.dating.favorite_round import (FAVORITE_ROUND_TICK_SEC,
@@ -174,6 +176,11 @@ async def chat_hold_run(seconds: float) -> dict:
     # собеседника и решение «писать ли сейчас», и все трое молча теряли опору.
     online = asyncio.create_task(_online_loop(deadline))
 
+    # Лента «Гости». ⚠ Кнопка её не наполняет сама: гости живут в кабинете
+    # **анкеты**, и если круг спит, лента стареет молча — на странице это
+    # выглядит как «никто не заходил» (`guests_round.py`).
+    guests = asyncio.create_task(_guests_loop(deadline))
+
     # Шаблоны писем. ⚠ Заготовки пишет агент, и без круга их писали бы, когда
     # вспомнят: через неделю у сайта те же пять текстов, которыми он писал в
     # понедельник, — а один и тот же текст на сотню людей читается как рассылка
@@ -277,6 +284,7 @@ async def chat_hold_run(seconds: float) -> dict:
         sched.cancel()
         mailing.cancel()
         online.cancel()
+        guests.cancel()
         tmpl.cancel()
         live.cancel()
         post.cancel()
@@ -778,6 +786,20 @@ async def _online_loop(deadline: float) -> None:
     """
     await round_loop(deadline, ONLINE_ROUND_TICK_SEC,
                             'ленты', online_round_run)
+
+
+async def _guests_loop(deadline: float) -> None:
+    """Держит ленту «Гости» наполненной, пока идёт смена.
+
+    Тик — минута; сам съём у каждой анкеты свой срок
+    (`mailing_guests_every`, обычно четыре часа), и большинство тиков только
+    смотрят, чей слот истёк.
+
+    ⚠ Круг **ждёт** прогона, в отличие от «Все онлайн»: строка визита обязана
+    лечь в базу в этом же заходе, иначе следующий тик снял бы то же заново.
+    """
+    await round_loop(deadline, GUESTS_ROUND_TICK_SEC,
+                            'гостям', guests_round_run)
 
 
 async def _mailing_loop(deadline: float) -> None:

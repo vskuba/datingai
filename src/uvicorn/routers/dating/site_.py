@@ -93,8 +93,9 @@ from src.auth.auth import AuthUser, auth_admin_required, auth_required
 # (`from … import site_settings_all`), роутер держал бы свою ссылку, и подмена
 # доезжала бы до домена, но не до ручек — половина сюиты проверяла бы не то.
 from src.dating import site_setting as setting_
-from src.dating.site_setting import (SITE_GROUPS, SITE_KEY_MAX, SITE_KNOWN,
-                                     SITE_SUBGROUPS)
+from src.dating.site_setting import (SITE_BOXES_NONE, SITE_GROUPS,
+                                     SITE_KEY_MAX, SITE_KNOWN, SITE_SUBGROUPS,
+                                     site_boxes_split)
 from src.dating.site_snapshot import site_rows
 from src.uvicorn.routers.dating.site_sync import (site_sync_answer,
                                                   site_sync_start)
@@ -246,7 +247,7 @@ async def site_save(site_id: int, payload: DatingSiteSave,
         # необъяснимое поведение там, где умолчание кода было осмысленным. То же
         # правило, что у настроек панели (`api.md`, §6.2).
         if str(value) != '':
-            clean[key] = _number_check(key, str(value))
+            clean[key] = _boxes_check(key, _number_check(key, str(value)))
 
     async with mysql_get_db_async() as db:
         await db.execute(
@@ -318,6 +319,38 @@ def _number_check(key: str, value: str) -> str:
                    f'({bounds})')
 
     return str(number)
+
+
+def _boxes_check(key: str, value: str) -> str:
+    """Настройка-список галочек — слова из реестра через запятую. Иначе `422`.
+
+    Возвращает значение **в порядке реестра**: форма и так шлёт его по своим
+    галочкам, но ручка открыта токену и запросу минуя форму — порядок на входе
+    означал бы, что вид лент на вкладке зависит от того, каким запросом значение
+    приехало.
+
+    Raises:
+        HTTPException: 422 — прислано слово, которого у настройки нет. Здесь, а не
+        «выбросить молча»: галочку сняли по ошибке — одно дело, привезти `onlin`
+        опечаткой в url — другое; на чтение (`site_boxes_values`) то же слово
+        стоит строкой в лог, потому что у чтения нет друга, которому вернуть
+        отказ. Разбор при этом общий (`site_boxes_split`): политики расходятся,
+        грамматика — нет.
+    """
+    spec = SITE_KNOWN.get(str(key), {})
+    if str(spec.get('kind') or '') != 'boxes':
+        return str(value)
+
+    kept, unknown = site_boxes_split(key, str(value))
+
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f'«{spec.get("title") or key}»: не знаю значений '
+                   f'{", ".join(unknown)}; бывают '
+                   f'{", ".join(one for one, _ in spec.get("options") or ())}')
+
+    return ','.join(kept) or SITE_BOXES_NONE
 
 
 def _known() -> list[dict]:

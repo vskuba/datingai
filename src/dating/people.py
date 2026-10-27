@@ -122,6 +122,10 @@ def people_rows(extract: dict, field: str) -> list[dict]:
     Returns:
         list: записи `{uid, name, age, photo, online, is_new, link}`. Запись без
         номера пропускается: по нему её узнают, и пустой склеил бы разных в одну.
+
+    ⚠ Правила строки живут **не здесь**, а в `people_row_card`: этот цикл —
+    только отбор близнецов. Тому, кому нужен номер сырой строки (гостям — их
+    даты), тоже сюда, а не своим разбором.
     """
     rows = scenario_field(extract, field)
     if not isinstance(rows, list):
@@ -129,48 +133,61 @@ def people_rows(extract: dict, field: str) -> list[dict]:
 
     found, seen = [], set()
     for row in rows:
-        if not isinstance(row, dict):
+        card = people_row_card(row)
+        if not card:
             continue
 
-        link = str(scenario_field(row, 'link') or '').strip()
-        photo = _photo(scenario_field(row, 'photo'))
-        name, age = _name_age(scenario_field(row, 'name'))
-
-        # Шаблон разметки, а не человек: сайт держит в списке скрытую строку-образец
-        # и заполняет её скриптом. Отсекаем по тексту — своего признака у неё нет.
-        if name.lower() in PEOPLE_TEMPLATE_NAMES:
-            continue
-
-        uid = _uid(link, photo, name)
-        if not uid:
-            continue
-
-        uid = uid[:PEOPLE_UID_MAX]
         # Повтор в одном списке — не беда сайта, а следствие ленивой подгрузки:
         # карточка попадает в съёмку дважды. Показать одного человека двумя
         # строками хуже, чем потерять дубль.
-        if uid in seen:
+        if card['uid'] in seen:
             continue
-        seen.add(uid)
+        seen.add(card['uid'])
 
-        found.append({'uid': uid,
-                      # ⚠ Тот же разбор регистра, что у API сайта: источника два,
-                      # а правило одно — иначе имя выглядело бы по-разному в
-                      # зависимости от того, чем сняли список.
-                      'name': people_name_case(name)[:PEOPLE_NAME_MAX],
-                      'age': age,
-                      'photo': photo,
-                      # Ключ по фотографии — отдельным полем, помимо `uid`. По нему
-                      # страница сводит человека из кабинета с ним же из чата:
-                      # номера у них разные (в чате его нет вовсе), а файл один.
-                      'photo_uid': people_photo_uid(photo),
-                      'online': PEOPLE_ONLINE_MARK in str(
-                          scenario_field(row, 'status_class') or ''),
-                      'is_new': bool(str(
-                          scenario_field(row, 'is_new') or '').strip()),
-                      'link': link})
+        found.append(card)
 
     return found
+
+
+def people_row_card(row) -> dict | None:
+    """Одна сырая строка ленты — карточкой; не человек — `None`.
+
+    ⚠ Дверь для тех, кто разбирает ленту **не целиком**: у гостей к строке едет
+    ещё и дата визита, и притягивать её пришлось бы к карточке, снятой по тем же
+    правилам. Заведи она свой разбор полей — правила разошлись бы молча: сегодня
+    шаблонная строка отсекалась бы в одном месте и отравляла ленту в другом.
+    """
+    if not isinstance(row, dict):
+        return None
+
+    link = str(scenario_field(row, 'link') or '').strip()
+    photo = _photo(scenario_field(row, 'photo'))
+    name, age = _name_age(scenario_field(row, 'name'))
+
+    # Шаблон разметки, а не человек: сайт держит в списке скрытую строку-образец
+    # и заполняет её скриптом. Отсекаем по тексту — своего признака у неё нет.
+    if name.lower() in PEOPLE_TEMPLATE_NAMES:
+        return None
+
+    uid = _uid(link, photo, name)
+    if not uid:
+        return None
+
+    return {'uid': uid[:PEOPLE_UID_MAX],
+            # ⚠ Тот же разбор регистра, что у API сайта: источника два,
+            # а правило одно — иначе имя выглядело бы по-разному в
+            # зависимости от того, чем сняли список.
+            'name': people_name_case(name)[:PEOPLE_NAME_MAX],
+            'age': age,
+            'photo': photo,
+            # Ключ по фотографии — отдельным полем, помимо `uid`. По нему
+            # страница сводит человека из кабинета с ним же из чата:
+            # номера у них разные (в чате его нет вовсе), а файл один.
+            'photo_uid': people_photo_uid(photo),
+            'online': PEOPLE_ONLINE_MARK in str(
+                scenario_field(row, 'status_class') or ''),
+            'is_new': bool(str(scenario_field(row, 'is_new') or '').strip()),
+            'link': link}
 
 
 def people_photo_uid(photo: str) -> str:

@@ -54,22 +54,35 @@
 
    Стрелки стоят **по краям самой ленты, поверх неё**, а не отдельной строкой:
    строка съела бы высоту у ряда, который и так тесен, а место по краям и без
-   того занято половинками карточек. #}
-{% macro strip_row(kind, title, hint) %}
+   того занято половинками карточек.
+
+   `reload`, `arrows` и `empty` — для рядов, которые страница **не наполняет**:
+   у ленты-заглушки кнопки нет — дёргать нечего, стрелок нет — листать нечего,
+   а в полосе стоит объясняющая пустота. Живые ленты («Все онлайн», «Гости»)
+   стоят на defaults. #}
+{% macro strip_row(kind, title, hint, reload=true, arrows=true, empty='') %}
 <div class="strip-row" data-strip="{{ kind }}">
     <div class="people-head">
         <span>{{ title }}</span>
         <span class="people-count" data-slot="{{ kind }}-count"></span>
         <span class="people-when" data-slot="{{ kind }}-when"></span>
+        {% if reload %}
         <button type="button" class="people-reload" data-kind="{{ kind }}"
                 title="{{ hint }}">⟳</button>
+        {% endif %}
     </div>
     <div class="strip-belt">
+        {% if arrows %}
         <button type="button" class="strip-arrow left" data-slot="{{ kind }}-left"
                 title="Назад" aria-label="Показать предыдущих">‹</button>
-        <div class="strip-lane" data-slot="{{ kind }}-strip"></div>
+        {% endif %}
+        <div class="strip-lane" data-slot="{{ kind }}-strip">
+            {%- if empty %}<div class="people-empty">{{ empty }}</div>{% endif %}
+        </div>
+        {% if arrows %}
         <button type="button" class="strip-arrow right" data-slot="{{ kind }}-right"
                 title="Вперёд" aria-label="Показать следующих">›</button>
+        {% endif %}
     </div>
 </div>
 {% endmacro %}
@@ -1125,13 +1138,37 @@
     <div class="mail-pane" data-mail-pane="pool">
 
     {% block work_mail_online %}
-    {# ⚠ Та же лента «Все онлайн», что в «Чате», и **она здесь главное**:
-       рассылку составляют, глядя, кто на сайте сейчас, а не листая анкеты.
+    {# Ленты этой вкладки — **какие включены настройкой «Активные ленты»**, и в
+       порядке реестра: «Все онлайн», затем «Гости». Рассылку составляют, глядя
+       на них, а не листая анкеты.
 
        Список про сайт, а не про анкету, — поэтому на этой вкладке правая
        панель живёт и без выбранной анкеты: страница не прячет `#work`, когда
-       открыты «Письма рассылка» (`workPaint`). #}
-    {{ online_row() }}
+       открыты «Письма рассылка» (`workPaint`).
+
+       ⚠ Разделитель — **один на все включённые ленты**, после них: ряды делят
+       одну высоту (`--online-h`), и тянуть её проще за одной ручкой. Когда не
+       включено ничего, нет и ряда, и ручки — панель начинается сразу с колонок.
+
+       ⚠ «Гости» стоят **внутри этого же блока**, а не своим: наполнение ленты —
+       отдельная задача, и сайту, которому она не нужна, довольно опустошить весь
+       блок, как это делает Goldenbride с онлайн-рядом.
+
+       ⚠ Ряд живой, как онлайн: наполняет его **круг от лица всех анкет**, включая
+       выключенные, — поэтому полоса не зависит от того, есть ли в сети хоть одна
+       анкета, и кнопка «обновить» заводит съём всех анкет сайта сразу, а не одной
+       чужой учёткой. #}
+    {% if 'online' in mailing_feeds %}
+        {{ strip_row('online', 'Все онлайн', 'Снять список заново') }}
+    {% endif %}
+    {% if 'guests' in mailing_feeds %}
+    {{ strip_row('guests', 'Гости', 'Снять гостей заново',
+                 empty='гостей пока не было') }}
+    {% endif %}
+    {% if mailing_feeds %}
+    <div class="split split-row split-online"
+         title="Потяните, чтобы изменить высоту"></div>
+    {% endif %}
     {% endblock %}
 
     {# ⚠ Ниже ленты онлайна контентная часть делится **на две колонки**: слева

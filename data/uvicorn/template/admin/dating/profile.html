@@ -2958,6 +2958,13 @@
         color: #94a3b8;
     }
 
+    /* Когда заходил — третья строка подписи в ленте «Гости». Чуть заметнее
+       возраста: по ней ленту и читают. */
+    .person-card-visit {
+        font-size: 10px;
+        color: #64748b;
+    }
+
     /* Полоса прокрутки ленты — тонкая: обычная съедает пятую часть высоты
        ряда, а прокрутка здесь и так очевидна по обрезанной карточке у края. */
     .strip-lane::-webkit-scrollbar {
@@ -4815,9 +4822,14 @@
             // запросом: списка `favonline` у сервера нет вовсе — это отбор по
             // отметке. Отправь мы его в `peopleLoad`, кнопка звала бы
             // `/people/{id}/favonline` и получала 422.
-            btn.addEventListener('click', () => ONLINE_STRIPS.includes(kind)
-                ? peopleOnlineLoad(true)
-                : peopleLoad(kind, true));
+            btn.addEventListener('click', () => {
+                if (ONLINE_STRIPS.includes(kind)) peopleOnlineLoad(true);
+                // ⚠ «Гости» — тоже лента про сайт, но ручка у своя: она из базы,
+                // а не со сценария, и общий путь гнал бы `/site/NN/guests` через
+                // список по виду — 422 вместо ленты.
+                else if (kind === 'guests') peopleGuestsLoad(true);
+                else peopleLoad(kind, true);
+            });
         });
 
         // Стрелки карусели — тоже узлы шаблона, и вешаются здесь же.
@@ -8816,6 +8828,14 @@
         // `true`: сюда приходят по действию человека — он выбрал анкету, вкладку
         // или сайт. Круга перерисовки у этой вкладки нет.
         peopleOnlineShow(true);
+        // Лента «Гости» — того же рода, что онлайн: живёт в базе, показ свой.
+        // Но в отличие от онлайна она **про выбранную анкету**: рядом со
+        // строкой девушки лента отвечает, кто заходил к ней. Спрашиваем её
+        // здесь ровно в той же схеме: нарисовали что есть (кэш), спросили
+        // один раз. Без этого вызова перезагрузка прямо на «Рассылке» стояла
+        // пустой до 45-секундного тика: «Чат» здесь никто не открывал, а его
+        // `peopleShow` — единственный elsewhere, где лента грузилась.
+        peopleGuestsShow();
         mailScheduleShow();
         mailPoolShow();
 
@@ -11837,7 +11857,8 @@
     // а вторая копия фотографии у собеседника разошлась бы с первой в день, когда
     // человек её сменит.
     function peoplePhoto(uid) {
-        for (const key of [`${openId}|favorite`, ONLINE_KEY, `${openId}|dialog`]) {
+        for (const key of [`${openId}|favorite`, ONLINE_KEY, guestsKey(),
+                           `${openId}|dialog`]) {
             const state = peopleCache.get(key);
             const found = (state && state.people || []).find(p => String(p.uid) === String(uid));
             if (found && found.photo) return found.photo;
@@ -11871,6 +11892,13 @@
             const found = (state && state.people || []).find(p => String(p.uid) === String(uid));
             if (found) return found.name;
         }
+
+        // Гости — та же лента, только под своим ключом; звать её здесь
+        // надо, иначе диалог с гостем, которого не было в онлайне, подписан бы
+        // был пустотой.
+        const feed = peopleCache.get(guestsKey());
+        const found = (feed && feed.people || []).find(p => String(p.uid) === String(uid));
+        if (found) return found.name;
 
         return '';
     }
@@ -11931,6 +11959,10 @@
         favonline: 'избранных нет в сети',
         favorite: 'избранных нет',
         dialog: 'переписки нет',
+        // ⚠ Не «никто не заходил», а «пока не приходил»: ленту наполняет круг от
+        // лица всех анкет, и пустая она чаще всего потому, что ещё ни одного
+        // захода не было, а не потому, что гостей нет.
+        guests: 'гостей пока не было',
     };
 
     function peopleIdle(state, empty = 'пусто', kind = '') {
@@ -12006,7 +12038,13 @@
         const idle = peopleIdle(state, empty, kind);
         if (idle) return idle;
 
-        return peopleSorted(state.people).map(p =>
+        // ⚠ **Гостей не переставляем.** Порядок здесь и есть ответ: сервер уже
+        // разложил ленту по дате визита, свежий сверху. Онлайн-первым-алфавит
+        // разбросал бы недавние визиты по всей ленте, и смысл ленты — «кто был
+        // недавно» — расплылся бы в «все равны, сортируем по имени».
+        const list = kind === 'guests' ? (state.people || []) : peopleSorted(state.people);
+
+        return list.map(p =>
             `<div class="person-card${String(openUid) === String(p.uid) ? ' open' : ''}"`
             + ` data-uid="${esc(p.uid)}"`
             + ` title="${esc(p.name)}${p.age ? ', ' + p.age : ''}">`
@@ -12024,6 +12062,7 @@
             + '</span>'
             + `<span class="person-card-name">${esc(p.name || 'без имени')}</span>`
             + `<span class="person-card-age">${p.age ? p.age : ''}</span>`
+            + (kind === 'guests' ? personCardVisit(p) : '')
             // ⚠ Значок карточки — **в правом нижнем углу**, а не поверх лица: там
             // уже точка «в сети» и значок переписки, и третий знак в том же месте
             // читался бы как часть лица.
@@ -12167,8 +12206,12 @@
     // щелчку в ленте значило бы вешать экран. Карточка заводится пустой по
     // описанию, а оно доедет при первом письме этому человеку.
     async function personCardAdd(uid, button) {
-        const state = peopleCache.get(ONLINE_KEY) || {};
-        const person = (state.people || []).find(one => String(one.uid) === String(uid));
+        // ⚠ Ищем по **всем** лентам сайта, а не только по онлайну: гость мог
+        // заходить вчера и сегодня не показываться в сети — тогда его карточка
+        // не завелась бы вовсе, а кнопка на его карточке выглядит рабочей.
+        const feeds = [peopleCache.get(guestsKey()), peopleCache.get(ONLINE_KEY)];
+        const person = feeds.flatMap(one => (one && one.people) || [])
+            .find(one => String(one.uid) === String(uid));
         if (!person) return;
 
         const was = button.disabled;
@@ -12200,6 +12243,7 @@
         // Перерисовываем ленту целиком: значок должен смениться на «открыть», а
         // ряда их два — в «Чате» и в «Письмах рассылка».
         peopleOnlinePaint();
+        peopleGuestsPaint();
     }
 
     function peopleCount(state) {
@@ -12285,6 +12329,11 @@
     // забытое место повело бы кнопку «обновить» за несуществующим списком.
     const ONLINE_STRIPS = ['online', 'favonline'];
 
+    // Ключ ленты «Гости» в памяти страницы. Без выбранной анкеты — общий на
+    // сайт (тот же вид, что у онлайна); с выбранной — под ней: лента рядом со
+    // строкой девушки показывает тех, кто заходил **к ней**.
+    const guestsKey = () => `site|${openId || 0}|guests`;
+
     // Грузит ряд «Все онлайн» — по сайту, а не по анкете.
     async function peopleOnlineLoad(fresh = false) {
         const site = Number(siteEl.value) || 0;
@@ -12333,6 +12382,142 @@
 
             return !!state.refreshing;
         });
+    }
+
+    // ── Лента «Гости» ─────────────────────────────────────────────────────────
+    //
+    // Ответ приходит **из нашей базы**, а не со сценария: круг снял страницы
+    // гостей под каждой анкетой сайта — включая выключенные — и разложил их по
+    // карточкам. Поэтому лента не зависит от того, есть ли в сети хоть одна
+    // анкета, и «анкеты не в сети» у неё случиться не может в принципе.
+
+    async function peopleGuestsLoad(fresh = false) {
+        const site = Number(siteEl.value) || 0;
+        const prof = openId || 0;
+        const key = guestsKey();
+        if (!site || peopleBusy.has(key)) return;
+
+        // Рода нет — просить нечего: сайт не включил гостей «Активными лентами».
+        if (!workEl.querySelector('.strip-row[data-strip="guests"]')) return;
+
+        peopleBusy.add(key);
+        peopleGuestsPaint();
+
+        let state;
+        try {
+            state = (await getData(`${BASE}/api/dating/people/site/${site}/guests`
+                + `?profile_id=${prof}` + (fresh ? '&fresh=1' : ''))).result || {};
+        } catch (e) {
+            state = {people: [], error: e.message};
+        } finally {
+            peopleBusy.delete(key);
+        }
+
+        // Гонка шире, чем у онлайна: ответ чужого сайта **или чужой анкеты**
+        // не должен перекрасить ленту, пока человек уже переключился.
+        if ((Number(siteEl.value) || 0) !== site || (openId || 0) !== prof) return;
+
+        peopleCache.set(key, state);
+        peopleGuestsPaint();
+
+        if (state.refreshing) peopleGuestsAwait(site, prof);
+    }
+
+    // Ждём конца съёма — тем же способом, что онлайн и колонки.
+    function peopleGuestsAwait(site, prof) {
+        // Ключ считаем на месте: сторож ниже не даёт дорисовать чужую ленту,
+        // значит в этот момент текущая анкета и есть `prof`.
+        const key = guestsKey();
+        peopleWatch(key, async () => {
+            if ((Number(siteEl.value) || 0) !== site || (openId || 0) !== prof) return false;
+
+            let state;
+            try {
+                state = (await getData(`${BASE}/api/dating/people/site/${site}/guests`
+                    + `?profile_id=${prof || 0}`)).result || {};
+            } catch (e) {
+                return true;
+            }
+            if ((Number(siteEl.value) || 0) !== site || (openId || 0) !== prof) return false;
+
+            peopleCache.set(key, state);
+            peopleGuestsPaint();
+
+            return !!state.refreshing;
+        });
+    }
+
+    function peopleGuestsPaint() {
+        // Рода нет — сайт ленту не включил; наполнять нечего, молча выходим.
+        if (!stripPaint('guests', guestsKey(), peopleCache.get(guestsKey()),
+                        PEOPLE_EMPTY.guests)) return;
+
+        // Точки «в сети» гостям ставит общий доводчик: он читает ленту онлайна
+        // и проходит по всем рядам кроме онлайновых. Гость без визита «сегодня»
+        // в сети редко, но точка обязана гореть, когда он там есть.
+        stripDotsPaint();
+    }
+
+    // Показ ленты — по образцу онлайна: нарисовали кэш, спросили обновление.
+    function peopleGuestsShow(refresh = false) {
+        if (!workEl.querySelector('.strip-row[data-strip="guests"]')) return;
+
+        peopleGuestsPaint();
+        if (refresh || !peopleCache.has(guestsKey())) peopleGuestsLoad();
+
+        // Значки «завести/открыть» гостям нужны те же, что и в ленте онлайна;
+        // запрос один на сайт и за лентой онлайна может не прийти, если той нет.
+        if (companionsKnownFor !== siteId()) {
+            companionsKnownLoad().then(() => peopleGuestsPaint());
+        }
+    }
+
+    // Когда заходил — словами, третьей строкой подписи карточки.
+    //
+    // ⚠ **Не `timeAgo`.** Строка «N ч назад» отвечает на вопрос «когда мы это
+    // узнали», а карточка гостя отвечает «когда он заходил»: при съёме раз в
+    // четыре часа вчерашний гость вчерашним и должен оставаться, а не
+    // «24 ч назад», прорастающим в «дн назад» на глазах.
+    //
+    // Дата приехать могла и не могла: сервер разбирал слова страницы
+    // («Вчера в 12:03», «3 дн. назад») в `ГГГГ-ММ-ДД`, и где не разобрал —
+    // строки нет вовсе. Строки нет — и рисовать нечего: молчание честнее даты,
+    // взятой не пойми откуда.
+    function personCardVisit(p) {
+        const day = String(p.visit || '');
+        if (day.length < 10) return '';
+
+        // ⚠ Сравниваем **панелевские** сутки, а не сырую дату: визит в 23:00
+        // при поясе +3 для человека уже завтра, и «сегодня» рядом с такой
+        // датой значило бы два разных «сегодня» в одной строке.
+        const shown = timeShift(day + ' 00:00:00').slice(0, 10);
+        const today = timeToday();
+
+        let text;
+        if (shown === today) text = 'сегодня';
+        else if (shown === _visitYesterday()) text = 'вчера';
+        else if (shown.slice(0, 4) === today.slice(0, 4))
+            text = `${shown.slice(8, 10)} ${VISIT_MONTHS[Number(shown.slice(5, 7)) - 1]}`;
+        else text = `${shown.slice(8, 10)}.${shown.slice(5, 7)}.${shown.slice(0, 4)}`;
+
+        // Скольким анкетам он заходил — в подсказку: на ленте это была бы
+        // четвёртая строка подписи, а её место занято именем и возрастом.
+        const prof = Number(p.profiles) || 0;
+
+        return `<span class="person-card-visit"`
+            + ` title="заходил ${esc(day.slice(8, 10))}.${esc(day.slice(5, 7))}.${esc(day.slice(0, 4))}`
+            + (prof > 1 ? `, ${prof} анкетам` : '') + `">${esc(text)}</span>`;
+    }
+
+    // Названия месяцев — как на странице гостей сайта: коротко, родительный.
+    const VISIT_MONTHS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн',
+                          'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+
+    // «Вчера» по часам панели — тем же приёмом, что `timeToday`, только сутки
+    // назад. Браузерные часы здесь ни при чём: пояс берётся общий.
+    function _visitYesterday() {
+        return timeShift(new Date(Date.now() - 86400000).toISOString()
+            .slice(0, 19).replace('T', ' ')).slice(0, 10);
     }
 
     // Наполняет **все** ряды-карусели одного вида списка.
@@ -12711,6 +12896,11 @@
     // ⚠ Лента онлайна исключена намеренно: она про **сайт**, а не про анкету, и
     // живёт своим показом (`peopleOnlineShow`) — он работает и там, где анкета не
     // выбрана вовсе.
+    //
+    // ⚠ «Гости» — из той же породы: лента живёт в базе, и показ у неё **свой**
+    // (`peopleGuestsShow`), а под выбранной анкетой ещё и отбор свой. Спроси
+    // её общий enumerатор — гнал бы список по анкете с сайтовым видом и ловил
+    // 422 на каждой отрисовке; отсюда и этот `delete`.
     function peopleKinds() {
         const kinds = new Set();
 
@@ -12718,6 +12908,7 @@
         workEl.querySelectorAll('.strip-row[data-strip]')
             .forEach(row => kinds.add(row.dataset.strip));
         kinds.delete('online');
+        kinds.delete('guests');
         kinds.delete(undefined);
 
         return [...kinds];
@@ -12725,6 +12916,7 @@
 
     function peopleShow(refresh = false) {
         peopleOnlineShow(refresh);
+        peopleGuestsShow(refresh);
 
         peopleKinds().forEach(kind => {
             peoplePaint(kind);
@@ -14012,6 +14204,14 @@
         // Списки по анкетам (`id|вид`) чистить незачем: номер анкеты уникален, и
         // чужим он не станет.
         peopleCache.delete(ONLINE_KEY);
+        // «Гости» — ключом без номера сайта: чужих гостей под своими
+        // именами показывать нельзя по тому же доводу, что и чужих онлайн-
+        // мужчин. С 2026.10 ключ держит номер анкеты, и чистим все ряды
+        // прежнего сайта разом — по одной лишь текущей анкете мы не знаем,
+        // под какими ключами лента успела лечь.
+        for (const key of [...peopleCache.keys()]) {
+            if (key.endsWith('|guests')) peopleCache.delete(key);
+        }
         // Пул — про сайт, и письма прежнего к новому отношения не имеют.
         mailPoolFor = 0;
         mailPool = [];
@@ -14549,11 +14749,13 @@
         // ⚠ **Проверяем разметку, а не имя вкладки.** Полоса ленты живёт сразу на
         // нескольких вкладках, а у сайта без неё (Goldenbride) её нет вовсе — имя
         // вкладки об этом не знает, а узел знает.
-        if (!workEl.querySelector('[data-strip="online"], .contact[data-uid]')) {
-            return;
-        }
+        if (workEl.querySelector('[data-strip="online"], .contact[data-uid]'))
+            peopleOnlineLoad();
 
-        peopleOnlineLoad();
+        // Гости — по тому же тику, но запрос их дешёвый: он из нашей базы, без
+        // браузера у соседа. Не освежать открытую ленту значило бы держать её
+        // замороженной до перезагрузки страницы, пока круг дописывает визиты.
+        if (workEl.querySelector('[data-strip="guests"]')) peopleGuestsLoad();
     }, ONLINE_TICK_MS);
 
     // ── Таймеры ответов: тикают сами, без запросов ───────────────────────────

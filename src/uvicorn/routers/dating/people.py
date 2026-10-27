@@ -79,6 +79,7 @@ Redis, а не своя таблица: это кэш со сроком годн
 import asyncio
 import json
 import time
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -88,6 +89,8 @@ from mysql_.mysql_ import mysql_get_db_async
 from redis_.redis_ import redis_conn_get
 
 from src.auth.auth import auth_required
+from src.dating.guests import guests_feed
+from src.dating.guests_round import guests_site_sweep
 from src.dating.log import log_write
 from src.dating.people import people_rows
 from src.dating.people_api import (DatingPeopleApiError, people_api_kinds,
@@ -232,6 +235,63 @@ _refresh_at: dict[tuple[int, str], float] = {}
 # показывала бы «кеш от 29.08» бесконечно, ни словом не обмолвившись, что новый
 # список не снимается уже которую попытку.
 _refresh_error: dict[tuple[int, str], str] = {}
+
+# Гости: фоновая съёмка, заведённая кнопкой «обновить». Круг гостит в воркере,
+# а кнопка — в этом процессе, и ждать его круг здесь некому: ответ ручки
+# обязан вернуться за секунду, а съём десяти анкет — минуты.
+_guests_refreshing: dict[int, object] = {}
+_guests_refresh_error: dict[int, str] = {}
+
+
+@router.get('/site/{site_id}/guests', include_in_schema=False)
+async def people_guests_list(site_id: int, fresh: bool = False,
+                             profile_id: int = 0,
+                             user=Depends(auth_required)):
+    """Гости сайта — кто и когда заходил в их анкеты.
+
+    Args:
+        site_id: сайт-закладка у соседа.
+        fresh: завести съём прямо сейчас, не глядя на срок слотов; ответ при
+            этом прежний, страница вернётся за новым по `refreshing`.
+        profile_id: 0 — все гости сайта; номер анкеты — только её гости.
+            Страница «Письма рассылка» передаёт выбранную анкету, и лента
+            рядом с ней отвечает на вопрос «кто был **у неё**».
+
+    Returns:
+        dict: та же форма, что у прочих списков, и у записей ещё `visit` —
+        дата визита словами `ГГГГ-ММ-ДД` или пусто, и `profiles` — скольким
+        анкетам сайта он заходил; под фильтром — тоже по всему сайту,
+        примета гуляки не должна пропадать от выбора анкеты.
+
+    ## ⚠⚌ Отвечаем из базы, а не с сайта
+
+    Прочие ленты — снимки: их нет, пока кто-то не зашёл на сайт под чьей-то
+    учёткой, и без анкет в сети ручка отвечает 422. Гости — строки в
+    `companion_guest`: их собрал круг от лица **всех** анкет, включая
+    выключенные, и ответ не зависит от того, горит ли сейчас хоть одна. У
+    гостей отказа «анкеты не в сети» нет вовсе — и это не забывчивость, а
+    смысл ленты.
+
+    ⚠ Фильтр по анкете — **про показ, а не про съём**: `fresh` заводит съём
+    всего сайта, как и раньше. Отбор по одной анкете у круга был бы второй
+    дорогой снятия ради ряда карточек на экране.
+
+    ⚠ **Порядок объявления важнее похожести путей:** ручка стоит до
+    `/site/{site_id}/{kind}` — иначе `guests` подошёл бы по `kind`, и вместо
+    ленты страница получила бы 422 «неизвестный список».
+    """
+    if fresh:
+        _guests_refresh_start(site_id)
+
+    feed = await guests_feed(site_id, profile_id)
+    task = _guests_refreshing.get(int(site_id))
+
+    return {'result': {'people': _online_now(feed['people'], site_id, 'guests'),
+                       'cached': True,
+                       'age_sec': _guests_age(feed['taken_at']),
+                       'taken_at': feed['taken_at'],
+                       'refreshing': bool(task and not task.done()),
+                       'error': _guests_refresh_error.get(int(site_id), '')}}
 
 
 @router.get('/site/{site_id}/{kind}', include_in_schema=False)
@@ -974,4 +1034,54 @@ async def _list(kind: str, fresh: bool, profile: dict, key: str, log_id: int,
                    refreshing=_refresh_start(profile, kind, key, log_id, fresh,
                                              fresh_sec, floor),
                    site_id=site_id, kind=kind)
+
+
+def _guests_refresh_start(site_id: int) -> None:
+    """Заводит фоновый съём гостей — тот, что просит кнопка «обновить».
+
+    ⚠ Один сайт не снимается дважды: задача жива — второй клик ничего нового
+    не заводит. Два параллельных прогона одних и тех же анкет — это два входа
+    на сайт под одной учёткой подряд, а лимит входов сайт считает по IP, не
+    разбирая, кто стучится.
+    """
+    key = int(site_id)
+    task = _guests_refreshing.get(key)
+
+    if task and not task.done():
+        return
+
+    async def _run() -> None:
+        try:
+            got = await guests_site_sweep(key, due_only=False, cap=0)
+            why = str(got.get('error') or '')
+            if why:
+                _guests_refresh_error[key] = why
+            else:
+                _guests_refresh_error.pop(key, None)
+        except Exception as e:
+            _guests_refresh_error[key] = str(e) or type(e).__name__
+            logger_info(f'[dating] гости сайта #{key} не обновились: {e}')
+
+    _guests_refreshing[key] = asyncio.create_task(_run())
+
+
+def _guests_age(taken_at: str) -> int:
+    """Возраст ленты в секундах — с момента, когда мы записали последний визит.
+
+    ⚠ Меряем по **нашему** времени записи, а не по дате визита: дата отвечает
+    «когда он заходил» (и то словами со страницы, а то и пустотой), возраст —
+    «когда мы это узнали». Сместить одно другим значило бы доложить «лента
+    обновлялась вчера» там, где сегодня сняли анкету с вчерашним гостем.
+
+    `-1` — ленты нет вовсе; ноль был бы враньём свежестью (см. `_answer`).
+    """
+    if not taken_at:
+        return -1
+
+    try:
+        when = datetime.strptime(taken_at, '%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        return -1
+
+    return max(0, int((datetime_utc_now() - when).total_seconds()))
 

@@ -40,7 +40,7 @@ from fastapi.responses import HTMLResponse
 from logging_.logging_ import logger_info
 
 from src.auth.auth import AuthUser, auth_required
-from src.dating.site_setting import site_setting
+from src.dating.site_setting import site_boxes, site_setting
 from src.dating.site_snapshot import site_rows
 from uvicorn_.uvicorn_base import uvicorn_base_path
 
@@ -55,6 +55,11 @@ WORK_DEFAULT = 'default'
 
 # Ключ настройки сайта, которым шаблон назначают руками (страница «Сайты»).
 WORK_SETTING = 'template'
+
+# Ключ настройки-галочек «Активные ленты» — какие ленты показывать на «Письмах
+# рассылка». Шаблон не выбирает их сам: `{% if %}` по готовому списку (реестр и
+# разбор — в `site_setting.py`, там же и значение по умолчанию).
+FEEDS_SETTING = 'mailing_feeds'
 
 # Что считаем именем шаблона. Строгий набор, потому что значение приходит из базы:
 # буквы, цифры, дефис и подчёркивание. Точки нет намеренно — с ней в имя пролезает
@@ -93,7 +98,10 @@ async def work_template(request: Request, site_id: int = 0,
     return request.app.state.jinja2_template.TemplateResponse(
         f'{WORK_DIR}/{name}.html',
         {'request': request, 'user': user, 'base': uvicorn_base_path(),
-         'site_id': site_id})
+         'site_id': site_id,
+         # Настройки читаются здесь, а не в шаблоне: шаблон сайта — данные,
+         # ему показывают готовый список, а не дают доступ к базе.
+         'mailing_feeds': await site_boxes(site_id, FEEDS_SETTING)})
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

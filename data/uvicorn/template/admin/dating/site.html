@@ -161,6 +161,14 @@
            значений растянулся бы на всю колонку. */
         .set-select { width: auto; min-width: 160px; padding: 5px 8px; }
 
+        /* Галочки настройки-списка — столбиком: два-три варианта в строку
+           встались бы впритык, а столбиком видно, что вариантов ровно столько
+           и никаких других нет. */
+        .set-boxes { display: inline-flex; flex-direction: column; gap: 5px; padding: 4px 0; }
+        .set-boxes-item { display: flex; align-items: center; gap: 7px; font-size: 13px; cursor: pointer; }
+        .set-boxes-box { margin: 0; padding: 0; }
+        .set-boxes-box:disabled { cursor: default; }
+
         /* ── Вкладка «Прокси»: пул выходов ───────────────────────────────────
            Стоит над настройками группы: выбирать «анкет на IP», не видя самих
            адресов и их занятости, нечем.
@@ -1051,7 +1059,8 @@
             + (spec.note ? `<span class="set-note">${noteHtml(spec.note)}</span>` : '')
             + '</td>'
             + '<td>'
-            + (spec.pair ? pairInputs(site, spec)
+            + (spec.kind === 'boxes' ? knownBoxes(spec, chosen)
+                : spec.pair ? pairInputs(site, spec)
                 : (spec.options.length ? knownSelect(spec, chosen)
                                        : knownInput(spec, chosen)))
             + (saved || !spec.options.length
@@ -1099,6 +1108,28 @@
                 + `${String(opt.value) === String(chosen) ? ' selected' : ''}>`
                 + `${esc(opt.title)}</option>`).join('')
             + '</select>';
+    }
+
+    // Настройка-список галочек — строка чекбоксов в одной ячейке.
+    //
+    // ⚠ **Галочками, а не мультивыбором**: в списке из двух-трёх значений
+    // мультивыбор прячет неотмеченное под прокрутку и требует удерживать Ctrl,
+    // а видеть надо все варианты разом — какой включён и какой нет.
+    //
+    // ⚠ Слова `none` («снято всё») среди галочек нет: оно не значение, а отказ
+    // от всех. При нём просто стоят снятые; отметим что-нибудь — уйдёт само.
+    function knownBoxes(spec, chosen) {
+        const picked = new Set(String(chosen).split(',').map(one => one.trim()));
+
+        return '<span class="set-boxes">'
+            + spec.options.map(opt =>
+                `<label class="set-boxes-item"`
+                + ` title="${esc(opt.value)}"><input type="checkbox"`
+                + ` class="set-boxes-box" value="${esc(opt.value)}"`
+                + `${picked.has(String(opt.value)) ? ' checked' : ''}`
+                + `${CAN_EDIT ? '' : ' disabled'}>`
+                + `${esc(opt.title)}</label>`).join('')
+            + '</span>';
     }
 
     // Известная настройка без набора значений — обычное поле: адрес, пароль.
@@ -1191,6 +1222,24 @@
         bodyEl.querySelectorAll('tr[data-known] .set-select').forEach(select => {
             const key = select.closest('tr').dataset.key;
             select.addEventListener('change', () => save({[key]: select.value}));
+        });
+
+        // Галочки — тем же порядком, что селект выше: сохраняются по щелчку.
+        //
+        // ⚠ Снято всё — шлём `none`, а не пустую строку: сервер пустое значение
+        // выбрасывает («нет настройки»), а «нет настройки» читается как
+        // умолчание — и первая же лента вернулась бы против снятия. `none`
+        // говорит словами, что снято всё (`site_setting.py`).
+        bodyEl.querySelectorAll('tr[data-known] .set-boxes-box').forEach(box => {
+            const tr = box.closest('tr');
+            const key = tr.dataset.key;
+
+            box.addEventListener('change', () => {
+                const picked = [...tr.querySelectorAll('.set-boxes-box')]
+                    .filter(one => one.checked).map(one => one.value);
+
+                save({[key]: picked.join(',') || 'none'});
+            });
         });
 
         // Поля ввода — и у незнакомых ключей, и у известных без набора значений:

@@ -16,6 +16,8 @@ from src.dating.site.site_about_step2love import DatingSiteAboutStep2Love
 from src.dating.site.site_base import DatingSiteChat
 from src.dating.site.site_goldenbride import (DatingSiteChatGoldenbride,
                                               DatingSiteProfileGoldenbride)
+from src.dating.site.site_guests import DatingSiteGuests
+from src.dating.site.site_guests_step2love import DatingSiteGuestsStep2Love
 from src.dating.site.site_import import DatingSiteImport
 from src.dating.site.site_import_goldenbride import DatingSiteImportGoldenbride
 from src.dating.site.site_import_step2love import DatingSiteImportStep2Love
@@ -76,6 +78,18 @@ DATING_SITE_IMPORT_DRIVERS = {
     DatingSiteImportGoldenbride.name: DatingSiteImportGoldenbride,
     DatingSiteImportStep2Love.name: DatingSiteImportStep2Love,
     DatingSiteImport.name: DatingSiteImport,
+}
+
+# Драйверы ленты гостей — по тем же именам, шестая таблица.
+#
+# ⚠ **Своя таблица, а не поле в прежних.** Шестой вопрос: какой сценарий несёт
+# список визитов и как из его ответа вынуть дату визита. По составу ответов сайты
+# здесь расходятся впервые: у Step2Love карточка отдаёт всё, кроме даты — она
+# лежит в ячейке голым текстом и приезжает только текстом страницы; остальным
+# сайтам хватит общего разбора.
+DATING_SITE_GUESTS_DRIVERS = {
+    DatingSiteGuestsStep2Love.name: DatingSiteGuestsStep2Love,
+    DatingSiteGuests.name: DatingSiteGuests,
 }
 
 # Чем разговаривать, когда сайт не назвал драйвер.
@@ -167,6 +181,25 @@ def site_registry_import(presence: dict | None = None) -> DatingSiteImport:
     другой раскладкой нужен ключ — как остальным граням.
     """
     return _driver_of(DATING_SITE_IMPORT_DRIVERS, presence)
+
+
+def site_registry_guests(presence: dict | None = None) -> DatingSiteGuests:
+    """Чем снимать и разбирать список гостей этого сайта.
+
+    Шестая половина драйвера: чат — кадрами, анкета — именами полей, вёрстка —
+    классами, панель и переписка — страницами кабинета, эта — сценарием ленты
+    визитов и способом вынуть из его ответа дату.
+
+    ⚠ **Умолчание — базовый драйвер, а не переходный goldenbride.** У гостей нет
+    истории с константами: занятие заведено вместе с драйверами, и базовый —
+    честный ответ «сценарий + общий разбор», а не страховка от старого кода.
+    """
+    if not isinstance(presence, dict):
+        return DatingSiteGuests()
+
+    name = str(presence.get('driver') or '').strip()
+
+    return DATING_SITE_GUESTS_DRIVERS.get(name, DatingSiteGuests)(presence)
 
 
 def _driver_of(drivers: dict, presence: dict | None):
