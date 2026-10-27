@@ -19,10 +19,16 @@ import uuid
 import pytest
 from fastapi import HTTPException
 
+from datetime import datetime, timedelta
+
+from datetime_.datetime_ import datetime_utc_now
 from mysql_.mysql_ import mysql_get_db_async
+from setting_.setting_state import setting_state_clear, setting_state_patch
 
 from tests.drive_fake import DRIVE_FAKE_ROOT
 
+from src.cronjob.cronjob import CRONJOB_JOBS, CRONJOB_LAST_KEY
+from src.dating.gallery import GALLERY_ROUND_JOB
 from src.dating.gallery_index import gallery_index_profile
 from src.uvicorn.routers.dating.gallery import (GalleryFileSave,
                                                 GalleryFolderSave,
@@ -74,7 +80,8 @@ async def test_folders_come_as_list(tree):
     """Список для выбора приезжает именами, без отказа."""
     got = (await gallery_folders(user=None))['result']
 
-    assert got == {'folders': [GIRL_FOLDER], 'why': ''}
+    assert got['folders'] == [GIRL_FOLDER]
+    assert got['why'] == ''
 
 
 async def test_folders_refusal_is_words_not_code(tree):
@@ -89,6 +96,86 @@ async def test_folders_refusal_is_words_not_code(tree):
 
     assert got['folders'] == []
     assert 'расшарил' in got['why']
+
+
+@pytest.fixture
+async def round_clean():
+    """Отметка заходов задания — общая строка `setting`, и за собой её убираем.
+
+    ⚠ Иначе тест про «заходов не было» зеленел бы или краснел в зависимости от
+    того, что оставил предыдущий, — а это худший вид связи между тестами.
+    """
+    await setting_state_clear(CRONJOB_LAST_KEY)
+
+    yield
+
+    await setting_state_clear(CRONJOB_LAST_KEY)
+
+
+async def test_round_without_a_single_run_says_so(tree, round_clean):
+    """⚠⚠ «Заходов не было» — это не «скоро будет», и путать их нельзя.
+
+    На установке, где задание не завели в расписание планировщика, обещание
+    «возьмём через час» повторялось бы каждый час, а фотографии не появлялись
+    бы никогда.
+    """
+    got = (await gallery_folders(user=None))['result']['round']
+
+    assert got['last_at'] == ''
+    assert got['next_at'] == ''
+    assert got['late'] is False
+
+
+async def test_round_counts_from_the_last_run(tree, round_clean):
+    """Следующий заход считается **от прошлого**, а не от зашитого расписания.
+
+    ⚠ Расписанием распоряжается Cronicle, и второй его записи у нас нет: смени
+    он минуту — предсказание поедет за ним само.
+    """
+    was = datetime_utc_now() - timedelta(minutes=10)
+    await setting_state_patch(CRONJOB_LAST_KEY,
+                              {GALLERY_ROUND_JOB: {'at': was.isoformat(timespec='seconds'),
+                                                   'ok': True}})
+
+    got = (await gallery_folders(user=None))['result']['round']
+
+    assert got['late'] is False
+    assert (datetime.fromisoformat(got['next_at'])
+            - datetime.fromisoformat(got['last_at'])).total_seconds() \
+        == got['every_sec']
+
+
+async def test_round_tells_when_the_job_stops_coming(tree, round_clean):
+    """Задание молчит дольше двух шагов — говорим это, а не зовём «через час»."""
+    was = datetime_utc_now() - timedelta(hours=9)
+    await setting_state_patch(CRONJOB_LAST_KEY,
+                              {GALLERY_ROUND_JOB: {'at': was.isoformat(timespec='seconds'),
+                                                   'ok': True}})
+
+    assert (await gallery_folders(user=None))['result']['round']['late'] is True
+
+
+async def test_round_is_told_even_when_drive_is_silent(tree, round_clean):
+    """⚠ Диск молчит — срок захода всё равно отвечается.
+
+    Заход задания к доступу на Диск отношения не имеет, а человек, увидев
+    красную строку, первым делом спрашивает «когда оно попробует снова».
+    """
+    tree.not_shared = True
+
+    got = (await gallery_folders(user=None))['result']
+
+    assert got['why'], 'отказ Диска обязан остаться'
+    assert 'round' in got, 'срок захода пропал вместе с папками'
+
+
+def test_the_job_name_matches_the_scheduler_list():
+    """⚠⚠ Имя задания у галереи и в списке планировщика — одно и то же.
+
+    Разойдись они, страница вечно показывала бы «обход ещё не заходил» при
+    исправно работающем задании: отметка легла бы под другим ключом.
+    """
+    assert GALLERY_ROUND_JOB in CRONJOB_JOBS
 
 
 async def test_folder_must_be_from_the_list(tree, girl):

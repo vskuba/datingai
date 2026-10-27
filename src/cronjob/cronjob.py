@@ -22,7 +22,9 @@ import asyncio
 import sys
 from pathlib import Path
 
+from datetime_.datetime_ import datetime_utc_now
 from logging_.logging_ import logger_exception, logger_info
+from setting_.setting_state import setting_state, setting_state_patch
 
 # Что вообще можно запустить. ⚠⚠ Закрытый список, а не поиск по каталогу:
 # ключ здесь — это разрешение, и появиться оно должно осознанно, вместе со
@@ -41,6 +43,16 @@ CRONJOB_TIMEOUT = 300
 # Потолок срока. Cronicle передаёт своё число, и ошибка в нём (секунды против
 # миллисекунд) не должна оставлять процесс на час.
 CRONJOB_TIMEOUT_MAX = 1800
+
+# Где лежит «когда задание заходило в последний раз»: одна строка `setting` на
+# все задания, внутри — имя задания ключом.
+#
+# ⚠⚠ **Расписание у нас не хранится, и это важно.** Им распоряжается Cronicle
+# (`worker.md`, §3.0.1), а здесь — **факт**: приходило или нет и когда. Панель,
+# показывая «следующий заход», считает его от этой отметки, а не от своего
+# представления о расписании: умри планировщик — отметка состарится, и человек
+# увидит именно это, а не бодрое «следующий через 20 минут».
+CRONJOB_LAST_KEY = 'cronjob_last'
 
 
 async def cronjob_run(job: str, timeout: int = CRONJOB_TIMEOUT) -> dict:
@@ -71,7 +83,44 @@ async def cronjob_run(job: str, timeout: int = CRONJOB_TIMEOUT) -> dict:
     wait = min(max(int(timeout or CRONJOB_TIMEOUT), 1), CRONJOB_TIMEOUT_MAX)
     logger_info(f'[cronjob] {job}: запуск, срок {wait} с')
 
-    return await _spawn(job, str(full), wait)
+    done = await _spawn(job, str(full), wait)
+    await _mark(job, bool(done['ok']))
+
+    return done
+
+
+async def cronjob_last(job: str) -> dict:
+    """Когда задание заходило в последний раз и чем кончилось.
+
+    Отвечает на вопрос страницы «когда это возьмут в работу»: срок там считают
+    **от прошлого захода**, а не от расписания, которого у нас нет.
+
+    Args:
+        job: имя задания из `CRONJOB_JOBS`.
+
+    Returns:
+        `{'at': str, 'ok': bool}`; `at` — время UTC в ISO. **Пустой `at` значит
+        «не заходило ни разу»** — обычное состояние на свежей установке и
+        единственный признак того, что задание в расписание не завели.
+    """
+    state = await setting_state(CRONJOB_LAST_KEY)
+    one = state.get(str(job or '').strip()) or {}
+
+    return {'at': str(one.get('at') or ''), 'ok': bool(one.get('ok'))}
+
+
+async def _mark(job: str, ok: bool) -> None:
+    """Отметить заход задания. Неудача — тоже заход: приходило, но не вышло.
+
+    ⚠ Своя неудача записи отметки задание не роняет: она про показ, а работа
+    уже сделана. Молча, впрочем, не проходит — строка в журнале остаётся.
+    """
+    try:
+        await setting_state_patch(CRONJOB_LAST_KEY,
+                                  {job: {'at': datetime_utc_now().isoformat(
+                                      timespec='seconds'), 'ok': ok}})
+    except (ValueError, OSError, RuntimeError) as err:
+        logger_exception(f'[cronjob] {job}: отметка захода не легла: {err}')
 
 
 async def _spawn(job: str, path: str, wait: int) -> dict:

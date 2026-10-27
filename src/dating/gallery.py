@@ -13,8 +13,12 @@
 алфавиту. Снимок, который видят все, важнее того, что показывают изредка.
 """
 
+from datetime import datetime, timedelta
+
+from datetime_.datetime_ import datetime_utc_now
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.cronjob.cronjob import cronjob_last
 from src.dating.json_column import json_column_list
 
 # Группа, которую показываем первой. Остальные — по алфавиту следом.
@@ -27,6 +31,24 @@ GALLERY_GROUP_FIRST = 'public'
 # Сколько плиток отдаём на вкладку за раз. Сорок снимков на анкету — обычный
 # объём; потолок нужен не ради него, а ради папки, куда однажды высыпали всё.
 GALLERY_FILES_MAX = 500
+
+# Чьи заходы считаем своими: имя задания планировщика (`CRONJOB_JOBS`).
+# ⚠ Совпадение с тем списком сторожит тест: разойдись имена, страница вечно
+# показывала бы «заходов ещё не было» при исправно работающем задании.
+GALLERY_ROUND_JOB = 'gallery_round'
+
+# Как часто задание заходит — час (`worker.md`, §3.0.1).
+#
+# ⚠⚠ **Это оценка, а не расписание.** Расписанием распоряжается Cronicle, и
+# второй его записи у нас нет намеренно: две записи одного правила расходятся
+# молча. Отсюда и счёт — **от прошлого захода**, а не от «ровно в HH:20»: смени
+# планировщик минуту, и предсказание поедет за ним само.
+GALLERY_ROUND_EVERY_SEC = 3600
+
+# Насколько задание должно опоздать, чтобы мы сказали «не приходит». Пропуск
+# одного захода — ещё не беда (Cronicle мог ждать прошлый), двух — уже повод
+# смотреть в расписание.
+GALLERY_ROUND_LATE_SEC = GALLERY_ROUND_EVERY_SEC * 2
 
 
 def gallery_folder_name(profile: dict) -> str:
@@ -86,6 +108,40 @@ async def gallery_view(profile_id: int, folder: str = '') -> dict:
                        for name in sorted(groups, key=_group_order)],
             'total': len(rows),
             'taken_at': taken_at.isoformat() if taken_at else None}
+
+
+async def gallery_round_when() -> dict:
+    """Когда обход Диска возьмёт в работу новые файлы.
+
+    Вопрос человека на вкладке простой: «я положил фотографию на Диск — когда
+    она тут появится?». Ответ складывается из факта (когда задание заходило) и
+    известного шага (раз в час), а не из расписания: расписание живёт у
+    Cronicle.
+
+    Returns:
+        `{'last_at': str, 'next_at': str, 'late': bool, 'every_sec': int}` —
+        время UTC в ISO, пустая строка значит «не было». **Часовой пояс
+        накладывает страница**, как и везде в панели.
+
+    ⚠⚠ **`last_at` пустой — это не «скоро будет», а «задания нет в
+    расписании».** Отличать их обязательно: иначе свежая установка, где
+    Cronicle не настроен вовсе, обещала бы человеку заход через час — и так
+    каждый час.
+
+    ⚠ `late` поднимается, когда заход просрочен вдвое: один пропуск — обычное
+    дело, два подряд значат, что планировщик до нас не доходит.
+    """
+    last = await cronjob_last(GALLERY_ROUND_JOB)
+    if not last['at']:
+        return {'last_at': '', 'next_at': '', 'late': False,
+                'every_sec': GALLERY_ROUND_EVERY_SEC}
+
+    was = datetime.fromisoformat(last['at'])
+    next_at = was + timedelta(seconds=GALLERY_ROUND_EVERY_SEC)
+    late = datetime_utc_now() - was > timedelta(seconds=GALLERY_ROUND_LATE_SEC)
+
+    return {'last_at': was.isoformat(), 'next_at': next_at.isoformat(),
+            'late': late, 'every_sec': GALLERY_ROUND_EVERY_SEC}
 
 
 def gallery_group_of(path: str) -> str:

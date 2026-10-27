@@ -29,7 +29,8 @@ from google_drive_.google_drive_bytes import (GOOGLE_DRIVE_THUMB_SIZES,
                                               google_drive_bytes)
 
 from src.auth.auth import AuthUser, auth_required
-from src.dating.gallery import gallery_folder_name, gallery_view
+from src.dating.gallery import (gallery_folder_name, gallery_round_when,
+                                gallery_view)
 from src.dating.gallery_index import (gallery_index_folders, gallery_index_sync)
 from src.dating.gallery_vision import (GALLERY_VISION_GROUP_TITLES,
                                        GALLERY_VISION_TAGS,
@@ -99,11 +100,21 @@ async def gallery_folders(user: AuthUser = Depends(auth_required)):
     Отказ Диска отдаём **словами и с кодом 200**: вкладка обязана объяснить,
     что случилось, а не показать пустой селект. Пустой селект человек читает
     как «папок нет», и идёт заводить их заново.
+
+    ⚠ Тем же ответом едет `round` — когда обход возьмёт новые файлы в работу.
+    Отдельной ручкой это был бы третий запрос вкладки ради одной строки, а
+    вопрос тот же самый: «что сейчас с Диском».
+
+    ⚠⚠ **Срок считается и при отказе Диска.** Заход задания к доступу на Диск
+    отношения не имеет, а человек, увидев красную строку, первым делом
+    спрашивает «когда оно попробует снова».
     """
+    when = await gallery_round_when()
     try:
-        return {'result': {'folders': await gallery_index_folders(), 'why': ''}}
+        return {'result': {'folders': await gallery_index_folders(), 'why': '',
+                           'round': when}}
     except RuntimeError as err:
-        return {'result': {'folders': [], 'why': str(err)}}
+        return {'result': {'folders': [], 'why': str(err), 'round': when}}
 
 
 @router.get('/{profile_id}', include_in_schema=False)

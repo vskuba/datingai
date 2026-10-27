@@ -25,7 +25,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from tests.drive_fake import DRIVE_FAKE_ROOT, DRIVE_FAKE_ROOT_SETTING
 
 from src.dating.error import ERROR_DRIVE
-from src.dating.gallery_index import (GALLERY_WHY_NOT_SHARED,
+from src.dating.gallery_index import (GALLERY_WHY_NOT_SHARED, gallery_index_takes,
                                       gallery_index_folders,
                                       gallery_index_profile,
                                       gallery_index_sync)
@@ -89,7 +89,11 @@ def tree(drive):
     drive.add_folder('public', 'public-1', parent='photo-1')
     drive.add_folder('intim', 'intim-1', parent='photo-1')
     drive.add_file('diana.png', 'file-1', parent='public-1', md5='md5-первый')
-    drive.add_file('vid.mp4', 'file-2', parent='intim-1', mime='video/mp4')
+    drive.add_file('diana-2.jpg', 'file-2', parent='intim-1', mime='image/jpeg')
+    # ⚠ Не-картинки лежат в тех же папках, что и снимки: `Анкета.txt` рядом с
+    # фотографиями — живая раскладка, а не выдумка. Индекс их брать не должен.
+    drive.add_file('Анкета.txt', 'file-text', parent='girl-1', mime='text/plain')
+    drive.add_file('clip.mp4', 'file-video', parent='intim-1', mime='video/mp4')
 
     return drive
 
@@ -111,8 +115,61 @@ async def test_walk_goes_deep(tree, girl):
                          ' ORDER BY path', (girl,))
         rows = [(r['path'], r['kind']) for r in (await db.fetchall() or [])]
 
-    assert rows == [('photo/intim/vid.mp4', 'video'),
+    assert rows == [('photo/intim/diana-2.jpg', 'image'),
                     ('photo/public/diana.png', 'image')]
+
+
+async def test_only_images_are_taken(tree, girl):
+    """⚠⚠ В индекс идут **только изображения** — ни текста, ни видео.
+
+    В папках девушек лежит не только фото: на живом Диске 27.10.2026 это
+    6 `.txt`, `.pdf`, `.download` и 73 видео. `Анкета.txt` приезжал плиткой в
+    галерею и мозолил глаза; видео убрано решением владельца.
+    """
+    await gallery_index_profile(girl, GIRL_FOLDER)
+
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT name FROM gallery_file WHERE profile_id = %s',
+                         (girl,))
+        names = sorted(row['name'] for row in (await db.fetchall() or []))
+
+    assert names == ['diana-2.jpg', 'diana.png'], 'в индекс попало лишнее'
+
+
+async def test_non_image_fades_from_the_index(tree, girl):
+    """Уже учтённое не-изображение гаснет на первом же обходе, а не живёт вечно.
+
+    ⚠ Именно гаснет (`is_gone`), а не удаляется: правило модуля одно на всех,
+    и за строкой могли стоять описание с правкой руками.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            "INSERT INTO gallery_file (profile_id, file_id, path, name, mime, kind, md5) "
+            " VALUES (%s, 'file-video', 'photo/intim/clip.mp4', 'clip.mp4', "
+            "         'video/mp4', 'video', 'md5-видео')", (girl,))
+        await db.connection.commit()
+
+    assert (await gallery_index_profile(girl, GIRL_FOLDER))['gone'] == 1
+
+    async with mysql_get_db_async() as db:
+        await db.execute("SELECT is_gone FROM gallery_file WHERE file_id = 'file-video'")
+        row = dict((await db.fetchone()) or {})
+
+    assert row['is_gone'] == 1, 'видео обязано погаснуть, а не исчезнуть'
+
+
+class TestWhatWeTake:
+    """Правило «берём ли файл» — чистое, и проверяется без Диска и базы."""
+
+    @pytest.mark.parametrize('name', ['a.jpg', 'a.jpeg', 'a.png', 'A.JPG', 'да.PnG',
+                                      'тут.точки.есть.jpg'])
+    def test_images_pass(self, name):
+        assert gallery_index_takes(name) is True
+
+    @pytest.mark.parametrize('name', ['Анкета.txt', 'cv.pdf', 'clip.mp4', 'clip.MOV',
+                                      'file.download', 'jpg', '', 'photo.jpg.txt'])
+    def test_the_rest_is_refused(self, name):
+        assert gallery_index_takes(name) is False
 
 
 async def test_second_pass_adds_nothing(tree, girl):

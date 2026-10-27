@@ -1011,6 +1011,9 @@
             galleryData = view.result;
             galleryFolders = (folders.result || {}).folders || [];
             galleryData.foldersWhy = (folders.result || {}).why || '';
+            // Срок захода приходит с папками, а не с плитками: он про Диск
+            // целиком, а не про эту анкету.
+            galleryData.round = (folders.result || {}).round || null;
         } catch (e) {
             if (currentId !== profileId) return;
             galleryData = {groups: [], total: 0, folder: folder, why: e.message};
@@ -1061,6 +1064,7 @@
             + '<button type="button" class="btn" id="gallerySync"'
             + ' title="Обойти папку на Диске и пересобрать список файлов.'
             + ' Идёт секунды">Обновить</button>'
+            + galleryRound(galleryData.round)
             + '</div>'
             + '<div class="var-note">Пусто — папка ищется по логину анкеты: так они '
             + 'и названы на Диске. Выбирают здесь только исключение.<br>'
@@ -1090,23 +1094,70 @@
             + '</div></div>').join('');
     }
 
+    // Состояние снимка значком в углу плитки. ⚠⚠ Состояний **четыре, и
+    // показываются все**: прежде «ждёт разбора» и «разбор не удался» угол
+    // оставляли пустым, то есть «работа не сделана» выглядело в точности как
+    // «значка не видно на светлом кадре». Сетка на сорок снимков отвечает на
+    // вопрос «что уже разобрано» только тогда, когда помечено каждое.
+    //
+    // ⚠ Это **разбор моделью**, а не «есть ли файл в базе»: плитки и рисуются
+    // из базы, так что запись есть у каждой видимой по построению.
+    const GALLERY_STATES = {
+        edited: {sign: '✎', why: 'описание правлено человеком'},
+        failed: {sign: '!', why: 'разбор не удался'},
+        described: {sign: '✓', why: 'разобрано моделью'},
+        waiting: {sign: '○', why: 'ждёт разбора моделью'},
+    };
+
+    function galleryState(file) {
+        if (file.edited) return 'edited';
+        if (file.described_error) return 'failed';
+
+        return file.described ? 'described' : 'waiting';
+    }
+
     function galleryTile(file) {
         const src = `${BASE}/api/dating/gallery/${currentId}/img/${file.id}?w=400`;
-        // ⚠ Признак описания — **галочкой в углу плитки**, а не видом кнопки:
-        // по сетке сразу видно, что модель уже разобрала, а что ещё нет, и
-        // видно это не наводя курсор.
-        const mark = file.edited ? 'правлено человеком'
-                   : file.described ? 'разобрано моделью' : 'без описания';
-        const state = file.edited ? ' edited' : file.described ? ' described' : '';
+        const state = galleryState(file);
+        const mark = GALLERY_STATES[state];
+        // У неудачи причина — часть подсказки: «!» без слов отправляет человека
+        // искать, что именно сломалось.
+        const why = state === 'failed' ? `${mark.why}: ${file.described_error}` : mark.why;
 
-        return `<div class="gallery-thumb${state}" data-id="${esc(file.id)}"`
+        return `<div class="gallery-thumb ${state}" data-id="${esc(file.id)}"`
             + ` data-kind="${esc(file.kind)}" data-view="${esc(file.view_url)}">`
             + `<img src="${src}" alt="${esc(file.name)}" loading="lazy">`
             + (file.kind === 'video' ? '<span class="gallery-video">видео</span>' : '')
-            + `<button type="button" class="gallery-info" title="${esc(mark)}"`
+            + `<span class="gallery-state" title="${esc(why)}">${mark.sign}</span>`
+            + `<button type="button" class="gallery-info" title="${esc(why)}"`
             + ` data-info="${esc(file.id)}">i</button>`
             + `<div class="gallery-name" title="${esc(file.name)}">`
             + `${esc(file.name)}</div></div>`;
+    }
+
+    // Когда обход возьмёт в работу новые файлы. ⚠⚠ Три разных ответа, и
+    // путать их нельзя: «не заходило ни разу» — это не «скоро будет», а
+    // «задания нет в расписании планировщика»; просроченный заход значит, что
+    // планировщик до нас не доходит, и обещать «через час» в этом случае —
+    // врать человеку, который как раз и пришёл выяснить, почему пусто.
+    function galleryRound(round) {
+        if (!round) return '';
+        if (!round.last_at) {
+            return '<span class="gallery-round late" title="Обход Диска запускает'
+                 + ' планировщик (Cronicle). Заходов не было ни одного">'
+                 + 'новые файлы: обход ещё не заходил</span>';
+        }
+
+        const every = Math.round((round.every_sec || 3600) / 60);
+        const title = `Обход забирает новые файлы с Диска сам, раз в ${every} мин.`
+                    + ` Последний заход ${timeShift(round.last_at)}.`
+                    + ' Кнопка «Обновить» делает то же немедленно';
+
+        return `<span class="gallery-round${round.late ? ' late' : ''}" title="${esc(title)}">`
+            + (round.late
+                ? `обход не приходит с ${timeShift(round.last_at)}`
+                : `новые файлы возьмёт ${timeShift(round.next_at)}`)
+            + '</span>';
     }
 
     // Кнопка на время работы: гаснет и говорит, чем занята. Возвращает функцию

@@ -39,6 +39,23 @@ from src.dating.error import ERROR_DRIVE, error_clear, error_write
 # нет» посреди работающей галереи.
 GALLERY_ROOT_NAME = 'GOOGLE_DRIVE_FOLDER'
 
+# Что берём в индекс. ⚠⚠ **Расширением, а не типом файла**: так это и задано
+# человеком, а на живом Диске 27.10.2026 они совпали во всех 1065 файлах
+# одиннадцати папок — расхождения нет ни одного. Расширение при этом надёжнее:
+# Диск иногда отдаёт снимку `application/octet-stream`, и по типу такой файл
+# выпал бы из галереи.
+#
+# ⚠⚠ **Это единственный список, и он же выключатель видео.** В папках лежат не
+# только снимки: 939 .jpg, 4 .png, 1 .jpeg — и рядом 39 .mp4, 34 .mov, 6 .txt,
+# .pdf, .download. Галерея показывает **только изображения** — решение
+# владельца от 27.10.2026; показ видео в коде остался (плитка со ссылкой в
+# просмотрщик Диска, `gallery.py`), и вернуть его — это вернуть сюда строку,
+# а не писать заново.
+#
+# ⚠ Чужое не удаляется, а гаснет: пропавшее из обхода метится `is_gone`, как
+# и всё остальное, — за строкой могли стоять описание и правка руками.
+GALLERY_INDEX_EXT = ('.jpg', '.jpeg', '.png')
+
 # Фразы отказа. Рядом с проверкой, чтобы не разошлись с тем, что видит человек.
 GALLERY_WHY_NO_ROOT = 'Диск не настроен: не задана общая папка'
 GALLERY_WHY_NOT_SHARED = ('папку не расшарили на сервисный аккаунт — '
@@ -76,6 +93,23 @@ async def gallery_index_folders() -> list[str]:
     rows = await google_drive_list(f"'{root}' in parents and trashed = false")
     return sorted(row['name'].strip() for row in rows
                   if row['mimeType'] == GOOGLE_DRIVE_FOLDER_MIME)
+
+
+def gallery_index_takes(name: str) -> bool:
+    """Берём ли этот файл Диска в галерею — по расширению имени.
+
+    Args:
+        name: имя файла, как его отдал Диск.
+
+    Returns:
+        `True` для изображений (`GALLERY_INDEX_EXT`), `False` для всего
+        прочего — текста рядом со снимками, PDF, видео.
+
+    ⚠ **Чистая, без похода на Диск и в базу**: то же правило спрашивает и
+    обход, и его проверка. Своя копия «а это картинка?» в соседнем месте
+    разошлась бы с этой на первой же правке списка.
+    """
+    return str(name or '').lower().endswith(GALLERY_INDEX_EXT)
 
 
 async def gallery_index_root() -> str:
@@ -131,7 +165,8 @@ async def gallery_index_profile(profile_id: int, folder: str) -> dict:
     if not found:
         raise RuntimeError(GALLERY_WHY_NO_FOLDER.format(folder=folder))
 
-    seen = {item['id']: item for item in await google_drive_walk(found[0]['id'])}
+    seen = {item['id']: item for item in await google_drive_walk(found[0]['id'])
+            if gallery_index_takes(item.get('name', ''))}
 
     async with mysql_get_db_async() as db:
         await db.execute('SELECT file_id, is_gone FROM gallery_file '

@@ -812,14 +812,24 @@
 .gallery-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .gallery-thumb:hover { border-color: #4f46e5; }
 
-/* Признак описания — углом плитки. ⚠ Разобранное моделью и правленое рукой
-   различаются цветом: по сетке видно, где работа модели, а где человека. */
-.gallery-thumb.described::after,
-.gallery-thumb.edited::after {
-    content: '✓'; position: absolute; right: 4px; top: 2px;
-    font-size: 14px; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, .75);
+/* Состояние снимка — углом плитки, и помечены **все четыре**, включая «ждёт».
+
+   ⚠⚠ Прежде это был `::after` только у разобранного и правленого: у ждущего
+   угол оставался пустым, и «ещё не разобрано» читалось так же, как «значок не
+   видно на светлом кадре». Теперь значок — **кружок с подложкой**, как у метки
+   видео: он виден на любом снимке, и отсутствие работы видно тоже.
+
+   ⚠ Цвета различают, чья это работа: модель (зелёный), человек (сиреневый),
+   неудача (красный), никто ещё (серый). */
+.gallery-state {
+    position: absolute; right: 4px; top: 4px; z-index: 1;
+    min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box;
+    border-radius: 9px; background: rgba(15, 23, 42, .75);
+    color: #cbd5e1; font: 700 12px/18px system-ui, sans-serif; text-align: center;
 }
-.gallery-thumb.edited::after { content: '✎'; color: #c7d2fe; }
+.gallery-thumb.described .gallery-state { color: #4ade80; }
+.gallery-thumb.edited .gallery-state { color: #c7d2fe; }
+.gallery-thumb.failed .gallery-state { color: #fca5a5; }
 
 /* Имя — поверх кадра снизу, а не отдельной строкой под ним: строка добавляла
    плиткам разную высоту и ломала ряд.
@@ -863,6 +873,7 @@
 }
 .gallery-thumb:hover .gallery-info,
 .gallery-thumb.described .gallery-info,
+.gallery-thumb.failed .gallery-info,
 .gallery-thumb.edited .gallery-info { opacity: 1; }
 .gallery-info:hover { background: #4f46e5; }
 .gallery-info:focus-visible { outline: 2px solid #a5b4fc; outline-offset: 2px; }
@@ -870,6 +881,17 @@
 /* Выбор папки и кнопки — одной строкой, переносятся на узком. */
 .gallery-pick { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .gallery-pick select { flex: 1 1 180px; min-width: 0; }
+
+/* Когда обход возьмёт новые файлы — правым краем той же строки. ⚠ Встаёт
+   рядом с «Обновить» намеренно: кнопка делает то же немедленно, и человек,
+   прочитав «возьмёт в 19:20», видит рядом, чем это ускорить.
+
+   ⚠ `margin-left: auto` прижимает строку вправо, пока она влезает; на узком
+   экране flex-wrap переносит её на свою строку целиком, а не рвёт пополам. */
+.gallery-round {
+    margin-left: auto; font-size: 11px; color: #64748b; white-space: nowrap;
+}
+.gallery-round.late { color: #b45309; font-weight: 600; }
 .gallery-when { margin-top: 4px; font-size: 11px; color: #94a3b8; }
 /* Причина отказа — красным и словами. ⚠ Пустая сетка без неё читается как
    «у девушки нет фото», и человек идёт заводить папки заново. */
