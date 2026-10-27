@@ -53,7 +53,7 @@ from src.dating.people import people_name_case, people_name_parts
 # ⚠ `firstname` и `lastname` здесь **нет намеренно** — их не передают, а считают
 # из `name` (ниже). Дай мы их писать снаружи, появился бы способ разойтись с именем.
 COMPANION_CARD_COLUMNS = ('name', 'photo', 'age', 'city', 'country', 'email',
-                          'about', 'about_state', 'about_error')
+                          'about', 'about_state', 'about_error', 'params')
 
 
 def companion_card_name(name) -> dict:

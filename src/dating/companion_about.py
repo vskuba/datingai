@@ -31,8 +31,20 @@
 
 Не всё подряд: рост, вес и цвет глаз вопроса не рождают. Берётся то, о чём можно
 спросить, — занятие, «About Myself», увлечения, образование, семейное положение.
+
+## Что попадает в **поля** (`params`)
+
+А вот туда — всё снятое целиком, кроме того, что уже лежит колонками (имя,
+возраст, город, страна, номер). Описание пишет письмо, поля отвечают на вопросы
+в разговоре и показываются человеку на вкладке «Информация»; у описания бюджет
+жёсткий, у полей его нет. Подписи — английские, как на странице, а карта подписей
+своего сайта держит сам драйвер (`site/site_about.py`): на Ladadate поля
+страницы называются как в общем списке здесь, на Step2Love — своими именами
+(«Eye color», «About me», «Hair length») и переводятся к канону его картой.
+Реестр русских подписей и порядок показа — `companion_param.py`.
 """
 
+import json
 import re
 
 import httpx
@@ -41,7 +53,9 @@ from http_.http_heartbeat import http_heartbeat_cookies
 from http_.http_pool import http_pool_transport
 from datetime_.datetime_ import datetime_utc_now
 from logging_.logging_ import logger_info
+from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.companion_param import companion_param_values
 from src.dating.json_column import json_column_load
 from src.dating.ready import password_pick
 from src.dating.scenario import scenario_run
@@ -154,43 +168,75 @@ class DatingCompanionAboutError(Exception):
     """Собрать не вышло. Причина — словами, для журнала и страницы."""
 
 
-def companion_about_parse(text: str) -> dict:
+def companion_about_parse(text: str, labels: tuple = None) -> dict:
     """Разбирает текст анкеты на поля.
 
     Args:
         text: то, что снял сценарий, — одна строка со всеми полями подряд.
+        labels: подписи, по которым режем, **в порядке страницы**. Элемент —
+            строка (подпись сайта и есть канон) либо пара `(подпись сайта,
+            канон)`, когда на сайте поле называется иначе; канон `None` ставит
+            только границу — значение между ней выбрасывается (служебные
+            заголовки вроде «Photo Album», за которые пустое поле иначе
+            утащило бы мусор). Одна подпись, названная дважды, значит, что её
+            **второе вхождение — другое поле**: у Step2Love «Looking for:»
+            стоит и в анкете («Female (30-45 years)»), и в вопроснике (своими
+            словами). `None` — общий список `COMPANION_FIELDS`.
 
     Returns:
-        dict: «подпись → значение», только непустые. Ключи — как на сайте
-        (`Occupation`, `About Myself`): переводить их здесь незачем, а сверять с
-        сайтом по одинаковым словам проще.
+        dict: «каноническая подпись → значение», только непустые. Ключи —
+        подписи Ladadate (`Occupation`, `About Myself`): переводить их здесь
+        незачем, а сверять с сайтом по одинаковым словам проще.
 
     ⚠ **Значение — всё между своей подписью и следующей.** Иначе пришлось бы знать,
     из скольких слов состоит каждое, а «Location» это и «London», и «Stuttgart,
     Germany», и «New York, United States».
     """
+    entries = [(one, one) if isinstance(one, str) else one
+               for one in (labels or COMPANION_FIELDS)]
+
     flat = ' '.join(str(text or '').split())
     if not flat:
         return {}
 
     # Где какая подпись стоит. ⚠ Ищем **по границе слова**: без неё «Children»
     # нашлось бы внутри «Childrens», а «Drink» — внутри «Drinking».
+    #
+    # ⚠ Правая граница — пробел **или двоеточие**: сайты подписывают поля то
+    # «Location London» (Ladadate, DOM-пары без знаков), то «Location: London»
+    # (Step2Love). Без двоеточия «Marital status» не находилось бы вовсе, а
+    # «Photo Album» — стоя один раз с двоеточием и один без.
     found = []
-    for label in COMPANION_FIELDS:
-        match = re.search(r'(?:^|\s)' + re.escape(label) + r'(?=\s|$)', flat)
-        if match:
-            found.append((match.end(), label))
+    cache, taken = {}, {}
+    for site, canonical in entries:
+        if site not in cache:
+            cache[site] = list(re.finditer(
+                r'(?:^|\s)' + re.escape(site) + r'(?=[\s:]|$)', flat))
 
-    found.sort()
+        # Которое по счёту вхождение этой подписи задал список — то и берём.
+        # Повтор подписи в списке — не повторка, а отсылка к следующему вхождению.
+        place = taken.get(site, 0)
+        taken[site] = place + 1
+
+        if place < len(cache[site]):
+            found.append((cache[site][place].start(), cache[site][place].end(),
+                          canonical))
+
+    found.sort(key=lambda one: one[0])   # только по началу: каноны бывают None
 
     got = {}
-    for index, (start, label) in enumerate(found):
-        end = found[index + 1][0] - len(found[index + 1][1]) if index + 1 < len(found) \
-            else len(flat)
-        value = flat[start:end].strip(' ,;·')
+    for index, (_start, end, canonical) in enumerate(found):
+        if canonical is None:
+            continue
+
+        # До **начала** следующей подписи — границу держит её вхождение, а не
+        # длина канонического имени: у пары «Date of birth» → «Birthday» они
+        # разной длины, и на длине имя отрезало бы себе половину значения.
+        stop = found[index + 1][0] if index + 1 < len(found) else len(flat)
+        value = flat[end:stop].strip(' ,;·:#')
 
         if value.lower() not in COMPANION_EMPTY:
-            got[label] = value
+            got[canonical] = value
 
     return got
 
@@ -415,7 +461,7 @@ async def companion_about_http(profile: dict, uid: str) -> dict:
         raise DatingCompanionAboutError(
             'на странице нет блока анкеты — сессия протухла или сайт сменил вёрстку')
 
-    return _from_blocks(blocks, uid)
+    return _from_blocks(blocks, uid, driver.about_fields or COMPANION_FIELDS)
 
 
 async def companion_about_fetch(profile: dict, uid: str) -> dict:
@@ -491,28 +537,11 @@ async def companion_about_fetch(profile: dict, uid: str) -> dict:
             f"сценарий встал на шаге {run.get('step_no')}: {run.get('error')}")
 
     extract = run.get('extract') or {}
-    fields = companion_about_parse(scenario_field(extract, 'profile'))
-    city, country = companion_about_place(fields)
-    name, age = companion_about_head(scenario_field(extract, 'head'))
 
-    # ⚠ Номер сверяем с тем, что просили. Сайт мог увести на чужую анкету — по
-    # опечатке в номере или редиректом, — и записать чужие сведения человеку было
-    # бы хуже, чем не записать ничего.
-    got_uid = str(fields.get('Id:') or '').strip()
-    if got_uid and got_uid != uid:
-        raise DatingCompanionAboutError(
-            f'открылась чужая анкета: просили {uid}, а на странице {got_uid}')
-
-    # ⚠ Заглушку ленивой загрузки отбрасываем — то же правило, что у списков
-    # (`people.py`). Сайт грузит картинки лениво, и в `src` успевает попасть
-    # `/images/placeholder-loading.svg`; запиши мы её в карточку, она заслонила бы
-    # настоящее фото, снятое лентой, и человек увидел бы пустое место.
-    return {'fields': fields,
-            'about': companion_about_text(fields),
-            'city': city,
-            'country': country,
-            'name': name,
-            'age': age}
+    # ⚠ Разбор — общий с GET (`_from_blocks`): страница та же, и сверка номера
+    # та же — сайт мог увести на чужую анкету, и записать чужие сведения
+    # человеку было бы хуже, чем не записать ничего.
+    return _from_blocks(extract, uid, await _about_labels(site_id))
 
 
 async def companion_about_due(site_id: int, card: dict) -> bool:
@@ -619,11 +648,55 @@ async def companion_about_collect(profile: dict, uid: str) -> dict:
               ('city', got.get('city')), ('country', got.get('country')))
              if value}
 
+    # ⚠ **Поля пишем всегда, даже пустые**: мы на этой странице были и всё
+    # сняли, и оставить прежние значило бы держать у человека сведения, которых
+    # на странице уже нет — например после того, как он сам их стёр.
     await companion_touch(
         int(profile['site_id']), uid, about=about,
-        about_state='done' if about else 'empty', about_error='', **extra)
+        about_state='done' if about else 'empty', about_error='',
+        params=json.dumps(companion_param_values(got.get('fields') or {}),
+                          ensure_ascii=False),
+        **extra)
 
     return {'ok': True, 'about': about, 'error': ''}
+
+
+async def companion_about_new(site_id: int, profile_id: int, uid: str) -> None:
+    """Заведённой только что карточке — анкету с сайта, если пора. Молча.
+
+    Круги зовут её **сразу** после того, как карточка легла: человек попал в
+    работу — значит, о нём есть чем спросить в первом же письме. «Пора ли»
+    решает `companion_about_due`, и у снятого недавно человека второго похода
+    не будет вовсе — заход описания ради описания кругам не нужен.
+
+    ⚠ **Не бросает.** Карточка уже заведена, и сорвать из-за анкеты ленту или
+    импорт — значит потерять и карточку. Причина ляжет в состояние самой
+    карточки (`companion_about_collect`), а здесь — только строка в журнал.
+    """
+    from src.uvicorn.routers.dating.companion import companion_get
+
+    uid = str(uid or '').strip()
+    if not uid:
+        return
+
+    try:
+        if not await companion_about_due(
+                int(site_id), await companion_get(int(site_id), uid)):
+            return
+
+        # Профиль — хозяйка похода: её логин, её пароль и её выход (`scenario_run`
+        # ведёт вход под той анкетой, что увидела человека).
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT * FROM profile WHERE id = %s',
+                             (int(profile_id),))
+            profile = dict(await db.fetchone() or {})
+
+        if not profile:
+            return
+
+        await companion_about_collect(profile, uid)
+    except Exception as e:
+        logger_info(f'[dating] анкету нового собеседника {uid} не сняли: {e}')
 
 
 def _tail(value: str) -> str:
@@ -659,20 +732,43 @@ def _tail(value: str) -> str:
     return re.sub(r'\s*\.{2,}\s*More\s*$', '…', value).strip()
 
 
-def _from_blocks(blocks: dict, uid: str) -> dict:
+def _from_blocks(blocks: dict, uid: str, labels: tuple = None) -> dict:
     """Разбирает снятые блоки в поля. ⚠ Общий для GET и сценария.
 
     Разбор один на оба пути намеренно: страница одна и та же, и второй его вид
     разошёлся бы с первым на первой же правке подписей.
     """
-    fields = companion_about_parse(scenario_field(blocks, 'profile'))
+    fields = companion_about_parse(scenario_field(blocks, 'profile'), labels)
     city, country = companion_about_place(fields)
     name, age = companion_about_head(scenario_field(blocks, 'head'))
 
-    got_uid = str(fields.get('Id:') or '').strip()
-    if got_uid and got_uid != str(uid):
+    # ⚠ Номер сверяем **первой цепочкой цифр из значения**, а не значением
+    # целиком: у сайтовой страницы до следующей границы значение номера успевает
+    # собрать шапочный мусор («#1182655 Send message Virtual gifts»), и цепочка
+    # цифр в нём всё та же. Чужую страницу это не прячет: на чужой анкете и
+    # цифры другие.
+    got_uid = re.search(r'\d+', str(fields.get('Id:') or ''))
+    if got_uid and got_uid.group(0) != str(uid):
         raise DatingCompanionAboutError(
-            f'открылась чужая анкета: просили {uid}, а на странице {got_uid}')
+            f'открылась чужая анкета: просили {uid}, а на странице '
+            f'{got_uid.group(0)}')
+
+    # ⚠ Имя и возраст из шапки — как были. Но сценарий Step2Love снимает только
+    # анкету, шапки у него нет; тогда те же два факта берутся из полей страницы
+    # («Name:», «Age:») — они те же самые, просто в другом месте страницы.
+    if not name:
+        name = str(fields.get('Name') or '').strip()[:COMPANION_NAME_MAX]
+
+    if not age:
+        years = re.search(r'\d+', str(fields.get('Age') or ''))
+        age = int(years.group(0)) if years else 0
 
     return {'fields': fields, 'about': companion_about_text(fields),
             'city': city, 'country': country, 'name': name, 'age': age}
+
+
+async def _about_labels(site_id: int) -> tuple:
+    """Подписи полей сайта — карта его драйвера либо общий список."""
+    return (site_registry_about(
+        json_column_load(await site_setting(site_id, 'presence'))).about_fields
+        or COMPANION_FIELDS)

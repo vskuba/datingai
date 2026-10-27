@@ -3355,6 +3355,7 @@
 
         if (compTab === 'info') {
             companionInfoBind(row);
+            compParamsLoad(row.id);
 
             return;
         }
@@ -3443,6 +3444,14 @@
             + shown('Страна', row.country)
             + '</div>'
 
+            // Поля снятой страницы — всё, что человек рассказал о себе, кроме
+            // того, что уже показано слева. Подписи и порядок задаёт сервер
+            // (`companion_param`), но приезжают они **своей ручкой**, а не
+            // списком: список намеренно не несёт `params` — по JSON-колонке на
+            // строку. Коробку заполнит `compParamsLoad`; полей нет вовсе —
+            // пусто: анкету ещё не снимали, пустой список пугал бы сильнее.
+            + '<div id="compParamsBox"></div>'
+
             + '<div class="info-head">Правится здесь</div>'
             + '<div class="info-grid">'
 
@@ -3499,6 +3508,41 @@
             + '<textarea class="info-bio" id="compBio" readonly spellcheck="false"'
             + ' placeholder="собираю…"></textarea>'
             + '</div></div>';
+    }
+
+    // Поля анкеты с сайта: приезжают своей ручкой — список их не несёт
+    // (`companion_params`), а вкладке они нужны одной строке. Гонка та же, что
+    // у переменных: пока шёл запрос, могли выбрать другого человека или вкладку.
+    async function compParamsLoad(wanted) {
+        let lines;
+        try {
+            lines = (await getData(
+                `${BASE}/api/dating/companion/${wanted}/params`)).result || [];
+        } catch (e) {
+            say('поля анкеты не пришли: ' + e.message, true);
+
+            return;
+        }
+
+        if (companionId !== wanted || compTab !== 'info') return;
+
+        const box = document.getElementById('compParamsBox');
+        if (!box) return;
+
+        box.innerHTML = lines.length
+            ? '<div class="info-head">Поля анкеты с сайта</div>'
+              + '<i class="info-hint">Приходят со страницы и правятся только'
+              + ' там — там же, где вся карточка.</i>'
+              + '<div class="info-grid">'
+              + lines.map(one =>
+                  '<label class="info-field' + (one.wide ? ' info-wide' : '') + '">'
+                  + `<span class="info-label">${esc(one.title)}</span>`
+                  + (one.wide
+                      ? `<textarea readonly rows="3">${esc(String(one.value))}</textarea>`
+                      : `<input type="text" value="${esc(String(one.value))}" readonly>`)
+                  + '</label>').join('')
+              + '</div>'
+            : '';
     }
 
     // Переключает приоритет собеседника в рассылке.

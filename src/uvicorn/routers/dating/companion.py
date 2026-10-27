@@ -38,6 +38,8 @@ from src.dating.companion_about import (COMPANION_ABOUT_EVERY_DEFAULT,
                                         COMPANION_ABOUT_EVERY_SETTING)
 from src.dating.companion_bio import companion_bio_build
 from src.dating.companion_card import companion_save
+from src.dating.companion_param import companion_param_shown
+from src.dating.json_column import json_column_load
 
 from src.auth.auth import AuthUser, auth_required
 from src.dating.mailing import mailing_companion_vars
@@ -126,6 +128,9 @@ async def companion_list(site_id: int = 0, find: str = '',
         return {'result': [], 'total': 0, 'limit': COMPANION_LIMIT}
 
     sql = ('SELECT id, site_id, uid, name, firstname, lastname, photo, age, city, country, email,'
+           # ⚠ `params` здесь **не читаем**: он нужен карточке, а не строке
+           # списка — две сотни JSON-колонок уехали бы в ответ ради вкладок,
+           # которых на списке нет.
            ' priority, about, about_state, about_error, about_at, created_at,'
            ' updated_at FROM companion WHERE site_id = %s')
     args = [int(site_id)]
@@ -345,6 +350,25 @@ async def companion_vars(companion_id: int,
     return {'result': mailing_companion_vars(_answer(row), known)}
 
 
+@router.get('/{companion_id}/params', include_in_schema=False)
+async def companion_params(companion_id: int,
+                           user: AuthUser = Depends(auth_required)):
+    """Поля снятой страницы сайта — для вкладки «Информация» карточки.
+
+    Returns:
+        dict: список строк — `title`, `value`, `wide`; порядок и русские подписи
+        задаёт реестр (`companion_param`), страница их только раскладывает.
+
+    ⚠ Зовётся **только вкладкой**, а не списком: список намеренно не несёт
+    `params` — по JSON-колонке на строку, а нужны они одной строке и редко.
+    Тот же узор, что у `/{id}/var` ниже.
+
+    ⚠ `_row` отвечает **уже разобранной** карточкой (`_answer` внутри), где
+    `params` — готовые строки; разбирать второй раз значило бы отдать пустоту.
+    """
+    return {'result': (await _row(companion_id))['params']}
+
+
 async def companion_get(site_id: int, uid: str) -> dict:
     """Карточка человека для кода. Нет такой — пустой словарь.
 
@@ -391,8 +415,8 @@ async def companion_touch(site_id: int, uid: str, **fields) -> dict:
     """Дописывает в карточку то, что стало известно. Нет карточки — заводит.
 
     Args:
-        **fields: любые из `about`, `about_state`, `about_error`, `city`,
-            `country`, `name`, `photo`, `age`. Что не назвали — не трогаем.
+        **fields: любые из `about`, `params`, `about_state`, `about_error`,
+            `city`, `country`, `name`, `photo`, `age`. Что не назвали — не трогаем.
 
     Returns:
         dict: карточка после правки.
@@ -429,7 +453,7 @@ async def _row(companion_id: int) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, site_id, uid, name, firstname, lastname, photo, age, city, country, email,'
-            ' priority, about, about_state, about_error, about_at, created_at,'
+            ' priority, about, params, about_state, about_error, about_at, created_at,'
             ' updated_at FROM companion WHERE id = %s', (int(companion_id),))
         row = await db.fetchone()
 
@@ -446,7 +470,7 @@ async def _row_by_uid(site_id: int, uid: str, soft: bool = False) -> dict:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, site_id, uid, name, firstname, lastname, photo, age, city, country, email,'
-            ' priority, about, about_state, about_error, about_at, created_at,'
+            ' priority, about, params, about_state, about_error, about_at, created_at,'
             ' updated_at FROM companion WHERE site_id = %s AND uid = %s',
             (int(site_id), str(uid)))
         row = await db.fetchone()
@@ -519,6 +543,10 @@ def _answer(row: dict, online: dict = None, every: int = 0) -> dict:
             'email': str(row['email']),
             'priority': bool(row.get('priority')),
             'about': about,
+            # Поля снятой страницы — строками [{'title','value','wide'}] и в
+            # порядке реестра: MySQL пересортировал бы ключи JSON-колонки сам,
+            # а русских подписей страница не знает (реестр — `companion_param`).
+            'params': companion_param_shown(json_column_load(row.get('params'))),
             'about_state': str(row['about_state']),
             'about_error': str(row['about_error']),
             'about_at': row['about_at'],

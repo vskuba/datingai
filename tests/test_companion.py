@@ -926,3 +926,40 @@ class TestPriorityOrders:
 
         assert companion['uid'] in await _marked(SITE)
         assert companion['uid'] not in await _marked(SITE + 1)
+
+
+class TestProfileFieldsRoute:
+    """Вкладка «Информация»: поля анкеты едут **своей ручкой**, а не списком.
+
+    ⚠ Список намеренно не читает `params` — по JSON-колонке на строку, а нужны
+    они одной строке. Тот же узор, что у переменных (`/{id}/var`): вкладка
+    догружает своё сама.
+    """
+
+    async def test_list_row_says_nothing(self, auth_client, companion):
+        row = (await auth_client.get(
+            f"/api/dating/companion?site_id={SITE}&find={companion['uid']}")
+        ).json()['result'][0]
+
+        assert row['params'] == []
+
+    async def test_route_shows_registry_labels(self, auth_client, companion):
+        import json
+
+        from src.uvicorn.routers.dating.companion import companion_touch
+
+        # ⚠ Не PUT'ом: он пишет почту и описание, а поля сайта правит только
+        # снятие анкеты — своей дверью, в процессе.
+        await companion_touch(SITE, companion['uid'], params=json.dumps(
+            {'About Myself': 'Парусный спорт', 'Height': '182 cm'},
+            ensure_ascii=False))
+
+        lines = (await auth_client.get(
+            f"/api/dating/companion/{companion['id']}/params")).json()['result']
+        titles = [one['title'] for one in lines]
+
+        assert 'Рост' in titles and 'О себе' in titles
+        # Порядок задаёт только реестр: «Рост» в нём раньше «О себе».
+        assert titles.index('Рост') < titles.index('О себе')
+        wide = {one['title'] for one in lines if one['wide']}
+        assert 'О себе' in wide and 'Рост' not in wide

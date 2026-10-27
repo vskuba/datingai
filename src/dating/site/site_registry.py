@@ -12,6 +12,7 @@
 
 from src.dating.site.site_about import (DatingSiteAbout,
                                         DatingSiteAboutLadadate)
+from src.dating.site.site_about_step2love import DatingSiteAboutStep2Love
 from src.dating.site.site_base import DatingSiteChat
 from src.dating.site.site_goldenbride import (DatingSiteChatGoldenbride,
                                               DatingSiteProfileGoldenbride)
@@ -46,6 +47,7 @@ DATING_SITE_PROFILE_DRIVERS = {
 # таблица заставляла бы заводить класс ради того, что не менялось.
 DATING_SITE_ABOUT_DRIVERS = {
     DatingSiteAboutLadadate.name: DatingSiteAboutLadadate,
+    DatingSiteAboutStep2Love.name: DatingSiteAboutStep2Love,
     DatingSiteAbout.name: DatingSiteAbout,
 }
 

@@ -75,6 +75,7 @@
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.companion_about import companion_about_new
 from src.dating.companion_card import companion_save
 from src.dating.log import log_write
 from src.dating.people import PEOPLE_NAME_MAX, PEOPLE_UID_MAX
@@ -439,6 +440,13 @@ async def favorite_sync(profile: dict, base: str, password: str) -> int:
     # же ответе. Заведение дешёвое (один `INSERT … ON DUPLICATE`), а «только
     # новым» означало бы, что у знакомых пар имя не появится никогда.
     await _cards_put(int(profile['site_id']), rows)
+
+    # ⚠ Новым карточкам — сразу и анкета с сайта, той же дверью, что у ленты
+    # гостей: страница знает о человеке больше, чем список закладок. Знакомым
+    # `companion_about_new` проверит состояние одним `SELECT` и пройдёт мимо.
+    for one in rows:
+        await companion_about_new(int(profile['site_id']), int(profile['id']),
+                                  str(one['uid']))
 
     listed = {one['uid'] for one in rows}
     known = await favorite_settled(int(profile['id']))
