@@ -27,19 +27,24 @@
 from config.config import config_get
 from google_drive_.google_drive_ import (GOOGLE_DRIVE_FOLDER_MIME,
                                          google_drive_list)
-from google_drive_.google_drive_walk import google_drive_find, google_drive_walk
+from google_drive_.google_drive_walk import google_drive_folder, google_drive_walk
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.error import ERROR_DRIVE, error_clear, error_write
 
-# Общая папка, внутри которой лежат папки девушек. Имя, а не номер: так его
-# задал человек в окружении.
+# Общая папка, внутри которой лежат папки девушек. ⚠ Значением годится и имя, и
+# **номер** папки, и ссылка на неё: разбирает их общий слой. Чужую папку —
+# расшаренную нам, а не нашу — задают номером: имя у неё живёт до первого
+# переименования владельцем, а переименование приходит молча, отказом «папки
+# нет» посреди работающей галереи.
 GALLERY_ROOT_NAME = 'GOOGLE_DRIVE_FOLDER'
 
 # Фразы отказа. Рядом с проверкой, чтобы не разошлись с тем, что видит человек.
 GALLERY_WHY_NO_ROOT = 'Диск не настроен: не задана общая папка'
 GALLERY_WHY_NOT_SHARED = ('папку не расшарили на сервисный аккаунт — '
                           'аккаунту не видно ни одного файла')
+GALLERY_WHY_NO_ROOT_FOLDER = ('общей папки «{folder}» аккаунту не видно — '
+                              'проверьте имя или номер в настройке')
 GALLERY_WHY_NO_FOLDER = 'папки «{folder}» в общей папке нет'
 
 
@@ -50,21 +55,34 @@ async def gallery_index_folders() -> list[str]:
     содержимое.
 
     Returns:
-        Имена по алфавиту. Пустой список значит «общая папка пуста», а не
-        «доступа нет» — второе поднимает отказ.
+        Имена по алфавиту, **без краевых пробелов**. Пустой список значит
+        «общая папка пуста», а не «доступа нет» — второе поднимает отказ.
 
     Raises:
         RuntimeError: Диск не настроен, не расшарен или молчит — словами из
             `GALLERY_WHY_*` и из общего слоя.
+
+    ⚠⚠ **Пробелы срезаются здесь, у источника списка.** Имена папок придумывают
+    люди, и лишний пробел у них обычное дело (на живом Диске 27.10.2026 — три
+    имени из двенадцати). А выбранное имя сохраняется обрезанным: его обрезает
+    и браузер, и сама ручка выбора. Отдай список как есть — выбранная человеком
+    папка не совпала бы с собой же при сохранении, и вкладка ответила бы «папки
+    «…» на Диске нет» на имя, которое сама же и показала.
+
+    ⚠ На обходе это не сказывается: `google_drive_folder` ищет имя прощая
+    пробелы (`docs-common/google_drive.md`, §4).
     """
     root = await gallery_index_root()
     rows = await google_drive_list(f"'{root}' in parents and trashed = false")
-    return sorted(row['name'] for row in rows
+    return sorted(row['name'].strip() for row in rows
                   if row['mimeType'] == GOOGLE_DRIVE_FOLDER_MIME)
 
 
 async def gallery_index_root() -> str:
-    """Номер общей папки на Диске по её имени из окружения.
+    """Номер общей папки на Диске по тому, что задано в окружении.
+
+    Значением годится имя папки, её номер или ссылка на неё — разбирает их
+    `google_drive_folder` (`docs-common/google_drive.md`, §4).
 
     ⚠⚠ **Отличает «не расшарили» от «папки с таким именем нет».** У сервисного
     аккаунта оба случая выглядят пустым ответом, и разница видна только лишним
@@ -75,7 +93,7 @@ async def gallery_index_root() -> str:
     if not name:
         raise RuntimeError(GALLERY_WHY_NO_ROOT)
 
-    found = await google_drive_find(name, folders_only=True)
+    found = await google_drive_folder(name)
     if found:
         return found[0]['id']
 
@@ -83,7 +101,7 @@ async def gallery_index_root() -> str:
     # признак, различающий два одинаковых с виду отказа.
     if not await google_drive_list('trashed = false'):
         raise RuntimeError(GALLERY_WHY_NOT_SHARED)
-    raise RuntimeError(GALLERY_WHY_NO_FOLDER.format(folder=name))
+    raise RuntimeError(GALLERY_WHY_NO_ROOT_FOLDER.format(folder=name))
 
 
 async def gallery_index_profile(profile_id: int, folder: str) -> dict:
@@ -91,7 +109,8 @@ async def gallery_index_profile(profile_id: int, folder: str) -> dict:
 
     Args:
         profile_id: чья галерея.
-        folder: имя её папки внутри общей.
+        folder: имя её папки внутри общей; годится и номер, если его вписали в
+            колонку руками — выбор на вкладке предлагает только имена.
 
     Returns:
         `{'found': int, 'added': int, 'gone': int, 'back': int}` — что застали и
@@ -102,9 +121,13 @@ async def gallery_index_profile(profile_id: int, folder: str) -> dict:
             нет — словами.
 
     ⚠ Описание, теги и отметку правки не трогает — см. шапку модуля.
+
+    ⚠⚠ **Папка ищется внутри общей, и номер это правило не обходит**: номер из
+    чужого конца Диска за совпадение не считается. Иначе одна описка в поле
+    «папка на Диске» утащила бы в галерею анкеты чужие фотографии.
     """
     root = await gallery_index_root()
-    found = await google_drive_find(folder, parent=root, folders_only=True)
+    found = await google_drive_folder(folder, parent=root)
     if not found:
         raise RuntimeError(GALLERY_WHY_NO_FOLDER.format(folder=folder))
 

@@ -21,6 +21,8 @@ from fastapi import HTTPException
 
 from mysql_.mysql_ import mysql_get_db_async
 
+from tests.drive_fake import DRIVE_FAKE_ROOT
+
 from src.dating.gallery_index import gallery_index_profile
 from src.uvicorn.routers.dating.gallery import (GalleryFileSave,
                                                 GalleryFolderSave,
@@ -39,7 +41,7 @@ GIRL_FOLDER = 'girl@example.com'
 @pytest.fixture
 def tree(drive):
     """Дерево настоящей формы: папка девушки — не лист."""
-    drive.add_folder('Dating', 'root-1')
+    drive.add_folder(DRIVE_FAKE_ROOT, 'root-1')
     drive.add_folder(GIRL_FOLDER, 'girl-1', parent='root-1')
     drive.add_folder('photo', 'photo-1', parent='girl-1')
     drive.add_folder('public', 'public-1', parent='photo-1')

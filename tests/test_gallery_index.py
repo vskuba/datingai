@@ -22,6 +22,8 @@ import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
+from tests.drive_fake import DRIVE_FAKE_ROOT, DRIVE_FAKE_ROOT_SETTING
+
 from src.dating.error import ERROR_DRIVE
 from src.dating.gallery_index import (GALLERY_WHY_NOT_SHARED,
                                       gallery_index_folders,
@@ -33,7 +35,7 @@ pytestmark = pytest.mark.profile
 
 STAND_SITE = 999_343
 
-ROOT = 'Dating'
+ROOT = DRIVE_FAKE_ROOT
 GIRL_FOLDER = 'girl@example.com'
 
 
@@ -51,6 +53,27 @@ async def girl(auth_client):
         await db.execute('DELETE FROM gallery_file WHERE profile_id = %s', (profile_id,))
         await db.connection.commit()
     await profile_delete(profile_id, user=None)
+
+
+# Номер настоящего вида — 33 знака. Короткий (`root-1`) на номер не похож, и
+# дверь к Диску по нему справедливо не пойдёт: вид решает, **спрашивать ли**.
+DRIVE_ID = '1TfgC8S7mBKUAiz8AxTq4Z3xHjXjTIyZe'
+
+
+@pytest.fixture
+def tree_by_id(drive):
+    """Общая папка, которую **нельзя** найти по имени из настройки.
+
+    Повторяет живое положение дел: папка чужая, назвал её владелец, и в
+    настройке у нас стоит её номер. Имя при этом ещё и с краевыми пробелами —
+    как на настоящем Диске (снято 27.10.2026).
+    """
+    drive.add_folder(' 1. Модели_фото_данные _все_сайты ', DRIVE_ID)
+    drive.add_folder(GIRL_FOLDER, 'girl-9', parent=DRIVE_ID)
+    drive.add_folder('photo', 'photo-9', parent='girl-9')
+    drive.add_file('diana.png', 'file-9', parent='photo-9')
+
+    return drive
 
 
 @pytest.fixture
@@ -208,6 +231,63 @@ async def test_missing_folder_names_it(tree, girl):
     assert got['why'] != GALLERY_WHY_NOT_SHARED, 'это другой отказ'
 
 
+async def test_root_by_id(tree_by_id, monkeypatch):
+    """⚠⚠ Общая папка задана **номером** — имени такого в настройке нет вовсе.
+
+    Так и настроен прод: папка чужая, её ведёт владелец, и переименование с
+    его стороны приходит молча. По имени галерея в этот день ослепла бы.
+    """
+    _root_setting(monkeypatch, DRIVE_ID)
+
+    assert await gallery_index_folders() == [GIRL_FOLDER]
+
+
+async def test_root_by_link(tree_by_id, monkeypatch):
+    """Ссылка из адресной строки годится как есть: номер из неё достают за нас."""
+    _root_setting(monkeypatch,
+                  f'https://drive.google.com/drive/folders/{DRIVE_ID}?usp=sharing')
+
+    assert await gallery_index_folders() == [GIRL_FOLDER]
+
+
+async def test_root_name_survives_stray_spaces(tree_by_id, monkeypatch):
+    """Имя с краевыми пробелами — живой случай, и настройка его переживает.
+
+    Человек перепишет имя из Диска глазами, пробелов не увидит и не наберёт.
+    """
+    _root_setting(monkeypatch, '1. Модели_фото_данные _все_сайты')
+
+    assert await gallery_index_folders() == [GIRL_FOLDER]
+
+
+async def test_girl_folder_with_stray_space(tree, girl):
+    """⚠⚠ Имя папки девушки в списке и в сохранённом значении — **одно и то же**.
+
+    Пробел в имени папки ставит человек, а обрезают его и браузер, и ручка
+    сохранения. Отдай список как есть — выбранная папка не совпала бы с собой
+    же при сохранении, а обход после сохранения её бы не нашёл.
+    """
+    tree.items['girl-1']['name'] = f' {GIRL_FOLDER} '
+
+    assert await gallery_index_folders() == [GIRL_FOLDER], 'список обязан быть обрезан'
+    assert (await gallery_index_profile(girl, GIRL_FOLDER))['found'] == 2
+
+
+async def test_id_from_outside_is_refused(tree, girl):
+    """⚠⚠ Номер папки, лежащей **вне общей**, за папку девушки не считается.
+
+    Иначе одна описка в поле «папка на Диске» утащила бы в галерею анкеты
+    чужие фотографии с чужого конца Диска — молча и с видом удачи.
+    """
+    tree.add_folder('чужая папка', '1OutsideFolderAAAAAAAAAAAAAAAAAAAA')
+    tree.add_file('чужое.png', 'file-outside', parent='1OutsideFolderAAAAAAAAAAAAAAAAAAAA')
+
+    got = await gallery_index_sync(girl, '1OutsideFolderAAAAAAAAAAAAAAAAAAAA')
+
+    assert got['ok'] is False, 'папка не внутри общей — брать её нельзя'
+    assert got['why'] != GALLERY_WHY_NOT_SHARED, 'это другой отказ'
+
+
 async def test_token_is_asked_once(tree, girl):
     """Токен берётся из кэша: два обхода — один поход за токеном."""
     await gallery_index_profile(girl, GIRL_FOLDER)
@@ -250,3 +330,15 @@ async def test_missing_folder_is_not_a_source_failure(tree, girl):
             'отказ источника обязан попасть в журнал'
         await db.execute('DELETE FROM error WHERE source = %s', (ERROR_DRIVE,))
         await db.connection.commit()
+
+
+def _root_setting(monkeypatch, value: str) -> None:
+    """Подменить настройку общей папки на время одного теста.
+
+    По умолчанию её пиннит фикстура Диска (`DRIVE_FAKE_ROOT`); здесь она
+    задаётся иначе — номером, ссылкой, именем с пробелами.
+    """
+    monkeypatch.setattr('src.dating.gallery_index.config_get',
+                        lambda name, default='': (value
+                                                  if name == DRIVE_FAKE_ROOT_SETTING
+                                                  else default))

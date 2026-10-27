@@ -73,6 +73,17 @@ DRIVE_FAKE_PNG = _png()
 
 DRIVE_FAKE_FOLDER_MIME = 'application/vnd.google-apps.folder'
 
+# Имя общей папки, под которым её знает сюита, и ключ настройки, из которой его
+# берёт код галереи.
+#
+# ⚠⚠ **Настройка пиннится фикстурой, а не берётся из `.env`.** В живом `.env`
+# стоит та папка, с которой работает прод, — сегодня номером чужой расшаренной
+# папки. Читай сюита его, каждый тест галереи искал бы на поддельном Диске
+# настоящую папку и краснел бы «общей папки аккаунту не видно» — отказом, не
+# имеющим к проверяемому коду никакого отношения.
+DRIVE_FAKE_ROOT = 'Dating'
+DRIVE_FAKE_ROOT_SETTING = 'GOOGLE_DRIVE_FOLDER'
+
 # Пара RSA на весь прогон: заводить её на каждый тест — лишние полсекунды.
 _key_pem: bytes = b''
 
@@ -143,6 +154,13 @@ class DriveFake:
             return httpx.Response(200, content=DRIVE_FAKE_PNG,
                                   headers={'content-type': 'image/png'})
 
+        # ⚠ Запись по номеру (`files/<id>`) — **отдельная ветка, а не список**:
+        # разбор `q` её бы не заметил и вернул всё дерево, то есть проверка
+        # «настройка задана номером» зеленела бы при сломанном поиске.
+        by_id = re.search(r'/drive/v3/files/([A-Za-z0-9_-]+)', url)
+        if by_id:
+            return self._one(by_id.group(1))
+
         if '/drive/v3/files' in url:
             return self._list(request)
 
@@ -153,6 +171,22 @@ class DriveFake:
                                'createdTime': '2026-01-01T00:00:00Z'}
         self.children.setdefault(parent, []).append(file_id)
         return file_id
+
+    def _one(self, file_id: str) -> httpx.Response:
+        """`files.get`: запись по номеру — или `404`, как у живого Диска.
+
+        ⚠ `404` отвечает и неизвестный номер, и известный, пока ничего не
+        расшарено: с той стороны это одно и то же (`docs/google_drive.md`, §4).
+        Родителя приходится считать по дереву — у заглушки он хранится обратной
+        связью «папка → дети».
+        """
+        item = None if self.not_shared else self.items.get(file_id)
+        if not item:
+            return httpx.Response(404, json={'error': {'message': 'File not found'}})
+
+        parents = [folder for folder, kids in self.children.items()
+                   if folder and file_id in kids]
+        return _json({**item, 'parents': parents})
 
     def _list(self, request: httpx.Request) -> httpx.Response:
         """`files.list`: разбираем `q` ровно настолько, насколько его строит дверь."""
@@ -216,6 +250,13 @@ def drive(monkeypatch, tmp_path) -> DriveFake:
     monkeypatch.setattr(bytes_module, 'http_pool_client', _pool(fake))
     monkeypatch.setattr(drive_module, 'config_get',
                         lambda name, default='': (str(key) if name == 'GOOGLE_DRIVE_KEY'
+                                                  else default))
+    # Общая папка — своя, а не из `.env` разработчика (см. `DRIVE_FAKE_ROOT`).
+    # Строкой, а не импортом: заглушка Диска не знает про галерею анкет и знать
+    # не должна — она подменяет Диск, а не предметную область.
+    monkeypatch.setattr('src.dating.gallery_index.config_get',
+                        lambda name, default='': (DRIVE_FAKE_ROOT
+                                                  if name == DRIVE_FAKE_ROOT_SETTING
                                                   else default))
     # ⚠ Кэш токена модульный: без чистки второй тест получил бы токен первого, и
     # проверка «токен берётся из кэша» зеленела бы при сломанном кэше.

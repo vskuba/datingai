@@ -21,6 +21,8 @@ import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
+from tests.drive_fake import DRIVE_FAKE_ROOT
+
 from src.dating import gallery_vision
 from src.dating.gallery_vision import (GALLERY_VISION_BATCH, gallery_vision_due,
                                        gallery_vision_one, gallery_vision_run)
@@ -95,7 +97,7 @@ def agent(monkeypatch):
 @pytest.fixture
 def tree(drive):
     """Папка с семью снимками — больше, чем берётся за заход."""
-    drive.add_folder('Dating', 'root-1')
+    drive.add_folder(DRIVE_FAKE_ROOT, 'root-1')
     drive.add_folder('girl@example.com', 'girl-1', parent='root-1')
     drive.add_folder('public', 'public-1', parent='girl-1')
     for number in range(7):
