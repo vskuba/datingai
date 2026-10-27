@@ -64,8 +64,8 @@ def only_mine(monkeypatch, girl):
 
     real = module.gallery_vision_due
 
-    async def _due(limit=GALLERY_VISION_BATCH):
-        return [row for row in await real(limit * 10)
+    async def _due(limit=GALLERY_VISION_BATCH, site_id=0):
+        return [row for row in await real(limit * 10, site_id)
                 if row['profile_id'] == girl][:limit]
 
     monkeypatch.setattr(module, 'gallery_vision_due', _due)

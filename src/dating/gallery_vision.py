@@ -152,11 +152,13 @@ def gallery_vision_tags_keep(tags) -> list:
     return [tag for tag in GALLERY_VISION_TAGS_ALL if tag in seen]
 
 
-async def gallery_vision_due(limit: int = GALLERY_VISION_BATCH) -> list[dict]:
+async def gallery_vision_due(limit: int = GALLERY_VISION_BATCH,
+                             site_id: int = 0) -> list[dict]:
     """Снимки, которые пора разобрать: ещё не разобранные либо сменившиеся.
 
     Args:
         limit: сколько строк вернуть.
+        site_id: только снимки анкет этого сайта; `0` — любого.
 
     Returns:
         Строки индекса с номером анкеты и файла.
@@ -164,19 +166,30 @@ async def gallery_vision_due(limit: int = GALLERY_VISION_BATCH) -> list[dict]:
     ⚠ Условие **исключает правленое руками** и ушедшее. Видео тоже не берётся:
     у него разбирать нечего — превью это первый кадр, и описывать по нему
     видеозапись значило бы выдавать догадку за знание.
+
+    ⚠ Отбор по сайту нужен заходу: пачка задана **настройкой сайта**, и общая
+    выборка отдавала бы одному сайту место другого — молча и в пользу того, у
+    кого номера анкет меньше.
     """
+    where = ['is_gone = 0', 'kind = %s', 'edited_at IS NULL',
+             '(described_at IS NULL OR described_md5 <> md5)']
+    args: list = ['image']
+    if site_id:
+        where.append('profile_id IN (SELECT id FROM profile WHERE site_id = %s)')
+        args.append(int(site_id))
+
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT id, profile_id, file_id, name, md5, described_md5 '
             '  FROM gallery_file '
-            ' WHERE is_gone = 0 AND kind = %s AND edited_at IS NULL '
-            '   AND (described_at IS NULL OR described_md5 <> md5) '
-            ' ORDER BY described_at IS NOT NULL, id LIMIT %s', ('image', int(limit)))
+            f' WHERE {" AND ".join(where)} '
+            ' ORDER BY described_at IS NOT NULL, id LIMIT %s', (*args, int(limit)))
 
         return [dict(row) for row in (await db.fetchall() or [])]
 
 
-async def gallery_vision_run(limit: int = GALLERY_VISION_BATCH) -> dict:
+async def gallery_vision_run(limit: int = GALLERY_VISION_BATCH,
+                             site_id: int = 0) -> dict:
     """Разобрать очередную пачку снимков. Итог — числами для журнала задания.
 
     Returns:
@@ -185,7 +198,7 @@ async def gallery_vision_run(limit: int = GALLERY_VISION_BATCH) -> dict:
     Не бросает: отказ по одному снимку не должен уносить остальную пачку —
     причина ложится в `described_error` и строка остаётся на следующий заход.
     """
-    rows = await gallery_vision_due(limit)
+    rows = await gallery_vision_due(limit, site_id)
     done = failed = 0
 
     for row in rows:

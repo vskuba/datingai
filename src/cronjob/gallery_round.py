@@ -40,37 +40,90 @@ from mysql_.mysql_ import mysql_get_db_async, mysql_pool_close
 
 from src.dating.gallery import gallery_folder_name
 from src.dating.gallery_index import gallery_index_sync
-from src.dating.gallery_vision import GALLERY_VISION_BATCH, gallery_vision_run
+from src.dating.gallery_vision import gallery_vision_run
+from src.dating.round import round_sites, round_sites_run
+from src.dating.site_setting import site_seconds
+
+# Ключ слота темпа. ⚠ Метится `{id}` — номером **сайта**: чужая метка осталась
+# бы в ключе текстом, то есть одним общим слотом на все сайты (`round.md`).
+GALLERY_ROUND_SLOT = 'dating:gallery:{id}'
+
+# Настройки сайта, которыми правят заход.
+GALLERY_EVERY_KEY = 'gallery_every'
+GALLERY_BATCH_KEY = 'gallery_vision_batch'
 
 
-async def gallery_round_run(batch: int = GALLERY_VISION_BATCH) -> dict:
-    """Один заход: обойти папки включённых анкет, затем разобрать пачку снимков.
-
-    Args:
-        batch: сколько снимков отдать модели за этот заход.
+async def gallery_round_run() -> dict:
+    """Один заход: обойти папки анкет каждого сайта, затем разобрать пачку снимков.
 
     Returns:
-        `{'profiles': int, 'found': int, 'added': int, 'gone': int,
-          'failed': int, 'vision': {...}}`.
+        `{'sites': int, 'profiles': int, 'found': int, 'added': int,
+          'gone': int, 'failed': int, 'vision': {...}}`.
 
-    ⚠ **Отказ по одной анкете не уносит заход.** У одной девушки папки может не
-    быть вовсе — это обычное состояние, пока её фотографии не завели, — и
+    ⚠ **Отказ по одной анкете не уносит заход.** У одной девушки папка может
+    быть не выбрана или переименована владельцем — состояние обычное, — и
     останавливаться из-за неё значило бы не обойти остальных.
+
+    ## ⚠⚠ Темп держит слот, а не расписание
+
+    Заход приходит от планировщика раз в час (`worker.md`, §3.0.1), а настройка
+    сайта `gallery_every` умеет **разредить** его: сайт, чей слот ещё не истёк,
+    пропускается целиком. Ускорить она не может — чаще, чем стучит планировщик,
+    заход не случится, и подсказка настройки говорит это словами.
+
+    ⚠ Слот ставится **на сайт**, а не на анкету: Диск у всех один, и разрежать
+    надо походы к нему, а не работу по девушкам.
     """
-    out = {'profiles': 0, 'found': 0, 'added': 0, 'gone': 0, 'failed': 0}
+    out = {'sites': 0, 'profiles': 0, 'found': 0, 'added': 0, 'gone': 0,
+           'failed': 0, 'vision': {'took': 0, 'done': 0, 'failed': 0}}
 
-    for profile in await _profiles():
-        got = await gallery_index_sync(profile['id'], gallery_folder_name(profile))
-        out['profiles'] += 1
-        if not got['ok']:
-            out['failed'] += 1
+    rows = await round_sites(what='галерея')
+    done = await round_sites_run(rows, work=_site_work, every=_every,
+                                 key=GALLERY_ROUND_SLOT, what='галерея',
+                                 keep_going=True)
+
+    for _, got in done:
+        if not got:
             continue
-        for key in ('found', 'added', 'gone'):
+        out['sites'] += 1
+        for key in ('profiles', 'found', 'added', 'gone', 'failed'):
             out[key] += got[key]
-
-    out['vision'] = await gallery_vision_run(batch)
+        for key in ('took', 'done', 'failed'):
+            out['vision'][key] += got['vision'][key]
 
     return out
+
+
+async def _site_work(row, minutes: int) -> dict:
+    """Заход по одному сайту: его анкеты, затем его же пачка разбора.
+
+    ⚠ Пачка разбора берётся **по сайту** (`gallery_vision_batch`): общая
+    выборка отдавала бы одному сайту место другого — молча и в пользу того, у
+    кого номера анкет меньше.
+    """
+    site_id = int(row['site_id'] if isinstance(row, dict) else row)
+    got = {'profiles': 0, 'found': 0, 'added': 0, 'gone': 0, 'failed': 0}
+
+    for profile in await _profiles(site_id):
+        one = await gallery_index_sync(profile['id'],
+                                       gallery_folder_name(profile), site_id)
+        got['profiles'] += 1
+        if not one['ok']:
+            got['failed'] += 1
+            continue
+        for key in ('found', 'added', 'gone'):
+            got[key] += one[key]
+
+    batch = await site_seconds(site_id, GALLERY_BATCH_KEY)
+    got['vision'] = (await gallery_vision_run(batch, site_id) if batch
+                     else {'took': 0, 'done': 0, 'failed': 0})
+
+    return got
+
+
+async def _every(site_id: int) -> int:
+    """Срок сайта в секундах: как редко обходить его папки."""
+    return await site_seconds(int(site_id), GALLERY_EVERY_KEY)
 
 
 async def main() -> None:
@@ -83,7 +136,8 @@ async def main() -> None:
         # ⚠ Молчим на пустом заходе — см. шапку. Говорим, когда что-то
         # появилось, пропало или разобрано: это и есть новости.
         if got['added'] or got['gone'] or got['vision']['done'] or got['failed']:
-            logger_info(f"галерея: анкет {got['profiles']}, файлов {got['found']}, "
+            logger_info(f"галерея: сайтов {got['sites']}, анкет {got['profiles']}, "
+                        f"файлов {got['found']}, "
                         f"новых {got['added']}, ушло {got['gone']}, "
                         f"разобрано {got['vision']['done']}, "
                         f"неудач {got['failed'] + got['vision']['failed']}")
@@ -95,16 +149,23 @@ async def main() -> None:
         await mysql_pool_close()
 
 
-async def _profiles() -> list[dict]:
-    """Анкеты, чьи папки обходим: включённые.
+async def _profiles(site_id: int) -> list[dict]:
+    """Анкеты этого сайта, чьи папки обходим: включённые и **с выбранной папкой**.
 
     ⚠ Берём **включённые**, а не «в сети»: фотографии лежат на Диске и от того,
     вошла ли девушка на сайт, не зависят. Привязка к `status` означала бы, что
     галерея спящей анкеты не обновляется никогда.
+
+    ⚠⚠ **Невыбранная папка — не работа, а её отсутствие.** Прежде пустую
+    колонку подменял логин анкеты, и заход честно искал на Диске папку
+    `luchinskaolena@gmail.com`: два запроса к Диску на анкету ради заведомого
+    «нет», восемнадцать запросов в час на нашем же проде. Отбор здесь, а не
+    пропуском внутри: заход не должен и начинаться там, где работы нет.
     """
     async with mysql_get_db_async() as db:
-        await db.execute('SELECT id, login, gallery_folder FROM profile '
-                         ' WHERE enabled = 1 ORDER BY id')
+        await db.execute("SELECT id, login, gallery_folder FROM profile "
+                         " WHERE site_id = %s AND enabled = 1 "
+                         "   AND gallery_folder <> '' ORDER BY id", (int(site_id),))
 
         return [dict(row) for row in (await db.fetchall() or [])]
 

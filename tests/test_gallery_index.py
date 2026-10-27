@@ -25,10 +25,14 @@ from mysql_.mysql_ import mysql_get_db_async
 from tests.drive_fake import DRIVE_FAKE_ROOT, DRIVE_FAKE_ROOT_SETTING
 
 from src.dating.error import ERROR_DRIVE
-from src.dating.gallery_index import (GALLERY_WHY_NOT_SHARED, gallery_index_takes,
+from src.dating.gallery_index import (GALLERY_FOLDERS_KEY, GALLERY_WHY_NOT_SHARED,
+                                      GALLERY_WHY_NO_PICK,
+                                      gallery_index_in_groups,
+                                      gallery_index_takes,
                                       gallery_index_folders,
                                       gallery_index_profile,
-                                      gallery_index_sync)
+                                      gallery_index_sync,
+                                      gallery_index_wanted_groups)
 from src.uvicorn.routers.dating.profile_ import profile_delete
 
 pytestmark = pytest.mark.profile
@@ -156,6 +160,98 @@ async def test_non_image_fades_from_the_index(tree, girl):
         row = dict((await db.fetchone()) or {})
 
     assert row['is_gone'] == 1, 'видео обязано погаснуть, а не исчезнуть'
+
+
+async def test_without_a_folder_we_do_not_touch_the_drive(tree, girl):
+    """⚠⚠ Папка не выбрана — отказ словами **до** похода на Диск.
+
+    Прежде пустое значение подменялось логином анкеты, и заход искал папку
+    `что-то@example.com`, которой нет и не будет: на рабочем Диске логином не
+    названа ни одна папка. Каждая такая анкета стоила двух запросов к Диску в
+    час ради заведомого «нет».
+    """
+    tree.queries.clear()
+    async with mysql_get_db_async() as db:
+        await db.execute('DELETE FROM error WHERE source = %s', (ERROR_DRIVE,))
+        await db.connection.commit()
+
+    got = await gallery_index_sync(girl, '')
+
+    assert got['ok'] is False
+    assert got['why'] == GALLERY_WHY_NO_PICK
+    assert tree.queries == [], 'на Диск ходили, хотя папки нет'
+
+    # ⚠⚠ И это **не отказ источника**: журнал для того, что не про анкету.
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT COUNT(*) AS n FROM error WHERE source = %s',
+                         (ERROR_DRIVE,))
+        assert int(((await db.fetchone()) or {}).get('n') or 0) == 0, \
+            '«папка не выбрана» засорила журнал источников'
+
+
+@pytest.fixture
+async def site_set():
+    """Ставит настройку у сайта стенда и убирает за собой."""
+    keys = []
+
+    async def _set(key, value):
+        keys.append(key)
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'UPDATE site SET settings = JSON_SET('
+                ' COALESCE(settings, JSON_OBJECT()), %s, %s) WHERE site_id = %s',
+                (f'$.{key}', str(value), STAND_SITE))
+            await db.connection.commit()
+
+    yield _set
+
+    async with mysql_get_db_async() as db:
+        for key in keys:
+            await db.execute('UPDATE site SET settings = JSON_REMOVE(settings, %s)'
+                             ' WHERE site_id = %s', (f'$.{key}', STAND_SITE))
+        await db.connection.commit()
+
+
+class TestWhichFoldersWeWalk:
+    """Какие подпапки обходить — настройка сайта, разбор чистый."""
+
+    @pytest.mark.parametrize('path, groups, taken', [
+        ('photo/public/a.jpg', (), True),            # список пуст — берём всё
+        ('photo/public/a.jpg', ('public',), True),
+        ('photo/public/a.jpg', ('photo',), True),    # папка выше тоже считается
+        ('photo/intim/a.jpg', ('public',), False),
+        ('photo/PUBLIC/a.jpg', ('public',), True),   # регистр не важен
+        ('a.jpg', ('public',), False),               # в корне её папки — мимо
+        ('a.jpg', (), True),
+    ])
+    def test_the_path_decides(self, path, groups, taken):
+        assert gallery_index_in_groups(path, groups) is taken
+
+    async def test_the_list_comes_from_the_site(self, site_set):
+        """Имена читаются через запятую, строчными и без краевых пробелов."""
+        await site_set(GALLERY_FOLDERS_KEY, ' Public , INTIM,, public ')
+
+        assert await gallery_index_wanted_groups(STAND_SITE) == ('intim', 'public')
+
+    async def test_an_empty_setting_means_everything(self, site_set):
+        """⚠ Пусто — это «всю папку вглубь», прежнее поведение, а не «ничего»."""
+        await site_set(GALLERY_FOLDERS_KEY, '')
+
+        assert await gallery_index_wanted_groups(STAND_SITE) == ()
+
+    async def test_the_walk_obeys_the_setting(self, tree, girl, site_set):
+        """⚠⚠ Заход берёт только названные ветки — и это видно по строкам базы."""
+        await site_set(GALLERY_FOLDERS_KEY, 'public')
+
+        got = await gallery_index_sync(girl, GIRL_FOLDER, STAND_SITE)
+
+        assert got['ok'] is True
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT path FROM gallery_file '
+                             ' WHERE profile_id = %s AND is_gone = 0', (girl,))
+            paths = sorted(row['path'] for row in (await db.fetchall() or []))
+
+        assert paths == ['photo/public/diana.png'], 'взята чужая ветка'
 
 
 class TestWhatWeTake:

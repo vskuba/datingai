@@ -56,14 +56,18 @@ async def _put(profile_id: int, rows: list[tuple]) -> None:
         await db.connection.commit()
 
 
-async def test_folder_falls_back_to_login(girl):
-    """Папку не выбирали — берём логин анкеты: так они и названы на Диске."""
-    assert gallery_folder_name({'gallery_folder': '', 'login': girl['login']}) \
-        == girl['login']
+async def test_folder_without_a_pick_stays_empty(girl):
+    """⚠⚠ Папку не выбрали — значит её нет, а не «подставим логин».
+
+    Правило «папка зовётся логином» было снято с данных 01.10.2026 и к
+    27.10.2026 умерло: на рабочем Диске логином не названа ни одна папка из
+    двенадцати. Подставляя логин, панель обещала обход папки, которой нет.
+    """
+    assert gallery_folder_name({'gallery_folder': '', 'login': girl['login']}) == ''
 
 
-async def test_chosen_folder_wins(girl):
-    """Выбранное человеком сильнее правила по умолчанию."""
+async def test_chosen_folder_is_taken_as_is(girl):
+    """Выбранное человеком — единственный источник имени папки."""
     assert gallery_folder_name({'gallery_folder': 'своя-папка',
                                 'login': girl['login']}) == 'своя-папка'
 

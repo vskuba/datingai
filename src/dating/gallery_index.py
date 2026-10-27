@@ -31,6 +31,7 @@ from google_drive_.google_drive_walk import google_drive_folder, google_drive_wa
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.error import ERROR_DRIVE, error_clear, error_write
+from src.dating.site_setting import site_setting
 
 # Общая папка, внутри которой лежат папки девушек. ⚠ Значением годится и имя, и
 # **номер** папки, и ссылка на неё: разбирает их общий слой. Чужую папку —
@@ -56,6 +57,11 @@ GALLERY_ROOT_NAME = 'GOOGLE_DRIVE_FOLDER'
 # и всё остальное, — за строкой могли стоять описание и правка руками.
 GALLERY_INDEX_EXT = ('.jpg', '.jpeg', '.png')
 
+# Настройка сайта «какие подпапки индексировать» — имена через запятую.
+# ⚠ Ключ константой: его читает домен, а пишет страница настроек, и опечатка
+# в одном из двух мест выглядела бы как «настройка не работает».
+GALLERY_FOLDERS_KEY = 'gallery_folders'
+
 # Фразы отказа. Рядом с проверкой, чтобы не разошлись с тем, что видит человек.
 GALLERY_WHY_NO_ROOT = 'Диск не настроен: не задана общая папка'
 GALLERY_WHY_NOT_SHARED = ('папку не расшарили на сервисный аккаунт — '
@@ -63,6 +69,13 @@ GALLERY_WHY_NOT_SHARED = ('папку не расшарили на сервис�
 GALLERY_WHY_NO_ROOT_FOLDER = ('общей папки «{folder}» аккаунту не видно — '
                               'проверьте имя или номер в настройке')
 GALLERY_WHY_NO_FOLDER = 'папки «{folder}» в общей папке нет'
+GALLERY_WHY_NO_PICK = ('папка на Диске не выбрана — выберите её в списке '
+                       'и нажмите «Сохранить»')
+
+# Начала фраз, означающих «отказ про **эту анкету**». Такие в журнал отказов не
+# идут: журнал для того, что не про анкету (`error.py`), а заход задания по
+# полусотне анкет иначе клал бы туда полсотни строк подряд.
+GALLERY_WHY_ABOUT_GIRL = (GALLERY_WHY_NO_FOLDER.split('{')[0], GALLERY_WHY_NO_PICK)
 
 
 async def gallery_index_folders() -> list[str]:
@@ -93,6 +106,51 @@ async def gallery_index_folders() -> list[str]:
     rows = await google_drive_list(f"'{root}' in parents and trashed = false")
     return sorted(row['name'].strip() for row in rows
                   if row['mimeType'] == GOOGLE_DRIVE_FOLDER_MIME)
+
+
+async def gallery_index_wanted_groups(site_id: int) -> tuple[str, ...]:
+    """Какие подпапки обходить у анкет этого сайта — настройкой сайта.
+
+    Args:
+        site_id: сайт анкеты.
+
+    Returns:
+        Имена папок строчными, без краевых пробелов. **Пустой кортеж значит
+        «все»** — папка девушки берётся целиком, вглубь.
+
+    ⚠ Раскладку внутри папки придумывает агентство, и у сайтов она разная —
+    поэтому настройка сайта, а не константа. Разбор здесь, а не у вызывающего:
+    «через запятую» — форма записи, и второе её чтение разошлось бы с первым.
+    """
+    raw = await site_setting(int(site_id or 0), GALLERY_FOLDERS_KEY)
+
+    return tuple(sorted({one.strip().lower() for one in str(raw or '').split(',')
+                         if one.strip()}))
+
+
+def gallery_index_in_groups(path: str, groups: tuple[str, ...]) -> bool:
+    """Лежит ли файл в одной из названных папок — по его пути от папки девушки.
+
+    Args:
+        path: путь листа без имени папки девушки (`photo/public/diana.png`).
+        groups: имена папок строчными; пусто — берём всё.
+
+    Returns:
+        `True`, если хоть одна папка пути названа в списке.
+
+    ⚠ Сверяется **каждая папка пути**, а не последняя: человек, написавший
+    `photo`, ждёт всё, что под ней, а написавший `public` — свою ветку на любой
+    глубине. Одно правило отвечает обоим.
+
+    ⚠⚠ Файл **в корне папки девушки** при непустом списке не берётся: папок в
+    его пути нет вовсе, и назвать его человек не мог. Это и отличает «список
+    пуст» от «список есть»: первое значит «всё», второе — «только названное».
+    """
+    if not groups:
+        return True
+
+    return any(one.strip().lower() in groups
+               for one in str(path or '').split('/')[:-1])
 
 
 def gallery_index_takes(name: str) -> bool:
@@ -138,13 +196,16 @@ async def gallery_index_root() -> str:
     raise RuntimeError(GALLERY_WHY_NO_ROOT_FOLDER.format(folder=name))
 
 
-async def gallery_index_profile(profile_id: int, folder: str) -> dict:
+async def gallery_index_profile(profile_id: int, folder: str,
+                                groups: tuple[str, ...] = ()) -> dict:
     """Обойти папку девушки и свести её содержимое в `gallery_file`.
 
     Args:
         profile_id: чья галерея.
         folder: имя её папки внутри общей; годится и номер, если его вписали в
             колонку руками — выбор на вкладке предлагает только имена.
+        groups: какие подпапки брать (`gallery_index_wanted_groups`); пусто —
+            всю папку вглубь.
 
     Returns:
         `{'found': int, 'added': int, 'gone': int, 'back': int}` — что застали и
@@ -159,14 +220,25 @@ async def gallery_index_profile(profile_id: int, folder: str) -> dict:
     ⚠⚠ **Папка ищется внутри общей, и номер это правило не обходит**: номер из
     чужого конца Диска за совпадение не считается. Иначе одна описка в поле
     «папка на Диске» утащила бы в галерею анкеты чужие фотографии.
+
+    ⚠⚠ **Пустое имя — отказ до похода на Диск**, а не обход «чего-нибудь».
+    Прежде пустую колонку подменял логин анкеты, и обход честно искал папку
+    `luchinskaolena@gmail.com`, которой нет и не будет: на рабочем Диске
+    логином не названа ни одна папка из двенадцати. Заход при этом стоил двух
+    запросов к Диску на каждую невыбранную анкету — восемнадцать запросов в
+    час ради заведомого «нет».
     """
+    if not str(folder or '').strip():
+        raise RuntimeError(GALLERY_WHY_NO_PICK)
+
     root = await gallery_index_root()
     found = await google_drive_folder(folder, parent=root)
     if not found:
         raise RuntimeError(GALLERY_WHY_NO_FOLDER.format(folder=folder))
 
     seen = {item['id']: item for item in await google_drive_walk(found[0]['id'])
-            if gallery_index_takes(item.get('name', ''))}
+            if gallery_index_takes(item.get('name', ''))
+            and gallery_index_in_groups(item.get('path', ''), groups)}
 
     async with mysql_get_db_async() as db:
         await db.execute('SELECT file_id, is_gone FROM gallery_file '
@@ -196,7 +268,8 @@ async def gallery_index_profile(profile_id: int, folder: str) -> dict:
     return {'found': len(seen), 'added': added, 'gone': len(gone), 'back': back}
 
 
-async def gallery_index_sync(profile_id: int, folder: str) -> dict:
+async def gallery_index_sync(profile_id: int, folder: str,
+                             site_id: int = 0) -> dict:
     """То же, что `gallery_index_profile`, но отказ — словами в ответе, а не броском.
 
     Для ручки и задания: им нужно не исключение, а «что показать человеку».
@@ -213,7 +286,8 @@ async def gallery_index_sync(profile_id: int, folder: str) -> dict:
     «папки нет» и один успех.
     """
     try:
-        got = await gallery_index_profile(profile_id, folder)
+        got = await gallery_index_profile(
+            profile_id, folder, await gallery_index_wanted_groups(site_id))
     except RuntimeError as err:
         if _about_source(str(err)):
             await error_write(ERROR_DRIVE, str(err))
@@ -229,14 +303,18 @@ def _about_source(why: str) -> bool:
     """Отказ про **источник**, а не про конкретную анкету?
 
     Различие решает, попадёт ли строка в журнал отказов. Считаем по тому, чего
-    в причине **нет**: всё, кроме «папки такой-то нет», — беда общая (ключ,
+    в причине **нет**: всё, кроме отказов про анкету, — беда общая (ключ,
     доступ, молчание Диска), и о ней человеку надо знать один раз и внятно.
 
     ⚠ Признаком служит сама фраза, а не класс исключения: фразы заданы
     константами рядом, и проверка здесь ломается вместе с ними — то есть
     заметно, а не молча.
+
+    ⚠⚠ Фраз про анкету **две**, и вторую легко забыть: «папка не выбрана» это
+    тоже про анкету, а не про Диск. Считай она источником — одна кнопка
+    «Обновить» у невыбранной анкеты писала бы в журнал отказ, которого нет.
     """
-    return not why.startswith(GALLERY_WHY_NO_FOLDER.split('{')[0])
+    return not why.startswith(GALLERY_WHY_ABOUT_GIRL)
 
 
 async def _row_save(db, profile_id: int, item: dict) -> None:

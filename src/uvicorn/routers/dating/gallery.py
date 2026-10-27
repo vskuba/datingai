@@ -172,8 +172,12 @@ async def gallery_sync(profile_id: int, user: AuthUser = Depends(auth_required))
     """
     profile = await profile_row(profile_id)
 
+    # ⚠ Сайт передаётся и здесь: какие подпапки брать, решает его настройка, и
+    # кнопка обязана обходить ровно то же, что обойдёт заход. Разойдись они —
+    # человек увидел бы по кнопке один набор плиток, а наутро другой.
     return {'result': await gallery_index_sync(profile_id,
-                                               gallery_folder_name(profile))}
+                                               gallery_folder_name(profile),
+                                               int(profile.get('site_id') or 0))}
 
 
 @router.get('/{profile_id}/img/{file_id}', include_in_schema=False)
