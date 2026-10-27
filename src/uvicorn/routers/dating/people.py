@@ -335,20 +335,29 @@ async def people_site_list(site_id: int, kind: str, fresh: bool = False,
             site_id, kind)
 
     profile = await _site_profile(site_id)
+    via_api = True
+    if not profile:
+        via_api = await _api_for(site_id, kind)
+        # Сценарному сайту спящая анкета не помеха: сценарий входит в панель сам.
+        profile = {} if via_api else await _site_sleeper(site_id)
+
     if not profile:
         # ⚠ Не «нет анкет», а «нет анкет **в сети**»: разница существенная —
         # первое чинят заведением учётки, второе проходит само, когда начнётся
         # смена. Отдаём прежний снимок, если он есть: он честнее пустоты.
+        why = ('ни одна анкета не в сети' if via_api
+               else 'у сайта нет ни одной включённой анкеты с логином')
         if cached:
             return await _with_favorites(
                 _answer(cached, cached=True,
-                        error='ни одна анкета не в сети — список не обновляется',
+                        error=f'{why} — список не обновляется',
                         site_id=site_id, kind=kind),
                 site_id, kind)
 
         raise HTTPException(status_code=422,
-                            detail='ни одна анкета сайта не в сети — под кем заходить? '
-                                   'Список снимается от лица работающей девушки')
+                            detail=f'{why} — под кем заходить? Список снимается '
+                                   'от лица ' + ('работающей девушки' if via_api
+                                                 else 'её анкет'))
 
     return await _with_favorites(
         await _list(kind, fresh, profile, key, log_id=0, cached=cached),
@@ -424,7 +433,9 @@ async def people_snap_start(site_id: int) -> bool:
     """Заводит фоновый съём ленты этого сайта. `False` — не завёлся.
 
     Не заводится по трём причинам, и все они законные: съём уже идёт, выдержка
-    между попытками не кончилась, у сайта нет анкет — заходить не под кем.
+    между попытками не кончилась, у сайта нет анкет — заходить не под кем (на
+    сценарном сайте это значит «нет ни одной включённой»: спящая годится,
+    `_site_sleeper`).
 
     ⚠ **Не ждёт результата**, как и страница: съём это ~40 секунд живого браузера.
     Круг заводит его и идёт дальше; снимок появится в кэше сам.
@@ -435,6 +446,8 @@ async def people_snap_start(site_id: int) -> bool:
     """
     site_id = int(site_id)
     profile = await _site_profile(site_id)
+    if not profile and not await _api_for(site_id, 'online'):
+        profile = await _site_sleeper(site_id)
     if not profile:
         return False
 
@@ -586,6 +599,16 @@ async def _api_ready(site_id: int) -> bool:
         str(await site_setting(site_id, PEOPLE_API_BASE_SETTING)).strip())
 
 
+async def _api_for(site_id: int, kind: str) -> bool:
+    """Берём этот вид списка у самого сайта, а не сценарием.
+
+    Одно условие на три двери: прогон в `_snapshot`, выбор анкеты у вызывающих
+    да подпись на странице. Расползись оно копиями, разошёлся бы и источник —
+    настройка сайта уже выбирает его, а не код.
+    """
+    return kind in people_api_kinds() and await _api_ready(site_id)
+
+
 async def _api_rows(profile: dict, kind: str, site_id: int) -> list:
     """Список через API сайта. Пароль — по настройке анкеты `password_source`.
 
@@ -709,6 +732,9 @@ async def _site_profile(site_id: int) -> dict:
     ⚠ **`password_source` и `password` в выборке не нужны.** Пароль берётся общий
     агентский (`password_pick` без этих полей отвечает «общий»), и это
     верно: список снимается от лица сайта, а не конкретной девушки.
+
+    Спит весь сайт — на сценарных сайтах за лентой идём всё равно, дверью служит
+    первая включённая анкета: `_site_sleeper`.
     """
     async with mysql_get_db_async() as db:
         await db.execute(
@@ -727,6 +753,35 @@ async def _site_profile(site_id: int) -> dict:
             return dict(row)
 
     return dict(rows[0])
+
+
+async def _site_sleeper(site_id: int) -> dict:
+    """Первая включённая анкета сайта, спит она или нет. Пусто — пустой словарь.
+
+    ⚠ **Дополняет `_site_profile`, а не отменяет её: только для сайтов, которые
+    снимают список сценарием.** Правило «только в сети» стережёт вход паролем
+    анкеты (осенняя история в `_site_profile`); сценарий же того пароля не
+    спрашивает вовсе: он входит в агентскую панель её же логином (переменные
+    `panel_login`/`panel_password`) и оттуда попадает в кабинет девушки по
+    автологину. Спящая анкета здесь — дверь, а не ключи: лента не умирает,
+    когда смена кончилась и «в сети» не держит никто.
+
+    Частота входа не отдана на волю и здесь: тот же срок `online_check_every`,
+    круг ходит не чаще него.
+
+    ⚠ **Для сайтов с своим API не зовётся.** Там вход — это вход паролем
+    анкеты, и оживлять им спящих значит вернуть сентябрь.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT id, site_id, login FROM profile '
+            ' WHERE site_id = %s AND login <> %s'
+            '   AND enabled = 1'
+            ' ORDER BY storage_state IS NULL, id LIMIT 1',
+            (int(site_id), ''))
+        row = await db.fetchone()
+
+    return dict(row) if row else {}
 
 
 def _cache_get(key: str) -> dict | None:
@@ -804,7 +859,7 @@ async def _snapshot(profile: dict, kind: str) -> list:
     как и раньше.
     """
     site_id = int(profile.get('site_id') or 0)
-    if kind in people_api_kinds() and await _api_ready(site_id):
+    if await _api_for(site_id, kind):
         return await _api_rows(profile, kind, site_id)
 
     spec = PEOPLE_KINDS[kind]

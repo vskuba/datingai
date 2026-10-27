@@ -34,6 +34,34 @@ BASE = 'https://example.invalid/api'
 PROFILE = {'id': 999_401, 'login': 'first@example.invalid'}
 
 
+@pytest.fixture
+def rows(monkeypatch):
+    """Подменяет базу: отдаёт то, что положили в `rows['out']`."""
+    state = {'out': [], 'sql': ''}
+
+    class _Db:
+        async def execute(self, sql, args=None):
+            state['sql'] = sql
+            state['args'] = args
+
+        async def fetchall(self):
+            return state['out']
+
+        async def fetchone(self):
+            return state['out'][0] if state['out'] else None
+
+    class _Conn:
+        async def __aenter__(self):
+            return _Db()
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(people, 'mysql_get_db_async', lambda: _Conn())
+
+    return state
+
+
 class _Redis:
     """Redis настолько, насколько его читает кэш токена."""
 
@@ -199,30 +227,6 @@ class TestHasToken:
 class TestPickProfile:
     """Кем идём за лентой: только в сети и, по возможности, с готовым токеном."""
 
-    @pytest.fixture
-    def rows(self, monkeypatch):
-        """Подменяет базу: отдаёт то, что положили в `rows['out']`."""
-        state = {'out': [], 'sql': ''}
-
-        class _Db:
-            async def execute(self, sql, args=None):
-                state['sql'] = sql
-                state['args'] = args
-
-            async def fetchall(self):
-                return state['out']
-
-        class _Conn:
-            async def __aenter__(self):
-                return _Db()
-
-            async def __aexit__(self, *a):
-                return False
-
-        monkeypatch.setattr(people, 'mysql_get_db_async', lambda: _Conn())
-
-        return state
-
     @pytest.mark.asyncio
     async def test_nobody_online_means_no_profile(self, rows, monkeypatch):
         """Никого в сети — пусто, и вызывающий на сайт не пойдёт.
@@ -267,6 +271,31 @@ class TestPickProfile:
         got = await people._site_profile(SITE)
 
         assert got['id'] == 11
+
+
+class TestPickSleeper:
+    """Кем идём, когда в сети никто не остался: первой включённой анкетой.
+
+    Выбор для сценарных сайтов (`_site_sleeper`): вход там делает панель, а не
+    пароль анкеты, — статус в выборке лишний, а `enabled` единственный смысл.
+    """
+
+    @pytest.mark.asyncio
+    async def test_status_is_not_asked_of_the_base(self, rows):
+        """Запрос знает про `enabled`, но не про статус: спящая тоже годится."""
+        rows['out'] = [{'id': 11, 'site_id': SITE, 'login': 'a'}]
+
+        got = await people._site_sleeper(SITE)
+
+        assert got['id'] == 11
+        assert 'enabled = 1' in rows['sql']
+        assert 'status' not in rows['sql'], 'фильтр по статусу оставил бы ленту без смены'
+
+    @pytest.mark.asyncio
+    async def test_no_profile_at_all_is_no_one_to_log_in(self, rows):
+        rows['out'] = []
+
+        assert await people._site_sleeper(SITE) == {}
 
 
 class TestRedisGivesBytes:

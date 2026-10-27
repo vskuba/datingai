@@ -179,6 +179,14 @@ def _site_profile(found: bool = True):
     return _pick
 
 
+def _site_sleeper(found: bool = True):
+    """Подменённый выбор спящей анкеты: та же форма, что у `_site_profile`."""
+    async def _pick(site_id):
+        return dict(PROFILE) if found else {}
+
+    return _pick
+
+
 def _snapshot(returns=None, fails=''):
     """Подменённый прогон: отдаёт записи или падает с заданной причиной."""
     async def _run(profile, kind):
@@ -423,16 +431,20 @@ class TestSiteScope:
     async def test_site_without_profiles_is_422(self, door, monkeypatch):
         """Анкета всё равно нужна: сценарий заходит в кабинет, а кабинет чей-то.
 
-        Нет ни одной — говорим прямо, а не отдаём пустой список: пустота читалась
-        бы как «на сайте никого нет».
+        Нет ни одной включённой — говорим прямо, а не отдаём пустой список:
+        пустота читалась бы как «на сайте никого нет».
         """
         monkeypatch.setattr(people, '_snapshot', _snapshot(PEOPLE))
         monkeypatch.setattr(people, '_site_profile', _site_profile(found=False))
+        monkeypatch.setattr(people, '_site_sleeper', _site_sleeper(found=False))
+        monkeypatch.setattr(people, 'site_setting', _settings({}))
 
         with pytest.raises(HTTPException) as refusal:
             await people.people_site_list(343, 'online', fresh=False, user=None)
 
         assert refusal.value.status_code == 422
+        assert 'включённой анкеты' in refusal.value.detail, \
+            'сценарному сайту не про «не в сети» говорить, у него и спящая подходит'
 
     async def test_site_list_stays_out_of_a_profile_journal(self, door, monkeypatch):
         """⚠ В журнал анкеты список по сайту не пишется.
@@ -449,6 +461,51 @@ class TestSiteScope:
         await _refreshed(SITE_KEY)
 
         assert door.log == []
+
+
+class TestSleepersServeScenarioSites:
+    """⚠ Сценарный сайт снимает ленту, даже когда вся смена спит.
+
+    Правило «только в сети» стережёт вход паролем анкеты; на сценарных сайтах
+    входа такого нет — сценарий входит в агентскую панель её же логином, а
+    анкета служит дверью в кабинет (`_site_sleeper`).
+    """
+
+    async def test_sleeping_site_still_runs_the_feed(self, door, monkeypatch):
+        """В сети никто не остался — лента всё равно снимается первой включённой."""
+        monkeypatch.setattr(people, 'site_setting', _settings({}))
+        monkeypatch.setattr(people, '_site_profile', _site_profile(found=False))
+        monkeypatch.setattr(people, '_site_sleeper', _site_sleeper())
+        monkeypatch.setattr(people, '_snapshot', _snapshot(PEOPLE))
+
+        await people.people_site_list(343, 'online', fresh=False, user=None)
+        await _refreshed(SITE_KEY)
+
+        answer = (await people.people_site_list(343, 'online', fresh=False,
+                                                user=None))['result']
+
+        assert [row['uid'] for row in answer['people']] == \
+               [row['uid'] for row in PEOPLE], 'спящий сайт остался без ленты'
+        assert answer['error'] == ''
+
+    async def test_api_site_does_not_wake_the_sleeping(self, door, monkeypatch):
+        """Сайт с своим API держит прежнее правило: спящая анкета там — это вход
+        паролем, а входом паролем и был сентябрьский бан (`_site_profile`)."""
+        monkeypatch.setattr(people, 'site_setting',
+                            _settings({'people_source': 'api',
+                                       'api_base': SITE_API_FAKE_BASE}))
+
+        async def _wakes(site_id):
+            raise AssertionError('api-сайт разбудил спящую анкету')
+
+        monkeypatch.setattr(people, '_site_profile', _site_profile(found=False))
+        monkeypatch.setattr(people, '_site_sleeper', _wakes)
+
+        with pytest.raises(HTTPException) as refusal:
+            await people.people_site_list(343, 'online', fresh=False, user=None)
+
+        assert refusal.value.status_code == 422
+        assert 'не в сети' in refusal.value.detail
 
 
 class TestSource:
