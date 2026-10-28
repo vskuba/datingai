@@ -495,3 +495,55 @@ def _root_setting(monkeypatch, value: str) -> None:
                         lambda name, default='': (value
                                                   if name == DRIVE_FAKE_ROOT_SETTING
                                                   else default))
+
+
+class TestHowOftenWeWalk:
+    """Срок обхода задан **в часах**, и час означает каждый заход планировщика."""
+
+    async def test_an_unset_site_walks_every_hour(self, site_set):
+        """Умолчание — 1 час: сайт без настройки обходится каждым заходом."""
+        from src.cronjob.gallery_round import _every, GALLERY_EVERY_SLACK, GALLERY_HOUR
+
+        assert await _every(STAND_SITE) == GALLERY_HOUR - GALLERY_EVERY_SLACK
+
+    async def test_hours_become_seconds(self, site_set):
+        """Человек пишет часы, слот считает секундами — перевод один на всех."""
+        from src.cronjob.gallery_round import _every, GALLERY_EVERY_SLACK, GALLERY_HOUR
+
+        await site_set('gallery_every_hours', 6)
+
+        assert await _every(STAND_SITE) == 6 * GALLERY_HOUR - GALLERY_EVERY_SLACK
+
+    async def test_an_hour_survives_a_jittery_scheduler(self, site_set):
+        """⚠⚠ Главное: «раз в час» не превращается в «раз в два часа».
+
+        Слот считает «пора» строго — прошедшее обязано дотянуть до срока. Тик
+        планировщика часовой, но не по атомным часам (на проде 20:20:20 и
+        08:20:29). Сойдись срок ровно с тиком — пришедший на секунду раньше
+        застал бы отметку живой, и половина заходов исчезала бы молча.
+        """
+        from src.cronjob.gallery_round import _every, GALLERY_HOUR
+
+        await site_set('gallery_every_hours', 1)
+        срок = await _every(STAND_SITE)
+
+        # Тик, опоздавший и поспешивший на полминуты, обязан застать слот
+        # истёкшим: прошедшее с прошлого захода ≥ срока.
+        for дрожание in (-30, 0, +30):
+            assert GALLERY_HOUR + дрожание >= срок, \
+                f'тик с дрожанием {дрожание} с пропустил бы заход'
+
+    async def test_a_longer_gap_still_skips_the_early_ticks(self, site_set):
+        """Запас не делает срок бесполезным: при «3 часа» два тика пропускаются.
+
+        Иначе запас лечил бы одну беду и заводил другую — настройка «реже»
+        перестала бы разрежать.
+        """
+        from src.cronjob.gallery_round import _every, GALLERY_HOUR
+
+        await site_set('gallery_every_hours', 3)
+        срок = await _every(STAND_SITE)
+
+        assert GALLERY_HOUR < срок, 'первый тик обязан быть пропущен'
+        assert 2 * GALLERY_HOUR < срок, 'второй тик обязан быть пропущен'
+        assert 3 * GALLERY_HOUR >= срок, 'третий тик обязан пройти'
