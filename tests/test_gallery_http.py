@@ -424,3 +424,70 @@ async def test_the_page_asks_the_server_for_tags():
 
     assert '/api/dating/gallery/tags' in page, 'страница не спрашивает словарь'
     assert 'gallery-tag' in page, 'теги не рисуются выбором'
+
+
+class TestTheListShowsTheGallery:
+    """Числа галереи — строкой списка, чтобы не открывать каждую карточку.
+
+    ⚠⚠ Проверяется **и по HTTP**: `response_model`, не объявивший поле,
+    выбрасывает его молча — без исключения и без падения, просто ключа нет в
+    JSON. В этом проекте так уже терялись `age` и `mailing_on`.
+    """
+
+    async def test_the_counts_reach_the_list(self, tree, girl):
+        from src.uvicorn.routers.dating.profile_ import profile_list
+
+        await gallery_index_profile(girl[0], GIRL_FOLDER)
+
+        rows = (await profile_list(site_id=STAND_SITE, user=None))['result']
+        found = next(row for row in rows if int(row['id']) == girl[0])
+
+        assert found['gallery'] == 1
+        assert found['gallery_described'] == 0, 'разбор ещё не приходил'
+
+    async def test_the_counts_survive_the_response_model(self, tree, girl, auth_client):
+        """Тот же список по-настоящему по HTTP — где поля и теряются."""
+        await gallery_index_profile(girl[0], GIRL_FOLDER)
+
+        answer = await auth_client.get(f'/api/dating/profile?site_id={STAND_SITE}')
+        assert answer.status_code == 200
+
+        rows = answer.json()['result']
+        found = next(row for row in rows if int(row['id']) == girl[0])
+
+        assert 'gallery' in found, 'поле выброшено моделью ответа'
+        assert 'gallery_described' in found, 'поле выброшено моделью ответа'
+        assert found['gallery'] == 1
+
+    async def test_a_profile_without_photos_shows_zero(self, tree, girl):
+        """Анкета без галереи — ноль, а не отсутствие ключа.
+
+        ⚠ На этом стоит показ: страница прячет значок у нулевой галереи, и
+        `undefined` вместо нуля читался бы как «считать нечем».
+        """
+        from src.uvicorn.routers.dating.profile_ import profile_list
+
+        rows = (await profile_list(site_id=STAND_SITE, user=None))['result']
+        found = next(row for row in rows if int(row['id']) == girl[1])
+
+        assert found['gallery'] == 0
+        assert found['gallery_described'] == 0
+
+    async def test_hidden_rows_are_not_counted(self, tree, girl):
+        """⚠⚠ Считается **видимое**: погашенные строки на вкладке не показываются.
+
+        Разойдись счёт с тем, что человек видит в галерее, — число хуже, чем
+        его отсутствие: оно обещает фотографии, которых там нет.
+        """
+        from src.uvicorn.routers.dating.profile_ import profile_list
+
+        await gallery_index_profile(girl[0], GIRL_FOLDER)
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE gallery_file SET is_gone = 1 WHERE profile_id = %s',
+                             (girl[0],))
+            await db.connection.commit()
+
+        rows = (await profile_list(site_id=STAND_SITE, user=None))['result']
+        found = next(row for row in rows if int(row['id']) == girl[0])
+
+        assert found['gallery'] == 0, 'погашенные строки попали в счёт'

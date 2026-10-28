@@ -400,3 +400,46 @@ def test_switching_a_tab_does_not_refetch(page):
 
     assert 'galleryPaint()' in box, 'после переключения сетка не перерисована'
     assert 'galleryLoad(' not in box, 'переключение вкладки лезет на сервер'
+
+
+def test_the_badge_hides_when_there_are_no_photos(page):
+    """⚠⚠ Значок показывается только у анкет с галереей.
+
+    Ноль у остальных дал бы столбец нулей на девятнадцать строк, в котором
+    четыре нужных числа перестают быть заметными. Отсутствие значка и есть
+    ответ «фотографий нет».
+    """
+    box = page[page.index('function galleryBadge'):]
+    box = box[:box.index('// Сколько строк влезает')]
+
+    assert "if (!all) return ''" in box, 'значок рисуется и при нулевой галерее'
+    assert 'gallery:' in box, 'в значке нет подписи, по которой его ищут глазами'
+
+
+def test_the_badge_shows_described_out_of_total(page):
+    """Два числа: разобрано из всего — иначе непонятно, ждать ли описаний."""
+    box = page[page.index('function galleryBadge'):]
+    box = box[:box.index('// Сколько строк влезает')]
+
+    assert '${done}/${all}' in box, 'показывается не «разобрано из всего»'
+    assert 'row.gallery_described' in box, 'число разобранных не читается из строки'
+
+
+def test_the_badge_counts_come_from_the_server(page):
+    """⚠ Страница не ходит за галереей каждой анкеты — числа приходят со списком.
+
+    Иначе список из девятнадцати строк стоил бы девятнадцати запросов ради
+    двух чисел в каждой.
+    """
+    box = page[page.index('function galleryBadge'):]
+    box = box[:box.index('// Сколько строк влезает')]
+
+    assert 'getData(' not in box, 'значок лезет на сервер за своими числами'
+
+
+def test_the_badge_style_lives_in_the_page(page):
+    """Разобранная целиком и недоразобранная различаются видом, а не только
+    числом: «работа кончилась» должно читаться с одного взгляда."""
+    assert '.prof-gallery.done' in page, 'нет отдельного вида у разобранной галереи'
+    assert '.prof-off + .prof-gallery' in page, \
+        'два значка рядом разъедутся: оба тянут margin-left: auto'

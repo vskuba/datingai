@@ -157,6 +157,11 @@ class DatingProfileResponse(BaseModel):
     has_password: bool = Field(..., description='Пароль задан — под учёткой можно входить')
     has_state: bool = Field(False, description='Вход снят: опрос идёт без браузера')
     contacts: int = Field(0, description='Сколько собеседниц писало в чат')
+    # ⚠ Числа галереи — **в модели**, см. предупреждение у `age` выше: поля, не
+    # объявленного здесь, страница не увидит вовсе, и молча.
+    gallery: int = Field(0, description='Снимков в индексе галереи; 0 — галереи нет')
+    gallery_described: int = Field(
+        0, description='Из них разобрано моделью — описание и теги готовы')
     unread_chat: int = Field(0, description='Непрочитанных сообщений чата — новые с прошлого просмотра')
     enabled: bool = Field(True, description='Ведём ли анкету: выключенную воркер не трогает вовсе')
     password_source: str = Field('site', description='Откуда пароль: `site` — общий, `own` — свой')
@@ -227,6 +232,19 @@ async def profile_list(site_id: int = 0,
             '       g.storage_state IS NOT NULL AS has_state, '
             '       (SELECT COUNT(DISTINCT m.sender_uid) FROM message m '
             '         WHERE m.profile_id = g.id) AS contacts, '
+            # Галерея строкой списка: сколько снимков в индексе и сколько из них
+            # разобрала модель. ⚠ Иначе ответ на вопрос «у кого есть фотографии»
+            # стоил бы открытия каждой карточки по очереди — девятнадцать
+            # переходов, чтобы узнать про четыре анкеты.
+            #
+            # ⚠ Считаем **видимое** (`is_gone = 0`): погашенные строки на
+            # вкладке не показываются, и число, не сходящееся с тем, что человек
+            # там видит, хуже отсутствующего.
+            '       (SELECT COUNT(*) FROM gallery_file f '
+            '         WHERE f.profile_id = g.id AND f.is_gone = 0) AS gallery, '
+            '       (SELECT COUNT(*) FROM gallery_file f '
+            '         WHERE f.profile_id = g.id AND f.is_gone = 0 '
+            '           AND f.described_at IS NOT NULL) AS gallery_described, '
             '       (SELECT COUNT(*) FROM message m '
             "         WHERE m.profile_id = g.id AND m.direction = 'in' AND m.is_read = 0) AS unread_chat "
             f'  FROM profile g{where.replace(" site_id", " g.site_id")}'
