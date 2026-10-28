@@ -37,18 +37,23 @@ GALLERY_FILES_MAX = 500
 # показывала бы «заходов ещё не было» при исправно работающем задании.
 GALLERY_ROUND_JOB = 'gallery_round'
 
-# Как часто задание заходит — час (`worker.md`, §3.0.1).
+# Шаг планировщика, когда заходов было меньше двух и мерить ещё нечем.
 #
-# ⚠⚠ **Это оценка, а не расписание.** Расписанием распоряжается Cronicle, и
-# второй его записи у нас нет намеренно: две записи одного правила расходятся
-# молча. Отсюда и счёт — **от прошлого захода**, а не от «ровно в HH:20»: смени
-# планировщик минуту, и предсказание поедет за ним само.
+# ⚠⚠ **Это запасной ответ, а не запись расписания.** Шаг берётся из **самих
+# заходов** — разницы между последним и предыдущим (`cronjob_last`), — и
+# потому поспевает за планировщиком сам. Держи мы его числом, получилась бы
+# вторая копия чужого расписания: 28.10.2026 шаг сменили с часа на четверть, и
+# такая копия час обещала бы «возьмёт через час», не соврав ни в одной строке
+# кода.
 GALLERY_ROUND_EVERY_SEC = 3600
 
-# Насколько задание должно опоздать, чтобы мы сказали «не приходит». Пропуск
-# одного захода — ещё не беда (Cronicle мог ждать прошлый), двух — уже повод
-# смотреть в расписание.
-GALLERY_ROUND_LATE_SEC = GALLERY_ROUND_EVERY_SEC * 2
+# Во сколько шагов задание должно опоздать, чтобы мы сказали «не приходит».
+# Пропуск одного захода — ещё не беда (Cronicle мог ждать прошлый), двух — уже
+# повод смотреть в расписание.
+#
+# ⚠ Считается **в шагах**, а не в секундах: шаг теперь измеряется, и запись
+# «два часа» разъехалась бы с ним при первой же правке расписания.
+GALLERY_ROUND_LATE_STEPS = 2
 
 
 def gallery_folder_name(profile: dict) -> str:
@@ -145,11 +150,35 @@ async def gallery_round_when() -> dict:
                 'every_sec': GALLERY_ROUND_EVERY_SEC}
 
     was = datetime.fromisoformat(last['at'])
-    next_at = was + timedelta(seconds=GALLERY_ROUND_EVERY_SEC)
-    late = datetime_utc_now() - was > timedelta(seconds=GALLERY_ROUND_LATE_SEC)
+    every = _step_of(last)
+    next_at = was + timedelta(seconds=every)
+    late = datetime_utc_now() - was > timedelta(seconds=every * GALLERY_ROUND_LATE_STEPS)
 
     return {'last_at': was.isoformat(), 'next_at': next_at.isoformat(),
-            'late': late, 'every_sec': GALLERY_ROUND_EVERY_SEC}
+            'late': late, 'every_sec': every}
+
+
+def _step_of(last: dict) -> int:
+    """Шаг планировщика по двум последним заходам; нечем мерить — умолчание.
+
+    ⚠⚠ Шаг **измеряется, а не записывается**: расписанием распоряжается
+    Cronicle, и своя запись о нём — вторая копия чужого правила, расходящаяся
+    молча. Две отметки дают его фактом и бесплатно.
+
+    ⚠ Отрицательная или нулевая разница (часы переставили, отметки легли в одну
+    секунду) — не шаг: берём умолчание, иначе «следующий заход» оказался бы в
+    прошлом.
+    """
+    if not last.get('prev'):
+        return GALLERY_ROUND_EVERY_SEC
+
+    try:
+        шаг = (datetime.fromisoformat(last['at'])
+               - datetime.fromisoformat(last['prev'])).total_seconds()
+    except ValueError:
+        return GALLERY_ROUND_EVERY_SEC
+
+    return int(шаг) if шаг > 0 else GALLERY_ROUND_EVERY_SEC
 
 
 def gallery_group_of(path: str) -> str:

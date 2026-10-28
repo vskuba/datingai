@@ -127,6 +127,56 @@ async def test_round_without_a_single_run_says_so(tree, round_clean):
     assert got['late'] is False
 
 
+async def test_the_step_is_measured_not_remembered(tree, round_clean):
+    """⚠⚠ Шаг планировщика **измеряется по двум заходам**, а не записан у нас.
+
+    Запись шага числом — вторая копия чужого расписания, и она расходится
+    молча: 28.10.2026 шаг сменили с часа на четверть, и панель обещала бы
+    «возьмёт через час», не соврав ни в одной строке кода.
+    """
+    было = datetime_utc_now() - timedelta(minutes=15)
+    await setting_state_patch(CRONJOB_LAST_KEY, {GALLERY_ROUND_JOB: {
+        'at': было.isoformat(timespec='seconds'),
+        'prev': (было - timedelta(minutes=15)).isoformat(timespec='seconds'),
+        'ok': True}})
+
+    got = (await gallery_folders(user=None))['result']['round']
+
+    assert got['every_sec'] == 15 * 60, 'шаг взят не из заходов'
+    assert got['late'] is False, 'один шаг опоздания — ещё не «не приходит»'
+
+
+async def test_a_single_run_falls_back_to_the_default_step(tree, round_clean):
+    """Заход был один — мерить нечем, отвечаем умолчанием, а не нулём.
+
+    ⚠ Нулевой шаг поставил бы «следующий заход» в прошлое, и строка говорила
+    бы «обход не приходит» на исправном задании.
+    """
+    await setting_state_patch(CRONJOB_LAST_KEY, {GALLERY_ROUND_JOB: {
+        'at': datetime_utc_now().isoformat(timespec='seconds'), 'ok': True}})
+
+    got = (await gallery_folders(user=None))['result']['round']
+
+    assert got['every_sec'] > 0
+    assert datetime.fromisoformat(got['next_at']) > datetime.fromisoformat(got['last_at'])
+
+
+async def test_late_is_counted_in_steps(tree, round_clean):
+    """⚠ «Не приходит» считается **в шагах**, а не в зашитых часах.
+
+    При четвертьчасовом шаге полчаса молчания — уже повод смотреть в
+    расписание, а при часовом те же полчаса ещё норма.
+    """
+    было = datetime_utc_now() - timedelta(minutes=40)
+    await setting_state_patch(CRONJOB_LAST_KEY, {GALLERY_ROUND_JOB: {
+        'at': было.isoformat(timespec='seconds'),
+        'prev': (было - timedelta(minutes=15)).isoformat(timespec='seconds'),
+        'ok': True}})
+
+    assert (await gallery_folders(user=None))['result']['round']['late'] is True, \
+        'сорок минут при четвертьчасовом шаге — это два пропуска'
+
+
 async def test_round_counts_from_the_last_run(tree, round_clean):
     """Следующий заход считается **от прошлого**, а не от зашитого расписания.
 

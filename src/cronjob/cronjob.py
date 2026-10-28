@@ -99,14 +99,22 @@ async def cronjob_last(job: str) -> dict:
         job: имя задания из `CRONJOB_JOBS`.
 
     Returns:
-        `{'at': str, 'ok': bool}`; `at` — время UTC в ISO. **Пустой `at` значит
-        «не заходило ни разу»** — обычное состояние на свежей установке и
-        единственный признак того, что задание в расписание не завели.
+        `{'at': str, 'prev': str, 'ok': bool}` — время UTC в ISO. **Пустой `at`
+        значит «не заходило ни разу»** — обычное состояние на свежей установке
+        и единственный признак того, что задание в расписание не завели.
+
+    ⚠⚠ `prev` — время **предыдущего** захода, и держим мы его ради одного:
+    по двум отметкам виден **шаг планировщика**, а значит его не надо
+    записывать у себя. Запись шага константой — это вторая копия чужого
+    расписания, и она расходится молча: 28.10.2026 шаг задания галереи
+    сменили с часа на четверть, а панель ещё час обещала «возьмёт через час»,
+    пока константу не поправили руками.
     """
     state = await setting_state(CRONJOB_LAST_KEY)
     one = state.get(str(job or '').strip()) or {}
 
-    return {'at': str(one.get('at') or ''), 'ok': bool(one.get('ok'))}
+    return {'at': str(one.get('at') or ''), 'prev': str(one.get('prev') or ''),
+            'ok': bool(one.get('ok'))}
 
 
 async def _mark(job: str, ok: bool) -> None:
@@ -116,9 +124,13 @@ async def _mark(job: str, ok: bool) -> None:
     уже сделана. Молча, впрочем, не проходит — строка в журнале остаётся.
     """
     try:
+        # ⚠ Прошлое время переезжает в `prev` — по двум отметкам читатель видит
+        # шаг планировщика и обходится без своей записи расписания.
+        was = (await cronjob_last(job))['at']
         await setting_state_patch(CRONJOB_LAST_KEY,
                                   {job: {'at': datetime_utc_now().isoformat(
-                                      timespec='seconds'), 'ok': ok}})
+                                      timespec='seconds'),
+                                         'prev': was, 'ok': ok}})
     except (ValueError, OSError, RuntimeError) as err:
         logger_exception(f'[cronjob] {job}: отметка захода не легла: {err}')
 
