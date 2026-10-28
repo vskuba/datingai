@@ -157,6 +157,7 @@ class TestSweepBrakes:
         marked = []
         monkeypatch.setattr(guests_round, '_guests_fail', {})
         monkeypatch.setattr(guests_round, '_guests_told', {})
+        monkeypatch.setattr(guests_round, '_guests_site_fail', {})
         monkeypatch.setattr(guests_round, 'round_mem_mark',
                             lambda mem, key: marked.append((id(mem), key)))
         monkeypatch.setattr(guests_round, 'round_slot_due',
@@ -206,6 +207,38 @@ class TestSweepBrakes:
 
         assert got == {'profiles': 0, 'guests': 0}
         assert sweep == [], 'остывшая анкета всё-таки встала в круг'
+
+    async def test_site_rests_after_a_broken_run(self, sweep, monkeypatch):
+        """⚠⚠ Разбитый сценарий — беда сайтовая: после отказа отдыхает весь сайт.
+
+        Поанкетная остуда при нём живёт ровно один тик: анкет сорок, за тик
+        берутся три, и круг перебором списка стучит в панель каждую минуту —
+        почти сорок входов в час. 28.10.2026 этим темпом сайт и израсходовал
+        лимит попыток входа, и замолчали все ленты разом. Здесь анкеты всегда
+        «в срок» — тормозом должен остаться один отдых сайта.
+        """
+        from src.dating import guests_round
+
+        def _mark(mem, key):
+            mem[key] = time.time()
+
+        def _due(mem, key, every):
+            if mem is guests_round._guests_site_fail:
+                return time.time() - mem.get(key, 0) >= every
+            return True                 # поанкетной остуды как бы нет
+
+        monkeypatch.setattr(guests_round, 'round_mem_mark', _mark)
+        monkeypatch.setattr(guests_round, 'round_mem_due', _due)
+
+        first = await guests_round.guests_site_sweep(self.SITE)
+
+        assert 'сценария' in first.get('error', ''), \
+            'заход, увидевший беду, обязан был о ней сказать'
+
+        second = await guests_round.guests_site_sweep(self.SITE)
+
+        assert second == {'profiles': 0, 'guests': 0}, \
+            'сайт с разбитым сценарием не отдохнул и стукнул снова'
 
 
 class TestSeenDoor:
