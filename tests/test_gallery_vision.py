@@ -188,13 +188,20 @@ async def test_image_goes_compressed_not_raw(tree, agent, girl):
     assert image.startswith('data:image/jpeg;base64,'), 'ушёл не JPEG'
 
 
-async def test_fields_are_named_in_the_prompt(tree, agent, girl):
-    """Поля названы в просьбе: не назовёшь — модель придумает свои."""
+async def test_the_prompt_is_not_sent_from_here(tree, agent, girl):
+    """⚠⚠ Промпт **не шлётся**: он живёт у соседа умолчанием переменной.
+
+    Присланный отсюда перебил бы его молча (умолчание не перезаписывает
+    переданное), и текст, который человек видит на странице workflow, перестал
+    бы быть тем, по которому работает модель, — а понять это по журналу
+    нельзя.
+    """
     await gallery_vision_one((await _mine(girl))[0])
 
-    question = agent.asked[0]['question']
+    sent = agent.asked[0]['variables']
 
-    assert 'description' in question and 'tags' in question
+    assert 'prompt' not in sent, 'промпт уехал из кода и перебил сторону соседа'
+    assert 'image' in sent, 'кадр обязан уехать — его у соседа взять неоткуда'
 
 
 async def test_answer_lands_in_columns(tree, agent, girl):
@@ -258,25 +265,23 @@ async def test_one_failure_does_not_take_the_batch(tree, agent, girl, only_mine)
     assert got['failed'] == 1 and got['done'] == GALLERY_VISION_BATCH - 1
 
 
-async def test_prompt_goes_as_a_variable(tree, agent, girl):
-    """⚠⚠ Просьба уходит **переменной** `prompt`, а не только вопросом.
-
-    Workflow соседа подставляет её в шаг `tool_invoke` (`inputs_map`), и без
-    этой переменной инструмент получил бы пустую просьбу — модель придумала бы
-    свои поля, и колонки заполнять было бы нечем.
+async def test_only_the_frame_goes_as_a_variable(tree, agent, girl):
+    """Переменной уходит **кадр**, и только он.
 
     ⚠ Переменной `workflow` здесь нет и быть не должно: workflow задаётся
     агенту при заведении, и переключить его вызовом нельзя. Первая редакция
     слала его переменной — это выглядело бы работающим ровно до первого
     прогона.
+
+    ⚠ Вопрос ручке всё равно нужен: `/chat/ask` требует его, а журнал прогонов
+    показывает строкой — пустой читался бы как сорванный вызов.
     """
     await gallery_vision_one((await _mine(girl))[0])
 
     sent = agent.asked[0]['variables']
 
-    assert 'image' in sent and 'prompt' in sent
-    assert sent['prompt'] == sent['prompt'].strip() and 'description' in sent['prompt']
-    assert 'workflow' not in sent, 'workflow задаётся агенту, а не вызовом'
+    assert list(sent) == ['image'], f'уехало лишнее: {sorted(sent)}'
+    assert agent.asked[0]['question'].strip(), 'вопрос пустой'
 
 
 def test_agent_without_workflow_is_refused_with_words():
@@ -361,20 +366,25 @@ class TestTheTagDictionary:
         assert sum(len(one) for one in GALLERY_VISION_TAGS.values()) \
             == len(GALLERY_VISION_TAGS_ALL), 'плоский список разошёлся с группами'
 
-    def test_the_prompt_carries_the_whole_dictionary(self):
-        """⚠⚠ Модели список уходит **целиком**, а не описанием.
+    def test_the_dictionary_has_no_twin_in_our_code(self):
+        """⚠⚠ Промпт со списком тегов у нас не живёт — он у соседа.
 
-        «Теги про одежду и место» она понимает как «придумай про одежду и
-        место» — так и было: `lace dress`, `silver dress`, `white sweater`.
+        Держи мы свою копию текста, она разошлась бы с его страницей молча, и
+        человек правил бы тот текст, по которому модель не работает. Отсюда и
+        сторож: в коде не должно быть строки, перечисляющей теги.
+
+        ⚠ Что список всё равно соблюдается, держит сверка **на записи**
+        (`gallery_vision_tags_keep`) и строка в журнале, когда модель прислала
+        теги мимо словаря, — см. `gallery_vision_one`.
         """
-        from src.dating.gallery_vision import (GALLERY_VISION_PROMPT,
-                                               GALLERY_VISION_TAGS_ALL)
+        import src.dating.gallery_vision as module
 
-        for tag in GALLERY_VISION_TAGS_ALL:
-            assert tag in GALLERY_VISION_PROMPT, f'тега «{tag}» нет в промпте'
+        assert not hasattr(module, 'GALLERY_VISION_PROMPT'), \
+            'промпт вернулся в код — он разойдётся со страницей workflow молча'
 
-        assert 'только' in GALLERY_VISION_PROMPT.lower(), \
-            'в промпте не сказано, что список закрытый'
+        # ⚠ Сам словарь остаётся здесь и это правильно: по нему идёт сверка на
+        # записи. Нельзя лишь **текста просьбы**, который его перечисляет.
+        assert hasattr(module, 'GALLERY_VISION_TAGS'), 'словарь тегов потерялся'
 
     def test_a_stranger_tag_is_dropped(self):
         """⚠⚠ Промпта мало: сверка стоит **на записи**.

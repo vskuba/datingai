@@ -29,6 +29,7 @@ import json
 from ai.vision.ai_vision import ai_vision_normalize
 from google_drive_.google_drive_bytes import google_drive_bytes
 from json_.json_ import json_from_string
+from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.agent import AGENT_NODE, agent_site
@@ -112,17 +113,15 @@ GALLERY_VISION_TAGS_WANT = 8
 
 # Что просим у модели. ⚠ **Поля названы прямо здесь**: не назовёшь — модель
 # придумает свои, и каждый раз другие, а колонки заполнять будет нечем.
-GALLERY_VISION_PROMPT = (
-    'Это фотография девушки с сайта знакомств. Опиши её для картотеки агентства.\n'
-    'Верни объект JSON с полями:\n'
-    '  description — один абзац: кто в кадре, во что одета, где находится, '
-    'какое настроение и план съёмки;\n'
-    f'  tags — до {GALLERY_VISION_TAGS_WANT} тегов, и **только** из этого '
-    'списка, слово в слово:\n'
-    '    ' + ', '.join(GALLERY_VISION_TAGS_ALL) + '.\n'
-    'Тегов не из списка не придумывай — их отбросят. Подходящего нет — не ставь.\n'
-    'Нечитаемого и неизвестного не выдумывай.'
-)
+# Чем зовём агента. ⚠⚠ **Сам промпт сюда не входит и жить здесь не должен**:
+# он лежит у соседа умолчанием переменной `prompt` в workflow
+# `dating_gallery_describe`, где его видно человеку на странице. Присылка
+# отсюда перебила бы его молча, и показанный текст перестал бы быть тем, по
+# которому работает модель.
+#
+# ⚠ Строка нужна всё равно: ручка `/chat/ask` требует вопрос, а журнал прогонов
+# показывает его строкой — пустой выглядел бы как сорванный вызов.
+GALLERY_VISION_ASK = 'Describe this photo for the agency catalogue.'
 
 
 def gallery_vision_tags_keep(tags) -> list:
@@ -247,17 +246,30 @@ async def gallery_vision_one(row: dict) -> dict:
     raw, _ = await google_drive_bytes(row['file_id'], GALLERY_VISION_WIDTH)
     frame = ai_vision_normalize(raw)
 
+    # ⚠⚠ **Промпт не шлём — он живёт у соседа**, умолчанием переменной `prompt`
+    # в workflow `dating_gallery_describe`. Присланный отсюда перебил бы его
+    # молча, и текст, который человек видит у соседа на странице workflow,
+    # перестал бы быть тем, по которому работает модель.
     answer = await rhapsody_api_chat_ask(
-        await _agent_id(row['profile_id']), GALLERY_VISION_PROMPT,
-        {'image': 'data:image/jpeg;base64,' + base64.b64encode(frame).decode(),
-         'prompt': GALLERY_VISION_PROMPT})
+        await _agent_id(row['profile_id']), GALLERY_VISION_ASK,
+        {'image': 'data:image/jpeg;base64,' + base64.b64encode(frame).decode()})
 
     got = json_from_string(answer)
     if not got:
         raise RuntimeError(f'агент ответил не объектом JSON: {answer[:200]}')
 
     description = str(got.get('description') or '').strip()
+    asked = [str(one).strip().lower() for one in (got.get('tags') or []) if str(one).strip()]
     tags = gallery_vision_tags_keep(got.get('tags'))
+
+    # ⚠⚠ **Сторож расхождения промпта со словарём.** Промпт живёт у соседа и
+    # перечисляет теги, а закрытый список — здесь; разойдись они, модель
+    # исправно вернула бы теги, которых у нас нет, и все они отсеялись бы
+    # молча — снимок остался бы без тегов при зелёном разборе. Половина
+    # отброшенного значит именно это, а не неудачный кадр.
+    if asked and len(tags) * 2 < len(asked):
+        logger_info(f'[gallery] теги разошлись со словарём: модель прислала '
+                    f'{asked}, принято {tags} — сверьте промпт у соседа')
     if not description:
         raise RuntimeError('агент вернул объект без описания')
 
