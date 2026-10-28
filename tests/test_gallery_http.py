@@ -14,6 +14,7 @@
 эти тесты краснели бы не из-за кода (`testing.md` §1.2). Диск — заглушка.
 """
 
+import asyncio
 import uuid
 
 import pytest
@@ -541,3 +542,33 @@ class TestTheListShowsTheGallery:
         found = next(row for row in rows if int(row['id']) == girl[0])
 
         assert found['gallery'] == 0, 'погашенные строки попали в счёт'
+
+
+async def test_the_mark_carries_the_start_not_the_finish(tree, round_clean, monkeypatch):
+    """⚠⚠ Отметка несёт время **начала** захода, а не завершения.
+
+    По отметкам меряется шаг планировщика, а заходы длятся по-разному — на
+    проде 225 и 150 секунд подряд. Запиши мы конец, шаг прыгал бы вместе с
+    длительностью: измерено 817 секунд там, где планировщик стучал ровно 900.
+    """
+    import src.cronjob.cronjob as module
+
+    # Заход, который «длится» заметное время: сам процесс не запускаем.
+    async def _slow(job, path, wait):
+        await asyncio.sleep(1.2)
+
+        return {'ok': True, 'job': job, 'out': '', 'why': ''}
+
+    monkeypatch.setattr(module, '_spawn', _slow)
+    monkeypatch.setattr(module, 'CRONJOB_JOBS', {'gallery_round': 'src/cronjob/gallery_round.py'})
+
+    before = datetime_utc_now()
+    await module.cronjob_run('gallery_round', timeout=30)
+    after = datetime_utc_now()
+
+    got = datetime.fromisoformat((await module.cronjob_last('gallery_round'))['at'])
+
+    assert got <= before + timedelta(seconds=1), \
+        'записано время завершения — шаг планировщика будет прыгать'
+    assert got >= before - timedelta(seconds=2)
+    assert after - before >= timedelta(seconds=1), 'заход обязан был занять время'

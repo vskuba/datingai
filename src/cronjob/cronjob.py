@@ -83,8 +83,14 @@ async def cronjob_run(job: str, timeout: int = CRONJOB_TIMEOUT) -> dict:
     wait = min(max(int(timeout or CRONJOB_TIMEOUT), 1), CRONJOB_TIMEOUT_MAX)
     logger_info(f'[cronjob] {job}: запуск, срок {wait} с')
 
+    # ⚠⚠ Время захода берётся **до работы**, а записывается после. Иначе
+    # отметка несёт момент завершения, а заходы длятся по-разному (на проде
+    # 225 с и 150 с подряд) — и шаг планировщика, который по этим отметкам
+    # меряют, скачет: 817 секунд вместо ровных 900. «Когда заходило» — это
+    # когда началось.
+    started_at = datetime_utc_now().isoformat(timespec='seconds')
     done = await _spawn(job, str(full), wait)
-    await _mark(job, bool(done['ok']))
+    await _mark(job, bool(done['ok']), started_at)
 
     return done
 
@@ -117,8 +123,13 @@ async def cronjob_last(job: str) -> dict:
             'ok': bool(one.get('ok'))}
 
 
-async def _mark(job: str, ok: bool) -> None:
+async def _mark(job: str, ok: bool, at: str) -> None:
     """Отметить заход задания. Неудача — тоже заход: приходило, но не вышло.
+
+    Args:
+        job: имя задания.
+        ok: чем кончилось.
+        at: когда заход **начался** — см. ⚠⚠ в `cronjob_run`.
 
     ⚠ Своя неудача записи отметки задание не роняет: она про показ, а работа
     уже сделана. Молча, впрочем, не проходит — строка в журнале остаётся.
@@ -128,9 +139,7 @@ async def _mark(job: str, ok: bool) -> None:
         # шаг планировщика и обходится без своей записи расписания.
         was = (await cronjob_last(job))['at']
         await setting_state_patch(CRONJOB_LAST_KEY,
-                                  {job: {'at': datetime_utc_now().isoformat(
-                                      timespec='seconds'),
-                                         'prev': was, 'ok': ok}})
+                                  {job: {'at': at, 'prev': was, 'ok': ok}})
     except (ValueError, OSError, RuntimeError) as err:
         logger_exception(f'[cronjob] {job}: отметка захода не легла: {err}')
 
