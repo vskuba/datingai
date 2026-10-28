@@ -170,6 +170,20 @@ async def gallery_vision_due(limit: int = GALLERY_VISION_BATCH,
     ⚠ Отбор по сайту нужен заходу: пачка задана **настройкой сайта**, и общая
     выборка отдавала бы одному сайту место другого — молча и в пользу того, у
     кого номера анкет меньше.
+
+    ## ⚠⚠ Порядок — по времени попытки, и это лечит вставшую очередь
+
+    Неудача `described_at` не ставит (строка обязана вернуться в очередь), и
+    пока порядок был `described_at IS NOT NULL, id`, пачка каждый заход брала
+    **одни и те же** первые строки по номеру. Живёт причина неудачи — очередь
+    повторяет их вечно: на проде 28.10.2026 пять снимков повторились 80 раз
+    подряд, а 117 остальных не пробовали ни разу.
+
+    ⚠ Порядком «строки с ошибкой в конец» это не лечится: случись неудача у
+    всех, ключ перестаёт различать строки, и всё снова упирается в `id`.
+    Поэтому сортируем по `described_try_at` — отметке попытки, которую ставит
+    `_error_save`. NULL (не пробовали ни разу) MySQL ставит первым, и это
+    правильно: свежий снимок важнее повтора неудачи.
     """
     where = ['is_gone = 0', 'kind = %s', 'edited_at IS NULL',
              '(described_at IS NULL OR described_md5 <> md5)']
@@ -183,7 +197,8 @@ async def gallery_vision_due(limit: int = GALLERY_VISION_BATCH,
             'SELECT id, profile_id, file_id, name, md5, described_md5 '
             '  FROM gallery_file '
             f' WHERE {" AND ".join(where)} '
-            ' ORDER BY described_at IS NOT NULL, id LIMIT %s', (*args, int(limit)))
+            ' ORDER BY described_at IS NOT NULL, described_try_at, id '
+            ' LIMIT %s', (*args, int(limit)))
 
         return [dict(row) for row in (await db.fetchall() or [])]
 
@@ -303,13 +318,21 @@ async def _result_save(row_id: int, description: str, tags: list, md5: str) -> N
 
 
 async def _error_save(row_id: int, why: str) -> None:
-    """Записать причину неудачи, не трогая прежнее описание.
+    """Записать причину неудачи и время попытки, не трогая прежнее описание.
 
     ⚠ `described_at` не ставится: строка обязана вернуться в очередь следующим
     заходом. Проставь мы отметку, неудача выглядела бы как разбор.
+
+    ⚠⚠ **`described_try_at` ставится явно, а не `updated_at`-ом.** У строки есть
+    `updated_at` с `ON UPDATE CURRENT_TIMESTAMP`, но он обновляется, только если
+    строка **изменилась**: повторная неудача пишет ту же причину той же строке,
+    MySQL видит совпадение и не трогает ничего. Очередь на этом и стояла бы — а
+    выглядело бы как «починили, но не работает». На этой отметке держится
+    порядок `gallery_vision_due`: по ней очередь проворачивается.
     """
     async with mysql_get_db_async() as db:
-        await db.execute('UPDATE gallery_file SET described_error = %s WHERE id = %s',
+        await db.execute('UPDATE gallery_file SET described_error = %s, '
+                         '       described_try_at = NOW() WHERE id = %s',
                          (why[:500], row_id))
         await db.connection.commit()
 

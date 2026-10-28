@@ -24,6 +24,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from tests.drive_fake import DRIVE_FAKE_ROOT
 
 from src.dating import gallery_vision
+from src.dating.gallery_index import gallery_index_profile
 from src.dating.gallery_vision import (GALLERY_VISION_BATCH, gallery_vision_due,
                                        gallery_vision_one, gallery_vision_run)
 from src.uvicorn.routers.dating.profile_ import profile_delete
@@ -406,3 +407,64 @@ class TestTheTagDictionary:
         from src.dating.gallery_vision import gallery_vision_tags_keep
 
         assert gallery_vision_tags_keep(['dress', 'dress']) == ['dress']
+
+
+class TestTheQueueTurns:
+    """⚠⚠ Очередь проворачивается: неудача не запирает её на одних и тех же.
+
+    Поймано на проде 28.10.2026. Неудача `described_at` не ставит — строка
+    обязана вернуться, — а порядок был `described_at IS NOT NULL, id`. Пока
+    причина неудачи жила (у соседа зрение ходило на мёртвый адрес), пачка брала
+    **одни и те же** первые пять строк час за часом: 80 прогонов подряд, а 117
+    остальных снимков не пробовали ни разу.
+    """
+
+    async def test_a_failed_photo_goes_behind_the_untried(self, tree, girl):
+        """Снимок с неудачей уступает место тем, кого ещё не пробовали."""
+        await gallery_index_profile(girl, 'girl@example.com')
+        first = (await _mine(girl, 1))[0]
+
+        await gallery_vision._error_save(first['id'], 'сосед молчит')
+
+        assert (await _mine(girl, 1))[0]['id'] != first['id'], \
+            'очередь снова упёрлась в ту же строку'
+
+    async def test_all_failed_still_rotates(self, tree, girl):
+        """⚠⚠ Главное: когда неудача у **всех**, очередь всё равно крутится.
+
+        Это и отличает отметку времени от простого «строки с ошибкой в конец»:
+        такой ключ перестаёт различать строки ровно тогда, когда он нужен, и
+        порядок снова упирается в `id`.
+        """
+        await gallery_index_profile(girl, 'girl@example.com')
+        everyone = await _mine(girl, 50)
+        assert len(everyone) >= 3, 'для проверки нужно хотя бы три снимка'
+
+        # Все пробованы, и самый старый — первый из списка.
+        for number, row in enumerate(reversed(everyone)):
+            await gallery_vision._error_save(row['id'], 'сосед молчит')
+            await _try_at(row['id'], f'2026-10-28 0{number}:00:00')
+
+        order = [row['id'] for row in await _mine(girl, 50)]
+
+        assert order[0] == everyone[-1]['id'], \
+            'взята не самая давняя попытка — очередь не проворачивается'
+
+    async def test_an_untried_photo_outranks_an_old_failure(self, tree, girl):
+        """Непробованный (`NULL`) идёт раньше любой попытки, даже давней."""
+        await gallery_index_profile(girl, 'girl@example.com')
+        rows = await _mine(girl, 50)
+
+        await gallery_vision._error_save(rows[0]['id'], 'сосед молчит')
+        await _try_at(rows[0]['id'], '2020-01-01 00:00:00')
+
+        assert (await _mine(girl, 1))[0]['id'] != rows[0]['id'], \
+            'давняя неудача обогнала снимок, который не пробовали ни разу'
+
+
+async def _try_at(row_id: int, when: str) -> None:
+    """Подменить время попытки — чтобы не ждать часов ради проверки порядка."""
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE gallery_file SET described_try_at = %s WHERE id = %s',
+                         (when, row_id))
+        await db.connection.commit()
