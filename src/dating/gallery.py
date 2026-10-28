@@ -158,6 +158,23 @@ async def gallery_round_when() -> dict:
             'late': late, 'every_sec': every}
 
 
+def gallery_group_of(path: str) -> str:
+    """Имя группы из пути файла: последняя папка над ним.
+
+    Берём именно последнюю, а не весь путь: `photo/public` и `photo/intim`
+    человек читает как «public» и «intim», а приставка `photo/` у всех одна и
+    ничего не различает.
+
+    ⚠⚠ **Публичная, и это не стиль.** Отбор снимков под отправку спрашивает тот
+    же вопрос («какой группы этот файл»), и своя копия правила разошлась бы с
+    показом: человек видел бы снимок в «public», а отбор считал бы его чужим.
+    Повторить это в SQL тем более нельзя — `SUBSTRING_INDEX(path, '/', 1)` даёт
+    приставку `photo`, а не группу.
+    """
+    where = path.rpartition('/')[0]
+    return where.rpartition('/')[2] if where else ''
+
+
 def _step_of(last: dict) -> int:
     """Шаг планировщика по двум последним заходам; нечем мерить — умолчание.
 
@@ -179,23 +196,6 @@ def _step_of(last: dict) -> int:
         return GALLERY_ROUND_EVERY_SEC
 
     return int(шаг) if шаг > 0 else GALLERY_ROUND_EVERY_SEC
-
-
-def gallery_group_of(path: str) -> str:
-    """Имя группы из пути файла: последняя папка над ним.
-
-    Берём именно последнюю, а не весь путь: `photo/public` и `photo/intim`
-    человек читает как «public» и «intim», а приставка `photo/` у всех одна и
-    ничего не различает.
-
-    ⚠⚠ **Публичная, и это не стиль.** Отбор снимков под отправку спрашивает тот
-    же вопрос («какой группы этот файл»), и своя копия правила разошлась бы с
-    показом: человек видел бы снимок в «public», а отбор считал бы его чужим.
-    Повторить это в SQL тем более нельзя — `SUBSTRING_INDEX(path, '/', 1)` даёт
-    приставку `photo`, а не группу.
-    """
-    where = path.rpartition('/')[0]
-    return where.rpartition('/')[2] if where else ''
 
 
 def _group_order(name: str) -> tuple:
