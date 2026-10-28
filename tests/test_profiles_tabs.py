@@ -176,7 +176,10 @@ class TestTabReviewFindings:
         """
         page = (await auth_client.get(PAGE)).text
         start = page.find("siteEl.addEventListener('change'")
-        end = page.find('importBtn.addEventListener', start)
+        # Правка 2026-11: кнопка импорта уехала на «Анкеты», её проводки
+        # здесь больше нет — конец области задаёт следующая за сменой сайта
+        # проводка, поиск по списку.
+        end = page.find('findEl.addEventListener', start)
         assert start != -1 and end != -1, 'обработчик смены сайта не найден на странице'
         handler = page[start:end]
 

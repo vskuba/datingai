@@ -28,7 +28,6 @@
         --col: 38%;
         /* Ширина списка шаблонов и переменных: тянется делителем. */
         --tmpl-col: 320px;
-        --log: 200px;
         /* Высота ряда «Все онлайн» — ленты карточек поперёк вкладки. Считана
            по содержимому: заголовок, лицо 44, имя и возраст по 13, отступы и
            полоса прокрутки. Меньше — и подписи схлопнутся (см. `.person-card`).
@@ -148,28 +147,6 @@
         grid-column: 2;
         grid-row: 3;
         cursor: col-resize;
-    }
-
-    .split-row {
-        cursor: row-resize;
-        height: 6px;
-        flex: 0 0 auto;
-        margin: 3px 0;
-    }
-
-    /* Точки-захват: три штриха посередине полосы. Без них тонкая линия
-       читается как рамка, а не как то, что можно взять и потянуть. */
-    .split-row::after {
-        content: '';
-        display: block;
-        border-radius: 2px;
-        background: #cbd5e1;
-    }
-
-    .split-row::after {
-        width: 26px;
-        height: 2px;
-        margin: 2px auto;
     }
 
     /* Полоса вкладок — в `dating_page.css`: теми же вкладками живёт
@@ -752,37 +729,6 @@
         flex: 1 1 auto;
         min-height: 0;
         display: flex;
-    }
-
-    .chat-log {
-        flex: 0 0 auto;
-        height: var(--log);
-        min-height: 0;
-        display: flex;
-        flex-direction: column;
-        padding: 0 12px 8px;
-    }
-
-    /* Журнала нет, пока не выбрана анкета: пустая лента под пустой работой
-       читается как «не загрузилось». */
-    .chat-log.off, .work-pane .split-row.off {
-        display: none;
-    }
-
-    .chat-log-body {
-        flex: 1 1 auto;
-        min-height: 0;
-        overflow-y: auto;
-    }
-
-    .chat-log-head {
-        font-size: 11px;
-        font-weight: 700;
-        color: #94a3b8;
-        text-transform: uppercase;
-        letter-spacing: .04em;
-        margin-bottom: 4px;
-        flex: 0 0 auto;
     }
 
     /* Тело панели во вкладке «Чат» не прокручивается само: прокрутка внутри,
@@ -3983,35 +3929,6 @@
     }
 
 
-    /* Состояние импорта рядом с кнопкой. Словом, а не только цветом кнопки:
-       погашенная кнопка говорит «нельзя», но не говорит почему, а причина у
-       неё бывает разная — сайт без сценария или недоступный сосед. */
-    /* Состояние импорта — цветом самой кнопки: зелёная работает, красная нет.
-       ⚠ Не яркая заливка, а мягкий фон с цветной рамкой: кнопка стоит в шапке
-       рядом с тремя другими, и сплошной зелёный тянул бы взгляд на себя
-       сильнее, чем это нужно. */
-    .dating-btn.ready {
-        background: #f0fdf4;
-        border-color: #86efac;
-        color: #166534;
-    }
-
-    .dating-btn.ready:hover:not(:disabled) {
-        background: #dcfce7;
-        border-color: #4ade80;
-    }
-
-    /* ⚠ Красная кнопка всегда заперта, поэтому цвет держим и в `:disabled` —
-       браузер иначе гасит его до общего серого, и «не подключено» становится
-       неотличимо от «идёт работа». */
-    .dating-btn.blocked,
-    .dating-btn.blocked:disabled {
-        background: #fef2f2;
-        border-color: #fecaca;
-        color: #b91c1c;
-        opacity: 1;
-    }
-
     /* Счёт строк в подвале переехал в `dating_page.css` (`.pane-count`): тот же
        пейджер стоит на «Анкетах», и две копии разошлись бы — они и разошлись,
        пока счёт жил здесь. */
@@ -4025,7 +3942,6 @@
     <div class="dating-head">
         <h1>🌐 Сайт</h1>
         <select id="siteSelect" title="Сайт, на котором заведены анкеты"></select>
-        <button type="button" class="dating-btn" id="importBtn" disabled>Импортировать профили</button>
         {# ⚠ Кнопки «Забрать сообщения» здесь больше нет, а импорт переписки из
         панели агентства остался: его делает **круг воркера** сам, по частоте
         сайта (`chat_check_every`, `worker.md`). Кнопка была лишь «сделай сейчас»,
@@ -4045,7 +3961,6 @@
         решал, красить ли кнопку), значок «с ним есть переписка» в лентах и счёт
         диалогов из её снимка. Всё трое питались **только** этим нажатием и без
         него молчали. #}
-        <span class="dating-hint" id="hint"></span>
         {# Админ-панель агентства: ссылка и состояние сессии. ⚠ Панель — **её**
         страница, не наша: там видны все анкеты сайта разом. Ссылка справа,
         отдельно от кнопок, потому что она уводит с панели, а не работает в ней. #}
@@ -4175,19 +4090,6 @@
         <div class="pane-body work-empty" id="workEmpty">
             <div class="edit-empty">Выберите анкету в списке — здесь будет работа с ней.</div>
         </div>
-
-        {# ⚠ Панель осталась **только под ход импорта**, а журнала анкеты здесь
-        больше нет: он целиком живёт на странице «Журналы», и вторая лента тех
-        же строк под работой с анкетой отвечала на вопрос, который здесь не
-        задают. Место она при этом занимала всегда.
-
-        Импорт же своей анкеты не имеет — он идёт по сайту, минутами, и
-        показывать его ход больше негде. #}
-        <div class="split split-row off" id="splitRow" title="Потяните, чтобы изменить высоту"></div>
-        <div class="chat-log off" id="logPane">
-            <div class="chat-log-head" id="logHead">Импорт</div>
-            <div class="chat-log-body" id="log"></div>
-        </div>
     </div>
 </div>
 {% endblock %}
@@ -4200,7 +4102,7 @@
     // Модальное окно — общее для всех страниц панели (`modal.js`).
     import {modalClose, modalOpen} from '{{ static_url('js/modal.js') }}';
     import {esc, faceFallback, onlineDot, warnBadge, seenText, timeShort, timeFull,
-            pagerRender, logRender}
+            pagerRender}
         from '{{ static_url('js/dating/view.js') }}';
     // Сдвиг времени в пояс настройки: с сервера метки приходят в UTC.
     import {timeAgo, timeAgoSec, timeLeftSec, timeNowMinutes, timeShift, timeToday}
@@ -4262,19 +4164,14 @@
     const LAYOUT_KEY = 'dating_profile_layout';
 
     const siteEl = document.getElementById('siteSelect');
-    const importBtn = document.getElementById('importBtn');
     const tableEl = document.getElementById('table');
-    const hintEl = document.getElementById('hint');
     const countEl = document.getElementById('profilesN');
     const findEl = document.getElementById('profileFind');
     const pagerEl = document.getElementById('profilesPager');
     const workEl = document.getElementById('work');
-    // Узлы каркаса: пустое состояние, журнал и разделитель над ним. Они не
-    // принадлежат шаблону сайта и живут, пока живёт страница.
+    // Узел каркаса: пустое состояние. Он не принадлежит шаблону сайта и живёт,
+    // пока живёт страница.
     const workEmptyEl = document.getElementById('workEmpty');
-    const logPaneEl = document.getElementById('logPane');
-    const logEl = document.getElementById('log');
-    const splitRowEl = document.getElementById('splitRow');
     const workWhoEl = document.getElementById('workWho');
     const pageTabsEl = document.getElementById('pageTabs');
     const pageEl = document.querySelector('.dating-page');
@@ -4342,11 +4239,6 @@
     // Кого сейчас держит долгое действие: вход идёт минутами, и перерисовка не
     // должна ни затирать «Вхожу…», ни подсовывать кнопку под руку второй раз.
     const busy = new Set();
-    // Ход последнего импорта — строками, как их вернул сервер. Держим здесь, а не
-    // в разметке: панель журнала перерисовывается своим кругом, и ход импорта
-    // должен её пережить.
-    let importLog = [];
-    let importBusy = false;
     // Какая вкладка открыта. Переживает смену анкеты: человек читает переписку и
     // переключается между анкетами, а не между вкладками — сбрасывать её на «Чат»
     // при каждом выборе значило бы отнимать у него то, что он только что открыл.
@@ -4393,7 +4285,6 @@
             return;
         }
 
-        importReadyLoad();
         profilesLoad();
         // Состояние админ-панели этого сайта. ⚠ Не ждём: ответ из своей базы, и
         // шапка не должна стоять из-за строки в правом углу.
@@ -5255,14 +5146,6 @@
         workScheduleShow();
         pageTabsEl.querySelectorAll('.page-tab').forEach(btn =>
             btn.classList.toggle('on', btn.dataset.tab === workTab));
-
-        // Журнал прячем вместе с работой: пустая лента под пустой панелью
-        // читается как «не загрузилось». Показываем и там, где идёт импорт — у
-        // него своей анкеты нет, а ход работы видеть надо.
-        // ⚠ Панель показывается **только пока идёт импорт**: журнал анкеты отсюда
-        // убран, а импорту место нужно — своей анкеты у него нет.
-        logPaneShow(importLog.length > 0);
-        if (importLog.length) logRender(logEl, importLog, '');
 
         // ⚠ **Две вкладки живут и без выбранной анкеты**, и по одной причине: у
         // каждой есть содержимое **про сайт**, а не про учётку.
@@ -11355,11 +11238,6 @@
     const mailScheduleShow = mailSchedule.show;
     const mailScheduleOnSet = mailSchedule.onSet;
 
-    function logPaneShow(on) {
-        logPaneEl.classList.toggle('off', !on);
-        splitRowEl.classList.toggle('off', !on);
-    }
-
     // Наполняет вкладку «Чат» данными. Разметку не собирает — она уже стоит из
     // шаблона сайта; здесь только содержимое контейнеров.
     // Args:
@@ -14125,90 +14003,6 @@
     // Привезённое показывается **само**: сообщения ложатся в ту же таблицу, куда
     // пишет сокет, и карточка чата не знает, откуда они (`chat_panel.py`).
 
-    // Настроен ли импорт переписки: признак берёт сервер у соседа (есть ли
-    // сценарий).
-    //
-    // ── Импорт анкет с сайта ─────────────────────────────────────────────────
-
-    // Кнопка активна только там, где импорт настроен. Признак спрашиваем у
-    // сервера, а не выводим из списка сайтов: настройка живёт у соседа
-    // (сценарий сайта), и страница про неё знать не может.
-    async function importReadyLoad() {
-        // ⚠ **Состояние показывает сама кнопка цветом**, а подписи «Активный» рядом
-        // больше нет. Она повторяла то, что и так видно по запертой кнопке, и
-        // занимала место в шапке, где кнопок уже четыре.
-        //
-        // Цвет читается быстрее слова: зелёный — импорт настроен, красный — нет.
-        // Причина остаётся подсказкой: цвет говорит «можно или нет», а «почему
-        // нет» нужно не всякий раз.
-        importState(false, 'спрашиваю, настроен ли импорт…');
-        if (!siteId()) return;
-
-        let state;
-        try {
-            state = (await getData(`${BASE}/api/dating/import/ready?site_id=${siteId()}`)).result || {};
-        } catch (e) {
-            importState(false, 'состояние импорта не спросилось: ' + e.message);
-            return;
-        }
-
-        importState(!!state.ready, state.ready
-            ? `импорт настроен: сценарий «${state.scenario}» у сайта в RhapsodyAi`
-            : (state.why || 'импорт у этого сайта не настроен'));
-    }
-
-    // Красит кнопку и запирает её. Одной функцией, потому что цвет и запертость —
-    // одно и то же сведение: красная кнопка обязана быть запертой, иначе она
-    // обещает работу, которой не будет.
-    function importState(ready, why) {
-        importBtn.classList.toggle('ready', ready);
-        importBtn.classList.toggle('blocked', !ready);
-        importBtn.disabled = !ready || importBusy;
-        importBtn.title = why || '';
-    }
-
-    // Импорт идёт минутами: список читается одним прогоном, а карточка каждой
-    // анкеты — своим. Поэтому кнопка занята всё это время, а ход показывается в
-    // панели журнала — там же, где человек и так читает, что происходит.
-    async function profileImport() {
-        if (importBusy || !siteId()) return;
-
-        importBusy = true;
-        importBtn.disabled = true;
-        importBtn.innerHTML = '<span class="dating-spin"></span>Импортирую…';
-        importLog = [{level: 'info', created_at: '', text: 'Импорт пошёл: вход в панель сайта…'}];
-        openSet(0);
-
-        try {
-            const res = (await postData(
-                `${BASE}/api/dating/import/profile?site_id=${siteId()}`, {})).result || {};
-
-            importLog = (res.log || []).map(text => ({level: 'info', created_at: '', text}));
-
-            if (res.status === 'error') {
-                importLog = [{level: 'fail', created_at: '', text: res.error}];
-                showNotification('Импорт не прошёл: ' + res.error, 'error');
-            } else {
-                showNotification(`Импорт: заведено ${res.created}, обновлено ${res.updated}, `
-                    + `без изменений ${res.same}`,
-                    res.created || res.updated ? 'success' : 'info');
-            }
-        } catch (e) {
-            importLog = [{level: 'fail', created_at: '', text: 'Импорт не прошёл: ' + e.message}];
-            showNotification('Импорт не прошёл: ' + e.message, 'error');
-        } finally {
-            importBusy = false;
-            importBtn.innerHTML = 'Импортировать профили';
-            await importReadyLoad();
-            await profilesLoad();
-            workPaint();
-        }
-    }
-
-    // Журнал — часть **каркаса**: его узел живёт, пока живёт страница, и на
-    // любой вкладке показывает одно и то же. Прежде он лежал внутри разметки
-    // вкладки «Чат» и на «Настройках» его не было вовсе; теперь искать его каждый
-    // раз незачем.
     // ── Действия ─────────────────────────────────────────────────────────────
 
     function bindActions() {
@@ -14327,10 +14121,7 @@
         // человек, переключившийся посмотреть соседний сайт, вернулся бы к
         // несохранённым правкам, которых уже нет.
         openSet(0);
-        // Ход прошлого импорта относится к прежнему сайту — уносим вместе с ним.
-        importLog = [];
         empty('Гружу…');
-        importReadyLoad();
         profilesLoad();
         // ⚠ Значок новых писем — по сайту, и спрашивается один раз на его смену:
         // он висит в списке анкет, а список рисуется задолго до того, как человек
@@ -14352,9 +14143,6 @@
         feedFirst = true;
         feedLoad();
     });
-    importBtn.addEventListener('click', profileImport);
-    // Кнопка шапки — обработчик один на страницу: шапка не перерисовывается, в
-    // отличие от вкладки, где она стояла раньше.
     // Поиск режет уже пришедший список, а не ходит на сервер: список приходит
     // целиком, и запрос на каждую букву ничего не уточнит. Каждая буква
     // возвращает на первую страницу — найденное показывают с начала.
@@ -15070,7 +14858,7 @@
     // Все размеры страницы в одном месте: список, журнал и две колонки
     // собеседников. Перечислены именами переменных, а не по одной строке на каждую,
     // — пятый разделитель не должен требовать правки в двух функциях.
-    const LAYOUT_VARS = ['--col', '--log', '--online-h', '--reply-col'];
+    const LAYOUT_VARS = ['--col', '--online-h', '--reply-col'];
 
     function layoutSave() {
         const saved = {};
@@ -15105,13 +14893,6 @@
         Math.round(innerWidth * 0.7),
         (e) => e.clientX - pageEl.getBoundingClientRect().left);
 
-    // Журнал растёт **вверх**: его низ стоит на месте, тянут за верх, — поэтому
-    // высота считается от нижнего края панели.
-    splitDrag(splitRowEl, '--log', 80, Math.round(innerHeight * 0.6),
-        (e) => document.querySelector('.work-pane').getBoundingClientRect().bottom
-            - e.clientY);
-
-    hintEl.textContent = 'состояние обновляется само';
     empty('Гружу…');
     workPaint();
     sitesLoad();

@@ -41,7 +41,37 @@
         .dating-head { grid-column: 1 / -1; }
 
         .dating-profiles-pane { grid-column: 1; grid-row: 3; }
-        .page-tabs { grid-column: 1 / -1; grid-row: 2; justify-self: start; }
+        /* Импорт — в строке вкладок: он про сайт целиком, а не про выбранную
+           анкету; в шапке теснее — там «+ девушка». */
+        .tabs-row {
+            grid-column: 1 / -1; grid-row: 2;
+            display: flex; align-items: center; gap: 10px;
+        }
+
+        /* Состояние импорта — цветом самой кнопки: зелёная настроена, красная
+           нет. ⚠ Не яркая заливка, а мягкий фон с цветной рамкой: сплошной
+           зелёный тянул бы взгляд на себя сильнее, чем нужно.
+           ⚠ Красная кнопка всегда заперта, поэтому цвет держим и в `:disabled`:
+           браузер иначе гасит его до общего серого, и «не подключено» становится
+           неотличимо от «идёт работа». */
+        .dating-btn.ready {
+            background: #f0fdf4;
+            border-color: #86efac;
+            color: #166534;
+        }
+
+        .dating-btn.ready:hover:not(:disabled) {
+            background: #dcfce7;
+            border-color: #4ade80;
+        }
+
+        .dating-btn.blocked,
+        .dating-btn.blocked:disabled {
+            background: #fef2f2;
+            border-color: #fecaca;
+            color: #b91c1c;
+            opacity: 1;
+        }
         /* ⚠ Собеседники разложены **как девушки**: список слева, карточка справа.
            Прежде это была сетка во всю ширину с правкой прямо в карточке — и
            расходилась с соседней вкладкой во всём: там выбирают строку и читают
@@ -497,9 +527,17 @@
        «Девушки» — наши учётки, которыми работают; «Собеседники» — те, кому пишут.
        У вторых нет ни настроек, ни расписания, ни входа: это не наша учётка, а
        карточка чужого человека. #}
-    <div class="page-tabs" id="pageTabs">
-        <button type="button" class="page-tab on" data-tab="girl">Девушки</button>
-        <button type="button" class="page-tab" data-tab="companion">Собеседники</button>
+    <div class="tabs-row">
+        <div class="page-tabs" id="pageTabs">
+            <button type="button" class="page-tab on" data-tab="girl">Девушки</button>
+            <button type="button" class="page-tab" data-tab="companion">Собеседники</button>
+        </div>
+        {# Импорт анкет переехал сюда с «Профилей»: он заводит те самые анкеты,
+        чей список на этой странице, и обновлять после него надо именно его.
+        Кнопка зелёная/красная: спрашивает у сервера, настроен ли у сайта импорт
+        (сценарий в RhapsodyAi); причина — подсказкой. #}
+        <button type="button" class="dating-btn" id="importBtn" disabled>Импортировать профили</button>
+        <span class="dating-hint">состояние обновляется само</span>
     </div>
 
     <div class="pane dating-profiles-pane">
@@ -596,6 +634,7 @@
     const PAGE_SIZE_GUESS = 8;
 
     const siteEl = document.getElementById('siteSelect');
+    const importBtn = document.getElementById('importBtn');
     const profilesEl = document.getElementById('profiles');
     const profileEl = document.getElementById('profile');
     const formEl = document.getElementById('form');
@@ -604,6 +643,9 @@
     const pageEl = document.querySelector('.dating-page');
 
     let profiles = [], currentId = 0, probeBusy = false;
+    // Пока импорт идёт, кнопка занята: прогон долгий, и второе нажатие завело бы
+    // второй заход по тому же сайту.
+    let importBusy = false;
     // Ответ карточки целиком: из него берут и настройки, и расписание.
     let cardData = null;
     // Черновик расписания по анкете: правки до сохранения. Ключ — id анкеты.
@@ -630,6 +672,7 @@
             return;
         }
         profilesLoad();
+        importReadyLoad();
         datingPanelPaint(document.getElementById('panelLink'), BASE, siteEl.value);
 
         // ⚠ Открыта вкладка собеседников — грузим и их: список спрашивается по
@@ -639,6 +682,75 @@
     }
 
     const siteId = () => Number(siteEl.value || 0);
+
+    // ── Импорт анкет с сайта ─────────────────────────────────────────────────
+    //
+    // Кнопка приехала с «Профилей»: импорт заводит анкеты, которые живут здесь,
+    // и ходить за списком после импорта на другую страницу незачем.
+    //
+    // Кнопка активна только там, где импорт настроен. Признак спрашиваем у
+    // сервера, а не выводим из списка сайтов: настройка живёт у соседа
+    // (сценарий сайта), и страница про неё знать не может. Состояние показывает
+    // сама кнопка цветом: зелёный — настроен, красный — нет; причина —
+    // подсказкой, она нужна не всякий раз.
+    async function importReadyLoad() {
+        importState(false, 'спрашиваю, настроен ли импорт…');
+        if (!siteId()) return;
+
+        let state;
+        try {
+            state = (await getData(`${BASE}/api/dating/import/ready?site_id=${siteId()}`)).result || {};
+        } catch (e) {
+            importState(false, 'состояние импорта не спросилось: ' + e.message);
+            return;
+        }
+
+        importState(!!state.ready, state.ready
+            ? `импорт настроен: сценарий «${state.scenario}» у сайта в RhapsodyAi`
+            : (state.why || 'импорт у этого сайта не настроен'));
+    }
+
+    // Красит кнопку и запирает её одной функцией: цвет и запертость — одно и то
+    // же сведение. Красная обязана быть запертой, иначе обещает работу, которой
+    // не будет.
+    function importState(ready, why) {
+        importBtn.classList.toggle('ready', ready);
+        importBtn.classList.toggle('blocked', !ready);
+        importBtn.disabled = !ready || importBusy;
+        importBtn.title = why || '';
+    }
+
+    // Импорт идёт минутами: список читается одним прогоном, а карточка каждой
+    // анкеты — своим. Кнопка занята всё это время; на этой странице журнала нет,
+    // поэтому итог приходит сообщением, а ход — в свой журнал («Журналы»), его
+    // импорт пишет на сервере по каждой анкете.
+    async function profileImport() {
+        if (importBusy || !siteId()) return;
+
+        importBusy = true;
+        importBtn.disabled = true;
+        importBtn.innerHTML = '<span class="dating-spin"></span>Импортирую…';
+
+        try {
+            const res = (await postData(
+                `${BASE}/api/dating/import/profile?site_id=${siteId()}`, {})).result || {};
+
+            if (res.status === 'error') {
+                showNotification('Импорт не прошёл: ' + res.error, 'error');
+            } else {
+                showNotification(`Импорт: заведено ${res.created}, обновлено ${res.updated}, `
+                    + `без изменений ${res.same}`,
+                    res.created || res.updated ? 'success' : 'info');
+            }
+        } catch (e) {
+            showNotification('Импорт не прошёл: ' + e.message, 'error');
+        } finally {
+            importBusy = false;
+            importBtn.innerHTML = 'Импортировать профили';
+            await importReadyLoad();
+            profilesLoad();
+        }
+    }
 
     async function profilesLoad() {
         if (!siteId()) {
@@ -2906,12 +3018,16 @@
     });
     document.getElementById('saveBtn').addEventListener('click', profileSave);
     document.getElementById('cancelBtn').addEventListener('click', () => formEl.classList.remove('open'));
+    // Кнопка импорта — обработчик один на страницу: строка вкладок не
+    // перерисовывается.
+    importBtn.addEventListener('click', profileImport);
     // Перерисовываем на месте, без запроса: список уже в памяти.
     findEl.addEventListener('input', () => { profilesPage = 0; profilesRender(); });
     siteEl.addEventListener('change', () => {
         localStorage.setItem(DATING_SITE_KEY, siteEl.value);
         currentId = 0;
         profilesLoad();
+        importReadyLoad();
 
         // ⚠ Собеседники — тоже по сайту, и их надо сбросить здесь же. Прежде
         // список перегружался только по щелчку вкладки: переключал сайт, не
