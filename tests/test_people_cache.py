@@ -741,6 +741,33 @@ class TestFreshness:
         assert answer['refreshing'] is False, \
             'прогон завёлся заново, хотя Redis помнит попытку — это двойной вход в панель'
 
+    async def test_failure_reason_is_known_to_both_processes(self, door, monkeypatch):
+        """⚠ И причина неудачи — **общая**, как штамп попытки.
+
+        Прогон заводит либо страница, либо круг; заведёт круг — и страница, у которой
+        в памяти своей неудачи нет, молча показывала бы устаревшее без «не
+        обновилось»: человек видел бы старый список и не знал, что он встал.
+        Тест делает вид, что причину помнит только другой процесс (своя память
+        пуста, Redis помнит), — и колонка обязана сказать правду.
+        """
+        monkeypatch.setattr(people, '_site_profile', _site_profile())
+        monkeypatch.setattr(people, '_snapshot', _snapshot(PEOPLE))
+        await people.people_site_list(343, 'online', fresh=False, user=None)
+        await _refreshed(SITE_KEY)
+
+        monkeypatch.setattr(people, '_snapshot', _snapshot(fails='панель не пускает'))
+        _stale(door, SITE_KEY)
+        await people.people_site_list(343, 'online', fresh=False, user=None)
+        await _refreshed(SITE_KEY)
+
+        people._refresh_error.clear()
+
+        answer = (await people.people_site_list(343, 'online', fresh=False,
+                                                user=None))['result']
+
+        assert 'панель не пускает' in answer['error'], \
+            'прогон встал в другом процессе, и страница об этом молчит'
+
     async def test_profile_list_carries_no_countdown(self, door, monkeypatch):
         """У списка без своего круга таймера нет — `-1`, а не выдуманный срок.
 

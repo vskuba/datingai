@@ -241,7 +241,13 @@ _refresh_at: dict[str, float] = {}
 # раньше, чем фоновый прогон добирается до конца, — и без этой памяти колонка
 # показывала бы «кеш от 29.08» бесконечно, ни словом не обмолвившись, что новый
 # список не снимается уже которую попытку.
-_refresh_error: dict[tuple[int, str], str] = {}
+#
+# ⚠ Та же судьба, что у штампа попытки: «не обновилось» не должно зависеть от
+# того, кто завёл съём — прогон заводит либо страница (uvicorn), либо круг
+# (воркер), и лежала бы причина в памяти завёвшего — второй показывал бы
+# устаревшее молча. Решает Redis (`:err` рядом со снимком), копия здесь —
+# подпорка на его сбой; читают `_error_get`.
+_refresh_error: dict[str, str] = {}
 
 # Гости: фоновая съёмка, заведённая кнопкой «обновить». Круг гостит в воркере,
 # а кнопка — в этом процессе, и ждать его круг здесь некому: ответ ручки
@@ -577,6 +583,51 @@ def _attempt_mark(key: str) -> None:
         logger_info(f'[dating] штамп попытки «{key}» не записался: {e}')
 
 
+def _error_mark(key: str, why: str) -> None:
+    """Запоминает, чем кончилась неудачная попытка. Не бросает — как запись кэша.
+
+    Пишет тот процесс, что заводил прогон, а читает любой: лежала бы причина
+    в памяти завёвшего — второй показывал бы устаревшее без единого слова о том,
+    почему оно не обновляется.
+    """
+    _refresh_error[key] = why
+    try:
+        # Срок — как у штампа попытки: причина нужна ровно столько, сколько
+        # человек видит устаревший снимок, и дольше недели показывать нечего.
+        redis_conn_get().set(key + ':err', why, ex=2 * PEOPLE_KEEP_SEC)
+    except Exception as e:
+        logger_info(f'[dating] причина сбоя «{key}» не записалась: {e}')
+
+
+def _error_clear(key: str) -> None:
+    """Снимает причину: удачный снимок снимает и старую неудачу."""
+    _refresh_error.pop(key, None)
+    try:
+        redis_conn_get().delete(key + ':err')
+    except Exception as e:
+        logger_info(f'[dating] причина сбоя «{key}» не снялась: {e}')
+
+
+def _error_get(key: str) -> str:
+    """Последняя неудача этого списка; пустая строка — неудачи нет.
+
+    Решает Redis: ключа нет — значит кто-то уже успешно снял, и доживающая копия
+    этого процесса не должна воскрешать причину, которую другой уже снял. Ею
+    пользуемся только когда сам Redis лёг — тот же размен, что у `_cache_get`.
+    """
+    try:
+        raw = redis_conn_get().get(key + ':err')
+    except Exception as e:
+        logger_info(f'[dating] причина сбоя «{key}» не прочиталась: {e}')
+
+        return _refresh_error.get(key, '')
+
+    if raw is None:
+        return ''
+
+    return raw if isinstance(raw, str) else raw.decode()
+
+
 async def _refresh_run(profile: dict, kind: str, key: str, log_id: int) -> None:
     """Снимает список в фоне и переписывает кэш. Не бросает: ждать его некому.
 
@@ -589,7 +640,7 @@ async def _refresh_run(profile: dict, kind: str, key: str, log_id: int) -> None:
     try:
         people = await _snapshot(profile, kind)
     except _PeopleFailure as e:
-        _refresh_error[key] = str(e)
+        _error_mark(key, str(e))
         if log_id:
             await log_write(log_id, 'fail', f'{title} с сайта не снялись: {e}')
         logger_info(f'[dating] фоновый список «{key}» не снялся: {e}')
@@ -598,7 +649,7 @@ async def _refresh_run(profile: dict, kind: str, key: str, log_id: int) -> None:
     except Exception as e:
         # Сюда падает то, чего мы не предусмотрели. Ждать эту задачу некому, и без
         # перехвата исключение утонуло бы в логе `asyncio` без следа на странице.
-        _refresh_error[key] = f'обновление сорвалось: {e}'
+        _error_mark(key, f'обновление сорвалось: {e}')
         logger_info(f'[dating] фоновый список «{key}» упал: {e}')
 
         return
@@ -607,7 +658,7 @@ async def _refresh_run(profile: dict, kind: str, key: str, log_id: int) -> None:
                      'when': datetime_utc_now().strftime('%Y-%m-%d %H:%M:%S'),
                      'people': people},
                await _keep_sec(kind, int(profile.get('site_id') or 0)))
-    _refresh_error.pop(key, None)
+    _error_clear(key)
     if log_id:
         await log_write(log_id, 'ok', f'{title} с сайта: {len(people)} собеседников')
 
@@ -1178,7 +1229,7 @@ async def _list(kind: str, fresh: bool, profile: dict, key: str, log_id: int,
     next_in = (max(0, fresh_sec - int(time.time() - _attempt_at(key)))
                if scheduled and cached else -1)
 
-    return _answer(cached, cached=bool(cached), error=_refresh_error.get(key, ''),
+    return _answer(cached, cached=bool(cached), error=_error_get(key),
                    refreshing=refreshing, site_id=site_id, kind=kind,
                    next_in=next_in)
 
