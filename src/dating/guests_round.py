@@ -201,7 +201,9 @@ async def guests_site_sweep(site_id: int, due_only: bool = True,
                          f'на вкладке «Сценарии»'}
 
     gone = 0
+    tried = 0
     for one in due:
+        tried += 1
         got = await _profile_guests(scenario, driver, site_id, one)
         if got is None:
             round_mem_mark(_guests_fail, one['id'])
@@ -210,6 +212,11 @@ async def guests_site_sweep(site_id: int, due_only: bool = True,
             # а про вход или вёрстку — у следующей будет то же самое (см.
             # `_guests_site_fail`).
             round_mem_mark(_guests_site_fail, site_id)
+            if due_only:
+                # ⚠ И остаток пачки не добираем: сайт уже на отдыхе, за него
+                # новые заходы всё равно не выйдут, а эти анкеты возьмутся
+                # после отдыха — а не ценою заведомо отказного входа.
+                break
             continue
 
         _guests_fail.pop(one['id'], None)
@@ -222,7 +229,9 @@ async def guests_site_sweep(site_id: int, due_only: bool = True,
         round_slot_mark(GUESTS_SLOT, one['id'], every=every)
         gone += got
 
-    return {'profiles': len(due), 'guests': gone}
+    # ⚠ Пробовали, а не удалось: с отказом пачка обрывается, и `len(due)`
+    # врал бы о числе зашедших в панель анкет.
+    return {'profiles': tried, 'guests': gone}
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

@@ -240,6 +240,39 @@ class TestSweepBrakes:
         assert second == {'profiles': 0, 'guests': 0}, \
             'сайт с разбитым сценарием не отдохнул и стукнул снова'
 
+    async def test_batch_stops_at_first_failure(self, sweep, monkeypatch):
+        """Круг с отказом не добивает остаток пачки: раз сайт отправлен на
+        отдых, следующие в пачке — те же входы, заведомо отказные. Кнопка
+        (`due_only=False`) — другое дело: там человек просил снять всех."""
+        from src.dating import guests_round
+
+        tried = []
+
+        async def _profiles(site_id):
+            return [{'id': self.PID, 'login': 'x', 'proxy_id': 0},
+                    {'id': self.PID + 1, 'login': 'y', 'proxy_id': 0}]
+
+        async def _find(site_id, name):
+            return {'id': 541, 'name': name}
+
+        async def _run(scenario, driver, site_id, one):
+            tried.append(one['id'])
+            return None
+
+        monkeypatch.setattr(guests_round, 'guests_site_profiles', _profiles)
+        monkeypatch.setattr(guests_round, 'scenario_find', _find)
+        monkeypatch.setattr(guests_round, '_profile_guests', _run)
+
+        got = await guests_round.guests_site_sweep(self.SITE)
+
+        assert tried == [self.PID], 'после отказа круг добил остаток пачки'
+        assert got['profiles'] == 1, 'счёт врёт о числе зашедших в панель'
+
+        tried.clear()
+        await guests_round.guests_site_sweep(self.SITE, due_only=False)
+
+        assert len(tried) == 2, 'кнопка не досняла остальных до конца'
+
 
 class TestSeenDoor:
     """Дверь записи: повторный визит — одна строка, подтверждение — свежее."""
