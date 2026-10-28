@@ -139,7 +139,7 @@ def test_carousel_scrolls_through_photos(page):
     assert 'gallery-step' in block, 'нет кнопок листания'
     assert "'ArrowRight'" in block and "'ArrowLeft'" in block, 'клавиши не слушаются'
     assert "'Escape'" in block, 'Esc перестал закрывать'
-    assert 'из ${photos.length}' in block, 'не видно, какой кадр по счёту'
+    assert 'of ${photos.length}' in block, 'не видно, какой кадр по счёту'
 
 
 def test_carousel_takes_photos_only(page):
@@ -207,8 +207,8 @@ def test_the_buttons_say_they_are_working(page):
     выглядела нетронутой.
     """
     assert 'galleryBusy(' in page, 'кнопки не показывают, что заняты'
-    assert 'Обхожу Диск…' in page, 'обход идёт молча'
-    assert 'Сохраняю…' in page, 'сохранение идёт молча'
+    assert 'Walking the Drive…' in page, 'обход идёт молча'
+    assert 'Saving…' in page, 'сохранение идёт молча'
 
     walk = page[page.index('function galleryBind'):]
     assert 'showNotification' in walk[:4000], \
@@ -240,11 +240,11 @@ def test_the_buttons_explain_what_they_do(page):
     head = page[page.index('function galleryHead'):]
     head = head[:head.index('function galleryGroups')]
 
-    assert 'title="Запомнить выбранную папку' in head, \
+    assert 'title="Remember the selected folder' in head, \
         'у «Сохранить» нет подсказки'
-    assert 'title="Обойти папку на Диске' in head, \
+    assert 'title="Walk the Drive folder' in head, \
         'у «Обновить» нет подсказки'
-    assert '<b>Сохранить</b>' in head and '<b>Обновить</b>' in head, \
+    assert '<b>Save</b>' in head and '<b>Refresh</b>' in head, \
         'под кнопками не сказано, чем они отличаются'
 
 
@@ -311,8 +311,8 @@ def test_the_question_warns_that_the_file_comes_back(page):
     box = box[:box.index('function galleryFile')]
     question = box[box.index('confirm('):box.index(')) return')]
 
-    assert 'вернёт' in question, 'вопрос молчит о возврате файла обходом'
-    assert 'описания' in question, 'вопрос молчит о потере описания'
+    assert 'brings it back' in question, 'вопрос молчит о возврате файла обходом'
+    assert 'no description' in question, 'вопрос молчит о потере описания'
 
 
 def test_the_trash_can_does_not_open_the_frame(page):

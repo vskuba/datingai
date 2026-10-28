@@ -848,13 +848,11 @@
         // ⚠ «1 снимков» в подсказке — мелочь, которую видно каждому: у анкеты с
         // одной фотографией она и показывалась. Склонение здесь же, своё: ради
         // одной строки общий склонятор не заводим, а разойтись ему не с чем.
-        const tail = all % 10 === 1 && all % 100 !== 11 ? 'снимок'
-                   : [2, 3, 4].includes(all % 10) && ![12, 13, 14].includes(all % 100)
-                     ? 'снимка' : 'снимков';
+        const tail = all === 1 ? 'photo' : 'photos';
         const title = done === all
-            ? `Галерея: ${all} ${tail}, все разобраны моделью`
-            : `Галерея: ${all} ${tail}, из них разобрано ${done};`
-              + ` ${all - done} ждут своей очереди`;
+            ? `Gallery: ${all} ${tail}, all described by the model`
+            : `Gallery: ${all} ${tail}, ${done} described;`
+              + ` ${all - done} still queued`;
 
         return `<span class="prof-gallery${done === all ? ' done' : ''}"`
             + ` title="${esc(title)}">gallery: ${done}/${all}</span>`;
@@ -1200,7 +1198,7 @@
         if (!box) return;
 
         if (galleryFor !== currentId || !galleryData) {
-            box.innerHTML = '<div class="empty">гружу…</div>';
+            box.innerHTML = '<div class="empty">loading…</div>';
 
             return;
         }
@@ -1219,31 +1217,31 @@
                        + `${esc(name)}</option>`).join('');
 
         return '<div class="prof-set">'
-            + '<div class="prof-set-head">Папка с фото на Диске</div>'
+            + '<div class="prof-set-head">Drive folder with photos</div>'
             + (galleryData.foldersWhy
                 ? `<div class="gallery-why">${esc(galleryData.foldersWhy)}</div>` : '')
             + '<div class="gallery-pick">'
-            + `<select id="galleryFolder"><option value="">— папка не выбрана —</option>`
+            + `<select id="galleryFolder"><option value="">— no folder selected —</option>`
             + `${options}</select>`
             // ⚠⚠ Кнопки делают **разное**, и по названиям это не читается.
             // «Сохранить» запоминает выбранную папку у анкеты и ничего не
             // снимает; «Обновить» идёт на Диск и пересобирает список файлов. Их
             // путали: жали «Обновить», ожидая, что сохранится папка.
             + '<button type="button" class="btn" id="gallerySave"'
-            + ' title="Запомнить выбранную папку у этой анкеты.'
-            + ' На Диск не ходит">Сохранить</button>'
+            + ' title="Remember the selected folder for this profile.'
+            + ' Does not touch the Drive">Save</button>'
             + '<button type="button" class="btn" id="gallerySync"'
-            + ' title="Обойти папку на Диске и пересобрать список файлов.'
-            + ' Идёт секунды">Обновить</button>'
+            + ' title="Walk the Drive folder and rebuild the file list.'
+            + ' Takes seconds">Refresh</button>'
             + galleryRound(galleryData.round)
             + '</div>'
-            + '<div class="var-note">Папку выбирают здесь: пока она не выбрана, '
-            + 'обход Диска для этой анкеты не идёт.<br>'
-            + '<b>Сохранить</b> — запомнить папку у анкеты. '
-            + '<b>Обновить</b> — сходить на Диск и пересобрать список файлов: '
-            + 'плитки берутся из нашей базы, а наполняет её обход.</div>'
+            + '<div class="var-note">Pick the folder here: until one is picked, '
+            + 'the Drive walk skips this profile.<br>'
+            + '<b>Save</b> — remember the folder. '
+            + '<b>Refresh</b> — go to the Drive and rebuild the file list: '
+            + 'tiles come from our database, and the walk is what fills it.</div>'
             + (galleryData.taken_at
-                ? `<div class="gallery-when">сверено ${timeShift(galleryData.taken_at)}</div>`
+                ? `<div class="gallery-when">checked ${timeShift(galleryData.taken_at)}</div>`
                 : '')
             + (galleryData.why ? `<div class="gallery-why">${esc(galleryData.why)}</div>` : '')
             + '</div>';
@@ -1255,12 +1253,12 @@
             // надо прямо: совет «нажмите Обновить» здесь привёл бы к отказу
             // «папка не выбрана», то есть к той же мысли на круг позже.
             return galleryData.folder
-                ? '<div class="empty">Фотографий нет. Проверьте папку и нажмите '
-                  + '«Обновить» — список берётся из нашей базы, а наполняет её обход '
-                  + 'Диска.</div>'
-                : '<div class="empty">Папка на Диске не выбрана — выберите её в списке '
-                  + 'выше и нажмите «Сохранить». Пока папка не выбрана, обход Диска '
-                  + 'для этой анкеты не идёт.</div>';
+                ? '<div class="empty">No photos. Check the folder and press '
+                  + '«Refresh» — the list comes from our database, and the Drive walk '
+                  + 'is what fills it.</div>'
+                : '<div class="empty">No Drive folder selected — pick one in the list '
+                  + 'above and press «Save». Until a folder is picked, the Drive walk '
+                  + 'skips this profile.</div>';
         }
 
         // ⚠⚠ Группы — **вкладками, а не списком подряд**. Папок у девушки
@@ -1305,10 +1303,10 @@
     // ⚠ Это **разбор моделью**, а не «есть ли файл в базе»: плитки и рисуются
     // из базы, так что запись есть у каждой видимой по построению.
     const GALLERY_STATES = {
-        edited: {sign: '✎', why: 'описание правлено человеком'},
-        failed: {sign: '!', why: 'разбор не удался'},
-        described: {sign: '✓', why: 'разобрано моделью'},
-        waiting: {sign: '○', why: 'ждёт разбора моделью'},
+        edited: {sign: '✎', why: 'description edited by a human'},
+        failed: {sign: '!', why: 'description failed'},
+        described: {sign: '✓', why: 'described by the model'},
+        waiting: {sign: '○', why: 'waiting for the model'},
     };
 
     function galleryState(file) {
@@ -1329,13 +1327,13 @@
         return `<div class="gallery-thumb ${state}" data-id="${esc(file.id)}"`
             + ` data-kind="${esc(file.kind)}" data-view="${esc(file.view_url)}">`
             + `<img src="${src}" alt="${esc(file.name)}" loading="lazy">`
-            + (file.kind === 'video' ? '<span class="gallery-video">видео</span>' : '')
+            + (file.kind === 'video' ? '<span class="gallery-video">video</span>' : '')
             + `<span class="gallery-state" title="${esc(why)}">${mark.sign}</span>`
             // ⚠ Корзинка **слева**, напротив кнопки описания: действия разной
             // цены не должны стоять рядом — промах по соседней кнопке здесь
             // стоит вызова модели заново.
             + '<button type="button" class="gallery-drop"'
-            + ' title="Убрать запись об этом снимке из базы"'
+            + ' title="Remove this photo record from the database"'
             + ` data-drop="${esc(file.id)}">🗑</button>`
             + `<button type="button" class="gallery-info" title="${esc(why)}"`
             + ` data-info="${esc(file.id)}">i</button>`
@@ -1351,20 +1349,20 @@
     function galleryRound(round) {
         if (!round) return '';
         if (!round.last_at) {
-            return '<span class="gallery-round late" title="Обход Диска запускает'
-                 + ' планировщик (Cronicle). Заходов не было ни одного">'
-                 + 'новые файлы: обход ещё не заходил</span>';
+            return '<span class="gallery-round late" title="The Drive walk is'
+                 + ' started by the scheduler (Cronicle). It has never run yet">'
+                 + 'new files: the walk has never run</span>';
         }
 
         const every = Math.round((round.every_sec || 3600) / 60);
-        const title = `Обход забирает новые файлы с Диска сам, раз в ${every} мин.`
-                    + ` Последний заход ${timeShift(round.last_at)}.`
-                    + ' Кнопка «Обновить» делает то же немедленно';
+        const title = `The walk picks up new files from the Drive on its own,`
+                    + ` every ${every} min. Last run ${timeShift(round.last_at)}.`
+                    + ' The «Refresh» button does the same right now';
 
         return `<span class="gallery-round${round.late ? ' late' : ''}" title="${esc(title)}">`
             + (round.late
-                ? `обход не приходит с ${timeShift(round.last_at)}`
-                : `новые файлы возьмёт ${timeShift(round.next_at)}`)
+                ? `the walk has not run since ${timeShift(round.last_at)}`
+                : `new files picked up at ${timeShift(round.next_at)}`)
             + '</span>';
     }
 
@@ -1400,15 +1398,15 @@
         const gone = Number(got.gone) || 0;
         const back = Number(got.back) || 0;
 
-        if (!found) return 'Обход прошёл: в папке нет ни одного файла';
+        if (!found) return 'Walk done: the folder holds no files at all';
 
         const news = [];
-        if (added) news.push(`новых ${added}`);
-        if (gone) news.push(`пропало ${gone}`);
-        if (back) news.push(`вернулось ${back}`);
+        if (added) news.push(`${added} new`);
+        if (gone) news.push(`${gone} gone`);
+        if (back) news.push(`${back} back`);
 
-        return `Обход прошёл: файлов ${found}`
-            + (news.length ? `, ${news.join(', ')}` : ', нового нет');
+        return `Walk done: ${found} files`
+            + (news.length ? `, ${news.join(', ')}` : ', nothing new');
     }
 
     function galleryBind() {
@@ -1427,15 +1425,15 @@
         if (save) save.addEventListener('click', async () => {
             const was = currentId;
             const folder = pick ? pick.value : '';
-            const busy = galleryBusy(save, 'Сохраняю…');
+            const busy = galleryBusy(save, 'Saving…');
             try {
                 await putData(`${BASE}/api/dating/gallery/${was}/folder`,
                               {folder: folder});
                 showNotification(folder
-                    ? `Папка сохранена: ${folder}`
-                    : 'Папка сохранена: ищем по логину анкеты', 'success');
+                    ? `Folder saved: ${folder}`
+                    : 'Folder cleared — the walk will skip this profile', 'success');
             } catch (e) {
-                showNotification('Папку сохранить не вышло: ' + e.message,
+                showNotification('Could not save the folder: ' + e.message,
                                  'error');
 
                 return;
@@ -1447,16 +1445,16 @@
 
         if (sync) sync.addEventListener('click', async () => {
             const was = currentId;
-            const busy = galleryBusy(sync, 'Обхожу Диск…');
+            const busy = galleryBusy(sync, 'Walking the Drive…');
             try {
                 const got = (await postData(
                     `${BASE}/api/dating/gallery/${was}/sync`, {})).result;
                 // ⚠ Числа обхода показываем **всегда**, а не только когда что-то
                 // изменилось: «ничего нового» — это ответ, а молчание — нет.
                 if (got.ok) showNotification(galleryWalkSays(got), 'success');
-                else showNotification('Обход не вышел: ' + got.why, 'error');
+                else showNotification('Walk failed: ' + got.why, 'error');
             } catch (e) {
-                showNotification('Обновить не вышло: ' + e.message, 'error');
+                showNotification('Refresh failed: ' + e.message, 'error');
             } finally {
                 busy();
             }
@@ -1511,16 +1509,16 @@
         const file = galleryFile(id);
         const name = file ? file.name : id;
 
-        if (!confirm(`Убрать запись о «${name}» из базы?\n\n`
-                   + 'Плитка исчезнет. Сам файл на Диске остаётся: если он лежит '
-                   + 'в индексируемой папке, обход вернёт его — уже без описания '
-                   + 'и тегов.')) return;
+        if (!confirm(`Remove the record of «${name}» from the database?\n\n`
+                   + 'The tile disappears. The file itself stays on the Drive: if it '
+                   + 'sits in an indexed folder, the next walk brings it back — this '
+                   + 'time with no description and no tags.')) return;
 
         const was = currentId;
         const busy = galleryBusy(btn, '…');
         try {
             await deleteData(`${BASE}/api/dating/gallery/${was}/file/${id}`);
-            showNotification(`Запись о «${name}» убрана`, 'success');
+            showNotification(`Record of «${name}» removed`, 'success');
         } catch (e) {
             // ⚠ Строки уже нет — это **рассинхрон, а не отказ**: её могли унести
             // обход или соседняя вкладка, пока человек смотрел на сетку. Тот же
@@ -1530,9 +1528,10 @@
             // полем `status` именно затем, и примета по словам рассыпалась бы
             // от первой правки формулировки в роутере.
             if (e.status === 404) {
-                showNotification('Этой записи уже нет — список устарел', 'success');
+                showNotification('That record is already gone — the list was stale',
+                                 'success');
             } else {
-                showNotification('Убрать не вышло: ' + e.message, 'error');
+                showNotification('Could not remove it: ' + e.message, 'error');
 
                 return;
             }
@@ -1574,9 +1573,9 @@
         const back = document.createElement('div');
         back.className = 'dating-modal-back gallery-carousel';
         back.innerHTML =
-            '<button type="button" class="gallery-step prev" aria-label="Предыдущее">‹</button>'
+            '<button type="button" class="gallery-step prev" aria-label="Previous">‹</button>'
             + '<figure class="gallery-frame"><img alt=""><figcaption></figcaption></figure>'
-            + '<button type="button" class="gallery-step next" aria-label="Следующее">›</button>';
+            + '<button type="button" class="gallery-step next" aria-label="Next">›</button>';
 
         const img = back.querySelector('img');
         const cap = back.querySelector('figcaption');
@@ -1588,7 +1587,7 @@
             at = (at + step + photos.length) % photos.length;
             const f = photos[at];
             img.src = src(f);
-            cap.textContent = `${f.group} · ${f.name} · ${at + 1} из ${photos.length}`
+            cap.textContent = `${f.group} · ${f.name} · ${at + 1} of ${photos.length}`
                             + (f.description ? ' — ' + f.description : '');
             // Соседей подгружаем заранее: кадр в 1600 весит мегабайты, и без
             // этого каждое нажатие стрелки показывало бы пустоту.
@@ -1642,8 +1641,8 @@
                 galleryTags = (await getData(`${BASE}/api/dating/gallery/tags`))
                     .result.groups || [];
             } catch (e) {
-                box.innerHTML = `<div class="gallery-why">словарь тегов не `
-                    + `пришёл: ${esc(e.message)}</div>`;
+                box.innerHTML = `<div class="gallery-why">tag dictionary did not `
+                    + `arrive: ${esc(e.message)}</div>`;
 
                 return;
             }
@@ -1693,9 +1692,9 @@
             + `<div class="dating-modal-head">${esc(file.name)}</div>`
             + (file.described_error
                 ? `<div class="gallery-why">${esc(file.described_error)}</div>` : '')
-            + '<label>Что на снимке</label>'
+            + '<label>What is in the photo</label>'
             + `<textarea id="galleryText" rows="9">${esc(file.description)}</textarea>`
-            + '<label>Теги — щелчком по слову</label>'
+            + '<label>Tags — click a word</label>'
             // ⚠ Теги в `textarea`, а не в `input`: их бывает десяток, и в одну
             // строку они не влезали — человек правил вслепую, прокручивая поле
             // горизонтально. Читаются так же (`.value`), правило разбора то же.
@@ -1706,9 +1705,9 @@
             // слову добавляет и убирает его из поля.
             + '<div class="gallery-tagbox" id="galleryTagBox"></div>'
             + '<div class="dating-modal-foot">'
-            + `<span class="gallery-when">${file.edited ? 'правлено человеком'
-                : file.described ? 'разобрано моделью' : 'ещё не разбиралось'}</span>`
-            + '<button type="button" class="btn" id="galleryKeep">Сохранить</button>'
+            + `<span class="gallery-when">${file.edited ? 'edited by a human'
+                : file.described ? 'described by the model' : 'not described yet'}</span>`
+            + '<button type="button" class="btn" id="galleryKeep">Save</button>'
             + '</div></div>';
 
         // ⚠⚠ `mousedown` со сверкой цели, а не `click`: выделив текст в поле и
@@ -1730,7 +1729,7 @@
                               {description: document.getElementById('galleryText').value,
                                tags: tags});
             } catch (e) {
-                alert('сохранить не вышло: ' + e.message);
+                alert('could not save: ' + e.message);
 
                 return;
             }
