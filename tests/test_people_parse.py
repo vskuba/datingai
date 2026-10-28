@@ -176,6 +176,49 @@ class TestNameAge:
         assert self._one('')['name'] == ''
 
 
+class TestPagesOfOneList:
+    """Длинный список приезжает нумерованными шагами — в один список.
+
+    Сайт режет ленту «все онлайн» по 12 карточек на страницу, и сценарий идёт
+    по страницам; продолжения ложатся в ответ как `men2`, `men3`… Здесь —
+    главное правило склейки: порядок страниц сохраняется, а человек, успевший
+    переехать между страницами прямо во время съёмки, не показывается дважды.
+    """
+
+    def test_pages_merge_in_order(self):
+        rows = people_rows({'men': [{'link': '/profile/1-men'}],
+                            'men2': [{'link': '/profile/2-men'}],
+                            'men3': [{'link': '/profile/3-men'}]}, 'men')
+
+        assert [row['uid'] for row in rows] == ['1', '2', '3']
+
+    def test_a_person_between_pages_counts_once(self):
+        one = {'link': '/profile/7-men'}
+        rows = people_rows({'men': [one],
+                            'men2': [dict(one), {'link': '/profile/8-men'}]}, 'men')
+
+        assert [row['uid'] for row in rows] == ['7', '8']
+
+    def test_missing_page_is_not_a_reason_to_stop(self):
+        """Сценарий потерял одну страницу (шаг optional) — остальные в списке.
+
+        Обрыв на первом промахе значил бы, что одна неудачная страница стоит
+        всего хвост ленты: молчало бы не 12 человек, а 12 минус хвост.
+        """
+        rows = people_rows({'men': [{'link': '/profile/1-men'}],
+                            'men3': [{'link': '/profile/9-men'}]}, 'men')
+
+        assert [row['uid'] for row in rows] == ['1', '9']
+
+    def test_numbered_steps_beyond_the_cap_ignored(self):
+        """За пределом нумерации — не страницы: ключ `men11` за пределами
+        списка, и читать его значит давать чужим шагам права на нашу ленту."""
+        rows = people_rows({'men': [{'link': '/profile/1-men'}],
+                            'men11': [{'link': '/profile/2-men'}]}, 'men')
+
+        assert [row['uid'] for row in rows] == ['1']
+
+
 class TestTheOldNamesStillWork:
     """⚠⚠ Сторож переходного периода: живые сценарии ещё шлют старые имена.
 
