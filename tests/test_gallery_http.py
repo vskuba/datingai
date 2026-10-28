@@ -103,7 +103,7 @@ async def test_folders_refusal_is_words_not_code(tree):
 async def round_clean():
     """Отметка заходов задания — общая строка `setting`, и за собой её убираем.
 
-    ⚠ Иначе тест про «заходов не было» зеленел бы или краснел в зависимости от
+    ⚠ Иначе тест про «заходов не was» зеленел бы или краснел в зависимости от
     того, что оставил предыдущий, — а это худший вид связи между тестами.
     """
     await setting_state_clear(CRONJOB_LAST_KEY)
@@ -114,7 +114,7 @@ async def round_clean():
 
 
 async def test_round_without_a_single_run_says_so(tree, round_clean):
-    """⚠⚠ «Заходов не было» — это не «скоро будет», и путать их нельзя.
+    """⚠⚠ «Заходов не was» — это не «скоро будет», и путать их нельзя.
 
     На установке, где задание не завели в расписание планировщика, обещание
     «возьмём через час» повторялось бы каждый час, а фотографии не появлялись
@@ -134,10 +134,10 @@ async def test_the_step_is_measured_not_remembered(tree, round_clean):
     молча: 28.10.2026 шаг сменили с часа на четверть, и панель обещала бы
     «возьмёт через час», не соврав ни в одной строке кода.
     """
-    было = datetime_utc_now() - timedelta(minutes=15)
+    was = datetime_utc_now() - timedelta(minutes=15)
     await setting_state_patch(CRONJOB_LAST_KEY, {GALLERY_ROUND_JOB: {
-        'at': было.isoformat(timespec='seconds'),
-        'prev': (было - timedelta(minutes=15)).isoformat(timespec='seconds'),
+        'at': was.isoformat(timespec='seconds'),
+        'prev': (was - timedelta(minutes=15)).isoformat(timespec='seconds'),
         'ok': True}})
 
     got = (await gallery_folders(user=None))['result']['round']
@@ -167,10 +167,10 @@ async def test_late_is_counted_in_steps(tree, round_clean):
     При четвертьчасовом шаге полчаса молчания — уже повод смотреть в
     расписание, а при часовом те же полчаса ещё норма.
     """
-    было = datetime_utc_now() - timedelta(minutes=40)
+    was = datetime_utc_now() - timedelta(minutes=40)
     await setting_state_patch(CRONJOB_LAST_KEY, {GALLERY_ROUND_JOB: {
-        'at': было.isoformat(timespec='seconds'),
-        'prev': (было - timedelta(minutes=15)).isoformat(timespec='seconds'),
+        'at': was.isoformat(timespec='seconds'),
+        'prev': (was - timedelta(minutes=15)).isoformat(timespec='seconds'),
         'ok': True}})
 
     assert (await gallery_folders(user=None))['result']['round']['late'] is True, \

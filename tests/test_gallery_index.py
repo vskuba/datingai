@@ -516,23 +516,23 @@ class TestHowOftenWeWalk:
 
         assert await _every(STAND_SITE) == 45 * GALLERY_MINUTE - GALLERY_EVERY_SLACK
 
-    @pytest.mark.parametrize('шаг_планировщика', [15, 60])
-    async def test_a_matching_interval_survives_jitter(self, site_set, шаг_планировщика):
-        """⚠⚠ Главное: срок, совпавший с шагом планировщика, не пропускает заход.
+    @pytest.mark.parametrize('step', [15, 60])
+    async def test_a_matching_interval_survives_jitter(self, site_set, step):
+        """⚠⚠ Главное: gap, совпавший с шагом планировщика, не пропускает заход.
 
         Слот считает «пора» строго — прошедшее обязано дотянуть до срока. Тик
         приходит не по атомным часам (на проде 20:20:20 и 08:20:29). Сойдись
-        срок ровно с шагом — тик, пришедший на секунду раньше, застал бы отметку
+        gap ровно с шагом — тик, пришедший на секунду раньше, застал бы отметку
         живой, и каждый второй заход исчезал бы молча.
         """
         from src.cronjob.gallery_round import _every, GALLERY_MINUTE
 
-        await site_set('gallery_every_minutes', шаг_планировщика)
-        срок = await _every(STAND_SITE)
+        await site_set('gallery_every_minutes', step)
+        gap = await _every(STAND_SITE)
 
-        for дрожание in (-30, 0, +30):
-            assert шаг_планировщика * GALLERY_MINUTE + дрожание >= срок, \
-                f'тик с дрожанием {дрожание} с пропустил бы заход'
+        for jitter in (-30, 0, +30):
+            assert step * GALLERY_MINUTE + jitter >= gap, \
+                f'тик с дрожанием {jitter} с пропустил бы заход'
 
     async def test_the_slack_does_not_swallow_a_step(self, site_set):
         """⚠⚠ Запас не округляет выбор человека вниз.
@@ -544,17 +544,17 @@ class TestHowOftenWeWalk:
         from src.cronjob.gallery_round import _every, GALLERY_MINUTE
 
         await site_set('gallery_every_minutes', 20)
-        срок = await _every(STAND_SITE)
+        gap = await _every(STAND_SITE)
 
-        assert срок > 15 * GALLERY_MINUTE, '«20 минут» схлопнулись в «15»'
+        assert gap > 15 * GALLERY_MINUTE, '«20 минут» схлопнулись в «15»'
 
     async def test_a_longer_gap_still_skips_early_ticks(self, site_set):
         """Настройка «реже» по-прежнему разрежает: при часе тики четверти пропускаются."""
         from src.cronjob.gallery_round import _every, GALLERY_MINUTE
 
         await site_set('gallery_every_minutes', 60)
-        срок = await _every(STAND_SITE)
+        gap = await _every(STAND_SITE)
 
-        assert 15 * GALLERY_MINUTE < срок, 'первый тик четверти обязан быть пропущен'
-        assert 45 * GALLERY_MINUTE < срок, 'третий тик четверти обязан быть пропущен'
-        assert 60 * GALLERY_MINUTE >= срок, 'часовой тик обязан пройти'
+        assert 15 * GALLERY_MINUTE < gap, 'первый тик четверти обязан быть пропущен'
+        assert 45 * GALLERY_MINUTE < gap, 'третий тик четверти обязан быть пропущен'
+        assert 60 * GALLERY_MINUTE >= gap, 'часовой тик обязан пройти'
