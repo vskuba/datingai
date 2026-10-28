@@ -215,6 +215,11 @@ class TestWorkTemplate:
         assert html.count('data-strip="online"') == 2, 'лента не в обоих местах'
         assert html.count('data-slot="online-strip"') == 2
 
+        # Таймер перед ⟳ — в обоих рядах: на одном ряду иконка осталась бы
+        # без срока, и «когда обновим» пришлось бы гадать.
+        assert html.count('data-slot="online-next"') == 2, \
+            'счёта до следующего захода нет в обоих рядах'
+
         # ⚠ **На «Диалогах» ленты нет.** Она отвечает на вопрос «кому писать
         # первым» — и потому осталась там, где этим и заняты: на «Инвайтах» (пул
         # набирается ровно из неё) и на «Письмах рассылка». В «Диалогах» читают
@@ -508,6 +513,8 @@ class TestWorkTemplate:
         assert 'data-strip="guests"' in pane, 'включённой ленты «Гости» нет'
         assert 'data-strip="online"' not in pane, 'снятая вернулась на вкладку'
         assert 'data-kind="guests"' in pane, 'у ленты нет кнопки снятия'
+        assert 'data-slot="guests-next"' in pane, \
+            'у ленты нет счёта до следующего захода круга'
         assert 'guests-left' in pane and 'guests-right' in pane, \
             'у ленты нет стрелок листать ленту'
         assert 'people-empty' in pane, 'пустота ленты не объяснена словами'

@@ -100,6 +100,17 @@ async def guests_round_run() -> dict:
                           for _, one in got if isinstance(one, dict))}
 
 
+async def guests_slot_every_sec(site_id: int) -> int:
+    """Через сколько секунд анкета этого сайта снова зовёт своих гостей.
+
+    Настройка хранит часы, код умножает на 3600 — примечание к реестру
+    `mailing_guests_every`. Считаем здесь, а не на месте: таймер «когда лента
+    гостей обновится сама» на странице читает это же число, и своя формула
+    разъехалась бы со слотом круга на первой же правке.
+    """
+    return 3600 * await site_seconds(site_id, 'mailing_guests_every')
+
+
 async def guests_site_sweep(site_id: int, due_only: bool = True,
                             cap: int = GUESTS_PROFILES_MAX) -> dict:
     """Снимает гостей сайта — по анкетам, чей срок истёк.
@@ -123,7 +134,7 @@ async def guests_site_sweep(site_id: int, due_only: bool = True,
     «сняли — никого» не значит «не снялось», и гонять прогон ради пустой
     страницы каждые полминуты незачем.
     """
-    every = 3600 * await site_seconds(site_id, 'mailing_guests_every')
+    every = await guests_slot_every_sec(site_id)
     profiles = await guests_site_profiles(site_id)
 
     due = [one for one in profiles

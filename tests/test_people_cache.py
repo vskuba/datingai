@@ -627,6 +627,40 @@ class TestFreshness:
         assert answer['cached'] is True and answer['error'] == ''
         assert answer['refreshing'] is False, 'свежий снимок не нуждается в обновлении'
 
+    async def test_fresh_site_list_counts_down_the_round(self, door, monkeypatch):
+        """Свежая лента онлайна отдаёт ** срок до следующего захода**.
+
+        Таймер перед иконкой ⟳ берёт это число: страница свой срок не считает —
+        расписание обновлений у круга (`online_check_every`), и своя копия
+        разъехалась бы с ним на первой правке. Проверяем обе стороны числа: что
+        оно считается от возраста снимка, а не от жёсткого пола.
+        """
+        monkeypatch.setattr(people, '_snapshot', _snapshot(PEOPLE))
+        monkeypatch.setattr(people, '_site_profile', _site_profile())
+
+        await people.people_site_list(343, 'online', fresh=False, user=None)
+        await _refreshed(SITE_KEY)
+
+        _stale(door, SITE_KEY, 60)
+        answer = (await people.people_site_list(343, 'online', fresh=False,
+                                                user=None))['result']
+
+        assert answer['cached'] is True
+        assert answer['next_in_sec'] == pytest.approx(PEOPLE_FRESH_SEC - 60, abs=2), \
+            'таймер снят не с того срока или не от возраста снимка'
+
+    async def test_profile_list_carries_no_countdown(self, door, monkeypatch):
+        """У списка без своего круга таймера нет — `-1`, а не выдуманный срок.
+
+        Избранные и диалоги освежаются по запросу, а не по расписанию, и
+        «через 5 мин» рядом с их ⟳ было бы обещанием, которое никто не
+        собирается исполнять.
+        """
+        monkeypatch.setattr(people, '_snapshot', _snapshot(PEOPLE))
+        answer = await _fill()
+
+        assert answer['next_in_sec'] == -1
+
     async def test_floor_holds_against_the_button(self, door, monkeypatch):
         """⚠ Жёсткий пол не обходит даже «обновить».
 

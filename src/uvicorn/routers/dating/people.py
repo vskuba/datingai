@@ -90,7 +90,7 @@ from redis_.redis_ import redis_conn_get
 
 from src.auth.auth import auth_required
 from src.dating.guests import guests_feed
-from src.dating.guests_round import guests_site_sweep
+from src.dating.guests_round import guests_site_sweep, guests_slot_every_sec
 from src.dating.log import log_write
 from src.dating.people import people_rows
 from src.dating.people_api import (DatingPeopleApiError, people_api_kinds,
@@ -285,13 +285,20 @@ async def people_guests_list(site_id: int, fresh: bool = False,
 
     feed = await guests_feed(site_id, profile_id)
     task = _guests_refreshing.get(int(site_id))
+    age = _guests_age(feed['taken_at'])
+
+    # Таймер «когда обновим сами» — от того же срока, по которому круг смотрит
+    # в слот анкеты (`guests_slot_every_sec`). Нет ни одного снимка — круг идёт
+    # на первый заход уже сейчас, на следующем тике.
+    next_in = max(0, await guests_slot_every_sec(site_id) - age) if age >= 0 else 0
 
     return {'result': {'people': _online_now(feed['people'], site_id, 'guests'),
                        'cached': True,
-                       'age_sec': _guests_age(feed['taken_at']),
+                       'age_sec': age,
                        'taken_at': feed['taken_at'],
                        'refreshing': bool(task and not task.done()),
-                       'error': _guests_refresh_error.get(int(site_id), '')}}
+                       'error': _guests_refresh_error.get(int(site_id), ''),
+                       'next_in_sec': next_in}}
 
 
 @router.get('/site/{site_id}/{kind}', include_in_schema=False)
@@ -328,11 +335,18 @@ async def people_site_list(site_id: int, kind: str, fresh: bool = False,
 
     # Анкету ищем только когда собираемся ходить на сайт: свежий снимок отдаётся
     # и без неё, а лишний запрос в базу на каждую перерисовку страницы не нужен.
-    if cached and time.time() - cached['at'] < (await _floor_sec(site_id) if fresh
-                                                else await _fresh_sec(kind, site_id)):
-        return await _with_favorites(
-            _answer(cached, cached=True, error='', site_id=site_id, kind=kind),
-            site_id, kind)
+    # Выдержку читаем один раз на запрос: она нужна и проверке срока, и таймеру.
+    if cached:
+        fresh_sec = await _fresh_sec(kind, site_id)
+
+        if time.time() - cached['at'] < (await _floor_sec(site_id) if fresh
+                                         else fresh_sec):
+            # Таймер «когда обновим сами» считаем от выдержки, а не от пола: кнопка
+            # «обновить» пол обходит, и срок у ленты всё равно тот, что у круга.
+            return await _with_favorites(
+                _answer(cached, cached=True, error='', site_id=site_id, kind=kind,
+                        next_in=max(0, fresh_sec - int(time.time() - cached['at']))),
+                site_id, kind)
 
     profile = await _site_profile(site_id)
     via_api = True
@@ -912,7 +926,7 @@ async def _snapshot(profile: dict, kind: str) -> list:
 
 
 def _answer(snapshot: dict | None, cached: bool, error: str, refreshing: bool = False,
-            site_id: int = 0, kind: str = '') -> dict:
+            site_id: int = 0, kind: str = '', next_in: int = -1) -> dict:
     """Ответ ручки из снимка. Нет снимка — пустой список и возраст `-1`.
 
     `-1` вместо нуля: ноль значит «снят только что», и показать его там, где
@@ -920,10 +934,16 @@ def _answer(snapshot: dict | None, cached: bool, error: str, refreshing: bool = 
 
     `refreshing` — «прямо сейчас снимаем новый»: страница по нему знает, что стоит
     вернуться за результатом, и показывает, что список обновляется.
+
+    `next_in` — через сколько секунд лента сама пойдёт на сайт по своему сроку;
+    `-1` — расписания у этого списка нет (страница по такому таймер не показывает).
+    Считает тот же срок, по которому круг ленты решает «пора» (`people_snap_due`),
+    — вторая цифра на тот же вопрос разъехалась бы с кругом на первой правке.
     """
     if not snapshot:
         return {'result': {'people': [], 'cached': False, 'age_sec': -1,
-                           'taken_at': '', 'refreshing': refreshing, 'error': error}}
+                           'taken_at': '', 'refreshing': refreshing, 'error': error,
+                           'next_in_sec': next_in}}
 
     # Возраст меряется календарными часами, а не монотонными: снимок переживает
     # перезапуск процесса, а монотонные часы после него начинаются заново — и
@@ -933,7 +953,8 @@ def _answer(snapshot: dict | None, cached: bool, error: str, refreshing: bool = 
                        'age_sec': max(0, int(time.time() - snapshot['at'])),
                        'taken_at': snapshot['when'],
                        'refreshing': refreshing,
-                       'error': error}}
+                       'error': error,
+                       'next_in_sec': next_in}}
 
 
 async def _with_favorites(answer: dict, site_id: int, kind: str) -> dict:

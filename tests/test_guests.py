@@ -27,6 +27,8 @@ from src.dating.guests import guests_visit_day
 from src.dating.site.site_guests_step2love import (
     DatingSiteGuestsStep2Love, _guests_page_visits)
 from src.dating.site.site_registry import site_registry_guests
+from datetime_.datetime_ import datetime_utc_now
+from src.uvicorn.routers.dating import people
 
 pytestmark = pytest.mark.core
 
@@ -355,3 +357,49 @@ class TestFeedFilter:
             assert people == {}, 'анкете без визитов подмешали чужих'
         finally:
             await self._wipe()
+
+
+class TestFeedCountdown:
+    """Лента гостей отдаёт вместе со списком срок до следующего захода круга.
+
+    Число перед иконкой ⟳ считает сервер: расписание у слота круга
+    (`mailing_guests_every`), и своя копия срока на странице разъехалась бы
+    с кругом на первой правке. Здесь обе стороны числа — есть снимок (срок
+    минус его возраст) и снимка нет (круг зовут на первом же тике — «скоро»,
+    то есть ноль).
+    """
+
+    async def test_snapshot_counts_the_period_left(self, monkeypatch):
+        async def _feed(site_id, profile_id=0):
+            taken = (datetime_utc_now() - timedelta(minutes=30))
+            return {'people': [], 'taken_at': taken.strftime('%Y-%m-%d %H:%M:%S')}
+
+        async def _every(site_id):
+            return 4 * 3600                      # настройка сайта: 4 часа
+
+        monkeypatch.setattr(people, 'guests_feed', _feed)
+        monkeypatch.setattr(people, 'guests_slot_every_sec', _every)
+        monkeypatch.setattr(people, '_online_now', lambda rows, site, kind: rows)
+
+        answer = (await people.people_guests_list(778))['result']
+
+        assert answer['age_sec'] == pytest.approx(1800, abs=2)
+        assert answer['next_in_sec'] == pytest.approx(4 * 3600 - 1800, abs=2), \
+            'таймер снят не с круга или не от возраста ленты'
+
+    async def test_without_snapshot_is_soon(self, monkeypatch):
+        """Ленты ещё нет ни у одной анкеты — круг идёт на первый заход сейчас."""
+        async def _feed(site_id, profile_id=0):
+            return {'people': [], 'taken_at': ''}
+
+        async def _every(site_id):
+            return 4 * 3600
+
+        monkeypatch.setattr(people, 'guests_feed', _feed)
+        monkeypatch.setattr(people, 'guests_slot_every_sec', _every)
+        monkeypatch.setattr(people, '_online_now', lambda rows, site, kind: rows)
+
+        answer = (await people.people_guests_list(778))['result']
+
+        assert answer['age_sec'] == -1
+        assert answer['next_in_sec'] == 0

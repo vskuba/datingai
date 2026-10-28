@@ -67,6 +67,11 @@
         <span class="people-count" data-slot="{{ kind }}-count"></span>
         <span class="people-when" data-slot="{{ kind }}-when"></span>
         {% if reload %}
+        {# Таймер «когда обновим сами» — перед кнопкой: она прижата вправо, и
+           числа встанут рядом с ней, где их ждут. Живёт ответом `next_in_sec`;
+           у списков без расписания ручка его не несёт, и слот пустует. #}
+        <span class="people-next" data-slot="{{ kind }}-next"
+              title="через сколько обновим список сами"></span>
         <button type="button" class="people-reload" data-kind="{{ kind }}"
                 title="{{ hint }}">⟳</button>
         {% endif %}

@@ -3094,6 +3094,25 @@
         color: #b45309;
     }
 
+    /* Обратный отсчёт до следующего захода ленты — прямо перед иконкой ⟳:
+       за ней стоит тот же вопрос, «когда обновится». Табличные цифры, чтобы
+       счёт при перещёлкивании не дёргал соседние строки заголовка. */
+    .people-next {
+        flex: 0 0 auto;
+        margin-left: auto;
+        font-size: 9px;
+        color: #94a3b8;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+
+    /* С таймером вправо упирается он — кнопка становится рядом, и пара
+       «5:12 ⟳» читается как одно «обновление». Без таймера кнопка прижата
+       своим же `margin-left: auto` — правило выше по ней и работает. */
+    .people-next + .people-reload {
+        margin-left: 0;
+    }
+
     /* Строка человека: лицо, под ним имя с возрастом. Не в одну строку —
        в 150 пикселях имя и возраст рядом с фото читались бы по одной букве. */
     .person {
@@ -11936,6 +11955,91 @@
     }
 
 
+    // Обратный отсчёт до следующего захода ленты — числа перед иконкой ⟳.
+    //
+    // ⚠ **Числа отдаёт сервер**, страница своя не считает: расписание обновлений
+    // у круга (`online_check_every` у ленты, `mailing_guests_every` у гостей), и
+    // своя копия срока на странице разъехалась бы с кругом на первой правке.
+    //
+    // ⚠ **Переводим в абсолютное время один раз** — в момент, когда ответ
+    // отрисован, и считаем от отметки: `next_in_sec` посчитан на момент запроса,
+    // показанное как есть число замерло бы между опросами.
+    //
+    // Пока съём идёт (`refreshing`), таймер молчит: иконка крутится на том же
+    // месте, и сказать «через 4 минуты» про уже идущий заход было бы нечестно.
+    // У списков без расписания `next_in_sec` не приезжает вовсе — слот пустует.
+    function peopleNextDeadline(state) {
+        if (!state || state.refreshing) return 0;
+        if (typeof state.next_in_sec !== 'number' || state.next_in_sec < 0) return 0;
+
+        return Date.now() + state.next_in_sec * 1000;
+    }
+
+    function peopleNextText(ms) {
+        const sec = Math.max(0, Math.ceil(ms / 1000));
+
+        if (sec >= 3600) return `${Math.floor(sec / 3600)} ч ${Math.floor(sec % 3600 / 60)} мин`;
+        if (sec >= 60) return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+
+        return sec > 0 ? `${sec} с` : 'скоро';
+    }
+
+    // Ставит ряду отметку «когда» — по свежему ответу — и рисует сейчас.
+    function peopleNextPaint(row, state) {
+        const at = peopleNextDeadline(state);
+
+        if (at) row.dataset.nextAt = String(at);
+        else delete row.dataset.nextAt;
+
+        peopleNextTickRow(row);
+    }
+
+    function peopleNextTickRow(row) {
+        const span = row.querySelector('.people-next');
+        if (!span) return;
+
+        const at = Number(row.dataset.nextAt) || 0;
+        if (!at) {
+            span.textContent = '';
+            return;
+        }
+
+        if (at > Date.now()) {
+            span.textContent = peopleNextText(at - Date.now());
+            return;
+        }
+
+        // Срок вышел — «0 с» на экране зависло бы навсегда: круг перерисовки
+        // запрос не шлёт, а круг ленты на сервере тем временем уже мог принести
+        // свежий снимок. Спрашиваем ленту сами; «скоро» остаётся подписью, пока
+        // ответ не придёт.
+        delete row.dataset.nextAt;
+        span.textContent = peopleNextText(0);
+        peopleNextRefetch(row.dataset.strip);
+    }
+
+    // Повторный спрос по истечении срока — не на каждый тик: пока съём не
+    // начался (у гостей без снимка сервер честно отвечает «0»), запрос раз в
+    // секунду гонял бы ручку впустую. Период — тот же, что у опроса страницы.
+    const peopleNextAsked = {};
+
+    function peopleNextRefetch(kind) {
+        const now = Date.now();
+        if ((peopleNextAsked[kind] || 0) + 15000 > now) return;
+
+        peopleNextAsked[kind] = now;
+
+        if (kind === 'guests') peopleGuestsLoad();
+        else if (ONLINE_STRIPS.includes(kind)) peopleOnlineLoad();
+    }
+
+    // Один отсчёт на все ряды — рядом с каждой иконкой живёт ряд, а копия
+    // ленты на второй вкладке обязана считать в такт с видимой.
+    setInterval(() => {
+        workEl.querySelectorAll('.strip-row[data-next-at]')
+            .forEach(row => peopleNextTickRow(row));
+    }, 1000);
+
     // Карточка ленты: лицо крупнее, чем в колонке, под ним имя и возраст. В ряду
     // место есть по вертикали, а имён поперёк помещается тем больше, чем уже
     // карточка, — поэтому подпись под лицом, а не рядом.
@@ -12551,6 +12655,7 @@
             fillSlot(`${kind}-count`, count, false, row);
             fillSlot(`${kind}-when`, when, true, row);
             peopleSpin(row, key, state);
+            peopleNextPaint(row, state);
             peopleBindRows(row);
             // ⚠ Стрелки пересчитываем **после** карточек: их видимость зависит от
             // того, помещается ли лента, а это известно только когда она набита.
@@ -12819,6 +12924,7 @@
             lane: slot(`${kind}-strip`, row),
             left: slot(`${kind}-left`, row),
             right: slot(`${kind}-right`, row),
+            next: row.querySelector('.people-next'),
         };
     };
 
