@@ -996,9 +996,17 @@
 
     let galleryData = null;
     let galleryFor = 0;
+    // Какая папка открыта на вкладках галереи. Пусто — ещё не выбирали, тогда
+    // показывается первая группа ответа.
+    let galleryGroup = '';
     let galleryFolders = [];
 
     async function galleryLoad(profileId, folder) {
+        // ⚠ Смена анкеты сбрасывает открытую папку: у каждой девушки раскладка
+        // своя, и «остаться на intim» после перехода читалось бы как выбор,
+        // которого человек не делал.
+        if (profileId !== galleryFor) galleryGroup = '';
+
         try {
             const [view, folders] = await Promise.all([
                 getData(`${BASE}/api/dating/gallery/${profileId}`),
@@ -1092,13 +1100,37 @@
                   + 'для этой анкеты не идёт.</div>';
         }
 
-        return galleryData.groups.map(group =>
-            '<div class="gallery-group">'
-            + `<div class="gallery-group-head">${esc(group.name)} `
-            + `<span class="gallery-count">${group.files.length}</span></div>`
+        // ⚠⚠ Группы — **вкладками, а не списком подряд**. Папок у девушки
+        // две-три, и в списке `intim` оказывался под двумя десятками плиток
+        // `public`: чтобы его увидеть, надо было знать, что он там есть, и
+        // прокрутить. Вкладка называет и то, и другое сразу — имя и сколько
+        // внутри.
+        //
+        // ⚠ Вид тот же, что у вкладок карточки анкеты (`card-tab`): один
+        // вопрос «что показать» на странице должен выглядеть одинаково.
+        const shown = galleryGroupShown();
+
+        return '<div class="card-tabs gallery-tabs">'
+            + galleryData.groups.map(group =>
+                `<button type="button" class="card-tab${group.name === shown ? ' on' : ''}"`
+                + ` data-group="${esc(group.name)}">${esc(group.name)} `
+                + `<span class="gallery-count">${group.files.length}</span></button>`).join('')
+            + '</div>'
             + '<div class="gallery-grid">'
-            + group.files.map(galleryTile).join('')
-            + '</div></div>').join('');
+            + (galleryData.groups.find(one => one.name === shown) || {files: []})
+                .files.map(galleryTile).join('')
+            + '</div>';
+    }
+
+    // Какую группу показываем. ⚠ Выбранная переживает перерисовку (обход Диска,
+    // удаление плитки), но не переживает смену анкеты и исчезновение самой
+    // папки: показывать пустоту под именем, которого в ответе уже нет, значило
+    // бы врать. Нечего показать — берём первую, а порядок задаёт сервер
+    // (`public` первой).
+    function galleryGroupShown() {
+        const names = galleryData.groups.map(one => one.name);
+
+        return names.includes(galleryGroup) ? galleryGroup : (names[0] || '');
     }
 
     // Состояние снимка значком в углу плитки. ⚠⚠ Состояний **четыре, и
@@ -1272,6 +1304,16 @@
             btn.addEventListener('click', event => {
                 event.stopPropagation();
                 galleryModal(btn.dataset.info);
+            }));
+
+        document.querySelectorAll('.gallery-tabs .card-tab').forEach(btn =>
+            btn.addEventListener('click', () => {
+                if (btn.dataset.group === galleryGroupShown()) return;
+                galleryGroup = btn.dataset.group;
+                // ⚠ Перерисовываем только сетку: данные уже в руках, ходить
+                // за ними снова незачем — вкладки переключают показ, а не
+                // источник.
+                galleryPaint();
             }));
 
         document.querySelectorAll('.gallery-drop').forEach(btn =>

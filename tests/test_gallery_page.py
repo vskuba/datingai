@@ -342,3 +342,61 @@ def test_the_trash_can_is_opposite_the_info_button(page):
     assert 'right:' in info and 'left:' not in info, 'кнопка описания не у правого'
     assert 'calc(var(--gallery-name-h)' in drop, \
         'корзинка уедет под подпись — отступ задан мимо переменной'
+
+
+def test_folders_are_tabs_not_a_stack(page):
+    """⚠⚠ Папки показываются **вкладками**, а не списком подряд.
+
+    Списком `intim` оказывался под двумя десятками плиток `public`: чтобы его
+    увидеть, надо было знать, что он там есть, и прокрутить. Вкладка называет
+    имя и число файлов сразу.
+    """
+    box = page[page.index('function galleryGroups'):]
+    box = box[:box.index('function galleryGroupShown')]
+
+    assert 'card-tabs gallery-tabs' in box, 'группы рисуются не вкладками'
+    assert 'gallery-count' in box, 'на вкладке нет числа файлов'
+    assert '.gallery-group-head' not in box, 'остался заголовок списка'
+
+
+def test_only_the_open_folder_is_drawn(page):
+    """Сетка рисует одну группу — открытую, а не все подряд.
+
+    Иначе вкладки были бы украшением над тем же самым списком.
+    """
+    box = page[page.index('function galleryGroups'):]
+    box = box[:box.index('function galleryGroupShown')]
+
+    assert 'groups.find(' in box, 'рисуются все группы, а не выбранная'
+
+
+def test_the_open_folder_survives_a_repaint_but_not_a_new_profile(page):
+    """⚠ Выбор переживает перерисовку и **не** переживает смену анкеты.
+
+    Перерисовка бывает от обхода Диска и удаления плитки — сбрасывать на ней
+    значило бы возвращать человека в `public` посреди работы. А раскладка у
+    каждой девушки своя, и «остаться на intim» после перехода читалось бы как
+    выбор, которого он не делал.
+    """
+    shown = page[page.index('function galleryGroupShown'):]
+    shown = shown[:shown.index('function galleryTile')]
+    assert 'names.includes(galleryGroup)' in shown, \
+        'выбранная папка не переживает перерисовку'
+    assert 'names[0]' in shown, 'нет возврата к первой группе'
+
+    load = page[page.index('async function galleryLoad'):]
+    load = load[:load.index('function galleryPaint')]
+    assert "galleryGroup = ''" in load, 'смена анкеты не сбрасывает папку'
+
+
+def test_switching_a_tab_does_not_refetch(page):
+    """⚠ Вкладка переключает показ, а не источник: данные уже в руках.
+
+    Поход за ними заново стоил бы двух запросов на каждое нажатие — и мигания
+    сетки там, где ничего не изменилось.
+    """
+    box = page[page.index(".querySelectorAll('.gallery-tabs .card-tab')"):]
+    box = box[:box.index(".querySelectorAll('.gallery-drop')")]
+
+    assert 'galleryPaint()' in box, 'после переключения сетка не перерисована'
+    assert 'galleryLoad(' not in box, 'переключение вкладки лезет на сервер'
