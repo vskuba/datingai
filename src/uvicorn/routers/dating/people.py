@@ -228,7 +228,14 @@ _refreshing: dict[tuple[int, str], object] = {}
 
 # Когда в последний раз **пробовали** обновить — удачно или нет. Второй сторож:
 # без него сорвавшийся прогон запускался бы заново на каждом опросе страницы.
-_refresh_at: dict[tuple[int, str], float] = {}
+#
+# ⚠ **Настоящий штамп живёт в Redis, эта копия — подпорка.** Ключ — тот же, к
+# которому лежит снимок, с суффиксом `:att`. Страницу спрашивает uvicorn, а круг
+# ленты заводит съём в воркере; читал бы каждый свой промежуток — сценарный сайт
+# получал бы вдвое больше входов в панель, чем настройка «как часто» вообще
+# обещает, и на панели это кончается лимитом попыток входа. Отсюда и `_attempt_at`
+# ниже: решает Redis, копия здесь — только на его сбой.
+_refresh_at: dict[str, float] = {}
 
 # Чем кончилась последняя попытка обновить, если неудачно. Ответ ручки уходит
 # раньше, чем фоновый прогон добирается до конца, — и без этой памяти колонка
@@ -374,7 +381,8 @@ async def people_site_list(site_id: int, kind: str, fresh: bool = False,
                                                  else 'её анкет'))
 
     return await _with_favorites(
-        await _list(kind, fresh, profile, key, log_id=0, cached=cached),
+        await _list(kind, fresh, profile, key, log_id=0, cached=cached,
+                    scheduled=kind in PEOPLE_FRESH_SETTING),
         site_id, kind)
 
 
@@ -510,6 +518,13 @@ def _refresh_start(profile: dict, kind: str, key: str, log_id: int,
     список полуторной минуты и нажимает «⟳» — а обновление не заводится, потому
     что выдержка ещё не кончилась. Кнопка обходит выдержку по своему смыслу
     (`fresh` в ручке); пол не обходит никто, потому что пол — про предел сайта.
+
+    ⚠ **Выдержка считается по общему штампу, а не по памяти процесса.** Страницу
+    спрашивает uvicorn, а круг ленты заводит съём в воркере: читал бы каждый свою
+    копию, сценарный сайт ловил бы по заходу с каждого процесса за одну выдержку.
+    Для ленты, где каждый заход — **вход в панель агентства**, это ровно то, чем
+    панель считает лишним: лимитом попыток входа она и встала 28.10.2026 на несколько
+    часов. Отсюда `_attempt_mark` ниже.
     """
     task = _refreshing.get(key)
     if task and not task.done():
@@ -518,13 +533,48 @@ def _refresh_start(profile: dict, kind: str, key: str, log_id: int,
     # ⚠ Выдержка не мешает **первому** заходу: пока снимка не было, обновление
     # никто не заводил, и ждать пять минут ради первого показа незачем. Порог тут
     # про повторные попытки, а не про начало работы.
-    if time.time() - _refresh_at.get(key, 0.0) < (floor_sec if fresh else fresh_sec):
+    if time.time() - _attempt_at(key) < (floor_sec if fresh else fresh_sec):
         return False
 
-    _refresh_at[key] = time.time()
+    _attempt_mark(key)
     _refreshing[key] = asyncio.ensure_future(_refresh_run(profile, kind, key, log_id))
 
     return True
+
+
+def _attempt_at(key: str) -> float:
+    """Когда в последний раз пробовали снять этот список; 0 — не пробовали никогда.
+
+    Решает штамп в Redis (тот же ключ, что у снимка, с суффиксом `:att`), копия
+    `_refresh_at` — подпорка на его сбой: тот же размен, что у самого кэша. На
+    пустом Redis не полагаемся на память: нулевой ответ честнее чужого штампа
+    другого процесса.
+    """
+    try:
+        raw = redis_conn_get().get(key + ':att')
+    except Exception:
+        raw = None
+
+    if raw is not None:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return 0.0
+
+    return _refresh_at.get(key, 0.0)
+
+
+def _attempt_mark(key: str) -> None:
+    """Ставит штамп попытки. Не бросает — как чтение и запись кэша."""
+    now = time.time()
+    _refresh_at[key] = now
+    try:
+        # Срок — вдвое с запасом против самой длинной выдержки: протухший штамп
+        # читался бы как «не пробовали», и первый же опрос завёл бы попытку раньше
+        # срока. PEOPLE_KEEP_SEC — самое длинное, чем живёт список.
+        redis_conn_get().set(key + ':att', repr(now), ex=2 * PEOPLE_KEEP_SEC)
+    except Exception as e:
+        logger_info(f'[dating] штамп попытки «{key}» не записался: {e}')
 
 
 async def _refresh_run(profile: dict, kind: str, key: str, log_id: int) -> None:
@@ -1039,7 +1089,8 @@ def _online_now(people: list, site_id: int, kind: str) -> list:
 
 
 async def _list(kind: str, fresh: bool, profile: dict, key: str, log_id: int,
-                cached: dict | None = None, hold: str = '') -> dict:
+                cached: dict | None = None, hold: str = '',
+                scheduled: bool = False) -> dict:
     """Общее тело обоих списков: кэш, фоновое обновление, запись в журнал.
 
     Args:
@@ -1053,6 +1104,10 @@ async def _list(kind: str, fresh: bool, profile: dict, key: str, log_id: int,
         cached: уже прочитанный снимок, если вызывающий его читал.
         hold: почему на сайт сейчас не идём (`_hold_why`). Непусто — отдаём
             прежний снимок с этой причиной и обновления **не заводим**.
+        scheduled: есть ли у этого снимка круг, который обновит его сам. Таймер
+            «через сколько зайдём сами» честно только у таких; у прочего его нет
+            и в ответе (`-1`), иначе страница обещала бы срок, которого никто не
+            держит.
     """
     site_id = int(profile.get('site_id') or 0)
     keep = await _keep_sec(kind, site_id)
@@ -1079,7 +1134,12 @@ async def _list(kind: str, fresh: bool, profile: dict, key: str, log_id: int,
     # «обновить» (`fresh`) выдержку обходит, но пол — нет: он про предел самого
     # сайта, а не про то, чего хочет страница.
     if cached and time.time() - cached['at'] < (floor if fresh else fresh_sec):
-        return _answer(cached, cached=True, error='', site_id=site_id, kind=kind)
+        # Таймер ставим и здесь, хотя у scheduled-видов ручка обычно отдаёт
+        # свежий снимок сама, не доходя до этой строки: сюда она доходит, только
+        # если фоновый прогон успел переписать кэш между двумя чтениями.
+        return _answer(cached, cached=True, error='', site_id=site_id, kind=kind,
+                       next_in=(max(0, fresh_sec - int(time.time() - cached['at']))
+                                if scheduled else -1))
 
     # ⚠⚠ **Анкете не в сети список не снимаем.** Снимок берётся **под ней**: для
     # сайта это вход, а вход под спящей учёткой — лишний поход наружу, который в
@@ -1105,11 +1165,22 @@ async def _list(kind: str, fresh: bool, profile: dict, key: str, log_id: int,
     #
     # `error` — чем кончилась прошлая попытка: молча показывать старое хуже всего,
     # человек смотрит на список и не знает, что новый не снимается.
-    return _answer(cached, cached=bool(cached),
-                   error=_refresh_error.get(key, ''),
-                   refreshing=_refresh_start(profile, kind, key, log_id, fresh,
-                                             fresh_sec, floor),
-                   site_id=site_id, kind=kind)
+    refreshing = _refresh_start(profile, kind, key, log_id, fresh, fresh_sec, floor)
+
+    # ⚠ **Таймер нужен и здесь, а не только на свежей дороге.** Именно на этой
+    # дороге человек сидит дольше всего: круг заводит, сайт список не даёт, и без
+    # счётчика остаётся «кеш · не обновилось» — ни срока, ни признака, что это
+    # кончится. Считаем от попытки — тем же штампом, каким `_refresh_start` меряет
+    # свою выдержку: две цифры на вопрос «когда следующая попытка» сошлись бы
+    # только в удачный день, а разъезжаются молча. По штампу попытки, а не по
+    # возрасту снимка: при неудачах снимок стареет бесконечно и счётчик весь этот
+    # срок врал бы «скоро», хотя сторож держит заход до конца выдержки.
+    next_in = (max(0, fresh_sec - int(time.time() - _attempt_at(key)))
+               if scheduled and cached else -1)
+
+    return _answer(cached, cached=bool(cached), error=_refresh_error.get(key, ''),
+                   refreshing=refreshing, site_id=site_id, kind=kind,
+                   next_in=next_in)
 
 
 def _guests_refresh_start(site_id: int) -> None:

@@ -244,7 +244,7 @@ class TestFailureKeepsCache:
 
         # Выдержку между попытками сбрасываем: тест проверяет не её, а то, что
         # удачное обновление стирает прежнюю жалобу.
-        people._refresh_at.clear()
+        _attempt_forget(door, KEY)
         monkeypatch.setattr(people, '_snapshot', _snapshot(PEOPLE))
         answer = await _fill()
 
@@ -620,7 +620,7 @@ class TestFreshness:
 
         # Выдержку между попытками снимаем: держать сайт должна свежесть снимка, а
         # не сторож повторных попыток. Иначе тест прошёл бы и без кэша вовсе.
-        people._refresh_at.clear()
+        _attempt_forget(door, KEY)
         monkeypatch.setattr(people, '_snapshot', _snapshot(fails='сюда ходить не должны'))
         answer = (await people_list(849, 'favorite', fresh=False, user=None))['result']
 
@@ -649,6 +649,98 @@ class TestFreshness:
         assert answer['next_in_sec'] == pytest.approx(PEOPLE_FRESH_SEC - 60, abs=2), \
             'таймер снят не с того срока или не от возраста снимка'
 
+    async def test_broken_feed_carries_the_countdown_too(self, door, monkeypatch):
+        """⚠ На сломанной дороге таймер нужнее всего: «не обновилось» без срока
+        читается как «никогда», а это неправда.
+
+        Так лента и стоит, когда панель агентства не пускает: круг заводит заход,
+        прогон падает, снимок стареет часами. Строка «кеш · не обновилось» без
+        счётчика оставляла человека с вопросом «оно когда-нибудь кончится?» — при
+        том, что круг ровно в конце выдержки заходит снова. Считаем от попытки —
+        тем же сроком, каким сторож держит следующую: две цифры на один вопрос
+        разъезжаются молча.
+        """
+        monkeypatch.setattr(people, '_snapshot', _snapshot(PEOPLE))
+        monkeypatch.setattr(people, '_site_profile', _site_profile())
+
+        await people.people_site_list(343, 'online', fresh=False, user=None)
+        await _refreshed(SITE_KEY)
+
+        # Панель закрылась: снятие больше не удаётся, попытки — по выдержке.
+        monkeypatch.setattr(people, '_snapshot', _snapshot(fails='панель не пускает'))
+        _stale(door, SITE_KEY)
+        await people.people_site_list(343, 'online', fresh=False, user=None)
+        await _refreshed(SITE_KEY)
+
+        answer = (await people.people_site_list(343, 'online', fresh=False,
+                                                user=None))['result']
+
+        assert answer['error'] and answer['cached'] is True
+        assert answer['refreshing'] is False, 'попытка повторилась раньше выдержки'
+        assert answer['next_in_sec'] == pytest.approx(PEOPLE_FRESH_SEC, abs=3), \
+            'таймер не считает до следующей попытки'
+
+    async def test_broken_feed_counts_from_the_attempt_not_the_snapshot(self, door,
+                                                                        monkeypatch):
+        """⚠ Раз неудача — счёт от попытки; возраст снимка здесь врать будет.
+
+        Снимок на неудачах стареет бесконечно. Считай таймер от него — и он показывал
+        бы «скоро» часами подряд (возраст-то давно за выдержку перевалил), хотя
+        сторож держит заход до конца выдержки после **последней попытки**. Проверка
+        и ловит подмену: часовой снимок, попытка минуту назад — ждём выдержку минус
+        минута, а не ноль.
+        """
+        monkeypatch.setattr(people, '_site_profile', _site_profile())
+        monkeypatch.setattr(people, '_snapshot', _snapshot(PEOPLE))
+        await people.people_site_list(343, 'online', fresh=False, user=None)
+        await _refreshed(SITE_KEY)
+
+        monkeypatch.setattr(people, '_snapshot', _snapshot(fails='панель не пускает'))
+        _stale(door, SITE_KEY)
+        await people.people_site_list(343, 'online', fresh=False, user=None)
+        await _refreshed(SITE_KEY)
+
+        # Снимок — часовой давности; попытка — ровно что была.
+        _age(door, SITE_KEY, 3600)
+        _attempt_shift(door, SITE_KEY, 60)
+
+        answer = (await people.people_site_list(343, 'online', fresh=False,
+                                                user=None))['result']
+
+        assert answer['error']
+        assert answer['next_in_sec'] == pytest.approx(PEOPLE_FRESH_SEC - 60, abs=3), \
+            'таймер считает от возраста снимка, а не от попытки'
+
+    async def test_attempt_is_known_to_both_processes(self, door, monkeypatch):
+        """⚠⚠ Покутку знают **оба процесса**: штамп живёт в Redis, а не в памяти.
+
+        Страницу спрашивает uvicorn, а круг ленты заводит съём в воркере. Читал бы
+        каждый свою копию времени последней попытки, за выдержку проходило бы по
+        заходу с каждого процесса — для ленты, где каждый заход это **вход в панель
+        агентства**, это ровно то, что панель считает лишним: лимитом попыток входа
+        она и встала 28.10.2026. Тест делает вид, что процесс только что перезапустили
+        (память пуста, Redis помнит), — и заход повторяться не должен.
+        """
+        monkeypatch.setattr(people, '_site_profile', _site_profile())
+        monkeypatch.setattr(people, '_snapshot', _snapshot(PEOPLE))
+        await people.people_site_list(343, 'online', fresh=False, user=None)
+        await _refreshed(SITE_KEY)
+
+        _stale(door, SITE_KEY)
+        await people.people_site_list(343, 'online', fresh=False, user=None)
+        await _refreshed(SITE_KEY)
+
+        # Тот же процесс сначала (или другой — для Redis разницы нет): память чиста,
+        # штамп попытки остался в Redis.
+        people._refresh_at.clear()
+        monkeypatch.setattr(people, '_snapshot', _snapshot(fails='сюда повторно не идут'))
+
+        answer = (await people.people_site_list(343, 'online', fresh=False,
+                                                user=None))['result']
+
+        assert answer['refreshing'] is False, \
+            'прогон завёлся заново, хотя Redis помнит попытку — это двойной вход в панель'
+
     async def test_profile_list_carries_no_countdown(self, door, monkeypatch):
         """У списка без своего круга таймера нет — `-1`, а не выдуманный срок.
 
@@ -659,6 +751,19 @@ class TestFreshness:
         monkeypatch.setattr(people, '_snapshot', _snapshot(PEOPLE))
         answer = await _fill()
 
+        assert answer['next_in_sec'] == -1
+
+        # На сломанной дороге — тоже `-1`: у списка без своего круга таймера нет
+        # ни в каком состоянии, иначе ⟳ рядом с ним обещала бы срок, который
+        # некому держать.
+        monkeypatch.setattr(people, '_snapshot', _snapshot(fails='браузер соседа занят'))
+        _stale(door, KEY)
+        await people_list(849, 'favorite', fresh=False, user=None)
+        await _refreshed(KEY)
+
+        answer = (await people_list(849, 'favorite', fresh=False, user=None))['result']
+
+        assert answer['error'], 'тест не дошёл до проверяемой дороги'
         assert answer['next_in_sec'] == -1
 
     async def test_floor_holds_against_the_button(self, door, monkeypatch):
@@ -744,7 +849,7 @@ class TestFreshness:
         #
         # Сторож повторных попыток при этом снять надо: попытку записал первый
         # заход, а проверяем мы выдержку снимка.
-        people._refresh_at.clear()
+        _attempt_forget(door, SITE_KEY)
         door.seconds['online_check_every'] = 120
 
         answer = (await people.people_site_list(
@@ -778,7 +883,7 @@ class TestFreshness:
         # точки зрения ручки это одно событие — прогон, который минуту назад лёг
         # в кэш.
         _age(door, KEY, 60)
-        people._refresh_at[KEY] -= 60
+        _attempt_shift(door, KEY, 60)
         answer = (await people_list(849, 'favorite', fresh=True, user=None))['result']
 
         assert answer['refreshing'] is True, 'кнопка ничего не завела'
@@ -1037,7 +1142,32 @@ def _stale(door, key: str, seconds: float = PEOPLE_FRESH_SEC + 1) -> None:
     правило, которое назвала.
     """
     _age(door, key, seconds)
+    _attempt_forget(door, key)
+
+
+def _attempt_forget(door, key: str = '') -> None:
+    """Забывает попытки обновления: и штамп в Redis, и копию в процессе.
+
+    Штамп живёт рядом со снимком — тот же ключ с суффиксом `:att`, — и стереть
+    только `_refresh_at` значит оставить сторожа в силе: решает Redis, копия в
+    процессе — подпорка на его сбой.
+    """
+    if key:
+        door.redis.store.pop(key + ':att', None)
     people._refresh_at.clear()
+
+
+def _attempt_shift(door, key: str, seconds: float) -> None:
+    """Отматывает штамп попытки на `seconds` назад, не трогая снимок.
+
+    Именно так выглядят настоящие повторные заходы: прогон был, снимок лёг, а
+    попытки после него ещё не было.
+    """
+    stamp = door.redis.store.get(key + ':att')
+    if stamp is not None:
+        door.redis.store[key + ':att'] = repr(float(stamp) - seconds)
+    else:
+        people._refresh_at[key] = people._refresh_at.get(key, 0.0) - seconds
 
 
 def _age(door, key: str, seconds: float) -> None:
