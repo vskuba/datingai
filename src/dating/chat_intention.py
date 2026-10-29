@@ -32,6 +32,8 @@
 даёт она, и обещание другой девушки тому же человеку — своё.
 """
 
+import json
+
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
@@ -58,14 +60,16 @@ CHAT_INTENTION_PAGE = 50
 
 
 async def chat_intention_put(profile_id: int, site_id: int, uid: str,
-                             intentions: list) -> int:
+                             intentions: dict) -> int:
     """Заводит открытые намерения пары. Отдаёт, сколько новых легло.
 
     Args:
         profile_id: чьё намерение — анкета, от чьего имени шёл разговор.
         site_id: сайт собеседника.
         uid: номер собеседника на сайте.
-        intentions: метки словом, как приехали от соседа.
+        intentions: намерения объектом «метка → контекст», как приехали от
+            соседа. Контекст — с чем исполнять: текст письма, приметы снимка,
+            время звонка; пустой законен.
 
     Returns:
         int: сколько строк вправду завелось. Ноль — всё уже лежало открытым
@@ -83,9 +87,18 @@ async def chat_intention_put(profile_id: int, site_id: int, uid: str,
 
     ⚠ Пустой `uid` или пустая анкета — не пишем: намерению не к кому
     принадлежать.
+
+    ## ⚠⚠ Контекст у открытой строки обновляется, а метка — нет
+
+    Повтор метки ключ отвергает (`INSERT IGNORE`), но контекст при этом **не
+    теряется**: свежий точнее прежнего — он собран по более полной истории
+    разговора. Отсюда `ON DUPLICATE KEY UPDATE` на одну колонку: ключ остаётся
+    защитой от дублей строк, а контекст догоняет.
+
+    ⚠ Пустой контекст прежний **не затирает**: прогон, который пометил
+    намерение, но не собрал контекст, не должен обнулять работу прошлого.
     """
-    said = [str(one or '').strip() for one in (intentions or [])]
-    said = [one for one in said if one and len(one) <= CHAT_INTENTION_LENGTH_MAX]
+    said = _pairs(intentions)
 
     if not (int(profile_id or 0) and str(uid or '').strip() and said):
         return 0
@@ -93,13 +106,21 @@ async def chat_intention_put(profile_id: int, site_id: int, uid: str,
     put = 0
 
     async with mysql_get_db_async() as db:
-        for one in said:
+        for one, context in said:
             await db.execute(
-                'INSERT IGNORE INTO chat_intention'
-                '  (profile_id, site_id, uid, intention)'
-                ' VALUES (%s, %s, %s, %s)',
-                (int(profile_id), int(site_id or 0), str(uid).strip(), one))
-            put += int(db.rowcount or 0)
+                'INSERT INTO chat_intention'
+                '  (profile_id, site_id, uid, intention, context)'
+                ' VALUES (%s, %s, %s, %s, %s)'
+                # ⚠ `IF(VALUES(context) IS NULL, context, VALUES(context))`, а не
+                # просто присваивание: пустой контекст свежего прогона не должен
+                # стирать собранный прошлым.
+                ' ON DUPLICATE KEY UPDATE'
+                '   context = IF(VALUES(context) IS NULL, context, VALUES(context))',
+                (int(profile_id), int(site_id or 0), str(uid).strip(), one,
+                 json.dumps(context, ensure_ascii=False) if context else None))
+            # ⚠ `rowcount` у `ON DUPLICATE KEY UPDATE` равен 2 при обновлении и
+            # 1 при вставке: считаем только новые строки.
+            put += int(db.rowcount == 1)
 
         await db.connection.commit()
 
@@ -352,6 +373,28 @@ _SOURCE = ('  FROM chat_intention i'
 # ⚠ Ноль в `profile_id` значит «все анкеты сайта», и выражено это **в запросе**,
 # а не ветвлением на стороне Python: одна форма строки на оба случая.
 _WHERE_SITE = ' WHERE i.site_id = %s AND (%s = 0 OR i.profile_id = %s)'
+
+
+def _pairs(intentions) -> list[tuple]:
+    """Намерения в пары «метка, контекст», отбросив негодные.
+
+    ⚠ Предел длины метки проверяется здесь, а не у соседа: он принадлежит
+    **столбцу**, а длинная вставка в строгом режиме MySQL сорвала бы запись
+    всей пачки — вместе с годными метками рядом.
+
+    ⚠ Контекст не той формы становится пустым, а намерение остаётся: метка
+    важнее своего контекста, и терять её из-за испорченной половины нельзя.
+    """
+    if not isinstance(intentions, dict):
+        return []
+
+    out = []
+    for name, context in intentions.items():
+        word = str(name or '').strip()
+        if word and len(word) <= CHAT_INTENTION_LENGTH_MAX:
+            out.append((word, context if isinstance(context, dict) and context else None))
+
+    return out
 
 
 def _empty() -> dict:
