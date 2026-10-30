@@ -18,7 +18,8 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import AuthUser, auth_required
-from src.dating.chat_intention import (chat_intention_pairs,
+from src.dating.chat_intention import (chat_intention_drop,
+                                       chat_intention_pairs,
                                        chat_intention_row,
                                        chat_intention_rows)
 from src.dating.companion_gallery import companion_gallery_pick
@@ -269,6 +270,34 @@ async def intention_mail_clear(site_id: int = 0,
     """
     return await pool_handle_clear(INTENTION_MAIL_TABLE, site_id,
                                    what='обещанных фото')
+
+
+@router.delete('/{intention_id}', include_in_schema=False)
+async def chat_intention_forget(intention_id: int,
+                                user: AuthUser = Depends(auth_required)):
+    """Убрать карточку намерения из пула — вместе с её черновиком письма.
+
+    Returns:
+        dict: `{'dropped': 1, 'mail': сколько черновиков ушло следом}`.
+
+    Raises:
+        HTTPException: 404 — карточки уже нет.
+
+    ⚠⚠ **Путь объявлен после всех `/mail…`**: у FastAPI порядок решает, и
+    слово «mail» иначе прочиталось бы номером намерения. Та же грабля уже
+    названа у `/mail` без номера.
+
+    ⚠ Отличие от «исполнено»: исполнение говорит «обещание сдержано», а
+    удаление — «этой работы не будет». Поэтому строка уходит совсем, а не
+    метится: иначе пул «Сделано» наполнялся бы тем, чего не делали.
+    """
+    got = await chat_intention_drop(intention_id)
+
+    if not got['dropped']:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail='карточки уже нет')
+
+    return {'result': got}
 
 
 async def _mail_row(mail_id: int) -> dict:

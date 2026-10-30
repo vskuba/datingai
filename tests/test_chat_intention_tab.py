@@ -194,6 +194,58 @@ class TestThePageKnowsTheTab:
         assert 'data-slot="intention-pool-reload"' in page
 
 
+class TestTheCardCanBeDropped:
+    """⚠ Корзинка у карточки намерения: пул чистится руками.
+
+    Намерение, которому собрать контекст было нечем, остаётся открытым
+    навсегда — такие и копятся. Без корзинки убрать его можно было только
+    исполнением, то есть отправкой письма, которого нет.
+    """
+
+    async def test_the_button_is_on_every_card(self, page):
+        assert 'class="in-card-drop"' in page, 'корзинки на карточке нет'
+        assert 'data-drop="${Number(row.id) || 0}"' in page, (
+            'корзинка не несёт номера намерения')
+
+    async def test_it_sits_in_the_corner(self, page):
+        """⚠ `absolute` в правом нижнем углу: карточек в колонке десятки, и
+        своя строка у каждой кнопки отняла бы у списка экран."""
+        spot = page.find('.in-card-drop {')
+        rule = page[spot:page.find('}', spot)]
+
+        assert 'position: absolute' in rule and 'right:' in rule and 'bottom:' in rule, (
+            f'корзинка не в углу: {rule.strip()}')
+
+    async def test_the_click_does_not_pick_the_pair(self, page):
+        """⚠ Карточка целиком кликабельна (выбор пары), и без остановки
+        всплытия удаление заодно открывало бы переписку того, кого удаляем."""
+        spot = page.find("querySelectorAll('.in-card-drop')")
+
+        assert spot > 0, 'корзинка ни к чему не привязана'
+        assert 'event.stopPropagation()' in page[spot:spot + 260], (
+            'щелчок по корзинке заодно выбирает пару')
+
+    async def test_both_columns_are_reread(self, page):
+        """⚠ Список пар слева считает намерения: оставь мы его прежним,
+        счётчик спорил бы с пулом в том же взгляде."""
+        spot = page.find('async function intentionDrop(')
+        body = page[spot:page.find('\n    }', spot)]
+
+        assert 'intentionPoolLoad();' in body and 'intentionPairsLoad();' in body, (
+            'после удаления перечитывается только одна колонка')
+
+    async def test_the_question_names_what_is_lost(self, page):
+        """⚠⚠ Вопрос у этой корзинки **другой**, чем у соседней: та убирает
+        письмо, оставляя обещание (круг соберёт заново), а эта убирает само
+        обещание — вернуть его может только новый разговор."""
+        spot = page.find('async function intentionDrop(')
+        body = page[spot:page.find('\n    }', spot)]
+
+        assert 'confirm(' in body, 'удаление не спрашивает — а оно необратимо'
+        assert 'пообещает снова' in body, (
+            'вопрос не говорит, что обещание не вернётся само')
+
+
 class TestTheDeliveryIsFullWidth:
     """⚠⚠ Журнал доставки — во всю ширину панели, как у писем и инвайтов.
 

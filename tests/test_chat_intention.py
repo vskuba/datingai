@@ -16,6 +16,7 @@ from src.dating import chat_intention as intention_module
 from src.dating.answer import _agent_ask
 from src.dating.json_column import json_column_load
 from src.dating.chat_intention import (chat_intention_do_allowed,
+                                       chat_intention_drop,
                                        chat_intention_done, chat_intention_pairs,
                                        chat_intention_put, chat_intention_row,
                                        chat_intention_rows)
@@ -181,6 +182,90 @@ class TestTheDoneMark:
 
     async def test_a_missing_row_is_not_ours(self):
         assert await chat_intention_done(0) is False
+
+
+class TestTheDrop:
+    """Удаление карточки руками: намерение уходит вместе с черновиком письма."""
+
+    async def test_it_takes_the_row(self, girl):
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        one = (await _open(girl))[0]
+
+        got = await chat_intention_drop(one['id'])
+
+        assert got['dropped'] == 1
+        assert await _rows(girl) == []
+
+    async def test_it_takes_the_draft_with_it(self, girl):
+        """⚠⚠ У `intention_mail.intention_id` нет внешнего ключа, и черновик
+        остался бы сиротой: `uq_intention_mail_once` держит его номер навсегда,
+        то есть следующее такое же обещание той же паре собрать было бы нечем.
+        Молча.
+        """
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        one = (await _open(girl))[0]
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO intention_mail (site_id, profile_id, intention_id,'
+                " uid, name, body, status)"
+                " VALUES (%s, %s, %s, 'u1', 'Кто-то', 'текст', 'draft')",
+                (TEST_STAND_SITE, girl, one['id']))
+            await db.connection.commit()
+
+        got = await chat_intention_drop(one['id'])
+
+        assert got['mail'] == 1, 'черновик остался сиротой'
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT COUNT(*) n FROM intention_mail'
+                             ' WHERE intention_id = %s', (one['id'],))
+            assert (await db.fetchall())[0]['n'] == 0
+
+    async def test_a_sent_letter_stays(self, girl):
+        """⚠ Удаление значит «этой работы не будет», а `sent` — работа уже
+        сделанная: собеседник письмо получил, и след в журнале доставки
+        принадлежит истории, а не пулу."""
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        one = (await _open(girl))[0]
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO intention_mail (site_id, profile_id, intention_id,'
+                " uid, name, body, status, sent_at)"
+                " VALUES (%s, %s, %s, 'u2', 'Кто-то', 'текст', 'sent', NOW())",
+                (TEST_STAND_SITE, girl, one['id']))
+            await db.connection.commit()
+
+        got = await chat_intention_drop(one['id'])
+
+        assert got['mail'] == 0, 'ушедшее письмо унесли вместе с намерением'
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT COUNT(*) n FROM intention_mail'
+                             ' WHERE intention_id = %s', (one['id'],))
+            assert (await db.fetchall())[0]['n'] == 1
+
+            await db.execute('DELETE FROM intention_mail WHERE intention_id = %s',
+                             (one['id'],))
+            await db.connection.commit()
+
+    async def test_a_missing_row_is_not_an_error(self):
+        """⚠ Карточку могли закрыть исполнением, пока человек смотрел на
+        список: это рассинхрон, а не отказ."""
+        assert await chat_intention_drop(0) == {'dropped': 0, 'mail': 0}
+        assert await chat_intention_drop(99999999) == {'dropped': 0, 'mail': 0}
+
+    async def test_the_key_is_released(self, girl):
+        """⚠ Убранное намерение отпускает ключ: та же пара вправе пообещать
+        снова, и строка ляжет заново."""
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
+        one = (await _open(girl))[0]
+        await chat_intention_drop(one['id'])
+
+        assert await chat_intention_put(girl, TEST_STAND_SITE, uid,
+                                        {PROMISE: {}}) == 1
 
 
 class TestTheWritingPoint:

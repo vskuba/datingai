@@ -1131,8 +1131,30 @@
         font-size: 12px;
     }
 
-    .in-card { cursor: pointer; }
+    .in-card { cursor: pointer; position: relative; }
     .in-card:hover { background: #fafbfc; }
+
+    /* Корзинка карточки — правый нижний угол.
+
+       ⚠ `absolute`, а не строка в потоке: карточек в колонке десятки, и своя
+       строка у каждой кнопки отняла бы у списка экран.
+
+       ⚠⚠ Показывается **по наведению на карточку**, а не всегда: удаление
+       необратимо, и кнопка, постоянно висящая у каждой из тридцати карточек,
+       превращается в фон — по такой промахиваются. Под пальцем же она
+       появляется ровно там, где её ищут.
+
+       ⚠ `:focus-visible` — чтобы кнопка не пропадала при ходьбе клавишей:
+       невидимая, но нажимаемая — это ловушка. */
+    .in-card-drop {
+        position: absolute; right: 6px; bottom: 6px;
+        border: 0; background: transparent; color: #cbd5e1;
+        cursor: pointer; font-size: 13px; line-height: 1; padding: 2px 4px;
+        opacity: 0; transition: opacity .12s ease, color .12s ease;
+    }
+    .in-card:hover .in-card-drop,
+    .in-card-drop:focus-visible { opacity: 1; }
+    .in-card-drop:hover { color: #dc2626; }
 
     /* ⚠ Выбранная карточка метится **тем же**, чем строка пары слева: выбор у
        них один, и два вида «выбранного» читались бы как два состояния. */
@@ -7253,6 +7275,17 @@
             + (Object.keys(ctx).length ? ''
                 : '<div class="in-card-none">контекст не собран</div>')
             + (mail ? intentionMailFoot(mail) : '')
+            // ⚠⚠ Корзинка — **у самой карточки**, а не в подвале письма:
+            // подвал есть только у карточки с готовым черновиком, а убрать
+            // человек может любую — и ту, которой собрать было нечем. Такие
+            // как раз и копятся.
+            //
+            // ⚠ Правый нижний угол и `position: absolute`: в потоке кнопка
+            // забрала бы строку у каждой карточки, а их в колонке десятки.
+            + '<button type="button" class="in-card-drop"'
+            + ` data-drop="${Number(row.id) || 0}"`
+            + ' title="убрать карточку из пула — вместе с черновиком письма,'
+            + ' если он собран">🗑</button>'
             + '</div>';
     }
 
@@ -7328,6 +7361,15 @@
 
         box.querySelectorAll('.in-card-kill').forEach(btn =>
             btn.addEventListener('click', () => intentionMailDrop(btn)));
+
+        // ⚠ Щелчок по корзинке **не выбирает пару**: карточка целиком
+        // кликабельна (выбор пары), и без остановки всплытия удаление заодно
+        // открывало бы переписку того, кого удаляем.
+        box.querySelectorAll('.in-card-drop').forEach(btn =>
+            btn.addEventListener('click', event => {
+                event.stopPropagation();
+                intentionDrop(btn);
+            }));
     }
 
     // ⚠ Кнопка запирается **до** запроса: отправка идёт секунды (сайт отвечает
@@ -7374,6 +7416,36 @@
         }
 
         intentionPoolLoad();
+    }
+
+    // Убрать карточку намерения целиком.
+    //
+    // ⚠⚠ Отличие от соседней корзинки: та убирает **письмо**, оставляя
+    // обещание открытым — круг соберёт черновик заново. Эта убирает само
+    // обещание, и вернуть его может только новый разговор. Поэтому и вопрос
+    // человеку другой.
+    async function intentionDrop(btn) {
+        const id = Number(btn.dataset.drop) || 0;
+        if (!id) return;
+
+        if (!confirm('Убрать карточку намерения?\n\nОбещание исчезнет из пула '
+                     + 'вместе с собранным черновиком. Вернётся оно, только '
+                     + 'если агент пообещает снова.'))
+            return;
+
+        try {
+            await deleteData(`${BASE}/api/dating/chat-intention/${id}`);
+        } catch (e) {
+            // ⚠ Исчезнувшая карточка — не отказ, а рассинхрон: её могли
+            // закрыть исполнением, пока человек смотрел на список.
+            if (!/404/.test(e.message))
+                showNotification('Карточка не убралась: ' + e.message, 'error');
+        }
+
+        // ⚠ Перечитываем **обе** колонки: список пар слева считает намерения,
+        // и оставь мы его прежним, счётчик спорил бы с пулом в том же взгляде.
+        intentionPoolLoad();
+        intentionPairsLoad();
     }
 
     async function intentionPhotoLoad(node, id) {

@@ -189,6 +189,54 @@ async def chat_intention_done(intention_id: int, note: str = '') -> bool:
     return bool(done)
 
 
+async def chat_intention_drop(intention_id: int) -> dict:
+    """Убирает намерение из пула вместе с его черновиком письма.
+
+    Args:
+        intention_id: номер строки `chat_intention`.
+
+    Returns:
+        dict: `dropped` — убрали ли намерение, `mail` — сколько черновиков
+        ушло следом. Строки нет — `{'dropped': 0, 'mail': 0}`, и это не ошибка:
+        её могли закрыть или убрать, пока человек смотрел на список.
+
+    ## ⚠⚠ Письмо уносим **сами**, внешнего ключа нет
+
+    У `intention_mail.intention_id` нет `FOREIGN KEY` (таблицы заведены
+    порознь), и удали мы одно намерение — черновик остался бы сиротой:
+    `uq_intention_mail_once` держит его номер навсегда, то есть следующее
+    такое же обещание той же паре собрать было бы нечем. Молча.
+
+    ⚠ **Ушедшее письмо не трогаем.** Удаление намерения значит «эту работу мы
+    делать не будем», а `sent` — работа уже сделанная, и её след в журнале
+    доставки принадлежит не пулу, а истории: собеседник письмо получил.
+
+    ⚠ Порядок — сперва письмо, потом намерение: оборвись дело посередине,
+    осиротевшего черновика не останется. Обратный порядок оставил бы ровно его.
+    """
+    if int(intention_id or 0) <= 0:
+        return {'dropped': 0, 'mail': 0}
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            "DELETE FROM intention_mail"
+            " WHERE intention_id = %s AND status <> 'sent'",
+            (int(intention_id),))
+        mail = int(db.rowcount or 0)
+
+        await db.execute('DELETE FROM chat_intention WHERE id = %s',
+                         (int(intention_id),))
+        dropped = int(db.rowcount or 0)
+
+        await db.connection.commit()
+
+    if dropped:
+        logger_info(f'[dating] намерение #{intention_id} убрано руками'
+                    f' (черновиков следом: {mail})')
+
+    return {'dropped': dropped, 'mail': mail}
+
+
 async def chat_intention_row(intention_id: int) -> dict:
     """Одно намерение со всем, что к нему прицеплено. Нет строки — пусто.
 
