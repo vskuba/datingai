@@ -45,6 +45,11 @@ globalThis.setInterval = () => 0;
 globalThis.setTimeout = () => 0;
 globalThis.fetch = async () => ({ok: true, json: async () => ({result: []})});
 
+// ⚠⚠ Заглушки — **шаблонная строка**, и внутри неё живут правила шаблона:
+// обратная кавычка закрывает её, а `${…}` раскрывается подстановкой. Поэтому в
+// комментариях здесь нельзя писать имена в обратных кавычках — JS прочтёт их
+// как код и упадёт на разборе, причём ошибка покажет не это место, а всю
+// склеенную строку в base64.
 const stub = `
 const getData = async () => ({result: []});
 const postData = getData, putData = getData, deleteData = getData;
@@ -52,9 +57,13 @@ const esc = (s) => String(s ?? '');
 const onlineDot = esc, warnBadge = esc, seenText = esc, timeShort = esc;
 const timeFull = esc, logRender = () => '', pagerRender = () => {};
 // Селект сайта и помощники ленты: страницы «Журналы» и «Ошибки» читают их на
-// верхнем уровне. datingSiteFill — первый же await стартового IIFE: без заглушки
+// верхнем уровне. datingSiteTabs — первый же await стартового IIFE: без заглушки
 // вызов не доходит до await, и модуль падает с «tab before initialization».
-const DATING_SITE_KEY = 'x', datingSiteFill = async () => {}, face = () => '';
+const DATING_SITE_KEY = 'x', datingSiteTabs = async () => [], face = () => '';
+// ⚠ Отдаёт **список**, а не пустое значение: страницы читают его длину сразу
+// после загрузки («сайтов нет — заведите закладку»), и на пустоте модуль упал
+// бы на первой же строке после await.
+const datingSiteList = async () => [];
 // Заглушка лиц: обе страницы раздела ставят перехват НА ВЕРХНЕМ УРОВНЕ, рядом с
 // layoutRestore, — иначе первые же картинки успели бы промахнуться до него.
 const faceFallback = () => {};

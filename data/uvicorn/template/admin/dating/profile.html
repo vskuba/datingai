@@ -4136,8 +4136,7 @@
 <div class="dating-page">
 
     <div class="dating-head">
-        <h1>🌐 Сайт</h1>
-        <select id="siteSelect" title="Сайт, на котором заведены анкеты"></select>
+        <div id="siteSelect" class="site-tabs" title="Сайт, на котором заведены анкеты"></div>
         {# ⚠ Кнопки «Забрать сообщения» здесь больше нет, а импорт переписки из
         панели агентства остался: его делает **круг воркера** сам, по частоте
         сайта (`chat_check_every`, `worker.md`). Кнопка была лишь «сделай сейчас»,
@@ -4313,7 +4312,7 @@
         from '{{ static_url('js/dating/schedule.js') }}';
     // Загрузка селекта общая на весь раздел: ключ выбора у страниц один, и
     // разъехавшиеся копии писали бы в него разное.
-    import {DATING_SITE_KEY, datingSiteFill, datingPanelPaint} from '{{ static_url('js/dating/site.js') }}';
+    import {DATING_SITE_KEY, datingSiteTabs, datingPanelPaint} from '{{ static_url('js/dating/site.js') }}';
     // Два действия над пулом — убрать карточку и очистить пул. Пулов на
     // странице четыре, и правила у этих действий общие: исчезнувшая карточка
     // не отказ, а необратимое спрашивают (`pool.js`).
@@ -4474,9 +4473,9 @@
 
     async function sitesLoad() {
         try {
-            await datingSiteFill(siteEl, BASE);
+            await datingSiteTabs(siteEl, BASE);
         } catch (e) {
-            siteEl.innerHTML = '<option value="">сайты не пришли</option>';
+            siteEl.innerHTML = '<span class="site-tabs-empty">сайты не пришли</span>';
             showNotification('Список сайтов не пришёл: ' + e.message, 'error');
             return;
         }

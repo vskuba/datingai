@@ -124,7 +124,7 @@ class TestCompanionDeepLink:
 
     async def test_tab_and_site_are_set_before_loading(self, auth_client):
         """⚠ **До** первой загрузки, а не после: `sitesLoad` смотрит на `pageTab`,
-        чтобы решить, грузить ли собеседников, а `datingSiteFill` — на ключ в
+        чтобы решить, грузить ли собеседников, а `datingSiteTabs` — на ключ в
         хранилище, чтобы выбрать сайт. Поставь мы их позже — список приехал бы по
         прежнему сайту, а вкладка осталась бы на «Девушках»."""
         page = (await auth_client.get(PAGE)).text

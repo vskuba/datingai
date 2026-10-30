@@ -23,6 +23,7 @@
 from fastapi import APIRouter, Depends
 
 from src.auth.auth import auth_required
+from src.dating.site_live import SITE_LIVE_HOURS, site_live_rows
 from src.dating.site_snapshot import site_rows
 from src.uvicorn.routers.dating.site_sync import site_sync_start
 
@@ -49,3 +50,29 @@ async def site_list(user=Depends(auth_required)):
             'sync': {'refreshing': refreshing,
                      'synced_at': max((row['synced_at'] for row in rows
                                        if row['synced_at']), default=None)}}
+
+
+@router.get('/live')
+async def site_live(user=Depends(auth_required)):
+    """Живые счётчики вкладок: кто в сети и много ли работы за полсуток.
+
+    Returns:
+        dict: `result` — `{номер сайта: {online, profiles, whole, chat, mail}}`,
+        `hours` — за сколько часов считана работа.
+
+    ## ⚠⚠ Своя ручка, а не поле в списке сайтов
+
+    Список меняется раз в недели, счётчики — каждые несколько секунд. Сведи мы
+    их в одну ручку, страница возила бы имена и адреса сайтов на каждый тик
+    обновления. Плюс оговорка у соседней ручки: форму `result` там менять
+    нельзя, её читает общий селект всех страниц раздела.
+
+    ⚠ Путь `/live` объявлен **до** `/{site_id}` в других роутерах не случайно
+    — здесь он единственный после корня, но правило то же: слово, похожее на
+    номер, однажды прочиталось бы номером.
+
+    ⚠ Отказ не приходит вовсе: счётчики украшают вкладку, и ронять из-за них
+    шапку значило бы поменять важное на второстепенное. Не прочиталось —
+    пустой словарь, вкладки рисуются без чисел (`site_live.py`).
+    """
+    return {'result': await site_live_rows(), 'hours': SITE_LIVE_HOURS}

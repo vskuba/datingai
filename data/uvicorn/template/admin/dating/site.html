@@ -333,7 +333,7 @@
 
     <div class="dating-head">
         <h1>🌐 Настройки сайтов</h1>
-        <select id="siteSelect" title="Сайт, который настраиваем"></select>
+        <div id="siteSelect" class="site-tabs" title="Сайт, который настраиваем"></div>
         <span class="dating-hint" id="hint"></span>
         {% if user.is_admin %}
         <button type="button" class="dating-btn" id="addBtn" style="margin-left:auto">Добавить</button>
@@ -354,7 +354,7 @@
     import {getData, postData, putData} from '{{ static_url('js/api.js') }}';
     import {showNotification} from '{{ static_url('js/notification.js') }}';
     import {esc} from '{{ static_url('js/dating/view.js') }}';
-    import {DATING_SITE_KEY, datingSiteFill} from '{{ static_url('js/dating/site.js') }}';
+    import {DATING_SITE_KEY, datingSiteTabs} from '{{ static_url('js/dating/site.js') }}';
 
     const BASE = '{{ base }}';
     // Правку прячем от того, кто её не сохранит: ручка всё равно ответит 403, но
@@ -1384,9 +1384,9 @@
 
     (async () => {
         try {
-            await datingSiteFill(siteEl, BASE);
+            await datingSiteTabs(siteEl, BASE);
         } catch (e) {
-            siteEl.innerHTML = '<option value="">сайты не пришли</option>';
+            siteEl.innerHTML = '<span class="site-tabs-empty">сайты не пришли</span>';
             showNotification('Список сайтов не пришёл: ' + e.message, 'error');
         }
         hintEl.textContent = CAN_EDIT ? 'настройки сайта на нашей стороне'

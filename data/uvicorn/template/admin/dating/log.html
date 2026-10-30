@@ -159,7 +159,7 @@
 
     <div class="dating-head">
         <h1>📜 Журналы</h1>
-        <select id="siteSelect" title="Сайт, по которому смотрим журнал"></select>
+        <div id="siteSelect" class="site-tabs" title="Сайт, по которому смотрим журнал"></div>
         <span class="dating-hint" id="hint"></span>
     </div>
 
@@ -251,7 +251,7 @@
     import {getData} from '{{ static_url('js/api.js') }}';
     import {showNotification} from '{{ static_url('js/notification.js') }}';
     import {esc, face, logStamp, pagerRender} from '{{ static_url('js/dating/view.js') }}';
-    import {DATING_SITE_KEY, datingSiteFill} from '{{ static_url('js/dating/site.js') }}';
+    import {DATING_SITE_KEY, datingSiteTabs} from '{{ static_url('js/dating/site.js') }}';
     // Метки приходят с сервера в UTC — сдвигает страница (`dashboard_frontend.md`, §3.8).
     import {timeShift} from '{{ static_url('js/dating/time.js') }}';
 
@@ -392,9 +392,9 @@
 
     (async () => {
         try {
-            await datingSiteFill(siteEl, BASE);
+            await datingSiteTabs(siteEl, BASE);
         } catch (e) {
-            siteEl.innerHTML = '<option value="">сайты не пришли</option>';
+            siteEl.innerHTML = '<span class="site-tabs-empty">сайты не пришли</span>';
             showNotification('Список сайтов не пришёл: ' + e.message, 'error');
         }
         tabPaint();

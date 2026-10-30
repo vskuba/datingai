@@ -322,8 +322,14 @@
             text-transform: uppercase; letter-spacing: .04em;
             border-bottom: 2px solid transparent; margin-bottom: -1px;
         }
-        .card-tab:hover:not(.on) { color: #4338ca; }
-        .card-tab.on { color: #4338ca; border-bottom-color: #4f46e5; }
+        /* ⚠ Цвет — открытого сайта, той же переменной с `<body>`, что красит
+           вкладки сайтов и подвкладки страницы (палитра в `dating_page.css`).
+           Подчёркивание здесь вместо заливки — про вес, а не про цвет: анкета
+           принадлежит сайту, и собственного оттенка у её вкладок нет. */
+        .card-tab:hover:not(.on) { color: var(--ink, #4338ca); }
+        .card-tab.on {
+            color: var(--ink, #4338ca); border-bottom-color: var(--ink, #4f46e5);
+        }
 
         /* ---------- Переменные анкеты ---------- */
 
@@ -534,8 +540,7 @@
 <div class="dating-page">
 
     <div class="dating-head">
-        <h1>🌐 Сайт</h1>
-        <select id="siteSelect" title="Сайт, на котором заведены анкеты"></select>
+        <div id="siteSelect" class="site-tabs" title="Сайт, на котором заведены анкеты"></div>
         <button type="button" class="dating-btn primary" id="addBtn">+ девушка</button>
         <span class="dating-hint" id="hint"></span>
         {# Админ-панель агентства: та же ссылка и то же состояние, что на
@@ -631,7 +636,7 @@
     import {scheduleBandBind, scheduleBodyHtml, scheduleCheck, scheduleSort}
         from '{{ static_url('js/dating/schedule.js') }}';
     // Загрузка селекта сайта — тоже общая: ключ выбора один на весь раздел.
-    import {DATING_SITE_KEY, datingSiteFill, datingPanelPaint} from '{{ static_url('js/dating/site.js') }}';
+    import {DATING_SITE_KEY, datingSiteTabs, datingPanelPaint} from '{{ static_url('js/dating/site.js') }}';
     // ⚠ Времена с сервера приходят в UTC, сдвигает их страница по настройке
     // `timezone` — иначе «снято в 08:21» человек прочитал бы как своё время.
     import {timeShift} from '{{ static_url('js/dating/time.js') }}';
@@ -687,7 +692,7 @@
 
     async function sitesLoad() {
         try {
-            await datingSiteFill(siteEl, BASE);
+            await datingSiteTabs(siteEl, BASE);
         } catch (e) {
             say('список сайтов не пришёл: ' + e.message, true);
             return;
@@ -3240,7 +3245,7 @@
     if (wantCompanionUid) {
         // ⚠ Вкладку и сайт ставим **до** первой загрузки, а не после: `sitesLoad`
         // смотрит на `pageTab`, чтобы решить, грузить ли собеседников, а
-        // `datingSiteFill` — на ключ в хранилище, чтобы выбрать сайт.
+        // `datingSiteTabs` — на ключ в хранилище, чтобы выбрать сайт.
         pageTab = 'companion';
         localStorage.setItem(PAGE_TAB_KEY, pageTab);
         if (wantCompanionSite) {
