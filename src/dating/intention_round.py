@@ -31,8 +31,7 @@
 from logging_.logging_ import logger_info
 
 from src.dating.intention_do import intention_mail_make
-from src.dating.round import (round_sites, round_sites_run, round_slot_due,
-                              round_slot_left)
+from src.dating.round import round_sites, round_sites_run, round_slot_due
 from src.dating.site_setting import site_seconds
 
 # Как часто круг просыпается. ⚠ Это **не** частота захода: её держит слот, а тик
@@ -80,24 +79,6 @@ async def intention_round_run(offset: int = 0) -> dict:
 
     return {'sites': ran, 'made': made, 'skipped': skipped}
 
-
-def intention_round_next(site_id: int) -> int:
-    """Через сколько секунд круг вернётся к сайту. `0` — готов идти сейчас.
-
-    ⚠ **Отвечает `TTL` отметки, а не наш расчёт.** Отметку ставит сам круг,
-    гасит её Redis; считай мы «прошлый заход плюс срок», ответ разошёлся бы с
-    действительностью в тот же час, когда настройку поправят на ходу.
-
-    Returns:
-        int: секунды до следующего захода; `0` — отметки нет; `-1` — спросить
-        не вышло, и врать сроком нельзя.
-
-    ⚠⚠ Ключ собирает **слой** (`round_slot_left`), а не эта функция: подставь
-    она номер сама, `.format(site_id=…)` на шаблоне с меткой `{id}` дал бы
-    `KeyError`, проглоченный `except`, и счётчик молчал бы месяцами. Это уже
-    случалось у писем избранным.
-    """
-    return round_slot_left(INTENTION_ROUND_KEY, site_id)
 
 
 async def _sites() -> list[dict]:
