@@ -141,22 +141,45 @@ class TestTheCountersAreCountedByTheServer:
             assert set(counted) == {'online', 'profiles', 'whole', 'chat', 'mail'}, (
                 f'сайт {site}: форма счётчиков разъехалась — {sorted(counted)}')
 
-    async def test_the_denominator_is_the_working_ones(self, auth_client):
-        """⚠⚠ Знаменатель — включённые анкеты, а не все.
+    async def test_the_denominator_is_every_profile(self, auth_client):
+        """⚠⚠ Знаменатель — **все анкеты сайта**, а не включённые.
 
-        Выключенную увёл человек, и работать она не должна. Поставь мы в
-        знаменатель всех — сайт с двумя включёнными из девятнадцати вечно
-        показывал бы `2/19`, и семнадцать «недостающих» читались бы как
-        поломка.
+        Прежде здесь стояли включённые, и довод был такой: выключенную увёл
+        человек, работать она не должна. Довод оказался неверным, и показала
+        это живая страница: у Ladadate девятнадцать анкет, включённых ноль —
+        вкладка писала `0/0` **рядом со списком из девятнадцати строк**.
+
+        Список рядом — та самая мера, с которой человек сверяет вкладку, и два
+        числа про одно и то же, спорящие на одном экране, хуже любого из них по
+        отдельности.
+
+        ⚠ Числитель по той же причине считается **без оглядки на `enabled`**:
+        разойдись множества, `online` оказался бы больше `whole` при первой же
+        выключенной, но живой анкете.
         """
         got = (await auth_client.get('/api/site/live')).json()['result']
 
         for site, counted in got.items():
             assert counted['profiles'] <= counted['whole'], (
-                f'сайт {site}: работающих больше, чем анкет вообще')
-            assert counted['online'] <= counted['profiles'], (
-                f'сайт {site}: в сети больше, чем работающих — знаменатель '
-                'взят не из тех анкет')
+                f'сайт {site}: включённых больше, чем анкет вообще')
+            assert counted['online'] <= counted['whole'], (
+                f'сайт {site}: в сети больше, чем анкет вообще — числитель и '
+                'знаменатель считают разные множества')
+
+    def test_the_tab_shows_the_whole_count(self):
+        """⚠⚠ На вкладке стоит `whole`, а не `working`: именно это число
+        человек сверяет с заголовком списка слева."""
+        code = MODULE.read_text(encoding='utf-8')
+
+        assert '${online}/${whole}' in code, (
+            'на вкладке не общее число анкет — оно разойдётся со списком')
+
+    def test_the_numerator_ignores_enabled(self):
+        """⚠ Числитель и знаменатель обязаны считать одно множество."""
+        code = (ROOT / 'src/dating/site_live.py').read_text(encoding='utf-8')
+
+        assert "SUM(status = 'online') AS online" in code, (
+            'в сети считаются только включённые, а в знаменателе — все')
 
     def test_the_mail_pools_are_not_listed_twice(self):
         """⚠⚠ Пулы писем перечисляет `mail_sent_union`, а не свой запрос.
@@ -419,3 +442,44 @@ class TestTheTabIsATableOfTwoRows:
 
         assert spot > 0 and 'prefers-reduced-motion' in css[spot:spot + 400], (
             'мигание почты не уважает `prefers-reduced-motion`')
+
+    def test_the_envelope_is_the_emoji_one(self):
+        """⚠⚠ Конверт — `U+2709` **с указателем вида** `U+FE0F`.
+
+        Голый `U+2709` браузер рисует текстовым знаком: тонкий контур в цвет
+        букв, который на белом фоне теряется рядом с полновесным `💬` (у того
+        текстового начертания нет вовсе). Два значка одного ряда выходили
+        разного веса — один читался, другой угадывался.
+
+        ⚠ Это про **наш литерал**, а не про текст снаружи: приехавшие эмодзи
+        приводит к одному виду `text_emoji_same` общего слоя, и к записи в
+        исходнике она отношения не имеет.
+        """
+        code = MODULE.read_text(encoding='utf-8')
+        spot = code.find("_datingCount('mail'")
+        sign = code[spot:spot + 60]
+
+        assert '️' in sign, (
+            'у конверта нет указателя вида — он сольётся с белым фоном: '
+            + ' '.join(f'U+{ord(c):04X}' for c in sign if ord(c) > 0x2000))
+
+    def test_the_quiet_badge_is_really_grey(self):
+        """⚠⚠ `💬` и `✉️` — **цветные** знаки, и цвет букв их не берёт. Без
+        обесцвечивания синий конверт на сером поле читался бы как «что-то
+        пришло» при нуле: значок говорил бы обратное своему числу."""
+        block = _block(STYLE.read_text(encoding='utf-8'), '.pill.off {')
+
+        assert 'grayscale' in block, (
+            'тихий значок остаётся цветным и противоречит своему нулю')
+
+    def test_the_live_mail_is_stronger_on_the_tab(self):
+        """⚠ На вкладке живая почта насыщеннее, чем на карточке анкеты: общий
+        `#fef3c7` почти белый, и на белом фоне шапки значок терялся рядом со
+        значком чата. На карточке бледный тон уместен — там значков по два на
+        девятнадцать строк. Разный вопрос — разный вес."""
+        css = STYLE.read_text(encoding='utf-8')
+        tab = _block(css, '.site-tab-counts .pill.mail {')
+        card = _block(css, '.pill.mail {')
+
+        assert 'background' in tab and tab != card, (
+            'почта на вкладке красится общим бледным тоном и сливается с фоном')
