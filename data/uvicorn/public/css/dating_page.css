@@ -384,6 +384,13 @@
     text-align: center; cursor: pointer; overflow: hidden;
     transition: background .12s ease;
 }
+
+/* ⚠ Имя — кнопка во всю ширину колонки, без своего фона и рамки: колонка уже
+   нарисована, и вторая рамка внутри неё читалась бы как вложенный элемент. */
+.site-tab-name {
+    display: block; width: 100%; border: none; background: none;
+    font: inherit; cursor: pointer;
+}
 .site-tab:hover { background: var(--tint, #f8fafc); }
 
 /* ⚠ Открытая вкладка выделена **заливкой**, а не рамкой: рамка в ряду из
@@ -407,6 +414,12 @@
     padding: 5px 12px; border-bottom: 1px solid var(--edge, #e2e8f0);
     font-weight: 600; white-space: nowrap; color: var(--ink, #334155);
 }
+
+/* ⚠ Значки — ссылки, и подчёркивание им ни к чему: они нарисованы пилюлями,
+   а подчёркнутый текст внутри цветной пилюли читается как опечатка вёрстки. */
+.site-tab-counts a { text-decoration: none; cursor: pointer; }
+.site-tab-counts a:hover { filter: brightness(.94); }
+.site-tab-counts a:focus-visible { outline: 2px solid var(--ink, #4338ca); outline-offset: 1px; }
 
 /* Ряд счётчиков. ⚠⚠ Значки стоят **всегда**, в том числе нулями: исчезающий
    значок менял бы ширину колонки на каждом тике — ровно то, ради чего счётчики

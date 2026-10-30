@@ -248,18 +248,48 @@ function _datingTabsPaint(el, sites, live) {
                        + ` реплик ${Number(own.chat || 0)},`
                        + ` писем ${Number(own.mail || 0)}`].filter(Boolean).join('\n');
 
-        return `<button type="button" class="site-tab${
-                    String(id) === picked ? ' on' : ''}"`
+        // ⚠⚠ Колонка — **не одна кнопка**, и это вынужденно: у неё три
+        // назначения. Имя выбирает сайт, значок реплик ведёт на «Чат →
+        // Диалоги», значок писем — на «Фавориты → Диалоги». Вложить ссылку в
+        // кнопку нельзя — разметка запрещает интерактивное в интерактивном, и
+        // браузеры разбирают такое по-своему.
+        return `<div class="site-tab${String(id) === picked ? ' on' : ''}"`
             + ` data-site="${id}" data-hue="${_datingSiteHue(sites, id)}"`
             + ` title="${esc(title)}">`
-            + `<span class="site-tab-name">${esc(row.name)}</span>`
+            + `<button type="button" class="site-tab-name"`
+            + ` data-site="${id}">${esc(row.name)}</button>`
             + '<span class="site-tab-counts">'
             + `<span class="site-tab-live${online ? ' on' : ''}"`
             + ` >${online}/${whole}</span>`
-            + _datingCount('chat', Number(own.chat || 0))
-            + _datingCount('mail', Number(own.mail || 0))
-            + '</span></button>';
+            + _datingCount('chat', Number(own.chat || 0), id)
+            + _datingCount('mail', Number(own.mail || 0), id)
+            + '</span></div>';
     }).join('');
+}
+
+// Куда ведёт значок счёта: вид работы → страница и её вкладки.
+//
+// ⚠⚠ Адресом, а не записью в хранилище: ссылку видно в строке состояния до
+// нажатия, её можно открыть в новой вкладке, и она не зависит от того, что
+// страница запомнила в прошлый раз. Разбирает её сама страница «Профили».
+//
+// ⚠ Сайт едет доводом: значок зовёт к работе **этого** сайта, а открыт мог
+// быть другой — человек смотрит на четыре колонки сразу.
+// ⚠⚠ `feed` — это **вид события ленты** (`FEED_WHERE` на «Профилях»), а не
+// второе написание той же пары. Страница, уже открытая на «Профилях», ловит
+// щелчок и зовёт `feedGo(feed)` — тем самым одна карта «куда вести» остаётся
+// одна на оба входа: ленту и значок. Разойдись они, щелчок по строке ленты и
+// щелчок по значку уводили бы в разные места.
+const DATING_COUNT_GOES = {
+    chat: {tab: 'chat', sub: 'talk', feed: 'talk'},
+    mail: {tab: 'fav', sub: 'talks', feed: 'favtalk'},
+};
+
+function _datingCountHref(kind, siteId) {
+    const go = DATING_COUNT_GOES[kind];
+
+    return `/admin/dating/profile?site=${Number(siteId)}`
+        + `&tab=${go.tab}&sub=${go.sub}`;
 }
 
 // Один значок счёта: цветной и мигающий, пока есть о чём говорить, иначе серый.
@@ -307,23 +337,41 @@ const DATING_COUNT_SIGNS = {
 // ⚠ Мигание почты приезжает модификатором `beat`, а чата — своим правилом
 // `.pill.chat`: на карточке анкеты тот же значок почты отвечает на другой
 // вопрос («у неё N писем») и мигать там не должен.
-function _datingCount(kind, count) {
+// ⚠⚠ Значок — **ссылка, и серый тоже**: «писем нет» это ответ, за которым
+// человек идёт в тот же список, чтобы убедиться. Веди туда только мигающий —
+// и значок переставал бы работать ровно тогда, когда на него смотрят спокойно.
+function _datingCount(kind, count, siteId) {
     const cls = count ? `pill ${kind}${kind === 'mail' ? ' beat' : ''}`
                       : 'pill off';
+    const go = DATING_COUNT_GOES[kind];
 
-    return `<span class="${cls}"><svg class="pill-sign" viewBox="0 0 16 16"`
+    return `<a class="${cls}" href="${_datingCountHref(kind, siteId)}"`
+        + ` data-go="${go.feed}" data-site="${siteId}"`
+        + ` title="${count} за 12 часов — открыть список">`
+        + '<svg class="pill-sign" viewBox="0 0 16 16"'
         + ' fill="none" stroke="currentColor" stroke-width="1.6"'
         + ` stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">`
-        + `${DATING_COUNT_SIGNS[kind]}</svg>${count}</span>`;
+        + `${DATING_COUNT_SIGNS[kind]}</svg>${count}</a>`;
 }
 
 // Щелчок по вкладке: запомнить выбор, перерисовать, сказать странице.
 //
 // ⚠ Обработчик вешается после отрисовки: вкладки переписываются целиком на
 // каждое обновление счётчиков, и повешенный до неё не пережил бы первого.
+// ⚠⚠ Слушаем **колонку**, а не только имя: мимо значков в ней есть пустое
+// место — ряд счётчиков шире своих пилюль, — и щелчок туда обязан выбрать
+// сайт.
+//
+// ⚠⚠ Щелчок по значку колонка **пропускает мимо себя**, но всплытие не рвёт.
+// Глушить его здесь нельзя: страница «Профили» ловит тот же щелчок выше по
+// дереву, чтобы открыть место без перезагрузки, — и `stopPropagation` отнимал
+// бы у неё событие. Это уже было: перехват молча не срабатывал, а ссылка
+// уводила браузер на ту же страницу заново.
 function _datingTabsWire(el, sites, onPick) {
     el.querySelectorAll('.site-tab').forEach(tab =>
-        tab.addEventListener('click', () => {
+        tab.addEventListener('click', event => {
+            if (event.target.closest('[data-go]')) return;
+
             const id = String(tab.dataset.site || '');
             if (!id || id === String(el.dataset.pick || '')) return;
 

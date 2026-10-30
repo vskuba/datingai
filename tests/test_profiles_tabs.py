@@ -400,6 +400,71 @@ class TestFreshestDialogOpensUnderChosenGirl:
             'желание не гасится сразу после чтения')
 
 
+class TestBadgeLinkOpensItsPlace:
+    """⚠⚠ Значок счёта на вкладке сайта ведёт сюда — ссылкой и щелчком.
+
+    Со страницы «Анкеты» он уводит адресом (`?site=…&tab=…&sub=…`), а если
+    человек уже здесь — страница ловит щелчок и открывает место **на месте**:
+    уйти по ссылке значило бы перезагрузить всё ради смены двух вкладок.
+    """
+
+    async def test_the_link_params_are_read(self, auth_client):
+        page = (await auth_client.get(PAGE)).text
+
+        for name in ('site', 'tab', 'sub'):
+            assert f"goParams.get('{name}')" in page, (
+                f'довод `{name}` из адреса не читается')
+
+    async def test_the_subtab_goes_under_its_own_key(self, auth_client):
+        """⚠⚠ Имена подвкладок пересекаются: `talk` есть и в чате, и в
+        фаворитах. Общий ключ увёл бы человека на «Приставание» вместо
+        «Диалогов»."""
+        page = (await auth_client.get(PAGE)).text
+
+        assert "goTab === 'chat'" in page and "goTab === 'fav'" in page, (
+            'подвкладка кладётся в один ключ на обе вкладки')
+
+    async def test_the_address_is_cleaned(self, auth_client):
+        """⚠ Иначе обновление страницы через час снова увело бы человека туда,
+        откуда он давно ушёл."""
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'history.replaceState(null, \'\', location.pathname)' in page, (
+            'довод остаётся в адресе и переживает обновление страницы')
+
+    async def test_the_click_is_caught_on_the_container(self, auth_client):
+        """⚠ На контейнере, а не на значках: вкладки переписываются целиком на
+        каждом обновлении счётчиков, и повешенный на значок не пережил бы
+        первого."""
+        page = (await auth_client.get(PAGE)).text
+        spot = page.find("siteEl?.addEventListener('click'")
+
+        assert spot > 0, 'щелчок по значку на этой странице не перехватывается'
+        assert 'ev.preventDefault()' in page[spot:spot + 400], (
+            'переход не отменяется — страница перезагрузится вместо смены вкладок')
+
+    async def test_the_site_changes_before_the_place_opens(self, auth_client):
+        """⚠⚠ Сайт меняем **до** `feedGo`: он берёт выбор анкеты за вкладкой, а
+        при чужом сайте его в списке нет — правая колонка осталась бы пустой
+        при полном списке слева."""
+        page = (await auth_client.get(PAGE)).text
+        spot = page.find("siteEl?.addEventListener('click'")
+        body = page[spot:spot + 900]
+
+        assert body.find('siteEl.value = site') < body.find('feedGo('), (
+            'место открывается раньше смены сайта')
+
+    async def test_the_destination_is_the_feed_map(self, auth_client):
+        """⚠⚠ Одна карта «куда вести» на оба входа: значок зовёт `feedGo`, а не
+        носит свою пару вкладок."""
+        page = (await auth_client.get(PAGE)).text
+        spot = page.find("siteEl?.addEventListener('click'")
+
+        assert 'feedGo(String(go.dataset.go' in page[spot:spot + 900], (
+            'значок открывает место мимо `feedGo` — завелась вторая карта '
+            'назначений, и она разойдётся с лентой')
+
+
 class TestTabsSurviveReload:
     """⚠ Открытая вкладка переживает перезагрузку — и вкладка, и подвкладка писем.
 
