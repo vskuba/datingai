@@ -28,6 +28,8 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.gallery import gallery_group_of
+from src.dating.gallery_vision import GALLERY_VISION_TAGS_ALL
+from src.dating.json_column import json_column_list
 
 
 async def companion_gallery_sent(profile_id: int, site_id: int, uid: str,
@@ -124,6 +126,88 @@ async def companion_gallery_fresh(profile_id: int, site_id: int, uid: str,
     return rows[:int(limit)] if int(limit or 0) > 0 else rows
 
 
+async def companion_gallery_pick(profile_id: int, site_id: int, uid: str,
+                                 tags, group: str = '') -> dict:
+    """Снимок под приметы намерения: лучший из тех, что этот человек не видел.
+
+    Args:
+        profile_id: чья галерея.
+        site_id: сайт собеседника.
+        uid: номер собеседника на сайте.
+        tags: приметы из контекста намерения — строка через запятую либо
+            список. Пусто — отбирать не по чему.
+        group: папка галереи; пусто — любая.
+
+    Returns:
+        dict: `file` — выбранная строка `gallery_file` (пусто — не выбралось),
+        `score` — сколько примет совпало, `fresh` — сколько снимков человек
+        ещё не видел, `why` — словами, почему не выбралось.
+
+    ## ⚠⚠ Три «ничего не выбралось» — это три разных ответа, а не пустота
+
+    У анкеты нет галереи; галерея есть, но всё уже показано; есть
+    непоказанное, но ни одна примета не совпала. Для глаза это одна и та же
+    карточка без снимка, а делать с ними надо разное: завести папку, подождать
+    обхода, поправить приметы. Поэтому причина возвращается **словами**, и
+    `fresh` отвечает «сколько вообще было из чего выбирать».
+
+    ## ⚠ Приметы принимаются в двух видах, и это не всеядность
+
+    Контекст намерения свободен по форме (`chat_intention.context`), и его
+    собирает подпоток у соседа — промпт просит строку через запятую, но
+    единственный, кто это обещание держит, это промпт. Читатель обязан
+    смотреть на своё поле и не падать: список здесь так же законен.
+
+    ## ⚠⚠ Порога совпадения нет: хватает одной приметы
+
+    «Не меньше двух из пяти» — правило, которого не объяснить ни оператору, ни
+    себе через полгода. Совпало больше — снимок выше в порядке; совпало одно —
+    он всё равно лучше случайного. Ноль совпадений снимок не берёт вовсе:
+    приметы тогда не значат ничего, и выбор перестал бы быть выбором.
+
+    ⚠ Старые теги словарю не подчиняются («lace dress», «sofa» — разбор был до
+    закрытого словаря) и просто не совпадают. Отдельного обращения им не надо:
+    снимок с ними проигрывает размеченному и выигрывает у ненайденного.
+
+    ⚠ Ровные совпадения разводит порядок `companion_gallery_fresh` — по номеру
+    строки, то есть по времени появления в индексе. Жребий дал бы разный ответ
+    на каждое обновление страницы, а человек смотрит на карточку и решает.
+
+    ## ⚠ Про папку эта функция политики не держит
+
+    Приметы могут указать на `intim`, и отбор туда пойдёт, если вызывающий не
+    сузил `group`. Решать, что и кому можно слать, будет отправка — её ещё нет;
+    карточка снимок только показывает, и оператор видит, что выбралось.
+    """
+    want = _tags_wanted(tags)
+    fresh = await companion_gallery_fresh(profile_id, site_id, uid, group=group)
+
+    if not fresh:
+        seen = await companion_gallery_seen(profile_id, uid)
+        why = ('все снимки этот человек уже видел' if seen
+               else 'галереи у анкеты нет')
+
+        return {'file': {}, 'score': 0, 'fresh': 0, 'why': why}
+
+    if not want:
+        return {'file': {}, 'score': 0, 'fresh': len(fresh),
+                'why': 'в контексте нет примет: выбирать не по чему'}
+
+    best, score = {}, 0
+
+    for row in fresh:
+        got = len(want & _tags_of(row.get('tags')))
+        if got > score:
+            best, score = row, got
+
+    if not score:
+        return {'file': {}, 'score': 0, 'fresh': len(fresh),
+                'why': f'ни один из {len(fresh)} снимков не подошёл по приметам:'
+                       f' {", ".join(sorted(want))}'}
+
+    return {'file': best, 'score': score, 'fresh': len(fresh), 'why': ''}
+
+
 async def companion_gallery_seen(profile_id: int, uid: str) -> list[dict]:
     """Что эта девушка уже показывала этому человеку — свежее первым.
 
@@ -156,3 +240,47 @@ async def companion_gallery_seen(profile_id: int, uid: str) -> list[dict]:
         logger_info(f'[dating] показанное этому человеку не прочиталось: {e}')
 
         return []
+
+
+def _tags_wanted(tags) -> set:
+    """Приметы из контекста → набор слов. Два вида на входе, один на выходе.
+
+    ## ⚠⚠ Здесь стоит сторож третьей копии словаря
+
+    Список тегов живёт **в трёх местах**: `GALLERY_VISION_TAGS` у нас, промпт
+    зрения у соседа и промпт подпотока `intention_context` — последний и
+    присылает эти приметы. Разойдись он со словарём, модель назовёт слова,
+    которых у снимков нет, отбор не найдёт ничего — и промолчит, потому что
+    «не подошло» выглядит обычным исходом.
+
+    ⚠ Поэтому чужое слово **не выбрасывается**, а идёт в журнал и остаётся в
+    наборе: выброшенное скрыло бы расхождение, а оставленное просто не
+    совпадёт — и причина отказа назовёт его человеку словами.
+    """
+    if isinstance(tags, str):
+        got = [word for word in tags.replace('\n', ',').split(',')]
+    elif isinstance(tags, (list, tuple, set)):
+        got = [str(word) for word in tags]
+    else:
+        got = []
+
+    want = {word.strip().lower() for word in got if word.strip()}
+    strange = want - set(GALLERY_VISION_TAGS_ALL)
+
+    if strange:
+        logger_info(f'[dating] приметы намерения вне словаря:'
+                    f' {", ".join(sorted(strange))} — сверьте промпт подпотока'
+                    f' intention_context у соседа с GALLERY_VISION_TAGS')
+
+    return want
+
+
+def _tags_of(value) -> set:
+    """Теги снимка из JSON-столбца → набор слов для сравнения.
+
+    ⚠ Словарём **не** сверяются: у снимков, размеченных до закрытого словаря,
+    лежат свободные слова («lace dress», «sofa»), и `gallery_vision_tags_keep`
+    их бы отбросил. Здесь они безвредны — просто не совпадут.
+    """
+    return {str(tag).strip().lower()
+            for tag in json_column_list(value) if str(tag).strip()}

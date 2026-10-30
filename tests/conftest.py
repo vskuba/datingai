@@ -225,7 +225,7 @@ TEST_SEED_PREFIX = 'seed-'
 # она не уходит ничем.
 TEST_SWEEP_BY_PROFILE = ('scenario_run', 'stat_day', 'favorite',
                          'companion_gallery_file', 'gallery_file', 'mail',
-                         'companion_guest')
+                         'companion_guest', 'intention_mail')
 
 # Номер, с которого начинаются сайты сюиты. Живые ведёт сосед, и номера у него
 # автоинкрементные — сейчас это 19 и 343.

@@ -24,6 +24,9 @@
 человеку, и это видно ему, а не нам.
 """
 
+import base64
+import hashlib
+import json
 import uuid
 
 import pytest
@@ -186,6 +189,161 @@ class TestSendGoes:
         assert body['AttachmentFile'] is None
         # Тело обязано быть JSON-годным: сайт принимает его как JSON.
         json.dumps(body)
+
+
+class TestTheAttachment:
+    """Снимок в письме: base64 в теле, хэш от байтов, предел по весу.
+
+    ## ⚠⚠ Что здесь стережётся
+
+    Письмо со снимком шлёт исполнитель намерений: девушка обещала фото. Уйди
+    такое письмо **текстом**, собеседник прочёл бы «вот моё фото» без фото — а
+    обещание при этом закрылось бы исполненным, и никто бы не узнал. Поэтому
+    негодное вложение — отказ, а не тихая отправка.
+    """
+
+    def test_the_bytes_ride_as_base64(self):
+        from src.dating.mail_send import _payload
+
+        body = _payload('c1', '812886', 'текст',
+                        attach={'name': 'evening.jpg', 'data': b'\xff\xd8photo'})
+
+        assert body['AttachmentName'] == 'evening.jpg'
+        assert base64.b64decode(body['AttachmentFile']) == b'\xff\xd8photo'
+        # Тело обязано быть JSON-годным: сайт принимает его как JSON.
+        json.dumps(body)
+
+    def test_the_hash_is_of_the_bytes_not_of_the_base64(self):
+        """⚠ Сайт сверяет хэшем то, что получил **после** разбора base64.
+
+        Посчитай мы его от строки — сверялся бы не файл, а его запись, и сайт
+        отверг бы каждое вложение.
+        """
+        from src.dating.mail_send import _payload
+
+        raw = b'\xff\xd8\xff\xe0 some jpeg bytes'
+        body = _payload('c1', '812886', 'текст',
+                        attach={'name': 'a.jpg', 'data': raw})
+
+        assert body['AttachmentHash'] == hashlib.md5(raw).hexdigest()
+
+    def test_no_attachment_keeps_the_old_shape(self):
+        """⚠ Три пула из четырёх шлют текст, и для них ничего не изменилось."""
+        from src.dating.mail_send import _payload
+
+        body = _payload('c1', '812886', 'текст')
+
+        assert body['AttachmentName'] is None
+        assert body['AttachmentHash'] == ''
+        assert body['AttachmentFile'] is None
+
+    def test_an_empty_attachment_is_refused_not_sent_as_text(self):
+        """⚠⚠ Просили приложить, а приложить нечем — **отказ**.
+
+        Тихая отправка текстом закрыла бы обещание исполненным, оставив
+        собеседника с «вот моё фото» без фото.
+        """
+        from src.dating.mail_send import DatingMailSendError, _payload
+
+        with pytest.raises(DatingMailSendError, match='байтов нет'):
+            _payload('c1', '812886', 'текст',
+                     attach={'name': 'a.jpg', 'data': b''})
+
+    def test_a_nameless_attachment_is_refused(self):
+        from src.dating.mail_send import DatingMailSendError, _payload
+
+        with pytest.raises(DatingMailSendError, match='нет имени'):
+            _payload('c1', '812886', 'текст', attach={'name': '', 'data': b'xx'})
+
+    def test_a_heavy_photo_is_refused_before_the_site_sees_it(self):
+        """⚠ Предел наш: сайтовского мы не знаем, и узнавали бы отказом —
+        то есть уже потратив поход. Меряется **до** base64: запись длиннее
+        на треть, и меряя её, мы меряли бы не файл."""
+        from src.dating.mail_send import (MAIL_ATTACH_MAX, DatingMailSendError,
+                                          _payload)
+
+        with pytest.raises(DatingMailSendError, match='тяжелее предела'):
+            _payload('c1', '812886', 'текст',
+                     attach={'name': 'big.jpg', 'data': b'x' * (MAIL_ATTACH_MAX + 1)})
+
+    async def test_a_bad_attachment_does_not_cost_a_request(self, site_api,
+                                                            letter, profile):
+        """⚠⚠ Негодное вложение видно **до** `check-send`.
+
+        Иначе за брак платили бы походом на сайт — и, хуже, разрешение на
+        отправку сгорало бы впустую: оно живёт десять секунд.
+        """
+        was = len(site_api.calls)
+
+        with pytest.raises(DatingMailSendError, match='байтов нет'):
+            await _send({**letter, 'attach': {'name': 'a.jpg', 'data': b''}},
+                        profile)
+
+        assert len(site_api.calls) == was, 'к сайту ходили зря'
+
+    async def test_the_photo_reaches_the_site(self, site_api, letter, profile):
+        """Снимок доезжает до сайта тем же письмом, что и текст."""
+        await _send({**letter,
+                     'attach': {'name': 'evening.jpg', 'data': b'\xff\xd8jpeg'}},
+                    profile)
+
+        sent = site_api.payloads[-1]
+
+        assert sent['AttachmentName'] == 'evening.jpg'
+        assert base64.b64decode(sent['AttachmentFile']) == b'\xff\xd8jpeg'
+
+
+class TestTheUnionCountsItsBranches:
+    """⚠⚠ Союз пулов и счёт доводов у вызывающих обязаны сходиться.
+
+    `where` подставляется в **каждую** ветку, значит `%s`-мест ровно столько,
+    сколько таблиц. Запиши вызывающий это числом — новый пул ломает его запрос
+    **молча**: доводов меньше, чем мест, `execute` бросает, `except` отвечает
+    пустотой, и наружу выходит не ошибка, а «данных нет».
+
+    Так и было 30.10.2026: в `mail_explain._last` стояло `* 3`, появился
+    `intention_mail`, и окно «почему этой паре не пишут» перестало называть
+    последнего говорившего.
+    """
+
+    def test_a_branch_per_table(self):
+        from src.dating.mail_send import MAIL_SEND_TABLES, mail_sent_union
+
+        sql = mail_sent_union('profile_id = %s AND uid = %s')
+
+        assert sql.count('UNION ALL') == len(MAIL_SEND_TABLES) - 1
+        for table in MAIL_SEND_TABLES:
+            assert f'FROM {table}' in sql, f'{table} выпал из союза'
+
+    def test_the_placeholders_scale_with_the_tables(self):
+        """Сколько таблиц — столько раз повторено условие, и ни разом меньше."""
+        from src.dating.mail_send import MAIL_SEND_TABLES, mail_sent_union
+
+        sql = mail_sent_union('profile_id = %s AND uid = %s')
+
+        assert sql.count('%s') == 2 * len(MAIL_SEND_TABLES)
+
+    def test_a_narrowed_set_scales_too(self):
+        """⚠ У холодного набора свой счёт — вызывающий берёт `len(tables)`."""
+        from src.dating.mail_send import MAIL_SEND_COLD_TABLES, mail_sent_union
+
+        sql = mail_sent_union('site_id = %s AND uid = %s',
+                              tables=MAIL_SEND_COLD_TABLES)
+
+        assert sql.count('%s') == 2 * len(MAIL_SEND_COLD_TABLES)
+
+    async def test_the_explain_window_still_names_the_last_speaker(self):
+        """⚠⚠ Сторож на **того самого** вызывающего, который сломался.
+
+        Проверка не на пустой паре: пустая отвечает пустой стороной законно, и
+        сломанный запрос от неё не отличить. Здесь важно, что вызов **не
+        бросает** и отвечает разобранной формой.
+        """
+        from src.dating.mail_explain import _last
+
+        got = await _last(10_000_000, 'nobody')
+
+        assert set(got) == {'at', 'side'}
 
 
 class TestSendRefused:

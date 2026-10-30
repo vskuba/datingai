@@ -10,6 +10,7 @@
 именно **решения круга**, а не сам поход: поход проверен там.
 """
 
+import re
 import uuid
 
 import pytest
@@ -815,3 +816,29 @@ class TestThePauseBelongsToTheGirl:
         why = await send_why(SITE, 'favorite_mail', 0)
 
         assert 'пауза' in why, why
+
+
+class TestTheFlagsAgree:
+    """⚠⚠ Два списка выключателей обязаны сходиться.
+
+    `_POOLS` отвечает «какой пул чем включён», `_sites()` — «куда вообще идти
+    за работой». Выражены они порознь намеренно: застава
+    `test_site_flags_alive.py` ищет читателя флага **внутри функции**, и
+    выведи мы один из другого, имя флага исчезло бы из её поля зрения — а
+    именно так однажды тихо перестала работать `chat_answer_on`.
+
+    Цена такой записи — расхождение, и держит его этот сторож: новый пул,
+    попавший в `_POOLS` и забытый в `_sites()`, не получил бы ни одного сайта
+    и молчал бы без единой ошибки.
+    """
+
+    def test_every_pool_switch_opens_a_site(self):
+        import inspect
+
+        from src.dating.send_round import _POOLS, _sites
+
+        said = set(re.findall(r"'([a-z_]+_on)'", inspect.getsource(_sites)))
+
+        assert said == {one[0] for one in _POOLS}, (
+            'списки выключателей разошлись: пул, которого нет в `_sites`, '
+            'не получит ни одного сайта и промолчит без ошибки')

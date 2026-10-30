@@ -17,7 +17,8 @@ from src.dating.answer import _agent_ask
 from src.dating.json_column import json_column_load
 from src.dating.chat_intention import (chat_intention_do_allowed,
                                        chat_intention_done, chat_intention_pairs,
-                                       chat_intention_put, chat_intention_rows)
+                                       chat_intention_put, chat_intention_row,
+                                       chat_intention_rows)
 from tests.conftest import TEST_STAND_SITE
 
 pytestmark = pytest.mark.chat
@@ -579,7 +580,62 @@ class TestTheContext:
         Форму кладёт сосед, и сменить её он может раньше, чем мы узнаем;
         терять из-за этого само намерение нельзя.
         """
-        for чужое in ('строка', 42, ['список']):
-            await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: чужое})
+        for stranger in ('строка', 42, ['список']):
+            await chat_intention_put(girl, TEST_STAND_SITE, _uid(),
+                                     {PROMISE: stranger})
 
         assert len(await _rows(girl)) == 3
+
+
+class TestTheContextReachesThePage:
+    """Контекст доезжает до страницы — и разобранным.
+
+    ## ⚠⚠ Почему это стерегут отдельно от записи
+
+    Записанный контекст и **показанный** — два разных события, и между ними
+    стоит список колонок запроса. Не выбери его запрос, карточка выйдет пустой
+    без единого отказа: ни журнала, ни красной строки — просто нечего
+    показать. Та же грабля уже стоила отметок `delivered_at` у писем и
+    `reply_to` в круге отправки.
+    """
+
+    async def test_the_list_carries_it(self, girl):
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+                                 {PROMISE: {'letter': 'Hi!', 'tags': 'dress'}})
+
+        rows = await _open(girl)
+
+        assert rows[0]['context'] == {'letter': 'Hi!', 'tags': 'dress'}, \
+            'контекст обязан быть в списке и разобранным объектом'
+
+    async def test_it_comes_parsed_not_as_a_string(self, girl):
+        """⚠ Разбирает **сервер**: столбец приезжает то структурой, то строкой,
+        и страница знала бы об этом вторым правилом."""
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(),
+                                 {PROMISE: {'letter': 'Hi!'}})
+
+        assert isinstance((await _open(girl))[0]['context'], dict)
+
+    async def test_no_context_is_an_empty_object_not_a_hole(self, girl):
+        """⚠ «Контекст не собран» — законное состояние, и выглядеть оно обязано
+        пустым объектом: `None` заставил бы каждого читателя проверять дважды."""
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+
+        assert (await _open(girl))[0]['context'] == {}
+
+    async def test_one_row_reads_the_same_shape(self, girl):
+        """⚠ Форма одной строки та же, что у списка, — её собирает тот же код."""
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+                                 {PROMISE: {'letter': 'Hi!'}})
+        listed = (await _open(girl))[0]
+
+        one = await chat_intention_row(listed['id'])
+
+        assert one['context'] == listed['context']
+        assert one['uid'] == uid and one['intention'] == PROMISE
+
+    async def test_a_missing_row_is_empty_not_a_throw(self):
+        assert await chat_intention_row(10_000_000) == {}
+        assert await chat_intention_row(0) == {}

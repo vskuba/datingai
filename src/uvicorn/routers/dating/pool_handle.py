@@ -51,7 +51,7 @@ from mysql_.mysql_ import mysql_get_db_async
 # написавшего первым. Здесь вопрос другой — «что человек может убрать
 # кнопкой», — и ответ убрать он вправе: «не такой» значит «напиши заново».
 POOL_HANDLE_TABLES = ('mailing', 'favorite_mail', 'invite', 'chat_initiative',
-                      'mail_reply')
+                      'mail_reply', 'intention_mail')
 
 
 async def pool_handle_drop(table: str, row_id: int, *, missing: str,

@@ -60,7 +60,7 @@ class TestChatTalk:
 
         got = await rhapsody_api_chat_talk(7, 'вопрос')
 
-        assert got == {'text': 'привет', 'message_id': 777, 'intentions': []}
+        assert got == {'text': 'привет', 'message_id': 777, 'intentions': {}}
 
     async def test_the_question_and_agent_travel_in_the_payload(self, requested):
         """⚠ Таймаут агента и номер агента — не на словах, а в самом запросе."""
@@ -82,7 +82,7 @@ class TestChatTalk:
 
         got = await rhapsody_api_chat_talk(7, 'вопрос')
 
-        assert got == {'text': '', 'message_id': 0, 'intentions': []}
+        assert got == {'text': '', 'message_id': 0, 'intentions': {}}
 
     @pytest.mark.parametrize('raw', [None, '', 'не число', [], {}])
     async def test_a_missing_or_unreadable_number_is_zero(self, requested, raw):
@@ -97,7 +97,7 @@ class TestChatTalk:
 
         got = await rhapsody_api_chat_talk(7, 'вопрос')
 
-        assert got == {'text': 'ответ', 'message_id': 0, 'intentions': []}
+        assert got == {'text': 'ответ', 'message_id': 0, 'intentions': {}}
 
     async def test_the_key_is_simply_absent(self, requested):
         """Соседний случай «ключа нет вовсе» — не то же самое, что `None`,
@@ -106,42 +106,72 @@ class TestChatTalk:
 
         got = await rhapsody_api_chat_talk(7, 'вопрос')
 
-        assert got == {'text': 'ответ', 'message_id': 0, 'intentions': []}
+        assert got == {'text': 'ответ', 'message_id': 0, 'intentions': {}}
 
-    async def test_intentions_come_through(self, requested):
+    async def test_intentions_come_through_with_their_context(self, requested):
+        """⚠⚠ Контракт — объект «метка → контекст», а не список меток.
+
+        Контекст собирает тот же прогон, что нашёл намерение: письму нужен его
+        текст и приметы снимка, звонку — время. Списком меток исполнителю
+        пришлось бы добывать это заново, по пересказу вместо первоисточника.
+        """
         requested['answers'].append(
             {'result': 'ок', 'message_id': 1,
-             'intentions': ['she_promised_send_photo']})
+             'intentions': {'she_promised_send_photo': {'letter': 'hi',
+                                                        'tags': 'outdoor'}}})
 
         got = await rhapsody_api_chat_talk(1, 'вопрос')
 
-        assert got['intentions'] == ['she_promised_send_photo']
+        assert got['intentions'] == {'she_promised_send_photo':
+                                     {'letter': 'hi', 'tags': 'outdoor'}}
 
-    async def test_no_intentions_key_is_an_empty_list(self, requested):
+    async def test_no_intentions_key_is_an_empty_object(self, requested):
         """⚠ Ключ отдаётся всегда: «пусто» и «ключа нет» зовущий сольёт в одно,
         и пропажа стала бы неотличима от штатной тишины."""
         requested['answers'].append({'result': 'ок', 'message_id': 1})
 
         got = await rhapsody_api_chat_talk(1, 'вопрос')
 
-        assert got['intentions'] == []
+        assert got['intentions'] == {}
 
-    async def test_a_strange_intentions_shape_is_an_empty_list(self, requested):
-        requested['answers'].append(
-            {'result': 'ок', 'message_id': 1, 'intentions': 'не список'})
+    async def test_a_list_is_no_longer_understood(self, requested):
+        """⚠⚠ Старая форма (список меток) **не понимается**, и это намеренно.
 
-        got = await rhapsody_api_chat_talk(1, 'вопрос')
-
-        assert got['intentions'] == []
-
-    async def test_blank_intentions_are_dropped(self, requested):
+        Отсюда порядок выкладки: сперва наше чтение, потом запись у соседа.
+        Прими мы и список — расхождение сторон прошло бы незамеченным, и
+        намерения приезжали бы без контекста неизвестно сколько.
+        """
         requested['answers'].append(
             {'result': 'ок', 'message_id': 1,
-             'intentions': ['  promised_photo  ', '', '   ']})
+             'intentions': ['she_promised_send_photo']})
 
         got = await rhapsody_api_chat_talk(1, 'вопрос')
 
-        assert got['intentions'] == ['promised_photo']
+        assert got['intentions'] == {}
+
+    async def test_a_strange_intentions_shape_is_an_empty_object(self, requested):
+        requested['answers'].append(
+            {'result': 'ок', 'message_id': 1, 'intentions': 'не объект'})
+
+        got = await rhapsody_api_chat_talk(1, 'вопрос')
+
+        assert got['intentions'] == {}
+
+    async def test_blank_marks_are_dropped_and_a_bad_context_is_emptied(
+            self, requested):
+        """⚠ Метка без имени выбрасывается, а контекст не той формы становится
+        пустым — но саму метку не теряет: форму кладёт сосед, и сменить её он
+        может раньше, чем мы узнаем."""
+        requested['answers'].append(
+            {'result': 'ок', 'message_id': 1,
+             'intentions': {'  promised_photo  ': {'letter': 'hi'},
+                            '': {'letter': 'ничей'},
+                            'promised_call': 'не объект'}})
+
+        got = await rhapsody_api_chat_talk(1, 'вопрос')
+
+        assert got['intentions'] == {'promised_photo': {'letter': 'hi'},
+                                     'promised_call': {}}
 
     async def test_numeric_string_is_accepted(self, requested):
         """Сосед вправе отдать номер строкой — `int()` должен его принять."""
@@ -149,7 +179,7 @@ class TestChatTalk:
 
         got = await rhapsody_api_chat_talk(7, 'вопрос')
 
-        assert got == {'text': 'ответ', 'message_id': 777, 'intentions': []}
+        assert got == {'text': 'ответ', 'message_id': 777, 'intentions': {}}
 
     async def test_refusal_is_not_swallowed(self, requested):
         """⚠ В отличие от «доставки», отказ в самом вопросе **не гасится**: тут

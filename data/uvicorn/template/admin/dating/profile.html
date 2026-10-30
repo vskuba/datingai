@@ -916,6 +916,29 @@
        ⚠ Правило **своё, у этой панели**, а не у `.in-head` вообще: у «Диалогов»
        в том же месте стоит имя разговора, и обрезать его там — чужое решение,
        принятое заодно. */
+    /* ⚠⚠ Своя ширина колонок у «Намерений», и ширина **первой**. Раскладка
+       `in-cols-3` общая с «Диалогами», но там средняя колонка несёт список
+       разговоров, а здесь — сам разговор: при общем умолчании (420 пикселей у
+       пар) на переписку оставалось 236, и письмо читалось по три слова в
+       строку. Строка пары при этом короткая — два лица, стрелка и счёт.
+
+       ⚠ Переменная **та же** (`--reply-col`), меняется только запасное
+       значение: разделитель пишет в неё, и заведи я свою, перетаскивание
+       перестало бы что-либо двигать. */
+    [data-chat-pane="intention"] .in-cols-3 {
+        grid-template-columns:
+            minmax(0, var(--reply-col, 290px)) 7px
+            minmax(0, 1fr) 7px
+            minmax(0, var(--initiative-col, 340px));
+    }
+
+    /* ⚠ Переписка прокручивается сама: лента длинная, а колонка стоит в сетке
+       полной высоты — без своей прокрутки она растянула бы всю панель. */
+    [data-chat-pane="intention"] [data-slot="intention-stuff"] {
+        overflow-y: auto;
+        min-height: 0;
+    }
+
     [data-chat-pane="intention"] .in-head {
         /* ⚠ Общий `.in-head` переносит содержимое (`flex-wrap: wrap`), и имя
            пары уезжало на вторую строку целиком: 70 пикселей. Запрет переноса
@@ -1070,6 +1093,179 @@
         color: #9ca3af;
         font-size: 12px;
         text-align: center;
+    }
+
+    /* ── Карточка намерения ──────────────────────────────────────────────────
+
+       ⚠⚠ Вид **один на все намерения**: метку присылает workflow у соседа, и
+       своё оформление каждой значило бы выкладку панели на каждое новое
+       обещание агента. Различает карточки только содержимое контекста.
+
+       ⚠ Класс свой (`in-card`), а не общий `mail-sent-row`: тот рисует строку
+       журнала — время, кто, состояние в ряд, — а здесь у записи есть тело:
+       текст письма в несколько строк и превью снимка. Разложив тело в строку
+       журнала, мы растянули бы её по высоте и сломали все прочие журналы
+       заодно. */
+    .in-card {
+        padding: 8px 10px;
+        border-bottom: 1px solid #f1f5f9;
+        font-size: 12px;
+    }
+
+    .in-card { cursor: pointer; }
+    .in-card:hover { background: #fafbfc; }
+
+    /* ⚠ Выбранная карточка метится **тем же**, чем строка пары слева: выбор у
+       них один, и два вида «выбранного» читались бы как два состояния. */
+    .in-card.open { background: #eef2ff; }
+
+    /* ── Переключатель «в пуле / сделано» ───────────────────────────────────
+       ⚠ Кнопками, а не селектом: состояний два, и селект ради двух значений
+       прячет второе за щелчком. */
+    .in-switch { display: inline-flex; gap: 2px; }
+
+    .in-switch-btn {
+        border: 0;
+        background: transparent;
+        padding: 2px 7px;
+        border-radius: 4px;
+        font: inherit;
+        font-size: 12px;
+        color: #64748b;
+        cursor: pointer;
+    }
+
+    .in-switch-btn:hover { background: #f1f5f9; }
+
+    .in-switch-btn.on {
+        background: #4f46e5;
+        color: #fff;
+    }
+
+    .in-card-top {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        justify-content: space-between;
+    }
+
+    .in-card-pair {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        min-width: 0;
+    }
+
+    .in-card-when {
+        color: #9ca3af;
+        font-size: 11px;
+        white-space: nowrap;
+    }
+
+    .in-card-what {
+        margin-top: 4px;
+        font-weight: 600;
+        color: #4338ca;
+        word-break: break-all;
+    }
+
+    /* ⚠ Текст письма **не обрезается по высоте**: ради него карточку и читают,
+       а «показать целиком» потребовало бы второго окна там, где хватает
+       прокрутки колонки. Длинные слова переносятся — адрес или ссылка иначе
+       распирает колонку вширь. */
+    .in-card-letter {
+        margin-top: 4px;
+        color: #374151;
+        line-height: 1.45;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+    }
+
+    .in-card-tags, .in-card-line {
+        margin-top: 3px;
+        color: #64748b;
+        font-size: 11px;
+        overflow-wrap: anywhere;
+    }
+
+    .in-card-none, .in-card-why {
+        margin-top: 4px;
+        color: #9ca3af;
+        font-size: 11px;
+        font-style: italic;
+    }
+
+    /* ⚠⚠ Превью ровно 20×20, как просили: карточка отвечает на вопрос «что
+       уйдёт», а не показывает снимок. Разглядеть его — щелчком, в общем окне
+       раздела. */
+    .in-card-thumb {
+        width: 20px;
+        height: 20px;
+        object-fit: cover;
+        border-radius: 3px;
+        cursor: zoom-in;
+        vertical-align: middle;
+    }
+
+    /* ⚠ Снимок и приметы — одной строкой: приметы его и выбрали. Приметы
+       переносятся, снимок остаётся прижатым к верху (`align-items: flex-start`),
+       иначе при двух строках примет он уезжал бы на их середину. */
+    .in-card-pick {
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        margin-top: 5px;
+    }
+
+    .in-card-pick .in-card-tags { margin-top: 0; min-width: 0; }
+
+    /* ⚠ Гнездо держит высоту до прихода ответа: без неё карточка подпрыгивает,
+       когда превью наконец доезжает, — а доезжает оно по запросу на карточку. */
+    .in-card-photo {
+        flex: none;
+        width: 20px;
+        min-height: 20px;
+    }
+
+    /* ── Подвал карточки: что с письмом ──────────────────────────────────────
+       ⚠ Появляется **только у готового письма**: пока письма нет, отправлять
+       нечего, и кнопка на пустом месте обещала бы работу, которой не было. */
+    .in-card-foot {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-top: 6px;
+    }
+
+    .in-card-send {
+        padding: 2px 10px;
+        font-size: 11px;
+        line-height: 18px;
+    }
+
+    .in-card-kill {
+        border: 0;
+        background: transparent;
+        color: #9ca3af;
+        cursor: pointer;
+        font-size: 13px;
+        line-height: 1;
+        padding: 2px 4px;
+    }
+
+    .in-card-kill:hover { color: #dc2626; }
+
+    .in-card-sent { color: #16a34a; font-size: 11px; }
+
+    /* ⚠ Причина неудачи — **текстом сайта и целиком**: она бывает временной
+       («у него переполнен ящик за этот час»), и человек решает по ней, ждать
+       или убрать строку. Значок вместо текста такого решения не даёт. */
+    .in-card-fail {
+        color: #dc2626;
+        font-size: 11px;
+        overflow-wrap: anywhere;
+        flex-basis: 100%;
     }
 
     /* Письмо, на которое отвечаем, — цитатой над ответом. ⚠ Ответ читают,
@@ -4865,6 +5061,15 @@
         if (intentionPoolReload)
             intentionPoolReload.addEventListener('click', intentionPoolLoad);
 
+        // ⚠ Переключатель «в пуле / сделано» — узел шаблона, живёт до смены
+        // сайта; вешать на него надо здесь, а не в отрисовке: она переписывает
+        // только списки, и обработчик повесился бы заново на каждое чтение.
+        [['intention-pool-open', 'open'],
+         ['intention-pool-done', 'done']].forEach(([name, want]) => {
+            const btn = workEl.querySelector(`[data-slot="${name}"]`);
+            if (btn) btn.addEventListener('click', () => intentionPoolSwitch(want));
+        });
+
         // Что с инициативой у этой пары — окном. ⚠ Ничего не меняет, только
         // рассказывает: решение отпустить пару принимает соседний значок.
         const initiativeInfo = workEl.querySelector('[data-slot="initiative-info"]');
@@ -6459,17 +6664,24 @@
     // Открытая пара строкой «анкета:номер»: номер у пары один на двоих, и по
     // нему её не найти. Тот же приём, что у `favTalkOpen`.
     let intentionOpen = '';
-    let intentionDone = [];
-    let intentionDonePage = 0, intentionDonePages = 1, intentionDoneTotal = 0;
     let intentionPool = [];
     let intentionPoolPage = 0, intentionPoolPages = 1, intentionPoolTotal = 0;
+    // Какие намерения показывает правая колонка: `open` (пул) или `done`
+    // (исполненные). ⚠ Переключателем, а не четвёртой колонкой: вопрос один.
+    let intentionPoolStatus = 'open';
+    // Готовые письма по обещаниям: `{номер намерения: строка intention_mail}`.
+    // ⚠ Отдельным запросом на всю колонку, а не полем в списке намерений:
+    // письмо есть не у каждого намерения, и собирать их джойном значило бы
+    // возить пул писем на каждое чтение намерений — включая вкладку «Сделано»,
+    // где писем не показывают вовсе.
+    let intentionMail = {};
 
     const intentionKey = (row) => `${row.profile_id}:${row.uid}`;
 
     function intentionShow() {
         intentionPairsLoad();
         intentionPoolLoad();
-        intentionDonePaint();
+        intentionStuffPaint();
     }
 
     async function intentionPairsLoad() {
@@ -6550,10 +6762,7 @@
         // каждое чтение, и повешенный до неё не пережил бы первого обновления.
         box.querySelectorAll('.contact').forEach(card =>
             card.addEventListener('click', () => {
-                intentionOpen = card.dataset.pair;
-                intentionDonePage = 0;
-                intentionPairsPaint();
-                intentionDoneLoad();
+                intentionPick(card.dataset.pair);
             }));
 
         intentionPagerPaint('intention-pairs-pager', intentionPairsPages,
@@ -6563,86 +6772,93 @@
                             `пар: ${intentionPairsTotal}`);
     }
 
-    async function intentionDoneLoad() {
-        const site = siteId();
-        const [pid, uid] = (intentionOpen || '').split(':');
+    // ── Средняя колонка: материал намерения ──────────────────────────────────
+    //
+    // ⚠⚠ Колонка показывает **то, с чем намерение связано**, а не список
+    // намерений. Карточка справа говорит «что обещано», и решить, годится ли
+    // обещанное, человек может только рядом с разговором: письмо про фото,
+    // написанное в ответ на «пришли мне свою фотографию», читается иначе, чем
+    // то же письмо посреди спора.
+    //
+    // ⚠ Чем именно показывать намерение, решает `INTENTION_STUFF` — карта
+    // «метка → вид». Сегодня метка одна, и карта из одной строки выглядит
+    // избыточной; но вторая метка приедет от **соседа**, из workflow, а не из
+    // нашей выкладки, и ветвление `if (intention === '…')` пришлось бы
+    // переписывать на каждую. Неизвестная метка показывает переписку — она
+    // есть у любой пары и ни о чём не врёт.
+    const INTENTION_STUFF = {
+        she_promised_send_photo: {title: 'Переписка', show: intentionMailShow},
+    };
 
-        if (!site || !uid) {
-            intentionDone = [];
-            intentionDonePaint();
+    const intentionStuffOf = (mark) =>
+        INTENTION_STUFF[mark] || {title: 'Переписка', show: intentionMailShow};
 
-            return;
-        }
-
-        try {
-            const got = (await getData(
-                `${BASE}/api/dating/chat-intention?site_id=${site}`
-                + `&profile_id=${pid}&uid=${encodeURIComponent(uid)}`
-                + `&status=done&page=${intentionDonePage + 1}`)) || {};
-
-            intentionDone = got.result || [];
-            intentionDonePages = Math.max(1, Number(got.pages) || 1);
-            intentionDoneTotal = Number(got.total) || 0;
-            intentionDonePage = Math.max(0, (Number(got.page) || 1) - 1);
-        } catch (e) {
-            intentionDone = [];
-            showNotification('Исполненные намерения не пришли: ' + e.message,
-                             'error');
-        }
-
-        intentionDonePaint();
+    // ⚠ Выбор пары — **одной дверью**: его делают два места (строка слева и
+    // карточка справа), и вторая копия разошлась бы с первой на первой правке.
+    function intentionPick(key) {
+        intentionOpen = String(key || '');
+        intentionPairsPaint();
+        intentionPoolPaint();
+        intentionStuffPaint();
     }
 
-    function intentionDonePaint() {
-        const box = slot('intention-done-list');
+    function intentionStuffPaint() {
+        const box = slot('intention-stuff');
         if (!box) return;
 
+        // ⚠ Имя пары ищется **в обоих списках**: пару выбирают и слева, и
+        // карточкой справа, а в левый список попадают только пары с текущей
+        // страницы — выбранная карточкой могла быть не на ней.
         const picked = intentionPairs.find(
-            row => intentionKey(row) === intentionOpen);
+            row => intentionKey(row) === intentionOpen)
+            || intentionPool.find(row => intentionKey(row) === intentionOpen);
 
         const who = picked ? `${picked.profile_name} → ${picked.name}` : '';
-        fillSlot('intention-done-who', who);
+        fillSlot('intention-stuff-who', who);
         // ⚠ Имя обрезается многоточием (правило у этой панели), поэтому целиком
         // оно живёт в подсказке: иначе длинная пара читалась бы наполовину и
         // узнать её было бы нечем.
-        const whoBox = slot('intention-done-who');
+        const whoBox = slot('intention-stuff-who');
         if (whoBox) whoBox.title = who;
 
-        if (!intentionOpen) {
-            box.innerHTML = '<div class="in-empty">Выберите пару слева.</div>';
-            intentionPagerPaint('intention-done-pager', 1, 0, () => {}, '');
+        if (!intentionOpen || !picked) {
+            fillSlot('intention-stuff-title', 'Переписка');
+            box.innerHTML = '<div class="in-empty">Выберите пару слева '
+                + 'или карточку справа.</div>';
 
             return;
         }
 
-        if (!intentionDone.length) {
-            // ⚠⚠ Пока нет исполнителя, колонка пуста ВСЕГДА — закрывать строки
-            // некому. Сказать это надо прямо, иначе человек решит, что вкладка
-            // сломана, и будет искать поломку там, где её нет.
-            box.innerHTML = '<div class="in-empty">Исполненных намерений нет: '
-                + 'занятия, которое их исполняет, пока не существует — '
-                + 'все намерения ждут в пуле справа.</div>';
-            intentionPagerPaint('intention-done-pager', 1, 0, () => {}, '');
+        const stuff = intentionStuffOf(picked.intention || '');
+        fillSlot('intention-stuff-title', stuff.title);
+        stuff.show(box, picked);
+    }
+
+    // ⚠ Ручка — **чужая, и намеренно**: `/favorite-mail/threads/{анкета}/{кто}`
+    // уже собирает нить парой и с ушедшими приставаниями. Своя ручка держала бы
+    // вторую сборку того же разговора; та же причина, по которой рисуем общим
+    // `threadPaint`, а не своей раскладкой.
+    async function intentionMailShow(box, pair) {
+        const was = intentionOpen;
+        box.innerHTML = '<span class="reply-thread-wait">гружу переписку…</span>';
+
+        let rows;
+        try {
+            rows = ((await getData(
+                `${BASE}/api/dating/favorite-mail/threads/`
+                + `${pair.profile_id}/${encodeURIComponent(pair.uid)}`))
+                || {}).result || [];
+        } catch (e) {
+            box.innerHTML = '<span class="reply-thread-wait">переписка не '
+                + `пришла: ${esc(e.message)}</span>`;
 
             return;
         }
 
-        box.innerHTML = intentionDone.map(row =>
-            '<div class="mail-sent-row plain">'
-            + `<span class="mail-sent-when first">`
-            + `${esc(row.done_at ? timeShift(row.done_at) : '')}</span>`
-            + `<span class="mail-sent-state">${esc(row.intention)}</span>`
-            // ⚠ Заметка исполнителя — тем же весом, что метка: ради неё колонку
-            // и открывают. Пусто — говорим словами, а не пустым местом.
-            + '<span class="mail-sent-text">'
-            + `${esc(row.done_note || 'чем исполнили — не записано')}</span>`
-            + '</div>').join('');
+        // Пока ответ ехал, могли выбрать другую пару.
+        if (intentionOpen !== was) return;
 
-        intentionPagerPaint('intention-done-pager', intentionDonePages,
-                            intentionDonePage,
-                            (pick) => { intentionDonePage = pick;
-                                        intentionDoneLoad(); },
-                            `сделано: ${intentionDoneTotal}`);
+        threadPaint(box, rows, {name: pair.name, girl: pair.profile_name});
     }
 
     async function intentionPoolLoad() {
@@ -6654,10 +6870,16 @@
             return;
         }
 
+        // ⚠ Письма читаем **до** намерений и ждём обоих: нарисуй мы карточки
+        // раньше, кнопка «Отправить» появлялась бы через полсекунды после них
+        // — человек успевает нажать на карточку и получить другое поведение,
+        // чем видел мгновение назад.
+        await intentionMailLoad(site);
+
         try {
             const got = (await getData(
                 `${BASE}/api/dating/chat-intention?site_id=${site}`
-                + `&profile_id=${openId || 0}&status=open`
+                + `&profile_id=${openId || 0}&status=${intentionPoolStatus}`
                 + `&page=${intentionPoolPage + 1}`)) || {};
 
             intentionPool = got.result || [];
@@ -6666,48 +6888,342 @@
             intentionPoolPage = Math.max(0, (Number(got.page) || 1) - 1);
         } catch (e) {
             intentionPool = [];
-            showNotification('Пул намерений не пришёл: ' + e.message, 'error');
+            showNotification('Намерения не пришли: ' + e.message, 'error');
         }
 
         intentionPoolPaint();
+    }
+
+    // ⚠ Письма берутся **целиком по сайту**, а не постранично вслед за
+    // намерениями: их десятки, а не тысячи, и вторая разбивка рядом с первой
+    // давала бы карточку без кнопки там, где письмо лежит на соседней странице.
+    async function intentionMailLoad(site) {
+        intentionMail = {};
+        if (!site) return;
+
+        try {
+            const got = (await getData(
+                `${BASE}/api/dating/chat-intention/mail?site_id=${site}`)) || {};
+
+            (got.result || []).forEach(row => {
+                intentionMail[Number(row.intention_id)] = row;
+            });
+        } catch (e) {
+            // ⚠ Молча: без писем карточки читаются и дальше, просто без
+            // кнопки. Красная полоса на всю панель пугала бы сильнее, чем
+            // стоит отсутствие одной кнопки.
+        }
+    }
+
+    // ⚠ Переключатель «в пуле / сделано». Страница сбрасывается: у двух отборов
+    // длина разная, и третья страница пула у исполненных могла бы не
+    // существовать вовсе — список вышел бы пустым при непустом ответе.
+    function intentionPoolSwitch(want) {
+        if (intentionPoolStatus === want) return;
+
+        intentionPoolStatus = want;
+        intentionPoolPage = 0;
+        intentionPoolLoad();
     }
 
     function intentionPoolPaint() {
         const box = slot('intention-pool-list');
         if (!box) return;
 
-        // ⚠ Тоже всегда: у этой колонки есть подпись «В пуле», но число рядом с
-        // ней должно стоять в обоих состояниях — иначе шапка прыгает при первом
-        // же наполнении.
+        // ⚠ Тоже всегда: у этой колонки есть подпись, но число рядом с ней
+        // должно стоять в обоих состояниях — иначе шапка прыгает при первом же
+        // наполнении.
         fillSlot('intention-pool-count', `намерений: ${intentionPoolTotal}`);
 
+        const open = intentionPoolStatus === 'open';
+        const onBtn = slot('intention-pool-open');
+        const offBtn = slot('intention-pool-done');
+        if (onBtn) onBtn.classList.toggle('on', open);
+        if (offBtn) offBtn.classList.toggle('on', !open);
+
         if (!intentionPool.length) {
-            box.innerHTML = '<div class="in-empty">Пул пуст.<br>'
-                + 'Намерения кладёт сюда прогон агента — на каждом ответе в '
-                + 'чате и в письмах.</div>';
+            // ⚠⚠ Пустота у двух отборов значит **разное**, и говорить надо
+            // разное. Пул пуст — агент ещё ничего не обещал; исполненных нет —
+            // занятия-исполнителя пока не существует вовсе, и человек, увидев
+            // ту же фразу, искал бы поломку там, где её нет.
+            box.innerHTML = open
+                ? '<div class="in-empty">Пул пуст.<br>'
+                  + 'Намерения кладёт сюда прогон агента — на каждом ответе в '
+                  + 'чате и в письмах.</div>'
+                : '<div class="in-empty">Исполненных намерений нет: '
+                  + 'занятия, которое их исполняет, пока не существует — '
+                  + 'все намерения ждут в пуле.</div>';
             intentionPagerPaint('intention-pool-pager', 1, 0, () => {}, '');
 
             return;
         }
 
-        box.innerHTML = intentionPool.map(row =>
-            '<div class="mail-sent-row plain">'
-            + `<span class="mail-sent-when first">`
-            + `${esc(row.created_at ? timeShift(row.created_at) : '')}</span>`
-            + '<span class="mail-sent-who talk">'
-            + talkSide(row.profile_name, row.profile_photo, row.profile_uid,
-                       'анкета, которая обещала')
-            + '<span class="talk-swap">→</span>'
-            + talkSide(row.name, row.photo, row.uid, 'кому обещано')
-            + '</span>'
-            + `<span class="mail-sent-state">${esc(row.intention)}</span>`
-            + '</div>').join('');
+        box.innerHTML = intentionPool.map(intentionCard).join('');
+        intentionCardsWire(box);
 
         intentionPagerPaint('intention-pool-pager', intentionPoolPages,
                             intentionPoolPage,
                             (pick) => { intentionPoolPage = pick;
                                         intentionPoolLoad(); },
                             `намерений: ${intentionPoolTotal}`);
+    }
+
+    // ── Карточка намерения ───────────────────────────────────────────────────
+    //
+    // ⚠⚠ **Шаблон один на все намерения.** Сегодня намерение одно
+    // (`she_promised_send_photo`), и соблазн нарисовать карточку под него велик.
+    // Но второе намерение появится у соседа, а не у нас — метку присылает
+    // workflow, — и карточка под каждое значила бы выкладку панели на каждое
+    // новое обещание агента. Поэтому карточка рисует **то, что в контексте**:
+    // знает она лишь, что `letter` это текст, а `tags` — приметы снимка.
+    //
+    // ⚠ Незнакомые поля контекста показываются как есть, парами «ключ:
+    // значение». Форма контекста свободная (`chat_intention.context`), и
+    // промолчать о поле значило бы спрятать работу агента от оператора.
+
+    // Поля контекста, у которых свой вид. Прочие идут общим списком.
+    const INTENTION_FIELDS_KNOWN = ['letter', 'tags'];
+
+    function intentionCard(row) {
+        const ctx = row.context || {};
+        const extra = Object.keys(ctx)
+            .filter(key => !INTENTION_FIELDS_KNOWN.includes(key))
+            .map(key => `<div class="in-card-line"><b>${esc(key)}:</b> `
+                        + `${esc(String(ctx[key] ?? ''))}</div>`).join('');
+
+        // ⚠⚠ Письмо лежит готовым — показываем **его** снимок, а не ответ
+        // отбора. Отбор считается заново на каждый вопрос и между двумя
+        // вопросами меняется; уйдёт же тот кадр, что лежит в строке пула.
+        // Покажи мы свежий отбор, карточка обещала бы не то, что отправит.
+        const mail = intentionMail[Number(row.id)];
+
+        // ⚠ Выбранная карточка метится так же, как строка пары слева (`open`):
+        // выбор у них один, и два вида «выбранного» на одной вкладке читались
+        // бы как два разных состояния.
+        return `<div class="in-card${
+                    intentionKey(row) === intentionOpen ? ' open' : ''}"`
+            + ` data-id="${Number(row.id) || 0}"`
+            + ` data-pair="${esc(intentionKey(row))}">`
+            + '<div class="in-card-top">'
+            + '<span class="in-card-pair">'
+            + talkSide(row.profile_name, row.profile_photo, row.profile_uid,
+                       'анкета, которая обещала')
+            + '<span class="talk-swap">→</span>'
+            + talkSide(row.name, row.photo, row.uid, 'кому обещано')
+            + '</span>'
+            + `<span class="in-card-when">`
+            + `${esc(row.created_at ? timeShift(row.created_at) : '')}</span>`
+            + '</div>'
+            + `<div class="in-card-what">${esc(row.intention)}</div>`
+            + (ctx.letter
+                ? `<div class="in-card-letter">${esc(ctx.letter)}</div>` : '')
+            // ⚠⚠ Снимок стоит **в одной строке с приметами**, и это не
+            // украшение: приметы его и выбрали, то есть строка читается как
+            // «по этим словам — вот это». На своей строке превью в двадцать
+            // пикселей висело сиротой, и связь с приметами приходилось
+            // угадывать.
+            //
+            // ⚠ Гнездо рисуется **пустым** и заполняется ответом своей ручки:
+            // отбор ходит в галерею, и ждать его всей колонкой значило бы
+            // держать список пустым, пока считаются превью.
+            + (ctx.tags
+                ? '<div class="in-card-pick">'
+                  + (mail ? intentionMailThumb(row, mail)
+                          : `<span class="in-card-photo" data-photo="${
+                                Number(row.id) || 0}"></span>`)
+                  + `<span class="in-card-tags">${esc(
+                        Array.isArray(ctx.tags) ? ctx.tags.join(', ')
+                                                : String(ctx.tags))}</span>`
+                  + '</div>' : '')
+            + extra
+            // ⚠⚠ Карточка без контекста — не брак, и говорить о ней надо
+            // словами: намерение помечено, а собрать контекст прогону было
+            // нечем. Пустая карточка читалась бы как недогруженная.
+            + (Object.keys(ctx).length ? ''
+                : '<div class="in-card-none">контекст не собран</div>')
+            + (mail ? intentionMailFoot(mail) : '')
+            + '</div>';
+    }
+
+    // ⚠ Снимок **готового письма**: `gallery_file` это номер файла на Диске, и
+    // показывает его тот же прокси, что галерею анкеты.
+    function intentionMailThumb(row, mail) {
+        if (!mail.gallery_file) return '<span class="in-card-photo"></span>';
+
+        const src = `${BASE}/api/dating/gallery/${row.profile_id}`
+            + `/img/${encodeURIComponent(mail.gallery_file)}?w=200`;
+
+        return '<span class="in-card-photo">'
+            + `<img class="in-card-thumb" src="${esc(src)}" alt=""`
+            + ` data-big="${esc(src)}"`
+            + ` title="${esc(mail.gallery_path || '')} — уйдёт этим письмом">`
+            + '</span>';
+    }
+
+    // Подвал карточки: что с письмом и что с ним можно сделать.
+    //
+    // ⚠⚠ Кнопка появляется **только у готового письма**. Пока письма нет,
+    // отправлять нечего: текст и снимок собирает круг, и кнопка «отправить» на
+    // пустом месте обещала бы работу, которой ещё не случилось.
+    //
+    // ⚠ Неудача показывается **красным и текстом сайта**, а не значком: причина
+    // у письма бывает временной («у него переполнен ящик»), и человек решает по
+    // ней, ждать или убрать строку.
+    function intentionMailFoot(mail) {
+        const sent = mail.status === 'sent';
+
+        return '<div class="in-card-foot">'
+            + (sent
+                ? `<span class="in-card-sent">ушло ${
+                       esc(mail.sent_at ? timeShift(mail.sent_at) : '')}</span>`
+                : '<button type="button" class="btn in-card-send"'
+                  + ` data-mail="${Number(mail.id) || 0}">Отправить</button>`
+                  + '<button type="button" class="in-card-kill"'
+                  + ` data-kill="${Number(mail.id) || 0}"`
+                  + ' title="убрать письмо из пула; обещание останется, и круг'
+                  + ' соберёт его заново">✕</button>')
+            + (mail.error
+                ? `<span class="in-card-fail">${esc(mail.error)}</span>` : '')
+            + '</div>';
+    }
+
+    // ⚠ Снимки спрашиваются **после** отрисовки и по одному: ручка на каждую
+    // карточку своя, и свалить их в один запрос нельзя — отбор зависит от пары.
+    function intentionCardsWire(box) {
+        box.querySelectorAll('[data-photo]').forEach(node =>
+            intentionPhotoLoad(node, Number(node.dataset.photo) || 0));
+
+        box.querySelectorAll('.in-card').forEach(card =>
+            card.addEventListener('click', event => {
+                // ⚠ Щелчок по превью открывает окно, а не выбирает пару: у
+                // снимка своё дело, и выбор пары заодно сбил бы прокрутку
+                // средней колонки под открытым окном.
+                if (event.target.closest('.in-card-thumb')) return;
+                // ⚠ То же у кнопок подвала: нажатие «Отправить» не должно
+                // заодно перерисовывать среднюю колонку под руками.
+                if (event.target.closest('.in-card-foot')) return;
+
+                intentionPick(card.dataset.pair);
+            }));
+
+        // ⚠ Снимок готового письма открывается тем же окном, что и превью
+        // отбора: кадр один, и второе окно рядом различалось бы ничем.
+        box.querySelectorAll('.in-card-thumb[data-big]').forEach(img =>
+            img.addEventListener('click', () => intentionPhotoModal(
+                img.dataset.big, {name: img.title}, {})));
+
+        box.querySelectorAll('.in-card-send').forEach(btn =>
+            btn.addEventListener('click', () => intentionMailSend(btn)));
+
+        box.querySelectorAll('.in-card-kill').forEach(btn =>
+            btn.addEventListener('click', () => intentionMailDrop(btn)));
+    }
+
+    // ⚠ Кнопка запирается **до** запроса: отправка идёт секунды (сайт отвечает
+    // двумя шагами), и четыре щелчка послали бы четыре письма. Тот же приём,
+    // что у инвайтов, и по той же причине.
+    async function intentionMailSend(btn) {
+        const id = Number(btn.dataset.mail) || 0;
+        if (!id || btn.disabled) return;
+
+        btn.disabled = true;
+        btn.textContent = 'шлю…';
+
+        try {
+            await postData(
+                `${BASE}/api/dating/chat-intention/mail/${id}/send`, {});
+            showNotification('Письмо с фото ушло', 'success');
+        } catch (e) {
+            showNotification('Письмо не ушло: ' + e.message, 'error');
+        }
+
+        // ⚠ Перечитываем **всю колонку**, а не правим карточку на месте:
+        // ушедшее письмо закрывает обещание, и строка уезжает из пула
+        // открытых — починить это правкой одного узла нельзя.
+        intentionPoolLoad();
+    }
+
+    async function intentionMailDrop(btn) {
+        const id = Number(btn.dataset.kill) || 0;
+        if (!id) return;
+
+        // ⚠ Вопрос обязателен: письмо собрано походом на Диск, и убранное
+        // соберётся заново не раньше следующего захода круга.
+        if (!confirm('Убрать письмо из пула?\n\nОбещание останется открытым — '
+                     + 'круг соберёт письмо заново, возможно с другим снимком.'))
+            return;
+
+        try {
+            await deleteData(`${BASE}/api/dating/chat-intention/mail/${id}`);
+        } catch (e) {
+            // ⚠ Исчезнувшая строка — не отказ, а рассинхрон: её унесли
+            // отправка или чистка, пока человек смотрел на список.
+            if (!/404/.test(e.message))
+                showNotification('Письмо не убралось: ' + e.message, 'error');
+        }
+
+        intentionPoolLoad();
+    }
+
+    async function intentionPhotoLoad(node, id) {
+        if (!id) return;
+
+        let got;
+        try {
+            got = ((await getData(
+                `${BASE}/api/dating/chat-intention/${id}/photo`)) || {}).result;
+        } catch (e) {
+            // ⚠ Молча: превью — украшение карточки, и красная полоса на всю
+            // панель из-за непришедшего снимка пугала бы сильнее, чем стоит.
+            return;
+        }
+        if (!got) return;
+
+        const file = got.file || {};
+        const row = intentionPool.find(one => Number(one.id) === id);
+        if (!node.isConnected) return;
+
+        if (!file.file_id) {
+            // ⚠⚠ Причина показывается словами. «Снимок не выбрался» бывает
+            // трёх видов — галереи нет, всё уже показано, приметы не совпали, —
+            // и делать с ними надо разное; пустое место не сказало бы ничего.
+            //
+            // ⚠ Своей строкой **под** приметами, а не вместо гнезда: гнездо
+            // шириной в двадцать пикселей, и причина в нём свернулась бы в
+            // столбик по букве. Гнездо при этом убирается — пустой отступ
+            // слева от примет читался бы как не догрузившееся превью.
+            const line = document.createElement('div');
+            line.className = 'in-card-why';
+            line.textContent = got.why || 'снимок не выбрался';
+            const row = node.closest('.in-card-pick');
+            (row || node).after(line);
+            node.remove();
+
+            return;
+        }
+
+        const src = `${BASE}/api/dating/gallery/${row ? row.profile_id : 0}`
+            + `/img/${encodeURIComponent(file.file_id)}?w=200`;
+        node.innerHTML = `<img class="in-card-thumb" src="${esc(src)}"`
+            + ` alt="${esc(file.name || '')}"`
+            + ` title="${esc(file.name || '')} — совпало примет: ${
+                  Number(got.score) || 0}">`;
+        node.querySelector('img').addEventListener(
+            'click', () => intentionPhotoModal(src, file, got));
+    }
+
+    // ⚠ Окно — общее для раздела (`dating-modal-back` в `dating_page.css`), а не
+    // своё: третья подложка на странице красила бы чужие окна.
+    function intentionPhotoModal(src, file, got) {
+        const back = document.createElement('div');
+        back.className = 'dating-modal-back';
+        back.innerHTML = `<img src="${esc(src.replace('w=200', 'w=800'))}"`
+            + ` alt="${esc(file.name || '')}" title="${esc(
+                  file.description || file.name || '')}">`;
+        back.addEventListener('mousedown', event => {
+            if (event.target === back) back.remove();
+        });
+        document.body.appendChild(back);
     }
 
     // ⚠ Одна обёртка на три пейджера: разница между ними — имя узла и что делать

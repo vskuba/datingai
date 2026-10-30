@@ -55,7 +55,7 @@ from src.dating.favorite_mail_round import (FAVORITE_MAIL_ROUND_EVERY_DEFAULT,
                                             FAVORITE_MAIL_ROUND_EVERY_SETTING,
                                             favorite_mail_round_next)
 from src.dating.json_column import json_column_list
-from src.dating.mail_send import mail_sent_union
+from src.dating.mail_send import MAIL_SEND_TABLES, mail_sent_union
 from src.dating.mail_wait import mail_wait_left, mail_wait_skip
 from src.dating.online import online_show
 from src.dating.schedule import schedule_now
@@ -551,10 +551,15 @@ async def _last(profile_id: int, uid: str) -> dict:
                              select="sent_at AS at, 'her' AS side") +
            '  ) AS all_mail WHERE at IS NOT NULL')
 
-    # ⚠ Условие подставляется **в каждую** ветку союза, поэтому доводов втрое
-    # больше: так же считают их дневной предел и пауза отправительницы.
+    # ⚠⚠ Условие подставляется **в каждую** ветку союза, и число доводов обязано
+    # считаться от **длины списка пулов**, а не числом в коде. Стояла тройка —
+    # и четвёртый пул (`intention_mail`) сломал запрос молча: доводов стало
+    # меньше, чем мест, `execute` бросил, `except` вернул «реплик нет вовсе», и
+    # окно «почему этой паре не пишут» перестало называть последнего
+    # говорившего. Ровно та беда, ради которой `mail_sent_union` и заведена, —
+    # только перечисление уехало не в SQL, а в счёт аргументов.
     args = [' ', ' ', int(profile_id), str(uid)]
-    args += [int(profile_id), str(uid)] * 3
+    args += [int(profile_id), str(uid)] * len(MAIL_SEND_TABLES)
 
     try:
         async with mysql_get_db_async() as db:

@@ -59,6 +59,7 @@ from src.dating.json_column import json_column_list
 from datetime_.datetime_ import datetime_day_minutes
 from src.dating.round import (round_mem_due, round_mem_mark, round_sent_day,
                               round_sites)
+from src.dating.intention_do import DatingIntentionError, intention_mail_ready
 from src.dating.mail_send import (MAIL_SEND_TALK_TABLES, DatingMailSendError,
                                   DatingMailWaitError, mail_send_fail,
                                   mail_send_one)
@@ -94,6 +95,20 @@ _POOLS = (
     ('reply_send_on', 'mail_reply', 'reply_every', 'ответов'),
     ('favorite_mail_send_on', 'favorite_mail', None, 'писем избранным'),
     ('mailing_send_on', 'mailing', 'send_every', 'рассылки'),
+    # ⚠⚠ Письма-исполнения уносит **этот же круг**, а не свой. Разговор с
+    # сайтом у них тот же до последнего поля, а пауза между письмами одной
+    # учётки (`SEND_ROUND_GAP_SEC`) — общая: заведи им отдельный круг, два
+    # круга слали бы от одной анкеты одновременно, и сайт ответил бы
+    # `ERROR_TOO_MANY_REQUESTS` обоим.
+    #
+    # ⚠⚠ Выключатель — **уже существующий** `chat_intention_do_on` («выполнять
+    # действия»), а не своя пара `make/send`, как у прочих пулов. У тех две
+    # галочки разделяют «сочинять» и «слать живому человеку», потому что первое
+    # стоит вызовов LLM. Здесь сочинять нечего — текст письма приехал вместе с
+    # намерением, — и вторая галочка отвечала бы на тот же вопрос, что уже
+    # задан на вкладке.
+    ('chat_intention_do_on', 'intention_mail', 'intention_send_every',
+     'обещанных фото'),
 )
 
 # Когда пул сайта слал в последний раз: `{(сайт, пул): время}`. В памяти процесса —
@@ -446,11 +461,23 @@ async def _girls_wait(site_id: int) -> str:
 
 async def _sites() -> list[dict]:
     """Сайты, где включён хоть один выключатель отправки."""
-    return await round_sites(
-        flags=('mailing_send_on', 'reply_send_on', 'favorite_mail_send_on'),
-        any_of=True, schedule='mailing_schedule',
-        extra=('mailing_send_on', 'reply_send_on', 'favorite_mail_send_on'),
-        what='отправке')
+    # ⚠⚠ Выключатели перечислены **именами, а не выведены из `_POOLS`**, и это
+    # не недосмотр. Застава `test_site_flags_alive.py` ищет читателя флага
+    # **внутри функции**: мёртвая константа на уровне модуля читателем не
+    # считается — именно так однажды тихо перестала работать `chat_answer_on`.
+    # Выведи мы список выражением, `mailing_send_on` исчез бы из поля её зрения,
+    # и галочка, перестав читаться по-настоящему, прошла бы незамеченной.
+    #
+    # ⚠ Расхождение с `_POOLS` закрывает не derivation, а сторож
+    # `TestTheFlagsAgree` — та же договорённость, что у `TestTheyAgree` в
+    # соседних занятиях: два выражения одного правила держат тестом, а не
+    # сведением одного к другому.
+    flags = ('mailing_send_on', 'reply_send_on', 'favorite_mail_send_on',
+             'chat_intention_do_on')
+
+    return await round_sites(flags=flags, any_of=True,
+                             schedule='mailing_schedule', extra=flags,
+                             what='отправке')
 
 
 async def _oldest(site_id: int, table: str) -> dict | None:
@@ -616,6 +643,23 @@ async def _send(letter: dict, table: str) -> str:
     # ⚠ `letter` уезжает в отправку как есть, вместе с `reply_to`: он пришёл из
     # запроса выше и нужен обоим путям — `ReplyForMessageId` у ручки API и
     # `MessageId` у формы панели.
+
+    # ⚠⚠ Снимок добывается **здесь, до отправки**, и только у этого пула: между
+    # `check-send` и `send` нельзя ходить в сеть, а Диск отвечает секунды.
+    # Готовит его одна дверь на обе дороги (круг и кнопка человека) — своя
+    # подготовка у каждой разошлась бы, и одна из них отправила бы «вот моё
+    # фото» без фото.
+    if table == 'intention_mail':
+        try:
+            letter = await intention_mail_ready(letter)
+        except DatingIntentionError as e:
+            # ⚠ Это **не** отказ сайта: наружу мы ещё не ходили. Причина
+            # ложится в письмо тем же путём, и круг вернётся к нему, когда
+            # снимок появится.
+            await mail_send_fail(letter, DatingMailSendError(str(e)), table=table)
+            logger_info(f"[dating] {table} #{letter['id']} без снимка: {e}")
+
+            return 'fail'
 
     try:
         await mail_send_one(letter, profile, base, password, table)

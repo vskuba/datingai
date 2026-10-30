@@ -570,13 +570,22 @@
             <div class="split split-reply"
                  title="Потяните, чтобы изменить ширину"></div>
 
+            {# ⚠⚠ Средняя колонка показывает **материал намерения**, а не список
+               намерений: карточка говорит «что обещано», а решить, годится ли
+               обещанное, можно только рядом с разговором. У обещания прислать
+               фото материал — переписка письмами; у будущих намерений он будет
+               свой, и выбирает его `INTENTION_STUFF`.
+
+               ⚠ Прежде здесь стояло «Сделано». Оно не пропало — переехало
+               переключателем в правую колонку: исполнителя пока нет, и колонка
+               была пуста всегда, а вид терять нельзя. #}
             <div class="in-col">
                 <div class="in-head">
-                    <span>Сделано</span>
-                    <span class="in-count" data-slot="intention-done-who"></span>
+                    <span data-slot="intention-stuff-title">Переписка</span>
+                    <span class="in-count" data-slot="intention-stuff-who"></span>
                 </div>
-                <div class="in-list" data-slot="intention-done-list"></div>
-                <div class="pane-foot" data-slot="intention-done-pager"></div>
+                <div class="in-list reply-thread"
+                     data-slot="intention-stuff"></div>
             </div>
 
             <div class="split split-initiative"
@@ -584,7 +593,15 @@
 
             <div class="in-col in-col-pool">
                 <div class="in-head">
-                    <span>В пуле</span>
+                    {# ⚠ Переключатель, а не две колонки: вопрос у них один —
+                       «какие намерения показать», — и разводить его по колонкам
+                       значило бы держать два списка на один ответ. #}
+                    <span class="in-switch">
+                        <button type="button" class="in-switch-btn on"
+                                data-slot="intention-pool-open">В пуле</button>
+                        <button type="button" class="in-switch-btn"
+                                data-slot="intention-pool-done">Сделано</button>
+                    </span>
                     <span class="in-count" data-slot="intention-pool-count"></span>
                     <button type="button" class="people-reload"
                             data-slot="intention-pool-reload"

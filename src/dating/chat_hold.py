@@ -31,6 +31,8 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.auto import AUTO_PERIOD_SEC, auto_round
 from src.dating.feed import feed_done, feed_write
+from src.dating.intention_round import (INTENTION_ROUND_TICK_SEC,
+                                        intention_round_run)
 from src.dating.round import (round_loop, round_offset_loop,
                               round_slot_due, round_slot_mark)
 from src.dating.favorite_mail_round import (
@@ -250,6 +252,12 @@ async def chat_hold_run(seconds: float) -> dict:
     # держателя, продолжая ходить на сайт от имени законченного процесса.
     revive_talk = asyncio.create_task(_favorite_mail_loop(deadline))
 
+    # Исполнение обещаний агента: он пообещал прислать фото — круг складывает
+    # письмо со снимком в пул, уносит его общий круг отправки
+    # (`intention_round.py`). ⚠ Расписания нет намеренно: обещание даётся в
+    # живом разговоре, и письмо наутро читается как забывчивость.
+    promised = asyncio.create_task(_intention_loop(deadline))
+
     # Админ-панель агентства: сессия сайта держится живой круглые сутки. ⚠ Круг
     # **не про анкеты** — учётка у панели одна на сайт, и расписания у неё нет:
     # панель нужна живой и в три часа ночи, когда придёт круг импорта переписки.
@@ -296,6 +304,7 @@ async def chat_hold_run(seconds: float) -> dict:
         invites_out.cancel()
         first_word.cancel()
         asking.cancel()
+        promised.cancel()
         panel.cancel()
         proxies.cancel()
         swept.cancel()
@@ -316,7 +325,7 @@ async def chat_hold_run(seconds: float) -> dict:
         await _service_wait(beat, answer, revive, chat, sched, mailing, online,
                             tmpl, live, post, answers, letters, stars, invites,
                             invites_out, first_word, asking, proxies, swept,
-                            revive_talk, panel)
+                            revive_talk, promised, panel)
 
     saved = sum(counters.values())
     logger_info(f'[dating] держатель чата закончил: учёток {len(counters)}, сообщений {saved}')
@@ -755,6 +764,24 @@ async def _send_loop(deadline: float) -> None:
     """
     await round_offset_loop(deadline, SEND_ROUND_TICK_SEC,
                                    'отправки', send_round_run)
+
+
+async def _intention_loop(deadline: float) -> None:
+    """Собирает письма по обещаниям агента, пока идёт смена.
+
+    Тик — минута, а заход идёт по сроку сайта (`intention_make_every`, обычно
+    пять минут): большинство тиков только смотрят, не пора ли.
+
+    ⚠ **Расписания нет, и это решение.** Обещание даётся в живом разговоре, и
+    письмо наутро читается как забывчивость — смены отложили бы исполнение
+    ровно для тех пар, которые говорили ночью (`intention_round.py`).
+
+    ⚠ Отсюда `round_offset_loop`, а не `round_loop`: сдвиг круг принимает ради
+    единообразия с соседями, хотя смен не спрашивает. Второй вид обвязки на ту
+    же работу читателю пришлось бы различать.
+    """
+    await round_offset_loop(deadline, INTENTION_ROUND_TICK_SEC,
+                            'исполнения обещаний', intention_round_run)
 
 
 async def _heartbeat_loop(deadline: float) -> None:

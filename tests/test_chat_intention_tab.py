@@ -98,15 +98,32 @@ class TestThePane:
 
         assert 'in-cols in-cols-3' in pane, 'раскладка не трёхколонная'
         assert pane.count('data-slot="intention-pairs-list"') == 1
-        assert pane.count('data-slot="intention-done-list"') == 1
+        # ⚠ Средняя колонка показывает **материал** намерения (у обещания фото
+        # это переписка письмами), а не список исполненного: решить, годится ли
+        # обещанное, можно только рядом с разговором. «Сделано» переехало
+        # переключателем в правую колонку — вид не потерян.
+        assert pane.count('data-slot="intention-stuff"') == 1
         assert pane.count('data-slot="intention-pool-list"') == 1
         assert pane.count('split-reply') == 1 and pane.count('split-initiative') == 1
 
-    async def test_every_column_has_a_pager(self, work):
+    async def test_the_done_view_did_not_vanish_with_its_column(self, work):
+        """⚠⚠ Колонку «Сделано» убрали, а вид обязан остаться.
+
+        Исполнителя не было, и колонка стояла пустой всегда — но «убрать
+        пустое» легко превращается в «потерять вид». Теперь это переключатель
+        в шапке правой колонки, и отбор у него свой (`status=done`).
+        """
+        assert 'data-slot="intention-pool-open"' in work
+        assert 'data-slot="intention-pool-done"' in work
+
+    async def test_every_paged_column_has_a_pager(self, work):
         """⚠ Список, отданный целиком, кончается молча: конец прокрутки читается
-        как конец списка. Эта грабля уже стоила трёхсот невидимых переписок."""
-        for name in ('intention-pairs-pager', 'intention-done-pager',
-                     'intention-pool-pager'):
+        как конец списка. Эта грабля уже стоила трёхсот невидимых переписок.
+
+        ⚠ Средней колонки здесь нет: она показывает **разговор**, а не список.
+        У переписки конец — это последнее письмо, и страницы ей не нужны.
+        """
+        for name in ('intention-pairs-pager', 'intention-pool-pager'):
             assert f'data-slot="{name}"' in work, f'у колонки нет пейджера: {name}'
 
 

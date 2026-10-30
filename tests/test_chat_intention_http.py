@@ -26,7 +26,7 @@ class TestThePairsHandle:
     """`GET /api/dating/chat-intention/pairs`."""
 
     async def test_it_answers_with_the_pager_shape(self, auth_client, girl):
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
 
         got = await auth_client.get(
             f'{PAIRS}?site_id={TEST_STAND_SITE}&profile_id={girl}')
@@ -51,7 +51,7 @@ class TestTheRowsHandle:
 
     async def test_status_open_gives_the_pool(self, auth_client, girl):
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, [PROMISE])
+        await chat_intention_put(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
 
         got = await auth_client.get(
             f'{ROWS}?site_id={TEST_STAND_SITE}&profile_id={girl}&status=open')
@@ -64,7 +64,7 @@ class TestTheRowsHandle:
     async def test_status_done_is_empty_while_nobody_executes(self, auth_client,
                                                               girl):
         """Исполнителя нет — исполненных не бывает. Вкладка об этом и говорит."""
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
 
         got = await auth_client.get(
             f'{ROWS}?site_id={TEST_STAND_SITE}&profile_id={girl}&status=done')
@@ -73,8 +73,8 @@ class TestTheRowsHandle:
 
     async def test_it_narrows_to_one_companion(self, auth_client, girl):
         mine = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, mine, [PROMISE])
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), [PROMISE])
+        await chat_intention_put(girl, TEST_STAND_SITE, mine, {PROMISE: {}})
+        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
 
         got = await auth_client.get(
             f'{ROWS}?site_id={TEST_STAND_SITE}&profile_id={girl}&uid={mine}')

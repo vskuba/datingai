@@ -12,18 +12,24 @@
 обещание не приезжало на каждом следующем ответе. Там дедупликация внутри
 разговора, здесь очередь работы.
 
-## ⚠⚠ Исполнителя пока нет, и дверь заведена раньше него
+## Кто это исполняет
 
-Круга, который берёт открытые намерения и делает дело, не существует. Память
-нужна в тот же миг, когда исполнение появится: заводить её потом значило бы
-иметь первые сотни обещаний без следа. Тем же доводом живёт
-`companion_gallery.py`.
+`intention_do.py` — берёт открытое намерение, выбирает снимок по приметам
+контекста и кладёт письмо в `intention_mail`; уносит его общий круг отправки.
+Сегодня исполняется одна метка, `she_promised_send_photo`; неизвестная **ждёт
+в пуле**, а не считается сделанной — метки присылает workflow у соседа, и
+новая появится раньше своего исполнителя.
 
 ⚠ Отдельной «двери для исполнителя» здесь **нет и заводить её не надо**: открытые
-намерения он возьмёт тем же `chat_intention_rows(site_id, status='open')`, что и
+намерения он берёт тем же `chat_intention_rows(site_id, status='open')`, что и
 вкладка. Такая дверь была написана заранее и три дня простояла без единого
 вызывающего, повторяя чужой отбор, — то есть ровно тем, что правила зовут
 размазанным знанием.
+
+⚠⚠ **Закрывает намерение не исполнитель, а `mail_send_mark`** — точка, через
+которую проходят обе дороги письма, круг и кнопка. Своя отметка у каждой
+разошлась бы: одна закрывала бы обещание, другая забывала, и тот же снимок
+ушёл бы второй раз по следующему обещанию.
 
 ## ⚠ Пара — это «сайт и человек»
 
@@ -110,12 +116,22 @@ async def chat_intention_put(profile_id: int, site_id: int, uid: str,
             await db.execute(
                 'INSERT INTO chat_intention'
                 '  (profile_id, site_id, uid, intention, context)'
-                ' VALUES (%s, %s, %s, %s, %s)'
-                # ⚠ `IF(VALUES(context) IS NULL, context, VALUES(context))`, а не
-                # просто присваивание: пустой контекст свежего прогона не должен
-                # стирать собранный прошлым.
+                ' VALUES (%s, %s, %s, %s, %s) AS new'
+                # ⚠ `IF(new.context IS NULL, …)`, а не просто присваивание:
+                # пустой контекст свежего прогона не должен стирать собранный
+                # прошлым.
+                #
+                # ⚠ Через псевдоним строки (`AS new`), а не `VALUES(context)`:
+                # MySQL 8.0.20 объявил вторую запись устаревшей, и живой прогон
+                # кричит об этом предупреждением на каждую метку.
+                #
+                # ⚠⚠ Прежнее значение называется **с таблицей**
+                # (`chat_intention.context`): с псевдонимом рядом голое имя
+                # становится неоднозначным, и MySQL отвечает отказом 1052, а не
+                # догадкой.
                 ' ON DUPLICATE KEY UPDATE'
-                '   context = IF(VALUES(context) IS NULL, context, VALUES(context))',
+                '   context = IF(new.context IS NULL,'
+                '                chat_intention.context, new.context)',
                 (int(profile_id), int(site_id or 0), str(uid).strip(), one,
                  json.dumps(context, ensure_ascii=False) if context else None))
             # ⚠ `rowcount` у `ON DUPLICATE KEY UPDATE` равен 2 при обновлении и
@@ -171,6 +187,44 @@ async def chat_intention_done(intention_id: int, note: str = '') -> bool:
         await db.connection.commit()
 
     return bool(done)
+
+
+async def chat_intention_row(intention_id: int) -> dict:
+    """Одно намерение со всем, что к нему прицеплено. Нет строки — пусто.
+
+    Args:
+        intention_id: номер строки `chat_intention`.
+
+    Returns:
+        dict: та же форма, что у строки списка — имена обеих сторон,
+        разобранный контекст. Пустой словарь значит «такой строки нет».
+
+    ⚠ Сайт здесь **не спрашивается**, хотя у списка он обязателен: номер строки
+    однозначен сам по себе, и требовать к нему сайт значило бы заставить
+    вызывающего знать то, что он и так получит из ответа.
+
+    ⚠ Форма ответа та же, что у списка, — и собирает её тот же `_intention_row`:
+    вторая форма у той же записи заставила бы читателя различать, откуда она
+    приехала.
+    """
+    if int(intention_id or 0) <= 0:
+        return {}
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT i.id, i.profile_id, i.site_id, i.uid, i.intention,'
+                '       i.context, i.status, i.created_at, i.done_at,'
+                '       i.done_note, comp.name, comp.photo,'
+                '       p.profile AS profile_card, p.login AS profile_login'
+                + _SOURCE + ' WHERE i.id = %s', (int(intention_id),))
+            row = await db.fetchone()
+    except Exception as e:
+        logger_info(f'[dating] намерение #{intention_id} не прочиталось: {e}')
+
+        return {}
+
+    return _intention_row(row) if row else {}
 
 
 async def chat_intention_rows(site_id: int, profile_id: int = 0, uid: str = '',
@@ -229,9 +283,14 @@ async def chat_intention_rows(site_id: int, profile_id: int = 0, uid: str = '',
             page, pages = _page_clamp(total, page, per)
 
             await db.execute(
+                # ⚠⚠ `i.context` обязан стоять **в списке колонок**: не
+                # выбранный запросом, он до страницы не доезжает вовсе, и
+                # карточка выходит пустой без единого отказа. Та же грабля, что
+                # уже была с `reply_to` в `send_round.py` и с отметкой
+                # `delivered_at` у писем.
                 'SELECT i.id, i.profile_id, i.site_id, i.uid, i.intention,'
-                '       i.status, i.created_at, i.done_at, i.done_note,'
-                '       comp.name, comp.photo,'
+                '       i.context, i.status, i.created_at, i.done_at,'
+                '       i.done_note, comp.name, comp.photo,'
                 '       p.profile AS profile_card, p.login AS profile_login'
                 + _SOURCE + where + order + ' LIMIT %s OFFSET %s',
                 (*args, per, (page - 1) * per))
@@ -339,7 +398,11 @@ async def chat_intention_do_allowed(site_id: int) -> bool:
     в `auto.py`; у настроек-сроков правило обратное (умолчание), и путать их
     дорого: там цена ошибки — лишняя пауза, здесь — необратимое действие.
 
-    ⚠ Исполнителя пока нет вовсе: функция заведена заранее, вместе с галочкой.
+    ⚠ Галочка гасит занятие **целиком** — и сбор черновиков, и отправку:
+    круг исполнения спрашивает её же (`intention_round._sites`). Второй пары
+    выключателей `make/send`, как у соседних пулов, здесь нет: там две галочки
+    разделяют «сочинять» и «слать живому человеку», потому что первое стоит
+    вызовов LLM, а здесь сочинять нечего — текст приехал вместе с намерением.
     """
     if int(site_id or 0) <= 0:
         return False
@@ -443,6 +506,12 @@ def _intention_row(row: dict) -> dict:
     got['name'] = str(got.get('name') or '') or str(got.get('uid') or '')
     got['photo'] = str(got.get('photo') or '')
     got['done_note'] = str(got.get('done_note') or '')
+
+    # ⚠ Контекст разбирается **здесь**, а не на странице: столбец приезжает то
+    # структурой, то строкой — зависит от драйвера, и страница знала бы об этом
+    # вторым правилом. Пустой — законное состояние: намерение помечено, а
+    # собирать было нечем.
+    got['context'] = json_column_load(got.get('context')) or {}
 
     for key in ('created_at', 'done_at'):
         got[key] = str(got[key]) if got.get(key) else ''
