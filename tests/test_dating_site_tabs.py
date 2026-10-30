@@ -38,6 +38,20 @@ def _page(name: str) -> str:
         encoding='utf-8')
 
 
+def _block(css: str, head: str) -> str:
+    """Тело одного правила CSS по его заголовку.
+
+    ⚠ Ищем до ближайшей `}`, а не регуляркой по всему файлу: соседнее правило
+    с похожим началом иначе утащило бы проверку к себе, и сторож молча стерёг
+    бы не то.
+    """
+    spot = css.find(head)
+
+    assert spot > 0, f'правила `{head}` в оформлении нет'
+
+    return css[spot:css.find('}', spot)]
+
+
 class TestEveryPageUsesTabs:
     """Все шесть страниц раздела перешли на вкладки, и ни одна не отстала."""
 
@@ -276,27 +290,132 @@ class TestTheLookIsShared:
 
     def test_the_badges_reuse_the_profile_classes(self):
         """Одно состояние на панели обязано выглядеть одинаково везде: два
-        значка про одно, нарисованные по-разному, читаются как про разное."""
+        значка про одно, нарисованные по-разному, читаются как про разное.
+
+        ⚠ Класс теперь собирается (`pill ${kind}`), а не стоит в разметке
+        строкой: у значка два состояния — живое и тихое. Стережём то, что от
+        этого не изменилось: вида ровно два и зовут их `chat` и `mail`.
+        """
         code = MODULE.read_text(encoding='utf-8')
 
-        assert 'class="pill chat"' in code, 'значок чата нарисован своим классом'
-        assert 'class="pill mail"' in code, 'значок почты нарисован своим классом'
+        assert "`pill ${kind}" in code, 'значок нарисован не общим классом `pill`'
+        for kind in ("'chat'", "'mail'"):
+            assert f"_datingCount({kind}" in code, (
+                f'значка {kind} на вкладке нет')
 
     def test_the_blinking_respects_reduced_motion(self):
         """⚠ Мигание приезжает из общего правила и уважает настройку человека
         «меньше движения» — иначе вкладка мигала бы там, где анимацию выключили
-        намеренно."""
-        css = STYLE.read_text(encoding='utf-8')
+        намеренно.
 
-        spot = css.find('.pill.chat')
+        ⚠ Ищем **правило**, а не первое упоминание: `.pill.chat` стоит и в
+        пояснении сверху, и оттуда до правила с настройкой далеко — сторож
+        стерёг бы комментарий.
+        """
+        css = STYLE.read_text(encoding='utf-8')
+        spot = css.find('.pill.chat {')
+
         assert spot > 0 and 'prefers-reduced-motion' in css[spot:spot + 600], (
             'мигание значка не уважает `prefers-reduced-motion`')
 
-    def test_the_tabs_wrap(self):
+    def test_the_tabs_scroll_rather_than_wrap(self):
         """⚠ Сайтов сейчас четыре, но число их задаёт не вёрстка, а закладки у
-        соседа: пятый не должен уезжать за край."""
+        соседа. Перенос второй строкой сломал бы ряды таблицы — счётчики уехали
+        бы под чужие имена, — поэтому лишнее уходит в прокрутку."""
+        css = STYLE.read_text(encoding='utf-8')
+        block = _block(css, '.site-tabs {')
+
+        assert 'overflow-x' in block, 'лишние сайты уедут за край без прокрутки'
+        assert 'flex-wrap' not in block, (
+            'перенос вернулся: счётчики встанут под чужими именами')
+
+
+class TestTheTabIsATableOfTwoRows:
+    """⚠⚠ Колонка — сайт, ряд — вид сведений. Счётчики под именем, не рядом.
+
+    Числа приезжают своей ручкой через секунду после имён. Стой они в строку,
+    `Ladadate` превращался бы в `Ladadate 13/19 💬27 ✉8` — вдвое шире, — и
+    соседние вкладки разъезжались под курсором. Ряд под именем меняет высоту
+    колонки на ноль.
+    """
+
+    def test_the_counters_live_in_their_own_row(self):
+        code = MODULE.read_text(encoding='utf-8')
+
+        assert 'site-tab-counts' in code, 'ряда счётчиков нет'
+        spot = code.find('site-tab-name')
+        assert 0 < spot < code.find('site-tab-counts'), (
+            'счётчики нарисованы раньше имени — ряды перепутаны')
+
+    def test_the_columns_are_equal(self):
+        """⚠⚠ `grid-auto-columns: 1fr` вместе с `width: max-content` даёт всем
+        колонкам ширину самой широкой. Это и фиксирует имена: сами по себе они
+        разной длины, и ряд разноразмерных плиток читается как случайный."""
+        block = _block(STYLE.read_text(encoding='utf-8'), '.site-tabs {')
+
+        assert 'grid-auto-columns: 1fr' in block, 'колонки не равной ширины'
+        assert 'max-content' in block, (
+            'без `width: max-content` равные колонки растянутся на всю шапку')
+
+    def test_everything_is_centred(self):
+        """Равные колонки с прижатым влево текстом выглядят хуже неравных."""
         css = STYLE.read_text(encoding='utf-8')
 
-        spot = css.find('.site-tabs {')
-        assert spot > 0, 'оформления вкладок нет'
-        assert 'flex-wrap' in css[spot:spot + 200], 'вкладки не переносятся'
+        assert 'text-align: center' in _block(css, '.site-tab {'), (
+            'имя сайта не по центру колонки')
+        assert 'justify-content: center' in _block(css, '.site-tab-counts {'), (
+            'значки не по центру колонки')
+
+    def test_a_third_row_is_cheap(self):
+        """⚠ Ряды заведены **рядами сетки**, а не вёрсткой внутри кнопки:
+        будущий третий ряд выравнивается по всем колонкам сам. Внутри кнопки он
+        поехал бы у той колонки, где содержимое выше."""
+        css = STYLE.read_text(encoding='utf-8')
+
+        assert 'grid-template-rows' in _block(css, '.site-tabs {'), (
+            'ряды не заданы сеткой — третий придётся равнять руками')
+        assert 'subgrid' in _block(css, '.site-tab {'), (
+            'колонка не делит ряды с таблицей: вся вкладка перестанет быть '
+            'одним нажимаемым элементом либо ряды разъедутся')
+
+    def test_the_zero_is_drawn_not_hidden(self):
+        """⚠⚠ Исчезающий значок менял бы ширину колонки на каждом тике — ровно
+        то, ради чего счётчики и съехали под имя. Серый ноль отвечает «тихо», а
+        отсутствие значка не отвечает ничего."""
+        code = MODULE.read_text(encoding='utf-8')
+
+        assert 'pill off' in code, 'нулевой счёт рисуется пустотой'
+        assert "? `<span class=\"pill chat\">" not in code, (
+            'значок чата всё ещё прячется при нуле')
+
+    def test_the_numbers_have_reserved_room(self):
+        """⚠⚠ Вторая половина того же решения: без `min-width` колонка ехала на
+        пять пикселей, когда `0/0` становился `13/19`."""
+        css = STYLE.read_text(encoding='utf-8')
+
+        assert 'min-width' in _block(css, '.site-tab-live {'), (
+            'под счёт анкет не зарезервировано место')
+        assert 'min-width' in _block(css, '.site-tab-counts .pill {'), (
+            'под числа значков не зарезервировано место')
+
+    def test_the_mail_blinks_only_on_the_tab(self):
+        """⚠ На карточке анкеты тот же значок почты отвечает на другой вопрос —
+        «у неё N писем», — и девятнадцать мигающих карточек были бы шумом.
+        Поэтому мигание почты это **модификатор**, а не правило `.pill.mail`."""
+        css = STYLE.read_text(encoding='utf-8')
+        code = MODULE.read_text(encoding='utf-8')
+
+        assert 'animation' not in _block(css, '.pill.mail {'), (
+            'почта замигала везде, включая карточки анкет')
+        assert '.pill.beat' in css and 'beat' in code, (
+            'на вкладке почта не мигает при непустом счёте')
+
+    def test_the_blinking_respects_reduced_motion(self):
+        """⚠ Новое мигание уважает настройку «меньше движения» наравне со
+        старым: заведи его мимо правила, и выключенная анимация вернулась бы
+        одним значком."""
+        css = STYLE.read_text(encoding='utf-8')
+        spot = css.find('.pill.beat {')
+
+        assert spot > 0 and 'prefers-reduced-motion' in css[spot:spot + 400], (
+            'мигание почты не уважает `prefers-reduced-motion`')
