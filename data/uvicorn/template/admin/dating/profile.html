@@ -640,6 +640,25 @@
         display: none;
     }
 
+    /* Панели «Намерений» — те же правила, что у подвкладок чата: остаток
+       высоты и скрытие классом. ⚠ Своими классами, а не `chat-pane`: занятие
+       больше не живёт в «Чате», и общее имя заставляло бы искать его там. */
+    .intention-pane {
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+    }
+    .intention-pane.off { display: none; }
+
+    /* ⚠ Галочка «выполнять действия» стоит в своей строке над панелями, а не в
+       правом краю полосы вкладок: полоса здесь из двух кнопок, и настройка
+       рядом с ними читалась бы третьей вкладкой. */
+    .work-panel[data-tab="intention"] .mail-switch {
+        display: inline-flex; align-items: center; gap: 6px;
+        margin: 0 0 8px; font-size: 12px; color: #475569; cursor: pointer;
+    }
+
     /* Работа с письмами на «Фаворитах» — под лентой избранных, остатком высоты.
        ⚠ Подвкладок здесь нет: лента и пул это одно занятие, и переход между ними
        был бы лишним щелчком. Лента берёт свою высоту из `--online-h`, как на
@@ -4186,6 +4205,14 @@
         заставляли на каждый переход отвечать «а это которые письма?». Внутри
         одной вкладки тот же вопрос решает порядок подвкладок. #}
         <button type="button" class="page-tab" data-tab="mail">Письма</button>
+        {# ⚠⚠ «Намерения и действия» были подвкладкой «Чата» и подняты сюда.
+        Обещание даётся в разговоре, но исполняется **письмом**, и внутри «Чата»
+        занятие пряталось за вкладкой, к которой относится только наполовину.
+
+        ⚠ Место после «Писем» не случайно: те отвечают «что мы пишем сами»,
+        намерения — «что мы обещали», и читается это подряд. #}
+        <button type="button" class="page-tab"
+                data-tab="intention">Намерения и действия</button>
         {# ⚠ Имя вкладки — «Статистика», и внутреннее имя переименовано вместе с
         подписью (`event` → `stats`). Оставь мы ключ прежним, он стал бы врать:
         «ивент» и «статистика» — разные вещи, а не разные слова про одно.
@@ -4448,7 +4475,10 @@
     // и переименование вкладки, и её удаление, а `workTab`, указывающий в никуда,
     // это пустая страница без единой кнопки в нажатом виде.
     const WORK_TAB_KEY = 'dating.profile.tab';
-    const WORK_TABS = ['chat', 'fav', 'mail', 'stats'];
+    // ⚠ Порядок — порядок чтения: «Письма» отвечают «что мы пишем
+    // сами», «Намерения» — «что мы обещали». Поэтому они подряд, а
+    // «Статистика» остаётся последней: она про всё сразу.
+    const WORK_TABS = ['chat', 'fav', 'mail', 'intention', 'stats'];
 
     // ## ⚠⚠ Ссылка снаружи открывает нужную вкладку: `?site=…&tab=…&sub=…`
     //
@@ -5093,6 +5123,11 @@
         if (intentionPoolReload)
             intentionPoolReload.addEventListener('click', intentionPoolLoad);
 
+        const intentionSentReload = workEl.querySelector(
+            '[data-slot="intention-sent-reload"]');
+        if (intentionSentReload)
+            intentionSentReload.addEventListener('click', intentionSentLoad);
+
         // ⚠ Переключатель «в пуле / сделано» — узел шаблона, живёт до смены
         // сайта; вешать на него надо здесь, а не в отрисовке: она переписывает
         // только списки, и обработчик повесился бы заново на каждое чтение.
@@ -5417,8 +5452,14 @@
         // Лента при этом без анкеты пуста, и это честный ответ: звёздочки бывают
         // только у кого-то. Пустая лента над полным пулом объясняет себя сама, а
         // спрятанная панель не объясняет ничего.
+        // ⚠⚠ Список «вкладок про весь сайт» — тот самый, в который легко
+        // забыть вписать новую: без строки здесь панель не грузится вовсе,
+        // пока не выбрана анкета, и выглядит это как «вкладка не работает».
+        // Намерения сюда входят: обещания копятся по всему сайту, а анкета —
+        // фильтр, как у чата и писем.
         const siteWide = workTab === 'mail' || workTab === 'chat'
-            || workTab === 'stats' || workTab === 'fav';
+            || workTab === 'stats' || workTab === 'fav'
+            || workTab === 'intention';
 
         workEl.classList.toggle('off', !row && !siteWide);
         workEmptyEl.classList.toggle('off', !!row || siteWide);
@@ -5487,6 +5528,16 @@
 
         if (workTab === 'mail') {
             mailPaint();
+            return;
+        }
+
+        if (workTab === 'intention') {
+            intentionShow();
+            // ⚠ Состояние галочки грузим здесь же: она про это занятие и
+            // больше ни про какое, и спрашивать её при каждом заходе в чат
+            // значило бы платить лишним запросом за то, чего человек не
+            // смотрит.
+            chatIntentionDoLoad();
             return;
         }
 
@@ -5834,7 +5885,10 @@
     // ⚠ Порядок — порядок разговора: сперва зовём, смотрим, ушло ли, потом
     // говорим. Он же и умолчание: первая подвкладка та, с которой начинают день, —
     // пул инвайтов набирается кругом ночью, а утром его разбирают.
-    const CHAT_TABS = ['invite', 'sent', 'talk', 'block', 'intention'];
+    // ⚠ `intention` отсюда ушло: занятие поднято на верхний уровень.
+    // Обещание даётся в чате, но исполняется письмом, и подвкладкой
+    // «Чата» оно пряталось за вкладкой, к которой относится наполовину.
+    const CHAT_TABS = ['invite', 'sent', 'talk', 'block'];
 
     let chatTab = CHAT_TABS.includes(localStorage.getItem(CHAT_TAB_KEY))
         ? localStorage.getItem(CHAT_TAB_KEY) : 'invite';
@@ -5874,13 +5928,6 @@
             chatInitiativeLoad();
         }
         if (chatTab === 'block') inviteBlockShow();
-        if (chatTab === 'intention') {
-            intentionShow();
-            // ⚠ Состояние галочки грузим здесь же: она видна только на этой
-            // подвкладке, и спрашивать её при каждом заходе в чат значило бы
-            // платить лишним запросом за то, чего человек не смотрит.
-            chatIntentionDoLoad();
-        }
     }
 
     // ── Автоответ в чате: один выключатель на сайт ──────────────────────────
@@ -6710,7 +6757,124 @@
 
     const intentionKey = (row) => `${row.profile_id}:${row.uid}`;
 
+    // Журнал доставки намерений: что ушло со снимком и что не ушло.
+    //
+    // ⚠ Своя ручка не нужна — пул умеет отдавать доставку доводом
+    // (`status_=delivery`): два состояния разом (`sent` и `failed`) собирает
+    // сервер, и это тот же отбор, что у соседей.
+    //
+    // ⚠⚠ Вид строки — **те же классы**, что у двух других журналов доставки
+    // (`mail-sent-row`): три журнала об одном и том же, и свой вид у третьего
+    // читался бы как другое занятие. Время берёт общий `_sentWhen`.
+    let intentionSent = [];
+
+    async function intentionSentLoad() {
+        const site = siteId();
+        const box = slot('intention-sent-list');
+        if (!box) return;
+
+        if (!site) {
+            intentionSent = [];
+            intentionSentPaint();
+
+            return;
+        }
+
+        try {
+            intentionSent = (await getData(
+                `${BASE}/api/dating/chat-intention/mail`
+                + `?site_id=${site}&status_=delivery`)).result || [];
+        } catch (e) {
+            box.innerHTML = `<div class="work-soon">журнал не пришёл: ${esc(e.message)}</div>`;
+
+            return;
+        }
+
+        intentionSentPaint();
+    }
+
+    function intentionSentPaint() {
+        const box = slot('intention-sent-list');
+        if (!box) return;
+
+        const count = slot('intention-sent-count');
+        if (count) count.textContent = intentionSent.length
+            ? `всего: ${intentionSent.length}` : '';
+
+        if (!intentionSent.length) {
+            box.innerHTML = '<div class="work-soon">ничего ещё не уходило</div>';
+
+            return;
+        }
+
+        // ⚠⚠ Строки рисует **общая выкройка** `sentRows`, а не своя копия:
+        // журналов доставки теперь четыре, и четвёртый вид читался бы как
+        // другое занятие. Прежде здесь стояла своя разметка — сторож
+        // `TestOnePatternForThreeJournals` её и поймал.
+        //
+        // ⚠ Отбора по именам здесь нет (`pick`): журнал короткий — письмо
+        // уходит по обещанию, а обещаний единицы, — и кнопки отбора обещали бы
+        // работу, которой не наберётся.
+        box.innerHTML = sentRows(intentionSent, {
+            // ⚠ `failed` значит «сайт отверг», как у писем: слово то же.
+            failWord: 'не доставлено',
+        });
+    }
+
+    // ── Подвкладки «Намерений»: диалоги и доставка ─────────────────────────
+    //
+    // ⚠ Устроены как у писем и фаворитов, и намеренно: третий род полосы в
+    // панели человеку пришлось бы разгадывать.
+    const INTENTION_TAB_KEY = 'dating.profile.intentiontab';
+    const INTENTION_TABS = ['talk', 'sent'];
+
+    let intentionTab = INTENTION_TABS.includes(localStorage.getItem(INTENTION_TAB_KEY))
+        ? localStorage.getItem(INTENTION_TAB_KEY) : 'talk';
+
+    function intentionTabPaint() {
+        const tabs = slot('intention-tabs');
+        if (!tabs) return;
+
+        tabs.querySelectorAll('.page-tab').forEach(btn =>
+            btn.classList.toggle('on', btn.dataset.intentionTab === intentionTab));
+
+        // ⚠ Прячем классом, а не перерисовкой: возврат на «Диалоги» не должен
+        // стоить перезагрузки пула и потери выбранной пары.
+        workEl.querySelectorAll('[data-intention-pane]').forEach(pane =>
+            pane.classList.toggle('off',
+                                  pane.dataset.intentionPane !== intentionTab));
+    }
+
+    function intentionTabWire() {
+        const tabs = slot('intention-tabs');
+        if (!tabs || tabs.dataset.wired) return;
+
+        // ⚠ Отметка на узле: полоса приезжает с шаблоном работы, и он
+        // подключается один раз на сайт — но `workPaint` зовут часто.
+        tabs.dataset.wired = '1';
+        tabs.addEventListener('click', (ev) => {
+            const btn = ev.target.closest('[data-intention-tab]');
+            if (!btn || btn.dataset.intentionTab === intentionTab) return;
+
+            intentionTab = btn.dataset.intentionTab;
+            localStorage.setItem(INTENTION_TAB_KEY, intentionTab);
+            intentionTabPaint();
+            intentionShow();
+        });
+    }
+
+    // ⚠ Грузим **только открытую** подвкладку: журнал доставки на сотню
+    // строк незачем возить тому, кто смотрит пул, и наоборот.
     function intentionShow() {
+        intentionTabWire();
+        intentionTabPaint();
+
+        if (intentionTab === 'sent') {
+            intentionSentLoad();
+
+            return;
+        }
+
         intentionPairsLoad();
         intentionPoolLoad();
         intentionStuffPaint();

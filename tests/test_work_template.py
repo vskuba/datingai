@@ -142,7 +142,10 @@ class TestWorkTemplate:
         page_src = pathlib.Path(
             'data/uvicorn/template/admin/dating/profile.html').read_text(encoding='utf-8')
 
-        tabs = set(re.findall(r'class="page-tab[^"]*" data-tab="(\w+)"', page_src))
+        # ⚠ `\s+`, а не пробел: длинная подпись переносит `data-tab` на
+        # следующую строку, и сторож переставал видеть кнопку — то есть
+        # зеленел ровно там, где должен был ловить.
+        tabs = set(re.findall(r'class="page-tab[^"]*"\s+data-tab="(\w+)"', page_src))
         panels = set(re.findall(r'class="work-panel" data-tab="(\w+)"', html))
 
         assert tabs == panels, f'кнопки {tabs}, панели {panels}'

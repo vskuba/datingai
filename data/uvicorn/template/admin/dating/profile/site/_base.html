@@ -146,18 +146,6 @@
            Заходят сюда реже всего: список пополняется сам, и открывают его, чтобы
            понять, почему паре ничего не уходит, либо чтобы снять запрет. #}
         <button type="button" class="page-tab" data-chat-tab="block">Не пишем</button>
-        {# ⚠ «Намерения и действия» — за «Не пишем», и это продолжение того же
-           пути: позвали → посмотрели, ушло ли → поговорили → с этими не
-           разговариваем → а вот что в разговорах наобещано.
-
-           ⚠ Намерения рождаются и в чате, и в письмах — их пишет одна точка
-           `_agent_ask`. Вкладка стоит здесь, а не в «Фаворитах», потому что
-           намерение про **разговор**: среди «Приставания» и «Доставки» оно
-           читалось бы как «намерение по письмам». Второго места показа нет
-           намеренно — отбор был бы тот же самый, то есть два одинаковых экрана. #}
-        <button type="button" class="page-tab"
-                data-chat-tab="intention">Намерения и действия</button>
-
         {# ⚠ Правый край полосы — **настройки открытой подвкладки**, как у почты.
            У каждой панели свои, и место у них общее: человек ищет «где это
            включается» один раз, а не заново на каждой вкладке.
@@ -226,23 +214,6 @@
                 отправка инициативы</label>
         </span>
 
-        {# ⚠⚠ **Своя подвкладка, свой выключатель.** Галочка стоит в блоке
-           `data-for="intention"` и видна только на «Намерениях», как настройки
-           у соседей: на «Инвайтах» она не нужна и путала бы.
-
-           ⚠⚠ **Подсказка здесь важнее обычного.** У трёх соседних галочек
-           снятие что-то останавливает, а здесь поднятие пока не запускает
-           ничего: занятия, которое исполняет намерения, не существует вовсе.
-           Не сказать об этом — повторить ровно ту ложь, от которой защищает
-           снятое умолчание столбца. #}
-        <span class="mail-tabs-set" data-for="intention">
-            <label class="mail-send-on" title="Пока снята, намерения копятся в
-                   пуле и никто их не исполняет. ⚠ Занятия, которое исполняет
-                   намерения, сейчас не существует вовсе — галочка готова к нему
-                   заранее">
-                <input type="checkbox" data-slot="chat-intention-do-on">
-                выполнять действия</label>
-        </span>
     </div>
 
     <div class="chat-pane off" data-chat-pane="talk">
@@ -547,72 +518,6 @@
         {% endblock %}
     </div>
 
-    {# ⚠ Колонок три, и порядок в них — порядок работы: кому обещали → что
-       сделано → что ещё ждёт. Раскладка общая с «Диалогами» (`in-cols-3`), и
-       разделители те же классы (`split-reply`, `split-initiative`): их
-       перетаскивание уже привязано обходом по всей панели работы, и своего кода
-       новой вкладке не нужно. #}
-    <div class="chat-pane off" data-chat-pane="intention">
-        {% block work_chat_intention %}
-        <div class="in-cols in-cols-3">
-            <div class="in-col">
-                <div class="in-head">
-                    <span class="in-count" data-slot="intention-pairs-count"></span>
-                    <button type="button" class="people-reload"
-                            data-slot="intention-pairs-reload"
-                            title="Перечитать пары">⟳</button>
-                </div>
-                <div class="in-list talk-cards"
-                     data-slot="intention-pairs-list"></div>
-                <div class="pane-foot" data-slot="intention-pairs-pager"></div>
-            </div>
-
-            <div class="split split-reply"
-                 title="Потяните, чтобы изменить ширину"></div>
-
-            {# ⚠⚠ Средняя колонка показывает **материал намерения**, а не список
-               намерений: карточка говорит «что обещано», а решить, годится ли
-               обещанное, можно только рядом с разговором. У обещания прислать
-               фото материал — переписка письмами; у будущих намерений он будет
-               свой, и выбирает его `INTENTION_STUFF`.
-
-               ⚠ Прежде здесь стояло «Сделано». Оно не пропало — переехало
-               переключателем в правую колонку: исполнителя пока нет, и колонка
-               была пуста всегда, а вид терять нельзя. #}
-            <div class="in-col">
-                <div class="in-head">
-                    <span data-slot="intention-stuff-title">Переписка</span>
-                    <span class="in-count" data-slot="intention-stuff-who"></span>
-                </div>
-                <div class="in-list reply-thread"
-                     data-slot="intention-stuff"></div>
-            </div>
-
-            <div class="split split-initiative"
-                 title="Потяните, чтобы изменить ширину"></div>
-
-            <div class="in-col in-col-pool">
-                <div class="in-head">
-                    {# ⚠ Переключатель, а не две колонки: вопрос у них один —
-                       «какие намерения показать», — и разводить его по колонкам
-                       значило бы держать два списка на один ответ. #}
-                    <span class="in-switch">
-                        <button type="button" class="in-switch-btn on"
-                                data-slot="intention-pool-open">В пуле</button>
-                        <button type="button" class="in-switch-btn"
-                                data-slot="intention-pool-done">Сделано</button>
-                    </span>
-                    <span class="in-count" data-slot="intention-pool-count"></span>
-                    <button type="button" class="people-reload"
-                            data-slot="intention-pool-reload"
-                            title="Перечитать пул">⟳</button>
-                </div>
-                <div class="in-list" data-slot="intention-pool-list"></div>
-                <div class="pane-foot" data-slot="intention-pool-pager"></div>
-            </div>
-        </div>
-        {% endblock %}
-    </div>
 </div>
 
 {# ⚠ Вкладки «Настройки» здесь больше нет: правка учётки, действия и автоответ
@@ -1512,6 +1417,119 @@
    ⚠ Блок свой (`work_stats`), чтобы сайт мог опустошить его у себя: у сайта без
    писем и избранных половина чисел была бы всегда нулевой, и честнее убрать
    вкладку, чем показывать нули. #}
+
+{# ── Намерения и действия ──────────────────────────────────────────────────
+
+   ⚠⚠ **Вкладка верхнего уровня, а не подвкладка «Чата».** Обещание даётся в
+   чате, но исполняется письмом — и, живя под «Чатом», занятие пряталось за
+   вкладкой, к которой относится только наполовину. Место в ряду тоже не
+   случайно: «Письма» отвечают «что мы пишем сами», намерения — «что мы
+   обещали», и читается это подряд.
+
+   ⚠ Подвкладки те же две, что у писем и фаворитов, и в том же порядке:
+   «Диалоги» — с кем говорим и что обещано, «Доставка» — что уже ушло и чем
+   кончилось. Пул читают, чтобы отправить; журнал — чтобы понять, почему не
+   дошло. #}
+<div class="work-panel" data-tab="intention">
+
+    <div class="page-tabs intention-tabs" data-slot="intention-tabs">
+        <button type="button" class="page-tab on"
+                data-intention-tab="talk">Диалоги</button>
+        <button type="button" class="page-tab"
+                data-intention-tab="sent">Доставка</button>
+    </div>
+
+    {# ⚠ Галочка «выполнять действия» живёт **здесь**, а не в шапке «Чата»:
+       она про это занятие и больше ни про какое. На «Чате» её не осталось. #}
+    <label class="mail-switch" title="Собирать письма по обещаниям и отправлять их">
+        <input type="checkbox" data-slot="chat-intention-do-on">
+        <span>выполнять действия</span>
+    </label>
+
+    <div class="intention-pane" data-intention-pane="talk">
+    {% block work_chat_intention %}
+    <div class="in-cols in-cols-3">
+        <div class="in-col">
+            <div class="in-head">
+                <span class="in-count" data-slot="intention-pairs-count"></span>
+                <button type="button" class="people-reload"
+                        data-slot="intention-pairs-reload"
+                        title="Перечитать пары">⟳</button>
+            </div>
+            <div class="in-list talk-cards"
+                 data-slot="intention-pairs-list"></div>
+            <div class="pane-foot" data-slot="intention-pairs-pager"></div>
+        </div>
+
+        <div class="split split-reply"
+             title="Потяните, чтобы изменить ширину"></div>
+
+        {# ⚠⚠ Средняя колонка показывает **материал намерения**, а не список
+           намерений: карточка говорит «что обещано», а решить, годится ли
+           обещанное, можно только рядом с разговором. У обещания прислать
+           фото материал — переписка письмами; у будущих намерений он будет
+           свой, и выбирает его `INTENTION_STUFF`.
+
+           ⚠ Прежде здесь стояло «Сделано». Оно не пропало — переехало
+           переключателем в правую колонку: исполнителя пока нет, и колонка
+           была пуста всегда, а вид терять нельзя. #}
+        <div class="in-col">
+            <div class="in-head">
+                <span data-slot="intention-stuff-title">Переписка</span>
+                <span class="in-count" data-slot="intention-stuff-who"></span>
+            </div>
+            <div class="in-list reply-thread"
+                 data-slot="intention-stuff"></div>
+        </div>
+
+        <div class="split split-initiative"
+             title="Потяните, чтобы изменить ширину"></div>
+
+        <div class="in-col in-col-pool">
+            <div class="in-head">
+                {# ⚠ Переключатель, а не две колонки: вопрос у них один —
+                   «какие намерения показать», — и разводить его по колонкам
+                   значило бы держать два списка на один ответ. #}
+                <span class="in-switch">
+                    <button type="button" class="in-switch-btn on"
+                            data-slot="intention-pool-open">В пуле</button>
+                    <button type="button" class="in-switch-btn"
+                            data-slot="intention-pool-done">Сделано</button>
+                </span>
+                <span class="in-count" data-slot="intention-pool-count"></span>
+                <button type="button" class="people-reload"
+                        data-slot="intention-pool-reload"
+                        title="Перечитать пул">⟳</button>
+            </div>
+            <div class="in-list" data-slot="intention-pool-list"></div>
+            <div class="pane-foot" data-slot="intention-pool-pager"></div>
+        </div>
+    </div>
+    {% endblock %}
+    </div>
+
+    {# ⚠ Журнал доставки — **своя панель**, а не тот же список с фильтром:
+       ушедшее не правят и не удаляют, и кнопки над ним другие. #}
+    <div class="intention-pane off" data-intention-pane="sent">
+        {% block work_intention_sent %}
+        {# ⚠ Колонкой (`in-col`), а не голой шапкой: шапка и кнопка обновления
+           берут вид от неё, и без обёртки `⟳` выпадала из ряда — синим
+           квадратом там, где у соседей бледный значок. #}
+        <div class="in-cols">
+            <div class="in-col">
+                <div class="in-head">
+                    <span data-slot="intention-sent-title">Доставка</span>
+                    <span class="in-count" data-slot="intention-sent-count"></span>
+                    <button type="button" class="in-reload"
+                            data-slot="intention-sent-reload" title="Обновить">⟳</button>
+                </div>
+                <div class="in-list" data-slot="intention-sent-list"></div>
+            </div>
+        </div>
+        {% endblock %}
+    </div>
+</div>
+
 <div class="work-panel" data-tab="stats">
     {% block work_stats %}
     {# ⚠ Подвкладки, а не две сетки подряд: вопросы разные. «Общая» отвечает

@@ -16,6 +16,7 @@
 """
 
 import os
+import re
 
 import pytest
 from fastapi.templating import Jinja2Templates
@@ -50,6 +51,18 @@ def _request() -> Request:
 
 
 @pytest.fixture
+async def page(auth_client):
+    """Каркас страницы «Профили».
+
+    ⚠ Своей фикстурой, а не вместе с `work`: кнопка верхнего ряда живёт в
+    каркасе, а панель — в шаблоне работы, и приезжают они разными ручками.
+    Спроси мы всё одним запросом, половина сторожей зеленела бы на пустом
+    месте.
+    """
+    return (await auth_client.get(PAGE)).text
+
+
+@pytest.fixture
 async def work(rhapsody, monkeypatch):
     """Разметка работы с анкетой под сайт — так, как её получает браузер."""
     async def _setting(site_id, key, default=''):
@@ -63,27 +76,45 @@ async def work(rhapsody, monkeypatch):
 
 
 class TestTheTabButton:
-    """Кнопка в полосе «Чата» — в шаблоне работы."""
+    """⚠⚠ Кнопка — **в верхнем ряду страницы**, а не в полосе «Чата».
 
-    async def test_the_button_is_there(self, work):
-        assert 'data-chat-tab="intention"' in work, 'кнопки вкладки нет'
-        assert 'Намерения и действия' in work, 'подписи вкладки нет'
+    Обещание даётся в разговоре, но исполняется письмом, и подвкладкой «Чата»
+    занятие пряталось за вкладкой, к которой относится только наполовину.
+    Кнопка верхнего ряда живёт в каркасе страницы, а не в шаблоне работы.
+    """
 
-    async def test_it_stands_after_the_block_tab(self, work):
-        """⚠ Порядок — конец пути «Чата»: позвали → ушло ли → поговорили →
-        этим не пишем → а вот что наобещали."""
-        block = work.find('data-chat-tab="block"')
-        mine = work.find('data-chat-tab="intention"')
+    async def test_the_button_is_there(self, page):
+        assert 'data-tab="intention"' in page, 'кнопки вкладки нет'
+        assert 'Намерения и действия' in page, 'подписи вкладки нет'
 
-        assert block != -1 and mine != -1, 'вкладок нет — разметка сломана'
-        assert block < mine, 'вкладка стоит раньше «Не пишем»'
+    async def test_it_stands_after_the_mail_tab(self, page):
+        """⚠ Порядок — порядок чтения: «Письма» отвечают «что мы пишем сами»,
+        намерения — «что мы обещали»."""
+        # ⚠ Ищем **кнопки**, а не любое упоминание имени: в стилях страницы
+        # есть селектор `.work-panel[data-tab="intention"]`, и он стоит выше
+        # полосы — сторож на простом `find` сравнивал бы его с кнопками.
+        order = re.findall(r'class="page-tab[^"]*"\s+data-tab="(\w+)"', page)
+
+        assert order, 'кнопок вкладок нет — разметка сломана'
+        assert order.index('mail') < order.index('intention') < order.index('stats'), (
+            f'порядок вкладок не тот: {order}')
+
+    async def test_the_chat_strip_lost_it(self, page, work):
+        """⚠ Прежняя подвкладка убрана, а не оставлена вторым входом: два
+        места на одно занятие — это вопрос «какое настоящее» на каждом заходе."""
+        assert 'data-chat-tab="intention"' not in work, (
+            'подвкладка «Чата» осталась вторым входом')
+        assert "'intention'" not in page[page.find('const CHAT_TABS'):
+                                         page.find('const CHAT_TABS') + 200], (
+            'намерения всё ещё в списке подвкладок чата')
 
 
 class TestThePane:
-    """Панель с тремя колонками — там же."""
+    """Панель с тремя колонками — в шаблоне работы, своей вкладкой."""
 
     async def test_the_pane_is_there(self, work):
-        assert 'data-chat-pane="intention"' in work, 'панели вкладки нет'
+        assert 'data-tab="intention"' in work, 'панели вкладки нет'
+        assert 'data-intention-pane="talk"' in work, 'панели «Диалогов» нет'
 
     async def test_it_has_three_columns_and_two_splits(self, work):
         """Раскладка общая с «Диалогами» (`in-cols-3`): вкладки об одном, и две
@@ -92,8 +123,8 @@ class TestThePane:
         # «Диалогов» те же разделители (`split-reply`, `split-initiative`), и
         # жадный срез насчитал бы три вместо одного — то есть тест зеленел бы на
         # чужой разметке.
-        start = work.find('data-chat-pane="intention"')
-        end = work.find('data-tab="fav"', start)
+        start = work.find('data-intention-pane="talk"')
+        end = work.find('data-intention-pane="sent"', start)
         pane = work[start:end if end != -1 else len(work)]
 
         assert 'in-cols in-cols-3' in pane, 'раскладка не трёхколонная'
@@ -130,23 +161,28 @@ class TestThePane:
 class TestThePageKnowsTheTab:
     """Поведение — в каркасе страницы, и оно обязано знать про вкладку."""
 
-    async def test_the_name_is_known_to_the_script(self, auth_client):
-        """⚠⚠ Главный сторож: кнопка, которой нет в `CHAT_TABS`, нарисована и
+    async def test_the_name_is_known_to_the_script(self, page):
+        """⚠⚠ Главный сторож: кнопка, которой нет в `WORK_TABS`, нарисована и
         мертва — щелчок по ней не покажет ничего, и тест на наличие узла это
         пропустит."""
-        page = (await auth_client.get(PAGE)).text
+        assert "const WORK_TABS = ['chat', 'fav', 'mail', 'intention', 'stats']" \
+            in page, 'имя вкладки не попало в WORK_TABS'
 
-        assert "const CHAT_TABS = ['invite', 'sent', 'talk', 'block', 'intention']" \
-            in page, 'имя вкладки не попало в CHAT_TABS'
+    async def test_it_counts_as_site_wide(self, page):
+        """⚠⚠ Без строки в `siteWide` панель не грузится вовсе, пока не выбрана
+        анкета, — и выглядит это как «вкладка не работает». Поймано живым
+        браузером: верхняя кнопка была, панелей в DOM ноль."""
+        spot = page.find('const siteWide =')
 
-    async def test_the_loader_is_wired(self, auth_client):
+        assert spot > 0 and "workTab === 'intention'" in page[spot:spot + 300], (
+            'намерения не в списке вкладок про весь сайт')
+
+    async def test_the_loader_is_wired(self, page):
         """⚠ Сторожим **наличие ветки и вызова**, а не их форму в одну строку:
         ветка обросла вторым вызовом (состояние галочки), и тест на точное
         совпадение строки покраснел бы на верной правке."""
-        page = (await auth_client.get(PAGE)).text
-
-        assert "if (chatTab === 'intention')" in page, \
-            'подвкладка не наполняется — ветки в chatSubShow нет'
+        assert "if (workTab === 'intention')" in page, \
+            'вкладка не наполняется — ветки в workPaint нет'
         assert 'intentionShow();' in page, 'колонки вкладки не загружаются'
 
     async def test_the_reload_buttons_are_wired(self, auth_client):
@@ -159,31 +195,38 @@ class TestThePageKnowsTheTab:
 
 
 class TestTheDoCheckbox:
-    """Галочка «выполнять действия» в полосе «Чата»."""
+    """Галочка «выполнять действия» — в своей панели."""
 
     async def test_it_is_in_the_strip(self, work):
         assert 'data-slot="chat-intention-do-on"' in work, 'галочки нет'
         assert 'выполнять действия' in work, 'подписи нет'
 
-    async def test_it_shows_only_on_its_own_subtab(self, work):
-        """⚠ `data-for="intention"` — настройки видны на своей подвкладке, как у
-        соседей: на «Инвайтах» эта галочка не нужна и путала бы."""
+    async def test_it_lives_in_its_own_panel(self, work):
+        """⚠ Галочка про это занятие и больше ни про какое: на полосе «Чата»,
+        где она стояла прежде, её больше нет."""
         start = work.find('data-slot="chat-intention-do-on"')
-        box = work.rfind('data-for="intention"', 0, start)
-        other = work.rfind('data-for="talk"', 0, start)
+        panel = work.rfind('data-tab="intention"', 0, start)
+        chat = work.rfind('data-tab="chat"', 0, start)
 
-        assert box != -1, 'галочка стоит вне блока data-for="intention"'
-        assert box > other, 'галочка попала в блок соседней подвкладки'
+        assert panel != -1, 'галочки нет в панели намерений'
+        assert panel > chat, 'галочка осталась в панели «Чата»'
 
-    async def test_the_hint_says_nobody_executes_yet(self, work):
-        """⚠⚠ Подсказка здесь важнее обычного: у трёх соседних галочек снятие
-        что-то останавливает, а здесь поднятие пока не запускает ничего. Не
-        сказать об этом — повторить ту ложь, от которой защищает умолчание 0."""
+    async def test_the_hint_tells_what_it_starts(self, work):
+        """⚠⚠ Подсказка переписана: прежняя говорила «занятия, которое
+        исполняет намерения, не существует вовсе», и это стало **неправдой** —
+        круг сбора писем и отправка есть, живое письмо со снимком уже уходило.
+
+        Обещать меньше, чем делаешь, не безобиднее, чем больше: человек не
+        поднимет галочку, думая, что она ни к чему.
+        """
         start = work.find('data-slot="chat-intention-do-on"')
         head = work.rfind('<label', 0, start)
         label = work[head:start]
 
-        assert 'не существует' in label, 'подсказка не говорит про отсутствие занятия'
+        assert 'не существует' not in label, (
+            'подсказка всё ещё отрицает занятие, которое работает')
+        assert 'отправля' in label.lower(), (
+            'подсказка не говорит, что галочка запускает')
 
     async def test_the_page_wires_it(self, auth_client):
         page = (await auth_client.get(PAGE)).text
