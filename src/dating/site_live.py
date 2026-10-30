@@ -25,7 +25,7 @@
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating.mail_send import mail_sent_union
+from src.dating.message_twin import message_twin_skip
 
 # За какой срок считаем работу. ⚠ Часы, а не минуты: число на вкладке отвечает
 # «идёт ли тут жизнь», и минутное окно дрожало бы от каждой реплики.
@@ -92,11 +92,25 @@ async def _profiles(db) -> dict:
 
 
 async def _chat(db, counted: dict) -> None:
-    """Реплики чата за срок — обе стороны разговора.
+    """Реплики чата за срок — **только от собеседников**.
 
-    ⚠ Считаем **и его, и её**: вкладка отвечает «идёт ли здесь разговор», а
-    разговор это обмен. Одни входящие показали бы молчащий сайт живым, если
-    туда просто пишут.
+    ## ⚠⚠ Входящие, а не обе стороны
+
+    Сперва считались обе, и довод был такой: разговор это обмен, одни входящие
+    показали бы молчащий сайт живым. Довод оказался неверным, и показал это
+    прод: у Ladadate за полсуток 20 исходящих реплик против 6 входящих —
+    вкладка писала 26 и отвечала в основном **про нашу собственную работу**.
+
+    Значок отвечает на вопрос «сколько пришло людям ответить», а не «сколько
+    строк мы записали»: наши исходящие круг наделает и в пустоту, и число от
+    этого вырастет, ничего не сообщив.
+
+    ⚠⚠ **Близнецов прячем общим правилом** `message_twin_skip`. Наше
+    исходящее лежит в `message` дважды — своей строкой и отражением из панели,
+    — и то же бывает со **входящим**: реплика приходит сокетом и второй раз
+    импортом. Правило одно на всех, кто показывает человеку счёт реплик; своя
+    копия разошлась бы на первой правке. Эта грабля уже случалась: значок
+    диалогов говорил 61 при шестидесяти видимых.
 
     ⚠ Сайт берётся через анкету: у `message` своего `site_id` нет — реплика
     принадлежит паре, а пара живёт у анкеты.
@@ -104,8 +118,10 @@ async def _chat(db, counted: dict) -> None:
     await db.execute(
         'SELECT p.site_id, COUNT(*) AS n'
         '  FROM message m JOIN profile p ON p.id = m.profile_id'
-        ' WHERE m.created_at > NOW() - INTERVAL %s HOUR'
-        ' GROUP BY p.site_id', (SITE_LIVE_HOURS,))
+        " WHERE m.direction = 'in'"
+        '   AND m.created_at > NOW() - INTERVAL %s HOUR'
+        + message_twin_skip('m')
+        + ' GROUP BY p.site_id', (SITE_LIVE_HOURS,))
 
     for row in (await db.fetchall() or []):
         counted.setdefault(int(row['site_id']),
@@ -114,42 +130,28 @@ async def _chat(db, counted: dict) -> None:
 
 
 async def _mail(db, counted: dict) -> None:
-    """Письма за срок: пришедшие и ушедшие вместе.
+    """Письма за срок — **только пришедшие**.
 
-    ⚠⚠ Пулы перечисляет `mail_sent_union`, а не этот запрос: список «откуда
-    письмо уходит человеку» один на проект и живёт у отправки. Своя копия
-    разошлась бы на первом же новом пуле — и разошлась бы молча, в меньшую
-    сторону.
+    ## ⚠⚠ Входящие, а не вся почта
 
-    ⚠ Входящие и исходящие в одном числе: вкладка отвечает «много ли тут
-    почты», а не «кто кому написал». Разводить их значило бы два числа там, где
-    человек читает одно.
+    Сперва считались и ушедшие тоже, союзом по всем пулам отправки. Прод
+    показал цену: у Ladadate за полсуток 95 писем, из них входящих **ноль** —
+    значок целиком докладывал о нашей собственной рассылке.
+
+    Вкладка отвечает «сколько людям есть что ответить». Исходящие письма
+    делает круг, и их число растёт само по себе — хоть в пустоту, хоть в
+    тишину.
+
+    ⚠ Отсюда и простота запроса: пулы отправки перечислять больше незачем,
+    `mail_in` это одна таблица со своим `site_id`. Вместе с союзом ушла и
+    арифметика его подстановок.
     """
-    where = 'site_id = site_id AND sent_at > NOW() - INTERVAL %s HOUR'
-    sent = mail_sent_union(where, select='site_id, sent_at')
-
     await db.execute(
-        'SELECT site_id, COUNT(*) AS n FROM ('
-        '   SELECT site_id, created_at AS at FROM mail_in'
-        '    WHERE created_at > NOW() - INTERVAL %s HOUR'
-        '   UNION ALL '
-        f'  SELECT site_id, sent_at AS at FROM ({sent}) AS gone'
-        ' ) AS whole WHERE at IS NOT NULL GROUP BY site_id',
-        (SITE_LIVE_HOURS,) + (SITE_LIVE_HOURS,) * _union_marks(sent))
+        'SELECT site_id, COUNT(*) AS n FROM mail_in'
+        ' WHERE created_at > NOW() - INTERVAL %s HOUR'
+        ' GROUP BY site_id', (SITE_LIVE_HOURS,))
 
     for row in (await db.fetchall() or []):
         counted.setdefault(int(row['site_id']),
                            {'profiles': 0, 'whole': 0, 'online': 0, 'chat': 0, 'mail': 0})
         counted[int(row['site_id'])]['mail'] = int(row['n'] or 0)
-
-
-def _union_marks(sql: str) -> int:
-    """Сколько `%s` в собранном союзе — столько раз повторено условие.
-
-    ⚠⚠ Считаем **по тексту**, а не числом пулов: `mail_sent_union` строит
-    ветку на каждый пул, и запиши мы длину списка сюда — появилась бы вторая
-    запись одного правила. Та же грабля уже стоила окна «почему этой паре не
-    пишут»: там стояло `* 3`, четвёртый пул сломал запрос, а `except` отдал
-    пустоту вместо ошибки.
-    """
-    return sql.count('%s')

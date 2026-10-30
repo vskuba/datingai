@@ -241,7 +241,11 @@ function _datingTabsPaint(el, sites, live) {
         const title = [`${esc(row.name)}`,
                        `в сети ${online} из ${whole} анкет`,
                        `включено ${working}`,
-                       `за 12 часов: реплик ${Number(own.chat || 0)},`
+                       // ⚠ «От собеседников» сказано словами: значок считает
+                       // **входящее**, и без этого число читалось бы как вся
+                       // работа сайта, включая нашу собственную рассылку.
+                       `за 12 часов от собеседников:`
+                       + ` реплик ${Number(own.chat || 0)},`
                        + ` писем ${Number(own.mail || 0)}`].filter(Boolean).join('\n');
 
         return `<button type="button" class="site-tab${
