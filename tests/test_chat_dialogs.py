@@ -279,6 +279,55 @@ class TestUnreadBadge:
         assert entry and int(entry['n']) == 3, \
             f'три непрочитанные реплики посчитаны как {entry}'
 
+    async def test_unread_names_who_wrote_last(self, talk, auth_client):
+        """⚠⚠ Значок несёт **от кого** последняя реплика, а не только «когда».
+
+        По значку человек приходит к этой реплике, а список диалогов
+        отсортирован по свежести **любой** строки, включая наши исходящие: у
+        STELA последним шевелился разговор с Simon (наша реплика), а значок
+        звал к письму Peter Pan — и открывался Simon. Приходилось жать второй
+        раз.
+        """
+        other = f'u{uuid.uuid4().hex[:8]}'
+        await _say(talk['profile_id'], other, 'in', 'я позже всех')
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'UPDATE message SET created_at = NOW() + INTERVAL 1 MINUTE'
+                ' WHERE profile_id = %s AND sender_uid = %s',
+                (talk['profile_id'], other))
+            await db.connection.commit()
+
+        entry = (await chat_unread(site_id=STAND_SITE, user=None))['result'] \
+            .get(str(talk['profile_id']))
+
+        assert entry and entry.get('last_in_uid') == other, (
+            'значок зовёт не к тому, кто написал последним: '
+            f"{entry and entry.get('last_in_uid')} вместо {other}")
+
+    async def test_the_same_second_breaks_by_row_not_by_name(self, talk):
+        """⚠⚠ У `datetime` точность в секунду, а собеседник пишет очередями.
+
+        Без разрыва ничьей по номеру строки две реплики одной секунды
+        разрешались бы по алфавиту номера собеседника — значок звал бы к
+        случайному из двоих.
+        """
+        early, late = 'u000000zz', 'u999999aa'   # алфавит и порядок спорят
+        await _say(talk['profile_id'], late, 'in', 'первая')
+        await _say(talk['profile_id'], early, 'in', 'вторая, она же последняя')
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'UPDATE message SET created_at = NOW() + INTERVAL 1 MINUTE'
+                ' WHERE profile_id = %s AND sender_uid IN (%s, %s)',
+                (talk['profile_id'], early, late))
+            await db.connection.commit()
+
+        entry = (await chat_unread(site_id=STAND_SITE, user=None))['result'] \
+            .get(str(talk['profile_id']))
+
+        assert entry and entry.get('last_in_uid') == early, (
+            'ничья одной секунды разрешилась по алфавиту, а не по порядку: '
+            f"{entry and entry.get('last_in_uid')}")
+
     async def test_unread_is_empty_without_a_site(self):
         got = await chat_unread(site_id=0, user=None)
 

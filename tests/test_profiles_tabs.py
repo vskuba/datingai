@@ -360,8 +360,44 @@ class TestFreshestDialogOpensUnderChosenGirl:
         по свежести, и первый в нём — самый свежий разговор девушки."""
         page = (await auth_client.get(PAGE)).text
 
-        assert "if (!hadPick && first && slot('chat-talk-thread'))" in page, \
+        assert 'const open = wanted || (hadPick ? null : first);' in page, \
             'свежий разговор выбранной анкеты не открывается сам'
+
+    async def test_the_badge_opens_the_one_who_wrote(self, auth_client):
+        """⚠⚠ Пришли по значку — открывается тот, **кто написал**, а не первый.
+
+        Список отсортирован по свежести **любой** строки, включая наши
+        исходящие, и «последний шевелился» это не «последний написал». У STELA
+        последним шевелился разговор с Simon (наша реплика в 20:14), а значок
+        звал к письму Peter Pan — открывался Simon, и человек жал второй раз.
+        """
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'chatUnreadWant' in page, 'значок не несёт, кого открывать'
+        assert 'last_in_uid' in page, (
+            'страница не читает отправителя последней реплики — ручка его '
+            'отдаёт, а щелчок им не пользуется')
+
+    async def test_the_wish_is_bound_to_its_profile(self, auth_client):
+        """⚠ Желание живёт с номером анкеты: список диалогов мог не прийти с
+        первого раза, и переживи оно смену анкеты — открылся бы разговор чужой
+        девушки."""
+        page = (await auth_client.get(PAGE)).text
+
+        assert 'Number(wantFor) === openId' in page, (
+            'желание не привязано к анкете — переживёт её смену и откроет '
+            'чужой разговор')
+
+    async def test_the_wish_lives_one_click(self, auth_client):
+        """⚠ Гасим **до** применения и в любом случае: круг перерисовки идёт
+        раз в десять секунд, и уцелевшее желание уводило бы человека с
+        разговора, который он читает."""
+        page = (await auth_client.get(PAGE)).text
+        spot = page.find("const [wantFor, want] = String(chatUnreadWant")
+
+        assert spot > 0, 'желание читается не ключом'
+        assert "chatUnreadWant = '';" in page[spot:spot + 200], (
+            'желание не гасится сразу после чтения')
 
 
 class TestTabsSurviveReload:
