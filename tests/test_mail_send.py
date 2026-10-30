@@ -208,10 +208,30 @@ class TestTheAttachment:
         body = _payload('c1', '812886', 'текст',
                         attach={'name': 'evening.jpg', 'data': b'\xff\xd8photo'})
 
-        assert body['AttachmentName'] == 'evening.jpg'
         assert base64.b64decode(body['AttachmentFile']) == b'\xff\xd8photo'
         # Тело обязано быть JSON-годным: сайт принимает его как JSON.
         json.dumps(body)
+
+    def test_a_new_attachment_goes_without_a_name(self):
+        """⚠⚠ Главный сторож вложения, и он **был написан наоборот**.
+
+        Документация сайта: «If the attachment already exists, provide its name
+        and hash. If not, provide the hash and base64-encoded file.» Имя — это
+        признак «файл у вас уже есть», а не подпись к присылаемому.
+
+        Прежний сторож требовал `AttachmentName == 'evening.jpg'` и зеленел,
+        пока живое письмо приходило **без снимка**: сайт отвечал `Status: OK`,
+        по имени искал готовое вложение, не находил и слал текст. Проверено на
+        живой паре — после снятия имени тот же файл принят.
+        """
+        from src.dating.mail_send import _payload
+
+        body = _payload('c1', '812886', 'текст',
+                        attach={'name': 'evening.jpg', 'data': b'\xff\xd8photo'})
+
+        assert body['AttachmentName'] is None, (
+            'имя у нового вложения непустое — сайт сочтёт файл уже имеющимся '
+            'и отправит письмо без снимка')
 
     def test_the_hash_is_of_the_bytes_not_of_the_base64(self):
         """⚠ Сайт сверяет хэшем то, что получил **после** разбора base64.
@@ -282,14 +302,18 @@ class TestTheAttachment:
         assert len(site_api.calls) == was, 'к сайту ходили зря'
 
     async def test_the_photo_reaches_the_site(self, site_api, letter, profile):
-        """Снимок доезжает до сайта тем же письмом, что и текст."""
+        """Снимок доезжает до сайта тем же письмом, что и текст.
+
+        ⚠ И **без имени**: непустое `AttachmentName` значит «файл у вас уже
+        есть», и сайт тогда отправляет письмо без снимка, отвечая `Status: OK`.
+        """
         await _send({**letter,
                      'attach': {'name': 'evening.jpg', 'data': b'\xff\xd8jpeg'}},
                     profile)
 
         sent = site_api.payloads[-1]
 
-        assert sent['AttachmentName'] == 'evening.jpg'
+        assert sent['AttachmentName'] is None, 'снимок уедет как «уже имеющийся»'
         assert base64.b64decode(sent['AttachmentFile']) == b'\xff\xd8jpeg'
 
 
