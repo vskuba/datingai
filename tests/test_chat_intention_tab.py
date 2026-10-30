@@ -194,6 +194,43 @@ class TestThePageKnowsTheTab:
         assert 'data-slot="intention-pool-reload"' in page
 
 
+class TestTheDeliveryIsFullWidth:
+    """⚠⚠ Журнал доставки — во всю ширину панели, как у писем и инвайтов.
+
+    Строка несёт отправителя, адресата, текст и исход. В колонке (`in-col`)
+    от текста оставалась пара слов: замерено на живой странице — 516 пикселей
+    из 986. Колонку завели ради вида кнопки ⟳, но вид берут классы шапки, и
+    колонка для этого не нужна.
+    """
+
+    async def test_it_uses_the_mail_journal_classes(self, work):
+        start = work.find('data-intention-pane="sent"')
+        pane = work[start:work.find('</div>', work.find('intention-sent-list'))]
+
+        assert 'mail-sent-head' in pane, 'шапка журнала не та, что у соседей'
+        assert 'class="mail-sent"' in pane, 'список журнала не во всю ширину'
+
+    async def test_the_column_wrapper_is_gone(self, work):
+        """⚠ Именно обёртка и ужимала журнал — сторожим её отсутствие, а не
+        присутствие классов: те могли бы стоять внутри колонки."""
+        start = work.find('data-intention-pane="sent"')
+        pane = work[start:work.find('intention-sent-list', start)]
+
+        assert 'in-col' not in pane, (
+            'журнал снова завёрнут в колонку и займёт треть ширины')
+
+    async def test_the_sender_is_named(self, page):
+        """⚠⚠ Без имени анкеты журнал писал «без имени»: при девятнадцати
+        анкетах это значит «неизвестно, от кого ушло».
+
+        ⚠ Имя берётся **из списка слева**, а не от сервера: журнал по сайту, и
+        те же анкеты уже загружены страницей. Девятая копия правила «карточка →
+        имя и лицо» на сервере была бы платой за то, что и так под рукой.
+        """
+        assert 'profile_name: girl.name || girl.login' in page, (
+            'строки журнала не получают имени анкеты')
+
+
 class TestTheDoCheckbox:
     """Галочка «выполнять действия» — в своей панели."""
 

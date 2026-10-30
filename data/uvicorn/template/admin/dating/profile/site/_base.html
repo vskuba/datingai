@@ -1512,20 +1512,19 @@
        ушедшее не правят и не удаляют, и кнопки над ним другие. #}
     <div class="intention-pane off" data-intention-pane="sent">
         {% block work_intention_sent %}
-        {# ⚠ Колонкой (`in-col`), а не голой шапкой: шапка и кнопка обновления
-           берут вид от неё, и без обёртки `⟳` выпадала из ряда — синим
-           квадратом там, где у соседей бледный значок. #}
-        <div class="in-cols">
-            <div class="in-col">
-                <div class="in-head">
-                    <span data-slot="intention-sent-title">Доставка</span>
-                    <span class="in-count" data-slot="intention-sent-count"></span>
-                    <button type="button" class="in-reload"
-                            data-slot="intention-sent-reload" title="Обновить">⟳</button>
-                </div>
-                <div class="in-list" data-slot="intention-sent-list"></div>
-            </div>
+        {# ⚠⚠ Журнал — **во всю ширину панели**, как у писем и инвайтов, а не
+           колонкой: строка несёт отправителя, адресата, текст и исход, и в
+           трети ширины от текста оставалась пара слов. Колонка здесь была
+           ошибкой переноса — её завели ради вида кнопки ⟳, а вид берётся
+           классами шапки (`mail-sent-head`), и колонка для этого не нужна. #}
+        <div class="mail-sent-head">
+            <span>Доставка</span>
+            <span class="mail-sent-count" data-slot="intention-sent-count"></span>
+            <button type="button" class="people-reload"
+                    data-slot="intention-sent-reload"
+                    title="Перечитать журнал доставки">⟳</button>
         </div>
+        <div class="mail-sent" data-slot="intention-sent-list"></div>
         {% endblock %}
     </div>
 </div>
