@@ -567,6 +567,20 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     # ей и выбирать нечего.
     message_id = (', m.message_id' if table in MAIL_SEND_TALK_TABLES else '')
 
+    # ⚠⚠ **Столбцы исполнения — той же дорогой, и по той же причине.** После
+    # отправки `mail_send_mark` зовёт `intention_mail_done`, а та читает из
+    # строки `intention_id` и `gallery_file_id`: закрыть обещание и запомнить
+    # снимок. Не выбери их запрос — обе отметки лягут на нули и **молча не
+    # сделают ничего**: письмо ушло, обещание осталось открытым, снимок числится
+    # непоказанным — и следующее обещание отправит его второй раз.
+    #
+    # Так и было на проде 31.10.2026: письмо ушло кругом в 09:49, обещание
+    # висело открытым, `companion_gallery_file` пустовала. Кнопка человека при
+    # этом отмечала верно — она берёт строку целиком (`_mail_row`), и беда жила
+    # только у круга. Третий раз та же грабля: `reply_to`, `message_id`, эта.
+    doing = (', m.intention_id, m.gallery_file_id'
+             if table == 'intention_mail' else '')
+
     # ⚠⚠ **Остывшие получатели выпадают из очереди, а не отсеиваются после.**
     #
     # Круг берёт из пула **одно** письмо за заход. Отсей мы остывшего после
@@ -604,7 +618,8 @@ async def _oldest(site_id: int, table: str) -> dict | None:
         async with mysql_get_db_async() as db:
             await db.execute(
                 f'SELECT m.id, m.site_id, m.profile_id, m.uid, m.body, m.status,'
-                f' p.login, p.password, p.password_source{reply_to}{message_id}'
+                f' p.login, p.password, p.password_source'
+                f'{reply_to}{message_id}{doing}'
                 f'  FROM {table} m'
                 f'  JOIN profile p ON p.id = m.profile_id'
                 f'{reply_join}'

@@ -842,3 +842,62 @@ class TestTheFlagsAgree:
         assert said == {one[0] for one in _POOLS}, (
             'списки выключателей разошлись: пул, которого нет в `_sites`, '
             'не получит ни одного сайта и промолчит без ошибки')
+
+
+class TestTheQueryCarriesWhatMarksNeed:
+    """⚠⚠⚠ Запрос круга обязан выбрать **всё, что читают отметки после
+    отправки**. Эта грабля случилась уже трижды.
+
+    Круг берёт письмо фиксированным списком столбцов, а `mail_send_mark` после
+    удачной отправки читает из той же строки поля, которых в списке может не
+    оказаться. Молчание при этом полное: письмо ушло, запрос не упал, ошибок
+    нет — просто отметка легла на `None` и не сделала ничего.
+
+    | когда | чего не выбрали | чем кончилось |
+    |-------|-----------------|---------------|
+    | 26.09.2026 | `reply_to` | панель числила неотвеченными письма суточной давности |
+    | ранее | `message_id` | сосед не узнавал, что реплика дошла |
+    | 31.10.2026 | `intention_id`, `gallery_file_id` | письмо ушло, обещание осталось открытым, снимок числился непоказанным |
+
+    ⚠ Сторож проверяет **текст запроса**, а не поведение: поймать это живым
+    прогоном можно лишь через сутки и случайно — ровно так его и находили.
+    """
+
+    def _query(self) -> str:
+        import inspect
+
+        from src.dating import send_round
+
+        return inspect.getsource(send_round)
+
+    def test_the_intention_columns_are_selected(self):
+        """⚠⚠ `intention_id` закрывает обещание, `gallery_file_id` помнит
+        снимок. Без них ушедшее письмо не делает ни того, ни другого — и
+        следующее обещание отправит тот же кадр второй раз."""
+        code = self._query()
+
+        assert 'm.intention_id' in code and 'm.gallery_file_id' in code, (
+            'запрос круга не выбирает столбцы исполнения — отметки лягут на '
+            'нули и молча ничего не сделают')
+
+    def test_they_ride_only_for_their_table(self):
+        """⚠ У прочих пулов этих колонок нет вовсе: выбери их безусловно, и
+        запрос упал бы на `mailing` с «Unknown column»."""
+        code = self._query()
+        spot = code.find('m.intention_id')
+        head = code.rfind('\n', 0, spot - 120)
+
+        assert "table == 'intention_mail'" in code[head:spot + 160], (
+            'столбцы исполнения выбираются безусловно — другие пулы упадут')
+
+    def test_every_optional_column_is_in_the_select(self):
+        """⚠ Собранные куски обязаны попасть **в сам запрос**: объявить
+        переменную и забыть подставить — то же молчание, что и не объявить.
+        """
+        code = self._query()
+        spot = code.find('SELECT m.id, m.site_id')
+        query = code[spot:code.find('ORDER BY m.id LIMIT 1', spot)]
+
+        for piece in ('{reply_to}', '{message_id}', '{doing}'):
+            assert piece in query, f'кусок {piece} собран, но не подставлен'
+
