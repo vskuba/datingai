@@ -23,6 +23,7 @@ from src.dating.chat_intention import (chat_intention_drop,
                                        chat_intention_row,
                                        chat_intention_rows)
 from src.dating.companion_gallery import companion_gallery_pick
+from src.dating.intention_round import intention_round_next
 from src.dating.intention_do import (DatingIntentionError, intention_mail_make,
                                      intention_mail_ready)
 from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
@@ -78,17 +79,23 @@ async def chat_intention_list(site_id: int = 0, profile_id: int = 0,
         per: строк на странице. Ноль — предел по умолчанию.
 
     Returns:
-        dict: `result` — записи страницы, рядом `page`, `pages`, `total`.
+        dict: `result` — записи страницы, рядом `page`, `pages`, `total` и
+        `next_sec` — через сколько секунд круг зайдёт сюда снова.
 
     ⚠ **Одна ручка на две колонки.** Они спрашивают одно и то же разными
     доводами; вторая ручка держала бы две копии отбора и разошлась бы с первой.
+
+    ⚠ Срок круга едет **вместе со списком**, а не своей ручкой: пул и «когда
+    добавится» читают одним взглядом, и два запроса дали бы два момента
+    времени. Так же устроены пулы инвайтов и писем избранным.
     """
     got = await chat_intention_rows(int(site_id or 0), int(profile_id or 0),
                                     str(uid or ''), str(status or ''),
                                     int(page or 1), int(per or 0))
 
     return {'result': got['rows'], 'page': got['page'], 'pages': got['pages'],
-            'total': got['total']}
+            'total': got['total'],
+            'next_sec': intention_round_next(int(site_id or 0))}
 
 
 @router.get('/{intention_id}/photo', include_in_schema=False)

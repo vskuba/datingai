@@ -651,12 +651,13 @@
     }
     .intention-pane.off { display: none; }
 
-    /* ⚠ Галочка «выполнять действия» стоит в своей строке над панелями, а не в
-       правом краю полосы вкладок: полоса здесь из двух кнопок, и настройка
-       рядом с ними читалась бы третьей вкладкой. */
-    .work-panel[data-tab="intention"] .mail-switch {
-        display: inline-flex; align-items: center; gap: 6px;
-        margin: 0 0 8px; font-size: 12px; color: #475569; cursor: pointer;
+    /* ⚠⚠ Полосе нужна **растяжка**: вправо галочку уводит `margin-left: auto`
+       у `.mail-tabs-set`, а тому нужно свободное место. Без неё коробка
+       обнимала бы две кнопки, и настройка вставала бы вплотную к «Доставке» —
+       то есть читалась бы третьей вкладкой. Тот же приём и та же причина, что
+       у `.fav-tabs` выше. */
+    .intention-tabs {
+        justify-self: stretch;
     }
 
     /* Работа с письмами на «Фаворитах» — под лентой избранных, остатком высоты.
@@ -5150,14 +5151,10 @@
         if (intentionSentReload)
             intentionSentReload.addEventListener('click', intentionSentLoad);
 
-        // ⚠ Переключатель «в пуле / сделано» — узел шаблона, живёт до смены
-        // сайта; вешать на него надо здесь, а не в отрисовке: она переписывает
-        // только списки, и обработчик повесился бы заново на каждое чтение.
-        [['intention-pool-open', 'open'],
-         ['intention-pool-done', 'done']].forEach(([name, want]) => {
-            const btn = workEl.querySelector(`[data-slot="${name}"]`);
-            if (btn) btn.addEventListener('click', () => intentionPoolSwitch(want));
-        });
+        const intentionDoneReload = workEl.querySelector(
+            '[data-slot="intention-done-reload"]');
+        if (intentionDoneReload)
+            intentionDoneReload.addEventListener('click', intentionDoneLoad);
 
         // Что с инициативой у этой пары — окном. ⚠ Ничего не меняет, только
         // рассказывает: решение отпустить пару принимает соседний значок.
@@ -6769,7 +6766,6 @@
     let intentionPoolPage = 0, intentionPoolPages = 1, intentionPoolTotal = 0;
     // Какие намерения показывает правая колонка: `open` (пул) или `done`
     // (исполненные). ⚠ Переключателем, а не четвёртой колонкой: вопрос один.
-    let intentionPoolStatus = 'open';
     // Готовые письма по обещаниям: `{номер намерения: строка intention_mail}`.
     // ⚠ Отдельным запросом на всю колонку, а не полем в списке намерений:
     // письмо есть не у каждого намерения, и собирать их джойном значило бы
@@ -6914,7 +6910,7 @@
 
         intentionPairsLoad();
         intentionPoolLoad();
-        intentionStuffPaint();
+        intentionDoneLoad();
     }
 
     async function intentionPairsLoad() {
@@ -7013,85 +7009,85 @@
     // написанное в ответ на «пришли мне свою фотографию», читается иначе, чем
     // то же письмо посреди спора.
     //
-    // ⚠ Чем именно показывать намерение, решает `INTENTION_STUFF` — карта
-    // «метка → вид». Сегодня метка одна, и карта из одной строки выглядит
-    // избыточной; но вторая метка приедет от **соседа**, из workflow, а не из
-    // нашей выкладки, и ветвление `if (intention === '…')` пришлось бы
-    // переписывать на каждую. Неизвестная метка показывает переписку — она
-    // есть у любой пары и ни о чём не врёт.
-    const INTENTION_STUFF = {
-        she_promised_send_photo: {title: 'Переписка', show: intentionMailShow},
-    };
-
-    const intentionStuffOf = (mark) =>
-        INTENTION_STUFF[mark] || {title: 'Переписка', show: intentionMailShow};
-
     // ⚠ Выбор пары — **одной дверью**: его делают два места (строка слева и
     // карточка справа), и вторая копия разошлась бы с первой на первой правке.
     function intentionPick(key) {
         intentionOpen = String(key || '');
         intentionPairsPaint();
         intentionPoolPaint();
-        intentionStuffPaint();
+        intentionDonePaint();
     }
 
-    function intentionStuffPaint() {
-        const box = slot('intention-stuff');
+    // ── Средняя колонка: исполненные намерения ───────────────────────────────
+    //
+    // ⚠⚠ Своя загрузка, а не переключатель над общим списком. Прежде оба
+    // отбора делили одну колонку и один набор переменных (`intentionPool`,
+    // страница, счёт), и показать их разом было нельзя. Теперь они стоят
+    // рядом, и каждому нужна своя страница: у пула её листают, пока история
+    // исполненного остаётся на месте.
+    // Через сколько круг зайдёт за намерениями. ⚠ `-1` — спросить не вышло.
+    let intentionNext = -1;
+
+    let intentionDone = [];
+    let intentionDonePage = 0;
+    let intentionDonePages = 1;
+    let intentionDoneTotal = 0;
+
+    async function intentionDoneLoad() {
+        const site = siteId();
+        if (!site) {
+            intentionDone = [];
+            intentionDonePaint();
+
+            return;
+        }
+
+        try {
+            const got = (await getData(
+                `${BASE}/api/dating/chat-intention?site_id=${site}`
+                + `&profile_id=${openId || 0}&status=done`
+                + `&page=${intentionDonePage + 1}`)) || {};
+
+            intentionDone = got.result || [];
+            intentionDonePages = Math.max(1, Number(got.pages) || 1);
+            intentionDoneTotal = Number(got.total) || 0;
+            intentionDonePage = Math.max(0, (Number(got.page) || 1) - 1);
+        } catch (e) {
+            intentionDone = [];
+            showNotification('Исполненные не пришли: ' + e.message, 'error');
+        }
+
+        intentionDonePaint();
+    }
+
+    function intentionDonePaint() {
+        const box = slot('intention-done-list');
         if (!box) return;
 
-        // ⚠ Имя пары ищется **в обоих списках**: пару выбирают и слева, и
-        // карточкой справа, а в левый список попадают только пары с текущей
-        // страницы — выбранная карточкой могла быть не на ней.
-        const picked = intentionPairs.find(
-            row => intentionKey(row) === intentionOpen)
-            || intentionPool.find(row => intentionKey(row) === intentionOpen);
+        // ⚠ Только число: подпись «Сделано» уже стоит рядом в шапке, и
+        // «СДЕЛАНО · сделано: 0» читается как сбой отрисовки. У соседних
+        // колонок слово в счёте уместно — там шапка называет не его.
+        fillSlot('intention-done-count', `${intentionDoneTotal}`);
 
-        const who = picked ? `${picked.profile_name} → ${picked.name}` : '';
-        fillSlot('intention-stuff-who', who);
-        // ⚠ Имя обрезается многоточием (правило у этой панели), поэтому целиком
-        // оно живёт в подсказке: иначе длинная пара читалась бы наполовину и
-        // узнать её было бы нечем.
-        const whoBox = slot('intention-stuff-who');
-        if (whoBox) whoBox.title = who;
-
-        if (!intentionOpen || !picked) {
-            fillSlot('intention-stuff-title', 'Переписка');
-            box.innerHTML = '<div class="in-empty">Выберите пару слева '
-                + 'или карточку справа.</div>';
+        if (!intentionDone.length) {
+            // ⚠ Говорим, **чем** это наполняется: пустая колонка рядом с
+            // полным пулом читается как «не загрузилось», а на самом деле
+            // значит «ещё ничего не исполнено».
+            box.innerHTML = '<div class="in-empty">Исполненных намерений нет.'
+                + '<br>Сюда попадает то, что круг уже отправил.</div>';
+            intentionPagerPaint('intention-done-pager', 1, 0, () => {}, '');
 
             return;
         }
 
-        const stuff = intentionStuffOf(picked.intention || '');
-        fillSlot('intention-stuff-title', stuff.title);
-        stuff.show(box, picked);
-    }
+        box.innerHTML = intentionDone.map(intentionCard).join('');
+        intentionCardsWire(box);
 
-    // ⚠ Ручка — **чужая, и намеренно**: `/favorite-mail/threads/{анкета}/{кто}`
-    // уже собирает нить парой и с ушедшими приставаниями. Своя ручка держала бы
-    // вторую сборку того же разговора; та же причина, по которой рисуем общим
-    // `threadPaint`, а не своей раскладкой.
-    async function intentionMailShow(box, pair) {
-        const was = intentionOpen;
-        box.innerHTML = '<span class="reply-thread-wait">гружу переписку…</span>';
-
-        let rows;
-        try {
-            rows = ((await getData(
-                `${BASE}/api/dating/favorite-mail/threads/`
-                + `${pair.profile_id}/${encodeURIComponent(pair.uid)}`))
-                || {}).result || [];
-        } catch (e) {
-            box.innerHTML = '<span class="reply-thread-wait">переписка не '
-                + `пришла: ${esc(e.message)}</span>`;
-
-            return;
-        }
-
-        // Пока ответ ехал, могли выбрать другую пару.
-        if (intentionOpen !== was) return;
-
-        threadPaint(box, rows, {name: pair.name, girl: pair.profile_name});
+        intentionPagerPaint('intention-done-pager', intentionDonePages,
+                            intentionDonePage,
+                            (pick) => { intentionDonePage = pick;
+                                        intentionDoneLoad(); },
+                            `сделано: ${intentionDoneTotal}`);  // в подвале слово нужно
     }
 
     async function intentionPoolLoad() {
@@ -7112,10 +7108,16 @@
         try {
             const got = (await getData(
                 `${BASE}/api/dating/chat-intention?site_id=${site}`
-                + `&profile_id=${openId || 0}&status=${intentionPoolStatus}`
+                // ⚠ Только открытые: исполненные живут в своей колонке и
+                // грузятся своей дорогой.
+                + `&profile_id=${openId || 0}&status=open`
                 + `&page=${intentionPoolPage + 1}`)) || {};
 
             intentionPool = got.result || [];
+            // ⚠ Срок приезжает **вместе со списком**: два запроса дали бы два
+            // момента времени, и счёт спорил бы со сроком в одном взгляде.
+            intentionNext = got.next_sec === undefined
+                ? -1 : Number(got.next_sec);
             intentionPoolPages = Math.max(1, Number(got.pages) || 1);
             intentionPoolTotal = Number(got.total) || 0;
             intentionPoolPage = Math.max(0, (Number(got.page) || 1) - 1);
@@ -7148,17 +7150,6 @@
         }
     }
 
-    // ⚠ Переключатель «в пуле / сделано». Страница сбрасывается: у двух отборов
-    // длина разная, и третья страница пула у исполненных могла бы не
-    // существовать вовсе — список вышел бы пустым при непустом ответе.
-    function intentionPoolSwitch(want) {
-        if (intentionPoolStatus === want) return;
-
-        intentionPoolStatus = want;
-        intentionPoolPage = 0;
-        intentionPoolLoad();
-    }
-
     function intentionPoolPaint() {
         const box = slot('intention-pool-list');
         if (!box) return;
@@ -7167,25 +7158,19 @@
         // должно стоять в обоих состояниях — иначе шапка прыгает при первом же
         // наполнении.
         fillSlot('intention-pool-count', `намерений: ${intentionPoolTotal}`);
-
-        const open = intentionPoolStatus === 'open';
-        const onBtn = slot('intention-pool-open');
-        const offBtn = slot('intention-pool-done');
-        if (onBtn) onBtn.classList.toggle('on', open);
-        if (offBtn) offBtn.classList.toggle('on', !open);
+        // ⚠ Слово «соберёт», а не «наберёт»: круг намерений не набирает пул —
+        // его наполняет прогон агента, — а собирает письма по тому, что в нём
+        // уже лежит. Общая выкройка говорит «наберёт», и здесь это было бы
+        // обещанием чужой работы.
+        fillSlot('intention-pool-next',
+                 roundNextText(intentionNext, 'по сроку круга', 'соберёт'));
 
         if (!intentionPool.length) {
-            // ⚠⚠ Пустота у двух отборов значит **разное**, и говорить надо
-            // разное. Пул пуст — агент ещё ничего не обещал; исполненных нет —
-            // занятия-исполнителя пока не существует вовсе, и человек, увидев
-            // ту же фразу, искал бы поломку там, где её нет.
-            box.innerHTML = open
-                ? '<div class="in-empty">Пул пуст.<br>'
-                  + 'Намерения кладёт сюда прогон агента — на каждом ответе в '
-                  + 'чате и в письмах.</div>'
-                : '<div class="in-empty">Исполненных намерений нет: '
-                  + 'занятия, которое их исполняет, пока не существует — '
-                  + 'все намерения ждут в пуле.</div>';
+            // ⚠ Говорим, **чем** наполняется: пустая колонка читается как
+            // «не загрузилось», а значит она «агент пока ничего не обещал».
+            box.innerHTML = '<div class="in-empty">Пул пуст.<br>'
+                + 'Намерения кладёт сюда прогон агента — на каждом ответе в '
+                + 'чате и в письмах.</div>';
             intentionPagerPaint('intention-pool-pager', 1, 0, () => {}, '');
 
             return;
@@ -7723,21 +7708,39 @@
     //
     // ⚠ **Три разных ответа, а не один.** «Скоро» на месте неизвестного срока
     // обещало бы то, чего мы не знаем, а молчание не отличалось бы от поломки.
-    function inviteNextText() {
-        const sec = Number(inviteNext);
+    // Через сколько круг зайдёт снова — словами.
+    //
+    // ⚠⚠ **Одна выкройка на все пулы.** Текст стоял двумя копиями слово в
+    // слово (инвайты и письма избранным) и различался ровно одной фразой — той,
+    // что говорится при молчащем Redis. Третий пул сделал бы её третьей копией,
+    // и разошлись бы они не формой, а правилом: «через 90 минут» у одного и
+    // «через 1 ч 30 мин» у другого читались бы как разные механизмы.
+    //
+    // Args:
+    //   sec: `next_sec` ручки. Отрицательное — спросить не вышло.
+    //   silent: что сказать, когда срок не спросился. Своё у каждого пула: у
+    //     инвайтов «по расписанию», у прочих — «наберётся кругом».
+    //   verb: что круг сделает. ⚠ Доводом, а не заменой слова в готовой
+    //     строке: намерения круг не **набирает** — пул наполняет прогон
+    //     агента, — а собирает по нему письма. Правь мы текст подстановкой,
+    //     первая же правка выкройки тихо вернула бы чужой глагол.
+    function roundNextText(sec, silent, verb = 'наберёт') {
+        const left = Number(sec);
 
         // Спросить не вышло (Redis молчит) — не врём сроком.
-        if (!Number.isFinite(sec) || sec < 0) return 'по расписанию';
+        if (!Number.isFinite(left) || left < 0) return silent;
 
         // Отметки нет: круг возьмётся на ближайшем тике, а он раз в минуту.
-        if (!sec) return 'наберёт в ближайшую минуту';
+        if (!left) return `${verb} в ближайшую минуту`;
 
-        const mins = Math.ceil(sec / 60);
+        const mins = Math.ceil(left / 60);
 
         return mins < 60
-            ? `наберёт через ${mins} мин`
-            : `наберёт через ${Math.floor(mins / 60)} ч ${mins % 60} мин`;
+            ? `${verb} через ${mins} мин`
+            : `${verb} через ${Math.floor(mins / 60)} ч ${mins % 60} мин`;
     }
+
+    const inviteNextText = () => roundNextText(inviteNext, 'по расписанию');
 
     function inviteCard(one, index) {
         const sent = one.status !== 'draft';
@@ -9194,21 +9197,7 @@
     // Срок следующего захода круга — теми же словами, что у инвайтов: круг у них
     // устроен одинаково, и разные формулировки про одно человеку пришлось бы
     // сверять между вкладками.
-    function favMailNextText() {
-        const sec = Number(favMailNext);
-
-        // Спросить не вышло (Redis молчит) — не врём сроком.
-        if (!Number.isFinite(sec) || sec < 0) return 'наберётся кругом';
-
-        // Отметки нет: круг возьмётся на ближайшем тике, а он раз в минуту.
-        if (!sec) return 'наберёт в ближайшую минуту';
-
-        const mins = Math.ceil(sec / 60);
-
-        return mins < 60
-            ? `наберёт через ${mins} мин`
-            : `наберёт через ${Math.floor(mins / 60)} ч ${mins % 60} мин`;
-    }
+    const favMailNextText = () => roundNextText(favMailNext, 'наберётся кругом');
 
     function favMailCard(one, index) {
         const sent = one.status !== 'draft';

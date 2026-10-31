@@ -129,23 +129,37 @@ class TestThePane:
 
         assert 'in-cols in-cols-3' in pane, 'раскладка не трёхколонная'
         assert pane.count('data-slot="intention-pairs-list"') == 1
-        # ⚠ Средняя колонка показывает **материал** намерения (у обещания фото
-        # это переписка письмами), а не список исполненного: решить, годится ли
-        # обещанное, можно только рядом с разговором. «Сделано» переехало
-        # переключателем в правую колонку — вид не потерян.
-        assert pane.count('data-slot="intention-stuff"') == 1
+        # ⚠⚠ Средняя колонка — **исполненные**, и три колонки читаются как путь
+        # работы: кому обещали → что уже сделано → что ещё ждёт. Прежде здесь
+        # стоял материал намерения (переписка письмами пары), а «Сделано»
+        # пряталось переключателем справа: пока исполнителя не было, показывать
+        # там было нечего.
+        assert pane.count('data-slot="intention-done-list"') == 1
         assert pane.count('data-slot="intention-pool-list"') == 1
         assert pane.count('split-reply') == 1 and pane.count('split-initiative') == 1
 
-    async def test_the_done_view_did_not_vanish_with_its_column(self, work):
-        """⚠⚠ Колонку «Сделано» убрали, а вид обязан остаться.
+    async def test_the_done_column_loads_on_its_own(self, work, page):
+        """⚠⚠ У исполненных **своя** загрузка, а не переключатель над общим
+        списком.
 
-        Исполнителя не было, и колонка стояла пустой всегда — но «убрать
-        пустое» легко превращается в «потерять вид». Теперь это переключатель
-        в шапке правой колонки, и отбор у него свой (`status=done`).
+        Прежде оба отбора делили одну колонку и один набор переменных (список,
+        страница, счёт), и показать их разом было нельзя. Теперь они стоят
+        рядом, и каждому нужна своя страница: пул листают, пока история
+        исполненного остаётся на месте.
         """
-        assert 'data-slot="intention-pool-open"' in work
-        assert 'data-slot="intention-pool-done"' in work
+        assert 'data-slot="intention-done-pager"' in work, (
+            'у колонки исполненных нет своего пейджера')
+        assert 'intentionDonePage' in page, 'страница исполненных общая с пулом'
+        assert "status=done" in page, 'исполненные не отбираются отдельно'
+        assert "status=open" in page, 'пул больше не отбирает только открытые'
+
+    async def test_the_switcher_is_gone(self, work, page):
+        """⚠ Переключатель убран, а не оставлен вторым входом: два места на
+        один вопрос — это «какое настоящее» на каждом заходе."""
+        assert 'data-slot="intention-pool-open"' not in work, (
+            'переключатель остался в шапке пула')
+        assert 'intentionPoolStatus' not in page, (
+            'состояние переключателя живёт в скрипте без самого переключателя')
 
     async def test_every_paged_column_has_a_pager(self, work):
         """⚠ Список, отданный целиком, кончается молча: конец прокрутки читается
@@ -192,6 +206,69 @@ class TestThePageKnowsTheTab:
 
         assert 'data-slot="intention-pairs-reload"' in page
         assert 'data-slot="intention-pool-reload"' in page
+
+
+class TestTheSwitchSitsRight:
+    """⚠ Галочка «выполнять действия» — в правом краю полосы вкладок, как
+    настройки у почты, инвайтов и фаворитов: человек ищет «где это включается»
+    один раз, а не заново на каждой вкладке."""
+
+    async def test_it_is_inside_the_strip(self, work):
+        strip = work[work.find('intention-tabs'):work.find('intention-pane')]
+
+        assert 'chat-intention-do-on' in strip, (
+            'галочка стоит вне полосы вкладок — своей строкой под ней')
+        assert 'mail-tabs-set' in strip, (
+            'галочка не в общей коробке настроек: вправо её уводит '
+            '`margin-left: auto` именно у неё')
+
+    async def test_the_strip_is_stretched(self, page):
+        """⚠⚠ Без растяжки коробка обнимала бы две кнопки, и настройка вставала
+        бы вплотную к «Доставке» — то есть читалась бы третьей вкладкой."""
+        spot = page.find('.intention-tabs {')
+
+        assert spot > 0 and 'justify-self: stretch' in page[spot:spot + 160], (
+            'полоса не растянута — `margin-left: auto` не сработает')
+
+
+class TestThePoolTellsWhenItRunsAgain:
+    """⚠ Срок круга в шапке пула: «сколько ждёт» и «когда добавится» — один
+    взгляд. Без него включённая галочка читалась как «включил, а оно не
+    работает»: ждать минуту или час — по надписи не понять."""
+
+    async def test_the_handle_sends_it(self, auth_client):
+        from tests.conftest import TEST_STAND_SITE
+
+        got = (await auth_client.get(
+            f'/api/dating/chat-intention?site_id={TEST_STAND_SITE}')).json()
+
+        assert 'next_sec' in got, 'ручка не отдаёт срок круга'
+        assert int(got['next_sec']) >= -1, 'срок не число секунд'
+
+    async def test_it_rides_with_the_list(self, page):
+        """⚠ Срок приезжает **вместе со списком**: два запроса дали бы два
+        момента времени, и счёт спорил бы со сроком в одном взгляде."""
+        assert 'got.next_sec' in page, 'страница не читает срок из ответа списка'
+        assert 'intention-pool-next' in page, 'сроку негде показаться'
+
+    async def test_the_text_is_one_pattern(self, page):
+        """⚠⚠ Текст стоял **двумя копиями слово в слово** (инвайты и письма
+        избранным) и различался одной фразой. Третий пул сделал бы её третьей,
+        и разошлись бы они не формой, а правилом: «через 90 минут» у одного и
+        «через 1 ч 30 мин» у другого читались бы как разные механизмы.
+        """
+        assert page.count('Math.floor(mins / 60)') == 1, (
+            'выкройка срока снова размножилась копиями')
+        assert 'function roundNextText(' in page, 'общей выкройки нет'
+
+    async def test_the_verb_is_a_parameter(self, page):
+        """⚠ Намерения круг не **набирает** — пул наполняет прогон агента, — а
+        собирает по нему письма. Правь мы текст подстановкой в готовую строку,
+        первая же правка выкройки тихо вернула бы чужой глагол."""
+        assert "'по сроку круга', 'соберёт')" in page, (
+            'глагол намерений не передаётся доводом')
+        assert ".replace('наберёт'" not in page, (
+            'глагол правится подстановкой в готовой строке')
 
 
 class TestTheCardCanBeDropped:

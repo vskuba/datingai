@@ -31,7 +31,8 @@
 from logging_.logging_ import logger_info
 
 from src.dating.intention_do import intention_mail_make
-from src.dating.round import round_sites, round_sites_run, round_slot_due
+from src.dating.round import (round_sites, round_sites_run,
+                              round_slot_due, round_slot_left)
 from src.dating.site_setting import site_seconds
 
 # Как часто круг просыпается. ⚠ Это **не** частота захода: её держит слот, а тик
@@ -79,6 +80,27 @@ async def intention_round_run(offset: int = 0) -> dict:
 
     return {'sites': ran, 'made': made, 'skipped': skipped}
 
+
+
+def intention_round_next(site_id: int) -> int:
+    """Сколько секунд до следующего захода круга по этому сайту.
+
+    Returns:
+        int: секунды до захода. `0` — отметки нет, круг возьмётся за сайт на
+        ближайшем тике (в пределах минуты). `-1` — спросить не вышло, и врать
+        сроком нельзя.
+
+    ⚠ Срок передаём **текущий** (`_every`): без него слой считает «сколько до
+    гашения ключа», и правка настройки видна человеку только со следующего
+    захода. Та же оговорка, что у соседей.
+
+    ⚠⚠ Ключ собирает **слой**, а не эта функция. У соседей она подставляла
+    единицу сама — `.format(site_id=…)` на шаблоне с меткой `{id}`, — и ответ
+    был `-1` всегда: `KeyError` глотал `except`, а счётчик молчал месяцами и
+    выглядел как «данных нет».
+    """
+    return round_slot_left(INTENTION_ROUND_KEY, int(site_id),
+                           'исполнению обещаний')
 
 
 async def _sites() -> list[dict]:

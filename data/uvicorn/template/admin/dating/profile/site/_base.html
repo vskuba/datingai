@@ -1432,19 +1432,25 @@
    дошло. #}
 <div class="work-panel" data-tab="intention">
 
+    {# ⚠ Галочка живёт **в правом краю полосы вкладок**, как настройки у
+       почты, инвайтов и фаворитов: человек ищет «где это включается» один раз,
+       а не заново на каждой вкладке. Своей строкой под полосой она отъедала
+       высоту у списка и стояла там, где у соседей ничего нет.
+
+       ⚠ Галочка одна на обе подвкладки (`data-for` ей не нужен): занятие у них
+       общее — «Диалоги» показывают, что обещано, «Доставка» — что ушло. #}
     <div class="page-tabs intention-tabs" data-slot="intention-tabs">
         <button type="button" class="page-tab on"
                 data-intention-tab="talk">Диалоги</button>
         <button type="button" class="page-tab"
                 data-intention-tab="sent">Доставка</button>
-    </div>
 
-    {# ⚠ Галочка «выполнять действия» живёт **здесь**, а не в шапке «Чата»:
-       она про это занятие и больше ни про какое. На «Чате» её не осталось. #}
-    <label class="mail-switch" title="Собирать письма по обещаниям и отправлять их">
-        <input type="checkbox" data-slot="chat-intention-do-on">
-        <span>выполнять действия</span>
-    </label>
+        <span class="mail-tabs-set">
+            <label title="Собирать письма по обещаниям и отправлять их">
+                <input type="checkbox" data-slot="chat-intention-do-on">
+                выполнять действия</label>
+        </span>
+    </div>
 
     <div class="intention-pane" data-intention-pane="talk">
     {% block work_chat_intention %}
@@ -1464,22 +1470,28 @@
         <div class="split split-reply"
              title="Потяните, чтобы изменить ширину"></div>
 
-        {# ⚠⚠ Средняя колонка показывает **материал намерения**, а не список
-           намерений: карточка говорит «что обещано», а решить, годится ли
-           обещанное, можно только рядом с разговором. У обещания прислать
-           фото материал — переписка письмами; у будущих намерений он будет
-           свой, и выбирает его `INTENTION_STUFF`.
+        {# ⚠⚠ Средняя колонка — **исполненные намерения**, и три колонки
+           читаются как путь работы: кому обещали → что уже сделано → что ещё
+           ждёт. Прежде здесь стоял материал намерения (переписка письмами
+           пары), а «Сделано» пряталось переключателем в правой колонке: пока
+           исполнителя не было, показывать там было нечего.
 
-           ⚠ Прежде здесь стояло «Сделано». Оно не пропало — переехало
-           переключателем в правую колонку: исполнителя пока нет, и колонка
-           была пуста всегда, а вид терять нельзя. #}
+           Теперь наоборот. Исполненное копится само, и смотрят его чаще, чем
+           переписку: карточка уже несёт текст письма, приметы и превью снимка
+           — того, по чему решают «годится ли», в ней самой хватает.
+
+           ⚠ Цена размена названа: переписки письмами пары на этой вкладке
+           больше нет. Она осталась на «Фаворитах → Диалоги». #}
         <div class="in-col">
             <div class="in-head">
-                <span data-slot="intention-stuff-title">Переписка</span>
-                <span class="in-count" data-slot="intention-stuff-who"></span>
+                <span>Сделано</span>
+                <span class="in-count" data-slot="intention-done-count"></span>
+                <button type="button" class="people-reload"
+                        data-slot="intention-done-reload"
+                        title="Перечитать исполненные">⟳</button>
             </div>
-            <div class="in-list reply-thread"
-                 data-slot="intention-stuff"></div>
+            <div class="in-list" data-slot="intention-done-list"></div>
+            <div class="pane-foot" data-slot="intention-done-pager"></div>
         </div>
 
         <div class="split split-initiative"
@@ -1487,16 +1499,16 @@
 
         <div class="in-col in-col-pool">
             <div class="in-head">
-                {# ⚠ Переключатель, а не две колонки: вопрос у них один —
-                   «какие намерения показать», — и разводить его по колонкам
-                   значило бы держать два списка на один ответ. #}
-                <span class="in-switch">
-                    <button type="button" class="in-switch-btn on"
-                            data-slot="intention-pool-open">В пуле</button>
-                    <button type="button" class="in-switch-btn"
-                            data-slot="intention-pool-done">Сделано</button>
-                </span>
+                {# ⚠ Переключателя здесь больше нет: «Сделано» переехало в
+                   среднюю колонку, и правая отвечает на один вопрос — «что
+                   ещё ждёт работы». Два списка на один ответ были нужны, пока
+                   средняя была занята перепиской. #}
+                <span>В пуле</span>
                 <span class="in-count" data-slot="intention-pool-count"></span>
+                {# ⚠ Срок круга рядом со счётом: «сколько ждёт» и «когда
+                   добавится» — один взгляд. Своей строкой он отъедал бы
+                   высоту у списка, а в подсказке его не нашли бы. #}
+                <span class="in-count" data-slot="intention-pool-next"></span>
                 <button type="button" class="people-reload"
                         data-slot="intention-pool-reload"
                         title="Перечитать пул">⟳</button>
