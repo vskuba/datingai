@@ -84,11 +84,11 @@ def agent(monkeypatch):
 
         return agent.answer
 
-    async def _agent_id(profile_id):
+    async def _agent(profile_id):
         return 501
 
     monkeypatch.setattr(gallery_vision, 'rhapsody_api_chat_ask', _ask)
-    monkeypatch.setattr(gallery_vision, '_agent_id', _agent_id)
+    monkeypatch.setattr(gallery_vision, 'gallery_vision_agent', _agent)
     agent.asked = asked
     agent.answer = ANSWER
 

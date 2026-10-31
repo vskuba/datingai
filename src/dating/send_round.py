@@ -59,10 +59,10 @@ from src.dating.json_column import json_column_list
 from datetime_.datetime_ import datetime_day_minutes
 from src.dating.round import (round_mem_due, round_mem_mark, round_sent_day,
                               round_sites)
-from src.dating.intention_do import DatingIntentionError, intention_mail_ready
-from src.dating.mail_send import (MAIL_SEND_TALK_TABLES, DatingMailSendError,
-                                  DatingMailWaitError, mail_send_fail,
-                                  mail_send_one)
+from src.dating.mail_shot import DatingMailShotError, mail_shot_ready
+from src.dating.mail_send import (MAIL_SEND_SHOT_TABLES, MAIL_SEND_TALK_TABLES,
+                                  DatingMailSendError, DatingMailWaitError,
+                                  mail_send_fail, mail_send_one)
 from src.dating.mail_wait import mail_wait_uids
 from src.dating.pool_pair import pool_mail_answered_where
 from src.dating.schedule import schedule_now
@@ -578,8 +578,13 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     # висело открытым, `companion_gallery_file` пустовала. Кнопка человека при
     # этом отмечала верно — она берёт строку целиком (`_mail_row`), и беда жила
     # только у круга. Третий раз та же грабля: `reply_to`, `message_id`, эта.
-    doing = (', m.intention_id, m.gallery_file_id'
-             if table == 'intention_mail' else '')
+    #
+    # ⚠⚠ **Номер снимка выбирают три пула, а номер обещания — один.** Снимок
+    # выпадает жребием и ответу, и приставанию (`mail_shot.py`); не выбери его
+    # запрос у них, письмо ушло бы текстом при назначенном кадре — и ровно так
+    # же молча. Обещание же есть только у своего пула.
+    shot = (', m.gallery_file_id' if table in MAIL_SEND_SHOT_TABLES else '')
+    doing = ((', m.intention_id' if table == 'intention_mail' else '') + shot)
 
     # ⚠⚠ **Остывшие получатели выпадают из очереди, а не отсеиваются после.**
     #
@@ -659,22 +664,33 @@ async def _send(letter: dict, table: str) -> str:
     # запроса выше и нужен обоим путям — `ReplyForMessageId` у ручки API и
     # `MessageId` у формы панели.
 
-    # ⚠⚠ Снимок добывается **здесь, до отправки**, и только у этого пула: между
-    # `check-send` и `send` нельзя ходить в сеть, а Диск отвечает секунды.
-    # Готовит его одна дверь на обе дороги (круг и кнопка человека) — своя
-    # подготовка у каждой разошлась бы, и одна из них отправила бы «вот моё
-    # фото» без фото.
-    if table == 'intention_mail':
+    # ⚠⚠ Снимок добывается **здесь, до отправки**: между `check-send` и `send`
+    # нельзя ходить в сеть, а Диск отвечает секунды. Готовит его одна дверь на
+    # все пулы и обе дороги (круг и кнопка человека) — своя подготовка у
+    # каждого разошлась бы, и один слал бы снимок, другой то же письмо текстом.
+    if int(letter.get('gallery_file_id') or 0):
         try:
-            letter = await intention_mail_ready(letter)
-        except DatingIntentionError as e:
-            # ⚠ Это **не** отказ сайта: наружу мы ещё не ходили. Причина
-            # ложится в письмо тем же путём, и круг вернётся к нему, когда
-            # снимок появится.
-            await mail_send_fail(letter, DatingMailSendError(str(e)), table=table)
-            logger_info(f"[dating] {table} #{letter['id']} без снимка: {e}")
+            letter = await mail_shot_ready(letter)
+        except DatingMailShotError as e:
+            # ⚠⚠ **Исход тут разный, и это главное различие пулов.** У письма
+            # по обещанию снимок — суть дела: о нём просили, и «вот моё фото»
+            # без фото это обман, поэтому письмо ждёт, пока снимок вернётся.
+            # У ответа и приставания снимок выпал жребием, он украшение — и
+            # терять из-за него живое письмо незачем: уходит текстом.
+            if table == 'intention_mail':
+                # ⚠ Это **не** отказ сайта: наружу мы ещё не ходили. Причина
+                # ложится в письмо тем же путём, и круг вернётся к нему, когда
+                # снимок появится.
+                await mail_send_fail(letter, DatingMailSendError(str(e)),
+                                     table=table)
+                logger_info(f"[dating] {table} #{letter['id']} без снимка: {e}")
 
-            return 'fail'
+                return 'fail'
+
+            # ⚠ Номер снимка снимаем со строки письма: иначе отправка
+            # отметила бы кадр показанным, хотя он никуда не ушёл.
+            letter = {**letter, 'gallery_file_id': 0}
+            logger_info(f"[dating] {table} #{letter['id']} уйдёт текстом: {e}")
 
     try:
         await mail_send_one(letter, profile, base, password, table)

@@ -25,7 +25,8 @@ from src.dating.chat_intention import (chat_intention_drop,
 from src.dating.companion_gallery import companion_gallery_pick
 from src.dating.intention_round import intention_round_next
 from src.dating.intention_do import (DatingIntentionError, intention_mail_make,
-                                     intention_mail_ready)
+                                     )
+from src.dating.mail_shot import DatingMailShotError, mail_shot_ready
 from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
                                   mail_send_one)
 from src.dating.site_setting import site_setting
@@ -213,7 +214,7 @@ async def intention_mail_send(mail_id: int,
     дважды по следующему обещанию.
 
     ⚠ Снимок готовится **до** отправки и одной дверью на обе дороги
-    (`intention_mail_ready`): между `check-send` и `send` нельзя ходить в сеть.
+    (`mail_shot_ready`): между `check-send` и `send` нельзя ходить в сеть.
     """
     letter = await _mail_row(mail_id)
 
@@ -229,8 +230,8 @@ async def intention_mail_send(mail_id: int,
     password = str(await site_setting(site_id, 'api_password')).strip()
 
     try:
-        letter = await intention_mail_ready(letter)
-    except DatingIntentionError as e:
+        letter = await mail_shot_ready(letter)
+    except DatingMailShotError as e:
         # ⚠ Это не отказ сайта — наружу мы ещё не ходили. Но причину храним так
         # же: человек закроет вкладку, а строка останется с объяснением.
         await mail_send_fail(letter, DatingMailSendError(str(e)),

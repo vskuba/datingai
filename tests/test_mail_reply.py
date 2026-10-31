@@ -611,5 +611,236 @@ class TestTheLetterTravelsAsQuestion:
         assert "int(agent_id), str(letter or '')" in replied, \
             'ответ на письмо везёт пустой вопрос: сосед сочтёт его письмом молчащему'
 
-        assert 'letter=str(' in inspect.getsource(mod), \
+        # ⚠ Проверяется **смысл**, а не написание: с 31.10.2026 тело едет не
+        # голым, а через `mail_in_body_for_agent` — к нему снизу дописывается
+        # описание присланного снимка. Письмо при этом всё так же обязано
+        # оказаться в вызове: без него заход уйдёт веткой письма молчащему.
+        source = inspect.getsource(mod)
+
+        assert 'letter=mail_in_body_for_agent(' in source, \
             'круг перестал класть тело его письма в вызов'
+        assert "letter.get('body')" in source, \
+            'в вызов уезжает не тело письма'
+
+
+class TestTheThreadIsWhole:
+    """⚠⚠ Разговор обязан показывать **всё**, что пара сказала друг другу.
+
+    Источников у него пять, и каждый добавлялся после того, как его отсутствие
+    замечали глазами на живой переписке. Последним — письма-исполнения
+    (`intention_mail`): агент пообещал в чате, письмо ушло со снимком, а лента
+    о нём молчала. У Дианы с Семёном «Намерения → Сделано» показывали три
+    письма, а разговор той же пары — три реплики чата и ни одного письма.
+
+    Цена пропуска тут выше обычной: это самая заметная реплика пары, и человек,
+    глядя на ленту, решает, что девушка обещание не исполнила.
+    """
+
+    async def test_the_promised_letter_is_in_the_thread(self, profile):
+        from src.dating.mail_reply import mail_reply_thread
+
+        await _intention(profile, '222', 'Here is that photo you asked for')
+
+        thread = await mail_reply_thread(int(profile['id']), '222')
+
+        assert [one['kind'] for one in thread] == ['intention'], (
+            'письмо по обещанию агента выпало из разговора')
+        assert thread[0]['from'] == 'her'
+
+    async def test_a_draft_one_is_not_shown(self, profile):
+        """⚠ Только ушедшее: черновик собеседник не видел, и в разговоре его
+        не было — как и у рассылки с приставанием."""
+        from src.dating.mail_reply import mail_reply_thread
+
+        await _intention(profile, '223', 'ещё не ушло', status='draft')
+
+        assert await mail_reply_thread(int(profile['id']), '223') == []
+
+    async def test_it_carries_the_photo_number(self, profile):
+        """⚠⚠ Номер файла — **на Диске**, а не ключ строки индекса: превью
+        отдаётся по первому, и спутать их легко (оба числа), а видно это
+        только пустым квадратом в ленте."""
+        from src.dating.mail_reply import mail_reply_thread
+
+        file_row, file_id = await _gallery_file(profile)
+        await _intention(profile, '224', 'вот снимок', file_row=file_row)
+
+        thread = await mail_reply_thread(int(profile['id']), '224')
+
+        assert thread[0]['file_id'] == file_id, (
+            f"в ленту уехал не номер файла Диска: {thread[0]['file_id']!r}")
+        assert thread[0]['profile_id'] == int(profile['id']), (
+            'без анкеты страница не соберёт адрес превью галереи')
+
+    async def test_an_incoming_photo_rides_with_its_words(self, profile):
+        """⚠ У присланного снимка едут **оба** поля: адрес и описание. Описание
+        и есть ответ на «что на картинке» — по превью сюжет не разобрать."""
+        from src.dating.mail_reply import mail_reply_thread
+
+        await _in_with_shot(profile, '225', 'look at this',
+                            'https://site.test/content/attachments/9/a.jpg',
+                            'A man on a boat at sunset.')
+
+        thread = await mail_reply_thread(int(profile['id']), '225')
+
+        assert thread[0]['attach'].endswith('/a.jpg')
+        assert thread[0]['attach_about'] == 'A man on a boat at sunset.'
+
+    async def test_letters_without_photos_say_so_plainly(self, profile):
+        """⚠ Пустые поля у прочих родов писем — не брак, а ответ «вложений не
+        бывает». Страница смотрит на них, и `None` там стал бы вторым видом
+        пустоты."""
+        from src.dating.mail_reply import mail_reply_thread
+
+        await _out(profile, '226', 'письмо рассылки')
+
+        thread = await mail_reply_thread(int(profile['id']), '226')
+
+        assert thread[0]['attach'] == ''
+        assert thread[0]['attach_about'] == ''
+        assert thread[0]['file_id'] == ''
+
+
+async def _intention(profile: dict, uid: str, body: str,
+                     status: str = 'sent', file_row: int = 0) -> int:
+    """Кладёт письмо-исполнение обещания — то, что ушло по метке агента."""
+    from mysql_.mysql_ import mysql_get_db_async
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO intention_mail'
+            ' (site_id, profile_id, intention_id, uid, name, body, status,'
+            '  gallery_file_id, sent_at)'
+            ' VALUES (%s, %s, %s, %s, %s, %s, %s, %s,'
+            "         IF(%s = 'sent', NOW(), NULL))",
+            (SITE, int(profile['id']), int(uuid.uuid4().int % 10**9), uid,
+             f'Man {uid}', body, status, int(file_row), status))
+        await db.connection.commit()
+        await db.execute('SELECT LAST_INSERT_ID() AS id')
+
+        return int((await db.fetchone())['id'])
+
+
+async def _gallery_file(profile: dict) -> tuple[int, str]:
+    """Снимок в индексе галереи. Возвращает (ключ строки, номер файла Диска)."""
+    from mysql_.mysql_ import mysql_get_db_async
+
+    file_id = f'drive-{uuid.uuid4().hex[:10]}'
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO gallery_file (profile_id, file_id, path, name, mime,'
+            "  kind, is_gone) VALUES (%s, %s, 'public/a.jpg', 'a',"
+            "  'image/jpeg', 'image', 0)",
+            (int(profile['id']), file_id))
+        await db.connection.commit()
+
+        return int(db.lastrowid), file_id
+
+
+async def _in_with_shot(profile: dict, uid: str, body: str, url: str,
+                        about: str) -> int:
+    """Входящее письмо со снимком, который он прислал, и его описанием."""
+    from mysql_.mysql_ import mysql_get_db_async
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO mail_in'
+            ' (site_id, profile_id, message_id, uid, name, body, date_post,'
+            '  attachment, attachment_about, attachment_at)'
+            ' VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s, %s, NOW())',
+            (SITE, int(profile['id']), int(uuid.uuid4().int % 10**9), uid,
+             f'Man {uid}', body, url, about))
+        await db.connection.commit()
+
+        return int(db.lastrowid)
+
+
+class TestTheAgentSeesThePhoto:
+    """⚠⚠ Снимок, присланный письмом, обязан доехать до агента.
+
+    Он присылает фотографию, а в промпт уезжал один текст — и девушка отвечала
+    так, будто ничего не приходило. На проде это видно дословно: Mike → Diana,
+    13.10.2026, «I send you photo» и следом «oh no...I didn't get any photo».
+
+    ⚠ Описание едет **в самом вопросе**, под текстом письма, а не отдельной
+    переменной: снимок — часть того же письма, и своя переменная стоила бы
+    объявления у соседа, правки промпта ветки и жёсткого порядка выкладки
+    (присылка необъявленного имени — `400` на весь прогон).
+    """
+
+    async def test_the_description_rides_under_the_letter(self, profile, agent,
+                                                          monkeypatch):
+        asked = {}
+
+        async def spy(agent_id, prof, uid, language, name='', letter=''):
+            asked['letter'] = letter
+
+            return 'ответ', '', 0
+
+        monkeypatch.setattr('src.dating.mail_reply.answer_mail_reply', spy)
+
+        await _in_with_shot(profile, '301', 'Look what I caught today!',
+                            'https://site.test/content/attachments/9/a.jpg',
+                            'A man holding a large fish on a river bank.')
+        await mail_reply_make(SITE)
+
+        got = asked.get('letter') or ''
+
+        assert 'Look what I caught today!' in got, 'текста письма агенту не дали'
+        assert 'large fish' in got, 'агент не узнал про снимок — ответит мимо'
+        assert got.index('Look what I caught') < got.index('large fish'), (
+            'описание встало выше письма — читается как слова собеседника')
+
+    async def test_a_letter_without_a_photo_is_untouched(self, profile, agent,
+                                                         monkeypatch):
+        """⚠ Пустое описание ничего не добавляет: заголовок без описания модель
+        прочла бы как «снимок был, но про него ничего не известно»."""
+        asked = {}
+
+        async def spy(agent_id, prof, uid, language, name='', letter=''):
+            asked['letter'] = letter
+
+            return 'ответ', '', 0
+
+        monkeypatch.setattr('src.dating.mail_reply.answer_mail_reply', spy)
+
+        await _in(profile, '302', 'Просто письмо без вложения')
+        await mail_reply_make(SITE)
+
+        assert asked.get('letter') == 'Просто письмо без вложения'
+
+    async def test_the_column_is_selected(self, profile, agent, monkeypatch):
+        """⚠⚠ Главный сторож: столбец обязан стоять **в запросе отбора**.
+
+        Не выбранный, он до агента не доедет вовсе — и ответ выйдет таким,
+        будто снимка не присылали, молча и без единой ошибки. Та же грабля, что
+        уже стоила отметок `delivered_at` и столбцов исполнения в круге
+        отправки, поэтому проверяется не склейка, а **дорога целиком**.
+        """
+        from src.dating.mail_reply import _to_answer
+
+        await _in_with_shot(profile, '303', 'hi', 'https://site.test/a.jpg',
+                            'Some description here.')
+
+        rows = await _to_answer(SITE)
+        ours = [row for row in rows if str(row['uid']) == '303']
+
+        assert ours, 'письмо не попало в отбор'
+        assert 'attachment_about' in ours[0], (
+            'запрос не выбирает описание снимка — агент его не увидит')
+        assert ours[0]['attachment_about'] == 'Some description here.'
+
+    def test_the_mark_says_it_is_not_his_words(self):
+        """⚠ Подпись помечает вложение, а не маскируется под письмо: иначе
+        модель приняла бы описание за слова собеседника."""
+        from src.dating.mail_in import (MAIL_IN_SHOT_TITLE,
+                                        mail_in_body_for_agent)
+
+        got = mail_in_body_for_agent('текст', 'описание')
+
+        assert MAIL_IN_SHOT_TITLE in got
+        assert MAIL_IN_SHOT_TITLE.startswith('==='), (
+            'подпись не отделена рамкой — уедет как слова собеседника')
+        assert got.endswith('описание'), (
+            'описание стоит не под письмом')

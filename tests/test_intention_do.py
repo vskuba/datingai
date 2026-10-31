@@ -31,7 +31,8 @@ from src.dating.intention_do import (INTENTION_DO_PAGE, INTENTION_DO_PHOTO,
                                      INTENTION_DO_STORY, DatingIntentionError,
                                      intention_mail_attach, intention_mail_done,
                                      intention_mail_draft, intention_mail_make,
-                                     intention_mail_ready)
+                                     )
+from src.dating.mail_shot import DatingMailShotError, mail_shot_ready
 from tests.conftest import TEST_STAND_SITE
 from tests.site_api_fake import SITE_API_FAKE_BASE, SITE_API_FAKE_PASSWORD
 
@@ -286,7 +287,7 @@ class TestTheLetterIsReady:
     async def test_the_photo_rides_with_it(self, ready, drive):
         made = await intention_mail_draft(ready['intention'])
 
-        letter = await intention_mail_ready(await _letter(made))
+        letter = await mail_shot_ready(await _letter(made))
 
         assert letter['attach']['data'][:3] == b'\xff\xd8\xff'
         assert letter['body'] == ready['intention']['context']['letter']
@@ -303,18 +304,25 @@ class TestTheLetterIsReady:
                              (ready['files']['evening'],))
             await db.connection.commit()
 
-        with pytest.raises(DatingIntentionError, match='больше нет в индексе'):
-            await intention_mail_ready(await _letter(made))
+        with pytest.raises(DatingMailShotError, match='больше нет в индексе'):
+            await mail_shot_ready(await _letter(made))
 
 
 class TestTheMarksAfterSending:
-    """Что отмечается, когда письмо ушло."""
+    """Что отмечается, когда письмо ушло.
+
+    ⚠⚠ **Отметки ставит `mail_send_mark`, а не `intention_mail_done`**, и
+    проверяются они через неё. Память о показанном снимке общая на все пулы:
+    кадр может уйти не только по обещанию, но и жребием к ответу
+    (`mail_shot.py`), и «этот человек снимок видел» — правило одно на всех.
+    Здешняя дверь закрывает только обещание.
+    """
 
     async def test_the_photo_is_remembered_and_the_promise_closed(self, ready):
         made = await intention_mail_draft(ready['intention'])
         letter = await _letter(made)
 
-        await intention_mail_done(letter)
+        await _sent(letter)
 
         seen = await companion_gallery_seen(ready['girl'], ready['uid'])
         assert {one['name'] for one in seen} == {'evening'}
@@ -327,7 +335,7 @@ class TestTheMarksAfterSending:
         """⚠⚠ Ради этого память и ведётся: второе обещание той же паре не
         должно принести тот же снимок."""
         made = await intention_mail_draft(ready['intention'])
-        await intention_mail_done(await _letter(made))
+        await _sent(await _letter(made))
 
         await chat_intention_put(ready['girl'], TEST_STAND_SITE, ready['uid'],
                                  {PROMISE: {'letter': 'one more',
@@ -364,7 +372,7 @@ class TestTheWholeChain:
         from src.dating.mail_send import mail_send_one
 
         made = await intention_mail_draft(ready['intention'])
-        letter = await intention_mail_ready(await _letter(made))
+        letter = await mail_shot_ready(await _letter(made))
 
         await mail_send_one(letter, await _profile(ready['girl']),
                             SITE_API_FAKE_BASE, SITE_API_FAKE_PASSWORD,
@@ -395,7 +403,7 @@ class TestTheWholeChain:
         from src.dating.mail_send import DatingMailSendError, mail_send_one
 
         made = await intention_mail_draft(ready['intention'])
-        letter = await intention_mail_ready(await _letter(made))
+        letter = await mail_shot_ready(await _letter(made))
         site_api.forbid_send(ready['uid'])
 
         with pytest.raises(DatingMailSendError):
@@ -511,6 +519,18 @@ class TestTheHandles:
                                          profile_id=ready['girl'],
                                          status='open')
         assert len(left['rows']) == 1, 'обещание закрылось вместе с письмом'
+
+
+async def _sent(letter: dict) -> None:
+    """Письмо ушло — ставит отметки **той же дверью**, что и живая отправка.
+
+    ⚠ Звать `intention_mail_done` напрямую здесь больше нельзя: память о
+    снимке живёт в `mail_send_mark`, и проба мимо неё проверяла бы половину
+    правила.
+    """
+    from src.dating.mail_send import mail_send_mark
+
+    await mail_send_mark(letter, sent=True, table='intention_mail')
 
 
 async def _letter(letter_id: int) -> dict:
@@ -740,7 +760,7 @@ class TestTheStory:
     async def test_it_is_sent_as_text_not_refused(self, girl):
         """⚠⚠ Письмо без снимка обязано **дойти до отправки** готовым.
 
-        `intention_mail_ready` стоит на обеих дорогах — круга и кнопки, — и
+        `mail_shot_ready` стоит на обеих дорогах — круга и кнопки, — и
         отвергни она строку без `gallery_file_id`, история не ушла бы никогда.
         """
         uid = _uid()
@@ -751,7 +771,7 @@ class TestTheStory:
                                         status='open')
         letter = await _letter(await intention_mail_draft(got['rows'][0]))
 
-        ready = await intention_mail_ready(letter)
+        ready = await mail_shot_ready(letter)
 
         assert 'attach' not in ready, 'к истории прицепилось вложение'
         assert ready['body'] == 'the story itself'

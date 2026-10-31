@@ -165,6 +165,18 @@ MAIL_SEND_COLD_TABLES = ('mailing', 'favorite_mail')
 # верно по смыслу, но видно со стороны ровно как частота.
 MAIL_SEND_GAP_TABLES = ('mail_reply', 'favorite_mail', 'intention_mail')
 
+# Пулы, письмо которых может уйти **со снимком**.
+#
+# ⚠⚠ Рассылки здесь нет и быть не должно: её письмо уходит полусотне людей
+# одним текстом, и снимок к нему — это один и тот же кадр, разосланный веером.
+# У прочих трёх письмо пишется паре, и снимок ей и принадлежит.
+#
+# ⚠ Поводы при этом разные, и отсюда разный исход неудачи (`send_round`): у
+# `intention_mail` о снимке **просили**, и без него письмо не уходит вовсе; у
+# ответа и приставания он выпал жребием (`mail_shot.py`) и потерю переживёт —
+# письмо уйдёт текстом.
+MAIL_SEND_SHOT_TABLES = ('intention_mail', 'mail_reply', 'favorite_mail')
+
 
 def mail_sent_union(where: str, select: str = 'sent_at',
                     tables: tuple = ()) -> str:
@@ -518,6 +530,28 @@ async def mail_send_mark(letter: dict, sent: bool, error: str = '',
     # намерений на самом импорте ей незачем. Круга сегодня нет (`intention_do`
     # отправку не зовёт), но появится он с первой же надобностью взять отсюда
     # предел вложения — а искать тогда будут не здесь.
+    # ⚠⚠ **Память о показанном снимке — общая для всех пулов.** Кадр ушёл
+    # человеку, и второй раз слать его нельзя, кем бы он ни был выбран: по
+    # обещанию агента или жребием (`mail_shot.py`). Своя отметка у каждого
+    # пула означала бы, что один и тот же снимок уйдёт дважды — сперва ответом,
+    # потом обещанием.
+    #
+    # ⚠ Ставится **после** отправки, а не при выборе: первая же неудача иначе
+    # сожгла бы кадр, и повторная попытка взяла бы другой.
+    if sent and int(letter.get('gallery_file_id') or 0):
+        from src.dating.companion_gallery import companion_gallery_sent
+
+        try:
+            await companion_gallery_sent(int(letter.get('profile_id') or 0),
+                                         int(letter.get('site_id') or 0),
+                                         str(letter.get('uid') or ''),
+                                         int(letter['gallery_file_id']))
+        except Exception as e:
+            # ⚠ Письмо **уже ушло**: исключение отсюда заставило бы вызывающего
+            # считать отправку несостоявшейся. Молча, впрочем, не проходит.
+            logger_info(f"[dating] {table} #{letter.get('id')} ушло, а снимок "
+                        f'не отметился показанным: {e}')
+
     if sent and table == 'intention_mail':
         from src.dating.intention_do import intention_mail_done
 

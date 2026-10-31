@@ -48,6 +48,8 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.answer import answer_mail_reply
 from src.dating.json_column import json_column_load
+from src.dating.mail_in import mail_in_body_for_agent
+from src.dating.mail_shot import mail_shot_pick
 from src.dating.mail_agent import DatingMailAgentError
 from src.dating.online import online_show
 from src.dating.pool_pair import pool_delivery_where, pool_pick_where
@@ -119,10 +121,16 @@ async def mail_reply_make(site_id: int, limit: int = 0) -> dict:
         # переменной, и ветку «ответ на письмо» он узнаёт по непустому
         # `prompt_user`. Без текста письма заход ушёл бы веткой письма
         # молчащему.
+        # ⚠⚠ Письмо едет агенту **вместе с описанием снимка**, который он
+        # прислал: описание дописывается под текстом одной дверью
+        # (`mail_in_body_for_agent`). Своей переменной у соседа ради этого не
+        # заводится — снимок часть того же письма, и объявлять его отдельно
+        # значило бы править промпт ветки и держать порядок выкладки.
         body, error, message_id = await answer_mail_reply(
             agent_id, profile, str(letter['uid']), language,
             str(letter.get('name') or ''),
-            letter=str(letter.get('body') or ''))
+            letter=mail_in_body_for_agent(letter.get('body'),
+                                          letter.get('attachment_about')))
 
         if error:
             # ⚠ Отказ агента обрывает **весь заход**: сосед занят, и следующие
@@ -209,9 +217,15 @@ async def mail_reply_thread(profile_id: int, uid: str, keep: int = 0,
     """
     # ⚠ Собираем строкой, а не склейкой литералов: кусок про приставания
     # прицепляется по условию, и «соседние строки склеятся сами» тут не работает.
+    # ⚠⚠ Столбцы снимка несут **все** ветки, и пустыми тоже: `UNION` требует
+    # одинаковой ширины, а «у этого рода писем вложений не бывает» — знание
+    # запроса, а не повод завести вторую выборку. У входящего это присланный им
+    # файл с описанием, у письма-исполнения — номер нашего снимка в галерее.
     sql = (
         "SELECT 'him' AS side, 'in' AS kind, body, date_post AS at, id,"
-        " '' AS status, 0 AS pending"
+        " '' AS status, 0 AS pending,"
+        " attachment AS attach, attachment_about AS attach_about,"
+        " '' AS file_id"
         ' FROM mail_in WHERE profile_id = %s AND uid = %s'
         ' UNION ALL'
         # ⚠ Время ответа — **отправки**, а не сочинения: между ними бывает час, и
@@ -220,23 +234,43 @@ async def mail_reply_thread(profile_id: int, uid: str, keep: int = 0,
         # `pending`.
         " SELECT 'her' AS side, 'reply' AS kind, body,"
         ' COALESCE(sent_at, created_at) AS at, id, status,'
-        " (status = 'draft') AS pending"
+        " (status = 'draft') AS pending,"
+        " '' AS attach, NULL AS attach_about, '' AS file_id"
         ' FROM mail_reply WHERE profile_id = %s AND uid = %s'
         ' UNION ALL'
         # ⚠ **Письма рассылки — тоже часть разговора**: чаще всего именно ими он и
         # начат, и он отвечал на них, а не написал сам. Только отправленные:
         # лежащее в пуле он не видел.
         " SELECT 'her' AS side, 'mailing' AS kind, body, sent_at AS at, id,"
-        ' status, 0 AS pending'
-        " FROM mailing WHERE profile_id = %s AND uid = %s AND status = 'sent'")
+        ' status, 0 AS pending,'
+        " '' AS attach, NULL AS attach_about, '' AS file_id"
+        " FROM mailing WHERE profile_id = %s AND uid = %s AND status = 'sent'"
+        ' UNION ALL'
+        # ⚠⚠ **Письма-исполнения — тоже разговор, и забыть их было ошибкой.**
+        # Обещал агент в чате, а уходит письмом со снимком — то есть это самая
+        # заметная реплика пары, и без неё лента врала: у Дианы с Семёном в
+        # «Сделано» лежали три письма, а разговор показывал три реплики чата и
+        # ни одного письма. Только ушедшие: черновик он не видел.
+        " SELECT 'her' AS side, 'intention' AS kind, m.body, m.sent_at AS at,"
+        ' m.id, m.status, 0 AS pending,'
+        " '' AS attach, NULL AS attach_about,"
+        # ⚠⚠ Берём номер файла **на Диске**, а не номер строки индекса:
+        # `gallery_file_id` это ключ нашей таблицы, а превью отдаётся по
+        # первому (`/gallery/{анкета}/img/{файл}`). Спутать их легко — оба
+        # числа, и ошибка видна лишь пустым квадратом в ленте.
+        ' COALESCE(g.file_id, \'\') AS file_id'
+        ' FROM intention_mail m'
+        ' LEFT JOIN gallery_file g ON g.id = m.gallery_file_id'
+        " WHERE m.profile_id = %s AND m.uid = %s AND m.status = 'sent'")
 
     args = [int(profile_id), str(uid), int(profile_id), str(uid),
-            int(profile_id), str(uid)]
+            int(profile_id), str(uid), int(profile_id), str(uid)]
 
     if with_favorite:
         sql += (' UNION ALL'
                 " SELECT 'her' AS side, 'favorite' AS kind, body, sent_at AS at,"
-                ' id, status, 0 AS pending'
+                ' id, status, 0 AS pending,'
+                " '' AS attach, NULL AS attach_about, '' AS file_id"
                 ' FROM favorite_mail'
                 " WHERE profile_id = %s AND uid = %s AND status = 'sent'")
         args += [int(profile_id), str(uid)]
@@ -264,9 +298,21 @@ async def mail_reply_thread(profile_id: int, uid: str, keep: int = 0,
     # не отдавал вовсе — видно было только глазом, на живой переписке.
     faces = await _faces(int(profile_id), str(uid))
 
+    # ⚠ Снимок едет **двумя** полями, и это не дубль: у его письма адрес на
+    # сайте (`attach`), у нашего — номер в нашей галерее (`file_id`). Картинки
+    # лежат в разных местах, и показывает их страница разными ручками.
+    # Описание есть только у присланного: свой снимок мы и так знаем.
     return [{'id': int(row['id']), 'from': str(row['side']),
              'kind': str(row['kind']), 'text': str(row['body'] or ''),
              'at': row['at'], 'status': str(row['status'] or ''),
+             'attach': str(row.get('attach') or ''),
+             'attach_about': str(row.get('attach_about') or ''),
+             # ⚠ Номер файла **на Диске**, строкой: ручка превью галереи ждёт
+             # именно его, а не ключ нашей таблицы.
+             'file_id': str(row.get('file_id') or ''),
+             # ⚠ Анкета нужна **странице**: превью нашего снимка отдаётся
+             # ручкой галереи, а та сверяет файл с анкетой-владелицей.
+             'profile_id': int(profile_id),
              'photo': faces['him' if str(row['side']) == 'him' else 'her']}
             for row in reversed(rows or [])]
 
@@ -531,8 +577,13 @@ async def _to_answer(site_id: int) -> list[dict]:
     """
     async with mysql_get_db_async() as db:
         await db.execute(
+            # ⚠⚠ `attachment_about` обязан стоять **в списке колонок**: не
+            # выбранный, он до агента не доедет вовсе, и ответ выйдет таким,
+            # будто снимка не присылали — молча, без единой ошибки. Та же
+            # грабля, что уже стоила отметок `delivered_at` и столбцов
+            # исполнения в круге отправки.
             'SELECT m.id, m.site_id, m.profile_id, m.uid, m.name, m.body,'
-            ' m.date_post'
+            ' m.date_post, m.attachment_about'
             ' FROM mail_in m'
             ' JOIN profile p ON p.id = m.profile_id'
             ' LEFT JOIN mail_reply r ON r.mail_in_id = m.id'
@@ -613,15 +664,23 @@ async def _put(site_id: int, letter: dict, body: str, message_id: int = 0) -> No
     ⚠⚠ `message_id` — номер обмена разговора у соседа. Доживает здесь до
     отправки: письмо уносит круг через часы после сочинения, а отметить доставку
     можно только зная номер. Ноль ложится `NULL` — «не знаем».
+
+    ⚠ Снимок выпадает **здесь**, при сборке, а не при отправке: между ними
+    часы, и человек должен видеть в пуле тот кадр, который уйдёт
+    (`mail_shot_pick`). Ноль — самый частый ответ: письмо уходит текстом.
     """
+    shot = await mail_shot_pick(int(letter['profile_id']), int(site_id),
+                                str(letter['uid']))
+
     async with mysql_get_db_async() as db:
         await db.execute(
             'INSERT IGNORE INTO mail_reply'
-            ' (site_id, profile_id, mail_in_id, uid, name, body, status, message_id)'
-            " VALUES (%s, %s, %s, %s, %s, %s, 'draft', %s)",
+            ' (site_id, profile_id, mail_in_id, uid, name, body, status,'
+            '  message_id, gallery_file_id)'
+            " VALUES (%s, %s, %s, %s, %s, %s, 'draft', %s, %s)",
             (int(site_id), int(letter['profile_id']), int(letter['id']),
              str(letter['uid']), str(letter['name'] or ''), body,
-             int(message_id or 0) or None))
+             int(message_id or 0) or None, int(shot)))
         await db.connection.commit()
 
 

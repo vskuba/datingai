@@ -85,7 +85,8 @@ async def _rows(profile_id: int) -> list[dict]:
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT message_id, uid, name, body, seen, is_replied, date_post'
+            'SELECT message_id, uid, name, body, seen, is_replied, date_post,'
+            '       attachment, attachment_about, attachment_at'
             ' FROM mail_in WHERE profile_id = %s ORDER BY message_id',
             (int(profile_id),))
 
@@ -625,3 +626,105 @@ class TestListIsByConversation:
         assert ours and all('unseen_count' in row for row in ours)
         assert any(row['unseen_count'] > 0 for row in ours), \
             'свежезабранные письма не считаются непрочитанными'
+
+
+class TestTheAttachmentHeCameWith:
+    """⚠⚠ Снимок, присланный собеседником: мы его не видели вовсе.
+
+    Забор читал из ответа сайта текст и отправителя, а поле `Attachment`
+    выбрасывал. Следствие тяжелее, чем выглядит: **агент его тоже не видел** —
+    человек прислал фото, а девушка отвечает так, будто ничего не приходило.
+    На проде это уже случилось: 13.10.2026 Mike написал Diana «I send you
+    photo», а следом — «oh no...I didn't get any photo».
+
+    ## ⚠⚠⚠ Главное здесь — адрес, а не сам факт чтения
+
+    Ссылка, которую отдаёт сайт, **не работает**: приходит она как
+    `…/content/attachments/<файл>.jpg` и отвечает `404` — и без cookie, и под
+    сессией получательницы. Рабочий путь несёт **номер отправителя**. Поэтому
+    заглушка кладёт адрес ровно в том виде, в каком его отдаёт живой сайт:
+    положи она сразу рабочий, сторож зеленел бы вхолостую.
+    """
+
+    async def test_it_is_saved_at_all(self, site_api, profile):
+        site_api.attachments[201] = ('https://site.test/content/attachments/'
+                                     'abc123.jpg')
+
+        await _fetch(profile)
+
+        rows = {int(row['message_id']): row for row in await _rows(profile['id'])}
+
+        assert rows[201]['attachment'], 'вложение не прочиталось вовсе'
+
+    async def test_the_sender_number_is_in_the_path(self, site_api, profile):
+        """Без номера отправителя файл не отдаётся — адрес обязан его нести."""
+        site_api.attachments[201] = ('https://site.test/content/attachments/'
+                                     'abc123.jpg')
+
+        await _fetch(profile)
+
+        rows = {int(row['message_id']): row for row in await _rows(profile['id'])}
+        got = str(rows[201]['attachment'])
+
+        assert got.endswith('/181685/abc123.jpg'), (
+            f'в адресе нет номера отправителя, файл не заберётся: {got}')
+
+    async def test_a_letter_without_it_stays_empty(self, site_api, profile):
+        """⚠ Пусто — законное состояние: вложений у писем обычно нет."""
+        await _fetch(profile)
+
+        rows = {int(row['message_id']): row for row in await _rows(profile['id'])}
+
+        assert rows[202]['attachment'] == ''
+        assert rows[202]['attachment_about'] is None
+        assert rows[202]['attachment_at'] is None
+
+    async def test_it_is_not_described_by_the_fetch(self, site_api, profile):
+        """⚠⚠ Забор снимок **не описывает**, и это решение, а не недоделка.
+
+        Описание стоит вызова зрения в секунды, а забор держит круг по всем
+        анкетам сайта. Описывает отдельное занятие (`mail_in_vision.py`), и
+        `attachment_at` остаётся пустым до него.
+        """
+        site_api.attachments[201] = ('https://site.test/content/attachments/'
+                                     'abc123.jpg')
+
+        await _fetch(profile)
+
+        rows = {int(row['message_id']): row for row in await _rows(profile['id'])}
+
+        assert rows[201]['attachment_at'] is None, (
+            'забор сходил к модели — это работа отдельного занятия')
+
+
+class TestTheAddressIsFixed:
+    """Починка присланного адреса — чистая, её видно без базы и без сети."""
+
+    def test_the_number_is_put_in(self):
+        from src.dating.mail_in import mail_in_attach_url
+
+        got = mail_in_attach_url(
+            'https://site.test/content/attachments/a.jpg', '361098')
+
+        assert got == 'https://site.test/content/attachments/361098/a.jpg'
+
+    def test_a_ready_address_is_left_alone(self):
+        """⚠ Придёт однажды готовый адрес — второй номер в него не вставляем."""
+        from src.dating.mail_in import mail_in_attach_url
+
+        ready = 'https://site.test/content/attachments/361098/a.jpg'
+
+        assert mail_in_attach_url(ready, '361098') == ready
+
+    def test_without_a_sender_there_is_no_address(self):
+        """⚠ Не ошибка: письмо ляжет без вложения, человек увидит его на сайте."""
+        from src.dating.mail_in import mail_in_attach_url
+
+        assert mail_in_attach_url(
+            'https://site.test/content/attachments/a.jpg', '') == ''
+
+    def test_no_attachment_is_empty(self):
+        from src.dating.mail_in import mail_in_attach_url
+
+        assert mail_in_attach_url(None, '361098') == ''
+        assert mail_in_attach_url('', '361098') == ''

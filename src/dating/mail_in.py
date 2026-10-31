@@ -53,6 +53,7 @@ MAIL_IN_DATE = 'DatePost'
 MAIL_IN_USER = 'User'
 MAIL_IN_BODY = 'Body'
 MAIL_IN_REPLIED = 'IsReplied'
+MAIL_IN_ATTACH = 'Attachment'
 
 # Поля отправителя — те же имена, что в списках собеседников.
 MAIL_IN_USER_FIELDS = {'uid': 'AccountId', 'name': 'Name', 'age': 'Age',
@@ -62,6 +63,18 @@ MAIL_IN_USER_FIELDS = {'uid': 'AccountId', 'name': 'Name', 'age': 'Age',
 # Сколько знаков текста храним. Письма на сайте короткие; предел здесь затем, чтобы
 # чужой сбой не положил в базу мегабайт.
 MAIL_IN_BODY_MAX = 20000
+
+# Чем подписан снимок в тексте, который уезжает агенту.
+#
+# ⚠ Заголовок в рамке `=== … ===` — **тем же приёмом, каким разделены блоки в
+# промптах соседа** (`=== What she promised ===`, `=== Chat with … ===`).
+# Модель должна видеть, что это не слова собеседника, а пометка о вложении:
+# обычной строкой описание уехало бы как часть письма, и девушка отвечала бы
+# на «фотографию, которую он пересказал словами».
+#
+# ⚠ По-английски, как `companion_about` и описания галереи: читает его модель,
+# а остальной промпт у соседа английский.
+MAIL_IN_SHOT_TITLE = '=== Attached image description ==='
 
 # Какое письмо считаем свежим. Час: круг ходит от двух минут, и пришедшее за
 # последний час — то, что человек и правда мог пропустить. Старше — догон истории,
@@ -152,12 +165,19 @@ async def mail_in_fetch(profile: dict, base: str, password: str) -> dict:
                                  bool(row.get(MAIL_IN_REPLIED)))
             continue
 
-        text = ''
+        text, attach = '', ''
         if bodies < MAIL_IN_BODY_LIMIT:
-            text = await _body(profile, base, secret, message_id)
+            # ⚠ Номер отправителя нужен **адресу вложения**: без него путь к
+            # файлу не собрать (`mail_in_attach_url`). Берём его из той же
+            # записи списка, что и имя с лицом.
+            user = row.get(MAIL_IN_USER)
+            text, attach = await _body(
+                profile, base, secret, message_id,
+                str((user if isinstance(user, dict) else {})
+                    .get(MAIL_IN_USER_FIELDS['uid']) or ''))
             bodies += 1
 
-        await _put(site_id, profile_id, message_id, row, text)
+        await _put(site_id, profile_id, message_id, row, text, attach)
         await _talk_new(site_id, profile_id, row)
         added += 1
         # ⚠ **«Привезено» и «свежих» — разные числа.** Забор берёт письма от
@@ -173,6 +193,94 @@ async def mail_in_fetch(profile: dict, base: str, password: str) -> dict:
                     f'из {len(rows)}')
 
     return {'found': len(rows), 'added': added, 'fresh': fresh, 'bodies': bodies}
+
+
+def mail_in_body_for_agent(body: str, about: str) -> str:
+    """Текст письма для агента: снимок — словами, под самим письмом.
+
+    Args:
+        body: текст письма, как он пришёл.
+        about: описание присланного снимка (`mail_in.attachment_about`).
+            Пусто — вложения не было либо его ещё не описали.
+
+    Returns:
+        str: то, что уедет агенту вопросом.
+
+    ## ⚠⚠ Зачем вообще: иначе агент снимка не видит
+
+    Собеседник присылает фотографию письмом, и до сих пор она пропадала: в
+    промпт уезжал один текст. Отвечать на «вот я на рыбалке» словами «спасибо за
+    письмо» — ровно то, по чему человек узнаёт автомат. На проде это уже
+    случилось: Mike написал Diana «I send you photo», а следом — «oh no...I
+    didn't get any photo».
+
+    ## ⚠⚠ Описание едет **в самом вопросе**, а не отдельной переменной
+
+    Объявлять ради него входную переменную у соседа не надо: текст письма уже
+    едет `prompt_user`, и снимок — часть того же письма. Своя переменная
+    стоила бы объявления в `dating_talk`, правки промпта ветки и жёсткого
+    порядка выкладки (присылка необъявленного имени — `400` на весь прогон), а
+    дала бы ровно то же.
+
+    ⚠ Подпись английская — как `companion_about` и описания галереи: её читает
+    модель, а не человек, и ей отвечают на языке сайта.
+
+    ⚠ Пустое описание **ничего не добавляет**: письмо без вложения не должно
+    нести пустую строку-заголовок, которую модель прочтёт как «снимок был, но
+    про него ничего не известно».
+    """
+    body = str(body or '').strip()
+    about = str(about or '').strip()
+
+    if not about:
+        return body
+
+    return f'{body}\n\n{MAIL_IN_SHOT_TITLE}\n{about}'.strip()
+
+
+def mail_in_attach_url(said, sender_uid: str) -> str:
+    """Рабочий адрес вложения из того, что прислал сайт. Нет вложения — пусто.
+
+    Args:
+        said: поле `Attachment` ответа сайта. `None` — вложения не было.
+        sender_uid: номер **отправителя** на сайте.
+
+    Returns:
+        str: адрес, по которому файл вправду отдаётся. Пусто — вложения нет
+        либо собрать адрес нечем.
+
+    ## ⚠⚠ Ссылка, которую отдаёт сайт, не работает
+
+    Приходит она в виде `…/content/attachments/<файл>.jpg` и отвечает `404` —
+    и без cookie, и под сессией получательницы. Настоящий путь несёт **номер
+    отправителя**: `…/content/attachments/<его uid>/<файл>.jpg`. Проверено на
+    живом письме (Jann Kränzlin → STELA, 29.10.2026): 404 против 200 и 37 КБ.
+
+    Та же грабля, что с `AttachmentName` у отправки: ответ сайта описывает не
+    то, что сайт делает, и верить ему на слово нельзя.
+
+    ⚠ Номер в присланном пути **не добавляем вслепую**: придёт однажды готовый
+    адрес с номером — и мы вставили бы второй. Берём только имя файла.
+
+    ⚠ Без номера отправителя адреса нет, и это не ошибка: письмо ляжет без
+    вложения, а человек увидит его на самом сайте.
+    """
+    said = str(said or '').strip()
+    uid = str(sender_uid or '').strip()
+
+    if not said or not uid:
+        return ''
+
+    name = said.rstrip('/').rsplit('/', 1)[-1]
+    if not name:
+        return ''
+
+    head = said[:said.rfind('/')] if '/' in said else ''
+    # ⚠ Если номер в пути уже стоит, второй раз его не вставляем.
+    if head.rstrip('/').endswith('/' + uid):
+        return said
+
+    return f'{head}/{uid}/{name}' if head else ''
 
 
 async def mail_in_unread(site_id: int) -> dict:
@@ -264,8 +372,17 @@ async def _known(profile_id: int) -> set:
     return {int(row['message_id']) for row in rows or []}
 
 
-async def _body(profile: dict, base: str, secret: str, message_id: int) -> str:
-    """Текст одного письма. Не вышло — пустая строка, а не отказ всему заходу.
+async def _body(profile: dict, base: str, secret: str,
+                message_id: int, sender_uid: str = '') -> tuple[str, str]:
+    """Текст письма и адрес его вложения. Возвращает `(текст, адрес)`.
+
+    Args:
+        profile: анкета-получательница.
+        base: корень API сайта.
+        secret: общий пароль анкет сайта.
+        message_id: номер письма на сайте.
+        sender_uid: номер **отправителя** — без него адрес вложения не собрать
+            (`mail_in_attach_url`).
 
     ⚠ **Одно неудачное тело не должно ронять весь забор.** Письмо ляжет без текста
     и будет видно в списке; текст доедет следующим заходом, а до тех пор человек
@@ -279,16 +396,23 @@ async def _body(profile: dict, base: str, secret: str, message_id: int) -> str:
     except DatingSiteApiError as e:
         logger_info(f'[dating] тело письма #{message_id} не забралось: {e}')
 
-        return ''
+        return '', ''
 
     # ⚠ Эмодзи к одному виду: письмо приходит тем же путём, что и всё снаружи.
-    return text_emoji_same(
+    text = text_emoji_same(
         str(answer.get(MAIL_IN_BODY) or ''))[:MAIL_IN_BODY_MAX]
+
+    return text, mail_in_attach_url(answer.get(MAIL_IN_ATTACH), sender_uid)
 
 
 async def _put(site_id: int, profile_id: int, message_id: int, row: dict,
-               text: str) -> None:
-    """Кладёт письмо. `INSERT IGNORE` ловит гонку двух заходов разом."""
+               text: str, attach: str = '') -> None:
+    """Кладёт письмо. `INSERT IGNORE` ловит гонку двух заходов разом.
+
+    ⚠ `attach` — **уже рабочий адрес**, собранный `mail_in_attach_url`: тот,
+    что прислал сайт, отвечает `404`. Чинить его у читателей было бы правилом
+    в нескольких местах разом.
+    """
     user = row.get(MAIL_IN_USER)
     user = user if isinstance(user, dict) else {}
     f = MAIL_IN_USER_FIELDS
@@ -297,8 +421,8 @@ async def _put(site_id: int, profile_id: int, message_id: int, row: dict,
         await db.execute(
             'INSERT IGNORE INTO mail_in'
             ' (site_id, profile_id, message_id, uid, name, photo, age, city,'
-            '  country, body, date_post, is_replied)'
-            ' VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
+            '  country, body, attachment, date_post, is_replied)'
+            ' VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
             (int(site_id), int(profile_id), int(message_id),
              str(user.get(f['uid']) or '')[:PEOPLE_UID_MAX],
              str(user.get(f['name']) or '')[:PEOPLE_NAME_MAX],
@@ -307,6 +431,7 @@ async def _put(site_id: int, profile_id: int, message_id: int, row: dict,
              str(user.get(f['city']) or '')[:PEOPLE_NAME_MAX],
              str(user.get(f['country']) or '')[:PEOPLE_NAME_MAX],
              str(text or ''),
+             str(attach or '')[:500],
              _stamp(row.get(MAIL_IN_DATE)),
              1 if row.get(MAIL_IN_REPLIED) else 0))
         await db.connection.commit()

@@ -8,7 +8,7 @@
 уходит от всех анкет многим людям.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 
 from logging_.logging_ import logger_info
@@ -25,6 +25,7 @@ from src.dating.mail_reply import (mail_reply_answer, mail_reply_make,
 from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
                                          mail_send_one)
 from src.dating.online import online_show
+from src.dating.site_session import DatingSiteSessionError, site_session_get
 from src.dating.site_setting import site_setting
 from src.uvicorn.routers.dating.pool_handle import (pool_handle_drop,
                                                     pool_handle_sender)
@@ -34,6 +35,15 @@ router = APIRouter(prefix='/api/dating/mail-in', tags=['dating'])
 # Сколько писем отдаём странице разом. Переписку читают глазами, и трёхсотое письмо
 # не помогает никому.
 MAIL_IN_LIMIT = 200
+
+# Сколько ждём вложение с сайта, секунд. Картинка, а не страница; дольше —
+# значит держать запрос оператора на одном молчащем файле.
+MAIL_IN_ATTACH_TIMEOUT = 10
+
+# Насколько браузеру можно помнить присланный снимок. Файл на сайте не
+# меняется, а лента перерисовывается часто: без кэша каждая перерисовка
+# тянула бы те же байты заново.
+MAIL_IN_ATTACH_CACHE = 3600
 
 
 class DatingMailInSeen(BaseModel):
@@ -219,6 +229,57 @@ async def mail_in_thread_get(mail_in_id: int,
     return {'result': [{**one, 'photo': row['photo'] if one['from'] == 'him'
                                         else girl_photo}
                        for one in thread]}
+
+
+@router.get('/{mail_in_id}/attachment', include_in_schema=False)
+async def mail_in_attachment(mail_in_id: int,
+                             user: AuthUser = Depends(auth_required)):
+    """Снимок, который он прислал письмом. Отдаём байтами.
+
+    ## ⚠⚠ Проксируем, а не даём ссылку
+
+    Файлы вложений закрыты: тот же адрес у браузера оператора отвечает `404` —
+    cookie анкеты есть только у нас. Тот же приём и по той же причине, что у
+    превью галереи (`gallery_image`), где ссылка Диска чужому браузеру тоже не
+    отдаётся.
+
+    ⚠ Номер письма приходит из адреса, и строка берётся **по нему**: собирать
+    путь из присланных доводов значило бы дать проксировать что угодно чужими
+    cookie.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT i.id, i.attachment, p.id AS profile_id, p.site_id,'
+            '       p.storage_state'
+            '  FROM mail_in i JOIN profile p ON p.id = i.profile_id'
+            ' WHERE i.id = %s', (int(mail_in_id),))
+        row = await db.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f'письма #{mail_in_id} нет')
+
+    if not str(row['attachment'] or '').strip():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail='у письма нет вложения')
+
+    try:
+        answer = await site_session_get(dict(row), str(row['attachment']),
+                                        MAIL_IN_ATTACH_TIMEOUT)
+    except DatingSiteSessionError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail=str(e)) from e
+
+    if answer.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f'сайт ответил {answer.status_code} на вложение')
+
+    return Response(content=answer.content,
+                    media_type=answer.headers.get('content-type')
+                    or 'image/jpeg',
+                    headers={'Cache-Control':
+                             f'private, max-age={MAIL_IN_ATTACH_CACHE}'})
 
 
 @router.post('/fetch', include_in_schema=False)

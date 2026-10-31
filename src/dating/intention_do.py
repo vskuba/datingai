@@ -67,8 +67,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.chat_intention import chat_intention_done, chat_intention_rows
-from src.dating.companion_gallery import (companion_gallery_pick,
-                                          companion_gallery_sent)
+from src.dating.companion_gallery import companion_gallery_pick
 
 # Какие метки чем исполняются. ⚠ Карта, а не `if`: метки приезжают **от
 # соседа**, из workflow, и каждая новая иначе требовала бы правки ветвления.
@@ -231,48 +230,6 @@ async def intention_mail_attach(file_id: str, name: str) -> dict:
     return {'name': _jpeg_name(name), 'data': frame}
 
 
-async def intention_mail_ready(letter: dict) -> dict:
-    """Строка пула → письмо, готовое к отправке: тот же словарь плюс снимок.
-
-    Args:
-        letter: строка `intention_mail` — нужны `gallery_file_id` и `body`.
-
-    Returns:
-        dict: копия строки с ключом `attach` (`{'name', 'data'}`). Без снимка
-        (`gallery_file_id = 0`) — та же строка без `attach`, и письмо уйдёт
-        текстом.
-
-    Raises:
-        DatingIntentionError: снимок есть, а взять его нечем.
-
-    ## ⚠⚠ Одна дверь на обе дороги
-
-    Готовить вложение надо и кругу отправки, и кнопке человека. Своя подготовка
-    у каждого разошлась бы ровно там, где это дороже всего: один слал бы снимок,
-    другой — то же письмо текстом, и собеседник получил бы «вот моё фото» без
-    фото. Та же причина, по которой `reply_to` однажды свели в одно место.
-
-    ⚠ Зовётся **до** `mail_send_one`, а не внутри: между `check-send` и `send`
-    нельзя ходить в сеть, а Диск отвечает секунды.
-    """
-    file_id = int(letter.get('gallery_file_id') or 0)
-    if not file_id:
-        return dict(letter)
-
-    async with mysql_get_db_async() as db:
-        await db.execute('SELECT file_id, name FROM gallery_file WHERE id = %s',
-                         (file_id,))
-        file = await db.fetchone()
-
-    if not file:
-        raise DatingIntentionError('снимка больше нет в индексе галереи')
-
-    attach = await intention_mail_attach(str(file['file_id']),
-                                         str(file['name'] or ''))
-
-    return {**letter, 'attach': attach}
-
-
 async def intention_mail_done(letter: dict) -> None:
     """Письмо ушло: запомнить снимок и закрыть обещание.
 
@@ -282,32 +239,25 @@ async def intention_mail_done(letter: dict) -> None:
 
     ## ⚠⚠ Обе отметки — здесь, и ставятся они **после** отправки
 
-    Память о снимке (`companion_gallery_file`) и закрытие намерения
-    (`chat_intention.status`) отвечают на один вопрос — «сделано» — и
-    разъехавшись, дали бы худшее из состояний: обещание закрыто, а снимок
-    числится непоказанным, и следующее обещание отправит его второй раз.
+    ⚠⚠ **Память о снимке сюда больше не входит.** Она переехала в
+    `mail_send_mark`, к остальным отметкам отправки: кадр может уйти не только
+    по обещанию, но и жребием к ответу или приставанию (`mail_shot.py`), и
+    «этот человек снимок видел» — правило общее для всех пулов. Здесь осталось
+    то, что принадлежит только обещанию: закрыть его.
 
-    ⚠ Ставить их **до** отправки нельзя: первая же неудача сожгла бы снимок, и
-    повторная попытка взяла бы другой — у человека копилась бы галерея вместо
-    обещанного кадра.
+    ⚠ Ставится **после** отправки, а не при выборе снимка: обещание исполнено
+    отправкой, а не намерением отправить.
 
     ⚠ Своя неудача эту дверь не роняет: письмо **уже ушло**, и исключение
     отсюда заставило бы вызывающего считать отправку несостоявшейся. Молча,
     впрочем, не проходит — строка в журнале остаётся.
     """
-    file_id = int(letter.get('gallery_file_id') or 0)
-
     try:
-        if file_id:
-            await companion_gallery_sent(int(letter.get('profile_id') or 0),
-                                         int(letter.get('site_id') or 0),
-                                         str(letter.get('uid') or ''), file_id)
-
         await chat_intention_done(int(letter.get('intention_id') or 0),
                                   _done_note(letter))
     except Exception as e:
         logger_info(f'[dating] письмо-исполнение #{letter.get("id")} ушло, '
-                    f'а отметки не легли: {e}')
+                    f'а обещание не закрылось: {e}')
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

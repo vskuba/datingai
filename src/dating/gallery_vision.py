@@ -254,7 +254,7 @@ async def gallery_vision_one(row: dict) -> dict:
     # молча, и текст, который человек видит у соседа на странице workflow,
     # перестал бы быть тем, по которому работает модель.
     answer = await rhapsody_api_chat_ask(
-        await _agent_id(row['profile_id']), GALLERY_VISION_ASK,
+        await gallery_vision_agent(row['profile_id']), GALLERY_VISION_ASK,
         {'image': 'data:image/jpeg;base64,' + base64.b64encode(frame).decode()})
 
     got = json_from_string(answer)
@@ -281,11 +281,16 @@ async def gallery_vision_one(row: dict) -> dict:
     return {'description': description, 'tags': tags}
 
 
-async def _agent_id(profile_id: int) -> int:
+async def gallery_vision_agent(profile_id: int) -> int:
     """Агент разбора для сайта анкеты; нет такого — заводим.
 
     Агент один на сайт, как у писем и инвайтов: метка собирается из имени
     сайта-закладки (`agent_site`), своего агента на каждую девушку не заводится.
+
+    ⚠⚠ Дверь **публичная**, и второй такой заводить не надо: зрение зовут двое —
+    разбор галереи и описание присланного снимка (`mail_in_vision.py`), — а
+    вопрос «каким агентом смотреть» у них один. Свой агент у каждого отличался
+    бы от соседнего ровно тем, что о нём забыли бы при правке промпта.
 
     ⚠ **Заводим при первом обращении, а не заранее.** Сайтов у соседа десятки, и
     агент впрок — это агент тем, кто галереей не пользуется вовсе.

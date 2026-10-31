@@ -150,6 +150,14 @@ class SiteApiFake:
         # Тела писем по номеру — то, что отдаёт `GET /messages/{id}`.
         self.bodies: dict = dict(SITE_API_FAKE_BODIES)
 
+        # Вложения по номеру письма: `{номер: адрес}`.
+        #
+        # ⚠⚠ Адрес кладётся **в том виде, в каком его отдаёт живой сайт** —
+        # без номера отправителя в пути. Такой адрес отвечает `404`, и
+        # починка его (`mail_in_attach_url`) — наша работа; положи заглушка
+        # сразу рабочий путь, сторож этой починки зеленел бы вхолостую.
+        self.attachments: dict = {}
+
         self._refuse: tuple[int, dict, str] | None = None
         self._offline = ''
 
@@ -258,7 +266,7 @@ class SiteApiFake:
 
             return self._json(200, {**found,
                                     'Body': self.bodies.get(int(one), ''),
-                                    'Attachment': None})
+                                    'Attachment': self.attachments.get(int(one))})
 
         if path.endswith('/messages/send'):
             sent = json.loads(request.content or b'{}')

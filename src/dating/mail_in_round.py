@@ -53,6 +53,7 @@ from src.dating.round import (round_sites, round_sites_run, round_slot_due,
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.mail_in import DatingMailInError, mail_in_fetch
+from src.dating.mail_in_vision import mail_in_vision_run
 from src.dating.ready import ready_online
 from src.dating.site_setting import site_seconds, site_setting
 
@@ -192,6 +193,21 @@ async def _work(site: dict, minutes: int) -> dict | None:
     feed_done(site_id, started, 'warn' if site_failed and not arrived else 'mail',
                      summary + (f' · с отказом анкет: {site_failed}' if site_failed else ''))
 
+    # ⚠⚠ Описание присланных снимков идёт **после** забора, а не внутри него.
+    # Вызов зрения стоит секунд, и описывай мы письмо по ходу чтения почты,
+    # одно вложение задерживало бы разбор всей остальной. Здесь же заход уже
+    # кончился: лишние секунды никого не держат.
+    #
+    # ⚠ Отдельного круга занятию не заводим: ему нужно ровно то же условие
+    # («у сайта включён забор») и ровно тот же темп. Второй круг отличался бы
+    # от этого лишь тем, что про него забыли бы при правке настроек.
+    #
+    # ⚠ Своя неудача круг не роняет: без описания письмо остаётся письмом, а
+    # ответ на него агент напишет и так — просто не зная про снимок.
+    try:
+        await mail_in_vision_run()
+    except Exception as e:
+        logger_info(f'[dating] снимки писем сайта #{site_id} не описались: {e}')
 
     return {'sites': 1, 'profiles': seen, 'added': added, 'failed': failed}
 

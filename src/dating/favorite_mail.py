@@ -105,6 +105,7 @@ from src.dating.dice import dice_steady
 from src.dating.mail_agent import DatingMailAgentError
 from src.dating.json_column import json_column_list
 from src.dating.mail_wait import mail_wait_left, mail_wait_skip
+from src.dating.mail_shot import mail_shot_pick
 from src.dating.online import online_show
 from src.dating.schedule import schedule_now
 from src.dating.site_setting import site_seconds, site_setting
@@ -1549,14 +1550,21 @@ async def _put(site_id: int, profile_id: int, pair: dict, body: str,
     ⚠⚠ `message_id` — номер обмена разговора у соседа; им отмечается доставка в
     момент отправки. Ноль ложится `NULL`: агент промолчал либо строка старая.
     """
+    # ⚠ Снимок выпадает **при сборке**, а не при отправке: между ними часы, и
+    # человек должен видеть в пуле тот кадр, который уйдёт (`mail_shot_pick`).
+    # Ноль — самый частый ответ: письмо уходит текстом.
+    shot = await mail_shot_pick(int(profile_id), int(site_id),
+                                str(pair['uid']))
+
     async with mysql_get_db_async() as db:
         await db.execute(
             'INSERT INTO favorite_mail'
-            ' (site_id, profile_id, uid, name, photo, body, status, message_id)'
-            " VALUES (%s, %s, %s, %s, %s, %s, 'draft', %s)",
+            ' (site_id, profile_id, uid, name, photo, body, status,'
+            '  message_id, gallery_file_id)'
+            " VALUES (%s, %s, %s, %s, %s, %s, 'draft', %s, %s)",
             (int(site_id), int(profile_id), str(pair['uid']),
              str(pair.get('name') or ''), str(pair.get('photo') or ''), body,
-             int(message_id or 0) or None))
+             int(message_id or 0) or None, int(shot)))
         await db.connection.commit()
 
 
