@@ -60,7 +60,9 @@ from datetime_.datetime_ import datetime_day_minutes
 from src.dating.round import (round_mem_due, round_mem_mark, round_sent_day,
                               round_sites)
 from src.dating.mail_shot import DatingMailShotError, mail_shot_ready
-from src.dating.mail_send import (MAIL_SEND_SHOT_TABLES, MAIL_SEND_TALK_TABLES,
+from src.dating.mail_send import (MAIL_SEND_DELAY_TABLES,
+                                  MAIL_SEND_SHOT_TABLES,
+                                  MAIL_SEND_TALK_TABLES,
                                   DatingMailSendError, DatingMailWaitError,
                                   mail_send_fail, mail_send_one)
 from src.dating.mail_wait import mail_wait_uids
@@ -307,20 +309,24 @@ async def _nothing_to_send(site_id: int, table: str) -> str:
         if left:
             return left
 
-    # ⚠ **Шестая причина, и она про ответы: они ещё «пишутся».** Задержка по
-    # длине текста держит готовый ответ, пока не наберётся время, которое человек
-    # потратил бы на эти слова. Пул при этом полон и без ошибок — то есть снова
+    # ⚠ **Шестая причина: письмо ещё «пишется».** Задержка по длине текста
+    # держит готовое письмо, пока не наберётся время, которое человек потратил
+    # бы на эти слова. Пул при этом полон и без ошибок — то есть снова
     # состояние, неотличимое от поломки, пока оно не названо.
-    if str(table) == 'mail_reply':
-        left = await _replies_wait(site_id)
+    #
+    # ⚠ Пулов здесь два, как и у самой задержки: ответ и обещание агента. Без
+    # второго человек видел бы полный пул обещаний и молчащую отправку без
+    # всякого объяснения — ровно та беда, ради которой строка и писалась.
+    if str(table) in MAIL_SEND_DELAY_TABLES:
+        left = await _replies_wait(site_id, table)
         if left:
             return left
 
     return ''
 
 
-async def _replies_wait(site_id: int) -> str:
-    """Все ли ответы пула ещё пишутся. Пусто — не все.
+async def _replies_wait(site_id: int, table: str = 'mail_reply') -> str:
+    """Все ли письма пула ещё пишутся. Пусто — не все.
 
     ⚠ Спрашивает **тем же счётом**, которым отбирает круг (`reply_delay_hold`):
     ответ «почему стоим» обязан считаться тем же кодом, что решает за круг,
@@ -331,19 +337,22 @@ async def _replies_wait(site_id: int) -> str:
     """
     from src.dating.reply_delay import reply_delay_hold, reply_delay_why
 
-    hold = await reply_delay_hold(site_id)
+    hold = await reply_delay_hold(site_id, table)
     if not hold:
         return ''
 
     try:
         async with mysql_get_db_async() as db:
+            # ⚠ Имя пула уезжает в запрос текстом, поэтому берётся **только из
+            # списка** `MAIL_SEND_DELAY_TABLES`: вызывающий тут свой, но
+            # правило «имя таблицы не из доводов» общее на проект.
             await db.execute(
-                'SELECT COUNT(*) AS ready FROM mail_reply'
+                f'SELECT COUNT(*) AS ready FROM {table}'
                 " WHERE site_id = %s AND status = 'draft' AND error = ''",
                 (int(site_id),))
             row = dict((await db.fetchone()) or {})
     except Exception as e:
-        logger_info(f'[dating] задержка ответов не спросилась: {e}')
+        logger_info(f'[dating] задержка пула {table} не спросилась: {e}')
 
         return ''
 
@@ -537,12 +546,13 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     # заход, и отсев после выборки оставил бы сайт молчать всю задержку, хотя
     # следующий ответ давно готов. Тот же довод, что у паузы строкой выше.
     #
-    # ⚠ Только этот пул: рассылка и приставание пишутся первыми, входящего у них
-    # нет, и сравнивать собеседнику нечего.
-    if table == 'mail_reply':
+    # ⚠ Два пула из четырёх: рассылка и приставание пишутся первыми, входящего
+    # у них нет, и сравнивать собеседнику нечего. У обещания сравнивать есть —
+    # оно само сказало «напишу скоро» (`reply_delay.py`).
+    if table in MAIL_SEND_DELAY_TABLES:
         from src.dating.reply_delay import reply_delay_hold_sql
 
-        busy = await reply_delay_hold_sql(site_id)
+        busy = await reply_delay_hold_sql(site_id, table=table)
 
     # ⚠⚠⚠ **Номер письма, на которое отвечаем, — у ответов обязателен.**
     #

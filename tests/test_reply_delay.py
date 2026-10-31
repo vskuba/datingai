@@ -298,3 +298,165 @@ class TestTheWordsOfTheTermAgree:
                 f'таймер и сервер говорят разное: {result.stdout.strip()}'
         finally:
             os.remove(path)
+
+
+class TestThePromiseWaitsToo:
+    """⚠⚠ Письмо-обещание ждёт по той же длине, что и ответ.
+
+    ## Что случилось на проде 31.10.2026
+
+    Девушка написала в ответе «I will write it to you soon, in a letter where
+    I can really tell it» — и рассказ в 181 слово пришёл **через 1 минуту
+    33 секунды** после того, как собеседник увидел это обещание. «Напишу
+    скоро» и готовый текст следом читается ровно как автомат.
+
+    ⚠ Занятие при этом **не то же самое**, что у ответа, и точка отсчёта своя:
+    у ответа это его письмо, у обещания — минута, когда обещание дано. Черновик
+    собирается кругом когда придётся, и считать от него значило бы мерить нашу
+    расторопность вместо её.
+    """
+
+    async def _promise(self, profile_id: int, *, words: int, ago_min: int,
+                       reply_draft: bool = False) -> int:
+        """Черновик письма-обещания: обещано `ago_min` минут назад."""
+        from mysql_.mysql_ import mysql_get_db_async
+
+        uid = f'pr-{uuid.uuid4().hex[:8]}'
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO chat_intention (profile_id, site_id, uid,'
+                " intention, status, created_at)"
+                " VALUES (%s, %s, %s, 'she_promise_tell_a_story', 'open',"
+                '         NOW() - INTERVAL %s MINUTE)',
+                (int(profile_id), SITE, uid, int(ago_min)))
+            await db.connection.commit()
+            await db.execute('SELECT LAST_INSERT_ID() AS id')
+            intention_id = int((await db.fetchone())['id'])
+
+            if reply_draft:
+                # ⚠ Неотправленный ответ этой паре: собеседник обещания ещё
+                # не видел.
+                await db.execute(
+                    'INSERT INTO mail_in (site_id, profile_id, message_id,'
+                    " uid, name, body, date_post)"
+                    " VALUES (%s, %s, %s, %s, 'Тест', 'Письмо', NOW())",
+                    (SITE, int(profile_id),
+                     int(uuid.uuid4().int % 1_000_000_000), uid))
+                await db.connection.commit()
+                await db.execute('SELECT LAST_INSERT_ID() AS id')
+                mail_in_id = int((await db.fetchone())['id'])
+
+                await db.execute(
+                    'INSERT INTO mail_reply (site_id, profile_id, mail_in_id,'
+                    " uid, name, body, status, error)"
+                    " VALUES (%s, %s, %s, %s, 'Тест', 'ответ', 'draft', '')",
+                    (SITE, int(profile_id), mail_in_id, uid))
+                await db.connection.commit()
+
+            await db.execute(
+                'INSERT INTO intention_mail (site_id, profile_id,'
+                " intention_id, uid, name, body, status, error)"
+                " VALUES (%s, %s, %s, %s, 'Тест', %s, 'draft', '')",
+                (SITE, int(profile_id), intention_id, uid,
+                 ' '.join(['word'] * int(words))))
+            await db.connection.commit()
+            await db.execute('SELECT LAST_INSERT_ID() AS id')
+
+            return int((await db.fetchone())['id'])
+
+    async def test_a_fresh_long_promise_is_held(self, girl, monkeypatch):
+        _coefficient(monkeypatch, 30)
+        letter_id = await self._promise(girl, words=300, ago_min=1)
+
+        hold = await reply_delay_hold(SITE, 'intention_mail')
+
+        assert letter_id in hold, (
+            'рассказ в 300 слов уходит сразу после обещания — читается как '
+            'автомат')
+        assert hold[letter_id] > 600
+
+    async def test_an_old_promise_goes(self, girl, monkeypatch):
+        """⚠ Прошедшее засчитывается, как и у ответа: обещание часовой
+        давности держать незачем."""
+        _coefficient(monkeypatch, 30)
+        letter_id = await self._promise(girl, words=300, ago_min=60)
+
+        assert letter_id not in await reply_delay_hold(SITE, 'intention_mail')
+
+    async def test_it_never_outruns_the_reply(self, girl, monkeypatch):
+        """⚠⚠⚠ Главное: обещание не уходит раньше ответа, в котором обещано.
+
+        Иначе при длинном ответе рассказ придёт первым, и собеседник прочтёт
+        историю раньше, чем слова «напишу скоро». Время здесь не при чём —
+        письмо ждёт **события**, и обещание часовой давности тоже задержано.
+        """
+        _coefficient(monkeypatch, 30)
+        letter_id = await self._promise(girl, words=10, ago_min=60,
+                                        reply_draft=True)
+
+        hold = await reply_delay_hold(SITE, 'intention_mail')
+
+        assert letter_id in hold, (
+            'обещание ушло, пока ответ с ним лежит неотправленным — рассказ '
+            'придёт раньше обещания его написать')
+
+    async def test_the_sending_asks_for_both_pools(self):
+        """⚠ Условие обязано доехать до круга отправки: правило, которое
+        считает, но никого не держит, — это отсутствие правила."""
+        import inspect
+
+        from src.dating import send_round
+        from src.dating.mail_send import MAIL_SEND_DELAY_TABLES
+
+        assert set(MAIL_SEND_DELAY_TABLES) == {'mail_reply', 'intention_mail'}
+        assert 'mailing' not in MAIL_SEND_DELAY_TABLES, (
+            'рассылку задержали ни за что: входящего у неё нет')
+
+        code = inspect.getsource(send_round._send if hasattr(send_round, '_send')
+                                 else send_round)
+
+        assert 'MAIL_SEND_DELAY_TABLES' in inspect.getsource(send_round), (
+            'круг отправки спрашивает задержку не у всех пулов')
+        assert 'table=table' in inspect.getsource(send_round), (
+            'пул не передаётся — задержка посчитается по чужому запросу')
+
+    async def test_the_idle_is_explained_for_promises_too(self, girl,
+                                                          monkeypatch):
+        """⚠⚠ Причину молчания считает **тот же код**, что держит круг.
+
+        Пул полон, ошибок нет, а отправка молчит — состояние, неотличимое от
+        поломки, пока оно не названо. У ответов строка была, у обещаний её не
+        стало бы вовсе: человек видел бы полный пул и шёл проверять
+        выключатели.
+
+        ⚠ Спрашиваем **само объяснение**, а не весь разбор простоя: у того
+        своя очередь причин (выключатель, расписание, пауза), и они про другое.
+        """
+        from src.dating.send_round import _replies_wait
+
+        _coefficient(monkeypatch, 30)
+        await self._promise(girl, words=300, ago_min=1)
+
+        why = await _replies_wait(SITE, 'intention_mail')
+
+        assert 'пишется' in why, (
+            f'молчание пула обещаний не объяснено: {why!r}')
+        assert 'через' in why, 'срок не назван — читается как зависший круг'
+
+    def test_the_explanation_covers_both_pools(self):
+        """⚠ Разбор простоя обязан спрашивать объяснение **у обоих** пулов,
+        которым задержка положена: своё условие для каждого разошлось бы со
+        списком при первой же правке."""
+        import inspect
+
+        from src.dating import send_round
+
+        # ⚠ Разбор идёт в `_nothing_to_send` — `send_why` зовёт её
+        # после выключателей и расписания.
+        code = inspect.getsource(send_round._nothing_to_send)
+
+        assert 'MAIL_SEND_DELAY_TABLES' in code, (
+            'разбор простоя знает про задержку только у ответов')
+        assert '_replies_wait(site_id, table)' in code, (
+            'пул не передаётся — объяснение посчитается по чужому запросу')

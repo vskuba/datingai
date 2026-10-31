@@ -49,6 +49,8 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.dating.answer import answer_mail_reply
 from src.dating.json_column import json_column_load
 from src.dating.mail_in import mail_in_body_for_agent
+from src.dating.mail_in_vision import (MAIL_IN_VISION_TRIES,
+                                       MAIL_IN_VISION_WAIT_SQL)
 from src.dating.mail_shot import mail_shot_pick
 from src.dating.mail_agent import DatingMailAgentError
 from src.dating.online import online_show
@@ -598,7 +600,25 @@ async def _to_answer(site_id: int) -> list[dict]:
             '        WHERE n.profile_id = m.profile_id AND n.uid = m.uid'
             '          AND (n.date_post > m.date_post'
             '               OR (n.date_post = m.date_post AND n.id > m.id)))'
-            ' ORDER BY m.date_post DESC, m.id DESC', (int(site_id),))
+            # ⚠⚠⚠ **Письмо со снимком ждёт, пока снимок опишут.** Агент
+            # должен видеть, что ему показали; ответив раньше, он отвечает на
+            # голый текст — а хуже того, достаёт приметы из прошлого письма и
+            # описывает **не тот** снимок. Ровно это и случилось на проде
+            # 31.10.2026: письмо легло в 15:40:53, вопрос собрался в 15:41:07,
+            # описание легло в 15:41:20 — и девушка похвалила синюю футболку,
+            # когда на фотографии была клетчатая рубашка.
+            #
+            # ⚠ Ждём **не вечно**: правило несёт предел попыток
+            # (`MAIL_IN_VISION_TRIES`). Снимок может не описаться никогда —
+            # файл пропал, зрение отказало, — и без предела письмо осталось бы
+            # без ответа навсегда, молча.
+            #
+            # ⚠⚠ Условие берётся **общее** с очередью описания
+            # (`MAIL_IN_VISION_WAIT_SQL`): своя копия разошлась бы с ней на
+            # первой правке, и письмо ждало бы описания, которого уже не будет.
+            '   AND NOT (' + MAIL_IN_VISION_WAIT_SQL.format(t='m') + ')'
+            ' ORDER BY m.date_post DESC, m.id DESC',
+            (int(site_id), MAIL_IN_VISION_TRIES))
         rows = await db.fetchall()
 
     return [dict(row) for row in rows or []]

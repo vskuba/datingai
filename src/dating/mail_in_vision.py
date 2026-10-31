@@ -62,6 +62,30 @@ MAIL_IN_VISION_TIMEOUT = 10
 # промпт агента: простыня на полстраницы отняла бы место у самого письма.
 MAIL_IN_VISION_MAX = 600
 
+# Сколько раз пробуем описать снимок, прежде чем сдаться.
+#
+# ⚠⚠ **Предел обязателен, потому что ответ на письмо описания ЖДЁТ.** Снимок
+# может не описаться никогда: файл пропал с сайта, зрение отказало, кадр не
+# читается как изображение. Без предела такое письмо осталось бы без ответа
+# навсегда — и молча.
+#
+# ⚠ Три, а не одна: отказы зрения чаще временные (сосед занят, модель не
+# ответила), и сдаваться с первого раза значило бы терять описание там, где
+# оно получилось бы со второго.
+MAIL_IN_VISION_TRIES = 3
+
+# Что мешает отвечать на письмо: снимок есть, описания нет, попытки не
+# исчерпаны.
+#
+# ⚠⚠ **Правило одно на двоих, и это главное в нём.** Его спрашивают очередь
+# описания («кого ещё пробовать») и отбор писем для ответа («кого ещё
+# ждать»); разойдись они, вышло бы худшее из двух: либо письмо ждёт описания,
+# которого уже не будет, либо отвечает, когда описание вот-вот ляжет. Второе
+# уже случилось на проде 31.10.2026 — агент описал снимок из прошлого письма.
+MAIL_IN_VISION_WAIT_SQL = (
+    "{t}.attachment <> '' AND {t}.attachment_at IS NULL"
+    ' AND {t}.attachment_try < %s')
+
 # Что спрашиваем у зрения.
 #
 # ⚠⚠ Вопрос **свой, а не галерейный**. Там снимок описывают для каталога
@@ -102,9 +126,14 @@ async def mail_in_vision_due(limit: int = MAIL_IN_VISION_BATCH) -> list:
             'SELECT i.id, i.profile_id, i.site_id, i.uid, i.attachment,'
             '       p.login, p.storage_state'
             '  FROM mail_in i JOIN profile p ON p.id = i.profile_id'
-            " WHERE i.attachment <> '' AND i.attachment_at IS NULL"
+            ' WHERE ' + MAIL_IN_VISION_WAIT_SQL.format(t='i') +
             "   AND p.storage_state IS NOT NULL AND p.storage_state <> ''"
-            ' ORDER BY i.date_post DESC, i.id DESC LIMIT %s', (want,))
+            # ⚠⚠ Порядок — **по числу попыток**, а уже потом по свежести:
+            # иначе один негодный снимок занимал бы место в пачке заход за
+            # заходом, пока не исчерпает предел. Ровно эта грабля случилась у
+            # галереи — 80 заходов подряд на одних и тех же строках.
+            ' ORDER BY i.attachment_try, i.date_post DESC, i.id DESC'
+            ' LIMIT %s', (MAIL_IN_VISION_TRIES, want))
 
         return list(await db.fetchall() or [])
 
@@ -130,6 +159,11 @@ async def mail_in_vision_run(limit: int = MAIL_IN_VISION_BATCH) -> dict:
         except (DatingMailInVisionError, DatingSiteSessionError,
                 RhapsodyError, RuntimeError) as e:
             failed += 1
+            # ⚠⚠ Неудачу **считаем**, и это не статистика: ответ на письмо
+            # ждёт описания, и без счёта он ждал бы вечно. Исчерпав попытки,
+            # письмо уйдёт в ответ без описания — отклик без снимка лучше
+            # молчания.
+            await _try_mark(int(row['id']))
             logger_info(f'[dating] снимок письма #{row["id"]} не описался: {e}')
 
     if done or failed:
@@ -212,6 +246,20 @@ async def mail_in_vision_frame(row: dict) -> bytes:
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+
+async def _try_mark(mail_in_id: int) -> None:
+    """Отметить неудачную попытку описания.
+
+    ⚠ Счётчик, а не отметка времени: вопрос здесь «сколько раз уже пробовали»,
+    и срок на него не отвечает. По нему же идёт очередь — негодный снимок
+    уходит в её конец сам.
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE mail_in'
+                         ' SET attachment_try = attachment_try + 1'
+                         ' WHERE id = %s', (int(mail_in_id),))
+        await db.connection.commit()
 
 
 async def _about_save(mail_in_id: int, about: str) -> None:

@@ -740,7 +740,12 @@ async def _gallery_file(profile: dict) -> tuple[int, str]:
 
 async def _in_with_shot(profile: dict, uid: str, body: str, url: str,
                         about: str) -> int:
-    """Входящее письмо со снимком, который он прислал, и его описанием."""
+    """Входящее письмо со снимком, который он прислал, и его описанием.
+
+    ⚠ Пустое описание значит «ещё не описан», и отметка времени тогда **не
+    ставится**: по ней и решают, ждать ли письму. Ставь её помощник всегда —
+    сторож ожидания зеленел бы вхолостую, проверяя уже описанное.
+    """
     from mysql_.mysql_ import mysql_get_db_async
 
     async with mysql_get_db_async() as db:
@@ -748,9 +753,10 @@ async def _in_with_shot(profile: dict, uid: str, body: str, url: str,
             'INSERT INTO mail_in'
             ' (site_id, profile_id, message_id, uid, name, body, date_post,'
             '  attachment, attachment_about, attachment_at)'
-            ' VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s, %s, NOW())',
+            " VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s, %s,"
+            '         IF(%s = 1, NOW(), NULL))',
             (SITE, int(profile['id']), int(uuid.uuid4().int % 10**9), uid,
-             f'Man {uid}', body, url, about))
+             f'Man {uid}', body, url, about, 1 if str(about or '').strip() else 0))
         await db.connection.commit()
 
         return int(db.lastrowid)
@@ -844,3 +850,102 @@ class TestTheAgentSeesThePhoto:
             'подпись не отделена рамкой — уедет как слова собеседника')
         assert got.endswith('описание'), (
             'описание стоит не под письмом')
+
+
+class TestTheAnswerWaitsForThePhoto:
+    """⚠⚠⚠ Письмо со снимком не отвечается, пока снимок не описан.
+
+    ## Что случилось на проде 31.10.2026
+
+    Письмо легло в 15:40:53, круг ответов собрал вопрос в **15:41:07**,
+    описание легло в **15:41:20** — на тринадцать секунд позже. Агент получил
+    голый текст «look at me, am i fine for you?» и ответил... описав снимок из
+    **прошлого** письма: похвалил синюю футболку, когда на фотографии была
+    клетчатая рубашка.
+
+    Это хуже, чем промолчать о фото: собеседник видит отклик на то, чего он не
+    присылал.
+
+    ⚠ Я утверждал, что гонки нет — «круг ответов ходит по своему сроку, к тому
+    времени описание успеет лечь». Рассуждение было про промежуток **между**
+    заходами, а решает промежуток **внутри** одного: забор кладёт письмо,
+    описание идёт следом, и круг ответов успевает вклиниться между ними.
+    """
+
+    async def test_a_letter_with_an_undescribed_photo_is_not_taken(self, profile):
+        from src.dating.mail_reply import _to_answer
+
+        await _in_with_shot(profile, '401', 'look at me',
+                            'https://site.test/content/attachments/9/a.jpg',
+                            '')
+
+        rows = await _to_answer(SITE)
+
+        assert not [r for r in rows if str(r['uid']) == '401'], (
+            'письмо со снимком ушло к агенту без описания — он ответит на '
+            'голый текст либо достанет приметы из прошлого письма')
+
+    async def test_once_described_it_is_taken(self, profile):
+        """⚠ Ждём именно описания, а не вообще снимка: описанное идёт в работу
+        сразу."""
+        from src.dating.mail_reply import _to_answer
+
+        await _in_with_shot(profile, '402', 'look at me',
+                            'https://site.test/content/attachments/9/a.jpg',
+                            'A man on a boat.')
+
+        rows = await _to_answer(SITE)
+
+        assert [r for r in rows if str(r['uid']) == '402'], (
+            'описанное письмо не пошло в работу')
+
+    async def test_a_letter_without_a_photo_is_not_delayed(self, profile):
+        """⚠ Ожидание касается **только** писем со снимком: прочие отвечаются
+        как прежде."""
+        from src.dating.mail_reply import _to_answer
+
+        await _in(profile, '403', 'просто письмо')
+
+        rows = await _to_answer(SITE)
+
+        assert [r for r in rows if str(r['uid']) == '403'], (
+            'письмо без вложения задержано ни за что')
+
+    async def test_waiting_is_not_forever(self, profile):
+        """⚠⚠ Снимок может не описаться никогда — файл пропал, зрение
+        отказало. Без предела такое письмо осталось бы без ответа навсегда, и
+        молча: ни ошибки, ни строки в журнале, просто собеседник не дождался.
+        """
+        from mysql_.mysql_ import mysql_get_db_async
+
+        from src.dating.mail_in_vision import MAIL_IN_VISION_TRIES
+        from src.dating.mail_reply import _to_answer
+
+        mail_id = await _in_with_shot(
+            profile, '404', 'look at me',
+            'https://site.test/content/attachments/9/a.jpg', '')
+
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE mail_in SET attachment_try = %s'
+                             ' WHERE id = %s',
+                             (MAIL_IN_VISION_TRIES, mail_id))
+            await db.connection.commit()
+
+        rows = await _to_answer(SITE)
+
+        assert [r for r in rows if str(r['uid']) == '404'], (
+            'попытки исчерпаны, а письмо всё ещё ждёт — собеседник не '
+            'дождётся ответа вовсе')
+
+    def test_both_sides_share_one_rule(self):
+        """⚠⚠ Условие ожидания **одно** на очередь описания и на отбор
+        ответов. Разойдись они — либо письмо ждёт описания, которого уже не
+        будет, либо отвечает, когда оно вот-вот ляжет."""
+        import inspect
+
+        from src.dating import mail_in_vision, mail_reply
+
+        assert 'MAIL_IN_VISION_WAIT_SQL' in inspect.getsource(mail_reply), (
+            'отбор ответов завёл свою копию правила ожидания')
+        assert 'MAIL_IN_VISION_WAIT_SQL.format' in inspect.getsource(
+            mail_in_vision), 'очередь описания правило не читает'
