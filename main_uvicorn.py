@@ -302,9 +302,13 @@ app.include_router(panel_translate_api_router(translate=rhapsody_api_translate))
 # установку», и E2E ровно про неё — прогон поднимает браузер и ходит по
 # страницам панели. Отдельного права под тесты не заводим: дробить каталог
 # ради одной страницы значит ломать его замысел.
+# ⚠ `cron_job` — имя, которым Cronicle зовёт наш прогон (`src/cronjob/e2e_run.py`).
+# По нему лента расписания находит своё событие у планировщика; заголовок
+# запасной приметой, его человек в панели Cronicle правит.
 app.include_router(e2e_api_router(view=AuthPermission.INSTALL_MANAGE,
                                   run=AuthPermission.INSTALL_MANAGE,
-                                  drop=AuthPermission.INSTALL_MANAGE))
+                                  drop=AuthPermission.INSTALL_MANAGE,
+                                  cron_job='e2e_run', cron_title='dating_e2e'))
 app.include_router(profile_.router)
 app.include_router(profile_action.router)
 app.include_router(profile_view.router)
