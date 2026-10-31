@@ -425,3 +425,46 @@ class TestTheDoCheckbox:
         assert "slot('chat-intention-do-on')" in page, 'страница её не рисует'
         assert 'chatIntentionDoSet' in page, 'переключение не привязано'
         assert "path: 'chat-intention-do-on'" in page, 'адрес ручки не тот'
+
+
+class TestTheCardDrawsEveryMark:
+    """⚠⚠ Карточка — **один шаблон на все метки**, и это надо стеречь.
+
+    Метки присылает workflow у соседа, а поля контекста у них разные: у фото
+    `letter` и `tags`, у истории `letter` и `story`. Знакомых полей ровно два,
+    всё прочее рисуется общим списком пар «ключ: значение» — и первая же
+    правка карточки «под фото» спрятала бы работу агента по другой метке
+    молча, без единой ошибки: поле просто не нарисовалось бы.
+    """
+
+    async def test_unknown_fields_go_to_the_general_list(self, auth_client):
+        """Поле `story` обязано доехать до экрана: его больше негде увидеть."""
+        page = (await auth_client.get(PAGE)).text
+
+        start = page.find('const INTENTION_FIELDS_KNOWN')
+        assert start != -1, 'списка знакомых полей больше нет'
+
+        known = page[start:page.find('\n', start)]
+
+        assert "'letter'" in known and "'tags'" in known, (
+            f'знакомые поля карточки стали другими: {known}')
+        assert "'story'" not in known, (
+            'поле истории попало в знакомые — значит у него свой вид, '
+            'и общий список его больше не покажет')
+
+        body = page[start:start + 900]
+
+        assert 'INTENTION_FIELDS_KNOWN.includes(key)' in body, (
+            'незнакомые поля контекста больше не рисуются — работа агента '
+            'по новой метке пропадёт с экрана')
+
+    async def test_the_photo_block_needs_tags(self, auth_client):
+        """⚠ Превью снимка висит **на приметах**: у истории их нет, и пустое
+        гнездо под фото на её карточке обещало бы вложение, которого не будет.
+        """
+        page = (await auth_client.get(PAGE)).text
+        start = page.find('const INTENTION_FIELDS_KNOWN')
+        body = page[start:start + 2600]
+
+        assert 'ctx.tags' in body and 'in-card-pick' in body, (
+            'блок снимка отвязан от примет — он появится и у письма без фото')

@@ -23,10 +23,12 @@ import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating.chat_intention import chat_intention_put, chat_intention_rows
+from src.dating.chat_intention import (chat_intention_put, chat_intention_rows,
+                                       intention_letter_text)
 from src.dating.intention_round import intention_round_run
 from src.dating.companion_gallery import companion_gallery_seen
-from src.dating.intention_do import (INTENTION_DO_PAGE, DatingIntentionError,
+from src.dating.intention_do import (INTENTION_DO_PAGE, INTENTION_DO_PHOTO,
+                                     INTENTION_DO_STORY, DatingIntentionError,
                                      intention_mail_attach, intention_mail_done,
                                      intention_mail_draft, intention_mail_make,
                                      intention_mail_ready)
@@ -574,3 +576,255 @@ class TestTheRoundRuns:
 
         assert isinstance(left, int) and left >= -1, (
             f'срок круга не число секунд: {left!r}')
+
+
+class TestTheParagraphMark:
+    """⚠⚠ Абзац приезжает **меткой**, а не живым переносом строки.
+
+    Контекст намерения собирается у соседа склейкой JSON текстом
+    (`{"letter": "%intention_letter%"}` шагом workflow), а перенос внутри
+    строкового литерала JSON запрещён: разбор падает, и контекст приезжает
+    **пустым**. Ровно это и случилось, как только письмо стало многоабзацным —
+    модель написала три абзаца, карточка вышла без текста вовсе.
+    """
+
+    def test_the_mark_becomes_a_blank_line(self):
+        got = intention_letter_text('Первый.[P]Второй.')
+
+        assert got == 'Первый.\n\nВторой.', f'метка не развернулась: {got!r}'
+
+    def test_a_real_break_survives(self):
+        """⚠ Правило чинит склейку, а не запрещает переносы: письмо, пришедшее
+        другой дорогой (рука человека, другой workflow), страдать не должно."""
+        got = intention_letter_text('Первый.\n\nВторой.')
+
+        assert got == 'Первый.\n\nВторой.', f'живой перенос потерялся: {got!r}'
+
+    def test_doubled_marks_collapse(self):
+        """⚠ Модель иногда ставит `[P][P]`, и три пустые строки в письме
+        выглядят браком вёрстки."""
+        got = intention_letter_text('Раз.[P][P][P]Два.')
+
+        assert got == 'Раз.\n\nДва.', f'метки не схлопнулись: {got!r}'
+
+    def test_empty_stays_empty(self):
+        assert intention_letter_text('') == ''
+        assert intention_letter_text(None) == ''
+
+    async def test_the_mark_never_reaches_the_letter(self, girl, drive):
+        """⚠⚠ Главный сторож ветки: метка не должна доехать до собеседника.
+
+        Проверяется **насквозь** — от записи контекста до тела в пуле, через
+        настоящую дверь чтения. Разворот стоит в одном месте
+        (`_intention_row`), и проверка исходников вместо дороги пропустила бы
+        переезд этого места.
+        """
+        uid = _uid()
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO gallery_file (profile_id, file_id, path, name,'
+                "  mime, kind, is_gone, tags)"
+                " VALUES (%s, %s, 'public/a.png', 'a', 'image/png', 'image',"
+                '         0, \'["outdoor"]\')',
+                (girl, f'f-{uuid.uuid4().hex[:8]}'))
+            await db.connection.commit()
+
+        await chat_intention_put(girl, TEST_STAND_SITE, uid, {
+            INTENTION_DO_PHOTO: {'letter': 'Hi there.[P]Here it is.',
+                                 'tags': 'outdoor'}})
+
+        got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
+                                        status='open')
+        row = got['rows'][0]
+
+        assert '[P]' not in row['context']['letter'], (
+            'карточка показывает оператору метку, а собеседнику уйдёт перенос')
+
+        body = (await _letter(await intention_mail_draft(row)))['body']
+
+        assert body == 'Hi there.\n\nHere it is.', (
+            f'метка доехала до письма собеседника: {body!r}')
+
+        async with mysql_get_db_async() as db:
+            await db.execute('DELETE FROM gallery_file WHERE profile_id = %s',
+                             (girl,))
+            await db.execute('DELETE FROM intention_mail WHERE profile_id = %s',
+                             (girl,))
+            await db.connection.commit()
+
+
+class TestTheStory:
+    """Обещание рассказать историю: письмо **без** вложения.
+
+    ## ⚠⚠ Зачем эта ветка стережётся отдельно
+
+    Метка вторая, и до неё занятие знало ровно одну. Карта `_DOERS` и строка
+    пула были написаны под снимок, и «письмо без снимка» легко выходит одним
+    из двух молчаливых способов:
+
+    * исполнителя нет — обещание **вечно ждёт** в пуле, без единой ошибки;
+    * исполнитель есть, но зовёт отбор снимка — и история не уходит никогда,
+      потому что у анкеты пустая галерея либо приметы ни к чему не подошли.
+
+    Наружу не уходит ничего: ни Диска, ни сайта эта ветка не касается вовсе.
+    """
+
+    async def test_the_mark_has_a_doer(self, girl):
+        """⚠ Слово метки — то же, что в указаниях темы судьи у соседа.
+
+        Разойдись они на одну букву, обещание ждало бы в пуле вечно: ошибки
+        при этом нет — «метку исполнять нечем» законное состояние.
+        """
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid, {
+            INTENTION_DO_STORY: {'letter': 'When I was six, I...',
+                                 'story': 'childhood, the dog'}})
+
+        got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
+                                        status='open')
+
+        made = await intention_mail_draft(got['rows'][0])
+
+        assert made, 'обещанная история осталась без исполнителя'
+
+        await _drop(girl)
+
+    async def test_it_goes_without_a_photo(self, girl):
+        """⚠ Ноль в `gallery_file_id` — законное состояние, а не недоделка:
+        отправка такое письмо уносит текстом."""
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid, {
+            INTENTION_DO_STORY: {'letter': 'A long one.[P]And the end.'}})
+
+        got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
+                                        status='open')
+        row = await _letter(await intention_mail_draft(got['rows'][0]))
+
+        assert row['gallery_file_id'] == 0
+        assert row['body'] == 'A long one.\n\nAnd the end.'
+
+        await _drop(girl)
+
+    async def test_an_empty_gallery_does_not_stop_it(self, girl):
+        """⚠⚠ Отбора снимка здесь нет **вовсе**, и это главное отличие.
+
+        Позови исполнитель `companion_gallery_pick` «на всякий случай» —
+        история не ушла бы ни одной анкете с пустой галереей, а у истории со
+        снимком связи нет никакой.
+        """
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid, {
+            INTENTION_DO_STORY: {'letter': 'Once, in Lviv...'}})
+
+        got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
+                                        status='open')
+
+        assert await intention_mail_draft(got['rows'][0]), (
+            'история не собралась из-за пустой галереи')
+
+        await _drop(girl)
+
+    async def test_no_letter_is_still_refused(self, girl):
+        """⚠ Пустое письмо — отказ, как и у снимка: отправлять нечего."""
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+                                 {INTENTION_DO_STORY: {'story': 'childhood'}})
+
+        got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
+                                        status='open')
+
+        with pytest.raises(DatingIntentionError, match='нет текста письма'):
+            await intention_mail_draft(got['rows'][0])
+
+    async def test_it_is_sent_as_text_not_refused(self, girl):
+        """⚠⚠ Письмо без снимка обязано **дойти до отправки** готовым.
+
+        `intention_mail_ready` стоит на обеих дорогах — круга и кнопки, — и
+        отвергни она строку без `gallery_file_id`, история не ушла бы никогда.
+        """
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid, {
+            INTENTION_DO_STORY: {'letter': 'the story itself'}})
+
+        got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
+                                        status='open')
+        letter = await _letter(await intention_mail_draft(got['rows'][0]))
+
+        ready = await intention_mail_ready(letter)
+
+        assert 'attach' not in ready, 'к истории прицепилось вложение'
+        assert ready['body'] == 'the story itself'
+
+        await _drop(girl)
+
+    async def test_sending_closes_the_promise(self, girl):
+        """⚠ Отметка об исполнении ставится и без снимка: обещание выполнено
+        письмом, а `companion_gallery_sent` просто нечего запоминать."""
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid, {
+            INTENTION_DO_STORY: {'letter': 'the story itself'}})
+
+        got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
+                                        status='open')
+        letter = await _letter(await intention_mail_draft(got['rows'][0]))
+
+        await intention_mail_done(letter)
+
+        left = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
+                                         status='open')
+
+        assert not left['rows'], 'обещание осталось открытым после отправки'
+
+        await _drop(girl)
+
+    async def test_the_note_does_not_promise_a_photo(self, girl):
+        """⚠ Колонка «Сделано» читается человеком: «отправлено фото письмом»
+        у письма без фото — враньё в единственном месте, где он проверяет."""
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid, {
+            INTENTION_DO_STORY: {'letter': 'the story itself'}})
+
+        got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
+                                        status='open')
+        letter = await _letter(await intention_mail_draft(got['rows'][0]))
+
+        await intention_mail_done(letter)
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT done_note FROM chat_intention'
+                             ' WHERE profile_id = %s', (girl,))
+            note = str((await db.fetchone())['done_note'])
+
+        assert 'фото' not in note, f'заметка обещает снимок: {note!r}'
+        assert 'письмо' in note, f'заметка не говорит, чем исполнили: {note!r}'
+
+        await _drop(girl)
+
+    def test_both_doers_write_through_one_door(self):
+        """⚠⚠ Строка пула описана **один раз**.
+
+        Свой `INSERT` у каждого исполнителя разошёлся бы на первой же правке
+        колонок — и разошёлся бы молча: обе ветки продолжали бы работать,
+        каждая по-своему.
+        """
+        import inspect
+
+        from src.dating import intention_do
+
+        saves = [name for name, fn in vars(intention_do).items()
+                 if callable(fn) and 'INSERT' in (inspect.getsource(fn)
+                                                  if fn.__module__ ==
+                                                  intention_do.__name__ else '')]
+
+        assert saves == ['_draft_save'], (
+            f'строку пула пишет не одна функция, а {saves}')
+
+
+async def _drop(profile_id: int) -> None:
+    """Убрать черновики анкеты — фикстура галереи сюда не доходит."""
+    async with mysql_get_db_async() as db:
+        await db.execute('DELETE FROM intention_mail WHERE profile_id = %s',
+                         (profile_id,))
+        await db.connection.commit()
+
