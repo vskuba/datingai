@@ -426,7 +426,7 @@ async def favorite_mail_make(site_id: int, limit: int = 0,
                 break
 
         try:
-            body, error, message_id = await answer_mail_write(
+            body, error, message_id, extra = await answer_mail_write(
                 agent_id, pair['profile'], uid, language,
                 name=str(pair.get('name') or ''))
         except DatingMailAgentError as e:
@@ -449,7 +449,8 @@ async def favorite_mail_make(site_id: int, limit: int = 0,
             _reason(reasons, f'{_addressee(pair)}: {FAVORITE_MAIL_SKIP_SILENT}')
             continue
 
-        await _put(site_id, profile_id_, pair, body, message_id)
+        await _put(site_id, profile_id_, pair, body, message_id,
+                   extra)
         written.add(uid)
         girls.add(profile_id_)
         made += 1
@@ -1538,7 +1539,7 @@ async def _seconds(site_id: int, key: str, fallback: int) -> int:
 
 
 async def _put(site_id: int, profile_id: int, pair: dict, body: str,
-               message_id: int = 0) -> None:
+               message_id: int = 0, extra: dict = None) -> None:
     """Кладёт письмо в пул.
 
     ⚠ **Без `INSERT IGNORE`, в отличие от прочих пулов**: уникального ключа на
@@ -1550,11 +1551,11 @@ async def _put(site_id: int, profile_id: int, pair: dict, body: str,
     ⚠⚠ `message_id` — номер обмена разговора у соседа; им отмечается доставка в
     момент отправки. Ноль ложится `NULL`: агент промолчал либо строка старая.
     """
-    # ⚠ Снимок выпадает **при сборке**, а не при отправке: между ними часы, и
-    # человек должен видеть в пуле тот кадр, который уйдёт (`mail_shot_pick`).
-    # Ноль — самый частый ответ: письмо уходит текстом.
+    # ⚠ Снимок выбирается **при сборке**, а не при отправке: между ними часы,
+    # и человек должен видеть в пуле тот кадр, который уйдёт. ⚠⚠ Просил ли его
+    # прогон — решает **сосед** (`extra.img_attach`), жребия в панели нет.
     shot = await mail_shot_pick(int(profile_id), int(site_id),
-                                str(pair['uid']))
+                                str(pair['uid']), extra)
 
     async with mysql_get_db_async() as db:
         await db.execute(

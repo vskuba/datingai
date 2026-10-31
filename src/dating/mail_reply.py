@@ -128,7 +128,7 @@ async def mail_reply_make(site_id: int, limit: int = 0) -> dict:
         # (`mail_in_body_for_agent`). Своей переменной у соседа ради этого не
         # заводится — снимок часть того же письма, и объявлять его отдельно
         # значило бы править промпт ветки и держать порядок выкладки.
-        body, error, message_id = await answer_mail_reply(
+        body, error, message_id, extra = await answer_mail_reply(
             agent_id, profile, str(letter['uid']), language,
             str(letter.get('name') or ''),
             letter=mail_in_body_for_agent(letter.get('body'),
@@ -147,7 +147,7 @@ async def mail_reply_make(site_id: int, limit: int = 0) -> dict:
             _reason(reasons, 'агент ответил пусто')
             continue
 
-        await _put(site_id, letter, body, message_id)
+        await _put(site_id, letter, body, message_id, extra)
         made += 1
 
     if made or skipped:
@@ -675,7 +675,8 @@ async def _profile(profile_id: int) -> dict:
     return dict(row or {})
 
 
-async def _put(site_id: int, letter: dict, body: str, message_id: int = 0) -> None:
+async def _put(site_id: int, letter: dict, body: str, message_id: int = 0,
+               extra: dict = None) -> None:
     """Кладёт ответ в пул. `INSERT IGNORE` ловит гонку двух заходов разом.
 
     ⚠ Уникальный ключ по `mail_in_id`: один ответ на письмо. Два ответа подряд
@@ -685,12 +686,12 @@ async def _put(site_id: int, letter: dict, body: str, message_id: int = 0) -> No
     отправки: письмо уносит круг через часы после сочинения, а отметить доставку
     можно только зная номер. Ноль ложится `NULL` — «не знаем».
 
-    ⚠ Снимок выпадает **здесь**, при сборке, а не при отправке: между ними
-    часы, и человек должен видеть в пуле тот кадр, который уйдёт
-    (`mail_shot_pick`). Ноль — самый частый ответ: письмо уходит текстом.
+    ⚠ Снимок выбирается **здесь**, при сборке, а не при отправке: между ними
+    часы, и человек должен видеть в пуле тот кадр, который уйдёт. ⚠⚠ Просил ли
+    его прогон — решает **сосед** (`extra.img_attach`), жребия в панели нет.
     """
     shot = await mail_shot_pick(int(letter['profile_id']), int(site_id),
-                                str(letter['uid']))
+                                str(letter['uid']), extra)
 
     async with mysql_get_db_async() as db:
         await db.execute(

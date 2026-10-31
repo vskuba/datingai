@@ -602,7 +602,11 @@ class TestTheWholeTripSurvivesTheExchangeNumber:
         from src.dating import answer as answer_mod
 
         async def _chat_talk(agent_id, question, variables=None):
-            return {'text': 'как прошли выходные?', 'message_id': 555111}
+            # ⚠ Ключи — **все, что отдаёт дверь**: `_agent_ask` разбирает её
+            # ответ целиком, и подмена без `extra` роняла бы разбор там, где
+            # живой клиент его не роняет.
+            return {'text': 'как прошли выходные?', 'message_id': 555111,
+                    'intentions': {}, 'extra': {}}
 
         monkeypatch.setattr(answer_mod, 'rhapsody_api_chat_talk', _chat_talk)
 
@@ -610,7 +614,7 @@ class TestTheWholeTripSurvivesTheExchangeNumber:
             await db.execute('SELECT * FROM profile WHERE id = %s', (girl,))
             profile = dict(await db.fetchone())
 
-        # Без тройки здесь уже упало бы `ValueError: too many values to
+        # Без четвёрки здесь уже упало бы `ValueError: too many values to
         # unpack` — ровно то, что случилось на проде.
         got = await initiative_mod._one(
             profile, 7, {'uid': 'u-1', 'name': 'Brian', 'try_no': 1})

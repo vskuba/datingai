@@ -20,42 +20,73 @@ import uuid
 
 import pytest
 
-from src.dating.mail_shot import (MAIL_SHOT_GROUP, MAIL_SHOT_SETTING,
-                                  MAIL_SHOT_SHARE, mail_shot_pick)
+from src.dating.mail_shot import (MAIL_SHOT_GROUP, MAIL_SHOT_KEY,
+                                  mail_shot_pick, mail_shot_want)
 
 pytestmark = pytest.mark.mail
 
 
-class TestTheDiceIsRare:
-    """Доля: пять писем из ста, и это проверяется счётом."""
+class TestTheDiceLivesAtTheNeighbour:
+    """⚠⚠⚠ Жребия в панели **нет**: решает сосед, мы читаем исход.
 
-    def test_the_default_is_five_percent(self):
-        assert MAIL_SHOT_SHARE == 0.05, (
-            'умолчание разошлось с тем, о чём договорились')
+    Доля жила настройкой панели, а бросок — здешним `random.random()`. Это
+    повторяло уже исправленную ошибку: доли стояли в двух местах разом и
+    складывались — приём «писать первой неловко» выпадал девяти заготовкам из
+    двадцати при ожидаемых четырёх. Теперь решение приезжает в `extra`
+    прогона ключом `img_attach`.
+    """
 
-    def test_the_registry_agrees_with_the_code(self):
-        """⚠⚠ Умолчаний **два** — в реестре настроек и в коде, — и разойдись
-        они, поведение зависело бы от того, прочиталась настройка или нет."""
+    def test_there_is_no_dice_in_the_code(self):
+        """Главный сторож: вернись бросок сюда — правило нарушено молча."""
+        import inspect
+
+        from src.dating import mail_shot
+
+        # ⚠ Смотрим на **код**, а не на весь файл: шапка объясняет, почему
+        # жребия здесь нет, и поминает `random.random()` словами. Запрети мы
+        # упоминание — пропала бы причина, по которой правило существует.
+        code = ''.join(line for line in inspect.getsource(mail_shot).splitlines(True)
+                       if not line.lstrip().startswith('#'))
+        code = code[code.index('MAIL_SHOT_KEY'):]
+
+        assert 'random' not in code, (
+            'жребий вернулся в панель — доля опять живёт в двух местах')
+        assert 'percent_share' not in code, (
+            'доля читается из настройки панели, а должна жить у соседа')
+
+    def test_the_setting_is_gone_from_the_registry(self):
+        """⚠ Настройка снята: оставь мы её, человек крутил бы число, которое
+        ни на что не влияет — хуже отсутствия, потому что обещает."""
         from src.dating.site_setting import SITE_KNOWN
 
-        known = SITE_KNOWN.get(MAIL_SHOT_SETTING) or {}
+        assert 'mail_shot_percent' not in SITE_KNOWN, (
+            'снятая настройка осталась в реестре и обещает несуществующее')
 
-        assert known, 'настройки нет в реестре — форма её не покажет'
-        assert int(known['default']) == int(MAIL_SHOT_SHARE * 100), (
-            f"реестр обещает {known['default']}%, код — "
-            f'{MAIL_SHOT_SHARE * 100}%')
-        assert known.get('max') == 100, (
-            'у доли снят потолок: 101% это не «много», а тихо выключенный '
-            'жребий')
+    def test_the_key_matches_the_workflow_step(self):
+        """⚠ Слово — то самое, что в шаге соседа. Опечатка здесь означала бы
+        вечно пустой отбор без единой ошибки."""
+        assert MAIL_SHOT_KEY == 'img_attach'
 
-    async def test_zero_turns_it_off(self, girl, monkeypatch):
-        """⚠ Ноль — законное значение: человек выбрал «никогда»."""
-        async def no_share(site_id, key, fallback):
-            return 0
+    def test_one_means_one_photo(self):
+        assert mail_shot_want({'img_attach': '1'}) == 1
 
-        monkeypatch.setattr('src.dating.mail_shot.percent_share', no_share)
+    def test_zero_and_absence_are_the_same(self):
+        """⚠ «Не просили» и «ключа нет» — один ответ: читающий смотрит на своё
+        имя и не падает, не найдя его."""
+        assert mail_shot_want({'img_attach': '0'}) == 0
+        assert mail_shot_want({}) == 0
+        assert mail_shot_want(None) == 0
 
-        assert await mail_shot_pick(girl, 343, 'someone') == 0
+    def test_a_number_is_ready_for_many_photos(self):
+        """⚠ Форма уже готова к «сколько снимков»: ключ придёт числом, и
+        менять здесь будет нечего."""
+        assert mail_shot_want({'img_attach': '3'}) == 3
+
+    def test_a_broken_value_does_not_break_the_pass(self):
+        """⚠ Опечатка в шаге workflow (`'yes'` вместо `'1'`) читается как ноль:
+        письмо уйдёт текстом. Это лучше упавшего захода — текст дойдёт."""
+        assert mail_shot_want({'img_attach': 'yes'}) == 0
+        assert mail_shot_want({'img_attach': '-2'}) == 0
 
 
 class TestOnlyPublicPhotos:
@@ -72,18 +103,14 @@ class TestOnlyPublicPhotos:
     async def test_the_picker_is_asked_for_that_group(self, girl, monkeypatch):
         asked = {}
 
-        async def always(site_id, key, fallback):
-            return 1.0
-
         async def spy(profile_id, site_id, uid, limit=0, group=''):
             asked['group'] = group
 
             return []
 
-        monkeypatch.setattr('src.dating.mail_shot.percent_share', always)
         monkeypatch.setattr('src.dating.mail_shot.companion_gallery_fresh', spy)
 
-        await mail_shot_pick(girl, 343, 'someone')
+        await mail_shot_pick(girl, 343, 'someone', {'img_attach': '1'})
 
         assert asked.get('group') == 'public', (
             f"жребий полез в папку {asked.get('group')!r} — оттуда снимки "
@@ -94,12 +121,8 @@ class TestNothingBreaksTheLetter:
     """⚠ Письмо дороже снимка: ни одна помеха не отменяет его отправки."""
 
     async def test_an_empty_gallery_is_not_an_error(self, girl, monkeypatch):
-        async def always(site_id, key, fallback):
-            return 1.0
-
-        monkeypatch.setattr('src.dating.mail_shot.percent_share', always)
-
-        assert await mail_shot_pick(girl, 343, _uid()) == 0, (
+        assert await mail_shot_pick(girl, 343, _uid(),
+                                    {'img_attach': '1'}) == 0, (
             'пустая галерея должна давать ноль, а не отказ')
 
 

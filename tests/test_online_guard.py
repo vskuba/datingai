@@ -181,7 +181,7 @@ class TestGuardStandsInBothPaths:
                    history='', uid='', anyway=False, name='', **_):
             asked.append(question)
 
-            return ('ответ', '', 0)
+            return ('ответ', '', 0, {})
 
         async def _send(profile, presence, uid, text):
             sent.append(text)
@@ -228,7 +228,7 @@ class TestGuardStandsInBothPaths:
                    history='', uid='', anyway=False, name='', **_):
             asked.append(question)
 
-            return ('ответ', '', 0)
+            return ('ответ', '', 0, {})
 
         async def _send(profile, presence, uid, text):
             sent.append(text)

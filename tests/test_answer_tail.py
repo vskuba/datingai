@@ -81,7 +81,7 @@ def asked(monkeypatch):
                    history='', uid='', anyway=False, name='', **_):
         seen.append(question)
 
-        return ('', '', 0)
+        return ('', '', 0, {})
 
     async def _send(profile, presence, uid, text):
         raise AssertionError('агент промолчал — отправлять нечего')

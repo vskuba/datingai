@@ -182,7 +182,7 @@ class TestTheRoundWritesAhead:
         # ловила бы `TypeError` вместо проверки правила.
         async def _ask(agent_id, question, language, profile, history='', uid='',
                        anyway=False, name='', **_):
-            return 'готовый ответ', '', 0
+            return 'готовый ответ', '', 0, {}
 
         async def _send(profile, presence, uid, text):
             sent.append(text)
@@ -338,7 +338,7 @@ class TestDraftsWaitAsLongAsNeeded:
 
         async def _ask(agent_id, question, language, profile, history='', uid='',
                        anyway=False, name='', initiative='', **_):
-            return 'не должны спрашивать', '', 0
+            return 'не должны спрашивать', '', 0, {}
 
         async def _send(profile, presence, uid, text):
             sent.append(text)

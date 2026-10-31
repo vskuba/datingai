@@ -223,7 +223,9 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
             # берёт сам `_agent_ask`. Прежде её добывали три места перед вызовом,
             # и с появлением второго канала они разошлись бы.
             anyway = await _anyway_here(profile_id, uid, anyway_first)
-            answer, error, message_id = await _agent_ask(
+            # ⚠ Чату решения прогона не нужны: снимок прикладывают к
+            # **письму**, а реплика в чат вложений не носит вовсе.
+            answer, error, message_id, _ = await _agent_ask(
                 agent_id, question, language, profile,
                 uid=uid, anyway=anyway, name=name,
                 initiative=first)
@@ -622,7 +624,7 @@ async def _agent_ask(agent_id: int, question: str, language: str,
                        # «Жребий» соседа, см. оговорку выше.
                        **agent_vars(profile, card or {})})
     except RhapsodyError as e:
-        return '', str(e), 0
+        return '', str(e), 0, {}
 
     # ⚠⚠ **Намерения прогона — одной точкой на все каналы.** Сюда приходят чат,
     # инициатива, письмо первым и ответ на письмо; отдай мы `intentions` наверх
@@ -644,7 +646,15 @@ async def _agent_ask(agent_id: int, question: str, language: str,
     except Exception as e:
         logger_info(f'[dating] намерения прогона не записались: {e}')
 
-    return got['text'], '', int(got.get('message_id') or 0)
+    # ⚠⚠ **Решения прогона едут четвёртым полем**, а не записываются тут же.
+    # Их читают пулы писем (прикладывать ли снимок), и дверь про галерею знать
+    # не должна: её дело — спросить агента и отдать сказанное целиком.
+    #
+    # ⚠ Кортеж из четырёх, а не словарь: вызывающих четверо, и все разбирают
+    # его распаковкой. Словарь потребовал бы править каждого ради формы, а не
+    # ради дела.
+    return (got['text'], '', int(got.get('message_id') or 0),
+            got.get('extra') or {})
 
 
 def _me_name(profile: dict) -> str:

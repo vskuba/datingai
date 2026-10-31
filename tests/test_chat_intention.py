@@ -279,7 +279,7 @@ class TestTheWritingPoint:
 
         monkeypatch.setattr(answer_module, 'rhapsody_api_chat_talk', _talk)
 
-        text, error, message_id = await _agent_ask(
+        text, error, message_id, _ = await _agent_ask(
             1, 'вопрос', 'en', await _profile_row(girl), uid=uid, name='Bob')
 
         assert (text, error, message_id) == ('ок', '', 7)
@@ -310,7 +310,7 @@ class TestTheWritingPoint:
         monkeypatch.setattr(answer_module, 'rhapsody_api_chat_talk', _talk)
         monkeypatch.setattr(answer_module, 'chat_intention_put', _boom)
 
-        text, error, message_id = await _agent_ask(
+        text, error, message_id, _ = await _agent_ask(
             1, 'вопрос', 'en', await _profile_row(girl), uid=_uid(),
             name='Bob')
 

@@ -482,9 +482,11 @@ async def _one(profile: dict, agent: int, pair: dict) -> str:
     # имени человека.
     #
     # ⚠ Ветку выбирает флаг `initiative`, а не текст вопроса.
-    text, error, message_id = await _agent_ask(agent, '', language, profile,
-                                               uid=uid, name=name,
-                                               anyway=True, initiative=True)
+    # ⚠ Решения прогона инициативе не нужны: снимок прикладывают к **письму**,
+    # а реплика в чат вложений не носит вовсе — как и у чата (`answer_run`).
+    text, error, message_id, _ = await _agent_ask(agent, '', language, profile,
+                                                  uid=uid, name=name,
+                                                  anyway=True, initiative=True)
 
     if error:
         await log_write(profile_id, 'fail',

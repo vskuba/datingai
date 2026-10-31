@@ -60,7 +60,7 @@ class TestChatTalk:
 
         got = await rhapsody_api_chat_talk(7, 'вопрос')
 
-        assert got == {'text': 'привет', 'message_id': 777, 'intentions': {}}
+        assert got == {'text': 'привет', 'message_id': 777, 'intentions': {}, 'extra': {}}
 
     async def test_the_question_and_agent_travel_in_the_payload(self, requested):
         """⚠ Таймаут агента и номер агента — не на словах, а в самом запросе."""
@@ -82,7 +82,7 @@ class TestChatTalk:
 
         got = await rhapsody_api_chat_talk(7, 'вопрос')
 
-        assert got == {'text': '', 'message_id': 0, 'intentions': {}}
+        assert got == {'text': '', 'message_id': 0, 'intentions': {}, 'extra': {}}
 
     @pytest.mark.parametrize('raw', [None, '', 'не число', [], {}])
     async def test_a_missing_or_unreadable_number_is_zero(self, requested, raw):
@@ -97,7 +97,7 @@ class TestChatTalk:
 
         got = await rhapsody_api_chat_talk(7, 'вопрос')
 
-        assert got == {'text': 'ответ', 'message_id': 0, 'intentions': {}}
+        assert got == {'text': 'ответ', 'message_id': 0, 'intentions': {}, 'extra': {}}
 
     async def test_the_key_is_simply_absent(self, requested):
         """Соседний случай «ключа нет вовсе» — не то же самое, что `None`,
@@ -106,7 +106,7 @@ class TestChatTalk:
 
         got = await rhapsody_api_chat_talk(7, 'вопрос')
 
-        assert got == {'text': 'ответ', 'message_id': 0, 'intentions': {}}
+        assert got == {'text': 'ответ', 'message_id': 0, 'intentions': {}, 'extra': {}}
 
     async def test_intentions_come_through_with_their_context(self, requested):
         """⚠⚠ Контракт — объект «метка → контекст», а не список меток.
@@ -179,7 +179,7 @@ class TestChatTalk:
 
         got = await rhapsody_api_chat_talk(7, 'вопрос')
 
-        assert got == {'text': 'ответ', 'message_id': 777, 'intentions': {}}
+        assert got == {'text': 'ответ', 'message_id': 777, 'intentions': {}, 'extra': {}}
 
     async def test_refusal_is_not_swallowed(self, requested):
         """⚠ В отличие от «доставки», отказ в самом вопросе **не гасится**: тут

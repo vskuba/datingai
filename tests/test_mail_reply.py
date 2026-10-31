@@ -84,7 +84,7 @@ def agent(monkeypatch):
                       'name': str(name),
                       'profile_id': int(profile.get('id') or 0)})
 
-        return f'Ответ №{len(calls)}', '', 0
+        return f'Ответ №{len(calls)}', '', 0, {}
 
     monkeypatch.setattr(mod, 'answer_mail_reply', fake)
     monkeypatch.setattr(mod, '_agent', _fake_agent)
@@ -290,7 +290,7 @@ class TestRefusal:
         async def broken(agent_id, profile, uid, language, name='', letter=''):
             calls.append(1)
 
-            return '', 'браузер соседа занят', 0
+            return '', 'браузер соседа занят', 0, {}
 
         monkeypatch.setattr(mod, 'answer_mail_reply', broken)
         monkeypatch.setattr(mod, '_agent', _fake_agent)
@@ -321,7 +321,7 @@ class TestRefusal:
 
     async def test_empty_answer_is_not_saved(self, profile, monkeypatch):
         async def empty(agent_id, profile, uid, language, name='', letter=''):
-            return '   ', '', 0
+            return '   ', '', 0, {}
 
         monkeypatch.setattr(mod, 'answer_mail_reply', empty)
         monkeypatch.setattr(mod, '_agent', _fake_agent)
@@ -552,7 +552,7 @@ class TestMessageIdReachesThePool:
         """Агент отдал ненулевой номер обмена — он обязан лежать в столбце, а не
         потеряться между сочинением ответа и записью в пул."""
         async def fake(agent_id, profile, uid, language, name='', letter=''):
-            return 'Ответ про мотоциклы', '', 4242
+            return 'Ответ про мотоциклы', '', 4242, {}
 
         monkeypatch.setattr(mod, 'answer_mail_reply', fake)
         monkeypatch.setattr(mod, '_agent', _fake_agent)
@@ -782,7 +782,7 @@ class TestTheAgentSeesThePhoto:
         async def spy(agent_id, prof, uid, language, name='', letter=''):
             asked['letter'] = letter
 
-            return 'ответ', '', 0
+            return 'ответ', '', 0, {}
 
         monkeypatch.setattr('src.dating.mail_reply.answer_mail_reply', spy)
 
@@ -807,7 +807,7 @@ class TestTheAgentSeesThePhoto:
         async def spy(agent_id, prof, uid, language, name='', letter=''):
             asked['letter'] = letter
 
-            return 'ответ', '', 0
+            return 'ответ', '', 0, {}
 
         monkeypatch.setattr('src.dating.mail_reply.answer_mail_reply', spy)
 

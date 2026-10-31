@@ -72,14 +72,18 @@ async def _profile(auth_client, tag: str) -> int:
 def _answer(value, message_id: int = 0):
     """Подменённый агент письма: всегда один и тот же текст.
 
-    ⚠ Возвращает **тройку** `(текст, ошибка, номер)` — так устроен
+    ⚠ Возвращает **четвёрку** `(текст, ошибка, номер, решения)` — так устроен
     `answer_mail_write`: отказ соседа и молчание агента здесь разные исходы, и
     первый обрывает заход, а второй пропускает одну пару. Номер обмена нулю по
     умолчанию — подменённый агент ни к кому не ходил; тесты, которым номер
     важен, задают его явно.
+
+    ⚠⚠ Четвёртое поле — **решения прогона** (`extra`), и пустое значит «снимка
+    не просили». Жребий живёт у соседа, и подменённый агент его не бросает:
+    письмо уйдёт текстом, как и до появления ключа.
     """
     async def _got(*args, **kwargs):
-        return value, '', message_id
+        return value, '', message_id, {}
 
     return _got
 
@@ -594,7 +598,7 @@ class TestBothMustBeOnline:
         async def _write(*args, **kwargs):
             called.append(args)
 
-            return 'письмо', '', 0
+            return 'письмо', '', 0, {}
 
         monkeypatch.setattr(favorite_mail, 'answer_mail_write', _write)
         monkeypatch.setattr(favorite_mail, '_agent', _agent_id())

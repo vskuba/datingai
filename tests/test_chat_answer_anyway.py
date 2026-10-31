@@ -292,7 +292,7 @@ class TestForeignNameIsNotSent:
         async def _ask(agent_id, question, language, profile, history='', uid='',
                        anyway=False, name='', **_):
             # Ровно тот ответ, что ушёл с прода.
-            return "ok vadim, let's go. what's on your mind today?", '', 0
+            return "ok vadim, let's go. what's on your mind today?", '', 0, {}
 
         sent = []
 
