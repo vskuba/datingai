@@ -236,14 +236,13 @@ class TestTheIntentionBadge:
         приезжает из `SITE_LIVE_EMPTY` даже когда счётчик не зовут вовсе, и
         проверка на его наличие зеленела на снятом вызове. Проверено
         диверсией."""
-        from src.dating.chat_intention import chat_intention_put
-        from tests.conftest import TEST_STAND_SITE
+        from tests.conftest import TEST_STAND_SITE, intention_said
 
         before = (await auth_client.get('/api/site/live')).json()['result']
         was = int((before.get(str(TEST_STAND_SITE)) or {}).get('intention') or 0)
 
-        await chat_intention_put(girl, TEST_STAND_SITE, 'u-live-probe',
-                                 {'she_promised_send_photo': {}})
+        await intention_said(girl, TEST_STAND_SITE, 'u-live-probe',
+                             {'she_promised_send_photo': {}})
 
         after = (await auth_client.get('/api/site/live')).json()['result']
         now = int((after.get(str(TEST_STAND_SITE)) or {}).get('intention') or 0)

@@ -179,9 +179,14 @@ async def _intention(db, counted: dict) -> None:
 
     ⚠ `site_id` у `chat_intention` свой — анкету присоединять не надо.
     """
+    # ⚠⚠ Ждущие доставки **не считаются**: обещание даётся в реплике, и пока
+    # та не ушла, его не существует. Значок, считающий их, обещал бы человеку
+    # работу, которой нет, — а половина ждущих не доедет вовсе
+    # (`chat_intention.py`).
     await db.execute(
         'SELECT site_id, COUNT(*) AS n FROM chat_intention'
-        ' WHERE created_at > NOW() - INTERVAL %s HOUR'
+        " WHERE status <> 'waiting'"
+        '   AND created_at > NOW() - INTERVAL %s HOUR'
         ' GROUP BY site_id', (SITE_LIVE_HOURS,))
 
     for row in (await db.fetchall() or []):

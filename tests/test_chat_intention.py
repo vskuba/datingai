@@ -15,12 +15,13 @@ from src.dating import answer as answer_module
 from src.dating import chat_intention as intention_module
 from src.dating.answer import _agent_ask
 from src.dating.json_column import json_column_load
-from src.dating.chat_intention import (chat_intention_do_allowed,
+from src.dating.chat_intention import (chat_intention_delivered,
+                                       chat_intention_do_allowed,
                                        chat_intention_drop,
                                        chat_intention_done, chat_intention_pairs,
                                        chat_intention_put, chat_intention_row,
                                        chat_intention_rows)
-from tests.conftest import TEST_STAND_SITE
+from tests.conftest import TEST_STAND_SITE, intention_said
 
 pytestmark = pytest.mark.chat
 
@@ -72,7 +73,7 @@ class TestThePut:
     async def test_it_lands(self, girl):
         uid = _uid()
 
-        assert await chat_intention_put(girl, TEST_STAND_SITE, uid,
+        assert await intention_said(girl, TEST_STAND_SITE, uid,
                                         {PROMISE: {}}) == 1
 
         rows = await _rows(girl)
@@ -84,9 +85,9 @@ class TestThePut:
     async def test_twice_while_open_does_not_land(self, girl):
         """⚠ Одна открытая на пару и метку: повтор новой строки не заводит."""
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
 
-        assert await chat_intention_put(girl, TEST_STAND_SITE, uid,
+        assert await intention_said(girl, TEST_STAND_SITE, uid,
                                         {PROMISE: {}}) == 0
         assert len(await _rows(girl)) == 1
 
@@ -94,23 +95,23 @@ class TestThePut:
         """Повторы внутри пачки схлопывает ключ базы, а не разбор."""
         uid = _uid()
 
-        assert await chat_intention_put(girl, TEST_STAND_SITE, uid,
+        assert await intention_said(girl, TEST_STAND_SITE, uid,
                                         {PROMISE: {}, PROMISE: {}}) == 1
 
     async def test_another_label_lands_beside_it(self, girl):
         """Ключ — на метку: другое обещание той же паре законно."""
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
 
-        assert await chat_intention_put(girl, TEST_STAND_SITE, uid,
+        assert await intention_said(girl, TEST_STAND_SITE, uid,
                                         {'he_asked_not_to_write': {}}) == 1
         assert len(await _rows(girl)) == 2
 
     async def test_another_companion_lands_beside_it(self, girl):
         """Ключ — на пару: та же метка другому человеку законна."""
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
 
-        assert await chat_intention_put(girl, TEST_STAND_SITE, _uid(),
+        assert await intention_said(girl, TEST_STAND_SITE, _uid(),
                                         {PROMISE: {}}) == 1
         assert len(await _rows(girl)) == 2
 
@@ -120,31 +121,31 @@ class TestWhatIsNotWritten:
 
     async def test_a_long_label_is_dropped(self, girl):
         """⚠ Длиннее 100 знаков — пересказ разговора, а не метка."""
-        assert await chat_intention_put(girl, TEST_STAND_SITE, _uid(),
+        assert await intention_said(girl, TEST_STAND_SITE, _uid(),
                                         ['x' * 101]) == 0
         assert await _rows(girl) == []
 
     async def test_a_label_of_exactly_the_limit_lands(self, girl):
         """Граница включительная: сто знаков — ещё метка."""
-        assert await chat_intention_put(girl, TEST_STAND_SITE, _uid(),
+        assert await intention_said(girl, TEST_STAND_SITE, _uid(),
                                         {'x' * 100: {}}) == 1
 
     async def test_blank_labels_are_dropped(self, girl):
-        assert await chat_intention_put(girl, TEST_STAND_SITE, _uid(),
+        assert await intention_said(girl, TEST_STAND_SITE, _uid(),
                                         {'': {}, '   ': {}}) == 0
         assert await _rows(girl) == []
 
     async def test_an_empty_list_writes_nothing(self, girl):
-        assert await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {}) == 0
+        assert await intention_said(girl, TEST_STAND_SITE, _uid(), {}) == 0
 
     async def test_without_a_companion_writes_nothing(self, girl):
         """⚠ Пустой `uid` — намерению не к кому принадлежать."""
-        assert await chat_intention_put(girl, TEST_STAND_SITE, '',
+        assert await intention_said(girl, TEST_STAND_SITE, '',
                                         {PROMISE: {}}) == 0
         assert await _rows(girl) == []
 
     async def test_without_a_profile_writes_nothing(self, girl):
-        assert await chat_intention_put(0, TEST_STAND_SITE, _uid(),
+        assert await intention_said(0, TEST_STAND_SITE, _uid(),
                                         {PROMISE: {}}) == 0
 
 
@@ -152,7 +153,7 @@ class TestTheDoneMark:
     """Отметка «исполнено»."""
 
     async def test_it_lands(self, girl):
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
         one = (await _open(girl))[0]
 
         assert await chat_intention_done(one['id']) is True
@@ -163,7 +164,7 @@ class TestTheDoneMark:
 
     async def test_the_second_mark_is_not_ours(self, girl):
         """⚠ Условный UPDATE: два исполнителя не отметят одну строку дважды."""
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
         one = (await _open(girl))[0]
         await chat_intention_done(one['id'])
 
@@ -172,11 +173,11 @@ class TestTheDoneMark:
     async def test_a_done_one_releases_the_key(self, girl):
         """⚠⚠ Второе обещание фото законно — но только после первого."""
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
         one = (await _open(girl))[0]
         await chat_intention_done(one['id'])
 
-        assert await chat_intention_put(girl, TEST_STAND_SITE, uid,
+        assert await intention_said(girl, TEST_STAND_SITE, uid,
                                         {PROMISE: {}}) == 1
         assert [row['status'] for row in await _rows(girl)] == ['done', 'open']
 
@@ -188,7 +189,7 @@ class TestTheDrop:
     """Удаление карточки руками: намерение уходит вместе с черновиком письма."""
 
     async def test_it_takes_the_row(self, girl):
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
         one = (await _open(girl))[0]
 
         got = await chat_intention_drop(one['id'])
@@ -202,7 +203,7 @@ class TestTheDrop:
         то есть следующее такое же обещание той же паре собрать было бы нечем.
         Молча.
         """
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
         one = (await _open(girl))[0]
 
         async with mysql_get_db_async() as db:
@@ -226,7 +227,7 @@ class TestTheDrop:
         """⚠ Удаление значит «этой работы не будет», а `sent` — работа уже
         сделанная: собеседник письмо получил, и след в журнале доставки
         принадлежит истории, а не пулу."""
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
         one = (await _open(girl))[0]
 
         async with mysql_get_db_async() as db:
@@ -260,11 +261,11 @@ class TestTheDrop:
         """⚠ Убранное намерение отпускает ключ: та же пара вправе пообещать
         снова, и строка ляжет заново."""
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
         one = (await _open(girl))[0]
         await chat_intention_drop(one['id'])
 
-        assert await chat_intention_put(girl, TEST_STAND_SITE, uid,
+        assert await intention_said(girl, TEST_STAND_SITE, uid,
                                         {PROMISE: {}}) == 1
 
 
@@ -283,6 +284,18 @@ class TestTheWritingPoint:
             1, 'вопрос', 'en', await _profile_row(girl), uid=uid, name='Bob')
 
         assert (text, error, message_id) == ('ок', '', 7)
+
+        # ⚠⚠ Строка ложится **ждущей**: обещание даётся в реплике, и пока та
+        # не ушла, его не существует. Прежде она была открытой — и круг
+        # собирал письмо по обещанию, которого собеседник не слышал
+        # (`TestThePromiseNeedsDelivery`).
+        assert not await _open(girl), (
+            'намерение открыто до отправки реплики')
+
+        from src.dating.chat_intention import chat_intention_delivered
+
+        assert await chat_intention_delivered(7) == 1, (
+            'доставка не открыла намерение этого обмена')
         assert [one['intention'] for one
                 in await _open(girl)] == [PROMISE]
 
@@ -330,7 +343,7 @@ class TestTheDoneNote:
     """Чем намерение исполнили — словами, в той же строке."""
 
     async def test_the_note_lands(self, girl):
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
         one = (await _open(girl))[0]
 
         assert await chat_intention_done(
@@ -339,7 +352,7 @@ class TestTheDoneNote:
 
     async def test_without_a_note_the_old_contract_holds(self, girl):
         """⚠ Довод необязательный: прежние вызовы и их тесты целы."""
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
         one = (await _open(girl))[0]
 
         assert await chat_intention_done(one['id']) is True
@@ -349,7 +362,7 @@ class TestTheDoneNote:
         """⚠ Пятьсот знаков — предел столбца. Обрезаем **мы**, а не база: в
         строгом режиме MySQL такая вставка падает ошибкой, и закрытие намерения
         сорвалось бы из-за длинного текста исполнителя."""
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
         one = (await _open(girl))[0]
 
         assert await chat_intention_done(one['id'], note='x' * 600) is True
@@ -357,7 +370,7 @@ class TestTheDoneNote:
 
     async def test_the_second_mark_leaves_the_first_note(self, girl):
         """Закрыли дважды — вторая отметка не наша, и заметку она не трогает."""
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
         one = (await _open(girl))[0]
         await chat_intention_done(one['id'], note='первое')
 
@@ -381,7 +394,7 @@ class TestTheRows:
     async def test_it_gives_the_row_with_names(self, girl):
         uid = _uid()
         await _companion(uid, 'Bruce', 'http://x/b.jpg')
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
 
         got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl)
 
@@ -394,7 +407,7 @@ class TestTheRows:
         """⚠ Карточка заводится по требованию — её может не быть. Тогда в строке
         остаётся номер, а не пустое место: по пустому собеседника не узнать."""
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
 
         got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl)
 
@@ -402,7 +415,7 @@ class TestTheRows:
 
     async def test_it_filters_by_status(self, girl):
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+        await intention_said(girl, TEST_STAND_SITE, uid,
                                  {PROMISE: {}, 'he_asked_not_to_write': {}})
         one = (await _open(girl))[0]
         await chat_intention_done(one['id'], note='сделано')
@@ -417,8 +430,8 @@ class TestTheRows:
 
     async def test_it_filters_by_companion(self, girl):
         mine = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, mine, {PROMISE: {}})
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, mine, {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
 
         got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
                                         uid=mine)
@@ -429,8 +442,8 @@ class TestTheRows:
     async def test_a_profile_of_zero_means_all_of_them(self, girl, girl_make):
         """⚠ Анкета — фильтр, а не условие показа. Общее правило раздела."""
         other = await girl_make()
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
-        await chat_intention_put(other, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(other, TEST_STAND_SITE, _uid(), {PROMISE: {}})
 
         got = await chat_intention_rows(TEST_STAND_SITE, per=1000)
 
@@ -438,7 +451,7 @@ class TestTheRows:
 
     async def test_pages_are_counted_by_the_server(self, girl):
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+        await intention_said(girl, TEST_STAND_SITE, uid,
                                  {'a_one': {}, 'a_two': {}, 'a_three': {}})
 
         got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl, per=2)
@@ -450,7 +463,7 @@ class TestTheRows:
     async def test_a_page_past_the_end_is_fixed_not_refused(self, girl):
         """⚠ Строку могли закрыть с последней страницы: отказ вместо предыдущей
         читался бы как поломка. То же правило, что у журнала доставки."""
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
 
         got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
                                         page=99)
@@ -466,7 +479,7 @@ class TestTheRows:
     async def test_dates_come_as_strings(self, girl):
         """Страница сдвигает время сама (`time.js`), и ей нужна строка, а не
         объект, который JSON не переживёт."""
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
 
         got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl)
 
@@ -480,7 +493,7 @@ class TestThePairs:
 
     async def test_one_row_per_pair_with_counts(self, girl):
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+        await intention_said(girl, TEST_STAND_SITE, uid,
                                  {PROMISE: {}, 'he_asked_not_to_write': {}})
         one = (await _open(girl))[0]
         await chat_intention_done(one['id'], note='сделано')
@@ -495,7 +508,7 @@ class TestThePairs:
     async def test_counts_are_numbers_not_decimals(self, girl):
         """⚠ `SUM()` в MySQL отдаёт `Decimal`, а JSON его не переживёт: ручка
         упала бы на сериализации, а не на запросе."""
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
 
         got = await chat_intention_pairs(TEST_STAND_SITE, profile_id=girl)
 
@@ -503,8 +516,8 @@ class TestThePairs:
         assert isinstance(got['rows'][0]['done_count'], int)
 
     async def test_two_companions_are_two_rows(self, girl):
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
 
         got = await chat_intention_pairs(TEST_STAND_SITE, profile_id=girl)
 
@@ -519,8 +532,8 @@ class TestThePairs:
 
     async def test_a_profile_of_zero_means_all_of_them(self, girl, girl_make):
         other = await girl_make()
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
-        await chat_intention_put(other, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(other, TEST_STAND_SITE, _uid(), {PROMISE: {}})
 
         got = await chat_intention_pairs(TEST_STAND_SITE, per=1000)
 
@@ -529,7 +542,7 @@ class TestThePairs:
     async def test_the_companion_name_comes_through(self, girl):
         uid = _uid()
         await _companion(uid, 'Mike')
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
 
         got = await chat_intention_pairs(TEST_STAND_SITE, profile_id=girl)
 
@@ -537,7 +550,7 @@ class TestThePairs:
 
     async def test_pages_are_counted_by_the_server(self, girl):
         for _ in range(3):
-            await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+            await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
 
         got = await chat_intention_pairs(TEST_STAND_SITE, profile_id=girl, per=2)
 
@@ -611,7 +624,7 @@ class TestTheContext:
 
     async def test_the_context_lands_with_the_label(self, girl):
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+        await intention_said(girl, TEST_STAND_SITE, uid,
                                  {PROMISE: {'letter': 'Hi!', 'tags': ['dress']}})
 
         rows = await _rows(girl)
@@ -624,7 +637,7 @@ class TestTheContext:
     async def test_a_label_without_context_is_still_written(self, girl):
         """⚠ Метка важнее контекста: помечено — записано, даже если собрать
         контекст было нечем."""
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
 
         rows = await _rows(girl)
 
@@ -639,8 +652,8 @@ class TestTheContext:
         прогона.
         """
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {PROMISE: {'letter': 'первый'}})
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {PROMISE: {'letter': 'второй'}})
+        await intention_said(girl, TEST_STAND_SITE, uid, {PROMISE: {'letter': 'первый'}})
+        await intention_said(girl, TEST_STAND_SITE, uid, {PROMISE: {'letter': 'второй'}})
 
         rows = await _rows(girl)
 
@@ -652,8 +665,8 @@ class TestTheContext:
         прошлого: иначе один «пустой» ответ агента стирал бы собранное письмо.
         """
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {PROMISE: {'letter': 'цел'}})
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, uid, {PROMISE: {'letter': 'цел'}})
+        await intention_said(girl, TEST_STAND_SITE, uid, {PROMISE: {}})
 
         rows = await _rows(girl)
 
@@ -666,7 +679,7 @@ class TestTheContext:
         терять из-за этого само намерение нельзя.
         """
         for stranger in ('строка', 42, ['список']):
-            await chat_intention_put(girl, TEST_STAND_SITE, _uid(),
+            await intention_said(girl, TEST_STAND_SITE, _uid(),
                                      {PROMISE: stranger})
 
         assert len(await _rows(girl)) == 3
@@ -686,7 +699,7 @@ class TestTheContextReachesThePage:
 
     async def test_the_list_carries_it(self, girl):
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+        await intention_said(girl, TEST_STAND_SITE, uid,
                                  {PROMISE: {'letter': 'Hi!', 'tags': 'dress'}})
 
         rows = await _open(girl)
@@ -697,7 +710,7 @@ class TestTheContextReachesThePage:
     async def test_it_comes_parsed_not_as_a_string(self, girl):
         """⚠ Разбирает **сервер**: столбец приезжает то структурой, то строкой,
         и страница знала бы об этом вторым правилом."""
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(),
+        await intention_said(girl, TEST_STAND_SITE, _uid(),
                                  {PROMISE: {'letter': 'Hi!'}})
 
         assert isinstance((await _open(girl))[0]['context'], dict)
@@ -705,14 +718,14 @@ class TestTheContextReachesThePage:
     async def test_no_context_is_an_empty_object_not_a_hole(self, girl):
         """⚠ «Контекст не собран» — законное состояние, и выглядеть оно обязано
         пустым объектом: `None` заставил бы каждого читателя проверять дважды."""
-        await chat_intention_put(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
+        await intention_said(girl, TEST_STAND_SITE, _uid(), {PROMISE: {}})
 
         assert (await _open(girl))[0]['context'] == {}
 
     async def test_one_row_reads_the_same_shape(self, girl):
         """⚠ Форма одной строки та же, что у списка, — её собирает тот же код."""
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+        await intention_said(girl, TEST_STAND_SITE, uid,
                                  {PROMISE: {'letter': 'Hi!'}})
         listed = (await _open(girl))[0]
 
@@ -724,3 +737,162 @@ class TestTheContextReachesThePage:
     async def test_a_missing_row_is_empty_not_a_throw(self):
         assert await chat_intention_row(10_000_000) == {}
         assert await chat_intention_row(0) == {}
+
+
+class TestThePromiseNeedsDelivery:
+    """⚠⚠⚠ Намерение заводится только по **доставленной** реплике.
+
+    ## Что случилось на проде 31.10.2026
+
+    Инициатива Olga → Benoit не ушла — сайт ответил `IsSuccess:false`, — а
+    намерение «пришлю фото письмом» записалось и встало в пул. Дальше было бы
+    хуже самой потери: круг собрал бы письмо со снимком человеку, который
+    обещания **не слышал**. Для него это письмо из ниоткуда.
+
+    Правило теперь одно: обещание есть только у сказанного.
+
+    ⚠ Размен был назван в коде прямо — «строка заводится по ответу прогона,
+    лечится позже отметкой доставки», — и лечения не дождался. Отсюда сторожа
+    на каждое звено, а не на одно.
+    """
+
+    async def test_a_fresh_intention_waits(self, girl):
+        """Легло ждущим, а не открытым."""
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+                                 {PROMISE: {}}, 7001)
+
+        async with mysql_get_db_async() as db:
+            await db.execute("SELECT status, message_id FROM chat_intention"
+                             ' WHERE profile_id = %s AND uid = %s', (girl, uid))
+            row = await db.fetchone()
+
+        assert row['status'] == 'waiting', (
+            'намерение открыто до отправки — круг соберёт письмо по обещанию, '
+            'которого собеседник не слышал')
+        assert row['message_id'] == 7001, 'номер обмена не записан'
+
+    async def test_the_waiting_one_is_not_in_the_pool(self, girl):
+        """⚠ Исполнитель берёт `open`, и ждущего там быть не должно."""
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+                                 {PROMISE: {}}, 7002)
+
+        got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl, status='open')
+
+        assert not got['rows'], 'ждущее намерение попало в пул исполнения'
+
+    async def test_the_waiting_one_is_not_shown_at_all(self, girl):
+        """⚠⚠ И человеку тоже: пустой статус значит «открытые и сделанные»."""
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+                                 {PROMISE: {}}, 7003)
+
+        got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl)
+
+        assert not got['rows'], (
+            'ждущее намерение показано человеку как обещание')
+
+    async def test_delivery_opens_it(self, girl):
+        """Реплика ушла — обещание стало настоящим."""
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+                                 {PROMISE: {}}, 7004)
+
+        opened = await chat_intention_delivered(7004)
+
+        assert opened == 1
+        got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl, status='open')
+        assert len(got['rows']) == 1, 'доставка не открыла намерение'
+
+    async def test_delivery_of_another_exchange_opens_nothing(self, girl):
+        """⚠⚠ Связь по **номеру обмена**, а не по паре: у пары обменов много, и
+        доставка одного не должна открывать обещание из другого."""
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+                                 {PROMISE: {}}, 7005)
+
+        assert await chat_intention_delivered(7006) == 0
+        assert not (await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
+                                              status='open'))['rows']
+
+    async def test_a_silent_run_never_opens(self, girl):
+        """⚠ Ноль значит «обмена нет»: агент промолчал. Такое намерение не
+        откроется никогда — и верно, реплики, в которой оно дано, нет."""
+        uid = _uid()
+        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+                                 {PROMISE: {}}, 0)
+
+        assert await chat_intention_delivered(0) == 0
+
+    async def test_doubles_are_swept_on_delivery(self, girl):
+        """⚠⚠ Агент метит одно обещание на каждой реплике. Открывается одно,
+        прочие ждущие той же пары и метки стираются — иначе следующая доставка
+        споткнулась бы о ключ открытых."""
+        uid = _uid()
+        for said in (7007, 7008, 7009):
+            await chat_intention_put(girl, TEST_STAND_SITE, uid,
+                                     {PROMISE: {}}, said)
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT COUNT(*) AS n FROM chat_intention'
+                             ' WHERE profile_id = %s AND uid = %s', (girl, uid))
+            assert int((await db.fetchone())['n']) == 3, 'ждущие не легли'
+
+        await chat_intention_delivered(7008)
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT status, COUNT(*) AS n FROM chat_intention'
+                             ' WHERE profile_id = %s AND uid = %s'
+                             ' GROUP BY status', (girl, uid))
+            by = {r['status']: int(r['n']) for r in await db.fetchall()}
+
+        assert by == {'open': 1}, f'после доставки осталось {by}'
+
+
+class TestEveryDeliveryOpensIt:
+    """⚠⚠⚠ Дорог доставки три, и каждая обязана открывать намерение.
+
+    Забыть одну — значит оставить её обещания ждущими навсегда: письмо по ним
+    не уйдёт, а человек увидит пустой пул. Ровно так жила грабля `delivered_at`,
+    где дорог оказалось пять и четвёртую забыли.
+    """
+
+    def test_all_three_call_it(self):
+        """Чат, инициатива и письма — рядом с отметкой у соседа.
+
+        ⚠⚠ Считаем **вызовы**, а не упоминания: первая запись этого сторожа
+        искала имя в тексте модуля и зеленела, когда вызов подменили на `pass`
+        — имя оставалось в импорте. Поймано диверсией.
+        """
+        import inspect
+        import re
+
+        from src.dating import answer, initiative_round, mail_send
+
+        for mod, what in ((answer, 'чат'), (initiative_round, 'инициатива'),
+                          (mail_send, 'письма')):
+            code = inspect.getsource(mod)
+            calls = re.findall(r'await chat_intention_delivered\(', code)
+
+            assert calls, (
+                f'дорога «{what}» не открывает намерения — они останутся '
+                'ждущими навсегда, и письмо по ним не уйдёт никогда')
+
+    def test_it_stands_next_to_the_neighbour_mark(self):
+        """⚠ Вопрос один — «реплика дошла», — и ответов на него два: отметка у
+        соседа и открытие обещания у нас. Разойдись они, одно без другого
+        означало бы либо немое обещание, либо невидимую агенту реплику."""
+        import inspect
+        import re
+
+        from src.dating import answer, initiative_round, mail_send
+
+        for mod in (answer, initiative_round, mail_send):
+            code = inspect.getsource(mod)
+            theirs = len(re.findall(r'await rhapsody_api_chat_delivered\(', code))
+            ours = len(re.findall(r'await chat_intention_delivered\(', code))
+
+            assert ours == theirs, (
+                f'{mod.__name__}: отметок у соседа {theirs}, открытий '
+                f'намерений {ours} — какая-то дорога забыта')

@@ -23,7 +23,7 @@ import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating.chat_intention import (chat_intention_put, chat_intention_rows,
+from src.dating.chat_intention import (chat_intention_rows,
                                        intention_letter_text)
 from src.dating.intention_round import intention_round_run
 from src.dating.companion_gallery import companion_gallery_seen
@@ -33,7 +33,7 @@ from src.dating.intention_do import (INTENTION_DO_PAGE, INTENTION_DO_PHOTO,
                                      intention_mail_draft, intention_mail_make,
                                      )
 from src.dating.mail_shot import DatingMailShotError, mail_shot_ready
-from tests.conftest import TEST_STAND_SITE
+from tests.conftest import intention_said, TEST_STAND_SITE
 from tests.site_api_fake import SITE_API_FAKE_BASE, SITE_API_FAKE_PASSWORD
 
 pytestmark = pytest.mark.chat
@@ -73,7 +73,7 @@ async def ready(girl, drive):
             files[name] = int(db.lastrowid)
         await db.connection.commit()
 
-    await chat_intention_put(girl, TEST_STAND_SITE, uid, {PROMISE: {
+    await intention_said(girl, TEST_STAND_SITE, uid, {PROMISE: {
         'letter': 'here is the photo i promised you',
         'tags': 'outdoor, evening, smiling'}})
 
@@ -143,7 +143,7 @@ class TestTheDraft:
 
     async def test_no_letter_in_the_context_is_refused(self, girl):
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+        await intention_said(girl, TEST_STAND_SITE, uid,
                                  {PROMISE: {'tags': 'outdoor'}})
         got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
                                         status='open')
@@ -155,7 +155,7 @@ class TestTheDraft:
         """⚠ Галереи нет — черновика тоже: письмо «вот моё фото» без фото хуже
         молчания, и причина обязана быть названа словами."""
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {PROMISE: {
+        await intention_said(girl, TEST_STAND_SITE, uid, {PROMISE: {
             'letter': 'here it is', 'tags': 'outdoor'}})
         got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
                                         status='open')
@@ -186,7 +186,7 @@ class TestTheBatch:
         """
         # Пятьдесят намерений с готовыми черновиками — ровно страница отбора.
         for _ in range(INTENTION_DO_PAGE):
-            await chat_intention_put(ready['girl'], TEST_STAND_SITE, _uid(),
+            await intention_said(ready['girl'], TEST_STAND_SITE, _uid(),
                                      {PROMISE: {'letter': 'older one',
                                                 'tags': 'outdoor, evening'}})
         older = await chat_intention_rows(TEST_STAND_SITE,
@@ -230,7 +230,7 @@ class TestTheBatch:
         # Шесть обещаний у анкет без галереи — больше, чем берётся за заход.
         for _ in range(6):
             other = await girl_make()
-            await chat_intention_put(other, TEST_STAND_SITE, _uid(),
+            await intention_said(other, TEST_STAND_SITE, _uid(),
                                      {PROMISE: {'letter': 'here it is',
                                                 'tags': 'outdoor'}})
 
@@ -243,7 +243,7 @@ class TestTheBatch:
         """⚠ «Снимок не выбрался» без имени пары не говорит ничего: намерений
         в пуле десятки."""
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {PROMISE: {
+        await intention_said(girl, TEST_STAND_SITE, uid, {PROMISE: {
             'letter': 'here it is', 'tags': 'outdoor'}})
 
         got = await intention_mail_make(TEST_STAND_SITE, profile_id=girl)
@@ -337,7 +337,7 @@ class TestTheMarksAfterSending:
         made = await intention_mail_draft(ready['intention'])
         await _sent(await _letter(made))
 
-        await chat_intention_put(ready['girl'], TEST_STAND_SITE, ready['uid'],
+        await intention_said(ready['girl'], TEST_STAND_SITE, ready['uid'],
                                  {PROMISE: {'letter': 'one more',
                                             'tags': 'outdoor, studio'}})
         got = await chat_intention_rows(TEST_STAND_SITE,
@@ -650,7 +650,7 @@ class TestTheParagraphMark:
                 (girl, f'f-{uuid.uuid4().hex[:8]}'))
             await db.connection.commit()
 
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {
+        await intention_said(girl, TEST_STAND_SITE, uid, {
             INTENTION_DO_PHOTO: {'letter': 'Hi there.[P]Here it is.',
                                  'tags': 'outdoor'}})
 
@@ -697,7 +697,7 @@ class TestTheStory:
         при этом нет — «метку исполнять нечем» законное состояние.
         """
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {
+        await intention_said(girl, TEST_STAND_SITE, uid, {
             INTENTION_DO_STORY: {'letter': 'When I was six, I...',
                                  'story': 'childhood, the dog'}})
 
@@ -714,7 +714,7 @@ class TestTheStory:
         """⚠ Ноль в `gallery_file_id` — законное состояние, а не недоделка:
         отправка такое письмо уносит текстом."""
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {
+        await intention_said(girl, TEST_STAND_SITE, uid, {
             INTENTION_DO_STORY: {'letter': 'A long one.[P]And the end.'}})
 
         got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
@@ -734,7 +734,7 @@ class TestTheStory:
         снимком связи нет никакой.
         """
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {
+        await intention_said(girl, TEST_STAND_SITE, uid, {
             INTENTION_DO_STORY: {'letter': 'Once, in Lviv...'}})
 
         got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
@@ -748,7 +748,7 @@ class TestTheStory:
     async def test_no_letter_is_still_refused(self, girl):
         """⚠ Пустое письмо — отказ, как и у снимка: отправлять нечего."""
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid,
+        await intention_said(girl, TEST_STAND_SITE, uid,
                                  {INTENTION_DO_STORY: {'story': 'childhood'}})
 
         got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
@@ -764,7 +764,7 @@ class TestTheStory:
         отвергни она строку без `gallery_file_id`, история не ушла бы никогда.
         """
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {
+        await intention_said(girl, TEST_STAND_SITE, uid, {
             INTENTION_DO_STORY: {'letter': 'the story itself'}})
 
         got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
@@ -782,7 +782,7 @@ class TestTheStory:
         """⚠ Отметка об исполнении ставится и без снимка: обещание выполнено
         письмом, а `companion_gallery_sent` просто нечего запоминать."""
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {
+        await intention_said(girl, TEST_STAND_SITE, uid, {
             INTENTION_DO_STORY: {'letter': 'the story itself'}})
 
         got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,
@@ -802,7 +802,7 @@ class TestTheStory:
         """⚠ Колонка «Сделано» читается человеком: «отправлено фото письмом»
         у письма без фото — враньё в единственном месте, где он проверяет."""
         uid = _uid()
-        await chat_intention_put(girl, TEST_STAND_SITE, uid, {
+        await intention_said(girl, TEST_STAND_SITE, uid, {
             INTENTION_DO_STORY: {'letter': 'the story itself'}})
 
         got = await chat_intention_rows(TEST_STAND_SITE, profile_id=girl,

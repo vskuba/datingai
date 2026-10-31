@@ -49,7 +49,8 @@ from src.dating.site_setting import site_seconds
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_chat_delivered,
                                        rhapsody_api_chat_talk)
 from src.dating.log import log_write
-from src.dating.chat_intention import chat_intention_put
+from src.dating.chat_intention import (chat_intention_delivered,
+                                       chat_intention_put)
 from src.dating.chat_reply import (chat_reply_failed, chat_reply_put,
                                    chat_reply_sent, chat_reply_waiting)
 from src.dating.companion_ref import (companion_ref_foreign, companion_title,
@@ -302,6 +303,10 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
         # которой собеседник не получал.
         if result['ok']:
             await rhapsody_api_chat_delivered(message_id)
+            # ⚠ Рядом, а не внутри двери к соседу: та про наши намерения знать
+            # не должна. Вопрос один — «реплика дошла», — и ответов на него
+            # два: отметка у соседа и открытие обещания у нас.
+            await chat_intention_delivered(message_id)
             sent += 1
             await chat_reply_sent(int(ready['id']))
             await log_write(profile_id, 'out', f'{me} → {who}: «{answer[:300]}»')
@@ -631,9 +636,16 @@ async def _agent_ask(agent_id: int, question: str, language: str,
     # четвёртым значением, правило «запиши намерения» встало бы тремя копиями —
     # ровно грабля `delivered_at`, где дорог оказалось пять и четвёртую забыли.
     #
-    # ⚠ Строка заводится **по ответу прогона**, то есть до отправки: у писем
-    # между сочинением и отправкой проходят часы. Размен назван в спеке —
-    # лечится позже отметкой доставки по номеру обмена.
+    # ⚠⚠⚠ Строка заводится **ждущей** (`waiting`), а не открытой: обещание
+    # даётся в реплике, и пока та не ушла, его не существует. Открывает её
+    # доставка — `chat_intention_delivered` рядом с каждым
+    # `rhapsody_api_chat_delivered`.
+    #
+    # Прежде она ложилась открытой — по ответу прогона, до отправки, — и это
+    # вскрылось живьём 31.10.2026: инициатива Olga → Benoit не ушла (сайт
+    # ответил `IsSuccess:false`), а намерение «пришлю фото письмом» встало в
+    # пул. Круг собрал бы письмо со снимком человеку, который обещания не
+    # слышал.
     #
     # ⚠⚠ Отказ записи ответ **не роняет**. Реплика к этому мигу сочинена и
     # сейчас уйдёт человеку; уронить её из-за ненаписавшейся отметки значит
@@ -642,7 +654,8 @@ async def _agent_ask(agent_id: int, question: str, language: str,
     try:
         await chat_intention_put(int(profile.get('id') or 0),
                                  int(profile.get('site_id') or 0),
-                                 uid, got.get('intentions') or [])
+                                 uid, got.get('intentions') or [],
+                                 int(got.get('message_id') or 0))
     except Exception as e:
         logger_info(f'[dating] намерения прогона не записались: {e}')
 

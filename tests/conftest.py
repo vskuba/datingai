@@ -818,3 +818,33 @@ async def _live_messages() -> int:
                          tuple(_PROFILES_LIVE))
 
         return int(((await db.fetchone()) or {}).get('n') or 0)
+
+
+async def intention_said(profile_id: int, site_id: int, uid: str,
+                         intentions: dict, message_id: int = 0) -> int:
+    """Намерение, чья реплика **дошла**: кладёт и открывает.
+
+    ⚠⚠ Тестам, которые проверяют не саму доставку, нужно готовое открытое
+    намерение — такое, каким оно становится в живой работе. Звать
+    `chat_intention_put` напрямую больше нельзя: с 31.10.2026 оно ложится
+    ждущим, и исполнитель его не видит (`chat_intention.py`).
+
+    ⚠ Номер обмена выдумывается свой на каждый вызов, если не задан: связь
+    «намерение → реплика» идёт по нему, и общий номер на два вызова открыл бы
+    чужое обещание.
+
+    Args:
+        message_id: номер обмена. Ноль — выдумываем, чтобы доставка нашла.
+
+    Returns:
+        int: сколько намерений открылось.
+    """
+    from src.dating.chat_intention import (chat_intention_delivered,
+                                           chat_intention_put)
+
+    said = int(message_id or 0) or int(uuid.uuid4().int % 900_000_000) + 1000
+
+    await chat_intention_put(int(profile_id), int(site_id), str(uid),
+                             intentions, said)
+
+    return await chat_intention_delivered(said)

@@ -57,6 +57,7 @@ from src.dating.mail_wait import mail_wait_mark, mail_wait_words
 from src.dating.ready import password_pick
 from src.dating.request import REQUEST_SEND
 from src.dating.site_api import DatingSiteApiError, site_api_call
+from src.dating.chat_intention import chat_intention_delivered
 from src.rhapsody.rhapsody_api import rhapsody_api_chat_delivered
 
 # Что зовём. Пути из документации сайта.
@@ -529,7 +530,12 @@ async def mail_send_mark(letter: dict, sent: bool, error: str = '',
     # ⚠ Отметка **после** записи исхода: сосед может не ответить, а исход письма
     # обязан лечь в любом случае.
     if sent and table in MAIL_SEND_TALK_TABLES:
-        await rhapsody_api_chat_delivered(int(letter.get('message_id') or 0))
+        said = int(letter.get('message_id') or 0)
+        await rhapsody_api_chat_delivered(said)
+        # ⚠⚠ Письмо дошло — обещание из него становится настоящим. У писем
+        # между сочинением и отправкой проходят часы, и всё это время
+        # намерение законно ждёт (`chat_intention.py`).
+        await chat_intention_delivered(said)
 
     # ⚠⚠ **Отметки исполнения — тоже здесь, и по той же причине.** Ушедшее
     # письмо-исполнение обязано запомнить снимок (`companion_gallery_file`) и

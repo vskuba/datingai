@@ -80,8 +80,8 @@ CHAT_INTENTION_PARAGRAPH = '[P]'
 
 
 async def chat_intention_put(profile_id: int, site_id: int, uid: str,
-                             intentions: dict) -> int:
-    """Заводит открытые намерения пары. Отдаёт, сколько новых легло.
+                             intentions: dict, message_id: int = 0) -> int:
+    """Заводит намерения пары **ждущими доставки**. Отдаёт, сколько новых легло.
 
     Args:
         profile_id: чьё намерение — анкета, от чьего имени шёл разговор.
@@ -90,6 +90,18 @@ async def chat_intention_put(profile_id: int, site_id: int, uid: str,
         intentions: намерения объектом «метка → контекст», как приехали от
             соседа. Контекст — с чем исполнять: текст письма, приметы снимка,
             время звонка; пустой законен.
+        message_id: номер обмена разговора у соседа — по нему намерение
+            откроется, когда реплика вправду уйдёт (`chat_intention_delivered`).
+
+    ## ⚠⚠⚠ Строка ложится `waiting`, а не `open`
+
+    Намерение даётся **в реплике**, и пока та не ушла, обещания не было.
+    Прежде строка заводилась открытой — по ответу прогона, то есть до
+    отправки, — и это вскрылось живьём: инициатива Olga → Benoit не ушла (сайт
+    ответил `IsSuccess:false`), а намерение «пришлю фото письмом» встало в пул.
+    Круг собрал бы письмо со снимком человеку, который обещания не слышал.
+
+    ⚠ Открывает строку только доставка, и это **единственная** дорога в `open`.
 
     Returns:
         int: сколько строк вправду завелось. Ноль — всё уже лежало открытым
@@ -129,8 +141,9 @@ async def chat_intention_put(profile_id: int, site_id: int, uid: str,
         for one, context in said:
             await db.execute(
                 'INSERT INTO chat_intention'
-                '  (profile_id, site_id, uid, intention, context)'
-                ' VALUES (%s, %s, %s, %s, %s) AS new'
+                '  (profile_id, site_id, uid, intention, context,'
+                '   message_id, status)'
+                " VALUES (%s, %s, %s, %s, %s, %s, 'waiting') AS new"
                 # ⚠ `IF(new.context IS NULL, …)`, а не просто присваивание:
                 # пустой контекст свежего прогона не должен стирать собранный
                 # прошлым.
@@ -147,7 +160,8 @@ async def chat_intention_put(profile_id: int, site_id: int, uid: str,
                 '   context = IF(new.context IS NULL,'
                 '                chat_intention.context, new.context)',
                 (int(profile_id), int(site_id or 0), str(uid).strip(), one,
-                 json.dumps(context, ensure_ascii=False) if context else None))
+                 json.dumps(context, ensure_ascii=False) if context else None,
+                 int(message_id or 0)))
             # ⚠ `rowcount` у `ON DUPLICATE KEY UPDATE` равен 2 при обновлении и
             # 1 при вставке: считаем только новые строки.
             put += int(db.rowcount == 1)
@@ -159,6 +173,100 @@ async def chat_intention_put(profile_id: int, site_id: int, uid: str,
                     f'(анкета {int(profile_id)}, собеседник {str(uid).strip()})')
 
     return put
+
+
+async def chat_intention_delivered(message_id: int) -> int:
+    """Реплика ушла — её намерения становятся открытыми. Отдаёт, сколько.
+
+    Args:
+        message_id: номер обмена разговора у соседа. Ноль — делать нечего:
+            обмена не было, и открывать нечего.
+
+    Returns:
+        int: сколько намерений открылось. Ноль — обычный исход: в этой реплике
+        агент ничего не обещал.
+
+    ## ⚠⚠⚠ Это единственная дорога из `waiting` в `open`
+
+    Обещание даётся **в реплике**, и пока та не ушла, его не существует.
+    Заводи мы намерение открытым — круг собрал бы письмо человеку, который
+    обещания не слышал; так и случилось с инициативой Olga → Benoit
+    31.10.2026, когда сайт ответил `IsSuccess:false`.
+
+    ⚠ Зовётся рядом с `rhapsody_api_chat_delivered` и везде, где она стоит:
+    это один и тот же вопрос — «реплика дошла». Дорог три (чат, инициатива,
+    письма), и сторож следит, чтобы их не стало больше без этой двери.
+
+    ## ⚠⚠ Дубль обещания снимается, а не копится
+
+    Агент метит одно обещание на каждой реплике, пока оно висит в истории:
+    обменов несколько, ждущих строк столько же. Открыть надо **одну** — ключ
+    `uq_chat_intention_open` второй такой и не даст, — а прочие ждущие той же
+    пары и метки стираются: их реплики несут то же обещание, и держать их
+    незачем.
+
+    ⚠ Открытие и уборка идут **в одной сделке**: оборвись она посередине,
+    осталось бы открытое намерение рядом с ждущими дублями, и следующая
+    доставка споткнулась бы о ключ.
+    """
+    message_id = int(message_id or 0)
+    if not message_id:
+        return 0
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT id, profile_id, uid, intention, context'
+            '  FROM chat_intention'
+            " WHERE message_id = %s AND status = 'waiting'", (message_id,))
+        rows = list(await db.fetchall() or [])
+
+        opened = 0
+        for row in rows:
+            # ⚠ Условный `UPDATE`: между чтением и записью строку мог открыть
+            # другой заход — ключ отверг бы вторую, и мы получили бы отказ там,
+            # где делать нечего.
+            try:
+                await db.execute(
+                    "UPDATE chat_intention SET status = 'open'"
+                    " WHERE id = %s AND status = 'waiting'", (int(row['id']),))
+                opened += int(db.rowcount or 0)
+            except Exception:
+                # ⚠⚠ Ключ занят — такое обещание **уже открыто** прошлой
+                # репликой, и это не ошибка: агент метит одно обещание много
+                # раз, пока оно висит в истории.
+                #
+                # ⚠⚠ Но контекст свежей реплики **переносим**: он собран по
+                # более полной истории, и правило «свежий точнее прежнего»
+                # старше этой правки (`chat_intention_put`). Потеряй мы его —
+                # письмо ушло бы по старому тексту.
+                if row.get('context') is not None:
+                    await db.execute(
+                        'UPDATE chat_intention SET context = %s'
+                        ' WHERE profile_id = %s AND uid = %s'
+                        "   AND intention = %s AND status = 'open'",
+                        (row['context'], int(row['profile_id']),
+                         str(row['uid']), str(row['intention'])))
+
+                # ⚠ И саму ждущую убираем: обещание есть, второго не нужно, а
+                # висящий дубль мешал бы следующей доставке.
+                await db.execute('DELETE FROM chat_intention WHERE id = %s',
+                                 (int(row['id']),))
+                continue
+
+            await db.execute(
+                'DELETE FROM chat_intention'
+                ' WHERE profile_id = %s AND uid = %s AND intention = %s'
+                "   AND status = 'waiting' AND id <> %s",
+                (int(row['profile_id']), str(row['uid']),
+                 str(row['intention']), int(row['id'])))
+
+        await db.connection.commit()
+
+    if opened:
+        logger_info(f'[dating] реплика #{message_id} дошла: '
+                    f'намерений открылось {opened}')
+
+    return opened
 
 
 async def chat_intention_done(intention_id: int, note: str = '') -> bool:
@@ -302,7 +410,9 @@ async def chat_intention_rows(site_id: int, profile_id: int = 0, uid: str = '',
         site_id: сайт. Ноль — пусто, а не намерения всех сайтов.
         profile_id: сузить до анкеты. Ноль — все анкеты сайта.
         uid: сузить до собеседника. Пусто — все.
-        status: `open` или `done`. Пусто — и те, и другие.
+        status: `open`, `done` либо `waiting`. Пусто — открытые и
+            сделанные, **без ждущих**: обещание, чья реплика не
+            ушла, показывать нечего.
         page: страница, с единицы. За концом — поправится сама.
         per: строк на странице. Ноль — `CHAT_INTENTION_PAGE`.
 
@@ -329,8 +439,17 @@ async def chat_intention_rows(site_id: int, profile_id: int = 0, uid: str = '',
 
     pid, who = int(profile_id or 0), str(uid or '').strip()
     what = str(status or '').strip()
+    # ⚠⚠⚠ Пустой статус значит «открытые и сделанные», но **не ждущие**:
+    # обещание даётся в реплике, и пока та не ушла, показывать его человеку
+    # нечего. Считай мы их за «все», колонка пула показывала бы обещания,
+    # которых собеседник не слышал, — ровно то, что случилось с инициативой
+    # Olga → Benoit 31.10.2026.
+    #
+    # ⚠ Спросить ждущих всё же можно — явным `status='waiting'`: это нужно
+    # отладке и сторожам, а молча их не отдаёт никто.
     where = (_WHERE_SITE + "   AND (%s = '' OR i.uid = %s)"
-                           "   AND (%s = '' OR i.status = %s)")
+                           "   AND (CASE WHEN %s = '' THEN i.status <> 'waiting'"
+                           "             ELSE i.status = %s END)")
     args = (site_id, pid, pid, who, who, what, what)
 
     order = (' ORDER BY i.done_at DESC, i.id DESC' if what == 'done'

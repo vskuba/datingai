@@ -81,6 +81,7 @@ from src.dating.round import (round_mem_due, round_mem_mark, round_sites,
 from src.dating.online import online_check
 from src.dating.send import send_message
 from src.dating.site_setting import site_seconds
+from src.dating.chat_intention import chat_intention_delivered
 from src.rhapsody.rhapsody_api import rhapsody_api_chat_delivered
 
 # Как часто круг просыпается. Минута — как у автоответа: чаще незачем, сроки
@@ -240,7 +241,12 @@ async def _send(site_id: int) -> int:
             # ⚠⚠ Доставку отмечаем только у ушедшего: сосед записал обмен внутри
             # прогона, то есть до того, как мы постучались к сайту знакомств.
             # Номер дожил до сюда в строке пула — карточку сочинял другой круг.
-            await rhapsody_api_chat_delivered(int(card.get('talk_message_id') or 0))
+            said = int(card.get('talk_message_id') or 0)
+            await rhapsody_api_chat_delivered(said)
+            # ⚠⚠ Реплика дошла — обещание из неё становится настоящим. Без
+            # этой строки намерение висело бы ждущим вечно, и письмо по нему
+            # не ушло бы никогда (`chat_intention.py`).
+            await chat_intention_delivered(said)
             await log_write(int(card['profile_id']), 'out',
                             f"Инициатива → {who}: «{str(card['body'])[:300]}»")
 
