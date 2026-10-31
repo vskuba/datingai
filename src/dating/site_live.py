@@ -31,12 +31,22 @@ from src.dating.message_twin import message_twin_skip
 # «идёт ли тут жизнь», и минутное окно дрожало бы от каждой реплики.
 SITE_LIVE_HOURS = 12
 
+# Пустая строка счётчиков — **одним местом**.
+#
+# ⚠ Форма у всех сайтов одинаковая и полная: сайт без работы отдаёт нули, а не
+# пропадает из ответа. Иначе вкладка осталась бы без чисел и выглядела
+# недогруженной. Записанная копиями у каждого счётчика, форма разъехалась бы на
+# первом же новом числе — и разъехалась бы молча, нулём в одном из сайтов.
+SITE_LIVE_EMPTY = {'profiles': 0, 'whole': 0, 'online': 0,
+                   'chat': 0, 'mail': 0, 'intention': 0}
+
 
 async def site_live_rows() -> dict:
     """Счётчики всех сайтов разом.
 
     Returns:
-        dict: `{номер сайта: {'online', 'profiles', 'whole', 'chat', 'mail'}}`.
+        dict: `{номер сайта: {'online', 'profiles', 'whole', 'chat', 'mail',
+        'intention'}}`.
         `profiles` — включённые анкеты (знаменатель вкладки), `whole` — все
         вместе с выключенными (для подсказки). Сайта нет в ответе — значит у
         него нет ни одной анкеты.
@@ -50,6 +60,7 @@ async def site_live_rows() -> dict:
             counted = await _profiles(db)
             await _chat(db, counted)
             await _mail(db, counted)
+            await _intention(db, counted)
 
         return counted
     except Exception as e:
@@ -84,10 +95,10 @@ async def _profiles(db) -> dict:
         "       SUM(status = 'online') AS online"
         '  FROM profile GROUP BY site_id')
 
-    return {int(row['site_id']): {'profiles': int(row['working'] or 0),
+    return {int(row['site_id']): {**SITE_LIVE_EMPTY,
+                                  'profiles': int(row['working'] or 0),
                                   'whole': int(row['whole'] or 0),
-                                  'online': int(row['online'] or 0),
-                                  'chat': 0, 'mail': 0}
+                                  'online': int(row['online'] or 0)}
             for row in (await db.fetchall() or [])}
 
 
@@ -124,8 +135,7 @@ async def _chat(db, counted: dict) -> None:
         + ' GROUP BY p.site_id', (SITE_LIVE_HOURS,))
 
     for row in (await db.fetchall() or []):
-        counted.setdefault(int(row['site_id']),
-                           {'profiles': 0, 'whole': 0, 'online': 0, 'chat': 0, 'mail': 0})
+        counted.setdefault(int(row['site_id']), dict(SITE_LIVE_EMPTY))
         counted[int(row['site_id'])]['chat'] = int(row['n'] or 0)
 
 
@@ -152,6 +162,29 @@ async def _mail(db, counted: dict) -> None:
         ' GROUP BY site_id', (SITE_LIVE_HOURS,))
 
     for row in (await db.fetchall() or []):
-        counted.setdefault(int(row['site_id']),
-                           {'profiles': 0, 'whole': 0, 'online': 0, 'chat': 0, 'mail': 0})
+        counted.setdefault(int(row['site_id']), dict(SITE_LIVE_EMPTY))
         counted[int(row['site_id'])]['mail'] = int(row['n'] or 0)
+
+
+async def _intention(db, counted: dict) -> None:
+    """Новые обещания агента за срок — карточки, легшие в пул.
+
+    ⚠ Считаем **заведённые**, а не открытые: число отвечает «что появилось за
+    полсуток», как и два соседних. Открытых же в пуле лежит десяток, и они не
+    меняются неделями — такое число не мигало бы никогда и не звало бы никуда.
+
+    ⚠ Исполненные не отнимаем: карточка, заведённая и закрытая за те же
+    полсуток, — это работа, которая была. Вычти мы её, значок обнулялся бы
+    ровно на удачной отправке.
+
+    ⚠ `site_id` у `chat_intention` свой — анкету присоединять не надо.
+    """
+    await db.execute(
+        'SELECT site_id, COUNT(*) AS n FROM chat_intention'
+        ' WHERE created_at > NOW() - INTERVAL %s HOUR'
+        ' GROUP BY site_id', (SITE_LIVE_HOURS,))
+
+    for row in (await db.fetchall() or []):
+        counted.setdefault(int(row['site_id']), dict(SITE_LIVE_EMPTY))
+        counted[int(row['site_id'])]['intention'] = int(row['n'] or 0)
+

@@ -458,6 +458,11 @@
    список рябым. Разный вопрос — разный вес. */
 .site-tab-counts .pill.mail { background: #fde68a; color: #78350f; }
 
+/* ⚠ Намерения — **свой цвет**, индиго: три значка подряд различаются прежде
+   всего им, и четвёртый в янтаре почты слился бы с ней в одно пятно. Рисунок
+   узнаётся силуэтом, цвет — боковым зрением; нужны оба. */
+.site-tab-counts .pill.intention { background: #e0e7ff; color: #3730a3; }
+
 /* Тихий значок: те же размеры, что у `.pill`, но серый и без мигания —
    иначе «ноль писем» дёргался бы наравне с настоящей работой. */
 .pill.off { background: #f1f5f9; color: #94a3b8; animation: none; }
@@ -499,6 +504,16 @@
 @keyframes alarm-mail { 0%,100% { box-shadow: 0 0 0 0 rgba(245,158,11,.55); }
                         70%     { box-shadow: 0 0 0 7px rgba(245,158,11,0); } }
 @media (prefers-reduced-motion: reduce) { .pill.beat { animation: none; } }
+
+/* ⚠ Отсвет мигания — **в цвет самого значка**: янтарная волна под индиговой
+   пилюлей читается как чужая, будто мигает не она. Правило о выключении
+   анимации при `prefers-reduced-motion` достаётся от `.pill.beat` выше —
+   второй записи не нужно. */
+.pill.intention.beat { animation-name: alarm-intention; }
+@keyframes alarm-intention {
+    0%,100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, .55); }
+    70%     { box-shadow: 0 0 0 7px rgba(99, 102, 241, 0); }
+}
 
 .site-tabs-empty { color: #9ca3af; font-size: 12px; }
 

@@ -32,6 +32,9 @@ STYLE = ROOT / 'data/uvicorn/public/css/dating_page.css'
 # Страницы раздела, у которых в шапке стоит выбор сайта.
 PAGES = ('profile', 'index', 'log', 'error', 'site', 'socket')
 
+# Адрес «Профилей»: там живёт карта «куда вести» (`FEED_WHERE`).
+PAGE_PROFILE = '/admin/dating/profile'
+
 
 def _page(name: str) -> str:
     return (ROOT / f'data/uvicorn/template/admin/dating/{name}.html').read_text(
@@ -138,7 +141,8 @@ class TestTheCountersAreCountedByTheServer:
         got = (await auth_client.get('/api/site/live')).json()['result']
 
         for site, counted in got.items():
-            assert set(counted) == {'online', 'profiles', 'whole', 'chat', 'mail'}, (
+            assert set(counted) == {'online', 'profiles', 'whole', 'chat',
+                                    'mail', 'intention'}, (
                 f'сайт {site}: форма счётчиков разъехалась — {sorted(counted)}')
 
     async def test_the_denominator_is_every_profile(self, auth_client):
@@ -217,6 +221,94 @@ class TestTheCountersAreCountedByTheServer:
 
         assert "message_twin_skip('m')" in body, (
             'счётчик реплик не прячет близнецов из панели и завысит число')
+
+
+class TestTheIntentionBadge:
+    """⚠ Четвёртый значок: сколько обещаний агент дал за полсуток.
+
+    Два соседних отвечают «что пришло от людей», этот — «что мы наобещали».
+    Вопрос соседний, но свой: обещание рождается в разговоре, а ждёт работы
+    уже в пуле, и заметить его надо так же быстро.
+    """
+
+    async def test_the_handle_counts_it(self, girl, auth_client):
+        """⚠ Сторож **считает живое обещание**, а не смотрит на ключ: ключ
+        приезжает из `SITE_LIVE_EMPTY` даже когда счётчик не зовут вовсе, и
+        проверка на его наличие зеленела на снятом вызове. Проверено
+        диверсией."""
+        from src.dating.chat_intention import chat_intention_put
+        from tests.conftest import TEST_STAND_SITE
+
+        before = (await auth_client.get('/api/site/live')).json()['result']
+        was = int((before.get(str(TEST_STAND_SITE)) or {}).get('intention') or 0)
+
+        await chat_intention_put(girl, TEST_STAND_SITE, 'u-live-probe',
+                                 {'she_promised_send_photo': {}})
+
+        after = (await auth_client.get('/api/site/live')).json()['result']
+        now = int((after.get(str(TEST_STAND_SITE)) or {}).get('intention') or 0)
+
+        assert now == was + 1, (
+            f'свежее обещание не попало в счёт: было {was}, стало {now}')
+
+    def test_the_sign_is_its_own(self):
+        """⚠ Силуэт различает значки прежде цвета: круг не спутать с конвертом
+        и пузырём даже боковым зрением."""
+        code = MODULE.read_text(encoding='utf-8')
+        signs = code[code.find('DATING_COUNT_SIGNS'):]
+
+        assert 'intention:' in signs[:signs.find('};')], 'у значка нет рисунка'
+        assert '<circle' in signs[:signs.find('};')], (
+            'рисунок намерения не круглый — силуэтом его не отличить')
+
+    def test_it_leads_to_its_own_tab(self):
+        code = MODULE.read_text(encoding='utf-8')
+        spot = code.find("intention: {tab:")
+
+        assert spot > 0, 'значок никуда не ведёт'
+        assert "tab: 'intention'" in code[spot:spot + 120], (
+            'значок обещаний ведёт не на свою вкладку')
+
+    def test_the_feed_kind_is_not_empty(self):
+        """⚠⚠ Лента про намерения не пишет, но вид события им всё равно нужен:
+        им ведёт щелчок, когда человек **уже на «Профилях»**. Оставь мы `feed`
+        пустым — оттуда значок уходил бы в никуда, а с других страниц работал.
+        Молча.
+        """
+        code = MODULE.read_text(encoding='utf-8')
+        spot = code.find("intention: {tab:")
+
+        assert "feed: 'intention'" in code[spot:spot + 140], (
+            'у значка пустой вид события — с «Профилей» щелчок не сработает')
+
+    async def test_the_page_knows_that_kind(self, auth_client):
+        """⚠ Карта «куда вести» одна на оба входа, и вид обязан быть в ней."""
+        page = (await auth_client.get(PAGE_PROFILE)).text
+        spot = page.find('const FEED_WHERE = {')
+
+        assert "intention: ['intention', 'talk']" in page[spot:spot + 900], (
+            'страница не знает вида события намерений')
+
+    def test_the_blink_is_declared_not_branched(self):
+        """⚠ Мигание записано в карте, а не развилкой по имени вида: третий
+        значок превратил бы `kind === 'mail'` в лестницу."""
+        code = MODULE.read_text(encoding='utf-8')
+
+        # ⚠ Ищем развилку **в выражении класса**, а не слово где угодно:
+        # в пояснении рядом оно названо прямым текстом, и сторож на простом
+        # `not in` краснел бы на верном коде. Та же грабля уже была со
+        # `stopPropagation`.
+        assert "? `pill ${kind}${go.beat ? ' beat' : ''}`" in code, (
+            'мигание решается не картой — с четвёртым значком развилка по '
+            'имени станет лестницей')
+
+    def test_its_glow_matches_its_colour(self):
+        """⚠ Янтарная волна под индиговой пилюлей читается как чужая, будто
+        мигает не она."""
+        css = STYLE.read_text(encoding='utf-8')
+
+        assert '.pill.intention.beat' in css, 'у значка нет своего мигания'
+        assert 'alarm-intention' in css, 'отсвет мигания взят у почты'
 
 
 class TestTheBadgesLeadSomewhere:

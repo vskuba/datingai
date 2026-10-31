@@ -246,7 +246,12 @@ function _datingTabsPaint(el, sites, live) {
                        // работа сайта, включая нашу собственную рассылку.
                        `за 12 часов от собеседников:`
                        + ` реплик ${Number(own.chat || 0)},`
-                       + ` писем ${Number(own.mail || 0)}`].filter(Boolean).join('\n');
+                       + ` писем ${Number(own.mail || 0)}`,
+                       // ⚠ Обещания — **своя строка**: они не «от
+                       // собеседников», а наши, и в том же перечислении
+                       // читались бы как ещё один вид входящего.
+                       `обещаний агента за 12 часов:`
+                       + ` ${Number(own.intention || 0)}`].filter(Boolean).join('\n');
 
         // ⚠⚠ Колонка — **не одна кнопка**, и это вынужденно: у неё три
         // назначения. Имя выбирает сайт, значок реплик ведёт на «Чат →
@@ -263,6 +268,7 @@ function _datingTabsPaint(el, sites, live) {
             + ` >${online}/${whole}</span>`
             + _datingCount('chat', Number(own.chat || 0), id)
             + _datingCount('mail', Number(own.mail || 0), id)
+            + _datingCount('intention', Number(own.intention || 0), id)
             + '</span></div>';
     }).join('');
 }
@@ -280,9 +286,19 @@ function _datingTabsPaint(el, sites, live) {
 // щелчок и зовёт `feedGo(feed)` — тем самым одна карта «куда вести» остаётся
 // одна на оба входа: ленту и значок. Разойдись они, щелчок по строке ленты и
 // щелчок по значку уводили бы в разные места.
+// ⚠ `beat` — мигает ли значок при непустом счёте. У чата мигание приезжает
+// своим правилом `.pill.chat` (оно общее с карточками анкет), у прочих —
+// модификатором: на карточке анкеты тот же конверт отвечает на другой вопрос
+// и мигать там не должен. Записано **здесь**, а не развилкой по имени вида в
+// отрисовке: третий значок превратил бы `kind === 'mail'` в лестницу.
 const DATING_COUNT_GOES = {
-    chat: {tab: 'chat', sub: 'talk', feed: 'talk'},
-    mail: {tab: 'fav', sub: 'talks', feed: 'favtalk'},
+    chat: {tab: 'chat', sub: 'talk', feed: 'talk', beat: false},
+    mail: {tab: 'fav', sub: 'talks', feed: 'favtalk', beat: true},
+    // ⚠ Лента про намерения не пишет, но вид события у них всё равно есть
+    // (`FEED_WHERE` на «Профилях»): им ведёт щелчок, когда человек уже на этой
+    // странице. Оставь мы `feed` пустым — с «Профилей» значок уходил бы в
+    // никуда, а с других страниц работал. Молча.
+    intention: {tab: 'intention', sub: 'talk', feed: 'intention', beat: true},
 };
 
 function _datingCountHref(kind, siteId) {
@@ -326,6 +342,12 @@ const DATING_COUNT_SIGNS = {
     chat: '<path d="M2.6 2.6h10.8a1.6 1.6 0 0 1 1.6 1.6v5.6a1.6 1.6 0 0 1-1.6'
         + ' 1.6H7.2l-3.6 2.9v-2.9H2.6A1.6 1.6 0 0 1 1 9.8V4.2a1.6 1.6 0'
         + ' 0 1 1.6-1.6Z"/>',
+    // ⚠ Намерение — **галочка в кружке**: «сказано — отмечено». Рукопожатие
+    // было бы точнее по смыслу, но в шестнадцати пикселях оно читается как
+    // клякса: обводка в 1.6 съедает пальцы. Здесь же знак узнаётся силуэтом,
+    // а силуэт у него свой — круглый, не спутать с конвертом и пузырём.
+    intention: '<circle cx="8" cy="8" r="6.4"/>'
+        + '<path d="m5.3 8.2 1.9 1.9 3.5-3.9"/>',
 };
 
 // Один значок счёта: цветной и мигающий, пока есть о чём говорить, иначе серый.
@@ -341,9 +363,8 @@ const DATING_COUNT_SIGNS = {
 // человек идёт в тот же список, чтобы убедиться. Веди туда только мигающий —
 // и значок переставал бы работать ровно тогда, когда на него смотрят спокойно.
 function _datingCount(kind, count, siteId) {
-    const cls = count ? `pill ${kind}${kind === 'mail' ? ' beat' : ''}`
-                      : 'pill off';
     const go = DATING_COUNT_GOES[kind];
+    const cls = count ? `pill ${kind}${go.beat ? ' beat' : ''}` : 'pill off';
 
     return `<a class="${cls}" href="${_datingCountHref(kind, siteId)}"`
         + ` data-go="${go.feed}" data-site="${siteId}"`
