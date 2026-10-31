@@ -12,8 +12,14 @@ page: /admin/dating
 widths: [1440, 900]
 
 steps:
+  # ⚠⚠ Ждём ВКЛАДКИ, а не `<option>`. Селект сайта стал полосой вкладок
+  # (`<div id="siteSelect" class="site-tabs">` плюс `.site-tab` внутри), и
+  # элементов `<option>` на странице нет вовсе. Условие по ним не наступало
+  # никогда: заход висел до таймаута, список собеседников не загружался, и
+  # все области падали «селектор не нашёл узла» — то есть случай сообщал про
+  # пропавшую карточку там, где пропал его собственный первый шаг.
   - wait_for: |
-      return document.querySelectorAll('#siteSelect option').length > 0;
+      return document.querySelectorAll('#siteSelect .site-tab').length > 0;
     timeout: 20000
 
   # ⚠ Сайт выбираем явно: список собеседников — ПО САЙТУ, а страница

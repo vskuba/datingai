@@ -18,8 +18,10 @@ steps:
   #
   # ⚠ По подписи, а не по значению: в `value` лежит номер сайта, он внешний и
   # в случае ничего не объясняет.
+  # ⚠⚠ Ждём ВКЛАДКИ, а не `<option>`: селект сайта стал полосой вкладок, и
+  # `<option>` на странице нет вовсе — условие не наступало никогда.
   - wait_for: |
-      return document.querySelectorAll('#siteSelect option').length > 0;
+      return document.querySelectorAll('#siteSelect .site-tab').length > 0;
     timeout: 20000
 
   - set: '#siteSelect'
