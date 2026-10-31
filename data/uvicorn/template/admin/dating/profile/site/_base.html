@@ -1445,9 +1445,16 @@
         <button type="button" class="page-tab"
                 data-intention-tab="sent">Доставка</button>
 
+        {# ⚠ Классы `sched-on` и `sched-on-box` — **те же, что у соседей**:
+           голый `<label>` брал размер галочки у браузера, и она выходила
+           крупнее, чем у «генерации писем» через вкладку. Одна настройка на
+           панели обязана выглядеть одинаково везде. #}
         <span class="mail-tabs-set">
-            <label title="Собирать письма по обещаниям и отправлять их">
-                <input type="checkbox" data-slot="chat-intention-do-on">
+            <label class="sched-on" title="Круг будет собирать письма по
+                   обещаниям агента и отправлять их. Это про весь сайт, а не
+                   про выбранную анкету">
+                <input type="checkbox" class="sched-on-box"
+                       data-slot="chat-intention-do-on">
                 выполнять действия</label>
         </span>
     </div>

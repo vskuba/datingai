@@ -24,6 +24,7 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.chat_intention import chat_intention_put, chat_intention_rows
+from src.dating.intention_round import intention_round_run
 from src.dating.companion_gallery import companion_gallery_seen
 from src.dating.intention_do import (INTENTION_DO_PAGE, DatingIntentionError,
                                      intention_mail_attach, intention_mail_done,
@@ -535,3 +536,41 @@ async def _file(file_row_id: int) -> dict:
                          (int(file_row_id),))
 
         return dict(await db.fetchone())
+
+
+class TestTheRoundRuns:
+    """⚠⚠ Круг исполнения обещаний **проходит целиком**, а не падает молча.
+
+    Он был не покрыт вовсе, и это стоило прода: `_every` звал `site_seconds` с
+    третьим доводом, которого та не принимает, круг падал с `TypeError`
+    **каждую минуту** — а пул стоял с надписью «соберёт в ближайшую минуту», то
+    есть выглядел работающим. Нашлось глазами: карточка висела пять минут.
+
+    ⚠ Отказ круга ловит `except` в воркере и пишет в журнал, наружу он не
+    выходит. Поэтому сторож зовёт сам заход, а не смотрит на его следы.
+    """
+
+    async def test_it_does_not_raise(self, girl):
+        """Главный сторож: заход кончается ответом, а не исключением."""
+        got = await intention_round_run(0)
+
+        assert set(got) == {'sites', 'made', 'skipped'}, (
+            f'круг ответил не тем: {got}')
+
+    async def test_every_asks_the_registry(self):
+        """⚠ Умолчание срока берёт **реестр**, а не вызывающий: два числа на
+        одно правило разошлись бы молча, а лишний довод роняет круг."""
+        from src.dating import intention_round
+
+        assert await intention_round._every(TEST_STAND_SITE) > 0, (
+            'срок захода не спросился — круг не узнает, когда ему ходить')
+
+    async def test_the_countdown_answers(self):
+        """⚠ Срок до следующего захода — число секунд либо `-1`. Страница
+        показывает его в шапке пула, и `None` там обернулся бы «NaN мин»."""
+        from src.dating.intention_round import intention_round_next
+
+        left = intention_round_next(TEST_STAND_SITE)
+
+        assert isinstance(left, int) and left >= -1, (
+            f'срок круга не число секунд: {left!r}')

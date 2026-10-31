@@ -222,6 +222,18 @@ class TestTheSwitchSitsRight:
             'галочка не в общей коробке настроек: вправо её уводит '
             '`margin-left: auto` именно у неё')
 
+    async def test_it_wears_the_shared_classes(self, work):
+        """⚠ Классы `sched-on` и `sched-on-box` — те же, что у соседей: голый
+        `<label>` брал размер галочки у браузера, и она выходила крупнее, чем
+        у «генерации писем» через вкладку. Одна настройка на панели обязана
+        выглядеть одинаково везде."""
+        start = work.find('chat-intention-do-on')
+        label = work[work.rfind('<label', 0, start):start]
+
+        assert 'sched-on' in label, 'подпись галочки не общего вида'
+        assert 'sched-on-box' in work[start - 80:start], (
+            'сама галочка не общего вида — размер возьмёт у браузера')
+
     async def test_the_strip_is_stretched(self, page):
         """⚠⚠ Без растяжки коробка обнимала бы две кнопки, и настройка вставала
         бы вплотную к «Доставке» — то есть читалась бы третьей вкладкой."""
@@ -260,6 +272,19 @@ class TestThePoolTellsWhenItRunsAgain:
         assert page.count('Math.floor(mins / 60)') == 1, (
             'выкройка срока снова размножилась копиями')
         assert 'function roundNextText(' in page, 'общей выкройки нет'
+
+    async def test_the_countdown_is_not_a_second_heading(self, page):
+        """⚠ Шапка колонки задаёт `uppercase` и жирность всему, что в ней
+        лежит, и срок выходил вторым заголовком: «СОБЕРЁТ В БЛИЖАЙШУЮ МИНУТУ»
+        рядом с «НАМЕРЕНИЙ: 9» читалось как две подписи равного веса, а
+        переносом — как вторая строка заголовка. Сбрасываем, как у пула
+        писем (`.mail-pool-busy`)."""
+        spot = page.find('[data-slot="intention-pool-next"] {')
+        rule = page[spot:page.find('}', spot)]
+
+        assert spot > 0, 'у срока нет своего вида — возьмёт вид заголовка'
+        assert 'text-transform: none' in rule and 'font-weight: 400' in rule, (
+            f'срок остался заголовком: {rule.strip()}')
 
     async def test_the_verb_is_a_parameter(self, page):
         """⚠ Намерения круг не **набирает** — пул наполняет прогон агента, — а

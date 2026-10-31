@@ -42,10 +42,6 @@ INTENTION_ROUND_TICK_SEC = 60
 # Настройка срока захода по сайту.
 INTENTION_ROUND_EVERY_SETTING = 'intention_make_every'
 
-# Сколько ждать между заходами, если настройки нет. Пять минут: обещания
-# появляются по одному и редко, а заход идёт на Диск.
-INTENTION_ROUND_EVERY_DEFAULT = 300
-
 # Отметка «на этот сайт только что ходили». ⚠ Метка `{id}`, а не `{site_id}`:
 # чужая осталась бы в ключе текстом, то есть одним общим слотом на все сайты.
 INTENTION_ROUND_KEY = 'dating:intention:round:{id}'
@@ -123,9 +119,18 @@ async def _gate(site: dict, minutes: int) -> bool:
 
 
 async def _every(site_id: int) -> int:
-    """Срок захода по сайту, секунды."""
-    return await site_seconds(site_id, INTENTION_ROUND_EVERY_SETTING,
-                              INTENTION_ROUND_EVERY_DEFAULT)
+    """Срок захода по сайту, секунды.
+
+    ⚠⚠ Умолчание берёт **реестр** (`default: '300'` у `intention_make_every`),
+    а не вызывающий: `site_seconds` принимает два довода, и третий роняет
+    круг с `TypeError`. Так и было — круг падал каждую минуту, а пул стоял с
+    надписью «соберёт в ближайшую минуту», то есть выглядел работающим.
+    Поймано глазами на проде: карточка висела пять минут.
+
+    ⚠ Отсюда же нет и своей константы умолчания: два числа на одно правило
+    разошлись бы молча.
+    """
+    return await site_seconds(site_id, INTENTION_ROUND_EVERY_SETTING)
 
 
 async def _work(site: dict, minutes: int) -> dict:
