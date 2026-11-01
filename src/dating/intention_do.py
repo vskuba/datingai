@@ -68,6 +68,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.chat_intention import chat_intention_done, chat_intention_rows
 from src.dating.companion_gallery import companion_gallery_pick
+from src.dating.json_column import json_column_load
 
 # Какие метки чем исполняются. ⚠ Карта, а не `if`: метки приезжают **от
 # соседа**, из workflow, и каждая новая иначе требовала бы правки ветвления.
@@ -262,6 +263,112 @@ async def intention_mail_done(letter: dict) -> None:
 
 # ── Приватное ────────────────────────────────────────────────────────────────
 
+
+
+async def intention_mail_delivery(db, site_id: int, take: int,
+                                  profile_id: int = 0,
+                                  uid: str = '') -> list[dict]:
+    """Письма по обещаниям для журнала доставки — готовыми строками страницы.
+
+    Args:
+        db: открытое соединение. ⚠ Своего не берём: журнал сливает несколько
+            таблиц, и открой мы второе — счёт и строки пришли бы из разных
+            мгновений. Тот же довод, что у `mail_reply_delivery`.
+        site_id: сайт-закладка.
+        take: сколько свежих строк взять (приём слияния — у зовущих).
+        profile_id: сузить до одной анкеты.
+        uid: сузить до одного собеседника — отбор именем в журнале.
+
+    Returns:
+        list: строки с `kind = 'intention'` и именами полей общей строки
+        журнала, плюс `intention` — метка обещания, которым письмо вызвано.
+
+    ## ⚠⚠ Зачем письмо по обещанию видно во всех трёх журналах
+
+    У него своя вкладка («Намерения и действия»), и сперва только она его и
+    показывала. Но журнал «Фаворитов» отвечает на вопрос «что уходило этой
+    паре», а «Писем» — «что вообще ушло с сайта», и письмо по обещанию уходит
+    ровно так же: живому человеку, от имени анкеты, однажды и навсегда. Человек
+    искал его там, где ищут всякое ушедшее письмо, и не находил.
+
+    Поэтому строка показывается **во всех трёх** — и это намеренный повтор, а
+    не недосмотр деления. Отличает её **чипс рода**: в одном журнале лежат
+    письма разных занятий, и чипс отвечает, каким именно это ушло.
+
+    ⚠ Довод против повтора («второй список того же самого заставляет сверять
+    их между собой») снят тем, что чипс есть у **каждого** рода: сверять нечего
+    — род написан на самой строке.
+
+    ⚠⚠ Метка обещания едет вместе со строкой: «как» видно по чипсу рода, а
+    «почему» — по ней (`she_promised_send_photo` против
+    `she_promise_tell_a_story`). Без неё чипс отвечал бы половину вопроса.
+    """
+    from src.dating.mail_shot import mail_shot_join
+    from src.dating.pool_pair import (pool_pair_girl, pool_pair_joins,
+                                      pool_pair_select)
+
+    where, args = intention_mail_delivery_scope(profile_id, uid)
+    shot_select, shot_join = mail_shot_join('m')
+
+    await db.execute(
+        'SELECT m.id, m.site_id, m.profile_id, m.uid,'
+        + pool_pair_select() +
+        ' m.body, m.status, m.error, m.answer, m.sent_at, m.created_at,'
+        ' m.updated_at, m.intention_id,'
+        ' p.login AS profile_login, p.profile AS profile_card,'
+        " COALESCE(ci.intention, '') AS intention"
+        + shot_select +
+        ' FROM intention_mail m'
+        ' LEFT JOIN profile p ON p.id = m.profile_id'
+        ' LEFT JOIN chat_intention ci ON ci.id = m.intention_id'
+        + shot_join
+        + pool_pair_joins() +
+        ' WHERE m.site_id = %s'
+        + where +
+        # ⚠ По времени события, а не по номеру — и тем же `COALESCE`, что у
+        # соседей: по этому ключу зовущий режет страницу из слитых списков, и
+        # разойдись они, срез взял бы строки не в том порядке, в котором считали.
+        ' ORDER BY COALESCE(m.sent_at, m.updated_at, m.created_at) DESC,'
+        ' m.id DESC LIMIT %s',
+        tuple([int(site_id)] + args + [int(take)]))
+
+    rows = []
+    for row in (await db.fetchall()) or []:
+        got = dict(row)
+        card = json_column_load(got.pop('profile_card', None)) or {}
+        pool_pair_girl(got, card)
+        got['sent_at'] = str(got['sent_at']) if got.get('sent_at') else ''
+        got['created_at'] = str(got.get('created_at') or '')
+        got['updated_at'] = str(got['updated_at']) if got.get('updated_at') else ''
+        rows.append({**got, 'kind': 'intention'})
+
+    return rows
+
+
+def intention_mail_delivery_scope(profile_id: int = 0, uid: str = '') -> tuple:
+    """Условие отбора журнала и доводы к нему — **один кусок на оба запроса**.
+
+    Returns:
+        tuple: `(where, args)` — хвост `WHERE` с ведущим ` AND ` и список
+        подстановок к нему.
+
+    ⚠⚠ Одним куском потому, что запросов два: сам список и `COUNT(*)` для
+    пейджера. Разойдись они — число страниц перестало бы отвечать содержимому,
+    и последняя страница вышла бы пустой. Та же беда и то же решение, что у
+    ответов (`mail_reply_delivery_scope`).
+
+    ⚠ «Доставка» — это `sent` и `failed` разом: черновик в пуле человеку не
+    уходил, и в журнале ушедшего ему места нет.
+    """
+    where, args = " AND m.status IN ('sent', 'failed')", []
+    if int(profile_id or 0):
+        where += ' AND m.profile_id = %s'
+        args.append(int(profile_id))
+    if str(uid or '').strip():
+        where += ' AND m.uid = %s'
+        args.append(str(uid).strip())
+
+    return where, args
 
 async def _photo_doer(row: dict) -> int:
     """Исполнитель метки `she_promised_send_photo`: письмо со снимком.

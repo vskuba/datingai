@@ -27,6 +27,8 @@ from src.dating.json_column import json_column_load
 from src.dating.mail import MAIL_BODY_MAX
 from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
                                          mail_send_one)
+from src.dating.intention_do import (intention_mail_delivery,
+                                     intention_mail_delivery_scope)
 from src.dating.mail_reply import (mail_reply_delivery,
                                           mail_reply_delivery_scope)
 from src.dating.online import online_show
@@ -239,6 +241,17 @@ async def mailing_delivery(site_id: int = 0, profile_id: int = 0, uid: str = '',
     # прежде строка честно попадала в оба — человек это отменил.
     reply_join, reply_where, reply_args = mail_reply_delivery_scope(
         favorites=False, profile_id=int(profile_id), uid=str(uid or ''))
+    # ⚠⚠ **Третий источник — письма по обещаниям.** Журнал «Писем» отвечает на
+    # «что вообще ушло с сайта», и письмо по обещанию уходит так же: живому
+    # человеку, от имени анкеты, однажды и навсегда. У него есть своя вкладка,
+    # и повтор намеренный — род строки написан на ней чипсом.
+    #
+    # ⚠ Деления между журналами у этих строк нет, в отличие от ответов: те
+    # делятся по звёздочке, чтобы не показаться дважды. Здесь же показ в двух
+    # журналах — сам смысл правки: искать ушедшее письмо человек идёт в
+    # «Письма», а не в занятие, которым оно вызвано.
+    deed, deed_args = intention_mail_delivery_scope(int(profile_id),
+                                                   str(uid or ''))
 
     async with mysql_get_db_async() as db:
         await db.execute(
@@ -247,10 +260,16 @@ async def mailing_delivery(site_id: int = 0, profile_id: int = 0, uid: str = '',
             ') AS letters,'
             ' (SELECT COUNT(*) FROM mail_reply r' + reply_join +
             '   WHERE r.site_id = %s' + reply_where +
-            ') AS replies',
-            tuple([int(site_id)] + own_args + [int(site_id)] + reply_args))
+            ') AS replies,'
+            ' (SELECT COUNT(*) FROM intention_mail m WHERE m.site_id = %s'
+            + deed +
+            ') AS deeds',
+            tuple([int(site_id)] + own_args + [int(site_id)] + reply_args
+                  + [int(site_id)] + deed_args))
         counts = (await db.fetchone()) or {}
-        total = int(counts.get('letters') or 0) + int(counts.get('replies') or 0)
+        total = (int(counts.get('letters') or 0)
+                 + int(counts.get('replies') or 0)
+                 + int(counts.get('deeds') or 0))
 
         pages = max(1, -(-total // per))
         # ⚠ Страницу поправляем, а не отвергаем: журнал мог укоротиться, пока
@@ -292,13 +311,19 @@ async def mailing_delivery(site_id: int = 0, profile_id: int = 0, uid: str = '',
                                            profile_id=int(profile_id),
                                            uid=str(uid or ''))
 
+        # ⚠ Тем же соединением и с тем же `take`: слияние режет страницу по
+        # общему ключу времени, и список своего размера сдвинул бы срез.
+        deeds = await intention_mail_delivery(db, int(site_id), take,
+                                              profile_id=int(profile_id),
+                                              uid=str(uid or ''))
+
     # ⚠ Ключ сортировки — **время события**, и он же стоит в обоих запросах.
     # Разойдись они — срез брал бы строки не по тому порядку, в котором их считали.
     #
     # ⚠ `updated_at` в ключе — ради **ответов**: у неудачного это единственное его
     # время (`sent_at` снимает сама неудача). У писем рассылки столбца нет вовсе, и
     # для них звено просто пустое.
-    rows = sorted(letters + replies,
+    rows = sorted(letters + replies + deeds,
                   key=lambda one: (str(one.get('sent_at')
                                        or one.get('updated_at')
                                        or one.get('created_at') or ''),

@@ -37,6 +37,8 @@ from src.dating.mail_explain import mail_explain
 from src.dating.mail_reply import (mail_reply_delivery,
                                           mail_reply_delivery_scope,
                                           mail_reply_thread)
+from src.dating.intention_do import (intention_mail_delivery,
+                                            intention_mail_delivery_scope)
 from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
                                          mail_send_one)
 from src.dating.mail_shot import mail_shot_join
@@ -312,6 +314,13 @@ async def favorite_mail_delivery(site_id: int = 0, profile_id: int = 0,
     # ⚠ Отбор по своей таблице — той же `pool_pick_where`, что и у ответов выше:
     # условие одно, и два его написания разошлись бы на первой правке.
     own, own_args = pool_pick_where('m', int(profile_id), str(uid or ''))
+    # ⚠⚠ **Третий источник — письма по обещаниям.** У них своя вкладка, но
+    # уходят они так же: живому человеку, от имени анкеты, однажды и навсегда.
+    # Журнал «Фаворитов» отвечает на «что уходило этой паре», и письмо по
+    # обещанию — часть ответа. Повтор со своей вкладкой намеренный: род строки
+    # написан на ней чипсом, и сверять списки между собой не нужно.
+    deed, deed_args = intention_mail_delivery_scope(int(profile_id),
+                                                   str(uid or ''))
 
     async with mysql_get_db_async() as db:
         await db.execute(
@@ -320,10 +329,16 @@ async def favorite_mail_delivery(site_id: int = 0, profile_id: int = 0,
             ') AS letters,'
             ' (SELECT COUNT(*) FROM mail_reply r' + join +
             '   WHERE r.site_id = %s' + where +
-            ') AS replies',
-            tuple([int(site_id)] + own_args + [int(site_id)] + args))
+            ') AS replies,'
+            ' (SELECT COUNT(*) FROM intention_mail m WHERE m.site_id = %s'
+            + deed +
+            ') AS deeds',
+            tuple([int(site_id)] + own_args + [int(site_id)] + args
+                  + [int(site_id)] + deed_args))
         counts = (await db.fetchone()) or {}
-        total = int(counts.get('letters') or 0) + int(counts.get('replies') or 0)
+        total = (int(counts.get('letters') or 0)
+                 + int(counts.get('replies') or 0)
+                 + int(counts.get('deeds') or 0))
 
         pages = max(1, -(-total // per))
         # ⚠ Страницу поправляем, а не отвергаем: журнал мог укоротиться, пока человек
@@ -363,9 +378,15 @@ async def favorite_mail_delivery(site_id: int = 0, profile_id: int = 0,
                                            profile_id=int(profile_id),
                                            uid=str(uid or ''))
 
+        # ⚠ Тем же соединением и с тем же `take`: слияние режет страницу по
+        # общему ключу времени, и список, взятый своим размером, сдвинул бы срез.
+        deeds = await intention_mail_delivery(db, int(site_id), take,
+                                              profile_id=int(profile_id),
+                                              uid=str(uid or ''))
+
     # ⚠ Ключ сортировки — **время события**, и он же стоит в обоих запросах.
     # Разойдись они — срез брал бы строки не в том порядке, в котором их считали.
-    rows = sorted(letters + replies,
+    rows = sorted(letters + replies + deeds,
                   key=lambda one: (str(one.get('sent_at')
                                        or one.get('updated_at')
                                        or one.get('created_at') or ''),
