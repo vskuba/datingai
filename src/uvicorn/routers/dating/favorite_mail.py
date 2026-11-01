@@ -39,6 +39,7 @@ from src.dating.mail_reply import (mail_reply_delivery,
                                           mail_reply_thread)
 from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
                                          mail_send_one)
+from src.dating.mail_shot import mail_shot_join
 from src.dating.online import online_show
 from src.dating.pool_pair import (pool_delivery_where, pool_pair_girl,
                                          pool_pair_joins, pool_pair_select,
@@ -338,8 +339,13 @@ async def favorite_mail_delivery(site_id: int = 0, profile_id: int = 0,
             ' m.body, m.status, m.error, m.answer, m.sent_at, m.created_at,'
             ' m.updated_at,'
             ' p.login AS profile_login, p.profile AS profile_card'
+            # ⚠ Снимок, ушедший этим письмом, — **общим куском** на все четыре
+            # его читателя (`mail_shot_join`): имена полей это договор со
+            # страницей, и четыре их написания разошлись бы молча.
+            + mail_shot_join('m')[0] +
             ' FROM favorite_mail m'
             ' LEFT JOIN profile p ON p.id = m.profile_id'
+            + mail_shot_join('m')[1]
             + pool_pair_joins() +
             ' WHERE m.site_id = %s'
             + pool_delivery_where('m') + own

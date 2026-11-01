@@ -51,7 +51,7 @@ from src.dating.json_column import json_column_load
 from src.dating.mail_in import mail_in_body_for_agent
 from src.dating.mail_in_vision import (MAIL_IN_VISION_TRIES,
                                        MAIL_IN_VISION_WAIT_SQL)
-from src.dating.mail_shot import mail_shot_pick
+from src.dating.mail_shot import mail_shot_join, mail_shot_pick
 from src.dating.mail_agent import DatingMailAgentError
 from src.dating.online import online_show
 from src.dating.pool_pair import pool_delivery_where, pool_pick_where
@@ -262,7 +262,7 @@ async def mail_reply_thread(profile_id: int, uid: str, keep: int = 0,
         # числа, и ошибка видна лишь пустым квадратом в ленте.
         ' COALESCE(g.file_id, \'\') AS file_id'
         ' FROM intention_mail m'
-        ' LEFT JOIN gallery_file g ON g.id = m.gallery_file_id'
+        + mail_shot_join('m')[1] +
         " WHERE m.profile_id = %s AND m.uid = %s AND m.status = 'sent'")
 
     args = [int(profile_id), str(uid), int(profile_id), str(uid),
@@ -490,6 +490,7 @@ async def mail_reply_delivery(db, site_id: int, take: int, *, favorites: bool,
     """
     join, where, args = mail_reply_delivery_scope(favorites=favorites,
                                                  profile_id=profile_id, uid=uid)
+    shot_select, shot_join = mail_shot_join('r')
 
     await db.execute(
         'SELECT r.id, r.site_id, r.profile_id, r.mail_in_id, r.uid, r.name,'
@@ -499,9 +500,16 @@ async def mail_reply_delivery(db, site_id: int, take: int, *, favorites: bool,
         ' p.login AS profile_login, p.profile AS profile_card,'
         ' i.body AS in_body, i.date_post AS in_at,'
         ' i.message_id AS in_message_id, i.photo AS in_photo'
+        # ⚠⚠ **Снимок, ушедший этим письмом.** Жребий прикладывает кадр к ответу
+        # (`mail_shot.py`), и в журнале доставки письмо со снимком ничем не
+        # отличалось от письма без него — а отличие существенное: кадр уходит
+        # живому человеку и тратится навсегда (`mail_send_mark` помнит
+        # показанное). Куском, а не своим джойном: читателей у склейки четверо.
+        + shot_select +
         ' FROM mail_reply r'
         ' LEFT JOIN profile p ON p.id = r.profile_id'
         ' LEFT JOIN mail_in i ON i.id = r.mail_in_id'
+        + shot_join
         + join +
         ' WHERE r.site_id = %s' + where +
         # ⚠ По времени события, а не по номеру: журнал читают как ленту «что
@@ -523,7 +531,14 @@ async def mail_reply_delivery(db, site_id: int, take: int, *, favorites: bool,
         rows.append({**got, 'kind': 'reply',
                      'profile_name': got['girl'],
                      'profile_photo': got['girl_photo'],
-                     'profile_uid': ''})
+                     'profile_uid': '',
+                     # ⚠ Переносим **явно**: `mail_reply_answer` собирает свой
+                     # словарь, а не правит строку, и выбранный столбец до
+                     # страницы сам не доедет. Та же грабля, что у отметок
+                     # круга отправки, только с другого конца — там столбец не
+                     # выбрали, здесь выбрали и потеряли на границе.
+                     'gallery_file': str(row.get('gallery_file') or ''),
+                     'gallery_path': str(row.get('gallery_path') or '')})
 
     return rows
 

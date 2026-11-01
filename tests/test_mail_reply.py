@@ -375,10 +375,36 @@ class TestNoSending:
     """
 
     def test_making_does_not_send(self):
+        """⚠⚠ Ищем **вызовы и импорты**, а не упоминание имени в тексте.
+
+        Прежде сторож искал подстроку `mail_send` во всём исходнике модуля — то
+        есть и в комментариях. Первый же комментарий, объясняющий, **почему**
+        отправка живёт не здесь (а объяснять это как раз и надо там, где есть
+        соблазн её позвать), покрасил модуль как научившийся отправлять. Запрет
+        на слово — не то же, что запрет на действие.
+
+        Разбираем дерево: `import` и вызов по имени — это действие, строка в
+        комментарии — нет.
+        """
+        import ast
         import inspect
 
-        assert 'mail_send' not in inspect.getsource(mod), \
-            'набор пула ответов научился отправлять письма'
+        tree = ast.parse(inspect.getsource(mod))
+        guilty = set()
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and 'mail_send' in (node.module or ''):
+                guilty.update(one.name for one in node.names)
+            elif isinstance(node, ast.Import):
+                guilty.update(one.name for one in node.names
+                              if 'mail_send' in one.name)
+            elif isinstance(node, ast.Call):
+                name = getattr(node.func, 'id', '') or getattr(node.func, 'attr', '')
+                if name.startswith('mail_send'):
+                    guilty.add(name)
+
+        assert not guilty, \
+            f'набор пула ответов научился отправлять письма: {sorted(guilty)}'
 
 
 class TestGenerationSwitchIsSiteWide:

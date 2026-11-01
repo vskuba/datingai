@@ -26,7 +26,8 @@ from src.dating.companion_gallery import companion_gallery_pick
 from src.dating.intention_round import intention_round_next
 from src.dating.intention_do import (DatingIntentionError, intention_mail_make,
                                      )
-from src.dating.mail_shot import DatingMailShotError, mail_shot_ready
+from src.dating.mail_shot import (DatingMailShotError, mail_shot_join,
+                                  mail_shot_ready)
 from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
                                   mail_send_one)
 from src.dating.site_setting import site_setting
@@ -167,9 +168,12 @@ async def intention_mail_list(site_id: int = 0, status_: str = 'draft',
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT m.*, g.path AS gallery_path, g.file_id AS gallery_file'
+            'SELECT m.*'
+            # ⚠ Снимок — **общим куском** (`mail_shot_join`): его джойнят
+            # четверо, и имена полей это договор со страницей.
+            + mail_shot_join('m')[0] +
             '  FROM intention_mail m'
-            '  LEFT JOIN gallery_file g ON g.id = m.gallery_file_id'
+            + mail_shot_join('m')[1] +
             f' WHERE m.site_id = %s AND m.{where}'
             ' ORDER BY m.id DESC LIMIT 200', (int(site_id),))
 

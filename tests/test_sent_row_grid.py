@@ -53,15 +53,36 @@ def _row_nodes() -> list:
     ⚠ Седьмой — `<button class="mail-sent-unfav">`, кнопка «удалить из
     фаворитов»: она узел строки наравне с прочими, и считаем мы её вместе с
     ними, а не отдельным счётом — иначе счёт колонок снова разошёлся бы с тем,
-    что кладёт выкройка."""
+    что кладёт выкройка.
+
+    ⚠⚠ **Помощников разворачиваем, а не пропускаем.** Узел строки может
+    собираться вынесенной функцией — так приехал снимок письма
+    (`letterShotChip`), общий у строки журнала и окна записи. Сканируй сторож
+    только текст `sentRow`, вынос узла в помощника читался бы как **пропажа
+    узла**: счёт колонок разошёлся бы с разметкой, и сторож наказывал бы ровно
+    за то, к чему сам призывает, — за один приём вместо двух копий.
+
+    ⚠ Тег `img` считается узлом наравне со `span` и `button`: превью снимка это
+    картинка, а гриду всё равно, чем узел нарисован.
+    """
     page = PAGE.read_text(encoding='utf-8')
     body = re.search(r'function sentRow\(row, opts\) \{.*?\n    \}', page, re.S)
 
     assert body, 'выкройка строки не нашлась'
 
+    text = body.group(0)
+
+    # Разворачиваем вызовы помощников **на месте вызова**: порядок узлов в
+    # строке задаётся им, и подстановка в конец сдвинула бы исход в чужую
+    # колонку.
+    for name in sorted(set(re.findall(r'\b(letter[A-Za-z]+)\(row\)', text))):
+        helper = re.search(rf'function {name}\(row\) \{{.*?\n    \}}', page, re.S)
+        if helper:
+            text = text.replace(f'{name}(row)', helper.group(0))
+
     seen = []
-    for one in re.findall(r'<(?:span|button)[^>]*?class="(mail-sent-[a-z]+)',
-                         body.group(0)):
+    for one in re.findall(r'<(?:span|button|img)[^>]*?class="(mail-sent-[a-z]+)',
+                         text):
         if one not in seen:
             seen.append(one)
 
