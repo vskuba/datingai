@@ -36,7 +36,12 @@ def feed(monkeypatch):
     def check(site_id, uid):
         return state.get(str(uid), {'online': False, 'known': False, 'age_sec': -1})
 
+    # ⚠ Подменяем **обе** двери: списки сверяются показным порогом
+    # (`online_show`), отправка — отправочным (`online_check`), а тесту важно
+    # одно — что лента сказала. Подмени мы одну, правка читателя с порога на
+    # порог молча уводила бы тест на живой Redis.
     monkeypatch.setattr(online, 'online_check', check)
+    monkeypatch.setattr(online, 'online_show', check)
 
     return state
 
@@ -143,3 +148,76 @@ class TestWhenWeDoNotKnow:
 
     def test_an_empty_list_is_returned_as_is(self, feed):
         assert _online_now([], SITE, 'favorite') == []
+
+
+class TestTheFeedItselfIsAlwaysOnline:
+    """⚠⚠⚠ Попасть в ленту «Все онлайн» — значит быть в сети.
+
+    Сайт отдаёт её как ответ на вопрос «кто сейчас онлайн», и второго условия у
+    принадлежности нет. Прежде лента возвращалась из `_online_now` нетронутой, и
+    точка зависела от поля `online` **в самой записи** — а его присылает не
+    всякий сайт.
+
+    Замер на проде 01.11.2026: у Step2Love (999345) поле пустовало у **всех 67**
+    человек ленты, и она стояла целиком серой; у Ladadate (343) горели все 183.
+    Один вопрос получал два ответа в зависимости от того, что положил в запись
+    чужой разбор.
+    """
+
+    def test_every_card_of_the_feed_lights_up(self, feed):
+        """Даже у того, кого сам сайт прислал погашенным."""
+        got = _online_now([HIM, HER_PICK], SITE, 'online')
+
+        assert [one['online'] for one in got] == [True, True], \
+            'лента «Все онлайн» светится не вся — точка снова зависит от того, ' \
+            'что положил в запись разбор чужого сайта'
+
+    def test_the_rest_of_the_record_survives(self, feed):
+        """⚠ Трогаем **только** `online`: карточка несёт имя, фото и ссылку."""
+        got = _online_now([HIM], SITE, 'online')
+
+        assert got[0]['name'] == 'Semen Gorbunkov' and got[0]['uid'] == '181685'
+
+    def test_the_source_rows_are_not_touched(self, feed):
+        """⚠ Записи кэша правим копией: снимок лежит в Redis один на всех, и
+        правка на месте испортила бы его следующему читателю."""
+        _online_now([HIM], SITE, 'online')
+
+        assert HIM['online'] is False, 'запись снимка изменена на месте'
+
+
+class TestTheOtherListsUseTheShowWindow:
+    """⚠⚠ Гости и избранные сверяются со снимком **показным** порогом.
+
+    Порогов два: `online_check` (5 минут) отвечает «слать ли письмо прямо
+    сейчас» — решение с последствием; `online_show` (15 минут) отвечает «горит
+    ли точка» — сведение к размышлению.
+
+    Лента обновляется по настройке сайта (`online_check_every`, на проде десять
+    минут), и с пятиминутным порогом совпадение гасло **чаще, чем светилось**:
+    тот же человек горел в «Онлайн» и был серым в «Гостях» — через ряд, на той
+    же странице.
+    """
+
+    def test_the_show_window_is_the_wider_one(self):
+        """⚠ Сторож на **числа**: сравнение порогов и есть всё правило. Сойдись
+        они — вернулась бы та же беда, и увидеть её можно лишь глазами на
+        странице, где две ленты спорят друг с другом."""
+        from src.dating.online import ONLINE_FRESH_SEC, ONLINE_SHOW_SEC
+
+        assert ONLINE_SHOW_SEC > ONLINE_FRESH_SEC, \
+            'показной порог сравнялся с отправочным — точки гостей снова будут ' \
+            'гаснуть при живой ленте'
+
+    def test_guests_are_matched_by_the_show_window(self):
+        """⚠ Сверка идёт `online_show`, а не `online_check`: проверяем сам
+        вызов, потому что разница видна лишь на снимке старше пяти минут."""
+        import inspect
+
+        from src.uvicorn.routers.dating import people
+
+        code = inspect.getsource(people._online_now)
+
+        assert 'online_show' in code and 'online_check(' not in code, \
+            'списки снова сверяются отправочным порогом — точка погаснет ' \
+            'раньше, чем лента устареет'
