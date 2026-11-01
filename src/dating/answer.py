@@ -53,8 +53,9 @@ from src.dating.chat_intention import (chat_intention_delivered,
                                        chat_intention_put)
 from src.dating.chat_reply import (chat_reply_failed, chat_reply_put,
                                    chat_reply_sent, chat_reply_waiting)
-from src.dating.companion_ref import (companion_ref_foreign, companion_title,
-                                      companion_vars)
+from src.dating.companion_card import (companion_name_known,
+                                       companion_vars_known)
+from src.dating.companion_ref import companion_ref_foreign, companion_title
 from src.dating.message_twin import message_twin_skip
 from src.dating.online import online_check
 from src.dating.send import send_message
@@ -155,7 +156,14 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
         # Имя **с номером**: имена собеседников повторяются десятками («три Natalia
         # в списке — обычное дело»), и по одному имени в журнале не понять, с кем
         # разговор.
-        name = str(row['sender_name'] or '').strip()
+        # ⚠⚠⚠ Имя спрашиваем **у карточки**, а реплику берём запасным путём:
+        # `sender_name` приходит пустым почти всегда (42110 входящих из 42520 на
+        # проде 01.11.2026), а карточка знает имя у **всех** собеседников. Пока
+        # имя бралось отсюда, слепли трое разом: ключ собеседника у соседа
+        # вырождался в `207556_207556` и расщеплял разговор надвое, сторож чужих
+        # имён не узнавал настоящего адресата, а журнал писал `#207556`.
+        name = await companion_name_known(profile.get('site_id'), uid,
+                                          row['sender_name'])
         who = f'{name} {uid}' if name else f'#{uid}'
 
         # ⚠⚠ **Черновик уже есть — значит текст написан, и платить снова не за
@@ -562,11 +570,15 @@ async def _agent_ask(agent_id: int, question: str, language: str,
                        # пяти таблиц, то есть из второго дома.
                        #
                        # ⚠⚠ Троица `companion_*` едет **в `variables`**
-                       # (`companion_ref.companion_vars`, ниже): с правкой
+                       # (`companion_card.companion_vars_known`, ниже): с правкой
                        # `remove_companion` сосед перестал подставлять её из
                        # запроса — что не прислали, то стало пустым default.
                        # Номер нужен шагу «Переменные»: из
                        # `%companion_id%_%companion_name%` он клеит ключ фактов.
+                       # ⚠⚠⚠ Имя берётся **из карточки**, а не из реплики: пустое
+                       # вырождало ключ в `207556_207556` и расщепляло разговор
+                       # надвое — сосед заводил вторую пару, и агент продолжал,
+                       # не видя половины сказанного.
                        # ⚠⚠ **Анкета собеседника — на случай, когда фактов о нём
                        # ещё нет.** Факты извлекает из переписки отдельный
                        # workflow, и в начале разговора извлекать нечего: агент
@@ -591,7 +603,8 @@ async def _agent_ask(agent_id: int, question: str, language: str,
                        # ⚠⚠ Кто именно пишет. Что не прислано — то пустой
                        # default, и факты леглись бы в общий документ безымянно
                        # (`companion_ref.py`).
-                       **companion_vars(profile.get('site_id'), uid, name),
+                       **await companion_vars_known(profile.get('site_id'),
+                                                    uid, name),
                        # ⚠ Строкой '1'/'0': у соседа `%if%` считает ложными
                        # пустое, '0' и отсутствие (`ai_workflow_variable_truthy`),
                        # а `False` превратился бы в 'False' — то есть в истину.

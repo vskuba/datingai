@@ -68,14 +68,19 @@ class TestTheLetterKnowsTheMan:
         сосед из `companion_session` двумя шагами workflow — считать её здесь
         значило бы держать разговор в двух домах. Но найти переписку он может
         только по ключам пары, и шлём их мы: `agent_vars` даёт номер и имя
-        девушки, `companion_vars` — собеседника. Отвались любой — сосед прочитает
-        пустую ленту и напишет письмо человеку, которого «не помнит».
+        девушки, `companion_vars_known` — собеседника. Отвались любой — сосед
+        прочитает пустую ленту и напишет письмо человеку, которого «не помнит».
+
+        ⚠ Дверь собеседника именно `_known`: она спрашивает имя **у карточки**,
+        а не берёт из реплики. Чистая `companion_vars` получила бы пустое имя, и
+        ключ выродился бы в «номер_номер» — лента нашлась бы не та
+        (`test_companion_ref.TestTheNameComesFromTheCard`).
         """
         code = inspect.getsource(answer._agent_ask)
 
         assert 'agent_vars(' in code, \
             'ключ девушки не уезжает — сосед не найдёт её переписку'
-        assert 'companion_vars(' in code, \
+        assert 'companion_vars_known(' in code, \
             'ключ собеседника не уезжает — сосед не найдёт переписку пары'
 
     def test_the_letter_is_not_an_initiative_reply(self):

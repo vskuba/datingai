@@ -242,6 +242,72 @@ class TestBothDoorsUseIt:
         """
         code = Path('src/dating/answer.py').read_text(encoding='utf-8')
 
-        assert '**companion_vars(' in code
+        assert '**await companion_vars_known(' in code
         # Мёртвой константы не осталось нигде: она была приставкой ко всякому ключу.
         assert 'COMPANION_REF_ID' not in code
+
+
+class TestTheNameComesFromTheCard:
+    """⚠⚠⚠ Третий виток той же беды: ключ вырождался в «номер_номер».
+
+    Правая половина ключа — имя, и при пустом имени `companion_name` законно
+    скатывается на номер: `207556_207556` вместо `207556_christopher_buchas`.
+    Ключ при этом **выглядит ключом** — сосед пары по нему не находит и заводит
+    вторую запись. Агент продолжает разговор, не видя половины сказанного; ни
+    ошибки, ни пустой строки.
+
+    Обе дороги чата брали имя из **реплики** (`message.sender_name`), а она
+    почти всегда пуста: на проде 01.11.2026 — 42110 входящих из 42520, то есть
+    99%. Расщеплялась пара ровно тогда, когда у человека приходили сообщения и с
+    именем, и без: первое заводило именной ключ, второе — вырожденный. Так
+    разошлись шесть пар, самая большая на 126 обменов.
+
+    ⚠⚠ Имя живёт **в карточке**, и живёт надёжно: на том же проде она знает его
+    у **всех** 2475 собеседников, ни одной пустой.
+    """
+
+    def _doors(self) -> str:
+        return (Path('src/dating/chat.py').read_text(encoding='utf-8')
+                + Path('src/dating/answer.py').read_text(encoding='utf-8'))
+
+    def test_neither_chat_door_keys_on_the_message_name(self):
+        """⚠⚠⚠ Главное утверждение: `sender_name` больше не идёт в ключ.
+
+        Сторож смотрит **текст дорог**, а не поведение: беда молчаливая, и
+        увидеть её можно лишь у соседа в списке разговоров — то есть случайно и
+        через недели.
+        """
+        for door in ('src/dating/chat.py', 'src/dating/answer.py'):
+            code = Path(door).read_text(encoding='utf-8')
+            spot = code.find('companion_vars(')
+
+            assert spot < 0 or 'companion_vars_known' in code[spot - 24:spot], (
+                f'{door} снова собирает ключ чистой `companion_vars` — имя '
+                'придёт из реплики, а она пуста в 99% случаев, и ключ '
+                'выродится в «номер_номер»')
+
+    def test_both_doors_ask_the_card(self):
+        """Карточку спрашивают **обе** дороги: одна починенная оставила бы
+        расщепление ровно наполовину — а расщеплённая пара хуже, чем явно
+        сломанная, её не видно."""
+        for door, who in (('src/dating/chat.py', 'приём реплики'),
+                          ('src/dating/answer.py', 'ответ агента')):
+            code = Path(door).read_text(encoding='utf-8')
+
+            assert 'companion_vars_known' in code or 'companion_name_known' in code, (
+                f'{who} ({door}) не спрашивает имя у карточки')
+
+    def test_the_card_wins_over_what_came_with_the_message(self):
+        """⚠ Порядок именно такой: карточка главная, присланное запасное.
+
+        Наоборот — и пустая реплика снова перебивала бы известное имя.
+        """
+        import inspect
+
+        from src.dating.companion_card import companion_name_known
+
+        body = inspect.getsource(companion_name_known)
+
+        assert 'known or said' in body, (
+            'карточка перестала быть главной: присланное имя перебивает '
+            'известное, и пустая реплика снова выродит ключ')

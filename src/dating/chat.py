@@ -356,12 +356,12 @@ async def _history_push(profile_id: int, message: dict) -> None:
     журнале, история у соседа на реплику короче.
 
     ⚠ Ключи собираются теми же функциями, что и для вызова агента
-    (`agent_vars`, `companion_vars`): склейка `{номер}_{имя}` у соседа одна на
-    все дороги, и второе правило разошлось бы с первым молча.
+    (`agent_vars`, `companion_vars_known`): склейка `{номер}_{имя}` у соседа одна
+    на все дороги, и второе правило разошлось бы с первым молча.
     """
     try:
         from src.dating.agent import agent_vars
-        from src.dating.companion_ref import companion_vars
+        from src.dating.companion_card import companion_vars_known
         from src.rhapsody.rhapsody_api import rhapsody_api_chat_incoming
 
         async with mysql_get_db_async() as db:
@@ -381,9 +381,13 @@ async def _history_push(profile_id: int, message: dict) -> None:
                 card = {}
 
         girl = agent_vars(profile, card or {})
-        companion = companion_vars(profile.get('site_id'),
-                                   message['sender_uid'],
-                                   message.get('sender_name'))
+        # ⚠⚠ Имя спрашиваем **у карточки**, а не берём из реплики: `sender_name`
+        # приходит пустым почти всегда (99% входящих на проде), и ключ выходил
+        # вырожденным — `663532_663532` рядом с живым `663532_youpikeke`. Довод
+        # целиком — в докстринге `companion_vars_known`.
+        companion = await companion_vars_known(profile.get('site_id'),
+                                               message['sender_uid'],
+                                               message.get('sender_name'))
 
         # ⚠ Проверяется только собеседник: у анкеты ключ есть всегда —
         # `agent_site_uid` падает до нашего внутреннего номера и пусто не

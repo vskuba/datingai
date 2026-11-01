@@ -484,7 +484,10 @@ class TestAStarIsEnough:
 
         code = inspect.getsource(answer._agent_ask)
 
-        assert 'agent_vars(' in code and 'companion_vars(' in code, \
+        # ⚠ Дверь собеседника — `_known`: имя она берёт у карточки, а не из
+        # реплики. Пустое имя вырождает ключ в «номер_номер», и лента найдётся
+        # не та (`test_companion_ref.TestTheNameComesFromTheCard`).
+        assert 'agent_vars(' in code and 'companion_vars_known(' in code, \
             'ключи пары не уезжают — сосед не найдёт переписку'
         # ⚠ А вот **какой** веткой сочинять решает само письмо: у соседа три
         # шага сочинения; с 24.10.2026 `mail_kind` — его внутренняя переменная,

@@ -596,6 +596,25 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     shot = (', m.gallery_file_id' if table in MAIL_SEND_SHOT_TABLES else '')
     doing = ((', m.intention_id' if table == 'intention_mail' else '') + shot)
 
+    # ⚠⚠⚠ **`m.name` выбирается безусловно и прямо в списке — это четвёртый раз
+    # той же грабли.** Имя адресата читает `_history_write`: из него собирается
+    # правая половина ключа собеседника у соседа (`companion_name`). Нет имени —
+    # `companion_name` законно скатывается на номер, ключ выходит `207556_207556`
+    # вместо `207556_christopher_buchas`, и сосед **заводит новую пару**: письмо
+    # ушло, строка в истории есть, а разговор у агента остался без неё.
+    #
+    # Так и было на проде 01.11.2026, Diana → Christopher Buchas: письмо уехало
+    # в 11:19:07, история легла записью `207556_207556` рядом с живой
+    # `207556_christopher_buchas`. Ни ошибки, ни пустой строки — ровно то же
+    # молчание, что у трёх прежних случаев в таблице сторожа.
+    #
+    # ⚠ Безусловно, а не куском под свою таблицу: `name` есть у **всех шести**
+    # пулов (сверено со схемой), и условная добавка ждала бы пятого читателя.
+    #
+    # ⚠⚠ Отметки свои столбцы носят кусками (`{doing}`) потому, что у прочих
+    # пулов их нет вовсе и запрос упал бы «Unknown column». С именем наоборот:
+    # условие здесь было бы лишним различением там, где различия нет.
+
     # ⚠⚠ **Остывшие получатели выпадают из очереди, а не отсеиваются после.**
     #
     # Круг берёт из пула **одно** письмо за заход. Отсей мы остывшего после
@@ -632,8 +651,8 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
-                f'SELECT m.id, m.site_id, m.profile_id, m.uid, m.body, m.status,'
-                f' p.login, p.password, p.password_source'
+                f'SELECT m.id, m.site_id, m.profile_id, m.uid, m.name, m.body,'
+                f' m.status, p.login, p.password, p.password_source'
                 f'{reply_to}{message_id}{doing}'
                 f'  FROM {table} m'
                 f'  JOIN profile p ON p.id = m.profile_id'
