@@ -771,3 +771,114 @@ async def _delivery(auth_client) -> list[dict]:
     answer = await auth_client.get(f'/api/dating/mailing?site_id={SITE}&status_=delivery')
 
     return answer.json()['result']
+
+
+class TestLettersWithoutARunReachTheHistory:
+    """⚠⚠ Письмо, сочинённое **не прогоном**, обязано лечь в историю у соседа.
+
+    Обмен там пишет прогон `dating_talk` — то есть текст, придуманный моделью
+    прямо сейчас. У письма по обещанию прогона нет вовсе: текст приехал вместе
+    с намерением. До 01.11.2026 такое письмо уходило человеку, а истории про
+    него не было — и следующий ответ агент строил так, будто обещанного письма
+    не случилось. Разговор искажался молча: ни ошибки, ни пустой строки.
+    """
+
+    def test_the_two_lists_never_overlap(self):
+        """⚠⚠⚠ Главное утверждение: у кого обмен **есть**, тому его не заводят.
+
+        Попади таблица в оба списка, одна реплика легла бы в историю дважды —
+        и агент прочитал бы её как два разных письма подряд.
+        """
+        from src.dating.mail_send import (MAIL_SEND_HISTORY_TABLES,
+                                          MAIL_SEND_TABLES,
+                                          MAIL_SEND_TALK_TABLES)
+
+        both = set(MAIL_SEND_TALK_TABLES) & set(MAIL_SEND_HISTORY_TABLES)
+
+        assert not both, (
+            f'таблица в обоих списках разом: {both} — её письмо ляжет '
+            'в историю дважды')
+
+        known = set(MAIL_SEND_TALK_TABLES) | set(MAIL_SEND_HISTORY_TABLES)
+
+        assert known <= set(MAIL_SEND_TABLES), (
+            f'списки знают пул, которого нет среди писем: {known - set(MAIL_SEND_TABLES)}')
+
+    async def test_an_intention_letter_goes_to_the_history(self, profile):
+        """Что именно уедет соседу: ключи обеих сторон, канал и ключ повтора."""
+        import src.rhapsody.rhapsody_api as api
+        from src.dating.mail_send import _history_write
+
+        sent = []
+
+        async def fake(owner_id, owner_name, guest_id, guest_name,
+                       question='', answer='', kind='chat', source_uid='',
+                       delivered=False):
+            sent.append({'owner_id': owner_id, 'owner_name': owner_name,
+                         'guest_id': guest_id, 'guest_name': guest_name,
+                         'kind': kind, 'source_uid': source_uid,
+                         'question': question, 'answer': answer,
+                         'delivered': delivered})
+            return 777
+
+        was = api.rhapsody_api_chat_put
+        api.rhapsody_api_chat_put = fake
+        try:
+            await _history_write({'id': 4242, 'profile_id': profile['id'],
+                                  'site_id': profile['site_id'],
+                                  'uid': '812886', 'name': 'Vincent',
+                                  'body': 'as promised, here it is'},
+                                 'intention_mail')
+        finally:
+            api.rhapsody_api_chat_put = was
+
+        assert sent, 'письмо ушло, а в историю соседа не поехало ничем'
+
+        got = sent[0]
+
+        assert got['kind'] == 'mail', f"канал не почтовый: {got['kind']}"
+        assert got['delivered'] is True, (
+            'письмо отмечено недоставленным, хотя зовут эту дверь после '
+            'удачной отправки')
+        # ⚠ Имя таблицы в ключе обязательно: номера пулов независимы, и без
+        # него письмо #10 рассылки выдало бы себя за письмо #10 исполнения.
+        assert got['source_uid'] == 'intention_mail:4242', (
+            f"ключ повтора без имени пула: {got['source_uid']}")
+        # ⚠⚠ Половина названа **явно**: письмо — это наш `answer`, а не
+        # безымянный «текст». Приедь оно вопросом, сосед записал бы его как
+        # реплику собеседника, и агент прочитал бы собственное письмо как
+        # присланное ему.
+        assert got['answer'] and not got['question'], (
+            f"письмо уехало не той половиной: вопрос={got['question']!r} "
+            f"ответ={got['answer']!r}")
+        # ⚠ Стороны едут частями, а не склеенным ключом: правило склейки
+        # принадлежит соседу, и повтори мы его здесь — разошлись бы молча.
+        assert got['owner_id'] and got['owner_name'], 'анкета уехала не частями'
+        assert got['guest_id'] and got['guest_name'], (
+            'собеседник уехал не частями')
+        assert '_' not in got['owner_id'], (
+            f"ключ склеен у нас, хотя сшивать его соседу: {got['owner_id']}")
+
+    async def test_a_nameless_companion_is_not_written(self, profile):
+        """⚠ Без номера собеседника класть реплику **некуда**: обмен лёг бы
+        под чужой записью, и два разговора слились бы в один."""
+        import src.rhapsody.rhapsody_api as api
+        from src.dating.mail_send import _history_write
+
+        sent = []
+
+        async def fake(*args, **kwargs):
+            sent.append(args)
+            return 777
+
+        was = api.rhapsody_api_chat_put
+        api.rhapsody_api_chat_put = fake
+        try:
+            await _history_write({'id': 1, 'profile_id': profile['id'],
+                                  'site_id': profile['site_id'],
+                                  'uid': '', 'name': '', 'body': 'text'},
+                                 'intention_mail')
+        finally:
+            api.rhapsody_api_chat_put = was
+
+        assert not sent, 'реплика поехала соседу без ключа собеседника'

@@ -100,6 +100,19 @@ MAIL_SEND_TABLES = ('mailing', 'mail_reply',
 # хуже, в чужую строку с совпавшим номером.
 MAIL_SEND_TALK_TABLES = ('mail_reply', 'favorite_mail')
 
+# Пулы, письма которых **сочинены не прогоном**, — их обмен у соседа заводим
+# сами, после отправки (`_history_write`).
+#
+# ⚠⚠ Со списком выше пересекаться не должен, и это главное про него: у тех
+# обмен уже лежит и его лишь отмечают доставленным, у этих обмена нет вовсе.
+# Попади таблица в оба, одна реплика легла бы в историю дважды — и агент
+# прочитал бы её как два разных письма подряд.
+#
+# ⚠ `mailing` и инвайты сюда не входят намеренно: они идут своими workflow,
+# это холодное обращение к незнакомому, и разговора, который надо помнить,
+# там ещё нет.
+MAIL_SEND_HISTORY_TABLES = ('intention_mail',)
+
 # Пулы, которые пишут человеку **первыми**, — холодное обращение и напоминание о
 # себе. Ими меряется навязчивость.
 #
@@ -574,8 +587,82 @@ async def mail_send_mark(letter: dict, sent: bool, error: str = '',
 
         await intention_mail_done(letter)
 
+    # ⚠⚠ **Письма без прогона кладутся в историю отдельно.** Обмен у соседа
+    # пишет прогон `dating_talk`, то есть текст, сочинённый моделью прямо
+    # сейчас. У письма по обещанию прогона нет вовсе — текст приехал вместе с
+    # намерением, — и до соседа не доезжало ничего: следующий ответ агент
+    # строил так, будто обещанного письма не было.
+    #
+    # ⚠ Отсюда и два разных списка: `MAIL_SEND_TALK_TABLES` — у кого обмен уже
+    # есть и его надо лишь отметить доставленным, `MAIL_SEND_HISTORY_TABLES` —
+    # у кого обмена нет и его надо завести. Пересекаться они не должны:
+    # пересёкшись, положили бы одну реплику дважды.
+    if sent and table in MAIL_SEND_HISTORY_TABLES:
+        await _history_write(letter, table)
+
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+
+async def _history_write(letter: dict, table: str) -> None:
+    """Положить ушедшее письмо в историю разговора у соседа.
+
+    Args:
+        letter: строка пула — нужны `profile_id`, `site_id`, `uid`, `body`.
+        table: из какого пула письмо; идёт в ключ повтора.
+
+    ⚠⚠ Своя неудача эту дверь **не роняет**: письмо уже у человека, и
+    исключение отсюда заставило бы вызывающего считать отправку
+    несостоявшейся — то есть послать второй раз. Строка в журнале остаётся.
+
+    ⚠ Ключ повтора — `{таблица}:{номер строки}`: номера пулов независимы, и
+    без имени таблицы письмо #10 рассылки однажды выдало бы себя за письмо #10
+    исполнения.
+
+    ⚠ Проверяется только ключ собеседника: у анкеты он есть всегда
+    (`agent_site_uid` падает до внутреннего номера), а номер собеседника
+    бывает пуст — тогда класть реплику некуда. Тот же порядок, что у приёма
+    входящего в `chat.py`.
+
+    ⚠⚠ Анкета читается **своим запросом**, а не `profile_row` из роутера: та
+    отвечает `HTTPException` — её контракт код ответа HTTP, и в домене он
+    означал бы, что отсутствие анкеты уронит отправку письма четырёхсотым.
+    Тот же путь, которым берёт анкету `chat.py` перед вызовом агента.
+    """
+    try:
+        from src.dating.agent import agent_vars
+        from src.dating.companion_ref import companion_vars
+        from src.dating.json_column import json_column_load
+        from src.rhapsody.rhapsody_api import rhapsody_api_chat_put
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT * FROM profile WHERE id = %s LIMIT 1',
+                             (int(letter.get('profile_id') or 0),))
+            profile = await db.fetchone()
+
+        if not profile:
+            return
+
+        girl = agent_vars(profile, json_column_load(profile.get('profile')))
+        companion = companion_vars(int(letter.get('site_id') or 0),
+                                   str(letter.get('uid') or ''),
+                                   str(letter.get('name') or ''))
+
+        if not companion.get('companion_id'):
+            return
+
+        # ⚠ Стороны едут **частями**: сшивает их сосед своим правилом, тем
+        #   же, которым пользуется шаг прогона. Склей мы ключ здесь, правило
+        #   легло бы в два места и разошлось бы молча.
+        await rhapsody_api_chat_put(
+            str(girl['girl_id']), str(girl['girl_name']),
+            str(companion['companion_id']), str(companion['companion_name']),
+            answer=str(letter.get('body') or ''), kind='mail',
+            source_uid=f"{table}:{int(letter.get('id') or 0)}",
+            delivered=True)
+    except Exception as e:
+        logger_info(f"[dating] {table} #{letter.get('id')} ушло, а в историю "
+                    f'не легло: {e}')
 
 async def _by_panel(letter: dict, table: str, profile_id: int):
     """Отправка ответа **через панель**, если так решено для этой пары.

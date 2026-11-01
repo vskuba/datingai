@@ -747,6 +747,85 @@ async def rhapsody_api_chat_incoming(owner_unique_id: str,
         return 0
 
 
+async def rhapsody_api_chat_put(owner_id: str, owner_name: str,
+                               companion_id: str, companion_name: str,
+                               question: str = '', answer: str = '',
+                               kind: str = 'chat', source_uid: str = '',
+                               delivered: bool = False) -> int:
+    """Кладёт соседу в историю обмен, сочинённый не прогоном.
+
+    Args:
+        owner_id: номер нашей анкеты на сайте (`girl_id` вызова агента).
+        owner_name: её имя техническим видом (`girl_name`).
+        companion_id: номер собеседника там же.
+        companion_name: его имя техническим видом.
+        question: что сказал **он**. Пусто — он молчал.
+        answer: что сказали **мы**. Пусто — мы не отвечали.
+        kind: `chat` или `mail`.
+        source_uid: ключ обмена у нас — им сосед ловит повтор вызова.
+        delivered: дошёл ли до человека наш `answer`.
+
+    Returns:
+        int: номер обмена у соседа; 0 — не записалось либо уже было.
+
+    ## ⚠⚠ ЗАЧЕМ
+
+    Обмен у соседа пишет **прогон**, то есть текст, сочинённый моделью прямо
+    сейчас. Письмо по обещанию так не уходит: его текст приехал вместе с
+    намерением, прогона нет — и до соседа не доезжает ничего. Следующий ответ
+    агент строит так, будто обещанного письма не было.
+
+    Этой же дверью кладётся всё прочее, чего модель сейчас не сочиняла:
+    правка оператора, текст чужого сервиса.
+
+    ## ⚠⚠ Стороны едут частями, а не склеенным ключом
+
+    Те же части, что уезжают агенту переменными вызова (`girl_id`,
+    `girl_name`, `companion_id`, `companion_name`), — сшивает их сосед, своим
+    правилом. Склей мы ключ здесь, правило лежало бы в двух местах и
+    разошлось бы молча: он завёл бы вторую запись той же пары, и агент писал
+    бы человеку как незнакомому.
+
+    ## ⚠ Отказ не роняет отправку
+
+    Письмо к этому моменту **уже ушло человеку**, и исключение отсюда
+    отменило бы отметку о его отправке — то есть круг послал бы его второй
+    раз. Неудача — строка в журнале: история у соседа будет на обмен короче,
+    и это несравнимо дешевле повторного письма.
+    """
+    asked = str(question or '').strip()
+    said = str(answer or '').strip()
+
+    if not asked and not said:
+        return 0
+
+    if not str(owner_id or '').strip() or not str(companion_id or '').strip():
+        return 0
+
+    try:
+        data = await _request('POST', '/chat/message/put',
+                              {'owner_id': str(owner_id),
+                               'owner_name': str(owner_name or ''),
+                               'companion_id': str(companion_id),
+                               'companion_name': str(companion_name or ''),
+                               'question': asked, 'answer': said,
+                               'kind': str(kind or 'chat'),
+                               'source_uid': str(source_uid or ''),
+                               'delivered': bool(delivered)})
+    except RhapsodyError as e:
+        logger_info(f'[rhapsody] обмен не ушёл в историю: {e}')
+
+        return 0
+
+    try:
+        return int((data.get('result') or {}).get('id') or 0)
+    except (AttributeError, TypeError, ValueError):
+        logger_info('[rhapsody] запись обмена: сосед ответил не тем, '
+                    f'что мы умеем прочитать: {data!r}')
+
+        return 0
+
+
 # Сколько дней просить у журнала LLM. ⚠ Больше семи бессмысленно: сосед держит
 # `llm_request` неделю и сам ограничивает запрос до семи дней. Число здесь затем,
 # чтобы страница не обещала «за месяц» того, чего нет.
