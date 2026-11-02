@@ -633,7 +633,7 @@ async def _history_write(letter: dict, table: str) -> None:
         from src.dating.agent import agent_vars
         from src.dating.companion_card import companion_vars_known
         from src.dating.json_column import json_column_load
-        from src.rhapsody.rhapsody_api import rhapsody_api_chat_put
+        from src.rhapsody.rhapsody_api import rhapsody_api_chat_add
 
         async with mysql_get_db_async() as db:
             await db.execute('SELECT * FROM profile WHERE id = %s LIMIT 1',
@@ -660,7 +660,7 @@ async def _history_write(letter: dict, table: str) -> None:
         # ⚠ Стороны едут **частями**: сшивает их сосед своим правилом, тем
         #   же, которым пользуется шаг прогона. Склей мы ключ здесь, правило
         #   легло бы в два места и разошлось бы молча.
-        await rhapsody_api_chat_put(
+        await rhapsody_api_chat_add(
             str(girl['girl_id']), str(girl['girl_name']),
             str(companion['companion_id']), str(companion['companion_name']),
             answer=str(letter.get('body') or ''), kind='mail',

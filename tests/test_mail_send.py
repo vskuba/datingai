@@ -821,8 +821,8 @@ class TestLettersWithoutARunReachTheHistory:
                          'delivered': delivered})
             return 777
 
-        was = api.rhapsody_api_chat_put
-        api.rhapsody_api_chat_put = fake
+        was = api.rhapsody_api_chat_add
+        api.rhapsody_api_chat_add = fake
         try:
             await _history_write({'id': 4242, 'profile_id': profile['id'],
                                   'site_id': profile['site_id'],
@@ -830,7 +830,7 @@ class TestLettersWithoutARunReachTheHistory:
                                   'body': 'as promised, here it is'},
                                  'intention_mail')
         finally:
-            api.rhapsody_api_chat_put = was
+            api.rhapsody_api_chat_add = was
 
         assert sent, 'письмо ушло, а в историю соседа не поехало ничем'
 
@@ -871,14 +871,14 @@ class TestLettersWithoutARunReachTheHistory:
             sent.append(args)
             return 777
 
-        was = api.rhapsody_api_chat_put
-        api.rhapsody_api_chat_put = fake
+        was = api.rhapsody_api_chat_add
+        api.rhapsody_api_chat_add = fake
         try:
             await _history_write({'id': 1, 'profile_id': profile['id'],
                                   'site_id': profile['site_id'],
                                   'uid': '', 'name': '', 'body': 'text'},
                                  'intention_mail')
         finally:
-            api.rhapsody_api_chat_put = was
+            api.rhapsody_api_chat_add = was
 
         assert not sent, 'реплика поехала соседу без ключа собеседника'

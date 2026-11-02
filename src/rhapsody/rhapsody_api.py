@@ -705,91 +705,28 @@ async def rhapsody_api_chat_delivered(message_id: int) -> bool:
         return False
 
 
-async def rhapsody_api_chat_incoming(owner_id: str, owner_name: str,
-                                     companion_id: str, companion_name: str,
-                                     text: str, kind: str = 'chat',
-                                     source_uid: str = '',
-                                     said_at: str = '') -> int:
-    """Отдаёт соседу реплику собеседника — сразу, не дожидаясь нашего ответа.
-
-    Args:
-        owner_id: номер нашей анкеты на сайте (`girl_id` вызова агента).
-        owner_name: её имя техническим видом (`girl_name`).
-        companion_id: номер собеседника там же.
-        companion_name: его имя техническим видом.
-        text: что он написал.
-        kind: `chat` или `mail`.
-        source_uid: наш `message_uid` — им сосед ловит повтор вызова.
-        said_at: когда написано, `ГГГГ-ММ-ДД ЧЧ:ММ:СС` UTC.
-
-    Returns:
-        int: номер обмена у соседа; 0 — не записалось либо уже было.
-
-    ## ⚠⚠ ЗАЧЕМ
-
-    В `companion_session` вела одна дорога — прогон workflow, а его запускает
-    `/chat/ask`, то есть **решение ответить**. Реплика, на которую агент не
-    ответил, не попадала к соседу ничем: ни ошибки, ни следа. Замерено
-    02.10.2026 — двенадцать таких за восемь дней, среди потерянного «how did
-    you sleep???» и «sent you photo».
-
-    ## ⚠⚠ Отказ не роняет приём сообщения
-
-    Сообщение к этому моменту **уже лежит у нас** (`message`), и исключение
-    отсюда отменило бы его запись. Неудача — строка в журнале: история у
-    соседа будет на реплику короче, и это несравнимо дешевле потери самого
-    сообщения.
-
-    ⚠ Звать можно на каждое входящее, в том числе на то, на которое ответим:
-    ответ агента эту строку поглотит (`_pending_absorb` у соседа).
-
-    ## ⚠⚠ Стороны едут частями, а не склеенным ключом
-
-    Те же части, что уезжают агенту переменными вызова, — сшивает их сосед,
-    своим правилом. Прежде ключ склеивали **мы**, и правило жило в двух домах:
-    у него (`_key`, дорога `put`) и здесь. Поменяй он разделитель — `put`
-    поехал бы за ним, а эта дверь осталась, и пара расщепилась бы надвое
-    молча: сосед завёл бы вторую запись, а агент писал бы как незнакомому.
-    """
-    said = str(text or '').strip()
-
-    if not said or not str(owner_id or '').strip() \
-            or not str(companion_id or '').strip():
-        return 0
-
-    try:
-        data = await _request('POST', '/chat/message/incoming',
-                              {'owner_id': str(owner_id),
-                               'owner_name': str(owner_name or ''),
-                               'companion_id': str(companion_id),
-                               'companion_name': str(companion_name or ''),
-                               'text': said, 'kind': str(kind or 'chat'),
-                               'source_uid': str(source_uid or ''),
-                               'said_at': str(said_at or '')})
-    except RhapsodyError as e:
-        logger_info(f'[rhapsody] входящее не ушло в историю: {e}')
-
-        return 0
-
-    # ⚠ Разбор под защитой по тому же доводу, что у отметки доставки: ответь
-    # сосед кодом 200 с `result`, который не словарь, `.get` бросил бы
-    # `AttributeError` — и приём сообщения упал бы на разборе чужого ответа.
-    try:
-        return int((data.get('result') or {}).get('id') or 0)
-    except (AttributeError, TypeError, ValueError):
-        logger_info('[rhapsody] приём входящего: сосед ответил не тем, '
-                    f'что мы умеем прочитать: {data!r}')
-
-        return 0
-
-
-async def rhapsody_api_chat_put(owner_id: str, owner_name: str,
+async def rhapsody_api_chat_add(owner_id: str, owner_name: str,
                                companion_id: str, companion_name: str,
                                question: str = '', answer: str = '',
                                kind: str = 'chat', source_uid: str = '',
                                delivered: bool = False,
                                said_at: str = '') -> int:
-    """Кладёт соседу в историю обмен, сочинённый не прогоном.
+    """Кладёт соседу в историю запись разговора: его половину, нашу или обе.
+
+    **Одна дверь** на всё, что не сочинил прогон: принятая реплика
+    собеседника, письмо по обещанию, правка оператора. Чья половина — говорит
+    довод.
+
+    ## ⚠⚠ Была вторая, и слияние не косметика
+
+    Приём реплики ходил своей дверью (`/chat/message/incoming`). Различались
+    они по-настоящему, пока у соседа в `put` стояло поглощение; он снял его —
+    и двери сошлись слово в слово: писали **одну и ту же строку**.
+
+    Цена разделения измерена на одной сессии: `said_at` и переезд ключа на
+    части пришлось вносить **дважды**, в обе двери, по одному доводу.
+    Изменение, которое всегда идёт в оба места, — примета того, что место
+    должно быть одно.
 
     Args:
         owner_id: номер нашей анкеты на сайте (`girl_id` вызова агента).
@@ -809,7 +746,14 @@ async def rhapsody_api_chat_put(owner_id: str, owner_name: str,
             в тот же миг.
 
     Returns:
-        int: номер обмена у соседа; 0 — не записалось либо уже было.
+        int: номер записи у соседа; **0 — неудача**.
+
+        ⚠⚠ Ноль значит именно неудачу, а не «уже было»: повтор сосед узнаёт по
+        `source_uid` и отвечает номером **уже записанной** строки. Прими
+        вызывающий ноль за успех, молчание соседа стоило бы реплики навсегда.
+
+        ⚠ Номер нужен тому, кто кладёт **недоставленным**: пометить доставку
+        потом можно только по нему (`rhapsody_api_chat_delivered`).
 
     ## ⚠⚠ ЗАЧЕМ
 
@@ -846,7 +790,7 @@ async def rhapsody_api_chat_put(owner_id: str, owner_name: str,
         return 0
 
     try:
-        data = await _request('POST', '/chat/message/put',
+        data = await _request('POST', '/chat/message/add',
                               {'owner_id': str(owner_id),
                                'owner_name': str(owner_name or ''),
                                'companion_id': str(companion_id),

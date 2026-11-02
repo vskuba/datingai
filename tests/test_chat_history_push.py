@@ -65,45 +65,21 @@ async def girl(rhapsody):
 
 
 @pytest.fixture
-def pushed(monkeypatch):
-    """Ручка соседа: запоминает, что ей отдали."""
-    seen = []
-
-    async def _push(owner_id, owner_name, companion_id, companion_name,
-                    text, kind='chat', source_uid='', said_at=''):
-        # ⚠⚠ Стороны запоминаются **частями**, как и уезжают: склейку делает
-        # сосед своим правилом, и собирать ключ здесь значило бы завести
-        # правилу третий дом — ровно то, от чего эта дорога и переехала.
-        #
-        # ⚠ `said_at` запоминается наравне с прочим: без него лента у соседа
-        # встаёт временем доклада, а не временем реплики, и привезённая
-        # переписка выглядит случившейся в одну минуту.
-        seen.append({'owner': (owner_id, owner_name),
-                     'companion': (companion_id, companion_name),
-                     'text': text, 'kind': kind, 'source_uid': source_uid,
-                     'said_at': said_at})
-
-        return 777
-
-    monkeypatch.setattr('src.rhapsody.rhapsody_api.rhapsody_api_chat_incoming',
-                        _push)
-
-    return seen
-
-
-@pytest.fixture
 def put(monkeypatch):
-    """Ручка соседа «положить обмен»: запоминает, что ей отдали.
+    """Общая дверь соседа: запоминает, что ей отдали.
 
     ⚠ Стороны запоминаются **частями**, как и уезжают: склейку делает сосед
-    своим правилом, и проверять здесь готовый ключ значило бы повторить это
-    правило третьим местом.
+    своим правилом, и собирать ключ здесь значило бы завести правилу третий
+    дом.
     """
     seen = []
 
     async def _put(owner_id, owner_name, companion_id, companion_name,
                    question='', answer='', kind='chat', source_uid='',
                    delivered=False, said_at=''):
+        # ⚠ `said_at` запоминается наравне с прочим: без него лента у соседа
+        # встаёт временем доклада, а не временем реплики, и привезённая
+        # переписка выглядит случившейся в одну минуту.
         seen.append({'owner': (owner_id, owner_name),
                      'companion': (companion_id, companion_name),
                      'question': question, 'answer': answer, 'kind': kind,
@@ -112,7 +88,7 @@ def put(monkeypatch):
 
         return 4242
 
-    monkeypatch.setattr('src.rhapsody.rhapsody_api.rhapsody_api_chat_put', _put)
+    monkeypatch.setattr('src.rhapsody.rhapsody_api.rhapsody_api_chat_add', _put)
 
     return seen
 
@@ -123,26 +99,26 @@ def _message(text: str = 'how did you sleep???') -> dict:
 
 
 class TestIncomingGoesToHistory:
-    async def test_reply_is_pushed_with_keys(self, girl, pushed):
+    async def test_reply_is_pushed_with_keys(self, girl, put):
         """⚠⚠ Ради этого всё: реплика уехала, ключи собраны верно."""
         assert await _message_save(girl, _message())
-        assert len(pushed) == 1
+        assert len(put) == 1
 
-        got = pushed[0]
+        got = put[0]
 
         assert got['owner'] == ('599939', 'elena'), 'части анкеты собраны не так'
         assert got['companion'] == ('329110', 'brian_ritter')
-        assert got['text'] == 'how did you sleep???'
+        assert got['question'] == 'how did you sleep???'
         assert got['kind'] == 'chat'
         assert got['source_uid'], 'без ключа источника повтор задвоит строку'
 
-    async def test_duplicate_message_is_not_pushed(self, girl, pushed):
+    async def test_duplicate_message_is_not_pushed(self, girl, put):
         """Повтор того же `message_uid` не записался — и не уехал."""
         one = _message()
 
         assert await _message_save(girl, one)
         assert not await _message_save(girl, one), 'повтор не должен записаться'
-        assert len(pushed) == 1, 'уехало дважды то, что записалось один раз'
+        assert len(put) == 1, 'уехало дважды то, что записалось один раз'
 
     async def test_push_failure_does_not_break_saving(self, girl, monkeypatch):
         """⚠⚠ Сосед недоступен — сообщение всё равно записано.
@@ -154,12 +130,12 @@ class TestIncomingGoesToHistory:
             raise RuntimeError('сосед недоступен')
 
         monkeypatch.setattr(
-            'src.rhapsody.rhapsody_api.rhapsody_api_chat_incoming', _boom)
+            'src.rhapsody.rhapsody_api.rhapsody_api_chat_add', _boom)
 
         assert await _message_save(girl, _message()), \
             'приём сообщения упал из-за чужой истории'
 
-    async def test_key_falls_back_like_the_agent_call(self, girl, pushed):
+    async def test_key_falls_back_like_the_agent_call(self, girl, put):
         """⚠⚠ У анкеты без номера сайта ключ тот же, что при вызове агента.
 
         `agent_site_uid` пусто не возвращает никогда — последней ступенью
@@ -180,12 +156,12 @@ class TestIncomingGoesToHistory:
 
         want = agent_vars(profile, {'name': 'Elena'})
 
-        assert pushed[0]['owner'] == (str(want['girl_id']), str(want['girl_name']))
+        assert put[0]['owner'] == (str(want['girl_id']), str(want['girl_name']))
 
-    async def test_companion_without_number_is_skipped(self, girl, pushed):
+    async def test_companion_without_number_is_skipped(self, girl, put):
         """Номера собеседника нет — класть реплику некуда, соседа не зовём."""
         assert await _message_save(girl, {**_message(), 'sender_uid': ''})
-        assert pushed == [], 'уехал ключ без номера собеседника'
+        assert put == [], 'уехал ключ без номера собеседника'
 
 
 class TestThePanelRoadTellsToo:
@@ -195,7 +171,7 @@ class TestThePanelRoadTellsToo:
     попадало вовсе, и агент вёл разговор, не зная ни одной прежней реплики.
     """
 
-    async def test_an_imported_reply_reaches_the_neighbour(self, girl, pushed):
+    async def test_an_imported_reply_reaches_the_neighbour(self, girl, put):
         """Реплика, привезённая импортом, едет в историю той же дверью."""
         from src.dating.chat_panel import chat_panel_save
 
@@ -206,9 +182,9 @@ class TestThePanelRoadTellsToo:
             'sent_at': '2026-11-02 11:56:56'}])
 
         assert out['added'] == 1
-        assert len(pushed) == 1 and pushed[0]['text'] == 'я писал тебе вчера'
+        assert len(put) == 1 and put[0]['question'] == 'я писал тебе вчера'
 
-    async def test_the_reply_keeps_its_own_time(self, girl, pushed):
+    async def test_the_reply_keeps_its_own_time(self, girl, put):
         """⚠⚠ Едет **время реплики**, а не время доклада.
 
         Без него сосед ставит своё «сейчас», и привезённая переписка легла бы в
@@ -223,9 +199,9 @@ class TestThePanelRoadTellsToo:
             'message_uid': f'panel:{uuid.uuid4().hex[:10]}',
             'sent_at': '2026-10-20 08:15:00'}])
 
-        assert pushed[0]['said_at'] == '2026-10-20 08:15:00'
+        assert put[0]['said_at'] == '2026-10-20 08:15:00'
 
-    async def test_our_own_lines_are_not_told(self, girl, pushed):
+    async def test_our_own_lines_are_not_told(self, girl, put):
         """⚠ Исходящее не докладываем: у соседа его пишет та дорога, что сочинила.
 
         Привезённая из панели копия — близнец, и доклад завёл бы второй
@@ -240,9 +216,9 @@ class TestThePanelRoadTellsToo:
             'sent_at': '2026-11-02 12:00:00'}])
 
         assert out['added'] == 1, 'в переписку исходящее лечь обязано'
-        assert pushed == [], 'а соседу его докладывать нельзя'
+        assert put == [], 'а соседу его докладывать нельзя'
 
-    async def test_what_did_not_land_is_not_told(self, girl, pushed):
+    async def test_what_did_not_land_is_not_told(self, girl, put):
         """Строка уже была — не легла, значит и у соседа она есть."""
         from src.dating.chat_panel import chat_panel_save
 
@@ -254,9 +230,9 @@ class TestThePanelRoadTellsToo:
         await chat_panel_save([row])
         await chat_panel_save([row])
 
-        assert len(pushed) == 1, 'повтор импорта задвоил историю у соседа'
+        assert len(put) == 1, 'повтор импорта задвоил историю у соседа'
 
-    async def test_the_batch_has_a_ceiling(self, girl, pushed, monkeypatch):
+    async def test_the_batch_has_a_ceiling(self, girl, put, monkeypatch):
         """⚠ Ручной импорт берёт до шестидесяти дней — доклад идёт с потолком.
 
         Берутся **самые свежие**: лента агента и так показывает последние
@@ -272,8 +248,8 @@ class TestThePanelRoadTellsToo:
              'message_uid': f'panel:{uuid.uuid4().hex[:10]}',
              'sent_at': f'2026-11-02 1{n}:00:00'} for n in range(5)])
 
-        assert len(pushed) == 2
-        assert [one['text'] for one in pushed] == ['реплика 3', 'реплика 4'], \
+        assert len(put) == 2
+        assert [one['question'] for one in put] == ['реплика 3', 'реплика 4'], \
             'докладывать надо свежие и по порядку времени'
 
 
@@ -344,7 +320,7 @@ class TestWhatTheOperatorWroteInThePanel:
 
             return (await db.fetchone())['history_at']
 
-    async def test_it_reaches_the_neighbour(self, girl, pushed, put):
+    async def test_it_reaches_the_neighbour(self, girl, put):
         """Ради этого всё: операторская реплика уехала в историю."""
         await self._his_reply(girl)
         row = await self._panel_out(girl, 'это написал оператор руками')
@@ -391,7 +367,7 @@ class TestWhatTheOperatorWroteInThePanel:
         async def _nope(*a, **kw):
             return 0
 
-        monkeypatch.setattr('src.rhapsody.rhapsody_api.rhapsody_api_chat_put',
+        monkeypatch.setattr('src.rhapsody.rhapsody_api.rhapsody_api_chat_add',
                             _nope)
 
         await self._his_reply(girl)

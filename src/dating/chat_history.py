@@ -2,8 +2,13 @@
 
 Историю пары (`companion_session`) сосед собирает сам и отдаёт агенту лентой.
 Писать её он умеет двумя дорогами: прогон workflow пишет обмен целиком, а
-`rhapsody_api_chat_incoming` кладёт **одну реплику собеседника** — ту, на
-которую мы ещё не ответили или не ответим вовсе.
+`rhapsody_api_chat_add` кладёт **одну половину** — его реплику (`question`),
+на которую мы ещё не ответили, либо нашу (`answer`), которую не сочинял
+прогон.
+
+⚠ Дверь у соседа одна (`/chat/message/add`), и чья это половина, говорит
+довод. Прежде дверей было две — отдельная на приём реплики, — и правки
+приходилось вносить в обе по одному доводу.
 
 ## ⚠⚠ Зачем отдельным файлом: дорог две, а правило одно
 
@@ -78,7 +83,7 @@ async def chat_history_incoming(profile_id: int, message: dict) -> bool:
     try:
         from src.dating.agent import agent_vars
         from src.dating.companion_card import companion_vars_known
-        from src.rhapsody.rhapsody_api import rhapsody_api_chat_incoming
+        from src.rhapsody.rhapsody_api import rhapsody_api_chat_add
 
         async with mysql_get_db_async() as db:
             await db.execute('SELECT * FROM profile WHERE id = %s LIMIT 1',
@@ -110,10 +115,14 @@ async def chat_history_incoming(profile_id: int, message: dict) -> bool:
         # правило жило в двух домах: у него и у нас. Поменяй он разделитель —
         # дорога писем поехала бы за ним, а эта осталась, и пара расщепилась
         # бы надвое молча.
-        await rhapsody_api_chat_incoming(
+        #
+        # ⚠ **Его половина — `question`.** Прежде у приёма была своя дверь с
+        # доводом `text`, и чья это реплика, говорило имя ручки. Теперь дверь
+        # одна на все дороги, и говорит это довод.
+        await rhapsody_api_chat_add(
             str(girl['girl_id']), str(girl['girl_name']),
             str(companion['companion_id']), str(companion['companion_name']),
-            message['text'], kind='chat',
+            question=str(message['text']), kind='chat',
             source_uid=str(message.get('message_uid') or ''),
             said_at=str(message.get('sent_at') or ''))
 
@@ -221,7 +230,7 @@ async def _said_one(row: dict) -> bool:
     try:
         from src.dating.agent import agent_vars
         from src.dating.companion_card import companion_vars_known
-        from src.rhapsody.rhapsody_api import rhapsody_api_chat_put
+        from src.rhapsody.rhapsody_api import rhapsody_api_chat_add
 
         async with mysql_get_db_async() as db:
             await db.execute('SELECT * FROM profile WHERE id = %s LIMIT 1',
@@ -239,7 +248,7 @@ async def _said_one(row: dict) -> bool:
         if not companion.get('companion_id'):
             return False
 
-        made = await rhapsody_api_chat_put(
+        made = await rhapsody_api_chat_add(
             str(girl['girl_id']), str(girl['girl_name']),
             str(companion['companion_id']), str(companion['companion_name']),
             # ⚠ Это **наша** половина: оператор писал от имени анкеты.
