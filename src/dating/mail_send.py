@@ -631,7 +631,7 @@ async def _history_write(letter: dict, table: str) -> None:
     """
     try:
         from src.dating.agent import agent_vars
-        from src.dating.companion_ref import companion_vars
+        from src.dating.companion_card import companion_vars_known
         from src.dating.json_column import json_column_load
         from src.rhapsody.rhapsody_api import rhapsody_api_chat_put
 
@@ -644,9 +644,15 @@ async def _history_write(letter: dict, table: str) -> None:
             return
 
         girl = agent_vars(profile, json_column_load(profile.get('profile')))
-        companion = companion_vars(int(letter.get('site_id') or 0),
-                                   str(letter.get('uid') or ''),
-                                   str(letter.get('name') or ''))
+        # ⚠⚠ Имя спрашивается **у карточки**, а строка пула остаётся запасным
+        # путём — той же дверью, что у трёх прочих дорог ключа. Прежде здесь
+        # стояла чистая `companion_vars` с именем из пула: оно там есть, пока
+        # запрос круга выбирает столбец `m.name`, — а запросов таких три, и
+        # сторож стоял у одного. Забудь любой из них столбец, и ключ выродился
+        # бы в «номер_номер» молча, расщепив разговор надвое.
+        companion = await companion_vars_known(int(letter.get('site_id') or 0),
+                                               str(letter.get('uid') or ''),
+                                               str(letter.get('name') or ''))
 
         if not companion.get('companion_id'):
             return

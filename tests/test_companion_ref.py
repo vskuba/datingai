@@ -266,31 +266,70 @@ class TestTheNameComesFromTheCard:
     у **всех** 2475 собеседников, ни одной пустой.
     """
 
-    def _doors(self) -> str:
-        return (Path('src/dating/chat.py').read_text(encoding='utf-8')
-                + Path('src/dating/answer.py').read_text(encoding='utf-8'))
+    # Где собираются ключи пары. ⚠ Список не зашит: дверь доклада переехала из
+    # `chat.py` в `chat_history.py`, и прибитый к именам файлов сторож покраснел
+    # на верном коде. Теперь дороги **ищутся** — по тому, что они делают, а не
+    # по тому, как называются; новая копия попадётся сама.
+    # ⚠ Границей слова, а не подстрокой: рядом живёт `mailing_companion_vars`
+    # — своя функция о другом, и поиск подстрокой объявлял её нарушителем.
+    CALL = re.compile(r'\bcompanion_(?:vars|vars_known|name_known)\(')
 
-    def test_neither_chat_door_keys_on_the_message_name(self):
+    @staticmethod
+    def _doors() -> dict:
+        found = {}
+        for path in sorted(Path('src/dating').glob('*.py')):
+            code = path.read_text(encoding='utf-8')
+            if TestTheNameComesFromTheCard.CALL.search(code):
+                found[str(path)] = code
+
+        return found
+
+    def test_the_doors_are_found_at_all(self):
+        """Сторож ищет дороги сам — и обязан хоть что-то найти.
+
+        ⚠ Без этой проверки переименование имён сделало бы весь класс зелёным
+        и пустым: цикл по пустому словарю не падает никогда.
+        """
+        found = self._doors()
+
+        assert len(found) >= 3, f'дороги ключа не нашлись: {sorted(found)}'
+        assert 'src/dating/companion_card.py' in found, \
+            'сама дверь карточки должна быть среди найденного'
+
+    def test_no_door_keys_on_the_message_name(self):
         """⚠⚠⚠ Главное утверждение: `sender_name` больше не идёт в ключ.
 
         Сторож смотрит **текст дорог**, а не поведение: беда молчаливая, и
         увидеть её можно лишь у соседа в списке разговоров — то есть случайно и
         через недели.
         """
-        for door in ('src/dating/chat.py', 'src/dating/answer.py'):
-            code = Path(door).read_text(encoding='utf-8')
-            spot = code.find('companion_vars(')
+        for door, code in self._doors().items():
+            # ⚠ Дома́ правила пропускаются — но **по признаку, а не по списку
+            # имён**: дом это файл, который сам определяет одну из дверей
+            # (`companion_vars` в `companion_ref.py`, `companion_vars_known` в
+            # `companion_card.py`). Там звать её без обёртки законно: обёртка
+            # ровно там и живёт.
+            if 'def companion_vars' in code:
+                continue
+
+            found = re.search(r'\bcompanion_vars\(', code)
+            spot = found.start() if found else -1
 
             assert spot < 0 or 'companion_vars_known' in code[spot - 24:spot], (
                 f'{door} снова собирает ключ чистой `companion_vars` — имя '
                 'придёт из реплики, а она пуста в 99% случаев, и ключ '
                 'выродится в «номер_номер»')
 
-    def test_both_doors_ask_the_card(self):
-        """Карточку спрашивают **обе** дороги: одна починенная оставила бы
-        расщепление ровно наполовину — а расщеплённая пара хуже, чем явно
-        сломанная, её не видно."""
-        for door, who in (('src/dating/chat.py', 'приём реплики'),
+    def test_both_chat_roads_ask_the_card(self):
+        """Карточку спрашивают **обе** дороги чата: приём реплики и ответ.
+
+        Одна починенная оставила бы расщепление ровно наполовину — а
+        расщеплённая пара хуже, чем явно сломанная: её не видно.
+
+        ⚠ Приём реплики живёт в `chat_history.py` — туда он переехал, когда
+        выяснилось, что импорт из панели не докладывал вовсе.
+        """
+        for door, who in (('src/dating/chat_history.py', 'приём реплики'),
                           ('src/dating/answer.py', 'ответ агента')):
             code = Path(door).read_text(encoding='utf-8')
 
