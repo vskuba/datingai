@@ -30,6 +30,7 @@ from logging_.logging_ import logger_exception, logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.auto import AUTO_PERIOD_SEC, auto_round
+from src.dating.chat_history import chat_history_said
 from src.dating.feed import feed_done, feed_write
 from src.dating.intention_round import (INTENTION_ROUND_TICK_SEC,
                                         intention_round_run)
@@ -890,6 +891,14 @@ async def _chat_import_round() -> None:
         started = feed_write(site_id, 'chat', 'Забираю переписку из панели')
 
         result = await chat_panel_import(site_id, CHAT_PANEL_ROUND_DAYS)
+
+        # ⚠⚠ **Доклад сказанного мимо нас — отдельным шагом и до разбора
+        # итога.** Он спрашивает базу, а не привезённое, и потому не зависит
+        # от того, чем кончился заход: строка, легшая в прошлый раз, созрела
+        # для доклада именно сейчас (ей нужна выдержка, `chat_history.py`).
+        # Привяжи его к удачному заходу — и первый же отказ панели отложил бы
+        # операторскую реплику до следующей удачи.
+        await chat_history_said(site_id)
 
         if result['status'] == 'error':
             logger_info(f"[dating] переписка сайта #{site_id} не забралась: "

@@ -31,6 +31,7 @@ import pytest
 from mysql_.mysql_ import mysql_get_db_async
 from src.dating import chat
 from src.dating.chat import _message_save
+from src.dating.chat_history import chat_history_said
 from src.uvicorn.routers.dating.profile_ import (DatingProfileSave,
                                                  profile_create,
                                                  profile_delete)
@@ -81,6 +82,32 @@ def pushed(monkeypatch):
 
     monkeypatch.setattr('src.rhapsody.rhapsody_api.rhapsody_api_chat_incoming',
                         _push)
+
+    return seen
+
+
+@pytest.fixture
+def put(monkeypatch):
+    """Ручка соседа «положить обмен»: запоминает, что ей отдали.
+
+    ⚠ Стороны запоминаются **частями**, как и уезжают: склейку делает сосед
+    своим правилом, и проверять здесь готовый ключ значило бы повторить это
+    правило третьим местом.
+    """
+    seen = []
+
+    async def _put(owner_id, owner_name, companion_id, companion_name,
+                   question='', answer='', kind='chat', source_uid='',
+                   delivered=False, said_at=''):
+        seen.append({'owner': (owner_id, owner_name),
+                     'companion': (companion_id, companion_name),
+                     'question': question, 'answer': answer, 'kind': kind,
+                     'source_uid': source_uid, 'delivered': delivered,
+                     'said_at': said_at})
+
+        return 4242
+
+    monkeypatch.setattr('src.rhapsody.rhapsody_api.rhapsody_api_chat_put', _put)
 
     return seen
 
@@ -243,3 +270,180 @@ class TestThePanelRoadTellsToo:
         assert len(pushed) == 2
         assert [one['text'] for one in pushed] == ['реплика 3', 'реплика 4'], \
             'докладывать надо свежие и по порядку времени'
+
+
+class TestWhatTheOperatorWroteInThePanel:
+    """⚠⚠⚠ Текст, набранный оператором руками в панели сайта.
+
+    Его не сочинял никто из наших дорог: человек написал в панели агентства,
+    сайт отправил, собеседник прочёл — а у соседа этого нет, и агент
+    продолжает разговор, будто сказанного не было.
+
+    Отбор здесь **не** «докладываем то, что легло»: исходящая строка из панели
+    ложится и когда она наша (инвайт переносится в переписку позже; наша
+    отправка бывает в полёте в момент захода). Пара появится, но **после**
+    вставки — поэтому три признака: выдержка, отсутствие близнеца и наличие
+    разговора.
+    """
+
+    @staticmethod
+    async def _panel_out(girl: int, text: str, ago_min: int = 60,
+                         uid: str = UID) -> int:
+        """Кладёт исходящую строку из панели — как её кладёт импорт.
+
+        ⚠ С именем собеседника: разбор панели его заполняет (`chat_panel_rows`),
+        и без него ключ выродился бы в «номер_номер» — беда, на которую здесь
+        уже стоит отдельный класс сторожей.
+        """
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                "INSERT INTO message (profile_id, sender_uid, sender_name, text,"
+                " message_uid, direction, is_read, source, created_at)"
+                " VALUES (%s, %s, 'Brian Ritter', %s, %s, 'out', 1, 'panel',"
+                "         NOW() - INTERVAL %s MINUTE)",
+                (girl, uid, text, f'panel:{uuid.uuid4().hex[:10]}', ago_min))
+            made = db.lastrowid
+            await db.connection.commit()
+
+        return int(made)
+
+    @staticmethod
+    async def _his_reply(girl: int, uid: str = UID) -> None:
+        """Его реплика — без неё разговора нет, и докладывать нечего."""
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                "INSERT INTO message (profile_id, sender_uid, sender_name, text,"
+                " message_uid, direction, is_read, source, created_at)"
+                " VALUES (%s, %s, 'Brian', 'hi there', %s, 'in', 1, 'panel',"
+                "         NOW() - INTERVAL 90 MINUTE)",
+                (girl, uid, f'panel:{uuid.uuid4().hex[:10]}'))
+            await db.connection.commit()
+
+    @staticmethod
+    async def _ours(girl: int, text: str, ago_min: int) -> None:
+        """Наша собственная запись той же реплики — та самая пара-близнец."""
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                "INSERT INTO message (profile_id, sender_uid, sender_name, text,"
+                " message_uid, direction, is_read, source, created_at)"
+                " VALUES (%s, %s, '', %s, %s, 'out', 1, 'http',"
+                "         NOW() - INTERVAL %s MINUTE)",
+                (girl, UID, text, uuid.uuid4().hex[:20], ago_min))
+            await db.connection.commit()
+
+    @staticmethod
+    async def _marked(row_id: int):
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT history_at FROM message WHERE id = %s',
+                             (row_id,))
+
+            return (await db.fetchone())['history_at']
+
+    async def test_it_reaches_the_neighbour(self, girl, pushed, put):
+        """Ради этого всё: операторская реплика уехала в историю."""
+        await self._his_reply(girl)
+        row = await self._panel_out(girl, 'это написал оператор руками')
+
+        assert await chat_history_said(SITE) == 1
+        assert len(put) == 1
+
+        got = put[0]
+
+        assert got['answer'] == 'это написал оператор руками'
+        assert got['question'] == '', 'оператор писал, а не собеседник'
+        assert got['owner'] == ('599939', 'elena'), 'ключ анкеты собран не так'
+        assert got['companion'] == ('329110', 'brian_ritter')
+        assert got['delivered'] is True, 'строка из журнала сайта — сайт её принял'
+        assert await self._marked(row) is not None, 'доложенное не отмечено'
+
+    async def test_the_moment_is_the_replys_own(self, put, girl):
+        """⚠⚠ Едет время реплики, а не время доклада.
+
+        Без него вся привезённая переписка легла бы у соседа одним числом.
+        """
+        await self._his_reply(girl)
+        await self._panel_out(girl, 'написано час назад', ago_min=60)
+
+        await chat_history_said(SITE)
+
+        assert put[0]['said_at'], 'время не уехало вовсе'
+        assert ':' in put[0]['said_at'] and put[0]['said_at'][:2] == '20'
+
+    async def test_told_once_and_never_again(self, put, girl):
+        """Отметка закрывает строку: второй заход её не возьмёт."""
+        await self._his_reply(girl)
+        await self._panel_out(girl, 'однажды сказанное')
+
+        assert await chat_history_said(SITE) == 1
+        assert await chat_history_said(SITE) == 0
+        assert len(put) == 1
+
+    async def test_a_failure_leaves_it_in_the_queue(self, girl, monkeypatch):
+        """⚠ Не ушло — отметки нет: реплика уедет следующим заходом.
+
+        Пометь мы её заранее, молчание соседа стоило бы реплики навсегда.
+        """
+        async def _nope(*a, **kw):
+            return 0
+
+        monkeypatch.setattr('src.rhapsody.rhapsody_api.rhapsody_api_chat_put',
+                            _nope)
+
+        await self._his_reply(girl)
+        row = await self._panel_out(girl, 'соседа нет дома')
+
+        assert await chat_history_said(SITE) == 0
+        assert await self._marked(row) is None, 'непривезённое отмечено доложенным'
+
+    async def test_our_own_reply_is_not_told_twice(self, put, girl):
+        """⚠ У нашей отправки есть своя запись — её пишет та дорога, что
+        сочинила. Доклад завёл бы у соседа второй экземпляр сказанного."""
+        await self._his_reply(girl)
+        await self._ours(girl, 'это сказали мы сами', ago_min=60)
+        await self._panel_out(girl, 'это сказали мы сами', ago_min=60)
+
+        assert await chat_history_said(SITE) == 0
+        assert put == []
+
+    async def test_a_fresh_line_waits_out_the_race(self, put, girl):
+        """⚠⚠ Выдержка — это **окно гонки**, а не вежливость.
+
+        Между «сайт принял кадр» и нашей записью проходят секунды, и заход
+        импорта в этот промежуток помещается. Молодую строку не трогаем.
+
+        ⚠ Возраст строки берётся **заметно меньше выдержки**, а не нулевым:
+        с нулём обе отметки времени попадают в одну секунду, `<` отвечает
+        ложью сам по себе, и сторож проходил бы даже со снятой выдержкой —
+        проверено порчей кода.
+        """
+        from src.dating import chat_history
+
+        young = max(1, chat_history.CHAT_HISTORY_SAID_WAIT_SEC // 60 // 2)
+        await self._his_reply(girl)
+        await self._panel_out(girl, 'отправлено только что', ago_min=young)
+
+        assert await chat_history_said(SITE) == 0
+        assert put == []
+
+    async def test_without_a_conversation_nothing_is_told(self, put, girl):
+        """⚠⚠ Инвайт, на который не ответили, разговором не считается.
+
+        Лента из одних наших слов — монолог, а не история; у соседа ему места
+        нет. Это же правило отсекает приглашения, которые импорт привозит
+        исходящими строками раньше, чем их переносит первый ответ.
+        """
+        await self._panel_out(girl, 'I might be bad for your health')
+
+        assert await chat_history_said(SITE) == 0
+        assert put == []
+
+    async def test_the_batch_has_a_ceiling(self, put, girl, monkeypatch):
+        """Потолок на заход — предохранитель от неожиданности."""
+        from src.dating import chat_history
+
+        monkeypatch.setattr(chat_history, 'CHAT_HISTORY_SAID_MAX', 2)
+        await self._his_reply(girl)
+        for n in range(4):
+            await self._panel_out(girl, f'реплика оператора {n}')
+
+        assert await chat_history_said(SITE) == 2

@@ -774,7 +774,8 @@ async def rhapsody_api_chat_put(owner_id: str, owner_name: str,
                                companion_id: str, companion_name: str,
                                question: str = '', answer: str = '',
                                kind: str = 'chat', source_uid: str = '',
-                               delivered: bool = False) -> int:
+                               delivered: bool = False,
+                               said_at: str = '') -> int:
     """Кладёт соседу в историю обмен, сочинённый не прогоном.
 
     Args:
@@ -787,6 +788,12 @@ async def rhapsody_api_chat_put(owner_id: str, owner_name: str,
         kind: `chat` или `mail`.
         source_uid: ключ обмена у нас — им сосед ловит повтор вызова.
         delivered: дошёл ли до человека наш `answer`.
+        said_at: когда это было сказано, `ГГГГ-ММ-ДД ЧЧ:ММ:СС` UTC. Пусто —
+            сейчас. ⚠ Нужен тому, кто узнаёт о сказанном **позже события**:
+            правку оператора в панели сайта привозит заход импорта, иногда
+            через сутки, и без времени вся привезённая переписка легла бы у
+            соседа одним числом. Письму по обещанию довод не нужен — его шлют
+            в тот же миг.
 
     Returns:
         int: номер обмена у соседа; 0 — не записалось либо уже было.
@@ -834,7 +841,8 @@ async def rhapsody_api_chat_put(owner_id: str, owner_name: str,
                                'question': asked, 'answer': said,
                                'kind': str(kind or 'chat'),
                                'source_uid': str(source_uid or ''),
-                               'delivered': bool(delivered)})
+                               'delivered': bool(delivered),
+                               'said_at': str(said_at or '')})
     except RhapsodyError as e:
         logger_info(f'[rhapsody] обмен не ушёл в историю: {e}')
 
