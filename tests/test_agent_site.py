@@ -105,7 +105,7 @@ class TestSiteReachesTheNeighbour:
                                         name='natalia_1430119', title='Наталья',
                                         variables={'girl_bio': 'био'}, site='goldenbride')
 
-        body = rhapsody.bodies.get('/agent/create') or {}
+        body = rhapsody.bodies.get('/api/agent/create') or {}
         assert body.get('site') == 'goldenbride', f'сосед получил не ту метку: {body!r}'
         # Остальные поля не должны потеряться при добавлении нового: заведение без
         # workflow или без биографии у соседа сорвётся уже своей ошибкой.

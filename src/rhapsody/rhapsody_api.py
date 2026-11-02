@@ -525,7 +525,7 @@ async def rhapsody_api_agent_create(node: str, workflow: str, name: str, title: 
     намеренно — агент без сайта у соседа не заводится, и подставить сюда что-нибудь
     «по умолчанию» значило бы приписать анкету чужому сайту.
     """
-    data = await _request('POST', '/agent/create',
+    data = await _request('POST', '/api/agent/create',
                           {'node': str(node), 'workflow': str(workflow), 'name': str(name),
                            'title': str(title), 'variables': variables or {},
                            'site': str(site)},
@@ -542,7 +542,7 @@ async def rhapsody_api_agent_find(name: str) -> dict:
     спрашивается ровно один агент, про которого имя известно.
     """
     try:
-        data = await _request('GET', f'/agent/name/{str(name).strip()}')
+        data = await _request('GET', f'/api/agent/name/{str(name).strip()}')
     except RhapsodyError as e:
         # 404 — это «агента нет», законный ответ, а не сбой связи.
         if ' → 404' in str(e):
@@ -603,7 +603,7 @@ async def rhapsody_api_chat_talk(agent_id: int, question: str,
     payload = {'question': str(question), 'agent_id': int(agent_id),
                'variables': {'chat_timeout': RHAPSODY_API_CHAT_TIMEOUT, **(variables or {})}}
 
-    data = await _request('POST', '/chat/ask', payload, timeout=RHAPSODY_API_TIMEOUT_AGENT)
+    data = await _request('POST', '/api/chat/ask', payload, timeout=RHAPSODY_API_TIMEOUT_AGENT)
 
     try:
         number = int(data.get('message_id') or 0)
@@ -685,7 +685,7 @@ async def rhapsody_api_chat_delivered(message_id: int) -> bool:
         return False
 
     try:
-        data = await _request('POST', '/chat/message/delivered',
+        data = await _request('POST', '/api/chat/message/delivered',
                               {'message_id': number})
     except RhapsodyError as e:
         logger_info(f'[rhapsody] отметка доставки {number} не легла: {e}')
@@ -790,7 +790,7 @@ async def rhapsody_api_chat_add(owner_id: str, owner_name: str,
         return 0
 
     try:
-        data = await _request('POST', '/chat/message/add',
+        data = await _request('POST', '/api/chat/message/add',
                               {'owner_id': str(owner_id),
                                'owner_name': str(owner_name or ''),
                                'companion_id': str(companion_id),

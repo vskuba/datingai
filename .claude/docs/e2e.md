@@ -86,7 +86,7 @@ checks:                      # СОДЕРЖИМОЕ: что страница п�
 закрыть: **письмо, доставленное отсюда, отмечено доставленным у соседа?**
 
 Письмо уходит здесь; доставив, мы зовём у RhapsodyAi
-`POST /chat/message/delivered`, и та ставит `companion_session.delivered_at`.
+`POST /api/chat/message/delivered`, и та ставит `companion_session.delivered_at`.
 Случай снимает **два кадра одного события**:
 
 | Сторона | Страница | Что на кадре |

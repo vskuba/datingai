@@ -129,7 +129,7 @@ class RhapsodyFake:
 
         # Тела POST-запросов: `{путь: последнее тело}`. Пути мало там, где важно
         # **что** отправлено: у соседа `site` в заведении агента обязателен и
-        # проверяется форматом, и «сходили на /agent/create» о правильности
+        # проверяется форматом, и «сходили на /api/agent/create» о правильности
         # запроса не говорит ничего.
         self.bodies: dict[str, dict] = {}
 
@@ -190,7 +190,7 @@ class RhapsodyFake:
     # ── Приватное ────────────────────────────────────────────────────────────
 
     def _route(self, request: httpx.Request, path: str) -> httpx.Response:
-        if path == '/agent/create':
+        if path == '/api/agent/create':
             body = json.loads(request.content or b'{}')
             self.bodies[path] = body
 
@@ -199,7 +199,7 @@ class RhapsodyFake:
                              'title': body.get('title') or '',
                              'site': body.get('site') or ''})
 
-        if path.startswith('/agent/name/'):
+        if path.startswith('/api/agent/name/'):
             # ⚠ Сперва смотрим в реестр `self.agents`: с универсальным агентом
             # («Девушка», один на все анкеты) поиск по имени стал **выбором** —
             # анкета спрашивает сначала общего, потом своего прежнего, и тесту надо

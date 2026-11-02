@@ -69,7 +69,7 @@ class TestChatTalk:
         await rhapsody_api_chat_talk(7, 'вопрос', {'companion_name': 'gerard'})
 
         sent = requested['calls'][0]
-        assert sent['path'] == '/chat/ask'
+        assert sent['path'] == '/api/chat/ask'
         assert sent['payload']['agent_id'] == 7
         assert sent['payload']['question'] == 'вопрос'
         assert sent['payload']['variables']['companion_name'] == 'gerard'
@@ -250,7 +250,7 @@ class TestChatDelivered:
         await rhapsody_api_chat_delivered(777)
 
         sent = requested['calls'][0]
-        assert sent['path'] == '/chat/message/delivered'
+        assert sent['path'] == '/api/chat/message/delivered'
         assert sent['payload'] == {'message_id': 777}
 
     async def test_a_refusal_from_the_neighbour_is_false_not_raised(self, requested):
@@ -336,3 +336,88 @@ class TestTheScenarioTimeoutClearsTheMeasuredRun:
 
         assert RHAPSODY_API_TIMEOUT < RHAPSODY_API_TIMEOUT_SCENARIO, (
             'справочники стали ждать столько же, сколько живой браузер')
+
+
+class TestEveryDoorGoesUnderApi:
+    """⚠⚠ Все публичные ручки соседа живут под `/api` — и мы зовём их так же.
+
+    Половина путей лежала под `/api` (браузер), половина в корне (`/chat/ask`,
+    `/agent/list`): правила угадать было нельзя, потому что его не было. Сосед
+    свёл публичные под один префикс, и здесь стережётся, что мы за ним поехали.
+
+    ⚠ Сторож смотрит **вызовы `_request`**, а не текст файла: имена ручек
+    встречаются в объяснениях, и поиск по строке краснел бы на верном коде.
+    """
+
+    # Ручки, которые у соседа **не переезжали** и живут в корне: они скрыты из
+    # его схемы (`include_in_schema=False`) и публичными не считаются. Переедут
+    # — строка отсюда уходит, и сторож ловит отставших.
+    #
+    # ⚠ Список **точный**, а не «всё, что не чат»: припиши сюда префикс, и
+    # перевод встанет молча — у соседа такого пути нет вовсе.
+    STAYS_AT_ROOT = ('/translate', '/llm/')
+
+    @staticmethod
+    def _asked() -> set:
+        """Пути, которые дверь правда спрашивает у соседа."""
+        import ast
+        import inspect
+
+        from src.rhapsody import rhapsody_api
+
+        tree = ast.parse(inspect.getsource(rhapsody_api))
+        out = set()
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if getattr(node.func, 'id', '') != '_request':
+                continue
+            if len(node.args) < 2:
+                continue
+
+            path = node.args[1]
+            if isinstance(path, ast.Constant) and isinstance(path.value, str):
+                out.add(path.value)
+            elif isinstance(path, ast.JoinedStr):
+                # f-строка: берём её начало — префикс всегда в нём.
+                head = path.values[0]
+                if isinstance(head, ast.Constant):
+                    out.add(str(head.value))
+
+        return out
+
+    def test_the_guard_finds_the_doors_at_all(self):
+        """⚠ Без этого весь класс зеленел бы на пустом множестве."""
+        asked = self._asked()
+
+        assert len(asked) >= 10, f'вызовы не нашлись: {sorted(asked)}'
+
+    def test_no_door_asks_outside_api(self):
+        loose = sorted(one for one in self._asked()
+                       if not one.startswith('/api/')
+                       and not one.startswith(self.STAYS_AT_ROOT))
+
+        assert not loose, (
+            f'эти пути зовутся мимо `/api`: {loose}. У соседа публичные ручки '
+            'переехали под префикс, старые адреса живут переходно и снимутся '
+            'третьим заходом — после чего такой вызов встанет молча')
+
+    def test_the_root_doors_are_really_still_there(self):
+        """⚠ Послабление обязано относиться к живым путям.
+
+        Иначе список исключений переживёт сами ручки и начнёт прикрывать
+        настоящих отставших.
+        """
+        asked = self._asked()
+
+        for one in self.STAYS_AT_ROOT:
+            assert any(p.startswith(one) for p in asked), (
+                f'{one} больше никто не зовёт — уберите из списка исключений')
+
+    def test_no_path_is_prefixed_twice(self):
+        """`/api/api/...` — то, чем кончилась первая редакция правки у соседа."""
+        doubled = sorted(one for one in self._asked()
+                         if one.startswith('/api/api'))
+
+        assert not doubled, doubled

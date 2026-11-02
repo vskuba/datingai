@@ -16,7 +16,7 @@
 | списки собеседников, если у сайта есть API | **сам сайт** | `POST /auth/login`, `GET /users/{state}` |
 | закладки сайтов и `presence` | RhapsodyAi | `GET /api/browser/site/{id}` |
 | ⚠ список сайтов — **снимок его ответа** у нас | RhapsodyAi → `site` | сверка в фоне, показываем своё |
-| агенты, workflow, факты | RhapsodyAi | `POST /agent/create` (обязателен `site`), `GET /agent/name/{name}` |
+| агенты, workflow, факты | RhapsodyAi | `POST /api/agent/create` (обязателен `site`), `GET /api/agent/name/{name}` |
 | ответы в чате (LLM) | RhapsodyAi | `POST /chat/ask` |
 | учётки, переписка, журнал | **здесь** | своя база `dating` |
 
