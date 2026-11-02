@@ -48,6 +48,7 @@ from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find
 
 from src.dating.presence import DATING_PRESENCE_TIMEOUT, DATING_PRESENCE_UA
 from src.dating.proxy import proxy_url
+from src.dating.send_connection import send_connection_run
 from src.dating.site.site_base import site_base_encode, site_base_render
 from src.dating.site.site_registry import site_registry_chat
 
@@ -95,7 +96,12 @@ SEND_TRANSPORT_SETTING = 'send_transport'
 # было верно, пока HTTP-путь никем не был настроен. С переводом LadaDate на
 # `/chat-send` каждое исходящее стало писаться как `socket` — у сайта, у которого
 # сокета нет вовсе, то есть ровно та путаница, от которой столбец и заводился.
-SEND_SOURCE = {'scenario': 'scenario', 'http': 'http', 'ws': 'socket'}
+#
+# ⚠ `connection` пишется как `socket`, и это не небрежность: кадры там те же, что
+# у вебсокета, и чинить такую отправку идут туда же, куда с сокетом
+# (`send_connection.py`). Своё слово в столбце обещало бы третье место.
+SEND_SOURCE = {'scenario': 'scenario', 'http': 'http', 'ws': 'socket',
+               'connection': 'socket'}
 
 
 async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
@@ -212,6 +218,13 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
         result = await _send_scenario(profile, to_uid, text, message_uid)
     elif transport == 'ws':
         result = await _send_ws(profile, site, to_uid, text, message_uid)
+    elif transport == 'connection':
+        # ⚠ Cookie здесь берёт **сам транспорт**, а не `_cookies` рядом: чат
+        # живёт на поддомене (`chat.сайт`), а та отбирает по домену из
+        # `presence.base` простым вхождением — поддомен ей не подходит, и
+        # отправка получила бы пустую сессию при живом входе.
+        result = await send_connection_run(profile, presence, send, to_uid, text,
+                                           message_uid, await proxy_url(profile))
     else:
         result = await _send_http(profile, presence, send, to_uid, text, message_uid)
 
