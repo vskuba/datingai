@@ -577,3 +577,110 @@ class TestTheTwoPeriodsExplainThemselves:
 
         assert 'probe_every' in keys, 'ключ переехал — у сайтов слетят значения'
         assert 'heartbeat_every' in keys
+
+
+class TestIdleProfilesGoOffline:
+    """⚠⚠⚠ «В сети» без расписания — замкнутый круг, и он горел на проде.
+
+    `status = 'online'` ставит **вход**, а снимает — конец смены
+    (`schedule_round`). У анкеты без расписания смены нет, снимать некому, и
+    статус держится вечно: вошли руками один раз — горит до перезаведения.
+
+    Питается этим круг ленты: он берёт анкету `status = 'online'` и гоняет под
+    ней сценарий списка каждые десять минут. Сайт видит активность и
+    показывает её **Online** — хотя присутствие по ней не бьётся ни разу.
+    Замерено 02.11.2026: у двух анкет Step2Love ноль ударов за полчаса при
+    горящем «Online» на самом сайте.
+    """
+
+    @staticmethod
+    async def _status(profile_id: int) -> str:
+        from mysql_.mysql_ import mysql_get_db_async
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT status FROM profile WHERE id = %s',
+                             (int(profile_id),))
+
+            return str((await db.fetchone() or {}).get('status') or '')
+
+    @staticmethod
+    async def _set(profile_id: int, **fields) -> None:
+        from mysql_.mysql_ import mysql_get_db_async
+
+        sets = ', '.join(f'{k} = %s' for k in fields)
+        async with mysql_get_db_async() as db:
+            await db.execute(f'UPDATE profile SET {sets} WHERE id = %s',
+                             (*fields.values(), int(profile_id)))
+            await db.connection.commit()
+
+    async def test_without_a_schedule_it_goes_dark(self, girl_make):
+        from src.dating.heartbeat_round import _idle_off
+
+        one = await girl_make('idle', online=True)
+        await self._set(one, schedule_on=0)
+
+        assert await _idle_off() >= 1
+        assert await self._status(one) == 'offline', (
+            'анкета без расписания осталась «в сети» — круг ленты продолжит '
+            'гонять под ней сценарий, и сайт будет считать её онлайн')
+
+    async def test_with_a_schedule_it_is_left_alone(self, girl_make):
+        """⚠ «Вне смены» при включённом расписании — забота `schedule_round`:
+        он делает настоящий **выход** с сайта, а не правит столбец."""
+        one = await girl_make('keep', online=True)
+        await self._set(one, schedule_on=1)
+
+        await _idle_off_call()
+
+        assert await self._status(one) == 'online'
+
+    async def test_a_disabled_profile_is_not_touched(self, girl_make):
+        """⚠ Выключенную не ведут вовсе, и её статус — след последнего
+        состояния, а не обещание работы."""
+        one = await girl_make('off', online=True)
+        await self._set(one, schedule_on=0, enabled=0)
+
+        await _idle_off_call()
+
+        assert await self._status(one) == 'online'
+
+    def test_the_round_really_calls_it(self):
+        """⚠⚠ Сторож на **вызов**, а не только на поведение уборки.
+
+        Прочие проверки зовут `_idle_off` напрямую и зеленеют, даже если из
+        захода её убрали, — проверено порчей кода. Здесь смотрим, что заход
+        её правда зовёт, и зовёт **до** отбора сайтов: список берётся от
+        анкет с расписанием, а гасить надо как раз тех, у кого его нет.
+        """
+        import inspect
+
+        from tests_.tests_guard import tests_guard_calls
+        from src.dating import heartbeat_round
+
+        assert '_idle_off' in tests_guard_calls(heartbeat_round.heartbeat_round_run)
+
+        body = inspect.getsource(heartbeat_round.heartbeat_round_run)
+
+        assert body.index('_idle_off()') < body.index('_sites()'), (
+            'уборка зовётся после отбора сайтов — сайт без единого расписания '
+            'останется с горящими анкетами навсегда')
+
+    async def test_an_offline_profile_is_not_counted(self, girl_make):
+        """Счёт — про погашенных, а не про просмотренных."""
+        from src.dating.heartbeat_round import _idle_off
+
+        one = await girl_make('cold', online=False)
+        await self._set(one, schedule_on=0)
+
+        before = await _idle_off()
+        again = await _idle_off()
+
+        assert again == 0, 'повторный заход снова «погасил» уже погашенных'
+        assert await self._status(one) == 'offline'
+
+
+async def _idle_off_call() -> int:
+    """Заход уборки. Отдельной функцией — её зовут четыре теста."""
+    from src.dating.heartbeat_round import _idle_off
+
+    return await _idle_off()
