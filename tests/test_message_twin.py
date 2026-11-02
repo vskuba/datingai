@@ -460,6 +460,111 @@ class TestTheClocksMayDisagree:
         assert len(await _seen(profile_id, uid)) == 2, 'съели входящую реплику'
 
 
+class TestThePanelCutsLongText:
+    """⚠⚠ Журнал панели режет текст на 256 знаках, и обрезок — тот же близнец.
+
+    Замер на проде 02.11.2026: у всех 512 панельных строк `CHAR_LENGTH(text)`
+    не больше 256, тогда как у наших доходит до 1532. Равенство текстов на таких
+    парах не срабатывало, и на экране висели две строки одной реплики — вторая
+    оборванная на полуслове (Yekaterina → Frank, 02.11 12:18). Таких пар
+    накопилось шесть, и все шесть — отражения наших же отправок.
+    """
+
+    # Живой текст той самой реплики: 278 знаков, панель привезла 256.
+    LONG = ('I like your straightforwardness, Frank. I would choose Vienna, because '
+            'it is calm and beautiful. But let us chat a bit more first. What is '
+            'your favorite book to read while walking? I prefer quiet places where '
+            'we can actually hear each other speak without distractions around us.')
+
+    # Текст, у которого 256-й знак — пробел: 'Vienna, ' кратно восьми.
+    SPACED = 'Vienna, ' * 40
+
+    async def test_a_truncated_panel_row_is_still_a_twin(self, pair):
+        profile_id, uid = pair
+        at = '2026-11-02 10:18:16'
+
+        ours = await _put(profile_id, uid, self.LONG, '01M6DW8MD3ECV67Q1SX0JYZWFX',
+                          'http', at)
+        await _put(profile_id, uid, self.LONG[:256], 'panel:80287559', 'panel', at)
+
+        seen = await _seen(profile_id, uid)
+
+        assert len(seen) == 1, f'обрезанный близнец показан отдельной строкой: {seen}'
+        assert seen[0]['id'] == ours, 'спрятали свою строку вместо обрезка'
+        assert seen[0]['text'] == self.LONG, 'на экране осталась обрезанная реплика'
+
+    async def test_the_cut_landing_on_a_space_is_still_a_twin(self, pair):
+        """⚠⚠ Обрезок бывает и **255** знаков, а не ровно 256.
+
+        Разбор панели зовёт `.strip()` (`chat_panel._text`), и когда срез попал на
+        пробел, тот пропадает. Живой случай — строка 684180 на проде: 255 знаков
+        при нашей в 355. Правило «длина ровно 256» такую пару не узнало бы.
+        """
+        profile_id, uid = pair
+        at = '2026-10-30 11:39:54'
+        cut = self.SPACED[:256].strip()
+
+        assert len(cut) == 255, 'текст подобран неверно: срез не попал на пробел'
+
+        ours = await _put(profile_id, uid, self.SPACED, 'ulid-1', 'invite', at)
+        await _put(profile_id, uid, cut, 'panel:684180', 'panel', at)
+
+        seen = await _seen(profile_id, uid)
+
+        assert len(seen) == 1, f'обрезок с потерянным пробелом не узнался: {seen}'
+        assert seen[0]['id'] == ours
+
+    async def test_the_import_skips_the_truncated_reflection(self, pair):
+        """⚠ Чиним причину, а не только показ: обрезок не должен заводиться."""
+        profile_id, uid = pair
+        at = '2026-11-02 10:18:16'
+
+        await _put(profile_id, uid, self.LONG, '01M6DW8MD3ECV67Q1SX0JYZWFX',
+                   'http', at)
+
+        got = await chat_panel_save([_row(profile_id, uid, self.LONG[:256],
+                                          'panel:80287559', at)])
+
+        assert got['added'] == 0, 'импорт снова завёл обрезанного близнеца'
+        assert len(await _all(profile_id, uid)) == 1
+
+    async def test_a_short_panel_row_does_not_eat_our_longer_one(self, pair):
+        """⚠⚠ Главная опасность правила: начало — это не «та же реплика».
+
+        «Ok» из панели и наше «Ok, let us meet tomorrow» в ту же секунду — два
+        разных события, и отсев обязан оставить оба. Поэтому сравнивается не любой
+        префикс, а ровно срез панели: начало длиной `MESSAGE_TWIN_PANEL_CUT`.
+        """
+        profile_id, uid = pair
+        at = '2026-11-02 10:18:16'
+
+        await _put(profile_id, uid, 'Ok, let us meet tomorrow', 'ulid-1', 'http', at)
+        await _put(profile_id, uid, 'Ok', 'panel:1', 'panel', at)
+
+        assert len(await _seen(profile_id, uid)) == 2, 'съели короткую реплику'
+
+    async def test_another_long_message_stays(self, pair):
+        """⚠ Длина у обоих за срез, а текст с самого начала разный — две реплики."""
+        profile_id, uid = pair
+        at = '2026-11-02 10:18:16'
+
+        await _put(profile_id, uid, self.LONG, 'ulid-1', 'http', at)
+        await _put(profile_id, uid, ('So tell me, ' + self.LONG)[:256], 'panel:2',
+                   'panel', at)
+
+        assert len(await _seen(profile_id, uid)) == 2, 'съели чужую длинную реплику'
+
+    def test_both_sides_cut_at_the_same_length(self):
+        """⚠ Срез панели — одно число на показ и на импорт."""
+        from src.dating.message_twin import (MESSAGE_TWIN_PANEL_CUT,
+                                             message_twin_absent,
+                                             message_twin_skip)
+
+        assert f'LEFT(twin.text, {MESSAGE_TWIN_PANEL_CUT})' in message_twin_skip()
+        assert (f'LEFT(twin.text, {MESSAGE_TWIN_PANEL_CUT})'
+                in message_twin_absent('out'))
+
+
 class TestTwoPanelRowsDoNotEatEachOther:
     """⚠⚠ Прячется отражение, а не «строка с бо́льшим номером».
 
