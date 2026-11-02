@@ -29,6 +29,9 @@ from src.rhapsody.rhapsody_api import (rhapsody_api_error_write,
                                        rhapsody_api_session_state, rhapsody_api_site_get)
 from src.dating.json_column import json_column_load
 from src.dating.log import log_write
+from src.dating.login_token import (DatingLoginTokenError,
+                                    login_token_ready,
+                                    login_token_run)
 from src.dating.presence import presence_probe
 from src.dating.ready import password_pick
 from src.dating.scenario import scenario_run
@@ -108,6 +111,20 @@ async def login_run(profile_id: int, scenario_id: int = 0, session_id: str = '',
     if not password:
         raise DatingLoginError('нечем войти: пароль не задан — проверьте блок «Пароль» '
                                'у анкеты')
+
+    # ⚠⚠ **Сайт, чья панель входит сама, идёт короткой дорогой — без браузера.**
+    #
+    # У Step2Love кнопка «Логин» в панели агентства это два обычных GET: токен и
+    # обмен его на сессию (`login_token.py`). Сценарий туда тоже написан и
+    # работает, но каждый его заход начинается **входом в панель**, а панель
+    # считает попытки: замер 02.11.2026 — 61 вход за час проб, после чего она
+    # перестала пускать вовсе. Та же беда 28.10 остановила ленту на часы.
+    #
+    # ⚠ Развилка стоит **здесь**, после всех проверок (пароль, пауза, счётчик) и
+    # до требования сценария: правила входа одни на обе дороги, а сценария у
+    # такого сайта может не быть вовсе — и это не повод отказывать.
+    if login_token_ready(site.get('presence')):
+        return await _by_token(profile, site)
 
     scenario = await _scenario_login(int(profile['site_id']), scenario_id)
     if not scenario:
@@ -505,6 +522,59 @@ async def _state_save(profile_id: int, session_id: str) -> None:
         await rhapsody_api_error_write('dating', f'состояние входа не снялось: {e}',
                                   session_id=session_id, context={'profile_id': profile_id})
 
+
+async def _by_token(profile: dict, site: dict) -> dict:
+    """Вход обменом токена: короткая дорога для сайта, чья панель входит сама.
+
+    Args:
+        profile: учётка, уже прошедшая все проверки `login_run`.
+        site: сайт-закладка с `presence` и адресом.
+
+    Returns:
+        dict: тот же вид ответа, что у сценарного входа — `status`,
+        `session_id`, `scenario`, `error`, `profile`.
+
+    ## ⚠⚠ Что здесь делается **ровно так же**, как после сценария
+
+    Удача означает одно и то же обеими дорогами: анкета под присмотром автомата
+    и череда неудач обнулена (`_keep_online_set`). Разойдись это — анкета вошла
+    бы, а автомат считал бы её исчерпавшей попытки, и следующий круг её не
+    тронул бы вовсе.
+
+    ## ⚠ Чего здесь нет и почему
+
+    **Вкладки.** `session_id` пуст, и это честно: браузера не было. Вызывающие
+    читают его, чтобы закрыть вкладку, — закрывать нечего.
+
+    **Адреса сокета.** У Step2Love чат не сокетный (замер 02.11.2026: страница
+    не шлёт по HTTP ничего, присутствие держит наш же удар `/connection`), и
+    `ws_capture` на нём ждал бы сокета впустую, тратя вкладку соседа.
+
+    **Чтения анкеты со страницы кабинета.** Оно идёт отдельной дорогой и к входу
+    не относится; сценарный путь делает его заодно, потому что вкладка уже
+    открыта, — здесь её нет.
+    """
+    profile_id = int(profile.get('id') or 0)
+
+    try:
+        got = await login_token_run(profile, str(site.get('url') or ''))
+    except DatingLoginTokenError as e:
+        await log_write(profile_id, 'fail', f'Вход через панель не вышел: {e}')
+        # ⚠ Неудачу метит **общая дверь** (`login_retry_fail`), та же, что у
+        # сценарного пути: лестница пауз одна на обе дороги, и свой счётчик
+        # здесь означал бы, что анкета долбится в сайт вдвое чаще правила.
+        await login_retry_fail(profile_id)
+
+        return {'status': 'error', 'session_id': '', 'scenario': 'панель',
+                'error': str(e), 'profile': {}}
+
+    await log_write(profile_id, 'ok',
+                    f"Вход через панель: сессия получена, cookie {got.get('cookies')}"
+                    ' — присутствие пойдёт без браузера')
+    await _keep_online_set(profile_id)
+
+    return {'status': 'success', 'session_id': '', 'scenario': 'панель',
+            'error': '', 'profile': {}}
 
 async def _keep_online_set(profile_id: int) -> None:
     """Успешный вход: анкета под присмотром, череда неудач обнулена.

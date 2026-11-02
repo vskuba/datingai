@@ -418,3 +418,100 @@ class TestSocketOnlyWhereItExists:
 
         assert not await login._ws_needed(
             999_343, {'presence': {'send': {'transport': 'ws'}}})
+
+
+class TestTheTokenDoorIsTakenBeforeTheScenario:
+    """⚠⚠ У сайта, чья панель входит сама, браузер не зовётся вовсе.
+
+    У Step2Love кнопка «Логин» в панели агентства — это два обычных GET: токен и
+    обмен его на сессию. Сценарий входа туда тоже написан и работает, но каждый
+    его заход начинается **входом в панель**, а панель считает попытки: замер
+    02.11.2026 — 61 вход за час проб, после чего она перестала пускать вовсе и
+    прогон встал на ожидании `billing.php`, не дойдя до кнопки. Та же беда
+    28.10.2026 остановила ленту Step2Love на несколько часов.
+    """
+
+    def test_the_fork_stands_before_the_scenario_is_required(self):
+        """⚠⚠⚠ Главное: развилка **до** требования сценария.
+
+        Встань она после — сайт без сценария входа получал бы отказ «заведите
+        сценарий» при полностью рабочей короткой дороге. А встань до проверок
+        пароля и паузы — правила входа разошлись бы на двух дорогах, и анкета
+        долбилась бы в сайт мимо лестницы откатов.
+        """
+        import inspect
+
+        from src.dating.login import login_run
+
+        code = inspect.getsource(login_run)
+
+        assert 'login_token_ready(site' in code, \
+            'развилка на вход через панель пропала — сайт без сценария снова ' \
+            'получит отказ вместо рабочей короткой дороги'
+        assert code.index('login_token_ready') < code.index('_scenario_login'), \
+            'развилка уехала ПОСЛЕ требования сценария: сайт без сценария ' \
+            'получит отказ, хотя входить умеет'
+
+    def test_the_rules_are_checked_before_the_fork(self):
+        """⚠ Пароль, пауза и счётчик — **выше** развилки: правила входа одни на
+        обе дороги, и обойти их короткой было бы ровно тем, от чего эти правила
+        и поставлены у двери."""
+        import inspect
+
+        from src.dating.login import login_run
+
+        code = inspect.getsource(login_run)
+
+        assert code.index('login_retry_allowed') < code.index('login_token_ready'), \
+            'короткая дорога обходит лестницу пауз'
+        assert code.index('password_pick') < code.index('login_token_ready'), \
+            'короткая дорога обходит проверку пароля'
+
+    def test_only_the_named_sites_take_it(self):
+        """⚠ Признак — **драйвер сайта**, а не наличие панели: панель есть у
+        всех агентских сайтов, а эта кнопка — особенность Step2Love. Пробовать
+        вслепую у всех значило бы ловить отказ у каждого второго."""
+        from src.dating.login_token import login_token_ready
+
+        assert login_token_ready({'driver': 'step2love'}) is True
+        assert login_token_ready({'driver': 'goldenbride'}) is False
+        assert login_token_ready({}) is False
+        assert login_token_ready(None) is False
+
+    def test_the_failure_goes_through_the_common_door(self):
+        """⚠⚠ Неудачу метит та же `login_retry_fail`, что у сценарного пути.
+
+        Свой счётчик здесь означал бы, что анкета долбится в сайт вдвое чаще
+        правила: лестница откатов считает попытки по одной колонке, и вторая
+        рука, которая её не трогает, делает лестницу слепой.
+        """
+        import inspect
+
+        from src.dating.login import _by_token
+
+        code = inspect.getsource(_by_token)
+
+        assert 'login_retry_fail' in code, \
+            'короткая дорога не метит неудачу общей дверью — лестница откатов ' \
+            'её не увидит'
+        assert '_keep_online_set' in code, \
+            'удача не снимает череду неудач: анкета войдёт, а автомат будет ' \
+            'считать её исчерпавшей попытки'
+
+    def test_the_state_shape_is_the_browser_one(self):
+        """⚠⚠⚠ Состояние пишется в виде `storage_state` Playwright, и это не
+        прихоть: его читает `http_heartbeat_cookies`, отбирая cookie по домену.
+
+        Запиши короткая дорога свой формат — присутствие молча не нашло бы ни
+        одного cookie, то есть анкета осталась бы вне чата при успешном с виду
+        входе. Молчаливая беда: и вход `ok`, и запись есть.
+        """
+        import inspect
+
+        from src.dating.login_token import _state_save
+
+        code = inspect.getsource(_state_save)
+
+        for field in ("'cookies'", "'domain'", "'origins'"):
+            assert field in code, \
+                f'в состоянии нет {field} — `http_heartbeat_cookies` его не прочтёт'
