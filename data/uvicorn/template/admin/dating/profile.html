@@ -3597,16 +3597,37 @@
     /* `.prof-who`, `.prof-name`, `.prof-login` переехали в `dating_page.css`:
        ту же учётку теми же классами показывает карточка на «Анкетах». */
 
-    /* Колонка «В сети»: в ней одна точка, и ширины ей нужно ровно под неё.
-       По центру — столбик точек читают сверху вниз, и разнобой по краю мешал
+    /* Колонка «В сети»: в ней чипс чата и точка, и ширины ей нужно ровно под
+       них. По центру — столбик читают сверху вниз, и разнобой по краю мешал
        бы искать красные. */
     .prof-online {
         width: 1%;
         text-align: center;
+        white-space: nowrap;
     }
 
     .prof-online .dot {
         display: inline-block;
+    }
+
+    /* Чипс «в чате». ⚠ Серый — **состояние, а не отсутствие**: присутствие не
+       держится, и знать это так же важно, как и обратное. Поэтому узел стоит
+       всегда, и гаснет краской, а не пропажей.
+       ⚠ Значок полупрозрачный в сером: рядом живёт точка «в сети», и два
+       одинаково ярких знака спорили бы за внимание. */
+    .chat-chip {
+        display: inline-block;
+        margin-right: 5px;
+        font-size: 11px;
+        line-height: 1;
+        filter: grayscale(1);
+        opacity: .35;
+        vertical-align: middle;
+    }
+
+    .chat-chip.on {
+        filter: none;
+        opacity: 1;
     }
 
     /* ⚠ `.prof-no`, `.prof-yes` и `.people-body` убраны: таблица анкет пишет
@@ -4454,7 +4475,7 @@
     import {textTranslateSection} from '{{ static_url('js/text_translate.js') }}';
     // Модальное окно — общее для всех страниц панели (`modal.js`).
     import {modalClose, modalOpen} from '{{ static_url('js/modal.js') }}';
-    import {esc, faceFallback, onlineDot, warnBadge, seenText, timeShort, timeFull,
+    import {esc, faceFallback, chatChip, onlineDot, warnBadge, seenText, timeShort, timeFull,
             pagerRender}
         from '{{ static_url('js/dating/view.js') }}';
     // Сдвиг времени в пояс настройки: с сервера метки приходят в UTC.
@@ -4901,7 +4922,13 @@
                 // Колонки с чекбоксом «ai-ответ» здесь больше нет: тот же
                 // переключатель стоит в самой анкете на «Анкетах», и второе
                 // место, откуда его дёргают, только расходилось бы с первым.
-                + `<td class="prof-online">${onlineDot(row)}</td>`
+                // ⚠⚠ Чипс чата — **в той же колонке, слева от точки**, а не
+                // своей: он отвечает на тот же вопрос «работает ли анкета
+                // прямо сейчас», только с другой стороны — точка про учётку,
+                // чипс про присутствие в чате. Отдельная колонка ради одного
+                // значка развела бы два ответа на один вопрос по разным краям
+                // строки.
+                + `<td class="prof-online">${chatChip(row)}${onlineDot(row)}</td>`
                 + '</tr>';
         }).join('');
 

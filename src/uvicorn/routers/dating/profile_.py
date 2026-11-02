@@ -49,6 +49,7 @@ from src.dating.profile_param import profile_param_max
 from src.dating.site_snapshot import site_rows
 from src.mysql_.repository.profile_repository import DatingProfileRepository
 from src.dating.json_column import json_column_load
+from src.dating.heartbeat import heartbeat_seen
 from src.dating.proxy import proxy_enabled
 from src.dating.schedule import SCHEDULE_DEFAULT, schedule_dump
 from src.dating.revive import revive_state
@@ -190,6 +191,12 @@ class DatingProfileResponse(BaseModel):
     # рисуется сразу по списку, и спроси она настройки сайта отдельным запросом —
     # блок «Выход наружу» успел бы мигнуть у сайта, где выходы выключены.
     proxy_on: bool = Field(False, description='Пользуется ли сайт выходами вообще')
+    # ⚠⚠ **Объявить поле обязательно, а не только положить в строку.** Ответ
+    # режется по этой модели: не названное здесь поле обработчик отдаёт, а
+    # наружу оно не уходит — молча, без единой ошибки. Поймано на этом самом
+    # `chat_on`: функция возвращала его, `curl` не видел.
+    chat_on: bool = Field(False, description='Держится ли присутствие в чате '
+                                             'прямо сейчас (удар heartbeat)')
 
     model_config = ConfigDict(json_schema_extra={
         'example': {'id': 3, 'site_id': 19, 'login': 'natalia@example.com',
@@ -309,11 +316,23 @@ async def profile_list(site_id: int = 0,
     # по строке: без `site_id` список идёт по всем сайтам сразу, и запрос на
     # каждую из шестидесяти анкет дал бы шестьдесят одинаковых ответов.
     known: dict[int, bool] = {}
+    # Присутствие в чате — **тем же приёмом и по той же причине**: ответ один на
+    # сайт, и спрашивать его на каждую из шестидесяти строк значило бы шестьдесят
+    # одинаковых проходов по журналу ударов.
+    #
+    # ⚠⚠ `chat_on` отвечает на «держится ли присутствие **прямо сейчас**», а не
+    # «включена ли анкета». Второе говорит `status`, и живёт оно часами; первое —
+    # про минуту: сайт гасит анкету через минуту-две тишины, и у Step2Love это
+    # единственный признак того, что инвайт уйдёт живому человеку, а не в пустоту
+    # (API у сайта нет, страница чата по HTTP молчит — замер 02.11.2026).
+    beating: dict[int, set] = {}
     for row in rows or []:
         one = int(row.get('site_id') or 0)
         if one not in known:
             known[one] = await proxy_enabled(one)
+            beating[one] = await heartbeat_seen(one)
         row['proxy_on'] = known[one]
+        row['chat_on'] = int(row.get('id') or 0) in beating[one]
 
     return {'result': rows}
 
