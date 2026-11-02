@@ -705,15 +705,18 @@ async def rhapsody_api_chat_delivered(message_id: int) -> bool:
         return False
 
 
-async def rhapsody_api_chat_incoming(owner_unique_id: str,
-                                     companion_unique_id: str, text: str,
-                                     kind: str = 'chat', source_uid: str = '',
+async def rhapsody_api_chat_incoming(owner_id: str, owner_name: str,
+                                     companion_id: str, companion_name: str,
+                                     text: str, kind: str = 'chat',
+                                     source_uid: str = '',
                                      said_at: str = '') -> int:
     """Отдаёт соседу реплику собеседника — сразу, не дожидаясь нашего ответа.
 
     Args:
-        owner_unique_id: ключ нашей анкеты у соседа (`{номер}_{имя}`).
-        companion_unique_id: ключ собеседника там же.
+        owner_id: номер нашей анкеты на сайте (`girl_id` вызова агента).
+        owner_name: её имя техническим видом (`girl_name`).
+        companion_id: номер собеседника там же.
+        companion_name: его имя техническим видом.
         text: что он написал.
         kind: `chat` или `mail`.
         source_uid: наш `message_uid` — им сосед ловит повтор вызова.
@@ -739,17 +742,27 @@ async def rhapsody_api_chat_incoming(owner_unique_id: str,
 
     ⚠ Звать можно на каждое входящее, в том числе на то, на которое ответим:
     ответ агента эту строку поглотит (`_pending_absorb` у соседа).
+
+    ## ⚠⚠ Стороны едут частями, а не склеенным ключом
+
+    Те же части, что уезжают агенту переменными вызова, — сшивает их сосед,
+    своим правилом. Прежде ключ склеивали **мы**, и правило жило в двух домах:
+    у него (`_key`, дорога `put`) и здесь. Поменяй он разделитель — `put`
+    поехал бы за ним, а эта дверь осталась, и пара расщепилась бы надвое
+    молча: сосед завёл бы вторую запись, а агент писал бы как незнакомому.
     """
     said = str(text or '').strip()
 
-    if not said or not str(owner_unique_id or '').strip() \
-            or not str(companion_unique_id or '').strip():
+    if not said or not str(owner_id or '').strip() \
+            or not str(companion_id or '').strip():
         return 0
 
     try:
         data = await _request('POST', '/chat/message/incoming',
-                              {'owner_unique_id': str(owner_unique_id),
-                               'companion_unique_id': str(companion_unique_id),
+                              {'owner_id': str(owner_id),
+                               'owner_name': str(owner_name or ''),
+                               'companion_id': str(companion_id),
+                               'companion_name': str(companion_name or ''),
                                'text': said, 'kind': str(kind or 'chat'),
                                'source_uid': str(source_uid or ''),
                                'said_at': str(said_at or '')})

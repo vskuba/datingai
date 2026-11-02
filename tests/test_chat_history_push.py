@@ -69,13 +69,18 @@ def pushed(monkeypatch):
     """Ручка соседа: запоминает, что ей отдали."""
     seen = []
 
-    async def _push(owner, companion, text, kind='chat', source_uid='',
-                    said_at=''):
+    async def _push(owner_id, owner_name, companion_id, companion_name,
+                    text, kind='chat', source_uid='', said_at=''):
+        # ⚠⚠ Стороны запоминаются **частями**, как и уезжают: склейку делает
+        # сосед своим правилом, и собирать ключ здесь значило бы завести
+        # правилу третий дом — ровно то, от чего эта дорога и переехала.
+        #
         # ⚠ `said_at` запоминается наравне с прочим: без него лента у соседа
         # встаёт временем доклада, а не временем реплики, и привезённая
         # переписка выглядит случившейся в одну минуту.
-        seen.append({'owner': owner, 'companion': companion, 'text': text,
-                     'kind': kind, 'source_uid': source_uid,
+        seen.append({'owner': (owner_id, owner_name),
+                     'companion': (companion_id, companion_name),
+                     'text': text, 'kind': kind, 'source_uid': source_uid,
                      'said_at': said_at})
 
         return 777
@@ -125,8 +130,8 @@ class TestIncomingGoesToHistory:
 
         got = pushed[0]
 
-        assert got['owner'] == '599939_elena', 'ключ анкеты собран не так'
-        assert got['companion'] == '329110_brian_ritter'
+        assert got['owner'] == ('599939', 'elena'), 'части анкеты собраны не так'
+        assert got['companion'] == ('329110', 'brian_ritter')
         assert got['text'] == 'how did you sleep???'
         assert got['kind'] == 'chat'
         assert got['source_uid'], 'без ключа источника повтор задвоит строку'
@@ -175,7 +180,7 @@ class TestIncomingGoesToHistory:
 
         want = agent_vars(profile, {'name': 'Elena'})
 
-        assert pushed[0]['owner'] == f"{want['girl_id']}_{want['girl_name']}"
+        assert pushed[0]['owner'] == (str(want['girl_id']), str(want['girl_name']))
 
     async def test_companion_without_number_is_skipped(self, girl, pushed):
         """Номера собеседника нет — класть реплику некуда, соседа не зовём."""

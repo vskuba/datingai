@@ -105,9 +105,14 @@ async def chat_history_incoming(profile_id: int, message: dict) -> bool:
         if not companion.get('companion_id'):
             return False
 
+        # ⚠⚠ Стороны едут **частями**, а сшивает их сосед — тем же правилом,
+        # которым сшивает их шаг прогона. Прежде ключ склеивали здесь, и
+        # правило жило в двух домах: у него и у нас. Поменяй он разделитель —
+        # дорога писем поехала бы за ним, а эта осталась, и пара расщепилась
+        # бы надвое молча.
         await rhapsody_api_chat_incoming(
-            f"{girl['girl_id']}_{girl['girl_name']}",
-            f"{companion['companion_id']}_{companion['companion_name']}",
+            str(girl['girl_id']), str(girl['girl_name']),
+            str(companion['companion_id']), str(companion['companion_name']),
             message['text'], kind='chat',
             source_uid=str(message.get('message_uid') or ''),
             said_at=str(message.get('sent_at') or ''))
