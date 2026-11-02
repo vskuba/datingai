@@ -162,6 +162,53 @@ class TestRefuses:
             assert chat_panel_rows(extract, PROFILES) == []
 
 
+class TestReadyKey:
+    """Готовый ключ строки (`uid`): у реплики чата своего номера нет.
+
+    Номер есть у **сессии**, а реплики внутри неё ничем не подписаны, поэтому
+    ключ собирает тот, кто видел страницу, — драйвер сайта
+    (`site_import_step2love.py`), и кладёт его в `uid`.
+    """
+
+    def test_a_ready_key_is_taken_whole(self):
+        """⚠⚠ Главное: `738476-3` обязан доехать целиком.
+
+        Прогони его через разбор номера — останется `738476`, то есть **один
+        ключ на всю сессию**: в базу легла бы одна реплика разговора вместо
+        всех, и ни одной ошибки при этом не случилось бы.
+        """
+        rows = chat_panel_rows(_extract(_row(uid='738476-3')), PROFILES)
+
+        assert len(rows) == 1
+        assert rows[0]['message_uid'] == f'{CHAT_PANEL_PREFIX}738476-3'
+
+    def test_each_reply_of_one_session_keeps_its_own_key(self):
+        """Две реплики одной сессии — две записи, а не одна."""
+        rows = chat_panel_rows(_extract(_row(uid='738476-2', text='раз'),
+                                        _row(uid='738476-3', text='два')), PROFILES)
+
+        assert [row['message_uid'] for row in rows] == \
+            [f'{CHAT_PANEL_PREFIX}738476-2', f'{CHAT_PANEL_PREFIX}738476-3']
+
+    def test_a_key_with_foreign_marks_falls_back_to_the_number(self):
+        """Чужой знак — не повод чинить ключ догадкой.
+
+        Ключ уезжает в `message_uid`, по которому стоит уникальный ключ базы;
+        пускать туда что попало со страницы сайта нельзя, а «почистить и
+        записать» значило бы придумать имя строке.
+        """
+        rows = chat_panel_rows(_extract(_row(uid="738476'; DROP")), PROFILES)
+
+        assert rows[0]['message_uid'] == f'{CHAT_PANEL_PREFIX}36594474', \
+            'ключуется прежним путём — номером строки'
+
+    def test_without_a_ready_key_nothing_changes(self):
+        """У письма свой номер есть, и дорога у него прежняя."""
+        rows = chat_panel_rows(_extract(ROW), PROFILES)
+
+        assert rows[0]['message_uid'] == f'{CHAT_PANEL_PREFIX}36594474'
+
+
 class TestHandler:
     """Ручка импорта: что она делает до прогона и как отказывает."""
 

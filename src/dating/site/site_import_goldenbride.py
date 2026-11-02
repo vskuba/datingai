@@ -33,7 +33,7 @@ class DatingSiteImportGoldenbride(DatingSiteImport):
         return True
 
     async def journal_rows(self, site_id: int, profiles: dict, date_from: str,
-                           date_to: str) -> tuple[int, list[dict]]:
+                           date_to: str) -> tuple[int, list[dict], str]:
         # `AccountId=0` — «все анкеты»: панель так и подписывает первый пункт
         # селекта. Спрашивать по одной значило бы тринадцать запросов вместо одного.
         html = await panel_fetch_html(site_id, self.PATH, {
@@ -44,7 +44,9 @@ class DatingSiteImportGoldenbride(DatingSiteImport):
 
         table = panel_fetch_table(html)
 
-        return len(table), self._cells(table)
+        # Источник здесь один — одна страница, — и «прочиталось наполовину» у
+        # него не бывает: либо страница отдалась, либо `panel_fetch` отказал.
+        return len(table), self._cells(table), ''
 
     def _cells(self, table: list) -> list[dict]:
         """Ячейки таблицы — в записи того же вида, что отдаёт сценарий.

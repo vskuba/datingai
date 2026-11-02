@@ -918,7 +918,18 @@ async def _chat_import_round() -> None:
         else:
             summary = f"Переписка: привезено {result['added']} — все старые"
 
-        feed_done(site_id, started, 'chat', summary)
+        # ⚠⚠ Забрали не всё — скажи об этом, даже когда заход удался. У сайта
+        # источников журнала бывает несколько (у Step2Love их два), и беда
+        # одного не отменяет работу другого: чат доехал, письма — нет. Молчи
+        # здесь — и сломанный источник чинить будет некому, потому что в
+        # остальном заход выглядит исправным.
+        warn = str(result.get('warn') or '')
+        if warn:
+            logger_info(f'[dating] переписка сайта #{site_id} забралась не вся: '
+                        f'{warn}')
+
+        feed_done(site_id, started, 'warn' if warn else 'chat',
+                  f'{summary}. Не всё: {warn}' if warn else summary)
 
 
 async def _chat_sites() -> list[int]:

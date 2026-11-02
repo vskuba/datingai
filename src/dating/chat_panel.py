@@ -107,6 +107,11 @@ CHAT_PANEL_TALKS_MAX = 5
 # запасной путь, если ссылки в ячейке не окажется.
 CHAT_PANEL_UID_RE = re.compile(r'\d+')
 
+# Что разрешено в готовом ключе строки (поле `uid`, см. `chat_panel_rows`). Ключ
+# уезжает в `message_uid` — столбец, по которому стоит уникальный ключ, — и
+# пускать в него что попало со страницы сайта нельзя.
+CHAT_PANEL_KEY_BAD = re.compile(r'[^0-9A-Za-z:_-]')
+
 
 def chat_panel_rows(extract: dict, profiles: dict) -> list[dict]:
     """Строки панели — в записи `message`.
@@ -125,6 +130,19 @@ def chat_panel_rows(extract: dict, profiles: dict) -> list[dict]:
     но менять его нельзя: по нему собран индекс диалога и группировка карточки
     (`profile_view.py`). Здесь это значит «с кем разговор», и исходящее
     сообщение попадает в тот же диалог, что и входящее.
+
+    ## ⚠⚠ Ключ строки: `number` у письма, `uid` у реплики чата
+
+    У письма в панели **есть свой номер** — им и ключуется строка. У реплики
+    чата своего номера нет вовсе: номер есть у **сессии** (`Чат #738476`), а
+    реплики внутри неё ничем не подписаны. Собрать ключ может только тот, кто
+    видел страницу, — драйвер сайта; он и кладёт готовое в поле `uid`
+    (`738476-3`: сессия и место реплики в ней).
+
+    ⚠ Поэтому `uid` **не идёт через `_digits`**: та берёт первое число, и
+    `738476-3` превратилось бы в `738476` — один ключ на всю сессию, то есть
+    одна реплика из разговора вместо всех. Сверка `uid` — свой разбор
+    (`_key`), и он запрещает лишние знаки, а не вырезает число.
     """
     rows = scenario_field(extract, CHAT_PANEL_FIELD)
     if not isinstance(rows, list):
@@ -135,7 +153,8 @@ def chat_panel_rows(extract: dict, profiles: dict) -> list[dict]:
         if not isinstance(row, dict):
             continue
 
-        message_uid = _digits(scenario_field(row, 'number'))
+        message_uid = (_key(scenario_field(row, 'uid'))
+                       or _digits(scenario_field(row, 'number')))
         if not message_uid or message_uid in seen:
             continue
 
@@ -191,18 +210,23 @@ async def chat_panel_import(site_id: int, days: int) -> dict:
         dict: `status` (`ok` | `error`), `total` — сколько строк отдала панель,
         `ours` — сколько из них про наши анкеты, `added`/`same`/`contacts` —
         сколько записалось, `from`/`to` — за какой диапазон, `error` — причина
-        отказа.
+        отказа, `warn` — чего недосчитались при удачном в целом заходе.
 
         ⚠ **Отказ здесь — значение, а не исключение.** Кругу воркера нельзя падать
         из-за того, что у сайта не заведён сценарий: он обходит все сайты подряд, и
         первый ненастроенный лишил бы импорта остальные. Ручка превращает эти
         причины в свои коды сама.
+
+        ⚠⚠ `warn` при `status = 'ok'` — **не противоречие**: у сайта источников
+        журнала бывает несколько (у Step2Love их два — история чата и списки
+        писем), и беда одного не отменяет работу другого. Молчать о ней нельзя:
+        сломанный источник чинить будет некому.
     """
     site_id = int(site_id or 0)
     days = int(days)
 
     empty = {'status': 'error', 'total': 0, 'ours': 0, 'added': 0, 'same': 0,
-             'contacts': 0, 'from': '', 'to': ''}
+             'contacts': 0, 'from': '', 'to': '', 'warn': ''}
 
     if not site_id:
         return {**empty, 'error': 'не выбран сайт'}
@@ -279,10 +303,12 @@ async def chat_panel_import(site_id: int, days: int) -> dict:
     rows = chat_panel_rows(extract, profiles)
     saved = await chat_panel_save(rows)
 
+    # У сценарной дороги источник один — прогон, — и «прочиталось наполовину» у
+    # неё не бывает: либо `extract` приехал, либо прогон встал на шаге.
     return {'status': 'ok',
             'total': len(scenario_field(extract, CHAT_PANEL_FIELD) or []),
             'ours': len(rows),
-            'from': date_from, 'to': date_to, 'error': '', **saved}
+            'from': date_from, 'to': date_to, 'error': '', 'warn': '', **saved}
 
 
 async def chat_panel_journal_ready(site_id: int, driver=None) -> bool:
@@ -559,6 +585,24 @@ def _fresh(sent_at) -> bool:
         <= CHAT_PANEL_FRESH_SEC
 
 
+def _key(value) -> str:
+    """Готовый ключ строки — как есть, если в нём нет лишних знаков.
+
+    Такой ключ приносит драйвер сайта для того, у чего своего номера в панели
+    нет (реплики чата: номер есть у сессии, у реплики — нет). Поэтому здесь
+    **сверка, а не вырезание числа**: вырежи мы первое число из `738476-3`, и
+    все реплики сессии получили бы один ключ на всех — то есть в базу легла бы
+    ровно одна из них, молча.
+
+    Чужой знак — не повод чинить ключ догадкой: строка просто остаётся без
+    готового ключа и ключуется прежним путём (`number`), а не ложится под
+    испорченным именем.
+    """
+    text = str(value or '').strip()
+
+    return '' if not text or CHAT_PANEL_KEY_BAD.search(text) else text
+
+
 def _digits(value) -> str:
     """Номер из ячейки: сама ссылка или первое число в тексте."""
     text = str(value or '').strip()
@@ -626,12 +670,18 @@ async def _import_by_driver(driver, site_id: int, profiles: dict, date_from: str
 
     Где страница, какие у неё параметры и как зовутся столбцы — у драйвера сайта
     (`site/site_import.py`): здесь только привод строк к записи `message`.
+
+    ⚠⚠ **`warn` — не то же, что `error`, и путать их нельзя.** `error` значит
+    «не забрали ничего», и заход неудачен. `warn` значит «забрали не всё»: у
+    сайта источников журнала бывает несколько (у Step2Love их два), и беда
+    одного не отменяет работу другого. Обе строки доходят до человека, но
+    первая останавливает заход, а вторая — нет.
     """
     from src.dating.panel_fetch import DatingPanelFetchError
 
     try:
-        total, cells = await driver.journal_rows(site_id, profiles,
-                                                 date_from, date_to)
+        total, cells, why = await driver.journal_rows(site_id, profiles,
+                                                      date_from, date_to)
     except DatingPanelFetchError as e:
         return {**empty, 'from': date_from, 'to': date_to, 'error': str(e)}
 
@@ -639,4 +689,4 @@ async def _import_by_driver(driver, site_id: int, profiles: dict, date_from: str
     saved = await chat_panel_save(rows)
 
     return {'status': 'ok', 'total': total, 'ours': len(rows),
-            'from': date_from, 'to': date_to, 'error': '', **saved}
+            'from': date_from, 'to': date_to, 'error': '', 'warn': why, **saved}
