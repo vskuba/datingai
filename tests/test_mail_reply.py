@@ -137,6 +137,31 @@ async def _out(profile: dict, uid: str, body: str, minutes: int = 0,
         return int((await db.fetchone())['id'])
 
 
+async def _making(mail_in_id: int, ago_sec: int) -> None:
+    """Ставит письму занятие, состарив его на `ago_sec` секунд.
+
+    Ноль — занятие свежее, «пишут прямо сейчас»; больше срока — протухшее.
+    """
+    from mysql_.mysql_ import mysql_get_db_async
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'UPDATE mail_in SET reply_making_at = NOW() - INTERVAL %s SECOND'
+            ' WHERE id = %s', (int(ago_sec), int(mail_in_id)))
+        await db.connection.commit()
+
+
+async def _making_at(mail_in_id: int):
+    """Отметка занятия письма: `None` — свободно."""
+    from mysql_.mysql_ import mysql_get_db_async
+
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT reply_making_at FROM mail_in WHERE id = %s',
+                         (int(mail_in_id),))
+
+        return (await db.fetchone())['reply_making_at']
+
+
 async def _replies(site_id: int = SITE) -> list[dict]:
     from mysql_.mysql_ import mysql_get_db_async
 
@@ -197,6 +222,97 @@ class TestWhoIsAnswered:
 
         assert again['made'] == 0, 'написали второй ответ на то же письмо'
         assert len(await _replies()) == 1
+
+    async def test_busy_letter_is_skipped(self, profile, agent):
+        """⚠⚠ **Занятое письмо второй заход не берёт.**
+
+        Ради этого всё и заведено: «ответ уже лежит» — признак запоздалый, строка
+        пула появляется минутами позже, чем письмо взяли в работу.
+        """
+        letter_id = await _in(profile, '111', 'Moto is my life')
+        await _making(letter_id, 0)
+
+        got = await mail_reply_make(SITE)
+
+        assert got['made'] == 0
+        assert not agent, 'позвали агента на письмо, которое уже пишут'
+
+    async def test_a_busy_letter_does_not_eat_the_batch(self, profile, agent):
+        """⚠ Занятое письмо отсеивает **отбор**, а не только занятие.
+
+        Иначе оно доходит до цикла, упирается в чужое занятие и уходит в
+        `skipped` — то есть занимает место в пределе захода, ничего не сделав.
+        Соседу с нормальным письмом места уже не достаётся.
+        """
+        busy = await _in(profile, '111', 'его пишут', minutes=1)
+        await _in(profile, '222', 'а этого нет', minutes=30)
+        await _making(busy, 0)
+
+        got = await mail_reply_make(SITE, limit=1)
+
+        assert got['made'] == 1, 'занятое письмо съело предел захода'
+        assert (await _replies())[0]['uid'] == '222'
+
+    async def test_a_stale_claim_releases_the_letter(self, profile, agent):
+        """⚠⚠ Протухшее занятие письмо **отпускает**.
+
+        Тот самый случай, что беду и породил: процесс умер посреди вызова, снять
+        отметку некому. Не протухай она — письмо не ответилось бы никогда, и
+        молча.
+        """
+        letter_id = await _in(profile, '111', 'Moto is my life')
+        await _making(letter_id, mod.MAIL_REPLY_CLAIM_SEC + 60)
+
+        assert (await mail_reply_make(SITE))['made'] == 1
+
+    async def test_claim_is_set_before_the_agent(self, profile, monkeypatch):
+        """⚠⚠⚠ **Главное здесь: занятие стоит ДО вызова, а не после.**
+
+        Проверяется изнутри самого вызова: пока агент «пишет», отбор обязан это
+        письмо уже не видеть. Поставь занятие после ответа — и проверка увидит
+        письмо свободным, то есть ровно ту дыру, в которую провалились два
+        прогона 03.11.2026.
+        """
+        seen = {}
+
+        async def fake(agent_id, profile, uid, language, name='', letter=''):
+            seen['free'] = await _to_answer(SITE)
+
+            return 'Ответ', '', 0, {}
+
+        monkeypatch.setattr(mod, 'answer_mail_reply', fake)
+        monkeypatch.setattr(mod, '_agent', _fake_agent)
+        await _in(profile, '111', 'Moto is my life')
+
+        assert (await mail_reply_make(SITE))['made'] == 1
+        assert seen['free'] == [], 'письмо осталось свободным, пока его писали'
+
+    async def test_an_empty_answer_frees_the_letter(self, profile, monkeypatch):
+        """⚠ Агент промолчал — занятие снимаем сразу, а не держим четверть часа.
+
+        Срок занятия сторожит только тех, кто **не вернулся** сказать об исходе.
+        """
+        async def silent(agent_id, profile, uid, language, name='', letter=''):
+            return '', '', 0, {}
+
+        monkeypatch.setattr(mod, 'answer_mail_reply', silent)
+        monkeypatch.setattr(mod, '_agent', _fake_agent)
+        letter_id = await _in(profile, '111', 'Moto is my life')
+
+        assert (await mail_reply_make(SITE))['made'] == 0
+        assert await _making_at(letter_id) is None, 'занятие осталось висеть'
+
+    async def test_a_refusal_frees_the_letter(self, profile, monkeypatch):
+        """То же у отказа соседа: он занят — письмо-то ни при чём."""
+        async def broken(agent_id, profile, uid, language, name='', letter=''):
+            return '', 'браузер соседа занят', 0, {}
+
+        monkeypatch.setattr(mod, 'answer_mail_reply', broken)
+        monkeypatch.setattr(mod, '_agent', _fake_agent)
+        letter_id = await _in(profile, '111', 'Moto is my life')
+
+        assert (await mail_reply_make(SITE))['made'] == 0
+        assert await _making_at(letter_id) is None, 'занятие осталось висеть'
 
     async def test_generation_off_is_skipped(self, auth_client, profile, agent):
         """⚠ Выключенная генерация — писем не берём вовсе.

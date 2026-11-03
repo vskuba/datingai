@@ -20,6 +20,22 @@
 разговор открывается только принятым запросом (`chat_request.py`): пока он
 висит, писать некуда, сколько ни пробуй. Отсюда и `offline` в ответе —
 состояние, а не сбой.
+
+## ⚠⚠ Когда чата нет, но реплика первая
+
+Приглашение у этого сайта **несёт текст** — он виден собеседнику прямо в
+списке запросов. Значит первая реплика и приглашение это одно событие, и
+инвайт в закрытый чат уходит не `sendMessage`, а `chatRequest/create`.
+
+Развилку включает довод `may_invite`, и он **не выводится из состояния**:
+«чата нет» одинаково для инвайта и для ответа, а приглашать вправе только
+первый. Решает вызывающий — `invite_send.py` ставит его явно, прочие дороги
+получают прежний `offline`.
+
+⚠ Удача приглашения значит «сайт принял», а не «доставлено»: чат откроется,
+когда собеседник нажмёт галочку. Поэтому в ответе остаётся `offline: True` —
+реплика **ещё не у него**, и вызывающий, приняв удачу за доставку, закрыл бы
+строку пула, а повторить приглашение стало бы нечем.
 """
 
 from src.dating.chat_socket import (ChatSocketError, chat_socket_frame,
@@ -38,7 +54,7 @@ SEND_CONNECTION_CHATS = 'chatObjectList'
 
 async def send_connection_run(profile: dict, presence: dict, send: dict,
                               to_uid: str, text: str, message_uid: str,
-                              proxy: str = '') -> dict:
+                              proxy: str = '', may_invite: bool = False) -> dict:
     """Шлёт реплику кадром через HTTP-обёртку сокета.
 
     Args:
@@ -50,6 +66,9 @@ async def send_connection_run(profile: dict, presence: dict, send: dict,
         message_uid: наш идентификатор реплики; он же становится `ID` кадра —
             по нему и узнаётся ответ сайта.
         proxy: выход наружу этой анкеты.
+        may_invite: можно ли, при закрытом чате, звать приглашением. ⚠ Ставит
+            **вызывающий**, а не состояние: «чата нет» одинаково у инвайта и у
+            ответа, а приглашать вправе только первый.
 
     Returns:
         dict: та же пятёрка, что у прочих путей отправки
@@ -71,6 +90,10 @@ async def send_connection_run(profile: dict, presence: dict, send: dict,
         return _fail(f'{type(e).__name__}: {e}', message_uid)
 
     chat_id = _chat_of(opened['frames'], to_uid)
+
+    if not chat_id and may_invite:
+        return await _invite(profile, presence, to_uid, text, message_uid, proxy)
+
     if not chat_id:
         # ⚠ Это **не ошибка настройки**: живого разговора с этим человеком у
         # анкеты сейчас нет — чаще всего потому, что запрос чата ещё не принят
@@ -97,6 +120,23 @@ async def send_connection_run(profile: dict, presence: dict, send: dict,
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+
+async def _invite(profile: dict, presence: dict, to_uid: str, text: str,
+                  message_uid: str, proxy: str) -> dict:
+    """Приглашение с первой репликой — когда разговора ещё нет.
+
+    ⚠⚠ `offline` остаётся **`True`** и при удаче: сайт приглашение принял, но
+    собеседник его ещё не открыл. Назови это доставкой — и строка пула
+    закроется, а позвать второй раз станет нечем.
+    """
+    from src.dating.chat_request import chat_request_create
+
+    got = await chat_request_create(profile, presence, to_uid, text, proxy)
+
+    return {'ok': got['ok'], 'offline': True, 'response': got['response'],
+            'message_uid': message_uid, 'status': 0,
+            'error': got['error'] or ''}
 
 
 def _chat_of(frames: list, to_uid: str) -> int:

@@ -416,7 +416,8 @@ class TestFeed:
 
         # ⚠ Отказ **стойкий**, а не «его нет в сети»: уход из чата состояние, оно
         # проходит само, в ленту не пишется и строку не глушит (см. `TestOffline…`).
-        async def refused(profile, presence, uid, body, to_history=True):
+        async def refused(profile, presence, uid, body, to_history=True,
+                      may_invite=False):
             return {'ok': False, 'error': 'слишком часто'}
 
         monkeypatch.setattr(invite_send, 'send_message', refused)
@@ -430,7 +431,8 @@ class TestFeed:
 
 
 def _ok_send():
-    async def _send(profile, presence, uid, body, to_history=True):
+    async def _send(profile, presence, uid, body, to_history=True,
+                      may_invite=False):
         return {'ok': True}
 
     return _send
@@ -478,7 +480,8 @@ class TestOfflineIsNotAFailure:
     async def test_away_leaves_the_row_clean(self, girl, monkeypatch):
         from src.dating import invite_send
 
-        async def away(profile, presence, uid, body, to_history=True):
+        async def away(profile, presence, uid, body, to_history=True,
+                      may_invite=False):
             return {'ok': False, 'offline': True}
 
         monkeypatch.setattr(invite_send, 'send_message', away)
@@ -498,7 +501,8 @@ class TestOfflineIsNotAFailure:
         зациклится ровно тогда, когда сайт просит остановиться."""
         from src.dating import invite_send
 
-        async def refused(profile, presence, uid, body, to_history=True):
+        async def refused(profile, presence, uid, body, to_history=True,
+                      may_invite=False):
             return {'ok': False, 'error': 'слишком часто'}
 
         monkeypatch.setattr(invite_send, 'send_message', refused)

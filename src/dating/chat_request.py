@@ -29,6 +29,23 @@
 промолчать можно всегда, а отклонённый запрос собеседник увидит отказом.
 Метод у сайта есть (`cancel`), и добавить его недолго, — но пусть это будет
 осознанная правка, а не побочная возможность.
+
+## ⚠⚠⚠ Приглашение несёт текст, и это делает его нашим инвайтом
+
+Запрос у этого сайта — не пустой стук: в кадре создания едет `message`, и
+страница показывает его прямо в списке («do you like sport girls?»). То есть
+**первая реплика и приглашение — одно и то же событие**, и слать инвайт в
+закрытый чат обычным `sendMessage` нельзя: писать некуда, пока чата нет.
+
+Вид кадра взят из SDK сайта дословно (`onlineSDK.min.js`, `createRequest`):
+
+    appNameCreate / appNameTarget = 'chatRequest'
+    method = 'create'
+    data = {userID: кому, message: текст, attachID: 0}
+
+⚠⚠ **`attachID` обязателен**, пусть и нулём: у SDK он `a || 0`, то есть поле
+всегда в кадре. Пропуск полей у этого сайта уже стоил двух реплик, ушедших в
+никуда (`chat_socket.py`, про `action`).
 """
 
 from logging_.logging_ import logger_info
@@ -40,6 +57,7 @@ from src.dating.chat_socket import (ChatSocketError, chat_socket_frame,
 # Имя приложения и методы — словами SDK сайта (`ChatRequestObject`).
 CHAT_REQUEST_APP = 'chatRequest'
 CHAT_REQUEST_CONFIRM = 'confirm'
+CHAT_REQUEST_CREATE = 'create'
 
 # Где в кадре авторизации лежит список запросов.
 CHAT_REQUEST_LIST = 'chatRequestObjectList'
@@ -151,6 +169,50 @@ async def chat_request_accept(profile: dict, presence: dict, uid: str,
         opened = await chat_socket_open(profile, presence, send, base, proxy)
         frame = chat_socket_frame(CHAT_REQUEST_APP, CHAT_REQUEST_CONFIRM, me,
                                   {'userID': int(uid)})
+
+        return await chat_socket_send(opened, base, presence, send, frame)
+    except ChatSocketError as e:
+        return {'ok': False, 'response': '', 'error': str(e)}
+    except Exception as e:
+        return {'ok': False, 'response': '', 'error': f'{type(e).__name__}: {e}'}
+
+
+async def chat_request_create(profile: dict, presence: dict, uid: str,
+                              text: str, proxy: str = '') -> dict:
+    """Шлёт приглашение в чат с первой репликой. Разговор откроет его согласие.
+
+    Args:
+        profile: строка `profile`.
+        presence: настройка сайта.
+        uid: кому — номер собеседника на сайте.
+        text: первая реплика; она же видна ему в списке приглашений.
+        proxy: выход наружу этой анкеты.
+
+    Returns:
+        dict: `ok`, `error`, `response` — как у отправки реплики.
+
+    ⚠⚠ **Удача здесь значит «приглашение принято сайтом», а не «доставлено».**
+    Чата после неё по-прежнему нет: он откроется, когда собеседник нажмёт
+    галочку. Путать эти две вещи дорого — вызывающий, принявший `ok` за
+    доставку, закрыл бы строку пула, и повторить приглашение стало бы нечем.
+
+    ⚠ **Ничего не бросает**, как и приём: шлёт круг, обходящий анкеты сайта.
+    """
+    base = str((presence.get('send') or {}).get('base') or '').rstrip('/')
+    if not base:
+        return {'ok': False, 'response': '',
+                'error': 'у сайта не задан адрес чата (presence.send.base)'}
+
+    send = presence.get('send') or {}
+    me = str(profile.get('profile_id') or '').strip()
+
+    try:
+        opened = await chat_socket_open(profile, presence, send, base, proxy)
+        frame = chat_socket_frame(CHAT_REQUEST_APP, CHAT_REQUEST_CREATE, me,
+                                  # ⚠ `attachID` нулём, но в кадре: у SDK поле
+                                  # стоит всегда (`a || 0`).
+                                  {'userID': int(uid), 'message': str(text),
+                                   'attachID': 0})
 
         return await chat_socket_send(opened, base, presence, send, frame)
     except ChatSocketError as e:

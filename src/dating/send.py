@@ -105,7 +105,8 @@ SEND_SOURCE = {'scenario': 'scenario', 'http': 'http', 'ws': 'socket',
 
 
 async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
-                              to_history: bool = True) -> dict:
+                              to_history: bool = True,
+                              may_invite: bool = False) -> dict:
     """Шлёт сообщение собеседнику и записывает его в переписку.
 
     Args:
@@ -116,6 +117,12 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
         to_history: писать ли ушедшее в переписку. ⚠ `False` у инвайтов:
             приглашение не разговор, и до первого ответа человека его в
             диалоге быть не должно.
+        may_invite: можно ли звать приглашением, если разговора ещё нет. ⚠⚠ У
+            сайтов, где чат открывается запросом (Step2Love), первая реплика и
+            приглашение — **одно событие**: запрос несёт текст, и собеседник
+            читает его прямо в списке. Ставит довод **вызывающий**, а не
+            состояние: «чата нет» одинаково у инвайта и у ответа, а приглашать
+            вправе только первый (`send_connection.py`).
 
     Returns:
         dict: `ok` — **принял ли сайт кадр**, а не «дошло до адресата»: это разные
@@ -224,7 +231,8 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
         # `presence.base` простым вхождением — поддомен ей не подходит, и
         # отправка получила бы пустую сессию при живом входе.
         result = await send_connection_run(profile, presence, send, to_uid, text,
-                                           message_uid, await proxy_url(profile))
+                                           message_uid, await proxy_url(profile),
+                                           may_invite)
     else:
         result = await _send_http(profile, presence, send, to_uid, text, message_uid)
 

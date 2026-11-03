@@ -368,3 +368,149 @@ class TestTheRoundSurvivesItsOwnPass:
             CHAT_REQUEST_ROUND_TICK_SEC, _every)
 
         assert await _every(999_345) == CHAT_REQUEST_ROUND_TICK_SEC
+
+
+class TestTheInviteOpensTheTalk:
+    """⚠⚠⚠ Первая реплика и приглашение — у этого сайта одно событие.
+
+    Запрос несёт `message`, и собеседник читает его прямо в списке
+    приглашений. Значит инвайт в закрытый чат уходит не `sendMessage` —
+    писать некуда, пока чата нет, — а `chatRequest/create`.
+
+    Вид кадра взят из SDK сайта дословно (`onlineSDK.min.js`,
+    `createRequest`), и проверяется здесь по полям, а не по тому, что
+    «отправилось»: у этого сайта пропуск поля уже уносил реплики молча.
+    """
+
+    async def test_the_frame_is_what_the_sdk_sends(self, monkeypatch):
+        from src.dating.chat_request import chat_request_create
+
+        seen = {}
+
+        async def open_(*a, **kw):
+            return {'client': None, 'socket_id': 'sid', 'frames': []}
+
+        async def send(opened, base, presence, s, frame):
+            seen.update(frame)
+
+            return {'ok': True, 'response': '', 'error': ''}
+
+        monkeypatch.setattr(chat_request, 'chat_socket_open', open_)
+        monkeypatch.setattr(chat_request, 'chat_socket_send', send)
+
+        got = await chat_request_create(PROFILE, PRESENCE, MAN, 'hi there')
+
+        assert got['ok']
+        assert seen['appNameCreate'] == 'chatRequest'
+        assert seen['appNameTarget'] == 'chatRequest'
+        assert seen['method'] == 'create'
+        assert seen['action'] == 'create', 'без `action` сайт молча выбросит кадр'
+        assert seen['data'] == {'userID': int(MAN), 'message': 'hi there',
+                                'attachID': 0}
+        assert seen['userID'] == int(GIRL), 'кадр уходит не от нашей анкеты'
+
+    async def test_the_attach_field_is_always_there(self, monkeypatch):
+        """⚠ `attachID` нулём, но в кадре: у SDK поле стоит всегда (`a || 0`)."""
+        from src.dating.chat_request import chat_request_create
+
+        seen = {}
+
+        async def open_(*a, **kw):
+            return {'client': None, 'socket_id': 'sid', 'frames': []}
+
+        async def send(opened, base, presence, s, frame):
+            seen.update(frame)
+
+            return {'ok': True, 'response': '', 'error': ''}
+
+        monkeypatch.setattr(chat_request, 'chat_socket_open', open_)
+        monkeypatch.setattr(chat_request, 'chat_socket_send', send)
+
+        await chat_request_create(PROFILE, PRESENCE, MAN, 'hi')
+
+        assert 'attachID' in seen['data']
+
+    async def test_a_closed_talk_is_not_a_crash(self, monkeypatch):
+        """⚠ Ничего не бросает: шлёт круг, обходящий анкеты сайта."""
+        from src.dating.chat_request import chat_request_create
+
+        async def boom(*a, **kw):
+            raise ChatSocketError('вход не выполнен')
+
+        monkeypatch.setattr(chat_request, 'chat_socket_open', boom)
+
+        got = await chat_request_create(PROFILE, PRESENCE, MAN, 'hi')
+
+        assert got['ok'] is False and 'вход не выполнен' in got['error']
+
+
+class TestOnlyTheFirstReplyMayInvite:
+    """⚠⚠ Приглашать вправе тот, кто начинает разговор, — и это решает
+    вызывающий, а не состояние.
+
+    «Чата нет» выглядит одинаково у инвайта и у ответа. Выведи развилку из
+    состояния — и обычный ответ в закрытый разговор ушёл бы приглашением, то
+    есть другим событием: собеседник увидел бы не реплику в ленте, а стук в
+    список запросов.
+    """
+
+    async def test_without_the_flag_a_closed_talk_stays_offline(self, monkeypatch):
+        from src.dating import send_connection
+
+        async def open_(*a, **kw):
+            return {'client': None, 'socket_id': 'sid', 'frames': []}
+
+        monkeypatch.setattr(send_connection, 'chat_socket_open', open_)
+
+        got = await send_connection.send_connection_run(
+            PROFILE, PRESENCE, PRESENCE['send'], MAN, 'hi', 'uid-1')
+
+        assert got['offline'] is True and got['ok'] is False
+        assert 'нет открытого чата' in got['error']
+
+    async def test_with_the_flag_it_invites(self, monkeypatch):
+        from src.dating import chat_request as mod
+        from src.dating import send_connection
+
+        sent = {}
+
+        async def open_(*a, **kw):
+            return {'client': None, 'socket_id': 'sid', 'frames': []}
+
+        async def send(opened, base, presence, s, frame):
+            sent.update(frame)
+
+            return {'ok': True, 'response': '', 'error': ''}
+
+        monkeypatch.setattr(send_connection, 'chat_socket_open', open_)
+        monkeypatch.setattr(mod, 'chat_socket_open', open_)
+        monkeypatch.setattr(mod, 'chat_socket_send', send)
+
+        got = await send_connection.send_connection_run(
+            PROFILE, PRESENCE, PRESENCE['send'], MAN, 'hi', 'uid-1',
+            may_invite=True)
+
+        assert sent.get('method') == 'create', 'приглашение не ушло'
+        assert got['ok'] is True
+        assert got['offline'] is True, (
+            'удача приглашения выдана за доставку: чат ещё не открыт, и строка '
+            'пула закрылась бы навсегда')
+
+    async def test_the_invite_road_sets_the_flag(self):
+        """⚠ И ставит его **только** отправка инвайтов."""
+        import inspect
+
+        from src.dating import invite_send
+
+        assert 'may_invite=True' in inspect.getsource(invite_send)
+
+    async def test_no_other_road_sets_it(self):
+        """⚠⚠ Ответ, инициатива и ручная кнопка приглашать не вправе."""
+        import inspect
+
+        from src.dating import answer, initiative_round
+
+        for mod in (answer, initiative_round):
+            assert 'may_invite' not in inspect.getsource(mod), (
+                f'{mod.__name__} шлёт приглашения — а это другое событие, '
+                f'чем реплика в разговоре')

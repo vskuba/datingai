@@ -210,7 +210,8 @@ class TestNoDouble:
 
         sent = []
 
-        async def _send(profile, presence, uid, body, to_history=True):
+        async def _send(profile, presence, uid, body, to_history=True,
+                      may_invite=False):
             sent.append(body)
             # Пауза внутри отправки — та самая, в которую пролезали дубли.
             await asyncio.sleep(0.2)
@@ -236,7 +237,8 @@ class TestNoDouble:
 
         # ⚠ Отказ **стойкий**: «его нет в сети» строку не глушит и причины не
         # пишет — это состояние, и оно проходит само (`invite_send`).
-        async def _refused(profile, presence, uid, body, to_history=True):
+        async def _refused(profile, presence, uid, body, to_history=True,
+                      may_invite=False):
             return {'ok': False, 'error': 'слишком часто'}
 
         monkeypatch.setattr(invite_send, 'send_message', _refused)
@@ -274,7 +276,8 @@ class TestAnsweredBeforeSending:
 
         sent = []
 
-        async def _send(profile, presence, uid, body, to_history=True):
+        async def _send(profile, presence, uid, body, to_history=True,
+                      may_invite=False):
             sent.append(body)
 
             return {'ok': True}
@@ -300,7 +303,8 @@ class TestAnsweredBeforeSending:
         """
         from src.dating import invite_send
 
-        async def _send(profile, presence, uid, body, to_history=True):
+        async def _send(profile, presence, uid, body, to_history=True,
+                      may_invite=False):
             return {'ok': True}
 
         monkeypatch.setattr(invite_send, 'send_message', _send)
@@ -325,7 +329,8 @@ class TestAnsweredBeforeSending:
 
         sent = []
 
-        async def _send(profile, presence, uid, body, to_history=True):
+        async def _send(profile, presence, uid, body, to_history=True,
+                      may_invite=False):
             sent.append(body)
 
             return {'ok': True}
@@ -348,7 +353,8 @@ class TestAnsweredBeforeSending:
 
         sent = []
 
-        async def _send(profile, presence, uid, body, to_history=True):
+        async def _send(profile, presence, uid, body, to_history=True,
+                      may_invite=False):
             sent.append(body)
 
             return {'ok': True}

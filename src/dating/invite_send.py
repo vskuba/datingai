@@ -126,8 +126,13 @@ async def invite_send_one(invite: dict) -> dict:
         # ответил, разговора нет, а приглашений ему уходит до двадцати за разные
         # дни — в диалоге они выглядели бы монологом. Последние из них ложатся в
         # переписку в момент его первого ответа (`chat.py`).
+        # ⚠⚠ `may_invite=True` — **только здесь**. У сайта, где чат открывается
+        # запросом, первая реплика и приглашение одно событие: запрос несёт
+        # текст, и собеседник читает его в списке приглашений. Прочие дороги
+        # (ответ, инициатива) в закрытый чат по-прежнему получают `offline`:
+        # приглашать вправе тот, кто начинает разговор.
         got = await send_message(profile, presence, str(invite['uid']), body,
-                                        to_history=False)
+                                        to_history=False, may_invite=True)
     except RhapsodyError as e:
         return await _fail(site_id, invite_id, profile_id, who, str(e))
     except Exception as e:
