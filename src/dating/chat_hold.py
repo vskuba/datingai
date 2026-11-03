@@ -42,6 +42,8 @@ from src.dating.panel_round import (PANEL_ROUND_TICK_SEC,
                                            panel_round_run)
 from src.dating.chat_panel import (CHAT_PANEL_ROUND_DAYS,
                                           chat_panel_import)
+from src.dating.chat_request_round import (CHAT_REQUEST_ROUND_TICK_SEC,
+                                           chat_request_round_run)
 from src.dating.ready import (READY_PASSWORD_SETTING, ready_check,
                                      ready_transport, ready_write)
 from src.dating.mail_round import (MAIL_ROUND_TICK_SEC,
@@ -92,9 +94,16 @@ CHAT_HOLD_RESCAN_SEC = 60
 # Как часто круг импорта переписки просыпается и смотрит, кому пора.
 #
 # ⚠ Это **тик круга**, а не частота импорта: та своя у каждого сайта (настройка
-# `chat_check_every`, от пяти минут). Тик мельче самой частой настройки, иначе
-# «каждые пять минут» превратилось бы в «каждые пять минут плюс тик».
-CHAT_IMPORT_TICK_SEC = 60
+# `chat_check_every`). Тик мельче самой частой настройки, иначе «каждые
+# пятнадцать секунд» превратилось бы в «пятнадцать секунд плюс тик».
+#
+# ⚠⚠ Пятнадцать, а не минута, и довод замерен. Прежде здесь стояло 60, потому
+# что заход шёл **сценарием** — живой браузер у соседа, ~40 секунд на сайт. У
+# сайта с заведённой панелью дорога другая: обычные HTTP-запросы по
+# удерживаемой сессии, и три подряд захода Step2Love на проде 03.11.2026 дали
+# **1417, 1378 и 1284 мс**. Тик в минуту означал бы, что входящая реплика ждёт
+# ответа до минуты там, где забор стоит полторы секунды.
+CHAT_IMPORT_TICK_SEC = 15
 
 # Настройка сайта с частотой импорта. Ключ — в `SITE_KNOWN`.
 CHAT_IMPORT_SETTING = 'chat_check_every'
@@ -258,6 +267,13 @@ async def chat_hold_run(seconds: float) -> dict:
     # (`intention_round.py`). ⚠ Расписания нет намеренно: обещание даётся в
     # живом разговоре, и письмо наутро читается как забывчивость.
     promised = asyncio.create_task(_intention_loop(deadline))
+
+    # Запросы чата: у сайтов, где разговор открывается приглашением, принять
+    # его — условие **самой возможности** переписки. Пока запрос висит, писать
+    # собеседнику некуда, и выглядит это его молчанием
+    # (`chat_request_round.py`). ⚠ Выключателя нет намеренно: запрос уже
+    # адресован нашей анкете, и отказ означал бы «не хотим говорить».
+    requests = asyncio.create_task(_chat_request_loop(deadline))
 
     # Админ-панель агентства: сессия сайта держится живой круглые сутки. ⚠ Круг
     # **не про анкеты** — учётка у панели одна на сайт, и расписания у неё нет:
@@ -783,6 +799,21 @@ async def _intention_loop(deadline: float) -> None:
     """
     await round_offset_loop(deadline, INTENTION_ROUND_TICK_SEC,
                             'исполнения обещаний', intention_round_run)
+
+
+async def _chat_request_loop(deadline: float) -> None:
+    """Принимает запросы чата, пока идёт смена.
+
+    ⚠⚠ Тик пятнадцать секунд — столько же, сколько у присутствия, и по тому
+    же доводу: запрос шлёт живой человек, который сидит в чате и ждёт. Срок
+    у запроса пять минут, но минута ожидания — это минута, когда он смотрит
+    на «ожидание» и может уйти (`chat_request_round.py`).
+
+    ⚠ Расписания круг не спрашивает: берёт анкеты с входом, то есть тех, кто
+    и так в сети по расписанию.
+    """
+    await round_loop(deadline, CHAT_REQUEST_ROUND_TICK_SEC,
+                     'приёма запросов чата', chat_request_round_run)
 
 
 async def _heartbeat_loop(deadline: float) -> None:

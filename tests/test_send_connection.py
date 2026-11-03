@@ -15,7 +15,7 @@ import pytest
 
 from tests_.tests_guard import tests_guard_calls
 
-from src.dating import send_connection
+from src.dating import chat_socket, send_connection
 from src.dating.send_connection import send_connection_run
 
 pytestmark = pytest.mark.chat
@@ -79,7 +79,7 @@ class _Client:
     async def post(self, url, headers=None, content=None):
         self.sent.append({'url': url, 'body': content})
 
-        if url.endswith(send_connection.SEND_CONNECTION_OPEN) \
+        if url.endswith(chat_socket.CHAT_SOCKET_OPEN) \
                 or '/connection?' in url:
             return _Answer(self.opened)
 
@@ -91,20 +91,21 @@ def serve(monkeypatch):
     """Подменяет клиента и убирает паузы опроса: сторожу ждать нечего."""
     def make(opened: str, replies: list) -> _Client:
         client = _Client(opened, replies)
-        # Подменяем **сборщик клиента**, а не библиотеку: так сторож заодно
-        # держит само его существование — вернись отправка к своему `httpx`
-        # мимо него, подмена перестанет действовать и тесты покраснеют.
-        monkeypatch.setattr(send_connection, '_client',
-                            lambda cookies, proxy: client)
-        monkeypatch.setattr(send_connection, 'SEND_CONNECTION_POLL_SEC', 0)
+        # ⚠ Подменяем **сборщик клиента у транспорта**: он переехал в
+        # `chat_socket.py` вместе с открытием соединения и опросами. Так
+        # сторож заодно держит само его существование — вернись отправка к
+        # своему `httpx` мимо транспорта, подмена перестанет действовать.
+        monkeypatch.setattr(chat_socket, 'chat_socket_client',
+                            lambda cookies, proxy='': client)
+        monkeypatch.setattr(chat_socket, 'CHAT_SOCKET_POLL_SEC', 0)
 
         async def step(client_, config, one, cookies, values=None):
-            """Открытие идёт общим шагом — подменяем его там же, где зовём."""
+            """Открытие идёт общим шагом — подменяем его там же, где зовут."""
             return await client_.post(
                 str(one.get('base') or '') + str(one.get('path') or ''),
                 content=one.get('body'))
 
-        monkeypatch.setattr(send_connection, 'http_heartbeat_step_call', step)
+        monkeypatch.setattr(chat_socket, 'http_heartbeat_step_call', step)
 
         return client
 
@@ -193,7 +194,7 @@ class TestItRefuses:
         assert 'не подтвердил' in out['error']
         # Открытие, отправка и все положенные опросы: молчание не укорачивает
         # ожидание — иначе редкий медленный ответ читался бы как отказ.
-        assert len(client.sent) == 2 + send_connection.SEND_CONNECTION_POLL_TRIES
+        assert len(client.sent) == 2 + chat_socket.CHAT_SOCKET_POLL_TRIES
 
     async def test_a_refusal_speaks_the_sites_reason(self, serve):
         """Отказ сайта едет словами, а не «что-то пошло не так»."""
@@ -264,8 +265,11 @@ class TestTheClientIsShared:
 
     Правило проекта (`http_pool.py`): cookie у каждой анкеты свои, а соединения
     общие. Клиент с собственным пулом (`http_heartbeat_client`) просит, чтобы
-    его закрыли, — а у отправки нет места, где это сделать: она уходит из круга
-    по анкете, и клиент оставался бы незакрытым на каждую реплику.
+    его закрыли, — а у кругов нет места, где это сделать: они ходят по анкете,
+    и клиент оставался бы незакрытым на каждый заход.
+
+    ⚠ Смотрим на **транспорт** (`chat_socket.py`): сборка клиента переехала
+    туда вместе с открытием соединения, и отправка его больше не заводит.
     """
 
     def test_it_takes_the_shared_transport(self):
@@ -276,14 +280,14 @@ class TestTheClientIsShared:
         объяснению. Разбор даёт `tests_guard_calls` общего слоя, у него эта
         грабля записана в докстринге.
         """
-        calls = tests_guard_calls(send_connection._client)
+        calls = tests_guard_calls(chat_socket.chat_socket_client)
 
         assert 'http_pool_transport' in calls
         assert 'http_heartbeat_client' not in calls
 
     def test_nothing_closes_the_shared_transport(self):
         """`aclose()` унёс бы транспорт у всех, кто им пользуется."""
-        closed = {one for one in tests_guard_calls(send_connection)
+        closed = {one for one in tests_guard_calls(chat_socket)
                   if one.endswith('aclose')}
 
         assert not closed, closed
