@@ -587,3 +587,64 @@ class TestTheRepeatPauseIsMinutes:
 
         assert 'DIV 60' in sql, 'миграция делит с дробью'
         assert '/ 60' not in sql
+
+
+class TestIntentionsHaveTheirOwnTab:
+    """⚠⚠ Намерения — вкладка верхнего уровня, а не подраздел «Инвайтов и чата».
+
+    Прежде они стояли подразделом, доводом «обещания агент даёт в разговоре».
+    Довод верен наполовину: обещание **даётся** в разговоре, а **исполняется**
+    письмом — и смотрят на него на своей вкладке верхнего уровня «Намерения и
+    действия», рядом с «Письмами», а вовсе не в чате.
+
+    Настройка обязана называться так же, как место, где видно её работу:
+    человек, ищущий «почему обещанное фото не уходит», открывает ту вкладку,
+    на которой это фото видит.
+    """
+
+    def test_the_group_exists(self):
+        from src.dating.site_setting import SITE_GROUPS
+
+        names = dict(SITE_GROUPS)
+
+        assert names.get('intention') == 'Намерения и действия', (
+            'вкладки намерений нет — настройки снова прячутся в чужой')
+
+    def test_every_intention_setting_lives_there(self):
+        """⚠ И **все** такие настройки, а не часть: разъехавшись, они стали бы
+        двумя местами, где настраивают одно занятие."""
+        from src.dating.site_setting import SITE_KNOWN
+
+        # ⚠ `get`, а не `[...]`: у части настроек группы нет вовсе — они
+        # ложатся в «Свои настройки», и это законно.
+        stray = [k for k, v in SITE_KNOWN.items()
+                 if k.startswith('intention_')
+                 and v.get('group') != 'intention']
+
+        assert not stray, (
+            f'{", ".join(stray)} остались в чужой вкладке')
+
+    def test_no_subgroup_repeats_the_tab_name(self):
+        """⚠ Подраздел внутри своей вкладки повторял бы её имя."""
+        from src.dating.site_setting import SITE_KNOWN, SITE_SUBGROUPS
+
+        subs = [one for one in SITE_SUBGROUPS if one[1] == 'intention']
+
+        assert not subs, f'внутри вкладки завёлся подраздел: {subs}'
+
+        for key, one in SITE_KNOWN.items():
+            if one.get('group') == 'intention':
+                assert not one.get('sub'), (
+                    f'{key} указывает на подраздел, которого нет')
+
+    def test_it_stands_after_the_favourites(self):
+        """⚠ Порядок вкладок — порядок знакомства: позвали в чат → написали
+        ответившему → исполнили обещанное → и только потом рассылка
+        незнакомым."""
+        from src.dating.site_setting import SITE_GROUPS
+
+        order = [one[0] for one in SITE_GROUPS]
+
+        assert (order.index('favorite') < order.index('intention')
+                < order.index('mail')), (
+            f'вкладка намерений встала не по порядку занятий: {order}')
