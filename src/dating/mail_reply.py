@@ -291,11 +291,19 @@ async def mail_reply_thread(profile_id: int, uid: str, keep: int = 0,
         # по времени написания ответ вставал бы в разговор раньше, чем собеседник
         # его получил. Неотправленному времени нет вовсе; его выносит вниз
         # `pending`.
-        " SELECT 'her' AS side, 'reply' AS kind, body,"
-        ' COALESCE(sent_at, created_at) AS at, id, status,'
-        " (status = 'draft') AS pending,"
-        " '' AS attach, NULL AS attach_about, '' AS file_id"
-        ' FROM mail_reply WHERE profile_id = %s AND uid = %s'
+        " SELECT 'her' AS side, 'reply' AS kind, r.body,"
+        ' COALESCE(r.sent_at, r.created_at) AS at, r.id, r.status,'
+        " (r.status = 'draft') AS pending,"
+        " '' AS attach, NULL AS attach_about,"
+        # ⚠⚠ **И у ответа снимок — тот же кусок.** Письмо со снимком это самая
+        # заметная реплика пары, а лента показывала её текстом: человек видел
+        # в «Доставке» чипс кадра, а в разговоре — пустоту, и шёл искать, куда
+        # делось фото (замер 03.11.2026: Natalia → Kazimierz, письмо #40,
+        # `gallery_file_id = 102154`).
+        ' COALESCE(g.file_id, \'\') AS file_id'
+        ' FROM mail_reply r'
+        + mail_shot_join('r')[1] +
+        ' WHERE r.profile_id = %s AND r.uid = %s'
         ' UNION ALL'
         # ⚠ **Письма рассылки — тоже часть разговора**: чаще всего именно ими он и
         # начат, и он отвечал на них, а не написал сам. Только отправленные:
@@ -327,11 +335,16 @@ async def mail_reply_thread(profile_id: int, uid: str, keep: int = 0,
 
     if with_favorite:
         sql += (' UNION ALL'
-                " SELECT 'her' AS side, 'favorite' AS kind, body, sent_at AS at,"
-                ' id, status, 0 AS pending,'
-                " '' AS attach, NULL AS attach_about, '' AS file_id"
-                ' FROM favorite_mail'
-                " WHERE profile_id = %s AND uid = %s AND status = 'sent'")
+                " SELECT 'her' AS side, 'favorite' AS kind, f.body,"
+                ' f.sent_at AS at, f.id, f.status, 0 AS pending,'
+                " '' AS attach, NULL AS attach_about,"
+                # ⚠ У приставания снимок бывает по тому же жребию, что у
+                # ответа (`mail_shot.py`), — и колонка та же.
+                ' COALESCE(g.file_id, \'\') AS file_id'
+                ' FROM favorite_mail f'
+                + mail_shot_join('f')[1] +
+                " WHERE f.profile_id = %s AND f.uid = %s"
+                " AND f.status = 'sent'")
         args += [int(profile_id), str(uid)]
 
     # ⚠ `pending` первым и **по убыванию**: выборка идёт от новых к старым и

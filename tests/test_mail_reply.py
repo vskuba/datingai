@@ -1091,3 +1091,95 @@ class TestTheAnswerWaitsForThePhoto:
             'отбор ответов завёл свою копию правила ожидания')
         assert 'MAIL_IN_VISION_WAIT_SQL.format' in inspect.getsource(
             mail_in_vision), 'очередь описания правило не читает'
+
+
+class TestThePhotoIsVisibleInTheTalk:
+    """⚠⚠⚠ Снимок в разговоре видно — и свой, и присланный.
+
+    Письмо со снимком это самая заметная реплика пары, а лента показывала её
+    одним текстом: человек видел в «Доставке» чипс кадра, открывал разговор —
+    и там пустота. Он идёт искать, куда делось фото, хотя оно ушло.
+
+    Замер 03.11.2026: Natalia → Kazimierz, письмо #40,
+    `gallery_file_id = 102154` — в журнале доставки чипс был, в ленте разговора
+    ничего.
+
+    ⚠ Страница рисовать умела давно: выкройка превью у неё одна на все журналы
+    (`one.file_id && one.profile_id`). Не хватало только того, чтобы запрос
+    эти поля отдавал — у письма по обещанию они были, у ответа стояла
+    заглушка `'' AS file_id`.
+    """
+
+    async def test_our_reply_carries_its_photo(self, profile):
+        from mysql_.mysql_ import mysql_get_db_async
+        from src.dating.mail_reply import mail_reply_thread
+
+        file_row, file_id = await _gallery_file(profile)
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO mail_in (site_id, profile_id, message_id, uid,'
+                ' body, date_post) VALUES (%s, %s, %s, %s, %s, NOW())',
+                (SITE, int(profile['id']), uuid.uuid4().int % 10 ** 12,
+                 '330', 'his letter'))
+            await db.execute('SELECT LAST_INSERT_ID() AS id')
+            in_id = int((await db.fetchone())['id'])
+            await db.execute(
+                'INSERT INTO mail_reply (site_id, profile_id, mail_in_id, uid,'
+                " name, body, status, sent_at, gallery_file_id)"
+                " VALUES (%s, %s, %s, '330', 'Man', 'вот моё фото', 'sent',"
+                ' NOW(), %s)',
+                (SITE, int(profile['id']), in_id, int(file_row)))
+            await db.connection.commit()
+
+        thread = await mail_reply_thread(int(profile['id']), '330')
+        mine = [one for one in thread if one['kind'] == 'reply']
+
+        assert mine, 'ответ выпал из разговора'
+        assert mine[0]['file_id'] == file_id, (
+            f"снимок ответа не доехал до ленты: {mine[0]['file_id']!r} — "
+            f'человек увидит письмо без фото')
+        assert mine[0]['profile_id'] == int(profile['id']), (
+            'без анкеты страница не соберёт адрес превью')
+
+    async def test_his_photo_is_there_too(self, profile):
+        """⚠ И присланный им снимок — он уже ехал, проверяем, что не потеряли."""
+        from src.dating.mail_reply import mail_reply_thread
+
+        await _in_with_shot(profile, '331', 'look',
+                            'https://site.test/content/attachments/9/a.jpg',
+                            'A man on a boat.')
+
+        thread = await mail_reply_thread(int(profile['id']), '331')
+
+        assert thread[0]['attach'].endswith('/a.jpg')
+        assert thread[0]['attach_about'] == 'A man on a boat.'
+
+    async def test_every_our_letter_can_carry_one(self):
+        """⚠⚠ Заглушка `'' AS file_id` осталась только там, где колонки нет.
+
+        У рассылки снимка не бывает вовсе; у ответа, приставания и письма по
+        обещанию — бывает, и у всех троих должен ехать один и тот же кусок
+        (`mail_shot_join`), иначе превью пропадёт у одного рода писем молча.
+        """
+        import inspect
+
+        from src.dating import mail_reply
+
+        body = inspect.getsource(mail_reply.mail_reply_thread)
+
+        assert body.count("mail_shot_join(") == 3, (
+            'не у всех писем со снимком берётся кадр — проверьте ответ, '
+            'приставание и письмо по обещанию')
+
+    async def test_the_page_paints_what_the_query_gives(self):
+        """⚠ Имена полей — часть договора со страницей."""
+        from pathlib import Path
+
+        page = Path(
+            'data/uvicorn/template/admin/dating/profile.html').read_text()
+
+        assert 'one.file_id && one.profile_id' in page, (
+            'страница перестала рисовать свой снимок')
+        assert 'one.attach_about' in page, (
+            'страница перестала рисовать присланный снимок')
