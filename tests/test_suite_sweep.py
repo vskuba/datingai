@@ -108,9 +108,9 @@ class TestOrphansAreSweptToo:
     async def test_orphan_tables_have_a_site(self):
         """Второй проход ищет по сайту, значит `site_id` у таблицы обязан быть.
 
-        ⚠ `gallery_file` его не знает, и в `TEST_SWEEP_ORPHANS` её нет
-        намеренно: её строки заводят четыре теста галереи, и анкету они сносят
-        сами, последней.
+        ⚠ У кого его нет — тому отдельный список `TEST_SWEEP_ORPHANS_NO_SITE`,
+        и отбор там по одному условию: анкеты не существует. Цена этого
+        послабления названа у самого списка в `conftest`.
         """
         async with mysql_get_db_async() as db:
             await db.execute(
@@ -122,6 +122,81 @@ class TestOrphansAreSweptToo:
 
         assert not missed, \
             f'у {", ".join(missed)} нет `site_id` — второй проход их не найдёт'
+
+    async def test_every_keyless_table_has_a_second_pass(self):
+        """⚠⚠⚠ Каждая бесключевая таблица обязана быть достижима **вторым**
+        проходом, а не только первым.
+
+        Этого сторожа не было, и цена названа замером: `intention_mail`
+        накопила **166** осиротевших строк при зелёной сюите, а `gallery_file`
+        оставляла по две за прогон и трижды роняла разбор галереи. Соседний
+        тест проверял только одну сторону — «у таблиц из списка есть
+        `site_id`», — и обратную («таблица из уборки по анкете вообще куда-то
+        попала») не проверял никто.
+
+        ⚠ Первый проход ищет по **живым** анкетам сюиты. Строка, пережившая
+        свою анкету, ему не видна никогда: номер в ней больше ни на что не
+        указывает.
+        """
+        from tests.conftest import (TEST_SWEEP_BY_PROFILE, TEST_SWEEP_ORPHANS,
+                                    TEST_SWEEP_ORPHANS_NO_SITE)
+
+        reachable = set(TEST_SWEEP_ORPHANS) | set(TEST_SWEEP_ORPHANS_NO_SITE)
+        missed = [one for one in TEST_SWEEP_BY_PROFILE if one not in reachable]
+
+        assert not missed, (
+            f'{", ".join(missed)} убираются только по живой анкете: пережив '
+            f'её, их строки останутся в базе навсегда — добавьте в '
+            f'`TEST_SWEEP_ORPHANS` (есть `site_id`) либо в '
+            f'`TEST_SWEEP_ORPHANS_NO_SITE` (нет)')
+
+    async def test_the_no_site_list_really_has_no_site(self):
+        """⚠ И обратное: послабление даётся только тем, кому отбирать нечем.
+
+        Попади сюда таблица с `site_id`, она чистилась бы по одному условию
+        вместо двух — то есть шире, чем нужно, и без всякой причины.
+        """
+        from tests.conftest import TEST_SWEEP_ORPHANS_NO_SITE
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT TABLE_NAME AS name FROM INFORMATION_SCHEMA.COLUMNS'
+                " WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME = 'site_id'")
+            with_site = {str(one['name']) for one in await db.fetchall() or []}
+
+        extra = [one for one in TEST_SWEEP_ORPHANS_NO_SITE if one in with_site]
+
+        assert not extra, (
+            f'у {", ".join(extra)} есть `site_id` — им место во втором '
+            f'проходе, с двумя условиями')
+
+    async def test_a_keyless_orphan_without_a_site_is_swept(self):
+        """Осиротевшая строка таблицы без `site_id` уборку не переживает.
+
+        Живой случай: `test_mail_reply` заводит строку галереи походя, ради
+        номера файла, а его фикстура сносит анкету после каждого теста.
+        """
+        from tests.conftest import _test_orphans_drop
+
+        gone = 10 ** 9 + 7  # номер, которого в `profile` заведомо нет
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO gallery_file (profile_id, file_id, path, name,'
+                " mime, kind, is_gone) VALUES (%s, %s, 'public/a.jpg', 'a',"
+                " 'image/jpeg', 'image', 0)",
+                (gone, f'drive-orphan-{gone}'))
+            await db.connection.commit()
+            left = db.lastrowid
+
+        _test_orphans_drop()
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT id FROM gallery_file WHERE id = %s',
+                             (left,))
+            still = await db.fetchone()
+
+        assert still is None, 'ничья строка галереи пережила уборку'
 
     async def test_an_orphan_row_is_swept(self):
         """Осиротевшую строку уборка находит и уносит.
