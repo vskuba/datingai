@@ -368,7 +368,16 @@ async def favorite_uids(profile: dict, base: str, password: str) -> set:
 
     ⚠ Разбор общий с `favorite_rows`, там же и довод: пустой список и отсутствие
     списка разведены, потому что на этом различии держится уборка погасших.
+
+    ⚠⚠ У сайта со **своей** дорогой список приезжает в кадре авторизации
+    сокета (`favoriteList`) — тем же открытием соединения, которым идут
+    отправка и приглашения, и лишнего похода на сайт он не стоит вовсе. API у
+    такого сайта нет, и общий путь ему не годится в принципе.
     """
+    own = await _handle_uids(profile)
+    if own is not None:
+        return own
+
     try:
         body = await site_api_call(profile, base, password,
                                           FAVORITE_LIST_PATH, method='GET',
@@ -599,6 +608,14 @@ async def favorite_add(profile: dict, uid: str, site_password: str = '',
     profile_id = int(profile.get('id') or 0)
     uid = str(uid or '').strip()
 
+    # ⚠⚠ Сайт со своей ручкой идёт **мимо сценария**: у Step2Love сценариев
+    # избранных нет вовсе, а звезда ставится тем же POST, что дёргает его
+    # страница чата, — доли секунды против десятков (`site/site_favorite.py`).
+    by_hand = await _by_handle(profile, uid, site_id, profile_id, reason,
+                               on=True)
+    if by_hand is not None:
+        return by_hand
+
     try:
         run = await _run(profile, uid, site_password, FAVORITE_ADD_SCENARIO)
     except DatingFavoriteError as e:
@@ -671,16 +688,23 @@ async def favorite_forget(profile: dict, uid: str,
     profile_id = int(profile.get('id') or 0)
     uid = str(uid or '').strip()[:PEOPLE_UID_MAX]
 
-    try:
-        run = await _run(profile, uid, site_password, FAVORITE_FORGET_SCENARIO)
-    except DatingFavoriteError as e:
-        await log_write(profile_id, 'fail', f'Снятие избранного {uid}: {e}')
+    # ⚠ Та же развилка, что у добавления: своя ручка — мимо сценария.
+    by_hand = await _handle_run(profile, uid, on=False)
 
-        return {'state': FAVORITE_FAIL, 'error': str(e)}
+    if by_hand is None:
+        try:
+            run = await _run(profile, uid, site_password,
+                             FAVORITE_FORGET_SCENARIO)
+        except DatingFavoriteError as e:
+            await log_write(profile_id, 'fail', f'Снятие избранного {uid}: {e}')
 
-    extract = run.get('extract') or {}
-    state, error = favorite_state(scenario_field(extract, 'before'),
-                                  scenario_field(extract, 'after'), on=False)
+            return {'state': FAVORITE_FAIL, 'error': str(e)}
+
+        extract = run.get('extract') or {}
+        state, error = favorite_state(scenario_field(extract, 'before'),
+                                      scenario_field(extract, 'after'), on=False)
+    else:
+        state, error = by_hand
 
     if state == FAVORITE_FAIL:
         await log_write(profile_id, 'fail', f'Снятие избранного {uid}: {error}')
@@ -707,6 +731,93 @@ async def favorite_forget(profile: dict, uid: str,
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+async def _handle_uids(profile: dict):
+    """Избранные своей дорогой сайта. `None` — такой дороги нет.
+
+    Raises:
+        DatingFavoriteError: список не пришёл. ⚠⚠ Именно отказ, а не пустое
+        множество: на различии «избранных нет» и «спросить не удалось» держится
+        уборка погасших — спутай их, и одно моргание сайта погасило бы всех
+        живых разом.
+    """
+    from src.dating.site.site_registry import site_registry_favorite
+    from src.dating.site_presence import site_presence
+
+    presence = await site_presence(int(profile.get('site_id') or 0))
+    driver = site_registry_favorite(presence)
+
+    if not driver.by_handle():
+        return None
+
+    try:
+        return await driver.uids(profile)
+    except Exception as e:
+        raise DatingFavoriteError(f'список избранных не пришёл: {e}')
+
+
+async def _handle_run(profile: dict, uid: str, on: bool):
+    """Ставит или гасит звезду **ручкой сайта**. `None` — сайт так не умеет.
+
+    Args:
+        profile: анкета девушки.
+        uid: номер мужчины на сайте.
+        on: зажечь (`True`) или погасить.
+
+    Returns:
+        tuple | None: пара `(state, error)` в тех же словах, что у разбора
+        сценария, либо `None` — «у этого сайта ручки нет, иди сценарием».
+
+    ⚠⚠ Исход сводится к **тем же трём словам**, что у сценарного пути
+    (`done`/`already`/`fail`), а не к своим: читателей у исхода трое — запись в
+    `favorite`, журнал анкеты и ответ ручки, — и второй словарь состояний
+    разошёлся бы с первым на первой же правке.
+
+    ⚠ `already` ручкой **не различается**: сайт отвечает «сделано» и на
+    повторное нажатие. Это честнее, чем гадать: звезда в нужном состоянии, а
+    сколько раз её трогали — не наше дело.
+    """
+    from src.dating.site.site_registry import site_registry_favorite
+    from src.dating.site_presence import site_presence
+
+    presence = await site_presence(int(profile.get('site_id') or 0))
+    driver = site_registry_favorite(presence)
+
+    if not driver.by_handle():
+        return None
+
+    got = await (driver.add(profile, uid) if on
+                 else driver.forget(profile, uid))
+
+    if got['ok']:
+        return FAVORITE_DONE, ''
+
+    return FAVORITE_FAIL, str(got['error'] or 'сайт отказал')
+
+
+async def _by_handle(profile: dict, uid: str, site_id: int, profile_id: int,
+                     reason: str, on: bool):
+    """Добавление ручкой вместе с его следом. `None` — сайт так не умеет.
+
+    ⚠ След — **тот же**, что у сценарного пути: строка в `favorite` и строка в
+    журнале анкеты. Заходов бывает много и из разных мест, и человек, читающий
+    журнал через месяц, не должен гадать, какой дорогой шла звезда.
+    """
+    got = await _handle_run(profile, uid, on=on)
+    if got is None:
+        return None
+
+    state, error = got
+
+    await favorite_mark(site_id, profile_id, uid, state, error, reason)
+
+    if state == FAVORITE_DONE:
+        await log_write(profile_id, 'ok', f'В избранные добавлен {uid}')
+    else:
+        await log_write(profile_id, 'fail', f'В избранные {uid}: {error}')
+
+    return {'state': state, 'error': error}
+
 
 async def _cards_put(site_id: int, rows: list[dict]) -> None:
     """Кладёт карточки собеседников из списка избранных.

@@ -810,7 +810,7 @@ class TestBothMustBeOnline:
         """Оба в сети — реплика уходит."""
         outbox = []
 
-        async def _send(profile, presence, uid, text):
+        async def _send(profile, presence, uid, text, may_invite=False):
             outbox.append(text)
 
             return {'ok': True, 'error': ''}
@@ -847,7 +847,7 @@ class TestThePauseBetweenSends:
         """Отправка и лента — заглушками; наружу сюита не ходит."""
         outbox = []
 
-        async def _send(profile, presence, uid, text):
+        async def _send(profile, presence, uid, text, may_invite=False):
             outbox.append(text)
 
             return {'ok': True, 'error': ''}
@@ -948,7 +948,7 @@ class TestThePauseBetweenSends:
         """
         tries = []
 
-        async def _send(profile, presence, uid, text):
+        async def _send(profile, presence, uid, text, may_invite=False):
             tries.append(text)
 
             return {'ok': False, 'error': 'сайт отказал'}

@@ -496,21 +496,49 @@ class TestOnlyTheFirstReplyMayInvite:
             'удача приглашения выдана за доставку: чат ещё не открыт, и строка '
             'пула закрылась бы навсегда')
 
-    async def test_the_invite_road_sets_the_flag(self):
-        """⚠ И ставит его **только** отправка инвайтов."""
+    async def test_the_roads_that_open_a_talk_set_the_flag(self):
+        """⚠ Ставят его те, кто разговор **начинает или будит**.
+
+        Инвайт — первая реплика незнакомому. Инициатива — возврат к
+        затихшему, а затихший у этого сайта бывает закрытым: собеседник жмёт
+        крестик, и писать туда нечем.
+        """
         import inspect
 
-        from src.dating import invite_send
+        from src.dating import initiative_round, invite_send
 
-        assert 'may_invite=True' in inspect.getsource(invite_send)
+        for mod in (invite_send, initiative_round):
+            assert 'may_invite=True' in inspect.getsource(mod), (
+                f'{mod.__name__} больше не приглашает — его реплики будут '
+                f'молча возвращаться в пул при закрытом разговоре')
 
-    async def test_no_other_road_sets_it(self):
-        """⚠⚠ Ответ, инициатива и ручная кнопка приглашать не вправе."""
+    async def test_the_answer_does_not_invite(self):
+        """⚠⚠ А ответ — не вправе, и это решение, а не забывчивость.
+
+        Он отвечает на **свежую** реплику, то есть на живой разговор.
+        Закрылся тот между его словами и нашими — человек ушёл, и ответ
+        дождётся его возвращения; стучаться к нему приглашением значило бы
+        подменять ответ другим событием.
+        """
         import inspect
 
-        from src.dating import answer, initiative_round
+        from src.dating import answer
 
-        for mod in (answer, initiative_round):
-            assert 'may_invite' not in inspect.getsource(mod), (
-                f'{mod.__name__} шлёт приглашения — а это другое событие, '
-                f'чем реплика в разговоре')
+        assert 'may_invite' not in inspect.getsource(answer), (
+            'ответ шлёт приглашения — а это другое событие, чем реплика в '
+            'разговоре')
+
+    async def test_an_invited_initiative_says_so_in_the_log(self):
+        """⚠ Человеку видно, что ушло приглашением, а не репликой.
+
+        У приглашения текст ждёт в списке запросов, пока собеседник не нажмёт
+        галочку, — и журнал, назвавший это обычной отправкой, обещал бы
+        доставку, которой ещё нет.
+        """
+        import inspect
+
+        from src.dating import initiative_round
+
+        body = inspect.getsource(initiative_round)
+
+        assert 'приглашением' in body

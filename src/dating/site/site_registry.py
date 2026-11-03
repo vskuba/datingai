@@ -17,6 +17,8 @@ from src.dating.site.site_base import DatingSiteChat
 from src.dating.site.site_goldenbride import (DatingSiteChatGoldenbride,
                                               DatingSiteProfileGoldenbride)
 from src.dating.site.site_guests import DatingSiteGuests
+from src.dating.site.site_favorite import (DatingSiteFavorite,
+                                           DatingSiteFavoriteStep2Love)
 from src.dating.site.site_guests_step2love import DatingSiteGuestsStep2Love
 from src.dating.site.site_import import DatingSiteImport
 from src.dating.site.site_import_goldenbride import DatingSiteImportGoldenbride
@@ -103,6 +105,12 @@ DATING_SITE_GUESTS_DRIVERS = {
 #
 # Убирается так: проставить `driver` каждой закладке в RhapsodyAi, после чего
 # заменить эту строку на `DatingSiteChat.name`. До тех пор она держит прод.
+# Седьмая таблица: избранные. ⚠ Умолчание — базовый драйвер, то есть «звезда
+# ставится сценарием»; в таблице только те, у кого своя дорога.
+DATING_SITE_FAVORITE_DRIVERS = {
+    DatingSiteFavoriteStep2Love.name: DatingSiteFavoriteStep2Love,
+}
+
 DATING_SITE_DRIVER_DEFAULT = DatingSiteChatGoldenbride.name
 
 
@@ -200,6 +208,25 @@ def site_registry_guests(presence: dict | None = None) -> DatingSiteGuests:
     name = str(presence.get('driver') or '').strip()
 
     return DATING_SITE_GUESTS_DRIVERS.get(name, DatingSiteGuests)(presence)
+
+
+def site_registry_favorite(presence: dict | None = None):
+    """Чем сайт зажигает звезду избранного: ручкой или сценарием.
+
+    Седьмая грань драйвера. ⚠⚠ Базовый отвечает «ручкой не умею»
+    (`by_handle() is False`), и `favorite.py` идёт прежней дорогой — прогоном
+    сценария у соседа. Так работали все сайты до Step2Love, и ломать это ради
+    единообразия незачем: у них сценарии есть и работают.
+
+    ⚠ У Step2Love сценариев избранных нет вовсе, зато есть ручка его же
+    страницы чата — поэтому драйвер, а не развилка внутри занятия.
+    """
+    if not isinstance(presence, dict):
+        return DatingSiteFavorite()
+
+    name = str(presence.get('driver') or '').strip()
+
+    return DATING_SITE_FAVORITE_DRIVERS.get(name, DatingSiteFavorite)(presence)
 
 
 def _driver_of(drivers: dict, presence: dict | None):
