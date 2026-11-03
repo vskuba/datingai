@@ -488,9 +488,22 @@ async def profile_card_drop(profile_id: int, field: str,
 @router.delete('/{profile_id}', include_in_schema=False)
 async def profile_delete(profile_id: int,
                              user=Depends(auth_required)):
-    """Удаляет учётку. Живые сессии браузера не трогает — они сами по себе."""
+    """Удаляет учётку и всё, что за ней не уходит само.
+
+    Живые сессии браузера не трогает — они сами по себе.
+
+    ⚠⚠⚠ **Не `repository.delete`.** Тот сносит одну строку и полагается на
+    каскад, а каскад уносит не всё: у семи таблиц внешнего ключа нет вовсе,
+    только колонка `profile_id`, и их строки анкету переживают — номер в них
+    после этого ни на что не указывает. Замер 03.11.2026 на данных сюиты:
+    `intention_mail` накопила так 166 строк, `gallery_file` оставляла по две
+    за прогон. На проде ноль — но лишь потому, что анкеты там не удаляют.
+    Правило одной дверью `profile_drop`, список сверяется со схемой.
+    """
+    from src.dating.profile_drop import profile_drop
+
     await profile_row(profile_id)
-    await DatingProfileRepository().delete(profile_id)
+    await profile_drop(profile_id)
 
     return {'status': 'success'}
 
