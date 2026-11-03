@@ -163,6 +163,10 @@ class DatingProfileResponse(BaseModel):
     gallery: int = Field(0, description='Снимков в индексе галереи; 0 — галереи нет')
     gallery_described: int = Field(
         0, description='Из них разобрано моделью — описание и теги готовы')
+    # ⚠⚠⚠ И этот флаг — **в модели**: поля, не объявленного здесь, страница не
+    # увидит вовсе, и молча. Та же грабля, что уже стоила чипса `chat_on`.
+    mail_photo_on: bool = Field(
+        False, description='Разрешена ли отправка фотографий от этой анкеты')
     unread_chat: int = Field(0, description='Непрочитанных сообщений чата — новые с прошлого просмотра')
     enabled: bool = Field(True, description='Ведём ли анкету: выключенную воркер не трогает вовсе')
     password_source: str = Field('site', description='Откуда пароль: `site` — общий, `own` — свой')
@@ -230,6 +234,10 @@ async def profile_list(site_id: int = 0,
             '       g.last_error, g.profile, g.auto_answer, g.auto_answer_only, g.enabled, '
             '       g.mailing_on, '
             '       g.password_source, '
+            # Отправка фотографий — строкой списка значком. ⚠ Иначе ответ
+            # на вопрос «кому из девятнадцати можно слать снимки» стоил бы
+            # открытия каждой карточки по очереди.
+            '       g.mail_photo_on, '
             '       g.keep_online, g.relogin_since, g.relogin_next_at, NOW() AS db_now, '
             # Выход анкеты: номер в реестре соседа и адрес, каким её видит сайт.
             # ⚠ **Только это, без `proxy_url`**: в нём пароль канала, и место ему

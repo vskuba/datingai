@@ -103,15 +103,78 @@ async def chat_initiative_ready(site_id: int) -> list[dict]:
     return [dict(row) for row in (rows or [])]
 
 
-async def chat_initiative_sent(initiative_id: int) -> None:
-    """Отмечает, что карточка ушла."""
+async def chat_initiative_sent(initiative_id: int,
+                               delivered: bool = True) -> None:
+    """Отмечает, что карточка ушла.
+
+    Args:
+        initiative_id: номер строки пула.
+        delivered: дошла ли реплика до собеседника. ⚠⚠⚠ `False` у сайта, где
+            разговор открывается приглашением: текст лежит у него в списке
+            запросов и ждёт согласия, а сайт стирает запрос по своему сроку.
+            Такая строка метится `invited` и ждёт решения — её судьбу разберёт
+            круг (`initiative_round._invited`).
+
+    ⚠⚠ Состояния три, а не два, и `draft` сюда не годится: оставь строку
+    черновиком — круг разошлёт второе приглашение через минуту, третье через
+    две. У пула нет способа отличить «ещё не звали» от «позвали и ждём».
+    """
     if not int(initiative_id or 0):
         return
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            "UPDATE chat_initiative SET status = 'sent', error = '',"
-            ' sent_at = NOW() WHERE id = %s', (int(initiative_id),))
+            'UPDATE chat_initiative SET status = %s, error = %s,'
+            ' sent_at = NOW() WHERE id = %s',
+            ('sent' if delivered else 'invited',
+             '' if delivered else 'приглашение ушло, ждёт согласия',
+             int(initiative_id)))
+        await db.connection.commit()
+
+
+async def chat_initiative_invited(site_id: int, older_sec: int) -> list[dict]:
+    """Приглашения, по которым пора принять решение.
+
+    Args:
+        site_id: сайт-закладка.
+        older_sec: сколько секунд должно пройти с отправки. ⚠ Срок берётся у
+            сайта: раньше него решать нечего — собеседник ещё может нажать.
+
+    Returns:
+        list: строки пула со статусом `invited`.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT * FROM chat_initiative'
+                " WHERE site_id = %s AND status = 'invited'"
+                '   AND sent_at IS NOT NULL'
+                '   AND sent_at < NOW() - INTERVAL %s SECOND'
+                ' ORDER BY sent_at',
+                (int(site_id), int(older_sec)))
+            rows = await db.fetchall()
+    except Exception as e:
+        logger_info(f'[dating] ждущие приглашения не спросились: {e}')
+
+        return []
+
+    return [dict(row) for row in rows or []]
+
+
+async def chat_initiative_drop(initiative_id: int) -> None:
+    """Убирает карточку совсем: приглашение истекло, никто её не читал.
+
+    ⚠⚠ Именно `DELETE`, а не `failed`: строка с причиной держала бы пару
+    «позванной» — круг к ней не возвращается, и одно непринятое приглашение
+    погасило бы разговор навсегда. Убрали — пара снова свободна, и круг
+    позовёт её своим чередом.
+    """
+    if not int(initiative_id or 0):
+        return
+
+    async with mysql_get_db_async() as db:
+        await db.execute('DELETE FROM chat_initiative WHERE id = %s',
+                         (int(initiative_id),))
         await db.connection.commit()
 
 

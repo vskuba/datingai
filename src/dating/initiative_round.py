@@ -69,7 +69,10 @@
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
-from src.dating.chat_initiative import (chat_initiative_failed,
+from src.dating.chat_request import chat_request_talk_open
+from src.dating.chat_initiative import (chat_initiative_drop,
+                                        chat_initiative_failed,
+                                        chat_initiative_invited,
                                         chat_initiative_ready,
                                         chat_initiative_sent,
                                         chat_initiative_stale)
@@ -117,6 +120,19 @@ INITIATIVE_SEND_EVERY_DEFAULT = 3
 # сюда безопасно. ⚠ Словарь свой, только для этого круга: соседние занятия ведут
 # свой темп сами.
 _sent_at: dict[int, float] = {}
+
+
+# Сколько ждём решения по ушедшему приглашению, прежде чем считать его
+# истекшим, секунд.
+#
+# ⚠⚠ Срок самого сайта — **пять минут** (`destroyTimeout` живого кадра
+# запроса), и здесь взят запас вдвое: решение необратимо (строка удаляется), а
+# цена ошибки несимметрична — поспешив, мы выбросим реплику, которую человек
+# как раз читает, опоздав же всего лишь позовём его позже.
+#
+# ⚠ Проверка стоит **не чаще тика круга** (минута), то есть запас стоит одного
+# лишнего POST на пару раз в минуту — и только у сайта с приглашениями.
+INITIATIVE_INVITE_WAIT_SEC = 600
 
 
 async def initiative_round_run() -> dict:
@@ -179,6 +195,12 @@ async def _work(site: dict, minutes: int) -> dict:
     # заново, когда девушка вернётся.
     stale += await pool_sweep(site_id)
 
+    # ⚠⚠⚠ Судьба ждущих приглашений — **до** набора и отправки. Приглашение,
+    # которое приняли, превращается в доставку; истекшее — убирается, и пара
+    # снова становится свободной. Решай мы это позже, круг на том же заходе
+    # набрал бы ей вторую карточку поверх первой.
+    stale += await _invited(site_id)
+
     made = 0
     if site['chat_initiative_on']:
         got = await initiative_make(site_id, limit=INITIATIVE_ROUND_MAKE)
@@ -187,6 +209,74 @@ async def _work(site: dict, minutes: int) -> dict:
     return {'made': made,
             'sent': await _send(site_id) if site['chat_initiative_send_on'] else 0,
             'stale': stale}
+
+
+async def _invited(site_id: int) -> int:
+    """Разбирает приглашения, по которым прошёл срок. Отдаёт — сколько убрано.
+
+    ## ⚠⚠⚠ Чем это кончается
+
+    Ушедшее приглашением лежит у собеседника в списке запросов. Исходов два, и
+    у них разная судьба:
+
+    | Что случилось | Что делаем |
+    |---------------|------------|
+    | нажал галочку — чат открылся | доставка: `sent` + отметка соседу |
+    | не нажал, сайт стёр запрос | **убираем строку** — пара снова свободна |
+
+    ⚠⚠ Истекшее именно **убирается**, а не метится отказом: строка с причиной
+    держала бы пару «позванной», круг к ней не возвращается, и одно непринятое
+    приглашение погасило бы разговор навсегда.
+
+    ⚠⚠ «Спросить не удалось» — **третий** ответ, и он ничего не меняет: строка
+    ждёт следующего захода. Убери мы её по молчанию сайта, реплика пропала бы
+    из-за одного моргания.
+
+    ⚠ Сайтов без приглашений это не касается вовсе: у них такого состояния не
+    бывает, и запрос к базе не делается.
+    """
+    presence = await _presence(site_id)
+    if not site_registry_chat(presence).invites():
+        return 0
+
+    rows = await chat_initiative_invited(site_id, INITIATIVE_INVITE_WAIT_SEC)
+    if not rows:
+        return 0
+
+    gone = 0
+    for card in rows:
+        profile = await _profile(int(card['profile_id']))
+        if not profile:
+            continue
+
+        uid = str(card['uid'])
+        open_ = await chat_request_talk_open(profile, presence, uid,
+                                             str(profile.get('proxy_url') or ''))
+
+        if open_ is None:
+            continue
+
+        if open_:
+            # ⚠ Чат открыт — значит приглашение приняли, и текст он прочитал.
+            # Теперь это доставка, и агенту о ней можно говорить.
+            await chat_initiative_sent(int(card['id']))
+            said = int(card.get('talk_message_id') or 0)
+            await rhapsody_api_chat_delivered(said)
+            await chat_intention_delivered(said)
+            await log_write(int(card['profile_id']), 'ok',
+                            f"Приглашение принято → {card.get('name') or uid} "
+                            f'{uid}: реплика доставлена')
+
+            continue
+
+        await chat_initiative_drop(int(card['id']))
+        gone += 1
+        await log_write(
+            int(card['profile_id']), 'info',
+            f"Приглашение истекло → {card.get('name') or uid} {uid}: "
+            f'реплику никто не прочитал, позовём снова')
+
+    return gone
 
 
 async def _send(site_id: int) -> int:
@@ -257,8 +347,6 @@ async def _send(site_id: int) -> int:
                                     str(card['body']), may_invite=True)
 
         if result['ok']:
-            await chat_initiative_sent(int(card['id']))
-
             # ⚠⚠⚠ **«Ушло» и «дошло» — разные вещи, и решает это драйвер.**
             #
             # Там, где разговор открывается приглашением (Step2Love), текст
@@ -279,6 +367,13 @@ async def _send(site_id: int) -> int:
             # Расхождение молчаливое, всплывает странным ответом через неделю.
             delivered = site_registry_chat(presence).delivered(result)
             said = int(card.get('talk_message_id') or 0)
+
+            # ⚠⚠ Строка закрывается **не одинаково**: доставленная — `sent`,
+            # ушедшая приглашением — `invited`, то есть «ждём согласия». Её
+            # судьбу разберёт `_invited` на следующих заходах: примут —
+            # станет доставкой, истечёт — строка уйдёт, и пара снова будет
+            # свободна.
+            await chat_initiative_sent(int(card['id']), delivered=delivered)
 
             if delivered:
                 # ⚠⚠ Сосед записал обмен внутри прогона, то есть до того, как

@@ -670,3 +670,131 @@ class TestTheOtherSitesAreUntouched:
         assert "'offline': False" in body, (
             'http-дорога научилась отвечать `offline` — проверьте, не стала '
             'ли она считаться приглашением')
+
+
+class TestAnInviteWaitsForItsAnswer:
+    """⚠⚠⚠ Ушедшее приглашением не закрывается как доставленное — оно ждёт.
+
+    Текст лежит у собеседника в списке запросов. Нажал галочку — доставка;
+    не нажал, сайт стёр запрос — строка **убирается**, и пара снова свободна.
+
+    Прежде такая строка закрывалась как `sent`: одно непринятое приглашение
+    гасило разговор навсегда, потому что к «позванной» паре круг не
+    возвращается (замер 03.11.2026, Anastasiya → Semen).
+    """
+
+    async def test_an_invite_is_marked_waiting(self, monkeypatch):
+        from src.dating import chat_initiative as mod
+
+        seen = {}
+
+        class _Db:
+            rowcount = 1
+
+            async def execute(self, sql, args=None):
+                seen['sql'], seen['args'] = sql, args
+
+            @property
+            def connection(self):
+                return self
+
+            async def commit(self):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+        monkeypatch.setattr(mod, 'mysql_get_db_async', lambda: _Db())
+
+        await mod.chat_initiative_sent(7, delivered=False)
+
+        assert seen['args'][0] == 'invited', (
+            'приглашение закрыто как доставленное — пара больше не получит '
+            'ни одной инициативы')
+
+        await mod.chat_initiative_sent(7, delivered=True)
+
+        assert seen['args'][0] == 'sent'
+
+    async def test_the_round_asks_the_site_about_the_talk(self):
+        """⚠ Судьбу решает **живой чат**, а не время само по себе."""
+        import inspect
+
+        from src.dating import initiative_round
+
+        body = inspect.getsource(initiative_round._invited)
+
+        assert 'chat_request_talk_open' in body
+        assert 'chat_initiative_drop' in body, (
+            'истекшее приглашение не убирается — пара останется «позванной» '
+            'навсегда')
+
+    async def test_an_unknown_answer_changes_nothing(self):
+        """⚠⚠⚠ «Спросить не удалось» — третий ответ, и он ничего не решает.
+
+        Убери строку по молчанию сайта — реплика пропала бы из-за одного
+        моргания, а не из-за отказа собеседника.
+        """
+        import inspect
+
+        from src.dating import initiative_round
+
+        body = inspect.getsource(initiative_round._invited)
+
+        assert 'if open_ is None:' in body and 'continue' in body
+
+    async def test_the_site_without_invites_is_not_asked(self):
+        """⚠ Сайта без приглашений это не касается — он и в базу не ходит."""
+        import inspect
+
+        from src.dating import initiative_round
+
+        body = inspect.getsource(initiative_round._invited)
+        head = body.split('chat_initiative_invited')[0]
+
+        assert '.invites()' in head, (
+            'круг спрашивает базу раньше, чем сайт — лишний запрос у тех, у '
+            'кого приглашений не бывает')
+
+    async def test_the_wait_outlasts_the_site_timeout(self):
+        """⚠⚠ Запас к сроку сайта: решение необратимо, строка удаляется.
+
+        Срок запроса у сайта — пять минут (`destroyTimeout` живого кадра).
+        Поспешив, мы выбросим реплику, которую человек как раз читает;
+        опоздав — всего лишь позовём его позже.
+        """
+        from src.dating.initiative_round import INITIATIVE_INVITE_WAIT_SEC
+
+        assert INITIATIVE_INVITE_WAIT_SEC >= 300 * 2, (
+            'запас к сроку приглашения меньше двойного — реплику выбросят у '
+            'человека из-под носа')
+
+    async def test_the_talk_check_tells_three_answers_apart(self, monkeypatch):
+        """Живой чат, его отсутствие и «не спросилось» — три разных ответа."""
+        from src.dating.chat_request import chat_request_talk_open
+
+        async def open_(*a, **kw):
+            return {'client': None, 'socket_id': 's',
+                    'frames': [{'data': {'chatObjectList': [
+                        {'chatID': 1, 'userIDMan': int(MAN),
+                         'userIDGirl': int(GIRL)}]}}]}
+
+        async def empty(*a, **kw):
+            return {'client': None, 'socket_id': 's',
+                    'frames': [{'data': {'chatObjectList': []}}]}
+
+        async def boom(*a, **kw):
+            raise ChatSocketError('вход не выполнен')
+
+        monkeypatch.setattr(chat_request, 'chat_socket_open', open_)
+        assert await chat_request_talk_open(PROFILE, PRESENCE, MAN) is True
+
+        monkeypatch.setattr(chat_request, 'chat_socket_open', empty)
+        assert await chat_request_talk_open(PROFILE, PRESENCE, MAN) is False
+
+        monkeypatch.setattr(chat_request, 'chat_socket_open', boom)
+        assert await chat_request_talk_open(PROFILE, PRESENCE, MAN) is None, (
+            'молчание сайта принято за отказ собеседника')

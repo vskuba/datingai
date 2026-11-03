@@ -62,6 +62,10 @@ CHAT_REQUEST_CREATE = 'create'
 # Где в кадре авторизации лежит список запросов.
 CHAT_REQUEST_LIST = 'chatRequestObjectList'
 
+# Где там же лежат живые разговоры. ⚠ Имя то же, что читает отправка
+# (`send_connection.py`): два написания одного списка разошлись бы молча.
+CHAT_REQUEST_CHATS = 'chatObjectList'
+
 # Имена полей в кадре. ⚠⚠ Не `idCreate`/`idTarget`, как зовут их **геттеры**
 # SDK (`getIDCreate`): в самом кадре они приезжают полными —
 # `userIDCreate`/`userIDTarget`. Первая редакция читала по геттерам и находила
@@ -254,6 +258,54 @@ async def chat_request_accept_all(profile: dict, presence: dict,
                         f"{one['uid']} не принят — {got['error']}")
 
     return {'found': len(rows), 'taken': taken, 'error': ''}
+
+
+async def chat_request_talk_open(profile: dict, presence: dict,
+                                 uid: str, proxy: str = '') -> bool | None:
+    """Открыт ли сейчас разговор с этим человеком.
+
+    Args:
+        profile: строка `profile`.
+        presence: настройка сайта.
+        uid: номер собеседника на сайте.
+        proxy: выход наружу этой анкеты.
+
+    Returns:
+        bool | None: `True` — чат живой, `False` — его нет, `None` — **спросить
+        не удалось**.
+
+    ⚠⚠⚠ Третий ответ обязателен и отличается от `False` по существу. «Чата
+    нет» значит «приглашение не приняли», и по нему строку пула убирают; «не
+    удалось спросить» значит, что мы ничего не знаем — убрать по нему было бы
+    потерей реплики из-за моргания сайта.
+
+    ⚠ Список живых чатов приезжает **в кадре авторизации**, тем же открытием
+    соединения, которым идут отправка и приглашения, — лишнего похода на сайт
+    вопрос не стоит.
+    """
+    base = str((presence.get('send') or {}).get('base') or '').rstrip('/')
+    if not base:
+        return None
+
+    want = str(uid or '').strip()
+
+    try:
+        opened = await chat_socket_open(profile, presence,
+                                        presence.get('send') or {}, base, proxy)
+    except Exception as e:
+        logger_info(f"[dating] анкета #{profile.get('id')}: живые чаты не "
+                    f'спросились — {e}')
+
+        return None
+
+    for chat in chat_socket_hello(opened['frames'], CHAT_REQUEST_CHATS):
+        if not isinstance(chat, dict) or chat.get('destroy'):
+            continue
+        if want in (str(chat.get('userIDMan') or ''),
+                    str(chat.get('userIDGirl') or '')):
+            return True
+
+    return False
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
