@@ -89,6 +89,19 @@ from src.dating.log import log_write
 from src.dating.site_setting import site_seconds
 
 # Настройки сайта и их умолчания.
+# Состояния, при которых пара **уже позвана**. ⚠⚠⚠ Их два: `sent` —
+# реплика дошла, `invited` — ушла приглашением и ждёт согласия у собеседника
+# в списке запросов. Для вопроса «звали ли мы её» это одно и то же: текст у
+# человека, и второе обращение будет вторым.
+#
+# ⚠⚠ Пока считался один `sent`, круг слал второе приглашение через три
+# минуты, третье через пять (замер 03.11.2026, Anastasiya → Semen).
+#
+# ⚠ Готовой строкой `IN (...)`, а не кортежем: уезжает в SQL текстом, а
+# собирать её по месту — значит завести второе написание того же правила.
+INITIATIVE_TAKEN = ('sent', 'invited')
+INITIATIVE_TAKEN_SQL = "('" + "', '".join(INITIATIVE_TAKEN) + "')"
+
 INITIATIVE_AFTER_SETTING = 'chat_initiative_after'
 INITIATIVE_AFTER_DEFAULT = 60
 # Верхняя граница срока. ⚠ Меньше нижней или ноль — значит «ровно нижняя»:
@@ -1076,6 +1089,17 @@ def _sent_count_sql(profile: str, uid: str, his_last: str = '',
     ⚠ Псевдоним `i` у обоих счётов, и это не оплошность: они стоят соседями в
     одном списке `SELECT`, каждый своим скалярным подзапросом, а область имени
     у подзапроса своя.
+
+    ⚠⚠⚠ **Заходом считается и `invited`.** Ушедшее приглашением — обращение к
+    паре: текст лежит у собеседника в списке запросов, и позвать её ещё раз
+    значит позвать дважды. Пока считался один `sent`, пара выглядела
+    непозванной, и круг слал второе приглашение через три минуты, третье через
+    пять — замер 03.11.2026, Anastasiya → Semen: три обращения за шесть минут,
+    и в списке запросов у человека висели разные тексты от одной девушки.
+
+    ⚠⚠ Истечёт — строка **удаляется** (`initiative_round._invited`), и счёт
+    сам вернётся назад: пара снова станет свободной, не требуя второго
+    правила «а это больше не считается».
     """
     his_last = his_last or _his_last_sql(profile, uid)
     window = ' AND i.sent_at > NOW() - INTERVAL 1 DAY' if day else ''
@@ -1084,4 +1108,4 @@ def _sent_count_sql(profile: str, uid: str, his_last: str = '',
             + _since_sql(profile, uid, his_last) + '), 0)'
             '   FROM chat_initiative i'
             f'  WHERE i.profile_id = {profile} AND i.uid = {uid}'
-            "    AND i.status = 'sent'" + window + ')')
+            f'    AND i.status IN {INITIATIVE_TAKEN_SQL}' + window + ')')

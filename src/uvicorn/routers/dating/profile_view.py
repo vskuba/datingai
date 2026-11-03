@@ -20,6 +20,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import auth_required
 from src.dating.agent import agent_bio
+from src.dating.chat_initiative import chat_initiative_hanging
 from src.dating.chat_reply import chat_reply_pending
 from src.dating.message_twin import message_twin_skip
 from src.dating.json_column import json_column_load
@@ -103,6 +104,23 @@ async def profile_view_messages(profile_id: int, uid: str = '', limit: int = 30,
                      'answer_silent_at': None, 'created_at': None,
                      'pending': True, 'error': str(one.get('error') or '')}
                     for one in await chat_reply_pending(int(profile_id), str(uid).strip())]
+
+        # ⚠⚠⚠ **И висящее приглашение — тем же приёмом.** У сайта, где
+        # разговор открывается запросом, реплика лежит у собеседника в списке
+        # приглашений и ждёт галочки: в `message` её нет намеренно (он её не
+        # читал, и агенту о ней говорить нельзя), но человеку видеть надо —
+        # иначе работа идёт, а в окне пусто.
+        #
+        # ⚠ Метится **своим** словом `invited`, а не `pending`: у черновика
+        # текст ещё у нас, у приглашения — уже у него. Для оператора это
+        # разные состояния, и красить их одинаково значило бы обещать
+        # одинаковое.
+        rows[:0] = [{'id': 0, 'sender_uid': str(uid).strip(), 'sender_name': '',
+                     'text': str(one['body']), 'direction': 'out', 'is_read': 1,
+                     'answer_silent_at': None, 'created_at': one.get('sent_at'),
+                     'invited': True, 'error': ''}
+                    for one in await chat_initiative_hanging(
+                        int(profile_id), str(uid).strip())]
 
     return {'result': rows}
 

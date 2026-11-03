@@ -14,6 +14,7 @@
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -908,3 +909,191 @@ class TestTheUnreadLineIsNotInTheTalk:
         assert 'text = %s' in body, 'уборка сносит по паре, не глядя на текст'
         assert 'BETWEEN' in body, 'у уборки нет окна времени'
         assert "direction = 'out'" in body, 'уборка может задеть его реплику'
+
+
+class TestTheWaitingLineCannotHangForever:
+    """⚠⚠⚠ `invited` никто, кроме круга, не трогает — значит ему и отпускать.
+
+    Все сметальщики пула ходят по `draft` (`pool.py`, `chat_initiative_drop`),
+    то есть строка, судьбу которой не удалось узнать, не уйдёт ниоткуда.
+    Повисни она навсегда — пара осталась бы «позванной», разговор замёрз бы
+    насовсем, и чинилось бы это руками в базе.
+
+    ⚠ Речь про **нашу** немоту: соединение не открылось, анкета
+    разлогинена, сайт лёг. У живого сайта ответ всегда определённый.
+    """
+
+    def test_a_fresh_unknown_waits(self):
+        from datetime import datetime
+
+        from src.dating.initiative_round import _too_long
+
+        assert _too_long({'sent_at': datetime.now()}) is False, (
+            'строку бросают на первом же моргании сайта')
+
+    def test_an_old_unknown_is_let_go(self):
+        from datetime import datetime, timedelta
+
+        from src.dating.initiative_round import (INITIATIVE_INVITE_GIVEUP_SEC,
+                                                 _too_long)
+
+        old = datetime.now() - timedelta(
+            seconds=INITIATIVE_INVITE_GIVEUP_SEC + 60)
+
+        assert _too_long({'sent_at': old}) is True, (
+            'строка висит дольше предела — пара заморожена навсегда')
+
+    def test_a_line_without_a_stamp_is_let_go(self):
+        """⚠ Без отметки времени она не разберётся никогда."""
+        from src.dating.initiative_round import _too_long
+
+        assert _too_long({}) is True
+
+    def test_the_limit_outlasts_any_blink(self):
+        """⚠ Предел заведомо больше срока приглашения у сайта и любого сбоя."""
+        from src.dating.initiative_round import (INITIATIVE_INVITE_GIVEUP_SEC,
+                                                 INITIATIVE_INVITE_WAIT_SEC)
+
+        assert INITIATIVE_INVITE_GIVEUP_SEC > INITIATIVE_INVITE_WAIT_SEC * 10
+        assert INITIATIVE_INVITE_GIVEUP_SEC <= 24 * 60 * 60, (
+            'сутки и больше — это уже не страховка, а замороженный разговор')
+
+    def test_no_sweeper_touches_the_waiting_line(self):
+        """⚠⚠ И обратное: ни один сметальщик не уносит `invited` мимо круга.
+
+        Унеси он её — принятое приглашение осталось бы незамеченным: реплика
+        не попала бы ни в переписку, ни в память агента.
+        """
+        import inspect
+
+        from src.dating import chat_initiative, pool
+
+        for mod in (pool, chat_initiative):
+            body = inspect.getsource(mod)
+
+            for line in body.split('\n'):
+                if 'DELETE' not in line.upper():
+                    continue
+
+                assert 'invited' not in line, (
+                    f'{mod.__name__}: сметальщик уносит ждущую строку мимо '
+                    f'круга — {line.strip()}')
+
+
+class TestTheWaitingInviteIsVisible:
+    """⚠⚠⚠ Висящее приглашение человек обязан видеть.
+
+    В `message` его нет намеренно: собеседник текста не читал, и агенту о нём
+    говорить нельзя. Но оператору работа видна быть должна — иначе он смотрит
+    в пустое окно, где только что шла отправка, и ищет поломку.
+
+    Замер 03.11.2026: три приглашения ушли паре за шесть минут, а панель
+    показывала «в пуле: 0» и ленту без единой новой строки.
+    """
+
+    def test_the_handle_adds_it_to_the_thread(self):
+        import inspect
+
+        from src.uvicorn.routers.dating import profile_view
+
+        body = inspect.getsource(profile_view)
+
+        assert 'chat_initiative_hanging' in body, (
+            'лента реплик не показывает висящее приглашение')
+        assert "'invited': True" in body, 'строка ничем не помечена'
+
+    def test_it_is_marked_apart_from_a_draft(self):
+        """⚠⚠ Своим словом, а не `pending`.
+
+        У черновика текст ещё у нас, у приглашения — уже у собеседника. Для
+        оператора это разные состояния, и красить их одинаково значило бы
+        обещать одинаковое.
+        """
+        page = Path(
+            'data/uvicorn/template/admin/dating/profile.html').read_text()
+
+        assert '.msg.invited .msg-body' in page, 'у приглашения нет своего вида'
+
+        spot = page.index('.msg.invited .msg-body')
+        rule = page[spot:page.index('}', spot)]
+
+        assert 'dashed' not in rule, (
+            'приглашение нарисовано пунктиром, как неотправленный черновик')
+        assert 'background' in rule, 'у приглашения нет заливки'
+
+    def test_the_page_paints_it(self):
+        page = Path(
+            'data/uvicorn/template/admin/dating/profile.html').read_text()
+
+        assert "m.invited ? ' invited' : ''" in page, 'класс не вешается'
+        assert 'ждёт принятия' in page, 'состояние не подписано словами'
+
+    def test_the_door_is_not_the_round_one(self):
+        """⚠ Две двери, и спрашивают они разное.
+
+        Круг спрашивает «что пора разобрать» — по сайту и сроку. Показ
+        спрашивает «что висит у этой пары», и срок ему не нужен: человеку
+        показывают и то, что ушло минуту назад.
+        """
+        import inspect
+
+        from src.dating import chat_initiative
+
+        body = inspect.getsource(chat_initiative.chat_initiative_hanging)
+
+        assert 'profile_id' in body and 'uid' in body
+        assert 'INTERVAL' not in body, (
+            'показ ждёт срока — человек не увидит только что ушедшее')
+
+
+class TestAPairIsCalledOnlyOnce:
+    """⚠⚠⚠ Пока приглашение висит, пару не зовут снова.
+
+    Замер 03.11.2026, Anastasiya → Semen: три приглашения за шесть минут —
+    20:26:27, 20:29:37 и набор в 20:31:33. В списке запросов у человека висели
+    три разных текста от одной девушки.
+
+    Причина: `invited` — состояние новое, и ни счёт заходов, ни проверка
+    «карточка уже есть» его не знали. Пара выглядела свободной.
+    """
+
+    def test_the_waiting_check_sees_the_invite(self):
+        import inspect
+
+        from src.dating import chat_initiative
+
+        body = inspect.getsource(chat_initiative.chat_initiative_waiting)
+
+        assert 'CHAT_INITIATIVE_INVITED' in body, (
+            'проверка «дело не закрыто» не видит висящего приглашения — круг '
+            'сочинит паре вторую карточку')
+        assert "'draft'" in body, 'проверка перестала видеть черновик'
+
+    def test_the_round_count_includes_it(self):
+        from src.dating.initiative import INITIATIVE_TAKEN, _in_row_sql
+
+        assert set(INITIATIVE_TAKEN) == {'sent', 'invited'}
+
+        sql = _in_row_sql('p.id', 'c.uid')
+
+        assert 'invited' in sql, (
+            'ушедшее приглашением не считается заходом — предел «подряд» его '
+            'не удержит')
+
+    def test_the_state_has_one_name(self):
+        """⚠ Имя состояния уезжает в SQL текстом из нескольких мест.
+
+        Опечатка в нём ничего не уронит: запрос просто не найдёт строк, и
+        круг молча перестанет разбирать приглашения.
+        """
+        import inspect
+
+        from src.dating import chat_initiative
+
+        body = inspect.getsource(chat_initiative)
+        bare = [one for one in body.split('\n')
+                if "'invited'" in one and 'CHAT_INITIATIVE_INVITED' not in one
+                and not one.strip().startswith('#')]
+
+        assert not bare, (
+            f'состояние написано строкой мимо константы: {bare}')

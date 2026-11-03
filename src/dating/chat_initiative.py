@@ -12,6 +12,12 @@
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+# Состояние «ушло приглашением, ждёт согласия». ⚠ Константой, потому что
+# уезжает в SQL текстом из нескольких мест, а опечатка в нём не уронит ничего:
+# запрос просто не найдёт строк, и круг молча перестанет разбирать
+# приглашения.
+CHAT_INITIATIVE_INVITED = 'invited'
+
 
 async def chat_initiative_put(site_id: int, profile_id: int, uid: str,
                               name: str, body: str, try_no: int = 1,
@@ -58,14 +64,36 @@ async def chat_initiative_put(site_id: int, profile_id: int, uid: str,
 
 
 async def chat_initiative_waiting(profile_id: int, uid: str) -> dict:
-    """Ждущая карточка пары. Пусто — её нет."""
+    """Незакрытое дело пары: черновик в пуле либо висящее приглашение.
+
+    Returns:
+        dict: строка пула. Пусто — звать пару можно.
+
+    ⚠⚠⚠ Состояния **два**, и второе важнее первого. `draft` — «карточка
+    сочинена, ещё не ушла»; `invited` — «ушла приглашением, и текст лежит у
+    собеседника в списке запросов». Во втором случае звать снова не просто
+    лишнее, а вредно: он увидит от одной девушки два разных приглашения.
+
+    Замер 03.11.2026, Anastasiya → Semen: пока здесь стоял один `draft`, круг
+    отправил три приглашения за семь минут и набирал четвёртое.
+
+    ⚠⚠⚠ **И текст при этом теряется.** Запрос у сайта **один на пару**:
+    новое приглашение затирает прежнее — спрошено у сокета, из трёх ушедших
+    висел текст последнего. То есть повторный зов не просто лишний, он
+    **стирает** то, что собеседник ещё не успел прочитать.
+
+    ⚠ Истечёт — строка **удаляется** (`initiative_round._invited`), и пара
+    освободится сама. Второго правила «а это больше не держит» не нужно.
+    """
     if not (int(profile_id or 0) and str(uid or '').strip()):
         return {}
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT id, body, try_no, error FROM chat_initiative'
-            " WHERE profile_id = %s AND uid = %s AND status = 'draft'",
+            'SELECT id, body, try_no, error, status FROM chat_initiative'
+            ' WHERE profile_id = %s AND uid = %s'
+            f"   AND status IN ('draft', '{CHAT_INITIATIVE_INVITED}')"
+            ' ORDER BY id DESC LIMIT 1',
             (int(profile_id), str(uid)))
         row = await db.fetchone()
 
@@ -126,10 +154,41 @@ async def chat_initiative_sent(initiative_id: int,
         await db.execute(
             'UPDATE chat_initiative SET status = %s, error = %s,'
             ' sent_at = NOW() WHERE id = %s',
-            ('sent' if delivered else 'invited',
+            ('sent' if delivered else CHAT_INITIATIVE_INVITED,
              '' if delivered else 'приглашение ушло, ждёт согласия',
              int(initiative_id)))
         await db.connection.commit()
+
+
+async def chat_initiative_hanging(profile_id: int, uid: str) -> list[dict]:
+    """Приглашения пары, которые ждут согласия. Для показа человеку.
+
+    Returns:
+        list: строки пула со статусом `invited`, от старых к свежим.
+
+    ⚠⚠ Отдельно от `chat_initiative_invited`: та отбирает **по сайту и
+    сроку** — её спрашивает круг, чтобы решить судьбу. Эта отвечает «что
+    сейчас висит у этой пары», и срок ей не нужен: человеку показывают и то,
+    что ушло минуту назад.
+    """
+    if not (int(profile_id or 0) and str(uid or '').strip()):
+        return []
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT id, body, sent_at FROM chat_initiative'
+                ' WHERE profile_id = %s AND uid = %s'
+                f"   AND status = '{CHAT_INITIATIVE_INVITED}'"
+                ' ORDER BY sent_at, id',
+                (int(profile_id), str(uid)))
+            rows = await db.fetchall()
+    except Exception as e:
+        logger_info(f'[dating] висящие приглашения не спросились: {e}')
+
+        return []
+
+    return [dict(row) for row in rows or []]
 
 
 async def chat_initiative_invited(site_id: int, older_sec: int) -> list[dict]:
@@ -147,7 +206,7 @@ async def chat_initiative_invited(site_id: int, older_sec: int) -> list[dict]:
         async with mysql_get_db_async() as db:
             await db.execute(
                 'SELECT * FROM chat_initiative'
-                " WHERE site_id = %s AND status = 'invited'"
+                f" WHERE site_id = %s AND status = '{CHAT_INITIATIVE_INVITED}'"
                 '   AND sent_at IS NOT NULL'
                 '   AND sent_at < NOW() - INTERVAL %s SECOND'
                 ' ORDER BY sent_at',
