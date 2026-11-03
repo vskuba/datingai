@@ -70,7 +70,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.chat_request import chat_request_talk_open
-from src.dating.chat_initiative import (chat_initiative_drop,
+from src.dating.chat_initiative import (chat_initiative_expired,
                                         chat_initiative_failed,
                                         chat_initiative_invited,
                                         chat_initiative_ready,
@@ -269,7 +269,7 @@ async def _invited(site_id: int) -> int:
 
             continue
 
-        await chat_initiative_drop(int(card['id']))
+        await chat_initiative_expired(int(card['id']))
         gone += 1
         await log_write(
             int(card['profile_id']), 'info',

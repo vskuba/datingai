@@ -53,6 +53,30 @@ class TestTheBadgeIsAlwaysThere:
     def test_it_is_painted_for_every_row(self, page):
         assert '+ photoBadge(row)' in page, 'значок не попал в строку списка'
 
+    def test_it_stands_before_the_gallery_chip(self, page):
+        """⚠⚠ Фото **перед** галереей, и это не вкусовщина.
+
+        Значок фото есть у каждой строки, значок галереи — не у каждой. Стой
+        фото вторым, правый край держал бы то один, то другой, и колонка
+        значков прыгала бы от строки к строке.
+        """
+        row = page[page.index('+ photoBadge(row)'):]
+
+        assert row.index('+ galleryBadge(row)') < 200, (
+            'галерея рисуется не сразу за фото — порядок значков разъехался')
+
+    def test_the_right_edge_is_held_by_the_first_chip(self, page):
+        """⚠ Прижимает вправо **один** значок: два `margin-left: auto` подряд
+
+        разделили бы пустоту между собой, и значки расползлись бы по строке.
+        """
+        css = page[page.index('.prof-photo {'):]
+        css = css[:css.index('.prof-photo + .prof-gallery')]
+
+        assert 'margin-left: auto' in css, 'фото не держит правый край'
+        assert '.prof-photo + .prof-gallery { margin-left: 4px; }' in page, (
+            'галерея после фото снова прижимается к краю сама')
+
 
 class TestTheColourCarriesTheAnswer:
     """⚠⚠ Разрешение читается **яркостью**, а не вторым рисунком.
@@ -65,12 +89,14 @@ class TestTheColourCarriesTheAnswer:
         body = _badge(page)
 
         assert "' on'" in body, 'у разрешённой анкеты значок ничем не отличается'
+        assert '1F5BC' in body, (
+            'значок сменился — проверьте, что новый различим в сером виде')
         assert 'row.mail_photo_on' in body, (
             'значок не смотрит на флаг анкеты')
 
     def test_grey_is_the_default_and_colour_is_the_exception(self, page):
         css = page[page.index('.prof-photo {'):]
-        css = css[:css.index('.profile > .prof-photo')]
+        css = css[:css.index('.prof-photo + .prof-gallery')]
 
         assert 'grayscale(1)' in css, 'запрещённая анкета не обесцвечена'
         assert '.prof-photo.on { filter: none;' in css, (
@@ -82,7 +108,7 @@ class TestTheColourCarriesTheAnswer:
         Красный на девятнадцати строках кричал бы о беде, которой нет.
         """
         css = page[page.index('.prof-photo {'):]
-        css = css[:css.index('.profile > .prof-photo')]
+        css = css[:css.index('.prof-photo + .prof-gallery')]
 
         for alarm in ('#dc2626', '#b91c1c', '#ef4444', 'red'):
             assert alarm not in css, f'запрет покрашен тревожным ({alarm})'

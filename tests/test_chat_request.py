@@ -728,7 +728,7 @@ class TestAnInviteWaitsForItsAnswer:
         body = inspect.getsource(initiative_round._invited)
 
         assert 'chat_request_talk_open' in body
-        assert 'chat_initiative_drop' in body, (
+        assert 'chat_initiative_expired' in body, (
             'истекшее приглашение не убирается — пара останется «позванной» '
             'навсегда')
 
@@ -798,3 +798,44 @@ class TestAnInviteWaitsForItsAnswer:
         monkeypatch.setattr(chat_request, 'chat_socket_open', boom)
         assert await chat_request_talk_open(PROFILE, PRESENCE, MAN) is None, (
             'молчание сайта принято за отказ собеседника')
+
+
+class TestNoNameIsDefinedTwice:
+    """⚠⚠⚠ Два определения с одним именем Python не считает ошибкой.
+
+    Побеждает **второе**, молча, а вызов первого падает на чужих доводах уже
+    в работе. Поймано на проде: `chat_initiative_drop` был заведён дважды, и
+    заход инициативы ронялся каждую минуту — `missing 1 required positional
+    argument: 'uid'`.
+
+    ⚠ Сюита этого не ловила: проверки смотрели **исходник** («имя упомянуто в
+    теле»), а упомянуто оно было верно — неверным оказалось то, на что имя
+    указывает. Ловится это только разбором самого модуля.
+    """
+
+    @pytest.mark.parametrize('name', [
+        'src.dating.chat_initiative', 'src.dating.chat_request',
+        'src.dating.initiative_round', 'src.dating.initiative',
+        'src.dating.send_connection', 'src.dating.chat_socket',
+    ])
+    def test_every_name_is_unique(self, name):
+        import ast
+        import importlib
+        import inspect
+        import textwrap
+
+        mod = importlib.import_module(name)
+        tree = ast.parse(textwrap.dedent(inspect.getsource(mod)))
+
+        seen, twice = set(), []
+        for node in tree.body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                     ast.ClassDef)):
+                continue
+            if node.name in seen:
+                twice.append(node.name)
+            seen.add(node.name)
+
+        assert not twice, (
+            f'{name}: {", ".join(twice)} определены дважды — побеждает '
+            f'второе, и вызовы первого падают уже в работе')

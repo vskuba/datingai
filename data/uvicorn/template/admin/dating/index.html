@@ -534,14 +534,16 @@
            состояние, и красный на девятнадцати строках кричал бы о беде,
            которой нет. */
         .prof-photo {
-            flex: 0 0 auto; margin-left: 4px; font-size: 12px; line-height: 1;
+            flex: 0 0 auto; margin-left: auto; font-size: 12px; line-height: 1;
             filter: grayscale(1); opacity: .35;
         }
         .prof-photo.on { filter: none; opacity: 1; }
-        /* ⚠ Когда значка галереи рядом нет, правый край держит этот. */
-        .profile > .prof-photo:not(.prof-gallery + .prof-photo):not(.prof-off + .prof-photo) {
-            margin-left: auto;
-        }
+        /* ⚠ Правый край держит **первый** из хвостовых значков, и порядок в
+           строке — фото, затем галерея. Поэтому `auto` у фото, а соседям —
+           обычный отступ: два `auto` подряд разделили бы пустоту между собой,
+           и значки расползлись бы по строке. */
+        .prof-off + .prof-photo { margin-left: 4px; }
+        .prof-photo + .prof-gallery { margin-left: 4px; }
 
         /* Профиль с сайта и собеседницы (`.card*`, `.contact*`, `.msg*`, `.need`)
            переехали в `dating_page.css`: тот же чат показывает вкладка «Чат» на
@@ -880,7 +882,7 @@
             : 'Отправка фотографий запрещена — галочка в карточке анкеты';
 
         return `<span class="prof-photo${on ? ' on' : ''}"`
-            + ` title="${esc(title)}">\u{1F4F7}</span>`;
+            + ` title="${esc(title)}">\u{1F5BC}\u{FE0F}</span>`;
     }
 
     function galleryBadge(row) {
@@ -1016,8 +1018,11 @@
                     ? '<span class="prof-off" title="Анкета выключена: воркер её не ведёт">'
                       + 'выкл</span>'
                     : '')
-                + galleryBadge(row)
-                + photoBadge(row);
+                // ⚠ Фото **перед** галереей: оно есть у каждой строки, а
+                // значок галереи — не у каждой, и правый край держал бы то
+                // один, то другой, то есть колонка значков прыгала бы.
+                + photoBadge(row)
+                + galleryBadge(row);
 
             el.addEventListener('click', () => profileSelect(row.id));
             profilesEl.appendChild(el);
