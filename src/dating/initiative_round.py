@@ -69,6 +69,8 @@
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from uuid import uuid4
+
 from src.dating.chat_request import chat_request_talk_open
 from src.dating.chat_initiative import (chat_initiative_expired,
                                         chat_initiative_failed,
@@ -82,7 +84,8 @@ from src.dating.log import log_write
 from src.dating.round import (round_mem_due, round_mem_mark, round_sites,
                               round_sites_run)
 from src.dating.online import online_check
-from src.dating.send import send_message
+from src.dating.send import (send_message, send_message_forget,
+                             send_message_remember)
 from src.dating.site.site_registry import site_registry_chat
 from src.dating.site_setting import site_seconds
 from src.dating.chat_intention import chat_intention_delivered
@@ -259,6 +262,12 @@ async def _invited(site_id: int) -> int:
         if open_:
             # ⚠ Чат открыт — значит приглашение приняли, и текст он прочитал.
             # Теперь это доставка, и агенту о ней можно говорить.
+            #
+            # ⚠⚠ И только теперь реплика ложится в **переписку**: до принятия
+            # её там нет намеренно — приглашение не разговор, то же правило,
+            # что у инвайтов (`send.py`).
+            await send_message_remember(int(card['profile_id']), uid,
+                                        str(card['body']), str(uuid4()))
             await chat_initiative_sent(int(card['id']))
             said = int(card.get('talk_message_id') or 0)
             await rhapsody_api_chat_delivered(said)
@@ -269,6 +278,11 @@ async def _invited(site_id: int) -> int:
 
             continue
 
+        # ⚠⚠ Убираем **и строку переписки**, если она там есть: записанное
+        # прежним кодом висит в окне как сказанное, хотя собеседник его не
+        # видел. Чистит это круг, а не человек руками.
+        await send_message_forget(int(card['profile_id']), uid,
+                                  str(card['body']), card.get('sent_at'))
         await chat_initiative_expired(int(card['id']))
         gone += 1
         await log_write(

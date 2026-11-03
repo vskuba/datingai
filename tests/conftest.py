@@ -427,7 +427,7 @@ async def no_live_writes():
         # Номера в тексте — чтобы искать не пришлось.
         raise AssertionError(
             f'тест написал в переписку живой анкеты: строк было {before}, стало {after}. '
-            'Подмените `_message_save` (см. фикстуру `saved` в test_profile_enabled.py) '
+            'Подмените `send_message_remember` (см. фикстуру `saved` в test_profile_enabled.py) '
             'и берите выдуманный номер анкеты, а не живой.')
 
 

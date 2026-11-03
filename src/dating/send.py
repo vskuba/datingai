@@ -249,13 +249,165 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
         #
         # Историю держит своя таблица (`invite`), а в переписку последние из
         # приглашений переносятся в момент **первого ответа** (`chat.py`).
-        if to_history:
-            await _message_save(int(profile['id']), to_uid, text, message_uid,
-                                SEND_SOURCE.get(transport, 'socket'))
+        #
+        # ⚠⚠⚠ **То же правило — и когда приглашением ушла обычная реплика.**
+        # У сайта, где разговор открывается запросом, текст лежит у
+        # собеседника в списке приглашений и ждёт галочки; до неё он его не
+        # читал, то есть разговора по-прежнему нет. Записанная сразу, такая
+        # реплика висит в окне как сказанная — а истекшее приглашение сайт
+        # стирает, и в переписке остаётся то, чего собеседник не видел
+        # (замер 03.11.2026: две висящие строки у пары Anastasiya ↔ Semen).
+        #
+        # ⚠ Записать её надо **при принятии**: чат открылся — значит прочитал.
+        # Это делает круг инициативы (`initiative_round._invited`) через
+        # `send_message_remember`.
+        if to_history and site_registry_chat(presence).delivered(result):
+            await send_message_remember(
+                int(profile['id']), to_uid, text, message_uid,
+                SEND_SOURCE.get(transport, 'socket'))
 
         await _answered_mark(int(profile['id']), to_uid)
 
     return result
+
+
+async def send_message_forget(profile_id: int, to_uid: str, text: str,
+                              at, window_sec: int = 300) -> int:
+    """Убирает из переписки реплику, которую собеседник так и не прочитал.
+
+    Args:
+        profile_id: анкета.
+        to_uid: собеседник на сайте.
+        text: текст реплики — он и опознаёт строку.
+        at: когда она была отправлена.
+        window_sec: допуск по времени вокруг `at`, секунды.
+
+    Returns:
+        int: сколько строк убрано (обычно ноль или одна).
+
+    ⚠⚠⚠ **Это уборка за истекшим приглашением.** Текст лежал у собеседника в
+    списке запросов, сайт стёр запрос по своему сроку — значит реплики он не
+    видел, и в окне диалога ей не место: оператор читает её как сказанную и
+    строит на ней следующий ход.
+
+    ⚠⚠ Условий три, и каждое нужно: пара, **текст** и окно времени вокруг
+    отправки. По одной паре снесло бы разговор; без времени — ту же фразу,
+    сказанную неделю назад и прочитанную; без текста — чужую реплику той же
+    минуты.
+
+    ⚠ С правилом «не писать недоставленное» (выше) это не спор, а страховка:
+    записанное прежним кодом надо убрать, и делает это круг, а не человек
+    руками.
+    """
+    if not int(profile_id or 0) or not str(text or '').strip() or not at:
+        return 0
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'DELETE FROM message'
+                ' WHERE profile_id = %s AND sender_uid = %s'
+                "   AND direction = 'out' AND text = %s"
+                '   AND created_at BETWEEN %s - INTERVAL %s SECOND'
+                '                      AND %s + INTERVAL %s SECOND',
+                (int(profile_id), str(to_uid)[:32], str(text)[:2000],
+                 at, int(window_sec), at, int(window_sec)))
+            gone = int(db.rowcount or 0)
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] непрочитанная реплика не убралась: {e}')
+
+        return 0
+
+    return gone
+
+
+async def send_message_remember(profile_id: int, to_uid: str, text: str,
+                                message_uid: str,
+                                source: str = 'socket') -> None:
+    """Кладёт отправленное в переписку — иначе в диалоге видна только их половина.
+
+    ⚠⚠ Дверь **публичная**, потому что зовущих двое: сама отправка и круг
+    инициативы — он записывает реплику, ушедшую приглашением, в тот момент,
+    когда собеседник его принял. Своя вставка у круга разошлась бы с этой
+    первой же правкой колонок, молча.
+
+    `source` — каким путём ушло (`SEND_SOURCE`). ⚠ Не украшение: у Ladadate
+    сокета нет вовсе, и запись со `socket` заставила бы искать поломку там, где её
+    нет. Это уже случалось дважды — сперва со сценарием, потом с HTTP-ручкой, — и
+    оба раза столбец приходилось учить новому значению, а не подгонять под старое.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT IGNORE INTO message '
+                '(profile_id, sender_uid, sender_name, text, message_uid, direction,'
+                ' is_answered, source) '
+                "VALUES (%s, %s, %s, %s, %s, 'out', 1, %s)",
+                (profile_id, str(to_uid)[:32], '', str(text)[:2000], str(message_uid)[:64],
+                 str(source)))
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] отправленное не записалось: {e}')
+
+
+async def _answered_mark(profile_id: int, to_uid: str) -> None:
+    """Помечает входящие этого собеседника отвеченными: мы только что ответили."""
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'UPDATE message SET is_answered = 1 '
+                " WHERE profile_id = %s AND sender_uid = %s AND direction = 'in' AND is_answered = 0",
+                (profile_id, str(to_uid)[:32]))
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] пометка «отвечено» не проставилась: {e}')
+
+
+def _fail(error: str) -> dict:
+    return {'ok': False, 'error': error, 'offline': False,
+            'response': '', 'message_uid': ''}
+
+
+async def _note_send(profile: dict, presence: dict, send: dict, transport: str,
+                     to_uid: str, text: str, got: dict, started: float) -> None:
+    """Строка журнала об отправке реплики — любым путём.
+
+    ⚠ **Одна строка на одну отправку, включая неудачную.** Журнал отвечает на
+    вопрос «сколько раз мы постучались к сайту», и отказ — такой же стук, как
+    удача. Неотправленное сообщение в переписку не ложится (`result['ok']`), и
+    без этой строки его след пропадал бы совсем.
+
+    ⚠ **Текста реплики здесь нет, только длина.** Журнал читают в консоли и
+    копируют в переписку; сам разговор живёт в `message`, и второй его копии в
+    таблице на 52 тысячи строк в сутки не нужно. Длина же отвечает на живой
+    вопрос «не обрезал ли сайт сообщение».
+
+    ⚠ `ok` берётся из разбора ответа, **а не из кода HTTP**: у LadaDate признак
+    удачи это поле `IsSuccess` в теле, и `200` с отказом внутри — обычное дело.
+    """
+    from src.dating.request import (REQUEST_SEND, request_ms, request_write)
+
+    if transport == 'ws':
+        # Адрес сокета без параметров: в строке у некоторых сайтов едет токен
+        # сессии, а журнал читают глазами и копируют в переписку.
+        where = str(profile.get('ws_url') or '').split('?')[0]
+        method = 'WS'
+    elif transport == 'scenario':
+        where = 'сценарий у соседа'
+        method = 'RUN'
+    else:
+        where = str(send.get('path') or '')
+        method = 'POST'
+
+    await request_write(
+        door=REQUEST_SEND, profile_id=int(profile.get('id') or 0),
+        site_id=int(profile.get('site_id') or 0), method=method,
+        path=f'{where} → {to_uid} ({len(str(text or ""))} зн.)',
+        status=int(got.get('status') or 0), ok=bool(got.get('ok')),
+        error=str(got.get('error') or ''), ms=request_ms(started),
+        proxy_ip=str(profile.get('proxy_ip') or ''),
+        body=str(got.get('response') or ''))
 
 
 async def _send_scenario(profile: dict, to_uid: str, text: str, message_uid: str) -> dict:
@@ -559,87 +711,3 @@ async def _said_already(profile_id: int, to_uid: str, text: str) -> bool:
     # Сравниваем по сути, а не побуквенно: агент может вернуть тот же текст с
     # другим пробелом или регистром, и для собеседника это одно и то же сообщение.
     return str(last.get('text') or '').strip().casefold() == str(text or '').strip().casefold()
-
-
-async def _message_save(profile_id: int, to_uid: str, text: str, message_uid: str,
-                        source: str = 'socket') -> None:
-    """Кладёт отправленное в переписку — иначе в диалоге видна только их половина.
-
-    `source` — каким путём ушло (`SEND_SOURCE`). ⚠ Не украшение: у Ladadate
-    сокета нет вовсе, и запись со `socket` заставила бы искать поломку там, где её
-    нет. Это уже случалось дважды — сперва со сценарием, потом с HTTP-ручкой, — и
-    оба раза столбец приходилось учить новому значению, а не подгонять под старое.
-    """
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                'INSERT IGNORE INTO message '
-                '(profile_id, sender_uid, sender_name, text, message_uid, direction,'
-                ' is_answered, source) '
-                "VALUES (%s, %s, %s, %s, %s, 'out', 1, %s)",
-                (profile_id, str(to_uid)[:32], '', str(text)[:2000], str(message_uid)[:64],
-                 str(source)))
-            await db.connection.commit()
-    except Exception as e:
-        logger_info(f'[dating] отправленное не записалось: {e}')
-
-
-async def _answered_mark(profile_id: int, to_uid: str) -> None:
-    """Помечает входящие этого собеседника отвеченными: мы только что ответили."""
-    try:
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                'UPDATE message SET is_answered = 1 '
-                " WHERE profile_id = %s AND sender_uid = %s AND direction = 'in' AND is_answered = 0",
-                (profile_id, str(to_uid)[:32]))
-            await db.connection.commit()
-    except Exception as e:
-        logger_info(f'[dating] пометка «отвечено» не проставилась: {e}')
-
-
-def _fail(error: str) -> dict:
-    return {'ok': False, 'error': error, 'offline': False,
-            'response': '', 'message_uid': ''}
-
-
-async def _note_send(profile: dict, presence: dict, send: dict, transport: str,
-                     to_uid: str, text: str, got: dict, started: float) -> None:
-    """Строка журнала об отправке реплики — любым путём.
-
-    ⚠ **Одна строка на одну отправку, включая неудачную.** Журнал отвечает на
-    вопрос «сколько раз мы постучались к сайту», и отказ — такой же стук, как
-    удача. Неотправленное сообщение в переписку не ложится (`result['ok']`), и
-    без этой строки его след пропадал бы совсем.
-
-    ⚠ **Текста реплики здесь нет, только длина.** Журнал читают в консоли и
-    копируют в переписку; сам разговор живёт в `message`, и второй его копии в
-    таблице на 52 тысячи строк в сутки не нужно. Длина же отвечает на живой
-    вопрос «не обрезал ли сайт сообщение».
-
-    ⚠ `ok` берётся из разбора ответа, **а не из кода HTTP**: у LadaDate признак
-    удачи это поле `IsSuccess` в теле, и `200` с отказом внутри — обычное дело.
-    """
-    from src.dating.request import (REQUEST_SEND, request_ms, request_write)
-
-    if transport == 'ws':
-        # Адрес сокета без параметров: в строке у некоторых сайтов едет токен
-        # сессии, а журнал читают глазами и копируют в переписку.
-        where = str(profile.get('ws_url') or '').split('?')[0]
-        method = 'WS'
-    elif transport == 'scenario':
-        where = 'сценарий у соседа'
-        method = 'RUN'
-    else:
-        where = str(send.get('path') or '')
-        method = 'POST'
-
-    await request_write(
-        door=REQUEST_SEND, profile_id=int(profile.get('id') or 0),
-        site_id=int(profile.get('site_id') or 0), method=method,
-        path=f'{where} → {to_uid} ({len(str(text or ""))} зн.)',
-        status=int(got.get('status') or 0), ok=bool(got.get('ok')),
-        error=str(got.get('error') or ''), ms=request_ms(started),
-        proxy_ip=str(profile.get('proxy_ip') or ''),
-        body=str(got.get('response') or ''))
-
-

@@ -69,7 +69,7 @@ def saved(monkeypatch):
     async def _mark(profile_id, to_uid):
         return None
 
-    monkeypatch.setattr(send, '_message_save', _save)
+    monkeypatch.setattr(send, 'send_message_remember', _save)
     monkeypatch.setattr(send, '_answered_mark', _mark)
 
     return rows

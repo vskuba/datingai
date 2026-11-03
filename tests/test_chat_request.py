@@ -839,3 +839,72 @@ class TestNoNameIsDefinedTwice:
         assert not twice, (
             f'{name}: {", ".join(twice)} определены дважды — побеждает '
             f'второе, и вызовы первого падают уже в работе')
+
+
+class TestTheUnreadLineIsNotInTheTalk:
+    """⚠⚠⚠ Непрочитанной реплике не место в окне диалога.
+
+    Ушедшее приглашением лежит у собеседника в списке запросов; до галочки он
+    его не читал, то есть разговора по-прежнему нет. Правило не новое — ровно
+    по нему в переписку не пишутся инвайты («приглашение не разговор»).
+
+    Замер 03.11.2026: две реплики (17:01 и 18:19) висели в окне у пары
+    Anastasiya ↔ Semen, хотя оба приглашения истекли, а строки пула были уже
+    убраны. Оператор читает такую строку как сказанную и строит на ней
+    следующий ход.
+    """
+
+    def test_the_send_writes_only_delivered(self):
+        import inspect
+
+        from src.dating import send
+
+        body = inspect.getsource(send.send_message)
+
+        assert 'site_registry_chat(presence).delivered(result)' in body, (
+            'в переписку пишется всё принятое сайтом, включая непрочитанное')
+        assert 'if to_history and' in body, (
+            'правило инвайтов («приглашение не разговор») потерялось')
+
+    def test_the_round_writes_it_when_accepted(self):
+        """⚠ Принял галочку — прочитал, и вот теперь реплика в переписке."""
+        import inspect
+
+        from src.dating import initiative_round
+
+        body = inspect.getsource(initiative_round._invited)
+        head = body[:body.index('await chat_initiative_expired')]
+
+        assert 'send_message_remember' in head, (
+            'принятое приглашение не ложится в переписку — реплика пропадёт '
+            'из окна навсегда, хотя собеседник её прочитал')
+
+    def test_the_round_sweeps_it_when_expired(self):
+        """⚠⚠ Истекло — круг убирает и строку переписки, а не только пула."""
+        import inspect
+
+        from src.dating import initiative_round
+
+        body = inspect.getsource(initiative_round._invited)
+
+        assert 'send_message_forget' in body, (
+            'записанное прежним кодом остаётся висеть в окне — чистить его '
+            'пришлось бы руками')
+
+    def test_the_sweep_needs_three_marks(self):
+        """⚠⚠⚠ Пара, текст и окно времени — каждое условие нужно.
+
+        По одной паре снесло бы разговор; без времени — ту же фразу,
+        сказанную неделю назад и прочитанную; без текста — чужую реплику той
+        же минуты.
+        """
+        import inspect
+
+        from src.dating import send
+
+        body = inspect.getsource(send.send_message_forget)
+
+        assert 'sender_uid = %s' in body, 'уборка не смотрит на собеседника'
+        assert 'text = %s' in body, 'уборка сносит по паре, не глядя на текст'
+        assert 'BETWEEN' in body, 'у уборки нет окна времени'
+        assert "direction = 'out'" in body, 'уборка может задеть его реплику'
