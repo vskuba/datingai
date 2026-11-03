@@ -314,3 +314,57 @@ class TestItDoesNotRefuseRequests:
         assert 'chat_socket_send' in calls
         assert 'chat_socket_open' in calls
         assert 'AsyncClient' not in calls, 'появился свой клиент мимо транспорта'
+
+
+class TestTheRoundSurvivesItsOwnPass:
+    """⚠⚠⚠ Первый сторож всякого круга — «заход не бросает».
+
+    Этого теста здесь не было, и цена названа замером: круг выложили с `key`
+    без `every`, слой отказал на первой же строке, и заход падал **каждые
+    пятнадцать секунд** десять минут подряд. Снаружи он при этом выглядел
+    живым: панель ничего не показывала, лента молчала, строка стояла только
+    в логах воркера (`docker logs dating_worker`).
+
+    Сюита этого не поймала, потому что круга в ней не было вовсе — проверялись
+    только чтение и приём. Отсюда правило: у круга обязан быть сторож на
+    **сам заход**, а не только на то, что он зовёт.
+    """
+
+    async def test_the_pass_does_not_throw_when_a_site_fails(self, monkeypatch):
+        """Сайт отвечает отказом — заход возвращает итог, а не исключение."""
+        from src.dating import chat_request_round
+
+        async def sites(**kw):
+            return [{'site_id': 999_345}, {'site_id': 999_346}]
+
+        async def boom(site_id):
+            raise RuntimeError('сайт недоступен')
+
+        monkeypatch.setattr(chat_request_round, 'round_sites', sites)
+        monkeypatch.setattr(chat_request_round, 'site_presence', boom)
+
+        out = await chat_request_round.chat_request_round_run()
+
+        assert out['taken'] == 0, 'отказ сайта не должен давать принятых'
+
+    async def test_the_slot_asks_for_a_span(self):
+        """⚠ `key` без `every` слой **отвергает**: срок отметки взять негде.
+
+        Проверяется не число, а то, что срок вообще спрашивается: именно его
+        отсутствие уронило круг на проде.
+        """
+        import inspect
+
+        from src.dating import chat_request_round
+
+        body = inspect.getsource(chat_request_round.chat_request_round_run)
+
+        assert 'key=' in body, 'слот у круга пропал'
+        assert 'every=' in body, 'слот задан без срока — заход упадёт целиком'
+
+    async def test_the_span_equals_the_tick(self):
+        """Срок слота — тик: слот тут от наложения заходов, а не для темпа."""
+        from src.dating.chat_request_round import (
+            CHAT_REQUEST_ROUND_TICK_SEC, _every)
+
+        assert await _every(999_345) == CHAT_REQUEST_ROUND_TICK_SEC
