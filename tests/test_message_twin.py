@@ -641,25 +641,60 @@ class TestTheSiteEatsCharacters:
         assert got['added'] == 0, 'импорт завёл близнеца с порченым текстом'
         assert len(await _all(profile_id, uid)) == 1
 
-    async def test_the_list_is_what_we_have_seen_eaten(self):
-        """⚠⚠ В списке стоит только то, чью потерю **видели**.
+    async def test_the_skeleton_needs_no_list_of_damages(self):
+        """⚠⚠⚠ Сравниваются скелеты, а не тексты со списком поправок.
 
-        Эмодзи здесь нет намеренно: их не удаляют, а искажают, и чинят раньше —
-        на входе, общим `text_emoji_same`. Добавить их сюда значило бы завести
-        второе место, где лечат одну беду.
+        Список здесь стоял и был отменён **третьим случаем подряд**: сайт
+        съедает апостроф, панель меняет эмодзи на `?`, а до них эмодзи
+        приезжал искажённым. Каждый раз список дописывали после того, как
+        дубль уже висел у человека на экране.
+
+        Замер 04.11.2026 на всей переписке: скелет и список ловят **одни и те
+        же 67 пар** — то есть широта не стоила ничего, а узость требовала
+        дописывания.
         """
-        from src.dating.message_twin import MESSAGE_TWIN_EATEN
+        import inspect
 
-        assert MESSAGE_TWIN_EATEN == ('’',), \
-            'список съедаемого изменился — проверь, чем это замерено'
+        from src.dating import message_twin
+
+        # ⚠ Смотрим **собранное условие**, а не тело функции: выражение
+        # живёт в константе, и проверка по исходнику краснела бы от переноса.
+        assert 'alnum' in message_twin.message_twin_clean('m.text'), (
+            'сравнение вернулось к списку знаков')
+        assert not hasattr(message_twin, 'MESSAGE_TWIN_EATEN'), (
+            'список съедаемого вернулся — он требует дописывания после каждой '
+            'новой порчи, см. шапку модуля')
+
+    async def test_the_damaged_emoji_is_a_twin_now(self, pair):
+        """⚠⚠ Живая пара 04.11.2026: панель заменила `😂` на `?`.
+
+        Мы отправили 267 знаков, панель записала 265 — эмодзи стал `?`, два
+        апострофа пропали. Ни один список этого не предусматривал.
+        """
+        profile_id, uid = pair
+        at = '2026-11-04 00:51:13'
+        ours = ("yelled 'who added that?!' \U0001F602 i had to explain it was my "
+                'feline muse. what’s your favorite snack when you’re scrolling?')
+        theirs = ("yelled 'who added that?!' ? i had to explain it was my "
+                  'feline muse. whats your favorite snack when youre scrolling?')
+
+        mine = await _put(profile_id, uid, ours, 'ulid-emo2', 'socket', at)
+        await _put(profile_id, uid, theirs, 'panel:900', 'panel',
+                   '2026-11-04 00:51:12')
+
+        seen = await _seen(profile_id, uid)
+
+        assert len(seen) == 1, f'реплика двоится из-за замены эмодзи: {seen}'
+        assert seen[0]['id'] == mine, 'спрятали свою строку вместо отражения'
 
     async def test_an_empty_remainder_is_not_a_twin(self, pair):
         """⚠⚠ Защита обратной стороны: реплика из одних съедаемых знаков."""
         profile_id, uid = pair
         at = '2026-11-03 12:05:00'
 
-        await _put(profile_id, uid, '’', 'ulid-apo', 'socket', at)
-        await _put(profile_id, uid, '’’', 'panel:2', 'panel', at)
+        # ⚠ Знаки без букв и цифр: скелет у обоих пуст.
+        await _put(profile_id, uid, '!!!', 'ulid-apo', 'socket', at)
+        await _put(profile_id, uid, '???', 'panel:2', 'panel', at)
 
         seen = await _seen(profile_id, uid)
 
@@ -683,24 +718,40 @@ class TestTheSiteEatsCharacters:
 
         assert len(seen) == 2, f'короткая панельная строка съедена: {seen}'
 
-    async def test_punctuation_still_tells_replies_apart(self, pair):
-        """⚠⚠⚠ Знак препинания по-прежнему различает реплики.
+    async def test_punctuation_no_longer_tells_replies_apart(self, pair):
+        """⚠⚠⚠ Цена скелета: «Yes!» и «Yes?» он считает одной репликой.
 
-        Ради этого список узкий. Широкая редакция — «оставить только буквы и
-        цифры» — на замере прода не находила **ничего** сверх узкой (66 из 77
-        у обеих), зато слила бы «Yes!» с «Yes?». А это не выдумка: оператор
-        пишет руками прямо в панели (`chat_history_said`), и его реплика
-        исчезла бы с экрана как «отражение» нашей.
+        Это **принятый размен**, а не упущение, и тест стоит здесь затем,
+        чтобы следующий читатель увидел цену, а не наткнулся на неё.
+
+        Что взвешивали. Замер 04.11.2026 на всей переписке (1434 исходящих):
+        скелет и прежний список съедаемых знаков ловят **одни и те же 67
+        пар** — узость не находила ничего сверх широты, зато требовала
+        дописывания после каждой новой порчи, и каждый раз уже после того, как
+        дубль повисел у человека на экране.
+
+        ⚠ Риск узкий: спрятаться может только **операторская** реплика из
+        панели, совпавшая с нашей по всем буквам и отличная одним знаком. На
+        живых данных таких пар нет ни одной. На качество ответов агента это не
+        влияет: наши тексты лежат у соседа в оригинале — их докладывает та
+        дорога, что сочинила, — а панельный уезжает к нему только
+        операторскими репликами, которых у него нет вовсе.
+
+        ⚠⚠ Появится такой случай — лечить **не возвратом к списку**, а
+        признаком, по которому операторская реплика отличается от нашей.
         """
         profile_id, uid = pair
         at = '2026-11-03 12:15:00'
 
-        await _put(profile_id, uid, 'Yes!', 'ulid-bang', 'socket', at)
+        ours = await _put(profile_id, uid, 'Yes!', 'ulid-bang', 'socket', at)
         await _put(profile_id, uid, 'Yes?', 'panel:4', 'panel', at)
 
         seen = await _seen(profile_id, uid)
 
-        assert len(seen) == 2, f'реплики слились по одному знаку: {seen}'
+        assert len(seen) == 1, (
+            'скелет перестал считать «Yes!» и «Yes?» одним — проверьте, не '
+            'вернулся ли список знаков')
+        assert seen[0]['id'] == ours, 'спрятали свою строку вместо панельной'
 
 
 class TestTheValuesComeFromTheRule:

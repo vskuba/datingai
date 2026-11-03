@@ -310,3 +310,64 @@ class TestTheAnswerKeepsItsShape:
 
         assert set(out) >= {'ok', 'offline', 'response', 'message_uid', 'error'}
         assert out['message_uid'] == UID, 'номер реплики возвращается и при отказе'
+
+
+class TestARefusedInviteIsNotOffline:
+    """⚠⚠⚠ Отказ сайта на приглашение — не «он отошёл».
+
+    `offline` вызывающие читают как состояние: инвайт по нему возвращает
+    строку в пул **чистой**, без причины, чтобы взять её снова, когда человек
+    вернётся. Отказ, прошедший под этим флагом, становится вечным циклом —
+    круг берёт ту же строку, получает тот же отказ, очередь не двигается.
+
+    Замер 04.11.2026: сайт отвечал «target» на приглашение к `356312`, и за
+    пять минут ушло **54 попытки** к одному человеку. В пуле при этом лежало
+    76 разных людей и **ни одной** строки с причиной — все вернулись чистыми.
+    """
+
+    async def test_a_refusal_keeps_offline_false(self, monkeypatch):
+        from src.dating import send_connection
+
+        async def open_(*a, **kw):
+            return {'client': None, 'socket_id': 'sid', 'frames': []}
+
+        async def refused(*a, **kw):
+            return {'ok': False, 'response': '',
+                    'error': 'сайт не принял кадр: target'}
+
+        monkeypatch.setattr(send_connection, 'chat_socket_open', open_)
+        monkeypatch.setattr(
+            'src.dating.chat_request.chat_request_create', refused)
+
+        got = await send_connection.send_connection_run(
+            PROFILE, PRESENCE, PRESENCE['send'], MAN, 'hi', 'uid-1',
+            may_invite=True)
+
+        assert got['ok'] is False
+        assert got['offline'] is False, (
+            'отказ выдан за «он отошёл» — строка вернётся в пул чистой, и '
+            'круг будет биться об неё бесконечно')
+        assert 'target' in got['error'], 'причина отказа потерялась'
+
+    async def test_a_success_still_waits(self, monkeypatch):
+        """⚠ А удача по-прежнему `offline`: ушло, но ещё не прочитано."""
+        from src.dating import send_connection
+
+        async def open_(*a, **kw):
+            return {'client': None, 'socket_id': 'sid', 'frames': []}
+
+        async def sent(*a, **kw):
+            return {'ok': True, 'response': '', 'error': ''}
+
+        monkeypatch.setattr(send_connection, 'chat_socket_open', open_)
+        monkeypatch.setattr(
+            'src.dating.chat_request.chat_request_create', sent)
+
+        got = await send_connection.send_connection_run(
+            PROFILE, PRESENCE, PRESENCE['send'], MAN, 'hi', 'uid-1',
+            may_invite=True)
+
+        assert got['ok'] is True
+        assert got['offline'] is True, (
+            'удача приглашения выдана за доставку: строка пула закроется, а '
+            'собеседник его ещё не открыл')

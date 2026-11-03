@@ -54,6 +54,19 @@ router = APIRouter(prefix='/api/dating/invite', tags=['dating'])
 # глазами, и тысяча карточек в нём не нужна никому.
 INVITE_LIMIT = 300
 
+# Сколько строк журнала доставки на странице. ⚠ Двадцать пять, а не сотня:
+# строка высокая — в ней обе стороны, текст реплики и ответ сайта.
+INVITE_DELIVERY_PER = 25
+
+# Что считается доставкой. ⚠⚠ Одной строкой на **оба** источника и на счёт с
+# выборкой: разойдись они, число страниц перестало бы отвечать содержимому.
+#
+# ⚠ «Всё про доставку» — статусы плюс черновики с причиной отказа: неудачная
+# отправка оставляет строку в пуле, и по статусу её от нетронутой не отличить.
+INVITE_DELIVERY_WHERE = (" AND ({alias}.status IN ('sent', 'failed')"
+                         "      OR ({alias}.status = 'draft'"
+                         "          AND {alias}.error <> ''))")
+
 
 class DatingInviteGenerate(BaseModel):
     """Повод набрать пул: один шаблон от агента, карточки — подстановкой."""
@@ -334,6 +347,117 @@ async def invite_drop(invite_id: int,
     return await pool_handle_drop('invite', invite_id,
                                   missing='инвайта нет',
                                   sent='инвайт уже ушёл — его не убрать')
+
+
+@router.get('/delivery', include_in_schema=False)
+async def invite_delivery(site_id: int = 0, profile_id: int = 0, uid: str = '',
+                          page: int = 1, per: int = 0,
+                          user: AuthUser = Depends(auth_required)):
+    """Журнал доставки чата: **инвайты и инициатива одним списком**, страницей.
+
+    Args:
+        site_id: сайт-закладка. Ноль — пустой список.
+        profile_id: только реплики этой анкеты. Ноль — всех.
+        uid: только реплики этому собеседнику. Пусто — всем.
+        page: страница, с единицы. Больше последней — отдаём последнюю.
+        per: сколько строк на ней. Ноль — умолчание.
+
+    Returns:
+        dict: `result` — строки обоих родов, свежие сверху, у каждой `kind`
+        (`invite` — первая реплика незнакомому, `initiative` — возврат к
+        затихшему разговору). Рядом `total`, `page`, `pages`.
+
+    ## ⚠⚠⚠ Почему источников два
+
+    Наружу в чат уходит **два занятия**, а журнал показывал одно. У сайта, где
+    инвайты не настроены, вкладка отвечала «инвайтов с этого сайта пока не
+    уходило» при десятке ушедших инициатив — то есть врала ровно тем, кто
+    пришёл проверить, ушла ли реплика (замер 04.11.2026, Step2Love: `invite`
+    200 строк и ни одной ушедшей, `chat_initiative` — ушедшая есть).
+
+    ⚠ **Метку `kind` ставит сервер.** Карточки выглядят одинаково («Anastasiya
+    → Semen»), а вещи разные: первая реплика незнакомому и возврат к тому, кто
+    замолчал. Угадывать род по набору полей страница не должна.
+
+    ## ⚠⚠ Почему ручка одна, а не два запроса
+
+    Тот же довод, что у журнала писем (`mailing_delivery`): со страницами
+    слить нельзя. «Вторая страница инвайтов» плюс «вторая страница
+    инициативы» — не вторая страница журнала, и число страниц по такому
+    слиянию посчитать нечем.
+
+    ⚠ Приём слияния тот же: взять по `page * per` свежих из каждой таблицы,
+    слить и отрезать нужный кусок — за этот предел строки не попадут ни при
+    каком порядке. Цена растёт с номером страницы, и это осознанно: журнал
+    читают с первых.
+    """
+    if not int(site_id or 0):
+        # ⚠ Поля пейджера есть и в пустом ответе: страница читает их без
+        # проверок, и `pages: undefined` нарисовало бы мёртвый пейджер.
+        return {'result': [], 'page': 1, 'pages': 1, 'total': 0}
+
+    per = min(int(per or 0) or INVITE_DELIVERY_PER, INVITE_LIMIT)
+    page = max(1, int(page or 1))
+
+    # ⚠ Отбор именами — общей `pool_pick_where`, той же, что у журналов писем:
+    # условие одно, и разойдись счёт с выборкой, число страниц перестало бы
+    # отвечать содержимому.
+    one, one_args = pool_pick_where('i', int(profile_id), str(uid or ''))
+    two, two_args = pool_pick_where('c', int(profile_id), str(uid or ''))
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT (SELECT COUNT(*) FROM invite i WHERE i.site_id = %s'
+            + INVITE_DELIVERY_WHERE.format(alias='i') + one +
+            ') AS invites,'
+            ' (SELECT COUNT(*) FROM chat_initiative c WHERE c.site_id = %s'
+            + INVITE_DELIVERY_WHERE.format(alias='c') + two +
+            ') AS talks',
+            tuple([int(site_id)] + one_args + [int(site_id)] + two_args))
+        counts = (await db.fetchone()) or {}
+        total = int(counts.get('invites') or 0) + int(counts.get('talks') or 0)
+
+        pages = max(1, -(-total // per))
+        # ⚠ Страницу поправляем, а не отвергаем: журнал мог укоротиться, пока
+        # человек листал, и отказ читался бы как поломка.
+        page = min(page, pages)
+        take = page * per
+
+        rows = []
+        for table, alias, kind, pick, pick_args in (
+                ('invite', 'i', 'invite', one, one_args),
+                ('chat_initiative', 'c', 'initiative', two, two_args)):
+            await db.execute(
+                f'SELECT {alias}.id, {alias}.site_id, {alias}.profile_id,'
+                f' {alias}.uid, {alias}.name, {alias}.body, {alias}.status,'
+                f' {alias}.error, {alias}.sent_at, {alias}.created_at,'
+                f' {alias}.updated_at,'
+                ' p.login AS profile_login, p.profile AS profile_card'
+                f'  FROM {table} {alias}'
+                f'  LEFT JOIN profile p ON p.id = {alias}.profile_id'
+                f' WHERE {alias}.site_id = %s'
+                + INVITE_DELIVERY_WHERE.format(alias=alias) + pick +
+                # ⚠ **По времени события, а не по номеру строки**: `id` — это
+                # порядок сочинения, а журнал про отправку. У неудачной
+                # `sent_at` снят самой неудачей, и временем остаётся
+                # `updated_at`.
+                f' ORDER BY COALESCE({alias}.sent_at, {alias}.updated_at) DESC,'
+                f' {alias}.id DESC LIMIT %s',
+                tuple([int(site_id)] + pick_args + [take]))
+
+            for row in (await db.fetchall() or []):
+                got = _answer(row)
+                got['kind'] = kind
+                rows.append(got)
+
+    # ⚠ Слияние — по тому же ключу, по какому сортировал каждый источник:
+    # иначе страница собралась бы из строк, отобранных одним порядком и
+    # показанных другим.
+    rows.sort(key=lambda one: (one.get('sent_at') or one.get('updated_at')
+                               or '', int(one.get('id') or 0)), reverse=True)
+
+    return {'result': rows[(page - 1) * per:page * per],
+            'total': total, 'page': page, 'pages': pages}
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

@@ -1097,3 +1097,71 @@ class TestAPairIsCalledOnlyOnce:
 
         assert not bare, (
             f'состояние написано строкой мимо константы: {bare}')
+
+
+class TestTheChatDeliveryMergesBothKinds:
+    """⚠⚠⚠ Журнал доставки чата сливает **два** занятия, а показывал одно.
+
+    Наружу в чат уходит и инвайт, и инициатива. Вкладка спрашивала только
+    инвайты и у сайта, где их нет, отвечала «инвайтов пока не уходило» при
+    ушедшей инициативе — то есть врала ровно тем, кто пришёл проверить, ушла
+    ли реплика (замер 04.11.2026, Step2Love: `invite` 200 строк и ни одной
+    ушедшей, `chat_initiative` — ушедшая есть).
+    """
+
+    def test_the_handle_asks_both_tables(self):
+        import inspect
+
+        from src.uvicorn.routers.dating import invite
+
+        body = inspect.getsource(invite.invite_delivery)
+
+        assert 'chat_initiative' in body, 'журнал не видит инициативу'
+        assert "'invite'" in body and "'initiative'" in body, (
+            'род строки не помечен — страница не отличит первую реплику '
+            'незнакомому от возврата к замолчавшему')
+
+    def test_the_condition_is_one_for_both(self):
+        """⚠⚠ Условие доставки — одной строкой на оба источника и на счёт с
+        выборкой: разойдись они, число страниц перестало бы отвечать
+        содержимому."""
+        from src.uvicorn.routers.dating.invite import INVITE_DELIVERY_WHERE
+
+        for alias in ('i', 'c'):
+            got = INVITE_DELIVERY_WHERE.format(alias=alias)
+
+            assert f'{alias}.status' in got
+            assert f"{alias}.error <> ''" in got, (
+                'неудачная отправка оставляет строку в пуле — по статусу её от '
+                'нетронутой не отличить')
+
+    def test_the_page_calls_the_merging_handle(self):
+        """⚠ И страница ходит именно туда, а не в пул со статусом."""
+        page = Path(
+            'data/uvicorn/template/admin/dating/profile.html').read_text()
+
+        assert '/api/dating/invite/delivery?site_id=' in page
+        assert 'invite?site_id=${site}&status_=delivery' not in page, (
+            'страница вернулась к пулу — инициатива снова пропадёт из журнала')
+
+    def test_each_kind_is_named_on_the_row(self):
+        """⚠ Инвайт без чипса, как рассылка у писем: в своём журнале он
+        большинство, и чипс у каждой второй строки ничего не выделял бы."""
+        page = Path(
+            'data/uvicorn/template/admin/dating/profile.html').read_text()
+
+        box = page[page.index('const SENT_KINDS = {'):]
+        box = box[:box.index('};')]
+
+        assert "invite: ''" in box, 'у инвайта завёлся чипс'
+        assert 'initiative:' in box and 'инициатива' in box, (
+            'инициатива в журнале неотличима от инвайта')
+
+    def test_the_empty_text_speaks_of_both(self):
+        """⚠ Пустота тоже про оба занятия, а не про одни инвайты."""
+        page = Path(
+            'data/uvicorn/template/admin/dating/profile.html').read_text()
+
+        assert 'Из чата с этого сайта пока' in page
+        assert 'Инвайтов с этого сайта ' not in page, (
+            'пустой журнал снова говорит только про инвайты')
