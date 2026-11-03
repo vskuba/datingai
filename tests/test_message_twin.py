@@ -641,31 +641,29 @@ class TestTheSiteEatsCharacters:
         assert got['added'] == 0, 'импорт завёл близнеца с порченым текстом'
         assert len(await _all(profile_id, uid)) == 1
 
-    async def test_an_eaten_emoji_is_a_twin_too(self, pair):
-        """⚠ Правило закрывает и прежнюю грабли: смайлик в скелет не входит."""
-        profile_id, uid = pair
-        at = '2026-11-03 12:00:00'
+    async def test_the_list_is_what_we_have_seen_eaten(self):
+        """⚠⚠ В списке стоит только то, чью потерю **видели**.
 
-        ours = await _put(profile_id, uid, 'see you tomorrow 😉', 'ulid-emo',
-                          'socket', at)
-        await _put(profile_id, uid, 'see you tomorrow', 'panel:1', 'panel', at)
+        Эмодзи здесь нет намеренно: их не удаляют, а искажают, и чинят раньше —
+        на входе, общим `text_emoji_same`. Добавить их сюда значило бы завести
+        второе место, где лечат одну беду.
+        """
+        from src.dating.message_twin import MESSAGE_TWIN_EATEN
 
-        seen = await _seen(profile_id, uid)
+        assert MESSAGE_TWIN_EATEN == ('’',), \
+            'список съедаемого изменился — проверь, чем это замерено'
 
-        assert len(seen) == 1 and seen[0]['id'] == ours
-
-    async def test_two_emoji_only_replies_are_not_twins(self, pair):
-        """⚠⚠ Защита обратной стороны: у текста из одних смайликов скелет пуст,
-        и без проверки на пустоту он совпал бы с любым другим таким же."""
+    async def test_an_empty_remainder_is_not_a_twin(self, pair):
+        """⚠⚠ Защита обратной стороны: реплика из одних съедаемых знаков."""
         profile_id, uid = pair
         at = '2026-11-03 12:05:00'
 
-        await _put(profile_id, uid, '😉', 'ulid-wink', 'socket', at)
-        await _put(profile_id, uid, '👍', 'panel:2', 'panel', at)
+        await _put(profile_id, uid, '’', 'ulid-apo', 'socket', at)
+        await _put(profile_id, uid, '’’', 'panel:2', 'panel', at)
 
         seen = await _seen(profile_id, uid)
 
-        assert len(seen) == 2, f'разные смайлики слились в один: {seen}'
+        assert len(seen) == 2, f'пустые остатки слились в один: {seen}'
 
     async def test_a_short_panel_row_is_not_a_prefix_of_ours(self, pair):
         """⚠⚠ Скелет не превращает правило в «любой префикс».
@@ -685,22 +683,24 @@ class TestTheSiteEatsCharacters:
 
         assert len(seen) == 2, f'короткая панельная строка съедена: {seen}'
 
-    async def test_cyrillic_survives_the_skeleton(self, pair):
-        """⚠ Кириллица — буква и для MySQL: русская реплика не схлопывается.
+    async def test_punctuation_still_tells_replies_apart(self, pair):
+        """⚠⚠⚠ Знак препинания по-прежнему различает реплики.
 
-        Проверка не теоретическая: выпади кириллица из `[:alnum:]`, скелет
-        любого русского текста стал бы пустым, и две разные реплики слились бы
-        в одну.
+        Ради этого список узкий. Широкая редакция — «оставить только буквы и
+        цифры» — на замере прода не находила **ничего** сверх узкой (66 из 77
+        у обеих), зато слила бы «Yes!» с «Yes?». А это не выдумка: оператор
+        пишет руками прямо в панели (`chat_history_said`), и его реплика
+        исчезла бы с экрана как «отражение» нашей.
         """
         profile_id, uid = pair
         at = '2026-11-03 12:15:00'
 
-        await _put(profile_id, uid, 'Привет, как дела?', 'ulid-ru', 'socket', at)
-        await _put(profile_id, uid, 'Добрый день', 'panel:4', 'panel', at)
+        await _put(profile_id, uid, 'Yes!', 'ulid-bang', 'socket', at)
+        await _put(profile_id, uid, 'Yes?', 'panel:4', 'panel', at)
 
         seen = await _seen(profile_id, uid)
 
-        assert len(seen) == 2, f'разные русские реплики слились: {seen}'
+        assert len(seen) == 2, f'реплики слились по одному знаку: {seen}'
 
 
 class TestTheValuesComeFromTheRule:
