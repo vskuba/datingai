@@ -80,6 +80,7 @@ from src.dating.round import (round_mem_due, round_mem_mark, round_sites,
                               round_sites_run)
 from src.dating.online import online_check
 from src.dating.send import send_message
+from src.dating.site.site_registry import site_registry_chat
 from src.dating.site_setting import site_seconds
 from src.dating.chat_intention import chat_intention_delivered
 from src.rhapsody.rhapsody_api import rhapsody_api_chat_delivered
@@ -251,24 +252,48 @@ async def _send(site_id: int) -> int:
         # забывчивость: он отвечает на свежую реплику, то есть на живой
         # разговор. Закрылся тот между его словами и нашими — человек ушёл, и
         # ответ дождётся его возвращения.
-        result = await send_message(profile, await _presence(site_id), uid,
+        presence = await _presence(site_id)
+        result = await send_message(profile, presence, uid,
                                     str(card['body']), may_invite=True)
 
         if result['ok']:
             await chat_initiative_sent(int(card['id']))
-            # ⚠⚠ Доставку отмечаем только у ушедшего: сосед записал обмен внутри
-            # прогона, то есть до того, как мы постучались к сайту знакомств.
-            # Номер дожил до сюда в строке пула — карточку сочинял другой круг.
+
+            # ⚠⚠⚠ **«Ушло» и «дошло» — разные вещи, и решает это драйвер.**
+            #
+            # Там, где разговор открывается приглашением (Step2Love), текст
+            # лежит у собеседника в списке запросов и ждёт галочки. Не нажал —
+            # сайт стирает запрос по своему сроку, и реплику не читал никто.
+            # Замер 03.11.2026: инициатива Anastasiya → Semen ушла
+            # приглашением в 17:01:28, к 17:30 запроса не было ни в списке
+            # анкеты, ни в панели, чат не открылся — а обмен #4730 у соседа
+            # стоял «доставлен».
+            #
+            # ⚠⚠ Спрашиваем **драйвер**, а не `if` по месту: тот же ответ
+            # нужен инвайтам и ручной кнопке, и три копии правила разошлись бы
+            # по сайтам — у Ladadate приглашений нет вовсе, и «доставлено» там
+            # значит просто «ушло» (`site/site_chat_step2love.py`).
+            #
+            # ⚠ Цена лжи та же, что у правки черновика руками: агент считает
+            # реплику сказанной и продолжает разговор от непрочитанного.
+            # Расхождение молчаливое, всплывает странным ответом через неделю.
+            delivered = site_registry_chat(presence).delivered(result)
             said = int(card.get('talk_message_id') or 0)
-            await rhapsody_api_chat_delivered(said)
-            # ⚠⚠ Реплика дошла — обещание из неё становится настоящим. Без
-            # этой строки намерение висело бы ждущим вечно, и письмо по нему
-            # не ушло бы никогда (`chat_intention.py`).
-            await chat_intention_delivered(said)
+
+            if delivered:
+                # ⚠⚠ Сосед записал обмен внутри прогона, то есть до того, как
+                # мы постучались к сайту знакомств. Номер дожил до сюда в
+                # строке пула — карточку сочинял другой круг.
+                await rhapsody_api_chat_delivered(said)
+                # ⚠⚠ Реплика дошла — обещание из неё становится настоящим.
+                # Без этой строки намерение висело бы ждущим вечно, и письмо
+                # по нему не ушло бы никогда (`chat_intention.py`).
+                await chat_intention_delivered(said)
+
             # ⚠ Приглашением или репликой — человеку это разные вещи, и
             # журнал обязан различать: у приглашения текст ждёт в списке
             # запросов, пока собеседник не нажмёт галочку.
-            how = ' приглашением' if result.get('offline') else ''
+            how = '' if delivered else ' приглашением (ждёт принятия)'
             await log_write(int(card['profile_id']), 'out',
                             f"Инициатива{how} → {who}: "
                             f"«{str(card['body'])[:300]}»")

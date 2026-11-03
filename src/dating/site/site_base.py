@@ -89,35 +89,6 @@ class DatingSiteChat:
         self.chat = dict(presence.get('chat') or {})
         self.send = dict(presence.get('send') or {})
 
-    # ── Умолчания. Подкласс сайта переопределяет их, а не разбор ────────────
-
-    def _default_subprotocol(self) -> str:
-        return ''
-
-    def _default_hello(self) -> tuple:
-        return ()
-
-    def _default_ask(self) -> tuple:
-        return ()
-
-    def _default_incoming(self) -> dict:
-        return {}
-
-    def _default_pending(self) -> dict:
-        return {}
-
-    def _default_confirm(self) -> dict:
-        return {}
-
-    def _default_send_frame(self) -> dict:
-        return {}
-
-    def _default_before(self) -> tuple:
-        return ()
-
-    def _default_ack(self) -> dict:
-        return {}
-
     # ── Соединение ──────────────────────────────────────────────────────────
 
     def subprotocol(self) -> str:
@@ -234,6 +205,36 @@ class DatingSiteChat:
                 'method': method, 'messageIdForConfirm': uid}
 
     # ── Отправка ────────────────────────────────────────────────────────────
+
+    def invites(self) -> bool:
+        """Открывается ли разговор **приглашением**, а не просто репликой.
+
+        ⚠⚠ `False` у всех, кроме сайтов, где чат — отдельный объект, который
+        собеседник открывает согласием. У прочих написать можно всегда, и
+        «нет открытого чата» у них не бывает в принципе.
+        """
+        return False
+
+    def delivered(self, result: dict) -> bool:
+        """Считается ли этот исход отправки **доставкой**.
+
+        Args:
+            result: ответ `send_message` — пятёрка `ok`/`offline`/…
+
+        Returns:
+            bool: дошло ли до собеседника.
+
+        ⚠⚠⚠ Вопрос драйверу, а не развилка по месту. «Ушло» и «дошло» у сайтов
+        разные вещи: там, где разговор открывается приглашением, текст лежит в
+        списке запросов, пока его не примут, — и может не дойти вовсе. Спроси
+        об этом `if` в круге, и правка под один сайт молча меняла бы отметки
+        другому.
+
+        ⚠ От этого ответа зависит, что запомнит **агент**: отмеченное
+        доставленным он считает сказанным и продолжает разговор от него. Соври
+        здесь — и он ответит на реплику, которой собеседник не читал.
+        """
+        return bool(result.get('ok'))
 
     def message_uid(self) -> str:
         """Идентификатор отправляемого сообщения.
@@ -386,6 +387,40 @@ class DatingSiteChat:
             return json.loads(raw)
         except Exception:
             return None
+
+
+    # ── Умолчания. ⚠ Приватные — внизу, как велит правило порядка
+    #    (`code_rules.md`, §3). Подкласс сайта переопределяет **их**,
+    #    а не разбор: тронь разбор — и правка под один сайт молча
+    #    поменяла бы кадры всем остальным.
+    # ──────────────────────────────────────────────────────────────
+
+    def _default_subprotocol(self) -> str:
+        return ''
+
+    def _default_hello(self) -> tuple:
+        return ()
+
+    def _default_ask(self) -> tuple:
+        return ()
+
+    def _default_incoming(self) -> dict:
+        return {}
+
+    def _default_pending(self) -> dict:
+        return {}
+
+    def _default_confirm(self) -> dict:
+        return {}
+
+    def _default_send_frame(self) -> dict:
+        return {}
+
+    def _default_before(self) -> tuple:
+        return ()
+
+    def _default_ack(self) -> dict:
+        return {}
 
 
 def site_base_render(template: str, to_uid: str, text: str, message_uid: str) -> str:

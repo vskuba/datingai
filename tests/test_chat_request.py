@@ -542,3 +542,131 @@ class TestOnlyTheFirstReplyMayInvite:
         body = inspect.getsource(initiative_round)
 
         assert 'приглашением' in body
+
+
+class TestTheDriverDecidesWhatDeliveredMeans:
+    """⚠⚠⚠ «Ушло» и «дошло» — разные вещи, и решает это драйвер сайта.
+
+    Там, где разговор открывается приглашением, текст лежит у собеседника в
+    списке запросов и ждёт галочки. Не нажал — сайт стирает запрос по своему
+    сроку, и реплику не читал никто.
+
+    Замер 03.11.2026: инициатива Anastasiya → Semen ушла приглашением в
+    17:01:28; к 17:30 запроса не было ни в списке анкеты, ни в панели, чат не
+    открылся — а обмен #4730 у соседа стоял «доставлен».
+
+    Цена лжи та же, что у правки черновика руками: агент считает реплику
+    сказанной и продолжает разговор от непрочитанного.
+    """
+
+    def test_a_site_with_invites_does_not_count_them(self):
+        from src.dating.site.site_registry import site_registry_chat
+
+        driver = site_registry_chat({'driver': 'step2love'})
+
+        assert driver.invites() is True
+        assert driver.delivered({'ok': True, 'offline': True}) is False, (
+            'приглашение считается доставкой — агент продолжит разговор от '
+            'непрочитанного')
+        assert driver.delivered({'ok': True, 'offline': False}) is True
+        assert driver.delivered({'ok': False, 'offline': True}) is False
+
+    @pytest.mark.parametrize('driver', ['ladadate', 'goldenbride', 'base', ''])
+    def test_the_other_sites_keep_the_old_meaning(self, driver):
+        """⚠⚠⚠ У сайта без приглашений «доставлено» значит просто «ушло».
+
+        Самая дорогая ошибка здесь — поправить под новый сайт и молча сменить
+        смысл соседнему: заметно это стало бы не сразу, а странными ответами
+        агента через неделю.
+        """
+        from src.dating.site.site_registry import site_registry_chat
+
+        got = site_registry_chat({'driver': driver})
+
+        assert got.invites() is False
+        assert got.delivered({'ok': True}) is True
+        assert got.delivered({'ok': True, 'offline': True}) is True, (
+            f'{driver}: приглашений у сайта нет, а отметка доставки изменилась')
+        assert got.delivered({'ok': False}) is False
+
+    def test_step2love_keeps_its_chat_driver(self):
+        """⚠⚠ Новый класс — наследник goldenbride, а не базы.
+
+        До него Step2Love брал драйвер чата **по умолчанию**; класс от
+        `DatingSiteChat` молча сменил бы сайту кадры и разбор вместе с
+        появлением одного нового ответа.
+        """
+        from src.dating.site.site_goldenbride import DatingSiteChatGoldenbride
+        from src.dating.site.site_registry import site_registry_chat
+
+        assert isinstance(site_registry_chat({'driver': 'step2love'}),
+                          DatingSiteChatGoldenbride)
+
+    def test_the_round_asks_the_driver(self):
+        """⚠⚠ Круг не судит о доставке сам — иначе правило разойдётся по местам."""
+        import inspect
+
+        from src.dating import initiative_round
+
+        body = inspect.getsource(initiative_round._send)
+
+        assert 'site_registry_chat' in body and '.delivered(' in body, (
+            'круг снова решает про доставку сам')
+        assert "result.get('offline')" not in body.split('delivered')[0], (
+            'в круге осталась своя развилка по `offline`')
+
+
+class TestTheOtherSitesAreUntouched:
+    """⚠⚠⚠ Сайт без приглашений живёт как жил — проверяется по коду.
+
+    Приглашения есть только там, где чат открывается запросом (транспорт
+    `connection`). У Ladadate и прочих отправка идёт ручкой сайта или
+    сценарием, и «нет открытого чата» у них не бывает в принципе.
+    """
+
+    def test_the_flag_reaches_only_the_socket_road(self):
+        """⚠ `may_invite` уходит **единственному** транспорту.
+
+        ⚠⚠ Смотрим **разобранный код**, а не текст построчно: вызов переносят,
+        и проверка по строке краснела бы от переноса, а не от правки.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        from src.dating import send
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(send.send_message)))
+
+        took = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+
+            names = [one.id for one in list(node.args)
+                     + [kw.value for kw in node.keywords]
+                     if isinstance(one, ast.Name)]
+
+            if 'may_invite' in names:
+                took.append(getattr(node.func, 'id', '')
+                            or getattr(node.func, 'attr', ''))
+
+        assert took == ['send_connection_run'], (
+            f'флаг ушёл не только в сокетный транспорт: {took} — приглашения '
+            f'появились бы там, где их не бывает')
+
+    def test_the_http_road_is_never_offline(self):
+        """⚠⚠ У ручки сайта `offline` всегда `False`, и это записано в коде.
+
+        Значит пара «удача и `offline`» — а по ней и различается приглашение —
+        у такого сайта невозможна, и отметка доставки у него прежняя.
+        """
+        import inspect
+
+        from src.dating import send
+
+        body = inspect.getsource(send._send_http)
+
+        assert "'offline': False" in body, (
+            'http-дорога научилась отвечать `offline` — проверьте, не стала '
+            'ли она считаться приглашением')

@@ -35,16 +35,6 @@ PROFILE = {'id': 78, 'site_id': 999_345, 'profile_id': '1803186',
            'storage_state': '{"cookies": []}'}
 
 
-class _Answer:
-    """Ответ сайта: код и тело. ⚠ Код и приговор здесь **разные** вещи."""
-
-    def __init__(self, body, status=200):
-        self._body, self.status_code = body, status
-
-    def json(self):
-        return self._body
-
-
 class TestTheDriverIsChosenBySite:
     """⚠ Сайт со своей дорогой — драйвером, прочие — прежним сценарием."""
 
@@ -236,3 +226,16 @@ class TestTheListComesFromTheSocketFrame:
 
         with pytest.raises(Exception):
             await DatingSiteFavoriteStep2Love(PRESENCE).uids(PROFILE)
+
+
+# ── Приватное ─────────────────────────────────────────────────────────────────
+
+
+class _Answer:
+    """Ответ сайта: код и тело. ⚠ Код и приговор здесь **разные** вещи."""
+
+    def __init__(self, body, status=200):
+        self._body, self.status_code = body, status
+
+    def json(self):
+        return self._body
