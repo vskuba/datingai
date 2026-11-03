@@ -591,3 +591,140 @@ class TestTwoPanelRowsDoNotEatEachOther:
         await _put(profile_id, uid, 'hi', 'ulid-2', 'http', '2026-09-21 12:00:02')
 
         assert len(await _seen(profile_id, uid)) == 2
+
+
+class TestTheSiteEatsCharacters:
+    """⚠⚠⚠ Сайт съедает символы, и равенство текстов этого не переживает.
+
+    Живой случай 03.11.2026, Step2Love, пара Anastasiya → Semen. Мы отправили
+    63 знака с типографским апострофом, сайт записал 62 — апостроф пропал **у
+    него**: кадр его переживает, в сыром HTML панели уже `Hows`, и ровно это
+    видит собеседник. Близнец не узнался ни показом, ни вставкой, и в окне
+    повисли две реплики одной отправки.
+
+    ⚠ Это второй случай той же беды — первым были эмодзи. Там чинилось на
+    входе, потому что символ **искажался**; здесь его **удаляют**, и на входе
+    чинить нечего: `Hows` обратно в `How’s` не превратить.
+    """
+
+    OURS = 'Hi again! How’s your Tuesday going? What brings you here today?'
+    THEIRS = 'Hi again! Hows your Tuesday going? What brings you here today?'
+
+    async def test_the_eaten_apostrophe_is_still_a_twin(self, pair):
+        profile_id, uid = pair
+        at = '2026-11-03 11:52:24'
+
+        assert len(self.OURS) == 63 and len(self.THEIRS) == 62, \
+            'тексты подобраны неверно: съеден должен быть ровно один знак'
+
+        ours = await _put(profile_id, uid, self.OURS, 'ulid-s2l', 'socket', at)
+        await _put(profile_id, uid, self.THEIRS, 'panel:769777', 'panel',
+                   '2026-11-03 11:52:23')
+
+        seen = await _seen(profile_id, uid)
+
+        assert len(seen) == 1, f'реплика двоится из-за съеденного знака: {seen}'
+        assert seen[0]['id'] == ours, 'спрятали свою строку вместо отражения'
+        assert seen[0]['text'] == self.OURS, 'на экране осталась порченая реплика'
+
+    async def test_the_import_does_not_create_it(self, pair):
+        """⚠ Главное — не завести двойника, а не спрятать заведённого."""
+        profile_id, uid = pair
+
+        await _put(profile_id, uid, self.OURS, 'ulid-s2l-2', 'socket',
+                   '2026-11-03 11:52:24')
+
+        got = await chat_panel_save([_row(profile_id, uid, self.THEIRS,
+                                          'panel:769777',
+                                          '2026-11-03 11:52:23')])
+
+        assert got['added'] == 0, 'импорт завёл близнеца с порченым текстом'
+        assert len(await _all(profile_id, uid)) == 1
+
+    async def test_an_eaten_emoji_is_a_twin_too(self, pair):
+        """⚠ Правило закрывает и прежнюю грабли: смайлик в скелет не входит."""
+        profile_id, uid = pair
+        at = '2026-11-03 12:00:00'
+
+        ours = await _put(profile_id, uid, 'see you tomorrow 😉', 'ulid-emo',
+                          'socket', at)
+        await _put(profile_id, uid, 'see you tomorrow', 'panel:1', 'panel', at)
+
+        seen = await _seen(profile_id, uid)
+
+        assert len(seen) == 1 and seen[0]['id'] == ours
+
+    async def test_two_emoji_only_replies_are_not_twins(self, pair):
+        """⚠⚠ Защита обратной стороны: у текста из одних смайликов скелет пуст,
+        и без проверки на пустоту он совпал бы с любым другим таким же."""
+        profile_id, uid = pair
+        at = '2026-11-03 12:05:00'
+
+        await _put(profile_id, uid, '😉', 'ulid-wink', 'socket', at)
+        await _put(profile_id, uid, '👍', 'panel:2', 'panel', at)
+
+        seen = await _seen(profile_id, uid)
+
+        assert len(seen) == 2, f'разные смайлики слились в один: {seen}'
+
+    async def test_a_short_panel_row_is_not_a_prefix_of_ours(self, pair):
+        """⚠⚠ Скелет не превращает правило в «любой префикс».
+
+        Панельное «Ok» не должно прятаться под нашим «Ok, let us meet
+        tomorrow»: панель не резала (текст короче среза), значит совпасть
+        обязано целиком.
+        """
+        profile_id, uid = pair
+        at = '2026-11-03 12:10:00'
+
+        await _put(profile_id, uid, 'Ok, let us meet tomorrow', 'ulid-long',
+                   'socket', at)
+        await _put(profile_id, uid, 'Ok', 'panel:3', 'panel', at)
+
+        seen = await _seen(profile_id, uid)
+
+        assert len(seen) == 2, f'короткая панельная строка съедена: {seen}'
+
+    async def test_cyrillic_survives_the_skeleton(self, pair):
+        """⚠ Кириллица — буква и для MySQL: русская реплика не схлопывается.
+
+        Проверка не теоретическая: выпади кириллица из `[:alnum:]`, скелет
+        любого русского текста стал бы пустым, и две разные реплики слились бы
+        в одну.
+        """
+        profile_id, uid = pair
+        at = '2026-11-03 12:15:00'
+
+        await _put(profile_id, uid, 'Привет, как дела?', 'ulid-ru', 'socket', at)
+        await _put(profile_id, uid, 'Добрый день', 'panel:4', 'panel', at)
+
+        seen = await _seen(profile_id, uid)
+
+        assert len(seen) == 2, f'разные русские реплики слились: {seen}'
+
+
+class TestTheValuesComeFromTheRule:
+    """⚠⚠ Счёт значений живёт в правиле, а не глазами у вызывающего.
+
+    Текст уходит в условие несколько раз, и при первой же правке условия счёт
+    у вызывающего сдвинулся бы молча — запрос упал бы не на тесте, а на проде.
+    """
+
+    def test_the_count_matches(self):
+        from src.dating.message_twin import (message_twin_absent,
+                                             message_twin_absent_args)
+
+        for direction in ('out', 'in'):
+            sql = message_twin_absent(direction)
+            args = message_twin_absent_args(1, 'u', 'текст', '2026-11-03 00:00:00')
+
+            assert sql.count('%s') == len(args), \
+                f'{direction}: условие ждёт {sql.count("%s")}, правило даёт {len(args)}'
+
+    def test_the_import_does_not_count_them_itself(self):
+        import inspect
+
+        import src.dating.chat_panel as mod
+
+        assert 'message_twin_absent_args' in inspect.getsource(mod), \
+            'импорт снова перечисляет значения условия сам'

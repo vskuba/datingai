@@ -54,7 +54,8 @@ from src.dating.feed import feed_write
 from src.dating.people import people_name_case
 from src.dating.scenario_field import scenario_field
 
-from src.dating.message_twin import message_twin_absent
+from src.dating.message_twin import (message_twin_absent,
+                                     message_twin_absent_args)
 from src.dating.json_column import json_column_load
 from src.dating.scenario import scenario_run
 from src.dating.site_presence import site_presence
@@ -440,12 +441,14 @@ async def chat_panel_save(rows: list) -> dict:
                 ' FROM DUAL WHERE 1 = 1'
                 + message_twin_absent(row['direction']),
                 (row['profile_id'], row['sender_uid'], row['sender_name'], row['text'],
-                 row['message_uid'], row['direction'], row['sent_at'],
-                 # Значения условия: анкета, собеседник, текст и время — дважды,
-                 # на обе границы допуска. Направление в условие не идёт: от него
-                 # зависит сам допуск, и оно вшито в текст запроса.
-                 row['profile_id'], row['sender_uid'], row['text'],
-                 row['sent_at'], row['sent_at']))
+                 row['message_uid'], row['direction'], row['sent_at'])
+                # ⚠ Значения условия собирает **само правило**: текст уходит в
+                # него несколько раз, и счёт глазами сдвигался бы молча при
+                # первой же правке условия. Направление туда не идёт — от него
+                # зависит сам допуск, и оно вшито в текст запроса.
+                + message_twin_absent_args(
+                    row['profile_id'], row['sender_uid'], row['text'],
+                    row['sent_at']))
             if db.rowcount:
                 added += 1
                 # ⚠⚠ **Доложить соседу — то, что реально легло.** Строка легла
