@@ -36,6 +36,8 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import AuthUser, auth_required
 from src.dating.initiative import initiative_explain, initiative_why
+from src.dating.initiative_round import (INITIATIVE_ROUND_TICK_SEC,
+                                         initiative_round_next)
 from src.dating.json_column import json_column_load
 from src.dating.online import online_show
 from src.dating.pool_pair import pool_pair_girl
@@ -95,7 +97,16 @@ async def chat_initiative_list(site_id: int = 0, status_: str = 'draft',
         pool = int(((await db.fetchone()) or {}).get('n') or 0)
 
     return {'result': [_answer(row) for row in (rows or [])],
-            'answer': {'pool': pool, 'why': await _why(site_id, pool)}}
+            'answer': {'pool': pool, 'why': await _why(site_id, pool),
+                       # ⚠⚠ Сколько ждать круга — **с сервера**, и иначе
+                       # никак: круг крутится в воркере, а темп его живёт в
+                       # памяти того процесса. Страница своей арифметикой тут
+                       # бы врала, а замерший счётчик — честный признак
+                       # умершего круга (`initiative_round.py`).
+                       'next_sec': initiative_round_next(int(site_id)),
+                       # ⚠ Тик отдаём рядом: по нему страница рисует шкалу,
+                       # а зашитое число разошлось бы с кругом при правке.
+                       'tick_sec': INITIATIVE_ROUND_TICK_SEC}}
 
 
 # ⚠⚠ **Правки текста карточки здесь нет, и это решение.** Карточку сочиняет

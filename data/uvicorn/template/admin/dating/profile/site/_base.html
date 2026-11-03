@@ -357,6 +357,15 @@
                         <div class="in-head">
                             <span>Инициатива</span>
                             <span class="in-count" data-slot="initiative-count"></span>
+                            {# Когда круг вернётся. ⚠⚠ Считает **сервер**:
+                               круг крутится в воркере, и темп его живёт в
+                               памяти того процесса — страница своей
+                               арифметикой тут бы врала. ⚠ Замерший счётчик
+                               читается как «круг умер», и это верно: отметку
+                               он ставит первой строкой захода. ⚠ Вид и слова
+                               — общей выкройкой `roundNextText`, как у
+                               намерений и инвайтов рядом. #}
+                            <span data-slot="initiative-pool-next"></span>
                             <button type="button" class="people-reload"
                                     data-slot="initiative-reload"
                                     title="Перечитать пул">⟳</button>

@@ -82,7 +82,8 @@ from src.dating.initiative import initiative_make
 from src.dating.pool import pool_sweep
 from src.dating.log import log_write
 from src.dating.round import (round_mem_due, round_mem_mark, round_sites,
-                              round_sites_run)
+                              round_sites_run, round_slot_left,
+                              round_slot_mark)
 from src.dating.online import online_check
 from src.dating.send import (send_message, send_message_forget,
                              send_message_remember)
@@ -137,6 +138,19 @@ _sent_at: dict[int, float] = {}
 # лишнего POST на пару раз в минуту — и только у сайта с приглашениями.
 INITIATIVE_INVITE_WAIT_SEC = 600
 
+# Ключ отметки «круг прошёл по этому сайту». ⚠⚠⚠ Это **не слот**: круг его не
+# спрашивает и ничем не придержан — его тик и есть его срок. Отметка нужна
+# панели, у которой другого способа узнать про круг нет: темп живёт в памяти
+# **воркера**, а страницу обслуживает другой процесс.
+#
+# ⚠ Поэтому и в имени `seen`, а не `round`: увидев слово «слот», следующий
+# читатель решил бы, что круг придержан, и стал бы искать, где настройка.
+#
+# ⚠⚠ Замерший счётчик на странице — **признак умершего круга**, и это второе,
+# ради чего отметка заведена: прежде круг, упавший на отказе, выглядел живым
+# (`round.md`, грабли).
+INITIATIVE_SEEN_KEY = 'dating:initiative:seen:{id}'
+
 
 async def initiative_round_run() -> dict:
     """Один круг по всем сайтам, где занятие включено хоть наполовину."""
@@ -163,6 +177,28 @@ async def initiative_round_run() -> dict:
     return {'sites': len(sites), 'made': made, 'sent': sent, 'stale': stale}
 
 
+def initiative_round_next(site_id: int) -> int:
+    """Через сколько секунд круг вернётся к этому сайту. `-1` — не спросилось.
+
+    Args:
+        site_id: сайт-закладка.
+
+    Returns:
+        int: секунды до ближайшего захода; `0` — придёт на ближайшем тике.
+
+    ⚠⚠ Отвечает **на вопрос страницы**, а не круга: круг ничем не придержан,
+    его тик и есть его срок. Панель же крутится в другом процессе и темпа
+    воркера не видит вовсе — без этой отметки ей неоткуда узнать даже то, жив
+    ли круг.
+
+    ⚠ Замерший счётчик читается как «круг умер», и это **верное** чтение:
+    отметка ставится первой строкой захода, до всяких проверок и флагов.
+    """
+    return round_slot_left(INITIATIVE_SEEN_KEY, int(site_id),
+                           what='заходу инициативы',
+                           every=INITIATIVE_ROUND_TICK_SEC)
+
+
 async def _work(site: dict, minutes: int) -> dict:
     """Один сайт за заход: чистка, набор, отправка — в этом порядке.
 
@@ -180,6 +216,13 @@ async def _work(site: dict, minutes: int) -> dict:
     под тишину и прозвучал бы мимо разговора.
     """
     site_id = int(site['site_id'])
+
+    # ⚠ Отметка захода — **первой строкой и всегда**, независимо от флагов:
+    # «круг приходил» значит приходил, что бы он потом ни решил не делать.
+    # Поставь её по делу, и страница у сайта с выключенным набором показывала
+    # бы замерший счётчик, то есть «круг умер» при живом круге.
+    round_slot_mark(INITIATIVE_SEEN_KEY, site_id, INITIATIVE_ROUND_TICK_SEC,
+                    what='заходу инициативы')
 
     # ⚠ Чистка идёт **всегда**, независимо от флагов: карточка, ставшая вредной,
     # вредна и при снятой отправке — человек прочитает её в пуле и не поймёт,

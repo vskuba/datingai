@@ -29,13 +29,6 @@ def page() -> str:
     return PAGE_FILE.read_text(encoding='utf-8')
 
 
-def _badge(page: str) -> str:
-    """Тело рисовальщика значка."""
-    box = page[page.index('function photoBadge'):]
-
-    return box[:box.index('function galleryBadge')]
-
-
 class TestTheBadgeIsAlwaysThere:
     """⚠⚠ Показывается у **каждой** строки, в отличие от значка галереи.
 
@@ -162,3 +155,13 @@ class TestTheFlagReachesThePage:
         assert mine, 'анкета сюиты не нашлась в списке'
         assert 'mail_photo_on' in mine[0], (
             'флаг не доехал до страницы — проверьте `response_model`')
+
+
+# ── Приватное ─────────────────────────────────────────────────────────────────
+
+
+def _badge(page: str) -> str:
+    """Тело рисовальщика значка."""
+    box = page[page.index('function photoBadge'):]
+
+    return box[:box.index('function galleryBadge')]
