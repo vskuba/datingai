@@ -146,11 +146,16 @@ class TestRepeat:
         assert (girl, UID) not in await _invited(STAND_SITE)
 
     async def test_pause_comes_from_the_site(self, girl, monkeypatch):
-        """Срок — настройка сайта, а не число в коде."""
-        async def week(site_id, key):
-            return 604_800
+        """Срок — настройка сайта, а не число в коде.
 
-        monkeypatch.setattr(invite, 'INVITE_REPEAT_DEFAULT', 1)
+        ⚠ Настройка **в минутах** с 03.11.2026, запрос считает в секундах:
+        неделя это 10 080 минут. Забудь перевод — «5 минут» стали бы пятью
+        секундами, и круг звал бы человека каждым заходом.
+        """
+        async def week(site_id, key):
+            return 10_080
+
+        monkeypatch.setattr(invite, 'INVITE_REPEAT_DEFAULT_MIN', 1)
         monkeypatch.setattr('src.dating.invite.site_seconds',
                             week)
         await _invite(girl, 'sent', ago_sec=90_000)

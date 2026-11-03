@@ -526,3 +526,64 @@ class TestCompanionAccount:
 
         assert got['companion_password'] == MASK
         assert got['companion_login'] == 'watcher', 'логин не секрет — его не маскируют'
+
+
+class TestTheRepeatPauseIsMinutes:
+    """⚠⚠⚠ Пауза повтора инвайта — в минутах, а запрос считает в секундах.
+
+    С 03.11.2026 поле стало числовым инпутом и хранит минуты; прежде был набор
+    со сроками в секундах (`300` = «5 минут»), и значения перевела миграция.
+
+    Забудь читатель умножить — «5 минут» молча стали бы пятью секундами, то
+    есть круг звал бы человека каждым заходом. Ни запрос, ни круг разницы не
+    заметят: они получат число и честно подставят его в `INTERVAL`.
+    """
+
+    def test_the_registry_says_minutes(self):
+        from src.dating.site_setting import SITE_KNOWN
+
+        one = SITE_KNOWN['invite_repeat_after']
+
+        assert one['kind'] == 'number', 'поле снова стало набором'
+        assert 'в мин' in one['title'], (
+            'в подписи не названа единица — трёхзначное число читается и как '
+            'минуты, и как секунды')
+        assert 'options' not in one, 'у числового поля остался набор значений'
+
+    def test_the_reader_multiplies(self):
+        import inspect
+
+        from src.dating import invite
+
+        body = inspect.getsource(invite._invited)
+
+        assert 'INVITE_REPEAT_MIN_SEC' in body, (
+            'читатель не переводит минуты в секунды — пауза сократится в '
+            'шестьдесят раз, молча')
+
+    def test_the_default_is_minutes_too(self):
+        from src.dating.invite import (INVITE_REPEAT_DEFAULT_MIN,
+                                       INVITE_REPEAT_MIN_SEC)
+        from src.dating.site_setting import SITE_KNOWN
+
+        assert INVITE_REPEAT_MIN_SEC == 60
+        assert INVITE_REPEAT_DEFAULT_MIN == 1440, 'умолчание не сутки в минутах'
+        assert (int(SITE_KNOWN['invite_repeat_after']['default'])
+                == INVITE_REPEAT_DEFAULT_MIN), (
+            'умолчание реестра разошлось с умолчанием кода: страница покажет '
+            'одно, круг возьмёт другое')
+
+    def test_the_migration_keeps_whole_numbers(self):
+        """⚠⚠ Деление в миграции целочисленное (`DIV`), а не `/`.
+
+        Обычное деление даёт `DECIMAL`, и в колонку легло бы `'5.0000'`:
+        число верное, но инпут покажет дробь, а первое сохранение формы
+        перепишет её обратно — молча меняя значение там, куда не заходили.
+        """
+        from pathlib import Path
+
+        sql = Path('migrations/20261103230000_invite_repeat_after_minutes.sql'
+                   ).read_text()
+
+        assert 'DIV 60' in sql, 'миграция делит с дробью'
+        assert '/ 60' not in sql
