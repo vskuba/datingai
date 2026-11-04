@@ -54,6 +54,7 @@ from src.dating.mail import (MAIL_BODY_MAX, MAIL_NAME_MAX,
                                     mail_check,
                                     mail_vars_found)
 from src.dating.mail_agent import DatingMailAgentError, mail_write
+from src.dating.mail_shot import mail_shot_for_template, mail_shot_join
 from src.uvicorn.routers.dating.mail_var import (mail_var_names,
                                                         mail_var_rows)
 
@@ -99,8 +100,16 @@ async def mail_list(site_id: int = 0, profile_id: int = 0,
         return {'result': []}
 
     where, args = _where(site_id, profile_id)
-    sql = ('SELECT id, site_id, profile_id, name, body, enabled,'
-           ' created_at, updated_at FROM mail ' + where + ' ORDER BY id DESC')
+
+    # Кадр шаблона показываем тем же куском, что и все журналы писем
+    # (`mail_shot_join`): у шаблона с 04.11.2026 своё изображение, и человек
+    # должен видеть его в списке — ровно то, что уйдёт его письмам.
+    pick, link = mail_shot_join('mail')
+
+    sql = ('SELECT mail.id, mail.site_id, mail.profile_id, mail.name,'
+           ' mail.body, mail.enabled, mail.created_at, mail.updated_at,'
+           ' mail.gallery_file_id' + pick +
+           '  FROM mail' + link + ' ' + where + ' ORDER BY mail.id DESC')
 
     async with mysql_get_db_async() as db:
         await db.execute(sql, tuple(args))
@@ -191,15 +200,27 @@ async def mail_create(payload: DatingMailSave,
     Raises:
         HTTPException: 422 — шаблон негодный; причина словами, как её вернул
             `mail_check`.
+
+    ⚠ **Шаблон заводится со своим кадром** (правило владельца от 04.11.2026):
+    шаблон ≠ чужой кадр, два живых шаблона одной анкеты не делят снимок. Кадр
+    берёт общая дверь `mail_shot_for_template` — та же, что у круга заготовок
+    и дозора рассылки; своя дорога здесь завела бы второй порядок свежести.
+    Общий текст без владелицы закрепить нечем — у него нулевой кадр, как и
+    у выключенного: выключенный шаблон кадр не держит (решение владельца).
     """
     await _checked(payload)
 
+    shot = (await mail_shot_for_template(int(payload.profile_id))
+            if int(payload.profile_id or 0) and payload.enabled else 0)
+
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT INTO mail (site_id, profile_id, name, body, enabled)'
-            ' VALUES (%s, %s, %s, %s, %s)',
+            'INSERT INTO mail (site_id, profile_id, name, body, enabled,'
+            ' gallery_file_id)'
+            ' VALUES (%s, %s, %s, %s, %s, %s)',
             (int(payload.site_id), int(payload.profile_id) or None,
-             payload.name.strip(), payload.body, 1 if payload.enabled else 0))
+             payload.name.strip(), payload.body, 1 if payload.enabled else 0,
+             shot))
         await db.connection.commit()
         mail_id = db.lastrowid
 
@@ -218,15 +239,26 @@ async def mail_update(mail_id: int, payload: DatingMailSave,
     другое действие: у журнала отправок сайт свой, и уехавший шаблон рассорил бы
     его с историей. Поля в теле есть (форма одна на заведение и правку), но здесь
     они не читаются: правят текст, имя и галочку, а чей текст — решает заведение.
+
+    ⚠ **Кадр правка текста не трогает**: свой кадр свободен — он и остаётся
+    (правило `keep` общей двери). Но если шаблон выключали и за это время на его
+    кадр сел живой, дверь сама пересадит включаемого на свободный: два живых
+    шаблона одной анкеты показывать один снимок не должны.
     """
-    await _row(mail_id)
+    row = await _row(mail_id)
     await _checked(payload)
+
+    shot = int(row.get('gallery_file_id') or 0)
+    if payload.enabled and int(row.get('profile_id') or 0):
+        shot = await mail_shot_for_template(int(row['profile_id']),
+                                            int(mail_id), shot)
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'UPDATE mail SET name = %s, body = %s, enabled = %s WHERE id = %s',
+            'UPDATE mail SET name = %s, body = %s, enabled = %s,'
+            ' gallery_file_id = %s WHERE id = %s',
             (payload.name.strip(), payload.body, 1 if payload.enabled else 0,
-             int(mail_id)))
+             shot, int(mail_id)))
         await db.connection.commit()
 
     return {'result': await _row(mail_id)}
@@ -300,10 +332,14 @@ def _where(site_id: int, profile_id: int) -> tuple[str, list]:
     Отбор один на список и на удаление разом: ручка корзинки обязана убрать
     ровно то, что человек видит на экране, а не второй раз угадать, что это.
     Вторая копия условий разошлась бы с первой на первой же правке.
+
+    ⚠ Колонки **с именем таблицы**: список читается с `LEFT JOIN gallery_file`
+    (кадр шаблона), а `profile_id` есть в обеих — голым именем список падал бы
+    `1052`. Для корзинки (`DELETE FROM mail`) префикс — то же самое.
     """
-    where, params = 'WHERE site_id = %s', [int(site_id)]
+    where, params = 'WHERE mail.site_id = %s', [int(site_id)]
     if int(profile_id or 0):
-        where += ' AND profile_id = %s'
+        where += ' AND mail.profile_id = %s'
         params.append(int(profile_id))
 
     return where, params
@@ -345,11 +381,15 @@ async def _checked(payload: DatingMailSave) -> None:
 
 
 async def _row(mail_id: int) -> dict:
-    """Шаблон по номеру или 404."""
+    """Шаблон по номеру или 404. Наружу — со своим кадром, как список."""
+    pick, link = mail_shot_join('mail')
+
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT id, site_id, profile_id, name, body, enabled,'
-            ' created_at, updated_at FROM mail WHERE id = %s', (int(mail_id),))
+            'SELECT mail.id, mail.site_id, mail.profile_id, mail.name,'
+            ' mail.body, mail.enabled, mail.created_at, mail.updated_at,'
+            ' mail.gallery_file_id' + pick +
+            '  FROM mail' + link + ' WHERE mail.id = %s', (int(mail_id),))
         row = await db.fetchone()
 
     if not row:
@@ -383,6 +423,12 @@ def _answer(row: dict) -> dict:
             'body': str(row['body']),
             'enabled': bool(row['enabled']),
             'vars': mail_vars_found(row['body']),
+            # Свой кадр шаблона (правило 04.11.2026): номер строки индекса и
+            # превью теми же полями, что у журналов писем, — выкройка чипса
+            # на панели одна.
+            'gallery_file_id': int(row.get('gallery_file_id') or 0),
+            'gallery_file': str(row.get('gallery_file') or ''),
+            'gallery_path': str(row.get('gallery_path') or ''),
             'created_at': row['created_at'],
             'updated_at': row['updated_at']}
 

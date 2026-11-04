@@ -37,7 +37,13 @@ class TestTheDiceLivesAtTheNeighbour:
     """
 
     def test_there_is_no_dice_in_the_code(self):
-        """Главный сторож: вернись бросок сюда — правило нарушено молча."""
+        """Главный сторож: вернись бросок сюда — правило нарушено молча.
+
+        ⚠ С 04.11.2026 бан был по слову `random`, и он же бил бы по двери
+        `mail_shot_for_template`: там `random.choice` — сброс круга, когда все
+        кадры уже браны (правило владельца), а не доля. Долю бросают броском
+        `random.random()` — её здесь и не должно быть.
+        """
         import inspect
 
         from src.dating import mail_shot
@@ -49,7 +55,7 @@ class TestTheDiceLivesAtTheNeighbour:
                        if not line.lstrip().startswith('#'))
         code = code[code.index('MAIL_SHOT_KEY'):]
 
-        assert 'random' not in code, (
+        assert 'random.random' not in code, (
             'жребий вернулся в панель — доля опять живёт в двух местах')
         assert 'percent_share' not in code, (
             'доля читается из настройки панели, а должна жить у соседа')

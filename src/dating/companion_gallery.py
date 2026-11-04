@@ -322,6 +322,48 @@ async def companion_gallery_seen(profile_id: int, uid: str) -> list[dict]:
         return []
 
 
+async def companion_gallery_shown(profile_id: int, site_id: int, uid: str,
+                                  gallery_file_id: int) -> bool:
+    """Этот кадр этот человек уже видел? Да/нет, тем же правилом, что и отбор.
+
+    Args:
+        profile_id: чья галерея (память читается по паре, но спрос без анкеты
+            был бы вторым договором о том, чей это кадр).
+        site_id: сайт собеседника.
+        uid: номер собеседника на сайте.
+        gallery_file_id: строка `gallery_file`, о которой вопрос.
+
+    Returns:
+        bool: `True` — показан.
+
+    ## ⚠⚠ Вопрос «не повторять человеку» при привязке кадра к шаблону
+
+    С 04.11.2026 кадр принадлежит шаблону (`mail_shot_for_template`), и письмо
+    наследует его, — но шаблон не лицензия слать человеку показанное: этим
+    вопросом сверяют кадр с памятью пары перед тем, как положить письмо
+    (`mailing._put` и дозор `mailing_shots_fill`). Своё условие повтора у
+    сверки означало бы «кадр не показан» ровно там, где отбор его прячет.
+
+    ⚠ Сверка — общим куском `_SEEN_MATCH`: и номер строки, и близнецы по `md5`.
+    """
+    if not (int(profile_id or 0) and str(uid or '').strip()
+            and int(gallery_file_id or 0)):
+        return False
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT EXISTS (SELECT 1 FROM companion_gallery_file c,'
+            '                    gallery_file g'
+            '                   WHERE g.id = %s'
+            '                     AND c.site_id = %s AND c.uid = %s'
+            # Кусок открывает свою скобку; закрываем её и `EXISTS` здесь.
+            '                     AND ' + _SEEN_MATCH + '))',
+            (int(gallery_file_id), int(site_id or 0), str(uid)))
+        row = await db.fetchone()
+
+    return bool(list(dict(row or {}).values())[0])
+
+
 # ⚠⚠ «Показано» — одним куском: его зовут и отбор невиданного
 # (`companion_gallery_fresh`), и прокрутка (`companion_gallery_repeat`). Заведи
 # каждый своё написание — правка в одном забыла бы другое, и кадр перестал бы

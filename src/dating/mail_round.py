@@ -119,6 +119,7 @@ from src.dating.round import (round_day_count, round_sites, round_sites_run,
                               round_slot_due, round_slot_left, round_slot_mark)
 from src.dating.mail import mail_check
 from src.dating.mail_agent import DatingMailAgentError, mail_write
+from src.dating.mail_shot import mail_shot_for_template
 from src.dating.schedule import schedule_now
 from src.dating.site_setting import site_seconds
 
@@ -491,11 +492,20 @@ async def _write(site_id: int, offset_hours: int) -> int:
                 logger_info(f'[dating] шаблон анкеты #{gid} забракован: {why}')
                 break
 
+            # ⚠⚠ Заготовка ложится **со своим кадром** — с 04.11.2026 кадр
+            # принадлежит шаблону, а не письму (правило владельца), и берётся
+            # общей дверью `mail_shot_for_template`. Берём **после** судьи:
+            # негодная заготовка не обязана съедать кадр, которого письмо
+            # никогда не увидит. Ноль — анкете брать нечем, и это законно:
+            # дозор рассылки привяжет кадр той же дверью, когда он появится.
+            shot = await mail_shot_for_template(gid)
+
             async with mysql_get_db_async() as db:
                 await db.execute(
-                    'INSERT INTO mail (site_id, profile_id, name, body, enabled)'
-                    ' VALUES (%s, %s, %s, %s, 1)',
-                    (int(site_id), gid, name, body))
+                    'INSERT INTO mail (site_id, profile_id, name, body,'
+                    ' enabled, gallery_file_id)'
+                    ' VALUES (%s, %s, %s, %s, 1, %s)',
+                    (int(site_id), gid, name, body, shot))
                 await db.connection.commit()
 
             made += 1

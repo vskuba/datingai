@@ -43,9 +43,10 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.block import block_pairs
-from src.dating.companion_gallery import companion_gallery_repeat
+from src.dating.companion_gallery import (companion_gallery_repeat,
+                                          companion_gallery_shown)
 from src.dating.json_column import json_column_load
-from src.dating.mail_shot import MAIL_SHOT_GROUP
+from src.dating.mail_shot import MAIL_SHOT_GROUP, mail_shot_for_template
 from src.dating.mail import (MAILING_QUESTION_CHANCE,
                                    MAILING_QUESTION_SETTING,
                                    mail_mark_drop, mail_missing,
@@ -250,7 +251,7 @@ async def mailing_templates(site_id: int, mail_ids: list = None) -> list[dict]:
     шаблоны с её `profile_id` — чужой текст ей не письмо. Строки без владелицы
     (`profile_id IS NULL`, заведённые до правила 2026-10-16) не достаются никому.
     """
-    sql = 'SELECT id, profile_id, name, body FROM mail'
+    sql = 'SELECT id, profile_id, name, body, gallery_file_id FROM mail'
     sql += ' WHERE site_id = %s AND enabled = 1'
     args = [int(site_id)]
 
@@ -268,7 +269,9 @@ async def mailing_templates(site_id: int, mail_ids: list = None) -> list[dict]:
     return [{'id': int(row['id']),
              'profile_id': (int(row['profile_id']) if row['profile_id'] is not None
                             else None),
-             'name': str(row['name']), 'body': str(row['body'])}
+             'name': str(row['name']), 'body': str(row['body']),
+             # Свой кадр шаблона: письмо наследует его (`_letter_shot`).
+             'gallery_file_id': int(row['gallery_file_id'] or 0)}
             for row in rows]
 
 
@@ -504,11 +507,17 @@ async def mailing_shots_fill(site_id: int) -> int:
 
     ## ⚠ Зачем это в наборе, а не в миграции
 
-    Отбор живёт здесь, в `_shot`: общая память показанного, папка `public`,
-    сверка близнецов. Повторить это SQL-ом в миграции — завести второе правило
-    о том же, оно разойдётся с первым на первой же правке. Условие
-    `gallery_file_id = 0` закрывает вопрос после первого прохода: остальные
-    письма пролистываются одним запросом.
+    Отбор живёт здесь, в `_letter_shot`: шаблонный кадр, общая память
+    показанного, папка `public`, сверка близнецов. Повторить это SQL-ом в
+    миграции — завести второе правило о том же, оно разойдётся с первым на
+    первой же правке. Условие `gallery_file_id = 0` закрывает вопрос после
+    первого прохода: остальные письма пролистываются одним запросом.
+
+    ⚠⚠ С 04.11.2026 дозор **не выбирает кадр по-своему**: он зовёт ту же
+    `_letter_shot`, что и сборка, — шаблон без кадра получает его общей дверью
+    (и шаблон дальше держит его сам), письмо несёт шаблонный, а показанный
+    этому адресату прокручивается. Свой отбор здесь был бы второй дорогой
+    мимо привязки — той самой бедой, которую правило и чинит.
 
     ## ⚠⚠ Это не разовая доводка, а постоянный шаг
 
@@ -524,17 +533,24 @@ async def mailing_shots_fill(site_id: int) -> int:
     """
     try:
         async with mysql_get_db_async() as db:
+            # `mail_id` и шаблонный кадр — чтобы `_letter_shot` наследовала
+            # его и привязывала недостающий, а не выбирала по жребию заново.
             await db.execute(
-                "SELECT id, profile_id, uid FROM mailing"
-                " WHERE site_id = %s AND status = 'draft'"
-                '   AND gallery_file_id = 0', (int(site_id),))
+                'SELECT m.id, m.profile_id, m.uid, m.mail_id,'
+                '       t.gallery_file_id'
+                '  FROM mailing m'
+                '  LEFT JOIN mail t ON t.id = m.mail_id'
+                " WHERE m.site_id = %s AND m.status = 'draft'"
+                '   AND m.gallery_file_id = 0', (int(site_id),))
             ours = [dict(row) for row in (await db.fetchall() or [])]
 
         filled = 0
 
         for row in ours:
-            shot = await _shot(int(row['profile_id']), int(site_id),
-                               str(row['uid'] or ''))
+            shot = await _letter_shot(int(row['profile_id']), int(site_id),
+                                      str(row['uid'] or ''),
+                                      int(row['mail_id'] or 0),
+                                      int(row['gallery_file_id'] or 0))
             if not shot:
                 continue
 
@@ -1160,6 +1176,15 @@ async def _put(site_id: int, girl: dict, person: dict, template: dict,
     показано этому человеку — галерея прокручивается (`_shot`), письмо всё
     равно уходит с кадром.
 
+    ## ⚠⚠ С 04.11.2026 кадр не выбирается адресату — его наследует шаблон
+
+    Разные шаблоны обязаны различаться снимком (правило владельца: иначе к
+    карточкам с разными текстами прикреплялся один кадр). Письмо несёт кадр,
+    закреплённый за своим шаблоном, — дорожит им `_letter_shot`, там же и
+    привязывает недостающий общей дверью `mail_shot_for_template`. Человек при
+    этом важнее шаблона: показанный ему кадр письмо не повторяет, берёт
+    следующий невиданный (ответ владельца 04.11.2026).
+
     ⚠⚠ Память «показан» — **общая** со всеми прочими письмами: пара «сайт +
     получатель», анкета в ключ не входит (`companion_gallery_repeat`). Заведи
     рассылка свой счёт — невиданный кадр тратился бы дважды: здесь прокруткой,
@@ -1171,12 +1196,16 @@ async def _put(site_id: int, girl: dict, person: dict, template: dict,
 
     ⚠⚠ Отметку «показан» ставит **отправка** (`mail_send_mark`), а не этот
     отбор: пока письмо лежит в пуле, снимок никому не показан, и сожги мы его
-    здесь, первая же неудачная отправка унесла бы кадр навсегда. Отсюда же
-    следствие: два письма, собранные **до** отправки первого, могут получить
-    один кадр. Терпимо — пул рассылки набирается по одному письму на пару, и
-    адресаты в заходе уникальны.
+    здесь, первая же неудачная отправка унесла бы кадр навсегда. С привязкой
+    кадра к шаблону прежнее следствие даже исчезло: письма **разных** шаблонов
+    не делят кадр (дверь не отдаёт один кадр двум живым), а письма **одного**
+    шаблона разным людям несут его намеренно — это один и тот же текст, логично
+    нести его одной фотографией.
     """
-    shot = await _shot(int(girl['id']), int(site_id), str(person['uid']))
+    shot = await _letter_shot(int(girl['id']), int(site_id),
+                              str(person['uid'] or ''),
+                              int(template['id'] or 0),
+                              int(template.get('gallery_file_id') or 0))
 
     async with mysql_get_db_async() as db:
         await db.execute(
@@ -1202,6 +1231,10 @@ async def _shot(profile_id: int, site_id: int, uid: str) -> int:
     ⚠ Письмо выйдет без снимка, только если славать нечем вовсе: галереи нет,
     в `public` кадров нет (интимные уходят по обещанию агента, где о них
     просили), Диск ещё не обошли. Броска здесь нет и быть не должно.
+
+    ⚠ С 04.11.2026 дороги рассылки зовут её **через `_letter_shot`**: первым
+    кадром письму служит шаблонный, а прокруткой — этот ход. Прямой вызов
+    остался бы второй дорогой, минуя привязку.
     """
     try:
         rows = await companion_gallery_repeat(int(profile_id), int(site_id),
@@ -1212,3 +1245,78 @@ async def _shot(profile_id: int, site_id: int, uid: str) -> int:
         return 0
 
     return int(rows[0]['id']) if rows else 0
+
+
+async def _letter_shot(profile_id: int, site_id: int, uid: str, mail_id: int,
+                       template_shot: int) -> int:
+    """Кадр письму: свой у шаблона, а человек важнее шаблона.
+
+    Args:
+        profile_id: анкета, что пишет письмо, — её галерея.
+        site_id: сайт адресата.
+        uid: номер адресата на сайте.
+        mail_id: шаблон, из которого собрано письмо; ноль — шаблона нет.
+        template_shot: кадр, закреплённый за шаблоном; ноль — не привязан.
+
+    Returns:
+        int: номер строки `gallery_file` письму либо ноль — галерее нечем
+        (правило 08.11.2026: единственное исключение).
+
+    ## ⚠⚠ Одна помощница на обе дороги
+
+    Зовут её сборка `_put` и дозор `mailing_shots_fill`. До 04.11.2026 у
+    каждой дороги был свой жребий адресату — оттого к разным шаблонам и
+    прилипал один кадр: помощница здесь — та же застывшая пара, что у
+    `mail_shot_ready` для отправки.
+
+    1. шаблон держит кадр, и этот человек его не видел — письмо несёт его;
+    2. шаблона кадр не имел — привязываем общей дверью `mail_shot_for_template`
+       (тот же порядок свежести, что у круга заготовок и ручных шаблонов) и
+       закрепляем за строкой guarded-правкой: в гонке побеждает первый,
+       второй несёт свой выбор — свежесть уже списана, различие лишь в том,
+       чью запись увидит страница;
+    3. этот человек кадр **уже видел** — берём ему следующий невиданный
+       (`_shot` с прокруткой): шаблон не лицензия повторять показанное,
+       так решил владелец 04.11.2026;
+    4. кадра нет ни у шаблона, ни у двери (галерея пуста либо дверь ошиблась)
+       — как и раньше: `_shot` прокруткой, чтобы правило «снимок обязан
+       каждому» не нарушалось молча.
+    """
+    shot = int(template_shot or 0)
+
+    if not shot and int(mail_id or 0):
+        shot = await mail_shot_for_template(int(profile_id), int(mail_id))
+
+        if shot:
+            try:
+                async with mysql_get_db_async() as db:
+                    # ⚠ `AND gallery_file_id = 0`: шаблон мог привязаться
+                    # параллельным заходом — не затираем чужую запись.
+                    await db.execute(
+                        'UPDATE mail SET gallery_file_id = %s'
+                        ' WHERE id = %s AND gallery_file_id = 0',
+                        (int(shot), int(mail_id)))
+                    await db.connection.commit()
+            except Exception as e:
+                # Кадр выбран и списан из свежести — отказ закрепить не
+                # делает письмо безкадровым, письмо его понесёт.
+                logger_info(f'[dating] кадр не закрепился за шаблоном'
+                            f' #{mail_id}: {e}')
+
+    if not shot:
+        return await _shot(int(profile_id), int(site_id), str(uid))
+
+    try:
+        shown = await companion_gallery_shown(int(profile_id), int(site_id),
+                                              str(uid), int(shot))
+    except Exception as e:
+        logger_info(f'[dating] показанность кадра не спросилась: {e}')
+
+        shown = False
+
+    if shown:
+        # Человек важнее шаблона: следующий невиданный, на исчерпанной памяти
+        # — давнейший (`_shot`).
+        return await _shot(int(profile_id), int(site_id), str(uid))
+
+    return int(shot)

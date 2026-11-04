@@ -35,9 +35,14 @@
 номер снимка **хранится в строке пула**, а не считается заново.
 """
 
-from logging_.logging_ import logger_info
+import random
 
-from src.dating.companion_gallery import companion_gallery_fresh
+from logging_.logging_ import logger_info
+from mysql_.mysql_ import mysql_get_db_async
+
+from src.dating.companion_gallery import (companion_gallery_fresh,
+                                          companion_gallery_shown)
+from src.dating.gallery import gallery_group_of
 
 # Ключ в `extra` прогона, которым сосед говорит «приложи снимок».
 #
@@ -131,6 +136,170 @@ async def mail_shot_pick(profile_id: int, site_id: int, uid: str,
                 f'приложен снимок #{row["id"]}')
 
     return int(row['id'])
+
+
+async def mail_shot_for_template(profile_id: int, mail_id: int = 0,
+                                 keep: int = 0) -> int:
+    """Кадр шаблону рассылки. Возвращает номер строки `gallery_file` либо ноль.
+
+    Args:
+        profile_id: анкета-владелица шаблона — её галерея.
+        mail_id: номер шаблона, которому берут кадр; нужен только чтобы не
+            счесть занятым **его собственный** кадр. Ноль — строки ещё нет.
+        keep: кадр, который шаблон уже держит. Свободен — он и остаётся,
+            перевыбор не трогает державший кадр; занят чужим живым шаблоном
+            (шаблон выключали, пока другой на тот же кадр сел) — берём новый.
+
+    Returns:
+        int: номер строки индекса галереи либо **ноль** — анкете брать нечем
+        (галереи нет либо Диск не обошли). Ноль законен, как в `_put`.
+
+    ## ⚠⚠ Кадр принадлежит шаблону, а не письму (правило владельца от 04.11.2026)
+
+    До этого кадр выбирали **получателю** («первый, которого он ещё не видел»),
+    и все новые адресаты получали один и тот же первый кадр: на странице разных
+    шаблонов стояла одна миниатюра. Теперь кадр берёт шаблон один раз — и
+    письма этого шаблона несут его; удаление шаблона кругом-чисткой освобождает
+    кадр, и он снова годен.
+
+    ⚠⚠ **Одна дверь на все дороги.** Зовут её круг заготовок
+    (`mail_round._write`), ручное заведение шаблона (routers `mail.py`) и
+    дозор рассылки (`mailing_shots_fill` через сборку `_put`). Свой отбор в
+    каждом — те же повторы, что это правило чинит.
+
+    ## Порядок выбора
+
+    0. **свой кадр свободен — он и есть выбор**: правка текста шаблона не
+       переселяет его на другой снимок и не передвигает `last_shot_at`;
+    1. **кандидаты** — живые снимки папки `public`, не занятые включёнными
+       шаблонами этой анкеты: у каждого живого шаблона свой кадр;
+    2. среди кандидатов — никогда не бранные (`last_shot_at IS NULL`), самыми
+       свежими файлами вперёд; нет таких — давнейший по `last_shot_at`;
+    3. все кадры анкеты уже брались — **сброс круга**: `last_shot_at`
+       обнуляется по всей анкете, и первый кадр нового круга берётся
+       **случайно** (правило владельца — круг заново идёт вразноброд);
+       дальше по кругу действует обычная лестница свежести;
+    4. кандидатов нет, а круг не исчерпан — живые шаблоны съели все кадры
+       (галерея мельче нормы): случайный из всех, иначе шаблон остался бы
+       без кадра там, где кадры есть.
+
+    ⚠ Включённый шаблон держит кадр; **выключенный — не держит** (решение
+    владельца 04.11.2026): занятость считают только строки с `enabled = 1`,
+    кадр выключенного шаблона сразу годен живым.
+
+    ⚠ ⚠ Дверь ничего не знает о **получателе**: память пары живёт по-прежнему
+    в `companion_gallery_file` и метится отправкой. Обязанность зовущего —
+    сверить кадр с памятью (`companion_gallery_shown`) и отдать письму
+    следующий невиданный, если этот человек кадр уже видел: шаблон ≠ лицензия
+    повторять человеку показанное.
+    """
+    gid = int(profile_id or 0)
+    if not gid:
+        return 0
+
+    try:
+        if int(keep or 0):
+            # Свой кадр занят чужим живым шаблоном? Показатель — тот же, что
+            # у кандидатов ниже: включённые строки этой анкеты.
+            async with mysql_get_db_async() as db:
+                await db.execute(
+                    'SELECT EXISTS (SELECT 1 FROM mail t'
+                    '                   WHERE t.profile_id = %s'
+                    '                     AND t.enabled = 1'
+                    '                     AND t.id <> %s'
+                    '                     AND t.gallery_file_id = %s)',
+                    (gid, int(mail_id or 0), int(keep)))
+                busy = bool(list(dict(await db.fetchone() or {}).values())[0])
+
+            if not busy:
+                return int(keep)
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT g.id, g.path, g.last_shot_at'
+                '  FROM gallery_file g'
+                ' WHERE g.profile_id = %s AND g.is_gone = 0 AND g.kind = %s'
+                '   AND NOT EXISTS (SELECT 1 FROM mail t'
+                '                     WHERE t.profile_id = g.profile_id'
+                '                       AND t.enabled = 1'
+                '                       AND t.gallery_file_id = g.id)'
+                ' ORDER BY g.id',
+                (gid, 'image'))
+            live = [dict(row) for row in (await db.fetchall() or [])]
+
+            await db.execute(
+                'SELECT g.id, g.path, g.last_shot_at'
+                '  FROM gallery_file g'
+                ' WHERE g.profile_id = %s AND g.is_gone = 0 AND g.kind = %s'
+                ' ORDER BY g.id',
+                (gid, 'image'))
+            whole = [dict(row) for row in (await db.fetchall() or [])]
+
+        # Группа — общим правилом (`gallery_group_of`), как у
+        # `companion_gallery_fresh`: в SQL вышло бы второе правило о папке.
+        pool = [row for row in whole
+                if gallery_group_of(row['path']) == MAIL_SHOT_GROUP]
+        free = [row for row in live
+                if gallery_group_of(row['path']) == MAIL_SHOT_GROUP]
+
+        if not pool:
+            # Галереи нет (или обошли не весь Диск) — письмо без кадра, то же
+            # исключение правила 08.11.2026, что у `_put`. Тихо: не случай.
+            return 0
+
+        exhausted = all(row['last_shot_at'] is not None for row in pool)
+
+        if exhausted:
+            # Сброс свежести: обнуляем по всей анкете и без группы — колонку
+            # `last_shot_at` заполняет только эта дверь, чужих значений у
+            # кадров других папок нет, а второе правило о папке в UPDATE
+            # было бы копией, расходящейся с отбором выше.
+            async with mysql_get_db_async() as db:
+                await db.execute('UPDATE gallery_file SET last_shot_at = NULL'
+                                 ' WHERE profile_id = %s', (gid,))
+                await db.connection.commit()
+
+            logger_info(f'[dating] анкете #{gid} кадры исчерпаны: круг сброшен')
+
+        # Порядок после всех развилок.
+        if exhausted:
+            # Первый подбор нового круга — случайный (правило владельца:
+            # круг заново идёт вразноброд). Свободных нет — из всех.
+            chosen = random.choice(free or pool)
+
+        elif not free:
+            # Живые шаблоны съели все кадры, а круг не исчерпан (галерея
+            # мельче нормы) — случайный из всех, иначе шаблон остался бы
+            # без кадра на галерее, которая есть.
+            chosen = random.choice(pool)
+
+        else:
+            never = [row for row in free if row['last_shot_at'] is None]
+            if never:
+                # Никогда не бранные — самыми свежими файлами вперёд.
+                chosen = max(never, key=lambda row: int(row['id']))
+
+            else:
+                # Страховка: свободные все браные, а круг не исчерпан —
+                # невиданные кадры сидят под живыми шаблонами. Давнейший.
+                chosen = min(free, key=lambda row: (str(row['last_shot_at']),
+                                                    -int(row['id'])))
+
+        shot = int(chosen['id'])
+
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE gallery_file SET last_shot_at = NOW()'
+                             ' WHERE id = %s', (shot,))
+            await db.connection.commit()
+
+        logger_info(f'[dating] шаблону анкеты #{gid} отдан кадр #{shot}')
+
+        return shot
+
+    except Exception as e:
+        logger_info(f'[dating] кадр шаблону анкеты #{gid} не выбрался: {e}')
+
+        return 0
 
 
 async def mail_shot_ready(letter: dict) -> dict:

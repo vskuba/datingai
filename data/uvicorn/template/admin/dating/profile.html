@@ -16463,6 +16463,9 @@
             // чей это текст — различают по лицу. Имена однофамилиц различить
             // глазами нечем, в том и смысл.
             const owner = profiles.find(one => String(one.id) === String(row.profile_id));
+            // Кадр шаблона — тем же адресом, что чипс журналов доставки
+            // (`letterShotSrc` — одно правило на все дороги).
+            const shot = letterShotSrc(row);
 
             return `<div class="mail-row${row.id === tmplOpenId ? ' open' : ''}" data-id="${row.id}">`
             // ⚠ Имя — в `alt`, а не только в подсказке: из него `faceFallback`
@@ -16474,6 +16477,14 @@
                   + ' referrerpolicy="no-referrer"'
                   + ` title="${esc(owner.name || owner.login || '')}">`
                 : '')
+            // ⚠⚠ Узел чипса ставится **всегда**, пустым при отсутствии кадра:
+            // строка — грид по порядку, и пропуск сдвинул бы имя к краю, а
+            // строки без кадра выглядели бы строками с потерянным кадром
+            // (то же правило, что у журналов доставки, `test_sent_row_grid`).
+            + (shot
+                ? `<img class="mail-sent-shot" src="${esc(shot)}" alt=""`
+                  + ` title="${esc(String(row.gallery_path || ''))} — кадр этого шаблона">`
+                : '<span class="mail-sent-shot empty"></span>')
             + `<span class="mail-name" title="${esc(row.name)}">${esc(row.name)}</span>`
             + (row.enabled ? ''
                 : '<span class="mail-off" title="Шаблон не берётся в рассылку">выкл</span>')
