@@ -303,25 +303,6 @@ class TestTheSamePhotoTwiceUnderTwoNames:
     анкет.
     """
 
-    @staticmethod
-    async def _twin(profile_id: int, like: int) -> int:
-        """Вторая строка того же снимка: иное имя, тот же `md5`."""
-        from mysql_.mysql_ import mysql_get_db_async
-
-        async with mysql_get_db_async() as db:
-            await db.execute('UPDATE gallery_file SET md5 = %s WHERE id = %s',
-                             ('a' * 32, int(like)))
-            await db.execute(
-                'INSERT INTO gallery_file (profile_id, file_id, path, name,'
-                "  mime, kind, is_gone, md5)"
-                " VALUES (%s, %s, 'photo/public/a (1).png', 'a (1)',"
-                "         'image/png', 'image', 0, %s)",
-                (int(profile_id), f'dup-{uuid.uuid4().hex[:8]}', 'a' * 32))
-            made = int(db.lastrowid)
-            await db.connection.commit()
-
-        return made
-
     async def test_the_copy_is_not_offered_again(self, girl):
         """Отправили один — второй больше не предлагается."""
         twin = await self._twin(girl['id'], girl['files']['a'])
@@ -377,3 +358,22 @@ class TestTheSamePhotoTwiceUnderTwoNames:
         assert int(girl['files']['b']) in ids, (
             'непосчитанные снимки скрыты — галерея опустела после одной '
             'отправки')
+
+    @staticmethod
+    async def _twin(profile_id: int, like: int) -> int:
+        """Вторая строка того же снимка: иное имя, тот же `md5`."""
+        from mysql_.mysql_ import mysql_get_db_async
+
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE gallery_file SET md5 = %s WHERE id = %s',
+                             ('a' * 32, int(like)))
+            await db.execute(
+                'INSERT INTO gallery_file (profile_id, file_id, path, name,'
+                "  mime, kind, is_gone, md5)"
+                " VALUES (%s, %s, 'photo/public/a (1).png', 'a (1)',"
+                "         'image/png', 'image', 0, %s)",
+                (int(profile_id), f'dup-{uuid.uuid4().hex[:8]}', 'a' * 32))
+            made = int(db.lastrowid)
+            await db.connection.commit()
+
+        return made
