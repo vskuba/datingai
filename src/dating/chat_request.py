@@ -82,6 +82,20 @@ CHAT_REQUEST_TO = 'userIDTarget'
 # поломкой.
 CHAT_REQUEST_WAITING = 1
 
+# Чем сайт отвечает, когда собеседник **вышел**. ⚠⚠⚠ Это не отказ, а
+# состояние: его собственная страница на это слово показывает окно «user
+# offline» (`chat_v4.min.js`: `"target" === t → popupUserOffline`).
+#
+# ⚠⚠ Различать обязательно. Отказ глушит строку пула причиной, и круг больше
+# её не берёт — она ждёт человека с кнопкой. А уход из чата проходит сам через
+# минуты: человек вернётся в ленту, и годная реплика должна уйти ему без
+# всякого вмешательства. Правило это в проекте уже есть (`invite_send.py`,
+# «его нет в сети — состояние, а не отказ»), и писалось оно ровно под такой
+# случай.
+#
+# ⚠ Слово ловим в **теле ответа**, а не в коде: сайт отвечает `200` и здесь.
+CHAT_REQUEST_AWAY = 'target'
+
 # Сколько запросов принимаем за один заход. ⚠ Потолок не про нагрузку, а про
 # неожиданность: каждый принятый открывает чат, то есть заводит разговор,
 # который кто-то должен вести.
@@ -218,11 +232,34 @@ async def chat_request_create(profile: dict, presence: dict, uid: str,
                                   {'userID': int(uid), 'message': str(text),
                                    'attachID': 0})
 
-        return await chat_socket_send(opened, base, presence, send, frame)
+        said = await chat_socket_send(opened, base, presence, send, frame)
+
+        # ⚠⚠ «Он вышел» отделяется **здесь**, где известен смысл слова: общий
+        # транспорт слов сайта не знает, а вызывающий знает ещё меньше.
+        return {**said, 'away': chat_request_away(said)}
     except ChatSocketError as e:
-        return {'ok': False, 'response': '', 'error': str(e)}
+        return {'ok': False, 'response': '', 'error': str(e), 'away': False}
     except Exception as e:
-        return {'ok': False, 'response': '', 'error': f'{type(e).__name__}: {e}'}
+        return {'ok': False, 'response': '',
+                'error': f'{type(e).__name__}: {e}', 'away': False}
+
+
+def chat_request_away(said: dict) -> bool:
+    """Это «собеседник вышел», а не отказ сайта.
+
+    Args:
+        said: ответ `chat_socket_send`.
+
+    Returns:
+        bool: `True` — человек вышел из чата, и реплика ему просто не дошла.
+
+    ⚠ Удачу сюда не пускаем: у неё в `error` пусто, и проверка вхождения на
+    пустой строке дала бы ложное «вышел».
+    """
+    if said.get('ok'):
+        return False
+
+    return CHAT_REQUEST_AWAY in str(said.get('error') or '')
 
 
 async def chat_request_accept_all(profile: dict, presence: dict,

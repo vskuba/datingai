@@ -371,3 +371,77 @@ class TestARefusedInviteIsNotOffline:
         assert got['offline'] is True, (
             'удача приглашения выдана за доставку: строка пула закроется, а '
             'собеседник его ещё не открыл')
+
+
+class TestGoneIsNotARefusal:
+    """⚠⚠⚠ «Собеседник вышел» — состояние, а не отказ сайта.
+
+    Сайт отвечает на это словом `target`, и его собственная страница
+    показывает окно «user offline» (`chat_v4.min.js`: `"target" === t →
+    popupUserOffline`). Уход проходит сам через минуты.
+
+    Правило в проекте уже есть и писалось ровно под такой случай
+    (`invite_send.py`): строку с причиной круг больше не берёт — она ждёт
+    человека с кнопкой, — а годная реплика должна уйти сама, когда человек
+    вернётся в ленту.
+
+    Замер 04.11.2026: за 20 попыток 2 таких ответа (10%). Считай мы их
+    отказом — две готовые реплики были бы заглушены насовсем.
+    """
+
+    @staticmethod
+    def _patch(monkeypatch, answer):
+        from src.dating import send_connection
+
+        async def open_(*a, **kw):
+            return {'client': None, 'socket_id': 'sid', 'frames': []}
+
+        async def create(*a, **kw):
+            return answer
+
+        monkeypatch.setattr(send_connection, 'chat_socket_open', open_)
+        monkeypatch.setattr(
+            'src.dating.chat_request.chat_request_create', create)
+
+    async def test_a_gone_peer_returns_the_row_clean(self, monkeypatch):
+        from src.dating import send_connection
+
+        self._patch(monkeypatch, {'ok': False, 'response': '', 'away': True,
+                                  'error': 'сайт не принял кадр: target'})
+
+        got = await send_connection.send_connection_run(
+            PROFILE, PRESENCE, PRESENCE['send'], MAN, 'hi', 'uid-1',
+            may_invite=True)
+
+        assert got['ok'] is False
+        assert got['offline'] is True, (
+            'уход собеседника принят за отказ — готовая реплика заглушена '
+            'насовсем, хотя человек вернётся сам')
+
+    async def test_a_real_refusal_still_stops_the_row(self, monkeypatch):
+        """⚠ А отказ по-прежнему глушит: иначе круг зациклится на нём."""
+        from src.dating import send_connection
+
+        self._patch(monkeypatch, {'ok': False, 'response': '', 'away': False,
+                                  'error': 'сайт не принял кадр: noMoney'})
+
+        got = await send_connection.send_connection_run(
+            PROFILE, PRESENCE, PRESENCE['send'], MAN, 'hi', 'uid-1',
+            may_invite=True)
+
+        assert got['offline'] is False, (
+            'отказ выдан за «он отошёл» — строка вернётся в пул чистой, и '
+            'круг будет биться об неё бесконечно')
+
+    def test_the_mark_belongs_to_the_site_driver(self):
+        """⚠⚠ Слово сайта разбирается там, где известен его смысл.
+
+        Общий транспорт слов сайта не знает, а вызывающий — тем более.
+        """
+        import inspect
+
+        from src.dating import chat_request, chat_socket
+
+        assert 'CHAT_REQUEST_AWAY' in inspect.getsource(chat_request)
+        assert 'target' not in inspect.getsource(chat_socket), (
+            'примета конкретного сайта уехала в общий транспорт')
