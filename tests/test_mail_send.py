@@ -532,11 +532,15 @@ class TestNoRoundSends:
             'круг набора пула научился отправлять письма'
 
     async def test_making_the_pool_does_not_send(self):
-        import inspect
+        # ⚠ Смотрим **код**, а не исходник: в докстрингах отправка упомянута
+        # нарочно — там объяснено, кто ставит отметку «показан» и почему это
+        # не набор. Чистит общий сторож слоя: `inspect.getsource` отдаёт
+        # файл целиком, вместе с прозой.
+        from tests_.tests_guard import tests_guard_code
 
         from src.dating import mailing
 
-        assert 'mail_send' not in inspect.getsource(mailing), \
+        assert 'mail_send' not in tests_guard_code(mailing), \
             'набор пула научился отправлять письма'
 
 

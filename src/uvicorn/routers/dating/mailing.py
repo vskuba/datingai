@@ -32,6 +32,7 @@ from src.dating.intention_do import (intention_mail_delivery,
 from src.dating.mail_reply import (mail_reply_delivery,
                                           mail_reply_delivery_scope)
 from src.dating.online import online_show
+from src.dating.mail_shot import mail_shot_join
 from src.dating.pool_pair import (pool_delivery_where,
                                          pool_mail_answered_where,
                                          pool_pair_girl, pool_pair_joins,
@@ -128,9 +129,16 @@ async def mailing_list(site_id: int = 0, status_: str = 'draft',
            ' m.body, m.status, m.error, m.sent_at, m.created_at,'
            ' p.login AS profile_login, p.profile AS profile_card,'
            ' t.name AS mail_name'
+           # ⚠⚠ Снимок письма — **тем же куском**, что у трёх прочих пулов
+           # (`mail_shot_join`): в строке лежит номер строки индекса, а превью
+           # отдаётся по номеру файла на Диске, и спутать их легко — оба
+           # числа, а ошибка видна лишь пустым квадратом. Своё написание здесь
+           # разошлось бы с соседями молча.
+           + mail_shot_join('m')[0] +
            ' FROM mailing m'
            ' LEFT JOIN profile p ON p.id = m.profile_id'
            ' LEFT JOIN mail t ON t.id = m.mail_id'
+           + mail_shot_join('m')[1]
            + pool_pair_joins() +
            ' WHERE m.site_id = %s')
     args = [int(site_id)]

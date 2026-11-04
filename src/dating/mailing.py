@@ -43,7 +43,9 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.block import block_pairs
+from src.dating.companion_gallery import companion_gallery_fresh
 from src.dating.json_column import json_column_load
+from src.dating.mail_shot import MAIL_SHOT_GROUP
 from src.dating.mail import (MAILING_QUESTION_CHANCE,
                                    MAILING_QUESTION_SETTING,
                                    mail_mark_drop, mail_missing,
@@ -1068,15 +1070,65 @@ async def _mail_answered(site_id: int) -> set:
 
 async def _put(site_id: int, girl: dict, person: dict, template: dict,
                body: str) -> None:
-    """Кладёт письмо в пул.
+    """Кладёт письмо в пул — со снимком, если у анкеты есть свободный.
 
     `INSERT IGNORE`: уникальный ключ ловит гонку, если кнопку нажали дважды разом.
+
+    ## ⚠⚠ Снимок кладётся **каждому** письму, и жребия здесь нет
+
+    Это отличие от ответов с приставанием: там долю бросает шаг `dice` у
+    соседа (`mail_shot.py`), потому что письмо сочиняется на пару и вызов
+    агента всё равно идёт. Рассылка собирается одним шаблоном на всех, агента
+    на письмо не зовёт, и второе место с долей разошлось бы с первым молча.
+
+    Правило простое и названо владельцем: есть свободный снимок —
+    прикладываем, нет — письмо уходит текстом. Отсутствие фотографий у анкеты
+    письму не мешает.
+
+    ⚠⚠ «Свободный» значит **этот человек его не видел**
+    (`companion_gallery_fresh`), и память общая со всеми прочими письмами:
+    пара «сайт + получатель», анкета в ключ не входит. Заведи рассылка свой
+    счёт — один кадр ушёл бы человеку дважды, разными занятиями.
+
+    ⚠ Берётся папка `public`: интимные уходят только по обещанию агента, где
+    о них попросили словами. Константа общая с прочими письмами
+    (`MAIL_SHOT_GROUP`), своя копия здесь разошлась бы при первой правке.
+
+    ⚠⚠ Отметку «показан» ставит **отправка** (`mail_send_mark`), а не этот
+    отбор: пока письмо лежит в пуле, снимок никому не показан, и сожги мы его
+    здесь, первая же неудачная отправка унесла бы кадр навсегда. Отсюда же
+    следствие: два письма, собранные **до** отправки первого, могут получить
+    один кадр. Терпимо — пул рассылки набирается по одному письму на пару, и
+    адресаты в заходе уникальны.
     """
+    shot = await _shot(int(girl['id']), int(site_id), str(person['uid']))
+
     async with mysql_get_db_async() as db:
         await db.execute(
             'INSERT IGNORE INTO mailing'
-            ' (site_id, profile_id, mail_id, uid, name, body, status)'
-            " VALUES (%s, %s, %s, %s, %s, %s, 'draft')",
+            ' (site_id, profile_id, mail_id, uid, name, body, status,'
+            '  gallery_file_id)'
+            " VALUES (%s, %s, %s, %s, %s, %s, 'draft', %s)",
             (int(site_id), int(girl['id']), int(template['id']),
-             str(person['uid']), str(person.get('name') or ''), body))
+             str(person['uid']), str(person.get('name') or ''), body,
+             int(shot)))
         await db.connection.commit()
+
+
+async def _shot(profile_id: int, site_id: int, uid: str) -> int:
+    """Снимок письму: первый, которого этот человек не видел. Ноль — нет таких.
+
+    ⚠ **Ничего не бросает.** Снимка может не быть по трём причинам — галереи
+    нет вовсе, всё уже показано, Диск не обошли, — и ни одна не повод отказать
+    письму: текст у него есть, человеку он уйдёт.
+    """
+    try:
+        fresh = await companion_gallery_fresh(int(profile_id), int(site_id),
+                                              str(uid), limit=1,
+                                              group=MAIL_SHOT_GROUP)
+    except Exception as e:
+        logger_info(f'[dating] снимок письму рассылки не выбрался: {e}')
+
+        return 0
+
+    return int(fresh[0]['id']) if fresh else 0
