@@ -303,12 +303,18 @@ async def intention_mail_delivery(db, site_id: int, take: int,
     «почему» — по ней (`she_promised_send_photo` против
     `she_promise_tell_a_story`). Без неё чипс отвечал бы половину вопроса.
     """
+    from src.dating.mail_cold_panel import (mail_cold_panel_subject,
+                                            mail_cold_panel_want)
     from src.dating.mail_shot import mail_shot_join
     from src.dating.pool_pair import (pool_pair_girl, pool_pair_joins,
                                       pool_pair_select)
 
     where, args = intention_mail_delivery_scope(profile_id, uid)
     shot_select, shot_join = mail_shot_join('m')
+    # Тема — **то же правило, что у пула рассылки**: письмо по обещанию уходит
+    # той же панельной дорогой, и окно письма обязано показывать ту тему,
+    # которая уйдёт, а не молчать о ней.
+    panel = await mail_cold_panel_want(int(site_id), 'intention_mail')
 
     await db.execute(
         'SELECT m.id, m.site_id, m.profile_id, m.uid,'
@@ -340,6 +346,8 @@ async def intention_mail_delivery(db, site_id: int, take: int,
         got['sent_at'] = str(got['sent_at']) if got.get('sent_at') else ''
         got['created_at'] = str(got.get('created_at') or '')
         got['updated_at'] = str(got['updated_at']) if got.get('updated_at') else ''
+        got['subj'] = (mail_cold_panel_subject(str(got.get('body') or ''))
+                       if panel else '')
         rows.append({**got, 'kind': 'intention'})
 
     return rows

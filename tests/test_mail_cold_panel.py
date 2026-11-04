@@ -368,6 +368,104 @@ class TestTheDoor:
                                   json={'settings': before})
 
 
+class TestShownInTheWindow:
+    """⚠ Тема, показанная в окне письма, — та же, что уйдёт.
+
+    Окно берёт строку из списка и из ответов кнопки, а не из `mail_cold_panel_send`
+    напрямую, и вторая формулировка правила разошлась бы с первой: на экране
+    одна тема, в панели другая.
+    """
+
+    async def test_pool_row_carries_the_subject(self, auth_client, site, girl):
+        mailing_id = await _mailing_row(girl)
+
+        try:
+            rows = (await auth_client.get(
+                '/api/dating/mailing', params={'site_id': SITE})).json()['result']
+            mine = next(r for r in rows if r['id'] == mailing_id)
+
+            assert mine['subj'] == mail_cold_panel_subject(BODY)
+            assert len(mine['subj']) >= 10, 'окно показало бы тему, которую ' \
+                                            'панель отвергает'
+        finally:
+            await _drop_mailing(mailing_id)
+
+    async def test_delivery_row_carries_it_too(self, auth_client, site, girl):
+        """Журнал доставки открывают ради не дошедшего — тема нужна и там."""
+        mailing_id = await _mailing_row(girl)
+
+        try:
+            # Неудача оставляет письмо черновиком с причиной — журнал
+            # показывает именно такое состояние.
+            async with mysql_get_db_async() as db:
+                await db.execute('UPDATE mailing SET error = %s WHERE id = %s',
+                                 ('панель не приняла письмо', mailing_id))
+                await db.connection.commit()
+
+            rows = (await auth_client.get('/api/dating/mailing/delivery',
+                                          params={'site_id': SITE})).json()['result']
+            mine = next(r for r in rows if r['id'] == mailing_id)
+
+            assert mine['subj'] == mail_cold_panel_subject(BODY)
+        finally:
+            await _drop_mailing(mailing_id)
+
+    async def test_the_button_answer_carries_it_after_send(self, site, girl):
+        """Страница подставляет ответ кнопки в строку пула — тема обязана ехать.
+
+        ⚠ Проверяется в процессе, а не HTTP: кнопка ходит к панели, а подделка
+        панели — `httpx.MockTransport`, она reachable только в этом процессе.
+    """
+        from src.uvicorn.routers.dating import mailing as mailing_router
+
+        mailing_id = await _mailing_row(girl)
+
+        try:
+            mine = await mailing_router._row(mailing_id)
+
+            assert mine['subj'] == mail_cold_panel_subject(BODY)
+        finally:
+            await _drop_mailing(mailing_id)
+
+    async def test_a_site_with_the_api_shows_no_subject(self, auth_client, girl):
+        """Сайт с ручкой тему не отправляет вовсе — врать в окне нечем."""
+        other = SITE + 1
+        before = ((await auth_client.get(f'/api/dating/site/{other}')).json()
+                  ['result']['settings'])
+        await auth_client.put(f'/api/dating/site/{other}', json={'settings': {
+            'presence': '{"driver": "ladadate"}', **before}})
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO profile (site_id, login, password, enabled)'
+                ' VALUES (%s, %s, %s, 1)',
+                (other, f'cp-{uuid.uuid4().hex[:8]}', 'x'))
+            await db.connection.commit()
+            await db.execute('SELECT LAST_INSERT_ID() AS id')
+            stranger = int((await db.fetchone())['id'])
+            await db.execute(
+                'INSERT INTO mailing (site_id, profile_id, mail_id, uid, name,'
+                " body, status) VALUES (%s, %s, NULL, %s, 'Petra', %s, 'draft')",
+                (other, stranger, MAN_SITE_ID, BODY))
+            await db.connection.commit()
+            await db.execute('SELECT LAST_INSERT_ID() AS id')
+            made = int((await db.fetchone())['id'])
+
+        try:
+            rows = (await auth_client.get('/api/dating/mailing',
+                                          params={'site_id': other})).json()['result']
+            mine = next(r for r in rows if r['id'] == made)
+
+            assert mine['subj'] == '', 'письму с ручкой пририсована тема'
+        finally:
+            async with mysql_get_db_async() as db:
+                await db.execute('DELETE FROM mailing WHERE id = %s', (made,))
+                await db.execute('DELETE FROM profile WHERE id = %s', (stranger,))
+                await db.connection.commit()
+            await auth_client.put(f'/api/dating/site/{other}',
+                                  json={'settings': before})
+
+
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 def _letter(profile_id: int, attach: bool = False) -> dict:

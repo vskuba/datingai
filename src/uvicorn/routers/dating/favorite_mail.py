@@ -34,6 +34,8 @@ from src.dating.favorite_mail import (FAVORITE_MAIL_BATCH_DEFAULT,
 from src.dating.favorite_mail_round import favorite_mail_round_next
 from src.dating.json_column import json_column_load
 from src.dating.mail_explain import mail_explain
+from src.dating.mail_cold_panel import (mail_cold_panel_subject,
+                                        mail_cold_panel_want)
 from src.dating.mail_reply import (mail_reply_delivery,
                                           mail_reply_delivery_scope,
                                           mail_reply_thread)
@@ -211,7 +213,14 @@ async def favorite_mail_list(site_id: int = 0, status_: str = 'draft',
     # анкета в сети, её избранный в сети, генерация включена, пул пуст — а причина
     # («писали 21 минуту назад, пауза 4 часа») была видна только в журнале воркера.
     # Один срок без повода читается как обещание набора к этому сроку.
-    return {'result': [_answer(row) for row in rows or []],
+    # Тема — тем же правилом, что у рассылки (`mailing.py`): той же функцией,
+    # что на отправке, и только там, где панель её правда шлёт.
+    panel = await mail_cold_panel_want(int(site_id), FAVORITE_MAIL_TABLE)
+
+    return {'result': [{**_answer(row),
+                        'subj': (mail_cold_panel_subject(str(row['body']))
+                                 if panel else '')}
+                       for row in rows or []],
             'page': page, 'pages': pages, 'total': total,
             'pool': await favorite_mail_pool_left(int(site_id)),
             'next_sec': favorite_mail_round_next(int(site_id)),
@@ -323,6 +332,9 @@ async def favorite_mail_delivery(site_id: int = 0, profile_id: int = 0,
     deed, deed_args = intention_mail_delivery_scope(int(profile_id),
                                                    str(uid or ''))
 
+    # Тема — тем же правилом, что у пула выше.
+    panel = await mail_cold_panel_want(int(site_id), FAVORITE_MAIL_TABLE)
+
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT (SELECT COUNT(*) FROM favorite_mail m WHERE m.site_id = %s'
@@ -370,7 +382,9 @@ async def favorite_mail_delivery(site_id: int = 0, profile_id: int = 0,
             + ' ORDER BY COALESCE(m.sent_at, m.updated_at, m.created_at) DESC,'
             ' m.id DESC LIMIT %s',
             tuple([int(site_id)] + own_args + [take]))
-        letters = [{**_answer(row), 'kind': 'favorite'}
+        letters = [{**_answer(row), 'kind': 'favorite',
+                    'subj': (mail_cold_panel_subject(str(row['body']))
+                             if panel else '')}
                    for row in (await db.fetchall()) or []]
 
         # ⚠ Ответы — той же общей функцией, что у журнала писем, с одним отличием:
@@ -835,7 +849,12 @@ async def _row(mail_id: int) -> dict:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail=f'письма #{mail_id} нет')
 
-    return _answer(row)
+    # Тема — как в списке: кнопка подставляет этот ответ в строку пула.
+    panel = await mail_cold_panel_want(int(row['site_id']), FAVORITE_MAIL_TABLE)
+
+    return {**_answer(row),
+            'subj': (mail_cold_panel_subject(str(row['body']))
+                     if panel else '')}
 
 
 def _answer(row) -> dict:

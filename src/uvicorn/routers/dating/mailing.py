@@ -23,6 +23,8 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.auth.auth import AuthUser, auth_required
 from src.dating.json_column import json_column_load
 from src.dating.mail import MAIL_BODY_MAX
+from src.dating.mail_cold_panel import (mail_cold_panel_subject,
+                                        mail_cold_panel_want)
 from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
                                          mail_send_one)
 from src.dating.intention_do import (intention_mail_delivery,
@@ -167,7 +169,16 @@ async def mailing_list(site_id: int = 0, status_: str = 'draft',
         await db.execute(sql, tuple(args))
         rows = await db.fetchall()
 
-    return {'result': [_answer(row) for row in rows],
+    # Тема — **той же функцией, что на отправке** (`mail_cold_panel_subject`), и
+    # только там, где её правда шлют: панель сочиняет письма сайтов без ручки.
+    # Сайты с ручкой тему не отправляют вовсе — там её рождает сайт, и строка
+    # «Тема» в окне врала бы о письме, у которого темы нет.
+    panel = await mail_cold_panel_want(int(site_id), 'mailing')
+
+    return {'result': [{**_answer(row),
+                        'subj': (mail_cold_panel_subject(str(row['body']))
+                                 if panel else '')}
+                       for row in rows],
             # ⚠ Почему полный пул не уходит — вместе со списком: «50 из 50» без
             # объяснения читается как поломка (`send_round.py`).
             'send_why': await send_why(int(site_id), 'mailing',
@@ -260,6 +271,10 @@ async def mailing_delivery(site_id: int = 0, profile_id: int = 0, uid: str = '',
     deed, deed_args = intention_mail_delivery_scope(int(profile_id),
                                                    str(uid or ''))
 
+    # Тема — тем же правилом, что у пула выше: только там, где панель её
+    # правда шлёт, и из начала самого письма.
+    panel = await mail_cold_panel_want(int(site_id), 'mailing')
+
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT (SELECT COUNT(*) FROM mailing m WHERE m.site_id = %s'
@@ -310,7 +325,9 @@ async def mailing_delivery(site_id: int = 0, profile_id: int = 0, uid: str = '',
             + ' ORDER BY COALESCE(m.sent_at, m.created_at) DESC, m.id DESC'
             ' LIMIT %s',
             tuple([int(site_id)] + own_args + [take]))
-        letters = [{**_answer(row), 'kind': 'mailing'}
+        letters = [{**_answer(row), 'kind': 'mailing',
+                    'subj': (mail_cold_panel_subject(str(row['body']))
+                             if panel else '')}
                    for row in (await db.fetchall()) or []]
 
         # ⚠⚠ Ответы читает **общая функция** (`mail_reply_delivery`), а не свой
@@ -670,7 +687,14 @@ async def _row(mailing_id: int) -> dict:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail=f'письма #{mailing_id} нет')
 
-    return _answer(row)
+    # Тема — как в списке (`mailing_list`): кнопка подставляет этот ответ в
+    # строку пула, и без темы окно отправленного письма молчало бы о том,
+    # что на самом деле ушло.
+    panel = await mail_cold_panel_want(int(row['site_id']), 'mailing')
+
+    return {**_answer(row),
+            'subj': (mail_cold_panel_subject(str(row['body']))
+                     if panel else '')}
 
 
 def _answer(row: dict) -> dict:
