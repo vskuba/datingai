@@ -519,6 +519,12 @@ async def mailing_shots_fill(site_id: int) -> int:
     этому адресату прокручивается. Свой отбор здесь был бы второй дорогой
     мимо привязки — той самой бедой, которую правило и чинит.
 
+    ⚠⚠ Дозор **начинает с шаблонов**: письма, набранные до правила, легли с
+    жребиевским кадром, и у таких строк условие `gallery_file_id = 0` не
+    сработало бы никогда — их шаблон остался бы без кадра, а все они несли бы
+    один и тот же файл. Поэтому сперва привязываются шаблоны без кадра, и
+    только потом письма, чей кадр разошёлся с шаблонным.
+
     ## ⚠⚠ Это не разовая доводка, а постоянный шаг
 
     Снимок мог не достаться письму и **после** правила: на сочинении галерея
@@ -532,16 +538,52 @@ async def mailing_shots_fill(site_id: int) -> int:
     позже, и письмо тогда доберёт свой.
     """
     try:
+        # ⚠⚠ Первым делом — **шаблоны**, а не письма. Дозор ходил только по
+        # черновикам, и шаблон, чьи письма легли ещё до правила 04.11 со
+        # жребиевским кадром, оставался непривязанным вечно: у писем кадр был,
+        # хода к шаблону не было, а пул стоял полным — сборка не заходила.
+        # Привязываем здесь той же общей дверью; письма добирают его вторым
+        # шагом.
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT id, profile_id FROM mail'
+                ' WHERE site_id = %s AND enabled = 1'
+                '   AND gallery_file_id = 0', (int(site_id),))
+            bare = [dict(row) for row in (await db.fetchall() or [])]
+
+        for row in bare:
+            shot = await mail_shot_for_template(int(row['profile_id'] or 0),
+                                                int(row['id']))
+            if not shot:
+                continue
+
+            async with mysql_get_db_async() as db:
+                # Тот же guarded-заход, что в `_letter_shot`: в гонке
+                # побеждает первый, второй не затирает чужую запись.
+                await db.execute(
+                    'UPDATE mail SET gallery_file_id = %s'
+                    ' WHERE id = %s AND gallery_file_id = 0',
+                    (int(shot), int(row['id'])))
+                await db.connection.commit()
+
         async with mysql_get_db_async() as db:
             # `mail_id` и шаблонный кадр — чтобы `_letter_shot` наследовала
             # его и привязывала недостающий, а не выбирала по жребию заново.
+            # ⚠ Второе условие — письма **старого пула**: они легли с
+            # жребиевским кадром, и без него половина пула несла бы разным
+            # людям один и тот же первый файл, против чего правило 04.11 и
+            # стояло. Шаблона кадр не имеет — письма не трогаем (исключение
+            # пустой галереи не множим).
             await db.execute(
                 'SELECT m.id, m.profile_id, m.uid, m.mail_id,'
-                '       t.gallery_file_id'
+                '       m.gallery_file_id AS held, t.gallery_file_id'
                 '  FROM mailing m'
                 '  LEFT JOIN mail t ON t.id = m.mail_id'
                 " WHERE m.site_id = %s AND m.status = 'draft'"
-                '   AND m.gallery_file_id = 0', (int(site_id),))
+                '   AND (m.gallery_file_id = 0'
+                '        OR (t.gallery_file_id > 0'
+                '            AND t.gallery_file_id <> m.gallery_file_id))',
+                (int(site_id),))
             ours = [dict(row) for row in (await db.fetchall() or [])]
 
         filled = 0
@@ -551,16 +593,19 @@ async def mailing_shots_fill(site_id: int) -> int:
                                       str(row['uid'] or ''),
                                       int(row['mail_id'] or 0),
                                       int(row['gallery_file_id'] or 0))
-            if not shot:
+            if not shot or shot == int(row['held'] or 0):
+                # Пусто — пропустим до следующего захода; совпало — письмо
+                # уже несёт своё (или прокрутку показанного), трогать нечего.
                 continue
 
             async with mysql_get_db_async() as db:
-                # ⚠ `AND gallery_file_id = 0` в условии правки: пока мы
+                # ⚠ `AND gallery_file_id = %s` по видимому значению: пока мы
                 # выбирали, письмо мог доверить другой заход — не затираем.
                 await db.execute(
                     'UPDATE mailing SET gallery_file_id = %s'
-                    ' WHERE id = %s AND gallery_file_id = 0',
-                    (int(shot), int(row['id'])))
+                    ' WHERE id = %s AND gallery_file_id = %s',
+                    (int(shot), int(row['id']),
+                     int(row['held'] or 0)))
                 await db.connection.commit()
 
             filled += 1
@@ -1297,6 +1342,19 @@ async def _letter_shot(profile_id: int, site_id: int, uid: str, mail_id: int,
                         ' WHERE id = %s AND gallery_file_id = 0',
                         (int(shot), int(mail_id)))
                     await db.connection.commit()
+
+                    # ⚠ И смотрим, что строка **держит**, а не что мы выбрали:
+                    # два письма одного шаблона за один заход сборки — второе
+                    # вошло с устаревшим чтением (ноль), и дверь выдала бы ему
+                    # чужую свежесть. Письмо несёт шаблонный кадр; проигравший
+                    # выбор — не повод нести другой.
+                    await db.execute('SELECT gallery_file_id FROM mail'
+                                     ' WHERE id = %s', (int(mail_id),))
+                    held = int(list(dict(await db.fetchone() or
+                                         {}).values())[0] or 0)
+
+                if held:
+                    shot = held
             except Exception as e:
                 # Кадр выбран и списан из свежести — отказ закрепить не
                 # делает письмо безкадровым, письмо его понесёт.

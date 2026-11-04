@@ -14,7 +14,9 @@
 * **порядок — по свежести** (`gallery_file.last_shot_at`): сначала никогда не
   бранные, самыми свежими вперёд; все браны — сброс круга и случайный порядок;
 * **человек важнее шаблона**: показанный этому адресату кадр письмо не
-  повторяет — берёт следующий невиданный (ответ владельца 04.11.2026).
+  повторяет — берёт следующий невиданный (ответ владельца 04.11.2026);
+* **старый пул тоже под правилом**: дозор сперва привязывает шаблоны без
+  кадра, а письма, чей кадр разошёлся с шаблонным, пересаживает на него.
 
 ⚠⚠ Одна дверь на все дороги — `mail_shot_for_template`. Круг заготовок, кнопка
 «Новый шаблон», правка с включением и письмо-новорождённый (шаблон без кадра)
@@ -297,6 +299,61 @@ class TestTheRecipientWinsOverTheTemplate:
         assert await _letter_shot(girl, 999_343, _uid(), 0, 0) in frames
 
 
+class TestThePatrolFixesWhatAssemblyMissed:
+    """⚠ Старый пул: письма легли до правила со жребиевским кадром.
+
+    Черновики **снимки уже несли**, и условие `gallery_file_id = 0` к ним не
+    применялось никогда — их шаблоны висели без кадра вечно (пул полон,
+    сборка не заходит), и все эти письма разным людям несли один и тот же
+    первый файл. Дозор идёт с другой стороны: сперва привязывает шаблоны,
+    потом пересаживает письма на их кадр.
+    """
+
+    async def test_the_template_behind_old_letters_gets_a_shot(self, girl):
+        from mysql_.mysql_ import mysql_get_db_async
+
+        from src.dating.mailing import mailing_shots_fill
+
+        frames = await _seed(girl, 3)
+        own = await _template(girl, 't-old')
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                "INSERT INTO mailing (site_id, profile_id, mail_id, uid,"
+                "  name, body, status, gallery_file_id)"
+                " VALUES (%s, %s, %s, %s, 'Bo', 'Hi', 'draft', %s)",
+                (999_343, girl, own, _uid(), frames[0]))
+            letter = int(db.lastrowid)
+            await db.connection.commit()
+
+        await mailing_shots_fill(999_343)
+
+        rows = await _sql('SELECT gallery_file_id FROM mail WHERE id = %s',
+                          (own,))
+        bound = int(rows[0]['gallery_file_id'])
+        assert bound > 0, 'шаблон за письмами со жребиевским кадром не привязался'
+
+        rows = await _sql('SELECT gallery_file_id FROM mailing WHERE id = %s',
+                          (letter,))
+        assert int(rows[0]['gallery_file_id']) == bound, (
+            'старое письмо не пересело на шаблонный кадр — разным людям шёл бы'
+            ' один и тот же снимок')
+
+    async def test_a_stale_read_does_not_dress_a_second_shot(self, girl):
+        """Два письма одного шаблона за заход: второе вошло, прочитав ноль, и
+        дверь выдала бы ему другую свежесть — письмо несёт то, что шаблон
+        держит на самом деле."""
+        from src.dating.mailing import _letter_shot
+
+        frames = await _seed(girl, 2)
+        own = await _template(girl, 't-bound', shot=frames[1])
+
+        got = await _letter_shot(girl, 999_343, _uid(), own, 0)
+
+        assert got == frames[1], ('письмо с устаревшим чтением понесло другой'
+                                  ' кадр, чем его шаблон')
+
+
 class TestOneDoorOnEveryRoad:
     """⚠⚠⚠ Все дороги — через `mail_shot_for_template`. Своё место отбора —
     второе мнение о том, какой кадр свеж и кто его держит; оно разойдётся с
@@ -322,6 +379,18 @@ class TestOneDoorOnEveryRoad:
             code = inspect.getsource(road)
             assert '_letter_shot(' in code, (
                 'одна из дорог письма пошла своим отбором мимо привязки')
+
+    def test_the_patrol_starts_with_the_templates(self):
+        """Дозор привязывает шаблонные кадры **сам**: письма старого пула уже
+        были со снимком, и обходом одних писем шаблоны остались бы висеть на
+        жребиевских кадрах навечно."""
+        from src.dating import mailing
+
+        code = inspect.getsource(mailing.mailing_shots_fill)
+
+        assert 'mail_shot_for_template(' in code, (
+            'дозор перестал привязывать шаблоны — старый пул так и шёл бы'
+            ' одним жребиевским кадром')
 
     def test_the_door_is_the_only_stamp(self):
         """⚠ Отметку свежести ставит только дверь — одна точка на весь код.
