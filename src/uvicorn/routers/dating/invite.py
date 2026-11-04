@@ -365,7 +365,9 @@ async def invite_delivery(site_id: int = 0, profile_id: int = 0, uid: str = '',
     Returns:
         dict: `result` — строки обоих родов, свежие сверху, у каждой `kind`
         (`invite` — первая реплика незнакомому, `initiative` — возврат к
-        затихшему разговору). Рядом `total`, `page`, `pages`.
+        затихшему разговору). Рядом `total`, `page`, `pages` и `speed` —
+        число на вкладке, тем же расчётом, что у пула: человек считает его
+        там, где стоит, а не там, где наполняется другой список.
 
     ## ⚠⚠⚠ Почему источников два
 
@@ -394,7 +396,7 @@ async def invite_delivery(site_id: int = 0, profile_id: int = 0, uid: str = '',
     if not int(site_id or 0):
         # ⚠ Поля пейджера есть и в пустом ответе: страница читает их без
         # проверок, и `pages: undefined` нарисовало бы мёртвый пейджер.
-        return {'result': [], 'page': 1, 'pages': 1, 'total': 0}
+        return {'result': [], 'page': 1, 'pages': 1, 'total': 0, 'speed': {}}
 
     per = min(int(per or 0) or INVITE_DELIVERY_PER, INVITE_LIMIT)
     page = max(1, int(page or 1))
@@ -457,7 +459,15 @@ async def invite_delivery(site_id: int = 0, profile_id: int = 0, uid: str = '',
                                or '', int(one.get('id') or 0)), reverse=True)
 
     return {'result': rows[(page - 1) * per:page * per],
-            'total': total, 'page': page, 'pages': pages}
+            'total': total, 'page': page, 'pages': pages,
+            # ⚠ **Число на вкладке «Доставка» говорит отсюда.** Прежде оно
+            # приезжало только с пулом — и обновлялось, лишь пока открыта
+            # «Инвайты»: перешёл человек к журналу, отправка идёт, строки
+            # добавляются, а число под ними стоит замороженным (замер
+            # 04.11.2026, прод: 54 на вкладке при 79 ушедших в том же окне).
+            # Считается **тем же `_speed()`, что и у пула**: у двух подвкладок
+            # один вопрос «сколько ушло», разойтись им некуда.
+            'speed': await _speed(int(site_id))}
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

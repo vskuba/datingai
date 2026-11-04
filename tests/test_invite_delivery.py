@@ -14,6 +14,7 @@
 """
 
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -208,6 +209,45 @@ class TestPoolIsNotBroken:
                                              'status_': 'draft'})).json()
 
         assert len({row['uid'] for row in got['result']}) == 2, got['result']
+
+
+class TestTheNumberOnTheTab:
+    """⚠⚠⚠ Число на вкладке «Доставка» едет **с журналом**, а не только с пулом.
+
+    Оно приезжало только с пулом — и обновлялось, лишь пока открыта подвкладка
+    «ІНВАЙТИ»: перешёл человек к журналу, отправка идёт, строки добавляются, а
+    число под ними стоит замороженным (замер 04.11.2026, прод Step2Love: 54 на
+    вкладке при 79 ушедших в том же окне).
+    """
+
+    async def test_the_number_comes_with_the_journal(self, auth_client, journal):
+        """Шесть реплик ушли только что — пять минут ещё не прошли."""
+        got = await _ask_journal(auth_client)
+
+        assert int((got.get('speed') or {}).get('last_5min') or 0) >= 6, \
+            f'журнал не везёт число: {got.get("speed")}'
+
+    async def test_the_page_reads_the_number_from_the_journal(self):
+        """⚠ И страница берёт его из журнала, иначе правка — половина."""
+        page = Path(
+            'data/uvicorn/template/admin/dating/profile.html').read_text()
+
+        assert 'if (got.speed) inviteSpeed = got.speed;' in page, \
+            'страница не берёт число из журнала — на «Доставке» оно снова замерло бы'
+
+    async def test_the_empty_answer_has_the_number_too(self, auth_client):
+        """Сайта нет — и это поле есть: страница читает ответ без проверок."""
+        got = (await auth_client.get('/api/dating/invite/delivery',
+                                     params={'site_id': 0})).json()
+
+        assert 'speed' in got, 'пустой ответ без числа'
+
+
+async def _ask_journal(client, per: int = 25, page: int = 1) -> dict:
+    """Страница «Доставки» ходит в слитую ручку, а не в пул со статусом."""
+    return (await client.get('/api/dating/invite/delivery',
+                             params={'site_id': STAND_SITE, 'page': page,
+                                     'per': per})).json()
 
 
 async def _sent_at(profile_id: int, uid: str, when: str) -> None:
