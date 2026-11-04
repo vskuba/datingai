@@ -105,9 +105,29 @@ async def companion_gallery_fresh(profile_id: int, site_id: int, uid: str,
             ' WHERE g.profile_id = %s AND g.is_gone = 0 AND g.kind = %s'
             # ⚠ `NOT EXISTS`, а не `LEFT JOIN … IS NULL`: читается как вопрос,
             # на который отвечает, и не множит строки, если отметок вдруг две.
+            #
+            # ⚠⚠⚠ Сверяется **и содержимое** (`md5`), а не только номер
+            # строки. Один и тот же снимок лежит на Диске под разными именами
+            # — «…_n.jpg» и «…_n (1).jpg», — и в индексе это две строки с
+            # разными номерами. Память об отправленном стоит на номере, и
+            # второй файл считался невиданным: Diana → Christopher получил
+            # один кадр дважды (04.11.2026, строки 97874 и 97875, `md5` и
+            # размер совпадают до байта).
+            #
+            # Замер прода: 1836 файлов, 1770 разных снимков — **66 дублей** у
+            # девяти анкет.
+            #
+            # ⚠ Пустой `md5` в сверку не идёт: он значит «не считали», и
+            # приравнять такие строки друг к другу — скрыть всю непосчитанную
+            # галерею разом.
             '   AND NOT EXISTS (SELECT 1 FROM companion_gallery_file c'
-            '                    WHERE c.gallery_file_id = g.id'
-            '                      AND c.site_id = %s AND c.uid = %s)'
+            '                    WHERE c.site_id = %s AND c.uid = %s'
+            '                      AND (c.gallery_file_id = g.id'
+            '                           OR EXISTS ('
+            '                               SELECT 1 FROM gallery_file d'
+            '                                WHERE d.id = c.gallery_file_id'
+            "                                  AND d.md5 <> ''"
+            '                                  AND d.md5 = g.md5)))'
             ' ORDER BY g.id',
             (int(profile_id), 'image', int(site_id or 0), str(uid)))
         rows = [dict(row) for row in (await db.fetchall() or [])]

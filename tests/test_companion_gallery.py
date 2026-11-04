@@ -288,3 +288,92 @@ class TestThePickByTags:
 
         assert got['file'] == {}, 'в intim лежит только «c», а он без примет'
         assert got['fresh'] == 1
+
+
+class TestTheSamePhotoTwiceUnderTwoNames:
+    """⚠⚠⚠ Один снимок, лежащий на Диске дважды, — всё равно один снимок.
+
+    Память об отправленном стоит на номере строки индекса, а один и тот же
+    кадр лежит под двумя именами: «…_n.jpg» и «…_n (1).jpg». Это две строки с
+    разными номерами, и второй файл считался невиданным.
+
+    Живой случай 04.11.2026: Diana → Christopher получил один кадр дважды —
+    письма 11 и 13, строки 97874 и 97875, `md5` и размер совпадают до байта.
+    Замер прода: 1836 файлов, 1770 разных снимков — **66 дублей** у девяти
+    анкет.
+    """
+
+    @staticmethod
+    async def _twin(profile_id: int, like: int) -> int:
+        """Вторая строка того же снимка: иное имя, тот же `md5`."""
+        from mysql_.mysql_ import mysql_get_db_async
+
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE gallery_file SET md5 = %s WHERE id = %s',
+                             ('a' * 32, int(like)))
+            await db.execute(
+                'INSERT INTO gallery_file (profile_id, file_id, path, name,'
+                "  mime, kind, is_gone, md5)"
+                " VALUES (%s, %s, 'photo/public/a (1).png', 'a (1)',"
+                "         'image/png', 'image', 0, %s)",
+                (int(profile_id), f'dup-{uuid.uuid4().hex[:8]}', 'a' * 32))
+            made = int(db.lastrowid)
+            await db.connection.commit()
+
+        return made
+
+    async def test_the_copy_is_not_offered_again(self, girl):
+        """Отправили один — второй больше не предлагается."""
+        twin = await self._twin(girl['id'], girl['files']['a'])
+
+        await companion_gallery_sent(girl['id'], STAND_SITE, 'u-dup',
+                                     girl['files']['a'])
+
+        fresh = await companion_gallery_fresh(girl['id'], STAND_SITE, 'u-dup')
+        ids = [int(one['id']) for one in fresh]
+
+        assert twin not in ids, (
+            'копия того же кадра предложена как новая — собеседник получит '
+            'одну фотографию дважды')
+        assert int(girl['files']['a']) not in ids, 'сам отправленный вернулся'
+
+    async def test_other_photos_are_still_offered(self, girl):
+        """⚠ И обратное: прочие снимки отбор не съедает.
+
+        Сверка идёт по содержимому, и широкое правило («скрыть всё похожее»)
+        отняло бы у анкеты галерею целиком.
+        """
+        await self._twin(girl['id'], girl['files']['a'])
+
+        await companion_gallery_sent(girl['id'], STAND_SITE, 'u-dup2',
+                                     girl['files']['a'])
+
+        fresh = await companion_gallery_fresh(girl['id'], STAND_SITE, 'u-dup2')
+        ids = [int(one['id']) for one in fresh]
+
+        assert int(girl['files']['b']) in ids, 'отбор съел чужой снимок'
+        assert int(girl['files']['c']) in ids
+
+    async def test_an_uncounted_photo_is_not_hidden(self, girl):
+        """⚠⚠ Пустой `md5` значит «не считали», а не «тот же снимок».
+
+        Приравняй такие строки друг к другу — и вся непосчитанная галерея
+        скрылась бы разом после первой же отправки.
+        """
+        from mysql_.mysql_ import mysql_get_db_async
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                "UPDATE gallery_file SET md5 = '' WHERE profile_id = %s",
+                (int(girl['id']),))
+            await db.connection.commit()
+
+        await companion_gallery_sent(girl['id'], STAND_SITE, 'u-dup3',
+                                     girl['files']['a'])
+
+        fresh = await companion_gallery_fresh(girl['id'], STAND_SITE, 'u-dup3')
+        ids = [int(one['id']) for one in fresh]
+
+        assert int(girl['files']['b']) in ids, (
+            'непосчитанные снимки скрыты — галерея опустела после одной '
+            'отправки')
