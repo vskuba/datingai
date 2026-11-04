@@ -24,6 +24,7 @@ from src.dating.mail_reply import (mail_reply_answer, mail_reply_make,
                                           mail_reply_thread)
 from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
                                          mail_send_one)
+from src.dating.mail_shot import DatingMailShotError, mail_shot_ready
 from src.dating.online import online_show
 from src.dating.site_session import DatingSiteSessionError, site_session_get
 from src.dating.site_setting import site_setting
@@ -486,7 +487,25 @@ async def mail_reply_send(reply_id: int,
               # ⚠⚠ Номер обмена разговора — без него `mail_send_mark` не
               # отметит у соседа доставку. Та же грабля, что у `reply_to`
               # строкой выше: не довези его сюда, и отметка ушла бы в пустоту.
-              'message_id': int(row.get('message_id') or 0)}
+              'message_id': int(row.get('message_id') or 0),
+              # ⚠ Сайт и номер снимка читает память о показанном кадре
+              # (`mail_send_mark`) ровно из этого словаря: письмо ушло с кадром,
+              # а памяти нет — и тот же кадр уйдёт вторым по другой дороге.
+              # Номер заодно сигнал для двери ниже.
+              'site_id': int(row['site_id']),
+              'gallery_file_id': int(row.get('gallery_file_id') or 0)}
+
+    # ⚠⚠ Снимок готовится **до** отправки и **одной дверью** с кругом
+    # (`mail_shot_ready`): между `check-send` и `send` в сеть не ходят. Исход
+    # при неудаче тот же, что у круга: две двери не выдумывают два правила —
+    # номер снят, письмо идёт текстом, память не помнит показанным то, что
+    # не ушло.
+    if int(letter.get('gallery_file_id') or 0):
+        try:
+            letter = await mail_shot_ready(letter)
+        except DatingMailShotError as e:
+            letter = {**letter, 'gallery_file_id': 0}
+            logger_info(f'[dating] ответ #{reply_id} уйдёт текстом: {e}')
 
     try:
         await mail_send_one(letter, profile, base, password,
@@ -591,6 +610,10 @@ async def _reply_row(reply_id: int) -> dict:
         await db.execute(
             'SELECT r.id, r.site_id, r.profile_id, r.mail_in_id, r.uid, r.name,'
             ' r.body, r.status, r.error, r.sent_at, r.created_at, r.message_id,'
+            # ⚠ Номер снимка — **кнопке**: круг его берёт своим запросом, а окно
+            # ответа нет. Без колонки клик досылал бы текстом то, что круг послал
+            # бы с кадром, и память о показанном молчала бы.
+            ' r.gallery_file_id,'
             ' p.login AS profile_login, p.profile AS profile_card,'
             ' i.body AS in_body, i.date_post AS in_at,'
             ' i.message_id AS in_message_id, i.photo AS in_photo,'

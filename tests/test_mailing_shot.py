@@ -395,3 +395,190 @@ class TestTheAnswerCarriesTheShot:
             f'/api/dating/mailing/{draft}', json={'body': 'Текст правленый'})
         assert edited.status_code == 200, edited.text[:200]
         keep('правка', [edited.json()['result']], draft)
+
+
+class TestBothRoadsSendTheSameLetter:
+    """⚠⚠⚠ Кнопка и круг готовят снимок **одной дверью**.
+
+    `mail_shot_ready` заявлена как единственная дверь на все пулы и обе дороги
+    (`mail_shot.py`), а в обработчиках кнопок её не оказалось вовсе: карточка
+    показывала человеку кадр, а клик «Отправить» досылал то же письмо текстом.
+    Полгода спустя человек нажимает кнопку на письме, которое круг послал бы с
+    фотографией, — и этого сбой в журнале не покажет.
+
+    ⚠ Стерёж двусторонний: живой клик (главная дорога — рассылка, та самая,
+    что решает чекбокс «отправка писем») и сторожа исходников для двух
+    кнопочных близнецов, у которых свой транспорт и свои сборки письма.
+    """
+
+    async def test_the_button_sends_the_shot(self, girl, drive, monkeypatch):
+        """Клик по письму со снимком — вложение уезжает настоящее.
+
+        ⚠ Кнопка зовётся **в процессе** (`testing.md`, §1.2): по HTTP она шла бы
+        из контейнерного процесса, где ни подмена транспорта Диска, ни подмена
+        отправки до неё не доходят. Подмены ровно две: транспорт Диска
+        (фикстура `drive`) и `mail_send_one` в модуле роутера — как `post`
+        в `test_send_round.py`. Дверь `mail_shot_ready`, запрос номера и путь
+        неудачи идут живьём.
+        """
+        from mysql_.mysql_ import mysql_get_db_async
+
+        import src.uvicorn.routers.dating.mailing as mod
+
+        uid = _uid()
+        one = await _seed_shot(girl, 'button')
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                "INSERT INTO mailing (site_id, profile_id, uid, name, body,"
+                "  status, gallery_file_id)"
+                " VALUES (%s, %s, %s, 'Ben', 'Hello', 'draft', %s)",
+                (999_343, int(girl), uid, one))
+            letter = int(db.lastrowid)
+            await db.connection.commit()
+
+        sent: list = []
+
+        async def fake_send(letter_, profile, base, password, table='mailing'):
+            sent.append(dict(letter_))
+
+            from src.dating.mail_send import mail_send_mark
+
+            await mail_send_mark(letter_, sent=True, table=table)
+
+        monkeypatch.setattr(mod, 'mail_send_one', fake_send)
+
+        got = await mod.mailing_send(letter)
+        assert got['result']['status'] == 'sent', got['result']
+
+        assert sent, 'кнопка не позвала отправку вовсе'
+        attach = sent[0].get('attach')
+        assert attach, ('кнопка повела письмо со снимком без вложения — круг'
+                        ' послал бы это же письмо с фотографией')
+        assert attach['data'][:3] == b'\xff\xd8\xff', 'вложение — не JPEG'
+        assert int(sent[0].get('gallery_file_id') or 0) == one, (
+            'номер доехал пустой — память о показанном кадре не отметилась,'
+            ' и этот же кадр уйдёт человеку вторым письмом')
+
+    async def test_the_button_falls_to_text_like_the_round(self, girl, drive,
+                                                          monkeypatch):
+        """Диск молчит — кнопка отдаёт **тот же исход, что круг**: текст.
+
+        ⚠ Номер снимка при этом снят со словаря, а не дописан в строку: письмо
+        в базе помнит кадр (круг вернётся к нему сам), а память о показанном —
+        нет (кадр никуда не ушёл).
+        """
+        from mysql_.mysql_ import mysql_get_db_async
+
+        import src.uvicorn.routers.dating.mailing as mod
+
+        uid = _uid()
+        one = await _seed_shot(girl, 'silent')
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                "INSERT INTO mailing (site_id, profile_id, uid, name, body,"
+                "  status, gallery_file_id)"
+                " VALUES (%s, %s, %s, 'Ben', 'Hello', 'draft', %s)",
+                (999_343, int(girl), uid, one))
+            letter = int(db.lastrowid)
+            await db.connection.commit()
+
+        drive.silent = True  # Диск отвечает 500 — снимок назначен, но недостижим
+
+        sent: list = []
+
+        async def fake_send(letter_, profile, base, password, table='mailing'):
+            sent.append(dict(letter_))
+
+            from src.dating.mail_send import mail_send_mark
+
+            await mail_send_mark(letter_, sent=True, table=table)
+
+        monkeypatch.setattr(mod, 'mail_send_one', fake_send)
+
+        got = await mod.mailing_send(letter)
+        assert got['result']['status'] == 'sent', got['result']
+
+        assert sent and 'attach' not in sent[0], (
+            'письмо без кадра повело бы битое вложение')
+        assert int(sent[0].get('gallery_file_id') or 0) == 0, (
+            'номер не снят — память запомнила бы показанным кадр, который'
+            ' никуда не ушёл, и вторым письмом он бы не ушёл никогда')
+
+    def test_the_twins_open_the_door(self):
+        """⚠ У кнопок ответа и приставания — та же дверь и тот же номер.
+
+        Живой клик здесь дороже теста (у ответа — пара с входящим, у
+        приставания — звёздочка), а беда ровно та же, что проверялась в
+        2026-10 с `delivered_at`: общая дверь, о которой забыли на одной
+        дороге. Смотрим **код**, а не исходник: в докстрингах `mail_shot_ready`
+        упомянут нарочно.
+        """
+        from tests_.tests_guard import tests_guard_code
+
+        import src.dating.mail_reply as reply
+        import src.uvicorn.routers.dating.favorite_mail as fav
+        import src.uvicorn.routers.dating.mail_in as mail_in
+        import src.uvicorn.routers.dating.mailing as mailing
+
+        for handle in (mailing.mailing_send, mail_in.mail_reply_send,
+                       fav.favorite_mail_send):
+            code = tests_guard_code(handle)
+            assert 'mail_shot_ready' in code, (
+                f'{handle.__name__}: кнопка ведёт в отправку письмо, не'
+                f' приготовив снимок, — то же письмо круг шлёт с кадром')
+
+        # Номер выбран запросом?
+        for handle in (mailing._row, mail_in._reply_row, fav._row):
+            assert 'gallery_file_id' in tests_guard_code(handle), (
+                f'{handle.__name__}: запрос не выбирает номер — дверь ниже'
+                f' не узнает о кадре молча')
+
+        # Словарь собирается руками? Номер обязан переехать в нём.
+        for handle in (mailing._answer, reply.mail_reply_answer):
+            assert "'gallery_file_id'" in tests_guard_code(handle), (
+                f'{handle.__name__}: выбранный столбец потерян на сборке'
+                f' словаря — та же грабля, что у `updated_at`')
+
+    async def test_the_round_watches_the_pool_even_full(self, girl,
+                                                       monkeypatch):
+        """⚠⚠ Пул полон — дозор кадров всё равно проходит.
+
+        Набор будит добор внутри `mailing_make`, а при полном пуле круг до
+        `mailing_make` не доходит вообще и уходит «впустую». Пока отправка
+        выключена, пул не расходуется никогда — и черновик, собранный на пустой
+        тогда галерее, ждал бы кадр дольше, чем стоит кнопка «Отправить».
+        """
+        from mysql_.mysql_ import mysql_get_db_async
+
+        from src.dating import mailing_round
+
+        uid = _uid()
+        one = await _seed_shot(girl, 'full')
+
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                "INSERT INTO mailing (site_id, profile_id, uid, name, body,"
+                "  status, gallery_file_id)"
+                " VALUES (%s, %s, %s, 'Ben', 'Hello', 'draft', 0)",
+                (999_343, int(girl), uid))
+            letter = int(db.lastrowid)
+            await db.connection.commit()
+
+        async def huge(site_id: int) -> int:
+            return 10 ** 6  # и запас, и потолок: `need <= 0` на верном месте
+
+        monkeypatch.setattr(mailing_round, '_pool_size', huge)
+        monkeypatch.setattr(mailing_round, '_pool_max', huge)
+
+        got = await mailing_round._make(999_343)
+
+        assert got == (None, True), 'полный пул обязан уходить «впустую»'
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT gallery_file_id FROM mailing'
+                             ' WHERE id = %s', (letter,))
+            shot = int(((await db.fetchone()) or {}).get('gallery_file_id') or 0)
+
+        assert shot == one, 'при полном пуле черновик остался без кадра'

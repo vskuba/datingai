@@ -470,7 +470,12 @@ def mail_reply_answer(row: dict, delay_per10: int = 0) -> dict:
             # отправка отмечает у соседа доставку; запрос, который не выбрал
             # это поле, оставил бы отметку без номера молча — `.get`, потому
             # что не все запросы, собирающие этот вид, его спрашивают.
-            'message_id': int(row.get('message_id') or 0)}
+            'message_id': int(row.get('message_id') or 0),
+            # ⚠ Номер снимка: по нему кнопка «Отправить» решает, готовить ли кадр
+            # (`mail_shot_ready`) — та же дверь, что у круга. `.get`, потому что
+            # пул «Ответов» этого столбца не спрашивает: тут вопрос «что лежит»,
+            # а окно ответа и кнопка — «чем отправить».
+            'gallery_file_id': int(row.get('gallery_file_id') or 0)}
 
 
 def mail_reply_delivery_scope(*, favorites: bool, profile_id: int = 0,

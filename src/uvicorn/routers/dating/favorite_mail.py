@@ -41,7 +41,8 @@ from src.dating.intention_do import (intention_mail_delivery,
                                             intention_mail_delivery_scope)
 from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
                                          mail_send_one)
-from src.dating.mail_shot import mail_shot_join
+from src.dating.mail_shot import (DatingMailShotError, mail_shot_join,
+                                  mail_shot_ready)
 from src.dating.online import online_show
 from src.dating.pool_pair import (pool_delivery_where, pool_pair_girl,
                                          pool_pair_joins, pool_pair_select,
@@ -735,6 +736,18 @@ async def favorite_mail_send(mail_id: int,
     base = str(await site_setting(site_id, 'api_base')).strip()
     password = str(await site_setting(site_id, 'api_password')).strip()
 
+    # ⚠⚠ Снимок готовится **до** отправки и **одной дверью** с кругом
+    # (`mail_shot_ready`): между `check-send` и `send` в сеть не ходят. Исход
+    # при неудаче тот же, что у круга: две двери не выдумывают два правила —
+    # номер снят, письмо идёт текстом, память не помнит показанным то, что
+    # не ушло.
+    if int(letter.get('gallery_file_id') or 0):
+        try:
+            letter = await mail_shot_ready(letter)
+        except DatingMailShotError as e:
+            letter = {**letter, 'gallery_file_id': 0}
+            logger_info(f'[dating] письмо избранному #{mail_id} уйдёт текстом: {e}')
+
     try:
         await mail_send_one(letter, profile, base, password,
                                    FAVORITE_MAIL_TABLE)
@@ -807,6 +820,11 @@ async def _row(mail_id: int) -> dict:
         await db.execute(
             'SELECT m.id, m.site_id, m.profile_id, m.uid, m.name, m.photo,'
             ' m.body, m.status, m.error, m.sent_at, m.created_at, m.message_id,'
+            # ⚠ Номер снимка — **кнопке**: `_answer` отдаёт строку как есть, и
+            # круг берёт этот же номер своим запросом. Без колонки клик досылал
+            # бы текстом то, что круг послал бы с кадром, и память о показанном
+            # молчала бы.
+            ' m.gallery_file_id,'
             ' p.login AS profile_login, p.profile AS profile_card'
             ' FROM favorite_mail m'
             ' LEFT JOIN profile p ON p.id = m.profile_id'

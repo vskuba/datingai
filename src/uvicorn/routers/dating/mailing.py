@@ -30,7 +30,8 @@ from src.dating.intention_do import (intention_mail_delivery,
 from src.dating.mail_reply import (mail_reply_delivery,
                                           mail_reply_delivery_scope)
 from src.dating.online import online_show
-from src.dating.mail_shot import mail_shot_join
+from src.dating.mail_shot import (DatingMailShotError, mail_shot_join,
+                                  mail_shot_ready)
 from src.dating.pool_pair import (pool_delivery_where,
                                          pool_mail_answered_where,
                                          pool_pair_girl, pool_pair_joins,
@@ -529,6 +530,20 @@ async def mailing_send(mailing_id: int,
     base = str(await site_setting(site_id, 'api_base')).strip()
     password = str(await site_setting(site_id, 'api_password')).strip()
 
+    # ⚠⚠ Снимок готовится **до** отправки и **одной дверью** с кругом
+    # (`mail_shot_ready`): между `check-send` и `send` в сеть не ходят, а своя
+    # подготовка у кнопки разошлась бы с круговой — и одно письмо круг послал
+    # бы с кадром, а кнопка то же послала текстом. Исход при неудаче **тот же,
+    # что у круга**: две двери не выдумывают два правила. Номер снимка при
+    # этом снимается — иначе память запомнила бы кадр показанным, хотя он никуда
+    # не ушёл, и по другой памяти тот же кадр ушёл бы вторым.
+    if int(letter.get('gallery_file_id') or 0):
+        try:
+            letter = await mail_shot_ready(letter)
+        except DatingMailShotError as e:
+            letter = {**letter, 'gallery_file_id': 0}
+            logger_info(f'[dating] письмо #{mailing_id} уйдёт текстом: {e}')
+
     try:
         await mail_send_one(letter, profile, base, password)
     except DatingMailSendError as e:
@@ -633,7 +648,12 @@ async def _row(mailing_id: int) -> dict:
             + pool_pair_select('m', own_photo=False) +
             ' m.body, m.status, m.error, m.sent_at, m.created_at,'
             ' p.login AS profile_login, p.profile AS profile_card,'
-            ' t.name AS mail_name'
+            ' t.name AS mail_name,'
+            # ⚠ Номер снимка — **кнопке**: карточке кадр показывают колонками
+            # `gallery_file`/`gallery_path` из куска ниже, а отправке решать,
+            # что готовить, надо по номеру. Без него `mail_shot_ready` не узнал
+            # бы о кадре, и клик досылал бы текстом то, что круг послал бы с ним.
+            ' m.gallery_file_id'
             # ⚠ Снимок — **тем же куском**, что у пула (`mailing_list`): окно
             # письма рисует кадр парой `letterShot`, и без колонки оно молчало
             # бы о фотографии, которая ушла этим письмом.
@@ -687,7 +707,11 @@ def _answer(row: dict) -> dict:
             # (`mail_reply.py`): там её нашли и описали, здесь поле просто
             # не попало в список.
             'gallery_file': str(row.get('gallery_file') or ''),
-            'gallery_path': str(row.get('gallery_path') or '')}
+            'gallery_path': str(row.get('gallery_path') or ''),
+            # ⚠ Номер — **с тем же явным переносом**: кнопка по нему решает,
+            # готовить ли снимок (`mail_shot_ready`). Та же грабля, что у двух
+            # строк выше: выбранный запросом столбец не едет в ответ сам.
+            'gallery_file_id': int(row.get('gallery_file_id') or 0)}
 
     # ⚠ Имя, лицо и номер анкеты — тем же общим куском, что у остальных
     # пулов: окно письма рисует обе стороны одним видом (`talkSide`).

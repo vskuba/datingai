@@ -56,6 +56,7 @@ from src.dating.pool import pool_sweep, pool_sweep_mail_answered
 from src.dating.json_column import json_column_list
 from src.dating.mailing import (MAILING_BATCH_MAX,
                                        mailing_make,
+                                       mailing_shots_fill,
                                        mailing_templates)
 from src.dating.schedule import schedule_now
 from datetime_.datetime_ import datetime_day_minutes
@@ -247,6 +248,14 @@ async def _make(site_id: int) -> tuple[dict | None, bool]:
     без предела, пока отправка не поспевает, и человек читал бы письма, написанные
     вчера про тех, кто давно ушёл с сайта.
     """
+    # ⚠⚠ Кадры добиваем **до** всего остального. Правило «кадр обязан каждому
+    # письму» (решение владельца 08.11.2026) не знает исключения «пул полон» или
+    # «шаблонов нет»: при `need <= 0` в `mailing_make` мы не идём, и без этой
+    # строки ждавшие черновики остались бы без кадра даже после того, как
+    # человек залил фотографии в галерею. Внутри `mailing_make` тот же добор
+    # проходит вторым вызовом — строки уже набраны, и он берёт ноль строк.
+    await mailing_shots_fill(int(site_id))
+
     templates = await mailing_templates(site_id)
     if not templates:
         return None, True
