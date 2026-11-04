@@ -43,11 +43,21 @@ async def companion_gallery_sent(profile_id: int, site_id: int, uid: str,
         gallery_file_id: строка `gallery_file`, та самая, что ушла.
 
     Returns:
-        bool: `True` — отметка легла; `False` — она уже была, и это не ошибка.
+        bool: `True` — отметка **новая**; `False` — она уже была, и это не
+        ошибка.
 
     ⚠⚠ **Повтор не ошибка, а обычный исход.** Отправку могли отметить дважды:
-    круг и кнопка, две попытки подряд. Ключ базы такую вставку отвергает сам
-    (`INSERT IGNORE`), и вызывающему достаточно знать, новая это отметка или нет.
+    круг и кнопка, две попытки подряд. Ключ базы дубль не заводит, и вызывающему
+    достаточно знать, новая это отметка или нет.
+
+    ⚠⚠ **Повтор передвигает время показа**, а не проходит молча: на нём крутится
+    прокрутка рассылки (`companion_gallery_repeat`). Осталось бы `INSERT
+    IGNORE` — пересланный кадр сохранил бы первую отметку и навсегда сидел бы в
+    начале очереди, то есть ходил бы этому человеку каждый раз.
+
+    ⚠ «Новая» считаем по **вставке**, а не по «строку тронули»: `ON DUPLICATE`
+    на обновление отдаёт `rowcount` 2, а на повтор в ту же секунду — 0, и по
+    любому из них прежний смысл читался бы неверно.
 
     ⚠ Отметка ставится **после** удачной отправки, а не до: снимок, не ушедший
     из-за отказа сайта, не должен считаться показанным — иначе человек не увидит
@@ -59,15 +69,16 @@ async def companion_gallery_sent(profile_id: int, site_id: int, uid: str,
 
     async with mysql_get_db_async() as db:
         await db.execute(
-            'INSERT IGNORE INTO companion_gallery_file'
+            'INSERT INTO companion_gallery_file'
             '  (profile_id, site_id, uid, gallery_file_id)'
-            ' VALUES (%s, %s, %s, %s)',
+            ' VALUES (%s, %s, %s, %s)'
+            ' ON DUPLICATE KEY UPDATE sent_at = NOW()',
             (int(profile_id), int(site_id or 0), str(uid),
              int(gallery_file_id)))
         put = int(db.rowcount or 0)
         await db.connection.commit()
 
-    return bool(put)
+    return put == 1
 
 
 async def companion_gallery_fresh(profile_id: int, site_id: int, uid: str,
@@ -103,31 +114,12 @@ async def companion_gallery_fresh(profile_id: int, site_id: int, uid: str,
             'SELECT g.id, g.file_id, g.name, g.path, g.description, g.tags'
             '  FROM gallery_file g'
             ' WHERE g.profile_id = %s AND g.is_gone = 0 AND g.kind = %s'
-            # ⚠ `NOT EXISTS`, а не `LEFT JOIN … IS NULL`: читается как вопрос,
-            # на который отвечает, и не множит строки, если отметок вдруг две.
-            #
-            # ⚠⚠⚠ Сверяется **и содержимое** (`md5`), а не только номер
-            # строки. Один и тот же снимок лежит на Диске под разными именами
-            # — «…_n.jpg» и «…_n (1).jpg», — и в индексе это две строки с
-            # разными номерами. Память об отправленном стоит на номере, и
-            # второй файл считался невиданным: Diana → Christopher получил
-            # один кадр дважды (04.11.2026, строки 97874 и 97875, `md5` и
-            # размер совпадают до байта).
-            #
-            # Замер прода: 1836 файлов, 1770 разных снимков — **66 дублей** у
-            # девяти анкет.
-            #
-            # ⚠ Пустой `md5` в сверку не идёт: он значит «не считали», и
-            # приравнять такие строки друг к другу — скрыть всю непосчитанную
-            # галерею разом.
+            # Условие «уже показано» — общим куском, `_SEEN_MATCH` ниже.
+            # Кусок открывает группу и закрывает свой `EXISTS`; первую скобку
+            # `NOT EXISTS` закрываем здесь же, второй скобкой.
             '   AND NOT EXISTS (SELECT 1 FROM companion_gallery_file c'
             '                    WHERE c.site_id = %s AND c.uid = %s'
-            '                      AND (c.gallery_file_id = g.id'
-            '                           OR EXISTS ('
-            '                               SELECT 1 FROM gallery_file d'
-            '                                WHERE d.id = c.gallery_file_id'
-            "                                  AND d.md5 <> ''"
-            '                                  AND d.md5 = g.md5)))'
+            '                      AND ' + _SEEN_MATCH + '))'
             ' ORDER BY g.id',
             (int(profile_id), 'image', int(site_id or 0), str(uid)))
         rows = [dict(row) for row in (await db.fetchall() or [])]
@@ -144,6 +136,74 @@ async def companion_gallery_fresh(profile_id: int, site_id: int, uid: str,
     # ⚠ Предел — после отбора по группе: примени его запрос, в окно попали бы
     # чужие группы, а своих не осталось бы вовсе.
     return rows[:int(limit)] if int(limit or 0) > 0 else rows
+
+
+async def companion_gallery_repeat(profile_id: int, site_id: int, uid: str,
+                                   group: str = '') -> list[dict]:
+    """Снимки анкеты в том порядке, в каком их славать этому человеку.
+
+    Args:
+        profile_id: чья галерея.
+        site_id: сайт собеседника.
+        uid: номер собеседника на сайте.
+        group: папка внутри галереи (`public`, `intim`); пусто — любая.
+
+    Returns:
+        list[dict]: строки `gallery_file`: невиданные — первыми, по номеру
+        строки; за ними показанные, по давности последнего показа.
+
+    ## ⚠⚠ Здесь порядок, а не отбор: пропускать уже нечего
+
+    `companion_gallery_fresh` отвечает «чего он ещё не видел» и на исчерпанной
+    галерее отдаёт пустоту — для письма по жребию это обычный исход. Рассылке
+    же снимок **обязан** каждому письму — правило владельца от 08.11.2026:
+    «Единственное исключение, если у профиля нету в галерее изображений».
+    Значит, когда невиданных не осталось, письмо не становится текстовым —
+    галерея прокручивается, и кадр уходит повторно.
+
+    ⚠ Первыми всё равно невиданные — той же дорогой `companion_gallery_fresh`,
+    со сверкой близнецов по `md5`. Прокрутка ниже глядит только на то, что
+    делать, когда невиданных нет вовсе.
+
+    ## ⚠ Давность — по **последнему** показу (`MAX(sent_at)`)
+
+    Пересланный кадр передвигает отметку (`companion_gallery_sent`) и уезжает в
+    конец очереди — так показ по кругу честен. Считай по первому показу, и
+    пересланный кадр навсегда сидел бы первым: человек получал бы его каждый
+    раз.
+
+    ⚠ Строки без отметки идут первыми и здесь — в прокрутку они попадают лишь
+    когда `md5` у них пустой, а отметки нет: для памяти это невиданный кадр,
+    и верен он, а не очередь.
+    """
+    if not (int(profile_id or 0) and str(uid or '').strip()):
+        return []
+
+    fresh = await companion_gallery_fresh(int(profile_id), int(site_id),
+                                          str(uid), group=group)
+    if fresh:
+        return fresh
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT g.id, g.file_id, g.name, g.path, g.description, g.tags,'
+            '       (SELECT MAX(c.sent_at) FROM companion_gallery_file c'
+            '         WHERE c.site_id = %s AND c.uid = %s'
+            # Две скобки на конце куска: группа условия и сама подвыборка.
+            '           AND ' + _SEEN_MATCH + ')) AS shown_at'
+            '  FROM gallery_file g'
+            ' WHERE g.profile_id = %s AND g.is_gone = 0 AND g.kind = %s'
+            ' ORDER BY shown_at, g.id',
+            (int(site_id or 0), str(uid), int(profile_id), 'image'))
+        rows = [dict(row) for row in (await db.fetchall() or [])]
+
+    # Группа — общим правилом и на том же месте, что у `companion_gallery_fresh`:
+    # в запросе вышло бы второе правило о том же.
+    if str(group or '').strip():
+        want = str(group).strip()
+        rows = [row for row in rows if gallery_group_of(row['path']) == want]
+
+    return rows
 
 
 async def companion_gallery_pick(profile_id: int, site_id: int, uid: str,
@@ -260,6 +320,30 @@ async def companion_gallery_seen(profile_id: int, uid: str) -> list[dict]:
         logger_info(f'[dating] показанное этому человеку не прочиталось: {e}')
 
         return []
+
+
+# ⚠⚠ «Показано» — одним куском: его зовут и отбор невиданного
+# (`companion_gallery_fresh`), и прокрутка (`companion_gallery_repeat`). Заведи
+# каждый своё написание — правка в одном забыла бы другое, и кадр перестал бы
+# считаться показанным молча, а это ровно те дубли, ради которых память и
+# затеяна.
+#
+# ⚠⚠⚠ Сверяется **и содержимое** (`md5`), а не только номер строки. Один и тот
+# же снимок лежит на Диске под разными именами — «…_n.jpg» и «…_n (1).jpg», —
+# и в индексе это две строки с разными номерами. Память об отправленном стоит
+# на номере, и второй файл считался невиданным: Diana → Christopher получил
+# один кадр дважды (04.11.2026, строки 97874 и 97875, `md5` и размер совпадают
+# до байта).
+#
+# Замер прода: 1836 файлов, 1770 разных снимков — **66 дублей** у девяти анкет.
+#
+# ⚠ Пустой `md5` в сверку не идёт: он значит «не считали», и приравнять такие
+# строки друг к другу — скрыть всю непосчитанную галерею разом.
+_SEEN_MATCH = ('(c.gallery_file_id = g.id'
+               '  OR EXISTS (SELECT 1 FROM gallery_file d'
+               '              WHERE d.id = c.gallery_file_id'
+               "                AND d.md5 <> ''"
+               '                AND d.md5 = g.md5)')
 
 
 def _tags_wanted(tags) -> set:

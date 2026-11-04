@@ -43,7 +43,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.block import block_pairs
-from src.dating.companion_gallery import companion_gallery_fresh
+from src.dating.companion_gallery import companion_gallery_repeat
 from src.dating.json_column import json_column_load
 from src.dating.mail_shot import MAIL_SHOT_GROUP
 from src.dating.mail import (MAILING_QUESTION_CHANCE,
@@ -102,7 +102,14 @@ async def mailing_make(site_id: int, templates: list, limit: int,
     для которых письмо уже лежит в пуле или ушло, пропускаются. Поэтому кнопку можно
     жать, пока пул не наберётся, и не бояться дублей — а круг может будить набор
     каждые полчаса, не заваливая пул повторами.
+
+    ⚠ **Первым делом пул добирает снимки** (`mailing_shots_fill`): письма,
+    собранные без кадра — старым кодом или на пустой тогда галерее, — обязаны
+    получить его до отправки, и человек должен видеть кадр на карточке, а не
+    узнать о нём в «Доставке».
     """
+    await mailing_shots_fill(int(site_id))
+
     girls = await _girls(site_id)
     people = mailing_people_first(await _people(site_id), first_uid)
 
@@ -484,6 +491,73 @@ def mailing_people_first(people: list[dict], uid: str) -> list[dict]:
 
     return first + [row for row in people if str(row.get('uid') or '') != uid] \
         if first else people
+
+
+async def mailing_shots_fill(site_id: int) -> int:
+    """Раздаёт снимки письмам пула, которые легли без них.
+
+    Args:
+        site_id: сайт-закладка.
+
+    Returns:
+        int: сколько писем получило кадр.
+
+    ## ⚠ Зачем это в наборе, а не в миграции
+
+    Отбор живёт здесь, в `_shot`: общая память показанного, папка `public`,
+    сверка близнецов. Повторить это SQL-ом в миграции — завести второе правило
+    о том же, оно разойдётся с первым на первой же правке. Условие
+    `gallery_file_id = 0` закрывает вопрос после первого прохода: остальные
+    письма пролистываются одним запросом.
+
+    ## ⚠⚠ Это не разовая доводка, а постоянный шаг
+
+    Снимок мог не достаться письму и **после** правила: на сочинении галерея
+    была пуста или Диск не обошли, а к отправке кадр появился. Добор каждый
+    заход набора держит слово «снимок обязан каждому письму» не только для
+    новых строк, но и для тех, что уже лежат в пуле, — человек видит кадр на
+    карточке до ухода, а не узнаёт о нём в «Доставке».
+
+    ⚠ Анкете взяться нечем (галереи нет вовсе) — письмо пробуется каждый заход:
+    два вопроса, ответа нет. Платим честно: кадр на Диске может появиться и
+    позже, и письмо тогда доберёт свой.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                "SELECT id, profile_id, uid FROM mailing"
+                " WHERE site_id = %s AND status = 'draft'"
+                '   AND gallery_file_id = 0', (int(site_id),))
+            ours = [dict(row) for row in (await db.fetchall() or [])]
+
+        filled = 0
+
+        for row in ours:
+            shot = await _shot(int(row['profile_id']), int(site_id),
+                               str(row['uid'] or ''))
+            if not shot:
+                continue
+
+            async with mysql_get_db_async() as db:
+                # ⚠ `AND gallery_file_id = 0` в условии правки: пока мы
+                # выбирали, письмо мог доверить другой заход — не затираем.
+                await db.execute(
+                    'UPDATE mailing SET gallery_file_id = %s'
+                    ' WHERE id = %s AND gallery_file_id = 0',
+                    (int(shot), int(row['id'])))
+                await db.connection.commit()
+
+            filled += 1
+
+        if filled:
+            logger_info(f'[dating] письма рассылки добрали снимков:'
+                        f' {filled} на сайте {site_id}')
+
+        return filled
+    except Exception as e:
+        logger_info(f'[dating] снимки письмам рассылки не добрались: {e}')
+
+        return 0
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
@@ -1070,7 +1144,7 @@ async def _mail_answered(site_id: int) -> set:
 
 async def _put(site_id: int, girl: dict, person: dict, template: dict,
                body: str) -> None:
-    """Кладёт письмо в пул — со снимком, если у анкеты есть свободный.
+    """Кладёт письмо в пул — со снимком всегда, кроме пустой галереи.
 
     `INSERT IGNORE`: уникальный ключ ловит гонку, если кнопку нажали дважды разом.
 
@@ -1081,14 +1155,15 @@ async def _put(site_id: int, girl: dict, person: dict, template: dict,
     агента всё равно идёт. Рассылка собирается одним шаблоном на всех, агента
     на письмо не зовёт, и второе место с долей разошлось бы с первым молча.
 
-    Правило простое и названо владельцем: есть свободный снимок —
-    прикладываем, нет — письмо уходит текстом. Отсутствие фотографий у анкеты
-    письму не мешает.
+    Правило простое и названо владельцем 08.11.2026: снимок достаётся каждому
+    письму, исключение одно — у анкеты в галерее нет изображений. Всё уже
+    показано этому человеку — галерея прокручивается (`_shot`), письмо всё
+    равно уходит с кадром.
 
-    ⚠⚠ «Свободный» значит **этот человек его не видел**
-    (`companion_gallery_fresh`), и память общая со всеми прочими письмами:
-    пара «сайт + получатель», анкета в ключ не входит. Заведи рассылка свой
-    счёт — один кадр ушёл бы человеку дважды, разными занятиями.
+    ⚠⚠ Память «показан» — **общая** со всеми прочими письмами: пара «сайт +
+    получатель», анкета в ключ не входит (`companion_gallery_repeat`). Заведи
+    рассылка свой счёт — невиданный кадр тратился бы дважды: здесь прокруткой,
+    там — первым показом.
 
     ⚠ Берётся папка `public`: интимные уходят только по обещанию агента, где
     о них попросили словами. Константа общая с прочими письмами
@@ -1116,19 +1191,24 @@ async def _put(site_id: int, girl: dict, person: dict, template: dict,
 
 
 async def _shot(profile_id: int, site_id: int, uid: str) -> int:
-    """Снимок письму: первый, которого этот человек не видел. Ноль — нет таких.
+    """Снимок письму рассылки: обязан быть на любой галерее.
 
-    ⚠ **Ничего не бросает.** Снимка может не быть по трём причинам — галереи
-    нет вовсе, всё уже показано, Диск не обошли, — и ни одна не повод отказать
-    письму: текст у него есть, человеку он уйдёт.
+    ⚠⚠ Снимок должен доставаться **каждому** письму — правило владельца от
+    08.11.2026: «Единственное исключение, если у профиля нету в галерее
+    изображений». Когда получатель всё уже видел, письмо текстом не становится:
+    галерея прокручивается и кадр уходит повторно
+    (`companion_gallery_repeat`).
+
+    ⚠ Письмо выйдет без снимка, только если славать нечем вовсе: галереи нет,
+    в `public` кадров нет (интимные уходят по обещанию агента, где о них
+    просили), Диск ещё не обошли. Броска здесь нет и быть не должно.
     """
     try:
-        fresh = await companion_gallery_fresh(int(profile_id), int(site_id),
-                                              str(uid), limit=1,
-                                              group=MAIL_SHOT_GROUP)
+        rows = await companion_gallery_repeat(int(profile_id), int(site_id),
+                                              str(uid), group=MAIL_SHOT_GROUP)
     except Exception as e:
         logger_info(f'[dating] снимок письму рассылки не выбрался: {e}')
 
         return 0
 
-    return int(fresh[0]['id']) if fresh else 0
+    return int(rows[0]['id']) if rows else 0

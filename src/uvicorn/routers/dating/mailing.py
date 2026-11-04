@@ -14,8 +14,6 @@
 его ручкой: разбор запроса, отказы словами и права.
 """
 
-import json
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
@@ -43,7 +41,7 @@ from src.dating.mailing import (MAILING_BATCH_DEFAULT,
                                        mailing_gaps, mailing_girls,
                                        mailing_make, mailing_people,
                                        mailing_templates)
-from src.dating.site_setting import site_seconds, site_setting
+from src.dating.site_setting import site_setting
 from src.uvicorn.routers.dating.pool_handle import (pool_handle_clear,
                                                     pool_handle_drop,
                                                     pool_handle_sender)
@@ -294,9 +292,14 @@ async def mailing_delivery(site_id: int = 0, profile_id: int = 0, uid: str = '',
             ' m.body, m.status, m.error, m.sent_at, m.created_at,'
             ' p.login AS profile_login, p.profile AS profile_card,'
             ' t.name AS mail_name'
+            # ⚠ Кадр — тем же куском, что у пула: строка журнала показывает
+            # снимок чипсом (`letterShotChip`), и без колонки письмо со снимком
+            # ничем не отличалось бы в «Доставке» от письма без него.
+            + mail_shot_join('m')[0] +
             ' FROM mailing m'
             ' LEFT JOIN profile p ON p.id = m.profile_id'
             ' LEFT JOIN mail t ON t.id = m.mail_id'
+            + mail_shot_join('m')[1]
             + pool_pair_joins() +
             ' WHERE m.site_id = %s'
             + pool_delivery_where('m') + own
@@ -631,9 +634,14 @@ async def _row(mailing_id: int) -> dict:
             ' m.body, m.status, m.error, m.sent_at, m.created_at,'
             ' p.login AS profile_login, p.profile AS profile_card,'
             ' t.name AS mail_name'
+            # ⚠ Снимок — **тем же куском**, что у пула (`mailing_list`): окно
+            # письма рисует кадр парой `letterShot`, и без колонки оно молчало
+            # бы о фотографии, которая ушла этим письмом.
+            + mail_shot_join('m')[0] +
             ' FROM mailing m'
             ' LEFT JOIN profile p ON p.id = m.profile_id'
             ' LEFT JOIN mail t ON t.id = m.mail_id'
+            + mail_shot_join('m')[1]
             + pool_pair_joins() +
             ' WHERE m.id = %s', (int(mailing_id),))
         row = await db.fetchone()
@@ -671,7 +679,15 @@ def _answer(row: dict) -> dict:
             'error': str(row['error'] or ''),
             'sent_at': row['sent_at'],
             'created_at': row['created_at'],
-            'mail_name': str(row.get('mail_name') or 'шаблон удалён')}
+            'mail_name': str(row.get('mail_name') or 'шаблон удалён'),
+            # ⚠ Переносим **явно**: `_answer` собирает свой словарь по списку
+            # полей, а не правит строку, и выбранный запросом столбец до
+            # страницы сам не доедет — карточка молча лишится снимка, хотя
+            # письмо уйдёт с ним. Та же грабля, что у журнала ответов
+            # (`mail_reply.py`): там её нашли и описали, здесь поле просто
+            # не попало в список.
+            'gallery_file': str(row.get('gallery_file') or ''),
+            'gallery_path': str(row.get('gallery_path') or '')}
 
     # ⚠ Имя, лицо и номер анкеты — тем же общим куском, что у остальных
     # пулов: окно письма рисует обе стороны одним видом (`talkSide`).
