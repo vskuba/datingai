@@ -899,3 +899,72 @@ class TestBatch:
         group = {row['key']: row['group'] for row in got['known']}
 
         assert group['invite_send_batch'] == group['invite_send_every']
+
+
+class TestATriedRowGivesUpItsPlace:
+    """⚠⚠⚠ Строка, которую только что пробовали, уступает очередь.
+
+    Когда собеседник вышел, строка возвращается в пул **чистой** — это верно,
+    уход проходит сам через минуты. Но порядок очереди стоял на `created_at`,
+    а он не меняется: отвергнутая строка оставалась первой **навсегда**.
+
+    Замер 04.11.2026: **106 попыток к одному человеку** за десять минут, ноль
+    удач, пул из 531 черновика не двигался вовсе.
+
+    ⚠⚠ Это **второй** такой цикл за сутки, и первый чинили в другом месте
+    (`send_connection`: отказ выдавали за уход). Здесь причина обратная —
+    уход честно возвращает строку, но очередь отдаёт её тому же самому.
+    """
+
+    async def test_the_order_looks_at_the_last_try(self):
+        import inspect
+
+        from src.dating import invite_send_round
+
+        # ⚠ Смотрим **сам `ORDER BY`**, а не весь исходник: в докстринге
+        # `updated_at` упомянут нарочно — там объяснено, почему он не годится.
+        body = inspect.getsource(invite_send_round._next)
+        order = body[body.index('ORDER BY'):][:200]
+
+        assert 'tried_at' in order, (
+            'очередь сортирует по возрасту — отвергнутая строка останется '
+            'первой навсегда, и круг будет биться об неё')
+        assert 'updated_at' not in order, (
+            '`updated_at` ставится уже при вставке — порядок по возрасту '
+            'сломается у всего пула')
+
+    async def test_an_untouched_row_keeps_its_age(self, girl):
+        """⚠ У нетронутой строки `tried_at` пуст, и порядок для таких
+        прежний — по возрасту. Сдвигается только та, которую пробовали."""
+        from src.dating.invite_send_round import _next
+
+        await _status(girl, 'online')
+        old = await _draft(girl, when='2026-01-01 10:00:00')
+        await _draft(girl, when='2026-01-01 11:00:00')
+
+        got = await _next(STAND_SITE)
+
+        assert got and int(got['id']) == old, (
+            'очередь перестала отдавать старейшую — порядок сломан у строк, '
+            'которых никто не трогал')
+
+    async def test_a_tried_row_goes_to_the_back(self, girl):
+        """⚠⚠ А тронутая уходит в конец: иначе цикл вернётся."""
+        from mysql_.mysql_ import mysql_get_db_async
+        from src.dating.invite_send_round import _next
+
+        await _status(girl, 'online')
+        first = await _draft(girl, when='2026-01-01 10:00:00')
+        second = await _draft(girl, when='2026-01-01 11:00:00')
+
+        # Круг попробовал первую и вернул её чистой — как при уходе человека.
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE invite SET tried_at = NOW()'
+                             ' WHERE id = %s', (first,))
+            await db.connection.commit()
+
+        got = await _next(STAND_SITE)
+
+        assert got and int(got['id']) == second, (
+            f'очередь снова отдала только что отвергнутую строку #{first} — '
+            f'круг зациклится на одном человеке')

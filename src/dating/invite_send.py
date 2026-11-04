@@ -240,7 +240,18 @@ async def invite_send_mark(invite_id: int, sent: bool, error: str,
     async with mysql_get_db_async() as db:
         await db.execute(
             'UPDATE invite'
-            ' SET status = %s, error = %s, answer = %s, sent_at = IF(%s, NOW(), NULL)'
+            ' SET status = %s, error = %s, answer = %s,'
+            ' sent_at = IF(%s, NOW(), NULL),'
+            # ⚠⚠⚠ **Отметка попытки — здесь, и ставится всегда**, каким бы ни
+            # был исход. По ней стоит очередь (`invite_send_round._next`): без
+            # неё строка, вернувшаяся в пул чистой (собеседник вышел),
+            # остаётся первой навсегда, и круг бьётся об неё. Замер
+            # 04.11.2026: 106 попыток к одному человеку за десять минут.
+            #
+            # ⚠ Не `updated_at`: та меняется от любой правки строки и
+            # ставится уже при вставке — у свежей строки она «сегодня», и
+            # порядок по возрасту сломался бы у всего пула.
+            ' tried_at = NOW()'
             ' WHERE id = %s',
             ('sent' if sent else ('failed' if final else 'draft'),
              _why_short(str(error or ''), str(answer or ''))[:500],
