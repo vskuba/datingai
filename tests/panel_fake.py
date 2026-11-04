@@ -81,6 +81,10 @@ PANEL_FAKE_CONTRACT = {
 # заглушка отвечает отказом на любой другой, иначе промах в адресе прошёл бы молча.
 PANEL_FAKE_POST_PATH = '/partner/agency/usermessage'
 
+# Страница сочинения письма (Step2Love): тот же строгий адрес, команда — в строке
+# запроса (`?com=`), поля — телом. Команды и ответы сняты с `mailbox.js` панели.
+PANEL_FAKE_MAILBOX_PATH = '/partner/agency/mailbox.php'
+
 # Страница письма с **открытой** формой ответа. Разметка снята с живой панели
 # 26.09.2026 и обрезана до того, что читает код: скрытый номер, поле текста и обе
 # кнопки.
@@ -137,6 +141,19 @@ class PanelFake:
         # Закрывать ли письмо после удачной отправки. ⚠ По умолчанию да: живая
         # панель именно так и подтверждает — формы больше нет.
         self.close_on_reply = True
+        # ── Страница сочинения письма (`mailbox.php`), Step2Love.
+        # Команды по порядку: `['draftcreate', 'fileupload', 'messagesend']`.
+        self.mailbox_seq = []
+        # Последнее, что ушло под каждой командой: поля, а у `fileupload` ещё и
+        # файл («upload» → {'filename', 'bytes'}).
+        self.mailbox = {}
+        # Заведённые черновики: номер → поля. `fileupload` и `messagesend` без
+        # черновика отвечают отказом — так живой порядок шагов проверяется прямо.
+        self.mailbox_drafts = {}
+        # Команда, на которой панель откажет, и её слова.
+        self.mailbox_fail = ''
+        self.mailbox_error = 'you cannot write to this man right now'
+        self._mailbox_id = 0
 
     def open(self, message_id, body: str = 'his letter') -> None:
         """Письмо, на которое можно ответить."""
@@ -188,6 +205,9 @@ class PanelFake:
         проде отвечает `404`. Ровно то расхождение, из-за которого контрактные
         проверки и пишут.
         """
+        if path == PANEL_FAKE_MAILBOX_PATH:
+            return self._mailbox(request)
+
         if path != PANEL_FAKE_POST_PATH:
             return httpx.Response(404, text=f'panel has no {path}')
 
@@ -206,6 +226,58 @@ class PanelFake:
                 302, headers={'Location': '/partner/agency/usermessages'})
 
         return httpx.Response(200, text='<h5>Message sent</h5>')
+
+    def _mailbox(self, request: httpx.Request) -> httpx.Response:
+        """Страница сочинения письма: команды в строке запроса, поля — телом.
+
+        ⚠ Удача и отказ отвечаются **одинаковым кодом 200** и различаются только
+        `result` в JSON — ровно как живая панель: код здесь ничего не решает, и
+        заглушка это сохраняет.
+
+        ⚠ `fileupload` и `messagesend` без черновика отвечают отказом: порядок
+        шагов (сначала черновик) проверяется не счётом вызовов, а самой панелью.
+        """
+        import json as _json
+
+        com = str(request.url.params.get('com') or '')
+        self.kinds.append(request.headers.get('content-type', ''))
+        self.mailbox_seq.append(com)
+
+        if not com:
+            return httpx.Response(404, text='panel has no mailbox command')
+
+        if self.mailbox_fail == com:
+            return httpx.Response(200, json={
+                'result': 'error', 'text': self.mailbox_error})
+
+        fields, files = _multipart(request), _multipart_files(request)
+
+        if com == 'draftcreate':
+            self._mailbox_id += 1
+            self.mailbox_drafts[self._mailbox_id] = fields
+            self.mailbox[com] = fields
+
+            return httpx.Response(200, json={'result': 'ok',
+                                             'id': self._mailbox_id,
+                                             'subj': '', 'reply_to_id': 0})
+
+        draft = int(fields.get('id') or 0)
+        if draft not in self.mailbox_drafts:
+            return httpx.Response(200, json={
+                'result': 'error', 'text': 'draft not found'})
+
+        if com == 'fileupload':
+            self.mailbox[com] = {**fields, 'upload': files.get('upload') or {}}
+
+            return httpx.Response(200, json={'result': 'ok',
+                                            'text': 'uploaded', 'id': 901})
+
+        if com == 'messagesend':
+            self.mailbox[com] = fields
+
+            return httpx.Response(200, json={'result': 'ok', 'id': 902})
+
+        return httpx.Response(404, text=f'panel has no command {com}')
 
 
 @pytest.fixture
@@ -268,5 +340,38 @@ def _multipart(request: httpx.Request) -> dict:
             continue
 
         out[name] = value
+
+    return out
+
+
+def _multipart_files(request: httpx.Request) -> dict:
+    """Файловые части формы: имя поля → {'filename', 'bytes'}.
+
+    ⚠ Разбор **байтовый**, а не через `_multipart`: тот декодирует тело целиком, и
+    байты снимка превратились бы в текст с заменами — сверять длину и содержимое
+    было бы нечем. Текстовые части при этом читает `_multipart`, и набор полей у
+    сторожей один.
+    """
+    kind = request.headers.get('content-type', '')
+    if 'multipart' not in kind:
+        return {}
+
+    edge = ('--' + kind.split('boundary=')[-1].strip('"')).encode()
+    out = {}
+    for part in request.content.split(edge):
+        if b'filename="' not in part:
+            continue
+
+        head, _, body = part.partition(b'\r\n\r\n')
+        name = head.split(b'name="', 1)[1].split(b'"', 1)[0].decode()
+        filename = head.split(b'filename="', 1)[1].split(b'"', 1)[0].decode()
+
+        # Конец части — ровно `CRLF` перед границей: срезать больше значило бы
+        # обрезать сам файл (у части-«хвоста» после закрывающей границы тело
+        # пустое, и ветка его не трогает).
+        if body.endswith(b'\r\n'):
+            body = body[:-2]
+
+        out[name] = {'filename': filename, 'bytes': body}
 
     return out

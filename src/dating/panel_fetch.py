@@ -112,13 +112,19 @@ async def panel_fetch_html(site_id: int, path: str, params: dict = None) -> str:
     return await _page(site_id, base, path, params, answer, started, 'GET')
 
 
-async def panel_fetch_post(site_id: int, path: str, data: dict) -> str:
+async def panel_fetch_post(site_id: int, path: str, data: dict,
+                           files: dict = None) -> str:
     """Отправка формы панели под нашей сессией. Разметка ответа строкой.
 
     Args:
         site_id: сайт, в чью панель отправляем.
         path: путь относительно корня панели — `usermessage`.
         data: поля формы «имя → значение».
+        files: части файлов «имя → (имя файла, байты, тип)». ⚠ По умолчанию `None` —
+            и тогда прикладывается пустая часть `uploadFile` (она включает
+            многочастную кодировку). С переданными файлами пустая часть **не**
+            прикладывается: набор частей обязан совпадать с тем, что шлёт браузер
+            этой же формы, — лишний файл чужой сервер может не простить.
 
     Returns:
         str: разметка страницы, которой панель ответила.
@@ -156,7 +162,9 @@ async def panel_fetch_post(site_id: int, path: str, data: dict) -> str:
     started = time.monotonic()
     try:
         answer = await client.post(f"{base}/{str(path or '').lstrip('/')}",
-                                   data=data or {}, files=PANEL_FETCH_EMPTY_FILE,
+                                   data=data or {},
+                                   files=files if files is not None
+                                   else PANEL_FETCH_EMPTY_FILE,
                                    cookies=cookies, follow_redirects=False,
                                    timeout=PANEL_FETCH_TIMEOUT)
     except Exception as e:

@@ -350,6 +350,16 @@ async def mail_send_one(letter: dict, profile: dict, base: str,
         done = await _by_panel(letter, table, int(profile.get('id') or 0))
         if done is not None:
             return done
+    elif not str(base or '').strip():
+        # ⚠ **У сайта нет API-ручки.** Не «мы её не настроили»: у Step2Love ручки
+        # нет вовсе, и прежняя ошибка «у сайта не задан адрес API» звала человека
+        # в настройку, где настраивать нечего. Панель агентства умеет **сочинять**
+        # письмо — для холодных пулов это та же дорога, по которой оператор пишет
+        # руками. Умел — шлём ей; не умел — прежняя ошибка, она честна для сайта,
+        # у которого и панели сочинять нечем.
+        done = await _cold_by_panel(letter, profile, table)
+        if done is not None:
+            return done
 
     if not str(base or '').strip():
         raise DatingMailSendError('у сайта не задан адрес API '
@@ -725,6 +735,53 @@ async def _by_panel(letter: dict, table: str, profile_id: int):
         await mail_send_mark(letter, sent=False, error=str(e), table=table)
 
         raise DatingMailSendError(f'панель не приняла ответ: {e}')
+
+    await mail_send_mark(letter, sent=True, table=table,
+                         answer=str(done.get('answer') or ''))
+
+    return {'sent': True}
+
+
+async def _cold_by_panel(letter: dict, profile: dict, table: str):
+    """Холодное письмо **через панель агентства**, если у сайта нет API-ручки.
+
+    Args:
+        letter: строка пула: `site_id`, `uid`, `body`, у письма со снимком —
+            `attach` готовыми байтами.
+        profile: анкета-отправитель (её `id` — наша строка; номер на сайте
+            добирает панельная дорога).
+        table: куда лечь исходу — `mailing`, `favorite_mail`, `intention_mail`.
+
+    Returns:
+        `{'sent': True}` — ушло панелью. `None` — этот сайт панелью писать не
+        умеет, и решать дальше обычной ручке (для сайта без ручки это кончится
+        старой ошибкой про `api_base`).
+
+    ## ⚠ Почему спрашивается только когда ручки нет
+
+    Сайт с рабочей ручкой (Ladadate, Goldenbride) панелью не пишет **никогда**:
+    ручка быстрее, держит `CheckId` и не зависит от живой сессии панели. Совать
+    им панель — значит поменять проверенную дорогу на недоказанную ради того,
+    чего и так нет.
+    """
+    from src.dating.mail_cold_panel import (DatingPanelColdError,
+                                            mail_cold_panel_send,
+                                            mail_cold_panel_want)
+
+    site_id = int(letter.get('site_id') or 0)
+
+    if not await mail_cold_panel_want(site_id, table):
+        return None
+
+    try:
+        done = await mail_cold_panel_send(letter, profile)
+    except DatingPanelColdError as e:
+        # ⚠ Причина ложится в письмо и ждёт человека: запасной дороги нет —
+        # панель здесь единственная. Если сессия панели села, поднимет её круг
+        # панели, и кнопка вернётся к письму сама.
+        await mail_send_mark(letter, sent=False, error=str(e), table=table)
+
+        raise DatingMailSendError(f'панель не приняла письмо: {e}')
 
     await mail_send_mark(letter, sent=True, table=table,
                          answer=str(done.get('answer') or ''))
