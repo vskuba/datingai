@@ -18,6 +18,7 @@
 POST /mailbox.php?com=draftcreate    ← завести черновик: to_id, reply_id=0, from_id
 POST /mailbox.php?com=fileupload     ← кадр письма: id=draftID, type=1, файл `upload`
 POST /mailbox.php?com=messagesend    ← отправить: id, to_id, type=1, subj, text
+                                     subj — не короче 10 символов, см. тему ниже
 ```
 
 Каждый шаг отвечает **JSON-ом**: `{result: 'ok', id: N}` на удачу и
@@ -75,10 +76,50 @@ MAIL_COLD_PANEL_SEND = f'{MAIL_COLD_PANEL_PATH}?com=messagesend'
 # Тип письма: 1 — «Letter», 3 — «Video message». Нам нужен обычный текст с кадром.
 MAIL_COLD_PANEL_TYPE = '1'
 
-# Тема. Панель держит поле `subj`, но холодное письмо не о чём, кроме текста: оператор
-# набирает тему руками по вкусу, а у нас её брать не откуда — в пуле темы нет.
-# Пустая тема — то же, что у писем сайтов с ручкой: там её рождает сайт.
-MAIL_COLD_PANEL_SUBJ = ''
+# Тема. Панель держит поле `subj` и **требует не менее 10 символов**: пустую (как и
+# короткую) `messagesend` отвергает словами «Ошибка отправки сообщения: Тема слишком
+# короткая (не менее 10 символов)» — замерено живьём 08.11.2026 на первой же ручной
+# отправке. `draftcreate` при этом отвечает свой `subj` **пустым**: сайт тему не
+# рождает, это поле ручного смысла. В пуле темы нет — поэтому её берём из самого
+# письма, см. `mail_cold_panel_subject`.
+MAIL_COLD_PANEL_SUBJ_MIN = 10
+# Дальше этого тема не нужна: в списке писем панель подрезает длинную, а полное
+# письмо собеседник прочтёт и без пересказа в теме.
+MAIL_COLD_PANEL_SUBJ_MAX = 60
+
+
+def mail_cold_panel_subject(body: str) -> str:
+    """Тема холодного письма — начало самого письма.
+
+    Первое предложение, в границах слов и не длиннее `MAIL_COLD_PANEL_SUBJ_MAX`.
+    Первое предложение короче панельного минимума — тема продолжается дальше по
+    тексту: слишком короткую панель отвергает. Придумывать же тему от себя
+    (шаблонную фразу на все письма) — выдать рассылку: одинаковые темы у десятка
+    писем мужчина видит до того, как откроет первое.
+
+    ⚠ Тема **производная, а не отдельный текст**: письмо и тема разойдутся, если
+    заводить её вторым хранилищем. Тело правится — тема на отправке другая сама.
+    """
+    text = ' '.join(str(body or '').split())
+
+    end = len(text)
+    for i, ch in enumerate(text):
+        if ch in '.!?' and (i + 1 == len(text) or text[i + 1] == ' '):
+            end = i + 1
+
+            break
+
+    subj = text[:end]
+    if len(subj) < MAIL_COLD_PANEL_SUBJ_MIN:
+        # Живой пример 08.11.2026: «Hi there. I am writing…» — первое предложение
+        # короче минимума; тема продолжается по тексту, а не обрывается на слове.
+        subj = text
+    if len(subj) > MAIL_COLD_PANEL_SUBJ_MAX:
+        cut = subj.rfind(' ', 0, MAIL_COLD_PANEL_SUBJ_MAX)
+        subj = subj[:cut if cut >= MAIL_COLD_PANEL_SUBJ_MIN
+                    else MAIL_COLD_PANEL_SUBJ_MAX]
+
+    return subj
 
 
 class DatingPanelColdError(RuntimeError):
@@ -183,8 +224,8 @@ async def mail_cold_panel_send(letter: dict, profile: dict) -> dict:
     sent = await _ask(
         site_id, MAIL_COLD_PANEL_SEND,
         {'id': str(draft_id), 'to_id': to_id,
-         'type': MAIL_COLD_PANEL_TYPE, 'subj': MAIL_COLD_PANEL_SUBJ,
-         'text': body},
+         'type': MAIL_COLD_PANEL_TYPE,
+         'subj': mail_cold_panel_subject(body), 'text': body},
         'панель не приняла письмо')
 
     said = json.dumps(sent, ensure_ascii=False)[:500]

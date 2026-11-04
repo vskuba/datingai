@@ -22,6 +22,7 @@
 словом панели в тексте ошибки, а не кодом.
 """
 
+import json
 import uuid
 
 import pytest
@@ -30,6 +31,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.mail_cold_panel import (DatingPanelColdError,
                                         mail_cold_panel_send,
+                                        mail_cold_panel_subject,
                                         mail_cold_panel_want)
 from src.dating.mail_send import DatingMailSendError, mail_send_one
 from tests.panel_fake import (PANEL_FAKE_MAILBOX_PATH, PANEL_FAKE_STATE,
@@ -142,6 +144,55 @@ class TestTheThreeSteps:
         assert sent['text'] == BODY
         assert sent['type'] == '1'
 
+    async def test_send_carries_a_subject_the_panel_takes(self, site, girl,
+                                                         panel):
+        """⚠ Панель **не принимает пустую тему** («Тема слишком короткая (не менее
+        10 символов)», замер живьём 08.11.2026 — первая ручная отправка встала на
+        этом). Заглушка повторяет её проверку, так что тест падает и на теме,
+        уехавшей в пустоту, и на теме короче минимума."""
+        await mail_cold_panel_send(_letter(girl), _profile(girl))
+
+        subj = str(panel.mailbox['messagesend']['subj'])
+        assert len(subj) >= 10, f'тема короче панельного минимума: {subj!r}'
+        assert BODY.startswith(subj), 'тема не из самого письма'
+
+
+class TestSubject:
+    """Тема — начало письма, в границах панельного минимума и потолка."""
+
+    def test_the_first_sentence_is_the_subject(self):
+        subj = mail_cold_panel_subject(
+            'How are you today? Write me back about your garden plans soon.')
+
+        assert subj == 'How are you today?'
+
+    def test_a_long_first_sentence_is_cut_on_a_word(self):
+        body = 'w' * 40 + ' ' + 'x' * 40 + '. ' + 'Next sentence here is long too.'
+
+        subj = mail_cold_panel_subject(body)
+
+        assert len(subj) <= 60, f'тема длиннее потолка: {subj!r}'
+        assert subj.endswith('w' * 40), 'тема порезана внутри слова'
+
+    def test_a_short_first_sentence_does_not_starve_the_subject(self):
+        """«Hi Bob.» короче минимума — тема продолжается открытием письма,
+        а не обрывается на следующем слове («Hi Bob. I» — живой облик ошибки)."""
+        subj = mail_cold_panel_subject(
+            'Hi Bob. I am writing to ask about your garden plans.')
+
+        assert subj.startswith('Hi Bob. I am'), f'тема оборвана: {subj!r}'
+        assert len(subj) >= 10, f'тема короче минимума: {subj!r}'
+
+    def test_a_letter_without_marks_gives_a_whole_opening(self):
+        body = 'No punctuation anywhere in this opening but it is long.'
+
+        assert mail_cold_panel_subject(body) == body
+
+    def test_runs_of_spaces_collapse(self):
+        subj = mail_cold_panel_subject('Hello dear,\n\n   I was thinking   about you.')
+
+        assert '\n' not in subj and '  ' not in subj
+
     async def test_a_letter_without_a_shot_skips_the_upload(self, site, girl,
                                                            panel):
         await mail_cold_panel_send(_letter(girl), _profile(girl))
@@ -212,6 +263,22 @@ class TestTheFakeRefusesWithoutDraft:
                                        'type': '1', 'subj': '', 'text': BODY})
 
         assert 'error' in said, 'заглушка приняла отправку без черновика'
+
+    async def test_send_without_a_subject_is_refused(self, site, girl, panel):
+        """И тема у заглушки не пустая: иначе живой отказ «тема слишком короткая»
+        здесь просто не случился бы, и регрессия ушла бы незаметно."""
+        from src.dating.panel_fetch import panel_fetch_post
+
+        said = json.loads(await panel_fetch_post(
+            SITE, 'mailbox.php?com=draftcreate',
+            {'to_id': MAN_SITE_ID, 'reply_id': '0',
+             'from_id': str(GIRL_SITE_ID)}))
+        said = await panel_fetch_post(
+            SITE, 'mailbox.php?com=messagesend',
+            {'id': str(said['id']), 'to_id': MAN_SITE_ID,
+             'type': '1', 'subj': '', 'text': BODY})
+
+        assert 'error' in said, 'заглушка приняла письмо без темы'
 
 
 class TestWhoGoesByPanel:

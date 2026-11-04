@@ -273,6 +273,15 @@ class PanelFake:
                                             'text': 'uploaded', 'id': 901})
 
         if com == 'messagesend':
+            # Живая панель требует тему **не короче 10 символов** и на пустую
+            # отвечает отказом тем же кодом 200 (замер 08.11.2026 — первая ручная
+            # отправка). Заглушка, которой нечего возразить, прощала бы тему,
+            # уехавшую в пустоту.
+            if len(str(fields.get('subj') or '').strip()) < 10:
+                return httpx.Response(200, json={
+                    'result': 'error',
+                    'text': 'Ошибка отправки сообщения: Тема слишком '
+                            'короткая (не менее 10 символов)'})
             self.mailbox[com] = fields
 
             return httpx.Response(200, json={'result': 'ok', 'id': 902})
