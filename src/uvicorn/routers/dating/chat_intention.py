@@ -24,8 +24,8 @@ from src.dating.chat_intention import (chat_intention_drop,
                                        chat_intention_rows)
 from src.dating.companion_gallery import companion_gallery_pick
 from src.dating.intention_round import intention_round_next
-from src.dating.intention_do import (DatingIntentionError, intention_mail_make,
-                                     )
+from src.dating.intention_do import intention_mail_make
+from src.dating.json_column import json_column_list
 from src.dating.mail_shot import (DatingMailShotError, mail_shot_join,
                                   mail_shot_ready)
 from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
@@ -157,6 +157,11 @@ async def intention_mail_list(site_id: int = 0, status_: str = 'draft',
 
     ⚠ **Путь `/mail` объявлен до `/{intention_id}/…`**, иначе слово «mail»
     однажды прочиталось бы как номер намерения.
+
+    ⚠ `gallery_tags` разбираются **здесь, а не на странице**: карточка
+    показывает приметы, которые просили, и теги ушедшего снимка рядом, и
+    страница, читающая строку, не должна догадываться, приедет колонка
+    structом или строкой (тот же приём, что у контекста намерения).
     """
     if not int(site_id or 0):
         return {'result': []}
@@ -177,7 +182,13 @@ async def intention_mail_list(site_id: int = 0, status_: str = 'draft',
             f' WHERE m.site_id = %s AND m.{where}'
             ' ORDER BY m.id DESC LIMIT 200', (int(site_id),))
 
-        return {'result': [dict(row) for row in (await db.fetchall() or [])]}
+        rows = []
+        for row in (await db.fetchall()) or []:
+            got = dict(row)
+            got['gallery_tags'] = json_column_list(got.get('gallery_tags'))
+            rows.append(got)
+
+        return {'result': rows}
 
 
 @router.post('/mail/make', include_in_schema=False)

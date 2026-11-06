@@ -470,6 +470,12 @@ class TestTheHandles:
         assert mine[0]['gallery_path'] == 'public/evening.png'
         assert mine[0]['gallery_file'], 'номер файла на Диске не отдан'
 
+        # ⚠ Карточка показывает теги ушедшего снимка рядом с приметами;
+        # JSON-колонка обязана приезжать **разобранной** — страница не
+        # должна догадываться о форме колонки (тот же приём, что у контекста).
+        assert mine[0]['gallery_tags'] == ['outdoor', 'evening', 'smiling'], \
+            'теги ушедшего снимка не доехали разобранными'
+
     async def test_the_button_collects_like_the_round(self, ready, auth_client):
         got = (await auth_client.post(
             '/api/dating/chat-intention/mail/make'

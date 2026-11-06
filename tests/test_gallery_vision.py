@@ -25,8 +25,10 @@ from tests.drive_fake import DRIVE_FAKE_ROOT
 
 from src.dating import gallery_vision
 from src.dating.gallery_index import gallery_index_profile
-from src.dating.gallery_vision import (GALLERY_VISION_BATCH, gallery_vision_due,
-                                       gallery_vision_one, gallery_vision_run)
+from src.dating.gallery_vision import (GALLERY_VISION_BATCH,
+                                       GALLERY_VISION_TAGS_ALL,
+                                       gallery_vision_due, gallery_vision_one,
+                                       gallery_vision_run)
 from src.uvicorn.routers.dating.profile_ import profile_delete
 
 pytestmark = pytest.mark.profile
@@ -243,6 +245,34 @@ async def test_bad_json_is_an_error_not_a_description(tree, agent, girl, only_mi
     assert row['described_at'] is None, 'неудача не должна выглядеть разбором'
     assert 'JSON' in row['described_error']
     assert not row['description']
+
+
+async def test_a_tag_dump_is_refused_not_recorded(tree, agent, girl):
+    """⚠⚠ Ответ «согласна на весь словарь» — отказ, а не разметка.
+
+    Такие теги пересекаются с любой приметой отбора, и обещание с любыми
+    словами выигрывает у честно размеченного снимка: на проде 06.11.2026
+    письмо про кухню с чаем увезло снимок в лифте. Сторож отброшенного
+    здесь молчит — всё оказалось в словаре, поэтому порог стоит на записи.
+    """
+    agent.answer = json.dumps({'description': 'девушка в лифте',
+                               'tags': list(GALLERY_VISION_TAGS_ALL)},
+                              ensure_ascii=False)
+
+    with pytest.raises(RuntimeError, match='свалка'):
+        await gallery_vision_one((await _mine(girl))[0])
+
+
+async def test_day_and_night_together_are_refused(tree, agent, girl):
+    """Снимок не бывает дневным и ночным разом — это бред прогона, не кадр."""
+    agent.answer = json.dumps(
+        {'description': 'девушка у окна',
+         'tags': ['dress', 'indoor', 'daylight', 'night', 'smiling',
+                  'sitting', 'portrait', 'close-up']},
+        ensure_ascii=False)
+
+    with pytest.raises(RuntimeError, match='дневным'):
+        await gallery_vision_one((await _mine(girl))[0])
 
 
 async def test_one_failure_does_not_take_the_batch(tree, agent, girl, only_mine):

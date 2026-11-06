@@ -210,6 +210,38 @@ class TestThePickByTags:
         assert got['file'].get('name') == 'a', got['why']
         assert got['score'] == 3
 
+    async def test_the_tie_goes_to_the_accurate_markup(self, girl):
+        """⚠⚠ Равное число совпадений: берётся тот, у кого тегов **меньше**.
+
+        Снимок, размеченный всем словарём разом, пересекается с любым запросом,
+        и на ничьей по номеру строк один промах зрения перевешивает всю честно
+        размеченную галерею. На проде 06.11.2026 так и вышло: письмо обещало
+        кухню с чаем, уехал лифт — размеченный всеми тегами снимок выиграл у
+        настоящей кухни по номеру строки.
+        """
+        async with mysql_get_db_async() as db:
+            # ⚠ Свалка заведена **первой по номеру**: иначе тест проходил бы
+            # и на старом порядке строк, и правку не сторожил бы.
+            for name, tags in (
+                    ('sloppy', '["indoor", "kitchen", "sitting", "night",'
+                              ' "city", "group", "portrait"]'),
+                    ('honest', '["indoor", "kitchen", "sitting"]')):
+                await db.execute(
+                    'INSERT INTO gallery_file (profile_id, file_id, path, name,'
+                    '  mime, kind, is_gone, tags)'
+                    ' VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+                    (girl['id'], f'{name}-{uuid.uuid4().hex[:8]}',
+                     f'photo/public/{name}.png', name, 'image/png', 'image', 0,
+                     tags))
+            await db.connection.commit()
+
+        got = await companion_gallery_pick(girl['id'], STAND_SITE, 'u-1',
+                                           'indoor, kitchen, sitting')
+
+        assert got['file'].get('name') == 'honest', \
+            'свалка тегов выиграла ничью по номеру'
+        assert got['score'] == 3
+
     async def test_one_match_is_enough(self, girl):
         """⚠ Порога нет: одна совпавшая примета лучше случайного снимка."""
         got = await companion_gallery_pick(girl['id'], STAND_SITE, 'u-1',
