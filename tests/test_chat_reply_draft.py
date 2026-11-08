@@ -218,12 +218,12 @@ class TestTheRoundWritesAhead:
         return sent
 
     def _offline(self, monkeypatch):
-        monkeypatch.setattr(answer_mod, 'online_check',
-                            lambda site_id, uid: {'online': False, 'known': True})
+        monkeypatch.setattr(answer_mod, 'online_sure',
+                            lambda site_id, uid: False)
 
     def _online(self, monkeypatch):
-        monkeypatch.setattr(answer_mod, 'online_check',
-                            lambda site_id, uid: {'online': True, 'known': True})
+        monkeypatch.setattr(answer_mod, 'online_sure',
+                            lambda site_id, uid: True)
 
     async def _run(self, girl):
         async with mysql_get_db_async() as db:
@@ -379,8 +379,8 @@ class TestDraftsWaitAsLongAsNeeded:
 
         monkeypatch.setattr(answer_mod, '_agent_ask', _ask)
         monkeypatch.setattr(answer_mod, 'send_message', _send)
-        monkeypatch.setattr(answer_mod, 'online_check',
-                            lambda site_id, uid: {'online': True, 'known': True})
+        monkeypatch.setattr(answer_mod, 'online_sure',
+                            lambda site_id, uid: True)
 
         async with mysql_get_db_async() as db:
             await db.execute('SELECT * FROM profile WHERE id = %s', (girl,))

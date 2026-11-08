@@ -57,7 +57,7 @@ from src.dating.companion_card import (companion_name_known,
                                        companion_vars_known)
 from src.dating.companion_ref import companion_ref_foreign, companion_title
 from src.dating.message_twin import message_twin_skip
-from src.dating.online import online_check
+from src.dating.online import online_sure
 from src.dating.send import send_message
 
 # Сколько диалогов отвечаем за раз. Каждый — прогон workflow, и полсотни разом
@@ -296,7 +296,15 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
         # Проверка стоит **после** сочинения, а не до, и это перемена: прежде
         # офлайн означал «даже не спрашиваем агента». Текст теперь готовится
         # заранее — ради этого всё и делалось.
-        if not online_check(int(profile.get('site_id') or 0), uid)['online']:
+        #
+        # ⚠⚠⚠ Спрашиваем **`online_sure`**, а не `online_check`: здесь незнание
+        # значит «не шлём». Мягкое правило соседней двери («не знаем — не
+        # мешаем») написано для писем, а реплике в чат оно стоило вечного
+        # стука: 08.11.2026 собеседник закрыл анкету сразу после первой
+        # реплики, ленты «Все онлайн» у сайта в те часы не было, и круг
+        # постучался к нему **199 раз за четыре часа**, получая «нет открытого
+        # чата». Закрытая анкета не вернётся, и конца у этого не было бы.
+        if not online_sure(int(profile.get('site_id') or 0), uid):
             # ⚠ В журнал — молча. Повод тот же, текст тот же, круг ходит раз в
             # минуту: за ночь это тысяча одинаковых строк, в которых утонуло бы
             # всё остальное. Ждущий черновик и так виден в разговоре.

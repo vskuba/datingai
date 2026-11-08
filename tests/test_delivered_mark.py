@@ -43,6 +43,19 @@ async def _profile(profile_id: int) -> dict:
         return dict(await db.fetchone())
 
 
+@pytest.fixture(autouse=True)
+def _online(monkeypatch):
+    """Собеседник в сети — иначе проверялось бы не то.
+
+    ⚠⚠ Круг ответов шлёт, только когда **знает**, что человек в сети
+    (`online_sure`, `test_online_sure.py`), а снимка в сюите нет. Без этой
+    подмены «ушедшая реплика помечается» падал бы, а соседний «неудачную не
+    отмечаем» зеленел бы по неверной причине: отправки не случилось вовсе.
+    Тесты, которым нужен офлайн, ставят `False` сами.
+    """
+    monkeypatch.setattr(answer_mod, 'online_sure', lambda site_id, uid: True)
+
+
 @pytest.fixture
 def marked(monkeypatch):
     """Номера, которые панель отметила доставленными."""
@@ -119,8 +132,8 @@ class TestDraftKeepsTheNumber:
         _sending(monkeypatch, ok=True)
 
         # Первый заход: собеседника нет в сети — черновик лёг, отправки не было.
-        monkeypatch.setattr(answer_mod, 'online_check',
-                            lambda site_id, uid: {'online': False})
+        monkeypatch.setattr(answer_mod, 'online_sure',
+                            lambda site_id, uid: False)
         await answer_mod.answer_run(await _profile(girl), {}, agent_id=7)
 
         assert marked == [], 'неотправленное отмечать нельзя'
@@ -130,8 +143,8 @@ class TestDraftKeepsTheNumber:
             raise AssertionError('агента во втором заходе спрашивать не должны')
 
         monkeypatch.setattr(answer_mod, 'rhapsody_api_chat_talk', _no_agent)
-        monkeypatch.setattr(answer_mod, 'online_check',
-                            lambda site_id, uid: {'online': True})
+        monkeypatch.setattr(answer_mod, 'online_sure',
+                            lambda site_id, uid: True)
         await answer_mod.answer_run(await _profile(girl), {}, agent_id=7)
 
         assert marked == [991], 'номер обязан дожить до отправки в строке пула'
