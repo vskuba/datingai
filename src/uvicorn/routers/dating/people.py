@@ -89,6 +89,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from redis_.redis_ import redis_conn_get
 
 from src.auth.auth import auth_required
+from src.dating.favorite import favorite_driver
 from src.dating.guests import guests_feed
 from src.dating.guests_round import guests_site_sweep, guests_slot_every_sec
 from src.dating.log import log_write
@@ -755,6 +756,30 @@ async def _api_rows(profile: dict, kind: str, site_id: int) -> list:
         raise _PeopleFailure(str(e))
 
 
+async def _handle_rows(profile: dict, site_id: int) -> list:
+    """Избранные своей ручкой сайта: номера от него, лица — из наших карточек.
+
+    ⚠⚠ **Номера спрашиваются под самой анкетой**: список избранных свой у
+    каждой девушки, и отдаёт его кадр авторизации её сокета. Карточка же
+    (`companion`) одна на сайт и человека и про «чей он» не знает ничего —
+    отсюда и разделение: кто чей, говорит сайт, кто эти люди, отвечаем мы.
+
+    ⚠ Порядок задаём сами (`sorted`): драйвер отдаёт **множество**, и порядок в
+    нём случаен — лента перетасовывалась бы при каждом чтении.
+    """
+    from src.dating.favorite import DatingFavoriteError, favorite_uids
+    from src.dating.people_known import people_known_rows
+
+    try:
+        # ⚠ Адрес и пароль API пустые намеренно: у сайта с ручкой их нет, а
+        # `favorite_uids` уходит в драйвер раньше, чем на них смотрит.
+        uids = await favorite_uids(profile, '', '')
+    except DatingFavoriteError as e:
+        raise _PeopleFailure(str(e))
+
+    return await people_known_rows(site_id, sorted(uids))
+
+
 async def _floor_sec(site_id: int) -> int:
     """Жёсткий пол: чаще этого к сайту не ходим ни при каких условиях.
 
@@ -972,8 +997,19 @@ async def _snapshot(profile: dict, kind: str) -> list:
 
     Вида, которого API не отдаёт (`dialog`), это не касается: он уходит к сценарию,
     как и раньше.
+
+    ⚠⚠ **Третья дорога — своя ручка сайта, и только для избранных.** У сайта без
+    API и без сценариев список всё-таки есть: он приезжает в кадре авторизации
+    сокета под самой анкетой (`site/site_favorite.py`) — но одними номерами,
+    имена и лица к ним приставляют наши карточки (`people_known`). Прежде лента
+    такого сайта писала «не снялось» при живых звёздочках: 08.11.2026 две
+    анкеты Step2Love добавили одного человека, сайт показывал обеим, панель — ни
+    одной.
     """
     site_id = int(profile.get('site_id') or 0)
+    if kind == 'favorite' and await favorite_driver(site_id):
+        return await _handle_rows(profile, site_id)
+
     if await _api_for(site_id, kind):
         return await _api_rows(profile, kind, site_id)
 

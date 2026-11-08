@@ -80,8 +80,9 @@ from src.dating.favorite import (FAVORITE_ALREADY,
                                         FAVORITE_DONE,
                                         FAVORITE_REASON_MAIL,
                                         DatingFavoriteError, favorite_add,
-                                        favorite_mark, favorite_pick,
-                                        favorite_settled, favorite_uids)
+                                        favorite_driver, favorite_mark,
+                                        favorite_pick, favorite_settled,
+                                        favorite_uids)
 from src.dating.site_setting import site_seconds, site_setting
 
 # Как часто круг просыпается. ⚠ Не частота захода: её задаёт `favorite_every`.
@@ -374,19 +375,15 @@ async def _setting(site_id: int, key: str) -> str:
 async def _handle(site_id: int) -> bool:
     """Есть ли у сайта **своя** дорога к звезде — ручка вместо API.
 
-    ⚠ Спрашиваем реестр драйверов, а не имя сайта и не наличие панели: то же
-    правило, что у чата и у панели (`site_registry.py`). Сайт, у которого
-    ручка появится завтра, войдёт в круг без правки этого файла.
+    ⚠ Вопрос задаётся **общей дверью** `favorite_driver`, а не своим
+    `site_registry_favorite(...).by_handle()`: спрашивающих четверо, и свои
+    копии разошлись бы на первом же сайте, добавленном в реестр.
 
-    ⚠ Ответ не запоминаем: описание сайта и так читается из настройки
-    (`site_presence`), и второй слой памяти разошёлся бы с ней молча.
+    ⚠ Отказ здесь значит «мимо сайта», а не поломку круга: у соседних анкет
+    всё в порядке, и заход по ним идти должен.
     """
-    from src.dating.site.site_registry import site_registry_favorite
-    from src.dating.site_presence import site_presence
-
     try:
-        return bool(site_registry_favorite(
-            await site_presence(int(site_id))).by_handle())
+        return bool(await favorite_driver(int(site_id)))
     except Exception as e:
         logger_info(f'[dating] сайт #{site_id}: своя дорога к избранным не '
                     f'спросилась: {e}')

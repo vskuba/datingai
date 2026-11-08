@@ -278,6 +278,36 @@ def favorite_pick(letters: list, favorites: set, settled: dict,
     return pick
 
 
+async def favorite_driver(site_id: int):
+    """Драйвер звезды этого сайта — **если у сайта своя ручка**. Иначе `None`.
+
+    Args:
+        site_id: сайт знакомств.
+
+    Returns:
+        Драйвер (`site/site_favorite.py`) либо `None` — «такой дороги нет, иди
+        сценарием».
+
+    ⚠⚠ **Одна дверь на весь вопрос «умеет ли сайт ручкой».** Спрашивающих уже
+    четверо — список избранных, нажатие звезды, пропуск сайта в круг
+    (`favorite_round`) и лента «MY FAVORITES» на странице, — и четыре своих
+    `site_registry_favorite(...).by_handle()` разошлись бы на первом же сайте,
+    добавленном в реестр: три места узнали бы о нём, четвёртое нет.
+
+    ⚠ Ответ не запоминаем: описание сайта и так читается из настройки
+    (`site_presence`), и второй слой памяти разошёлся бы с ней молча.
+
+    ⚠ Отказ не глотаем: у вызывающих он значит разное — кругу «мимо сайта»,
+    ленте «покажи прежний снимок с причиной».
+    """
+    from src.dating.site.site_registry import site_registry_favorite
+    from src.dating.site_presence import site_presence
+
+    driver = site_registry_favorite(await site_presence(int(site_id or 0)))
+
+    return driver if driver.by_handle() else None
+
+
 async def favorite_rows(profile: dict, base: str, password: str) -> list[dict]:
     """Избранные этой девушки **записями**, а не номерами: имя, лицо, возраст, город.
 
@@ -741,13 +771,8 @@ async def _handle_uids(profile: dict):
         уборка погасших — спутай их, и одно моргание сайта погасило бы всех
         живых разом.
     """
-    from src.dating.site.site_registry import site_registry_favorite
-    from src.dating.site_presence import site_presence
-
-    presence = await site_presence(int(profile.get('site_id') or 0))
-    driver = site_registry_favorite(presence)
-
-    if not driver.by_handle():
+    driver = await favorite_driver(int(profile.get('site_id') or 0))
+    if not driver:
         return None
 
     try:
@@ -777,13 +802,8 @@ async def _handle_run(profile: dict, uid: str, on: bool):
     повторное нажатие. Это честнее, чем гадать: звезда в нужном состоянии, а
     сколько раз её трогали — не наше дело.
     """
-    from src.dating.site.site_registry import site_registry_favorite
-    from src.dating.site_presence import site_presence
-
-    presence = await site_presence(int(profile.get('site_id') or 0))
-    driver = site_registry_favorite(presence)
-
-    if not driver.by_handle():
+    driver = await favorite_driver(int(profile.get('site_id') or 0))
+    if not driver:
         return None
 
     got = await (driver.add(profile, uid) if on
