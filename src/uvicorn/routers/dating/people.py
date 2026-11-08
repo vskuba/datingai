@@ -340,9 +340,17 @@ async def people_site_list(site_id: int, kind: str, fresh: bool = False,
     На **результат** выбор не влияет — список один и тот же под любой учёткой, —
     а вот на **цену** влияет: у каждой анкеты свой токен, и взяв ту, у которой он
     уже есть, мы обходимся без входа вовсе. Этим и занят `_site_profile`.
+
+    ⚠⚠ **Избранные по сайту — исключение: они берутся из нашей базы.** Это
+    сумма звёздочек всех анкет (`favorite`), и спрашивать её у сайта незачем —
+    ни входа, ни снимка, ни «ни одна анкета не в сети». Подробности и довод —
+    у `_favorite_site_feed`.
     """
     if kind not in PEOPLE_KINDS:
         raise HTTPException(status_code=422, detail=f'неизвестный список «{kind}»')
+
+    if kind == 'favorite':
+        return await _favorite_site_feed(int(site_id))
 
     key = _key(kind, site_id=site_id)
     cached = _cache_get(key)
@@ -357,10 +365,9 @@ async def people_site_list(site_id: int, kind: str, fresh: bool = False,
                                          else fresh_sec):
             # Таймер «когда обновим сами» считаем от выдержки, а не от пола: кнопка
             # «обновить» пол обходит, и срок у ленты всё равно тот, что у круга.
-            return await _with_favorites(
-                _answer(cached, cached=True, error='', site_id=site_id, kind=kind,
-                        next_in=max(0, fresh_sec - int(time.time() - cached['at']))),
-                site_id, kind)
+            return _answer(
+                cached, cached=True, error='', site_id=site_id, kind=kind,
+                next_in=max(0, fresh_sec - int(time.time() - cached['at'])))
 
     profile = await _site_profile(site_id)
     via_api = True
@@ -376,21 +383,17 @@ async def people_site_list(site_id: int, kind: str, fresh: bool = False,
         why = ('ни одна анкета не в сети' if via_api
                else 'у сайта нет ни одной включённой анкеты с логином')
         if cached:
-            return await _with_favorites(
-                _answer(cached, cached=True,
-                        error=f'{why} — список не обновляется',
-                        site_id=site_id, kind=kind),
-                site_id, kind)
+            return _answer(cached, cached=True,
+                           error=f'{why} — список не обновляется',
+                           site_id=site_id, kind=kind)
 
         raise HTTPException(status_code=422,
                             detail=f'{why} — под кем заходить? Список снимается '
                                    'от лица ' + ('работающей девушки' if via_api
                                                  else 'её анкет'))
 
-    return await _with_favorites(
-        await _list(kind, fresh, profile, key, log_id=0, cached=cached,
-                    scheduled=kind in PEOPLE_FRESH_SETTING),
-        site_id, kind)
+    return await _list(kind, fresh, profile, key, log_id=0, cached=cached,
+                       scheduled=kind in PEOPLE_FRESH_SETTING)
 
 
 @router.get('/{profile_id}/{kind}', include_in_schema=False)
@@ -756,6 +759,61 @@ async def _api_rows(profile: dict, kind: str, site_id: int) -> list:
         raise _PeopleFailure(str(e))
 
 
+async def _favorite_site_feed(site_id: int) -> dict:
+    """Избранные всего сайта — сумма по его анкетам, из нашей базы.
+
+    Args:
+        site_id: сайт-закладка.
+
+    Returns:
+        dict: та же форма ответа, что у прочих лент.
+
+    ## ⚠⚠ Почему из базы, а не с сайта
+
+    Вопрос ленты — «кто у нас вообще в избранных по этому сайту», и ответ на
+    него целиком наш: звёздочки жмём мы, и каждая лежит строкой в `favorite`.
+    Поход на сайт дал бы то же самое ценой входа под анкетой — а главное, без
+    единой анкеты в сети не дал бы **ничего**: снимок по сайту берётся под
+    девушкой, и ручка честно отвечала `422` «под кем заходить?».
+
+    ⚠⚠ Прежде здесь стоял отбор из ленты «Все онлайн» по отметке `favorite`, и
+    на вопрос «кто в избранных» панель не отвечала вовсе: пока никто из них не
+    в сети, лента пуста. 08.11.2026 у Step2Love было три звёздочки на три
+    анкеты — лента показывала ноль, и это читалось как поломка.
+
+    ⚠⚠ **Источник «кто в сети» при этом остался один** — снимок ленты
+    (`_online_now`). Правило, по которому отбор и завели, было именно про него,
+    и оно цело: второго списка онлайна не появилось, изменилось лишь то, что
+    принадлежность ленте больше не значит «в сети». Теперь это говорит точка.
+
+    ⚠ Сумма, а не перечень пар: человека, отмеченного двумя девушками, лента
+    показывает **раз** — она отвечает «кто у нас в избранных», а не «сколько
+    звёздочек нажато». Дубли снимает сам `favorite_site_uids` (`DISTINCT`).
+
+    ⚠ Ответ всегда свежий (`cached: False`, `age_sec: 0`): это чтение базы, а
+    не снимок в Redis, и возраст у него был бы выдумкой — страница показала бы
+    «кеш 40 мин назад» под строкой, прочитанной секунду назад.
+    """
+    from src.dating.favorite import favorite_site_uids
+    from src.dating.people_known import people_known_rows
+
+    rows = await people_known_rows(site_id, sorted(await favorite_site_uids(site_id)))
+    rows = _online_now(rows, site_id, 'favorite')
+
+    # ⚠ Кто в сети — в начало: лента прокручивается, а работать человек будет с
+    # теми, кому можно написать прямо сейчас. Сортировка устойчивая, то есть
+    # внутри каждой половины порядок остаётся прежним.
+    rows.sort(key=lambda one: not one.get('online'))
+
+    return {'result': {'people': rows,
+                       'cached': False,
+                       'age_sec': 0,
+                       'taken_at': datetime_utc_now(),
+                       'refreshing': False,
+                       'error': '',
+                       'next_in_sec': -1}}
+
+
 async def _handle_rows(profile: dict, site_id: int) -> list:
     """Избранные своей ручкой сайта: номера от него, лица — из наших карточек.
 
@@ -1092,50 +1150,6 @@ def _answer(snapshot: dict | None, cached: bool, error: str, refreshing: bool = 
                        'refreshing': refreshing,
                        'error': error,
                        'next_in_sec': next_in}}
-
-
-async def _with_favorites(answer: dict, site_id: int, kind: str) -> dict:
-    """Отмечает в ленте тех, кого сайт держит в избранных.
-
-    Args:
-        answer: готовый ответ ручки — правится на месте.
-        site_id: сайт-закладка.
-        kind: вид списка. Отмечаем только ленту онлайна.
-
-    Returns:
-        dict: тот же ответ, у карточек появилось поле `favorite`.
-
-    ## ⚠⚠ Отметка, а не отдельный список
-
-    Лента «Избранные онлайн» на «Приставании» — это та же лента «Все онлайн»,
-    из которой выброшены чужие. Своей ручки, своего кэша и своего снимка у неё
-    нет нарочно: два списка «кто сейчас в сети» разъезжаются во времени, и
-    человек видел бы в одном виджете зелёного, а в другом того же серым. Так уже
-    было с избранными и онлайном, и чинили это как раз сведе́нием к одному
-    источнику (`_online_now`).
-
-    ⚠ **Только для `online`.** У списков по анкете вопрос другой — «кто у **этой**
-    девушки», — и отвечает на него `favorite_settled`.
-
-    ⚠ **Один запрос на ответ, а не на карточку.** Лента бывает в полторы сотни
-    человек; спроси мы базу по каждому, отрисовка стоила бы полутора сотен
-    запросов вместо одного.
-    """
-    if str(kind) != 'online':
-        return answer
-
-    people = (answer.get('result') or {}).get('people') or []
-    if not people:
-        return answer
-
-    from src.dating.favorite import favorite_site_uids
-
-    uids = await favorite_site_uids(int(site_id or 0))
-
-    for one in people:
-        one['favorite'] = str(one.get('uid') or '') in uids
-
-    return answer
 
 
 def _online_now(people: list, site_id: int, kind: str) -> list:

@@ -1,15 +1,25 @@
-"""Лента «Избранные онлайн»: та же лента, из которой выброшены чужие.
+"""Лента «Избранные сайта»: сумма звёздочек всех анкет, без похода наружу.
 
-## ⚠⚠ Почему не отдельный список
+## ⚠⚠ Что здесь поменялось и почему
 
-Два списка «кто сейчас в сети» разъезжаются во времени: сняты они в разные
-минуты, и человек видел бы в одном виджете зелёного, а в другом того же серым.
-Этим уже болели «My favorites» и «Все онлайн» — и лечили сведе́нием к одному
-источнику (`people._online_now`).
+Лента была отбором из «Все онлайн» по отметке `favorite` — то есть показывала
+избранных, **которые сейчас в сети**. Пока никто из них не в сети, она пуста, и
+на вопрос «кто у нас вообще в избранных» панель не отвечала вовсе: 08.11.2026 у
+Step2Love три звёздочки на три анкеты, в ленте ноль, и это читается как
+поломка.
 
-Поэтому у новой ленты нет ни своей ручки, ни своего кэша, ни своего снимка:
-сервер помечает карточки ленты полем `favorite`, страница берёт тот же снимок и
-оставляет отмеченных.
+Теперь лента показывает всех избранных сайта — сумму по его анкетам, из нашей
+базы (`favorite` плюс карточки `companion`). Ни входа, ни снимка, ни «ни одна
+анкета не в сети».
+
+## ⚠⚠ Прежнее правило цело: источник «кто в сети» один
+
+Отбор заводили ровно затем, чтобы не завести **второй список онлайна**: два
+снимка разъезжаются во времени, и человек видел бы в одном виджете зелёного, а
+в другом того же серым. Этого не случилось и теперь — точку ставит тот же
+снимок ленты (`people._online_now`), изменилось лишь то, что принадлежность
+ленте больше не значит «в сети». Теперь это говорит точка, и потому лента
+**ушла** из `ONLINE_STRIPS`: её карточки обязан красить `stripDotsPaint`.
 
 ## ⚠ Знание «кто избранный» — в одном месте
 
@@ -19,8 +29,10 @@
 
 ## ⚠ Избранный у сайта, а не у открытой девушки
 
-Лента отвечает на «с кем сейчас можно поработать», а работать может любая анкета
-сайта: человек, избранный у Дианы, для Елены такой же собеседник.
+Лента отвечает на «с кем вообще работаем», а работать может любая анкета
+сайта: человек, избранный у Дианы, для Елены такой же собеседник. Своя лента
+«My favorites» отвечает на другой вопрос и встаёт на то же место, когда анкета
+выбрана.
 """
 
 import inspect
@@ -110,72 +122,80 @@ class TestWhoCountsAsAFavorite:
         assert await favorite_site_uids(0) == set()
 
 
-class TestTheFeedIsMarked:
-    """⚠⚠ Сервер помечает карточки ленты, а не отдаёт второй список."""
+class TestThePageTakesItsOwnFeed:
+    """⚠⚠ У ленты теперь свой список — но не свой онлайн."""
 
-    def test_only_the_online_feed_is_marked(self):
-        """⚠ У списков по анкете вопрос другой — «кто у **этой** девушки», — и
-        отвечает на него `favorite_settled`."""
+    def _page(self):
+        return open('data/uvicorn/template/admin/dating/profile.html',
+                    encoding='utf-8').read()
+
+    def test_it_asks_the_site_wide_favorites(self):
+        page = self._page()
+
+        assert 'people/site/${site}/favorite' in page, \
+            'лента больше не спрашивает избранных сайта'
+        assert "stripPaint('favsite', FAVSITE_KEY" in page, \
+            'лента рисуется не своим снимком'
+
+    def test_it_left_the_online_strips(self):
+        """⚠⚠ Главное отличие от прежнего устройства.
+
+        Пока лента была отбором из онлайна, принадлежность ей значила «в сети»,
+        и точки у её карточек красить было нечем и незачем. Теперь в ней есть
+        и те, кого сейчас нет, — останься она в `ONLINE_STRIPS`, у всех
+        стояла бы серая точка, и лента врала бы молча.
+        """
+        page = self._page()
+
+        assert "ONLINE_STRIPS = ['online']" in page, \
+            'лента снова считается частью онлайна — точки красить перестанут'
+        assert 'ONLINE_STRIPS.includes(row.dataset.strip)' in page, \
+            'пропал пропуск самой ленты онлайна у точек'
+
+    def test_the_dot_still_comes_from_one_snapshot(self):
+        """⚠ Второго источника «кто в сети» не завелось: сервер ставит точку
+        тем же снимком ленты, что и везде."""
         import src.uvicorn.routers.dating.people as mod
 
-        code = inspect.getsource(mod._with_favorites)
+        code = inspect.getsource(mod._favorite_site_feed)
 
-        assert "str(kind) != 'online'" in code, \
-            'отметка поехала в списки по анкете'
+        assert '_online_now(' in code
 
-    def test_it_asks_the_base_once(self):
-        """⚠ Один запрос на ответ, а не на карточку: лента бывает в полторы сотни
-        человек."""
+    def test_the_knowledge_is_asked_once(self):
+        """⚠ Кто избранный — знает одна функция, и зовут её одним запросом на
+        ответ, а не на карточку: избранных бывает полторы сотни."""
         import src.uvicorn.routers.dating.people as mod
 
-        code = inspect.getsource(mod._with_favorites)
+        code = inspect.getsource(mod._favorite_site_feed)
 
         assert code.count('favorite_site_uids(') == 1
 
-    def test_the_site_feed_uses_it(self):
-        import src.uvicorn.routers.dating.people as mod
+    def test_the_profile_loader_skips_it(self):
+        """⚠⚠⚠ Общий перебор видов обязан пропускать ленты про сайт.
 
-        code = inspect.getsource(mod.people_site_list)
+        Он грузит списки **выбранной анкеты** (`/people/{id}/{вид}`), а такого
+        списка по анкете не бывает: сервер отвечает `422`, отказ ложится в
+        состояние ленты, которую никто не рисует, и в консоли остаётся одна
+        красная строка на каждую отрисовку. Ровно так и жила прежняя лента до
+        08.11.2026 — `/people/45/favonline` отказывал на проде при исправной
+        панели, и нашлось это кадром, а не тестом.
 
-        assert code.count('_with_favorites(') == 3, \
-            'какой-то из возвратов ленты остался без отметки'
+        ⚠ Список, а не `delete` по месту: третий забытый вид прошёл бы так же
+        тихо, как второй.
+        """
+        page = self._page()
 
-
-class TestThePageReusesOneFeed:
-    """⚠⚠ У ленты нет своего запроса, кэша и снимка."""
-
-    def test_it_paints_from_the_online_cache(self):
-        page = open('data/uvicorn/template/admin/dating/profile.html',
-                    encoding='utf-8').read()
-
-        assert "stripPaint('favonline', ONLINE_KEY, _favOnly(feed)" in page, \
-            'лента избранных больше не берёт снимок онлайна'
-
-    def test_reload_goes_to_the_online_feed(self):
-        """⚠ Списка `favonline` у сервера нет вовсе — это отбор по отметке.
-        Отправь кнопку в `peopleLoad`, она звала бы `/people/{id}/favonline` и
-        получала 422."""
-        page = open('data/uvicorn/template/admin/dating/profile.html',
-                    encoding='utf-8').read()
-
-        assert "ONLINE_STRIPS = ['online', 'favonline']" in page
-        assert 'ONLINE_STRIPS.includes(kind)' in page
-
-    def test_dots_skip_it(self):
-        """⚠ Точку «в сети» у этих карточек не трогаем: принадлежность ленте и
-        означает «в сети»."""
-        page = open('data/uvicorn/template/admin/dating/profile.html',
-                    encoding='utf-8').read()
-
-        assert 'ONLINE_STRIPS.includes(row.dataset.strip)' in page
+        assert "SITE_STRIPS = ['online', 'guests', 'favsite']" in page, \
+            'лента про сайт выпала из списка пропускаемых'
+        assert 'SITE_STRIPS.forEach(kind => kinds.delete(kind))' in page, \
+            'перебор видов больше не пропускает ленты про сайт'
 
     def test_the_empty_text_is_its_own(self):
-        """⚠ Пусто здесь означает другое: лента снята и полна, просто избранных
-        среди них нет. Общий текст отправил бы проверять, снимается ли лента."""
-        page = open('data/uvicorn/template/admin/dating/profile.html',
-                    encoding='utf-8').read()
+        """⚠ Пусто здесь значит «звёздочек не нажато ни одной», а не «никого
+        нет в сети»: общий текст отправил бы человека проверять ленту."""
+        page = self._page()
 
-        assert "favonline: 'избранных нет в сети'" in page
+        assert "favsite: 'ни у одной анкеты сайта нет избранных'" in page
 
     def test_the_markup_uses_the_macro(self):
         """⚠ Тем же макросом, что и прочие ленты: копия разъехалась бы с ними в
@@ -183,13 +203,13 @@ class TestThePageReusesOneFeed:
         page = open('data/uvicorn/template/admin/dating/profile/site/_base.html',
                     encoding='utf-8').read()
 
-        assert "strip_row('favonline'" in page
+        assert "strip_row('favsite'" in page
 
 
 class TestTheTwoStripsTakeTurns:
     """⚠⚠ Две ленты избранных стоят по очереди, а не рядом.
 
-    «My favorites» — про открытую девушку, «Избранные онлайн» — про весь сайт, и
+    «My favorites» — про открытую девушку, «Избранные сайта» — про весь сайт, и
     вместе они отвечают на один вопрос дважды. Выбрана анкета — говорит её
     список; не выбрана — общий.
 
@@ -206,7 +226,7 @@ class TestTheTwoStripsTakeTurns:
         `noGirl`. Поставь одинаковое — ленты либо обе горели бы, либо обе гасли."""
         page = self._page()
 
-        assert ("workEl.querySelectorAll('.strip-row[data-strip=\"favonline\"]')"
+        assert ("workEl.querySelectorAll('.strip-row[data-strip=\"favsite\"]')"
                 ".forEach(\n            row => row.classList.toggle('off', !noGirl))"
                 in page), 'общая лента больше не уступает место своей'
 
