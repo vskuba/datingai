@@ -3031,6 +3031,22 @@
         white-space: nowrap;
     }
 
+    /* Когда черновик написан — своей строкой под пометкой «ответ в пуле».
+
+       ⚠⚠ Строка **блочная и переносимая**, в отличие от `.msg-when` у сказанной
+       реплики. Та стоит у правого края пузыря одним куском (`nowrap`), и место
+       ей всегда есть; здесь же текст длиннее («написан 01:59 27/10/2026, через
+       40 с»), а колонка разговора узкая — на первом же кадре строка вылезла за
+       пузырь и была срезана краем колонки. */
+    .msg-draft-when {
+        display: block;
+        margin-top: 2px;
+        color: #a96060;
+        font-size: 10px;
+        line-height: 1.3;
+        white-space: normal;
+    }
+
     /* Ждущий отправки ответ. ⚠ Пунктир, а не другой цвет пузыря: он стоит в ленте
        на месте сказанного, и сплошная заливка читалась бы как обычная реплика —
        а она ещё не прозвучала. Пунктир видно, не читая подписи. */
@@ -14660,7 +14676,7 @@
             // ⚠ Ждать показываем, только когда ждут времени: у пары, упёршейся в
             // потолок, ожидание бессмысленно — её отпускают руками, а не ждут.
             + (got.wait_sec > 0
-                ? letterFact('Ждать', initiativeInfoLeft(got.wait_sec)) : '')
+                ? letterFact('Ждать', durationWords(got.wait_sec)) : '')
             // ⚠⚠ Минуту отправки не называем: уносит карточки свой круг со своей
             // паузой на весь сайт (`chat_initiative_send_every`), и точное время
             // здесь было бы выдумкой. Говорим про годность — это считается честно.
@@ -14705,14 +14721,14 @@
     function initiativeInfoRules(got) {
         return '<div class="init-info-head">Правила сайта</div>'
             + letterFact('Набор инициативы', got.on ? 'включён' : 'выключен')
-            + letterFact('Первый заход', `через ${initiativeInfoLeft(got.after_sec)}`
+            + letterFact('Первый заход', `через ${durationWords(got.after_sec)}`
                 + (got.after_max_sec > got.after_sec
-                    ? `—${initiativeInfoLeft(got.after_max_sec)} тишины, жребием`
+                    ? `—${durationWords(got.after_max_sec)} тишины, жребием`
                     : ' тишины'))
-            + letterFact('Срок этой пары', `${initiativeInfoLeft(got.due_sec)}`
-                + ` · молчит ${initiativeInfoLeft(got.quiet_sec)}`)
+            + letterFact('Срок этой пары', `${durationWords(got.due_sec)}`
+                + ` · молчит ${durationWords(got.quiet_sec)}`)
             + letterFact('Повторный заход', got.reset_after_sec
-                ? `через ${initiativeInfoLeft(got.reset_after_sec)} тишины`
+                ? `через ${durationWords(got.reset_after_sec)} тишины`
                 : 'своего срока нет — по минутному, как первый')
             + letterFact('Потолок подряд', `${got.repeat}`)
             + letterFact('Потолок за сутки', `${got.max_day}`);
@@ -14743,7 +14759,13 @@
 
     // Секунды словами: «2 ч 30 мин». ⚠ Своя, а не `timeAgoSec`: та говорит про
     // прошлое («3 ч назад»), а здесь речь о длительности — «через 3 ч».
-    function initiativeInfoLeft(sec) {
+    //
+    // ⚠ **Имя нейтральное, потому что читателей много и они разные**: окно
+    // «почему не пишут», пауза писем избранным, срок возврата круга и
+    // промежуток между его репликой и нашим черновиком в разговоре. Звалась
+    // она `initiativeInfoLeft` — по первому своему окну, — и к четвёртому
+    // читателю имя говорило уже неправду.
+    function durationWords(sec) {
         const left = Math.max(0, Math.floor(Number(sec) || 0));
         if (left < 60) return `${left} с`;
         if (left < 3600) return `${Math.floor(left / 60)} мин`;
@@ -14831,7 +14853,7 @@
             + [...new Set(all)].map(
                 one => letterFact('Мешает', one, true)).join('')
             + (got.wait_sec > 0
-                ? letterFact('Ждать', initiativeInfoLeft(got.wait_sec)) : '')
+                ? letterFact('Ждать', durationWords(got.wait_sec)) : '')
             // ⚠⚠ Минуту отправки не называем: уносит письма общий круг со своей
             // паузой на весь сайт, и очередь делится со всеми анкетами.
             + '<div class="letter-row"><span class="letter-val init-info-note">'
@@ -14920,11 +14942,11 @@
         if (!fav.gap_sec) return 'без паузы';
 
         const spread = fav.gap_high_sec > fav.gap_low_sec
-            ? ` (жребий ${initiativeInfoLeft(fav.gap_low_sec)} — `
-              + `${initiativeInfoLeft(fav.gap_high_sec)})`
+            ? ` (жребий ${durationWords(fav.gap_low_sec)} — `
+              + `${durationWords(fav.gap_high_sec)})`
             : '';
 
-        return initiativeInfoLeft(fav.gap_sec) + spread;
+        return durationWords(fav.gap_sec) + spread;
     }
 
     // По каким правилам: настройки сайта, которые человек и правит, увидев окно.
@@ -14934,7 +14956,7 @@
             + letterFact('Предел писем получателю',
                          `${got.favorite.per_day} в сутки`)
             + letterFact('Остуда его ящика', got.cooling_sec
-                ? initiativeInfoLeft(got.cooling_sec) : '')
+                ? durationWords(got.cooling_sec) : '')
             // ⚠ Канал запрета показываем словами: «только письма» и «оба канала»
             // — разного охвата, и путать их нельзя.
             + letterFact('Запрет «не пишем»', got.block.is
@@ -14973,12 +14995,12 @@
     // «ноль секунд». Поймано кадром: строка «вернётся через 0 с» читается как
     // сбой счётчика — ровно то состояние, которое окно и заводилось объяснять.
     function mailInfoEvery(one) {
-        const every = `раз в ${initiativeInfoLeft(one.every_sec)}`;
+        const every = `раз в ${durationWords(one.every_sec)}`;
 
         if (one.next_sec < 0) return `${every} · когда вернётся — не спросилось`;
         if (!one.next_sec) return `${every} · возьмётся на ближайшем тике`;
 
-        return `${every} · вернётся через ${initiativeInfoLeft(one.next_sec)}`;
+        return `${every} · вернётся через ${durationWords(one.next_sec)}`;
     }
 
     // ── Окно переписки ───────────────────────────────────────────────────────
@@ -15241,6 +15263,32 @@
                 her: String(found.profile_photo || '')};
     }
 
+    // Когда черновик написан — и через сколько после его реплики.
+    //
+    // ⚠⚠ Слово «написан» обязательно: у соседних реплик метка времени значит
+    // «сказано», и такая же метка у черновика читалась бы как отправленная.
+    // Ровно от этого `created_at` у него на сервере и обнулён
+    // (`profile_view.py`), а время едет своим полем `made_at`.
+    //
+    // ⚠⚠ Промежуток — главное число, ради которого всё и заведено. У сайта,
+    // где разговор живёт минутами, ответ опаздывает не на часы, а на десятки
+    // секунд: 08.11.2026 Марина → Lance — реплика в 18:47:13, черновик в
+    // 18:47:53, и к этой секунде чата уже не было.
+    //
+    // ⚠ Его реплики в показанном куске переписки может не быть вовсе
+    // (черновик к уехавшей за край) — тогда остаётся одно время: считать
+    // промежуток не от чего, а показать «через 0 с» значило бы соврать.
+    function chatDraftWhen(m, heSaidAt) {
+        if (!m.made_at) return '';
+
+        const gap = (stampMs(m.made_at) - stampMs(heSaidAt)) / 1000;
+        const after = heSaidAt && gap >= 0 ? `, через ${durationWords(gap)}` : '';
+
+        return '<span class="msg-draft-when" title="Когда ответ написан.'
+            + ` Собеседнику он ещё не ушёл">написан ${esc(timeFull(m.made_at))}`
+            + `${esc(after)}</span>`;
+    }
+
     function chatDialogBody(rows, {who, me, faces}) {
         if (!rows.length) {
             return '<div class="talk-load">Переписки пока нет.</div>';
@@ -15264,6 +15312,14 @@
         // правки поставила строку к самой старой реплике.
         const silentLast = rows.find(
             one => one.direction !== 'out' && one.answer_silent_at) || null;
+
+        // ⚠⚠ Повод черновика — **его последняя входящая реплика**, и берётся
+        // она тем же приёмом, что молчание выше: `rows` идут свежими сверху,
+        // значит первая входящая и есть та, на которую писался ответ.
+        // Черновики лежат в начале списка с `direction = 'out'` и в отбор не
+        // попадают.
+        const heSaidAt = (rows.find(one => one.direction !== 'out')
+                          || {}).created_at || '';
 
         return '<div class="talk-full">'
             + [...rows].reverse().map(m => {
@@ -15298,6 +15354,7 @@
                         ? ' <span class="reply-msg-draft" title="Ответ написан и'
                         + ' ждёт, когда собеседник появится в сети — тогда уйдёт'
                         + ' сам, без нового обращения к агенту">ответ в пуле</span>'
+                        + chatDraftWhen(m, heSaidAt)
                         : '')
                     // ⚠ Причина прошлой неудачи — рядом с текстом, а не только в
                     // журнале: черновик остаётся в пуле и будет повторён, и

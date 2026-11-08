@@ -31,13 +31,20 @@
    спрашиваем: строка стоит записи, а не сорока секунд браузера.
 5. Оставшихся жмём сценарием, не больше `favorite_batch` за заход, с паузой.
 
-## ⚠ Без API сайта круг не работает — и это не ограничение, а следствие
+## ⚠⚠ Сайту нужна дорога к звезде, а не именно API
 
-Список избранных читается ручкой сайта. Её нет — нечем узнать, кто там уже есть.
-Но и работы тогда нет тоже: письма попадают в `mail_in` **той же самой
-ручкой** (`mail_in.py`), и сайт без API не принесёт ни одного письма. Так что
-условие «нужен `api_base`» ничего не отсекает — оно лишь называет вещи своими
-именами.
+Дорог две, и спрашиваются они у драйвера (`site/site_favorite.py`): у сайта с
+API список берётся ручкой `/users/my-favorites`, а звезда жмётся сценарием; у
+сайта со **своей** ручкой (Step2Love) список приезжает в кадре авторизации
+сокета, а звезда ставится одним POST. Обе двери разведены внутри
+`favorite_uids` и `favorite_add` — кругу довольно знать, что хоть одна есть.
+
+⚠⚠ Прежде здесь стояло «без API круг не работает», и довод звучал
+убедительно: письма приходят **той же** ручкой, нет API — нет и работы. Довод
+был верен ровно до сайта без почты. У Step2Love ответ приезжает импортом
+панели в `message`, работа есть, обе двери готовы — а круг уходил на первой
+строке `_work`, спросив `api_base`. На проде 08.11.2026 это стоило восьми
+анкет с пустым списком избранных при отвечавших собеседниках.
 
 ## ⚠ Расписание не спрашивается
 
@@ -68,8 +75,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.ready import ready_online
-from src.dating.round import (round_sites, round_sites_run, round_slot_due,
-                              round_slot_mark)
+from src.dating.round import round_sites, round_sites_run, round_slot_due
 from src.dating.favorite import (FAVORITE_ALREADY,
                                         FAVORITE_DONE,
                                         FAVORITE_REASON_MAIL,
@@ -148,12 +154,17 @@ async def _work(site: dict, minutes: int) -> dict | None:
     неудачи вообще: не пришедший список — отказ по HTTP, вкладку у соседа он
     не занимал, и вычитать его из потолка значило бы наказывать сайт за
     молчание.
+
+    ⚠⚠ **Пропуск в круг — API сайта либо его собственная ручка.** Адрес API
+    здесь не условие работы, а аргумент для одной дороги из двух: сайту со
+    своей ручкой он не нужен вовсе, и обе двери уходят в драйвер раньше, чем
+    посмотрят на `base` (`favorite_uids`, `favorite_add`).
     """
     site_id = int(site['site_id'])
 
     seen = added = already = failed = 0
     base = str(await _setting(site_id, 'api_base')).strip()
-    if not base:
+    if not base and not await _handle(site_id):
         return None
 
     profiles = await _profiles(site_id)
@@ -350,6 +361,29 @@ async def _senders(profile_id: int) -> list[str]:
 
 async def _setting(site_id: int, key: str) -> str:
     return await site_setting(site_id, key)
+
+
+async def _handle(site_id: int) -> bool:
+    """Есть ли у сайта **своя** дорога к звезде — ручка вместо API.
+
+    ⚠ Спрашиваем реестр драйверов, а не имя сайта и не наличие панели: то же
+    правило, что у чата и у панели (`site_registry.py`). Сайт, у которого
+    ручка появится завтра, войдёт в круг без правки этого файла.
+
+    ⚠ Ответ не запоминаем: описание сайта и так читается из настройки
+    (`site_presence`), и второй слой памяти разошёлся бы с ней молча.
+    """
+    from src.dating.site.site_registry import site_registry_favorite
+    from src.dating.site_presence import site_presence
+
+    try:
+        return bool(site_registry_favorite(
+            await site_presence(int(site_id))).by_handle())
+    except Exception as e:
+        logger_info(f'[dating] сайт #{site_id}: своя дорога к избранным не '
+                    f'спросилась: {e}')
+
+        return False
 
 
 async def _seconds(site_id: int, key: str) -> int:

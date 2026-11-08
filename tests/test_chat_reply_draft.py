@@ -153,6 +153,29 @@ class TestItShowsInTheTalk:
         assert got[0]['created_at'] is None, 'у черновика появилось время'
         assert got[0]['direction'] == 'out'
 
+    async def test_the_draft_says_when_it_was_written(self, auth_client, girl):
+        """⚠⚠ Время черновика едет **своим** полем, а не в `created_at`.
+
+        «За сколько мы готовили ответ» — вопрос, с которым в это окно и
+        приходят: у Step2Love разговор живёт минутами, и 08.11.2026 ответ
+        Марины опоздал к Lance на сорок секунд. Без времени черновика с экрана
+        это не читается никак.
+
+        А `created_at` остаётся пустым: с ним карточка встала бы между
+        репликами и читалась бы как отправленная.
+        """
+        message_id = await _said(girl, 'u-1', 'вопрос')
+        await chat_reply_put(STAND_SITE, girl, message_id, 'u-1', 'Brian', 'ответ')
+        row = (await chat_reply_pending(girl, 'u-1'))[0]
+
+        got = (await auth_client.get(
+            f'/api/dating/profile/{girl}/message?uid=u-1')).json()['result']
+
+        assert got[0]['created_at'] is None, 'у черновика появилось время реплики'
+        assert got[0]['made_at'], 'черновик не сказал, когда он написан'
+        assert str(got[0]['made_at']).replace('T', ' ')[:19] \
+            == str(row['created_at'])[:19], 'время черновика не его собственное'
+
     async def test_the_list_preview_stays_clean(self, auth_client, girl):
         """⚠ В предпросмотр списка черновик **не** идёт.
 

@@ -94,6 +94,13 @@ async def profile_view_messages(profile_id: int, uid: str = '', limit: int = 30,
     # (`mail_reply_thread`), и правило здесь то же — разговор это сказанное, а
     # черновика никто не слышал.
     #
+    # ⚠⚠ **Зато когда он написан — говорим, и своим полем `made_at`.** Вопрос
+    # «за сколько мы готовили ответ» с экрана не отвечался никак, а он тут
+    # главный: у сайта, где разговор живёт минутами, эти секунды решают судьбу
+    # реплики (08.11.2026 ответ Марины опоздал к собеседнику на сорок секунд —
+    # чат закрылся). Поле отдельное именно потому, что `created_at` обязан
+    # остаться пустым: на нём держится и место строки, и то, как её читают.
+    #
     # ⚠ Без `uid` — не показываем: там вся переписка учётки вперемешку, и место
     # «в конце» ничего не значит.
     if str(uid or '').strip():
@@ -102,6 +109,7 @@ async def profile_view_messages(profile_id: int, uid: str = '', limit: int = 30,
         rows[:0] = [{'id': 0, 'sender_uid': str(uid).strip(), 'sender_name': '',
                      'text': str(one['body']), 'direction': 'out', 'is_read': 1,
                      'answer_silent_at': None, 'created_at': None,
+                     'made_at': one.get('created_at'),
                      'pending': True, 'error': str(one.get('error') or '')}
                     for one in await chat_reply_pending(int(profile_id), str(uid).strip())]
 
