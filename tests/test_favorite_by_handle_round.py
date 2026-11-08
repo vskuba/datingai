@@ -29,21 +29,37 @@ pytestmark = pytest.mark.mail
 STAND_SITE = 999_343
 
 
+# ⚠⚠ Что ручка читает из строки анкеты. Номер на сайте нужен кадру сокета
+# (`chat_socket_open`), состояние входа — его cookie; без них дорога отвечает «у
+# анкеты нет номера на сайте». Список именно здесь, а не в голове: запрос круга
+# выбирал пять колонок, и ни одной из этих — заход 08.11.2026 на проде дал три
+# отказа подряд при включённом занятии и живых анкетах.
+FAVORITE_HANDLE_NEEDS = ('profile_id', 'storage_state')
+
+
 class _FakeDriver:
-    """Драйвер сайта со своей ручкой: помнит, кого просили зажечь."""
+    """Драйвер сайта со своей ручкой: помнит, кого просили зажечь.
+
+    ⚠ Заодно сторожит **строку**: ручка берёт её целиком, и недостающий
+    столбец виден только по тому, чего в ней нет.
+    """
 
     def __init__(self, handle: bool = True, uids: set | None = None):
         self.handle = handle
         self.already = uids or set()
         self.added = []
+        self.rows = []
 
     def by_handle(self) -> bool:
         return self.handle
 
     async def uids(self, profile: dict) -> set:
+        self.rows.append(dict(profile))
+
         return set(self.already)
 
     async def add(self, profile: dict, uid: str) -> dict:
+        self.rows.append(dict(profile))
         self.added.append(str(uid))
 
         return {'ok': True, 'error': ''}
@@ -103,6 +119,33 @@ class TestASiteWithItsOwnHandleNeedsNoApi:
         assert driver.added == ['u-handle-1'], \
             f'звезду не нажали: {driver.added}'
         assert got['added'] == 1
+
+    async def test_the_row_carries_what_the_handle_reads(
+            self, girl_make, monkeypatch):
+        """⚠⚠⚠ Строка анкеты обязана нести то, чем ручка ходит на сайт.
+
+        Ручке нужен номер анкеты на сайте и состояние входа: из первого
+        собирается кадр сокета, из второго — cookie. Запрос круга выбирал пять
+        колонок и ни одной из этих, и дорога отвечала «у анкеты нет номера на
+        сайте» — занятие было включено, анкеты в сети, звёздочек ноль (прод,
+        08.11.2026: три отказа подряд).
+
+        Та же грабля, что уже стоила отметок обмена у писем: не выбрал столбец
+        запрос — до дела он не доедет.
+        """
+        await _settings(STAND_SITE, '')
+        profile_id = await girl_make('fav', online=True)
+        await _said(profile_id, 'u-handle-4')
+
+        driver = _FakeDriver()
+        _driver(monkeypatch, driver)
+
+        await favorite_round._work({'site_id': STAND_SITE}, 0)
+
+        assert driver.rows, 'ручку не позвали вовсе'
+        for key in FAVORITE_HANDLE_NEEDS:
+            assert key in driver.rows[0], \
+                f'в строке анкеты нет «{key}» — ручке не с чем идти на сайт'
 
     async def test_a_site_without_api_and_without_a_handle_is_skipped(
             self, girl_make, monkeypatch):
