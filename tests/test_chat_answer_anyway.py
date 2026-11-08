@@ -303,8 +303,8 @@ class TestForeignNameIsNotSent:
 
         monkeypatch.setattr(answer_mod, '_agent_ask', _ask)
         monkeypatch.setattr(answer_mod, 'send_message', _send)
-        monkeypatch.setattr(answer_mod, 'online_check',
-                            lambda site_id, uid: {'online': True, 'known': True})
+        monkeypatch.setattr(answer_mod, 'online_sure',
+                            lambda site_id, uid: True)
 
         message_id = await _said(girl, 'u-1')
         async with mysql_get_db_async() as db:

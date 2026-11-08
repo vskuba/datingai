@@ -224,6 +224,10 @@ class TestAnswerStillWorks:
 
         monkeypatch.setattr(answer, '_agent_ask', _ask)
         monkeypatch.setattr(answer, 'send_message', _send)
+        # ⚠ Собеседник в сети: круг шлёт, только когда **знает** это
+        # (`online_sure`), а снимка в сюите нет. Без подмены проверялось бы
+        # не «непустой ответ уходит», а «без снимка не уходит ничего».
+        monkeypatch.setattr(answer, 'online_sure', lambda site_id, uid: True)
 
         result = await answer_run({'id': talk, 'site_id': SITE, 'role': 'lady'},
                                          {}, agent_id=1, limit=5)
