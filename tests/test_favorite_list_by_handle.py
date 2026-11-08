@@ -103,6 +103,40 @@ class TestTheRowsAreBuiltFromCards:
 
         assert [one['uid'] for one in got] == [first, second]
 
+    async def test_a_relative_photo_becomes_a_site_address(self, monkeypatch):
+        """⚠⚠ Относительный путь дорисовывается адресом сайта.
+
+        Половина карточек Step2Love несёт `/uploades/photos/default_1.gif` — его
+        браузер панели попытался бы взять **у панели** и показал бы битую
+        картинку в каждой второй строке ленты. Абсолютный адрес не трогаем: его
+        сайт и отдаёт.
+        """
+        uid = f'fv-{uuid.uuid4().hex[:8]}'
+        await _card(uid, 'Lance', photo='/uploades/photos/default_1.gif')
+
+        async def _presence(site_id):
+            return {'base': 'https://example-dating.test'}
+
+        monkeypatch.setattr('src.dating.site_presence.site_presence', _presence)
+
+        got = (await people_known_rows(STAND_SITE, [uid]))[0]
+
+        assert got['photo'] == \
+            'https://example-dating.test/uploades/photos/default_1.gif'
+
+    async def test_an_absolute_photo_is_left_alone(self, monkeypatch):
+        uid = f'fv-{uuid.uuid4().hex[:8]}'
+        await _card(uid, 'Lance', photo='https://step2love.test/a/b.jpg')
+
+        async def _presence(site_id):
+            return {'base': 'https://example-dating.test'}
+
+        monkeypatch.setattr('src.dating.site_presence.site_presence', _presence)
+
+        got = (await people_known_rows(STAND_SITE, [uid]))[0]
+
+        assert got['photo'] == 'https://step2love.test/a/b.jpg'
+
     async def test_the_row_carries_what_the_page_reads(self):
         """⚠⚠ Поля — те же, что у двух прежних дорог.
 

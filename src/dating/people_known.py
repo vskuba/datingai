@@ -58,8 +58,11 @@ async def people_known_rows(site_id: int, uids) -> list[dict]:
         return []
 
     cards = await _cards(int(site_id or 0), want)
+    # ⚠ Адрес сайта читаем **один раз на список**, а не на строку: он один и
+    # тот же, а строк в ленте бывает триста.
+    base = await _base(int(site_id or 0))
 
-    return [_row(uid, cards.get(uid) or {}) for uid in want]
+    return [_row(uid, cards.get(uid) or {}, base) for uid in want]
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
@@ -89,14 +92,37 @@ async def _cards(site_id: int, uids: list[str]) -> dict:
     return {str(row['uid']): dict(row) for row in rows or []}
 
 
-def _row(uid: str, card: dict) -> dict:
+async def _base(site_id: int) -> str:
+    """Адрес сайта — им дорисовываются относительные пути к лицам.
+
+    ⚠ Молчит при любой беде: без адреса лента покажет строки с битой
+    картинкой, а без ленты человек не увидит ничего.
+    """
+    from src.dating.site_presence import site_presence
+
+    try:
+        return str((await site_presence(int(site_id))).get('base') or '').rstrip('/')
+    except Exception as e:
+        logger_info(f'[dating] адрес сайта #{site_id} не прочитался: {e}')
+
+        return ''
+
+
+def _row(uid: str, card: dict, base: str = '') -> dict:
     """Одна строка ленты. Пустая карточка — номер и ничего больше.
 
     ⚠ Имя не правится регистром: в `companion` оно уже легло через
     `people_name_case` (`companion_card.py` — единственная дверь записи), и
     второй правки тут быть не должно.
+
+    ⚠⚠ Путь к лицу бывает **относительным**: у Step2Love половина карточек
+    несёт `/uploades/photos/default_1.gif`, и браузер панели взял бы его у
+    панели — битая картинка в каждой второй строке. Дорисовываем адресом
+    сайта; абсолютный не трогаем — его сайт и отдал.
     """
     photo = str(card.get('photo') or '').strip()
+    if photo.startswith('/') and base:
+        photo = base + photo
     age = card.get('age')
 
     return {'uid': uid[:PEOPLE_UID_MAX],
