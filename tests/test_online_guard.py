@@ -183,7 +183,7 @@ class TestGuardStandsInBothPaths:
 
             return ('ответ', '', 0, {})
 
-        async def _send(profile, presence, uid, text):
+        async def _send(profile, presence, uid, text, **_):
             sent.append(text)
 
             return {'ok': True, 'error': '', 'offline': False, 'response': '',
@@ -230,7 +230,7 @@ class TestGuardStandsInBothPaths:
 
             return ('ответ', '', 0, {})
 
-        async def _send(profile, presence, uid, text):
+        async def _send(profile, presence, uid, text, **_):
             sent.append(text)
 
             return {'ok': True, 'error': '', 'offline': False, 'response': '',

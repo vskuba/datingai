@@ -30,10 +30,20 @@
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.chat_initiative import CHAT_INITIATIVE_INVITED
+
 # Сколько черновиков показываем в разговоре. Больше одного там быть не может — у
 # пары один последний повод, — но выборка всё равно с пределом: строка в базе
 # живёт дольше повода, и старые могли остаться при своих репликах.
 CHAT_REPLY_SHOW = 1
+
+# Состояние «ушло приглашением, ждёт согласия».
+#
+# ⚠⚠ Берётся **у инициативы**, а не объявляется своим словом: состояние у них
+# одно и то же — текст лежит у собеседника в списке запросов, — и два разных
+# слова на него заставили бы читателя гадать, чем они разнятся. Сторож стоит на
+# их совпадении (`test_answer_invite.py`).
+CHAT_REPLY_INVITED = CHAT_INITIATIVE_INVITED
 
 async def chat_reply_put(site_id: int, profile_id: int, message_id: int,
                          uid: str, name: str, body: str,
@@ -107,6 +117,130 @@ async def chat_reply_sent(reply_id: int) -> None:
         await db.execute(
             "UPDATE chat_reply SET status = 'sent', error = '', sent_at = NOW()"
             ' WHERE id = %s', (int(reply_id),))
+        await db.connection.commit()
+
+
+async def chat_reply_invited(reply_id: int) -> None:
+    """Отмечает, что ответ ушёл **приглашением** и ждёт согласия.
+
+    Args:
+        reply_id: номер строки пула.
+
+    ## ⚠⚠⚠ Третье состояние, и ни одно из двух прежних сюда не годится
+
+    У сайта с приглашениями (Step2Love) писать можно только в открытый чат, а
+    закрывший окно собеседник оставляет его пустым. Тогда реплика уходит
+    приглашением: текст лежит у него в списке запросов и ждёт галочки.
+
+    | Чем пометить | Что сломается |
+    |--------------|---------------|
+    | `sent` | агент сочтёт реплику сказанной и продолжит от непрочитанного |
+    | `draft` | круг разошлёт второе приглашение через минуту, третье через две |
+
+    Отсюда `invited` — «позвали и ждём». Судьбу строки разбирает круг ответов
+    (`answer._invited_check`): примут — доставка, истечёт срок — отказ.
+
+    ⚠ Время ставим: по нему и считается срок ожидания. Без него строка висела
+    бы вечно — разобрать её было бы нечем.
+    """
+    if not int(reply_id or 0):
+        return
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'UPDATE chat_reply SET status = %s, error = %s, sent_at = NOW()'
+            ' WHERE id = %s',
+            (CHAT_REPLY_INVITED, 'приглашение ушло, ждёт согласия',
+             int(reply_id)))
+        await db.connection.commit()
+
+
+async def chat_reply_invited_rows(profile_id: int, older_sec: int) -> list[dict]:
+    """Приглашения этой анкеты, по которым пора принять решение.
+
+    Args:
+        profile_id: анкета.
+        older_sec: сколько секунд должно пройти с отправки. ⚠ Раньше срока
+            решать нечего — собеседник ещё может нажать галочку.
+
+    Returns:
+        list: строки пула в состоянии `invited`, старые первыми.
+    """
+    if not int(profile_id or 0):
+        return []
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT * FROM chat_reply'
+                ' WHERE profile_id = %s AND status = %s'
+                '   AND sent_at IS NOT NULL'
+                '   AND sent_at < NOW() - INTERVAL %s SECOND'
+                ' ORDER BY sent_at',
+                (int(profile_id), CHAT_REPLY_INVITED, int(older_sec)))
+            rows = await db.fetchall()
+    except Exception as e:
+        logger_info(f'[dating] ждущие приглашения ответа не спросились: {e}')
+
+        return []
+
+    return [dict(row) for row in rows or []]
+
+
+async def chat_reply_hanging(profile_id: int, uid: str) -> list[dict]:
+    """Ответы пары, ушедшие приглашением и ждущие согласия. Для показа человеку.
+
+    Returns:
+        list: строки пула в состоянии `invited`, от старых к свежим.
+
+    ⚠⚠ Отдельно от `chat_reply_invited_rows`: та отбирает **по сроку** — её
+    спрашивает круг, чтобы решить судьбу. Эта отвечает «что сейчас висит у
+    этой пары», и срок ей не нужен: человеку показывают и то, что ушло минуту
+    назад. То же разделение, что у инициативы.
+    """
+    if not (int(profile_id or 0) and str(uid or '').strip()):
+        return []
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT id, body, sent_at FROM chat_reply'
+                ' WHERE profile_id = %s AND uid = %s AND status = %s'
+                ' ORDER BY sent_at, id',
+                (int(profile_id), str(uid), CHAT_REPLY_INVITED))
+            rows = await db.fetchall()
+    except Exception as e:
+        logger_info(f'[dating] ждущие приглашения ответа не прочитались: {e}')
+
+        return []
+
+    return [dict(row) for row in rows or []]
+
+
+async def chat_reply_expired(reply_id: int) -> None:
+    """Приглашение не приняли: реплику не прочитал никто.
+
+    ⚠⚠ Строка метится **настоящим отказом** (`failed`), а не возвращается в
+    пул. Повод остаётся неотвеченным, и это правда: мы позвали, человек не
+    открыл. Верни мы её черновиком — круг послал бы второе приглашение, третье,
+    и так, пока он не вернётся; у закрывшейся анкеты — вечно.
+
+    ⚠ Второго приглашения по тому же поводу не будет и даром: ключ пула стоит
+    на `message_id`, то есть **одна строка на реплику**. Напишет снова — будет
+    новый повод и новый ответ, это законно.
+
+    ⚠ Отличие от инициативы, где такая строка **удаляется**: там пара обязана
+    снова стать свободной — круг зовёт её по своему сроку. Здесь повод один и
+    неповторим, и след о попытке полезнее пустоты: он виден в разговоре.
+    """
+    if not int(reply_id or 0):
+        return
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            "UPDATE chat_reply SET status = 'failed', error = %s"
+            ' WHERE id = %s',
+            ('приглашение не приняли — реплику не прочитали', int(reply_id)))
         await db.connection.commit()
 
 

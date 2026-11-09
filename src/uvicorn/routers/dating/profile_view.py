@@ -21,7 +21,8 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.auth.auth import auth_required
 from src.dating.agent import agent_bio
 from src.dating.chat_initiative import chat_initiative_hanging
-from src.dating.chat_reply import chat_reply_pending
+from src.dating.chat_reply import (chat_reply_hanging,
+                                   chat_reply_pending)
 from src.dating.message_twin import message_twin_skip
 from src.dating.json_column import json_column_load
 from src.dating.online import online_check
@@ -123,12 +124,21 @@ async def profile_view_messages(profile_id: int, uid: str = '', limit: int = 30,
         # текст ещё у нас, у приглашения — уже у него. Для оператора это
         # разные состояния, и красить их одинаково значило бы обещать
         # одинаковое.
+        #
+        # ⚠⚠ Пулов, умеющих это состояние, **два**: инициатива будит затихший
+        # разговор, ответ отвечает на свежую реплику в закрывшийся чат
+        # (09.11.2026). Висят они одинаково — текст у собеседника в списке
+        # запросов, — и показываются одним видом: человеку важно «ждёт
+        # галочки», а не какой круг позвал.
+        hanging = (await chat_initiative_hanging(int(profile_id),
+                                                 str(uid).strip())
+                   + await chat_reply_hanging(int(profile_id),
+                                              str(uid).strip()))
         rows[:0] = [{'id': 0, 'sender_uid': str(uid).strip(), 'sender_name': '',
                      'text': str(one['body']), 'direction': 'out', 'is_read': 1,
                      'answer_silent_at': None, 'created_at': one.get('sent_at'),
                      'invited': True, 'error': ''}
-                    for one in await chat_initiative_hanging(
-                        int(profile_id), str(uid).strip())]
+                    for one in hanging]
 
     return {'result': rows}
 

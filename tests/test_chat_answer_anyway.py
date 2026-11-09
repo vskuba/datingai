@@ -296,7 +296,7 @@ class TestForeignNameIsNotSent:
 
         sent = []
 
-        async def _send(profile, presence, uid, text):
+        async def _send(profile, presence, uid, text, **_):
             sent.append(text)
 
             return {'ok': True, 'error': ''}

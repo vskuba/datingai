@@ -83,7 +83,7 @@ def asked(monkeypatch):
 
         return ('', '', 0, {})
 
-    async def _send(profile, presence, uid, text):
+    async def _send(profile, presence, uid, text, **_):
         raise AssertionError('агент промолчал — отправлять нечего')
 
     monkeypatch.setattr(answer, '_agent_ask', _ask)

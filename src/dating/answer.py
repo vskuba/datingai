@@ -41,6 +41,7 @@
 
 
 import json
+from uuid import uuid4
 
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
@@ -51,8 +52,11 @@ from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_chat_delivere
 from src.dating.log import log_write
 from src.dating.chat_intention import (chat_intention_delivered,
                                        chat_intention_put)
-from src.dating.chat_reply import (chat_reply_failed, chat_reply_put,
-                                   chat_reply_sent, chat_reply_waiting)
+from src.dating.chat_request import CHAT_REQUEST_WAIT_SEC
+from src.dating.chat_reply import (chat_reply_expired, chat_reply_failed,
+                                   chat_reply_invited, chat_reply_invited_rows,
+                                   chat_reply_put, chat_reply_sent,
+                                   chat_reply_waiting)
 from src.dating.companion_card import (companion_name_known,
                                        companion_vars_known)
 from src.dating.companion_ref import companion_ref_foreign, companion_title
@@ -108,6 +112,14 @@ ANSWER_TAIL_GLUE = '\n\n'
 # сказал ПРЯМО СЕЙЧАС».
 ANSWER_TAIL_LIMIT = 10
 
+# Сколько ждём решения по ушедшему приглашением ответу, секунд.
+#
+# ⚠⚠ Берётся **у самого понятия запроса** (`chat_request.py`), а не задаётся
+# своим числом: того же срока ждёт инициатива, и три числа на один вопрос
+# разошлись бы при первой правке. У круга инициативы его взять нельзя — он сам
+# читает этот модуль, и импорт замкнул бы круг.
+ANSWER_INVITE_WAIT_SEC = CHAT_REQUEST_WAIT_SEC
+
 
 async def answer_run(profile: dict, presence: dict, agent_id: int,
                             limit: int = ANSWER_LIMIT) -> dict:
@@ -122,8 +134,9 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
     Returns:
         dict: `asked` — сколько раз спросили агента, `sent` — сколько ответов
         ушло, `silent` — сколько раз агент промолчал, `offline` — сколько
-        собеседников вышли из чата, `drafted` — сколько ответов написано
-        впрок, `errors` — что не вышло.
+        собеседников вышли из чата, `invited` — сколько ушло приглашением и
+        ждёт согласия, `drafted` — сколько ответов написано впрок, `errors` —
+        что не вышло.
 
     ⚠ `asked` и `sent` больше не равны даже в удачном заходе: ответ пишется
     одним кругом, а уходит другим — тем, что застал собеседника в сети.
@@ -135,6 +148,12 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
     language = str(presence.get('answer_language') or ANSWER_LANGUAGE)
     only = _only_parse(profile.get('auto_answer_only'))
     lead = str(profile.get('role') or '') == ANSWER_ROLE_LEAD
+    # ⚠⚠ **Судьбу ждущих приглашений разбираем до отбора, а не после.**
+    # Принявший согласие собеседник открыл чат — значит пара снова живая, и
+    # следующий повод к ней придёт обычной репликой. Разбери мы это после, пара
+    # простояла бы лишний заход «позванной».
+    await _invited_check(profile, presence)
+
     # ⚠ Порог обязательности спрашиваем **до** отбора: он в нём и участвует —
     # «отвечать всегда» не должно упираться в порог свежести.
     anyway_first = await _anyway_first(int(profile.get('site_id') or 0))
@@ -144,11 +163,11 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
                                'Продолжать разговор пока не нужно' if lead
                                else 'Неотвеченных сообщений нет')
         return {'asked': 0, 'sent': 0, 'silent': 0, 'offline': 0,
-                'drafted': 0, 'errors': []}
+                'invited': 0, 'drafted': 0, 'errors': []}
 
     await log_write(profile_id, 'info', f'Поводов написать: {len(waiting)}')
 
-    asked = sent = silent = offline = drafted = 0
+    asked = sent = silent = offline = drafted = invited = 0
     errors = []
 
     for row in waiting:
@@ -312,12 +331,26 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
             continue
 
         answer = str(ready['body'])
-        result = await send_message(profile, presence, uid, answer)
+        # ⚠⚠⚠ **`may_invite=True`, и прежде его тут намеренно не было.**
+        #
+        # Довод был такой: ответ отвечает на свежую реплику, то есть на живой
+        # разговор; закрылся тот между его словами и нашими — человек ушёл, и
+        # ответ дождётся возвращения. Довод оказался неверен, и цена измерена:
+        # у Step2Love чат живёт, пока собеседник сидит в окне, а ответ готов
+        # через десятки секунд (замер 09.11.2026: реплика 19:49:17, ответ
+        # 19:50:32 — и уже некуда). Дождаться нечего: пара Vironika → Lance
+        # дала 56 попыток за час, накануне другая — 249 за сутки.
+        #
+        # Выбор не между «репликой» и «стуком в список запросов», а между
+        # «стуком» и «ничем»: при закрытом разговоре строки в ленте не будет
+        # вовсе. Тот же вывод, к которому раньше пришла инициатива.
+        result = await send_message(profile, presence, uid, answer,
+                                    may_invite=True)
         # ⚠⚠ Доставку отмечаем **только у ушедшего**, и это вся суть правки.
         # Сосед записал обмен внутри прогона — до того, как мы постучались к
         # сайту. Не отметь мы её отдельно, агент увидел бы в истории реплику,
         # которой собеседник не получал.
-        if result['ok']:
+        if result['ok'] and not result.get('offline'):
             await rhapsody_api_chat_delivered(message_id)
             # ⚠ Рядом, а не внутри двери к соседу: та про наши намерения знать
             # не должна. Вопрос один — «реплика дошла», — и ответов на него
@@ -326,6 +359,15 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
             sent += 1
             await chat_reply_sent(int(ready['id']))
             await log_write(profile_id, 'out', f'{me} → {who}: «{answer[:300]}»')
+        elif result['ok']:
+            # ⚠⚠ Ушло **приглашением**: сайт принял, но текст ещё не у
+            # собеседника — он лежит в списке запросов и ждёт галочки. Отметку
+            # доставки здесь не ставим и обещаний не открываем: прочитанным
+            # это станет, когда он примет (`_invited_check`).
+            invited += 1
+            await chat_reply_invited(int(ready['id']))
+            await log_write(profile_id, 'info',
+                            f'{who}: чат закрыт — позвала приглашением')
         elif result.get('offline'):
             # Собеседник вышел из чата между проверкой и отправкой. Ошибкой это не
             # считаем: он вернётся, и черновик уйдёт — теперь уже без нового
@@ -346,9 +388,12 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
     await log_write(
         profile_id, 'ok',
         f'Ответы: спрошено {asked}, написано {drafted}, отправлено {sent}, '
-        f'промолчал {silent}, нет в чате {offline}, ошибок {len(errors)}')
+        f'промолчал {silent}, нет в чате {offline}'
+        + (f', приглашением {invited}' if invited else '')
+        + f', ошибок {len(errors)}')
 
     return {'asked': asked, 'sent': sent, 'silent': silent, 'offline': offline,
+            'invited': invited,
             'drafted': drafted, 'errors': errors}
 
 
@@ -689,6 +734,78 @@ async def _agent_ask(agent_id: int, question: str, language: str,
     # ради дела.
     return (got['text'], '', int(got.get('message_id') or 0),
             got.get('extra') or {})
+
+
+async def _invited_check(profile: dict, presence: dict) -> int:
+    """Разбирает ответы, ушедшие приглашением. Отдаёт — сколько доставлено.
+
+    ## ⚠⚠⚠ Чем это кончается
+
+    Ушедшее приглашением лежит у собеседника в списке запросов. Исходов три, и
+    у них разная судьба:
+
+    | Что случилось | Что делаем |
+    |---------------|------------|
+    | нажал галочку — чат открылся | доставка: `sent`, запись в переписку, отметки соседу |
+    | не нажал, сайт стёр запрос | `failed` с причиной — реплику не прочитали |
+    | спросить не удалось | ничего: строка ждёт следующего захода |
+
+    ⚠⚠ Третий исход обязателен и отличается от второго по существу: «чата нет»
+    значит «приглашение не приняли», а «не удалось спросить» — что мы ничего не
+    знаем. Схлопни их — одно моргание сайта хоронило бы готовый ответ.
+
+    ⚠⚠ В переписку реплика ложится **только при принятии**, и там же — отметки
+    соседу: до галочки её не читал никто, и сказать агенту «реплика была»
+    значило бы продолжать разговор от непрочитанного. То же правило и тем же
+    приёмом, что у инициативы (`initiative_round._invited`).
+
+    ⚠ Сайта без приглашений это не касается: строк в таком состоянии у него не
+    бывает, и запрос к базе не делается.
+    """
+    from src.dating.chat_request import chat_request_talk_open
+    from src.dating.send import send_message_remember
+    from src.dating.site.site_registry import site_registry_chat
+
+    if not site_registry_chat(presence).invites():
+        return 0
+
+    profile_id = int(profile['id'])
+    rows = await chat_reply_invited_rows(profile_id, ANSWER_INVITE_WAIT_SEC)
+    if not rows:
+        return 0
+
+    done = 0
+    for card in rows:
+        uid = str(card['uid'])
+        who = f"{card.get('name') or ''} {uid}".strip()
+        open_ = await chat_request_talk_open(profile, presence, uid,
+                                             str(profile.get('proxy_url') or ''))
+
+        if open_ is None:
+            # Спросить не удалось — ждём следующего захода. Убери мы строку по
+            # молчанию сайта, готовый ответ пропал бы из-за одного моргания.
+            continue
+
+        if open_:
+            # ⚠ Чат открыт — приглашение приняли, и текст он прочитал. Теперь
+            # это доставка, и агенту о ней можно говорить.
+            await send_message_remember(profile_id, uid, str(card['body']),
+                                        str(uuid4()))
+            await chat_reply_sent(int(card['id']))
+            said = int(card.get('talk_message_id') or 0)
+            await rhapsody_api_chat_delivered(said)
+            await chat_intention_delivered(said)
+            done += 1
+            await log_write(profile_id, 'out',
+                            f'{who}: приглашение принято — '
+                            f"«{str(card['body'])[:300]}»")
+            continue
+
+        await chat_reply_expired(int(card['id']))
+        await log_write(profile_id, 'info',
+                        f'{who}: приглашение не приняли — реплику не прочитали')
+
+    return done
 
 
 def _me_name(profile: dict) -> str:

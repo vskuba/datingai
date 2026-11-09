@@ -207,7 +207,7 @@ class TestTheRoundWritesAhead:
                        anyway=False, name='', **_):
             return 'готовый ответ', '', 0, {}
 
-        async def _send(profile, presence, uid, text):
+        async def _send(profile, presence, uid, text, **_):
             sent.append(text)
 
             return {'ok': True, 'error': ''}
@@ -271,7 +271,7 @@ class TestTheRoundWritesAhead:
         """Отказ сайта не стоит нового вызова LLM: текст остаётся."""
         message_id = await _said(girl, 'u-1', 'вопрос')
 
-        async def _send(profile, presence, uid, text):
+        async def _send(profile, presence, uid, text, **_):
             return {'ok': False, 'error': 'сайт отказал'}
 
         monkeypatch.setattr(answer_mod, 'send_message', _send)
@@ -363,7 +363,7 @@ class TestDraftsWaitAsLongAsNeeded:
                        anyway=False, name='', initiative='', **_):
             return 'не должны спрашивать', '', 0, {}
 
-        async def _send(profile, presence, uid, text):
+        async def _send(profile, presence, uid, text, **_):
             sent.append(text)
 
             return {'ok': True, 'error': ''}

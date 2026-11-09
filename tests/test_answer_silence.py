@@ -72,7 +72,7 @@ def silent_agent(monkeypatch):
 
         return ('', '', 0, {})          # пустой ответ — решение молчать
 
-    async def _send(profile, presence, uid, text):
+    async def _send(profile, presence, uid, text, **_):
         raise AssertionError('после молчания отправлять нечего')
 
     monkeypatch.setattr(answer, '_agent_ask', _ask)
@@ -216,7 +216,7 @@ class TestAnswerStillWorks:
                    history='', uid='', anyway=False, name='', **_):
             return ('и тебе привет', '', 0, {})
 
-        async def _send(profile, presence, uid, text):
+        async def _send(profile, presence, uid, text, **_):
             sent.append(text)
 
             return {'ok': True, 'error': '', 'offline': False, 'response': '',

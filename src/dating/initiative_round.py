@@ -72,7 +72,8 @@ from mysql_.mysql_ import mysql_get_db_async
 from datetime import datetime
 from uuid import uuid4
 
-from src.dating.chat_request import chat_request_talk_open
+from src.dating.chat_request import (CHAT_REQUEST_WAIT_SEC,
+                                     chat_request_talk_open)
 from src.dating.chat_initiative import (chat_initiative_expired,
                                         chat_initiative_failed,
                                         chat_initiative_invited,
@@ -127,17 +128,10 @@ INITIATIVE_SEND_EVERY_DEFAULT = 3
 _sent_at: dict[int, float] = {}
 
 
-# Сколько ждём решения по ушедшему приглашению, прежде чем считать его
-# истекшим, секунд.
-#
-# ⚠⚠ Срок самого сайта — **пять минут** (`destroyTimeout` живого кадра
-# запроса), и здесь взят запас вдвое: решение необратимо (строка удаляется), а
-# цена ошибки несимметрична — поспешив, мы выбросим реплику, которую человек
-# как раз читает, опоздав же всего лишь позовём его позже.
-#
-# ⚠ Проверка стоит **не чаще тика круга** (минута), то есть запас стоит одного
-# лишнего POST на пару раз в минуту — и только у сайта с приглашениями.
-INITIATIVE_INVITE_WAIT_SEC = 600
+# Сколько ждём решения по ушедшему приглашению. ⚠ Берётся у самого понятия
+# запроса (`chat_request.py`): того же срока ждёт ответ в чате, и два числа на
+# один вопрос разошлись бы при первой правке.
+INITIATIVE_INVITE_WAIT_SEC = CHAT_REQUEST_WAIT_SEC
 
 # Сколько терпим **неизвестность**: столько висит строка, судьбу которой
 # спросить не удалось, прежде чем считать приглашение истекшим.
