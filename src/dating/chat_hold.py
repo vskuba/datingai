@@ -802,8 +802,10 @@ async def _panel_loop(deadline: float) -> None:
     и жива она должна быть всегда: в неё входит круг импорта переписки, и в три
     часа ночи тоже. Смены сайта — про письма живым людям, а не про это.
     """
-    await round_loop(deadline, PANEL_ROUND_TICK_SEC,
-                            'админ-панели', panel_round_run)
+    # ⚠ С часовым поясом: тот же круг сверяет присутствие девушек по их
+    # сменам (`panel_presence.py`), а смены заданы местным временем.
+    await round_offset_loop(deadline, PANEL_ROUND_TICK_SEC,
+                                   'админ-панели', panel_round_run)
 
 
 async def _favorite_loop(deadline: float) -> None:

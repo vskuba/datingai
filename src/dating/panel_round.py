@@ -25,11 +25,13 @@ cookie. Не признала — заходит сценарием и спра�
 как мы обещали себе параллельность.
 """
 
+from datetime_.datetime_ import datetime_day_minutes
 from logging_.logging_ import logger_info
 
 from src.dating.feed import feed_write
 from src.dating.round import (round_slot_due,
                             round_slot_mark)
+from src.dating.panel_presence import panel_presence_keep, panel_presence_on
 from src.dating.panel import (panel_every, panel_keep,
                                      panel_sites)
 
@@ -41,16 +43,35 @@ PANEL_ROUND_TICK_SEC = 60
 PANEL_ROUND_KEY = 'dating:panel:round:{id}'
 
 
-async def panel_round_run() -> dict:
-    """Один круг: спросить панели, чей срок вышел.
+async def panel_round_run(offset_hours: int = 0) -> dict:
+    """Один круг: спросить панели, чей срок вышел, и сверить присутствие.
+
+    Args:
+        offset_hours: часовое смещение панели (настройка `timezone`): смены
+            заданы местным временем, а сверка присутствия решает по ним.
 
     Returns:
         dict: `sites` — сколько панелей спросили, `online` — сколько живы,
-        `logged_in` — сколько пришлось заводить входом сценарием.
+        `logged_in` — сколько пришлось заводить входом сценарием, `kept` —
+        скольким анкетам сверка переключила статус в панели.
     """
-    ran = online = logged = 0
+    ran = online = logged = kept = 0
+    minutes = datetime_day_minutes(offset_hours)
 
     for site_id in await panel_sites():
+        # ⚠⚠ Сверка присутствия — **каждый тик**, а не по сроку `admin_every`:
+        # это heartbeat девушек сайта, у которого «в сети» держит кнопка панели
+        # (`panel_presence.py`). Один POST на сайт в минуту; панель гасит девушку
+        # за бездействие оператора, и пять минут тишины были бы пятью минутами
+        # вне сети посреди смены. Идёт до проверки сессии и не ждёт её: протухла
+        # — POST ответит отказом, и сверка промолчит до входа.
+        if await panel_presence_on(site_id):
+            kept_now = await panel_presence_keep(site_id, minutes)
+            kept += kept_now['on'] + kept_now['off']
+            if kept_now['error']:
+                logger_info(f"[dating] сверка присутствия сайта #{site_id}: "
+                            f"{kept_now['error']}")
+
         # ⚠ Сбой — молчим: лишний заход может кончиться вкладкой Chromium.
         if not round_slot_due(PANEL_ROUND_KEY, site_id, 'панели',
                               every=await panel_every(site_id)):
@@ -79,7 +100,7 @@ async def panel_round_run() -> dict:
             logger_info(f"[dating] панель сайта #{site_id}: {answer.get('status')} "
                         f"— {answer.get('error')}")
 
-    return {'sites': ran, 'online': online, 'logged_in': logged}
+    return {'sites': ran, 'online': online, 'logged_in': logged, 'kept': kept}
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

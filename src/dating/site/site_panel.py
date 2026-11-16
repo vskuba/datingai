@@ -87,6 +87,12 @@ class DatingSitePanel:
     # Ведущая черта — путь от корня **сайта**, а не панели (`panel_fetch`).
     ONLINE_PATH = ''
 
+    # Ручки панели, которыми агентство само включает и гасит девушку «в сети»
+    # (`panel_presence.py`). ⚠ Пусто — у панели такой кнопки нет, и анкета
+    # входит прежней дорогой: сценарием или обменом токена.
+    PRESENCE_SET_PATH = ''
+    PRESENCE_READ_PATH = ''
+
     def __init__(self, presence: dict | None = None):
         self.presence = presence or {}
 
@@ -118,6 +124,14 @@ class DatingSitePanel:
     def online_page(self, raw: str) -> tuple[list[dict], str]:
         """Одна страница ленты: карточки и метка следующей. У базовой — пусто."""
         return [], ''
+
+    def presence_form(self, uids: list[str], online: bool | None = None) -> dict:
+        """Поля запроса присутствия: чтение (`online=None`) или переключение."""
+        return {}
+
+    def presence_answer(self, raw: str) -> dict[str, bool]:
+        """Ответ панели — «номер → в сети». У базовой панели присутствия нет."""
+        return {}
 
     def card(self, form: dict) -> dict:
         """Поля карточки помимо параметров: пустой набор у базовой панели."""
@@ -251,6 +265,59 @@ class DatingSitePanelLuxee(DatingSitePanel):
         token = str(page.get('token') or '').strip()
 
         return rows, '' if token in ('', '0') else token
+
+    # ── Присутствие девушки: «Set online» / «Set offline» ──────────────────
+    #
+    # ⚠⚠ У Luxee «в сети» девушку держит **сама панель**: кнопкой в меню плитки
+    # анкеты, а не входом под ней — входить и некуда, кабинета нет. Кнопка —
+    # обычный POST формой `profiles[]` + `online` (10 — в сети, 1 — нет), а
+    # страница узнаёт статусы POST-ом `online-status` с теми же `profiles[]`.
+    # CSRF ручки не спрашивают (замер 16.11.2026).
+
+    PRESENCE_SET_PATH = '/profile/toggle-online/'
+    PRESENCE_READ_PATH = '/profile/online-status/'
+
+    PRESENCE_ON, PRESENCE_OFF = '10', '1'
+
+    def presence_form(self, uids: list[str], online: bool | None = None) -> dict:
+        """`profiles[]` всегда; `online` — только у переключения."""
+        form = {'profiles[]': [str(uid) for uid in uids]}
+        if online is not None:
+            form['online'] = self.PRESENCE_ON if online else self.PRESENCE_OFF
+
+        return form
+
+    def presence_answer(self, raw: str) -> dict[str, bool]:
+        """Оба ответа к одному виду «номер → в сети».
+
+        Чтение отвечает `{"622348": true}`, переключение — тем же словарём
+        внутри `data` и списком `errors` рядом.
+
+        Raises:
+            ValueError: не JSON, ошибки панели или пустой ответ. ⚠ Пустота —
+                отказ: «никого не переключили» не должно читаться удачей.
+        """
+        try:
+            page = json.loads(raw)
+        except (TypeError, ValueError):
+            raise ValueError('панель ответила не JSON — сессия или разметка?')
+
+        if not isinstance(page, dict):
+            raise ValueError('панель ответила не словарём статусов')
+
+        errors = page.get('errors') or []
+        if errors:
+            raise ValueError('панель отказала: ' + '; '.join(
+                str(one.get('message') if isinstance(one, dict) else one)
+                for one in errors))
+
+        got = page['data'] if isinstance(page.get('data'), dict) else page
+        statuses = {str(uid): bool(state) for uid, state in got.items()
+                    if str(uid).isdigit()}
+        if not statuses:
+            raise ValueError('панель не вернула ни одного статуса')
+
+        return statuses
 
 
 class DatingSitePanelStep2Love(DatingSitePanel):

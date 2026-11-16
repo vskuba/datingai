@@ -252,7 +252,17 @@ async def _state_clear(profile_id: int) -> bool:
 
     `status` ставим `offline` сразу: иначе круг увидел бы анкету «в сети» и вышел
     из неё второй раз через минуту.
+
+    ⚠⚠ У сайта, где «в сети» держит кнопка панели (Luxee), выход — это ещё и
+    «Set offline» там (`panel_presence_leave`): нашего столбца мало, девушка
+    горела бы в панели до утра. Здесь, а не в `_leave`, потому что сюда же
+    приходят снятая галочка и выключенная анкета. Не бросает: недошедшее
+    нажатие выправит сверка круга панели.
     """
+    from src.dating.panel_presence import panel_presence_leave
+
+    await panel_presence_leave(int(profile_id))
+
     try:
         async with mysql_get_db_async() as db:
             await db.execute("UPDATE profile SET ws_url = '', storage_state = NULL, "

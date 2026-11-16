@@ -29,6 +29,8 @@ from src.rhapsody.rhapsody_api import (rhapsody_api_error_write,
                                        rhapsody_api_session_state, rhapsody_api_site_get)
 from src.dating.json_column import json_column_load
 from src.dating.log import log_write
+from src.dating.panel_presence import (DatingPanelPresenceError,
+                                       panel_presence_enter, panel_presence_on)
 from src.dating.login_token import (DatingLoginTokenError,
                                     login_token_ready,
                                     login_token_run)
@@ -98,6 +100,14 @@ async def login_run(profile_id: int, scenario_id: int = 0, session_id: str = '',
             raise DatingLoginHeld(why)
 
     site = await _site_check(int(profile['site_id']))
+
+    # ⚠⚠ **Сайт, где «в сети» держит кнопка панели, не входит вовсе** (Luxee):
+    # кабинета под девушкой нет, и вход по смене — это «Set online» в панели
+    # агентства (`panel_presence.py`). Стоит **до** пароля: пароль анкеты здесь
+    # не нужен ни для чего, и отказ «пароль не задан» остановил бы смену зря.
+    # Лестница пауз — выше, общая на все дороги.
+    if await panel_presence_on(int(profile['site_id'])):
+        return await _by_panel(profile)
 
     # ⚠ **Вход брал только свой пароль анкеты** — в отличие от отправки и списков,
     # которые падали на общий агентский. Расхождение было тихим: анкета работала
@@ -554,6 +564,11 @@ async def _by_token(profile: dict, site: dict) -> dict:
     не относится; сценарный путь делает его заодно, потому что вкладка уже
     открыта, — здесь её нет.
     """
+    # ⚠ Импорт здесь, как в `login_run`: на уровне модуля он замыкает круг
+    # импортов. Без него неудача обмена падала `NameError`, и счётчик неудач
+    # не рос вовсе — лестница пауз у Step2Love не работала.
+    from src.dating.login_retry import login_retry_fail
+
     profile_id = int(profile.get('id') or 0)
 
     try:
@@ -575,6 +590,37 @@ async def _by_token(profile: dict, site: dict) -> dict:
 
     return {'status': 'success', 'session_id': '', 'scenario': 'панель',
             'error': '', 'profile': {}}
+
+async def _by_panel(profile: dict) -> dict:
+    """Вход кнопкой панели: «Set online», без браузера и без сессии анкеты.
+
+    Returns:
+        dict: тот же вид ответа, что у прочих дорог входа. `session_id` пуст —
+        вкладки не было; `storage_state` не пишется — cookie анкеты нет вовсе,
+        присутствие держит панель (`panel_presence.py`).
+
+    ⚠ Неудачу метит общая дверь `login_retry_fail`, как у прочих дорог:
+    лестница пауз одна, и своя здесь значила бы вдвое больше нажатий.
+    """
+    from src.dating.login_retry import login_retry_fail
+
+    profile_id = int(profile.get('id') or 0)
+
+    try:
+        await panel_presence_enter(profile)
+    except DatingPanelPresenceError as e:
+        await log_write(profile_id, 'fail', f'Панель: «Set online» не прошло — {e}')
+        await login_retry_fail(profile_id)
+
+        return {'status': 'error', 'session_id': '', 'scenario': 'панель',
+                'error': str(e), 'profile': {}}
+
+    await log_write(profile_id, 'ok', 'Панель: «Set online» — анкета в сети')
+    await _keep_online_set(profile_id)
+
+    return {'status': 'success', 'session_id': '', 'scenario': 'панель',
+            'error': '', 'profile': {}}
+
 
 async def _keep_online_set(profile_id: int) -> None:
     """Успешный вход: анкета под присмотром, череда неудач обнулена.
