@@ -121,7 +121,7 @@ async def panel_fetch_html(site_id: int, path: str, params: dict = None,
 
 
 async def panel_fetch_post(site_id: int, path: str, data: dict,
-                           files: dict = None) -> str:
+                           files: dict = None, headers: dict = None) -> str:
     """Отправка формы панели под нашей сессией. Разметка ответа строкой.
 
     Args:
@@ -133,6 +133,8 @@ async def panel_fetch_post(site_id: int, path: str, data: dict,
             многочастную кодировку). С переданными файлами пустая часть **не**
             прикладывается: набор частей обязан совпадать с тем, что шлёт браузер
             этой же формы, — лишний файл чужой сервер может не простить.
+        headers: свои заголовки. ⚠ Ручкам Luxee, которые страница зовёт
+            `$.post`, нужен `X-Requested-With`: без него `403 Forbidden`.
 
     Returns:
         str: разметка страницы, которой панель ответила.
@@ -173,6 +175,7 @@ async def panel_fetch_post(site_id: int, path: str, data: dict,
                                    data=data or {},
                                    files=files if files is not None
                                    else PANEL_FETCH_EMPTY_FILE,
+                                   headers=headers or None,
                                    cookies=cookies, follow_redirects=False,
                                    timeout=PANEL_FETCH_TIMEOUT)
     except Exception as e:

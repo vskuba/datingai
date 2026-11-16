@@ -45,6 +45,11 @@ from src.dating.site_presence import site_presence
 from src.dating.site_setting import site_setting
 
 
+# Ручки присутствия страница зовёт `$.post` — с этим заголовком; без него 403.
+PANEL_PRESENCE_HEADERS = {'X-Requested-With': 'XMLHttpRequest',
+                          'Accept': 'application/json, text/javascript, */*'}
+
+
 class DatingPanelPresenceError(RuntimeError):
     """Панель не переключила или не ответила. Текст годен для журнала анкеты."""
 
@@ -115,7 +120,7 @@ async def panel_presence_keep(site_id: int, minutes: int) -> dict:
         return {'checked': 0, 'on': 0, 'off': 0, 'error': str(e)}
 
     # Анкеты, которых панель не знает, выпадают из сверки целиком: переключать
-    # их нечем, а в пачке они уронили бы и остальных.
+    # их нечем.
     rows = [row for row in rows if row['uid'] in now]
 
     want = {row['uid']: bool(row['enabled']) and schedule_now(row['schedule'], minutes)
@@ -162,40 +167,21 @@ async def _driver(site_id: int):
 
 
 async def _read(site_id: int, driver, rows: list[dict]) -> dict[str, bool]:
-    """Статусы анкет: пачкой, а при отказе — по одной.
+    """Статусы анкет одним POST. Чужие — те, кого нет в ответе.
 
-    ⚠⚠ Номер, которого панель не знает, роняет **весь** запрос `403` (замер
-    16.11.2026: анкета 622339 есть у нас и нет в панели). Пачкой — дёшево, пока
-    все свои; отказала — читаем по одной, и чужие получают строку в журнале, а
-    не молчаливый вечный отказ сверки всему сайту.
-
-    Raises:
-        DatingPanelPresenceError: не прочиталась ни одна — значит дело не в
-            номерах, а в сессии или панели.
+    ⚠ Номер, которого панель не знает, она просто **не возвращает** (замер
+    16.11.2026: анкета 622339 есть у нас и нет в панели). Такой анкете —
+    строка в журнале: в присутствии по расписанию она не участвует, и молчать
+    об этом значило бы держать её «вне сети» без объяснения.
     """
-    try:
-        return await _ask(site_id, driver, driver.PRESENCE_READ_PATH,
-                          driver.presence_form([row['uid'] for row in rows]))
-    except DatingPanelPresenceError as e:
-        first = e
+    got = await _ask(site_id, driver, driver.PRESENCE_READ_PATH,
+                     driver.presence_form([row['uid'] for row in rows]))
 
-    got, strangers = {}, []
     for row in rows:
-        try:
-            got.update(await _ask(site_id, driver, driver.PRESENCE_READ_PATH,
-                                  driver.presence_form([row['uid']])))
-        except DatingPanelPresenceError:
-            strangers.append(row)
-
-    # ⚠ Не прочиталась ни одна — дело в сессии, а не в номерах: строка «панель
-    # не знает анкету» всем двенадцати была бы ложью.
-    if not got:
-        raise first
-
-    for row in strangers:
-        await log_write(int(row['id']), 'fail',
-                        f"Панель не знает анкету {row['uid']}: в присутствии "
-                        'по расписанию она не участвует')
+        if row['uid'] not in got:
+            await log_write(int(row['id']), 'fail',
+                            f"Панель не знает анкету {row['uid']}: в присутствии "
+                            'по расписанию она не участвует')
 
     return got
 
@@ -210,6 +196,9 @@ async def _press(profile: dict, online: bool) -> None:
     got = await _ask(int(profile['site_id']), driver, driver.PRESENCE_SET_PATH,
                      driver.presence_form([uid], online))
 
+    if uid not in got:
+        raise DatingPanelPresenceError(f'панель не знает анкету {uid}')
+
     if got.get(uid) is not online:
         raise DatingPanelPresenceError(
             f"панель ответила «{'в сети' if got.get(uid) else 'не в сети'}» "
@@ -222,9 +211,14 @@ async def _ask(site_id: int, driver, path: str, form: dict) -> dict:
     ⚠ `files={}` — форма уходит строкой полей, как шлёт её `$.post` страницы:
     пустой словарь файлов многочастную кодировку не включает
     (`panel_fetch_post`).
+
+    ⚠⚠ `X-Requested-With` обязателен: без него обе ручки отвечают
+    `403 Forbidden` (поймано первым же заходом на проде 16.11.2026 — все
+    двенадцать «Set online» легли отказом).
     """
     try:
-        raw = await panel_fetch_post(site_id, path, form, files={})
+        raw = await panel_fetch_post(site_id, path, form, files={},
+                                     headers=PANEL_PRESENCE_HEADERS)
         return driver.presence_answer(raw)
     except (DatingPanelFetchError, ValueError) as e:
         raise DatingPanelPresenceError(str(e))

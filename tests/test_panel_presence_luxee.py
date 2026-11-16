@@ -67,7 +67,7 @@ def panel(monkeypatch):
     posts = []
     statuses = {}
 
-    async def fake_post(site_id, path, data, files=None):
+    async def fake_post(site_id, path, data, files=None, headers=None):
         posts.append({'path': path, 'data': data, 'files': files})
         uids = data['profiles[]']
         if 'online' in data:
@@ -186,7 +186,7 @@ class TestTheKeepFollowsTheSchedule:
                               'enabled': 1, 'schedule': ALL_DAY}])
         read = mod.panel_fetch_post
 
-        async def toggle_fails(site_id, path, data, files=None):
+        async def toggle_fails(site_id, path, data, files=None, headers=None):
             if 'online' in data:
                 raise DatingPanelFetchError('панель увела на вход')
 
@@ -280,12 +280,11 @@ class TestTheDoorsAreWired:
         assert 'import login_retry_fail' in inspect.getsource(login._by_token)
 
 
-class TestAStrangerDoesNotSinkTheSite:
-    """⚠⚠ Номер, которого панель не знает, роняет пачку `403` целиком."""
+class TestAStrangerIsLeftOut:
+    """Номер, которого панель не знает, она не возвращает — он выпадает."""
 
     async def test_unknown_number_is_dropped_others_are_kept(self, panel, monkeypatch):
         import src.dating.panel_presence as mod
-        from src.dating.panel_fetch import DatingPanelFetchError
 
         state, _, _ = panel
         _girls(monkeypatch, [
@@ -293,20 +292,31 @@ class TestAStrangerDoesNotSinkTheSite:
             {'id': 2, 'profile_id': 99, 'profile': '{}', 'enabled': 1, 'schedule': ALL_DAY}])
         known = mod.panel_fetch_post
 
-        async def stranger_forbidden(site_id, path, data, files=None):
-            if '99' in data['profiles[]']:
-                raise DatingPanelFetchError('панель ответила 403')
+        async def stranger_missing(site_id, path, data, files=None, headers=None):
+            data = {**data, 'profiles[]': [u for u in data['profiles[]'] if u != '99']}
 
             return await known(site_id, path, data, files)
 
-        monkeypatch.setattr(mod, 'panel_fetch_post', stranger_forbidden)
+        monkeypatch.setattr(mod, 'panel_fetch_post', stranger_missing)
 
         got = await mod.panel_presence_keep(7, NOON)
 
         assert got == {'checked': 1, 'on': 1, 'off': 0, 'error': ''}
         assert state['11'] is True
 
-    async def test_nobody_readable_is_an_error(self, panel, monkeypatch):
+    async def test_press_on_a_stranger_says_so(self, panel, monkeypatch):
+        import src.dating.panel_presence as mod
+
+        async def empty_data(site_id, path, data, files=None, headers=None):
+            return json.dumps({'data': {'5': True}, 'errors': []})
+
+        monkeypatch.setattr(mod, 'panel_fetch_post', empty_data)
+
+        with pytest.raises(mod.DatingPanelPresenceError, match='не знает'):
+            await mod.panel_presence_enter({'id': 1, 'site_id': 7, 'profile_id': '99',
+                                            'profile': '{}'})
+
+    async def test_dead_session_is_an_error(self, panel, monkeypatch):
         import src.dating.panel_presence as mod
         from src.dating.panel_fetch import DatingPanelFetchError
 
@@ -321,3 +331,24 @@ class TestAStrangerDoesNotSinkTheSite:
         got = await mod.panel_presence_keep(7, NOON)
 
         assert 'увела на вход' in got['error']
+
+    async def test_every_post_asks_as_the_page_script(self, panel, monkeypatch):
+        """⚠⚠ Без `X-Requested-With` обе ручки отвечают 403."""
+        import src.dating.panel_presence as mod
+
+        seen = []
+        known = mod.panel_fetch_post
+
+        async def spy(site_id, path, data, files=None, headers=None):
+            seen.append(headers or {})
+
+            return await known(site_id, path, data, files)
+
+        monkeypatch.setattr(mod, 'panel_fetch_post', spy)
+        _girls(monkeypatch, [{'id': 1, 'profile_id': 11, 'profile': '{}',
+                              'enabled': 1, 'schedule': ALL_DAY}])
+
+        await mod.panel_presence_keep(7, NOON)
+
+        assert seen and all(one.get('X-Requested-With') == 'XMLHttpRequest'
+                            for one in seen)
