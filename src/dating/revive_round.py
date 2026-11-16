@@ -64,7 +64,7 @@ async def revive_round_run(login_run=None) -> dict:
 
         login_run = login_run
 
-    profiles = await revive_db_profiles_kept()
+    profiles = await _not_panel_held(await revive_db_profiles_kept())
     counts = {'checked': len(profiles), 'online': 0, 'tried': 0, 'revived': 0, 'given_up': 0}
 
     # Настройка опроса спрашивается на сайт, а не на анкету: двести анкет с трёх
@@ -134,6 +134,24 @@ async def revive_round_run(login_run=None) -> dict:
                 counts['revived'] += 1
 
     return counts
+
+
+async def _not_panel_held(profiles: list[dict]) -> list[dict]:
+    """Анкеты без сайтов, где «в сети» держит кнопка панели (Luxee).
+
+    ⚠⚠ Такой сайт этот круг проверить не может и не должен: опрос идёт по
+    настройке `heartbeat`, которой у него нет и не будет — присутствие держит
+    поминутная сверка круга панели (`panel_presence.py`). Без этого отбора круг
+    метил анкеты `error` строкой «проверить нечем», круг расписания видел «не в
+    сети» и снова жал «Set online» — карусель, пойманная на проде 16.11.2026:
+    десять анкет из двенадцати в `error` через две минуты после входа.
+    """
+    from src.dating.panel_presence import panel_presence_on
+
+    held = {site_id for site_id in {int(one['site_id']) for one in profiles}
+            if await panel_presence_on(site_id)}
+
+    return [one for one in profiles if int(one['site_id']) not in held]
 
 
 async def _give_up_say(profile: dict) -> None:

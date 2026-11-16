@@ -352,3 +352,22 @@ class TestAStrangerIsLeftOut:
 
         assert seen and all(one.get('X-Requested-With') == 'XMLHttpRequest'
                             for one in seen)
+
+
+class TestReviveLeavesPanelSitesAlone:
+    """⚠⚠ Круг восстановления метил анкеты Luxee `error` — их присутствие
+    держит сверка панели, а настройки `heartbeat` у сайта нет."""
+
+    async def test_panel_held_site_is_skipped(self, monkeypatch):
+        import src.dating.panel_presence as mod
+        from src.dating import revive_round
+
+        async def only_seven(site_id):
+            return int(site_id) == 7
+
+        monkeypatch.setattr(mod, 'panel_presence_on', only_seven)
+
+        got = await revive_round._not_panel_held(
+            [{'id': 1, 'site_id': 7}, {'id': 2, 'site_id': 343}])
+
+        assert [one['id'] for one in got] == [2]
