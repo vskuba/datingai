@@ -67,7 +67,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 from text_.text_trim_lines import text_trim_lines
 
-from src.dating.agent import (AGENT_NODE, agent_bio, agent_site)
+from src.dating.agent import (AGENT_NODE, agent_bio, agent_site, agent_vars)
 from src.dating.mail import (MAIL_VAR_RE, MAILING_AVOID_MAX)
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_agent_create,
                                        rhapsody_api_agent_find, rhapsody_api_chat_ask)
@@ -104,6 +104,11 @@ MAIL_AGENT_NAME = 'mail_vars_{site}'
 # `mail_write` — текст письма.
 MAIL_WRITE_NAME = 'mail_write_{site}'
 
+
+# Сколько знаков зачина прошлого письма видит писатель. Первой строки хватает:
+# зачин — первое, что видит человек, а образы из тела письма писатель как раз и
+# перенимал, когда видел письма целиком.
+MAIL_AVOID_OPENING = 140
 
 # Агент вопроса — тоже свой: у агента один workflow.
 MAIL_QUESTION_NAME = 'mail_ask_{site}'
@@ -511,10 +516,20 @@ async def mail_write(site_id: int, variables: list[dict],
                    # (`agent_bio`): «кто пишет», не цитата. Пуста — секция
                    # гасится у соседа.
                    'girl_bio': _girl_bio(girl) if girl else '',
+                   # ⚠⚠ Ключ её фактов — **тем же `agent_vars`, что у чата**: подпоток
+                   # дня у соседа (`girl_day_invent`) кладёт сочинённый день фактами
+                   # под `girl_id_girl_name`, и агент чата находит их по тому же
+                   # ключу. Свой расчёт здесь разошёлся бы с чатом молча — день лёг
+                   # бы в документ, который никто не читает. Пусто (кнопка без
+                   # анкеты) — у соседа шаг дня пропускается.
+                   **_girl_key(girl),
                    # Её собственные прошлые письма, не весь сайт: повторяется
                    # владелица для адресата в первую очередь собой.
-                   'mail_avoid': _avoid_text(
-                       await _mail_avoid(int(site_id), girl)),
+                   # ⚠ Целиком их видит только **судья**: писатель, которому
+                   # отдавали десять писем целиком, брал из них образы — чайник,
+                   # свет на столе, «забыла сахар» стояли в трёх письмах подряд
+                   # (замер 16.11.2026). Писателю — одни зачины (`mail_avoid_brief`).
+                   **_avoid_both(await _mail_avoid(int(site_id), girl)),
                    # ⚠ Язык — на каждом вызове: без него сосед возьмёт первый
                    # язык узла, а он свой у каждой установки (см. константу).
                    'user_language': language})
@@ -946,6 +961,32 @@ async def _mail_avoid(site_id: int, girl: dict = None) -> list[str]:
         return []
 
     return [str(row['body']) for row in rows or []]
+
+
+def _girl_key(girl: dict | None) -> dict:
+    """`girl_id`, `girl_name`, `girl_title` владелицы — или пустые строки."""
+    if not girl:
+        return {'girl_id': '', 'girl_name': '', 'girl_title': ''}
+
+    card = girl.get('profile') if isinstance(girl.get('profile'), dict) else {}
+
+    return agent_vars(girl, card)
+
+
+def _avoid_both(avoid) -> dict:
+    """Прошлые письма судье целиком, писателю — только зачины."""
+    return {'mail_avoid': _avoid_text(avoid),
+            'mail_avoid_brief': _avoid_text(
+                [_opening(one) for one in avoid or []])}
+
+
+def _opening(body: str) -> str:
+    """Зачин письма: первая непустая строка, не длиннее `MAIL_AVOID_OPENING`."""
+    for line in str(body or '').splitlines():
+        if line.strip():
+            return line.strip()[:MAIL_AVOID_OPENING]
+
+    return ''
 
 
 def _avoid_text(avoid) -> str:

@@ -323,3 +323,45 @@ def _one(value):
         return value
 
     return _got
+
+
+class TestTheGirlDayKey:
+    """⚠⚠ Ключ фактов владелицы — тем же `agent_vars`, что у чата.
+
+    Подпоток дня у соседа (`girl_day_invent`) кладёт сочинённый день фактами
+    под `girl_id_girl_name`, и агент чата ищет их по тому же ключу. Разойдись
+    ключи — день лёг бы в документ, который никто не читает, и на вопрос «а что
+    за кафе?» агент отвечал бы наугад.
+    """
+
+    async def test_the_key_is_the_chat_key(self, agent, share):
+        from src.dating.agent import agent_vars
+
+        await mail_write(STAND_SITE, VARS, girl=GIRL)
+
+        card = GIRL.get('profile') if isinstance(GIRL.get('profile'), dict) else {}
+        want = agent_vars(GIRL, card)
+
+        assert {k: agent[k] for k in ('girl_id', 'girl_name', 'girl_title')} == want
+
+    async def test_no_owner_sends_empty_key(self, agent, share):
+        """Пустой `girl_id` — у соседа шаг дня пропускается, письмо идёт как прежде."""
+        await mail_write(STAND_SITE, VARS)
+
+        assert agent['girl_id'] == agent['girl_name'] == agent['girl_title'] == ''
+
+
+class TestTheWriterSeesOpeningsOnly:
+    """⚠ Писатель видел десять прошлых писем целиком и брал из них образы —
+    чайник, свет на столе, «забыла сахар» в трёх письмах подряд (16.11.2026).
+    Целиком их теперь видит только судья."""
+
+    async def test_brief_has_openings_and_full_has_bodies(self, agent, share, monkeypatch):
+        monkeypatch.setattr(mail_agent, '_mail_avoid', _one(
+            ['Look at this,\nthe kettle sang and the light was gold.']))
+
+        await mail_write(STAND_SITE, VARS, girl=GIRL)
+
+        assert agent['mail_avoid_brief'] == '1. Look at this,'
+        assert 'kettle' in agent['mail_avoid']
+        assert 'kettle' not in agent['mail_avoid_brief']
