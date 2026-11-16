@@ -28,6 +28,10 @@
 имён в форме нашлось, а решение «отказ» принимает `profile_panel.py`.
 """
 
+import html
+import json
+import re
+
 from datetime_.datetime_ import datetime_utc_now
 
 from src.dating.profile_param import profile_param_frame
@@ -77,6 +81,12 @@ class DatingSitePanel:
     # каркасом, здесь — то, что лежит у карточки самой: город, описание.
     CARD: dict = {}
 
+    # Страница панели со списком мужчин в сети — лента «Все онлайн» без
+    # сценария (`panel_online.py`). ⚠ Пусто значит «у панели такой страницы
+    # нет», и лента идёт прежней дорогой: API сайта или сценарий у соседа.
+    # Ведущая черта — путь от корня **сайта**, а не панели (`panel_fetch`).
+    ONLINE_PATH = ''
+
     def __init__(self, presence: dict | None = None):
         self.presence = presence or {}
 
@@ -100,6 +110,14 @@ class DatingSitePanel:
         names = tuple(self.FIELDS) + tuple(self.SOURCES) + tuple(self.CARD)
 
         return sum(1 for name in names if name in got)
+
+    def online_params(self, token: str) -> dict:
+        """Строка запроса страницы ленты. У базовой панели ленты нет."""
+        return {}
+
+    def online_page(self, raw: str) -> tuple[list[dict], str]:
+        """Одна страница ленты: карточки и метка следующей. У базовой — пусто."""
+        return [], ''
 
     def card(self, form: dict) -> dict:
         """Поля карточки помимо параметров: пустой набор у базовой панели."""
@@ -156,7 +174,9 @@ class DatingSitePanelLuxee(DatingSitePanel):
 
     name = 'luxee'
 
-    path = 'profile/update/{uid}/'
+    # ⚠ От корня сайта: корень панели Luxee — `…/profile` (`admin_url`
+    # обязан кончаться чертой), и относительный путь ушёл бы этажом ниже.
+    path = '/profile/update/{uid}/'
 
     FIELDS = {
         'FakeProfileModel[birthday]': 'birthday',
@@ -183,6 +203,54 @@ class DatingSitePanelLuxee(DatingSitePanel):
         values['weight'] = _bracket_metric(values.get('weight'))
 
         return profile_param_frame(values)
+
+    # ── Лента «Все онлайн»: раздел Clients ──────────────────────────────────
+    #
+    # ⚠⚠ У Luxee кабинета под девушкой нет — одна панель агентства на всех, и
+    # мужчины, которые сейчас на сайте, видны в ней плитками `/clients/list/`.
+    # Сценарий здесь не нужен: страница server-rendered, подкачка «Load more» —
+    # тот же адрес с меткой `token`, ответ JSON `{success, html, token}`.
+    #
+    # ⚠⚠ Берём **только платящих** (`Payed`): бесплатный ответить не может, и
+    # реплика ему потрачена впустую. Отбор двойной — фильтром сервера
+    # (`purchased=2`, `is_online=10`: замер 16.11.2026 — 103 плитки за шесть
+    # GET вместо листания всех) и проверкой ярлыков плитки: проглоти сайт
+    # однажды фильтр молча, лента наполнилась бы бесплатными без единой ошибки.
+
+    ONLINE_PATH = '/clients/list/'
+
+    ONLINE_FILTER = {'ClientsFilterForm[is_online]': '10',
+                     'ClientsFilterForm[purchased]': '2'}
+
+    def online_params(self, token: str) -> dict:
+        """Фильтр формы плюс метка страницы: `0` — первая."""
+        return {'token': str(token or '0'), **self.ONLINE_FILTER}
+
+    def online_page(self, raw: str) -> tuple[list[dict], str]:
+        """Ответ подкачки — карточками нашего вида и меткой следующей страницы.
+
+        Raises:
+            ValueError: ответ не JSON подкачки или `success` ложен. ⚠ Отказ, а
+                не пустой список: пустота погасила бы точки «в сети» у всех и
+                читалась бы как «никого нет», хотя сломался разбор.
+        """
+        try:
+            page = json.loads(raw)
+        except (TypeError, ValueError):
+            raise ValueError('панель ответила не JSON подкачки — '
+                             'разметка раздела Clients сменилась?')
+
+        if not isinstance(page, dict) or not page.get('success'):
+            raise ValueError('панель не отдала страницу клиентов (success ложен)')
+
+        rows = [card for card in map(_luxee_tile, _LUXEE_TILE_RE.split(
+            str(page.get('html') or ''))[1:]) if card]
+
+        # ⚠ Метка конца — пустая строка (иногда ноль): так сама страница
+        # прячет кнопку «Load more».
+        token = str(page.get('token') or '').strip()
+
+        return rows, '' if token in ('', '0') else token
 
 
 class DatingSitePanelStep2Love(DatingSitePanel):
@@ -271,6 +339,58 @@ class DatingSitePanelStep2Love(DatingSitePanel):
             card['age'] = _years(born)
 
         return card
+
+
+# Граница плитки клиента: номер человека — в `data-key`.
+_LUXEE_TILE_RE = re.compile(r'<div class="profile-tile-wrap-outside" data-key="')
+
+# Заглушка вместо фотографии: силуэт, общий для всех без снимка.
+_LUXEE_BLANK_PHOTO = '/blank/'
+
+
+def _luxee_tile(chunk: str) -> dict | None:
+    """Плитка клиента — карточкой ленты. Не платящий или не в сети — `None`.
+
+    ⚠ Вид карточки тот же, что у API сайта и у сценария (`people_api.py`,
+    `people_row_card`): лента одна, источники разные, и разойдись поля —
+    страница рисовала бы плитки по-разному в зависимости от дороги.
+    """
+    from src.dating.people import (PEOPLE_NAME_MAX, PEOPLE_UID_MAX,
+                                   people_name_case, people_photo_uid)
+
+    uid = chunk.split('"', 1)[0].strip()
+    if not uid.isdigit():
+        return None
+
+    status = _luxee_text(chunk, r'class="profile-status[^"]*">([^<]*)<')
+    paid = _luxee_text(chunk, r'class="profile-sync[^"]*">([^<]*)<')
+    if status.lower() != 'online' or paid.lower() != 'payed':
+        return None
+
+    photo = _luxee_text(chunk, r'background-image:\s*url\(&quot;([^&"]*)')
+    if _LUXEE_BLANK_PHOTO in photo:
+        photo = ''
+
+    age = _luxee_text(chunk, r'<div class="age">\s*(\d+)')
+
+    return {'uid': uid[:PEOPLE_UID_MAX],
+            'name': people_name_case(
+                _luxee_text(chunk, r'<div class="username">([^<]*)<'))[:PEOPLE_NAME_MAX],
+            'age': int(age) if age else 0,
+            'photo': photo,
+            'photo_uid': people_photo_uid(photo),
+            'online': True,
+            'is_new': False,
+            # Анкеты клиента по адресу у панели нет — только окно по номеру.
+            'link': '',
+            'city': _luxee_text(chunk, r'<div class="location">([^<]*)<')}
+
+
+def _luxee_text(chunk: str, pattern: str) -> str:
+    """Первая группа совпадения, без сущностей и лишних пробелов."""
+    found = re.search(pattern, chunk)
+
+    return ' '.join(html.unescape(found.group(1)).split()) if found else ''
 
 
 def _bracket_metric(value) -> str:

@@ -93,6 +93,8 @@ from src.dating.favorite import favorite_driver
 from src.dating.guests import guests_feed
 from src.dating.guests_round import guests_site_sweep, guests_slot_every_sec
 from src.dating.log import log_write
+from src.dating.panel_fetch import DatingPanelFetchError
+from src.dating.panel_online import panel_online_on, panel_online_rows
 from src.dating.people import people_rows
 from src.dating.people_api import (DatingPeopleApiError, people_api_kinds,
                                           people_api_rows)
@@ -369,7 +371,7 @@ async def people_site_list(site_id: int, kind: str, fresh: bool = False,
                 cached, cached=True, error='', site_id=site_id, kind=kind,
                 next_in=max(0, fresh_sec - int(time.time() - cached['at'])))
 
-    profile = await _site_profile(site_id)
+    profile = await _panel_door(site_id, kind) or await _site_profile(site_id)
     via_api = True
     if not profile:
         via_api = await _api_for(site_id, kind)
@@ -477,7 +479,7 @@ async def people_snap_start(site_id: int) -> bool:
     (`scenario.py`).
     """
     site_id = int(site_id)
-    profile = await _site_profile(site_id)
+    profile = await _panel_door(site_id, 'online') or await _site_profile(site_id)
     if not profile and not await _api_for(site_id, 'online'):
         profile = await _site_sleeper(site_id)
     if not profile:
@@ -899,6 +901,21 @@ def _key(kind: str, profile_id: int = 0, site_id: int = 0) -> str:
             else PEOPLE_SITE_KEY.format(site_id=site_id, kind=kind))
 
 
+async def _panel_door(site_id: int, kind: str) -> dict:
+    """Дверь ленты панельного сайта: «анкета» без анкеты. Не тот сайт — пусто.
+
+    ⚠ Ленту такого сайта снимает **агентство**, а не девушка
+    (`panel_online.py`), и спрашивать «кто в сети, под кем войти» значило бы
+    гасить её ночью словами «ни одна анкета не в сети», хотя сессия панели
+    жива. Дальше по цепочке от «анкеты» нужен только номер сайта; номер
+    анкеты ноль — журнал ведётся по сайту, как у всякого списка по сайту.
+    """
+    if kind != 'online' or not await panel_online_on(site_id):
+        return {}
+
+    return {'id': 0, 'site_id': int(site_id), 'login': ''}
+
+
 async def _site_profile(site_id: int) -> dict:
     """Анкета **в сети**, под которой снимаем список. Нет таких — пустой словарь.
 
@@ -1067,6 +1084,15 @@ async def _snapshot(profile: dict, kind: str) -> list:
     site_id = int(profile.get('site_id') or 0)
     if kind == 'favorite' and await favorite_driver(site_id):
         return await _handle_rows(profile, site_id)
+
+    # ⚠⚠ Четвёртая дорога — страница админ-панели, только для ленты: у Luxee
+    # кабинета под девушкой нет, мужчины в сети видны в панели агентства, и
+    # снимаются они GET-ом по сессии круга панели (`panel_online.py`).
+    if kind == 'online' and await panel_online_on(site_id):
+        try:
+            return await panel_online_rows(site_id)
+        except DatingPanelFetchError as e:
+            raise _PeopleFailure(str(e))
 
     if await _api_for(site_id, kind):
         return await _api_rows(profile, kind, site_id)

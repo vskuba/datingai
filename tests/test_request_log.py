@@ -221,10 +221,22 @@ class TestPathIsTheRealOne:
     async def test_empty_params_do_not_leave_a_dangling_question_mark(self, written):
         from src.dating import panel_fetch
 
-        await panel_fetch._note(SITE, 'https://x.test/root', '/page', None,
+        await panel_fetch._note(SITE, 'https://x.test/root', 'page', None,
                                        200, '', time.monotonic())
 
         assert written[0]['path'] == '/root/page'
+
+    @pytest.mark.asyncio
+    async def test_a_leading_slash_is_from_the_site_root(self, written):
+        """⚠ Ведущая черта — от корня **сайта** (`panel_fetch_address`): у Luxee
+        корень панели `…/profile`, а разделы лежат рядом. Журнал пишет ровно
+        то, что ушло, — иначе показал бы путь, которого на сайте нет."""
+        from src.dating import panel_fetch
+
+        await panel_fetch._note(SITE, 'https://x.test/profile', '/clients/list/',
+                                None, 200, '', time.monotonic())
+
+        assert written[0]['path'] == '/clients/list/'
 
 
 class TestNotEveryFailureIsARequest:

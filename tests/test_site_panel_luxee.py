@@ -116,7 +116,9 @@ class TestTheRegistry:
                           DatingSitePanelLuxee)
 
     def test_the_path_reaches_the_edit_page(self):
-        """Карточка анкеты живёт по `profile/update/{номер}/` — с чертой: на
-        неё сайт отвечает прямо, без `301`. """
+        """Карточка анкеты живёт по `/profile/update/{номер}/` — с чертой: на
+        неё сайт отвечает прямо, без `301`. ⚠ И от корня **сайта**: корень
+        панели у Luxee — `…/profile` (адрес проверки кончается чертой), и
+        относительный путь уехал бы в `/profile/profile/update/`. """
         assert site_registry_panel({'driver': 'luxee'}).path == \
-            'profile/update/{uid}/'
+            '/profile/update/{uid}/'

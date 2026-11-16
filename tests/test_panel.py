@@ -87,8 +87,9 @@ class TestProbeUrl:
     @pytest.mark.parametrize('url, base, path', [
         ('https://panel.test/partner/agency/profile', 'https://panel.test',
          'partner/agency/profile'),
-        # Черта в конце снимается — ровно тот случай, что и ловил.
-        ('https://panel.test/partner/agency/', 'https://panel.test', 'partner/agency'),
+        # ⚠ Черта в конце пути остаётся: Luxee без неё отвечает `301`, и
+        # снятая черта держала его панель красной при живой сессии.
+        ('https://luxee.test/profile/', 'https://luxee.test', 'profile/'),
         # Голый хост: пути нет вовсе, и выдумывать его нечем.
         ('https://panel.test', 'https://panel.test', ''),
     ])

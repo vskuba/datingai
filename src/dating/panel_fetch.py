@@ -67,13 +67,20 @@ PANEL_FETCH_TIMEOUT = 20.0
 PANEL_FETCH_EMPTY_FILE = {'uploadFile': ('', b'', 'application/octet-stream')}
 
 
-async def panel_fetch_html(site_id: int, path: str, params: dict = None) -> str:
+async def panel_fetch_html(site_id: int, path: str, params: dict = None,
+                           headers: dict = None) -> str:
     """Страница панели под нашей сессией. Разметка строкой.
 
     Args:
         site_id: сайт, чью панель читаем.
-        path: путь относительно корня панели — `userchatmessages`.
+        path: путь относительно корня панели — `userchatmessages`. ⚠ С ведущей
+            чертой — от корня **сайта** (`/clients/list/`): у Luxee адрес
+            проверки (`/profile/`) обязан кончаться чертой, и корень панели
+            выходит `…/profile`, а разделы лежат рядом с ним, не внутри.
         params: строка запроса словарём.
+        headers: свои заголовки запроса. Нужны подкачке: Luxee отдаёт JSON
+            «Load more» только на `X-Requested-With`, без него — целую
+            страницу, и устаревшая метка даёт её без списка вовсе.
 
     Returns:
         str: разметка страницы.
@@ -91,7 +98,8 @@ async def panel_fetch_html(site_id: int, path: str, params: dict = None) -> str:
     client = http_heartbeat_client()
     started = time.monotonic()
     try:
-        answer = await client.get(f"{base}/{str(path or '').lstrip('/')}",
+        answer = await client.get(panel_fetch_address(base, path),
+                                  headers=headers or None,
                                   # ⚠ Пустой словарь запроса httpx 0.28 **срезает**
                                   # строку запроса с конца URL: путь с `?com=…`
                                   # доезжал до панели без него, и панель отдавала
@@ -161,7 +169,7 @@ async def panel_fetch_post(site_id: int, path: str, data: dict,
     client = http_heartbeat_client()
     started = time.monotonic()
     try:
-        answer = await client.post(f"{base}/{str(path or '').lstrip('/')}",
+        answer = await client.post(panel_fetch_address(base, path),
                                    data=data or {},
                                    files=files if files is not None
                                    else PANEL_FETCH_EMPTY_FILE,
@@ -178,6 +186,24 @@ async def panel_fetch_post(site_id: int, path: str, data: dict,
 
     return await _page(site_id, base, path, None, answer, started, 'POST',
                       redirect_ok=True)
+
+
+def panel_fetch_address(base: str, path: str) -> str:
+    """Полный адрес страницы: от корня панели, а с ведущей чертой — от сайта.
+
+    ⚠⚠ Ведущая черта значит «от корня сайта», как в браузере. До Luxee
+    различать было незачем: у Step2Love корень панели и есть корень сайта, у
+    Ladadate пути пишутся без черты. У Luxee адрес проверки обязан кончаться
+    чертой (`/profile/` → `200`, `/profile` → `301`), корень панели выходит
+    `…/profile`, и `clients/list/` искался бы этажом ниже.
+    """
+    clean = str(path or '')
+    if clean.startswith('/'):
+        origin = httpx.URL(str(base or ''))
+
+        return f'{origin.scheme}://{origin.netloc.decode()}{clean}'
+
+    return f"{str(base or '').rstrip('/')}/{clean}"
 
 
 def panel_fetch_table(html: str) -> list[list[dict]]:
@@ -523,7 +549,7 @@ async def _note(site_id: int, base: str, path: str, params: dict, status: int,
     from src.dating.request import (REQUEST_PANEL, request_ms,
                                            request_write)
 
-    url = httpx.URL(f"{str(base or '').rstrip('/')}/{str(path or '').lstrip('/')}")
+    url = httpx.URL(panel_fetch_address(base, path))
     if params:
         url = url.copy_merge_params({key: value for key, value in params.items()
                                      if value not in (None, '')})
