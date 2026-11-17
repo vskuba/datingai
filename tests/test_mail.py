@@ -121,6 +121,24 @@ class TestCheck:
 
         assert 'Переменные' in why
 
+    def test_a_bare_mark_in_any_case_is_refused(self):
+        """⚠⚠ Метка словом без скобок — отказ, и регистр не спасает.
+
+        17.11.2026 шаблон начинался «Companion_name,»: подстановка такое не
+        видит, и письмо ушло бы с именем переменной в первой строке.
+        """
+        known = {'companion_name', 'girl_name'}
+        why = mail_check('Имя', 'Companion_name,\n\nHello. [[girl_name]]', known)
+
+        assert 'companion_name' in why
+
+    def test_a_mark_in_brackets_and_a_plain_word_pass(self):
+        """Метка в скобках и обычное слово, совпавшее с именем без подчёркивания,
+        отказом не считаются."""
+        known = {'companion_name', 'city'}
+
+        assert mail_check('Имя', 'Hi [[companion_name]], my city is calm.', known) == ''
+
 
 class TestVarName:
     """Каким может быть имя переменной."""

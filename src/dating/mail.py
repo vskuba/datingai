@@ -144,6 +144,24 @@ def mail_vars_found(body: str) -> list[str]:
     return found
 
 
+def mail_marks_bare(body: str, known) -> list[str]:
+    """Какие переменные написаны в тексте **словом**, без скобок, в любом регистре.
+
+    ⚠⚠ Живой брак 17.11.2026: шаблон начинался «Companion_name,» — метка без
+    скобок и с заглавной. Подстановка такое не видит, и человек получил бы
+    письмо, которое начинается с имени переменной. Счёт голых меток у соседа
+    регистр учитывал и заглавную пропускал; здесь регистр не важен.
+
+    ⚠ Ищутся только имена **с подчёркиванием**: переменная `city` словом — это
+    обычное слово письма, а `companion_name` в прозе не встречается никогда.
+    """
+    text = MAIL_VAR_RE.sub(' ', str(body or ''))
+
+    return [name for name in sorted(set(known or ())) if '_' in name
+            if re.search(rf'(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])',
+                         text, re.IGNORECASE)]
+
+
 def mail_var_check(name: str) -> str:
     """Годится ли имя переменной. Пустая строка — годится, иначе причина словами.
 
@@ -202,6 +220,10 @@ def mail_check(name: str, body: str, known) -> str:
             else 'на этом сайте переменных пока нет — заведите их на вкладке «Переменные»'
 
         return f'неизвестная переменная [[{unknown[0]}]]; {have}'
+
+    bare = mail_marks_bare(body, known)
+    if bare:
+        return f'переменная написана словом, без скобок: {bare[0]} — нужно [[{bare[0]}]]'
 
     return ''
 
