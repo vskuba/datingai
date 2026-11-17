@@ -104,6 +104,11 @@ async def clean():
     await wipe()
 
 
+# Тело заготовки длиной с настоящее письмо: короче `MAIL_ROUND_WORDS_MIN` круг
+# заготовку не записывает.
+_BODY = ' '.join(['word'] * round_.MAIL_ROUND_WORDS_MIN)
+
+
 @pytest.fixture
 def agent(monkeypatch):
     """Подменяет агента: считает вызовы вместо походов к LLM.
@@ -117,7 +122,7 @@ def agent(monkeypatch):
     async def fake(site_id, variables, girl=None):
         calls.append(int(site_id))
 
-        return f'Hi [[companion_name]]! Draft #{len(calls)}'
+        return f'Hi [[companion_name]]! Draft #{len(calls)} {_BODY}'
 
     monkeypatch.setattr(round_, 'mail_write', fake)
 
@@ -686,7 +691,7 @@ class TestNameCounts:
         gid = await _girl('Соня')
 
         async def named(site_id, variables, girl=None):
-            return 'Hi [[companion_name]]!'
+            return f'Hi [[companion_name]]! {_BODY}'
 
         monkeypatch.setattr(round_, 'mail_write', named)
 
@@ -826,7 +831,7 @@ class TestTheRoundChecksTheDraft:
         gid = await _girl('Злата')
 
         async def fine(site_id, variables, girl=None):
-            return 'Hello! [[question_to_companion]]'
+            return f'Hello! {_BODY}\n\n[[question_to_companion]]'
 
         monkeypatch.setattr(round_, 'mail_write', fine)
 
@@ -838,6 +843,29 @@ class TestTheRoundChecksTheDraft:
 
         assert made == 1, 'годная заготовка не сохранилась'
         assert await _names(gid) == ['template_1']
+
+    async def test_a_stub_is_not_saved(self, auth_client, clean, monkeypatch):
+        """⚠⚠ Пример из промпта вместо письма не ложится в базу.
+
+        17.11.2026 модель вернула «text of the letter», проверки соседа его
+        пропустили (меток нет — шаги перескочены), и два письма-заглушки ушли
+        живым людям. Предел длины — на нашей стороне, у самой записи.
+        """
+        gid = await _girl('Лана')
+
+        async def stub(site_id, variables, girl=None):
+            return 'text of the letter'
+
+        monkeypatch.setattr(round_, 'mail_write', stub)
+
+        was = await _settings(auth_client, template_per_day='1')
+        try:
+            made = await _write(SITE, 0)
+        finally:
+            await auth_client.put(f'/api/dating/site/{SITE}', json={'settings': was})
+
+        assert made == 0, 'заглушка записана шаблоном'
+        assert await _names(gid) == []
 
 
 class TestTheNormLivesInOnePlace:
