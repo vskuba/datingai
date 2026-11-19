@@ -32,6 +32,22 @@ class TestTheQueueGoesFirst:
         got = await answer_mod._waiting_find(girl, 5, [], False, {'u-req-old'})
         assert [r['sender_uid'] for r in got] == ['u-req-old', 'u-req-new']
 
+    async def test_our_last_line_in_the_queue_is_a_follow_up(self, girl):
+        """Задание «напиши повторно»: последней была наша реплика, он молчит.
+
+        Без очереди такой диалог не повод, в очереди — повод, и один раз за
+        выдержку: отметка ставится на самой нашей реплике.
+        """
+        mine = await _said(girl, 'u-req-out', ago_min=3000, direction='out')
+
+        assert await answer_mod._waiting_find(girl, 5, [], False) == []
+        got = await answer_mod._waiting_find(girl, 5, [], False, {'u-req-out'})
+        assert [(r['sender_uid'], r['direction']) for r in got] == [('u-req-out', 'out')]
+
+        await answer_mod._tried_row(mine)
+        assert await answer_mod._waiting_find(girl, 5, [], False, {'u-req-out'}) == [], \
+            'агента спросят о том же каждую минуту'
+
     async def test_only_her_pairs_count(self, monkeypatch):
         async def _pairs(self, site_id, presence, owner):
             return {('622354', '3075112'), ('622231', '2194241')}
@@ -79,12 +95,16 @@ class TestTheDriverReadsTheQueue:
         assert calls == [622354], 'очередь одна на сайт — второй сокет лишний'
 
 
-async def _said(profile_id: int, uid: str, silent: bool = False, ago_min: int = 1):
+async def _said(profile_id: int, uid: str, silent: bool = False, ago_min: int = 1,
+                direction: str = 'in') -> int:
     async with mysql_get_db_async() as db:
         await db.execute(
             'INSERT INTO message (profile_id, sender_uid, sender_name, text,'
             '  message_uid, direction, created_at, answer_silent_at)'
-            " VALUES (%s, %s, 'X', 'hi', %s, 'in', NOW() - INTERVAL %s MINUTE,"
+            " VALUES (%s, %s, 'X', 'hi', %s, %s, NOW() - INTERVAL %s MINUTE,"
             '         IF(%s, NOW(), NULL))',
-            (int(profile_id), uid, f'zz-{uuid.uuid4().hex[:12]}', ago_min, int(silent)))
+            (int(profile_id), uid, f'zz-{uuid.uuid4().hex[:12]}', direction, ago_min,
+             int(silent)))
         await db.connection.commit()
+
+        return int(db.lastrowid)

@@ -148,6 +148,17 @@ class TestNothingIsMissed:
 
         assert total == 45
 
+    async def test_an_old_dialog_seen_first_is_read_too(self, serve):
+        """Без отметки диалог берётся, как давно бы он ни жил: затихший 17.11
+        не подтянулся, хотя панель уже выдала по нему задание Catch Up."""
+        server = _Server(5, last_activity=NOW_MS - 30 * DAY_MS)
+        serve(server)
+
+        total, _, _ = await DatingSiteImportLuxee(PRESENCE).journal_rows(
+            SITE, PROFILES, _day(NOW_MS - DAY_MS), _day(NOW_MS))
+
+        assert total == 5
+
     async def test_resumes_from_the_mark_however_long_it_slept(self, serve):
         """Отметка 10, в диалоге 437: приезжают ровно 11…437, без окна дат."""
         server = _Server(437, last_activity=NOW_MS - 30 * DAY_MS)

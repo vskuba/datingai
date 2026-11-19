@@ -32,7 +32,7 @@ GET страницы под сессией круга панели даёт то
 подряд с единицы (замер: 437 из 437 без дыр). Помним по диалогу последний
 **сохранённый** номер (Redis, `LUXEE_CHAT_MARKS`) и, когда он вырос, листаем
 назад до него — сколько бы ни проспал круг. Диалог без отметки (первый заход,
-пустой Redis) берётся, если жил в окне дат круга, и читается **целиком**. Отметка ставится **после записи**
+пустой Redis) читается **целиком**, как давно бы он ни жил. Отметка ставится **после записи**
 (`journal_saved`): упади запись — следующий заход перечитает то же самое.
 """
 
@@ -86,11 +86,10 @@ class DatingSiteImportLuxee(DatingSiteImport):
         if not girls:
             return 0, [], ''
 
-        since_ms = _ms(date_from)
         marks = _marks_get(site_id)
 
         async with site_socket_luxee_open(site_id, self.presence, girls[0]) as sock:
-            return await self._read(sock, girls, marks, since_ms)
+            return await self._read(sock, girls, marks)
 
     async def journal_saved(self, site_id: int) -> None:
         """Строки записаны — запоминаем, докуда прочитан каждый диалог."""
@@ -99,14 +98,16 @@ class DatingSiteImportLuxee(DatingSiteImport):
                                   mapping=self._pending)
         self._pending = {}
 
-    async def _read(self, sock, girls: list, marks: dict,
-                    since_ms: int) -> tuple[int, list[dict], str]:
+    async def _read(self, sock, girls: list,
+                    marks: dict) -> tuple[int, list[dict], str]:
         """Обход по девушкам: диалоги, затем новые сообщения в каждом.
 
-        ⚠⚠ Окно дат решает только, **какие диалоги** брать впервые (живые в
-        окне), а не сколько из них читать: впервые взятый диалог читается
-        **целиком**. Иначе у агента не было бы начала разговора — ни своего
-        зачина, ни первых его слов, — а отметка закрыла бы их навсегда.
+        ⚠⚠ Диалог без отметки читается **целиком и всегда**, как давно бы он
+        ни жил: окно дат здесь не спрашивается вовсе. Прежде впервые брались
+        только живые в окне круга (сутки) — и диалог, затихший 17.11, не
+        подтянулся, хотя панель уже выдала по нему задание Catch Up
+        (19.11.2026, Olena ↔ David). Цена — одно чтение на диалог: дальше
+        работает отметка.
         """
         inner = await site_socket_luxee_outer(sock, girls)
 
@@ -124,8 +125,6 @@ class DatingSiteImportLuxee(DatingSiteImport):
                 mark = marks.get(identity)
 
                 if not identity or (mark is not None and index <= mark):
-                    continue
-                if mark is None and int(channel.get('lastActivity') or 0) < since_ms:
                     continue
 
                 try:
@@ -190,16 +189,6 @@ def _when(created) -> str:
         return ''
 
     return moment.strftime('%Y-%m-%d %H:%M:%S')
-
-
-def _ms(day: str) -> int:
-    """Начало дня окна (`гггг-мм-дд`, UTC) — в миллисекундах."""
-    try:
-        moment = datetime.strptime(str(day), '%Y-%m-%d').replace(tzinfo=timezone.utc)
-    except ValueError:
-        return 0
-
-    return int(moment.timestamp() * 1000)
 
 
 def _marks_get(site_id: int) -> dict:

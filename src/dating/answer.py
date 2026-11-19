@@ -248,6 +248,8 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
             # Попытку отмечаем до вопроса, а не после: прогон длится минуты, и
             # круг успел бы начаться заново, спросив агента о том же во второй раз.
             await _tried_mark(profile_id, uid)
+            if row.get('direction') == 'out':
+                await _tried_row(int(row['id']))
 
             # ⚠⚠ «Здесь молчать нельзя» — решаем мы, а не агент. У соседа это
             # переменная `answer_anyway`: она не отменяет проверку ответа, а
@@ -1070,8 +1072,21 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool,
              "      OR m.answer_tried_at < NOW() - INTERVAL %s SECOND"
              + draft_ready + ')')
 
-    reason = f'({fresh})' if not lead else \
-        f'({fresh} OR m.created_at < NOW() - INTERVAL %s SECOND)'
+    # ⚠⚠ Задание очереди, где последней была **наша** реплика, — «напиши
+    # повторно» (Catch Up Luxee, вид 7: 17.11 «whisper in my ear?», он молчит
+    # двое суток, и панель держит замок). Входящего без ответа там нет, и без
+    # этой ветки отбор такой диалог не видел бы никогда. Вопроса у такого
+    # повода нет — заход уходит веткой «Инициатива», как молчание у ведущей.
+    # Выдержка повтора — по отметке на самой нашей реплике (`_tried_row`).
+    parts = [fresh]
+    if must:
+        parts.append(f"{must_in} AND m.direction = 'out'"
+                     " AND (m.answer_tried_at IS NULL"
+                     "      OR m.answer_tried_at < NOW() - INTERVAL %s SECOND"
+                     + draft_ready + ')')
+    if lead:
+        parts.append('m.created_at < NOW() - INTERVAL %s SECOND')
+    reason = '(' + ' OR '.join(f'({one})' for one in parts) + ')'
 
     # Номер анкеты дважды: во внешний подзапрос («последняя реплика пары») и во
     # внутренний («какая именно, если время совпало»).
@@ -1082,6 +1097,9 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool,
 
     params.extend(must)
     params.append(int(ANSWER_RETRY_SEC))
+    if must:
+        params.extend(must)
+        params.append(int(ANSWER_RETRY_SEC))
     if lead:
         params.append(int(ANSWER_NUDGE_SEC))
 
@@ -1246,6 +1264,21 @@ async def _silent_mark(profile_id: int, uid: str) -> None:
             await db.connection.commit()
     except Exception as e:
         logger_info(f'[dating] молчание #{profile_id} не отметилось: {e}')
+
+
+async def _tried_row(message_id: int) -> None:
+    """Отметка попытки на **нашей** реплике — поводе «напиши повторно».
+
+    У такого повода нет его входящих, и `_tried_mark` метить нечего: без этой
+    отметки агента спрашивали бы о нём каждую минуту. Не бросает.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('UPDATE message SET answer_tried_at = NOW() WHERE id = %s',
+                             (int(message_id),))
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] отметка попытки #{message_id} не проставилась: {e}')
 
 
 async def _tried_mark(profile_id: int, uid: str) -> None:
