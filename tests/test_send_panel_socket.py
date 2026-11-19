@@ -106,6 +106,18 @@ class TestHerSideAnsweredFirst:
             'её реплика не готова к докладу соседу ключом импорта'
         assert _sent(server) == [], 'ответ ушёл поверх её реплики'
 
+    async def test_the_same_second_as_the_reason_is_not_newer(self, serve):
+        """Наша последняя реплика — повод «напиши повторно»: та же секунда,
+        другие миллисекунды. Это она сама, а не ответ девушки."""
+        server = serve(_Server([{'identity': f'{MAN}_3161888', 'lastActivity': '1'}]))
+        server.opened = [{'author': {'uid': 3161888}, 'created': '1795100000640',
+                          'body': 'whisper in my ear?', 'sid': 's1'}]
+
+        got = await send_panel_socket_run(PROFILE, PRESENCE, MAN, 'still there?', 'k',
+                                          since='2026-11-19 14:53:20')
+
+        assert got['ok'] and len(_sent(server)) == 1
+
     async def test_older_lines_do_not_matter(self, serve):
         server = serve(_Server([{'identity': f'{MAN}_3161888', 'lastActivity': '1'}]))
         server.opened = [{'author': {'uid': 3161888}, 'created': '1795000000000', 'body': 'old'},

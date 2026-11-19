@@ -255,7 +255,11 @@ async def site_socket_luxee_send(sock, girl: int, identity: str, text: str,
     if since_ms and man:
         newer = [m for m in opened if isinstance(m, dict)
                  and str((m.get('author') or {}).get('uid') or '') != str(man)
-                 and int(m.get('created') or 0) > int(since_ms)]
+                 # ⚠ Со следующей секунды: повод у нас записан с точностью до
+                 # секунды, сервер — до миллисекунд, и наша же реплика той
+                 # секунды казалась «новее» себя (19.11.2026, #458 отменён
+                 # нашим же #457; «напиши повторно» отменялось бы всегда).
+                 and int(m.get('created') or 0) >= int(since_ms) + 1000]
         if newer:
             last = max(newer, key=lambda m: int(m.get('created') or 0))
             return {'ok': False, 'skipped': True, 'code': 0, 'sid': '',
