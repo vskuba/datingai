@@ -31,6 +31,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.auto import AUTO_PERIOD_SEC, auto_round
 from src.dating.chat_history import chat_history_heard, chat_history_said
+from src.dating.chat_live import chat_live_run
 from src.dating.feed import feed_done, feed_write
 from src.dating.intention_round import (INTENTION_ROUND_TICK_SEC,
                                         intention_round_run)
@@ -145,6 +146,14 @@ CHAT_HOLD_SHUTDOWN_SEC = 60
 # дождавшийся прошёлся бы ровно по тому, что первый только что разобрал.
 _answer_lock = asyncio.Lock()
 
+# ⚠⚠ Замок забора переписки — **по сайту**: забор зовут двое, круг по тику и
+# живой сокет сайта (`chat_live.py`), и два забора одного сайта в одну секунду
+# записали бы одно и то же наперегонки, а отметки диалогов поставил бы тот, кто
+# кончил вторым. Занятый замок — повод не ждать, а пометить сайт «повторить»:
+# реплика могла прийти, когда идущий забор уже прошёл её диалог.
+_chat_locks: dict = {}
+_chat_again: set = set()
+
 
 async def chat_hold_run(seconds: float) -> dict:
     """Держит сокеты всех готовых учёток заданное время.
@@ -186,6 +195,11 @@ async def chat_hold_run(seconds: float) -> dict:
     # сайта нет сокета** (Ladadate): без этого круга они приходили только по кнопке
     # «Забрать сообщения», то есть пока человек смотрит на экран.
     chat = asyncio.create_task(_chat_import_loop(deadline))
+
+    # Живое соединение с чатом сайта (`chat_live.py`): у сайта, чей сервер сам
+    # шлёт события (Luxee), забор зовётся сразу на новой реплике, а не по тику.
+    # ⚠ Ускорение, а не замена: круг выше остаётся страховкой.
+    live_chat = asyncio.create_task(chat_live_run(deadline, _chat_live_sites, _chat_wake))
 
     # Рассылка: пул набирается сам по расписанию сайта. ⚠ **Готовит, но не
     # отправляет** — отправка это отдельный выключатель, и включённое расписание
@@ -315,6 +329,7 @@ async def chat_hold_run(seconds: float) -> dict:
         answer.cancel()
         revive.cancel()
         chat.cancel()
+        live_chat.cancel()
         sched.cancel()
         mailing.cancel()
         online.cancel()
@@ -348,7 +363,7 @@ async def chat_hold_run(seconds: float) -> dict:
         # `swept`: их отменяли, но не дожидались. Список выше и список здесь
         # расходились молча, потому что ничего, кроме хвоста в журнале, это не
         # ломает. Теперь они совпадают, и новую задачу надо дописывать в оба.
-        await _service_wait(beat, answer, revive, chat, sched, mailing, online,
+        await _service_wait(beat, answer, revive, chat, live_chat, sched, mailing, online,
                             tmpl, live, post, answers, letters, stars, invites,
                             invites_out, first_word, asking, proxies, swept,
                             revive_talk, promised, panel)
@@ -973,77 +988,119 @@ async def _chat_import_round() -> None:
         # фоновых обновлений списков (`people.py`).
         _chat_mark(site_id, int(every))
 
-        # ⚠ В ленту пишем **до** захода и **всегда**, а не только при добыче.
-        # Прежде строка появлялась, лишь когда что-то привезли, — а привозить чаще
-        # всего нечего, и чат в ленте не показывался вовсе: человек видел там одну
-        # почту и решил, что переписка не забирается. Теперь заход виден так же,
-        # как заход за письмами: «иду» → тот же ряд заменяется итогом.
-        # ⚠ Без многоточия: оно читается как обрезанный текст, а не как «идёт».
-        started = feed_write(site_id, 'chat', 'Забираю переписку из панели')
+        await _chat_import_site(site_id)
 
-        result = await chat_panel_import(site_id, CHAT_PANEL_ROUND_DAYS)
 
-        # ⚠⚠ **Доклад сказанного мимо нас — отдельным шагом и до разбора
-        # итога.** Он спрашивает базу, а не привезённое, и потому не зависит
-        # от того, чем кончился заход: строка, легшая в прошлый раз, созрела
-        # для доклада именно сейчас (ей нужна выдержка, `chat_history.py`).
-        # Привяжи его к удачному заходу — и первый же отказ панели отложил бы
-        # операторскую реплику до следующей удачи.
-        await chat_history_said(site_id)
-        # Его реплики, не уехавшие соседу при записи (потолок захода, молчание
-        # соседа): без них агент отвечает по обрывку разговора.
-        await chat_history_heard(site_id)
+async def _chat_import_site(site_id: int) -> None:
+    """Забор переписки одного сайта — общий для круга по тику и живого сокета.
 
-        if result['status'] == 'error':
-            logger_info(f"[dating] переписка сайта #{site_id} не забралась: "
-                        f"{result['error']}")
-            feed_done(site_id, started, 'warn',
-                             f"Переписка не забралась: {result['error']}")
+    ⚠ Замок на сайт (`_chat_locks`): занят — сайт метится «повторить», и
+    идущий забор пройдёт ещё раз сразу по окончании, а не через тик.
+    """
+    lock = _chat_locks.setdefault(int(site_id), asyncio.Lock())
+    if lock.locked():
+        _chat_again.add(int(site_id))
+        return
 
-            continue
+    async with lock:
+        while True:
+            _chat_again.discard(int(site_id))
+            await _chat_import_site_once(site_id)
+            if int(site_id) not in _chat_again:
+                break
 
-        # В лог — только когда что-то привезли: он растёт бесконечно, и «привезено
-        # 0» забило бы его до бесполезности. Лента живёт иначе — она кольцо на
-        # тридцать записей, и её задача как раз показать, что круг ходил.
-        if result['added']:
-            logger_info(f"[dating] переписка сайта #{site_id}: "
-                        f"новых {result['added']}, собеседников {result['contacts']}")
 
-        # ⚠ **«Привезено» и «свежих» — разные числа, и путать их дорого.** Импорт
-        # берёт сутки назад, и «привезено 5» почти всегда значит пять старых
-        # реплик, которых у нас не было. Назови их новыми — человек откроет «Чат →
-        # Диалоги» и не найдёт там ничего свежего; на это и пожаловались.
-        fresh = int(result.get('fresh') or 0)
-        if not result['added']:
-            summary = 'Новой переписки нет'
-        elif fresh:
-            summary = f"Переписка: сообщений {result['added']}, свежих {fresh}"
-        else:
-            summary = f"Переписка: привезено {result['added']} — все старые"
+async def _chat_wake(site_id: int) -> None:
+    """Живой сокет сайта увидел новое — забрать сейчас, не дожидаясь тика."""
+    try:
+        await _chat_import_site(int(site_id))
+    except Exception as e:
+        logger_info(f'[dating] забор по сигналу сокета сайта #{site_id}: {e}')
 
-        # ⚠⚠ Забрали не всё — скажи об этом, даже когда заход удался. У сайта
-        # источников журнала бывает несколько (у Step2Love их два), и беда
-        # одного не отменяет работу другого: чат доехал, письма — нет. Молчи
-        # здесь — и сломанный источник чинить будет некому, потому что в
-        # остальном заход выглядит исправным.
-        warn = str(result.get('warn') or '')
-        if warn:
-            logger_info(f'[dating] переписка сайта #{site_id} забралась не вся: '
-                        f'{warn}')
 
-        feed_done(site_id, started, 'warn' if warn else 'chat',
-                  f'{summary}. Не всё: {warn}' if warn else summary)
+async def _chat_import_site_once(site_id: int) -> None:
+    """Один забор сайта: импорт, доклад соседу, лента, побудка ответов."""
+    # ⚠ В ленту пишем **до** захода и **всегда**, а не только при добыче.
+    # Прежде строка появлялась, лишь когда что-то привезли, — а привозить чаще
+    # всего нечего, и чат в ленте не показывался вовсе: человек видел там одну
+    # почту и решил, что переписка не забирается. Теперь заход виден так же,
+    # как заход за письмами: «иду» → тот же ряд заменяется итогом.
+    # ⚠ Без многоточия: оно читается как обрезанный текст, а не как «идёт».
+    started = feed_write(site_id, 'chat', 'Забираю переписку из панели')
 
-        # ⚠⚠ **Привезли свежее — будим круг ответов, не дожидаясь его тика.**
-        # Он ходит раз в минуту, и на проде 09.11.2026 эта минута стоила
-        # разговора: реплика легла в 19:49:38, круг проснулся в 19:50:10, и к
-        # ответу чат Step2Love закрылся (`_answer_wake`).
-        #
-        # ⚠ Только на `fresh`, а не на любой `added`: импорт берёт сутки
-        # назад, и привезённое почти всегда — старые строки, которых у нас не
-        # было. Буди мы на них, круг ответов ходил бы с тиком импорта.
-        if fresh:
-            await _answer_wake(site_id)
+    result = await chat_panel_import(site_id, CHAT_PANEL_ROUND_DAYS)
+
+    # ⚠⚠ **Доклад сказанного мимо нас — отдельным шагом и до разбора
+    # итога.** Он спрашивает базу, а не привезённое, и потому не зависит
+    # от того, чем кончился заход: строка, легшая в прошлый раз, созрела
+    # для доклада именно сейчас (ей нужна выдержка, `chat_history.py`).
+    # Привяжи его к удачному заходу — и первый же отказ панели отложил бы
+    # операторскую реплику до следующей удачи.
+    await chat_history_said(site_id)
+    # Его реплики, не уехавшие соседу при записи (потолок захода, молчание
+    # соседа): без них агент отвечает по обрывку разговора.
+    await chat_history_heard(site_id)
+
+    if result['status'] == 'error':
+        logger_info(f"[dating] переписка сайта #{site_id} не забралась: "
+                    f"{result['error']}")
+        feed_done(site_id, started, 'warn',
+                         f"Переписка не забралась: {result['error']}")
+
+        return
+
+    # В лог — только когда что-то привезли: он растёт бесконечно, и «привезено
+    # 0» забило бы его до бесполезности. Лента живёт иначе — она кольцо на
+    # тридцать записей, и её задача как раз показать, что круг ходил.
+    if result['added']:
+        logger_info(f"[dating] переписка сайта #{site_id}: "
+                    f"новых {result['added']}, собеседников {result['contacts']}")
+
+    # ⚠ **«Привезено» и «свежих» — разные числа, и путать их дорого.** Импорт
+    # берёт сутки назад, и «привезено 5» почти всегда значит пять старых
+    # реплик, которых у нас не было. Назови их новыми — человек откроет «Чат →
+    # Диалоги» и не найдёт там ничего свежего; на это и пожаловались.
+    fresh = int(result.get('fresh') or 0)
+    if not result['added']:
+        summary = 'Новой переписки нет'
+    elif fresh:
+        summary = f"Переписка: сообщений {result['added']}, свежих {fresh}"
+    else:
+        summary = f"Переписка: привезено {result['added']} — все старые"
+
+    # ⚠⚠ Забрали не всё — скажи об этом, даже когда заход удался. У сайта
+    # источников журнала бывает несколько (у Step2Love их два), и беда
+    # одного не отменяет работу другого: чат доехал, письма — нет. Молчи
+    # здесь — и сломанный источник чинить будет некому, потому что в
+    # остальном заход выглядит исправным.
+    warn = str(result.get('warn') or '')
+    if warn:
+        logger_info(f'[dating] переписка сайта #{site_id} забралась не вся: '
+                    f'{warn}')
+
+    feed_done(site_id, started, 'warn' if warn else 'chat',
+              f'{summary}. Не всё: {warn}' if warn else summary)
+
+    # ⚠⚠ **Привезли свежее — будим круг ответов, не дожидаясь его тика.**
+    # Он ходит раз в минуту, и на проде 09.11.2026 эта минута стоила
+    # разговора: реплика легла в 19:49:38, круг проснулся в 19:50:10, и к
+    # ответу чат Step2Love закрылся (`_answer_wake`).
+    #
+    # ⚠ Только на `fresh`, а не на любой `added`: импорт берёт сутки
+    # назад, и привезённое почти всегда — старые строки, которых у нас не
+    # было. Буди мы на них, круг ответов ходил бы с тиком импорта.
+    if fresh:
+        await _answer_wake(site_id)
+
+
+async def _chat_live_sites() -> list[int]:
+    """Сайты с включённым забором переписки — им и держать живое соединение."""
+    found = []
+    for site_id in await _chat_sites():
+        if await site_seconds(site_id, CHAT_IMPORT_SETTING):
+            found.append(int(site_id))
+
+    return found
 
 
 async def _chat_sites() -> list[int]:

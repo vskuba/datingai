@@ -123,3 +123,15 @@ class DatingSiteImport:
         упавшая запись потеряла бы прочитанное навсегда. Остальным — ничего.
         """
         return None
+
+    def live(self) -> bool:
+        """Умеет ли драйвер держать живое соединение и сообщать о новом сам.
+
+        ⚠ Это ускорение, а не замена: круг забора по тику остаётся, и сайт без
+        живого соединения забирается им одним, как раньше.
+        """
+        return False
+
+    async def journal_live(self, site_id: int, on_change, stop_at: float) -> None:
+        """Держать живое соединение до `stop_at`, звать `on_change()` на новом."""
+        raise NotImplementedError(f'{type(self).__name__} живого соединения не держит')

@@ -43,6 +43,7 @@ from redis_.redis_ import redis_conn_get
 from src.dating.panel_fetch import DatingPanelFetchError
 from src.dating.site.site_import import DatingSiteImport
 from src.dating.site.site_socket_luxee import (site_socket_luxee_channels,
+                                               site_socket_luxee_listen,
                                                site_socket_luxee_messages,
                                                site_socket_luxee_open,
                                                site_socket_luxee_outer)
@@ -90,6 +91,30 @@ class DatingSiteImportLuxee(DatingSiteImport):
 
         async with site_socket_luxee_open(site_id, self.presence, girls[0]) as sock:
             return await self._read(sock, girls, marks)
+
+    def live(self) -> bool:
+        return True
+
+    async def journal_live(self, site_id: int, on_change, stop_at: float) -> None:
+        """Держать сокет панели открытым и звать `on_change()` на новом в чате.
+
+        ⚠⚠ Запрос профилей (`cm_get_profiles`) — до слушания, как у страницы:
+        без него сервер не считает девушек «открытыми» в этом соединении.
+
+        Raises:
+            DatingPanelFetchError: сокет не открылся или закрылся — переоткрывает
+                вызывающий (`chat_live.py`) со своей паузой.
+        """
+        from src.dating.chat_panel import chat_panel_profiles
+
+        girls = sorted(int(uid) for uid in await chat_panel_profiles(site_id)
+                       if str(uid).isdigit())
+        if not girls:
+            return
+
+        async with site_socket_luxee_open(site_id, self.presence, girls[0]) as sock:
+            await site_socket_luxee_outer(sock, girls)
+            await site_socket_luxee_listen(sock, on_change, stop_at)
 
     async def journal_saved(self, site_id: int) -> None:
         """Строки записаны — запоминаем, докуда прочитан каждый диалог."""

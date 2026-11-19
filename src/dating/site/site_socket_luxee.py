@@ -297,6 +297,53 @@ async def site_socket_luxee_send(sock, girl: int, identity: str, text: str,
             'sid': str(sent.get('sid') or '')}
 
 
+async def site_socket_luxee_listen(sock, on_change, stop_at: float) -> None:
+    """Слушать сокет и звать `on_change()`, когда в чате девушек что-то появилось.
+
+    Сервер сам шлёт оператору события по всем его девушкам (замер 19.11.2026:
+    счётчики `sm_mc_new` раз в ~18 с, `server_c_update` и `s_m_update` на каждое
+    изменение диалога). Сигнал «забрать» — новая реплика (`server_m_new`), новый
+    диалог (`server_jn_ch`, `s_c_newbie`) и изменение диалога, у которого вырос
+    номер последнего сообщения (`server_c_update`). Прочитал он нашу реплику —
+    номер прежний, и сигнала нет.
+
+    ⚠ Что именно пришло, здесь не разбирается: забор по отметкам сам дочитает
+    изменившийся диалог, и правило записи остаётся одно (`site_import_luxee`).
+
+    Args:
+        on_change: корутина без доводов — «забери сейчас».
+        stop_at: `time.monotonic()`, до которого слушать.
+
+    Raises:
+        SocketIoV2Error: соединение закрылось — переоткрывает вызывающий.
+    """
+    seen: dict = {}
+    loop = asyncio.get_running_loop()
+
+    while loop.time() < stop_at:
+        try:
+            event, args = await sock.next(min(30.0, max(0.1, stop_at - loop.time())))
+        except asyncio.TimeoutError:
+            continue
+        if event != 'message' or not args or not isinstance(args[0], dict):
+            continue
+
+        kind = args[0].get('type')
+        data = args[0].get('data') if isinstance(args[0].get('data'), dict) else {}
+
+        if kind in ('server_m_new', 'server_jn_ch', 's_c_newbie'):
+            await on_change()
+        elif kind == 'server_c_update':
+            message = data.get('message') if isinstance(data.get('message'), dict) else {}
+            channel = message.get('channel') if isinstance(message.get('channel'), dict) else {}
+            identity = str(channel.get('identity') or '')
+            index = int(channel.get('index') or 0)
+            if identity and index > seen.get(identity, -1):
+                if identity in seen:
+                    await on_change()
+                seen[identity] = index
+
+
 async def _wait(sock, match) -> dict:
     """Первое событие `message`, которое подходит под `match(type, data)`."""
     loop = asyncio.get_running_loop()

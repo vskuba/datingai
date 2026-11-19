@@ -41,7 +41,7 @@ class TestTheImportWakesTheAnswers:
     """Главное: связь есть, и она не даром."""
 
     def test_the_import_calls_the_wake(self):
-        code = inspect.getsource(chat_hold._chat_import_round)
+        code = inspect.getsource(chat_hold._chat_import_site_once)
 
         assert '_answer_wake(' in code, \
             'импорт больше не будит круг ответов'
@@ -53,7 +53,7 @@ class TestTheImportWakesTheAnswers:
         старых строк, которых у нас не было. Буди мы на них — круг ответов
         ходил бы с тиком импорта, то есть вчетверо чаще без всякого повода.
         """
-        code = inspect.getsource(chat_hold._chat_import_round)
+        code = inspect.getsource(chat_hold._chat_import_site_once)
         at = code.index('_answer_wake(')
         before = code[:at]
 
