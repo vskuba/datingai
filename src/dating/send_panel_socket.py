@@ -42,7 +42,8 @@ async def send_panel_socket_run(profile: dict, presence: dict, to_uid: str,
         presence: описание сайта — нужен `base`.
         to_uid: номер собеседника на сайте.
         text: что отправляем.
-        message_uid: наш ключ сообщения — он же `key` реплики у сервера.
+        message_uid: наш ключ сообщения — под ним реплика ляжет в переписку;
+            у сервера ключ свой, в форме страницы.
 
     ⚠ Ничего не бросает: исход словами, как у прочих транспортов.
     """
@@ -61,8 +62,7 @@ async def send_panel_socket_run(profile: dict, presence: dict, to_uid: str,
             # перехватит дверь открытия и назовёт «сокет не ответил» — а это
             # другое событие (реплика, может быть, ушла).
             try:
-                got = await site_socket_luxee_send(sock, int(girl), identity,
-                                                   text, message_uid)
+                got = await site_socket_luxee_send(sock, int(girl), identity, text)
             except asyncio.TimeoutError:
                 return _result(False, 'сервер чата не подтвердил отправку')
     except DatingPanelFetchError as e:

@@ -66,8 +66,13 @@ class TestTheRightDialog:
 
         assert got['ok'] and got['response'] == 'sid-new'
         (data,) = _sent(server)
-        assert (data['identity'], data['ownerUid'], data['body'], data['key'],
-                data['type']) == (f'{MAN}_3161888', GIRL, 'hello', 'k-1', 1)
+        assert (data['identity'], data['ownerUid'], data['body'], data['type']) == \
+               (f'{MAN}_3161888', GIRL, 'hello', 1)
+        assert data['key'].startswith(f'cl_m_message-{MAN}_3161888-'), \
+            'ключ не в форме страницы — сервер отвечает 409 Not valid message'
+        kinds = [kind for kind, _ in server.sent]
+        assert kinds.index('cl_c_messages') < kinds.index('cl_m_message'), \
+            'диалог не открыт перед отправкой'
 
     async def test_sides_order_in_the_identity_does_not_matter(self, serve):
         server = serve(_Server([{'identity': f'3161888_{MAN}', 'lastActivity': '1'}]))

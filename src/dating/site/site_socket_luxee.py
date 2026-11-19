@@ -193,18 +193,27 @@ async def site_socket_luxee_messages(sock, girl: int, identity: str,
             and (mark is None or int(m.get('index') or 0) > mark)]
 
 
-async def site_socket_luxee_send(sock, girl: int, identity: str, text: str,
-                                 key: str) -> dict:
+async def site_socket_luxee_send(sock, girl: int, identity: str, text: str) -> dict:
     """Отправить текстовую реплику в диалог и дождаться приговора сервера.
+
+    ⚠⚠ Делаем **ровно как страница**, и оба отличия уже стоили отказа «409 Can't
+    save message. Not valid message» на первых двух живых ответах 19.11.2026:
+    ключ реплики — в её форме (`cl_m_message-{диалог}-{микровремя}-{случайное}`),
+    и диалог перед отправкой **открыт** — страница всегда зовёт `cl_c_messages`,
+    прежде чем дать писать (это чтение, «прочитано» оно не ставит).
 
     Returns:
         dict: `ok` — сервер прислал наше сообщение обратно (`server_m_new` с
-        нашим `key`); `error` — его отказ словами (`s_m_error`), `code` — код
+        нашим ключом — ключ в форме страницы собирается здесь); `error` — его отказ словами (`s_m_error`), `code` — код
         отказа (485 — «сначала Catch Up»), `sid` — номер принятого сообщения.
 
     Raises:
         asyncio.TimeoutError: ни подтверждения, ни отказа за срок ожидания.
     """
+    key = f'cl_m_message-{identity}-{time.time()}-{random.randint(1, 500)}'
+    await site_socket_luxee_ask(sock, 'cl_c_messages',
+                                {'ownerUid': int(girl), 'identity': str(identity)})
+
     await sock.emit('message', {
         'type': 'cl_m_message', 'key': _key('cl_m_message'),
         'data': {'body': str(text), 'type': SITE_SOCKET_LUXEE_TEXT, 'media': [],
