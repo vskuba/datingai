@@ -417,7 +417,7 @@ class TestFeed:
         # ⚠ Отказ **стойкий**, а не «его нет в сети»: уход из чата состояние, оно
         # проходит само, в ленту не пишется и строку не глушит (см. `TestOffline…`).
         async def refused(profile, presence, uid, body, to_history=True,
-                      may_invite=False):
+                      may_invite=False, **kwargs):
             return {'ok': False, 'error': 'слишком часто'}
 
         monkeypatch.setattr(invite_send, 'send_message', refused)
@@ -432,7 +432,7 @@ class TestFeed:
 
 def _ok_send():
     async def _send(profile, presence, uid, body, to_history=True,
-                      may_invite=False):
+                      may_invite=False, **kwargs):
         return {'ok': True}
 
     return _send
@@ -481,7 +481,7 @@ class TestOfflineIsNotAFailure:
         from src.dating import invite_send
 
         async def away(profile, presence, uid, body, to_history=True,
-                      may_invite=False):
+                      may_invite=False, **kwargs):
             return {'ok': False, 'offline': True}
 
         monkeypatch.setattr(invite_send, 'send_message', away)
@@ -502,7 +502,7 @@ class TestOfflineIsNotAFailure:
         from src.dating import invite_send
 
         async def refused(profile, presence, uid, body, to_history=True,
-                      may_invite=False):
+                      may_invite=False, **kwargs):
             return {'ok': False, 'error': 'слишком часто'}
 
         monkeypatch.setattr(invite_send, 'send_message', refused)

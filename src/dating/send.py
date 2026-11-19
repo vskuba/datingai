@@ -107,7 +107,8 @@ SEND_SOURCE = {'scenario': 'scenario', 'http': 'http', 'ws': 'socket',
 
 async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
                               to_history: bool = True,
-                              may_invite: bool = False, since=None) -> dict:
+                              may_invite: bool = False, since=None,
+                              by_agent: bool = False) -> dict:
     """Шлёт сообщение собеседнику и записывает его в переписку.
 
     Args:
@@ -128,6 +129,8 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
             который видит диалог перед отправкой (`panel_socket`), не шлёт, если
             её сторона ответила новее: девушку ведёт ещё и живой человек. Ответ
             тогда несёт `skipped: True`. Прочим транспортам не нужен.
+        by_agent: реплику сочинил агент — уезжает в `message.by_agent`
+            (`send_message_remember`). Кнопка оператора его не ставит.
 
     Returns:
         dict: `ok` — **принял ли сайт кадр**, а не «дошло до адресата»: это разные
@@ -275,7 +278,7 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
         if to_history and site_registry_chat(presence).delivered(result):
             await send_message_remember(
                 int(profile['id']), to_uid, text, message_uid,
-                SEND_SOURCE.get(transport, 'socket'))
+                SEND_SOURCE.get(transport, 'socket'), by_agent=by_agent)
 
         await _answered_mark(int(profile['id']), to_uid)
 
@@ -335,7 +338,8 @@ async def send_message_forget(profile_id: int, to_uid: str, text: str,
 
 async def send_message_remember(profile_id: int, to_uid: str, text: str,
                                 message_uid: str,
-                                source: str = 'socket') -> None:
+                                source: str = 'socket',
+                                by_agent: bool = False) -> None:
     """Кладёт отправленное в переписку — иначе в диалоге видна только их половина.
 
     ⚠⚠ Дверь **публичная**, потому что зовущих двое: сама отправка и круг
@@ -347,16 +351,21 @@ async def send_message_remember(profile_id: int, to_uid: str, text: str,
     сокета нет вовсе, и запись со `socket` заставила бы искать поломку там, где её
     нет. Это уже случалось дважды — сперва со сценарием, потом с HTTP-ручкой, — и
     оба раза столбец приходилось учить новому значению, а не подгонять под старое.
+
+    `by_agent` — реплику сочинил агент (ответ, инициатива, инвайт), а не человек
+    кнопкой «Отправить». ⚠ По `source` этого не различить: кнопка оператора шлёт
+    той же дорогой. Окно разговора метит такую реплику значком агента — анкету
+    ведут параллельно человек и агент, и по ленте должно быть видно, кто сказал.
     """
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
                 'INSERT IGNORE INTO message '
                 '(profile_id, sender_uid, sender_name, text, message_uid, direction,'
-                ' is_answered, source) '
-                "VALUES (%s, %s, %s, %s, %s, 'out', 1, %s)",
+                ' is_answered, source, by_agent) '
+                "VALUES (%s, %s, %s, %s, %s, 'out', 1, %s, %s)",
                 (profile_id, str(to_uid)[:32], '', str(text)[:2000], str(message_uid)[:64],
-                 str(source)))
+                 str(source), 1 if by_agent else 0))
             await db.connection.commit()
     except Exception as e:
         logger_info(f'[dating] отправленное не записалось: {e}')

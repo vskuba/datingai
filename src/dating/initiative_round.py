@@ -332,7 +332,8 @@ async def _invited(site_id: int) -> int:
             # её там нет намеренно — приглашение не разговор, то же правило,
             # что у инвайтов (`send.py`).
             await send_message_remember(int(card['profile_id']), uid,
-                                        str(card['body']), str(uuid4()))
+                                        str(card['body']), str(uuid4()),
+                                        by_agent=True)
             await chat_initiative_sent(int(card['id']))
             said = int(card.get('talk_message_id') or 0)
             await rhapsody_api_chat_delivered(said)
@@ -423,7 +424,8 @@ async def _send(site_id: int) -> int:
         # ответ дождётся его возвращения.
         presence = await _presence(site_id)
         result = await send_message(profile, presence, uid,
-                                    str(card['body']), may_invite=True)
+                                    str(card['body']), may_invite=True,
+                                    by_agent=True)
 
         if result['ok']:
             # ⚠⚠⚠ **«Ушло» и «дошло» — разные вещи, и решает это драйвер.**

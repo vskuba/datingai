@@ -690,6 +690,7 @@
             background: #f1f5f9; color: #334155; }
 .msg.out .msg-body { background: #eef2ff; color: #3730a3; }
 .msg-who { font-size: 10px; color: #94a3b8; margin-right: 5px; }
+.msg-agent { font-size: 11px; margin-left: 1px; cursor: help; }
 
 /* Последнее слово за собеседником — значит ему не ответили. Метка мигает:
    это единственная строка в панели, означающая несделанную работу. */

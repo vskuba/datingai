@@ -360,7 +360,8 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
         # «стуком» и «ничем»: при закрытом разговоре строки в ленте не будет
         # вовсе. Тот же вывод, к которому раньше пришла инициатива.
         result = await send_message(profile, presence, uid, answer,
-                                    may_invite=True, since=row.get('created_at'))
+                                    may_invite=True, since=row.get('created_at'),
+                                    by_agent=True)
         # ⚠⚠ Доставку отмечаем **только у ушедшего**, и это вся суть правки.
         # Сосед записал обмен внутри прогона — до того, как мы постучались к
         # сайту. Не отметь мы её отдельно, агент увидел бы в истории реплику,
@@ -838,7 +839,7 @@ async def _invited_check(profile: dict, presence: dict) -> int:
             # ⚠ Чат открыт — приглашение приняли, и текст он прочитал. Теперь
             # это доставка, и агенту о ней можно говорить.
             await send_message_remember(profile_id, uid, str(card['body']),
-                                        str(uuid4()))
+                                        str(uuid4()), by_agent=True)
             await chat_reply_sent(int(card['id']))
             said = int(card.get('talk_message_id') or 0)
             await rhapsody_api_chat_delivered(said)

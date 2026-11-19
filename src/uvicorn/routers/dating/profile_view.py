@@ -70,8 +70,10 @@ async def profile_view_messages(profile_id: int, uid: str = '', limit: int = 30,
         await db.execute(
             # `answer_silent_at` — чтобы окно сказало «агент решил не отвечать»:
             # иначе тишина после чужой реплики читается как поломка.
+            # `by_agent` — значок агента у реплики: человек и агент ведут
+            # анкету параллельно, и по ленте должно быть видно, кто сказал.
             'SELECT id, sender_uid, sender_name, text, direction, is_read, '
-            '       answer_silent_at, created_at '
+            '       answer_silent_at, created_at, by_agent '
             f'FROM message WHERE profile_id = %s{where}'
             # ⚠ Наше исходящее лежит в таблице дважды: своей строкой от
             # отправки и строкой из панели агентства. Ключи у них разные
@@ -110,7 +112,7 @@ async def profile_view_messages(profile_id: int, uid: str = '', limit: int = 30,
         rows[:0] = [{'id': 0, 'sender_uid': str(uid).strip(), 'sender_name': '',
                      'text': str(one['body']), 'direction': 'out', 'is_read': 1,
                      'answer_silent_at': None, 'created_at': None,
-                     'made_at': one.get('created_at'),
+                     'made_at': one.get('created_at'), 'by_agent': 1,
                      'pending': True, 'error': str(one.get('error') or '')}
                     for one in await chat_reply_pending(int(profile_id), str(uid).strip())]
 
@@ -137,7 +139,7 @@ async def profile_view_messages(profile_id: int, uid: str = '', limit: int = 30,
         rows[:0] = [{'id': 0, 'sender_uid': str(uid).strip(), 'sender_name': '',
                      'text': str(one['body']), 'direction': 'out', 'is_read': 1,
                      'answer_silent_at': None, 'created_at': one.get('sent_at'),
-                     'invited': True, 'error': ''}
+                     'by_agent': 1, 'invited': True, 'error': ''}
                     for one in hanging]
 
     return {'result': rows}

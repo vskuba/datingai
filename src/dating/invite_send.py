@@ -132,7 +132,8 @@ async def invite_send_one(invite: dict) -> dict:
         # (ответ, инициатива) в закрытый чат по-прежнему получают `offline`:
         # приглашать вправе тот, кто начинает разговор.
         got = await send_message(profile, presence, str(invite['uid']), body,
-                                        to_history=False, may_invite=True)
+                                        to_history=False, may_invite=True,
+                                        by_agent=True)
     except RhapsodyError as e:
         return await _fail(site_id, invite_id, profile_id, who, str(e))
     except Exception as e:

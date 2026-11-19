@@ -184,8 +184,9 @@ async def chat_invites_to_history(db, profile_id: int, uid: str) -> int:
         await db.execute(
             'INSERT IGNORE INTO message'
             ' (profile_id, sender_uid, sender_name, text, message_uid, direction,'
-            "  is_answered, source, created_at)"
-            " VALUES (%s, %s, '', %s, %s, 'out', 1, 'invite', %s)",
+            "  is_answered, source, created_at, by_agent)"
+            # ⚠ Инвайт сочиняет агент: шаблон пишет его workflow.
+            " VALUES (%s, %s, '', %s, %s, 'out', 1, 'invite', %s, 1)",
             (int(profile_id), str(uid), str(one['body'] or ''),
              f"invite-{profile_id}-{uid}-{one['sent_at']:%Y%m%d%H%M%S}",
              one['sent_at']))
