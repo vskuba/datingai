@@ -107,7 +107,7 @@ SEND_SOURCE = {'scenario': 'scenario', 'http': 'http', 'ws': 'socket',
 
 async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
                               to_history: bool = True,
-                              may_invite: bool = False) -> dict:
+                              may_invite: bool = False, since=None) -> dict:
     """Шлёт сообщение собеседнику и записывает его в переписку.
 
     Args:
@@ -124,6 +124,10 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
             читает его прямо в списке. Ставит довод **вызывающий**, а не
             состояние: «чата нет» одинаково у инвайта и у ответа, а приглашать
             вправе только первый (`send_connection.py`).
+        since: время повода — его реплики (у «напиши повторно» — нашей). Транспорт,
+            который видит диалог перед отправкой (`panel_socket`), не шлёт, если
+            её сторона ответила новее: девушку ведёт ещё и живой человек. Ответ
+            тогда несёт `skipped: True`. Прочим транспортам не нужен.
 
     Returns:
         dict: `ok` — **принял ли сайт кадр**, а не «дошло до адресата»: это разные
@@ -239,7 +243,7 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
     elif transport == 'panel_socket':
         # Сокет чата панели агентства — у сайта без кабинета девушки (Luxee).
         result = await send_panel_socket_run(profile, presence, to_uid, text,
-                                             message_uid)
+                                             message_uid, since)
     else:
         result = await _send_http(profile, presence, send, to_uid, text, message_uid)
 

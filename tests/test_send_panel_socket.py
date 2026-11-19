@@ -88,6 +88,35 @@ class TestTheRightDialog:
         assert not got['ok'] and 'диалога' in got['error'] and _sent(server) == []
 
 
+class TestHerSideAnsweredFirst:
+    """⚠⚠ Девушку ведёт и живой человек: ответила она — наш ответ не уходит."""
+
+    async def test_newer_line_of_her_side_stops_the_send(self, serve):
+        server = serve(_Server([{'identity': f'{MAN}_3161888', 'lastActivity': '1'}]))
+        server.opened = [{'author': {'uid': int(MAN)}, 'created': '1795100000000', 'body': 'hi'},
+                         {'author': {'uid': 3161888}, 'created': '1795100060000',
+                          'body': 'hey you', 'sid': 'sid-her', 'type': 1}]
+
+        got = await send_panel_socket_run(PROFILE, PRESENCE, MAN, 'hello', 'k',
+                                          since='2026-11-19 14:53:20')
+
+        assert not got['ok'] and got['skipped'] and 'hey you' in got['error']
+        assert got['theirs'] == [{'uid': 'sid-her', 'text': 'hey you',
+                                  'when': '2026-11-19 14:54:20'}], \
+            'её реплика не готова к докладу соседу ключом импорта'
+        assert _sent(server) == [], 'ответ ушёл поверх её реплики'
+
+    async def test_older_lines_do_not_matter(self, serve):
+        server = serve(_Server([{'identity': f'{MAN}_3161888', 'lastActivity': '1'}]))
+        server.opened = [{'author': {'uid': 3161888}, 'created': '1795000000000', 'body': 'old'},
+                         {'author': {'uid': int(MAN)}, 'created': '1795100000000', 'body': 'hi'}]
+
+        got = await send_panel_socket_run(PROFILE, PRESENCE, MAN, 'hello', 'k',
+                                          since='2026-11-19 14:53:20')
+
+        assert got['ok'] and len(_sent(server)) == 1
+
+
 class TestOnlyConfirmedIsSent:
     async def test_refusal_is_told_with_code(self, serve):
         serve(_Server([{'identity': f'{MAN}_3161888', 'lastActivity': '1'}],
@@ -145,6 +174,7 @@ class _Server:
     def __init__(self, channels: list, verdict: str = 'ok'):
         self.channels = channels
         self.verdict = verdict
+        self.opened = []
         self.sent = []
         self.queue = [('message', [{'type': 's_ua_success', 'data': {'status': True}}])]
 
@@ -160,6 +190,8 @@ class _Server:
             answer['message'] = OUTER
         elif kind == 'cl_ch_all':
             answer['message'] = self.channels
+        elif kind == 'cl_c_messages':
+            answer['message'] = self.opened
         self.queue.append(('message', [{'type': 'answer', 'data': answer}]))
 
     def _verdict(self, data):

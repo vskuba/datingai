@@ -298,6 +298,25 @@ async def chat_history_heard(site_id: int, take: int = 0) -> int:
     return told
 
 
+async def chat_history_her_line(profile_id: int, uid: str, name: str, text: str,
+                                message_uid: str, said_at: str) -> bool:
+    """Отдаёт соседу реплику её стороны, увиденную раньше импорта, — доставленной.
+
+    Зовёт отправка, отменившая наш ответ, потому что девушка (живой человек)
+    ответила сама (решение владельца 19.11.2026): агент должен знать, что
+    сказано, сразу, а не через выдержку `chat_history_said`. `message_uid` —
+    **тот же ключ**, под которым её привезёт импорт (`panel:{sid}`): позже
+    `chat_history_said` доложит ту же строку ещё раз, и сосед узнает повтор.
+
+    Returns:
+        bool: уехала ли. Не бросает.
+    """
+    return await _said_one({'id': 0, 'profile_id': int(profile_id),
+                            'sender_uid': str(uid), 'sender_name': str(name or ''),
+                            'text': str(text or ''), 'message_uid': str(message_uid),
+                            'created_at': str(said_at or '')})
+
+
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 
@@ -346,11 +365,15 @@ async def _said_one(row: dict) -> bool:
         if not made:
             return False
 
-        async with mysql_get_db_async() as db:
-            await db.execute(
-                'UPDATE message SET history_at = NOW()'
-                ' WHERE id = %s AND history_at IS NULL', (int(row['id']),))
-            await db.connection.commit()
+        # ⚠ Строки у нас может ещё не быть (`chat_history_her_line`: реплика
+        # увидена в сокете раньше импорта) — тогда метить нечего, а импорт
+        # привезёт её позже, и повторный доклад сосед узнает по `source_uid`.
+        if row.get('id'):
+            async with mysql_get_db_async() as db:
+                await db.execute(
+                    'UPDATE message SET history_at = NOW()'
+                    ' WHERE id = %s AND history_at IS NULL', (int(row['id']),))
+                await db.connection.commit()
 
         return True
     except Exception as e:

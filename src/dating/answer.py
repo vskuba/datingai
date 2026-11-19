@@ -62,6 +62,8 @@ from src.dating.companion_card import (companion_name_known,
 from src.dating.companion_ref import companion_ref_foreign, companion_title
 from src.dating.message_twin import message_twin_skip
 from src.dating.block import block_add, block_deny
+from src.dating.chat_history import chat_history_her_line
+from src.dating.chat_panel import CHAT_PANEL_PREFIX
 from src.dating.online import online_sure
 from src.dating.site.site_registry import site_registry_chat
 from src.dating.send import send_message
@@ -358,7 +360,7 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
         # «стуком» и «ничем»: при закрытом разговоре строки в ленте не будет
         # вовсе. Тот же вывод, к которому раньше пришла инициатива.
         result = await send_message(profile, presence, uid, answer,
-                                    may_invite=True)
+                                    may_invite=True, since=row.get('created_at'))
         # ⚠⚠ Доставку отмечаем **только у ушедшего**, и это вся суть правки.
         # Сосед записал обмен внутри прогона — до того, как мы постучались к
         # сайту. Не отметь мы её отдельно, агент увидел бы в истории реплику,
@@ -387,6 +389,21 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
             # вызова LLM.
             offline += 1
             await log_write(profile_id, 'info', f'{who}: нет в чате, отвечу когда вернётся')
+        elif result.get('skipped'):
+            # ⚠⚠ Её сторона ответила, пока агент сочинял: девушку ведёт и живой
+            # человек (решение владельца 19.11.2026 — двух ответов не бывать).
+            # Черновик закрывается с причиной и не повторяется; её реплика
+            # приедет импортом и станет последней — повода у пары больше нет.
+            await chat_reply_refused(int(ready['id']), result['error'])
+            # Её реплики — соседу сразу и доставленными, тем же ключом, что
+            # привезёт импорт: агент не должен ждать выдержки, чтобы узнать,
+            # что разговор уже продолжили за него.
+            for line in result.get('theirs') or []:
+                await chat_history_her_line(profile_id, uid, name, line['text'],
+                                            CHAT_PANEL_PREFIX + line['uid'],
+                                            line['when'])
+            await log_write(profile_id, 'info',
+                            f"{me} → {who}: не отправлено — {result['error']}")
         elif await block_deny(int(profile.get('site_id') or 0),
                               f"{result['error']} {result.get('response') or ''}"):
             # ⚠⚠ **«Он закрылся от неё» — навсегда, а не до следующего круга.**

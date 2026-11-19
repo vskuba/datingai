@@ -217,8 +217,18 @@ async def site_socket_luxee_tasks(sock) -> list[dict]:
     return tasks
 
 
-async def site_socket_luxee_send(sock, girl: int, identity: str, text: str) -> dict:
+async def site_socket_luxee_send(sock, girl: int, identity: str, text: str,
+                                 man: str = '', since_ms: int = 0) -> dict:
     """Отправить текстовую реплику в диалог и дождаться приговора сервера.
+
+    Args:
+        man: его номер — чтобы отличить его реплики от реплик её стороны.
+        since_ms: метка повода (его реплики, на которую отвечаем, либо нашей
+            последней у «напиши повторно»). ⚠⚠ Есть в диалоге реплика её
+            стороны **новее** — не шлём: девушку ведёт и живой человек, и он
+            мог ответить, пока агент сочинял (решение владельца 19.11.2026).
+            Ноль — не проверять. Проверка по свежему ответу сервера, а не по
+            нашей базе: импорт отстаёт на 15–30 секунд.
 
     ⚠⚠ Делаем **ровно как страница**, и оба отличия уже стоили отказа «409 Can't
     save message. Not valid message» на первых двух живых ответах 19.11.2026:
@@ -228,15 +238,30 @@ async def site_socket_luxee_send(sock, girl: int, identity: str, text: str) -> d
 
     Returns:
         dict: `ok` — сервер прислал наше сообщение обратно (`server_m_new` с
-        нашим ключом — ключ в форме страницы собирается здесь); `error` — его отказ словами (`s_m_error`), `code` — код
-        отказа (485 — «сначала Catch Up»), `sid` — номер принятого сообщения.
+        нашим ключом — ключ в форме страницы собирается здесь); `error` — его
+        отказ словами (`s_m_error`), `code` — код отказа (485 — «сначала Catch
+        Up»), `sid` — номер принятого сообщения, `skipped` — не слали вовсе:
+        её сторона уже ответила, и тогда `theirs` — её реплики новее повода
+        (сообщения сервера как есть).
 
     Raises:
         asyncio.TimeoutError: ни подтверждения, ни отказа за срок ожидания.
     """
     key = f'cl_m_message-{identity}-{time.time()}-{random.randint(1, 500)}'
-    await site_socket_luxee_ask(sock, 'cl_c_messages',
-                                {'ownerUid': int(girl), 'identity': str(identity)})
+    opened = (await site_socket_luxee_ask(
+        sock, 'cl_c_messages', {'ownerUid': int(girl), 'identity': str(identity)})
+              ).get('message') or []
+
+    if since_ms and man:
+        newer = [m for m in opened if isinstance(m, dict)
+                 and str((m.get('author') or {}).get('uid') or '') != str(man)
+                 and int(m.get('created') or 0) > int(since_ms)]
+        if newer:
+            last = max(newer, key=lambda m: int(m.get('created') or 0))
+            return {'ok': False, 'skipped': True, 'code': 0, 'sid': '',
+                    'theirs': sorted(newer, key=lambda m: int(m.get('created') or 0)),
+                    'error': 'девушка уже ответила сама: '
+                             f"«{str(last.get('body') or '')[:80]}»"}
 
     await sock.emit('message', {
         'type': 'cl_m_message', 'key': _key('cl_m_message'),
@@ -258,13 +283,14 @@ async def site_socket_luxee_send(sock, girl: int, identity: str, text: str) -> d
     message = answer.get('message') if isinstance(answer.get('message'), dict) else {}
     error = answer.get('error') if isinstance(answer.get('error'), dict) else {}
     if error or 'request' not in message:
-        return {'ok': False, 'code': int(error.get('code') or 0),
+        return {'ok': False, 'skipped': False, 'code': int(error.get('code') or 0),
                 'error': str(error.get('text') or error.get('message')
                              or 'сервер чата отказал без причины'), 'sid': ''}
 
     sent = message.get('message') if isinstance(message.get('message'), dict) else {}
 
-    return {'ok': True, 'code': 0, 'error': '', 'sid': str(sent.get('sid') or '')}
+    return {'ok': True, 'skipped': False, 'code': 0, 'error': '',
+            'sid': str(sent.get('sid') or '')}
 
 
 async def _wait(sock, match) -> dict:

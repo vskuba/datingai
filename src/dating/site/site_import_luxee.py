@@ -141,6 +141,35 @@ class DatingSiteImportLuxee(DatingSiteImport):
         return total, rows, '; '.join(why)
 
 
+def site_import_luxee_text(message: dict) -> str:
+    """Текст сообщения Luxee для нашей переписки; без текста — словом о том,
+    что пришло. ⚠ Наружу — ради отправки: реплика девушки, увиденная до импорта,
+    уходит соседу тем же текстом, каким её потом привезёт импорт."""
+    body = str(message.get('body') or message.get('bodyOrigin') or '').strip()
+    extra = []
+    if message.get('media'):
+        extra.append('[photo]')
+    if message.get('sticker') and not body:
+        extra.append('[sticker]')
+
+    kind = LUXEE_CHAT_KINDS.get(int(message.get('type') or 0))
+    if not body and not extra and kind:
+        extra.append(kind)
+
+    return ' '.join([body, *extra]).strip()
+
+
+def site_import_luxee_line(message: dict) -> dict:
+    """Сообщение сокета — ключом, текстом и временем, как их запишет импорт.
+
+    Зовёт отправка: реплика её стороны, увиденная до импорта, уходит соседу
+    под тем же ключом (`uid` → `panel:{uid}`), тем же текстом и временем.
+    """
+    return {'uid': str(message.get('sid') or ''),
+            'text': site_import_luxee_text(message),
+            'when': _when(message.get('created'))}
+
+
 def _row(message: dict, inner: dict) -> dict | None:
     """Сообщение сокета — строкой общего разбора (`chat_panel_rows`)."""
     author = str((message.get('author') or {}).get('uid') or '')
@@ -161,24 +190,8 @@ def _row(message: dict, inner: dict) -> dict | None:
         side = {'from_uid': girl, 'from': girl, 'to_uid': man, 'to': man_cell}
 
     return {'uid': str(message.get('sid') or ''), **side,
-            'text': _text(message),
+            'text': site_import_luxee_text(message),
             'when': _when(message.get('created'))}
-
-
-def _text(message: dict) -> str:
-    """Текст сообщения; без текста — словом о том, что пришло."""
-    body = str(message.get('body') or message.get('bodyOrigin') or '').strip()
-    extra = []
-    if message.get('media'):
-        extra.append('[photo]')
-    if message.get('sticker') and not body:
-        extra.append('[sticker]')
-
-    kind = LUXEE_CHAT_KINDS.get(int(message.get('type') or 0))
-    if not body and not extra and kind:
-        extra.append(kind)
-
-    return ' '.join([body, *extra]).strip()
 
 
 def _when(created) -> str:

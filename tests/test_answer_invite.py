@@ -172,3 +172,47 @@ class TestABlockEndsThePair:
         assert silent is not None, 'повод не закрыт — агента спросят заново'
         assert await chat_reply_waiting(girl, message_id) == {}, \
             'черновик пары остался в пуле'
+
+
+class TestHerSideAnsweredFirstInTheRound:
+    """Ответ не ушёл, потому что девушка ответила сама: черновик закрыт, не повтор."""
+
+    async def test_skipped_closes_the_draft(self, girl, monkeypatch):
+        message_id = await _said(girl, 'u-skip-1', 'hey')
+        reply_id = await chat_reply_put(STAND_SITE, girl, message_id, 'u-skip-1',
+                                        'Brian', 'hi')
+        seen = {}
+
+        async def _send(*args, **kwargs):
+            seen.update(kwargs)
+            return {'ok': False, 'offline': False, 'skipped': True, 'message_uid': '',
+                    'error': 'девушка уже ответила сама: «yo»', 'response': '',
+                    'theirs': [{'uid': 'sid-yo', 'text': 'yo',
+                                'when': '2026-11-19 17:00:00'}]}
+
+        told = []
+
+        async def _add(*args, **kwargs):
+            told.append(kwargs)
+            return 77
+
+        monkeypatch.setattr('src.rhapsody.rhapsody_api.rhapsody_api_chat_add', _add)
+
+        async def _nothing(*args, **kwargs):
+            return 0
+
+        monkeypatch.setattr(answer_mod, 'send_message', _send)
+        monkeypatch.setattr(answer_mod, 'online_sure', lambda *a: True)
+        monkeypatch.setattr(answer_mod, '_invited_check', _nothing)
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT * FROM profile WHERE id = %s', (girl,))
+            profile = dict(await db.fetchone())
+
+        await answer_mod.answer_run(profile, {}, 1)
+
+        assert seen.get('since') is not None, 'время повода не дошло до отправки'
+        got = await _row(reply_id)
+        assert got['status'] == 'failed' and 'ответила сама' in got['error']
+        assert [(t['answer'], t['source_uid'], t['delivered']) for t in told] == \
+            [('yo', 'panel:sid-yo', True)], 'её реплика не ушла соседу доставленной'

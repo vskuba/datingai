@@ -24,8 +24,10 @@
 """
 
 import asyncio
+from datetime import datetime, timezone
 
 from src.dating.panel_fetch import DatingPanelFetchError
+from src.dating.site.site_import_luxee import site_import_luxee_line
 from src.dating.site.site_socket_luxee import (site_socket_luxee_channels,
                                                site_socket_luxee_open,
                                                site_socket_luxee_outer,
@@ -33,7 +35,7 @@ from src.dating.site.site_socket_luxee import (site_socket_luxee_channels,
 
 
 async def send_panel_socket_run(profile: dict, presence: dict, to_uid: str,
-                                text: str, message_uid: str) -> dict:
+                                text: str, message_uid: str, since=None) -> dict:
     """Шлёт реплику девушки собеседнику сокетом панели. Ответ — пятёрка `send_message`.
 
     Args:
@@ -44,6 +46,9 @@ async def send_panel_socket_run(profile: dict, presence: dict, to_uid: str,
         text: что отправляем.
         message_uid: наш ключ сообщения — под ним реплика ляжет в переписку;
             у сервера ключ свой, в форме страницы.
+        since: время повода (UTC, `datetime` или `гггг-мм-дд чч:мм:сс`). Есть
+            в диалоге реплика её стороны новее — ответ не уходит, в ответе
+            `skipped: True` (девушка ответила сама, `site_socket_luxee_send`).
 
     ⚠ Ничего не бросает: исход словами, как у прочих транспортов.
     """
@@ -62,11 +67,17 @@ async def send_panel_socket_run(profile: dict, presence: dict, to_uid: str,
             # перехватит дверь открытия и назовёт «сокет не ответил» — а это
             # другое событие (реплика, может быть, ушла).
             try:
-                got = await site_socket_luxee_send(sock, int(girl), identity, text)
+                got = await site_socket_luxee_send(sock, int(girl), identity, text,
+                                                   str(to_uid), _ms(since))
             except asyncio.TimeoutError:
                 return _result(False, 'сервер чата не подтвердил отправку')
     except DatingPanelFetchError as e:
         return _result(False, str(e))
+
+    if got.get('skipped'):
+        return {**_result(False, got['error']), 'skipped': True,
+                'theirs': [site_import_luxee_line(m)
+                           for m in got.get('theirs') or [] if m.get('sid')]}
 
     if not got['ok']:
         code = f" (код {got['code']})" if got['code'] else ''
@@ -99,3 +110,18 @@ def _result(ok: bool, error: str, response: str = '') -> dict:
     """Пятёрка ответа `send_message`: ключи все и всегда."""
     return {'ok': ok, 'error': error, 'offline': False, 'response': response,
             'message_uid': ''}
+
+
+def _ms(since) -> int:
+    """Время повода в миллисекундах UTC; не разобралось — ноль, то есть «не проверять»."""
+    if not since:
+        return 0
+
+    try:
+        moment = since if isinstance(since, datetime) else \
+            datetime.strptime(str(since)[:19], '%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        return 0
+
+    return int(moment.replace(tzinfo=timezone.utc).timestamp() * 1000)
+
