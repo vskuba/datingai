@@ -23,6 +23,7 @@ from src.dating.site.site_favorite import (DatingSiteFavorite,
 from src.dating.site.site_guests_step2love import DatingSiteGuestsStep2Love
 from src.dating.site.site_import import DatingSiteImport
 from src.dating.site.site_import_goldenbride import DatingSiteImportGoldenbride
+from src.dating.site.site_import_luxee import DatingSiteImportLuxee
 from src.dating.site.site_import_step2love import DatingSiteImportStep2Love
 from src.dating.site.site_panel import (DatingSitePanel,
                                         DatingSitePanelLadadate,
@@ -84,6 +85,9 @@ DATING_SITE_PANEL_DRIVERS = {
 DATING_SITE_IMPORT_DRIVERS = {
     DatingSiteImportGoldenbride.name: DatingSiteImportGoldenbride,
     DatingSiteImportStep2Love.name: DatingSiteImportStep2Love,
+    # Чат панели сокетом: страницы журнала у Luxee нет, умолчание goldenbride
+    # ходило за `userchatmessages` и получало «панель увела на вход».
+    DatingSiteImportLuxee.name: DatingSiteImportLuxee,
     DatingSiteImport.name: DatingSiteImport,
 }
 

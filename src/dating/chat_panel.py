@@ -751,5 +751,9 @@ async def _import_by_driver(driver, site_id: int, profiles: dict, date_from: str
     rows = chat_panel_rows({CHAT_PANEL_FIELD: cells}, profiles)
     saved = await chat_panel_save(rows)
 
+    # ⚠ После записи, а не после чтения: драйвер, помнящий место чтения,
+    # ставит отметку здесь — упади запись, и следующий заход прочтёт то же.
+    await driver.journal_saved(site_id)
+
     return {'status': 'ok', 'total': total, 'ours': len(rows),
             'from': date_from, 'to': date_to, 'error': '', 'warn': why, **saved}

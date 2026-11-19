@@ -94,7 +94,7 @@ class TestRegistry:
 
     def test_table_is_the_whole_choice(self):
         """Новый сайт — строка здесь плюс файл рядом; веток по сайтам в коде нет."""
-        assert set(DATING_SITE_IMPORT_DRIVERS) == {'goldenbride', 'step2love', 'base'}
+        assert set(DATING_SITE_IMPORT_DRIVERS) == {'goldenbride', 'step2love', 'luxee', 'base'}
 
     def test_dates_speak_each_panels_language(self):
         """Формат даты — часть языка сайта: на чужом панель молча подменяет
