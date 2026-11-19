@@ -30,7 +30,7 @@ from logging_.logging_ import logger_exception, logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.auto import AUTO_PERIOD_SEC, auto_round
-from src.dating.chat_history import chat_history_said
+from src.dating.chat_history import chat_history_heard, chat_history_said
 from src.dating.feed import feed_done, feed_write
 from src.dating.intention_round import (INTENTION_ROUND_TICK_SEC,
                                         intention_round_run)
@@ -990,6 +990,9 @@ async def _chat_import_round() -> None:
         # Привяжи его к удачному заходу — и первый же отказ панели отложил бы
         # операторскую реплику до следующей удачи.
         await chat_history_said(site_id)
+        # Его реплики, не уехавшие соседу при записи (потолок захода, молчание
+        # соседа): без них агент отвечает по обрывку разговора.
+        await chat_history_heard(site_id)
 
         if result['status'] == 'error':
             logger_info(f"[dating] переписка сайта #{site_id} не забралась: "

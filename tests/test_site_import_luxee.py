@@ -21,7 +21,7 @@ import pytest
 
 from src.dating.chat_panel import CHAT_PANEL_FIELD, chat_panel_rows
 from src.dating.panel_fetch import DatingPanelFetchError
-from src.dating.site import site_import_luxee
+from src.dating.site import site_import_luxee, site_socket_luxee
 from src.dating.site.site_import_luxee import DatingSiteImportLuxee
 from src.dating.site.site_registry import site_registry_import
 
@@ -94,7 +94,7 @@ def serve(monkeypatch):
 
     def make(server):
         async def fetch(site_id, path, params=None, headers=None):
-            assert path == site_import_luxee.LUXEE_CHAT_PAGE
+            assert path == site_socket_luxee.SITE_SOCKET_LUXEE_PAGE
             return PAGE
 
         @asynccontextmanager
@@ -103,8 +103,8 @@ def serve(monkeypatch):
             assert url == 'wss://luxee.io/chat/socket.io/'
             yield server
 
-        monkeypatch.setattr(site_import_luxee, 'panel_fetch_html', fetch)
-        monkeypatch.setattr(site_import_luxee, 'socketio_v2_open', open_)
+        monkeypatch.setattr(site_socket_luxee, 'panel_fetch_html', fetch)
+        monkeypatch.setattr(site_socket_luxee, 'socketio_v2_open', open_)
         monkeypatch.setattr(site_import_luxee, 'redis_conn_get', lambda: _Redis())
 
         return marks
@@ -131,6 +131,22 @@ class TestNothingIsMissed:
         assert why == '' and total == 45
         assert sorted(int(r['uid'][3:]) for r in rows) == list(range(1, 46))
         assert server.sent.count('cl_cm_messages') == 2
+
+    async def test_a_dialog_seen_first_is_read_whole(self, serve):
+        """Окно решает, какие диалоги брать, но не сколько из них читать.
+
+        Первые 30 сообщений — трёхдневной давности, окно — сутки: без чтения
+        целиком агент не увидел бы начала разговора, а отметка закрыла бы его.
+        """
+        server = _Server(45)
+        for message in server.messages[:30]:
+            message['created'] = str(NOW_MS - 3 * DAY_MS)
+        serve(server)
+
+        total, rows, _ = await DatingSiteImportLuxee(PRESENCE).journal_rows(
+            SITE, PROFILES, _day(NOW_MS - DAY_MS), _day(NOW_MS))
+
+        assert total == 45
 
     async def test_resumes_from_the_mark_however_long_it_slept(self, serve):
         """Отметка 10, в диалоге 437: приезжают ровно 11…437, без окна дат."""
@@ -205,7 +221,7 @@ class TestRefusals:
         async def fetch(*args, **kwargs):
             return '<html>login</html>'
 
-        monkeypatch.setattr(site_import_luxee, 'panel_fetch_html', fetch)
+        monkeypatch.setattr(site_socket_luxee, 'panel_fetch_html', fetch)
 
         with pytest.raises(DatingPanelFetchError, match='токена'):
             await DatingSiteImportLuxee(PRESENCE).journal_rows(

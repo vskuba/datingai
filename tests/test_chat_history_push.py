@@ -25,13 +25,14 @@ sleep???» и «sent you photo».
 
 import json
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 
 from mysql_.mysql_ import mysql_get_db_async
 from src.dating import chat
 from src.dating.chat import _message_save
-from src.dating.chat_history import chat_history_said
+from src.dating.chat_history import chat_history_heard, chat_history_said
 from src.uvicorn.routers.dating.profile_ import (DatingProfileSave,
                                                  profile_create,
                                                  profile_delete)
@@ -428,3 +429,61 @@ class TestWhatTheOperatorWroteInThePanel:
             await self._panel_out(girl, f'реплика оператора {n}')
 
         assert await chat_history_said(SITE) == 2
+
+
+class TestWhatDidNotFitIsSentLater:
+    """⚠⚠ Его реплики, не влезшие в потолок захода, досылаются следующими.
+
+    Первый импорт Luxee 19.11.2026 привёз 76 его реплик и доложил 49: доклад при
+    записи — одна попытка с потолком, и остальное агент не увидел бы никогда.
+    Очередь держит отметка `history_at`.
+    """
+
+    @staticmethod
+    def _rows(girl: int, count: int) -> list:
+        return [{'profile_id': girl, 'sender_uid': UID, 'sender_name': 'Brian Ritter',
+                 'text': f'реплика {n}', 'direction': 'in',
+                 'message_uid': f'panel:{uuid.uuid4().hex[:10]}',
+                 'sent_at': f'{datetime.now(timezone.utc):%Y-%m-%d} 0{n}:00:00'}
+                for n in range(count)]
+
+    async def test_the_rest_follows_oldest_first(self, girl, put, monkeypatch):
+        from src.dating import chat_panel
+
+        monkeypatch.setattr(chat_panel, 'CHAT_PANEL_HISTORY_MAX', 2)
+        await chat_panel.chat_panel_save(self._rows(girl, 5))
+        assert [one['question'] for one in put] == ['реплика 3', 'реплика 4']
+
+        assert await chat_history_heard(SITE) == 3
+        assert [one['question'] for one in put[2:]] == \
+            ['реплика 0', 'реплика 1', 'реплика 2']
+        assert await chat_history_heard(SITE) == 0, 'доложенное ушло дважды'
+
+    async def test_silence_of_the_neighbour_keeps_it_queued(self, girl, monkeypatch):
+        from src.dating import chat_panel
+
+        async def _zero(*args, **kwargs):
+            return 0
+
+        monkeypatch.setattr('src.rhapsody.rhapsody_api.rhapsody_api_chat_add', _zero)
+        await chat_panel.chat_panel_save(self._rows(girl, 1))
+        assert await chat_history_heard(SITE) == 0
+
+        async def _ok(*args, **kwargs):
+            return 7
+
+        monkeypatch.setattr('src.rhapsody.rhapsody_api.rhapsody_api_chat_add', _ok)
+        assert await chat_history_heard(SITE) == 1
+
+    async def test_older_than_the_window_stays(self, girl, put):
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                "INSERT INTO message (profile_id, sender_uid, sender_name, text,"
+                " message_uid, direction, is_read, source, created_at)"
+                " VALUES (%s, %s, 'Brian', 'давнее', %s, 'in', 1, 'panel',"
+                "         NOW() - INTERVAL 40 DAY)",
+                (girl, UID, f'panel:{uuid.uuid4().hex[:10]}'))
+            await db.connection.commit()
+
+        assert await chat_history_heard(SITE) == 0 and put == []
+

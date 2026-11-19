@@ -55,6 +55,12 @@ CHAT_HISTORY_SAID_WAIT_SEC = 600
 # потолок здесь — предохранитель от неожиданности, а не рабочее ограничение.
 CHAT_HISTORY_SAID_MAX = 20
 
+# Сколько его недоложенных реплик досылаем за заход и за сколько дней назад.
+# Заход ходит от пятнадцати секунд, так что сотня за раз разбирает и первый
+# импорт сайта за минуту; окно — то, что агент вообще может увидеть.
+CHAT_HISTORY_HEARD_MAX = 100
+CHAT_HISTORY_HEARD_DAYS = 14
+
 
 async def chat_history_incoming(profile_id: int, message: dict) -> bool:
     """Отдаёт входящую реплику в историю разговора у соседа.
@@ -119,12 +125,28 @@ async def chat_history_incoming(profile_id: int, message: dict) -> bool:
         # ⚠ **Его половина — `question`.** Прежде у приёма была своя дверь с
         # доводом `text`, и чья это реплика, говорило имя ручки. Теперь дверь
         # одна на все дороги, и говорит это довод.
-        await rhapsody_api_chat_add(
+        made = await rhapsody_api_chat_add(
             str(girl['girl_id']), str(girl['girl_name']),
             str(companion['companion_id']), str(companion['companion_name']),
             question=str(message['text']), kind='chat',
             source_uid=str(message.get('message_uid') or ''),
             said_at=str(message.get('sent_at') or ''))
+
+        # ⚠⚠ Ноль — неудача, а не «уже было»: повтор сосед узнаёт по
+        # `source_uid` и отвечает номером записанной строки. Отметка — только
+        # доложенному: по ней догоняет `chat_history_heard`, и без неё реплика,
+        # не влезшая в потолок захода, не уезжала бы никогда.
+        if not made:
+            return False
+
+        if message.get('message_uid'):
+            async with mysql_get_db_async() as db:
+                await db.execute(
+                    'UPDATE message SET history_at = NOW()'
+                    ' WHERE profile_id = %s AND message_uid = %s'
+                    '   AND history_at IS NULL',
+                    (int(profile_id), str(message['message_uid'])))
+                await db.connection.commit()
 
         return True
     except Exception as e:
@@ -214,6 +236,64 @@ async def chat_history_said(site_id: int, take: int = 0) -> int:
     if told:
         logger_info(f'[dating] сайт #{site_id}: доложено соседу реплик, '
                     f'написанных мимо нас: {told}')
+
+    return told
+
+
+async def chat_history_heard(site_id: int, take: int = 0) -> int:
+    """Досылает соседу его реплики из панели, которые туда ещё не уехали.
+
+    Args:
+        site_id: сайт, чьи анкеты смотрим.
+        take: сколько строк за заход; ноль — `CHAT_HISTORY_HEARD_MAX`.
+
+    Returns:
+        int: сколько доложили.
+
+    ## ⚠⚠ Зачем: доклад при записи — одна попытка и с потолком
+
+    Импорт докладывает привезённое сразу, но не больше `CHAT_PANEL_HISTORY_MAX`
+    за заход и без повтора: первый заход Luxee 19.11.2026 привёз 76 его реплик,
+    а доложил 49 — остальные 27 агент не увидел бы никогда, и ответ на живой
+    разговор писался бы по обрывку. Здесь — очередь по отметке `history_at`:
+    не уехало сейчас — уедет следующим заходом.
+
+    ⚠ Только `source = 'panel'`: сокет докладывает каждую реплику при приёме и
+    потолка не знает. ⚠ Окно — `CHAT_HISTORY_HEARD_DAYS`: месячный хвост
+    агенту не покажут, а неотмеченных строк старше отметки на проде тысячи —
+    все они легли до неё. Повтор безвреден: сосед узнаёт строку по
+    `source_uid`.
+
+    ⚠ Ничего не бросает — заход импорта обходит сайты подряд.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT m.profile_id, m.sender_uid, m.sender_name, m.text,'
+                '       m.message_uid, m.created_at AS sent_at'
+                '  FROM message m'
+                '  JOIN profile p ON p.id = m.profile_id'
+                ' WHERE p.site_id = %s'
+                "   AND m.source = 'panel' AND m.direction = 'in'"
+                '   AND m.history_at IS NULL'
+                '   AND m.created_at >= NOW() - INTERVAL %s DAY'
+                ' ORDER BY m.created_at LIMIT %s',
+                (int(site_id), int(CHAT_HISTORY_HEARD_DAYS),
+                 int(take or CHAT_HISTORY_HEARD_MAX)))
+            rows = await db.fetchall() or []
+    except Exception as e:
+        logger_info(f'[dating] недоложенные входящие не спросились: {e}')
+
+        return 0
+
+    told = 0
+    for row in rows:
+        if await chat_history_incoming(int(row['profile_id']),
+                                       {**row, 'sent_at': str(row['sent_at'] or '')}):
+            told += 1
+
+    if told:
+        logger_info(f'[dating] сайт #{site_id}: дослано соседу входящих: {told}')
 
     return told
 

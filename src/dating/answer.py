@@ -62,6 +62,7 @@ from src.dating.companion_card import (companion_name_known,
 from src.dating.companion_ref import companion_ref_foreign, companion_title
 from src.dating.message_twin import message_twin_skip
 from src.dating.online import online_sure
+from src.dating.site.site_registry import site_registry_chat
 from src.dating.send import send_message
 
 # Сколько диалогов отвечаем за раз. Каждый — прогон workflow, и полсотни разом
@@ -323,7 +324,11 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
         # реплики, ленты «Все онлайн» у сайта в те часы не было, и круг
         # постучался к нему **199 раз за четыре часа**, получая «нет открытого
         # чата». Закрытая анкета не вернётся, и конца у этого не было бы.
-        if not online_sure(int(profile.get('site_id') or 0), uid):
+        #
+        # ⚠ Сайт-мессенджер (Luxee) — исключение: реплика ждёт его в диалоге,
+        # а лента «Все онлайн» знает только сидящих сейчас (`reaches_offline`).
+        if not site_registry_chat(presence).reaches_offline() \
+                and not online_sure(int(profile.get('site_id') or 0), uid):
             # ⚠ В журнал — молча. Повод тот же, текст тот же, круг ходит раз в
             # минуту: за ночь это тысяча одинаковых строк, в которых утонуло бы
             # всё остальное. Ждущий черновик и так виден в разговоре.
@@ -764,7 +769,6 @@ async def _invited_check(profile: dict, presence: dict) -> int:
     """
     from src.dating.chat_request import chat_request_talk_open
     from src.dating.send import send_message_remember
-    from src.dating.site.site_registry import site_registry_chat
 
     if not site_registry_chat(presence).invites():
         return 0

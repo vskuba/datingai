@@ -13,6 +13,7 @@
 from src.dating.site.site_about import (DatingSiteAbout,
                                         DatingSiteAboutLadadate)
 from src.dating.site.site_about_step2love import DatingSiteAboutStep2Love
+from src.dating.site.site_chat_luxee import DatingSiteChatLuxee
 from src.dating.site.site_chat_step2love import DatingSiteChatStep2Love
 from src.dating.site.site_base import DatingSiteChat
 from src.dating.site.site_goldenbride import (DatingSiteChatGoldenbride,
@@ -38,6 +39,8 @@ DATING_SITE_DRIVERS = {
     # драйвер чата **по умолчанию**, и класс от `DatingSiteChat` молча сменил
     # бы сайту кадры и разбор — вместе с одним новым ответом про доставку.
     DatingSiteChatStep2Love.name: DatingSiteChatStep2Love,
+    # Мессенджер: реплика ждёт собеседника и не в сети (`reaches_offline`).
+    DatingSiteChatLuxee.name: DatingSiteChatLuxee,
     DatingSiteChat.name: DatingSiteChat,
 }
 

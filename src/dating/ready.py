@@ -58,6 +58,12 @@ READY_PASSWORD_SETTING = 'api_password'
 # ошибиться здесь значит либо запретить работу, либо разрешить невозможную.
 READY_NEEDS_LOGIN = {'ws', 'http'}
 
+# Транспорты, которым не нужно ничего от анкеты: пишет сессия панели агентства,
+# её держит круг панели на весь сайт (Luxee, `panel_socket`). ⚠ Без этого списка
+# такой сайт попал бы в ветку сценария и требовал пароль, которого у его анкет
+# не бывает, — а «вход не снят» стоял бы у всех и запрещал автоответ.
+READY_NEEDS_NOTHING = {'panel_socket'}
+
 
 def password_pick(profile: dict, site_password: str = '') -> str:
     """Пароль анкеты по её настройке: свой или общий агентский.
@@ -100,6 +106,9 @@ def ready_check(profile: dict, transport: str, site_password: str = '') -> dict:
     """
     if not int(profile.get('enabled', 1) or 0):
         return {'can': False, 'why': 'анкета выключена'}
+
+    if str(transport) in READY_NEEDS_NOTHING:
+        return {'can': True, 'why': ''}
 
     if str(transport) in READY_NEEDS_LOGIN:
         if not profile.get('storage_state'):

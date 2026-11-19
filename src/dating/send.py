@@ -49,6 +49,7 @@ from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find
 from src.dating.presence import DATING_PRESENCE_TIMEOUT, DATING_PRESENCE_UA
 from src.dating.proxy import proxy_url
 from src.dating.send_connection import send_connection_run
+from src.dating.send_panel_socket import send_panel_socket_run
 from src.dating.site.site_base import site_base_encode, site_base_render
 from src.dating.site.site_registry import site_registry_chat
 
@@ -101,7 +102,7 @@ SEND_TRANSPORT_SETTING = 'send_transport'
 # у вебсокета, и чинить такую отправку идут туда же, куда с сокетом
 # (`send_connection.py`). Своё слово в столбце обещало бы третье место.
 SEND_SOURCE = {'scenario': 'scenario', 'http': 'http', 'ws': 'socket',
-               'connection': 'socket'}
+               'connection': 'socket', 'panel_socket': 'socket'}
 
 
 async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
@@ -204,8 +205,10 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
     # `offline: True` — **состояние, а не ошибка**: собеседник вернётся, и тогда
     # сообщение уйдёт. Вызывающий поступает с этим по-своему: автоответ оставляет
     # сообщение неотвеченным, страница гасит поле ввода.
+    # ⚠ Кроме сайта-мессенджера: там реплика ждёт его в диалоге
+    # (`reaches_offline`), а лента «Все онлайн» знает только сидящих сейчас.
     away = online_check(site_id, to_uid)
-    if not away['online']:
+    if not away['online'] and not site_registry_chat(presence).reaches_offline():
         return {'ok': False, 'error': 'собеседника нет в сети', 'offline': True,
                 'response': '', 'message_uid': ''}
 
@@ -233,6 +236,10 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
         result = await send_connection_run(profile, presence, send, to_uid, text,
                                            message_uid, await proxy_url(profile),
                                            may_invite)
+    elif transport == 'panel_socket':
+        # Сокет чата панели агентства — у сайта без кабинета девушки (Luxee).
+        result = await send_panel_socket_run(profile, presence, to_uid, text,
+                                             message_uid)
     else:
         result = await _send_http(profile, presence, send, to_uid, text, message_uid)
 
@@ -396,6 +403,9 @@ async def _note_send(profile: dict, presence: dict, send: dict, transport: str,
     elif transport == 'scenario':
         where = 'сценарий у соседа'
         method = 'RUN'
+    elif transport == 'panel_socket':
+        where = 'сокет чата панели'
+        method = 'WS'
     else:
         where = str(send.get('path') or '')
         method = 'POST'
