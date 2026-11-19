@@ -129,3 +129,46 @@ class TestTheRuleIsOneWithTheInitiative:
 
         assert hasattr(chat_request, 'chat_request_talk_open'), \
             'пропала дверь «открыт ли разговор» — пулы начнут спрашивать по-своему'
+
+
+class TestABlockEndsThePair:
+    """⚠⚠ «Он закрылся от неё» в ответ на автоответ — запрет, а не повтор.
+
+    Прежде разбирал это только инвайт: автоответ возвращал черновик в пул и
+    стучался каждую минуту (Luxee, 19.11.2026: 412 «User has blocked this
+    profile»).
+    """
+
+    async def test_refusal_blocks_and_silences(self, girl, monkeypatch):
+        message_id = await _said(girl, 'u-blk-1', 'hey')
+        await chat_reply_put(STAND_SITE, girl, message_id, 'u-blk-1', 'Brian', 'hi')
+
+        async def _send(*args, **kwargs):
+            return {'ok': False, 'offline': False, 'message_uid': '',
+                    'error': 'сервер отказал: ERROR_MESSAGE_USER_DENY', 'response': ''}
+
+        async def _nothing(*args, **kwargs):
+            return 0
+
+        monkeypatch.setattr(answer_mod, 'send_message', _send)
+        monkeypatch.setattr(answer_mod, 'online_sure', lambda *a: True)
+        monkeypatch.setattr(answer_mod, '_invited_check', _nothing)
+
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT * FROM profile WHERE id = %s', (girl,))
+            profile = dict(await db.fetchone())
+
+        await answer_mod.answer_run(profile, {}, 1)
+
+        async with mysql_get_db_async() as db:
+            await db.execute("SELECT COUNT(*) AS n FROM block WHERE profile_id = %s"
+                             " AND uid = 'u-blk-1'", (girl,))
+            blocked = (await db.fetchone())['n']
+            await db.execute('SELECT answer_silent_at FROM message WHERE id = %s',
+                             (message_id,))
+            silent = (await db.fetchone())['answer_silent_at']
+
+        assert blocked == 1, 'запрет не заведён — круг постучится снова'
+        assert silent is not None, 'повод не закрыт — агента спросят заново'
+        assert await chat_reply_waiting(girl, message_id) == {}, \
+            'черновик пары остался в пуле'

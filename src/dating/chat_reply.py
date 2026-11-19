@@ -261,6 +261,24 @@ async def chat_reply_failed(reply_id: int, error: str) -> None:
         await db.connection.commit()
 
 
+async def chat_reply_refused(reply_id: int, error: str) -> None:
+    """Сайт отказал навсегда («он закрылся от анкеты»): ответ не уйдёт никогда.
+
+    ⚠ `failed` с причиной, а не `draft`: черновик в пуле повторялся бы каждый
+    круг с тем же отказом, а удалённый — пропал бы из «Доставки», и попытку,
+    ради которой заведён запрет, не увидел бы никто. Тот же выбор, что у
+    инвайта при стойком отказе.
+    """
+    if not int(reply_id or 0):
+        return
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            "UPDATE chat_reply SET status = 'failed', error = %s WHERE id = %s",
+            (str(error or '')[:500], int(reply_id)))
+        await db.connection.commit()
+
+
 async def chat_reply_pending(profile_id: int, uid: str) -> list[dict]:
     """Черновики пары для показа в разговоре — с их поводом.
 

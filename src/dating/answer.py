@@ -55,12 +55,13 @@ from src.dating.chat_intention import (chat_intention_delivered,
 from src.dating.chat_request import CHAT_REQUEST_WAIT_SEC
 from src.dating.chat_reply import (chat_reply_expired, chat_reply_failed,
                                    chat_reply_invited, chat_reply_invited_rows,
-                                   chat_reply_put, chat_reply_sent,
+                                   chat_reply_put, chat_reply_refused, chat_reply_sent,
                                    chat_reply_waiting)
 from src.dating.companion_card import (companion_name_known,
                                        companion_vars_known)
 from src.dating.companion_ref import companion_ref_foreign, companion_title
 from src.dating.message_twin import message_twin_skip
+from src.dating.block import block_add, block_deny
 from src.dating.online import online_sure
 from src.dating.site.site_registry import site_registry_chat
 from src.dating.send import send_message
@@ -379,6 +380,25 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
             # вызова LLM.
             offline += 1
             await log_write(profile_id, 'info', f'{who}: нет в чате, отвечу когда вернётся')
+        elif await block_deny(int(profile.get('site_id') or 0),
+                              f"{result['error']} {result.get('response') or ''}"):
+            # ⚠⚠ **«Он закрылся от неё» — навсегда, а не до следующего круга.**
+            # Прежде так разбирал отказ только инвайт: автоответ возвращал
+            # черновик в пул и стучался каждую минуту, а сброшенный черновик
+            # стоил бы нового вызова агента. Luxee отвечает так кодом 412 «User
+            # has blocked this profile» — замер 19.11.2026, Edwin Garber → Stela
+            # и Valentina; фраза — в настройке сайта `block_deny_mark`. Запрет уносит черновики пары, молчание закрывает
+            # повод: агента про эти реплики больше не спросят, а черновик
+            # уходит в `failed` — попытку видно в «Доставке».
+            errors.append(f"{who}: {result['error']}")
+            await block_add(int(profile.get('site_id') or 0), profile_id, uid, name,
+                            f"{result['error']} {result.get('response') or ''}".strip(),
+                            source='chat')
+            await chat_reply_refused(int(ready['id']), result['error'])
+            await _silent_mark(profile_id, uid)
+            await log_write(profile_id, 'fail',
+                            f"{me} → {who}: закрылся от анкеты — больше не пишем "
+                            f"({result['error']})")
         else:
             errors.append(f"{who}: {result['error']}")
             # ⚠ Черновик остаётся в пуле с причиной, а не хоронится: повод написать
