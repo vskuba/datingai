@@ -171,7 +171,7 @@ class TestGuardStandsInBothPaths:
         asked, sent = [], []
 
         # ⚠ Подпись повторяет живую: порога свежести в отборе больше нет.
-        async def _waiting(profile_id, limit, only, lead):
+        async def _waiting(profile_id, limit, only, lead, required=frozenset()):
             # ⚠ `id` — повод написать: по нему ищется и кладётся черновик
             # ответа (`chat_reply.message_id`).
             return [{'id': 1, 'sender_uid': UID, 'sender_name': 'Semen',
@@ -218,7 +218,7 @@ class TestGuardStandsInBothPaths:
         asked, sent = [], []
 
         # ⚠ Подпись повторяет живую: порога свежести в отборе больше нет.
-        async def _waiting(profile_id, limit, only, lead):
+        async def _waiting(profile_id, limit, only, lead, required=frozenset()):
             # ⚠ `id` — повод написать: по нему ищется и кладётся черновик
             # ответа (`chat_reply.message_id`).
             return [{'id': 1, 'sender_uid': UID, 'sender_name': 'Semen',

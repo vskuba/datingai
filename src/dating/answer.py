@@ -159,7 +159,11 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
     # ⚠ Порог обязательности спрашиваем **до** отбора: он в нём и участвует —
     # «отвечать всегда» не должно упираться в порог свежести.
     anyway_first = await _anyway_first(int(profile.get('site_id') or 0))
-    waiting = await _waiting_find(profile_id, limit, only, lead)
+    # ⚠⚠ Обязательные ответы сайта — задания Catch Up у Luxee: пока одно висит,
+    # панель запирает отправку во все прочие диалоги (код 485). Они идут первыми,
+    # и молчать в них судье нельзя (решение владельца 19.11.2026).
+    required = await _required(profile, presence)
+    waiting = await _waiting_find(profile_id, limit, only, lead, required)
     if not waiting:
         await log_write(profile_id, 'info',
                                'Продолжать разговор пока не нужно' if lead
@@ -252,7 +256,8 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
             # ⚠ Историю разговора спрашивать тут не нужно: обе — чат и письма —
             # берёт сам `_agent_ask`. Прежде её добывали три места перед вызовом,
             # и с появлением второго канала они разошлись бы.
-            anyway = await _anyway_here(profile_id, uid, anyway_first)
+            anyway = uid in required \
+                or await _anyway_here(profile_id, uid, anyway_first)
             # ⚠ Чату решения прогона не нужны: снимок прикладывают к
             # **письму**, а реплика в чат вложений не носит вовсе.
             answer, error, message_id, _ = await _agent_ask(
@@ -861,6 +866,20 @@ def _only_parse(value) -> list:
     return [part.strip() for part in str(value or '').replace(';', ',').split(',') if part.strip()]
 
 
+async def _required(profile: dict, presence: dict) -> set:
+    """Собеседники этой анкеты, которым сайт требует ответа прямо сейчас.
+
+    Спрашивает драйвер чата (`required_pairs`): у большинства сайтов таких нет,
+    у Luxee это очередь Catch Up панели агентства. Пары приходят по всему
+    сайту — здесь оставляем только свою девушку.
+    """
+    girl = str(profile.get('profile_id') or profile.get('login') or '').strip()
+    pairs = await site_registry_chat(presence).required_pairs(
+        int(profile.get('site_id') or 0), presence, girl)
+
+    return {uid for owner, uid in pairs if owner == girl}
+
+
 async def _anyway_first(site_id: int) -> int:
     """Сколько первых ответов пары обязательны. Настройка сайта.
 
@@ -945,8 +964,14 @@ async def _anyway_here(profile_id: int, uid: str, first: int) -> bool:
     return int((row or {}).get('n') or 0) < int(first)
 
 
-async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool) -> list:
+async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool,
+                        required: set = frozenset()) -> list:
     """Поводы написать: по одному на диалог.
+
+    `required` — собеседники, ответ которым **обязателен** (задания Catch Up у
+    Luxee, `site_base.required_pairs`): они идут первыми, и прежнее решение
+    молчать (`answer_silent_at`) их не прячет — висящее задание запирает
+    панели отправку во все остальные диалоги.
 
     Смотрим последнюю реплику диалога, а не каждое сообщение: ответ на неё
     закрывает переписку целиком, а не одну строку.
@@ -1034,7 +1059,13 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool) -> 
     # Оставь мы её общей, вышло бы обидно: текст написан, собеседник в сети, а
     # круг не берёт пару ещё пять минут — ровно та задержка, ради устранения
     # которой черновики и заводились.
-    fresh = ("m.direction = 'in' AND m.is_answered = 0 AND m.answer_silent_at IS NULL "
+    must = sorted(str(one) for one in (required or ()))
+    # ⚠ Пустой случай — выражение, а не `0`: `ORDER BY 0` MySQL читает как
+    # номер столбца и отвечает 1054.
+    must_in = ('m.sender_uid IN (' + ', '.join(['%s'] * len(must)) + ')') if must \
+        else '(1 = 0)'
+    fresh = ("m.direction = 'in' AND m.is_answered = 0"
+             f" AND (m.answer_silent_at IS NULL OR {must_in})"
              " AND (m.answer_tried_at IS NULL "
              "      OR m.answer_tried_at < NOW() - INTERVAL %s SECOND"
              + draft_ready + ')')
@@ -1049,6 +1080,7 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool) -> 
     # `%s` обязан совпадать с текстом, и лишний параметр сдвинул бы все остальные.
     params = [int(profile_id), int(profile_id)]
 
+    params.extend(must)
     params.append(int(ANSWER_RETRY_SEC))
     if lead:
         params.append(int(ANSWER_NUDGE_SEC))
@@ -1057,6 +1089,7 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool) -> 
     if only:
         where = ' AND m.sender_uid IN (' + ', '.join(['%s'] * len(only)) + ')'
         params.extend(only)
+    params.extend(must)
     params.append(int(limit))
 
     # ⚠ **«Последняя реплика» считается по времени, а не по `MAX(id)`.**
@@ -1092,7 +1125,8 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool) -> 
             '                WHERE x.profile_id = %s AND x.sender_uid = m.sender_uid '
             '                  AND x.created_at = t.last_at) '
             f' WHERE {reason}' + where +
-            ' ORDER BY m.created_at DESC, m.id DESC LIMIT %s', tuple(params))
+            f' ORDER BY {must_in} DESC, m.created_at DESC, m.id DESC LIMIT %s',
+            tuple(params))
         rows = await db.fetchall()
 
     return [dict(row) for row in (rows or [])]

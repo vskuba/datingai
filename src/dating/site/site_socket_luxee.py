@@ -193,6 +193,30 @@ async def site_socket_luxee_messages(sock, girl: int, identity: str,
             and (mark is None or int(m.get('index') or 0) > mark)]
 
 
+async def site_socket_luxee_tasks(sock) -> list[dict]:
+    """Задания очереди Catch Up: диалоги, где он написал, а ответа нет.
+
+    ⚠⚠ Пока хоть одно висит, панель отвечает на любую реплику в **другой**
+    диалог отказом 485 «You have unfinished tasks in Catch Up» — замок на всю
+    учётку агентства (19.11.2026: Kateryna не пустили из-за задания Olena ↔
+    Ricardo). Закрывает задание ответ в его диалоге либо пропуск с причиной.
+
+    Returns:
+        list: задания как их отдаёт сервер — `importUid` (наша девушка),
+        `userUid` (он), `channelIdentity`, `priority`, `createdAt`.
+    """
+    tasks, page = [], None
+    for _ in range(SITE_SOCKET_LUXEE_CHANNEL_PAGES):
+        got = (await site_socket_luxee_ask(sock, 'cl_get_tasks', {'page': page})
+               ).get('message') or {}
+        tasks += [t for t in got.get('tasks') or [] if isinstance(t, dict)]
+        page = got.get('page') if got.get('page') != page else None
+        if not page:
+            break
+
+    return tasks
+
+
 async def site_socket_luxee_send(sock, girl: int, identity: str, text: str) -> dict:
     """Отправить текстовую реплику в диалог и дождаться приговора сервера.
 
