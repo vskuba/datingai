@@ -263,6 +263,8 @@ async def gallery_index_profile(profile_id: int, folder: str,
             await db.execute(f'UPDATE gallery_file SET is_gone = 1 '
                              f' WHERE profile_id = %s AND file_id IN ({marks})',
                              (profile_id, *gone))
+        if added:
+            await _twin_copy(db, profile_id)
         await db.connection.commit()
 
     return {'found': len(seen), 'added': added, 'gone': len(gone), 'back': back}
@@ -349,6 +351,31 @@ async def _row_save(db, profile_id: int, item: dict) -> None:
         '  kind = fresh.kind, size = fresh.size, md5 = fresh.md5, '
         '  width = fresh.width, height = fresh.height, is_gone = 0',
         values)
+
+
+async def _twin_copy(db, profile_id: int) -> None:
+    """Неописанным файлам анкеты — описание того же снимка у другой анкеты.
+
+    ⚠⚠ Одна девушка ведётся на нескольких сайтах одной папкой Диска (Olena:
+    Ladadate #55 и Luxee #64), и строки у анкет **свои** — ключ
+    `(profile_id, file_id)`. Без переноса за тот же снимок модели зрения
+    платили бы по разу на каждый сайт.
+
+    ⚠ Только при совпавшем `md5`: файл заменили — описание старого врёт.
+    ⚠ Правленое руками у этой анкеты не трогаем, отметку правки не переносим:
+    правила «не перезаписывать руками» у двойника нет — он описан чужим трудом.
+    """
+    await db.execute(
+        'UPDATE gallery_file g'
+        '  JOIN gallery_file t ON t.file_id = g.file_id'
+        '                     AND t.profile_id <> g.profile_id'
+        '                     AND t.described_at IS NOT NULL'
+        '                     AND t.described_md5 = g.md5'
+        '   SET g.description = t.description, g.tags = t.tags,'
+        '       g.described_at = t.described_at, g.described_md5 = t.described_md5'
+        ' WHERE g.profile_id = %s AND g.described_at IS NULL'
+        '   AND g.edited_at IS NULL',
+        (int(profile_id),))
 
 
 def _kind(mime: str) -> str:

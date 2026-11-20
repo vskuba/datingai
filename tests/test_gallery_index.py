@@ -558,3 +558,60 @@ class TestHowOftenWeWalk:
         assert 15 * GALLERY_MINUTE < gap, 'первый тик четверти обязан быть пропущен'
         assert 45 * GALLERY_MINUTE < gap, 'третий тик четверти обязан быть пропущен'
         assert 60 * GALLERY_MINUTE >= gap, 'часовой тик обязан пройти'
+
+
+class TestOneFolderTwoSites:
+    """⚠⚠ Одна девушка на двух сайтах — одна папка Диска, две галереи.
+
+    Живой случай 20.11.2026: Olena ведётся на Ladadate (#55) и Luxee (#64)
+    одной папкой. Ключ стоял на одном `file_id`, и обход второй анкеты молча
+    переписывал строки первой: «94 files, 94 new», а плиток ноль.
+    """
+
+    @pytest.fixture
+    async def sister(self, auth_client):
+        profile_id = int((await auth_client.post('/api/dating/profile', json={
+            'site_id': STAND_SITE,
+            'login': f'gallery-{uuid.uuid4().hex[:8]}@example.com',
+            'password': 'x'})).json()['result'])
+
+        yield profile_id
+
+        async with mysql_get_db_async() as db:
+            await db.execute('DELETE FROM gallery_file WHERE profile_id = %s',
+                             (profile_id,))
+            await db.connection.commit()
+        await profile_delete(profile_id, user=None)
+
+    @staticmethod
+    async def _rows(profile_id: int) -> list[dict]:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT file_id, description, edited_at FROM gallery_file'
+                             ' WHERE profile_id = %s AND is_gone = 0 ORDER BY file_id',
+                             (profile_id,))
+            return list(await db.fetchall() or [])
+
+    async def test_each_profile_gets_its_own_rows(self, tree, girl, sister):
+        await gallery_index_profile(girl, GIRL_FOLDER)
+        await gallery_index_profile(sister, GIRL_FOLDER)
+
+        assert [r['file_id'] for r in await self._rows(girl)] == ['file-1', 'file-2']
+        assert [r['file_id'] for r in await self._rows(sister)] == ['file-1', 'file-2'], \
+            'вторая анкета осталась без галереи'
+
+    async def test_the_description_comes_along(self, tree, girl, sister):
+        """Описанный снимок не описывается второй раз — описание переезжает."""
+        await gallery_index_profile(girl, GIRL_FOLDER)
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                "UPDATE gallery_file SET description = 'платили модели',"
+                '  described_at = NOW(), described_md5 = md5'
+                " WHERE profile_id = %s AND file_id = 'file-1'", (girl,))
+            await db.connection.commit()
+
+        await gallery_index_profile(sister, GIRL_FOLDER)
+
+        got = {r['file_id']: r for r in await self._rows(sister)}
+        assert got['file-1']['description'] == 'платили модели'
+        assert got['file-1']['edited_at'] is None, 'отметка правки руками переехала'
+        assert not got['file-2']['description'], 'описание взялось ниоткуда'

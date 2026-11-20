@@ -121,6 +121,12 @@ INITIATIVE_ROUND_MAKE = 5
 INITIATIVE_SEND_EVERY_SETTING = 'chat_initiative_send_every'
 INITIATIVE_SEND_EVERY_DEFAULT = 3
 
+# Срок жизни карточки — настройка сайта, **в часах**; ноль — срока нет.
+# ⚠ Проверяется у отправки, когда собеседник уже в сети: уборка по часам
+# пересочиняла бы карточки тем, кого нет, — за вызов агента каждая.
+INITIATIVE_CARD_HOURS_SETTING = 'chat_initiative_card_hours'
+INITIATIVE_CARD_HOURS_DEFAULT = 6
+
 # Когда сайту уходила последняя карточка инициативы: `{сайт: время}`. В памяти
 # процесса: перезапуск смены — это лишняя пауза, а не лишняя реплика, и ошибаться
 # сюда безопасно. ⚠ Словарь свой, только для этого круга: соседние занятия ведут
@@ -385,6 +391,8 @@ async def _send(site_id: int) -> int:
     if not round_mem_due(_sent_at, int(site_id), await _send_every(site_id)):
         return 0
 
+    keep_sec = await _card_keep_sec(site_id)
+
     for card in await chat_initiative_ready(site_id):
         uid = str(card['uid'])
 
@@ -392,6 +400,19 @@ async def _send(site_id: int) -> int:
         # карточка уйдёт. Ровно как черновик ответа. Берём следующего — того, кто
         # в ленте сейчас.
         if not online_check(int(site_id), uid)['online']:
+            continue
+
+        # ⚠⚠ Карточка старше срока — **убрать, а не отправить**: текст
+        # сочинялся под тишину того часа («как прошло утро?»), и уйдя вечером,
+        # он звучит мимо времени. Он в сети — значит, круг на следующем тике
+        # сочинит свежую, и уйдёт уже она. Пауза при этом не тратится: ничего
+        # не ушло.
+        if keep_sec and int(card.get('age_sec') or 0) > keep_sec:
+            await chat_initiative_expired(int(card['id']))
+            await log_write(
+                int(card['profile_id']), 'info',
+                f"Инициатива → {card.get('name') or ''} {uid}: карточка "
+                f"пролежала дольше {keep_sec // 3600} ч, сочиним заново")
             continue
 
         profile = await _profile(int(card['profile_id']))
@@ -516,6 +537,19 @@ async def _send_every(site_id: int) -> int:
         minutes = INITIATIVE_SEND_EVERY_DEFAULT
 
     return max(0, minutes) * 60
+
+
+async def _card_keep_sec(site_id: int) -> int:
+    """Срок жизни карточки у этого сайта, в секундах; `0` — срока нет."""
+    try:
+        hours = int(await site_seconds(int(site_id or 0),
+                                       INITIATIVE_CARD_HOURS_SETTING))
+    except Exception as e:
+        logger_info(f'[dating] срок жизни карточки инициативы не прочитался: {e}')
+
+        hours = INITIATIVE_CARD_HOURS_DEFAULT
+
+    return max(0, hours) * 3600
 
 
 async def _stale_clean(site_id: int) -> int:

@@ -63,7 +63,7 @@ def saved(monkeypatch):
 
     rows = []
 
-    async def _save(profile_id, to_uid, text, message_uid, source='socket'):
+    async def _save(profile_id, to_uid, text, message_uid, source='socket', **kwargs):
         rows.append((int(profile_id), str(to_uid), str(text)))
 
     async def _mark(profile_id, to_uid):

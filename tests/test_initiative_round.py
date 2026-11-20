@@ -1256,3 +1256,80 @@ class TestTheResetTermIsRead:
         finally:
             await auth_client.put(f'/api/dating/site/{STAND_SITE}',
                                   json={'settings': before})
+
+
+class TestTheCardGetsOld:
+    """⚠⚠ Карточка старше срока не уходит — её сочиняют заново.
+
+    Живой случай: Anastasiya → Semen (Step2Love, 20.11.2026) — карточка
+    сочинена утром под тишину того часа, а уйти могла, когда он появится, хоть
+    через сутки. ⚠ Проверка стоит у отправки: пока его нет, пересочинять
+    незачем — каждая карточка стоит вызова агента.
+    """
+
+    @staticmethod
+    async def _age(profile_id: int, hours: int) -> None:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'UPDATE chat_initiative SET created_at = NOW() - INTERVAL %s HOUR'
+                " WHERE profile_id = %s AND status = 'draft'",
+                (int(hours), int(profile_id)))
+            await db.connection.commit()
+
+    @staticmethod
+    def _outbox(monkeypatch, online: bool) -> list:
+        outbox = []
+
+        async def _send(profile, presence, uid, text, may_invite=False, **kwargs):
+            outbox.append(text)
+
+            return {'ok': True, 'error': ''}
+
+        async def _keep(site_id):
+            return 6 * 3600
+
+        monkeypatch.setattr(round_mod, 'online_check',
+                            lambda site_id, uid: {'online': online, 'known': True})
+        monkeypatch.setattr(round_mod, 'send_message', _send)
+        monkeypatch.setattr(round_mod, '_card_keep_sec', _keep)
+        round_mod._sent_at.clear()
+
+        return outbox
+
+    async def test_an_old_card_is_dropped_when_he_comes(self, monkeypatch, girl):
+        outbox = self._outbox(monkeypatch, online=True)
+        await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'утренний текст')
+        await self._age(girl, 7)
+
+        sent = await round_mod._send(STAND_SITE)
+
+        assert sent == 0 and outbox == [], 'протухший текст ушёл'
+        assert await chat_initiative_waiting(girl, 'u-1') == {}, 'карточка осталась'
+        assert round_mod.round_mem_due(round_mod._sent_at, STAND_SITE, 60), \
+            'пауза потрачена, хотя ничего не ушло'
+
+    async def test_an_old_card_waits_while_he_is_away(self, monkeypatch, girl):
+        """Его нет — карточку не трогаем: пересочинять впустую незачем."""
+        self._outbox(monkeypatch, online=False)
+        await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'утренний текст')
+        await self._age(girl, 30)
+
+        await round_mod._send(STAND_SITE)
+
+        assert await chat_initiative_waiting(girl, 'u-1'), 'карточку убрали зря'
+
+    async def test_a_fresh_card_goes(self, monkeypatch, girl):
+        outbox = self._outbox(monkeypatch, online=True)
+        await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'свежий текст')
+        await self._age(girl, 5)
+
+        assert await round_mod._send(STAND_SITE) == 1
+        assert outbox == ['свежий текст']
+
+    def test_the_setting_is_in_hours_and_zero_means_never(self):
+        from src.dating.site_setting import SITE_KNOWN
+
+        one = SITE_KNOWN['chat_initiative_card_hours']
+
+        assert one['kind'] == 'number' and one['min'] == 0
+        assert 'час' in one['title']

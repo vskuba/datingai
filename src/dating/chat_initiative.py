@@ -119,7 +119,10 @@ async def chat_initiative_ready(site_id: int) -> list[dict]:
     async with mysql_get_db_async() as db:
         await db.execute(
             'SELECT i.id, i.site_id, i.profile_id, i.uid, i.name, i.body,'
-            '       i.try_no, i.talk_message_id'
+            '       i.try_no, i.talk_message_id,'
+            # ⚠ Возраст считает **база**: `created_at` лёг её `NOW()` (UTC), и
+            # часы процесса рядом с ним дали бы сдвиг на пояс сервера.
+            '       TIMESTAMPDIFF(SECOND, i.created_at, NOW()) AS age_sec'
             '  FROM chat_initiative i'
             '  JOIN profile p ON p.id = i.profile_id'
             " WHERE i.site_id = %s AND i.status = 'draft' AND i.error = ''"
