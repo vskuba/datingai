@@ -124,3 +124,101 @@ async def _said(profile_id: int, uid: str, silent: bool = False, ago_min: int = 
         await db.connection.commit()
 
         return int(db.lastrowid)
+
+
+class TestFollowUpsHaveALimit:
+    """⚠⚠ Повторы по заданию «напиши повторно»: потолок, пауза, сверх — Skip.
+
+    Kateryna → Specialted, 21.11.2026: панель заводила задание каждые ~15 минут
+    его молчания, агент писал на каждое — двенадцать реплик подряд без ответа.
+    """
+
+    @staticmethod
+    def _wire(monkeypatch, skip_error: str = ''):
+        skipped = []
+
+        async def _skip(self, site_id, presence, owner, uid):
+            skipped.append(uid)
+            return skip_error
+
+        async def _limits(site_id):
+            return 2, 3600
+
+        monkeypatch.setattr(site_chat_luxee.DatingSiteChatLuxee, 'required_skip', _skip)
+        monkeypatch.setattr(answer_mod, '_followup_limits', _limits)
+
+        return skipped
+
+    @staticmethod
+    async def _trim(girl, uids):
+        profile = {'id': girl, 'site_id': 999_344, 'profile_id': '622231'}
+        return await answer_mod._required_trim(profile, {'driver': 'luxee'}, set(uids))
+
+    async def test_answer_and_follow_ups_up_to_the_cap(self, monkeypatch, girl):
+        skipped = self._wire(monkeypatch)
+        await _said(girl, 'u-f', ago_min=400, direction='in')
+        await _said(girl, 'u-f', ago_min=390, direction='out')   # ответ
+        await _said(girl, 'u-f', ago_min=300, direction='out')   # повтор 1
+
+        assert await self._trim(girl, ['u-f']) == {'u-f'}, 'второй повтор отняли'
+        assert skipped == []
+
+        await _said(girl, 'u-f', ago_min=200, direction='out')   # повтор 2
+
+        assert await self._trim(girl, ['u-f']) == set(), 'третий повтор пропустили бы'
+        assert skipped == ['u-f'], 'задание не пропущено — замок остался'
+
+    async def test_too_early_is_skipped_not_held(self, monkeypatch, girl):
+        """Пауза не вышла — задание пропускается: ждущее держит замок на всю учётку."""
+        skipped = self._wire(monkeypatch)
+        await _said(girl, 'u-e', ago_min=100, direction='in')
+        await _said(girl, 'u-e', ago_min=20, direction='out')
+
+        assert await self._trim(girl, ['u-e']) == set()
+        assert skipped == ['u-e']
+
+    async def test_fresh_line_leaves_the_stale_task_alone(self, monkeypatch, girl):
+        """Сразу после нашего ответа висит прежнее «ответь» — его не пропускаем."""
+        skipped = self._wire(monkeypatch)
+        await _said(girl, 'u-s', ago_min=5, direction='in')
+        await _said(girl, 'u-s', ago_min=2, direction='out')
+
+        assert await self._trim(girl, ['u-s']) == {'u-s'} and skipped == []
+
+    async def test_his_word_is_not_a_follow_up(self, monkeypatch, girl):
+        skipped = self._wire(monkeypatch)
+        await _said(girl, 'u-h', ago_min=100, direction='out')
+        await _said(girl, 'u-h', ago_min=90, direction='out')
+        await _said(girl, 'u-h', ago_min=80, direction='out')
+        await _said(girl, 'u-h', ago_min=1, direction='in')
+
+        assert await self._trim(girl, ['u-h']) == {'u-h'} and skipped == []
+
+    async def test_failed_skip_keeps_the_pair(self, monkeypatch, girl):
+        """Не снялось — пара остаётся обязательной: лишний повтор лучше замка."""
+        self._wire(monkeypatch, skip_error='сокет отказал')
+        await _said(girl, 'u-x', ago_min=100, direction='in')
+        await _said(girl, 'u-x', ago_min=20, direction='out')
+
+        assert await self._trim(girl, ['u-x']) == {'u-x'}
+
+    async def test_luxee_skips_by_the_task_number(self, monkeypatch):
+        sent = []
+
+        @asynccontextmanager
+        async def _open(site_id, presence, owner):
+            yield object()
+
+        async def _skip(sock, sid, reason=2, description=''):
+            sent.append((sid, reason))
+
+        monkeypatch.setattr(site_chat_luxee, 'site_socket_luxee_open', _open)
+        monkeypatch.setattr(site_chat_luxee, 'site_socket_luxee_skip', _skip)
+        monkeypatch.setitem(site_chat_luxee._TASKS, 999_344, (
+            0.0, set(), [{'importUid': 622231, 'userUid': 3178392, 'sid': 'T-77'}]))
+
+        driver = site_registry_chat({'driver': 'luxee'})
+        assert await driver.required_skip(999_344, {}, '622231', '3178392') == ''
+        assert sent == [('T-77', 2)]
+        assert 999_344 not in site_chat_luxee._TASKS, 'снимок очереди не сброшен'
+        assert await driver.required_skip(999_344, {}, '622231', '1') != ''

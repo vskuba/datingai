@@ -18,6 +18,7 @@ from logging_.logging_ import logger_info
 from src.dating.panel_fetch import DatingPanelFetchError
 from src.dating.site.site_goldenbride import DatingSiteChatGoldenbride
 from src.dating.site.site_socket_luxee import (site_socket_luxee_open,
+                                               site_socket_luxee_skip,
                                                site_socket_luxee_tasks)
 
 # Сколько живёт снимок очереди Catch Up. Круг ответов спрашивает её на каждую
@@ -25,7 +26,7 @@ from src.dating.site.site_socket_luxee import (site_socket_luxee_open,
 # одиннадцать сокетов в минуту ради одного ответа.
 SITE_CHAT_LUXEE_TASKS_SEC = 20
 
-# Снимок: сайт → (когда снят, пары).
+# Снимок: сайт → (когда снят, пары, задания как есть).
 _TASKS: dict = {}
 
 
@@ -62,6 +63,32 @@ class DatingSiteChatLuxee(DatingSiteChatGoldenbride):
 
         pairs = {(str(t.get('importUid') or ''), str(t.get('userUid') or ''))
                  for t in tasks if t.get('isActive', True)}
-        _TASKS[int(site_id)] = (time.monotonic(), pairs)
+        _TASKS[int(site_id)] = (time.monotonic(), pairs, tasks)
 
         return pairs
+
+    async def required_skip(self, site_id: int, presence: dict, owner: str,
+                            uid: str) -> str:
+        """Пропустить задание Catch Up пары «Skip» с причиной «Non-active user».
+
+        ⚠ Задание ищется в снимке очереди (`required_pairs` зовётся раньше в
+        том же заходе). После пропуска снимок сбрасывается: иначе 20 секунд
+        пара числилась бы обязательной и круг написал бы ей поверх пропуска.
+        """
+        taken = _TASKS.get(int(site_id))
+        task = next((t for t in (taken[2] if taken else [])
+                     if str(t.get('importUid') or '') == str(owner)
+                     and str(t.get('userUid') or '') == str(uid)), None)
+        if not task or not task.get('sid'):
+            return 'задания этой пары в очереди нет'
+
+        try:
+            async with site_socket_luxee_open(int(site_id), presence,
+                                              int(owner)) as sock:
+                await site_socket_luxee_skip(sock, task['sid'])
+        except Exception as e:
+            return str(e) or type(e).__name__
+
+        _TASKS.pop(int(site_id), None)
+
+        return ''

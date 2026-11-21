@@ -217,6 +217,31 @@ async def site_socket_luxee_tasks(sock) -> list[dict]:
     return tasks
 
 
+# Причина пропуска задания Catch Up — как в форме панели (`chat.v2.js`,
+# `SKIP_TASK_REASON_*`): 1 Missmatch, 2 Non-active user, 3 Other (нужен
+# комментарий от 10 знаков), 4 Message limit reached. Мы пропускаем того, кто
+# молчит на наши повторы, — «Non-active user».
+SITE_SOCKET_LUXEE_SKIP_INACTIVE = 2
+
+
+async def site_socket_luxee_skip(sock, sid, reason: int = SITE_SOCKET_LUXEE_SKIP_INACTIVE,
+                                 description: str = '') -> None:
+    """Пропустить задание Catch Up — кнопка «Skip» в очереди панели.
+
+    Args:
+        sid: номер **задания** (`sid` из `cl_get_tasks`), а не диалога.
+
+    ⚠ Панель не даёт пропускать задания с `priority <= 1` (кнопки там нет) —
+    сервер ответит отказом, и он поднимется `DatingPanelFetchError`.
+
+    Raises:
+        DatingPanelFetchError: сервер отказал.
+    """
+    await site_socket_luxee_ask(sock, 'cl_skip_task',
+                                {'uid': sid, 'reason': int(reason),
+                                 'description': str(description or '')})
+
+
 async def site_socket_luxee_send(sock, girl: int, identity: str, text: str,
                                  man: str = '', since_ms: int = 0) -> dict:
     """Отправить текстовую реплику в диалог и дождаться приговора сервера.

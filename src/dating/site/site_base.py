@@ -239,6 +239,16 @@ class DatingSiteChat:
         """
         return set()
 
+    async def required_skip(self, site_id: int, presence: dict, owner: str,
+                            uid: str) -> str:
+        """Снять с пары обязательный ответ — пропустить задание очереди.
+
+        Returns:
+            str: пусто — снято; иначе причина словами. У сайтов без очереди
+            снимать нечего.
+        """
+        return 'у сайта нет очереди обязательных ответов'
+
     def delivered(self, result: dict) -> bool:
         """Считается ли этот исход отправки **доставкой**.
 

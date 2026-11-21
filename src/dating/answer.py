@@ -91,6 +91,13 @@ ANSWER_RETRY_SEC = 300
 # реплика — Kateryna → Specialted, 21.11.2026, шесть реплик из двенадцати.
 ANSWER_FOLLOWUP_AFTER_SEC = 600
 
+# Потолок повторов подряд по заданию «напиши повторно» и пауза между ними —
+# настройки сайта (`_required_trim`). Сверх них задание пропускается.
+ANSWER_FOLLOWUPS_SETTING = 'chat_catchup_followups'
+ANSWER_FOLLOWUPS_DEFAULT = 2
+ANSWER_FOLLOWUP_GAP_SETTING = 'chat_catchup_followup_gap'
+ANSWER_FOLLOWUP_GAP_DEFAULT = 60
+
 # Сколько первых ответов пары обязательны — настройка сайта и её умолчание.
 # ⚠ Судья у соседа вправе промолчать, и обычно это верно; но в начале разговора
 # молчание обрывает то, что мы сами и начали инвайтом.
@@ -172,6 +179,7 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
     # панель запирает отправку во все прочие диалоги (код 485). Они идут первыми,
     # и молчать в них судье нельзя (решение владельца 19.11.2026).
     required = await _required(profile, presence)
+    required = await _required_trim(profile, presence, required)
     waiting = await _waiting_find(profile_id, limit, only, lead, required)
     if not waiting:
         await log_write(profile_id, 'info',
@@ -905,6 +913,103 @@ async def _required(profile: dict, presence: dict) -> set:
         int(profile.get('site_id') or 0), presence, girl)
 
     return {uid for owner, uid in pairs if owner == girl}
+
+
+async def _required_trim(profile: dict, presence: dict, required: set) -> set:
+    """Повторы по заданиям «напиши повторно»: сколько и как часто, остальное — Skip.
+
+    Luxee заводит задание «напиши повторно» примерно через 15 минут его
+    молчания и, пока оно висит, запирает все прочие диалоги учётки (485).
+    Отвечая на каждое, агент писал молчащему раз в четверть часа: Kateryna →
+    Specialted, 21.11.2026, двенадцать реплик подряд без единого ответа.
+
+    Решение владельца: не больше `chat_catchup_followups` повторов подряд и не
+    чаще `chat_catchup_followup_gap` минут; сверх этого задание **пропускается**
+    кнопкой панели («Skip», причина «Non-active user»).
+
+    ⚠⚠ Пропуск и тогда, когда пауза ещё не вышла: держать задание до срока
+    значит держать замок на всю учётку — час без ответов всем остальным.
+
+    ⚠ Пары, где последним говорил он, не трогаем: это задание «ответь».
+    ⚠ Не снялось — пара остаётся обязательной: лучше лишний повтор, чем замок.
+    """
+    if not required:
+        return required
+
+    site_id = int(profile.get('site_id') or 0)
+    cap, gap = await _followup_limits(site_id)
+    girl = str(profile.get('profile_id') or profile.get('login') or '').strip()
+    keep = set(required)
+
+    for uid in sorted(required):
+        state = await _followup_state(int(profile['id']), uid)
+        # ⚠ Первые минуты после нашей реплики в очереди ещё висит **прежнее**
+        # задание «ответь» — панель снимает его не мгновенно. Пропускать его
+        # незачем: повтор в это время и так не пишется (`_waiting_find`).
+        if not state['ours_last'] or state['quiet_sec'] < ANSWER_FOLLOWUP_AFTER_SEC:
+            continue
+
+        if state['followups'] < cap and state['quiet_sec'] >= gap:
+            continue
+
+        why = (f'повторов уже {state["followups"]} из {cap}'
+               if state['followups'] >= cap
+               else f'с нашей реплики {state["quiet_sec"] // 60} мин из {gap // 60}')
+        error = await site_registry_chat(presence).required_skip(
+            site_id, presence, girl, uid)
+        if error:
+            await log_write(int(profile['id']), 'fail',
+                            f'Catch Up {uid}: пропуск не удался ({error}) — пишем повтор')
+            continue
+
+        keep.discard(uid)
+        await log_write(int(profile['id']), 'info',
+                        f'Catch Up {uid}: задание пропущено — он молчит, {why}')
+
+    return keep
+
+
+async def _followup_limits(site_id: int) -> tuple[int, int]:
+    """Потолок повторов подряд и пауза между ними (в секундах)."""
+    try:
+        cap = max(0, int(await site_seconds(site_id, ANSWER_FOLLOWUPS_SETTING)))
+        gap = max(0, int(await site_seconds(site_id, ANSWER_FOLLOWUP_GAP_SETTING))) * 60
+    except Exception as e:
+        logger_info(f'[dating] пределы повторов Catch Up не прочитались: {e}')
+        cap, gap = ANSWER_FOLLOWUPS_DEFAULT, ANSWER_FOLLOWUP_GAP_DEFAULT * 60
+
+    return cap, gap
+
+
+async def _followup_state(profile_id: int, uid: str) -> dict:
+    """Чья реплика последняя, сколько наших повторов после его слова, сколько тишины.
+
+    ⚠ Повтором считается каждая наша реплика после его последней, **кроме
+    первой** — первая и есть ответ ему. ⚠ Отражения из панели не считаются:
+    наша реплика лежит дважды (`message_twin_skip`).
+    """
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'SELECT MAX(created_at) AS at FROM message m'
+            " WHERE m.profile_id = %s AND m.sender_uid = %s AND m.direction = 'in'",
+            (int(profile_id), str(uid)))
+        his = ((await db.fetchone()) or {}).get('at')
+
+        await db.execute(
+            'SELECT COUNT(*) AS n, MAX(m.created_at) AS at,'
+            '       TIMESTAMPDIFF(SECOND, MAX(m.created_at), NOW()) AS quiet'
+            '  FROM message m'
+            " WHERE m.profile_id = %s AND m.sender_uid = %s AND m.direction = 'out'"
+            '   AND (%s IS NULL OR m.created_at > %s)'
+            + message_twin_skip('m'),
+            (int(profile_id), str(uid), his, his))
+        ours = (await db.fetchone()) or {}
+
+    n = int(ours.get('n') or 0)
+
+    return {'ours_last': n > 0,
+            'followups': max(0, n - 1),
+            'quiet_sec': int(ours.get('quiet') or 0)}
 
 
 async def _anyway_first(site_id: int) -> int:
