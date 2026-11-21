@@ -554,15 +554,28 @@ class TestThePanelCutsLongText:
 
         assert len(await _seen(profile_id, uid)) == 2, 'съели чужую длинную реплику'
 
-    def test_both_sides_cut_at_the_same_length(self):
-        """⚠ Срез панели — одно число на показ и на импорт."""
-        from src.dating.message_twin import (MESSAGE_TWIN_PANEL_CUT,
-                                             message_twin_absent,
-                                             message_twin_skip)
+    def test_both_sides_compare_the_same_way(self):
+        """⚠ Показ и импорт сравнивают наш текст **одним** выражением — целиком."""
+        from src.dating.message_twin import message_twin_absent, message_twin_skip
 
-        assert f'LEFT(twin.text, {MESSAGE_TWIN_PANEL_CUT})' in message_twin_skip()
-        assert (f'LEFT(twin.text, {MESSAGE_TWIN_PANEL_CUT})'
-                in message_twin_absent('out'))
+        for rule in (message_twin_skip(), message_twin_absent('out')):
+            assert 'LEFT(twin.text,' not in rule, 'наш текст снова режется'
+
+    async def test_a_whole_long_panel_copy_is_hidden(self, pair):
+        """⚠⚠ Панель Luxee отдаёт реплику **целиком**, без среза в 256.
+
+        Irina → Jp, 21.11.2026: наша история в 608 знаков и её полная копия из
+        панели — обрезок нашей с полной копией не совпадал, и реплика стояла в
+        окне дважды.
+        """
+        profile_id, uid = pair
+        at = '2026-11-21 14:53:58'
+        story = (self.LONG + ' ') * 3
+
+        await _put(profile_id, uid, story, 'ulid-1', 'socket', at)
+        await _put(profile_id, uid, story, 'panel:3', 'panel', at)
+
+        assert len(await _seen(profile_id, uid)) == 1, 'полная копия из панели не спрятана'
 
 
 class TestTwoPanelRowsDoNotEatEachOther:

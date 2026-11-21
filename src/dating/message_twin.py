@@ -290,8 +290,11 @@ def message_twin_skip(table: str = 'message') -> str:
         f'      AND twin.sender_uid = {t}.sender_uid'
         f'      AND twin.direction = {t}.direction'
         # ⚠ Не равенство: панель режет текст, а сайт съедает символы.
-        '      AND ' + message_twin_same(
-            f'LEFT(twin.text, {MESSAGE_TWIN_PANEL_CUT})', f'{t}.text') +
+        # ⚠⚠ Наш текст — **целиком**, не обрезком в 256: панель Luxee отдаёт
+        # реплику полностью, и обрезок нашей длинной (608 знаков) не совпадал с
+        # её полной копией — реплика стояла в окне дважды (Irina → Jp,
+        # 21.11.2026). Обрезанную панель (Ladadate) пропускает само правило.
+        '      AND ' + message_twin_same('twin.text', f'{t}.text') +
         "      AND twin.source <> 'panel'"
         f'      AND twin.created_at BETWEEN {t}.created_at'
         f"           - INTERVAL IF({t}.direction = 'out',"
@@ -331,8 +334,8 @@ def message_twin_absent(direction: str) -> str:
         '      AND twin.sender_uid = %s'
         f"      AND twin.direction = '{'out' if str(direction) == 'out' else 'in'}'"
         # ⚠ Не равенство: панель режет текст, а сайт съедает символы.
-        '      AND ' + message_twin_same(
-            f'LEFT(twin.text, {MESSAGE_TWIN_PANEL_CUT})', '%s') +
+        # ⚠⚠ Наш текст — целиком: см. `message_twin_skip`.
+        '      AND ' + message_twin_same('twin.text', '%s') +
         "      AND twin.source <> 'panel'"
         "      AND twin.created_at BETWEEN COALESCE(NULLIF(%s, ''), NOW())"
         f'           - INTERVAL {window} SECOND'
