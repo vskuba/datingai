@@ -17,7 +17,8 @@ from logging_.logging_ import logger_info
 
 from src.dating.panel_fetch import DatingPanelFetchError
 from src.dating.site.site_goldenbride import DatingSiteChatGoldenbride
-from src.dating.site.site_socket_luxee import (site_socket_luxee_open,
+from src.dating.site.site_socket_luxee import (site_socket_luxee_media_ok,
+                                               site_socket_luxee_open,
                                                site_socket_luxee_skip,
                                                site_socket_luxee_tasks)
 
@@ -66,6 +67,26 @@ class DatingSiteChatLuxee(DatingSiteChatGoldenbride):
         _TASKS[int(site_id)] = (time.monotonic(), pairs, tasks)
 
         return pairs
+
+    def chat_photo(self) -> bool:
+        return True
+
+    async def chat_photo_open(self, site_id: int, presence: dict, girl: str,
+                              uid: str) -> bool:
+        """Спросить сервер чата (`cl_m_is_available_media`). Сбой — «закрыто»."""
+        from src.dating.send_panel_socket import send_panel_socket_identity
+
+        if not str(girl or '').isdigit():
+            return False
+        try:
+            async with site_socket_luxee_open(int(site_id), presence, int(girl)) as sock:
+                identity = await send_panel_socket_identity(sock, int(girl), str(uid))
+                return bool(identity) and await site_socket_luxee_media_ok(
+                    sock, int(girl), identity)
+        except Exception as e:
+            logger_info(f'[dating] доступ к снимкам {girl} → {uid} не спросился: {e}')
+
+            return False
 
     async def required_skip(self, site_id: int, presence: dict, owner: str,
                             uid: str) -> str:

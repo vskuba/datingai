@@ -1550,3 +1550,11 @@
 .gallery-tag.on {
     background: #2563eb; border-color: #2563eb; color: #fff;
 }
+
+/* Снимки реплики в окне разговора: превью ссылкой на полный размер. ⚠ Высота
+   ограничена, ширина своя: портретный кадр не должен растягивать пузырь. */
+.msg-media { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.msg-media img {
+    display: block; max-height: 140px; max-width: 200px; border-radius: 6px;
+    border: 1px solid var(--edge, #e2e8f0); object-fit: cover;
+}

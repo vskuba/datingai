@@ -35,7 +35,8 @@ from src.dating.site.site_socket_luxee import (site_socket_luxee_channels,
 
 
 async def send_panel_socket_run(profile: dict, presence: dict, to_uid: str,
-                                text: str, message_uid: str, since=None) -> dict:
+                                text: str, message_uid: str, since=None,
+                                photo: dict | None = None) -> dict:
     """Шлёт реплику девушки собеседнику сокетом панели. Ответ — пятёрка `send_message`.
 
     Args:
@@ -49,6 +50,9 @@ async def send_panel_socket_run(profile: dict, presence: dict, to_uid: str,
         since: время повода (UTC, `datetime` или `гггг-мм-дд чч:мм:сс`). Есть
             в диалоге реплика её стороны новее — ответ не уходит, в ответе
             `skipped: True` (девушка ответила сама, `site_socket_luxee_send`).
+        photo: снимок к реплике `{raw, kind}` — уйдёт одним сообщением с
+            текстом. Медиа в диалоге закрыто — ответ `no_media: True`, ничего
+            не ушло; в удаче — `media` с адресами снимка.
 
     ⚠ Ничего не бросает: исход словами, как у прочих транспортов.
     """
@@ -67,8 +71,10 @@ async def send_panel_socket_run(profile: dict, presence: dict, to_uid: str,
             # перехватит дверь открытия и назовёт «сокет не ответил» — а это
             # другое событие (реплика, может быть, ушла).
             try:
-                got = await site_socket_luxee_send(sock, int(girl), identity, text,
-                                                   str(to_uid), _ms(since))
+                got = await site_socket_luxee_send(
+                    sock, int(girl), identity, text, str(to_uid), _ms(since),
+                    {**photo, 'site_id': int(profile.get('site_id') or 0)}
+                    if photo else None)
             except asyncio.TimeoutError:
                 return _result(False, 'сервер чата не подтвердил отправку')
     except DatingPanelFetchError as e:
@@ -79,13 +85,22 @@ async def send_panel_socket_run(profile: dict, presence: dict, to_uid: str,
                 'theirs': [site_import_luxee_line(m)
                            for m in got.get('theirs') or [] if m.get('sid')]}
 
+    if got.get('no_media'):
+        return {**_result(False, got['error']), 'no_media': True}
+
     if not got['ok']:
         code = f" (код {got['code']})" if got['code'] else ''
         return _result(False, f"сервер чата отказал{code}: {got['error']}",
                        response=got['error'])
 
     return {'ok': True, 'error': '', 'offline': False,
-            'response': got['sid'], 'message_uid': message_uid}
+            'response': got['sid'], 'message_uid': message_uid,
+            'media': got.get('media') or []}
+
+
+async def send_panel_socket_identity(sock, girl: int, man: str) -> str:
+    """Номер диалога девушки с этим мужчиной — наружу для проверки медиа."""
+    return await _identity(sock, girl, man)
 
 
 async def _identity(sock, girl: int, man: str) -> str:

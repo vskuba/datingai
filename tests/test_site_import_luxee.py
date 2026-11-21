@@ -160,25 +160,63 @@ class TestNothingIsMissed:
         assert total == 5
 
     async def test_resumes_from_the_mark_however_long_it_slept(self, serve):
-        """Отметка 10, в диалоге 437: приезжают ровно 11…437, без окна дат."""
-        server = _Server(437, last_activity=NOW_MS - 30 * DAY_MS)
+        """Отметка — время сообщения 10, в диалоге 437: приезжают 11…437.
+
+        ⚠ Отметка по **времени**, с нахлёстом в минуту назад: девятое лежит
+        ровно за минуту и тоже приезжает — повтор ловит `INSERT IGNORE`.
+        """
+        server = _Server(437)
         marks = serve(server)
-        marks[site_import_luxee.LUXEE_CHAT_MARKS.format(site_id=SITE)] = {IDENTITY: '10'}
+        marks[site_import_luxee.LUXEE_CHAT_MARKS.format(site_id=SITE)] = {
+            IDENTITY: server.messages[9]['created']}
 
         total, rows, _ = await DatingSiteImportLuxee(PRESENCE).journal_rows(
             SITE, PROFILES, _day(NOW_MS), _day(NOW_MS))
 
-        assert sorted(int(r['uid'][3:]) for r in rows) == list(range(11, 438))
+        got = {int(r['uid'][3:]) for r in rows}
+        assert set(range(11, 438)) <= got and min(got) >= 9
 
     async def test_unchanged_dialog_is_not_read(self, serve):
         server = _Server(5)
         marks = serve(server)
-        marks[site_import_luxee.LUXEE_CHAT_MARKS.format(site_id=SITE)] = {IDENTITY: '5'}
+        marks[site_import_luxee.LUXEE_CHAT_MARKS.format(site_id=SITE)] = {
+            IDENTITY: str(server.last_activity)}
 
         total, rows, _ = await DatingSiteImportLuxee(PRESENCE).journal_rows(
             SITE, PROFILES, _day(NOW_MS), _day(NOW_MS))
 
         assert total == 0 and rows == [] and 'cl_c_messages' not in server.sent
+
+    async def test_a_reused_number_is_not_lost(self, serve):
+        """⚠⚠ Удаление уменьшает номер диалога, новое сообщение берёт прежний.
+
+        Olena ↔ Donnie, 21.11.2026: удалены 120 и 121, новое пришло снова
+        номером 120 — отметка по номеру 121 прятала его. По времени — видно.
+        """
+        server = _Server(6)
+        marks = serve(server)
+        marks[site_import_luxee.LUXEE_CHAT_MARKS.format(site_id=SITE)] = {
+            IDENTITY: server.messages[5]['created']}
+        server.messages = server.messages[:4] + [{
+            **server.messages[4], 'sid': 'sid-new', 'index': 5,
+            'created': str(int(server.messages[5]['created']) + 120_000)}]
+        server.last_activity = int(server.messages[-1]['created'])
+
+        _, rows, _ = await DatingSiteImportLuxee(PRESENCE).journal_rows(
+            SITE, PROFILES, _day(NOW_MS), _day(NOW_MS))
+
+        assert 'sid-new' in {r['uid'] for r in rows}
+
+    async def test_an_old_number_mark_reads_whole_once(self, serve):
+        """Прежняя отметка номером — диалог читается целиком один раз."""
+        server = _Server(5)
+        marks = serve(server)
+        marks[site_import_luxee.LUXEE_CHAT_MARKS.format(site_id=SITE)] = {IDENTITY: '5'}
+
+        total, _, _ = await DatingSiteImportLuxee(PRESENCE).journal_rows(
+            SITE, PROFILES, _day(NOW_MS), _day(NOW_MS))
+
+        assert total == 5
 
     async def test_read_state_is_never_touched(self, serve):
         server = _Server(45)
@@ -202,7 +240,8 @@ class TestTheMarkFollowsTheWrite:
         assert key not in marks
 
         await driver.journal_saved(SITE)
-        assert marks[key] == {IDENTITY: '7'}
+        assert marks[key] == {IDENTITY: str(max(server.last_activity, *(
+            int(m['created']) for m in server.messages)))}
 
 
 class TestRowsReadAsOurs:

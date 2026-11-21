@@ -108,7 +108,8 @@ SEND_SOURCE = {'scenario': 'scenario', 'http': 'http', 'ws': 'socket',
 async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
                               to_history: bool = True,
                               may_invite: bool = False, since=None,
-                              by_agent: bool = False) -> dict:
+                              by_agent: bool = False,
+                              photo: dict | None = None) -> dict:
     """Шлёт сообщение собеседнику и записывает его в переписку.
 
     Args:
@@ -131,6 +132,11 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
             тогда несёт `skipped: True`. Прочим транспортам не нужен.
         by_agent: реплику сочинил агент — уезжает в `message.by_agent`
             (`send_message_remember`). Кнопка оператора его не ставит.
+        photo: снимок к реплике `{raw, kind}` — уходит одним сообщением с
+            текстом. ⚠ Умеет только транспорт `panel_socket` (Luxee); прочие
+            снимок не берут и отвечают `no_media`, ничего не отправив, — решает
+            вызывающий. Удача несёт `media` — адреса снимка, они ложатся в
+            `message.media`.
 
     Returns:
         dict: `ok` — **принял ли сайт кадр**, а не «дошло до адресата»: это разные
@@ -231,6 +237,13 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
     # присутствие, письма и списки — и ни одной реплики чата.
     started = time.monotonic()
 
+    # ⚠ Снимок к реплике умеет только сокет панели. Прочим — отказ без
+    # отправки: уйди реплика текстом молча, вызывающий счёл бы подарок
+    # врученным.
+    if photo and transport != 'panel_socket':
+        return {'ok': False, 'error': 'этот путь отправки снимков не умеет',
+                'offline': False, 'response': '', 'message_uid': '', 'no_media': True}
+
     if transport == 'scenario':
         result = await _send_scenario(profile, to_uid, text, message_uid)
     elif transport == 'ws':
@@ -246,7 +259,7 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
     elif transport == 'panel_socket':
         # Сокет чата панели агентства — у сайта без кабинета девушки (Luxee).
         result = await send_panel_socket_run(profile, presence, to_uid, text,
-                                             message_uid, since)
+                                             message_uid, since, photo)
     else:
         result = await _send_http(profile, presence, send, to_uid, text, message_uid)
 
@@ -278,7 +291,8 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
         if to_history and site_registry_chat(presence).delivered(result):
             await send_message_remember(
                 int(profile['id']), to_uid, text, message_uid,
-                SEND_SOURCE.get(transport, 'socket'), by_agent=by_agent)
+                SEND_SOURCE.get(transport, 'socket'), by_agent=by_agent,
+                media=result.get('media') or None)
 
         await _answered_mark(int(profile['id']), to_uid)
 
@@ -339,7 +353,8 @@ async def send_message_forget(profile_id: int, to_uid: str, text: str,
 async def send_message_remember(profile_id: int, to_uid: str, text: str,
                                 message_uid: str,
                                 source: str = 'socket',
-                                by_agent: bool = False) -> None:
+                                by_agent: bool = False,
+                                media: list | None = None) -> None:
     """Кладёт отправленное в переписку — иначе в диалоге видна только их половина.
 
     ⚠⚠ Дверь **публичная**, потому что зовущих двое: сама отправка и круг
@@ -362,10 +377,11 @@ async def send_message_remember(profile_id: int, to_uid: str, text: str,
             await db.execute(
                 'INSERT IGNORE INTO message '
                 '(profile_id, sender_uid, sender_name, text, message_uid, direction,'
-                ' is_answered, source, by_agent) '
-                "VALUES (%s, %s, %s, %s, %s, 'out', 1, %s, %s)",
+                ' is_answered, source, by_agent, media) '
+                "VALUES (%s, %s, %s, %s, %s, 'out', 1, %s, %s, %s)",
                 (profile_id, str(to_uid)[:32], '', str(text)[:2000], str(message_uid)[:64],
-                 str(source), 1 if by_agent else 0))
+                 str(source), 1 if by_agent else 0,
+                 json.dumps(media) if media else None))
             await db.connection.commit()
     except Exception as e:
         logger_info(f'[dating] отправленное не записалось: {e}')

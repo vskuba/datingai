@@ -82,6 +82,7 @@ from src.dating.chat_initiative import (chat_initiative_expired,
                                         chat_initiative_stale)
 from src.dating.initiative import initiative_make
 from src.dating.pool import pool_sweep
+from src.dating.profile_row import profile_row_get
 from src.dating.log import log_write
 from src.dating.round import (round_mem_due, round_mem_mark, round_sites,
                               round_sites_run, round_slot_left,
@@ -310,7 +311,7 @@ async def _invited(site_id: int) -> int:
 
     gone = 0
     for card in rows:
-        profile = await _profile(int(card['profile_id']))
+        profile = await profile_row_get(int(card['profile_id']))
         if not profile:
             continue
 
@@ -415,7 +416,7 @@ async def _send(site_id: int) -> int:
                 f"пролежала дольше {keep_sec // 3600} ч, сочиним заново")
             continue
 
-        profile = await _profile(int(card['profile_id']))
+        profile = await profile_row_get(int(card['profile_id']))
         if not profile:
             continue
 
@@ -605,15 +606,6 @@ def _too_long(card: dict) -> bool:
         return True
 
     return (datetime.now() - at).total_seconds() > INITIATIVE_INVITE_GIVEUP_SEC
-
-
-async def _profile(profile_id: int) -> dict:
-    """Анкета, от чьего имени уйдёт реплика."""
-    async with mysql_get_db_async() as db:
-        await db.execute('SELECT * FROM profile WHERE id = %s', (int(profile_id),))
-        row = await db.fetchone()
-
-    return dict(row) if row else {}
 
 
 async def _presence(site_id: int) -> dict:

@@ -30,7 +30,9 @@
 
 from logging_.logging_ import logger_info
 
-from src.dating.intention_do import intention_mail_make
+from src.dating.intention_do import intention_chat_send, intention_mail_make
+from src.dating.site.site_registry import site_registry_chat
+from src.dating.site_presence import site_presence
 from src.dating.round import (round_sites, round_sites_run,
                               round_slot_due, round_slot_left)
 from src.dating.site_setting import site_seconds
@@ -134,5 +136,14 @@ async def _every(site_id: int) -> int:
 
 
 async def _work(site: dict, minutes: int) -> dict:
-    """Собрать черновики этого сайта."""
+    """Собрать черновики этого сайта — либо, где писем нет, исполнить в чат.
+
+    ⚠ Развилка по драйверу чата: у Luxee писем нет, и обещанное фото уходит
+    снимком в чат (`intention_chat_send`), а не черновиком письма, которое
+    некому было бы отправить.
+    """
+    presence = await site_presence(int(site['site_id']))
+    if site_registry_chat(presence).chat_photo():
+        return await intention_chat_send(int(site['site_id']), presence)
+
     return await intention_mail_make(int(site['site_id']))

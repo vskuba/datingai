@@ -55,6 +55,22 @@ LUXEE_CHAT_MARKS = 'dating:luxee:chat:{site_id}'
 # пустой текст общий разбор выбрасывает. Вид — по `type` сообщения.
 LUXEE_CHAT_KINDS = {3: '[wink]', 5: '[gift]', 6: '[gift request]', 8: '[sticker]'}
 
+# Откуда раздаются снимки чата: в сообщении лежат пути (`/thumb/…`, `/src/…`),
+# а хост страница чата берёт из своей разметки — `img.luxee.date`.
+LUXEE_MEDIA_HOST = 'https://img.luxee.date'
+
+# Состояние стороны «удалено» (`MESSAGE_STATUS_DELETED` в `chat.v2.js`): кнопка
+# удаления панели сообщение не стирает, а метит им сторону автора.
+LUXEE_MESSAGE_DELETED = 4
+
+# Отметка диалога — время в миллисекундах. Меньше этого — прежняя отметка
+# номером, и такой диалог читается целиком один раз.
+LUXEE_CHAT_MARK_MS_FROM = 10 ** 11
+
+# Нахлёст чтения назад от отметки: сообщения одной миллисекунды и разница
+# часов сервера не должны выпасть. Повторы ловит `INSERT IGNORE`.
+LUXEE_CHAT_MARK_OVERLAP_MS = 60_000
+
 
 class DatingSiteImportLuxee(DatingSiteImport):
     """Чат панели Luxee сокетом (см. заголовок файла)."""
@@ -146,22 +162,35 @@ class DatingSiteImportLuxee(DatingSiteImport):
 
             for channel in channels:
                 identity = str(channel.get('identity') or '')
-                index = int(channel.get('index') or 0)
+                last = int(channel.get('lastActivity') or 0)
+                # ⚠⚠ Отметка — **время** последнего прочитанного, а не номер:
+                # номер диалога у Luxee не растёт монотонно. Кнопка удаления
+                # уменьшает его, и следующее сообщение получает освободившийся
+                # номер (Olena ↔ Donnie, 21.11.2026: удалены 120 и 121, новое —
+                # снова 120). Отметка по номеру 121 прятала его, пока в диалоге
+                # не набралось бы ещё два сообщения.
+                # ⚠ Прежние отметки — номера (меньше сотни тысяч): читаем такой
+                # диалог целиком один раз, `INSERT IGNORE` повторов не заведёт.
                 mark = marks.get(identity)
+                if mark is not None and mark < LUXEE_CHAT_MARK_MS_FROM:
+                    mark = None
 
-                if not identity or (mark is not None and index <= mark):
+                if not identity or (mark is not None and last and last <= mark):
                     continue
 
+                since = max(0, mark - LUXEE_CHAT_MARK_OVERLAP_MS) if mark is not None else 0
                 try:
-                    messages = await site_socket_luxee_messages(sock, girl,
-                                                                identity, mark)
+                    messages = await site_socket_luxee_messages(sock, girl, identity,
+                                                                None, since)
                 except DatingPanelFetchError as e:
                     why.append(f'{girl}/{identity}: {e}')
                     continue
 
+                messages = [m for m in messages if int(m.get('created') or 0) >= since]
                 total += len(messages)
                 rows += [row for row in (_row(m, inner) for m in messages) if row]
-                self._pending[identity] = index
+                self._pending[identity] = max(
+                    [last, *(int(m.get('created') or 0) for m in messages)])
 
         return total, rows, '; '.join(why)
 
@@ -170,9 +199,15 @@ def site_import_luxee_text(message: dict) -> str:
     """Текст сообщения Luxee для нашей переписки; без текста — словом о том,
     что пришло. ⚠ Наружу — ради отправки: реплика девушки, увиденная до импорта,
     уходит соседу тем же текстом, каким её потом привезёт импорт."""
-    body = str(message.get('body') or message.get('bodyOrigin') or '').strip()
+    # ⚠ Сперва `bodyOrigin` — текст, как его написали: в `body` сервер правит
+    # знаки (наше «...» приехало «***»), и наша реплика переставала узнавать
+    # свою копию из панели — близнец показывался второй строкой.
+    body = str(message.get('bodyOrigin') or message.get('body') or '').strip()
     extra = []
-    if message.get('media'):
+    # ⚠ Слово «[photo]» — только у снимка без подписи: снимок теперь едет
+    # своим полем (`site_import_luxee_media`), а слово в тексте развело бы
+    # подпись с нашей строкой той же реплики.
+    if message.get('media') and not body:
         extra.append('[photo]')
     if message.get('sticker') and not body:
         extra.append('[sticker]')
@@ -182,6 +217,31 @@ def site_import_luxee_text(message: dict) -> str:
         extra.append(kind)
 
     return ' '.join([body, *extra]).strip()
+
+
+def site_import_luxee_media(message: dict) -> list[dict]:
+    """Снимки сообщения — `[{thumb, src}]` полными адресами; нет — пусто."""
+    media = message.get('media') or []
+    items = media.values() if isinstance(media, dict) else media
+    found = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        thumb = str(item.get('thumbnail') or item.get('preview') or '')
+        src = str(item.get('src') or thumb)
+        if src:
+            found.append({'thumb': LUXEE_MEDIA_HOST + thumb if thumb.startswith('/') else thumb,
+                          'src': LUXEE_MEDIA_HOST + src if src.startswith('/') else src})
+
+    return found
+
+
+def site_import_luxee_deleted(message: dict) -> bool:
+    """Удалено ли сообщение кнопкой панели: сторона автора помечена «удалено»."""
+    author = str((message.get('author') or {}).get('uid') or '')
+    mine = ((message.get('memberStatus') or {}).get(author) or {})
+
+    return int(mine.get('status') or 0) == LUXEE_MESSAGE_DELETED
 
 
 def site_import_luxee_line(message: dict) -> dict:
@@ -208,6 +268,11 @@ def _row(message: dict, inner: dict) -> dict | None:
     if not girl or not man or not author:
         return None
 
+    # ⚠ Удалённое кнопкой панели в переписку не идёт: сервер его хранит, но
+    # собеседнику оно уже не показано.
+    if site_import_luxee_deleted(message):
+        return None
+
     man_cell = f'{man} {names.get(man, "").strip()}'
     if author == man:
         side = {'from_uid': man, 'from': man_cell, 'to_uid': girl, 'to': girl}
@@ -216,6 +281,7 @@ def _row(message: dict, inner: dict) -> dict | None:
 
     return {'uid': str(message.get('sid') or ''), **side,
             'text': site_import_luxee_text(message),
+            'media': site_import_luxee_media(message),
             'when': _when(message.get('created'))}
 
 
@@ -230,7 +296,7 @@ def _when(created) -> str:
 
 
 def _marks_get(site_id: int) -> dict:
-    """Отметки диалогов сайта: `identity → последний сохранённый номер`."""
+    """Отметки диалогов сайта: `identity → время последнего прочитанного, мс`."""
     raw = redis_conn_get().hgetall(LUXEE_CHAT_MARKS.format(site_id=int(site_id))) or {}
 
     found = {}

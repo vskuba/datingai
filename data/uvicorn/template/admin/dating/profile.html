@@ -15452,6 +15452,17 @@
                         : '')
                     + '</span>'
                     + `${esc(m.text)}`
+                    // ⚠ Снимки реплики — превью ссылкой на полный размер в новой
+                    // вкладке (`message.media`): подарок и обещанное фото уходят
+                    // в чат, и по одной подписи не понять, что именно ушло.
+                    + (Array.isArray(m.media) && m.media.length
+                        ? '<span class="msg-media">' + m.media.map(x =>
+                            `<a href="${esc(x.src || x.thumb)}" target="_blank"`
+                            + ' rel="noopener noreferrer">'
+                            + `<img src="${esc(x.thumb || x.src)}" alt="снимок"`
+                            + ' referrerpolicy="no-referrer" loading="lazy"></a>').join('')
+                            + '</span>'
+                        : '')
                     // ⚠ В окне метка **полная** (`10:35 26/12/2026`), а не короткая,
                     // как в строке диалога. Там место тесное и хватает «сегодня или
                     // нет»; здесь читают разговор целиком, и рядом лежат реплики из

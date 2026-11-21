@@ -26,6 +26,7 @@
 """
 
 import asyncio
+import json
 import random
 import re
 import time
@@ -33,7 +34,8 @@ from contextlib import asynccontextmanager
 
 from socketio_.socketio_v2 import SocketIoV2Error, socketio_v2_open
 
-from src.dating.panel_fetch import DatingPanelFetchError, panel_fetch_html
+from src.dating.panel_fetch import (DatingPanelFetchError, panel_fetch_html,
+                                   panel_fetch_post)
 
 # Страница чата: несёт токен сокета (третий довод `ModelChatInstance`).
 SITE_SOCKET_LUXEE_PAGE = '/chats/'
@@ -61,6 +63,13 @@ SITE_SOCKET_LUXEE_MESSAGE_PAGES = 500
 
 # Вид сообщения «текст» — так шлёт страница обычную реплику.
 SITE_SOCKET_LUXEE_TEXT = 1
+
+# Вид сообщения «медиа» — снимок с подписью (`MESSAGE_TYPE_MEDIA` в `chat.v2.js`).
+SITE_SOCKET_LUXEE_MEDIA = 2
+
+# Куда страница грузит файл перед сообщением. ⚠ Заголовок `token` — токен
+# **девушки** из `cm_get_profiles` (`access_token`), а не сессии панели.
+SITE_SOCKET_LUXEE_UPLOAD = '/media/agency-chat/upload-media/'
 
 
 @asynccontextmanager
@@ -242,8 +251,68 @@ async def site_socket_luxee_skip(sock, sid, reason: int = SITE_SOCKET_LUXEE_SKIP
                                  'description': str(description or '')})
 
 
+async def site_socket_luxee_media_ok(sock, girl: int, identity: str) -> bool:
+    """Открыта ли в диалоге отправка снимков (`private` у `cl_m_is_available_media`).
+
+    ⚠ Открывается панелью не сразу — когда между ними уже шёл разговор (замер
+    21.11.2026: открыто примерно у половины разговоров). Закрыто — кнопка
+    вложения на странице серая, и сервер снимок не примет.
+    """
+    got = (await site_socket_luxee_ask(sock, 'cl_m_is_available_media',
+                                       {'identity': str(identity), 'ownerUid': int(girl)})
+           ).get('message') or {}
+
+    return bool(isinstance(got, dict) and got.get('private'))
+
+
+async def site_socket_luxee_upload(sock, site_id: int, girl: int, key: str,
+                                   raw: bytes, kind: str = 'image/jpeg') -> dict:
+    """Загрузить снимок к будущему сообщению `key`. Отдаёт запись файла сервера.
+
+    Raises:
+        DatingPanelFetchError: токена девушки нет или загрузка не принята.
+    """
+    cards = (await site_socket_luxee_ask(
+        sock, 'cm_get_profiles',
+        {'uids': [int(girl)], 'settings': SITE_SOCKET_LUXEE_SETTINGS})).get('message') or {}
+    token = next((str(c.get('access_token') or '') for c in cards.values()
+                  if isinstance(c, dict) and str(c.get('import_uid')) == str(girl)), '')
+    if not token:
+        raise DatingPanelFetchError('у девушки нет токена загрузки снимков')
+
+    answer = await panel_fetch_post(
+        int(site_id), SITE_SOCKET_LUXEE_UPLOAD, {'type': '1', 'mailUid': str(key)},
+        files={'src': ('photo.jpg', raw, kind or 'image/jpeg')},
+        headers={'token': token, 'X-Requested-With': 'XMLHttpRequest'})
+    try:
+        got = json.loads(answer or '{}')
+    except ValueError:
+        got = {}
+    if not got.get('success') or not isinstance(got.get('data'), dict):
+        raise DatingPanelFetchError('панель не приняла снимок')
+
+    return got['data']
+
+
+def site_socket_luxee_media_item(file: dict) -> dict:
+    """Элемент `media` сообщения из записи загрузки.
+
+    ⚠⚠ Вид — «из хранилища» (`isStorage`), а имена — **голые**: так сервер
+    принимает (вид «новый файл» отвечает `418 Not valid files`), и сам дописывает
+    `/src/`, `/thumb/`, `/preview/`. Пришли путь целиком — получишь
+    `/thumb//thumb/…`, адрес отвечает `403`, и собеседник видит битую картинку
+    (Olena → Donnie, 21.11.2026).
+    """
+    bare = {k: str(file.get(k) or '').rsplit('/', 1)[-1]
+            for k in ('src', 'preview', 'thumbnail')}
+
+    return {'index': str(file.get('entity_id') or ''), 'file': {**file, **bare},
+            'type': 1, 'isNew': True, 'status': 7, 'isStorage': True}
+
+
 async def site_socket_luxee_send(sock, girl: int, identity: str, text: str,
-                                 man: str = '', since_ms: int = 0) -> dict:
+                                 man: str = '', since_ms: int = 0,
+                                 photo: dict | None = None) -> dict:
     """Отправить текстовую реплику в диалог и дождаться приговора сервера.
 
     Args:
@@ -292,9 +361,20 @@ async def site_socket_luxee_send(sock, girl: int, identity: str, text: str,
                     'error': 'девушка уже ответила сама: '
                              f"«{str(last.get('body') or '')[:80]}»"}
 
+    # ⚠⚠ Снимок к реплике: одним сообщением с подписью. Медиа закрыто —
+    # ответ `no_media`, и решает вызывающий (обычно — уйти одним текстом).
+    media, kind = [], SITE_SOCKET_LUXEE_TEXT
+    if photo:
+        if not await site_socket_luxee_media_ok(sock, girl, identity):
+            return {'ok': False, 'skipped': False, 'no_media': True, 'code': 0,
+                    'error': 'отправка снимков в этом диалоге ещё закрыта', 'sid': ''}
+        file = await site_socket_luxee_upload(sock, int(photo['site_id']), girl, key,
+                                              photo['raw'], photo.get('kind') or '')
+        media, kind = [site_socket_luxee_media_item(file)], SITE_SOCKET_LUXEE_MEDIA
+
     await sock.emit('message', {
         'type': 'cl_m_message', 'key': _key('cl_m_message'),
-        'data': {'body': str(text), 'type': SITE_SOCKET_LUXEE_TEXT, 'media': [],
+        'data': {'body': str(text), 'type': kind, 'media': media,
                  'key': str(key), 'identity': str(identity),
                  'ownerUid': int(girl), 'gift': None, 'sticker': None}})
 
@@ -319,7 +399,9 @@ async def site_socket_luxee_send(sock, girl: int, identity: str, text: str,
     sent = message.get('message') if isinstance(message.get('message'), dict) else {}
 
     return {'ok': True, 'skipped': False, 'code': 0, 'error': '',
-            'sid': str(sent.get('sid') or '')}
+            'sid': str(sent.get('sid') or ''),
+            # Снимки, как их запомнил сервер, — полными адресами для окна разговора.
+            'media': _media_urls(sent) if media else []}
 
 
 async def site_socket_luxee_listen(sock, on_change, stop_at: float) -> None:
@@ -363,7 +445,10 @@ async def site_socket_luxee_listen(sock, on_change, stop_at: float) -> None:
             channel = message.get('channel') if isinstance(message.get('channel'), dict) else {}
             identity = str(channel.get('identity') or '')
             index = int(channel.get('index') or 0)
-            if identity and index > seen.get(identity, -1):
+            # ⚠ Сигнал — на **смену** номера, а не на рост: удаление уменьшает
+            # номер, и новое сообщение после него приходит с прежним
+            # (Olena ↔ Donnie, 21.11.2026). Прочтение номер не меняет.
+            if identity and index != seen.get(identity, -1):
                 if identity in seen:
                     await on_change()
                 seen[identity] = index
@@ -382,6 +467,13 @@ async def _wait(sock, match) -> dict:
         data = args[0].get('data')
         if isinstance(data, dict) and match(args[0].get('type'), data):
             return data
+
+
+def _media_urls(message: dict) -> list[dict]:
+    """Снимки сообщения полными адресами — та же форма, что у импорта."""
+    from src.dating.site.site_import_luxee import site_import_luxee_media
+
+    return site_import_luxee_media(message)
 
 
 def _key(kind: str) -> str:

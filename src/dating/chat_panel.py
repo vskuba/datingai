@@ -42,6 +42,7 @@
 заводим мы у себя не всех.
 """
 
+import json
 import re
 from datetime import datetime, timedelta
 
@@ -204,6 +205,9 @@ def chat_panel_rows(extract: dict, profiles: dict) -> list[dict]:
                             + message_uid)[:CHAT_PANEL_MSG_UID_MAX],
             'direction': direction,
             'sent_at': _when(scenario_field(row, 'when')),
+            # Снимки реплики `[{thumb, src}]` — у драйверов, которые их видят
+            # (Luxee); прочие поле не кладут, и строка ложится без снимков.
+            'media': row.get('media') if isinstance(row.get('media'), list) else [],
         })
 
     return found
@@ -433,15 +437,16 @@ async def chat_panel_save(rows: list) -> dict:
             await db.execute(
                 'INSERT IGNORE INTO message'
                 ' (profile_id, sender_uid, sender_name, text, message_uid, direction,'
-                '  is_read, source, created_at)'
+                '  is_read, source, created_at, media)'
                 # Не разобралось время — ставим время импорта: потерять сообщение
                 # из-за неожиданного формата даты хуже, чем показать его не тем часом.
                 " SELECT %s, %s, %s, %s, %s, %s, 1, 'panel',"
-                " COALESCE(NULLIF(%s, ''), NOW())"
+                " COALESCE(NULLIF(%s, ''), NOW()), %s"
                 ' FROM DUAL WHERE 1 = 1'
                 + message_twin_absent(row['direction']),
                 (row['profile_id'], row['sender_uid'], row['sender_name'], row['text'],
-                 row['message_uid'], row['direction'], row['sent_at'])
+                 row['message_uid'], row['direction'], row['sent_at'],
+                 json.dumps(row['media']) if row.get('media') else None)
                 # ⚠ Значения условия собирает **само правило**: текст уходит в
                 # него несколько раз, и счёт глазами сдвигался бы молча при
                 # первой же правке условия. Направление туда не идёт — от него

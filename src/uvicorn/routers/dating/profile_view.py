@@ -24,7 +24,7 @@ from src.dating.chat_initiative import chat_initiative_hanging
 from src.dating.chat_reply import (chat_reply_hanging,
                                    chat_reply_pending)
 from src.dating.message_twin import message_twin_skip
-from src.dating.json_column import json_column_load
+from src.dating.json_column import json_column_list, json_column_load
 from src.dating.online import online_check
 from src.dating.profile_card import profile_card_edited
 from src.dating.profile_param import profile_param_fields, profile_param_frame
@@ -72,8 +72,9 @@ async def profile_view_messages(profile_id: int, uid: str = '', limit: int = 30,
             # иначе тишина после чужой реплики читается как поломка.
             # `by_agent` — значок агента у реплики: человек и агент ведут
             # анкету параллельно, и по ленте должно быть видно, кто сказал.
+            # `media` — снимки реплики (`[{thumb, src}]`): окно рисует превью.
             'SELECT id, sender_uid, sender_name, text, direction, is_read, '
-            '       answer_silent_at, created_at, by_agent '
+            '       answer_silent_at, created_at, by_agent, media '
             f'FROM message WHERE profile_id = %s{where}'
             # ⚠ Наше исходящее лежит в таблице дважды: своей строкой от
             # отправки и строкой из панели агентства. Ключи у них разные
@@ -83,7 +84,8 @@ async def profile_view_messages(profile_id: int, uid: str = '', limit: int = 30,
             f'ORDER BY created_at DESC, id DESC LIMIT {limit}', tuple(params))
         rows = await db.fetchall()
 
-    rows = [dict(row) for row in (rows or [])]
+    rows = [{**dict(row), 'media': json_column_list(row.get('media'))}
+            for row in (rows or [])]
 
     # ⚠⚠ **Ждущий черновик — в конце, и только при открытом диалоге.**
     #

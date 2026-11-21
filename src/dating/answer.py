@@ -51,7 +51,11 @@ from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_chat_delivere
                                        rhapsody_api_chat_talk)
 from src.dating.log import log_write
 from src.dating.chat_intention import (chat_intention_delivered,
+                                       chat_intention_done,
                                        chat_intention_put)
+from src.dating.companion_gallery import companion_gallery_sent
+from src.dating.photo_gift import photo_gift_attach, photo_gift_due
+from src.dating.site_presence import site_presence
 from src.dating.chat_request import CHAT_REQUEST_WAIT_SEC
 from src.dating.chat_reply import (chat_reply_expired, chat_reply_failed,
                                    chat_reply_invited, chat_reply_invited_rows,
@@ -374,9 +378,19 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
         # Выбор не между «репликой» и «стуком в список запросов», а между
         # «стуком» и «ничем»: при закрытом разговоре строки в ленте не будет
         # вовсе. Тот же вывод, к которому раньше пришла инициатива.
+        # ⚠⚠ Фото-подарок едет **с этим же ответом**, одним сообщением: прогон
+        # пометил `she_just_send_photo`, и снимок — подпись к его строке о
+        # снимке (`photo_gift.py`). Медиа закрыто — уходит один текст.
+        gift = await _gift(profile, message_id, uid)
+        photo = {'raw': gift['raw'], 'kind': gift['kind']} if gift.get('raw') else None
         result = await send_message(profile, presence, uid, answer,
                                     may_invite=True, since=row.get('created_at'),
-                                    by_agent=True)
+                                    by_agent=True, photo=photo)
+        if photo and result.get('no_media'):
+            gift = {**gift, 'raw': None, 'why': result.get('error') or 'медиа закрыто'}
+            result = await send_message(profile, presence, uid, answer,
+                                        may_invite=True, since=row.get('created_at'),
+                                        by_agent=True)
         # ⚠⚠ Доставку отмечаем **только у ушедшего**, и это вся суть правки.
         # Сосед записал обмен внутри прогона — до того, как мы постучались к
         # сайту. Не отметь мы её отдельно, агент увидел бы в истории реплику,
@@ -387,6 +401,7 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
             # не должна. Вопрос один — «реплика дошла», — и ответов на него
             # два: отметка у соседа и открытие обещания у нас.
             await chat_intention_delivered(message_id)
+            await _gift_close(profile, uid, gift)
             sent += 1
             await chat_reply_sent(int(ready['id']))
             await log_write(profile_id, 'out', f'{me} → {who}: «{answer[:300]}»')
@@ -737,6 +752,16 @@ async def _agent_ask(agent_id: int, question: str, language: str,
                        # они лежали лишней копией договора — и разошлись бы с
                        # промптом на первой же правке.
                        'make_initiative': '1' if initiative else '0',
+                       # ⚠⚠ Фото-подарок: **можно ли** — решаем мы фактами
+                       # (`photo_gift.py`), **хочется ли** (30%) — жребий соседа.
+                       # Только в обычном ответе в чат: инициатива и письма
+                       # снимок не несут.
+                       'photo_gift_due': '1' if (not initiative and not mail
+                                                 and await photo_gift_due(
+                                                     profile, await site_presence(
+                                                         int(profile.get('site_id') or 0)),
+                                                     uid))
+                       else '0',
                        # ⚠⚠ Письмо, а не реплика. Строкой '1'/'0' — по тому же
                        # доводу, что у соседних флагов.
                        'mail_mode': '1' if mail else '0',
@@ -913,6 +938,38 @@ async def _required(profile: dict, presence: dict) -> set:
         int(profile.get('site_id') or 0), presence, girl)
 
     return {uid for owner, uid in pairs if owner == girl}
+
+
+async def _gift(profile: dict, message_id: int, uid: str) -> dict:
+    """Подарок этого обмена, готовый к отправке. Сбой — без подарка, не без ответа."""
+    try:
+        return await photo_gift_attach(profile, message_id, uid)
+    except Exception as e:
+        logger_info(f'[dating] фото-подарок обмена #{message_id} не собрался: {e}')
+
+        return {}
+
+
+async def _gift_close(profile: dict, uid: str, gift: dict) -> None:
+    """Ответ ушёл — подарок закрыт: со снимком или с причиной, почему без него.
+
+    ⚠ Закрывается **всегда**: подарок не обещание, и ждать в пуле ему нечего —
+    оставленный открытым, он висел бы вечно (исполнителя у круга нет).
+    """
+    if not gift.get('intention_id'):
+        return
+
+    if gift.get('raw'):
+        file = gift.get('file') or {}
+        await companion_gallery_sent(int(profile['id']), int(profile['site_id']),
+                                     str(uid), int(file.get('id') or 0))
+        await chat_intention_done(int(gift['intention_id']),
+                                  f"снимок ушёл с ответом: {file.get('name') or ''}")
+        await log_write(int(profile['id']), 'out',
+                        f"Фото-подарок → {uid}: {file.get('name') or ''}")
+    else:
+        await chat_intention_done(int(gift['intention_id']),
+                                  f"без снимка: {gift.get('why') or 'не вышло'}")
 
 
 async def _required_trim(profile: dict, presence: dict, required: set) -> set:

@@ -69,6 +69,7 @@ from mysql_.mysql_ import mysql_get_db_async
 from src.dating.chat_intention import chat_intention_done, chat_intention_rows
 from src.dating.companion_gallery import companion_gallery_pick
 from src.dating.json_column import json_column_load
+from src.dating.profile_row import profile_row_get
 
 # Какие метки чем исполняются. ⚠ Карта, а не `if`: метки приезжают **от
 # соседа**, из workflow, и каждая новая иначе требовала бы правки ветвления.
@@ -158,6 +159,72 @@ async def intention_mail_make(site_id: int, limit: int = 0,
     if made or skipped:
         logger_info(f'[dating] намерения сайта #{site_id}: собрано {made}, '
                     f'пропущено {skipped}')
+
+    return {'made': made, 'skipped': skipped, 'why': why}
+
+
+async def intention_chat_send(site_id: int, presence: dict, limit: int = 1) -> dict:
+    """Исполнить обещания сайта **репликой в чат** — там, где писем нет (Luxee).
+
+    Обещанное фото уходит снимком с текстом письма подписью, обещанная история
+    — текстом. ⚠ По одной за заход: залп обещаний в одну минуту выдаёт автомат,
+    срок захода — `intention_make_every`.
+
+    ⚠⚠ Медиа в диалоге ещё закрыто — обещание **ждёт**, а не закрывается:
+    девушка обещала снимок, и разговор его откроет. Подарок, наоборот, не ждёт
+    (`photo_gift.py`) — его никто не просил.
+
+    Returns:
+        dict: `made` — сколько ушло, `skipped`, `why` — словами.
+    """
+    from src.dating.companion_gallery import companion_gallery_sent
+    from src.dating.send import send_message
+
+    made, skipped, why = 0, 0, []
+    for row in await _todo(int(site_id), 0, INTENTION_DO_PAGE):
+        if made >= max(1, int(limit or 1)):
+            break
+        label = str(row.get('intention') or '')
+        if label not in (INTENTION_DO_PHOTO, INTENTION_DO_STORY):
+            continue
+
+        profile = await profile_row_get(int(row['profile_id']))
+        if not profile:
+            continue
+
+        try:
+            body = _body(row.get('context') or {})
+        except DatingIntentionError as e:
+            skipped += 1
+            why.append(f'#{row["id"]}: {e}')
+            continue
+
+        photo, file = None, {}
+        if label == INTENTION_DO_PHOTO:
+            pick = await companion_gallery_pick(int(row['profile_id']), int(row['site_id']),
+                                                str(row['uid']),
+                                                (row.get('context') or {}).get('tags'))
+            file = pick.get('file') or {}
+            if not file.get('file_id'):
+                skipped += 1
+                why.append(f'#{row["id"]}: {pick.get("why") or "снимок не выбрался"}')
+                continue
+            raw, kind = await google_drive_bytes(file['file_id'], INTENTION_DO_WIDTH)
+            photo = {'raw': raw, 'kind': kind or 'image/jpeg'}
+
+        result = await send_message(profile, presence, str(row['uid']), body,
+                                    by_agent=True, photo=photo)
+        if not result['ok']:
+            skipped += 1
+            why.append(f'#{row["id"]}: {result.get("error") or "не ушло"}')
+            continue
+
+        if file:
+            await companion_gallery_sent(int(row['profile_id']), int(row['site_id']),
+                                         str(row['uid']), int(file['id']))
+        await chat_intention_done(int(row['id']),
+                                  'ушло в чат' + (f" со снимком {file.get('name')}" if file else ''))
+        made += 1
 
     return {'made': made, 'skipped': skipped, 'why': why}
 

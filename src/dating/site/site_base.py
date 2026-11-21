@@ -239,6 +239,19 @@ class DatingSiteChat:
         """
         return set()
 
+    def chat_photo(self) -> bool:
+        """Умеет ли наша отправка класть снимок в реплику чата.
+
+        ⚠ `False` у всех, кроме Luxee (сокет панели, `send_panel_socket.py`):
+        у прочих снимок уходит только письмом.
+        """
+        return False
+
+    async def chat_photo_open(self, site_id: int, presence: dict, girl: str,
+                              uid: str) -> bool:
+        """Открыта ли отправка снимков в диалоге этой пары прямо сейчас."""
+        return False
+
     async def required_skip(self, site_id: int, presence: dict, owner: str,
                             uid: str) -> str:
         """Снять с пары обязательный ответ — пропустить задание очереди.
