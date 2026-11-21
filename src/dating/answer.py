@@ -84,6 +84,13 @@ ANSWER_ROLE_LEAD = 'man'
 # Меньше — трата LLM на одно и то же, больше — собеседник ждёт слишком долго.
 ANSWER_RETRY_SEC = 300
 
+# Сколько тишины после **нашей** реплики, прежде чем писать по заданию Catch Up
+# «напиши повторно». ⚠⚠ Без порога повтор уходил вслед за нашим же ответом через
+# 16 секунд: задание «ответь» ещё висело в очереди (её снимок живёт 20 с, и
+# панель снимает задание не мгновенно), а последней в диалоге уже была наша
+# реплика — Kateryna → Specialted, 21.11.2026, шесть реплик из двенадцати.
+ANSWER_FOLLOWUP_AFTER_SEC = 600
+
 # Сколько первых ответов пары обязательны — настройка сайта и её умолчание.
 # ⚠ Судья у соседа вправе промолчать, и обычно это верно; но в начале разговора
 # молчание обрывает то, что мы сами и начали инвайтом.
@@ -1099,6 +1106,7 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool,
     parts = [fresh]
     if must:
         parts.append(f"{must_in} AND m.direction = 'out'"
+                     ' AND m.created_at < NOW() - INTERVAL %s SECOND'
                      " AND (m.answer_tried_at IS NULL"
                      "      OR m.answer_tried_at < NOW() - INTERVAL %s SECOND"
                      + draft_ready + ')')
@@ -1117,6 +1125,7 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool,
     params.append(int(ANSWER_RETRY_SEC))
     if must:
         params.extend(must)
+        params.append(int(ANSWER_FOLLOWUP_AFTER_SEC))
         params.append(int(ANSWER_RETRY_SEC))
     if lead:
         params.append(int(ANSWER_NUDGE_SEC))

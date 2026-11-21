@@ -48,6 +48,22 @@ class TestTheQueueGoesFirst:
         assert await answer_mod._waiting_find(girl, 5, [], False, {'u-req-out'}) == [], \
             'агента спросят о том же каждую минуту'
 
+    async def test_no_follow_up_right_after_our_own_line(self, girl):
+        """⚠⚠ Наша реплика свежая — повтора нет, даже если пара ещё в очереди.
+
+        Kateryna → Specialted, 21.11.2026: задание «ответь» не успевало
+        исчезнуть из очереди, и вслед за нашим ответом через 16 секунд уходил
+        «повтор» — шесть реплик из двенадцати подряд.
+        """
+        await _said(girl, 'u-req-fresh', ago_min=2, direction='out')
+
+        assert await answer_mod._waiting_find(girl, 5, [], False, {'u-req-fresh'}) == [], \
+            'повтор ушёл вслед за нашей же репликой'
+
+        await _said(girl, 'u-req-quiet', ago_min=11, direction='out')
+        got = await answer_mod._waiting_find(girl, 5, [], False, {'u-req-quiet'})
+        assert [r['sender_uid'] for r in got] == ['u-req-quiet']
+
     async def test_only_her_pairs_count(self, monkeypatch):
         async def _pairs(self, site_id, presence, owner):
             return {('622354', '3075112'), ('622231', '2194241')}
