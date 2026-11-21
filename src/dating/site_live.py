@@ -56,6 +56,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.message_twin import message_twin_skip
+from src.dating.site_alert import site_alert_rows
 
 # За какой срок считаем работу. ⚠ Часы, а не минуты: число на вкладке отвечает
 # «идёт ли тут жизнь», и минутное окно дрожало бы от каждой реплики.
@@ -68,7 +69,7 @@ SITE_LIVE_HOURS = 12
 # недогруженной. Записанная копиями у каждого счётчика, форма разъехалась бы на
 # первом же новом числе — и разъехалась бы молча, нулём в одном из сайтов.
 SITE_LIVE_EMPTY = {'profiles': 0, 'whole': 0, 'online': 0,
-                   'chat': 0, 'mail': 0, 'intention': 0}
+                   'chat': 0, 'mail': 0, 'intention': 0, 'alerts': ()}
 
 
 async def site_live_rows() -> dict:
@@ -91,6 +92,12 @@ async def site_live_rows() -> dict:
             await _chat(db, counted)
             await _mail(db, counted)
             await _intention(db, counted)
+            # ⚠ Тревога — тем же тиком, а не своей ручкой: второй опрос раз в
+            # 15 секунд ради одного значка был бы лишним (`site_alert.py`).
+            # ⚠ Свой список каждому сайту: умолчание в `SITE_LIVE_EMPTY` —
+            # кортеж, общий на всех, и правка его по месту задела бы соседей.
+            for site_id, why in (await site_alert_rows(db)).items():
+                counted.setdefault(site_id, {**SITE_LIVE_EMPTY})['alerts'] = list(why)
 
         return counted
     except Exception as e:

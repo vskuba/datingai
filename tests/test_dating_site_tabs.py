@@ -142,7 +142,7 @@ class TestTheCountersAreCountedByTheServer:
 
         for site, counted in got.items():
             assert set(counted) == {'online', 'profiles', 'whole', 'chat',
-                                    'mail', 'intention'}, (
+                                    'mail', 'intention', 'alerts'}, (
                 f'сайт {site}: форма счётчиков разъехалась — {sorted(counted)}')
 
     async def test_the_denominator_is_every_profile(self, auth_client):

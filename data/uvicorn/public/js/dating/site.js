@@ -258,9 +258,18 @@ function _datingTabsPaint(el, sites, live) {
         // Диалоги», значок писем — на «Фавориты → Диалоги». Вложить ссылку в
         // кнопку нельзя — разметка запрещает интерактивное в интерактивном, и
         // браузеры разбирают такое по-своему.
+        // ⚠⚠ Тревога — значком в углу вкладки, причины — его подсказкой: у
+        // значка свой `title`, и он перекрывает подсказку вкладки ровно там,
+        // где на него навели. Считает их сервер (`site_alert.py`).
+        const alerts = Array.isArray(own.alerts) ? own.alerts : [];
+        const alarm = alerts.length
+            ? `<span class="site-tab-alert" title="${esc(alerts.join('\n'))}">⚠</span>`
+            : '';
+
         return `<div class="site-tab${String(id) === picked ? ' on' : ''}"`
             + ` data-site="${id}" data-hue="${_datingSiteHue(sites, id)}"`
             + ` title="${esc(title)}">`
+            + alarm
             + `<button type="button" class="site-tab-name"`
             + ` data-site="${id}">${esc(row.name)}</button>`
             + '<span class="site-tab-counts">'

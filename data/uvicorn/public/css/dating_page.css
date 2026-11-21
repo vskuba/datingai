@@ -391,6 +391,17 @@
     display: block; width: 100%; border: none; background: none;
     font: inherit; cursor: pointer;
 }
+
+/* Тревога сайта (`site_alert.py`): мигающий значок в правом верхнем углу
+   вкладки, причины — его подсказкой. ⚠ Поверх колонки, а не в ряд с именем:
+   появляясь и пропадая, он не должен менять ширину вкладки. */
+.site-tab { position: relative; }
+.site-tab-alert {
+    position: absolute; top: 3px; right: 5px; z-index: 1;
+    color: #dc2626; font-size: 16px; line-height: 1; cursor: help;
+    animation: site-tab-alert-blink 1s steps(2, start) infinite;
+}
+@keyframes site-tab-alert-blink { to { visibility: hidden; } }
 .site-tab:hover { background: var(--tint, #f8fafc); }
 
 /* ⚠ Открытая вкладка выделена **заливкой**, а не рамкой: рамка в ряду из
