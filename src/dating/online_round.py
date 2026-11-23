@@ -92,15 +92,14 @@ async def online_round_run() -> dict:
     if started:
         logger_info(f'[dating] круг ленты: обновляем {started} из {len(sites)}')
 
-    # ⚠ Платившие нашим девушкам — раз в час, тем же кругом: это тоже «кому
-    # писать», и своего круга ради одного похода в час заводить незачем
-    # (`payers.py`). Только у сайтов, чьи списки идут через API.
+    # ⚠ Платившие нашим девушкам — по сроку сайта `payers_every`, тем же кругом:
+    # это тоже «кому писать», и своего круга ради одного запроса в час заводить
+    # незачем (`payers.py`; дорога — панель, запасная — API).
     from src.dating.payers import payers_due, payers_sync
-    from src.uvicorn.routers.dating.people import _api_ready
 
     for site_id in sites:
         try:
-            if await payers_due(site_id) and await _api_ready(site_id):
+            if await payers_due(site_id):
                 await payers_sync(site_id)
         except Exception as e:
             logger_info(f'[dating] платившие сайта #{site_id}: {e}')
