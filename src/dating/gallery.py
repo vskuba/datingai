@@ -100,7 +100,7 @@ async def gallery_view(profile_id: int, folder: str = '') -> dict:
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT file_id, path, name, mime, kind, size, width, height, '
+            'SELECT id, file_id, path, name, mime, kind, size, width, height, '
             '       description, tags, described_at, described_error, edited_at, '
             '       updated_at '
             '  FROM gallery_file '
@@ -212,6 +212,10 @@ def _file_of(row: dict) -> dict:
     """
     return {
         'id': row['file_id'],
+        # ⚠ Номер **строки индекса** — рядом с номером файла на Диске, а не
+        # вместо: превью просится по второму, а шаблон письма держит первый
+        # (`mail.gallery_file_id`), и окно выбора кадра шаблону шлёт его.
+        'row_id': int(row['id']),
         'name': row['name'],
         'kind': row['kind'],
         'mime': row['mime'],

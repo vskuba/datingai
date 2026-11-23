@@ -4225,6 +4225,93 @@
         align-items: flex-start;
     }
 
+    /* Кадр шаблона: превью, крестик в углу и кнопка выбора из галереи. */
+    .mail-shot {
+        display: flex;
+        align-items: flex-end;
+        gap: 10px;
+    }
+
+    .mail-shot-frame {
+        position: relative;
+        width: 96px;
+        height: 96px;
+        flex: none;
+        border: 1px dashed #cbd5e1;
+        border-radius: 8px;
+        background: #f8fafc;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #94a3b8;
+        font-size: 11px;
+        text-align: center;
+    }
+
+    .mail-shot-frame img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        border-radius: 8px;
+        cursor: zoom-in;
+    }
+
+    .mail-shot-drop {
+        position: absolute;
+        top: -7px;
+        right: -7px;
+        width: 20px;
+        height: 20px;
+        padding: 0;
+        border: none;
+        border-radius: 50%;
+        background: #dc2626;
+        color: #fff;
+        font-size: 13px;
+        line-height: 20px;
+        cursor: pointer;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+    }
+
+    .mail-shot-drop:hover { background: #b91c1c; }
+
+    .mail-shot-side {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        align-items: flex-start;
+    }
+
+    /* Окно выбора кадра: сетка плиток галереи `public`. */
+    .mail-shot-pick-box { width: min(760px, 94vw); }
+
+    .mail-shot-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+        gap: 8px;
+    }
+
+    .mail-shot-tile {
+        position: relative;
+        padding: 0;
+        border: 2px solid transparent;
+        border-radius: 8px;
+        background: #f1f5f9;
+        aspect-ratio: 1;
+        overflow: hidden;
+        cursor: pointer;
+    }
+
+    .mail-shot-tile img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+    .mail-shot-tile:hover { border-color: #93c5fd; }
+    .mail-shot-tile.on { border-color: #4f46e5; }
+
     .mail-var {
         padding: 2px 7px;
         border: 1px solid #e5e7eb;
@@ -16834,6 +16921,14 @@
             + '<div class="mail-found" data-slot="mailFound"></div>'
             + '</div>'
 
+            // Кадр шаблона: с 04.11.2026 он принадлежит шаблону, и письма
+            // рассылки несут его. Подбирает его сервер сам; здесь человек
+            // видит, что уйдёт, и может выбрать другой руками.
+            + '<div class="mail-field">'
+            + '<span class="mail-label">Снимок к письму</span>'
+            + '<div class="mail-shot" data-slot="mailShot"></div>'
+            + '</div>'
+
             // ⚠ **Выбора собеседника здесь нет, и это осознанно.** Он был — и
             // оказался вреден: шаблон пишется для всех, а получив карточку
             // человека, агент вписывал в текст его и её словами («Diana here!
@@ -16880,9 +16975,158 @@
             + '</div>'
             + '</div>';
 
+        // Кадр формы — свой у открытого шаблона. Сбрасывается только при
+        // смене шаблона: перерисовка той же формы не должна терять выбор,
+        // который человек ещё не сохранил.
+        if (tmplShotFor !== tmplOpenId) {
+            tmplShotFor = tmplOpenId;
+            tmplShot = mail.gallery_file
+                ? {id: Number(mail.gallery_file_id) || 0,
+                   file: String(mail.gallery_file), path: mail.gallery_path || ''}
+                : null;
+        }
+
         varsPaint();
         foundPaint();
+        shotPaint();
         editBind();
+    }
+
+    // ── Кадр шаблона ─────────────────────────────────────────────────────────
+    //
+    // ⚠⚠ Два номера у снимка, и путать их нельзя: `id` — строка индекса
+    // (`gallery_file.id`), его держит шаблон и его шлёт форма; `file` — номер
+    // файла на Диске, по нему отдаётся превью.
+    //
+    // ⚠ Крестик снимает кадр **в форме**, а не в базе: сохранят без нового
+    // выбора — сервер даст шаблону другой сам. Пустым шаблон рассылки не
+    // бывает: снимок обязан каждому письму (правило владельца 08.11.2026).
+    let tmplShot = null;
+    let tmplShotFor = null;
+
+    // Чья галерея: у нового — открытая анкета, у сохранённого — владелица.
+    function tmplShotOwner() {
+        if (tmplOpenId === MAIL_NEW) return Number(openId) || 0;
+
+        return Number((openMail() || {}).profile_id) || 0;
+    }
+
+    function tmplShotSrc(file, w) {
+        return `${BASE}/api/dating/gallery/${tmplShotOwner()}`
+            + `/img/${encodeURIComponent(file)}?w=${w}`;
+    }
+
+    function shotPaint() {
+        const box = slot('mailShot');
+        if (!box) return;
+
+        const owner = tmplShotOwner();
+        if (!owner) {
+            box.innerHTML = '<span class="mail-found">У шаблона нет владелицы — '
+                + 'снимок брать неоткуда.</span>';
+
+            return;
+        }
+
+        box.innerHTML = '<div class="mail-shot-frame">'
+            + (tmplShot
+                ? `<img src="${esc(tmplShotSrc(tmplShot.file, 200))}" alt=""`
+                + ` title="${esc(tmplShot.path)} — нажмите, чтобы открыть целиком">`
+                + (CAN_EDIT_SITE
+                    ? '<button type="button" class="mail-shot-drop"'
+                    + ' data-slot="shotDrop" title="убрать снимок">✕</button>'
+                    : '')
+                : 'снимка нет')
+            + '</div>'
+            + '<div class="mail-shot-side">'
+            + (CAN_EDIT_SITE
+                ? '<button type="button" class="dating-btn" data-slot="shotPick">'
+                + 'Выбрать из галереи</button>'
+                : '')
+            + '<span class="mail-found">'
+            + (tmplShot
+                ? esc(tmplShot.path)
+                : 'Сохраните без выбора — снимок подберётся сам: '
+                + 'письму рассылки он обязателен.')
+            + '</span>'
+            + '</div>';
+
+        const img = box.querySelector('.mail-shot-frame img');
+        if (img) {
+            // Целиком — самой крупной стороной из набора прокси (1600).
+            img.addEventListener('click', () => intentionPhotoModal(
+                tmplShotSrc(tmplShot.file, 1600), {name: tmplShot.path}, {}));
+        }
+
+        const drop = slot('shotDrop');
+        if (drop) {
+            drop.addEventListener('click', () => {
+                tmplShot = null;
+                shotPaint();
+            });
+        }
+
+        const pick = slot('shotPick');
+        if (pick) pick.addEventListener('click', shotPickOpen);
+    }
+
+    // Окно выбора: плитки папки `public` её галереи. Другие папки не
+    // показываются — интимные снимки рассылкой не уходят, сервер их отвергнет.
+    async function shotPickOpen() {
+        const owner = tmplShotOwner();
+        if (!owner) return;
+
+        const back = document.createElement('div');
+        back.className = 'dating-modal-back';
+        back.innerHTML = '<div class="dating-modal-box mail-shot-pick-box">'
+            + '<div class="dating-modal-head">Снимок к шаблону — папка public</div>'
+            + '<div data-role="grid"><span class="dating-spin"></span></div>'
+            + '<div class="dating-modal-foot">'
+            + '<button type="button" class="dating-btn" data-role="close">Закрыть</button>'
+            + '</div></div>';
+        back.addEventListener('mousedown', event => {
+            if (event.target === back) back.remove();
+        });
+        back.querySelector('[data-role="close"]')
+            .addEventListener('click', () => back.remove());
+        document.body.appendChild(back);
+
+        const grid = back.querySelector('[data-role="grid"]');
+        let files = [];
+        try {
+            const answer = await getData(`${BASE}/api/dating/gallery/${owner}`);
+            const group = ((answer.result || {}).groups || [])
+                .find(one => one.name === 'public');
+            files = ((group || {}).files || []).filter(one => one.kind === 'image');
+        } catch (e) {
+            grid.innerHTML = `<span class="mail-found bad">${esc(e.message)}</span>`;
+
+            return;
+        }
+
+        if (!files.length) {
+            grid.innerHTML = '<span class="mail-found">В папке public её галереи '
+                + 'снимков нет — выбрать не из чего.</span>';
+
+            return;
+        }
+
+        grid.className = 'mail-shot-grid';
+        grid.innerHTML = files.map((one, at) =>
+            `<button type="button" class="mail-shot-tile${
+                tmplShot && tmplShot.id === Number(one.row_id) ? ' on' : ''}"`
+            + ` data-at="${at}" title="${esc(one.name || '')}">`
+            + `<img src="${esc(tmplShotSrc(one.id, 200))}" alt="" loading="lazy">`
+            + '</button>').join('');
+
+        grid.querySelectorAll('.mail-shot-tile').forEach(tile =>
+            tile.addEventListener('click', () => {
+                const one = files[Number(tile.dataset.at)];
+                tmplShot = {id: Number(one.row_id) || 0, file: String(one.id),
+                            path: `public/${one.name || ''}`};
+                back.remove();
+                shotPaint();
+            }));
     }
 
     // Пилюли переменных. Залитые — те, что шаблон уже использует: видно, что
@@ -16997,14 +17241,19 @@
         // ⚠ Владелица — открытая анкета: с этого дня заведённый текст её. При
         // правке сервер поле не читает (текст не переезжает), но форме одно тело
         // на заведение и правку.
+        // Кадр — всегда, и ноль тоже: ноль значит «сняли крестиком», и сервер
+        // подберёт другой; тот же номер, что держит строка, выбором не считается.
         const send = {site_id: siteId(), profile_id: openId || 0, name, body,
-                      enabled: !!on};
+                      enabled: !!on,
+                      gallery_file_id: tmplShot ? Number(tmplShot.id) || 0 : 0};
         try {
             const answer = tmplOpenId === MAIL_NEW
                 ? await postData(`${BASE}/api/dating/mail`, send)
                 : await putData(`${BASE}/api/dating/mail/${tmplOpenId}`, send);
 
             tmplOpenId = Number((answer.result || {}).id || 0);
+            // Кадр перечитать из ответа: снятый крестиком сервер заменил сам.
+            tmplShotFor = null;
             showNotification('Шаблон сохранён', 'success');
         } catch (e) {
             if (note) {

@@ -302,6 +302,63 @@ async def mail_shot_for_template(profile_id: int, mail_id: int = 0,
         return 0
 
 
+async def mail_shot_choose(profile_id: int, file_id: int) -> int:
+    """Кадр шаблона, выбранный человеком руками: проверить и закрепить.
+
+    Args:
+        profile_id: владелица шаблона (`profile.id`).
+        file_id: номер строки индекса галереи (`gallery_file.id`), который
+            человек выбрал в окне «выбрать из галереи».
+
+    Returns:
+        int: тот же номер — годный, и свежесть его отмечена.
+
+    Raises:
+        DatingMailShotError: снимок чужой анкеты, погас, не изображение или
+            лежит не в `public` — причина словами для ответа ручки.
+
+    ⚠⚠ **Только `public`**, как и у двери выбора: шаблон уходит рассылкой
+    холодным письмом, а интимные снимки уходят лишь по обещанию агента.
+    Окно выбора показывает ту же группу, но ручка — не единственный вход, и
+    проверка стоит здесь.
+
+    ⚠ Занятость другими живыми шаблонами **не проверяется**: человек решает, —
+    тот же размен, что у ручного выбора выхода анкеты. Дверь
+    `mail_shot_for_template` при этом ничего не пересадит: правка шаблона с
+    тем же кадром идёт мимо неё (`keep` ручки).
+
+    ⚠ `last_shot_at` ставится и здесь: иначе дверь отдала бы этот же снимок
+    следующему новому шаблону как «никогда не бранный».
+    """
+    gid, shot = int(profile_id or 0), int(file_id or 0)
+    if not gid or not shot:
+        raise DatingMailShotError('снимок не выбран')
+
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT id, profile_id, path, kind, is_gone'
+                         '  FROM gallery_file WHERE id = %s', (shot,))
+        row = await db.fetchone()
+
+    if not row or int(row['profile_id'] or 0) != gid:
+        raise DatingMailShotError(f'снимка #{shot} нет в галерее этой анкеты')
+    if int(row['is_gone'] or 0):
+        raise DatingMailShotError('снимка больше нет на Диске')
+    if str(row['kind'] or '') != 'image':
+        raise DatingMailShotError('это не изображение')
+    if gallery_group_of(str(row['path'] or '')) != MAIL_SHOT_GROUP:
+        raise DatingMailShotError(f'к шаблону годятся только снимки из папки '
+                                  f'«{MAIL_SHOT_GROUP}»')
+
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE gallery_file SET last_shot_at = NOW()'
+                         ' WHERE id = %s', (shot,))
+        await db.connection.commit()
+
+    logger_info(f'[dating] шаблону анкеты #{gid} кадр #{shot} выбран руками')
+
+    return shot
+
+
 async def mail_shot_ready(letter: dict) -> dict:
     """Строка пула → письмо, готовое к отправке: тот же словарь плюс снимок.
 

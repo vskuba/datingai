@@ -54,7 +54,8 @@ from src.dating.mail import (MAIL_BODY_MAX, MAIL_NAME_MAX,
                                     mail_check,
                                     mail_vars_found)
 from src.dating.mail_agent import DatingMailAgentError, mail_write
-from src.dating.mail_shot import mail_shot_for_template, mail_shot_join
+from src.dating.mail_shot import (DatingMailShotError, mail_shot_for_template,
+                                  mail_shot_join, mail_shot_choose)
 from src.uvicorn.routers.dating.mail_var import (mail_var_names,
                                                         mail_var_rows)
 
@@ -76,6 +77,13 @@ class DatingMailSave(BaseModel):
     body: str = Field(..., min_length=1, max_length=MAIL_BODY_MAX,
                       description='Текст письма с переменными вида {{firstName}}')
     enabled: bool = Field(True, description='Участвует ли шаблон в рассылке')
+    gallery_file_id: int | None = Field(
+        None, ge=0,
+        description='Кадр шаблона (gallery_file.id). Не прислан — как прежде, '
+                    'кадр решает общая дверь; номер — выбран человеком в окне '
+                    'галереи; ноль — человек снял кадр крестиком, и шаблон '
+                    'получает новый той же дверью (снимок обязан каждому '
+                    'письму рассылки)')
 
 
 @router.get('', include_in_schema=False)
@@ -210,8 +218,7 @@ async def mail_create(payload: DatingMailSave,
     """
     await _checked(payload)
 
-    shot = (await mail_shot_for_template(int(payload.profile_id))
-            if int(payload.profile_id or 0) and payload.enabled else 0)
+    shot = await _shot(payload, int(payload.profile_id or 0), 0, 0)
 
     async with mysql_get_db_async() as db:
         await db.execute(
@@ -248,10 +255,8 @@ async def mail_update(mail_id: int, payload: DatingMailSave,
     row = await _row(mail_id)
     await _checked(payload)
 
-    shot = int(row.get('gallery_file_id') or 0)
-    if payload.enabled and int(row.get('profile_id') or 0):
-        shot = await mail_shot_for_template(int(row['profile_id']),
-                                            int(mail_id), shot)
+    shot = await _shot(payload, int(row.get('profile_id') or 0), int(mail_id),
+                       int(row.get('gallery_file_id') or 0))
 
     async with mysql_get_db_async() as db:
         await db.execute(
@@ -378,6 +383,56 @@ async def _checked(payload: DatingMailSave) -> None:
     if why:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail=why)
+
+
+async def _shot(payload: DatingMailSave, profile_id: int, mail_id: int,
+                held: int) -> int:
+    """Кадр, который ляжет в строку шаблона при заведении или правке.
+
+    Args:
+        payload: тело формы; решает поле `gallery_file_id`.
+        profile_id: владелица шаблона; ноль — общий текст, кадра у него нет.
+        mail_id: номер правимого шаблона; ноль — заводится новый.
+        held: кадр, который строка держит сейчас.
+
+    Raises:
+        HTTPException: 422 — выбранный руками снимок негодный.
+
+    ⚠⚠ Развилок четыре, и все про одно — **кто выбрал кадр**:
+
+    1. поле не прислано — прежняя дорога: держит свой (`keep`), а нет его —
+       выбирает общая дверь `mail_shot_for_template`;
+    2. прислан тот же, что держит строка — тоже прежняя дорога: страница шлёт
+       текущий кадр при каждой правке текста, и ручным выбором это не стало;
+    3. прислан другой номер — человек выбрал в окне галереи: `mail_shot_choose`
+       проверяет его и отмечает свежесть;
+    4. прислан ноль — человек снял кадр крестиком и нового не выбрал:
+       включённый шаблон тут же получает **другой** той же дверью, без
+       `keep`. Оставить шаблон пустым нельзя — правило владельца 08.11.2026
+       «снимок обязан каждому письму рассылки», и дозор `mailing_shots_fill`
+       всё равно привязал бы кадр через минуту, только молча.
+    """
+    if not profile_id:
+        return 0
+
+    want = payload.gallery_file_id
+
+    if want and int(want) != int(held or 0):
+        try:
+            return await mail_shot_choose(profile_id, int(want))
+        except DatingMailShotError as e:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(e)) from e
+
+    if not payload.enabled:
+        # Выключенный шаблон кадр не держит (решение 04.11.2026), но и не
+        # теряет: включат — дверь проверит, свободен ли он.
+        return 0 if want == 0 else int(held or 0)
+
+    keep = 0 if want == 0 else int(held or 0)
+
+    return await mail_shot_for_template(profile_id, int(mail_id), keep)
 
 
 async def _row(mail_id: int) -> dict:

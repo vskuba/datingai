@@ -420,3 +420,82 @@ class TestOneDoorOnEveryRoad:
         assert '_SEEN_MATCH' in inspect.getsource(companion_gallery_shown), (
             'у сверки завёллся свой критерий показанного — одно и то же письмо'
             ' отбор считает свежим, а сверка показанным')
+
+
+class TestTheHumanPicksTheShot:
+    """Кадр шаблона выбирают руками: окно галереи на форме правки шаблона.
+
+    ⚠⚠ Развилка ручки одна (`_shot`), и стережётся каждая ветка: страница
+    шлёт текущий кадр при **каждой** правке текста — прочти его ручка как
+    ручной выбор, и правило «живые шаблоны не делят кадр» перестало бы
+    действовать; а крестик без нового выбора обязан дать шаблону **другой**
+    кадр — снимок обязан каждому письму рассылки (08.11.2026).
+    """
+
+    @staticmethod
+    def _payload(shot, enabled=True):
+        from src.uvicorn.routers.dating.mail import DatingMailSave
+
+        return DatingMailSave(site_id=999_343, name='t', body='Hello',
+                              enabled=enabled, gallery_file_id=shot)
+
+    async def test_picked_shot_lands(self, girl):
+        from src.uvicorn.routers.dating.mail import _shot
+
+        frames = await _seed(girl, 3)
+        own = await _template(girl, 't-pick', shot=frames[2])
+
+        got = await _shot(self._payload(frames[0]), girl, own, frames[2])
+        assert got == frames[0], 'выбранный руками кадр не лёг в шаблон'
+
+        fresh = await _sql('SELECT last_shot_at FROM gallery_file WHERE id = %s',
+                           (frames[0],))
+        assert fresh[0]['last_shot_at'] is not None, (
+            'ручной выбор не отметил свежесть: дверь отдала бы этот кадр '
+            'следующему шаблону как никогда не бранный')
+
+    async def test_same_shot_is_not_a_pick(self, girl):
+        from src.uvicorn.routers.dating.mail import _shot
+
+        frames = await _seed(girl, 2)
+        own = await _template(girl, 't-same', shot=frames[0])
+
+        assert await _shot(self._payload(frames[0]), girl, own,
+                           frames[0]) == frames[0]
+
+    async def test_cross_gives_another_shot(self, girl):
+        from src.uvicorn.routers.dating.mail import _shot
+
+        frames = await _seed(girl, 2)
+        own = await _template(girl, 't-cross', shot=frames[1])
+
+        got = await _shot(self._payload(0), girl, own, frames[1])
+        assert got and got != frames[1], (
+            'крестик без выбора оставил прежний кадр либо шаблон без кадра')
+
+    async def test_foreign_or_intim_shot_refused(self, girl, girl_make):
+        from fastapi import HTTPException
+
+        from src.uvicorn.routers.dating.mail import _shot
+
+        frames = await _seed(girl, 1)
+        own = await _template(girl, 't-bad', shot=frames[0])
+
+        other = await girl_make()
+        alien = (await _seed(other, 1))[0]
+        with pytest.raises(HTTPException) as e:
+            await _shot(self._payload(alien), girl, own, frames[0])
+        assert e.value.status_code == 422
+
+        from mysql_.mysql_ import mysql_get_db_async
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO gallery_file (profile_id, file_id, name, path,'
+                " mime, kind) VALUES (%s, %s, 'x.png', 'intim/x.png',"
+                " 'image/png', 'image')", (girl, uuid.uuid4().hex))
+            intim = int(db.lastrowid)
+            await db.connection.commit()
+
+        with pytest.raises(HTTPException) as e:
+            await _shot(self._payload(intim), girl, own, frames[0])
+        assert e.value.status_code == 422, 'интимный снимок лёг в рассылку'
