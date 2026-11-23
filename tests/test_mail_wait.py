@@ -193,6 +193,13 @@ class TestTheRefusalIsRecognised:
 
         assert mail_wait_mark(SITE, '549126', said) == 5 * 60
 
+    def test_the_unread_limit_is_three_days(self):
+        """«Try a few days» — три дня в пуле (владелец 23.11.2026)."""
+        said = ('сайт отказал: Exceeded the limit of sending messages to the user. '
+                'Try a few days (ERROR_MESSAGE_USER_UNREAD_LIMIT) (→ 403)')
+
+        assert mail_wait_mark(SITE, '430044', said) == 3 * 24 * 3600
+
     def test_the_age_refusal_is_not_a_cooldown(self):
         """⚠⚠ Возраст девушки через час не изменится.
 
