@@ -72,7 +72,18 @@ from src.dating.site_setting import site_seconds, site_setting
 
 # Как часто круг просыпается. ⚠ Это **не** частота отправки: её задаёт каждый пул
 # своим сроком (`_POOLS`), а круг лишь смотрит, кому из них пора.
-SEND_ROUND_TICK_SEC = 30
+#
+# ⚠⚠ Было 30 секунд, и рассылка не могла уходить чаще тика: владелец 23.11.2026
+# поставил паузу «1 минута» и получил письмо в 3–4 минуты. Тик стал **нижним
+# пределом** паузы рассылки (`send_every`, `min` в реестре) — меньшее значение
+# круг не исполнил бы, он не просыпается чаще.
+SEND_ROUND_TICK_SEC = 5
+
+# ⚠ Темп писем избранным, которого у них нет своей настройкой: их время живёт в
+# условии выборки (пауза девушки), а сайт целиком они проходили по письму за
+# прежний тик. Тик ускорили ради рассылки — избранные остаются на прежних 30
+# секундах, иначе свободные девушки уходили бы залпом по письму в пять секунд.
+SEND_ROUND_FAVORITE_SEC = 30
 
 # ⚠⚠ **Пауза между двумя письмами одного захода. Написана по живому отказу.**
 #
@@ -154,8 +165,9 @@ async def send_round_run(offset_hours: int = 0) -> dict:
 
             # ⚠ Темп у пула свой: ответ ждёт `reply_every`, а не рассылочные
             # три минуты; рассылка не смотрит на соседние сроки.
-            if setting and not round_mem_due(_sent_at, (site_id, table),
-                                              await _every(site_id, setting)):
+            every = (await _every(site_id, setting) if setting
+                     else SEND_ROUND_FAVORITE_SEC)
+            if not round_mem_due(_sent_at, (site_id, table), every):
                 continue
 
             # ⚠ Норма рассылки считает её собственные ушедшие письма: ответы
@@ -173,8 +185,7 @@ async def send_round_run(offset_hours: int = 0) -> dict:
             if not letter:
                 continue
 
-            if setting:
-                round_mem_mark(_sent_at, (site_id, table))
+            round_mem_mark(_sent_at, (site_id, table))
 
             # ⚠⚠ **Пауза перед вторым пулом захода, и она не вежливость.**
             #
@@ -189,6 +200,18 @@ async def send_round_run(offset_hours: int = 0) -> dict:
             touched = True
 
             got = await _send(letter, table)
+
+            # ⚠⚠ **«Подождать» паузу не тратит.** Отказ «ящик получателя полон
+            # за час» — про него, а не про нас: письмо не ушло, сайт ничего не
+            # получил. Замер 23.11.2026 на Ladadate: две попытки из трёх легли
+            # таким отказом, и каждая съедала целую паузу — при «1 минуте» уходило
+            # письмо в 3–4 минуты. Следующее письмо (другому человеку: остывший
+            # выпал из очереди, `mail_wait_uids`) идёт следующим тиком.
+            #
+            # ⚠ Только `wait`: `fail` может значить поломку сайта целиком, и без
+            # паузы круг похоронил бы весь пул причинами за минуту.
+            if got == 'wait':
+                _sent_at.pop((site_id, table), None)
             sent += got == 'sent'
             waited += got == 'wait'
             failed += got == 'fail'
@@ -648,6 +671,26 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     # набор пула, уборка и кнопка, и четыре копии разошлись бы на первой правке.
     answered = pool_mail_answered_where('m') if table == 'mailing' else ''
 
+    # ⚠⚠ **Рассылка идёт по девушкам по очереди, а не по номеру письма.**
+    #
+    # Пул набирается пачками на анкету, и `ORDER BY m.id` уносил подряд письма
+    # той, чьи черновики легли раньше: за 12 часов 23.11.2026 у Nadezhda ушло 17,
+    # у Natalia 5 при полном пуле у обеих. Первой теперь идёт анкета, чья
+    # последняя рассылка самая давняя (не писавшая за сутки — раньше всех), и
+    # внутри неё — самое старое письмо.
+    #
+    # ⚠ Отметка берётся **одной выборкой на сайт** за сутки (индекс
+    # `idx_dating_mailing_pool`), а не подзапросом на каждый черновик: круг
+    # спрашивает очередь каждые несколько секунд.
+    turn_join, turn_order, turn_args = '', '', ()
+    if table == 'mailing':
+        turn_join = ('  LEFT JOIN (SELECT profile_id, MAX(sent_at) AS last_at'
+                     '    FROM mailing WHERE site_id = %s AND status = \'sent\''
+                     '     AND sent_at > NOW() - INTERVAL 1 DAY'
+                     '   GROUP BY profile_id) turn ON turn.profile_id = m.profile_id')
+        turn_order = 'turn.last_at IS NOT NULL, turn.last_at, '
+        turn_args = (int(site_id),)
+
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
@@ -656,11 +699,11 @@ async def _oldest(site_id: int, table: str) -> dict | None:
                 f'{reply_to}{message_id}{doing}'
                 f'  FROM {table} m'
                 f'  JOIN profile p ON p.id = m.profile_id'
-                f'{reply_join}'
+                f'{reply_join}{turn_join}'
                 f" WHERE m.site_id = %s AND m.status = 'draft' AND m.error = ''"
                 f'   AND p.enabled = 1{online_only}{busy}{cool}{answered}'
-                f' ORDER BY m.id LIMIT 1',
-                (int(site_id), *cooling))
+                f' ORDER BY {turn_order}m.id LIMIT 1',
+                (*turn_args, int(site_id), *cooling))
             row = await db.fetchone()
     except Exception as e:
         logger_info(f'[dating] очередь отправки {table} не спросилась: {e}')

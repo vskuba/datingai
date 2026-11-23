@@ -253,12 +253,13 @@ class TestOneAtATime:
 
         assert len(post) == 1, 'пауза между письмами не соблюдена'
 
-    async def test_pause_has_no_floor_and_loses_to_options(self):
-        """⚠ Предела константой больше нет: темп задан **набором**, а `site_seconds`
-        значение вне набора не берёт — значит, «5» в базу не проедет вовсе."""
-        values = {int(v) for v, _ in SITE_KNOWN['send_every']['options']}
+    async def test_pause_floor_is_the_round_tick(self):
+        """⚠ Пауза — число секунд, и нижний предел равен тику круга: меньшее круг
+        не исполнит, он не просыпается чаще (владелец 23.11.2026)."""
+        known = SITE_KNOWN['send_every']
 
-        assert min(values) >= 30
+        assert known.get('kind') == 'number'
+        assert int(known['min']) == round_.SEND_ROUND_TICK_SEC
 
 
 class TestValuesAreSiteSettings:
@@ -270,12 +271,8 @@ class TestValuesAreSiteSettings:
     те же значения, что были в константах: незанятый сайт ведёт себя как раньше.
     """
 
-    async def test_default_pause_is_the_old_constant(self, site, profile, post):
-        """Не задал сайт паузу — круг ждёт три минуты, прежнюю константу.
-
-        100 секунд — мало (за константы в 30 или 60 письмо ушло бы раньше),
-        190 — довольно (за часы письмо промолчало бы и дальше).
-        """
+    async def test_default_pause_is_five_seconds(self, site, profile, post):
+        """Не задал сайт паузу — круг ждёт пять секунд (владелец 23.11.2026)."""
         import time
 
         await _letter(profile)
@@ -284,19 +281,19 @@ class TestValuesAreSiteSettings:
         await send_round_run(0)
         assert len(post) == 1, 'первое письмо не ушло'
 
-        round_._sent_at[(SITE, 'mailing')] = time.time() - 100
+        round_._sent_at[(SITE, 'mailing')] = time.time() - 2
         assert (await send_round_run(0))['sent'] == 0, \
-            'пауза короче умолчания в три минуты'
+            'пауза короче умолчания в пять секунд'
 
-        round_._sent_at[(SITE, 'mailing')] = time.time() - 190
+        round_._sent_at[(SITE, 'mailing')] = time.time() - 6
         assert (await send_round_run(0))['sent'] == 1, \
-            'пауза длиннее умолчания в три минуты'
+            'пауза длиннее умолчания в пять секунд'
 
     async def test_pause_is_a_site_setting(self, auth_client, site, profile, post):
         """⚠ Пауза берётся из настроек сайта: поднял минуту — круг ждёт минуту.
 
         Прошло 70 секунд после прошлого письма — этого не хватило бы умолчанию
-        в три минуты (`test_default_pause_is_the_old_constant`) и хватило бы
+        в три минуты и хватило бы
         минуты из настройки: уходит второе. Молчал бы круг — значит ждёт число
         из кода, а не то, что человек поставил на странице.
         """
@@ -313,6 +310,9 @@ class TestValuesAreSiteSettings:
             await _letter(profile)
 
             assert (await send_round_run(0))['sent'] == 1, 'первое письмо не ушло'
+            round_._sent_at[(SITE, 'mailing')] = time.time() - 30
+            assert (await send_round_run(0))['sent'] == 0, \
+                'круг не ждёт минуту, настроенную сайтом'
             round_._sent_at[(SITE, 'mailing')] = time.time() - 70
 
             assert (await send_round_run(0))['sent'] == 1, \
@@ -325,7 +325,7 @@ class TestValuesAreSiteSettings:
     async def test_registry_defaults_are_the_old_constants(self):
         """Умолчания лежат в реестре настроек: их видит страница и берёт круг,
         когда сайт ничего не задавал. Оба числа — ровно те, что жили в константах."""
-        assert SITE_KNOWN['send_every']['default'] == '180'
+        assert SITE_KNOWN['send_every']['default'] == '5'
         assert SITE_KNOWN['send_max_day']['default'] == '40'
 
 
@@ -951,3 +951,45 @@ class TestTheQueryCarriesWhatMarksNeed:
             'не выбирает: отметка ляжет на пустоту и промолчит. Так 01.11.2026 '
             'потерялось `name`, и история легла в новую пару у соседа')
 
+
+
+class TestMailingTakesTurnsAndWaitsCheap:
+    """Рассылка по девушкам по очереди, а «подождать» паузу не тратит.
+
+    Владелец 23.11.2026: «почему так мало и неравномерно». Замер: две попытки
+    из трёх ложились отказом «ящик получателя полон за час», и каждая съедала
+    минуту паузы; а `ORDER BY id` уносил подряд письма той, чьи черновики легли
+    раньше.
+    """
+
+    async def test_the_girl_who_waited_longer_goes_first(self, auth_client, site,
+                                                         profile, post):
+        other = (await auth_client.post('/api/dating/profile', json={
+            'site_id': LIVE_SITE, 'login': f'snd-{uuid.uuid4().hex[:8]}@example.com',
+            'password': 'x'})).json()['result']
+        try:
+            first = await _letter(profile, uid='turn-1')
+            await _letter(profile, uid='turn-2')
+            theirs = await _letter(other, uid='turn-3')
+
+            await send_round_run(0)
+            round_._sent_at.clear()
+            await send_round_run(0)
+
+            assert [one['id'] for one in post] == [first, theirs], \
+                'вторым ушло письмо той же девушки, а не той, что ещё не писала'
+        finally:
+            await auth_client.delete(f'/api/dating/profile/{other}')
+
+    async def test_a_wait_does_not_spend_the_pause(self, site, profile, monkeypatch):
+        async def _wait(letter, table):
+            return 'wait'
+
+        monkeypatch.setattr(round_, '_send', _wait)
+        monkeypatch.setattr(round_, '_sent_at', {})
+        monkeypatch.setattr(round_, 'mail_wait_uids', lambda site_id: [])
+        await _letter(profile)
+
+        assert (await send_round_run(0))['waited'] == 1
+        assert (SITE, 'mailing') not in round_._sent_at, \
+            'отказ «подождать» съел паузу: следующее письмо ждало бы её целиком'

@@ -60,7 +60,7 @@
 | опрос статуса | 15 | — | темп в памяти, `probe_every` | `schedule_on` у анкеты |
 | восстановление входа | 60 | — | — | — |
 | отправка инвайтов | **1** | да | темп в памяти + норма `invite_send_max_day` | `invite_send_on` |
-| отправка писем | 30 | да | темп на пул + норма `send_max_day` | `mailing_send_on`, `reply_send_on`, `favorite_mail_send_on`, `chat_intention_do_on` |
+| отправка писем | 5 | да | темп на пул + норма `send_max_day` | `mailing_send_on`, `reply_send_on`, `favorite_mail_send_on`, `chat_intention_do_on` |
 | набор инвайтов | 60 | да | слот, `invite_every` | `invite_schedule_on` |
 | рассылка | 60 | да | слот, `mailing_every` | `mailing_schedule_on` |
 | ответы на письма | 60 | — | слот, `reply_every`; ⚠ плюс занятие письма — §3.1 | `reply_make_on` |
