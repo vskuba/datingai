@@ -206,7 +206,8 @@ def mail_wait_words(said: str, left: int = 0) -> str:
     """
     low = str(said or '').lower()
     hit = next((one for one in MAIL_WAIT_MARKS if one[0].lower() in low), None)
-    words = hit[2] if hit else 'сайт просит подождать'
+    girl = next((one for one in MAIL_WAIT_GIRL_MARKS if one[0].lower() in low), None)
+    words = hit[2] if hit else girl[1] if girl else 'сайт просит подождать'
 
     return (f'письмо ждёт: {words}. Повторим через {_when(left)} — письмо цело и '
             f'остаётся в пуле' if left else f'письмо ждёт: {words}')
@@ -275,6 +276,69 @@ def mail_wait_fresh_uids(site_id: int) -> list[str]:
         return []
 
     return [redis_text(one) for one in rows or []]
+
+# ── Предел самой анкеты ──────────────────────────────────────────────────────
+#
+# ⚠⚠ `ERROR_MESSAGE_USER_NON_CONTACT_DAILY_SEND_LIMIT` — предел **отправительницы**,
+# а не получателя: «Daily message sending limit for non-contacts exceeded». Замер
+# 23.11.2026: 31 отказ за четыре дня, все у одной анкеты (#52) 28 разным людям,
+# а тем же людям от других девушек письма проходили. Прежде отказ хоронил письмо
+# причиной, и анкета жгла по письму в минуту до полуночи. Теперь анкета выпадает
+# из очереди рассылки до конца суток UTC, а письма остаются в пуле.
+#
+# ⚠ Конец суток — догадка: когда сайт сбрасывает счёт, он не говорит. Ошибка в
+# сторону «рано» стоит одного отказа в сутки, а не похороненного письма.
+MAIL_WAIT_GIRL_KEY = 'dating:mail_girl_wait:{site_id}'
+MAIL_WAIT_GIRL_MARKS = (
+    ('ERROR_MESSAGE_USER_NON_CONTACT_DAILY_SEND_LIMIT',
+     'у анкеты выбран суточный предел писем не-контактам'),
+)
+
+
+def mail_wait_girl_mark(site_id: int, profile_id: int, said: str) -> int:
+    """Отказ — предел анкеты? Ставит её на паузу до конца суток. Секунды или ноль."""
+    site_id, profile_id = int(site_id or 0), int(profile_id or 0)
+    hit = next((one for one in MAIL_WAIT_GIRL_MARKS
+                if one[0].lower() in str(said or '').lower()), None)
+    if not site_id or not profile_id or not hit:
+        return 0
+
+    now = time.time()
+    wait = max(60, 86400 - int(now) % 86400)
+
+    try:
+        conn = redis_conn_get()
+        key = MAIL_WAIT_GIRL_KEY.format(site_id=site_id)
+        conn.zadd(key, {str(profile_id): now + wait})
+        conn.expire(key, 86400 + 600)
+    except Exception as e:
+        logger_info(f'[dating] пауза анкеты #{profile_id} не записалась: {e}')
+
+    logger_info(f'[dating] анкета #{profile_id}: {hit[1]} — пауза {wait // 60} мин')
+
+    return wait
+
+
+def mail_wait_girls(site_id: int) -> list[int]:
+    """Анкеты сайта на паузе по своему пределу. Сбой Redis — пусто."""
+    site_id = int(site_id or 0)
+    if not site_id:
+        return []
+
+    now = time.time()
+
+    try:
+        conn = redis_conn_get()
+        key = MAIL_WAIT_GIRL_KEY.format(site_id=site_id)
+        conn.zremrangebyscore(key, '-inf', now)
+        rows = conn.zrangebyscore(key, now, '+inf')
+    except Exception as e:
+        logger_info(f'[dating] анкеты на паузе не спросились: {e}')
+
+        return []
+
+    return [int(redis_text(one)) for one in rows or [] if redis_text(one).isdigit()]
+
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────

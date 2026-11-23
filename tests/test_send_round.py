@@ -1035,3 +1035,22 @@ class TestFreshDeliveryHoldsTheMailingAnHour:
         await send_round_run(0)
 
         assert marked == [(SITE, 'fresh-3')]
+
+
+class TestAPausedGirlLeavesTheMailing:
+    async def test_her_letters_wait_and_others_go(self, auth_client, site, profile,
+                                                  post, monkeypatch):
+        other = (await auth_client.post('/api/dating/profile', json={
+            'site_id': LIVE_SITE, 'login': f'snd-{uuid.uuid4().hex[:8]}@example.com',
+            'password': 'x'})).json()['result']
+        try:
+            monkeypatch.setattr(round_, 'mail_wait_girls', lambda site_id: [int(profile)])
+            await _letter(profile, uid='girl-1')
+            theirs = await _letter(other, uid='girl-2')
+
+            await send_round_run(0)
+
+            assert [one['id'] for one in post] == [theirs], \
+                'анкета на паузе своего предела всё равно писала'
+        finally:
+            await auth_client.delete(f'/api/dating/profile/{other}')

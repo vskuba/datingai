@@ -457,3 +457,42 @@ class TestTheRefusalIsToldApart:
             403, json={'Error': 'x', 'Reason': 'ERROR_MESSAGE_USER_DENY'}))
 
         assert 'ERROR_MESSAGE_USER_DENY' in said
+
+
+class TestTheGirlsOwnLimit:
+    """Предел писем не-контактам — у **анкеты**, а не у получателя.
+
+    Замер 23.11.2026: 31 отказ за четыре дня, все у анкеты #52 двадцати восьми
+    разным людям; тем же людям от других девушек письма проходили.
+    """
+
+    NON_CONTACT = ('сайт отказал: Daily message sending limit for non-contacts '
+                   'exceeded (ERROR_MESSAGE_USER_NON_CONTACT_DAILY_SEND_LIMIT) (→ 403)')
+
+    def test_it_pauses_the_girl_not_the_man(self, monkeypatch):
+        import src.dating.mail_wait as mw
+
+        assert mw.mail_wait_mark(SITE, '845089', self.NON_CONTACT) == 0, \
+            'предел анкеты принят за остуду получателя'
+
+        class _R:
+            def zadd(self, key, items): self.got = (key, items)
+            def expire(self, key, sec): pass
+
+        fake = _R()
+        monkeypatch.setattr(mw, 'redis_conn_get', lambda: fake)
+
+        left = mw.mail_wait_girl_mark(SITE, 52, self.NON_CONTACT)
+
+        assert 60 <= left <= 86400
+        assert list(fake.got[1]) == ['52']
+
+    def test_other_refusals_do_not_pause_the_girl(self):
+        import src.dating.mail_wait as mw
+
+        assert mw.mail_wait_girl_mark(SITE, 52, HOURLY) == 0
+
+    def test_the_words_name_the_girl(self):
+        import src.dating.mail_wait as mw
+
+        assert 'не-контактам' in mw.mail_wait_words(self.NON_CONTACT, 3600)

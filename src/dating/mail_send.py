@@ -53,8 +53,8 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.log import log_write
-from src.dating.mail_wait import (mail_wait_fresh_mark, mail_wait_mark,
-                                  mail_wait_words)
+from src.dating.mail_wait import (mail_wait_fresh_mark, mail_wait_girl_mark,
+                                  mail_wait_mark, mail_wait_words)
 from src.dating.ready import password_pick
 from src.dating.request import REQUEST_SEND
 from src.dating.site_api import DatingSiteApiError, site_api_call
@@ -382,7 +382,9 @@ async def mail_send_one(letter: dict, profile: dict, base: str,
         # переполнен ящик за этот час» — это 1392 отказа из 1463 на живом проде, и
         # до появления остуды каждый такой отказ хоронил письмо навсегда: причина
         # ложилась в `error`, а строки с причиной круг не берёт.
-        left = mail_wait_mark(int(profile.get('site_id') or 0), uid, str(e))
+        left = (mail_wait_girl_mark(int(profile.get('site_id') or 0),
+                                    int(profile.get('id') or 0), str(e))
+                or mail_wait_mark(int(profile.get('site_id') or 0), uid, str(e)))
         if left:
             raise DatingMailWaitError(mail_wait_words(str(e), left))
 
@@ -409,7 +411,9 @@ async def mail_send_one(letter: dict, profile: dict, base: str,
         # ⚠ Та же развилка, что и у разрешения: ящик получателя мог переполниться
         # между двумя шагами — их разделяют доли секунды, но предел считает не
         # только нас. Правило одно на оба отказа.
-        left = mail_wait_mark(int(profile.get('site_id') or 0), uid, str(e))
+        left = (mail_wait_girl_mark(int(profile.get('site_id') or 0),
+                                    int(profile.get('id') or 0), str(e))
+                or mail_wait_mark(int(profile.get('site_id') or 0), uid, str(e)))
         if left:
             raise DatingMailWaitError(mail_wait_words(str(e), left))
 

@@ -189,6 +189,8 @@ SITE_API_REASON_MEANING = {
         'у получателя выбран суточный предел входящих писем',
     'ERROR_MESSAGE_USER_SHORT_IN_LIMIT':
         'получатель только что получил слишком много писем',
+    'ERROR_MESSAGE_USER_NON_CONTACT_DAILY_SEND_LIMIT':
+        'у анкеты выбран суточный предел писем не-контактам',
     'ERROR_MESSAGE_USER_UNREAD_LIMIT':
         'получатель не читает присланное — сайт просит подождать несколько дней',
     'ERROR_MESSAGE_AGE_CRITERIA':

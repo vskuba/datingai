@@ -65,7 +65,8 @@ from src.dating.mail_send import (MAIL_SEND_DELAY_TABLES,
                                   MAIL_SEND_TALK_TABLES,
                                   DatingMailSendError, DatingMailWaitError,
                                   mail_send_fail, mail_send_one)
-from src.dating.mail_wait import mail_wait_fresh_uids, mail_wait_uids
+from src.dating.mail_wait import (mail_wait_fresh_uids, mail_wait_girls,
+                                  mail_wait_uids)
 from src.dating.pool_pair import pool_mail_answered_where
 from src.dating.schedule import schedule_now
 from src.dating.site_setting import site_seconds, site_setting
@@ -653,6 +654,13 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     # (`mail_wait.MAIL_WAIT_FRESH_KEY`). Прочим пулам — нет: там ждут ответа.
     if table == 'mailing':
         cooling = sorted(set(cooling) | set(mail_wait_fresh_uids(site_id)))
+    # ⚠ Анкета, выбравшая свой суточный предел писем не-контактам, выпадает из
+    # очереди рассылки до конца суток (`mail_wait.MAIL_WAIT_GIRL_KEY`): иначе
+    # жгла бы попытку за попыткой. Числа — свои, в запрос текстом безопасно.
+    if table == 'mailing':
+        paused = mail_wait_girls(site_id)
+        if paused:
+            busy += ' AND m.profile_id NOT IN (%s)' % ', '.join(str(int(one)) for one in paused)
     cool = (' AND m.uid NOT IN (%s)' % ', '.join(['%s'] * len(cooling))
             if cooling else '')
 
