@@ -178,6 +178,21 @@ class TestTheRefusalIsRecognised:
 
         assert mail_wait_mark(SITE, '812886', said) == 24 * 3600
 
+    def test_the_daily_inbox_limit_is_a_day(self):
+        """Суточный предел входящих у всех — сутки в пуле, а не ошибка навсегда
+        (владелец 23.11.2026; 31 письмо рассылки лежало похороненным)."""
+        said = ('сайт отказал: Daily incoming message limit exceeded '
+                '(ERROR_MESSAGE_USER_DAILY_IN_LIMIT) (/messages/check-send/286031 → 403)')
+
+        assert mail_wait_mark(SITE, '286031', said) == 24 * 3600
+
+    def test_the_five_minute_limit_is_five_minutes(self):
+        said = ('сайт отказал: The recipient has received too many messages in the '
+                'last five minutes. Please try again later. '
+                '(ERROR_MESSAGE_USER_SHORT_IN_LIMIT) (→ 403)')
+
+        assert mail_wait_mark(SITE, '549126', said) == 5 * 60
+
     def test_the_age_refusal_is_not_a_cooldown(self):
         """⚠⚠ Возраст девушки через час не изменится.
 
