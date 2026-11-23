@@ -292,7 +292,7 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
             await send_message_remember(
                 int(profile['id']), to_uid, text, message_uid,
                 SEND_SOURCE.get(transport, 'socket'), by_agent=by_agent,
-                media=result.get('media') or None)
+                media=_media_about(result.get('media'), photo) or None)
 
         await _answered_mark(int(profile['id']), to_uid)
 
@@ -385,6 +385,19 @@ async def send_message_remember(profile_id: int, to_uid: str, text: str,
             await db.connection.commit()
     except Exception as e:
         logger_info(f'[dating] отправленное не записалось: {e}')
+
+
+def _media_about(media, photo: dict | None) -> list:
+    """Снимки реплики с описанием из галереи (`photo['about']`).
+
+    ⚠ Наш снимок уже описан у файла (`gallery_file.description`): подпись в
+    окне и строка агенту берут его отсюда, и зрение второй раз не зовётся
+    (`message_vision.py`).
+    """
+    about = str((photo or {}).get('about') or '').strip()
+    items = [dict(x) for x in (media or []) if isinstance(x, dict)]
+
+    return [{**x, 'about': about} for x in items] if about else items
 
 
 async def _answered_mark(profile_id: int, to_uid: str) -> None:

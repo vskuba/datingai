@@ -41,6 +41,7 @@ from src.dating.favorite_mail_round import (
     FAVORITE_MAIL_ROUND_TICK_SEC, favorite_mail_round_run)
 from src.dating.panel_round import (PANEL_ROUND_TICK_SEC,
                                            panel_round_run)
+from src.dating.message_vision import message_vision_run
 from src.dating.chat_panel import (CHAT_PANEL_ROUND_DAYS,
                                           chat_panel_import)
 from src.dating.chat_request_round import (CHAT_REQUEST_ROUND_TICK_SEC,
@@ -1089,6 +1090,13 @@ async def _chat_import_site_once(site_id: int) -> None:
     # ⚠ Только на `fresh`, а не на любой `added`: импорт берёт сутки
     # назад, и привезённое почти всегда — старые строки, которых у нас не
     # было. Буди мы на них, круг ответов ходил бы с тиком импорта.
+    # ⚠⚠ Снимки — словами **до** побудки ответов: агент сядет отвечать сразу,
+    # и неописанный снимок он увидел бы словом «[photo]» (`message_vision.py`).
+    try:
+        await message_vision_run(site_id=int(site_id))
+    except Exception as e:
+        logger_info(f'[dating] снимки чата сайта #{site_id} не описались: {e}')
+
     if fresh:
         await _answer_wake(site_id)
 

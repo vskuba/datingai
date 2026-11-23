@@ -210,7 +210,8 @@ async def intention_chat_send(site_id: int, presence: dict, limit: int = 1) -> d
                 why.append(f'#{row["id"]}: {pick.get("why") or "снимок не выбрался"}')
                 continue
             raw, kind = await google_drive_bytes(file['file_id'], INTENTION_DO_WIDTH)
-            photo = {'raw': raw, 'kind': kind or 'image/jpeg'}
+            photo = {'raw': raw, 'kind': kind or 'image/jpeg',
+                     'about': file.get('description') or ''}
 
         result = await send_message(profile, presence, str(row['uid']), body,
                                     by_agent=True, photo=photo)

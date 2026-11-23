@@ -1558,3 +1558,12 @@
     display: block; max-height: 140px; max-width: 200px; border-radius: 6px;
     border: 1px solid var(--edge, #e2e8f0); object-fit: cover;
 }
+
+/* Подпись под снимком реплики — описание, уехавшее агенту (`message_vision.py`).
+   ⚠ Тот же вид, что у подписи под снимком письма (`.reply-msg-about`): один
+   вопрос «что на картинке» — один ответ глазами на обеих вкладках. */
+.msg-media-one { display: flex; flex-direction: column; max-width: 240px; }
+.msg-media-about {
+    display: block; margin-top: 3px; font-size: 11px; line-height: 1.35;
+    color: #64748b; font-style: italic; white-space: normal;
+}

@@ -534,7 +534,33 @@ async def _told(rows: list) -> None:
                     f'{len(rows)} — остальные старше потолка захода')
 
     for row in take:
+        if row.get('media'):
+            row = await _history_shot(row)
         await chat_history_incoming(int(row['profile_id']), row)
+
+
+async def _history_shot(row: dict) -> dict:
+    """Его реплика со снимком — соседу с описанием снимка, а не словом «[photo]».
+
+    ⚠⚠ История у соседа пишется **здесь**, один раз: доложи мы «[photo]», агент
+    и через десять реплик помнил бы снимок пустым словом. Поэтому снимок
+    описывается до доклада (`message_vision.py`); не вышло — уходит как есть,
+    молчание зрения разговор не держит.
+    """
+    from src.dating.message_vision import message_vision_line, message_vision_run
+
+    try:
+        await message_vision_run(profile_id=int(row['profile_id']), uid=str(row['sender_uid']))
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT text, media FROM message'
+                             ' WHERE profile_id = %s AND message_uid = %s',
+                             (int(row['profile_id']), str(row['message_uid'])))
+            got = await db.fetchone()
+    except Exception as e:
+        logger_info(f'[dating] снимок реплики для истории не описался: {e}')
+        return row
+
+    return {**row, 'text': message_vision_line(got['text'], got['media'])} if got else row
 
 
 async def _panel_ready(site_id: int) -> bool:

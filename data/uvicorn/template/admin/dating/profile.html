@@ -15455,12 +15455,20 @@
                     // ⚠ Снимки реплики — превью ссылкой на полный размер в новой
                     // вкладке (`message.media`): подарок и обещанное фото уходят
                     // в чат, и по одной подписи не понять, что именно ушло.
+                    // ⚠ Под снимком — **описание**, то самое, что уехало агенту
+                    // (`message_vision.py`), как под снимком письма LadaDate:
+                    // по превью сюжет не разобрать, подпись читается сразу.
                     + (Array.isArray(m.media) && m.media.length
                         ? '<span class="msg-media">' + m.media.map(x =>
-                            `<a href="${esc(x.src || x.thumb)}" target="_blank"`
+                            '<span class="msg-media-one">'
+                            + `<a href="${esc(x.src || x.thumb)}" target="_blank"`
                             + ' rel="noopener noreferrer">'
                             + `<img src="${esc(x.thumb || x.src)}" alt="снимок"`
-                            + ' referrerpolicy="no-referrer" loading="lazy"></a>').join('')
+                            + ' referrerpolicy="no-referrer" loading="lazy"></a>'
+                            + (x.about
+                                ? `<span class="msg-media-about">${esc(x.about)}</span>`
+                                : '')
+                            + '</span>').join('')
                             + '</span>'
                         : '')
                     // ⚠ В окне метка **полная** (`10:35 26/12/2026`), а не короткая,

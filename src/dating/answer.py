@@ -55,6 +55,7 @@ from src.dating.chat_intention import (chat_intention_delivered,
                                        chat_intention_put)
 from src.dating.companion_gallery import companion_gallery_sent
 from src.dating.photo_gift import photo_gift_attach, photo_gift_due
+from src.dating.message_vision import message_vision_line, message_vision_run
 from src.dating.site_presence import site_presence
 from src.dating.chat_request import CHAT_REQUEST_WAIT_SEC
 from src.dating.chat_reply import (chat_reply_expired, chat_reply_failed,
@@ -382,7 +383,9 @@ async def answer_run(profile: dict, presence: dict, agent_id: int,
         # пометил `she_just_send_photo`, и снимок — подпись к его строке о
         # снимке (`photo_gift.py`). Медиа закрыто — уходит один текст.
         gift = await _gift(profile, message_id, uid)
-        photo = {'raw': gift['raw'], 'kind': gift['kind']} if gift.get('raw') else None
+        photo = ({'raw': gift['raw'], 'kind': gift['kind'],
+                  'about': (gift.get('file') or {}).get('description') or ''}
+                 if gift.get('raw') else None)
         result = await send_message(profile, presence, uid, answer,
                                     may_invite=True, since=row.get('created_at'),
                                     by_agent=True, photo=photo)
@@ -1392,6 +1395,14 @@ async def _waiting_tail(profile_id: int, uid: str, row: dict) -> str:
 
     one = str(row.get('text') or '')
 
+    # ⚠⚠ Его снимки — словами, до того как хвост уедет агенту: иначе агент видит
+    # «[photo]» и отвечает на текст рядом (`message_vision.py`). Обычно описание
+    # уже положил импорт; здесь страховка, и неудача ответа не держит.
+    try:
+        await message_vision_run(profile_id=int(profile_id), uid=str(uid))
+    except Exception as e:
+        logger_info(f'[dating] снимки хвоста не описались: {e}')
+
     try:
         async with mysql_get_db_async() as db:
             # Когда мы говорили в последний раз. Пусто — не говорили вовсе.
@@ -1415,7 +1426,7 @@ async def _waiting_tail(profile_id: int, uid: str, row: dict) -> str:
                            int(row.get('id') or 0), int(ANSWER_TAIL_LIMIT)])
 
             await db.execute(
-                'SELECT m.text FROM message m'
+                'SELECT m.text, m.media FROM message m'
                 " WHERE m.profile_id = %s AND m.sender_uid = %s"
                 "   AND m.direction = 'in'" + after +
                 '   AND (m.created_at < %s OR (m.created_at = %s AND m.id <= %s))'
@@ -1427,7 +1438,7 @@ async def _waiting_tail(profile_id: int, uid: str, row: dict) -> str:
 
         return one
 
-    texts = [str(r['text'] or '').strip() for r in reversed(rows or [])]
+    texts = [message_vision_line(r['text'], r.get('media')) for r in reversed(rows or [])]
     texts = [t for t in texts if t]
 
     return ANSWER_TAIL_GLUE.join(texts) if texts else one
