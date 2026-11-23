@@ -54,7 +54,8 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.mail_wait import (mail_wait_fresh_uids, mail_wait_girls,
                                   mail_wait_uids)
-from src.dating.pool import pool_sweep, pool_sweep_mail_answered
+from src.dating.pool import (pool_sweep, pool_sweep_mail_answered,
+                             pool_sweep_mail_waiting)
 from src.dating.json_column import json_column_list
 from src.dating.mailing import (MAILING_BATCH_MAX,
                                        mailing_make,
@@ -275,6 +276,10 @@ async def _make(site_id: int) -> tuple[dict | None, bool]:
     # себе они и есть та мертвечина, из-за которой пул однажды встал «полным».
     # Тоже **до** счёта места, и по той же причине.
     await pool_sweep_mail_answered(site_id)
+
+    # ⚠ И письма тем, кому писать нельзя сутки и дольше (владелец 24.11.2026):
+    # иначе они упирают пул в потолок ждущих, и набор стоит (`pool.py`).
+    await pool_sweep_mail_waiting(site_id)
 
     # Сколько уже готово и сколько ещё нужно.
     have = await _pool_size(site_id)

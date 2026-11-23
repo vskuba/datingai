@@ -496,3 +496,71 @@ class TestTheGirlsOwnLimit:
         import src.dating.mail_wait as mw
 
         assert 'не-контактам' in mw.mail_wait_words(self.NON_CONTACT, 3600)
+
+
+class TestLongWaitersLeaveThePool:
+    """Письмо тому, кому писать сутки и дольше нельзя, место в пуле не держит.
+
+    Владелец 24.11.2026: из 178 черновиков отправлять нельзя было ни одного, и
+    набор стоял на потолке ждущих.
+    """
+
+    DAILY = ('сайт отказал: (ERROR_MESSAGE_USER_DAILY_IN_LIMIT) (→ 403)')
+    UNREAD = ('сайт отказал: (ERROR_MESSAGE_USER_UNREAD_LIMIT) (→ 403)')
+    SHORT = ('сайт отказал: (ERROR_MESSAGE_USER_SHORT_IN_LIMIT) (→ 403)')
+
+    def test_only_day_and_longer_are_long(self):
+        mail_wait_mark(SITE, '1', self.DAILY)
+        mail_wait_mark(SITE, '2', self.UNREAD)
+        mail_wait_mark(SITE, '3', HOURLY)
+        mail_wait_mark(SITE, '4', self.SHORT)
+
+        assert sorted(mail_wait.mail_wait_long_uids(SITE)) == ['1', '2']
+
+    async def test_the_sweep_deletes_only_their_mailing_drafts(self, monkeypatch):
+        import src.dating.pool as pool
+
+        mail_wait_mark(SITE, '1', self.DAILY)
+        mail_wait_mark(SITE, '3', HOURLY)
+        said = []
+
+        class _Db:
+            rowcount = 1
+
+            async def execute(self, sql, args):
+                said.append((sql, args))
+
+            class connection:
+                @staticmethod
+                async def commit():
+                    pass
+
+        class _Open:
+            async def __aenter__(self):
+                return _Db()
+
+            async def __aexit__(self, *a):
+                return False
+
+        monkeypatch.setattr(pool, 'mysql_get_db_async', lambda: _Open())
+
+        assert await pool.pool_sweep_mail_waiting(SITE) == 1
+        sql, args = said[0]
+        assert 'FROM mailing' in sql and "status = 'draft'" in sql
+        assert args == (SITE, '1'), 'уборка взяла не тех получателей'
+
+    async def test_nothing_to_sweep_touches_no_base(self, monkeypatch):
+        import src.dating.pool as pool
+
+        monkeypatch.setattr(pool, 'mysql_get_db_async',
+                            lambda: pytest.fail('лишний поход в базу'))
+
+        assert await pool.pool_sweep_mail_waiting(SITE) == 0
+
+    def test_the_round_sweeps_before_counting(self):
+        from src.dating.mailing_round import _make
+
+        code = inspect.getsource(_make)
+
+        assert code.index('pool_sweep_mail_waiting(') < code.index('_pool_size('), \
+            'уборка ждущих стоит после счёта места — пул увидится полным'

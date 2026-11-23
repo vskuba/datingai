@@ -323,6 +323,54 @@ async def pool_sweep_mail_answered(site_id: int) -> int:
     return total
 
 
+async def pool_sweep_mail_waiting(site_id: int) -> int:
+    """Стирает письма рассылки тем, кому писать ещё сутки и дольше нельзя.
+
+    Returns:
+        int: сколько черновиков убрали.
+
+    ⚠⚠ **Решение владельца 24.11.2026.** Замер часа после правок темпа: 124
+    письма ушло, но в момент замера из 178 черновиков отправлять нельзя было ни
+    один — пул упирался в потолок ждущих (`MAILING_POOL_WAITING_TIMES`), и набор
+    не сочинял писем тем, кому писать можно. Суточная и трёхдневная остуда
+    (`mail_wait.MAIL_WAIT_MARKS`) держала бы место сутки; часовая и пятиминутная
+    остаются ждать — они рассосутся раньше, чем стоит новое письмо.
+
+    ⚠ **Только рассылка.** Ответ и письмо избранному написаны этой паре по
+    переписке, их не заменить письмом другому человеку.
+
+    ⚠ Набор такому человеку снова не напишет, пока он остывает: `mailing_make`
+    отсеивает остывающих тем же списком `mail_wait`. Остыл — получит письмо
+    заново, уже свежее.
+    """
+    from src.dating.mail_wait import mail_wait_long_uids
+
+    site_id = int(site_id or 0)
+    uids = mail_wait_long_uids(site_id) if site_id else []
+    if not uids:
+        return 0
+
+    marks = ', '.join(['%s'] * len(uids))
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'DELETE FROM mailing WHERE site_id = %s'
+                f" AND status = 'draft' AND uid IN ({marks})",
+                (site_id, *uids))
+            total = int(db.rowcount or 0)
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] черновики рассылки остывающим не убрались: {e}')
+
+        return 0
+
+    if total:
+        logger_info(f'[dating] пул рассылки #{site_id}: убрано {total} — '
+                    f'получателям писать нельзя сутки и дольше')
+
+    return total
+
+
 def _away(state: dict) -> bool:
     """Точно ли человека нет в сети. «Не знаем» — не повод стирать."""
     return bool(state.get('known')) and not state.get('online')

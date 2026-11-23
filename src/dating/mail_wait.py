@@ -197,6 +197,35 @@ def mail_wait_uids(site_id: int) -> list[str]:
     return [redis_text(one) for one in rows or []]
 
 
+# С какого остатка остуды письмо рассылки не ждёт в пуле, а уходит из него.
+# ⚠ Больше часового предела с запасом: часовая остуда сюда не попадает никогда,
+# суточная и трёхдневная — пока им осталось больше двух часов.
+MAIL_WAIT_LONG_SEC = 2 * 3600
+
+
+def mail_wait_long_uids(site_id: int) -> list[str]:
+    """Кому писать ещё долго нельзя — остатка остуды не меньше `MAIL_WAIT_LONG_SEC`.
+
+    ⚠ Читает уборка пула рассылки (`pool.pool_sweep_mail_waiting`): письмо
+    такому человеку держало бы место сутки и больше, а новое письмо другому
+    адресату собирается подстановкой за доли секунды.
+    """
+    site_id = int(site_id or 0)
+    if not site_id:
+        return []
+
+    try:
+        rows = redis_conn_get().zrangebyscore(
+            MAIL_WAIT_KEY.format(site_id=site_id),
+            time.time() + MAIL_WAIT_LONG_SEC, '+inf')
+    except Exception as e:
+        logger_info(f'[dating] список долго остывающих не спросился: {e}')
+
+        return []
+
+    return [redis_text(one) for one in rows or []]
+
+
 def mail_wait_words(said: str, left: int = 0) -> str:
     """Почему письмо не ушло — словами, по которым видно, что оно живо.
 
