@@ -135,6 +135,19 @@ async def people_api_payers(profile: dict, base: str, password: str) -> list[dic
     return _rows(body.get(PEOPLE_API_ROWS), online=False)
 
 
+async def people_api_offline(profile: dict, base: str, password: str) -> list[dict]:
+    """Месячные активные: `GET /users/offline` — «заходившие за последний месяц».
+
+    ⚠ Отдельной функцией, как `people_api_payers`: это адресаты рассылки
+    (`people_offline.py`), а не ещё одна лента страницы.
+    """
+    body = await site_api_call(
+        profile, base, password, PEOPLE_API_USERS_PATH.format(state='offline'),
+        door=REQUEST_PEOPLE)
+
+    return _rows(body.get(PEOPLE_API_ROWS), online=False)
+
+
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 def _number(value) -> int:

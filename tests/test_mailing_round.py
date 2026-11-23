@@ -495,6 +495,40 @@ class TestPoolCeiling:
 
         assert await _pool_size(SITE) == 2
 
+    async def test_waiting_letters_do_not_hold_a_place(self, site, pool, profile,
+                                                      monkeypatch):
+        """⚠⚠ Место — только у письма, которое можно отправить сейчас
+        (владелец 23.11.2026): 126 черновиков остывающим держали пул «полным», и
+        набор не сочинял писем тем, кому писать можно."""
+        import src.dating.mailing_round as mr
+
+        await pool(5)
+        monkeypatch.setattr(mr, 'mail_wait_uids', lambda site_id: ['tst-draft-0', 'tst-draft-1'])
+        monkeypatch.setattr(mr, 'mail_wait_fresh_uids', lambda site_id: ['tst-draft-2'])
+        monkeypatch.setattr(mr, 'mail_wait_girls', lambda site_id: [])
+
+        assert await _pool_size(SITE) == 2
+
+        monkeypatch.setattr(mr, 'mail_wait_girls', lambda site_id: [int(profile)])
+        assert await _pool_size(SITE) == 0, 'письма анкеты на паузе заняли место'
+
+    async def test_waiting_letters_still_have_a_ceiling(self, site, pool, monkeypatch):
+        """Остуда длится часы и сутки: без общего потолка пул рос бы без края."""
+        import src.dating.mailing_round as mr
+
+        async def _cap(site_id):
+            return 2
+
+        await pool(7)
+        monkeypatch.setattr(mr, '_pool_max', _cap)
+        monkeypatch.setattr(mr, 'mail_wait_uids',
+                            lambda site_id: [f'tst-draft-{n}' for n in range(7)])
+        monkeypatch.setattr(mr, 'mail_wait_fresh_uids', lambda site_id: [])
+        monkeypatch.setattr(mr, 'mail_wait_girls', lambda site_id: [])
+
+        # Семь ждущих при пределе 2 и множителе 3: потолок 6, занято «на одно больше».
+        assert await _pool_size(SITE) == 7 - 2 * (mr.MAILING_POOL_WAITING_TIMES - 1)
+
     async def test_ceiling_comes_from_the_setting(self, auth_client, site):
         before = (await auth_client.get(
             f'/api/dating/site/{SITE}')).json()['result']['settings']

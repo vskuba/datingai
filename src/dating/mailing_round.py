@@ -52,6 +52,8 @@ from datetime_.datetime_ import datetime_offset_hours
 from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
+from src.dating.mail_wait import (mail_wait_fresh_uids, mail_wait_girls,
+                                  mail_wait_uids)
 from src.dating.pool import pool_sweep, pool_sweep_mail_answered
 from src.dating.json_column import json_column_list
 from src.dating.mailing import (MAILING_BATCH_MAX,
@@ -92,6 +94,9 @@ MAILING_POOL_MAX = 500
 
 # Настройка сайта, задающая размер пула.
 MAILING_POOL_SETTING = 'mailing_pool_max'
+
+# Во сколько раз пул с ждущими письмами может превысить предел (`_pool_size`).
+MAILING_POOL_WAITING_TIMES = 3
 
 # Отметка «этому сайту только что набирали». Живёт ровно свой срок и гаснет сама.
 MAILING_ROUND_KEY = 'dating:mailing:round:{id}'
@@ -346,9 +351,24 @@ async def _pool_size(site_id: int) -> int:
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            "SELECT COUNT(*) AS n FROM mailing"
+            "SELECT uid, profile_id FROM mailing"
             " WHERE site_id = %s AND status = 'draft' AND error = ''",
             (int(site_id),))
-        row = await db.fetchone()
+        rows = await db.fetchall() or []
 
-    return int((row or {}).get('n') or 0)
+    # ⚠⚠ **Место занимает только то, что можно отправить сейчас** (владелец
+    # 23.11.2026). Письма остывающим получателям (`mail_wait`), только что
+    # получившим наше письмо и от анкеты на паузе своего предела лежат целыми,
+    # но круг отправки их не берёт — а набор видел их «полным пулом» и не
+    # сочинял писем тем, кому писать можно. Замер того дня: 126 черновиков при
+    # потолке 100, отправлять из них нельзя было ни одного.
+    #
+    # ⚠ Ждущих при этом держит общий потолок `MAILING_POOL_WAITING_TIMES` ×
+    # предела: остуда длится часы и сутки, и без него пул рос бы без края.
+    waiting = (set(mail_wait_uids(site_id)) | set(mail_wait_fresh_uids(site_id)))
+    paused = set(mail_wait_girls(site_id))
+    live = sum(1 for row in rows if str(row['uid']) not in waiting
+               and int(row['profile_id']) not in paused)
+    cap = await _pool_max(site_id)
+
+    return max(live, len(rows) - cap * (MAILING_POOL_WAITING_TIMES - 1))

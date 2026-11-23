@@ -96,6 +96,7 @@ async def online_round_run() -> dict:
     # это тоже «кому писать», и своего круга ради одного запроса в час заводить
     # незачем (`payers.py`; дорога — панель, запасная — API).
     from src.dating.payers import payers_due, payers_sync
+    from src.dating.people_offline import people_offline_due, people_offline_sync
 
     for site_id in sites:
         try:
@@ -103,6 +104,14 @@ async def online_round_run() -> dict:
                 await payers_sync(site_id)
         except Exception as e:
             logger_info(f'[dating] платившие сайта #{site_id}: {e}')
+
+        # ⚠ Месячные активные — второй круг адресатов рассылки, по своему
+        # сроку `mailing_offline_every` (`people_offline.py`).
+        try:
+            if await people_offline_due(site_id):
+                await people_offline_sync(site_id)
+        except Exception as e:
+            logger_info(f'[dating] месячные активные сайта #{site_id}: {e}')
 
     return {'checked': len(sites), 'started': started}
 

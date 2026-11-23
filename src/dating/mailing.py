@@ -53,7 +53,7 @@ from src.dating.mail import (MAILING_QUESTION_CHANCE,
                                    mail_render, mail_vars_found)
 from src.dating.mail_age import mail_age_fits, mail_age_nobody
 from src.dating.mail_agent import DatingMailAgentError, mail_question
-from src.dating.mail_wait import mail_wait_uids
+from src.dating.mail_wait import mail_wait_fresh_uids, mail_wait_uids
 from src.dating.people import (PEOPLE_NAME_ALIEN,
                                       people_name_parts,
                                       people_name_usable)
@@ -112,7 +112,7 @@ async def mailing_make(site_id: int, templates: list, limit: int,
     await mailing_shots_fill(int(site_id))
 
     girls = await _girls(site_id)
-    people = mailing_people_first(await _people(site_id), first_uid)
+    people = mailing_people_first(await _audience(site_id), first_uid)
 
     # ⚠ Сужаем **после** отбора, а не запросом: правила «включена» и «с рассылкой»
     # должны быть одни на оба случая. Спроси мы анкету отдельным запросом, письма
@@ -135,7 +135,7 @@ async def mailing_make(site_id: int, templates: list, limit: int,
     # что писать им сейчас не даст (`mail_wait.py`), и письмо такому человеку
     # легло бы в пул мёртвым грузом: отправка его не унесёт, а место оно займёт.
     # Один поход в Redis на заход — против двухсот отказов сайта.
-    cooling = set(mail_wait_uids(site_id))
+    cooling = set(mail_wait_uids(site_id)) | set(mail_wait_fresh_uids(site_id))
     cooled = 0
     if cooling:
         warm = [one for one in people
@@ -1054,6 +1054,29 @@ async def _people(site_id: int) -> list[dict]:
     people = [row for row in ((cached or {}).get('people') or []) if row.get('uid')]
 
     return await _by_priority(site_id, people) if people else people
+
+
+async def _audience(site_id: int) -> list[dict]:
+    """Адресаты рассылки: сперва кто в сети, следом — месячные активные.
+
+    ⚠⚠ Второй круг — `people_offline.py` (владелец 23.11.2026): лента «Все
+    онлайн» — две сотни человек, и почти все они остывали после отказа «ящик
+    полон», так что набору было некому писать. Месячные идут **после** онлайн и
+    без повторов; платившие и отмеченные встают вперёд из обоих кругов.
+
+    ⚠ Только набор рассылки: ленты страницы и инвайты зовут `_people` — им
+    нужны те, кто в сети, а не те, кто заходил за месяц.
+    """
+    from src.dating.people_offline import people_offline_rows
+
+    online = await _people(site_id)
+    seen = {str(one.get('uid')) for one in online}
+    later = [one for one in await people_offline_rows(site_id)
+             if str(one.get('uid')) not in seen]
+    if not later:
+        return online
+
+    return await _by_priority(site_id, online + later)
 
 
 async def _by_priority(site_id: int, people: list[dict]) -> list[dict]:
