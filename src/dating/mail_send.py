@@ -53,7 +53,8 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating.log import log_write
-from src.dating.mail_wait import mail_wait_mark, mail_wait_words
+from src.dating.mail_wait import (mail_wait_fresh_mark, mail_wait_mark,
+                                  mail_wait_words)
 from src.dating.ready import password_pick
 from src.dating.request import REQUEST_SEND
 from src.dating.site_api import DatingSiteApiError, site_api_call
@@ -523,6 +524,10 @@ async def mail_send_mark(letter: dict, sent: bool, error: str = '',
     tail = ', answer = %s' if said else ''
 
     if sent:
+        # ⚠ Дошло — час рассылка ему не пишет: удача выбирает его часовую норму
+        # (`mail_wait.MAIL_WAIT_FRESH_KEY`). Здесь, а не в круге: через эту дверь
+        # идут и круг, и кнопки, и все пулы.
+        mail_wait_fresh_mark(int(letter.get('site_id') or 0), letter.get('uid'))
         sql = (f"UPDATE {table} SET status = 'sent', sent_at = NOW(), error = ''"
                f'{tail} WHERE id = %s')
         args = ((said, letter_id) if said else (letter_id,))

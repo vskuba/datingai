@@ -65,7 +65,7 @@ from src.dating.mail_send import (MAIL_SEND_DELAY_TABLES,
                                   MAIL_SEND_TALK_TABLES,
                                   DatingMailSendError, DatingMailWaitError,
                                   mail_send_fail, mail_send_one)
-from src.dating.mail_wait import mail_wait_uids
+from src.dating.mail_wait import mail_wait_fresh_uids, mail_wait_uids
 from src.dating.pool_pair import pool_mail_answered_where
 from src.dating.schedule import schedule_now
 from src.dating.site_setting import site_seconds, site_setting
@@ -648,6 +648,11 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     # ⚠ Список берём у `mail_wait`, а не считаем здесь: его же читает набор пула,
     # и две копии правила разошлись бы на первой правке.
     cooling = mail_wait_uids(site_id)
+    # ⚠ Рассылке — ещё и те, кому письмо дошло за последний час: удача выбирает
+    # его часовую норму, и следующая анкета упиралась бы в отказ
+    # (`mail_wait.MAIL_WAIT_FRESH_KEY`). Прочим пулам — нет: там ждут ответа.
+    if table == 'mailing':
+        cooling = sorted(set(cooling) | set(mail_wait_fresh_uids(site_id)))
     cool = (' AND m.uid NOT IN (%s)' % ', '.join(['%s'] * len(cooling))
             if cooling else '')
 

@@ -1077,7 +1077,14 @@ async def _by_priority(site_id: int, people: list[dict]) -> list[dict]:
 
         return people
 
-    if not marked:
+    # ⚠ **Платившие нашим девушкам — сразу за отмеченными человеком**
+    # (`payers.py`, владелец 23.11.2026). Только порядок: поле `priority` им не
+    # ставится — для инвайтов оно значит «пишут все свободные», а этого не просили.
+    from src.dating.payers import payers_uids
+
+    payers = payers_uids(site_id)
+
+    if not marked and not payers:
         return people
 
     # ⚠ **Отметку не только сортируем, но и ставим в запись** (`priority`). Порядок
@@ -1089,7 +1096,8 @@ async def _by_priority(site_id: int, people: list[dict]) -> list[dict]:
     # поле, мы изменили бы то, что показывает страница.
     return sorted(({**row, 'priority': str(row.get('uid')) in marked}
                    for row in people),
-                  key=lambda row: 0 if row['priority'] else 1)
+                  key=lambda row: 0 if row['priority']
+                  else 1 if str(row.get('uid')) in payers else 2)
 
 
 async def _marked(site_id: int) -> set:

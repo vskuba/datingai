@@ -121,6 +121,19 @@ async def people_api_rows(profile: dict, kind: str, base: str,
 
     return _rows(body.get(PEOPLE_API_ROWS), online=(kind == 'online'))
 
+async def people_api_payers(profile: dict, base: str, password: str) -> list[dict]:
+    """Кто платил этой анкете: `GET /users/payers` — «хоть один платёж с ней».
+
+    ⚠ Отдельной функцией, а не видом в `PEOPLE_API_STATES`: виды оттуда — ленты
+    страницы, и `payers` стал бы ещё одной лентой, которой никто не просил
+    (`payers.py` — порядок рассылки, а не карусель).
+    """
+    body = await site_api_call(
+        profile, base, password, PEOPLE_API_USERS_PATH.format(state='payers'),
+        door=REQUEST_PEOPLE)
+
+    return _rows(body.get(PEOPLE_API_ROWS), online=False)
+
 
 # ── Приватное ────────────────────────────────────────────────────────────────
 

@@ -993,3 +993,45 @@ class TestMailingTakesTurnsAndWaitsCheap:
         assert (await send_round_run(0))['waited'] == 1
         assert (SITE, 'mailing') not in round_._sent_at, \
             'отказ «подождать» съел паузу: следующее письмо ждало бы её целиком'
+
+
+class TestFreshDeliveryHoldsTheMailingAnHour:
+    """После удачной доставки рассылка час не пишет этому человеку.
+
+    Замер 23.11.2026: удача выбирает его часовую норму — в 971 часе из 1008
+    дошло ровно одно письмо, а следующая анкета в первые десять минут получала
+    отказ в 11 случаях из 29. Ответы при этом не держатся: там ждут ответа.
+    """
+
+    async def test_the_mailing_skips_a_fresh_recipient(self, site, profile, post,
+                                                       monkeypatch):
+        monkeypatch.setattr(round_, 'mail_wait_fresh_uids', lambda site_id: ['fresh-1'])
+        await _letter(profile, uid='fresh-1')
+        other = await _letter(profile, uid='fresh-2')
+
+        await send_round_run(0)
+
+        assert [one['id'] for one in post] == [other], \
+            'рассылка написала тому, кому письмо дошло только что'
+
+    async def test_a_reply_is_not_held(self, site, profile, post, monkeypatch):
+        monkeypatch.setattr(round_, 'mail_wait_fresh_uids', lambda site_id: ['fresh-r'])
+        reply = await _letter(profile, 'mail_reply', uid='fresh-r')
+
+        await send_round_run(0)
+
+        assert reply in [one['id'] for one in post], \
+            'ответ на его письмо придержан недавней доставкой'
+
+    async def test_a_delivery_marks_the_recipient(self, site, profile, post,
+                                                  monkeypatch):
+        import src.dating.mail_send as mail_send
+
+        marked = []
+        monkeypatch.setattr(mail_send, 'mail_wait_fresh_mark',
+                            lambda site_id, uid: marked.append((site_id, uid)))
+        await _letter(profile, uid='fresh-3')
+
+        await send_round_run(0)
+
+        assert marked == [(SITE, 'fresh-3')]

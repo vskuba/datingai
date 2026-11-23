@@ -223,6 +223,59 @@ def mail_wait_skip(left: int) -> str:
     return (f'сайт сейчас не даёт ему писать — выбран предел входящих, '
             f'ждём {_when(left)}')
 
+# ── Только что доставлено ────────────────────────────────────────────────────
+#
+# ⚠⚠ Замер 23.11.2026 на Ladadate (3056 попыток за трое суток): из 1008 часов, в
+# которые человеку дошло наше письмо, в 971 дошло ровно одно — удачная доставка
+# сама выбирает его часовую норму. Следующая анкета в первые десять минут
+# получала отказ «ящик полон за час» в 11 случаях из 29. Владелец: после удачи —
+# час паузы этому человеку.
+#
+# ⚠ **Только для рассылки.** Ответ на его письмо и письма избранным этим списком
+# не придерживаются: человек ждёт ответа, и половина повторов всё же проходит —
+# держать живой разговор ради холодной статистики незачем.
+#
+# ⚠ Отдельное множество, а не запись в общую остуду: та говорит «сайт отказал»
+# и показывается человеку причиной простоя всех пулов (`send_why`).
+MAIL_WAIT_FRESH_KEY = 'dating:mail_fresh:{site_id}'
+MAIL_WAIT_FRESH_SEC = 3600
+
+
+def mail_wait_fresh_mark(site_id: int, uid: str) -> None:
+    """Письмо этому человеку только что дошло: час рассылка ему не пишет."""
+    site_id, uid = int(site_id or 0), str(uid or '').strip()
+    if not site_id or not uid:
+        return
+
+    try:
+        conn = redis_conn_get()
+        key = MAIL_WAIT_FRESH_KEY.format(site_id=site_id)
+        conn.zadd(key, {uid: time.time() + MAIL_WAIT_FRESH_SEC})
+        conn.expire(key, MAIL_WAIT_FRESH_SEC + 600)
+    except Exception as e:
+        logger_info(f'[dating] отметка доставки {uid} не записалась: {e}')
+
+
+def mail_wait_fresh_uids(site_id: int) -> list[str]:
+    """Кому за последний час дошло наше письмо. Сбой Redis — пусто."""
+    site_id = int(site_id or 0)
+    if not site_id:
+        return []
+
+    now = time.time()
+
+    try:
+        conn = redis_conn_get()
+        key = MAIL_WAIT_FRESH_KEY.format(site_id=site_id)
+        conn.zremrangebyscore(key, '-inf', now)
+        rows = conn.zrangebyscore(key, now, '+inf')
+    except Exception as e:
+        logger_info(f'[dating] недавние доставки не спросились: {e}')
+
+        return []
+
+    return [redis_text(one) for one in rows or []]
+
 
 # ── Приватное ────────────────────────────────────────────────────────────────
 
