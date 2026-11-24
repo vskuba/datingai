@@ -26,8 +26,8 @@
 | Что нужно | Чем берём |
 |-----------|-----------|
 | список выключателей | `SITE_FLAGS` из `site_switch.py` — тот же, что разрешает запись |
-| в какой функции упомянут флаг | `tool_impact_functions` (разбором дерева) |
-| какие имена мёртвые | `tool_dead`: вердикты «мёртвое» **и «только тесты»** |
+| в какой функции упомянут флаг | `code_impact_functions` (разбором дерева) |
+| какие имена мёртвые | `code_dead`: вердикты «мёртвое» **и «только тесты»** |
 
 ⚠⚠ «Только тесты» считается мёртвым наравне с «мёртвым», и это не придирка — на
 этом застава попалась при первой же проверке. Вернув вчерашний дефект (зов убран,
@@ -37,7 +37,7 @@
 по-прежнему не работает, а проверка зелёная.
 
 ⚠ Своего обхода дерева здесь нет намеренно: третья копия `ast.walk` в проекте
-разошлась бы с первыми двумя. Вопрос «где упомянуто имя» принадлежит `tool_impact`,
+разошлась бы с первыми двумя. Вопрос «где упомянуто имя» принадлежит `code_impact`,
 и там он и решается.
 
 ⚠ Тест **структурный**: ни базы, ни HTTP. Он отвечает не «работает ли выключатель»,
@@ -49,8 +49,8 @@ from pathlib import Path
 
 import pytest
 
-from tool_.tool_dead import TOOL_DEAD_GONE, TOOL_DEAD_TESTS_ONLY, tool_dead
-from tool_.tool_impact import tool_impact_functions
+from code_.code_dead import CODE_DEAD_GONE, CODE_DEAD_TESTS_ONLY, code_dead
+from code_.code_impact import code_impact_functions
 
 from src.uvicorn.routers.dating.site_switch import SITE_FLAGS
 
@@ -72,8 +72,8 @@ def dead() -> set:
 
     ⚠⚠ Оба вердикта, а не только «мёртвое» — см. ⚠⚠ в докстринге модуля.
     """
-    return {one['name'] for one in tool_dead(str(SRC))
-            if one['verdict'] in (TOOL_DEAD_GONE, TOOL_DEAD_TESTS_ONLY)}
+    return {one['name'] for one in code_dead(str(SRC))
+            if one['verdict'] in (CODE_DEAD_GONE, CODE_DEAD_TESTS_ONLY)}
 
 
 class TestEveryFlagHasALiveReader:
@@ -141,5 +141,5 @@ class TestTheListIsTheOneThatGuardsWrites:
 def _readers(flag: str) -> list[str]:
     """Кто читает флаг: `файл.py:функция`, без списка разрешённых к записи."""
     return [f"{one['file']}:{one['func']}"
-            for one in tool_impact_functions(flag, str(SRC))
+            for one in code_impact_functions(flag, str(SRC))
             if one['file'] not in SKIP]
