@@ -4394,6 +4394,34 @@
                        text-decoration-style: dotted; cursor: pointer; }
     .fav-manual-link:hover { color: #312e81; text-decoration-style: solid; }
 
+    /* Кому письмо от этой анкеты **не ляжет** — красное кольцо вокруг лица в
+       ленте «My favorites» («закрылся от неё», причина в подсказке под
+       курсором).
+
+       ⚠⚠ Кольцо **`box-shadow`-ом, а не `border`-ом**: ширина у `.person-face`
+       задана явно (44px в ленте), и рамка прибавила бы карточке по 2 пикселя с
+       каждой стороны — лента из двухсот лиц разъехалась бы, а с ней и ряды под
+       ней. Приём тот же, что у точки «в сети» (`.person-card .person-dot`).
+
+       ⚠ **Карточка остаётся на месте и под курсором**: запрет показан кольцом,
+       подсказкой и отказом выбрать, а не исчезновением человека из ленты.
+       Человеку нужно видеть, **кого именно** письмо не пустило, а не искать,
+       куда делись двое из его избранных.
+     */
+    .person-card.fav-off .person-face {
+        box-shadow: 0 0 0 2px #dc2626;
+        opacity: .55;
+    }
+
+    .person-card.fav-off .person-card-name,
+    .person-card.fav-off .person-card-age {
+        color: #9ca3af;
+    }
+
+    .person-card.fav-off {
+        cursor: not-allowed;
+    }
+
     .mail-shot-tile:hover { border-color: #93c5fd; }
     .mail-shot-tile.on { border-color: #4f46e5; }
 
@@ -9983,6 +10011,19 @@
     let favManualShot = null;    // {id, file, path} либо null
     let favManualBusy = false;
 
+    // Кому из её избранных письмо **не ляжет** — `{uid: причина словами}`.
+    //
+    // ⚠⚠ **Решает сервер, на странице нет ни одного признака** ни про `block`,
+    // ни про состояние звезды: `/api/dating/favorite-mail/recipients` отдаёт
+    // ровно тот ответ, которым отказывает ручка `POST /manual` (одна функция
+    // домена, `favorite_mail_mailable`). Лента же «My favorites» — список
+    // **сайта**, и про наши запреты он не знает вовсе. Живой случай 11 ноября:
+    // человек выбрал пятерых из этой ленты, двое были закрыты от писем, и
+    // письмо — всё или ничего — не легло **никому**. Вторая копия правила на
+    // странице разошлась бы с первой на первой же правке.
+    let favManualOff = new Map();
+    let favManualOffFor = 0;     // для какой анкеты спрашивали; 0 — неспрошено
+
     // Щелчок по избранному в ленте. ⚠ Только пока форма на экране: лента
     // «My favorites» стоит и там, где формы нет, и копить там чипсы незачем.
     function favManualAdd(uid) {
@@ -9991,6 +10032,18 @@
 
         uid = String(uid || '');
         if (!uid || favManualTo.some(one => one.uid === uid)) return;
+
+        // ⚠ **Закрытому от писем чипс не ставится.** Ленту не отменяешь — она
+        // показывает сайт, каким он есть, и человек вправе видеть, кто в ней
+        // есть; отменяется сам щелчок. Причина — та же строка, что в подсказке
+        // под карточкой и в отказе на «Отправить», со слова сервера.
+        const why = favManualOff.get(uid);
+        if (why !== undefined) {
+            fillSlot('fav-manual-note', `${peopleName(uid) || uid} — `
+                + `${why || 'письмо не ляжет'}. Выберите другого.`);
+
+            return;
+        }
 
         favManualTo.push({uid, name: peopleName(uid) || ''});
         fillSlot('fav-manual-note', '');
@@ -10027,6 +10080,12 @@
             favManualFor = Number(openId);
             favManualTo = [];
             favManualShot = null;
+
+            // И запрет другой: у неё свои закрытые от писем. Спрашиваем сразу,
+            // лента к этому моменту уже на экране.
+            favManualOff = new Map();
+            favManualOffFor = 0;
+            favManualOffLoad();
         }
 
         favManualChipsPaint();
@@ -10036,12 +10095,99 @@
         put.disabled = favManualBusy || !online || !favManualTo.length;
     }
 
-    // Все её избранные из ленты «My favorites» — `[{uid, name}]`.
+    // Все её **годные** избранные из ленты «My favorites» — `[{uid, name}]`.
+    //
+    // ⚠⚠ Закрытые от писем здесь **не** перечисляются, хотя лента их показывает:
+    // по этому списку работает «выбрать всех», а он обязан положить только тех,
+    // кому письмо ляжет. Положи он всех, кого видит лента, одна нажатая ссылка
+    // давала бы ровно тот живой случай 11 ноября — выбранные закрытые, и
+    // всё или ничего, и письмо не легло никому.
     function favManualAll() {
         const state = peopleCache.get(`${openId}|favorite`);
 
         return (state && state.people || []).map(one =>
-            ({uid: String(one.uid), name: one.name || ''})).filter(one => one.uid);
+            ({uid: String(one.uid), name: one.name || ''}))
+            .filter(one => one.uid && !favManualOff.has(one.uid));
+    }
+
+    // Спрашивает сервер, кому из её избранных письмо не ляжет, — и перекрашивает
+    // ленту.
+    //
+    // ⚠ Отметку «спросили» ставим **до** похода: ленту перекрашивают и две
+    // минуты, и приход снимка, и щелчок по человеку; без отметки каждое
+    // перекрашивание ходило бы в базу за тем же списком.
+    //
+    // ⚠ **Сбой — молчание, а не запрет.** Не спросив, лента осталась бы без
+    // красных лиц, но человек выбрал бы сам, и отказ на «Отправить» назвал бы
+    // каждого по имени. Гасить же лица по незнанию — запрещать то, что не
+    // запрещали.
+    async function favManualOffLoad() {
+        const profile = Number(openId) || 0;
+        if (!profile || favManualOffFor === profile) return;
+
+        favManualOffFor = profile;
+
+        let rows;
+        try {
+            rows = (await getData(`${BASE}/api/dating/favorite-mail/recipients`
+                + `?profile_id=${profile}`)).result;
+        } catch (e) {
+            rows = null;
+        }
+
+        // Ушли на другую анкету, пока шли, — ответ той, которой уже нет на экране.
+        if (Number(openId) !== profile) return;
+        if (!rows) {
+            favManualOffFor = 0;
+
+            return;
+        }
+
+        favManualOff = new Map(rows.filter(one => !one.mailable)
+            .map(one => [String(one.uid), one.why || '']));
+
+        // ⚠⚠ Кого успели выбрать, пока ответ шёл, — **снимаем**: письмо уходит
+        // всё или ничего, и один закрытый адресат стоил бы письма всем
+        // остальным. Оставить его чипсом значило бы положить мину под кнопку.
+        const gone = favManualTo.filter(one => favManualOff.has(one.uid));
+        if (gone.length) {
+            favManualTo = favManualTo.filter(one => !favManualOff.has(one.uid));
+            fillSlot('fav-manual-note', gone.map(one =>
+                `${one.name || one.uid} — ${favManualOff.get(one.uid)
+                || 'письмо не ляжет'}`).join('; ') + '. Сняли с адресатов.');
+        }
+
+        favManualOffPaint();
+        favManualPaint();
+    }
+
+    // Красит ленту «My favorites»: у закрытого от писем — красное лицо и причина
+    // в подсказке. Тот же приём, что у `stripDotsPaint`: лента собрана из
+    // **сайта**, а наши запреты накладываются поверх уже нарисованных карточек.
+    function favManualOffPaint() {
+        workEl.querySelectorAll('.strip-row[data-strip="favorite"] .person-card')
+            .forEach(card => {
+                const why = favManualOff.get(String(card.dataset.uid || ''));
+
+                // ⚠ Подсказка ленты собирается при каждой перекраске, поэтому её
+                // исходный вид убираем в `data` один раз на карточку: без этого
+                // вторая перекраска дописала бы причину к уже дополненной.
+                if (card.dataset.base === undefined) card.dataset.base = card.title;
+
+                if (why === undefined) {
+                    card.classList.remove('fav-off');
+                    card.title = card.dataset.base;
+
+                    return;
+                }
+
+                card.classList.add('fav-off');
+
+                // ⚠ Причина — **со слова сервера**, не со страницы: две записи
+                // одной причины разошлись бы, и подсказка обещала бы одно, а
+                // отказ на «Отправить» говорил другое.
+                card.title = `${card.dataset.base} — ${why}`;
+            });
     }
 
     function favManualChipsPaint() {
@@ -14540,8 +14686,12 @@
         });
 
         // Ссылка «выбрать всех» у формы письма руками считает по этой ленте, а
-        // лента приезжает позже формы.
-        if (kind === 'favorite') favManualChipsPaint();
+        // лента приезжает позже формы. Красные лица — по той же причине: карточки
+        // только что собраны заново, и запрет с них сорван вместе со старыми.
+        if (kind === 'favorite') {
+            favManualOffPaint();
+            favManualChipsPaint();
+        }
 
         return true;
     }

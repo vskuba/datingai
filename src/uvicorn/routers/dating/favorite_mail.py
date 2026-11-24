@@ -26,13 +26,14 @@ from src.dating.send_round import send_why
 from src.dating.favorite import (FAVORITE_STATES,
                                         FAVORITE_STATES_SQL)
 from src.dating.favorite_mail import (FAVORITE_MAIL_BATCH_DEFAULT,
+                                      FAVORITE_MAIL_BATCH_MAX,
                                       DatingFavoriteMailManualError,
+                                      favorite_mail_mailable,
+                                      favorite_mail_make,
                                       favorite_mail_manual,
-                                             FAVORITE_MAIL_BATCH_MAX,
-                                             favorite_mail_make,
-                                             favorite_mail_pool_left,
-                                             favorite_mail_queue,
-                                             favorite_mail_why)
+                                      favorite_mail_pool_left,
+                                      favorite_mail_queue,
+                                      favorite_mail_why)
 from src.dating.favorite_mail_round import favorite_mail_round_next
 from src.dating.json_column import json_column_load
 from src.dating.mail_explain import mail_explain
@@ -700,6 +701,54 @@ async def favorite_mail_explain(profile_id: int = 0, uid: str = '',
     return {'result': got or {'known': False}}
 
 
+class DatingFavoriteMailRecipient(BaseModel):
+    """Один её избранный — с ответом, ляжет ли ему письмо, и почему нет."""
+
+    uid: str = Field(..., description='Номер человека на сайте')
+    name: str = Field('', description='Имя: сперва карточка собеседника, потом контакт')
+    photo: str = Field('', description='Лицо, полный адрес; пусто — лица нет')
+    mailable: bool = Field(True, description='Может ли эта анкета писать этому')
+    # ⚠ Поле обязано быть **здесь**, а не только в строке: `response_model`
+    # выбрасывает всё, чего в ней нет, и молча — страница вместо причины
+    # получила бы `undefined` и серый чип без слова.
+    why: str = Field('', description='Почему нельзя — теми же словами, что и в '
+                                     'отказе ручки; пусто, когда писать можно')
+
+
+class DatingFavoriteMailRecipients(BaseModel):
+    """Ответ про адресатов ручного письма — все её избранные, годные и нет."""
+
+    result: list[DatingFavoriteMailRecipient] = Field(
+        ..., description='Её избранные по имени; `mailable` — можно ли писать')
+
+
+@router.get('/recipients', include_in_schema=False,
+            response_model=DatingFavoriteMailRecipients)
+async def favorite_mail_recipients_get(profile_id: int = 0,
+                                       user: AuthUser = Depends(auth_required)):
+    """Кому эта анкета может писать письмо руками — и почему кому-то нет.
+
+    Returns:
+        dict: `result` — её избранные (`uid`, `name`, `photo`, `mailable`, `why`).
+            Без анкеты — пустой список, как и прочие ручки этого роутера.
+
+    ## ⚠⚠ Отвечает **домен**, а не ручка
+
+    Разрешением и причиной правит `favorite_mail_mailable` — тем же ответом, каким
+    отказывает `favorite_mail_manual`. Подбор, собранный своим запросом, разошёлся
+    бы с отказом на первой же правке, и страница пускала бы к кнопке тех, кому
+    письмо не ляжет: 11 ноября так и было — лента звала писать двоих, письмо не
+    легло никому. Здесь расходиться нечему: спрашивается тот же ответ.
+
+    ⚠ Стоит **выше** путей с номером (`/{mail_id}/send`, `/{mail_id}`) — тот же
+    довод, что у `explain` строкой выше.
+    """
+    if not int(profile_id or 0):
+        return {'result': []}
+
+    return {'result': await favorite_mail_mailable(int(profile_id))}
+
+
 @router.post('/manual', include_in_schema=False)
 async def favorite_mail_manual_post(payload: DatingFavoriteMailManual,
                                     user: AuthUser = Depends(auth_required)):
@@ -710,8 +759,10 @@ async def favorite_mail_manual_post(payload: DatingFavoriteMailManual,
         dict: `result` — строки пула в порядке адресатов.
 
     Raises:
-        HTTPException: 409 — не легло никому, причина словами (не в избранных,
-        снимок негоден, пустой текст).
+        HTTPException: 409 — не легло никому. Причина словами и **поимённо**:
+            «Harry — закрылся от неё; Benoit — не в избранных» — теми же
+            словами, которыми подбор адресатов (`/recipients`) запретил их
+            выбирать. Снимок негоден, пустой текст, спящая анкета — те же 409.
     """
     try:
         mail_ids = await favorite_mail_manual(int(payload.profile_id), payload.uids,

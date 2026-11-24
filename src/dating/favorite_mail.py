@@ -226,6 +226,20 @@ FAVORITE_MAIL_SKIP_TWICE = 'ему уже пишет другая анкета �
 # вызывающий (`_girl_said`), и начинается строка теперь с него.
 FAVORITE_MAIL_SKIP_BUSY = 'уже написала письмо этим заходом'
 
+# Почему письмо этому человеку **не ляжет** — словами.
+#
+# ⚠⚠ **Одна формулировка на три места**: её показывает карточка человека в
+# ленте, ею же подписан отказ ручки `favorite_mail_manual` и та же строка лежит
+# в подсказке под формой. Три записи одного ответа разошлись бы молча — человек
+# читал бы в подсказке «закрылся от неё», а в уведомлении «не в избранных», и
+# обе были бы про одного и того же человека.
+#
+# ⚠ «От неё», а не «от анкеты»: так эта причина уже звучала в отказе ручки до
+# правки 11 ноября («…или закрылись от неё: 584168, 756302») — человек знает её
+# по прошлым письмам, новое «от анкеты» было бы другим словом про то же.
+FAVORITE_MAIL_WHY_BLOCK = 'закрылся от неё'
+FAVORITE_MAIL_WHY_FAVORITE = 'не в избранных'
+
 
 async def favorite_mail_make(site_id: int, limit: int = 0,
                                     profile_id: int = 0) -> dict:
@@ -467,38 +481,75 @@ class DatingFavoriteMailManualError(Exception):
     """Ручное письмо не легло в пул — причина словами для ответа ручки."""
 
 
-async def favorite_mail_recipients(profile_id: int) -> list[dict]:
-    """Кому анкета может написать письмо приставания руками: её избранные.
+async def favorite_mail_mailable(profile_id: int) -> list[dict]:
+    """Каждый её избранный — с ответом, ляжет ли ему письмо, и почему нет.
+
+    Args:
+        profile_id: чьи избранные разбираем (`profile.id`).
 
     Returns:
-        list[dict]: `uid`, `name`, `photo` — по имени, безымянные в конце.
+        list[dict]: `uid`, `name`, `photo`, `mailable` (можно ли писать) и `why`
+            — причина словами, пустая у тех, кому письмо ляжет. По имени,
+            безымянные в конце.
 
-    ⚠ Набор тот же, что у круга (`_quiet`): состояния `FAVORITE_STATES` и без
-    закрывшихся (`block`). Условий «затих ли разговор» и «в сети ли» здесь нет
-    намеренно — человек пишет, когда сам решил; уйдёт письмо, как всякое письмо
-    пула, когда отправка сочтёт уместным (сеть, пауза, дневной предел).
+    ## ⚠⚠ Это **тот же** ответ, которым отказывает ручка
+
+    `favorite_mail_manual` проверяет адресатов по нему же, поэтому подсказка в
+    подборе и отказ одного письма не могут разойтись: страница ничего не решает
+    сама, она только показывает решённое здесь. Завести второй вопрос «можно ли
+    этому» значило бы иметь два ответа на один — и они разошлись бы молча, ровно
+    как разошлись в живом случае 11 ноября: лента звала писать двоим, которых
+    письмо уже не брало.
+
+    ## ⚠ Запрет — **любая** строка `block`, канал не смотрим
+
+    Для писем `block_pairs` отдаёт все строки: канал `mail` гасит письма, канал
+    `all` — письма и разговор. Значит про письмо спрашивается «есть ли строка про
+    эту пару», и канал в ответ не выходит: для человека на экране оба значат
+    одно — письмо не ляжет.
+
+    ## ⚠ Состояние звезды — то же, что у круга, `already` в их числе
+
+    `FAVORITE_STATES` — те же, по каким круг (`_quiet`) набирает пул. Состояние
+    `already` («звезда стояла у сайта, мы её только переписали к себе») —
+    законный избранный, и оторвать его здесь значило бы отказывать человеку,
+    которому письмо уходит каждый день.
+
+    ## ⚠ Имя и лицо — общей приклейкой, не своей
+
+    `pool_pair_select`/`pool_pair_joins`: имя и лицо собеседника во всех пулах
+    собираются из трёх источников в одном месте, и здесь — четвёртое место, а не
+    пятая копия. Своей версии ответа на один вопрос быть не должно.
     """
+    from src.dating.pool_pair import pool_pair_joins, pool_pair_select
+
     sql = ('SELECT f.uid,'
-           '       COALESCE(c.name, comp.name, %s) AS name,'
-           '       COALESCE(NULLIF(comp.photo, %s), c.photo, %s) AS photo'
-           '  FROM favorite f'
-           '  LEFT JOIN contact c ON c.profile_id = f.profile_id AND c.uid = f.uid'
-           '  LEFT JOIN companion comp'
-           '    ON comp.site_id = f.site_id AND comp.uid = f.uid'
-           ' WHERE f.profile_id = %s'
-           f'   AND f.state IN ({FAVORITE_STATES_SQL})'
-           '   AND NOT EXISTS (SELECT 1 FROM block b'
-           '                    WHERE b.profile_id = f.profile_id AND b.uid = f.uid)')
+           + pool_pair_select('f', own_name=False, own_photo=False)
+           + '       f.state IN (' + FAVORITE_STATES_SQL + ') AS star,'
+             '       b.uid IS NOT NULL AS closed'
+             '  FROM favorite f'
+           + pool_pair_joins('f')
+           + '  LEFT JOIN block b ON b.profile_id = f.profile_id AND b.uid = f.uid'
+             ' WHERE f.profile_id = %s')
 
     async with mysql_get_db_async() as db:
-        await db.execute(sql, ('', '', '', int(profile_id), *FAVORITE_STATES))
+        await db.execute(sql, (*FAVORITE_STATES, int(profile_id)))
         rows = await db.fetchall()
 
     out = {}
     for row in rows or []:
         uid = str(row['uid'])
-        out[uid] = {'uid': uid, 'name': str(row['name'] or '').strip(),
-                    'photo': str(row['photo'] or '')}
+        # ⚠ Запрет важнее состояния: человеку без звезды и с запретом причина
+        # именно запрет — писать ему нельзя в принципе, а не «пока не избран».
+        star = bool(int(row['star'] or 0))
+        closed = bool(int(row['closed'] or 0))
+
+        out[uid] = {
+            'uid': uid, 'name': str(row['name'] or '').strip(),
+            'photo': str(row['photo'] or ''),
+            'mailable': star and not closed,
+            'why': '' if star and not closed else (
+                FAVORITE_MAIL_WHY_BLOCK if closed else FAVORITE_MAIL_WHY_FAVORITE)}
 
     return sorted(out.values(), key=lambda one: (not one['name'],
                                                  one['name'].lower(), one['uid']))
@@ -522,6 +573,14 @@ async def favorite_mail_manual(profile_id: int, uids: list[str], body: str,
     ⚠⚠ **Всё или ничего**: адресаты проверяются до первой вставки. Положи мы
     годных и откажи на негодном, человек не знал бы, кому из выбранных письмо
     уже легло, и второе нажатие дало бы годным дубль.
+
+    ⚠⚠ **Отказ называет каждого по имени и причину**: «Harry — закрылся от
+    анкеты; Benoit — закрылся от неё». Прежде тут стоял один общий список
+    номеров («не в избранных этой анкеты или закрылись от неё: 584168, 756302»),
+    и человек, выбиравший адресатов **по именам**, получал два номера, по которым
+    непонятно, кому что не так. Живой случай 11 ноября. Причина та же, что у
+    подсказки в подборе (`favorite_mail_mailable`), — одной записью, не двумя;
+    без имени остаётся номер.
 
     Raises:
         DatingFavoriteMailManualError: причина словами.
@@ -568,12 +627,13 @@ async def favorite_mail_manual(profile_id: int, uids: list[str], body: str,
             'анкета не в сети: черновик от неё чистка пула сотрёт ближайшим '
             'кругом — войдите под ней и отправьте снова')
 
-    who = {one['uid']: one for one in await favorite_mail_recipients(profile_id)}
-    strangers = [one for one in uids if one not in who]
-    if strangers:
+    site_id = int(girl['site_id'])
+
+    who = {one['uid']: one for one in await favorite_mail_mailable(profile_id)}
+    off = [one for one in uids if not (who.get(one) or {}).get('mailable')]
+    if off:
         raise DatingFavoriteMailManualError(
-            f'не в избранных этой анкеты или закрылись от неё: {", ".join(strangers)}'
-            ' — письмо не легло никому')
+            f'{await _refusal_words(site_id, off, who)} — письмо не легло никому')
 
     shot = 0
     if int(gallery_file_id or 0):
@@ -582,9 +642,9 @@ async def favorite_mail_manual(profile_id: int, uids: list[str], body: str,
         except DatingMailShotError as e:
             raise DatingFavoriteMailManualError(str(e)) from e
 
-    site_id = int(girl['site_id'])
     mail_ids = [await _put(site_id, profile_id, who[one], body, shot=shot)
                 for one in uids]
+
     logger_info(f'[dating] письмо избранным {", ".join(uids)} от анкеты '
                 f'#{profile_id} написано руками: {mail_ids}'
                 + (f', снимок #{shot}' if shot else ''))
@@ -1716,6 +1776,44 @@ def _addressee(pair: dict) -> str:
     name = str((pair or {}).get('name') or '').strip()
 
     return f'{name} ({uid})' if name else uid
+
+
+async def _refusal_words(site_id: int, off: list, who: dict) -> str:
+    """Кого не пустило письмо и почему — поимённо, одной строкой.
+
+    Args:
+        site_id: сайт-закладка анкеты, от которой пишут.
+        off: адресаты, которым письмо не ляжет, в порядке выбора.
+        who: строка `favorite_mail_mailable` на каждый номер — из неё причина.
+
+    Returns:
+        str: «Harry — закрылся от неё; Benoit — не в избранных».
+
+    ## ⚠⚠ Имя, а не номер
+
+    Человек выбирал адресатов по именам в ленте, и `584168` в ответе он был бы
+    вынужден расшифровывать по той же ленте руками — а их в ленте две сотни.
+    Номер остаётся запасным: имя спрашивается общей дверью (`companion_name_known`),
+    карточки могут ещё не быть, и тогда назвать нечем.
+
+    ⚠ **Причина берётся из той же строки, что и разрешение**
+    (`favorite_mail_mailable`), а не сочиняется здесь: две записи одного ответа
+    разошлись бы молча. Номера, о котором база не знает вовсе, в `who` нет —
+    ему и достаётся «не в избранных», та же причина, что у отказа по нему же.
+    """
+    from src.dating.companion_card import companion_name_known
+
+    out = []
+    for uid in off:
+        one = who.get(uid) or {}
+        name = await companion_name_known(site_id, uid,
+                                          str(one.get('name') or ''))
+
+        out.append(f'{name or uid} — '
+                   f'{one.get("why") or FAVORITE_MAIL_WHY_FAVORITE}')
+
+    return '; '.join(out)
+
 
 
 def _girl_said(pair: dict) -> str:

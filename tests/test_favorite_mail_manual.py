@@ -4,6 +4,10 @@
 
 * письмо ложится **обычной строкой пула** (`draft`) — уносит его та же отправка;
 * адресат — только **её избранный** и не закрывшийся от неё (`block`);
+* ⚠⚠ отказ **называет каждого по имени и причине** — страница по номерам из
+  двухсот человек в ленте своего не найдёт;
+* список «кому ляжет, а кому нет» (`GET /recipients`) — **тот же** ответ, каким
+  отказывает ручка: на странице своего признака нет;
 * снимок — тем же правилом, что у шаблона (`mail_shot_check`): своя анкета,
   `public`; без отметки свежести шаблонов (`last_shot_at`);
 * ⚠⚠ анкета обязана быть в сети: черновик спящей стирает `pool_sweep`, и
@@ -50,6 +54,41 @@ async def online_girl(girl_make):
     girl = await girl_make(online=True)
     yield girl
     await _sql('DELETE FROM favorite WHERE profile_id = %s', (girl,))
+
+
+@pytest.fixture
+async def someone(online_girl):
+    """Избранник с именем: звезда, состояние и запрет — доводом.
+
+    Убирает за собой **все три** строки. Анкета стенда тест переживает, а
+    `companion` и `block` уборкой по анкете не находятся: у первой нет
+    `profile_id`, у второй уборка идёт по сайту.
+    """
+    made: list[str] = []
+
+    async def add(uid: str, name: str, *, state: str = 'done',
+                  closed: bool = False) -> str:
+        await _sql('INSERT INTO companion (site_id, uid, name, photo)'
+                   ' VALUES (%s, %s, %s, %s)', (TEST_STAND_SITE, uid, name, ''))
+        await _sql('INSERT INTO favorite (site_id, profile_id, uid, state)'
+                   ' VALUES (%s, %s, %s, %s)', (TEST_STAND_SITE, online_girl, uid, state))
+        if closed:
+            await _sql('INSERT INTO block (site_id, profile_id, uid)'
+                       ' VALUES (%s, %s, %s)', (TEST_STAND_SITE, online_girl, uid))
+        made.append(uid)
+
+        return uid
+
+    yield add
+
+    if made:
+        marks = ', '.join(['%s'] * len(made))
+        await _sql(f'DELETE FROM companion WHERE site_id = %s AND uid IN ({marks})',
+                   (TEST_STAND_SITE, *made))
+        await _sql(f'DELETE FROM favorite WHERE profile_id = %s AND uid IN ({marks})',
+                   (online_girl, *made))
+        await _sql(f'DELETE FROM block WHERE profile_id = %s AND uid IN ({marks})',
+                   (online_girl, *made))
 
 
 async def test_letter_lands_in_pool_with_shot(online_girl):
@@ -154,9 +193,70 @@ async def test_one_stranger_spoils_all(online_girl):
     assert rows == []
 
 
-async def test_routes(auth_client, online_girl):
+async def test_mailable_verdict(online_girl, someone):
+    """⚠⚠ Кому ляжет и почему нет — одним списком: он же и отказ, и подсказка.
+
+    Тот же ответ отдаёт `POST /manual`, поэтому страница показывает решённое
+    здесь, а не сочиняет признак второй раз.
+    """
+    from src.dating.favorite_mail import (FAVORITE_MAIL_WHY_BLOCK,
+                                          favorite_mail_mailable)
+
+    closed = await someone(f'man-{uuid.uuid4().hex[:8]}', 'Benoit', closed=True)
+    star = await someone(f'man-{uuid.uuid4().hex[:8]}', 'Harry')
+    already = await someone(f'man-{uuid.uuid4().hex[:8]}', 'Otto', state='already')
+
+    rows = await favorite_mail_mailable(online_girl)
+    got = {one['uid']: one for one in rows}
+
+    assert set(got) == {closed, star, already}
+    assert [one['name'] for one in rows] == ['Benoit', 'Harry', 'Otto']
+
+    assert got[closed]['mailable'] is False
+    assert got[closed]['why'] == FAVORITE_MAIL_WHY_BLOCK
+
+    # ⚠ `already` — «звезда стояла у сайта, мы её только переписали»: по тому же
+    # набору (`FAVORITE_STATES`) пул набирает круг, и отказать ему здесь значило
+    # бы запретить то, что уходит каждый день.
+    assert got[star]['mailable'] is True and got[star]['why'] == ''
+    assert got[already]['mailable'] is True and got[already]['why'] == ''
+
+
+async def test_refusal_names_every_one(online_girl, someone):
+    """⚠⚠ Отказ называет **каждого** по имени и причине — живой случай 11 ноября.
+
+    Из пяти выбранных по ленте двое были закрыты, письмо — всё или ничего — не
+    легло никому, а в отказе стояли два номера, которые человек ещё должен был
+    найти в двухстах именах ленты.
+    """
+    from src.dating.favorite_mail import (DatingFavoriteMailManualError,
+                                          FAVORITE_MAIL_WHY_BLOCK,
+                                          FAVORITE_MAIL_WHY_FAVORITE,
+                                          favorite_mail_manual)
+
+    closed = await someone(f'man-{uuid.uuid4().hex[:8]}', 'Benoit', closed=True)
+    good = await someone(f'man-{uuid.uuid4().hex[:8]}', 'Harry')
+
+    with pytest.raises(DatingFavoriteMailManualError) as got:
+        await favorite_mail_manual(online_girl, [good, closed, 'nobody'], 'Hi')
+
+    words = str(got.value)
+    assert f'Benoit — {FAVORITE_MAIL_WHY_BLOCK}' in words
+    assert f'nobody — {FAVORITE_MAIL_WHY_FAVORITE}' in words
+    assert 'письмо не легло никому' in words
+
+    # ⚠ Имя, а не номер: карточка есть — показывать номер незачем.
+    assert closed not in words
+
+    rows, _ = await _sql('SELECT id FROM favorite_mail WHERE profile_id = %s',
+                         (online_girl,))
+    assert rows == []
+
+
+async def test_routes(auth_client, online_girl, someone):
     uid = f'man-{uuid.uuid4().hex[:8]}'
     await _star(online_girl, uid)
+    closed = await someone(f'man-{uuid.uuid4().hex[:8]}', 'Benoit', closed=True)
 
     ok = await auth_client.post('/api/dating/favorite-mail/manual', json={
         'profile_id': online_girl, 'uids': [uid], 'body': 'Hi there'})
@@ -166,7 +266,25 @@ async def test_routes(auth_client, online_girl):
     bad = await auth_client.post('/api/dating/favorite-mail/manual', json={
         'profile_id': online_girl, 'uids': ['nobody'], 'body': 'Hi'})
     assert bad.status_code == 409
+    assert 'nobody — не в избранных' in bad.json()['detail']
 
     none = await auth_client.post('/api/dating/favorite-mail/manual', json={
         'profile_id': online_girl, 'uids': [], 'body': 'Hi'})
     assert none.status_code == 422
+
+    # Подбор адресатов: годные и негодные одним списком, с причиной.
+    got = await auth_client.get('/api/dating/favorite-mail/recipients',
+                                params={'profile_id': online_girl})
+    assert got.status_code == 200, got.text
+    rows = {one['uid']: one for one in got.json()['result']}
+
+    # ⚠ Поля вне `response_model` отбрасываются молча — страница прочла бы
+    # `undefined` вместо причины.
+    assert set(rows[uid]) == {'uid', 'name', 'photo', 'mailable', 'why'}
+    assert rows[uid]['mailable'] is True
+    assert rows[closed]['mailable'] is False
+    assert rows[closed]['why'] == 'закрылся от неё'
+
+    # Анкета не выбрана — спрашивать не о ком.
+    empty = await auth_client.get('/api/dating/favorite-mail/recipients')
+    assert empty.status_code == 200 and empty.json() == {'result': []}
