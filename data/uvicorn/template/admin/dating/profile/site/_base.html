@@ -543,7 +543,12 @@
        и подсказка с текущим интервалом.
 
        ⚠ Список **на сайт**, не на анкету: шаблоны общие, и чинит человек
-       «быстрый ответ сайта», а не сорок анкет по очереди. #}
+       «быстрый ответ сайта», а не сорок анкет по очереди.
+
+       ⚠ **Две колонки**: слева настраивают, справа читают — тот же расклад,
+       что у `mail-cols` на «Письмах» и «Инвайтах». Одной колонкой список
+       уезжал под форму, и добавить шаблон, не оторвав глаз от списка, было
+       нельзя. На узком экране (<1000px) колонки встают друг под друга. #}
     <div class="chat-pane off" data-chat-pane="quick">
         <div class="mail-sent-head">
             <span>Быстрый ответ</span>
@@ -551,20 +556,22 @@
             <button type="button" class="people-reload" data-slot="chat-quick-reload"
                     title="Перечитать список">⟳</button>
         </div>
-        <div class="mail-form">
-            <label class="mail-field">
-                <span class="mail-label">Новый шаблон</span>
-                <textarea class="mail-body" maxlength="2000" rows="2"
-                          data-slot="chat-quick-text"
-                          placeholder="Короткая реплика: «hi», смайлик — что угодно. Уйдёт, если агент не ответил за интервал."></textarea>
-            </label>
-            <div class="fav-manual-foot">
-                <button type="button" class="dating-btn primary"
-                        data-slot="chat-quick-add">Добавить</button>
-                <span class="sched-note" data-slot="chat-quick-note"></span>
+        <div class="quick-cols">
+            <div class="mail-form">
+                <label class="mail-field">
+                    <span class="mail-label">Новый шаблон</span>
+                    <textarea class="mail-body" maxlength="2000" rows="2"
+                              data-slot="chat-quick-text"
+                              placeholder="Короткая реплика: «hi», смайлик — что угодно. Уйдёт, если агент не ответил за интервал."></textarea>
+                </label>
+                <div class="fav-manual-foot">
+                    <button type="button" class="dating-btn primary"
+                            data-slot="chat-quick-add">Добавить</button>
+                    <span class="sched-note" data-slot="chat-quick-note"></span>
+                </div>
             </div>
+            <div class="mail-sent" data-slot="chat-quick"></div>
         </div>
-        <div class="mail-sent" data-slot="chat-quick"></div>
     </div>
 
 </div>

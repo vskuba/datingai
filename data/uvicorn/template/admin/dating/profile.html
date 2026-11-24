@@ -2415,6 +2415,58 @@
         line-height: 1.5;
     }
 
+    /* ---------- Подвкладка «Быстрый ответ»: форма слева, список справа -------
+
+       Тот же расклад, что у `mail-cols`: слева настраивают, справа читают.
+       Левая — по содержимому (поле ввода полной ширины не просит), правая
+       забирает остаток: текст шаблонов переносится именно там. */
+    [data-chat-pane="quick"] .quick-cols {
+        display: grid;
+        grid-template-columns: minmax(0, 460px) minmax(0, 1fr);
+        gap: 14px;
+        align-items: start;
+    }
+
+    [data-chat-pane="quick"] .quick-cols > * {
+        min-width: 0;
+    }
+
+    /* Узкий экран: колонки встают друг под другом, форма — сверху. Порог —
+       ширина, на которой левой колонке с полем и правой с текстом шаблона
+       становится тесно вдвоём. */
+    @media (max-width: 1000px) {
+        [data-chat-pane="quick"] .quick-cols {
+            grid-template-columns: minmax(0, 1fr);
+        }
+    }
+
+    /* Ячейки. Вид таблицы общий с `prof-table` — той же, что перечень анкет
+       выше на этой странице; своими остаются только ширины колонок: текстовая
+       переносится, действие жмётся к кнопке и центрируется. */
+    [data-chat-pane="quick"] .quick-body {
+        word-break: break-word;
+    }
+
+    [data-chat-pane="quick"] .quick-when {
+        display: block;
+        font-size: 10px;
+        color: #9ca3af;
+        margin-top: 2px;
+    }
+
+    [data-chat-pane="quick"] .quick-act {
+        width: 1%;
+        text-align: center;
+        white-space: nowrap;
+    }
+
+    /* Пустой список — одна строка той же таблицы, а не полоса текста: пустая
+       таблица обязана читаться таблицей. */
+    [data-chat-pane="quick"] td.quick-none {
+        text-align: center;
+        color: #9ca3af;
+    }
+
     .mail-pool-empty {
         grid-column: 1 / -1;
         padding: 20px 12px;
@@ -7287,32 +7339,40 @@
     }
 
     function quickPaint() {
-        const box = workEl.querySelector('[data-chat-pane="quick"] .mail-sent');
+        const box = workEl.querySelector('[data-chat-pane="quick"]'
+                                         + ' [data-slot="chat-quick"]');
         if (!box) return;
 
         fillSlot('chat-quick-hint', quickAfter
             ? `шаблон уходит, если агент молчит ${quickAfter} с`
             : 'интервал = 0 — быстрый ответ выключен');
 
+        // Таблица тем же видом, что перечень анкет на этой странице
+        // (`prof-table`): список из двух колонок не изобретает новый фасон.
+        // Дата — мелким серым под текстом: она справочная, важнее сама реплика.
+        const head = '<table class="prof-table"><thead><tr>'
+            + '<th>Шаблон</th><th class="quick-act">Действия</th>'
+            + '</tr></thead>';
+
         if (!quickRows.length) {
-            box.innerHTML = '<div class="mail-sent-empty">Шаблонов ещё нет — '
-                + 'быстрый ответ молчит, даже если интервал выставлен.<br>'
-                + 'Добавьте короткую реплику: «hi», смайлик. Она уйдёт там, где '
-                + 'агент не ответил за '
-                + (quickAfter ? `${quickAfter} секунд` : 'настроенный интервал')
-                + ', а настоящий ответ придёт всё равно отдельно.</div>';
+            box.innerHTML = head
+                + '<tbody><tr><td colspan="2" class="quick-none">'
+                + 'Шаблонов нет — добавьте слева</td></tr></tbody></table>';
 
             return;
         }
 
-        box.innerHTML = quickRows.map(row =>
-            '<div class="mail-sent-row plain">'
-            + `<span class="mail-sent-when first">`
-            + `${esc(row.created_at ? timeShift(row.created_at) : '')}</span>`
-            + `<span class="mail-sent-who talk">${esc(row.body)}</span>`
+        box.innerHTML = head + '<tbody>' + quickRows.map(row =>
+            '<tr>'
+            + `<td class="quick-body">${esc(row.body)}`
+            + (row.created_at
+                ? `<span class="quick-when">${esc(timeShift(row.created_at))}</span>`
+                : '')
+            + '</td>'
+            + '<td class="quick-act">'
             + `<button type="button" class="block-undo" data-quick="${row.id}"`
-            + ' title="Убрать шаблон">🗑</button>'
-            + '</div>').join('');
+            + ' title="Убрать шаблон">🗑</button></td>'
+            + '</tr>').join('') + '</tbody></table>';
 
         // После отрисовки: строки переписываются на каждое чтение.
         box.querySelectorAll('[data-quick]').forEach(btn =>
