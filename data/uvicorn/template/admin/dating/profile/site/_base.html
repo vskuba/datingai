@@ -751,6 +751,43 @@
                 <div class="sched-note" data-slot="fav-mail-limits"></div>
             </form>
 
+            {# ── Письмо руками ─────────────────────────────────────────────
+               Человек пишет письмо избранному сам: анкета — выбранная слева,
+               адресат — из её избранных, снимок — из `public` её галереи (тот
+               же выбор, что у шаблонов). Кнопка кладёт письмо в пул карточкой,
+               а уносит его обычная отправка с обычными пределами.
+
+               ⚠ Разметка статична, а не рисуется скриптом: перерисовка пула
+               идёт часто, и набранный текст не должен пропадать. #}
+            <form class="sched sched-mail fav-manual" data-form="fav-manual"
+                  onsubmit="return false">
+                <div class="sched-head-row">
+                    <span class="sched-title">Письмо руками</span>
+                </div>
+                <div class="sched-note" data-slot="fav-manual-who"></div>
+                <div class="mail-form fav-manual-body" data-slot="fav-manual-body">
+                    <label class="mail-field">
+                        <span class="mail-label">Кому</span>
+                        <select data-slot="fav-manual-to"></select>
+                    </label>
+                    <label class="mail-field">
+                        <span class="mail-label">Письмо</span>
+                        <textarea class="mail-body fav-manual-text" maxlength="20000"
+                                  data-slot="fav-manual-text"
+                                  placeholder="Текст письма целиком — меток здесь не подставляют"></textarea>
+                    </label>
+                    <div class="mail-field">
+                        <span class="mail-label">Снимок к письму</span>
+                        <div class="mail-shot" data-slot="fav-manual-shot"></div>
+                    </div>
+                    <div class="fav-manual-foot">
+                        <button type="button" class="dating-btn primary"
+                                data-slot="fav-manual-put">Отправить в пул</button>
+                        <span class="sched-note" data-slot="fav-manual-note"></span>
+                    </div>
+                </div>
+            </form>
+
         </div><!-- /mail-col-left -->
 
         <div class="mail-col-right">

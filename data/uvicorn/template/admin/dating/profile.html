@@ -4309,6 +4309,14 @@
         display: block;
     }
 
+    /* Письмо приставания руками — под расписанием, тем же видом, что форма
+       шаблона. */
+    .fav-manual { margin-top: 14px; }
+    .fav-manual-body { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+    .fav-manual-body[hidden] { display: none; }
+    .fav-manual-text { min-height: 160px; }
+    .fav-manual-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
     .mail-shot-tile:hover { border-color: #93c5fd; }
     .mail-shot-tile.on { border-color: #4f46e5; }
 
@@ -9621,6 +9629,7 @@
         // Без выбранной анкеты не гасим вовсе: список полон, и «не работает» было
         // бы неправдой про весь сайт.
         favMailFlagsPaint(row);
+        favManualPaint();
 
         // ⚠ Пределы частоты **только показываем**: правят их на «Настройках
         // сайтов», в группе «Избранные и переписка». Два места для одного
@@ -9716,6 +9725,180 @@
     // устроен одинаково, и разные формулировки про одно человеку пришлось бы
     // сверять между вкладками.
     const favMailNextText = () => roundNextText(favMailNext, 'наберётся кругом');
+
+    // ── Письмо приставания руками ────────────────────────────────────────────
+    //
+    // Форма под расписанием: анкета — выбранная слева, адресат — из её
+    // избранных (`/favorite-mail/recipients`), снимок — из `public` её галереи
+    // тем же окном, что у шаблона. «Отправить в пул» кладёт письмо карточкой, а
+    // уносит его обычная отправка с обычными пределами.
+    //
+    // ⚠ Разметка статична (шаблон работы), скрипт только наполняет её: пул
+    // перерисовывается часто, и набранный текст не должен пропадать.
+    let favManualFor = null;     // для какой анкеты загружены адресаты
+    let favManualTo = null;      // [{uid, name, photo}] либо null — грузится
+    let favManualShot = null;    // {id, file, path} либо null
+    let favManualBusy = false;
+
+    async function favManualLoad(profile) {
+        favManualTo = null;
+        let got = [];
+        try {
+            const answer = await getData(
+                `${BASE}/api/dating/favorite-mail/recipients?profile_id=${profile}`);
+            got = answer.result || [];
+        } catch (e) {
+            showNotification('Избранные анкеты не пришли: ' + e.message, 'error');
+        }
+
+        // Анкету могли сменить, пока ответ ехал.
+        if (favManualFor !== profile) return;
+
+        favManualTo = got;
+        favManualPaint();
+    }
+
+    function favManualPaint() {
+        const body = slot('fav-manual-body');
+        if (!body) return;
+
+        favManualBind();
+
+        const row = openRow();
+        if (!openId || !row) {
+            fillSlot('fav-manual-who', 'Выберите анкету в списке слева: письмо '
+                + 'уходит от её имени одному из её избранных.');
+            body.hidden = true;
+
+            return;
+        }
+
+        body.hidden = false;
+        const online = row.status === 'online';
+        fillSlot('fav-manual-who', `От ${row.name || row.login}.`
+            + (online
+                ? ' Письмо ляжет в пул карточкой и уйдёт обычной отправкой — с теми'
+                  + ' же пределами и только когда адресат в сети.'
+                : ' ⚠ Она не в сети: черновик спящей анкеты стирает чистка пула,'
+                  + ' поэтому положить письмо сейчас нельзя.'));
+
+        if (favManualFor !== Number(openId)) {
+            favManualFor = Number(openId);
+            favManualShot = null;
+            favManualLoad(favManualFor);
+        }
+
+        const select = slot('fav-manual-to');
+        const was = select.value;
+        if (favManualTo === null) {
+            select.innerHTML = '<option value="">загружаю…</option>';
+        } else if (!favManualTo.length) {
+            select.innerHTML = '<option value="">у неё нет избранных</option>';
+        } else {
+            select.innerHTML = '<option value="">— выберите избранного —</option>'
+                + favManualTo.map(one => `<option value="${esc(one.uid)}">`
+                    + `${esc(one.name || 'без имени')} · ${esc(one.uid)}</option>`)
+                    .join('');
+            if (favManualTo.some(one => one.uid === was)) select.value = was;
+        }
+
+        favManualShotPaint();
+
+        const put = slot('fav-manual-put');
+        put.disabled = favManualBusy || !online || !favManualTo || !favManualTo.length;
+    }
+
+    function favManualShotPaint() {
+        const box = slot('fav-manual-shot');
+        if (!box) return;
+
+        const owner = Number(openId) || 0;
+        const shot = favManualShot;
+        box.innerHTML = '<div class="mail-shot-frame">'
+            + (shot
+                ? `<img src="${esc(galleryImgSrc(owner, shot.file, 200))}" alt=""`
+                + ` title="${esc(shot.path)} — нажмите, чтобы открыть целиком">`
+                + '<button type="button" class="mail-shot-drop"'
+                + ' data-role="drop" title="убрать снимок">✕</button>'
+                : 'без снимка')
+            + '</div>'
+            + '<div class="mail-shot-side">'
+            + '<button type="button" class="dating-btn" data-role="pick">'
+            + 'Выбрать из галереи</button>'
+            + '<span class="mail-found">'
+            + (shot ? esc(shot.path) : 'Один снимок из папки public — по желанию.')
+            + '</span>'
+            + '</div>';
+
+        const img = box.querySelector('.mail-shot-frame img');
+        if (img) {
+            img.addEventListener('click', () => intentionPhotoModal(
+                galleryImgSrc(owner, shot.file, 1600), {name: shot.path}, {}));
+        }
+
+        const drop = box.querySelector('[data-role="drop"]');
+        if (drop) {
+            drop.addEventListener('click', () => {
+                favManualShot = null;
+                favManualShotPaint();
+            });
+        }
+
+        box.querySelector('[data-role="pick"]').addEventListener('click', () =>
+            galleryPublicPick(owner, shot ? shot.id : 0,
+                'Снимок к письму — папка public', one => {
+                    favManualShot = one;
+                    favManualShotPaint();
+                }));
+    }
+
+    // Обработчики вешаются один раз: разметка статична и не пересоздаётся.
+    function favManualBind() {
+        const put = slot('fav-manual-put');
+        if (!put || put.dataset.bound) return;
+
+        put.dataset.bound = '1';
+        put.addEventListener('click', favManualPut);
+    }
+
+    async function favManualPut() {
+        const profile = Number(openId) || 0;
+        const uid = slot('fav-manual-to').value;
+        const text = slot('fav-manual-text');
+        const body = text.value.trim();
+
+        if (!profile) return;
+        if (!uid) {
+            fillSlot('fav-manual-note', 'Выберите, кому письмо.');
+
+            return;
+        }
+        if (!body) {
+            fillSlot('fav-manual-note', 'Письмо пустое.');
+
+            return;
+        }
+
+        favManualBusy = true;
+        fillSlot('fav-manual-note', '');
+        favManualPaint();
+        try {
+            await postData(`${BASE}/api/dating/favorite-mail/manual`, {
+                profile_id: profile, uid, body,
+                gallery_file_id: favManualShot ? Number(favManualShot.id) || 0 : 0,
+            });
+            text.value = '';
+            favManualShot = null;
+            showNotification('Письмо в пуле — уйдёт обычной отправкой', 'success');
+            favMailLoad();
+        } catch (e) {
+            fillSlot('fav-manual-note', e.message);
+            showNotification('Письмо не легло в пул: ' + e.message, 'error');
+        } finally {
+            favManualBusy = false;
+            favManualPaint();
+        }
+    }
 
     function favMailCard(one, index) {
         const sent = one.status !== 'draft';
@@ -17012,7 +17195,12 @@
     }
 
     function tmplShotSrc(file, w) {
-        return `${BASE}/api/dating/gallery/${tmplShotOwner()}`
+        return galleryImgSrc(tmplShotOwner(), file, w);
+    }
+
+    // Превью снимка галереи анкеты: `file` — номер файла на Диске.
+    function galleryImgSrc(owner, file, w) {
+        return `${BASE}/api/dating/gallery/${owner}`
             + `/img/${encodeURIComponent(file)}?w=${w}`;
     }
 
@@ -17073,13 +17261,25 @@
     // Окно выбора: плитки папки `public` её галереи. Другие папки не
     // показываются — интимные снимки рассылкой не уходят, сервер их отвергнет.
     async function shotPickOpen() {
-        const owner = tmplShotOwner();
+        await galleryPublicPick(tmplShotOwner(), tmplShot ? tmplShot.id : 0,
+            'Снимок к шаблону — папка public', one => {
+                tmplShot = one;
+                shotPaint();
+            });
+    }
+
+    // Окно выбора: плитки папки `public` галереи анкеты. ⚠ Общее у шаблона и
+    // ручного письма приставания: другие папки не показываются — холодным
+    // письмом интимные снимки не уходят, сервер их отвергнет
+    // (`mail_shot_check`). `onPick` получает `{id, file, path}`: `id` — строка
+    // индекса (её шлёт форма), `file` — номер на Диске (по нему превью).
+    async function galleryPublicPick(owner, currentId, title, onPick) {
         if (!owner) return;
 
         const back = document.createElement('div');
         back.className = 'dating-modal-back';
         back.innerHTML = '<div class="dating-modal-box mail-shot-pick-box">'
-            + '<div class="dating-modal-head">Снимок к шаблону — папка public</div>'
+            + `<div class="dating-modal-head">${esc(title)}</div>`
             + '<div data-role="grid"><span class="dating-spin"></span></div>'
             + '<div class="dating-modal-foot">'
             + '<button type="button" class="dating-btn" data-role="close">Закрыть</button>'
@@ -17114,18 +17314,17 @@
         grid.className = 'mail-shot-grid';
         grid.innerHTML = files.map((one, at) =>
             `<button type="button" class="mail-shot-tile${
-                tmplShot && tmplShot.id === Number(one.row_id) ? ' on' : ''}"`
+                currentId && Number(currentId) === Number(one.row_id) ? ' on' : ''}"`
             + ` data-at="${at}" title="${esc(one.name || '')}">`
-            + `<img src="${esc(tmplShotSrc(one.id, 200))}" alt="" loading="lazy">`
+            + `<img src="${esc(galleryImgSrc(owner, one.id, 200))}" alt="" loading="lazy">`
             + '</button>').join('');
 
         grid.querySelectorAll('.mail-shot-tile').forEach(tile =>
             tile.addEventListener('click', () => {
                 const one = files[Number(tile.dataset.at)];
-                tmplShot = {id: Number(one.row_id) || 0, file: String(one.id),
-                            path: `public/${one.name || ''}`};
                 back.remove();
-                shotPaint();
+                onPick({id: Number(one.row_id) || 0, file: String(one.id),
+                        path: `public/${one.name || ''}`});
             }));
     }
 

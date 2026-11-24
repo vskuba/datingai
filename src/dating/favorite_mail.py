@@ -463,6 +463,122 @@ async def favorite_mail_make(site_id: int, limit: int = 0,
             'stopped': stopped}
 
 
+class DatingFavoriteMailManualError(Exception):
+    """Ручное письмо не легло в пул — причина словами для ответа ручки."""
+
+
+async def favorite_mail_recipients(profile_id: int) -> list[dict]:
+    """Кому анкета может написать письмо приставания руками: её избранные.
+
+    Returns:
+        list[dict]: `uid`, `name`, `photo` — по имени, безымянные в конце.
+
+    ⚠ Набор тот же, что у круга (`_quiet`): состояния `FAVORITE_STATES` и без
+    закрывшихся (`block`). Условий «затих ли разговор» и «в сети ли» здесь нет
+    намеренно — человек пишет, когда сам решил; уйдёт письмо, как всякое письмо
+    пула, когда отправка сочтёт уместным (сеть, пауза, дневной предел).
+    """
+    sql = ('SELECT f.uid,'
+           '       COALESCE(c.name, comp.name, %s) AS name,'
+           '       COALESCE(NULLIF(comp.photo, %s), c.photo, %s) AS photo'
+           '  FROM favorite f'
+           '  LEFT JOIN contact c ON c.profile_id = f.profile_id AND c.uid = f.uid'
+           '  LEFT JOIN companion comp'
+           '    ON comp.site_id = f.site_id AND comp.uid = f.uid'
+           ' WHERE f.profile_id = %s'
+           f'   AND f.state IN ({FAVORITE_STATES_SQL})'
+           '   AND NOT EXISTS (SELECT 1 FROM block b'
+           '                    WHERE b.profile_id = f.profile_id AND b.uid = f.uid)')
+
+    async with mysql_get_db_async() as db:
+        await db.execute(sql, ('', '', '', int(profile_id), *FAVORITE_STATES))
+        rows = await db.fetchall()
+
+    out = {}
+    for row in rows or []:
+        uid = str(row['uid'])
+        out[uid] = {'uid': uid, 'name': str(row['name'] or '').strip(),
+                    'photo': str(row['photo'] or '')}
+
+    return sorted(out.values(), key=lambda one: (not one['name'],
+                                                 one['name'].lower(), one['uid']))
+
+
+async def favorite_mail_manual(profile_id: int, uid: str, body: str,
+                               gallery_file_id: int = 0) -> int:
+    """Письмо приставания, написанное человеком: кладёт его в пул черновиком.
+
+    Args:
+        profile_id: от кого (`profile.id`).
+        uid: кому — номер избранного на сайте.
+        body: текст письма как есть.
+        gallery_file_id: снимок из `public` её галереи (`gallery_file.id`);
+            ноль — письмо без снимка.
+
+    Returns:
+        int: номер строки пула.
+
+    Raises:
+        DatingFavoriteMailManualError: причина словами.
+
+    ⚠⚠ **Дальше это обычная строка пула**: уносит её тот же круг отправки (или
+    кнопка «Отправить» на карточке) с теми же пределами — сеть обеих сторон,
+    пауза анкеты, дневной предел получателя. Обхода правил ручное письмо не даёт.
+
+    ⚠⚠ **Агент соседа этого письма не знает.** Обмена у соседа нет
+    (`message_id` пуст), и доставка ему не отмечается — то же, что у рассылки:
+    сочинял не он. Агент продолжит разговор, не видя этих слов.
+
+    ⚠⚠ **Анкета обязана быть в сети**: черновик спящей стирает чистка пула, а
+    текст, набранный человеком, круг не сочинит заново.
+
+    ⚠ Неподставленная метка `[[…]]` — отказ: подставлять здесь нечего, и она
+    ушла бы живому человеку как есть.
+    """
+    from src.dating.mail_shot import DatingMailShotError, mail_shot_check
+
+    profile_id, uid = int(profile_id or 0), str(uid or '').strip()
+    body = str(body or '').strip()
+    if not body:
+        raise DatingFavoriteMailManualError('письмо пустое')
+    if '[[' in body or ']]' in body:
+        raise DatingFavoriteMailManualError(
+            'в письме осталась метка [[…]] — здесь их не подставляют, '
+            'напишите текст целиком')
+
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT id, site_id, status FROM profile WHERE id = %s',
+                         (profile_id,))
+        girl = await db.fetchone()
+    if not girl:
+        raise DatingFavoriteMailManualError(f'анкеты #{profile_id} нет')
+    # ⚠⚠ Черновик анкеты не в сети стирает чистка пула (`pool.pool_sweep`) —
+    # ближайшим же кругом, и написанное руками пропало бы молча.
+    if str(girl['status'] or '') != 'online':
+        raise DatingFavoriteMailManualError(
+            'анкета не в сети: черновик от неё чистка пула сотрёт ближайшим '
+            'кругом — войдите под ней и отправьте снова')
+
+    who = {one['uid']: one for one in await favorite_mail_recipients(profile_id)}
+    if uid not in who:
+        raise DatingFavoriteMailManualError(
+            f'{uid} не в избранных этой анкеты или закрылся от неё')
+
+    shot = 0
+    if int(gallery_file_id or 0):
+        try:
+            shot = await mail_shot_check(profile_id, int(gallery_file_id))
+        except DatingMailShotError as e:
+            raise DatingFavoriteMailManualError(str(e)) from e
+
+    site_id = int(girl['site_id'])
+    mail_id = await _put(site_id, profile_id, who[uid], body, shot=shot)
+    logger_info(f'[dating] письмо избранному {uid} от анкеты #{profile_id} '
+                f'написано руками: #{mail_id}' + (f', снимок #{shot}' if shot else ''))
+
+    return mail_id
+
+
 async def favorite_mail_stars_sync(site_id: int, profile_id: int = 0) -> None:
     """Сверяет звёзды с сайтом — не чаще своего срока. Ничего не бросает.
 
@@ -1539,7 +1655,8 @@ async def _seconds(site_id: int, key: str, fallback: int) -> int:
 
 
 async def _put(site_id: int, profile_id: int, pair: dict, body: str,
-               message_id: int = 0, extra: dict = None) -> None:
+               message_id: int = 0, extra: dict = None,
+               shot: int | None = None) -> int:
     """Кладёт письмо в пул.
 
     ⚠ **Без `INSERT IGNORE`, в отличие от прочих пулов**: уникального ключа на
@@ -1554,8 +1671,11 @@ async def _put(site_id: int, profile_id: int, pair: dict, body: str,
     # ⚠ Снимок выбирается **при сборке**, а не при отправке: между ними часы,
     # и человек должен видеть в пуле тот кадр, который уйдёт. ⚠⚠ Просил ли его
     # прогон — решает **сосед** (`extra.img_attach`), жребия в панели нет.
-    shot = await mail_shot_pick(int(profile_id), int(site_id),
-                                str(pair['uid']), extra)
+    # ⚠ Ручное письмо (`favorite_mail_manual`) приносит кадр готовым: его
+    # выбрал человек, и жребий соседа тут не при чём.
+    if shot is None:
+        shot = await mail_shot_pick(int(profile_id), int(site_id),
+                                    str(pair['uid']), extra)
 
     async with mysql_get_db_async() as db:
         await db.execute(
@@ -1566,7 +1686,10 @@ async def _put(site_id: int, profile_id: int, pair: dict, body: str,
             (int(site_id), int(profile_id), str(pair['uid']),
              str(pair.get('name') or ''), str(pair.get('photo') or ''), body,
              int(message_id or 0) or None, int(shot)))
+        mail_id = int(db.lastrowid or 0)
         await db.connection.commit()
+
+    return mail_id
 
 
 def _addressee(pair: dict) -> str:

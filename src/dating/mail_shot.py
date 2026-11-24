@@ -302,6 +302,48 @@ async def mail_shot_for_template(profile_id: int, mail_id: int = 0,
         return 0
 
 
+async def mail_shot_check(profile_id: int, file_id: int) -> int:
+    """Годится ли снимок, выбранный человеком руками, в холодное письмо.
+
+    Args:
+        profile_id: чья галерея (`profile.id`).
+        file_id: номер строки индекса (`gallery_file.id`) из окна выбора.
+
+    Returns:
+        int: тот же номер — снимок годный.
+
+    Raises:
+        DatingMailShotError: не выбран, чужой анкеты, погас, не изображение или
+            лежит не в `public` — причина словами для ответа ручки.
+
+    ⚠ **Только проверка, без отметок.** Выбор кадра шаблону (`mail_shot_choose`)
+    ставит ещё и `last_shot_at`, а ручное письмо приставания — нет: оно уходит
+    одному человеку, и память о показанном ставит отправка (`mail_send_mark`).
+    Правило годности при этом одно на обе двери — разойдись они, шаблон и письмо
+    принимали бы разные снимки.
+    """
+    gid, shot = int(profile_id or 0), int(file_id or 0)
+    if not gid or not shot:
+        raise DatingMailShotError('снимок не выбран')
+
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT id, profile_id, path, kind, is_gone'
+                         '  FROM gallery_file WHERE id = %s', (shot,))
+        row = await db.fetchone()
+
+    if not row or int(row['profile_id'] or 0) != gid:
+        raise DatingMailShotError(f'снимка #{shot} нет в галерее этой анкеты')
+    if int(row['is_gone'] or 0):
+        raise DatingMailShotError('снимка больше нет на Диске')
+    if str(row['kind'] or '') != 'image':
+        raise DatingMailShotError('это не изображение')
+    if gallery_group_of(str(row['path'] or '')) != MAIL_SHOT_GROUP:
+        raise DatingMailShotError(f'к письму годятся только снимки из папки '
+                                  f'«{MAIL_SHOT_GROUP}»')
+
+    return shot
+
+
 async def mail_shot_choose(profile_id: int, file_id: int) -> int:
     """Кадр шаблона, выбранный человеком руками: проверить и закрепить.
 
@@ -330,24 +372,7 @@ async def mail_shot_choose(profile_id: int, file_id: int) -> int:
     ⚠ `last_shot_at` ставится и здесь: иначе дверь отдала бы этот же снимок
     следующему новому шаблону как «никогда не бранный».
     """
-    gid, shot = int(profile_id or 0), int(file_id or 0)
-    if not gid or not shot:
-        raise DatingMailShotError('снимок не выбран')
-
-    async with mysql_get_db_async() as db:
-        await db.execute('SELECT id, profile_id, path, kind, is_gone'
-                         '  FROM gallery_file WHERE id = %s', (shot,))
-        row = await db.fetchone()
-
-    if not row or int(row['profile_id'] or 0) != gid:
-        raise DatingMailShotError(f'снимка #{shot} нет в галерее этой анкеты')
-    if int(row['is_gone'] or 0):
-        raise DatingMailShotError('снимка больше нет на Диске')
-    if str(row['kind'] or '') != 'image':
-        raise DatingMailShotError('это не изображение')
-    if gallery_group_of(str(row['path'] or '')) != MAIL_SHOT_GROUP:
-        raise DatingMailShotError(f'к шаблону годятся только снимки из папки '
-                                  f'«{MAIL_SHOT_GROUP}»')
+    gid, shot = int(profile_id or 0), await mail_shot_check(profile_id, file_id)
 
     async with mysql_get_db_async() as db:
         await db.execute('UPDATE gallery_file SET last_shot_at = NOW()'
