@@ -823,8 +823,10 @@
        карточек в пуле сотни, и им нужна ширина. */
     .mail-cols {
         display: grid;
-        grid-template-columns: 540px minmax(0, 1fr);
-        gap: 14px;
+        /* ⚠ Средняя дорожка — разделитель `.split-mail`: он стоит в каждой
+           такой сетке, без него правая колонка легла бы в семь пикселей. */
+        grid-template-columns: minmax(0, var(--mail-col, 540px)) 7px minmax(0, 1fr);
+        gap: 6px;
         padding-top: 4px;
         /* ⚠ `align-items: start` снят: с ним колонки тянулись по содержимому, и
            прокрутке внутри них было не от чего отсчитываться. Теперь они
@@ -979,7 +981,8 @@
        На «Анкетах» иначе — там колонки разделены пустотой страницы, и полоса
        проступает лишь под курсором. */
     .split-reply,
-    .split-initiative {
+    .split-initiative,
+    .split-mail {
         background: #eef2f7;
         border-radius: 3px;
         cursor: col-resize;
@@ -987,7 +990,8 @@
     }
 
     .split-reply:hover, .split-reply.drag,
-    .split-initiative:hover, .split-initiative.drag {
+    .split-initiative:hover, .split-initiative.drag,
+    .split-mail:hover, .split-mail.drag {
         background: #c7d2fe;
     }
 
@@ -4228,7 +4232,7 @@
     /* Кадр шаблона: превью, крестик в углу и кнопка выбора из галереи. */
     .mail-shot {
         display: flex;
-        align-items: flex-end;
+        align-items: flex-start;
         gap: 10px;
     }
 
@@ -4316,6 +4320,8 @@
     .fav-manual-body[hidden] { display: none; }
     .fav-manual-text { min-height: 160px; }
     .fav-manual-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .fav-manual-to { display: flex; flex-wrap: wrap; gap: 5px; min-height: 22px; align-items: center; }
+    .fav-manual-to .sent-chip { font-size: 11px; }
 
     .mail-shot-tile:hover { border-color: #93c5fd; }
     .mail-shot-tile.on { border-color: #4f46e5; }
@@ -5297,6 +5303,16 @@
 
             splitDrag(split, '--initiative-col', 240, Math.round(innerWidth * 0.45),
                 (e) => cols.getBoundingClientRect().right - e.clientX);
+        });
+
+        // Разделитель двух колонок «расписание | пул» (рассылка, инвайты,
+        // приставание): левая растёт вправо, отсчёт от левого края сетки.
+        workEl.querySelectorAll('.split-mail').forEach(split => {
+            const cols = split.closest('.mail-cols');
+            if (!cols) return;
+
+            splitDrag(split, '--mail-col', 360, Math.round(innerWidth * 0.6),
+                (e) => e.clientX - cols.getBoundingClientRect().left);
         });
 
         // Разделитель подвкладок «Шаблоны» и «Переменные»: список слева растёт
@@ -9728,33 +9744,30 @@
 
     // ── Письмо приставания руками ────────────────────────────────────────────
     //
-    // Форма под расписанием: анкета — выбранная слева, адресат — из её
-    // избранных (`/favorite-mail/recipients`), снимок — из `public` её галереи
-    // тем же окном, что у шаблона. «Отправить в пул» кладёт письмо карточкой, а
-    // уносит его обычная отправка с обычными пределами.
+    // Форма под расписанием: анкета — выбранная слева, адресаты — **чипсами**:
+    // щелчок по человеку в ленте «My favorites» над формой добавляет чипс,
+    // крестик убирает. Снимок — из `public` её галереи тем же окном, что у
+    // шаблона. «Отправить в пул» кладёт каждому выбранному свою карточку, а
+    // уносит их обычная отправка с обычными пределами.
     //
     // ⚠ Разметка статична (шаблон работы), скрипт только наполняет её: пул
     // перерисовывается часто, и набранный текст не должен пропадать.
-    let favManualFor = null;     // для какой анкеты загружены адресаты
-    let favManualTo = null;      // [{uid, name, photo}] либо null — грузится
+    let favManualFor = null;     // для какой анкеты набраны адресаты
+    let favManualTo = [];        // [{uid, name}] — чипсы в порядке выбора
     let favManualShot = null;    // {id, file, path} либо null
     let favManualBusy = false;
 
-    async function favManualLoad(profile) {
-        favManualTo = null;
-        let got = [];
-        try {
-            const answer = await getData(
-                `${BASE}/api/dating/favorite-mail/recipients?profile_id=${profile}`);
-            got = answer.result || [];
-        } catch (e) {
-            showNotification('Избранные анкеты не пришли: ' + e.message, 'error');
-        }
+    // Щелчок по избранному в ленте. ⚠ Только пока форма на экране: лента
+    // «My favorites» стоит и там, где формы нет, и копить там чипсы незачем.
+    function favManualAdd(uid) {
+        const body = slot('fav-manual-body');
+        if (!body || body.hidden || !body.offsetParent) return;
 
-        // Анкету могли сменить, пока ответ ехал.
-        if (favManualFor !== profile) return;
+        uid = String(uid || '');
+        if (!uid || favManualTo.some(one => one.uid === uid)) return;
 
-        favManualTo = got;
+        favManualTo.push({uid, name: peopleName(uid) || ''});
+        fillSlot('fav-manual-note', '');
         favManualPaint();
     }
 
@@ -9767,7 +9780,7 @@
         const row = openRow();
         if (!openId || !row) {
             fillSlot('fav-manual-who', 'Выберите анкету в списке слева: письмо '
-                + 'уходит от её имени одному из её избранных.');
+                + 'уходит от её имени её избранным.');
             body.hidden = true;
 
             return;
@@ -9777,35 +9790,48 @@
         const online = row.status === 'online';
         fillSlot('fav-manual-who', `От ${row.name || row.login}.`
             + (online
-                ? ' Письмо ляжет в пул карточкой и уйдёт обычной отправкой — с теми'
-                  + ' же пределами и только когда адресат в сети.'
+                ? ' Каждому выбранному письмо ляжет в пул своей карточкой и уйдёт'
+                  + ' обычной отправкой — с теми же пределами и только когда'
+                  + ' адресат в сети.'
                 : ' ⚠ Она не в сети: черновик спящей анкеты стирает чистка пула,'
                   + ' поэтому положить письмо сейчас нельзя.'));
 
+        // Другая анкета — другие избранные: чипсы прежней ей не годятся.
         if (favManualFor !== Number(openId)) {
             favManualFor = Number(openId);
+            favManualTo = [];
             favManualShot = null;
-            favManualLoad(favManualFor);
         }
 
-        const select = slot('fav-manual-to');
-        const was = select.value;
-        if (favManualTo === null) {
-            select.innerHTML = '<option value="">загружаю…</option>';
-        } else if (!favManualTo.length) {
-            select.innerHTML = '<option value="">у неё нет избранных</option>';
-        } else {
-            select.innerHTML = '<option value="">— выберите избранного —</option>'
-                + favManualTo.map(one => `<option value="${esc(one.uid)}">`
-                    + `${esc(one.name || 'без имени')} · ${esc(one.uid)}</option>`)
-                    .join('');
-            if (favManualTo.some(one => one.uid === was)) select.value = was;
-        }
-
+        favManualChipsPaint();
         favManualShotPaint();
 
         const put = slot('fav-manual-put');
-        put.disabled = favManualBusy || !online || !favManualTo || !favManualTo.length;
+        put.disabled = favManualBusy || !online || !favManualTo.length;
+    }
+
+    function favManualChipsPaint() {
+        const box = slot('fav-manual-to');
+        if (!box) return;
+
+        if (!favManualTo.length) {
+            box.innerHTML = '<span class="sched-note">Нажмите на избранного в ленте'
+                + ' «My favorites» выше — он встанет сюда. Можно нескольких.</span>';
+
+            return;
+        }
+
+        box.innerHTML = favManualTo.map((one, at) =>
+            `<span class="sent-chip" title="${esc(one.uid)}">`
+            + `${esc(one.name || one.uid)}`
+            + `<button type="button" class="sent-chip-x" data-at="${at}"`
+            + ' title="убрать адресата">✕</button></span>').join('');
+
+        box.querySelectorAll('.sent-chip-x').forEach(x =>
+            x.addEventListener('click', () => {
+                favManualTo.splice(Number(x.dataset.at), 1);
+                favManualPaint();
+            }));
     }
 
     function favManualShotPaint() {
@@ -9863,13 +9889,13 @@
 
     async function favManualPut() {
         const profile = Number(openId) || 0;
-        const uid = slot('fav-manual-to').value;
+        const uids = favManualTo.map(one => one.uid);
         const text = slot('fav-manual-text');
         const body = text.value.trim();
 
         if (!profile) return;
-        if (!uid) {
-            fillSlot('fav-manual-note', 'Выберите, кому письмо.');
+        if (!uids.length) {
+            fillSlot('fav-manual-note', 'Выберите адресатов в ленте избранных.');
 
             return;
         }
@@ -9884,12 +9910,14 @@
         favManualPaint();
         try {
             await postData(`${BASE}/api/dating/favorite-mail/manual`, {
-                profile_id: profile, uid, body,
+                profile_id: profile, uids, body,
                 gallery_file_id: favManualShot ? Number(favManualShot.id) || 0 : 0,
             });
             text.value = '';
             favManualShot = null;
-            showNotification('Письмо в пуле — уйдёт обычной отправкой', 'success');
+            favManualTo = [];
+            showNotification(`Писем в пуле: ${uids.length} — уйдут обычной отправкой`,
+                'success');
             favMailLoad();
         } catch (e) {
             fillSlot('fav-manual-note', e.message);
@@ -14485,7 +14513,14 @@
     // Строки колонки выбирают собеседника — тем же способом, что список диалогов.
     function peopleBindRows(box) {
         box.querySelectorAll('.person, .person-card').forEach(person => {
-            person.addEventListener('click', () => chatSelect(person.dataset.uid));
+            person.addEventListener('click', () => {
+                chatSelect(person.dataset.uid);
+                // Лента избранных над формой «Письмо руками» — она же выбор
+                // адресатов: щелчок добавляет чипс (`favManualAdd`).
+                if (person.closest('.strip-row[data-strip="favorite"]')) {
+                    favManualAdd(person.dataset.uid);
+                }
+            });
         });
 
         // ⚠ Значок гасит всплытие: без этого щелчок по нему ещё и выбирал бы
@@ -16709,7 +16744,7 @@
     // Все размеры страницы в одном месте: список, журнал и две колонки
     // собеседников. Перечислены именами переменных, а не по одной строке на каждую,
     // — пятый разделитель не должен требовать правки в двух функциях.
-    const LAYOUT_VARS = ['--col', '--online-h', '--reply-col'];
+    const LAYOUT_VARS = ['--col', '--online-h', '--reply-col', '--mail-col'];
 
     function layoutSave() {
         const saved = {};

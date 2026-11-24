@@ -28,7 +28,6 @@ from src.dating.favorite import (FAVORITE_STATES,
 from src.dating.favorite_mail import (FAVORITE_MAIL_BATCH_DEFAULT,
                                       DatingFavoriteMailManualError,
                                       favorite_mail_manual,
-                                      favorite_mail_recipients,
                                              FAVORITE_MAIL_BATCH_MAX,
                                              favorite_mail_make,
                                              favorite_mail_pool_left,
@@ -104,8 +103,9 @@ class DatingFavoriteMailManual(BaseModel):
     """Письмо приставания, написанное руками: от кого, кому, текст и снимок."""
 
     profile_id: int = Field(..., gt=0, description='От какой анкеты')
-    uid: str = Field(..., min_length=1, max_length=64,
-                     description='Кому — номер избранного на сайте')
+    uids: list[str] = Field(..., min_length=1, max_length=200,
+                            description='Кому — номера её избранных на сайте; '
+                            'каждому своя карточка пула')
     body: str = Field(..., min_length=1, max_length=20000, description='Текст письма')
     gallery_file_id: int = Field(0, ge=0, description='Снимок из public её '
                                  'галереи (`gallery_file.id`); ноль — без снимка')
@@ -700,33 +700,27 @@ async def favorite_mail_explain(profile_id: int = 0, uid: str = '',
     return {'result': got or {'known': False}}
 
 
-@router.get('/recipients', include_in_schema=False)
-async def favorite_mail_recipients_get(profile_id: int = 0,
-                                       user: AuthUser = Depends(auth_required)):
-    """Избранные анкеты — кому можно написать письмо руками (`uid`, `name`, `photo`)."""
-    if int(profile_id) <= 0:
-        return {'result': []}
-
-    return {'result': await favorite_mail_recipients(int(profile_id))}
-
-
 @router.post('/manual', include_in_schema=False)
 async def favorite_mail_manual_post(payload: DatingFavoriteMailManual,
                                     user: AuthUser = Depends(auth_required)):
-    """Кладёт в пул письмо, написанное человеком; уходит оно обычной отправкой.
+    """Кладёт в пул письмо, написанное человеком, — карточку каждому адресату;
+    уходят они обычной отправкой.
+
+    Returns:
+        dict: `result` — строки пула в порядке адресатов.
 
     Raises:
-        HTTPException: 409 — не легло, причина словами (не в избранных, снимок
-        негоден, пустой текст).
+        HTTPException: 409 — не легло никому, причина словами (не в избранных,
+        снимок негоден, пустой текст).
     """
     try:
-        mail_id = await favorite_mail_manual(int(payload.profile_id), payload.uid,
-                                             payload.body,
-                                             int(payload.gallery_file_id))
+        mail_ids = await favorite_mail_manual(int(payload.profile_id), payload.uids,
+                                              payload.body,
+                                              int(payload.gallery_file_id))
     except DatingFavoriteMailManualError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
-    return {'result': await _row(mail_id)}
+    return {'result': [await _row(one) for one in mail_ids]}
 
 
 @router.post('/generate', include_in_schema=False)

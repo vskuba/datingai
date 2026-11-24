@@ -504,19 +504,24 @@ async def favorite_mail_recipients(profile_id: int) -> list[dict]:
                                                  one['name'].lower(), one['uid']))
 
 
-async def favorite_mail_manual(profile_id: int, uid: str, body: str,
-                               gallery_file_id: int = 0) -> int:
-    """Письмо приставания, написанное человеком: кладёт его в пул черновиком.
+async def favorite_mail_manual(profile_id: int, uids: list[str], body: str,
+                               gallery_file_id: int = 0) -> list[int]:
+    """Письмо приставания, написанное человеком: кладёт его в пул черновиком —
+    по карточке **на каждого** адресата.
 
     Args:
         profile_id: от кого (`profile.id`).
-        uid: кому — номер избранного на сайте.
-        body: текст письма как есть.
+        uids: кому — номера её избранных на сайте; повторы схлопываются.
+        body: текст письма как есть — один на всех.
         gallery_file_id: снимок из `public` её галереи (`gallery_file.id`);
             ноль — письмо без снимка.
 
     Returns:
-        int: номер строки пула.
+        list[int]: номера строк пула в порядке адресатов.
+
+    ⚠⚠ **Всё или ничего**: адресаты проверяются до первой вставки. Положи мы
+    годных и откажи на негодном, человек не знал бы, кому из выбранных письмо
+    уже легло, и второе нажатие дало бы годным дубль.
 
     Raises:
         DatingFavoriteMailManualError: причина словами.
@@ -537,8 +542,12 @@ async def favorite_mail_manual(profile_id: int, uid: str, body: str,
     """
     from src.dating.mail_shot import DatingMailShotError, mail_shot_check
 
-    profile_id, uid = int(profile_id or 0), str(uid or '').strip()
+    profile_id = int(profile_id or 0)
+    uids = list(dict.fromkeys(str(one or '').strip() for one in (uids or [])))
+    uids = [one for one in uids if one]
     body = str(body or '').strip()
+    if not uids:
+        raise DatingFavoriteMailManualError('не выбран ни один адресат')
     if not body:
         raise DatingFavoriteMailManualError('письмо пустое')
     if '[[' in body or ']]' in body:
@@ -560,9 +569,11 @@ async def favorite_mail_manual(profile_id: int, uid: str, body: str,
             'кругом — войдите под ней и отправьте снова')
 
     who = {one['uid']: one for one in await favorite_mail_recipients(profile_id)}
-    if uid not in who:
+    strangers = [one for one in uids if one not in who]
+    if strangers:
         raise DatingFavoriteMailManualError(
-            f'{uid} не в избранных этой анкеты или закрылся от неё')
+            f'не в избранных этой анкеты или закрылись от неё: {", ".join(strangers)}'
+            ' — письмо не легло никому')
 
     shot = 0
     if int(gallery_file_id or 0):
@@ -572,11 +583,13 @@ async def favorite_mail_manual(profile_id: int, uid: str, body: str,
             raise DatingFavoriteMailManualError(str(e)) from e
 
     site_id = int(girl['site_id'])
-    mail_id = await _put(site_id, profile_id, who[uid], body, shot=shot)
-    logger_info(f'[dating] письмо избранному {uid} от анкеты #{profile_id} '
-                f'написано руками: #{mail_id}' + (f', снимок #{shot}' if shot else ''))
+    mail_ids = [await _put(site_id, profile_id, who[one], body, shot=shot)
+                for one in uids]
+    logger_info(f'[dating] письмо избранным {", ".join(uids)} от анкеты '
+                f'#{profile_id} написано руками: {mail_ids}'
+                + (f', снимок #{shot}' if shot else ''))
 
-    return mail_id
+    return mail_ids
 
 
 async def favorite_mail_stars_sync(site_id: int, profile_id: int = 0) -> None:

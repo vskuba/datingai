@@ -445,6 +445,10 @@
 
         </div><!-- /mail-col-left -->
 
+        {# Разделитель колонок: ширину левой тянут руками (`--mail-col`, одна на
+           все вкладки с этой раскладкой). #}
+        <div class="split split-mail" title="Потяните, чтобы изменить ширину"></div>
+
         <div class="mail-col-right">
             <div class="mail-pool-head">
                 <span>Пул инвайтов</span>
@@ -752,8 +756,8 @@
             </form>
 
             {# ── Письмо руками ─────────────────────────────────────────────
-               Человек пишет письмо избранному сам: анкета — выбранная слева,
-               адресат — из её избранных, снимок — из `public` её галереи (тот
+               Человек пишет письмо избранным сам: анкета — выбранная слева,
+               адресаты — чипсами из ленты её избранных, снимок — из `public` её галереи (тот
                же выбор, что у шаблонов). Кнопка кладёт письмо в пул карточкой,
                а уносит его обычная отправка с обычными пределами.
 
@@ -766,10 +770,13 @@
                 </div>
                 <div class="sched-note" data-slot="fav-manual-who"></div>
                 <div class="mail-form fav-manual-body" data-slot="fav-manual-body">
-                    <label class="mail-field">
+                    {# Адресаты — чипсами: щелчок по человеку в ленте «My
+                       favorites» выше добавляет чипс, крестик убирает. Каждому
+                       выбранному ляжет своя карточка пула. #}
+                    <div class="mail-field">
                         <span class="mail-label">Кому</span>
-                        <select data-slot="fav-manual-to"></select>
-                    </label>
+                        <div class="fav-manual-to" data-slot="fav-manual-to"></div>
+                    </div>
                     <label class="mail-field">
                         <span class="mail-label">Письмо</span>
                         <textarea class="mail-body fav-manual-text" maxlength="20000"
@@ -789,6 +796,10 @@
             </form>
 
         </div><!-- /mail-col-left -->
+
+        {# Разделитель колонок: ширину левой тянут руками (`--mail-col`, одна на
+           все вкладки с этой раскладкой). #}
+        <div class="split split-mail" title="Потяните, чтобы изменить ширину"></div>
 
         <div class="mail-col-right">
             <div class="mail-pool-head">
@@ -1199,6 +1210,8 @@
     <div class="work-soon" data-slot="mail-soon">Рассылка анкеты появится здесь.</div>
 
     </div><!-- /mail-col-left -->
+
+    <div class="split split-mail" title="Потяните, чтобы изменить ширину"></div>
 
     {% block work_mail_pool %}
     {# Пул писем — правая колонка. ⚠ Он про **сайт**, а не про выбранную анкету:
