@@ -5705,6 +5705,13 @@
                                 + ' [data-slot="fav-block-reload"]')
             .forEach(btn => btn.addEventListener('click', inviteBlockLoad));
 
+        // Быстрый ответ: кнопка добавления и перезагрузка списка.
+        const quickAddBtn = workEl.querySelector('[data-slot="chat-quick-add"]');
+        if (quickAddBtn) quickAddBtn.addEventListener('click', quickAdd);
+
+        const quickReload = workEl.querySelector('[data-slot="chat-quick-reload"]');
+        if (quickReload) quickReload.addEventListener('click', quickLoad);
+
         // Форму не отправляют — Enter в ней не должен перезагружать страницу.
         workEl.querySelectorAll('[data-form="invite-schedule"]')
             .forEach(form => form.addEventListener('submit', (e) => e.preventDefault()));
@@ -6287,7 +6294,7 @@
     // ⚠ `intention` отсюда ушло: занятие поднято на верхний уровень.
     // Обещание даётся в чате, но исполняется письмом, и подвкладкой
     // «Чата» оно пряталось за вкладкой, к которой относится наполовину.
-    const CHAT_TABS = ['invite', 'sent', 'talk', 'block'];
+    const CHAT_TABS = ['invite', 'sent', 'talk', 'block', 'quick'];
 
     let chatTab = CHAT_TABS.includes(localStorage.getItem(CHAT_TAB_KEY))
         ? localStorage.getItem(CHAT_TAB_KEY) : 'invite';
@@ -6327,6 +6334,9 @@
             chatInitiativeLoad();
         }
         if (chatTab === 'block') inviteBlockShow();
+        // Быстрый ответ — список шаблонов сайта; грузится при открытии, и
+        // интервал настройки показывается рядом (одной ручкой, `chat_quick.py`).
+        if (chatTab === 'quick') quickShow();
     }
 
     // ── Автоответ в чате: один выключатель на сайт ──────────────────────────
@@ -7211,6 +7221,143 @@
 
         showNotification('Запрет снят — паре снова можно писать', 'success');
         inviteBlockLoad();
+    }
+
+    // ── Быстрый ответ: шаблоны «привета» на паузу ────────────────────────────
+    //
+    // ⚠ **Список сайта, а не анкеты** — как у «Не пишем» рядом: шаблоны общие,
+    // и чинит человек «быстрый ответ сайта». Анкета для этой панели — не фильтр
+    // вовсе: реплику ждёт пара, а шаблон у сайта один.
+    //
+    // ⚠ Интервал настройки показываем здесь же, одной ручкой с GET: без него
+    // список выглядел бы списком, а «через сколько это уходит» человек искал
+    // бы в настройках сайта.
+    let quickRows = [];
+    let quickAfter = 0;
+    // Сайт, чьи строки сейчас в списке: свести его с `siteId()` — значит
+    // поймать чужие шаблоны, мелькнувшие до ответа.
+    let quickSite = 0;
+
+    function quickShow() {
+        if (!workEl.querySelector('[data-chat-pane="quick"]'))
+            return;
+
+        if (siteId() !== quickSite) {
+            quickSite = siteId();
+            quickRows = [];
+            quickAfter = 0;
+        }
+
+        quickPaint();
+        quickLoad();
+    }
+
+    async function quickLoad() {
+        const site = siteId();
+        const box = workEl.querySelector('[data-chat-pane="quick"]');
+        if (!box) return;
+
+        if (!site) {
+            quickRows = [];
+            quickAfter = 0;
+            quickPaint();
+
+            return;
+        }
+
+        try {
+            const got = (await getData(`${BASE}/api/dating/chat-quick?site_id=${site}`)
+                         || {});
+
+            quickRows = got.result || [];
+            quickAfter = Number(got.after_sec) || 0;
+        } catch (e) {
+            quickRows = [];
+            quickPaint();
+            showNotification('Список «быстрый ответ» не пришёл: ' + e.message,
+                             'error');
+
+            return;
+        }
+
+        if (siteId() !== site) return;
+
+        quickSite = site;
+        quickPaint();
+    }
+
+    function quickPaint() {
+        const box = workEl.querySelector('[data-chat-pane="quick"] .mail-sent');
+        if (!box) return;
+
+        fillSlot('chat-quick-hint', quickAfter
+            ? `шаблон уходит, если агент молчит ${quickAfter} с`
+            : 'интервал = 0 — быстрый ответ выключен');
+
+        if (!quickRows.length) {
+            box.innerHTML = '<div class="mail-sent-empty">Шаблонов ещё нет — '
+                + 'быстрый ответ молчит, даже если интервал выставлен.<br>'
+                + 'Добавьте короткую реплику: «hi», смайлик. Она уйдёт там, где '
+                + 'агент не ответил за '
+                + (quickAfter ? `${quickAfter} секунд` : 'настроенный интервал')
+                + ', а настоящий ответ придёт всё равно отдельно.</div>';
+
+            return;
+        }
+
+        box.innerHTML = quickRows.map(row =>
+            '<div class="mail-sent-row plain">'
+            + `<span class="mail-sent-when first">`
+            + `${esc(row.created_at ? timeShift(row.created_at) : '')}</span>`
+            + `<span class="mail-sent-who talk">${esc(row.body)}</span>`
+            + `<button type="button" class="block-undo" data-quick="${row.id}"`
+            + ' title="Убрать шаблон">🗑</button>'
+            + '</div>').join('');
+
+        // После отрисовки: строки переписываются на каждое чтение.
+        box.querySelectorAll('[data-quick]').forEach(btn =>
+            btn.addEventListener('click', () => quickDrop(btn.dataset.quick)));
+    }
+
+    async function quickAdd() {
+        const site = siteId();
+        if (!site) return;
+
+        const field = workEl.querySelector('[data-slot="chat-quick-text"]');
+        const body = field ? String(field.value || '').trim() : '';
+        if (!body) {
+            showNotification('Шаблон пустой: напишите реплику', 'error');
+
+            return;
+        }
+
+        try {
+            await postData(`${BASE}/api/dating/chat-quick`,
+                           {site_id: Number(site), body});
+        } catch (e) {
+            showNotification('Шаблон не добавился: ' + e.message, 'error');
+
+            return;
+        }
+
+        if (field) field.value = '';
+        quickLoad();
+    }
+
+    async function quickDrop(quickId) {
+        if (!confirm('Убрать шаблон быстрого ответа?\n\nРазговоры, где он уже '
+                     + 'ушёл, он не трогает; новые ходить без него.'))
+            return;
+
+        try {
+            await deleteData(`${BASE}/api/dating/chat-quick/${Number(quickId)}`);
+        } catch (e) {
+            showNotification('Шаблон не убрался: ' + e.message, 'error');
+
+            return;
+        }
+
+        quickLoad();
     }
 
     // ── Намерения и действия: что агент наобещал ────────────────────────────

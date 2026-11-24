@@ -301,7 +301,7 @@ TEST_SWEEP_ORPHANS_NO_SITE = ('gallery_file',)
 # копил бы в ней черновики молча. Нашёл это сам сторож `test_suite_sweep.py` —
 # он сверяет список со **схемой**, а не с другим списком, ровно для такого
 # случая.
-TEST_SWEEP_BY_SITE = ('companion', 'error', 'invite_draft', 'mail_var', 'site')
+TEST_SWEEP_BY_SITE = ('chat_quick', 'companion', 'error', 'invite_draft', 'mail_var', 'site')
 
 # Префикс учёток **панели**, заведённых сюитой (`test_users.py`, `_name`). Люди
 # панели не привязаны ни к анкете, ни к сайту, и три прохода выше их не видят ни

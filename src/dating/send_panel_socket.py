@@ -32,6 +32,8 @@ from src.dating.site.site_socket_luxee import (site_socket_luxee_channels,
                                                site_socket_luxee_open,
                                                site_socket_luxee_outer,
                                                site_socket_luxee_send)
+from mysql_.mysql_ import mysql_get_db_async
+from logging_.logging_ import logger_info
 
 
 async def send_panel_socket_run(profile: dict, presence: dict, to_uid: str,
@@ -55,10 +57,24 @@ async def send_panel_socket_run(profile: dict, presence: dict, to_uid: str,
             не ушло; в удаче — `media` с адресами снимка.
 
     ⚠ Ничего не бросает: исход словами, как у прочих транспортов.
+
+    ## ⚠⚠ Быстрая строка не считается «её ответом»
+
+    Наш «привет» из шаблона (`chat_quick.py`) сервер возвращает в том же сокете
+    **от лица девушки** — `author.uid` её, а не его. Для проверки `since` это
+    выглядило бы репликой её стороны новее повода, и параллельный ответ агента
+    отменялся бы собственной вежливостью: быстрый ответ молча съел бы то, ради
+    чего не ставил пометку «отвечено». Поэтому рядом с `since` на проверку
+    уезжает список **наших быстрых текстов** этой пары — сокет вычитает их из
+    «её строк» (сверка скелетом текста, как у близнецов: сайт съедает знаки).
     """
     girl = str(profile.get('profile_id') or profile.get('login') or '').strip()
     if not girl.isdigit():
         return _result(False, 'у анкеты нет номера на сайте')
+
+    # Только когда проверка `since` вообще будет работать (ноль — «не проверять»).
+    ours = await _quick_texts(int(profile.get('id') or 0), str(to_uid), since) \
+        if since else ()
 
     try:
         async with site_socket_luxee_open(int(profile.get('site_id') or 0),
@@ -74,7 +90,7 @@ async def send_panel_socket_run(profile: dict, presence: dict, to_uid: str,
                 got = await site_socket_luxee_send(
                     sock, int(girl), identity, text, str(to_uid), _ms(since),
                     {**photo, 'site_id': int(profile.get('site_id') or 0)}
-                    if photo else None)
+                    if photo else None, ours)
             except asyncio.TimeoutError:
                 return _result(False, 'сервер чата не подтвердил отправку')
     except DatingPanelFetchError as e:
@@ -139,4 +155,31 @@ def _ms(since) -> int:
         return 0
 
     return int(moment.replace(tzinfo=timezone.utc).timestamp() * 1000)
+
+
+async def _quick_texts(profile_id: int, to_uid: str, since) -> list:
+    """Тексты наших быстрых ответов этой пары с момента повода — для проверки `since`.
+
+    ⚠ Окно с запасом в 5 секунд **до** повода: наши часы и час базы сверены, но
+    строка, рождённая кругом в ту же секунду, что и повод, не должна проскочить
+    в «её строки новее повода». Дольше повода быстрых строк и так быть не может
+    по построению занятия (он отправляет их после реплики, а не до).
+
+    ⚠ Сбой базы — пустой список, как было до занятия: риск тогда прежний
+    (эхо может отменить ответ), новой поломки сбой не добавляет.
+    """
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT text FROM message'
+                ' WHERE profile_id = %s AND sender_uid = %s'
+                "   AND direction = 'out' AND source = 'quick'"
+                '   AND created_at >= %s - INTERVAL 5 SECOND',
+                (int(profile_id), str(to_uid)[:32], since))
+
+            return [str(r.get('text') or '') for r in (await db.fetchall() or [])]
+    except Exception as e:
+        logger_info(f'[dating] быстрые тексты пары не прочитались: {e}')
+
+        return []
 

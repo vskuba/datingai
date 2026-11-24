@@ -146,6 +146,11 @@
            Заходят сюда реже всего: список пополняется сам, и открывают его, чтобы
            понять, почему паре ничего не уходит, либо чтобы снять запрет. #}
         <button type="button" class="page-tab" data-chat-tab="block">Не пишем</button>
+        {# ⚠ «Быстрый ответ» — после «Не пишем»: это не шаг пути, а подстраховка
+           для шага «поговорили»: если агент молчит дольше интервала, уйдёт
+           шаблонное «привет». Занимает её реже всего: список заводится один раз
+           и живёт, пока человек не захочет его поменять. #}
+        <button type="button" class="page-tab" data-chat-tab="quick">Быстрый ответ</button>
         {# ⚠ Правый край полосы — **настройки открытой подвкладки**, как у почты.
            У каждой панели свои, и место у них общее: человек ищет «где это
            включается» один раз, а не заново на каждой вкладке.
@@ -529,6 +534,37 @@
            убывает — запрет не истекает, и каждый отказ сайта добавляет строку. #}
         <div class="pane-foot" data-slot="invite-block-pager"></div>
         {% endblock %}
+    </div>
+
+    {# ── Быстрый ответ: шаблоны «привета» на паузу ───────────────────────────
+       Правило целиком на сервере (`chat_quick.py`): реплика уходит, если агент
+       не ответил за `chat_quick_after` секунд, и **не считается ответом** —
+       свой настоящий ответ он отдаст всё равно. Здесь только список шаблонов
+       и подсказка с текущим интервалом.
+
+       ⚠ Список **на сайт**, не на анкету: шаблоны общие, и чинит человек
+       «быстрый ответ сайта», а не сорок анкет по очереди. #}
+    <div class="chat-pane off" data-chat-pane="quick">
+        <div class="mail-sent-head">
+            <span>Быстрый ответ</span>
+            <span class="mail-sent-count" data-slot="chat-quick-hint"></span>
+            <button type="button" class="people-reload" data-slot="chat-quick-reload"
+                    title="Перечитать список">⟳</button>
+        </div>
+        <div class="mail-form">
+            <label class="mail-field">
+                <span class="mail-label">Новый шаблон</span>
+                <textarea class="mail-body" maxlength="2000" rows="2"
+                          data-slot="chat-quick-text"
+                          placeholder="Короткая реплика: «hi», смайлик — что угодно. Уйдёт, если агент не ответил за интервал."></textarea>
+            </label>
+            <div class="fav-manual-foot">
+                <button type="button" class="dating-btn primary"
+                        data-slot="chat-quick-add">Добавить</button>
+                <span class="sched-note" data-slot="chat-quick-note"></span>
+            </div>
+        </div>
+        <div class="mail-sent" data-slot="chat-quick"></div>
     </div>
 
 </div>

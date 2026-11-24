@@ -50,7 +50,7 @@ def spy(monkeypatch):
         return True
 
     monkeypatch.setattr(auto, 'answer_run', _answer_run)
-    monkeypatch.setattr(auto, '_answer_on', _answer_on)
+    monkeypatch.setattr(auto, 'answer_on', _answer_on)
 
     return got
 
@@ -139,7 +139,7 @@ class TestTheSiteSwitch:
     """⚠⚠ Галочка сайта «отправка ответов» обязана выключать автоответ.
 
     Она уже переставала работать однажды, и молча: убирая вторую проверку (флаг
-    анкеты `auto_answer`), потеряли и первую — `_answer_on` остался в файле, но
+    анкеты `auto_answer`), потеряли и первую — `answer_on` остался в файле, но
     звать его перестали. Панель галочку исправно сохраняла, круг отвечал.
 
     ⚠ Сторона ошибки здесь обратная обычной: не «агент молчит, когда должен
@@ -169,7 +169,7 @@ class TestTheSiteSwitch:
         async def _answer_on(site_id):
             return False
 
-        monkeypatch.setattr(auto, '_answer_on', _answer_on)
+        monkeypatch.setattr(auto, 'answer_on', _answer_on)
         got = await auto.auto_round(_profiles(1, 2))
 
         assert only_answer == [], 'галочка снята, а ответ всё равно ушёл'
@@ -179,7 +179,7 @@ class TestTheSiteSwitch:
         async def _answer_on(site_id):
             return True
 
-        monkeypatch.setattr(auto, '_answer_on', _answer_on)
+        monkeypatch.setattr(auto, 'answer_on', _answer_on)
         await auto.auto_round(_profiles(1, 2))
 
         assert only_answer == [1, 2], 'галочка поднята, а ответа нет'
@@ -198,7 +198,7 @@ class TestTheSiteSwitch:
             return False
 
         monkeypatch.setattr(auto, '_agent_id', _agent_id)
-        monkeypatch.setattr(auto, '_answer_on', _answer_on)
+        monkeypatch.setattr(auto, 'answer_on', _answer_on)
         await auto.auto_round(_profiles(1))
 
         assert asked == [], 'за агентом сходили при снятой галочке'

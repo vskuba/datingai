@@ -45,7 +45,9 @@ from src.dating.message_vision import message_vision_run
 from src.dating.chat_panel import (CHAT_PANEL_ROUND_DAYS,
                                           chat_panel_import)
 from src.dating.chat_request_round import (CHAT_REQUEST_ROUND_TICK_SEC,
-                                           chat_request_round_run)
+                                          chat_request_round_run)
+from src.dating.chat_quick_round import (CHAT_QUICK_ROUND_TICK_SEC,
+                                         chat_quick_round_run)
 from src.dating.ready import (READY_PASSWORD_SETTING, ready_check,
                                      ready_transport, ready_write)
 from src.dating.mail_round import (MAIL_ROUND_TICK_SEC,
@@ -299,6 +301,12 @@ async def chat_hold_run(seconds: float) -> dict:
     # адресован нашей анкете, и отказ означал бы «не хотим говорить».
     requests = asyncio.create_task(_chat_request_loop(deadline))
 
+    # Быстрый ответ: шаблонное «привет» в паузе, пока агент сочиняет настоящий
+    # ответ (`chat_quick_round.py`). ⚠ Выключателя нет намеренно: их у занятия
+    # уже три (ноль в интервале, пустой список шаблонов, `enabled` анкеты) —
+    # четвёртый означал бы, что человек выключит одно, а другое продолжит.
+    quick = asyncio.create_task(_chat_quick_loop(deadline))
+
     # Админ-панель агентства: сессия сайта держится живой круглые сутки. ⚠ Круг
     # **не про анкеты** — учётка у панели одна на сайт, и расписания у неё нет:
     # панель нужна живой и в три часа ночи, когда придёт круг импорта переписки.
@@ -347,6 +355,8 @@ async def chat_hold_run(seconds: float) -> dict:
         first_word.cancel()
         asking.cancel()
         promised.cancel()
+        requests.cancel()
+        quick.cancel()
         panel.cancel()
         proxies.cancel()
         swept.cancel()
@@ -364,10 +374,12 @@ async def chat_hold_run(seconds: float) -> dict:
         # `swept`: их отменяли, но не дожидались. Список выше и список здесь
         # расходились молча, потому что ничего, кроме хвоста в журнале, это не
         # ломает. Теперь они совпадают, и новую задачу надо дописывать в оба.
+        # ⚠ Своей очереди дождались `requests` с `quick`: задача стояла, а в
+        # списках отмены и ожидания её не было вовсе.
         await _service_wait(beat, answer, revive, chat, live_chat, sched, mailing, online,
                             tmpl, live, post, answers, letters, stars, invites,
                             invites_out, first_word, asking, proxies, swept,
-                            revive_talk, promised, panel)
+                            revive_talk, promised, requests, quick, panel)
 
     saved = sum(counters.values())
     logger_info(f'[dating] держатель чата закончил: учёток {len(counters)}, сообщений {saved}')
@@ -890,6 +902,20 @@ async def _chat_request_loop(deadline: float) -> None:
     """
     await round_loop(deadline, CHAT_REQUEST_ROUND_TICK_SEC,
                      'приёма запросов чата', chat_request_round_run)
+
+
+async def _chat_quick_loop(deadline: float) -> None:
+    """Шлёт быстрые ответы, пока идёт смена.
+
+    ⚠⚠ Тик пять секунд: настройка обещает «ответ через N секунд», и круг,
+    который спит дольше N, добавлял бы к обещанному свой сон
+    (`chat_quick_round.py`).
+
+    ⚠ Расписания круг не спрашивает, и это решение: входящее ждёт ответа
+    **сейчас**, а не в следующие смены; молчание в паузу — смену, а не вежливость.
+    """
+    await round_loop(deadline, CHAT_QUICK_ROUND_TICK_SEC,
+                     'быстрых ответов чата', chat_quick_round_run)
 
 
 async def _heartbeat_loop(deadline: float) -> None:

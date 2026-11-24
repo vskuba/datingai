@@ -104,12 +104,19 @@ SEND_TRANSPORT_SETTING = 'send_transport'
 SEND_SOURCE = {'scenario': 'scenario', 'http': 'http', 'ws': 'socket',
                'connection': 'socket', 'panel_socket': 'socket'}
 
+# Источник быстрой строки — **не транспорт, а занятие**: чем именно её слали,
+# читается по тому же `presence`. Отдельное слово столбцу нужно затем, чтобы
+# «последняя реплика пары» в автоответе и инициативе умела её не видеть
+# (`chat_quick.py`). Значение enum заводит миграция `20261122120000_chat_quick.sql`.
+QUICK_SOURCE = 'quick'
+
 
 async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
                               to_history: bool = True,
                               may_invite: bool = False, since=None,
                               by_agent: bool = False,
-                              photo: dict | None = None) -> dict:
+                              photo: dict | None = None,
+                              quick: bool = False) -> dict:
     """Шлёт сообщение собеседнику и записывает его в переписку.
 
     Args:
@@ -137,6 +144,12 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
             снимок не берут и отвечают `no_media`, ничего не отправив, — решает
             вызывающий. Удача несёт `media` — адреса снимка, они ложатся в
             `message.media`.
+        quick: это **быстрый ответ** по шаблону, а не реплика разговора
+            (`chat_quick.py`). Удача записывается иначе трёх обычных мест:
+            строка с `source='quick'`, `by_agent=0`, и **без** `_answered_mark`
+            — входящее остаётся неотвеченным, чтобы круг ответов написал в ту
+            же пару своим кругом. Соседу реплика не сообщается никогда: два
+            ответа на одно входящее — штатный исход, а не ошибка.
 
     Returns:
         dict: `ok` — **принял ли сайт кадр**, а не «дошло до адресата»: это разные
@@ -291,10 +304,17 @@ async def send_message(profile: dict, presence: dict, to_uid: str, text: str,
         if to_history and site_registry_chat(presence).delivered(result):
             await send_message_remember(
                 int(profile['id']), to_uid, text, message_uid,
-                SEND_SOURCE.get(transport, 'socket'), by_agent=by_agent,
+                QUICK_SOURCE if quick else SEND_SOURCE.get(transport, 'socket'),
+                by_agent=by_agent,
                 media=_media_about(result.get('media'), photo) or None)
 
-        await _answered_mark(int(profile['id']), to_uid)
+        # ⚠⚠ Быстрый ответ **не ставит пометку «отвечено»**, и в этом весь смысл
+        # занятия: входящее остаётся висеть неотвеченным, и круг ответов
+        # (`auto.answer_run`) приходит к той же строке своим кругом — настоящий
+        # ответ пишется параллельно паузе, а не вместо неё. Поставить метку —
+        # значит украсть у пары её ответ (`chat_quick.py`).
+        if not quick:
+            await _answered_mark(int(profile['id']), to_uid)
 
     return result
 
@@ -744,11 +764,17 @@ async def _said_already(profile_id: int, to_uid: str, text: str) -> bool:
     кладёт историю за неделю сегодня, то есть с наибольшими `id`: по `id`
     «последней» оказалась бы недельной давности реплика (`dating.md`, §5.8). Тот же
     разбор, что у списка диалогов.
+
+    ⚠ **Быстрая строка здесь не считается** (`source <> 'quick'`): она — не
+    сказанное слово разговора, а жест вежливости в паузе. С ней ответ «Hi!»
+    сразу после нашего же «hi» считался бы повтором и не ушёл бы вовсе — а
+    именно это быстрый ответ и обязан пережить: параллельный ответ агента.
     """
     try:
         async with mysql_get_db_async() as db:
             await db.execute('SELECT text, direction FROM message '
                              ' WHERE profile_id = %s AND sender_uid = %s '
+                             "   AND source <> 'quick' "
                              ' ORDER BY created_at DESC, id DESC LIMIT 1',
                              (profile_id, str(to_uid)[:32]))
             last = await db.fetchone()

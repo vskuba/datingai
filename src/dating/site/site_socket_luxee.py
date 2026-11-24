@@ -310,9 +310,24 @@ def site_socket_luxee_media_item(file: dict) -> dict:
             'type': 1, 'isNew': True, 'status': 7, 'isStorage': True}
 
 
+def _skeleton(text) -> str:
+    """Скелет текста: буквы и цифры без регистра — та же мерка, что у близнецов.
+
+    ⚠ Python-двойник `message_twin_clean` (там `REGEXP_REPLACE('[^[:alnum:]]')`):
+    сверять приходится со строкой сокета, а не колонкой базы, — общего
+    вызова нет. Расходятся на экзотике (SQL знает unicode-классы строже), для
+    «hi»/«Hello!» это одно и то же; найдётся разница — править **оба** места
+    разом. Пустой скелет близнецом не считается — тот же смысл, что в правиле
+    близнецов: по пустоте сравнивать нельзя.
+    """
+
+    return ''.join(c for c in str(text or '') if c.isalnum()).casefold()
+
+
 async def site_socket_luxee_send(sock, girl: int, identity: str, text: str,
                                  man: str = '', since_ms: int = 0,
-                                 photo: dict | None = None) -> dict:
+                                 photo: dict | None = None,
+                                 ours_texts=()) -> dict:
     """Отправить текстовую реплику в диалог и дождаться приговора сервера.
 
     Args:
@@ -323,6 +338,12 @@ async def site_socket_luxee_send(sock, girl: int, identity: str, text: str,
             мог ответить, пока агент сочинял (решение владельца 19.11.2026).
             Ноль — не проверять. Проверка по свежему ответу сервера, а не по
             нашей базе: импорт отстаёт на 15–30 секунд.
+        ours_texts: тексты **наших** быстрых ответов этой пары (`chat_quick.py`).
+            ⚠⚠ Сервер возвращает их в сокете от лица девушки — `author.uid`
+            её, и без вычитания шаблонное «hi» читалось бы «её ответ новее
+            повода»: параллельный ответ агента отменялся бы нашим же жестом
+            вежливости. Сверка скелетом текста (буквы и цифры, регистр не
+            важен) — та же мерка, что у близнецов: сайт съедает знаки в пути.
 
     ⚠⚠ Делаем **ровно как страница**, и оба отличия уже стоили отказа «409 Can't
     save message. Not valid message» на первых двух живых ответах 19.11.2026:
@@ -347,13 +368,19 @@ async def site_socket_luxee_send(sock, girl: int, identity: str, text: str,
               ).get('message') or []
 
     if since_ms and man:
+        # Скелеты наших быстрых строк — один раз на вызов, не на каждую строку.
+        # Пустой скелет не участвует: по пустоте сравнивать нельзя (правило
+        # близнецов тот же смысл).
+        ours = {s for s in (_skeleton(t) for t in ours_texts) if s}
         newer = [m for m in opened if isinstance(m, dict)
                  and str((m.get('author') or {}).get('uid') or '') != str(man)
                  # ⚠ Со следующей секунды: повод у нас записан с точностью до
                  # секунды, сервер — до миллисекунд, и наша же реплика той
                  # секунды казалась «новее» себя (19.11.2026, #458 отменён
                  # нашим же #457; «напиши повторно» отменялось бы всегда).
-                 and int(m.get('created') or 0) >= int(since_ms) + 1000]
+                 and int(m.get('created') or 0) >= int(since_ms) + 1000
+                 # ⚠ И это не наш же быстрый ответ, приехавший её строкой.
+                 and _skeleton(m.get('body')) not in ours]
         if newer:
             last = max(newer, key=lambda m: int(m.get('created') or 0))
             return {'ok': False, 'skipped': True, 'code': 0, 'sid': '',

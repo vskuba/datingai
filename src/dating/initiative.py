@@ -620,7 +620,14 @@ async def _quiet(profile_id: int, after_sec: int, after_max_sec: int,
     async with mysql_get_db_async() as db:
         # «Последняя реплика» считается по времени, а не по `MAX(id)`: импорт из
         # панели кладёт недельную историю сегодняшними номерами. Та же мерка, что
-        # у автоответа и у списка диалогов — три места, и во всех правило одно.
+        # у автоответа и у списка диалога — три места, и во всех правило одно.
+        #
+        # ⚠⚠ Быстрые строки (`source = 'quick'`) в этом отборе **не участвуют** —
+        # во всех трёх местах: в подсчёте последней реплики, в стороне
+        # последнего слова и в метке молчания. Шаблонное «hi» в паузе — не наше
+        # слово и не тишина: с ним затихший разговор выглядел бы оживлённым,
+        # таймер сбрасывался бы самим собой, а счёт «подряд» врал бы
+        # (`chat_quick.py`).
         await db.execute(
             'SELECT q.uid, q.name, q.last_at, q.quiet_sec, cnt.in_row'
             '  FROM (SELECT t.profile_id, t.sender_uid AS uid, t.last_at,'
@@ -635,6 +642,7 @@ async def _quiet(profile_id: int, after_sec: int, after_max_sec: int,
             '               (SELECT m2.direction FROM message m2'
             '                 WHERE m2.profile_id = t.profile_id'
             '                   AND m2.sender_uid = t.sender_uid'
+            "                   AND m2.source <> 'quick'"
             '                 ORDER BY m2.created_at DESC, m2.id DESC'
             '                 LIMIT 1) AS last_side,'
             # ⚠ Решение молчать по **последней** реплике: оно и превращает
@@ -643,6 +651,7 @@ async def _quiet(profile_id: int, after_sec: int, after_max_sec: int,
             '               (SELECT m3.answer_silent_at FROM message m3'
             '                 WHERE m3.profile_id = t.profile_id'
             '                   AND m3.sender_uid = t.sender_uid'
+            "                   AND m3.source <> 'quick'"
             '                 ORDER BY m3.created_at DESC, m3.id DESC'
             '                 LIMIT 1) AS last_silent,'
             # Сколько пара молчит — им и проверяется жребий срока. Считает база,
@@ -652,6 +661,7 @@ async def _quiet(profile_id: int, after_sec: int, after_max_sec: int,
             '          FROM (SELECT m.profile_id, m.sender_uid,'
             '                       MAX(m.created_at) AS last_at'
             '                  FROM message m WHERE m.profile_id = %s'
+            "                    AND m.source <> 'quick'"
             '                 GROUP BY m.profile_id, m.sender_uid) t'
             '          JOIN profile p ON p.id = t.profile_id'
             '         WHERE t.last_at < NOW() - INTERVAL %s SECOND) q'
@@ -885,7 +895,10 @@ async def _pair_state(profile_id: int, uid: str) -> dict:
 
     ⚠ «Последняя реплика» — по времени, а не по `MAX(id)`: импорт из панели
     кладёт недельную историю сегодняшними номерами. Та же мерка, что у `_quiet`,
-    автоответа и списка диалогов.
+    автоответа и списка диалогов. **И те же исключения**: быстрых строк
+    (`source = 'quick'`) здесь нет ровно потому, что окно обязано объяснять то
+    же состояние пары, по которому решает круг, — с быстрым оно расходилось бы
+    с `_quiet` на каждом шаблонном «hi» (`chat_quick.py`).
 
     ⚠ Последние заходы отдаём **списком с причинами неудач**: человек, открывший
     окно у пары без единой ушедшей инициативы, должен видеть, не лежат ли они
@@ -902,11 +915,13 @@ async def _pair_state(profile_id: int, uid: str) -> dict:
             '       (SELECT m2.direction FROM message m2'
             '         WHERE m2.profile_id = t.profile_id'
             '           AND m2.sender_uid = t.sender_uid'
+            "           AND m2.source <> 'quick'"
             '         ORDER BY m2.created_at DESC, m2.id DESC'
             '         LIMIT 1) AS last_side,'
             '       (SELECT m3.answer_silent_at FROM message m3'
             '         WHERE m3.profile_id = t.profile_id'
             '           AND m3.sender_uid = t.sender_uid'
+            "           AND m3.source <> 'quick'"
             '         ORDER BY m3.created_at DESC, m3.id DESC'
             '         LIMIT 1) AS last_silent,'
             '       (SELECT MAX(r.reset_at) FROM chat_initiative r'
@@ -915,6 +930,7 @@ async def _pair_state(profile_id: int, uid: str) -> dict:
             '  FROM (SELECT m.profile_id, m.sender_uid, MAX(m.created_at) AS last_at'
             '          FROM message m'
             '         WHERE m.profile_id = %s AND m.sender_uid = %s'
+            "           AND m.source <> 'quick'"
             '         GROUP BY m.profile_id, m.sender_uid) t',
             (profile_id, uid))
         row = await db.fetchone()

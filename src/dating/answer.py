@@ -1047,6 +1047,9 @@ async def _followup_state(profile_id: int, uid: str) -> dict:
     ⚠ Повтором считается каждая наша реплика после его последней, **кроме
     первой** — первая и есть ответ ему. ⚠ Отражения из панели не считаются:
     наша реплика лежит дважды (`message_twin_skip`).
+    ⚠ Быстрая строка не повтор и не «наше последнее слово»: шаблонное «hi» не
+    съедаёт квоту повторов и не выдаёт тишину за разговор
+    (`chat_quick.py`).
     """
     async with mysql_get_db_async() as db:
         await db.execute(
@@ -1060,6 +1063,7 @@ async def _followup_state(profile_id: int, uid: str) -> dict:
             '       TIMESTAMPDIFF(SECOND, MAX(m.created_at), NOW()) AS quiet'
             '  FROM message m'
             " WHERE m.profile_id = %s AND m.sender_uid = %s AND m.direction = 'out'"
+            "   AND m.source <> 'quick'"
             '   AND (%s IS NULL OR m.created_at > %s)'
             + message_twin_skip('m'),
             (int(profile_id), str(uid), his, his))
@@ -1118,6 +1122,8 @@ async def _anyway_here(profile_id: int, uid: str, first: int) -> bool:
       повторяет наш инвайт 107378 той же секундой; без правила близнецов одна
       реплика считалась бы дважды, и порог выбирался бы тем быстрее, чем дольше
       пара живёт.
+    * `source = 'quick'` — быстрый ответ по шаблону: вежливость в паузе, а не
+      ответ судьи; квоту первых ответов он есть не вправе (`chat_quick.py`).
 
     ⚠ Правило близнеца берётся **общее**, а не переписывается здесь: разойдись оно
     с показом, человек видел бы в диалоге одно число ответов, а счётчик порога
@@ -1145,6 +1151,7 @@ async def _anyway_here(profile_id: int, uid: str, first: int) -> bool:
                 'SELECT COUNT(*) AS n FROM message m'
                 ' WHERE m.profile_id = %s AND m.sender_uid = %s'
                 "   AND m.direction = 'out' AND m.source <> 'invite'"
+                "   AND m.source <> 'quick'"
                 + message_twin_skip('m'),
                 (int(profile_id), str(uid or '')))
             row = await db.fetchone()
@@ -1317,6 +1324,13 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool,
     # Двойной подзапрос нужен для случая одинакового времени: панель отдаёт время с
     # точностью до минуты, и две реплики в одну минуту — обычное дело. Тогда
     # различаем по `id` — внутри одного времени он снова означает порядок.
+    #
+    # ⚠⚠ **Быстрые строки (`source = 'quick'`) в «последней реплике» не участвуют**
+    # — и в подзапросе, и в сверке при совпадении времени. «Привет» из шаблона,
+    # ушедший в паузе, — не сказанное слово разговора: с ним диалог выглядел бы
+    # так, будто последнее слово наше, и неотвеченное входящее выпало бы из
+    # отбора. Именно тем занятие и живёт, что параллельный ответ агента
+    # доходит до этой же пары (`chat_quick.py`).
     async with mysql_get_db_async() as db:
         await db.execute(
             # ⚠ `m.id` — **повод написать**, и он уезжает в черновик ответа
@@ -1329,10 +1343,12 @@ async def _waiting_find(profile_id: int, limit: int, only: list, lead: bool,
             'SELECT m.id, m.sender_uid, m.sender_name, m.text, m.direction,'
             '       m.created_at FROM message m '
             '  JOIN (SELECT sender_uid, MAX(created_at) AS last_at FROM message '
-            '         WHERE profile_id = %s GROUP BY sender_uid) t '
+            "         WHERE profile_id = %s AND source <> 'quick'"
+            '         GROUP BY sender_uid) t '
             '    ON t.sender_uid = m.sender_uid AND t.last_at = m.created_at '
             '   AND m.id = (SELECT MAX(x.id) FROM message x '
             '                WHERE x.profile_id = %s AND x.sender_uid = m.sender_uid '
+            "                  AND x.source <> 'quick'"
             '                  AND x.created_at = t.last_at) '
             f' WHERE {reason}' + where +
             f' ORDER BY {must_in} DESC, m.created_at DESC, m.id DESC LIMIT %s',
@@ -1406,10 +1422,15 @@ async def _waiting_tail(profile_id: int, uid: str, row: dict) -> str:
     try:
         async with mysql_get_db_async() as db:
             # Когда мы говорили в последний раз. Пусто — не говорили вовсе.
+            #
+            # ⚠ Быстрая строка здесь не «говорили»: приняв её за границу, хвост
+            # обрезался бы до одного последнего входящего, а реплика, ради
+            # которой всё и затевалось, из вопроса бы выпала (`chat_quick.py`).
             await db.execute(
                 'SELECT MAX(m.created_at) AS said_at FROM message m'
                 " WHERE m.profile_id = %s AND m.sender_uid = %s"
-                "   AND m.direction = 'out' AND m.created_at <= %s",
+                "   AND m.direction = 'out' AND m.source <> 'quick'"
+                "   AND m.created_at <= %s",
                 (int(profile_id), str(uid)[:32], row.get('created_at')))
             said_at = ((await db.fetchone()) or {}).get('said_at')
 

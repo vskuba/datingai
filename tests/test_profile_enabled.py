@@ -354,7 +354,7 @@ class TestAutoRoundSkipsDisabled:
         """Круг с подменёнными дорогими шагами. Возвращает, до чего дошло.
 
         ⚠ Выключатель сайта поднят подменой: здесь проверяется флаг **анкеты**, а
-        анкеты в этих тестах заводятся без `site_id` вовсе — настоящий `_answer_on`
+        анкеты в этих тестах заводятся без `site_id` вовсе — настоящий `answer_on`
         спросил бы про сайт «0» и отказал бы всем, то есть тесты зеленели бы по
         причине, к их вопросу не относящейся. Сам выключатель проверяется в
         `tests/test_auto_agent_id.py`, `TestTheSiteSwitch`.
@@ -378,7 +378,7 @@ class TestAutoRoundSkipsDisabled:
 
         monkeypatch.setattr(auto, '_agent_id', _agent)
         monkeypatch.setattr(auto, 'answer_run', _answer)
-        monkeypatch.setattr(auto, '_answer_on', _answer_on)
+        monkeypatch.setattr(auto, 'answer_on', _answer_on)
 
         return seen
 
