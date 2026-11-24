@@ -4410,7 +4410,14 @@
      */
     .person-card.fav-off .person-face {
         box-shadow: 0 0 0 2px #dc2626;
-        opacity: .55;
+    }
+
+    /* Бледнеет **снимок**, а не рамка лица: `opacity` у `.person-face` гасит и
+       её `box-shadow` — кольцо выходило розовым, а не красным. ⚠ И не
+       `opacity` у снимка: под ним лежит буква-заглушка, и полупрозрачный кадр
+       показывал её насквозь. Фильтр оставляет снимок непрозрачным. */
+    .person-card.fav-off .person-face img {
+        filter: grayscale(1) brightness(1.15) contrast(.7);
     }
 
     .person-card.fav-off .person-card-name,
