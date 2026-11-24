@@ -310,20 +310,6 @@ def site_socket_luxee_media_item(file: dict) -> dict:
             'type': 1, 'isNew': True, 'status': 7, 'isStorage': True}
 
 
-def _skeleton(text) -> str:
-    """Скелет текста: буквы и цифры без регистра — та же мерка, что у близнецов.
-
-    ⚠ Python-двойник `message_twin_clean` (там `REGEXP_REPLACE('[^[:alnum:]]')`):
-    сверять приходится со строкой сокета, а не колонкой базы, — общего
-    вызова нет. Расходятся на экзотике (SQL знает unicode-классы строже), для
-    «hi»/«Hello!» это одно и то же; найдётся разница — править **оба** места
-    разом. Пустой скелет близнецом не считается — тот же смысл, что в правиле
-    близнецов: по пустоте сравнивать нельзя.
-    """
-
-    return ''.join(c for c in str(text or '') if c.isalnum()).casefold()
-
-
 async def site_socket_luxee_send(sock, girl: int, identity: str, text: str,
                                  man: str = '', since_ms: int = 0,
                                  photo: dict | None = None,
@@ -506,3 +492,17 @@ def _media_urls(message: dict) -> list[dict]:
 def _key(kind: str) -> str:
     """Ключ запроса в форме страницы: тип, микровремя, случайное число."""
     return f'{kind}{time.time()}-{random.randint(1, 500)}'
+
+
+def _skeleton(text) -> str:
+    """Скелет текста: буквы и цифры без регистра — та же мерка, что у близнецов.
+
+    ⚠ Python-двойник `message_twin_clean` (там `REGEXP_REPLACE('[^[:alnum:]]')`):
+    сверять приходится со строкой сокета, а не колонкой базы, — общего
+    вызова нет. Расходятся на экзотике (SQL знает unicode-классы строже), для
+    «hi»/«Hello!» это одно и то же; найдётся разница — править **оба** места
+    разом. Пустой скелет близнецом не считается — тот же смысл, что в правиле
+    близнецов: по пустоте сравнивать нельзя.
+    """
+
+    return ''.join(c for c in str(text or '') if c.isalnum()).casefold()
