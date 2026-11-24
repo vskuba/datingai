@@ -4322,6 +4322,10 @@
     .fav-manual-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .fav-manual-to { display: flex; flex-wrap: wrap; gap: 5px; min-height: 22px; align-items: center; }
     .fav-manual-to .sent-chip { font-size: 11px; }
+    .fav-manual-link { padding: 0; border: none; background: none; color: #4338ca;
+                       font: inherit; font-size: 11px; text-decoration: underline;
+                       text-decoration-style: dotted; cursor: pointer; }
+    .fav-manual-link:hover { color: #312e81; text-decoration-style: solid; }
 
     .mail-shot-tile:hover { border-color: #93c5fd; }
     .mail-shot-tile.on { border-color: #4f46e5; }
@@ -9810,22 +9814,58 @@
         put.disabled = favManualBusy || !online || !favManualTo.length;
     }
 
+    // Все её избранные из ленты «My favorites» — `[{uid, name}]`.
+    function favManualAll() {
+        const state = peopleCache.get(`${openId}|favorite`);
+
+        return (state && state.people || []).map(one =>
+            ({uid: String(one.uid), name: one.name || ''})).filter(one => one.uid);
+    }
+
     function favManualChipsPaint() {
         const box = slot('fav-manual-to');
         if (!box) return;
 
+        // Всех разом — те же люди, что в ленте над формой: её снимок уже в памяти.
+        const all = favManualAll();
+        const rest = all.filter(one => !favManualTo.some(to => to.uid === one.uid));
+        const allLink = rest.length
+            ? ' <button type="button" class="fav-manual-link" data-role="all">'
+              + (favManualTo.length ? `добавить остальных (${rest.length})`
+                                    : `выбрать всех (${all.length})`) + '</button>'
+            : '';
+
         if (!favManualTo.length) {
             box.innerHTML = '<span class="sched-note">Нажмите на избранного в ленте'
-                + ' «My favorites» выше — он встанет сюда. Можно нескольких.</span>';
-
-            return;
+                + ' «My favorites» выше — он встанет сюда. Можно нескольких'
+                + (allLink ? ', или' + allLink : '.') + '</span>';
+        } else {
+            box.innerHTML = favManualTo.map((one, at) =>
+                `<span class="sent-chip" title="${esc(one.uid)}">`
+                + `${esc(one.name || one.uid)}`
+                + `<button type="button" class="sent-chip-x" data-at="${at}"`
+                + ' title="убрать адресата">✕</button></span>').join('')
+                + allLink
+                + ' <button type="button" class="fav-manual-link" data-role="none">'
+                + 'убрать всех</button>';
         }
 
-        box.innerHTML = favManualTo.map((one, at) =>
-            `<span class="sent-chip" title="${esc(one.uid)}">`
-            + `${esc(one.name || one.uid)}`
-            + `<button type="button" class="sent-chip-x" data-at="${at}"`
-            + ' title="убрать адресата">✕</button></span>').join('');
+        const add = box.querySelector('[data-role="all"]');
+        if (add) {
+            add.addEventListener('click', () => {
+                favManualTo.push(...rest);
+                fillSlot('fav-manual-note', '');
+                favManualPaint();
+            });
+        }
+
+        const none = box.querySelector('[data-role="none"]');
+        if (none) {
+            none.addEventListener('click', () => {
+                favManualTo = [];
+                favManualPaint();
+            });
+        }
 
         box.querySelectorAll('.sent-chip-x').forEach(x =>
             x.addEventListener('click', () => {
@@ -14276,6 +14316,10 @@
             // того, помещается ли лента, а это известно только когда она набита.
             stripArrowsPaint(row);
         });
+
+        // Ссылка «выбрать всех» у формы письма руками считает по этой ленте, а
+        // лента приезжает позже формы.
+        if (kind === 'favorite') favManualChipsPaint();
 
         return true;
     }
