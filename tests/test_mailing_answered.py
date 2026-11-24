@@ -163,6 +163,57 @@ async def _incoming(profile_id: int, uid: str) -> int:
         return int((await db.fetchone())['id'])
 
 
+async def _chat(profile_id: int, uid: str, direction: str) -> None:
+    """Реплика чата этой паре. ⚠ `message_uid` свой: пара «анкета + номер» уникальна."""
+    from mysql_.mysql_ import mysql_get_db_async
+
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO message (profile_id, sender_uid, sender_name,'
+            ' direction, text, source, message_uid)'
+            ' VALUES (%s, %s, %s, %s, %s, %s, %s)',
+            (int(profile_id), uid, 'Riano', direction, 'привет', 'scenario',
+             f'zz-{uuid.uuid4().hex[:12]}'))
+        await db.connection.commit()
+
+
+class TestHisChatCountsToo:
+    """⚠⚠ Правило владельца 24.11.2026: общение — это **его** сообщение анкете,
+    письмом или в чате. Наши инвайты и реплики общением не считаются."""
+
+    async def test_his_chat_line_stops_the_letter(self, site, girl, post):
+        await _chat(girl, 'riano', 'in')
+        await _draft(girl, 'riano')
+
+        assert (await send_round_run(0))['sent'] == 0
+        assert post == [], 'рассылка ушла тому, кто уже писал анкете в чат'
+
+    async def test_our_own_chat_lines_do_not(self, site, girl, post):
+        """Её инвайт без ответа — не общение: рассылка уходит."""
+        await _chat(girl, 'riano', 'out')
+        await _draft(girl, 'riano')
+
+        assert (await send_round_run(0))['sent'] == 1
+
+    async def test_the_sweep_takes_the_chat_pair(self, site, girl):
+        await _chat(girl, 'riano', 'in')
+        await _draft(girl, 'riano')
+        await _draft(girl, 'stranger')
+
+        assert await pool_sweep_mail_answered(SITE) == 1
+
+    async def test_the_pool_set_knows_chat(self, site, girl):
+        from src.dating.mailing import _mail_answered
+
+        await _chat(girl, 'riano', 'in')
+        await _incoming(girl, 'mailer')
+
+        # ⚠ Письма несут сайт стенда (`SITE`), а чат узнаёт сайт по анкете — она
+        # заведена на `LIVE_SITE`; на проде это один и тот же сайт.
+        assert (int(girl), 'mailer') in await _mail_answered(SITE)
+        assert (int(girl), 'riano') in await _mail_answered(LIVE_SITE)
+
+
 class TestTheQueueSkipsHim:
     """⚠⚠ Главное: проверка стоит **перед отправкой**, а не только на наборе.
 
