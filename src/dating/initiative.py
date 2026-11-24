@@ -86,6 +86,7 @@ from src.dating.companion_ref import companion_ref_foreign, companion_title
 from src.dating.dice import dice_steady
 from src.dating.json_column import json_column_load
 from src.dating.log import log_write
+from src.dating.message_twin import message_twin_skip
 from src.dating.site_setting import site_seconds
 
 # Настройки сайта и их умолчания.
@@ -467,6 +468,32 @@ async def initiative_explain(profile_id: int, uid: str) -> dict:
         'blockers': blockers,
     }
 
+
+def initiative_human_said_sql(m: str) -> str:
+    """Условие «эту реплику написал живой человек от имени анкеты».
+
+    Args:
+        m: псевдоним таблицы `message` в запросе.
+
+    Returns:
+        str: кусок `WHERE` без ведущего `AND`.
+
+    ⚠⚠ Признак — `by_agent = 0` у **исходящей**: его ставят только дороги
+    агента, а кнопка оператора и строка из панели идут нулём. Но строка из
+    панели бывает и **отражением** нашей же реплики — её прячет общее правило
+    близнеца `message_twin_skip`; без него каждая реплика агента считалась бы
+    ещё и человеческой, то есть дважды.
+
+    ⚠ Быстрый шаблон (`quick`), инвайт и письмо — не разговорная реплика
+    человека: первые два пишет автомат, письмо идёт другим каналом.
+
+    ⚠ Зовут двое: счёт заходов (`_sent_count_sql`) и уборка карточек круга
+    (`initiative_round._stale_clean`). Своя копия у второго разошлась бы с
+    первым — счёт держал бы пару, а карточка всё равно ушла бы.
+    """
+    return (f"{m}.direction = 'out' AND {m}.by_agent = 0"
+            f" AND {m}.source NOT IN ('quick', 'invite', 'mail')"
+            + message_twin_skip(m))
 
 async def _one(profile: dict, agent: int, pair: dict) -> str:
     """Одна пара: спросить агента и положить карточку. Исход — словами."""
@@ -1118,10 +1145,22 @@ def _sent_count_sql(profile: str, uid: str, his_last: str = '',
     правила «а это больше не считается».
     """
     his_last = his_last or _his_last_sql(profile, uid)
+    since = _since_sql(profile, uid, his_last)
     window = ' AND i.sent_at > NOW() - INTERVAL 1 DAY' if day else ''
+    hand_window = ' AND hm.created_at > NOW() - INTERVAL 1 DAY' if day else ''
 
-    return ('(SELECT COALESCE(SUM(i.sent_at > '
-            + _since_sql(profile, uid, his_last) + '), 0)'
+    # ⚠⚠⚠ Заходом считается и **реплика, набранная человеком руками** — в
+    # панели сайта или кнопкой оператора (`initiative_human_said_sql`). Анкету
+    # ведут параллельно человек и агент, и обращение к молчащему остаётся
+    # обращением, кто бы его ни написал. Без этого слагаемого вышла каша:
+    # Yekaterina → Joe, 24.11.2026 — оператор написал ему дважды (13:43, 14:14),
+    # а в 16:04 поверх ушла инициатива агента, будто девушка молчала.
+    return ('((SELECT COALESCE(SUM(i.sent_at > ' + since + '), 0)'
             '   FROM chat_initiative i'
             f'  WHERE i.profile_id = {profile} AND i.uid = {uid}'
-            f'    AND i.status IN {INITIATIVE_TAKEN_SQL}' + window + ')')
+            f'    AND i.status IN {INITIATIVE_TAKEN_SQL}' + window + ')'
+            ' + (SELECT COUNT(*) FROM message hm'
+            f'  WHERE hm.profile_id = {profile} AND hm.sender_uid = {uid}'
+            '    AND hm.created_at > ' + since + hand_window
+            + '    AND ' + initiative_human_said_sql('hm') + '))')
+

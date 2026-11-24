@@ -80,7 +80,8 @@ from src.dating.chat_initiative import (chat_initiative_expired,
                                         chat_initiative_ready,
                                         chat_initiative_sent,
                                         chat_initiative_stale)
-from src.dating.initiative import initiative_make
+from src.dating.initiative import (initiative_human_said_sql,
+                                   initiative_make)
 from src.dating.pool import pool_sweep
 from src.dating.profile_row import profile_row_get
 from src.dating.log import log_write
@@ -565,7 +566,7 @@ async def _stale_clean(site_id: int) -> int:
         await db.execute(
             'SELECT i.profile_id, i.uid FROM chat_initiative i'
             " WHERE i.site_id = %s AND i.status = 'draft'"
-            '   AND EXISTS (SELECT 1 FROM message m'
+            '   AND (EXISTS (SELECT 1 FROM message m'
             '                WHERE m.profile_id = i.profile_id'
             '                  AND m.sender_uid = i.uid'
             "                  AND m.direction = 'in'"
@@ -574,7 +575,16 @@ async def _stale_clean(site_id: int) -> int:
             # строгом сравнении осталась бы незамеченной. Сторона ошибки
             # выбрана нарочно: снять лишнюю карточку дёшево — круг наберёт
             # новую, — а отправить мимо разговора нельзя.
-            '                  AND m.created_at >= i.created_at)',
+            '                  AND m.created_at >= i.created_at)'
+            # ⚠⚠ Либо за неё заговорил **живой человек** — оператор в панели
+            # сайта или кнопкой. Тишины больше нет: карточка, ушедшая следом,
+            # легла бы поверх его слов агентской репликой про другое
+            # (Yekaterina → Joe, 24.11.2026). Условие общее со счётом заходов.
+            '    OR EXISTS (SELECT 1 FROM message m'
+            '                WHERE m.profile_id = i.profile_id'
+            '                  AND m.sender_uid = i.uid'
+            '                  AND m.created_at >= i.created_at'
+            '                  AND ' + initiative_human_said_sql('m') + '))',
             (int(site_id),))
         rows = await db.fetchall() or []
 

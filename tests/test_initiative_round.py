@@ -53,19 +53,28 @@ async def girl(auth_client):
 
 
 async def _said(profile_id: int, uid: str, direction: str = 'out',
-                minutes_ago: int = 0) -> int:
+                minutes_ago: int = 0, human: bool = False,
+                source: str = 'socket') -> int:
     """Реплика в переписке.
 
     ⚠ Время считает **база** (`NOW() - INTERVAL`): MySQL живёт по UTC, и
     `datetime.now()` положил бы строку в будущее.
+
+    ⚠⚠ Исходящая по умолчанию — **агентская** (`by_agent = 1`): «мы ответили» в
+    этих тестах значит автоответ. Реплика, набранная человеком руками, сама
+    считается заходом инициативы (`initiative_human_said_sql`) — её заводят
+    доводом `human=True`.
     """
+    by_agent = int(direction == 'out' and not human)
     async with mysql_get_db_async() as db:
         await db.execute(
             'INSERT INTO message (profile_id, sender_uid, sender_name, text,'
-            '  message_uid, direction, created_at)'
-            ' VALUES (%s, %s, %s, %s, %s, %s, NOW() - INTERVAL %s MINUTE)',
+            '  message_uid, direction, source, by_agent, created_at)'
+            ' VALUES (%s, %s, %s, %s, %s, %s, %s, %s,'
+            '         NOW() - INTERVAL %s MINUTE)',
             (int(profile_id), uid, 'Brian', 'текст',
-             f'zz-{uuid.uuid4().hex[:12]}', direction, int(minutes_ago)))
+             f'zz-{uuid.uuid4().hex[:12]}', direction, source, by_agent,
+             int(minutes_ago)))
         await db.connection.commit()
 
         return int(db.lastrowid)
@@ -686,6 +695,96 @@ class TestStaleCards:
         """Молчит — карточка ждёт своего часа."""
         await _said(girl, 'u-1', direction='in', minutes_ago=300)
         await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'как выходные?')
+
+        await round_mod._stale_clean(STAND_SITE)
+
+        assert await chat_initiative_waiting(girl, 'u-1'), 'карточку сняли зря'
+
+
+class TestAHumanWriterCountsAsACall:
+    """⚠⚠⚠ Реплика, набранная **живым человеком** от имени анкеты, — тоже заход.
+
+    Анкету ведут параллельно человек и агент. Yekaterina → Joe, 24.11.2026: он
+    подмигнул, агент ответил, оператор дважды написал ему руками в панели (13:43,
+    14:14), а в 16:04 поверх ушла инициатива агента — будто девушка молчала.
+    """
+
+    async def test_human_lines_use_up_the_in_row_limit(self, girl):
+        """Две реплики оператора при пределе «два подряд» — звать больше нельзя."""
+        await _said(girl, 'u-1', direction='in', minutes_ago=400)
+        await _said(girl, 'u-1', direction='out', minutes_ago=399)
+        await _said(girl, 'u-1', direction='out', minutes_ago=380, human=True,
+                    source='panel')
+        await _said(girl, 'u-1', direction='out', minutes_ago=350, human=True,
+                    source='panel')
+
+        assert await initiative_mod._quiet(girl, 3600, 3600, 2) == [], \
+            'реплики человека не засчитались — инициатива легла поверх них'
+
+    async def test_one_human_line_is_one_call(self, girl):
+        """Одна реплика человека — один заход из двух; второй ещё можно."""
+        await _said(girl, 'u-1', direction='in', minutes_ago=400)
+        await _said(girl, 'u-1', direction='out', minutes_ago=350, human=True,
+                    source='http')
+
+        got = await initiative_mod._quiet(girl, 3600, 3600, 2)
+
+        assert [one['try_no'] for one in got] == [2], \
+            'реплика человека должна считаться первым заходом'
+
+    async def test_human_lines_use_up_the_day_limit(self, girl):
+        """Дневной предел считает их тем же счётом."""
+        await _said(girl, 'u-1', direction='in', minutes_ago=400)
+        await _said(girl, 'u-1', direction='out', minutes_ago=350, human=True,
+                    source='panel')
+
+        assert await initiative_mod._quiet(girl, 3600, 3600, 5, 1) == [], \
+            'дневной предел не увидел реплики человека'
+
+    async def test_his_answer_resets_human_lines_too(self, girl):
+        """Его ответ обнуляет счёт — и человеческие заходы в нём тоже."""
+        await _said(girl, 'u-1', direction='out', minutes_ago=500, human=True,
+                    source='panel')
+        await _said(girl, 'u-1', direction='out', minutes_ago=450, human=True,
+                    source='panel')
+        await _said(girl, 'u-1', direction='in', minutes_ago=400)
+        await _said(girl, 'u-1', direction='out', minutes_ago=350)
+
+        got = await initiative_mod._quiet(girl, 3600, 3600, 2)
+
+        assert [one['uid'] for one in got] == ['u-1']
+
+    async def test_a_panel_twin_of_ours_is_not_a_human(self, girl):
+        """⚠⚠ Отражение нашей реплики из панели — не человек: иначе каждая
+        реплика агента считалась бы дважды."""
+        await _said(girl, 'u-1', direction='in', minutes_ago=400)
+        await _said(girl, 'u-1', direction='out', minutes_ago=350)
+        # Та же реплика (текст «текст»), привезённая импортом панели.
+        await _said(girl, 'u-1', direction='out', minutes_ago=350, human=True,
+                    source='panel')
+
+        got = await initiative_mod._quiet(girl, 3600, 3600, 1)
+
+        assert [one['uid'] for one in got] == ['u-1'], \
+            'близнец из панели засчитан заходом человека'
+
+    async def test_a_human_line_removes_the_waiting_card(self, girl):
+        """Карточка, легшая до реплики человека, снимается, а не уходит."""
+        await _said(girl, 'u-1', direction='in', minutes_ago=300)
+        await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'как выходные?')
+        await _said(girl, 'u-1', direction='out', minutes_ago=0, human=True,
+                    source='panel')
+
+        gone = await round_mod._stale_clean(STAND_SITE)
+
+        assert gone >= 1
+        assert await chat_initiative_waiting(girl, 'u-1') == {}
+
+    async def test_an_agent_line_keeps_the_card(self, girl):
+        """Агентская реплика после карточки её не снимает — это не рука."""
+        await _said(girl, 'u-1', direction='in', minutes_ago=300)
+        await chat_initiative_put(STAND_SITE, girl, 'u-1', 'Brian', 'как выходные?')
+        await _said(girl, 'u-1', direction='out', minutes_ago=0)
 
         await round_mod._stale_clean(STAND_SITE)
 

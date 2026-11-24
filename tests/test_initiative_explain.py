@@ -441,11 +441,13 @@ async def _said(profile_id: int, uid: str, side: str, minutes_ago: int) -> None:
     async with mysql_get_db_async() as db:
         await db.execute(
             'INSERT INTO message (profile_id, sender_uid, sender_name, text,'
-            '  message_uid, direction, created_at)'
-            " VALUES (%s, %s, 'Brian', 'привет', %s, %s,"
+            '  message_uid, direction, by_agent, created_at)'
+            " VALUES (%s, %s, 'Brian', 'привет', %s, %s, %s,"
             '  NOW() - INTERVAL %s MINUTE)',
+            # ⚠ Исходящая — агентская: реплика человека сама считается заходом
+            # инициативы (`initiative_human_said_sql`).
             (int(profile_id), uid, f'ex-{uuid.uuid4().hex[:12]}', side,
-             int(minutes_ago)))
+             int(side == 'out'), int(minutes_ago)))
         await db.connection.commit()
 
 
