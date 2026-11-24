@@ -10,7 +10,10 @@
 Тест держит две половины правила, и вторая важнее первой:
 
 1. **отбор** — кому шаблон уходит и кому не вправе (`chat_quick._waiting_pairs`:
-   окно `[N, N + 300]`, никаких наших строк после повода — в том числе быстрых);
+   окно `[N, N + 300]` по `received_at` — по нашей минуте приёма, плюс отсечка
+   свежести по времени сайта; никаких наших строк после повода — в том числе
+   быстрых); в сеть — тем же порогом, что у автоответа (`online_sure` с
+   поблажкой мессенджеру), и «не в сети» не сжигает попытку;
 2. **агент не сломан** — быстрая строка лежит в `message` той же таблицей, что
    ответы, и если отбор автоответа её увидит, пара перестанет ждать настоящего
    ответа: «последняя реплика наша» скроет повод от `_waiting_find`. Именно за
@@ -43,25 +46,47 @@ AFTER = 60
 
 async def _said(profile_id: int, uid: str, direction: str = 'in',
                 source: str = 'socket', age_sec: int = 0,
-                text: str = 'привет') -> int:
+                text: str = 'привет', recv_sec=None) -> int:
     """Строка переписки с возрастом в секундах. Отдает её номер.
 
     ⚠ Входящая — `is_answered = 0` по умолчанию: она и есть «ждёт ответа».
+
+    ⚠ `age_sec` — время **сайта** (`created_at`), `recv_sec` — минута приёма к
+    нам (`received_at`). Без `recv_sec` они равны: так реплика приходит сокетом,
+    живо. Разные — сюжет импорта: вчерашнюю реплику привезли сегодня.
     """
     async with mysql_get_db_async() as db:
         await db.execute(
             'INSERT INTO message (profile_id, sender_uid, sender_name, text,'
             '  message_uid, direction, source, by_agent,'
-            '  created_at)'
+            '  created_at, received_at)'
             ' VALUES (%s, %s, %s, %s, %s, %s, %s, %s,'
+            '         NOW() - INTERVAL %s SECOND,'
             '         NOW() - INTERVAL %s SECOND)',
             (int(profile_id), uid, 'Brian' if direction == 'in' else 'Girl',
              text, f'zq-{uuid.uuid4().hex[:12]}', direction, source,
              1 if source == 'socket' and direction == 'out' else 0,
-             int(age_sec)))
+             int(age_sec), int(age_sec if recv_sec is None else recv_sec)))
         await db.connection.commit()
 
         return int(db.lastrowid)
+
+
+async def _no_receipt(message_id: int) -> None:
+    """Строка старше миграции: `received_at = NULL`, минуты приёма не знаем."""
+    async with mysql_get_db_async() as db:
+        await db.execute('UPDATE message SET received_at = NULL WHERE id = %s',
+                         (int(message_id),))
+        await db.connection.commit()
+
+
+async def _site_minute(message_id: int):
+    """Время сайта этой реплики — то, что обязано уехать в `since` отправки."""
+    async with mysql_get_db_async() as db:
+        await db.execute('SELECT created_at FROM message WHERE id = %s',
+                         (int(message_id),))
+
+        return (await db.fetchone())['created_at']
 
 
 async def _setting(site_id: int, seconds) -> None:
@@ -147,9 +172,14 @@ def env(monkeypatch, clean):
     Подменный `send_message` кладёт в базу исходящую строку так, как это делает
     настоящий быстрый путь (`source = 'quick'`, `by_agent = 0`), но **не трогает**
     `is_answered` — именно в этом смысл занятия: ответ не засчитан.
+
+    ⚠ `online_sure` подменён сознательно: в сюите снимка «кто в сети» нет, а без
+    подмены проверялось бы не «тишина закрыта шаблоном», а «без снимка не уходит
+    ничего». Состояние — `state['online']`; `state['presence']` — описание сайта,
+    им дают мессенджер, который достучен и офлайн.
     """
     state = {'calls': [], 'sent_ok': True, 'blocked': [], 'answer_on': True,
-             'redis': _FakeRedis()}
+             'online': True, 'presence': {}, 'redis': _FakeRedis()}
 
     async def _send(profile, presence, to_uid, text, to_history=True,
                     may_invite=False, since=None, by_agent=False, photo=None,
@@ -180,13 +210,17 @@ def env(monkeypatch, clean):
         return list(state['blocked'])
 
     async def _presence(site_id):
-        return {}
+        return dict(state['presence'])
 
     monkeypatch.setattr(quick, 'send_message', _send)
     monkeypatch.setattr(quick, 'answer_on', _on)
     monkeypatch.setattr(quick, 'block_pairs', _blocked)
     monkeypatch.setattr(quick, 'site_presence', _presence)
     monkeypatch.setattr(quick, 'feed_write', lambda *a, **kw: None)
+    # Снимка «кто в сети» в тестовой базе нет: без подмены проверка сети значила
+    # бы «никогда», и проверялся бы снимок, а не правило. Спрос — тот же
+    # `online_sure`, что у автоответа.
+    monkeypatch.setattr(quick, 'online_sure', lambda site_id, uid: bool(state['online']))
     monkeypatch.setattr(quick, 'redis_conn_get', lambda: state['redis'])
 
     async def run(profile_uid: str = 'u-quick'):
@@ -353,6 +387,110 @@ class TestSelection:
             await db.connection.commit()
 
         assert (await env['run']())['sent'] == 0
+
+
+class TestReceiptWindow:
+    """⚠⚠ Тишина меряется по нашей минуте приёма, а не по времени сайта.
+
+    `message.created_at` — время **сайта**: импорт панели (`chat_panel.py`)
+    кладёт в него `sent_at` из журнала агентства. Меряй окно им — и привезённая
+    сегодня вчерашняя реплика встанет в трёхсекундную тишину, а шаблон уйдёт в
+    разговор, умерший сутки назад. Поэтому у окна две мерки и обе обязаны
+    сойтись: `received_at` в окне `[N, N + 300]` и `created_at` свежее
+    `QUICK_FRESH_SEC`.
+    """
+
+    async def test_window_is_by_our_minute_not_by_site(self, env, girl_make):
+        """Сайту реплике семь минут, нам — полторы: тишина наша, шаблон идёт.
+
+        По времени сайта реплика уже за нижним краем окна, и прежнее правило
+        молчало бы; по минуте приёма она ровно там, где надо.
+        """
+        girl = await girl_make(online=True)
+        await quick.chat_quick_add(STAND_SITE, 'hi')
+        message_id = await _said(girl, 'u-quick', age_sec=420, recv_sec=90)
+
+        assert (await env['run']())['sent'] == 1
+
+        # ⚠ А сайту повод всё равно зовётся его же временем: `since` сравнивают
+        # с репликами собеседника, пришедшими с сайта.
+        assert env['calls'][0]['since'] == await _site_minute(message_id)
+
+    async def test_yesterday_imported_today_gets_nothing(self, env, girl_make):
+        """⚠ Импорт истории: реплику привезли сейчас, написана она вчера.
+
+        Окно по `received_at` здесь сходилось бы идеально — и это ровно та дыра,
+        которую закрывает отсечка `QUICK_FRESH_SEC` по времени сайта.
+        """
+        girl = await girl_make(online=True)
+        await quick.chat_quick_add(STAND_SITE, 'hi')
+        await _said(girl, 'u-quick', age_sec=quick.QUICK_FRESH_SEC + 300,
+                    recv_sec=90)
+
+        assert (await env['run']())['sent'] == 0
+
+    async def test_row_without_our_minute_gets_nothing(self, env, girl_make):
+        """Строка старше миграции: `received_at` пуст, мерить паузу нечем.
+
+        ⚠ Колонку заводят двумя шагами именно поэтому — одним `ALTER` с
+        `DEFAULT CURRENT_TIMESTAMP` база расставила бы вчерашним строкам время
+        миграции, и первый круг осыпал бы шаблонами всю накопленную тишину.
+        """
+        girl = await girl_make(online=True)
+        await quick.chat_quick_add(STAND_SITE, 'hi')
+        message_id = await _said(girl, 'u-quick', age_sec=90)
+        await _no_receipt(message_id)
+
+        assert (await env['run']())['sent'] == 0
+
+
+class TestOnlineGate:
+    """⚠ «В сети» — тем же порогом, что у автоответа, и попытку не сжигает.
+
+    Порог тот же, что в `answer.answer_run`: `online_sure` (незнание = «не
+    шлём») плюс поблажка сайту, который доставляет не в сети. Мягкий
+    `online_check` из `send.py` сюда не зовётся: две дороги к одному
+    собеседнику разошлись бы порогами.
+    """
+
+    async def test_offline_gets_nothing(self, env, girl_make):
+        """Собеседник не в сети — шаблона нет, и отправки не было."""
+        girl = await girl_make(online=True)
+        await quick.chat_quick_add(STAND_SITE, 'hi')
+        await _said(girl, 'u-quick', age_sec=90)
+        env['online'] = False
+
+        assert (await env['run']())['sent'] == 0
+        assert env['calls'] == []
+
+    async def test_attempt_survives_the_silence_offline(self, env, girl_make):
+        """⚠⚠ Офлайн — **не** сожжённая попытка: вернулся в сеть — получит.
+
+        Отметку снимают **после** проверки сети; порядок здесь — весь смысл.
+        Сожги её на «его нет» — и разговор, где человек появился через минуту,
+        остался бы без быстрого ответа до конца окна.
+        """
+        girl = await girl_make(online=True)
+        await quick.chat_quick_add(STAND_SITE, 'hi')
+        await _said(girl, 'u-quick', age_sec=90)
+        env['online'] = False
+
+        assert (await env['run']())['sent'] == 0
+
+        env['online'] = True
+
+        assert (await env['run']())['sent'] == 1
+        assert len(env['calls']) == 1
+
+    async def test_messenger_sends_though_offline(self, env, girl_make):
+        """Сайт-мессенджер достучен и офлайн: то же `reaches_offline`, что у агента."""
+        girl = await girl_make(online=True)
+        await quick.chat_quick_add(STAND_SITE, 'hi')
+        await _said(girl, 'u-quick', age_sec=90)
+        env['online'] = False
+        env['presence'] = {'driver': 'luxee'}
+
+        assert (await env['run']())['sent'] == 1
 
 
 class TestAgentStillAnswers:

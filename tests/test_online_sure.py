@@ -120,6 +120,25 @@ class TestTheReplyRoadUsesIt:
         assert 'online_check(' not in code, \
             'в круге ответов осталась мягкая проверка'
 
+    def test_the_quick_line_asks_for_the_same_certainty(self):
+        """⚠ Быстрая строка — **тем же** порогом: две дороги к одному человеку.
+
+        Соблазн у неё особый: мягкий `online_check` живёт в `send.py`, куда
+        быстрая строка приходит сама. Но тогда «hi» уходил бы туда, куда
+        настоящий ответ не идёт, — и стучалась бы каждые пять секунд, ровно как
+        те 199 попыток.
+        """
+        import inspect
+
+        from src.dating import chat_quick
+
+        code = inspect.getsource(chat_quick.chat_quick_run)
+
+        assert 'online_sure(' in code, \
+            'быстрая строка снова шлёт по незнанию'
+        assert 'online_check(' not in code, \
+            'в быстром ответе осталась мягкая проверка'
+
     def test_letters_keep_the_soft_rule(self):
         """⚠⚠ Письма правило **не** меняют: у них нет открытого чата, который
         мог бы не открыться, и ящик дождётся. Поменяй им правило заодно — и
