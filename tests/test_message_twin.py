@@ -713,6 +713,34 @@ class TestTheSiteEatsCharacters:
 
         assert len(seen) == 2, f'пустые остатки слились в один: {seen}'
 
+    async def test_a_signs_only_twin_is_hidden(self, pair):
+        """⚠⚠⚠ Реплика из одних знаков сравнивается **точным текстом**.
+
+        Kateryna → Alma Hawker, 25.11.2026: быстрый ответ «:)» стоял в окне
+        дважды — скелет у обоих пуст, и правило близнеца молчало.
+        """
+        profile_id, uid = pair
+        at = '2026-11-25 07:49:52'
+
+        mine = await _put(profile_id, uid, ':)', 'ulid-quick', 'quick', at)
+        await _put(profile_id, uid, ':)', 'panel:3', 'panel', at)
+
+        seen = await _seen(profile_id, uid)
+
+        assert len(seen) == 1, f'«:)» двоится: {seen}'
+        assert seen[0]['id'] == mine, 'спрятали свою строку вместо отражения'
+
+    async def test_a_signs_only_twin_is_not_imported(self, pair):
+        """Та же беда со стороны вставки: импорт не заводит отражение «:)»."""
+        profile_id, uid = pair
+        at = '2026-11-25 07:49:52'
+
+        await _put(profile_id, uid, ':)', 'ulid-quick', 'quick', at)
+
+        got = await chat_panel_save([_row(profile_id, uid, ':)', 'panel:4', at)])
+
+        assert got['added'] == 0, 'импорт снова завёл близнеца «:)»'
+
     async def test_a_short_panel_row_is_not_a_prefix_of_ours(self, pair):
         """⚠⚠ Скелет не превращает правило в «любой префикс».
 

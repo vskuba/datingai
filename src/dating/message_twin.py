@@ -241,13 +241,22 @@ def message_twin_same(ours: str, theirs: str) -> str:
     its = message_twin_clean(theirs)
 
     return (
-        # ⚠ Пустой остаток близнецом не считается: реплика из одних съедаемых
-        # знаков совпала бы с любой другой такой же.
-        f'CHAR_LENGTH({its}) > 0'
+        # ⚠ Пустой остаток скелетом не сравнивается: реплика из одних знаков
+        # совпала бы с любой другой такой же.
+        f'((CHAR_LENGTH({its}) > 0'
         f' AND LEFT({mine}, CHAR_LENGTH({its})) = {its}'
         # ⚠ Либо совпало целиком, либо панель резала — см. шапку модуля.
         f' AND (CHAR_LENGTH({mine}) = CHAR_LENGTH({its})'
-        f'      OR CHAR_LENGTH({theirs}) >= {MESSAGE_TWIN_PANEL_CUT_SEEN})')
+        f'      OR CHAR_LENGTH({theirs}) >= {MESSAGE_TWIN_PANEL_CUT_SEEN}))'
+        # ⚠⚠⚠ …а **точным текстом**. Без этой ветки реплика из одних знаков
+        # («:)», «?», «...») близнеца не находила никогда: импорт заводил её
+        # отражение второй строкой, показ его не прятал. Kateryna → Alma
+        # Hawker, 25.11.2026: быстрый ответ «:)» стоял в окне дважды, а
+        # отражение вдобавок считалось репликой человека. Точное равенство
+        # здесь безопасно: скелета нет — значит и портить дороге нечего.
+        f' OR (CHAR_LENGTH({its}) = 0'
+        f'     AND TRIM({theirs}) <> \'\''
+        f'     AND TRIM({ours}) = TRIM({theirs})))')
 
 
 def message_twin_absent_args(profile_id, sender_uid, text, sent_at) -> tuple:
@@ -259,8 +268,10 @@ def message_twin_absent_args(profile_id, sender_uid, text, sent_at) -> tuple:
     """
     return (profile_id, sender_uid,
             # Текст: наш (колонка `twin.text` подставляется кодом) и панельный
-            # пять раз — столько его просит `message_twin_same`.
-            text, text, text, text, text,
+            # столько раз, сколько его просит `message_twin_same`. ⚠ Счёт —
+            # **из самого условия**, а не числом: числом он уже сдвигался бы
+            # молча при каждой правке правила.
+            *([text] * message_twin_same('twin.text', '%s').count('%s')),
             sent_at, sent_at)
 
 
@@ -315,7 +326,7 @@ def message_twin_absent(direction: str) -> str:
     Returns:
         str: кусок `WHERE`, начинающийся с ` AND`. ⚠ Значения собирает
         `message_twin_absent_args` — руками их не перечисляют: текст уходит в
-        условие пять раз, и счёт глазами при каждой правке сдвигался бы молча.
+        условие многократно, и счёт глазами при каждой правке сдвигался бы молча.
 
     ⚠ **Ставится в `INSERT … SELECT`, а не проверяется отдельным запросом.** Между
     проверкой и вставкой успевает пройти другой заход импорта, и дубль появился бы
