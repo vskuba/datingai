@@ -432,9 +432,9 @@ class TestThePoolIsCounted:
         """⚠ О снимке просили. Войди пул в холодные, письмо по обещанию съедало
         бы дневной предел настоящего приставания — за вежливость наказали бы
         дважды, та же беда, из-за которой там нет `mail_reply`."""
-        from src.dating.mail_send import MAIL_SEND_COLD_TABLES
+        from src.dating.favorite_mail import FAVORITE_MAIL_DAY_TABLES
 
-        assert 'intention_mail' not in MAIL_SEND_COLD_TABLES
+        assert 'intention_mail' not in FAVORITE_MAIL_DAY_TABLES
 
     def test_a_ban_sweeps_its_drafts(self):
         """⚠ Запрет писать — ни одно письмо паре больше не уйдёт, и неубранный

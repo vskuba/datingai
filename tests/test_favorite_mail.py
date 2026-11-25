@@ -150,7 +150,12 @@ async def _his(profile_id: int, uid: str, when: str) -> None:
 
 async def _hers(profile_id: int, uid: str, when: str,
                 table: str = 'mailing') -> None:
-    """Наше ушедшее письмо. Таблица — чтобы проверить, что считаются все три."""
+    """Наше ушедшее письмо. Таблица — чтобы проверить, какие пулы считаются.
+
+    ⚠ Дневной предел считает **только письма избранным**
+    (`FAVORITE_MAIL_DAY_TABLES`, решение владельца 25.11.2026): его сторожа
+    кладут письмо доводом `table='favorite_mail'`.
+    """
     async with mysql_get_db_async() as db:
         if table == 'mailing':
             await db.execute(
@@ -610,8 +615,8 @@ class TestBothMustBeOnline:
         await _star(girl, uid)
         await _his(girl, uid, '2026-09-01 10:00:00')
         # Два письма за сутки — предел исчерпан.
-        await _hers(girl, uid, _now_minus_hours(3))
-        await _hers(girl, uid, _now_minus_hours(4))
+        await _hers(girl, uid, _now_minus_hours(3), 'favorite_mail')
+        await _hers(girl, uid, _now_minus_hours(4), 'favorite_mail')
 
         got = await favorite_mail_make(STAND_SITE, 5, girl)
 
@@ -622,14 +627,15 @@ class TestBothMustBeOnline:
 class TestHowOften:
     """⚠ Оба предела — про человека, а не про сайт, и считают всё ушедшее ему."""
 
-    async def test_the_daily_cap_counts_every_pool(self, girl):
-        """⚠ Считается и рассылка, и возобновление: в почту они приходят вместе,
-        и разделять их стал бы только тот, кто смотрит в наши таблицы."""
+    async def test_the_daily_cap_counts_her_letters(self, girl):
+        """⚠ Считаются её письма избранному; рассылка — нет
+        (`TestTheLimitIsPerPair`)."""
         uid = f'u{uuid.uuid4().hex[:8]}'
-        await _hers(girl, uid, _now_minus_hours(5))
+        await _hers(girl, uid, _now_minus_hours(5), 'favorite_mail')
         await _hers(girl, uid, _now_minus_hours(6), 'favorite_mail')
 
-        why = await favorite_mail_person_soon(STAND_SITE, uid, per_day=2)
+        why = await favorite_mail_person_soon(STAND_SITE, uid, per_day=2,
+                                           profile_id=girl)
 
         assert 'за сутки' in why, why
         # ⚠ Склонение — не украшение: «ушло 2 писем» читается как сбой
@@ -640,7 +646,8 @@ class TestHowOften:
         uid = f'u{uuid.uuid4().hex[:8]}'
         await _hers(girl, uid, _now_minus_hours(30))
 
-        assert await favorite_mail_person_soon(STAND_SITE, uid, per_day=2) == ''
+        assert await favorite_mail_person_soon(STAND_SITE, uid, per_day=2,
+                                           profile_id=girl) == ''
 
     async def test_the_daily_cap_does_not_answer_for_the_pause(self, girl):
         """⚠ Сторож разделения: письмо часовой давности дневного предела не
@@ -653,7 +660,8 @@ class TestHowOften:
         uid = f'u{uuid.uuid4().hex[:8]}'
         await _hers(girl, uid, _now_minus_hours(1))
 
-        assert await favorite_mail_person_soon(STAND_SITE, uid, per_day=5) == '', \
+        assert await favorite_mail_person_soon(STAND_SITE, uid, per_day=5,
+                                           profile_id=girl) == '', \
             'дневной предел снова считает паузу — это разные правила'
 
 
@@ -946,113 +954,76 @@ class TestTheQueueTellsWhenSheWrites:
         assert got.status_code == 200 and got.json()['result'] == {}
 
 
-class TestTheLimitIsPerPersonNotPerPair:
-    """⚠⚠ Предел считается по человеку, а не по паре «анкета + человек».
+class TestTheLimitIsPerPair:
+    """⚠⚠⚠ Дневной предел — на пару «анкета + человек», и только письма избранным.
 
-    Здесь стояло `profile_id = %s AND uid = %s`, и обе настройки из-за этого не
-    работали: каждая девушка честно выдерживала свои два письма в сутки и свои
-    четыре часа, но про других не знала.
-
-    Поймано на живых данных: собеседник получил **четыре письма от четырёх разных
-    девушек за одиннадцать минут** — 18:28, 18:31, 18:34, 18:39. Ни одна пара
-    предела не превысила: у каждой было по одному письму при разрешённых двух.
+    Решение владельца 25.11.2026: каждая анкета вправе написать этому человеку
+    своё письмо в сутки, письма других девушек её счёт не тратят, а рассылка с
+    избранными не связана вовсе. Прежде ключом был человек и считалась
+    рассылка: при пределе 1 утренняя рассылка любой девушки закрывала его для
+    всех анкет на сутки — около одного письма избранным в сутки на анкету.
     """
 
-    async def test_another_girls_letter_counts_for_the_daily_cap(self, girl,
-                                                                 auth_client):
-        """Второй девушке нельзя, если первая уже исчерпала предел человека."""
+    async def test_her_own_letter_counts(self, girl):
+        """Её письмо ему — в счёт её предела."""
+        uid = f'u{uuid.uuid4().hex[:8]}'
+        await _hers(girl, uid, _now_minus_hours(2), 'favorite_mail')
+
+        why = await favorite_mail_person_soon(STAND_SITE, uid, per_day=1,
+                                              profile_id=girl)
+
+        assert 'за сутки' in why, why
+
+    async def test_another_girls_letter_does_not_count(self, girl, auth_client):
+        """Письмо другой нашей девушки ему этой анкете не мешает."""
         uid = f'u{uuid.uuid4().hex[:8]}'
         other = await _profile(auth_client, 'fav2')
 
-        await _hers(girl, uid, _now_minus_hours(5))
-        await _hers(girl, uid, _now_minus_hours(6), 'favorite_mail')
-
         try:
-            why = await favorite_mail_person_soon(STAND_SITE, uid, per_day=2)
+            await _hers(other, uid, _now_minus_hours(1), 'favorite_mail')
+            await _hers(other, uid, _now_minus_hours(2), 'favorite_mail')
 
-            assert 'за сутки' in why, \
-                f'письма другой девушки в счёт не попали: {why!r}'
+            assert await favorite_mail_person_soon(
+                STAND_SITE, uid, per_day=1, profile_id=girl) == '', \
+                'письма другой девушки снова тратят чужой предел'
         finally:
             await auth_client.delete(f'/api/dating/profile/{other}')
 
-    async def test_the_daily_cap_counts_letters_of_every_girl(self, girl,
-                                                              auth_client):
-        """⚠⚠ Тот самый случай: четыре письма за одиннадцать минут.
-
-        Держит его теперь **дневной предел** — он про получателя и считает всё
-        ушедшее ему от любой нашей анкеты. Паузы в этом счёте больше нет: она
-        уехала к девушке (`TestThePauseBelongsToTheGirl`), и требовать её здесь
-        значило бы запирать одного человека из-за письма, отправленного другому.
-        """
+    async def test_mailing_does_not_count(self, girl):
+        """⚠⚠ Рассылка с избранными не связана — даже её собственная."""
         uid = f'u{uuid.uuid4().hex[:8]}'
-        other = await _profile(auth_client, 'fav2')
+        for hours in (1, 2, 3, 4):
+            await _hers(girl, uid, _now_minus_hours(hours), 'mailing')
 
-        await _hers(girl, uid, _now_minus_hours(0))
-        await _hers(girl, uid, _now_minus_hours(2))
-
-        try:
-            why = await favorite_mail_person_soon(STAND_SITE, uid, per_day=2)
-
-            assert 'за сутки' in why, \
-                f'письма другой девушки в счёт получателя не попали: {why!r}'
-        finally:
-            await auth_client.delete(f'/api/dating/profile/{other}')
+        assert await favorite_mail_person_soon(STAND_SITE, uid, per_day=1,
+                                               profile_id=girl) == '', \
+            'рассылка снова съедает предел избранных'
 
     async def test_other_people_are_not_affected(self, girl):
-        """⚠ Обратная сторона: предел на **этого** человека, а не на сайт целиком.
-
-        Письма одному не должны закрывать дорогу к другому — иначе одна активная
-        пара застопорила бы всю переписку сайта.
-        """
+        """⚠ Письма одному не закрывают дорогу к другому."""
         busy, free = f'u{uuid.uuid4().hex[:8]}', f'u{uuid.uuid4().hex[:8]}'
-        await _hers(girl, busy, _now_minus_hours(0))
-        await _hers(girl, busy, _now_minus_hours(1))
+        await _hers(girl, busy, _now_minus_hours(0), 'favorite_mail')
 
-        assert await favorite_mail_person_soon(STAND_SITE, free, per_day=2) == '', \
-            'предел одного человека закрыл дорогу к другому'
+        assert await favorite_mail_person_soon(STAND_SITE, free, per_day=1,
+                                               profile_id=girl) == ''
 
-    def test_the_query_keys_on_the_site_not_the_profile(self):
-        """⚠ Сторож от возврата: `profile_id` в условии означал бы счёт по паре.
+    def test_the_query_keys_on_the_pair(self):
+        """⚠ Сторож от возврата: условие отбора обязано нести анкету.
 
-        ⚠ Смотрим на **условие отбора**, а не на весь текст запроса: таблицы
-        теперь перечисляет общий сборщик (`mail_sent_union`), и запрос целиком
-        в исходнике больше не лежит. Приколоти проверку к буквам SQL — она
-        краснела бы на каждой перестановке строк, ничего не защищая.
-
-        ⚠⚠ И **без докстринга**: в нём разобрана та самая прежняя ошибка, со
-        строкой `profile_id = %s AND uid = %s` в тексте. Проверка по всему
-        исходнику нашла бы её там и объявила поломкой — то есть запрещала бы
-        объяснять, почему так делать нельзя.
-
-        ⚠ Смотрим на `favorite_mail_person_sent`, а не на `..._soon`: сам счёт
-        уехал туда, когда число понадобилось ещё и окну «почему этой паре не
-        пишут». Вердикт и слова остались в `..._soon`, а ключ отбора — здесь,
-        и сторожить надо его.
+        ⚠ Без докстринга — в нём разобрана прежняя редакция.
         """
         code = _source_without_doc(favorite_mail_person_sent)
 
-        assert "site_id = %s AND uid = %s" in code, \
-            'дневной предел больше не считает по человеку'
-        assert "profile_id = %s AND uid = %s" not in code, \
-            'счёт снова ведётся по паре — предел перестанет работать'
+        assert 'AND profile_id = %s' in code, \
+            'дневной предел снова считает по человеку, а не по паре'
 
-    def test_the_daily_cap_counts_every_pool(self):
-        """⚠⚠ И считает **все** пулы, а не те, что кто-то вспомнил.
+    def test_only_favorite_letters_are_counted(self):
+        """⚠ Список пулов — один, и в нём только письма избранным."""
+        from src.dating.favorite_mail import FAVORITE_MAIL_DAY_TABLES
 
-        Список таблиц один на проект (`MAIL_SEND_TABLES`), и счёт обязан брать
-        его целиком: посчитай он два пула из трёх, предел молча отпускал бы
-        лишнее письмо — запрос от недостающей таблицы не падает.
-        """
-        from src.dating.mail_send import MAIL_SEND_TABLES, mail_sent_union
-
-        code = _source_without_doc(favorite_mail_person_sent)
-
-        assert 'mail_sent_union' in code, \
-            'дневной предел снова перечисляет таблицы сам'
-
-        built = mail_sent_union("site_id = %s AND uid = %s AND status = 'sent'")
-        for table in MAIL_SEND_TABLES:
-            assert f'FROM {table} ' in built, f'{table} выпал из счёта'
+        assert FAVORITE_MAIL_DAY_TABLES == ('favorite_mail',)
+        assert 'FAVORITE_MAIL_DAY_TABLES' in _source_without_doc(
+            favorite_mail_person_sent)
 
 
 class TestReasonNamesTheRecipient:
@@ -1072,8 +1043,8 @@ class TestReasonNamesTheRecipient:
         await _his(girl, uid, '2026-09-01 10:00:00')
         # Последнее слово наше — пара попадает в отбор; и два письма за сутки,
         # чтобы она тут же упёрлась в предел.
-        await _hers(girl, uid, _now_minus_hours(3))
-        await _hers(girl, uid, _now_minus_hours(4))
+        await _hers(girl, uid, _now_minus_hours(3), 'favorite_mail')
+        await _hers(girl, uid, _now_minus_hours(4), 'favorite_mail')
 
         async with mysql_get_db_async() as db:
             await db.execute(
@@ -1710,14 +1681,14 @@ class TestHisLetterResetsTheDailyCap:
     async def test_his_letter_clears_what_went_before(self, girl):
         """Письма ушли до его ответа — счёт их больше не держит."""
         uid = f'cap-{uuid.uuid4().hex[:8]}'
-        await _hers(girl, uid, _now_minus_hours(5))
+        await _hers(girl, uid, _now_minus_hours(5), 'favorite_mail')
         await _hers(girl, uid, _now_minus_hours(4), table='favorite_mail')
         await _his(girl, uid, _now_minus_hours(3))
 
-        got = await favorite_mail_person_sent(STAND_SITE, uid)
+        got = await favorite_mail_person_sent(STAND_SITE, uid, girl)
 
         assert got['count'] == 0, 'его письмо не обнулило счёт'
-        assert await favorite_mail_person_soon(STAND_SITE, uid, 1) == '', \
+        assert await favorite_mail_person_soon(STAND_SITE, uid, 1, girl) == '', \
             'предел держит пару, которая только что ответила'
 
     async def test_letters_after_his_reply_do_count(self, girl):
@@ -1726,10 +1697,10 @@ class TestHisLetterResetsTheDailyCap:
         await _his(girl, uid, _now_minus_hours(3))
         await _hers(girl, uid, _now_minus_hours(2), table='favorite_mail')
 
-        got = await favorite_mail_person_sent(STAND_SITE, uid)
+        got = await favorite_mail_person_sent(STAND_SITE, uid, girl)
 
         assert got['count'] == 1
-        assert await favorite_mail_person_soon(STAND_SITE, uid, 1) != '', \
+        assert await favorite_mail_person_soon(STAND_SITE, uid, 1, girl) != '', \
             'предел перестал держать вовсе'
 
     async def test_without_his_letters_the_day_window_stands(self, girl):
@@ -1740,12 +1711,12 @@ class TestHisLetterResetsTheDailyCap:
         кто нам не писал, то есть у большинства.
         """
         uid = f'cap-{uuid.uuid4().hex[:8]}'
-        await _hers(girl, uid, _now_minus_hours(5))
+        await _hers(girl, uid, _now_minus_hours(5), 'favorite_mail')
 
-        got = await favorite_mail_person_sent(STAND_SITE, uid)
+        got = await favorite_mail_person_sent(STAND_SITE, uid, girl)
 
         assert got['count'] == 1
-        assert await favorite_mail_person_soon(STAND_SITE, uid, 1) != ''
+        assert await favorite_mail_person_soon(STAND_SITE, uid, 1, girl) != ''
 
     async def test_the_day_window_still_cuts(self, girl):
         """Сутки режут и при давнем его письме: настройка зовётся «в сутки».
@@ -1757,25 +1728,24 @@ class TestHisLetterResetsTheDailyCap:
         await _his(girl, uid, _now_minus_hours(72))
         await _hers(girl, uid, _now_minus_hours(48), table='favorite_mail')
 
-        got = await favorite_mail_person_sent(STAND_SITE, uid)
+        got = await favorite_mail_person_sent(STAND_SITE, uid, girl)
 
         assert got['count'] == 0, 'письмо двухдневной давности попало в сутки'
 
     async def test_the_border_keys_on_the_person_not_the_pair(self, girl_make):
         """⚠⚠ Сбрасывает его письмо **любой** нашей девушке.
 
-        Предел считает получатель, а не пара, — и граница обязана считать так
-        же. Разойдись они, письмо Диане снимало бы счёт только у Дианы, а
-        Елена держала бы его до конца суток, хотя предел у них общий.
+        Счёт с 25.11.2026 ведётся по паре, а граница — по человеку: его письмо
+        любой нашей девушке значит, что почту он читает.
         """
         one = await girl_make()
         two = await girl_make()
         uid = f'cap-{uuid.uuid4().hex[:8]}'
         await _hers(one, uid, _now_minus_hours(5), table='favorite_mail')
-        # Написал он **второй** анкете — предел общий, значит сброс общий.
+        # Написал он **второй** анкете — граница по человеку, сброс общий.
         await _his(two, uid, _now_minus_hours(3))
 
-        got = await favorite_mail_person_sent(STAND_SITE, uid)
+        got = await favorite_mail_person_sent(STAND_SITE, uid, one)
 
         assert got['count'] == 0, 'граница посчитала пару, а не человека'
 
@@ -1792,8 +1762,8 @@ class TestOurReplyDoesNotEatTheCap:
     молчит → разговор затихает навсегда. У Bruce и Brian Ritter остаток
     состоял из ответа целиком.
 
-    ⚠ Рассылка в счёте остаётся: она обращение к тому, кто нас не звал, и она
-    как раз то, от чего предел защищает.
+    ⚠ Рассылки в счёте нет с 25.11.2026: она с избранными не связана
+    (`TestTheLimitIsPerPair`).
     """
 
     async def test_a_reply_is_not_counted(self, girl):
@@ -1802,22 +1772,22 @@ class TestOurReplyDoesNotEatTheCap:
         await _his(girl, uid, _now_minus_hours(3))
         await _reply_sent(girl, uid, _now_minus_hours(2))
 
-        got = await favorite_mail_person_sent(STAND_SITE, uid)
+        got = await favorite_mail_person_sent(STAND_SITE, uid, girl)
 
         assert got['count'] == 0, 'ответ на его письмо съел предел'
-        assert await favorite_mail_person_soon(STAND_SITE, uid, 1) == '', \
+        assert await favorite_mail_person_soon(STAND_SITE, uid, 1, girl) == '', \
             'после ответа приставанию по-прежнему нельзя'
 
-    async def test_a_mailing_is_counted(self, girl):
-        """А рассылка тратит: это холодное обращение."""
+    async def test_a_mailing_is_not_counted(self, girl):
+        """⚠⚠ Рассылка не тратит: она с избранными не связана (25.11.2026)."""
         uid = f'cap-{uuid.uuid4().hex[:8]}'
         await _his(girl, uid, _now_minus_hours(3))
         await _hers(girl, uid, _now_minus_hours(2))
 
-        got = await favorite_mail_person_sent(STAND_SITE, uid)
+        got = await favorite_mail_person_sent(STAND_SITE, uid, girl)
 
-        assert got['count'] == 1
-        assert await favorite_mail_person_soon(STAND_SITE, uid, 1) != ''
+        assert got['count'] == 0
+        assert await favorite_mail_person_soon(STAND_SITE, uid, 1, girl) == ''
 
     async def test_a_nudge_is_counted(self, girl):
         """И приставание тратит — оно и есть то, что предел считает."""
@@ -1825,7 +1795,7 @@ class TestOurReplyDoesNotEatTheCap:
         await _his(girl, uid, _now_minus_hours(3))
         await _hers(girl, uid, _now_minus_hours(2), table='favorite_mail')
 
-        got = await favorite_mail_person_sent(STAND_SITE, uid)
+        got = await favorite_mail_person_sent(STAND_SITE, uid, girl)
 
         assert got['count'] == 1
 
@@ -1841,5 +1811,47 @@ class TestOurReplyDoesNotEatTheCap:
         await _his(girl, uid, _now_minus_hours(4))
         await _reply_sent(girl, uid, _now_minus_hours(3))
 
-        assert await favorite_mail_person_soon(STAND_SITE, uid, 1) == '', \
+        assert await favorite_mail_person_soon(STAND_SITE, uid, 1, girl) == '', \
             'пара всё ещё заперта пределом после его ответа'
+
+
+class TestManualLettersDoNotHoldTheRound:
+    """⚠⚠⚠ Ручная пачка места круга не занимает.
+
+    25.11.2026 оператор одним нажатием поставил Diana 24 письма; адресаты были
+    не в сети, и 23 черновика держали потолок пула (20 на сайт) — круг
+    перестал сочинять всем девятнадцати анкетам.
+    """
+
+    async def _put(self, profile_id: int, message_id):
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO favorite_mail'
+                ' (site_id, profile_id, uid, name, body, status, message_id)'
+                " VALUES (%s, %s, %s, 'X', 'hi', 'draft', %s)",
+                (STAND_SITE, int(profile_id), f'm{uuid.uuid4().hex[:8]}',
+                 message_id))
+            await db.connection.commit()
+
+    async def test_the_round_does_not_count_manual(self, girl):
+        from src.dating.favorite_mail import favorite_mail_pool_left
+
+        before_all = await favorite_mail_pool_left(STAND_SITE, ready_only=True)
+        before_round = await favorite_mail_pool_left(STAND_SITE, ready_only=True,
+                                                     manual=False)
+        await self._put(girl, None)       # ручное — номера обмена нет
+        await self._put(girl, 4242)       # круга — номер обмена есть
+
+        assert await favorite_mail_pool_left(
+            STAND_SITE, ready_only=True) == before_all + 2, \
+            'страница обязана видеть пул целиком'
+        assert await favorite_mail_pool_left(
+            STAND_SITE, ready_only=True, manual=False) == before_round + 1, \
+            'ручное письмо снова держит потолок круга'
+
+    def test_the_round_asks_without_manual(self):
+        from src.dating import favorite_mail_round
+
+        code = _source_without_doc(favorite_mail_round._work)
+
+        assert 'manual=False' in code

@@ -348,13 +348,13 @@ class TestTheUnionCountsItsBranches:
         assert sql.count('%s') == 2 * len(MAIL_SEND_TABLES)
 
     def test_a_narrowed_set_scales_too(self):
-        """⚠ У холодного набора свой счёт — вызывающий берёт `len(tables)`."""
-        from src.dating.mail_send import MAIL_SEND_COLD_TABLES, mail_sent_union
+        """⚠ У суженного набора свой счёт — вызывающий берёт `len(tables)`."""
+        from src.dating.mail_send import mail_sent_union
 
-        sql = mail_sent_union('site_id = %s AND uid = %s',
-                              tables=MAIL_SEND_COLD_TABLES)
+        tables = ('mailing', 'favorite_mail')
+        sql = mail_sent_union('site_id = %s AND uid = %s', tables=tables)
 
-        assert sql.count('%s') == 2 * len(MAIL_SEND_COLD_TABLES)
+        assert sql.count('%s') == 2 * len(tables)
 
     async def test_the_explain_window_still_names_the_last_speaker(self):
         """⚠⚠ Сторож на **того самого** вызывающего, который сломался.

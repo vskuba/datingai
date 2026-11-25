@@ -376,7 +376,7 @@ class TestTheFullPoolStillSyncs:
         async def nothing(site_id):
             return None
 
-        async def full(site_id, ready_only=False):
+        async def full(site_id, ready_only=False, manual=True):
             # ⚠ `ready_only` обязателен: круг считает место **живыми**
             # черновиками, а застрявшее с ошибкой ждёт человека, не отправку
             # (`favorite_mail_pool_left`).

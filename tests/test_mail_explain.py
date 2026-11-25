@@ -375,10 +375,9 @@ class TestFavoriteBlockers:
         assert _has(got, 'favorite', 'предел входящих')
 
     async def test_person_day_cap(self, girl_make, fav_on, online_feed):
-        """Дневной предел считает **получатель**, а не пара.
+        """Дневной предел считает **пару** «анкета + человек» (25.11.2026).
 
-        ⚠ Письма шлёт другая анкета — и всё равно считаются: пока ключом был
-        `profile_id`, тринадцать девушек давали одному человеку до 26 писем.
+        ⚠ Её письма ему — в счёте и в окне; письма другой анкеты — нет.
         """
         girl = await girl_make(online=True)
         other = await girl_make(online=True)
@@ -386,11 +385,13 @@ class TestFavoriteBlockers:
         await _star(girl, uid)
         online_feed([uid])
         for _ in range(2):
+            await _fav_sent(girl, uid, minutes_ago=600)
             await _fav_sent(other, uid, minutes_ago=600)
 
         got = await mail_explain(girl, uid)
 
-        assert got['favorite']['day_sent'] >= 2
+        assert got['favorite']['day_sent'] == 2, \
+            'в окне письма другой анкеты — счёт снова по человеку'
         assert _has(got, 'favorite', 'за сутки')
 
     async def test_girl_gap(self, girl_make, fav_on, online_feed):

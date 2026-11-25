@@ -352,8 +352,8 @@ async def _favorite(site_id: int, profile_id: int, uid: str, pair: dict,
     # ⚠ Число и вердикт по нему — из одного места (`favorite_mail`): свой
     # запрос здесь показывал бы человеку одно число, а предел считал по
     # другому, и разошлись бы они молча.
-    sent = await favorite_mail_person_sent(site_id, uid)
-    person = await favorite_mail_person_soon(site_id, uid, per_day)
+    sent = await favorite_mail_person_sent(site_id, uid, profile_id)
+    person = await favorite_mail_person_soon(site_id, uid, per_day, profile_id)
     # ⚠ Срок и помеха — **одним чтением**: окно показывает оба, и спроси оно их
     # порознь, второй вопрос бросил бы жребий заново по новому письму.
     gap, girl_soon = await favorite_mail_girl_wait(profile_id, gap_low, gap_high)
