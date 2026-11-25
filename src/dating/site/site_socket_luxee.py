@@ -354,10 +354,12 @@ async def site_socket_luxee_send(sock, girl: int, identity: str, text: str,
               ).get('message') or []
 
     if since_ms and man:
-        # Скелеты наших быстрых строк — один раз на вызов, не на каждую строку.
-        # Пустой скелет не участвует: по пустоте сравнивать нельзя (правило
-        # близнецов тот же смысл).
-        ours = {s for s in (_skeleton(t) for t in ours_texts) if s}
+        # Ключи наших быстрых строк — один раз на вызов, не на каждую строку.
+        # ⚠⚠ Ключ, а не голый скелет: от «:)» скелет пуст, пустые прежде
+        # выбрасывались — и наш же быстрый «:)», приехавший её строкой,
+        # отменял каждый ответ агента как «девушка ответила сама» (Irina →
+        # Alma Hawker, 25.11.2026: ответ отменялся каждые пять минут).
+        ours = {s for s in (_twin_key(t) for t in ours_texts) if s}
         newer = [m for m in opened if isinstance(m, dict)
                  and str((m.get('author') or {}).get('uid') or '') != str(man)
                  # ⚠ Со следующей секунды: повод у нас записан с точностью до
@@ -366,7 +368,7 @@ async def site_socket_luxee_send(sock, girl: int, identity: str, text: str,
                  # нашим же #457; «напиши повторно» отменялось бы всегда).
                  and int(m.get('created') or 0) >= int(since_ms) + 1000
                  # ⚠ И это не наш же быстрый ответ, приехавший её строкой.
-                 and _skeleton(m.get('body')) not in ours]
+                 and _twin_key(m.get('body')) not in ours]
         if newer:
             last = max(newer, key=lambda m: int(m.get('created') or 0))
             return {'ok': False, 'skipped': True, 'code': 0, 'sid': '',
@@ -492,6 +494,23 @@ def _media_urls(message: dict) -> list[dict]:
 def _key(kind: str) -> str:
     """Ключ запроса в форме страницы: тип, микровремя, случайное число."""
     return f'{kind}{time.time()}-{random.randint(1, 500)}'
+
+
+def _twin_key(text) -> str:
+    """Ключ сравнения реплики с нашей: скелет, а при пустом — сам текст.
+
+    ⚠⚠ Python-двойник `message_twin_same` целиком, а не только скелета: там
+    реплика из одних знаков («:)», «?») сравнивается **точным текстом** без
+    краевых пробелов. Ведущий `=` не даёт такому ключу совпасть со скелетом —
+    в скелете знаков нет. Пустая строка — пусто: сравнивать нечего.
+    """
+    skeleton = _skeleton(text)
+    if skeleton:
+        return skeleton
+
+    bare = str(text or '').strip()
+
+    return '=' + bare if bare else ''
 
 
 def _skeleton(text) -> str:
