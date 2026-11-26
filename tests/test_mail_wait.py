@@ -487,6 +487,42 @@ class TestTheGirlsOwnLimit:
         assert 60 <= left <= 86400
         assert list(fake.got[1]) == ['52']
 
+    def test_the_pause_belongs_to_its_pool(self, monkeypatch):
+        """⚠⚠ Отказ рассылки держит только рассылку (решение владельца 26.11.2026):
+        письма избранным пробуют сами и встают на паузу на своём отказе."""
+        import time
+        import src.dating.mail_wait as mw
+
+        class _R:
+            def __init__(self): self.keys = {}
+            def zadd(self, key, items): self.keys.setdefault(key, {}).update(items)
+            def expire(self, key, sec): pass
+            def zremrangebyscore(self, key, low, high): pass
+            def zrangebyscore(self, key, low, high, withscores=False):
+                rows = [(k, v) for k, v in self.keys.get(key, {}).items()
+                        if v >= time.time()]
+                return rows if withscores else [k for k, _ in rows]
+
+        fake = _R()
+        monkeypatch.setattr(mw, 'redis_conn_get', lambda: fake)
+
+        mw.mail_wait_girl_mark(SITE, 52, self.NON_CONTACT)  # рассылка
+        assert mw.mail_wait_girls(SITE) == [52]
+        assert mw.mail_wait_girls(SITE, 'favorite_mail') == [], \
+            'отказ рассылки запер письма избранным'
+
+        mw.mail_wait_girl_mark(SITE, 53, self.NON_CONTACT, 'favorite_mail')
+        assert mw.mail_wait_girls(SITE, 'favorite_mail') == [53]
+        assert mw.mail_wait_girls(SITE) == [52], 'отказ избранных запер рассылку'
+        assert mw.mail_wait_girls_left(SITE, 'favorite_mail') > 0
+
+    def test_the_mailing_key_is_unchanged(self):
+        """Ключ рассылки прежний: отметки до правки остаются в силе."""
+        import src.dating.mail_wait as mw
+
+        assert mw._girl_key(SITE) == mw.MAIL_WAIT_GIRL_KEY.format(site_id=SITE)
+        assert mw._girl_key(SITE, 'favorite_mail') != mw._girl_key(SITE)
+
     def test_other_refusals_do_not_pause_the_girl(self):
         import src.dating.mail_wait as mw
 

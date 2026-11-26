@@ -365,7 +365,8 @@ async def mail_send_one(letter: dict, profile: dict, base: str,
         # до появления остуды каждый такой отказ хоронил письмо навсегда: причина
         # ложилась в `error`, а строки с причиной круг не берёт.
         left = (mail_wait_girl_mark(int(profile.get('site_id') or 0),
-                                    int(profile.get('id') or 0), str(e))
+                                    int(profile.get('id') or 0), str(e),
+                                    table)
                 or mail_wait_mark(int(profile.get('site_id') or 0), uid, str(e)))
         if left:
             raise DatingMailWaitError(mail_wait_words(str(e), left))
@@ -394,7 +395,8 @@ async def mail_send_one(letter: dict, profile: dict, base: str,
         # между двумя шагами — их разделяют доли секунды, но предел считает не
         # только нас. Правило одно на оба отказа.
         left = (mail_wait_girl_mark(int(profile.get('site_id') or 0),
-                                    int(profile.get('id') or 0), str(e))
+                                    int(profile.get('id') or 0), str(e),
+                                    table)
                 or mail_wait_mark(int(profile.get('site_id') or 0), uid, str(e)))
         if left:
             raise DatingMailWaitError(mail_wait_words(str(e), left))

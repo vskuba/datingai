@@ -505,11 +505,11 @@ class TestPoolCeiling:
         await pool(5)
         monkeypatch.setattr(mr, 'mail_wait_uids', lambda site_id: ['tst-draft-0', 'tst-draft-1'])
         monkeypatch.setattr(mr, 'mail_wait_fresh_uids', lambda site_id: ['tst-draft-2'])
-        monkeypatch.setattr(mr, 'mail_wait_girls', lambda site_id: [])
+        monkeypatch.setattr(mr, 'mail_wait_girls', lambda site_id, table='mailing': [])
 
         assert await _pool_size(SITE) == 2
 
-        monkeypatch.setattr(mr, 'mail_wait_girls', lambda site_id: [int(profile)])
+        monkeypatch.setattr(mr, 'mail_wait_girls', lambda site_id, table='mailing': [int(profile)])
         assert await _pool_size(SITE) == 0, 'письма анкеты на паузе заняли место'
 
     async def test_waiting_letters_still_have_a_ceiling(self, site, pool, monkeypatch):
@@ -524,7 +524,7 @@ class TestPoolCeiling:
         monkeypatch.setattr(mr, 'mail_wait_uids',
                             lambda site_id: [f'tst-draft-{n}' for n in range(7)])
         monkeypatch.setattr(mr, 'mail_wait_fresh_uids', lambda site_id: [])
-        monkeypatch.setattr(mr, 'mail_wait_girls', lambda site_id: [])
+        monkeypatch.setattr(mr, 'mail_wait_girls', lambda site_id, table='mailing': [])
 
         # Семь ждущих при пределе 2 и множителе 3: потолок 6, занято «на одно больше».
         assert await _pool_size(SITE) == 7 - 2 * (mr.MAILING_POOL_WAITING_TIMES - 1)

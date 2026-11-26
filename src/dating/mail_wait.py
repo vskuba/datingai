@@ -318,14 +318,30 @@ def mail_wait_fresh_uids(site_id: int) -> list[str]:
 # ⚠ Конец суток — догадка: когда сайт сбрасывает счёт, он не говорит. Ошибка в
 # сторону «рано» стоит одного отказа в сутки, а не похороненного письма.
 MAIL_WAIT_GIRL_KEY = 'dating:mail_girl_wait:{site_id}'
+
+# ⚠⚠ **Пауза своя у каждого пула** (решение владельца 26.11.2026). Отказ,
+# полученный рассылкой, держит только рассылку: письма избранным обязаны
+# попробовать сами и встать на паузу лишь на **своём** отказе. Общая отметка
+# запирала избранных на сутки по чужому отказу — 21 анкета утром выбрала предел
+# рассылкой, и ни одно письмо избранным не было даже предложено сайту.
+#
+# ⚠ У рассылки ключ прежний, без хвоста: отметки, поставленные до правки,
+# остаются в силе, и выкладка посреди суток не пускает её снова жечь отказы.
+MAIL_WAIT_GIRL_DEFAULT = 'mailing'
+
 MAIL_WAIT_GIRL_MARKS = (
     ('ERROR_MESSAGE_USER_NON_CONTACT_DAILY_SEND_LIMIT',
      'у анкеты выбран суточный предел писем не-контактам'),
 )
 
 
-def mail_wait_girl_mark(site_id: int, profile_id: int, said: str) -> int:
-    """Отказ — предел анкеты? Ставит её на паузу до конца суток. Секунды или ноль."""
+def mail_wait_girl_mark(site_id: int, profile_id: int, said: str,
+                        table: str = MAIL_WAIT_GIRL_DEFAULT) -> int:
+    """Отказ — предел анкеты? Ставит её на паузу **этого пула** до конца суток.
+
+    Секунды или ноль. `table` — пул, в котором отказ получен: пауза другим
+    пулам не передаётся (`_girl_key`).
+    """
     site_id, profile_id = int(site_id or 0), int(profile_id or 0)
     hit = next((one for one in MAIL_WAIT_GIRL_MARKS
                 if one[0].lower() in str(said or '').lower()), None)
@@ -337,7 +353,7 @@ def mail_wait_girl_mark(site_id: int, profile_id: int, said: str) -> int:
 
     try:
         conn = redis_conn_get()
-        key = MAIL_WAIT_GIRL_KEY.format(site_id=site_id)
+        key = _girl_key(site_id, table)
         conn.zadd(key, {str(profile_id): now + wait})
         conn.expire(key, 86400 + 600)
     except Exception as e:
@@ -348,8 +364,9 @@ def mail_wait_girl_mark(site_id: int, profile_id: int, said: str) -> int:
     return wait
 
 
-def mail_wait_girls(site_id: int) -> list[int]:
-    """Анкеты сайта на паузе по своему пределу. Сбой Redis — пусто."""
+def mail_wait_girls(site_id: int,
+                    table: str = MAIL_WAIT_GIRL_DEFAULT) -> list[int]:
+    """Анкеты сайта на паузе по своему пределу **в этом пуле**. Сбой Redis — пусто."""
     site_id = int(site_id or 0)
     if not site_id:
         return []
@@ -358,7 +375,7 @@ def mail_wait_girls(site_id: int) -> list[int]:
 
     try:
         conn = redis_conn_get()
-        key = MAIL_WAIT_GIRL_KEY.format(site_id=site_id)
+        key = _girl_key(site_id, table)
         conn.zremrangebyscore(key, '-inf', now)
         rows = conn.zrangebyscore(key, now, '+inf')
     except Exception as e:
@@ -370,7 +387,8 @@ def mail_wait_girls(site_id: int) -> list[int]:
 
 
 
-def mail_wait_girls_left(site_id: int) -> int:
+def mail_wait_girls_left(site_id: int,
+                         table: str = MAIL_WAIT_GIRL_DEFAULT) -> int:
     """Сколько секунд ещё стоит **самая долгая** пауза анкет по своему пределу.
 
     Ноль — пауз нет или Redis не ответил. Срок берётся из той же отметки, что
@@ -385,7 +403,7 @@ def mail_wait_girls_left(site_id: int) -> int:
 
     try:
         conn = redis_conn_get()
-        rows = conn.zrangebyscore(MAIL_WAIT_GIRL_KEY.format(site_id=site_id),
+        rows = conn.zrangebyscore(_girl_key(site_id, table),
                                   now, '+inf', withscores=True)
     except Exception as e:
         logger_info(f'[dating] сроки пауз анкет не спросились: {e}')
@@ -401,6 +419,14 @@ def mail_wait_when(left: int) -> str:
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+def _girl_key(site_id: int, table: str = MAIL_WAIT_GIRL_DEFAULT) -> str:
+    """Ключ паузы анкет по своему пределу — у каждого пула свой."""
+    key = MAIL_WAIT_GIRL_KEY.format(site_id=int(site_id))
+    table = str(table or MAIL_WAIT_GIRL_DEFAULT)
+
+    return key if table == MAIL_WAIT_GIRL_DEFAULT else f'{key}:{table}'
+
 
 def _when(left: int) -> str:
     """Срок словами: «40 мин», «3 ч». Секунды в журнале не читаются.

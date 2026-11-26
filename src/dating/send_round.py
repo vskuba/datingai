@@ -72,12 +72,6 @@ from src.dating.pool_pair import pool_mail_answered_where
 from src.dating.schedule import schedule_now
 from src.dating.site_setting import site_seconds, site_setting
 
-# ⚠ Пулы, у которых анкета на суточном пределе сайта «письма не-контактам»
-# (`mail_wait.MAIL_WAIT_GIRL_KEY`) выпадает из очереди: оба пишут первыми, то есть
-# не-контактам. Один кортеж на отбор (`_oldest`) и на причину простоя
-# (`_girls_limit_wait`) — разойдись они, шапка объясняла бы не тот простой.
-SEND_GIRL_LIMIT_TABLES = ('mailing', 'favorite_mail')
-
 # Как часто круг просыпается. ⚠ Это **не** частота отправки: её задаёт каждый пул
 # своим сроком (`_POOLS`), а круг лишь смотрит, кому из них пора.
 #
@@ -410,10 +404,7 @@ async def _girls_limit_wait(site_id: int, table: str) -> str:
     Заведено 26.11.2026: 22 ручных письма Diana стояли полным пулом, а шапка
     молчала — причина была видна только в журнале воркера.
     """
-    if str(table) not in SEND_GIRL_LIMIT_TABLES:
-        return ''
-
-    paused = mail_wait_girls(site_id)
+    paused = mail_wait_girls(site_id, table)
     if not paused:
         return ''
 
@@ -435,11 +426,11 @@ async def _girls_limit_wait(site_id: int, table: str) -> str:
     if int(row.get('free') or 0):
         return ''
 
-    left = mail_wait_girls_left(site_id)
+    left = mail_wait_girls_left(site_id, table)
     when = f' — ещё {mail_wait_when(left)}' if left else ''
 
     return (f'сайт закрыл анкетам пула письма не-контактам до конца суток '
-            f'({len(paused)} анк.): ждём сброса в 00:00 UTC{when}. '
+            f'({len(paused)} анк. получили отказ в этом пуле): ждём сброса в 00:00 UTC{when}. '
             f'Письма целы и уйдут сами')
 
 
@@ -713,18 +704,19 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     if table == 'mailing':
         cooling = sorted(set(cooling) | set(mail_wait_fresh_uids(site_id)))
     # ⚠ Анкета, выбравшая свой суточный предел писем не-контактам, выпадает из
-    # очереди рассылки до конца суток (`mail_wait.MAIL_WAIT_GIRL_KEY`): иначе
-    # жгла бы попытку за попыткой. Числа — свои, в запрос текстом безопасно.
+    # очереди до конца суток (`mail_wait.MAIL_WAIT_GIRL_KEY`): иначе жгла бы
+    # попытку за попыткой. Числа — свои, в запрос текстом безопасно.
     #
-    # ⚠⚠ И письмам избранным: они тоже идут не-контактам, и сайт отвечает им тем
-    # же отказом. Пока правило стояло только у рассылки, очередь избранных
-    # брала то же письмо каждый заход — Diana 26.11.2026 получала отказ сайта
-    # раз в шесть секунд на 22 ручных письмах. Ответы и обещания не трогаем:
-    # они уходят тому, кто писал сам, то есть контакту.
-    if table in SEND_GIRL_LIMIT_TABLES:
-        paused = mail_wait_girls(site_id)
-        if paused:
-            busy += ' AND m.profile_id NOT IN (%s)' % ', '.join(str(int(one)) for one in paused)
+    # ⚠⚠ **Пауза — этого пула, а не общая** (решение владельца 26.11.2026).
+    # Отказ рассылки держит рассылку; письма избранным пробуют сами и встают на
+    # паузу только на своём отказе (`mail_wait._girl_key`). До того отметка была
+    # одна, и 21 анкета, выбравшая предел рассылкой к 08:00 UTC, не предложила
+    # сайту ни одного письма избранным до полуночи. Читается для **всех** пулов:
+    # ответу и обещанию такой отказ не приходит (они пишут контактам), а придёт —
+    # пул не будет долбить сайт тем же письмом каждые пять секунд.
+    paused = mail_wait_girls(site_id, table)
+    if paused:
+        busy += ' AND m.profile_id NOT IN (%s)' % ', '.join(str(int(one)) for one in paused)
     cool = (' AND m.uid NOT IN (%s)' % ', '.join(['%s'] * len(cooling))
             if cooling else '')
 
