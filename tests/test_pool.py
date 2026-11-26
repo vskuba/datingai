@@ -52,9 +52,15 @@ async def pools():
 
         for table in POOL_TABLES:
             for profile_id in (GONE, HERE):
+                # ⚠ У письма избранным круга есть номер обмена: без него оно
+                # считалось бы ручным, а ручное уход анкеты не стирает
+                # (`pool._keep`) — этим проверкам нужен обычный черновик.
+                talk = table == 'favorite_mail'
                 await db.execute(
-                    f'INSERT INTO {table} (site_id, profile_id, uid, name, body, status)'
-                    " VALUES (%s, %s, 'u1', 'Кто-то', 'текст', 'draft')",
+                    f'INSERT INTO {table} (site_id, profile_id, uid, name, body, status'
+                    + (', message_id' if talk else '') + ')'
+                    " VALUES (%s, %s, 'u1', 'Кто-то', 'текст', 'draft'"
+                    + (', 1' if talk else '') + ')',
                     (SITE, profile_id))
 
             await db.execute(
@@ -198,6 +204,53 @@ class TestSweep:
         потолок сайта ответы и не занимают: они набираются по входящим письмам.
         """
         assert 'mail_reply' not in POOL_TABLES
+
+
+class TestManualLettersStay:
+    """⚠⚠ Письмо избранному, поставленное руками, переживает уход анкеты.
+
+    Решение владельца 26.11.2026: 22 письма Diana стёрты концом смены, ни разу не
+    предложенные сайту. Адресатов выбрал и текст написал человек — сочинить их
+    заново некому. Уходят они только от анкеты в сети, в её следующую смену.
+    """
+
+    async def _manual(self) -> int:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'INSERT INTO favorite_mail (site_id, profile_id, uid, name, body, status)'
+                " VALUES (%s, %s, 'u9', 'Кто-то', 'руками', 'draft')", (SITE, GONE))
+            await db.connection.commit()
+
+            return int(db.lastrowid)
+
+    async def _alive(self, mail_id: int) -> bool:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT 1 FROM favorite_mail WHERE id = %s', (mail_id,))
+
+            return bool(await db.fetchone())
+
+    async def test_the_shift_end_keeps_it(self, pools):
+        mail_id = await self._manual()
+
+        await pool_drop(GONE, 'смена кончилась')
+
+        assert await self._alive(mail_id), 'конец смены стёр письмо, набранное руками'
+        assert await _drafts(GONE) == 1, 'черновики круга остались вместе с ручным'
+
+    async def test_the_sweep_keeps_it(self, pools):
+        mail_id = await self._manual()
+
+        await pool_sweep(SITE)
+
+        assert await self._alive(mail_id), 'уборка офлайновых стёрла письмо руками'
+
+    async def test_switching_her_off_removes_it(self, pools):
+        """Отключённую не ведут вовсе — письмо от неё не ушло бы никогда."""
+        mail_id = await self._manual()
+
+        await pool_drop(GONE, 'анкету отключили', keep_manual=False)
+
+        assert not await self._alive(mail_id)
 
 
 class TestSweepAway:

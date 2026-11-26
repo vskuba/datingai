@@ -20,7 +20,7 @@
 | Пул | Уходит | Почему |
 |-----|--------|--------|
 | `mailing` | да | письмо незнакомому: ждать его неделю незачем |
-| `favorite_mail` | да | приставание «ты замолчал» через сутки уже не про то |
+| `favorite_mail` | да, **кроме ручных** | приставание «ты замолчал» через сутки уже не про то; письмо руками ждёт её смены (`_keep`) |
 | `invite` | да | зовут того, кто **сейчас** в чате: назавтра его там нет |
 | `mail_reply` | **нет** | это ответ живому человеку на его письмо |
 
@@ -71,12 +71,16 @@ from mysql_.mysql_ import mysql_get_db_async
 POOL_TABLES = ('mailing', 'favorite_mail', 'invite', 'chat_initiative')
 
 
-async def pool_drop(profile_id: int, why: str = '') -> dict:
+async def pool_drop(profile_id: int, why: str = '',
+                    keep_manual: bool = True) -> dict:
     """Стирает черновики анкеты во всех пулах. Отправленное не трогает.
 
     Args:
         profile_id: анкета, которая ушла из сети.
         why: чем вызвано — уходит в журнал анкеты одной строкой.
+        keep_manual: оставить письма избранным, поставленные руками
+            (`_keep`). Ложь — у отключения анкеты: её не ведут вовсе, и письмо
+            не ушло бы никогда.
 
     Returns:
         dict: `{имя таблицы: сколько стёрли}` плюс `total`.
@@ -95,7 +99,8 @@ async def pool_drop(profile_id: int, why: str = '') -> dict:
         async with mysql_get_db_async() as db:
             for table in POOL_TABLES:
                 await db.execute(
-                    f"DELETE FROM {table} WHERE profile_id = %s AND status = 'draft'",
+                    f"DELETE FROM {table} WHERE profile_id = %s AND status = 'draft'"
+                    + (_keep(table) if keep_manual else ''),
                     (profile_id,))
                 dropped[table] = int(db.rowcount or 0)
 
@@ -205,7 +210,8 @@ async def pool_sweep(site_id: int) -> int:
                     f"DELETE p FROM {table} p"
                     '  JOIN profile g ON g.id = p.profile_id'
                     "  WHERE p.site_id = %s AND p.status = 'draft'"
-                    "    AND g.status <> 'online'", (site_id,))
+                    "    AND g.status <> 'online'" + _keep(table, 'p.'),
+                    (site_id,))
                 total += int(db.rowcount or 0)
 
             await db.connection.commit()
@@ -369,6 +375,26 @@ async def pool_sweep_mail_waiting(site_id: int) -> int:
                     f'получателям писать нельзя сутки и дольше')
 
     return total
+
+
+def _keep(table: str, alias: str = '') -> str:
+    """Кусок `WHERE`: что из черновиков уход анкеты **не** стирает.
+
+    ⚠⚠ Письмо избранному, поставленное **руками** (`FAVORITE_MAIL_MANUAL_SQL`),
+    переживает конец смены — решение владельца 26.11.2026. Довод модуля «текст
+    сочинится заново по свежему состоянию» к нему не относится: адресатов выбрал
+    и текст написал человек, сочинить его заново некому. Прод 26.11.2026: 22
+    письма Diana стёрты в 16:15 UTC концом смены, ни разу не предложенные
+    сайту. Уходят они, как и прежде, только от анкеты в сети — в её следующую
+    смену (`send_round._oldest`); места круга в пуле не занимают
+    (`favorite_mail_pool_left`), так что потолок сайта не держат.
+    """
+    if str(table) != 'favorite_mail':
+        return ''
+
+    from src.dating.favorite_mail import FAVORITE_MAIL_MANUAL_SQL
+
+    return f' AND NOT ({alias}{FAVORITE_MAIL_MANUAL_SQL})'
 
 
 def _away(state: dict) -> bool:
