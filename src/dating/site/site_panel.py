@@ -93,6 +93,12 @@ class DatingSitePanel:
     PRESENCE_SET_PATH = ''
     PRESENCE_READ_PATH = ''
 
+    # Страница истории переписки пары в панели (`mail_human.py`). `{uid}` —
+    # её номер на сайте, его номер едет параметром `id2`. ⚠ Пусто значит «у
+    # панели такой страницы нет»: писем человека на сайте у такого сайта не
+    # забирают, и проверка пары проходит молча, без попытки.
+    HISTORY_PATH = ''
+
     def __init__(self, presence: dict | None = None):
         self.presence = presence or {}
 
@@ -133,6 +139,20 @@ class DatingSitePanel:
         """Ответ панели — «номер → в сети». У базовой панели присутствия нет."""
         return {}
 
+    def history_page(self, raw: str, her: str = '', him: str = '') -> list[dict]:
+        """Страница истории пары: письма. У базовой панели её нет — пусто.
+
+        Args:
+            raw: HTML страницы.
+            her: имя девушки — запасная сверка стороны, не признак.
+            him: имя собеседника — то же.
+
+        Returns:
+            list[dict]: письма в порядке страницы (свежие сверху): `message_id`,
+            `side` (`her`/`his`), `name`, `at`, `body`, `attachment`.
+        """
+        return []
+
     def card(self, form: dict) -> dict:
         """Поля карточки помимо параметров: пустой набор у базовой панели."""
 
@@ -163,6 +183,10 @@ class DatingSitePanelLadadate(DatingSitePanel):
 
     SOURCES = ('BirthdayDay', 'BirthdayMonth', 'BirthdayYear')
 
+    # История пары: `/partner/agency/usermessagehistory/{её ID}?id2={его ID}` —
+    # письмо за письмом, свежие сверху, по пять на страницу (`mail_human.py`).
+    HISTORY_PATH = 'usermessagehistory/{uid}'
+
     def params(self, form: dict) -> dict:
         """То же, что у базового, плюс нормализация мер и сборка даты."""
         got = form or {}
@@ -175,6 +199,11 @@ class DatingSitePanelLadadate(DatingSitePanel):
                                        got.get('BirthdayYear'))
 
         return profile_param_frame(values)
+
+    def history_page(self, raw: str, her: str = '', him: str = '') -> list[dict]:
+        """Страница истории пары: письма, свежие сверху, как их кладёт страница."""
+
+        return ladadate_history_page(raw, her=her, him=him)
 
 
 class DatingSitePanelLuxee(DatingSitePanel):
@@ -413,6 +442,121 @@ _LUXEE_TILE_RE = re.compile(r'<div class="profile-tile-wrap-outside" data-key="'
 
 # Заглушка вместо фотографии: силуэт, общий для всех без снимка.
 _LUXEE_BLANK_PHOTO = '/blank/'
+
+
+# ── Страница истории переписки пары (Ladadate) ────────────────────────────────
+#
+# Письмо — блок `<div class="card-body ...">`: в шапке номер и автор
+# (`ID: 853653413 | Ekaterina`) и время, ниже — тело `<p class="card-text">`,
+# а вложения ссылками `attachments/`. Разметка замерена 26.11.2026 на живой
+# паре Ekaterina ↔ Mark (письмо 853653413).
+
+# Начало блока письма. ⚠ Делим по открывающему тегу: вложенных `card-body` на
+# странице нет, а всё, что идёт после последнего письма (подвал, скрипты),
+# отсекает признак автора — такие куски просто не проходят дальше.
+_LADADATE_HIST_BODY_RE = re.compile(r'<div class="card-body[^"]*"')
+
+# Чьё письмо: шапка заголовка красная — её, серая — его.
+_LADADATE_HIST_SIDE_RE = re.compile(r'card-title\s+text-(danger|secondary)')
+
+# `ID: 853653413 | Ekaterina` — номер письма и автор одной строкой.
+# ⚠ Та же форма есть в карточках профилей над списком, но там номер
+# вложенной ссылкой, а не текстом, — регулярка их не берёт.
+_LADADATE_HIST_ID_RE = re.compile(r'ID:\s*(\d+)\s*\|\s*([^<]+)')
+
+# Время в шапке: «2026-11-26 17:06», секунды могут быть, а могут и не быть.
+# ⚠ Ищем **до** тела письма: в самом тексте письма дата тоже может быть.
+_LADADATE_HIST_AT_RE = re.compile(r'(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?')
+
+# Тело письма. ⚠ Только `class="card-text"`: сразу за ним страница повторяет
+# тот же текст обычным `<p>` для печати — взять оба значило бы удвоить письмо.
+_LADADATE_HIST_TEXT_RE = re.compile(r'<p class="card-text"[^>]*>([\s\S]*?)</p>')
+
+# Ссылка на вложение; уменьшенный вариант — тот же путь с `-s` перед расширением.
+_LADADATE_HIST_FILE_RE = re.compile(r'<img[^>]*src="([^"]*attachments/[^"]*)"', re.I)
+
+# Часовые пояса страницы: «Date UTC» панель подписывает им журнал чата;
+# страницу истории та же рука пишет по тем же часам (замер 26.11.2026).
+_LADADATE_HIST_SIDE = {'danger': 'her', 'secondary': 'his'}
+
+
+def ladadate_history_page(raw: str, her: str = '', him: str = '') -> list[dict]:
+    """Страница истории пары — письма в порядке страницы, свежие сверху.
+
+    Returns:
+        list[dict]: `message_id` (число), `side` (`her`/`his`/'' — не понял),
+        `name`, `at` (`ГГГГ-ММ-ДД ЧЧ:ММ:СС`, как пишет панель), `body`,
+        `attachment` (ссылка первого снимка; '' — вложений нет).
+
+    ## ⚠⚠ Сторона — классом шапки, имя только сверяется
+
+    Красный заголовок — её письмо, серый — его. Именем сторону не решаем:
+    панельная вёрстка переживает смену имён (девушка переименовывается,
+    собеседник приходит со своим), а класс — разметка, она и есть признак.
+    Имя — **запасная ступень**: когда ни один класс не узнался (перевёрстка),
+    сверяем с переданными, и то молча. Тот же порядок и та же причина, что у
+    импорта чата Step2Love.
+
+    ⚠ Письмо без узнавшейся стороны в результат попадает со `side=''` —
+    вызывающий такие не берёт: угадать чужое письмо как её хуже, чем потерять
+    одно своё (потеряется следующим забором страницы, а ложная реплика
+    рассказана соседу).
+    """
+
+    letters = []
+
+    for chunk in _LADADATE_HIST_BODY_RE.split(str(raw or ''))[1:]:
+        who = _LADADATE_HIST_ID_RE.search(chunk)
+        if not who:
+            # Карточка профиля в начале страницы, подвал — всё, что не письмо.
+            continue
+
+        name = who.group(2).strip()
+        mark = _LADADATE_HIST_SIDE_RE.search(chunk)
+        side = _LADADATE_HIST_SIDE.get(mark.group(1), '') if mark else ''
+
+        if not side:
+            lowered = name.lower()
+            side = ('her' if her and lowered == her.strip().lower()
+                    else 'his' if him and lowered == him.strip().lower() else '')
+
+        # Время ищем в шапке, до первого `<p>`: в теле письма дата — чужая.
+        head = chunk[:chunk.find('<p')] if '<p' in chunk else chunk
+        when = _LADADATE_HIST_AT_RE.search(head)
+        at = ''
+        if when:
+            at = (when.group(1) + ' ' + when.group(2)
+                  + (':' + when.group(3) if when.group(3) else ':00'))
+
+        text = _LADADATE_HIST_TEXT_RE.search(chunk)
+        body = _ladadate_history_text(text.group(1)) if text else ''
+
+        files = _LADADATE_HIST_FILE_RE.findall(chunk)
+        # Уменьшенный — он же превью: полноразмерный тянуть в ленту незачем.
+        attach = next((f for f in files if '-s.' in f), files[0] if files else '')
+
+        letters.append({'message_id': int(who.group(1)), 'side': side,
+                        'name': name, 'at': at, 'body': body,
+                        'attachment': attach.strip()})
+
+    return letters
+
+
+def _ladadate_history_text(raw: str) -> str:
+    """Тело письма из HTML: переносы сохраняем, разметку снимаем."""
+    text = re.sub(r'<br\s*/?>', '\n', str(raw or ''))
+    text = html.unescape(re.sub(r'<[^>]+>', '', text))
+
+    # Пробелы построчно и не более одного пустого ряда подряд: панелью
+    # абзацы разделены парой `<br/>`, а хвостовые переносы — просто мусор.
+    lines = [line.strip() for line in text.splitlines()]
+    out = []
+    for line in lines:
+        if not line and (not out or not out[-1]):
+            continue
+        out.append(line)
+
+    return '\n'.join(out).strip()
 
 
 def _luxee_tile(chunk: str) -> dict | None:

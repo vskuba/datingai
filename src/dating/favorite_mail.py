@@ -1574,6 +1574,13 @@ async def _quiet(site_id: int, profile_id: int = 0) -> list[dict]:
         "          SELECT profile_id, uid, date_post AS at, 'him' AS side"
         '            FROM mail_in'
         '          UNION ALL '
+        # Письма живого человека на сайте — **её** реплики (`mail_human.py`,
+        # 26.11.2026): ответил человек — разговор жив её словами, и возобновлять
+        # его под только что написанное живое письмо нельзя, «последним
+        # говорил он» тут неверно в обе стороны.
+        "          SELECT profile_id, uid, date_post AS at, 'her' AS side"
+        '            FROM mail_human'
+        '          UNION ALL '
         + mail_sent_union(
             "status = 'sent'",
             select="profile_id, uid, sent_at AS at, 'her' AS side") +

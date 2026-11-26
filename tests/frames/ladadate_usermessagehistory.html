@@ -1,0 +1,261 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Message History</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+	<link rel="preconnect" href="https://ladadate.com">
+	<link rel="preconnect" href="https://cdnjs.cloudflare.com">
+	
+	
+	<link rel="preconnect" href="https://discovery.amp.cloudflare.com">
+    <link href="/partner/css/bootstrap.4.3.1.min.css" rel="stylesheet" />
+    <link href="/partner/css/bootstrap-datepicker3.min.css" rel="stylesheet" />
+    <link href="/partner/css/style.css?v=2" rel="stylesheet" type="text/css" />
+     
+    <link rel="stylesheet" href="/partner/css/picbox.css" type="text/css" media="screen" />
+ 
+</head>
+<body>
+    <div class="wrapper">
+        
+    <nav id="sidebar">
+        <h4>Agency</h4>
+        <ul class="list-unstyled components">
+            <li class="nav-item nav-agency-home"><a class="nav-link" href="/partner/agency/home">Home</a></li>
+                <li class="nav-item nav-agency-admins"><a class="nav-link" href="/partner/agency/partneradmins">Admins</a></li>
+            <li class="nav-item nav-agency-user-profiles"><a class="nav-link" href="/partner/agency/userprofiles">Ladies profiles</a></li>
+            <li class="nav-item nav-agency-user-messages"><a class="nav-link" href="/partner/agency/usermessages">User Messages<span class="">(0)</span></a></li>
+            <li class="nav-item nav-agency-user-chat-messages"><a class="nav-link" href="/partner/agency/userchatmessages">Chat Messages</a></li>
+            <li class="nav-item nav-agency-user-lost-chats"><a class="nav-link" href="/partner/agency/userlostchats">Lost Chats</a></li>
+            <li class="nav-item nav-agency-user-activities"><a class="nav-link" href="/partner/agency/useractivities">User Activities</a></li>
+            <li class="nav-item nav-agency-user-payment-statistics"><a class="nav-link" href="/partner/agency/userpaymentstatistics">Statistics</a></li>
+                <li class="nav-item nav-agency-user-payments"><a class="nav-link" href="/partner/agency/userpayments">Payments</a></li>
+                            <li class="nav-item nav-agency-bonuses"><a class="nav-link" href="/partner/agency/bonuses">Bonuses</a></li>
+                            <li class="nav-item nav-agency-user-fines"><a class="nav-link" href="/partner/agency/userfines">Fines<span class="">(0)</span></a></li>
+                            <li class="nav-item nav-agency-user-gifts"><a class="nav-link" href="/partner/agency/usergifts">Gifts<span class="">(0)</span></a></li>
+                            <li class="nav-item nav-agency-user-contact-requests"><a class="nav-link" href="/partner/agency/usercontactrequests">Contact requests<span class="">(0)</span></a></li>
+                            <li class="nav-item nav-agency-regulations"><a class="nav-link" href="/partner/agency/regulations">Regulations</a></li>
+                <li class="nav-item nav-agency-agreement"><a class="nav-link" href="/partner/agency/agreement"><span class="">Agreement</span></a></li>
+            <li class="nav-item nav-agency-user-payment-statistics"><a class="nav-link" href="https://ladadate.com/api.html">Api</a></li>
+        </ul>
+            <h4>Webmaster</h4>
+            <ul class="list-unstyled components">
+                <li class="nav-item nav-agency-webmaster-home"><a class="nav-link" href="/partner/agency/webmastertop">Home</a></li>
+                <li class="nav-item nav-agency-webmaster-domains"><a class="nav-link" href="/partner/agency/webmasterdomains">Domais</a></li>
+                <li class="nav-item nav-agency-webmaster-statistics"><a class="nav-link" href="/partner/agency/webmasterstatistics">Statistics</a></li>
+                <li class="nav-item nav-agency-webmaster-registrations"><a class="nav-link" href="/partner/agency/webmasterregistrations">Registrations</a></li>
+                <li class="nav-item nav-agency-webmaster-deposits"><a class="nav-link" href="/partner/agency/webmasterdeposits">User Payments</a></li>
+                <li class="nav-item nav-agency-webmaster-agreement"><a class="nav-link" href="/partner/agency/webmasteragreement">Agreement</a></li>
+                <li class="nav-item nav-agency-webmaster-regulations"><a class="nav-link" href="/partner/agency/webmasterregulations">Payment Rules</a></li>
+                <li class="nav-item nav-agency-webmaster-balance"><a class="nav-link" href="/partner/agency/webmasterbalance">Balance</a></li>
+            </ul>
+                    <h4>My Account</h4>
+            <ul class="list-unstyled components">
+                <li class="nav-item nav-agency-profile"><a class="nav-link" href="/partner/agency/profile">Profile</a></li>
+                <li class="nav-item nav-agency-security-settings"><a class="nav-link" href="/partner/agency/securitysettings">Settings</a></li>
+                <li class="nav-item nav-agency-balance"><a class="nav-link" href="/partner/agency/balance">Balance<span class="text-success font-weight-bold">($191)</span></a></li>
+                
+                <li class="nav-item nav-agency-messages"><a class="nav-link" href="/partner/agency/messages">Messages<span class="">(0)</span></a></li>
+            </ul>
+    </nav>
+
+        <div id="content" class="flex-fill w-100">
+            <nav id="navbar-top" class="navbar navbar-dark navbar-expand-md sticky-top p-0 px-3 px-md-4 navbar-top">
+                <button id="toggle-btn" class="navbar-toggler pull-left mr-4" type="button" data-toggle="active" data-target="#sidebar" aria-controls="sidebar" aria-expanded="false" aria-label="Menu">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <a href="/partner/admin/home" class="navbar-brand pull-left">
+                    <img src="/partner/images/logo-partner.svg" width="140" height="40">
+                </a>
+
+                    <ul class="navbar-nav ml-md-auto">
+                        <li class="nav-item text-nowrap d-flex">
+                            <a class="btn btn-warning my-3 d-none d-md-block" href="/partner/agency/webmastertop">Top Webmasters $$$</a>
+                            <a class="nav-link" href="/partner/agency/profile">
+                                <div class="profile-circle rounded-circle bg-secondary text-uppercase text-center" style="width:50px; height:50px;font-size:2rem;display:table-cell;">L</div>
+                            </a>
+                            <form name="signoutForm" action="/partner/signout" method="post">
+                                <a class="nav-link logout-icon h-100 ml-2" title="Sign Out" href="javascript:signOut()"></a>
+                            </form>
+                        </li>
+                    </ul>
+            </nav>
+            
+<main class="p-2 p-xl-4">
+    
+<div class="container-fluid p-0">
+    <h1>Message History</h1>
+    <div class="card mb-3">
+        <div class="card-header p-2 px-md-3">
+            <div class="d-flex justify-content-between">
+                <div>History with Ekaterina and Mark</div>
+                <div></div>
+            </div>
+        </div>
+        <div class="card-body p-2 p-md-3">
+            <div class="row p-0 m-0">
+                <div class="col-lg-6 p-0">
+    <div class="card flex-row flex-wrap border-0">
+        <div class="card-header border-0 p-0" style="width:30%;">
+            <div class="ratio-1x15">
+                <a href="/partner/agency/userprofileview/622715">
+                    <img class="bg-white" src="/content/photos/f1fea29c165e435fbb6a27ee8fe8d7e0-s.jpg">
+                </a>
+            </div>
+            </div>
+            <div class="card-body px-2 pt-1" style="width:70%;">
+                <h4 title="Ekaterina, 33" class="card-title d-inline-block text-wrap">Ekaterina, 33</h4>
+                <h5 class="card-title">ID: <a href="/partner/agency/userprofileview/622715">622715</a></h5>
+                <p class="card-text" title="Kyiv, Ukraine">Kyiv, UA</p>
+            </div>
+    </div></div>
+                <div class="col-lg-6 p-0 mt-2 mt-lg-0">
+    <div class="card flex-row flex-wrap border-0">
+        <div class="card-header border-0 p-0" style="width:30%;">
+            <div class="ratio-1x15">
+                <a href="/partner/agency/userprofileview/549126">
+                    <img class="bg-white" src="/content/photos/18cb04028ce842ff85cebba9f75528ab-s.jpg">
+                </a>
+            </div>
+            </div>
+            <div class="card-body px-2 pt-1" style="width:70%;">
+                <h4 title="Mark, 63" class="card-title d-inline-block text-wrap">Mark, 63</h4>
+                <h5 class="card-title">ID: <a href="/partner/agency/userprofileview/549126">549126</a></h5>
+                <p class="card-text" title="Boston, United States">Boston, US</p>
+            </div>
+    </div></div>
+            </div>
+            <hr />
+        </div>
+            <div class="card-body p-2 px-md-3 ">
+                <div class="card-title text-danger">
+                    <div class="d-flex justify-content-between p-0">
+                        <div class="font-weight-bold">ID: 853653413 | Ekaterina</div>
+                        <div>2026-11-26 17:06</div>
+                    </div>
+                </div>
+                <p class="card-text">Mmm, you’ve guessed my biggest, steamiest fantasy, honey!<br/>I think I’d be the one to make the first move on you... you wouldn’t say no to that, would you?<br/>Mmmm, another man? Tell me more!</p>
+                <p>Mmm, you’ve guessed my biggest, steamiest fantasy, honey!<br/>I think I’d be the one to make the first move on you... you wouldn’t say no to that, would you?<br/>Mmmm, another man? Tell me more!</p>
+
+                    <hr class="my-2" />
+                    <div class="row m-0" style="width:150px;">
+                        <a href="/content/attachments/622715/56cc8b354cd04e37a837819e0843a219.jpg" rel="lightbox">
+                            <img class="w-100" src="/content/attachments/622715/56cc8b354cd04e37a837819e0843a219-s.jpg" />
+                        </a>
+                    </div>
+            </div>
+            <div class="card-body p-2 px-md-3 bg-2">
+                <div class="card-title text-secondary">
+                    <div class="d-flex justify-content-between p-0">
+                        <div class="font-weight-bold">ID: 853634242 | Mark</div>
+                        <div>2026-11-26 16:19</div>
+                    </div>
+                </div>
+                <p class="card-text">I have a silly question for you: if we were stuck in an elevator for an hour, would you start talking about your ex, or would you just stare at the ceiling and let me entertain you? <br/><br/>Well hopefully there will be another man in there with us lot of fun will happen<br/></p>
+                <p>I have a silly question for you: if we were stuck in an elevator for an hour, would you start talking about your ex, or would you just stare at the ceiling and let me entertain you? <br/><br/>Well hopefully there will be another man in there with us lot of fun will happen<br/></p>
+
+            </div>
+            <div class="card-body p-2 px-md-3 ">
+                <div class="card-title text-danger">
+                    <div class="d-flex justify-content-between p-0">
+                        <div class="font-weight-bold">ID: 852239294 | Ekaterina</div>
+                        <div>2026-11-22 11:23</div>
+                    </div>
+                </div>
+                <p class="card-text">Hey Mark! I was looking at your profile and saw you’re into mountains and ocean—what’s the funniest thing that happened to you out there the other day? I once tried to surf and ended up eating sand instead of riding a wave.<br/><br/>I’m in Kyiv now, filming clips for fashion brands. My days are full of cameras and coffee, but I still love yoga and stretching. I have two dogs who think I’m always late for walks.<br/><br/>I’m looking for comfort in relationships—home, heart, public, bed, soul. It’s not perfect, but it’s real. And I’m curious about your story, Mark. Tell me something funny you’ve experienced lately.</p>
+                <p>Hey Mark! I was looking at your profile and saw you’re into mountains and ocean—what’s the funniest thing that happened to you out there the other day? I once tried to surf and ended up eating sand instead of riding a wave.<br/><br/>I’m in Kyiv now, filming clips for fashion brands. My days are full of cameras and coffee, but I still love yoga and stretching. I have two dogs who think I’m always late for walks.<br/><br/>I’m looking for comfort in relationships—home, heart, public, bed, soul. It’s not perfect, but it’s real. And I’m curious about your story, Mark. Tell me something funny you’ve experienced lately.</p>
+
+                    <hr class="my-2" />
+                    <div class="row m-0" style="width:150px;">
+                        <a href="/content/attachments/622715/370650d5691e4f6da3756b79ecf9437e.jpg" rel="lightbox">
+                            <img class="w-100" src="/content/attachments/622715/370650d5691e4f6da3756b79ecf9437e.jpg" />
+                        </a>
+                    </div>
+            </div>
+            <div class="card-body p-2 px-md-3 ">
+                <div class="card-title text-danger">
+                    <div class="d-flex justify-content-between p-0">
+                        <div class="font-weight-bold">ID: 851427921 | Ekaterina</div>
+                        <div>2026-11-19 20:28</div>
+                    </div>
+                </div>
+                <p class="card-text">Hello! I noticed that a lot of time has passed since our last exchange, and I wanted to write because I remembered you. It feels strange to write a letter instead of a message, but I find myself enjoying the process. I am sitting in my apartment, and the quietness of the evening makes me want to talk about something more than just daily routines.<br/><br/>I was thinking about what you wrote in your profile — about being protective and open-minded. I find that very attractive. I am a camerawoman, and I work with fashion brands, making clips for them. I do not make movies, but I create short videos. I prefer a casual style in daily life, not so stylish, but comfortable. I love yoga and surfing, and I have two dogs. I think about traveling to see the whole world. I find that I am looking for a companion who is comfortable everywhere — home, heart, public, bed, soul. I believe comfort is the base of relationships.<br/><br/>I am curious about you. You live in Boston, close to mountains and ocean. I wonder, which compliment do you never get but would like to? It is a question that makes me think about how people are seen by others, and how they wish to be seen. I think it is a good question for a letter, because it allows someone to share something personal without being too direct. I find that I am interested in what people value in themselves, and what they wish others would notice.<br/><br/>I hope you are well, and that you are finding moments of peace in your days. I am writing this letter because I enjoy the process of writing, and I find that it allows me to think more deeply about what I want to say. I hope you will write back when you have time, and I will be happy to read your words. Thank you for being a part of my days, even if we do not meet in person. I am grateful for the connection we have built through words.<br/><br/>With warmth and thoughtfulness,<br/>Ekaterina</p>
+                <p>Hello! I noticed that a lot of time has passed since our last exchange, and I wanted to write because I remembered you. It feels strange to write a letter instead of a message, but I find myself enjoying the process. I am sitting in my apartment, and the quietness of the evening makes me want to talk about something more than just daily routines.<br/><br/>I was thinking about what you wrote in your profile — about being protective and open-minded. I find that very attractive. I am a camerawoman, and I work with fashion brands, making clips for them. I do not make movies, but I create short videos. I prefer a casual style in daily life, not so stylish, but comfortable. I love yoga and surfing, and I have two dogs. I think about traveling to see the whole world. I find that I am looking for a companion who is comfortable everywhere — home, heart, public, bed, soul. I believe comfort is the base of relationships.<br/><br/>I am curious about you. You live in Boston, close to mountains and ocean. I wonder, which compliment do you never get but would like to? It is a question that makes me think about how people are seen by others, and how they wish to be seen. I think it is a good question for a letter, because it allows someone to share something personal without being too direct. I find that I am interested in what people value in themselves, and what they wish others would notice.<br/><br/>I hope you are well, and that you are finding moments of peace in your days. I am writing this letter because I enjoy the process of writing, and I find that it allows me to think more deeply about what I want to say. I hope you will write back when you have time, and I will be happy to read your words. Thank you for being a part of my days, even if we do not meet in person. I am grateful for the connection we have built through words.<br/><br/>With warmth and thoughtfulness,<br/>Ekaterina</p>
+
+                    <hr class="my-2" />
+                    <div class="row m-0" style="width:150px;">
+                        <a href="/content/attachments/622715/553a8e5980374c338978a85275c3d47f.jpg" rel="lightbox">
+                            <img class="w-100" src="/content/attachments/622715/553a8e5980374c338978a85275c3d47f.jpg" />
+                        </a>
+                    </div>
+            </div>
+            <div class="card-body p-2 px-md-3 ">
+                <div class="card-title text-danger">
+                    <div class="d-flex justify-content-between p-0">
+                        <div class="font-weight-bold">ID: 842732053 | Ekaterina</div>
+                        <div>2026-10-31 18:02</div>
+                    </div>
+                </div>
+                <p class="card-text">I admit it. I am curious about you, Mark, and I want to know the shape of that secret.
+
+You want to share your wife with another man. That is a big secret for a man who says he is protective and non-judgmental. I am curious, but I also want to understand the shape of it. Is it a shared space in your life, or a shared moment? Do you want to watch, or do you want to join? And is this a secret you carry alone, or is she part of the story?
+
+I am a videographer, so I think in frames and in edits. I edit clips for fashion brands, and I know how a small detail can change the whole mood of a scene. I think about your secret in the same way: what is the lighting, what is the silence between words, what is the feeling you want to leave behind.
+
+I am 33, I live in Kyiv, and I work from a small studio where I edit video projects. I also hike in the Carpathians on weekends, and I love cooking Ukrainian borscht for friends. I have two dogs, and I surf when the Black Sea is good. I am slim, 186 cm, and I prefer comfortable casual style in daily life, even if I work with fashion brands.
+
+I am calm today, and I am writing this letter slowly, because I want to read it later and remember how it felt. I am not perfect, like you say, but I am honest, and I like honest secrets.
+
+Tell me, Mark, what is the first thing you would notice when you are with your wife and another man, and what is the last thing you would want to remember from that moment?</p>
+                <p>I admit it. I am curious about you, Mark, and I want to know the shape of that secret.
+
+You want to share your wife with another man. That is a big secret for a man who says he is protective and non-judgmental. I am curious, but I also want to understand the shape of it. Is it a shared space in your life, or a shared moment? Do you want to watch, or do you want to join? And is this a secret you carry alone, or is she part of the story?
+
+I am a videographer, so I think in frames and in edits. I edit clips for fashion brands, and I know how a small detail can change the whole mood of a scene. I think about your secret in the same way: what is the lighting, what is the silence between words, what is the feeling you want to leave behind.
+
+I am 33, I live in Kyiv, and I work from a small studio where I edit video projects. I also hike in the Carpathians on weekends, and I love cooking Ukrainian borscht for friends. I have two dogs, and I surf when the Black Sea is good. I am slim, 186 cm, and I prefer comfortable casual style in daily life, even if I work with fashion brands.
+
+I am calm today, and I am writing this letter slowly, because I want to read it later and remember how it felt. I am not perfect, like you say, but I am honest, and I like honest secrets.
+
+Tell me, Mark, what is the first thing you would notice when you are with your wife and another man, and what is the last thing you would want to remember from that moment?</p>
+
+            </div>
+    </div>
+    
+<nav>
+    <ul class="pagination">
+                                <li class="page-item active"><a class="page-link" href="#">1</a></li>
+                <li class="page-item "><a class="page-link" href="/partner/agency/usermessagehistory/622715?id2=549126&amp;page=2">2</a></li>
+                            <li class="page-item"><a class="page-link" href="/partner/agency/usermessagehistory/622715?id2=549126&amp;page=2">Next</a></li>
+    </ul>
+</nav>
+
+</div>
+</main>
+        </div>
+    </div>
+    <script src="/partner/js/jquery.3.4.1.min.js"></script>
+    <script src="/partner/js/bootstrap.4.3.1.min.js"></script>
+    <script src="/partner/js/bootstrap-datepicker.min.js" type="text/javascript"></script>
+    <script src="/partner/js/common.js?v=1" type="text/javascript"></script>
+    <script type="text/javascript">
+        var baseUrl = '/partner';
+        function signOut() { document.forms["signoutForm"].submit(); }
+    </script>
+    <script>
+        $('.form-date').datepicker({format: "dd.mm.yyyy", autoclose: true});
+    </script>
+     
+    <script src="/partner/js/picbox.js" type="text/javascript"></script>
+ 
+    <script>
+        $("#toggle-btn").click(function (e) {
+            e.preventDefault();
+            $("#sidebar").toggleClass("active");
+            $("#navbar-top").toggleClass("with-menu");
+        });
+    </script>
+</body>
+</html>

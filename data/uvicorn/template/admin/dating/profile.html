@@ -1565,6 +1565,23 @@
         white-space: nowrap;
     }
 
+    /* Почему письмо стоит в пуле и не уходит: жёлтая полоска под телом.
+       Красное «не ушло» — письмо ждёт человека, жёлтое «ждёт» — письмо живое,
+       круг обойдёт его, когда пройдёт причина. Причина у слова — та же, по
+       которой очередь её пропускает (`send_round.send_card_wait`). */
+    .mail-card-wait {
+        font-size: 10px;
+        color: #b45309;
+        background: #fef3c7;
+        border-radius: 4px;
+        padding: 1px 5px;
+        align-self: flex-start;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
     /* Место под значки у первой строки: иначе длинное имя уходит под них.
        Два значка по 16 с зазором — 40 с полем. */
     .mail-card-who {
@@ -9363,6 +9380,166 @@
             .addEventListener('click', () => replyDrop(index, box));
     }
 
+    // ── Письмо руками под разговором ─────────────────────────────────────────
+    //
+    // ⚠⚠ **Это письмо приставания, написанное руками, и это не тот блок правки,
+    // что лежит ниже.** Уходит оно в пул тем же правилом и той же дверью, что
+    // «Письмо руками» на «Приставании»: на сервере кладёт его доменная
+    // `favorite_mail_manual`, а уносит — функция кнопки «отправить сейчас»,
+    // ручка `POST /favorite-mail/reply`. Ниже остаётся только ответ, сочинённый
+    // кругом; формы друг друга не знают и не должны.
+    //
+    // ⚠ Письмо — **от анкеты пары** (`favTalkRow.profile_id`), а не от `openId`:
+    // читают разговор пары, и письмо должно быть от неё; анкета слева — фильтр,
+    // который может быть снят вовсе.
+    let favTalkReplyShot = null;    // снимок, выбранный для этой пары
+    let favTalkReplyFor = '';       // для какой пары он выбран
+    let favTalkReplyBusy = false;   // отправка идёт
+
+    // Строка открытой пары. ⚠ Берём `favTalkRow`, а не поиск по `favTalks`:
+    // пару открывают и карточкой из пула ответов, а её строки может не быть
+    // на открытой странице списка.
+    function favTalkReplyPair() {
+        return favTalkOpen ? favTalkRow : null;
+    }
+
+    // Форма живёт только с выбранной парой: кнопка, ведущая в пустоту,
+    // читается как поломка — тот же довод, что у значка ⓘ.
+    function favTalkReplyShow() {
+        const box = slot('fav-talk-reply');
+        if (!box) return;
+
+        if (!favTalkReplyPair()) {
+            box.hidden = true;
+
+            return;
+        }
+
+        const text = slot('fav-talk-reply-text');
+        const btn = slot('fav-talk-reply-send');
+        const warn = slot('fav-talk-reply-warn');
+
+        if (btn && !btn.dataset.bound) {
+            // Слушатели вешаются ровно один раз: разметка статична и не
+            // пересоздаётся.
+            btn.dataset.bound = '1';
+            btn.addEventListener('click', favTalkReplySend);
+            text.addEventListener('input', favTalkReplyReady);
+            // Enter отправляет, Shift+Enter — перенос строки: так устроены все
+            // чаты, и здесь ожидание человека важнее единообразия с прочими
+            // формами панели.
+            text.addEventListener('keydown', e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    favTalkReplySend();
+                }
+            });
+        }
+
+        if (favTalkReplyFor !== favTalkOpen) {
+            // Сменилась пара — набираемое для другой женщины стирается: письмо
+            // адресовано человеку, а не полю.
+            favTalkReplyFor = favTalkOpen;
+            favTalkReplyShot = null;
+
+            if (!favTalkReplyBusy && text) text.value = '';
+            if (warn) warn.classList.add('off');
+        }
+
+        box.hidden = false;
+        favTalkReplyShotPaint();
+        favTalkReplyReady();
+    }
+
+    // Кнопка пуста, пока поле пустое и пока отправка идёт: и то и другое видно
+    // по самой кнопке, объяснять словами нечего.
+    function favTalkReplyReady() {
+        const text = slot('fav-talk-reply-text');
+        const btn = slot('fav-talk-reply-send');
+        if (!text || !btn) return;
+
+        btn.disabled = favTalkReplyBusy || !(text.value || '').trim();
+    }
+
+    function favTalkReplyShotPaint() {
+        const box = slot('fav-talk-reply-shot');
+        if (!box) return;
+
+        const one = favTalkReplyPair() || {};
+
+        mailShotRow(box, favTalkReplyShot, Number(one.profile_id) || 0, shot => {
+            favTalkReplyShot = shot;
+            favTalkReplyShotPaint();
+        });
+    }
+
+    async function favTalkReplySend() {
+        const one = favTalkReplyPair();
+        if (!one || favTalkReplyBusy) return;
+
+        const text = slot('fav-talk-reply-text');
+        const btn = slot('fav-talk-reply-send');
+        const warn = slot('fav-talk-reply-warn');
+        const body = (text.value || '').trim();
+        if (!body) return;
+
+        // ⚠ Поле не чистим до ответа: отправка идёт секунды, и стёртое заранее
+        // потерялось бы при отказе — человеку набирать заново.
+        favTalkReplyBusy = true;
+        btn.disabled = true;
+        text.disabled = true;
+        btn.innerHTML = '<span class="dating-spin"></span>Отправляю…';
+        warn.classList.add('off');
+
+        try {
+            const r = await postData(`${BASE}/api/dating/favorite-mail/reply`, {
+                profile_id: Number(one.profile_id),
+                uid: String(one.uid),
+                body: body,
+                gallery_file_id: favTalkReplyShot
+                    ? Number(favTalkReplyShot.id) || 0 : 0,
+            });
+
+            // Ушло или осталось в пуле — письма в поле больше нет: оно либо на
+            // сайте, либо в карточке пула; второе нажатие плодило бы дубль.
+            favTalkReplyShot = null;
+            text.value = '';
+
+            if (r.status === 'sent') {
+                showNotification(`Письмо ушло: ${one.name || one.uid}`, 'success');
+                // Перечитываем разговор, а не дописываем реплику руками: письмо
+                // уже записано, и второй способ показать его разошёлся бы с
+                // первым в мелочах — времени, пометках, порядке.
+                await favTalkPairOpen(one);
+            } else {
+                // ⚠⚠ Письмо не умерло — оно в пуле: ручные черновики пережидают
+                // конец её смены (`pool._keep`), причина лежит на карточке
+                // «Приставания». Здесь она звучит словами, иначе поле очистилось бы
+                // молча и человек не понял бы, куда делись его слова.
+                const why = `не ушло сразу: ${r.error || 'сайт отказал'}`
+                    + ' — письмо осталось в пуле';
+
+                warn.textContent = why;
+                warn.classList.remove('off');
+                showNotification(why, 'error');
+
+                // Пул «Приставания» изменился — перечитываем, он мог быть открыт.
+                favMailLoad();
+            }
+        } catch (e) {
+            // ⚠ 409 — «не легло вовсе»: текст остаётся в поле. Причина (спящая
+            // анкета, негодный адресат, метка в тексте) правится без набора —
+            // терять набранное за молчаливый отказ незачем.
+            showNotification(`Не отправилось: ${e.message}`, 'error');
+        } finally {
+            favTalkReplyBusy = false;
+            btn.innerHTML = 'Отправить';
+            text.disabled = false;
+            favTalkReplyShotPaint();
+            favTalkReplyReady();
+        }
+    }
+
     function favTalkPaint() {
         const wrap = slot('fav-talk-thread');
         if (!wrap) return;
@@ -9387,6 +9564,10 @@
             wrap.innerHTML = '<span class="reply-thread-wait">Выберите переписку '
                 + 'слева — здесь будет разговор.</span>';
         }
+
+        // Письмо руками под разговором: с выбранной парой видно форму, без
+        // неё (сняли фильтр, сменили анкету, сдвинули отбор) — нет.
+        favTalkReplyShow();
     }
 
     // ── Доставка писем избранным: что ушло и чем кончилось ───────────────────
@@ -10250,12 +10431,15 @@
             }));
     }
 
-    function favManualShotPaint() {
-        const box = slot('fav-manual-shot');
-        if (!box) return;
-
-        const owner = Number(openId) || 0;
-        const shot = favManualShot;
+    // Строка снимка к письму: рамка-превью с крестиком и кнопка выбора из
+    // галереи. **Общая для двух форм** — «Письма руками» на «Приставании» и
+    // ответа под разговором в «Диалогах»: галерея одна (`public` той анкеты),
+    // превью одно, крестик один. Вторая отрисовка разошлась бы с первой в
+    // мелочах — в размере превью, в подсказке, в поведении крестика.
+    //
+    // `owner` — анкета, чью галерею показывать; `onShot` получает выбранный
+    // кадр (или `null` после крестика) и сам решает, куда его положить.
+    function mailShotRow(box, shot, owner, onShot) {
         box.innerHTML = '<div class="mail-shot-frame">'
             + (shot
                 ? `<img src="${esc(galleryImgSrc(owner, shot.file, 200))}" alt=""`
@@ -10280,18 +10464,22 @@
 
         const drop = box.querySelector('[data-role="drop"]');
         if (drop) {
-            drop.addEventListener('click', () => {
-                favManualShot = null;
-                favManualShotPaint();
-            });
+            drop.addEventListener('click', () => onShot(null));
         }
 
         box.querySelector('[data-role="pick"]').addEventListener('click', () =>
             galleryPublicPick(owner, shot ? shot.id : 0,
-                'Снимок к письму — папка public', one => {
-                    favManualShot = one;
-                    favManualShotPaint();
-                }));
+                'Снимок к письму — папка public', one => onShot(one)));
+    }
+
+    function favManualShotPaint() {
+        const box = slot('fav-manual-shot');
+        if (!box) return;
+
+        mailShotRow(box, favManualShot, Number(openId) || 0, one => {
+            favManualShot = one;
+            favManualShotPaint();
+        });
     }
 
     // Обработчики вешаются один раз: разметка статична и не пересоздаётся.
@@ -10344,6 +10532,25 @@
         }
     }
 
+    // Почему карточка стоит в пуле, а не уходит — жёлтой полоской под телом.
+    // «Не ушло» (красное) — письмо с причиной, круг к нему не вернётся; «ждёт» —
+    // письмо живое, его обойдут, когда пройдёт причина. Слово причины приносит
+    // сервер **правилами очереди** (`send_round.send_card_wait`), а не здесь:
+    // вторая копия правил под глазами человека разошлась бы на первой правке.
+    // Час последней попытки — заодно: без него карточка молчала бы о повторе,
+    // который круг уже делал (метка `try_at`, UTC; `timeShift` — в час панели).
+    function mailCardWait(row) {
+        if (!row || row.status !== 'draft') return '';
+
+        const why = [];
+        if (row.wait) why.push('ждёт: ' + esc(row.wait));
+        if (row.try_at) why.push('последняя попытка '
+            + esc(timeShift(row.try_at).slice(11, 16)) + ' — не ушло');
+        if (!why.length) return '';
+
+        return `<span class="mail-card-wait">${why.join(' · ')}</span>`;
+    }
+
     function favMailCard(one, index) {
         const sent = one.status !== 'draft';
         const allowed = !!(favMailSaved.get(siteId()) || {}).favorite_mail_send_on;
@@ -10381,6 +10588,9 @@
             // Кадр, который уйдёт этим письмом, — той же `mailShotThumb`, что у
             // пула рассылки: нет снимка — узла нет вовсе.
             + mailShotThumb(one)
+            // Почему стоит — жёлтой полоской; красное «не ушло» ниже живёт
+            // своим правилом и никуда не делось.
+            + mailCardWait(one)
             + (one.status === 'sent'
                 ? '<span class="mail-card-sent">отправлено</span>' : '')
             // ⚠ Причина неудачи живёт на карточке, а не только в уведомлении:
@@ -11651,6 +11861,12 @@
             // разговоре. Без метки человек ищет его в пулах и не находит.
             + (one.kind === 'intention'
                 ? ' <span class="reply-msg-kind">обещание</span>' : '')
+            // ⚠ Её письмо, **написанное живым человеком прямо на сайте**
+            // (`mail_human.py`, 26.11.2026): его нет ни в одном пуле, агент
+            // его не сочинял — без метки человек стал бы искать автора
+            // по пулам и не нашёл бы.
+            + (one.kind === 'human'
+                ? ' <span class="reply-msg-kind">написано на сайте</span>' : '')
             // ⚠ **Черновик подписываем, чей он.** Пока метка была одна («в
             // пуле»), в ленте стоял помеченный ответ, а форма под ней правила
             // письмо приставания — два разных пула, и тексты не совпадали.
@@ -12615,6 +12831,9 @@
                 // квадрат у большинства карточек читался бы как «кадр не
                 // загрузился».
                 + mailShotThumb(row)
+                // Почему стоит — жёлтой полоской; красное «не ушло» ниже живёт
+                // своим правилом и никуда не делось.
+                + mailCardWait(row)
                 + (row.status === 'sent'
                     ? '<span class="mail-card-sent">отправлено</span>' : '')
                 // ⚠ Причина неудачи живёт на карточке, а не только в уведомлении:

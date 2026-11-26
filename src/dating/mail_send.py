@@ -330,6 +330,16 @@ async def mail_send_one(letter: dict, profile: dict, base: str,
     # ⚠ Спрашиваем **до** `check-send`: между разрешением и отправкой не делаем
     # ничего, `CheckId` живёт десять секунд.
     if str(table) == 'mail_reply':
+        # ⚠⚠ **Сперва — живой взгляд на сайт: а не ответил ли уже человек.**
+        # Проверка круга была сочинением — между ним и этой секундой минуты
+        # генерации и часы `reply_delay`, и человек мог ответить на сайте
+        # посреди них. Здесь, а не у вызывающих: эта дверь — и круг, и кнопка.
+        from src.dating.mail_human import mail_human_answered
+
+        if await mail_human_answered(letter, profile, base, password):
+            raise DatingMailSendError(
+                'ответ не ушёл: на письмо уже ответил человек на сайте')
+
         done = await _by_panel(letter, table, int(profile.get('id') or 0))
         if done is not None:
             return done
@@ -427,6 +437,40 @@ async def mail_send_one(letter: dict, profile: dict, base: str,
     return {'sent': True}
 
 
+async def mail_send_try(letter: dict, table: str = 'mailing') -> None:
+    """Ставит строке пула время попытки — `try_at = NOW()`.
+
+    ⚠⚠ **Единственное место, где это число записывается.** Очередь
+    (`send_round._oldest`) ставит непробованные вперёд, а между пробованными
+    берёт того, кто ждёт дольше, — иначе карточка, у которой временная беда,
+    оставалась бы первой по `id` и круг бился бы в неё каждые несколько секунд
+    (замер прода 26.11.2026: `favorite_mail` #2276 — повтор каждые 6 с).
+
+    Значит писать его надо **у любой попытки, которая не кончилась отправкой**:
+    и `wait`, и `fail`, и случай, когда отправка упала не своей ошибкой. Дверь —
+    `mail_send_fail`; сюда заглядывает только круг, где исключение чужого рода
+    (`except Exception`) в дверь не идёт, а греться на одном письме нельзя.
+
+    ⚠ Отметка не решает, вернётся ли круг: у неудачи с причиной (`error`) его не
+    будет и с `try_at` — это правило `_oldest` не меняет.
+    """
+    letter_id = int(letter.get('id') or 0)
+
+    # ⚠ Имя таблицы подставляем из белого списка: в SQL оно не параметризуется.
+    if not letter_id or str(table) not in MAIL_SEND_TABLES:
+        return
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(f'UPDATE {table} SET try_at = NOW() WHERE id = %s',
+                             (letter_id,))
+            await db.connection.commit()
+    except Exception as e:
+        # ⚠ Молча: сорванный из-за отметки разбор исхода стоил бы дороже, чем
+        # один лишний повтор очереди.
+        logger_info(f'[dating] отметка попытки {table} #{letter_id} не легла: {e}')
+
+
 async def mail_send_fail(letter: dict, error, table: str = 'mailing') -> None:
     """Исход неудачной отправки — одной дверью на все пять дорог.
 
@@ -449,7 +493,14 @@ async def mail_send_fail(letter: dict, error, table: str = 'mailing') -> None:
     в `error` намеренно: там она запрещает кругу вернуться к письму
     (`send_round._oldest`). Человеку же она видна — её несёт текст исключения в
     ответе кнопки и в журнале анкеты.
+
+    ⚠⚠ **Отметка попытки — здесь, до разбора исхода: и `wait`, и `fail` —
+    попытка.** Очередь поворачивается к письмам по `try_at` (`mail_send_try`),
+    и оба исхода обязаны её оставить — иначе временная причина вернула бы в
+    очередь прежний вечный повтор (26.11.2026, `favorite_mail` #2276).
     """
+    await mail_send_try(letter, table)
+
     if isinstance(error, DatingMailWaitError):
         # ⚠ Уровень `info`, а не `fail`: ничего не сломалось, письмо ждёт своего
         # часа. И только из этих пяти значений — `log.level` их перечисляет

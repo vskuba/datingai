@@ -22,7 +22,7 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import AuthUser, auth_required
-from src.dating.send_round import send_why
+from src.dating.send_round import send_card_wait, send_why
 from src.dating.favorite import (FAVORITE_STATES,
                                         FAVORITE_STATES_SQL)
 from src.dating.favorite_mail import (FAVORITE_MAIL_BATCH_DEFAULT,
@@ -172,6 +172,10 @@ async def favorite_mail_list(site_id: int = 0, status_: str = 'draft',
            # его нет вовсе — отметку снимает сама неудача, — и остаётся
            # `updated_at`. Без него красные строки журнала стояли без даты.
            ' m.updated_at,'
+           # ⚠ Время последней попытки: по нему страница рисует «последняя
+           # попытка HH:MM — не ушло» у карточки, что стоит в пуле (`try_at`,
+           # ставит `mail_send.mail_send_try`).
+           ' m.try_at,'
            ' p.login AS profile_login, p.profile AS profile_card'
            + shot_pick +
            ' FROM favorite_mail m'
@@ -237,10 +241,22 @@ async def favorite_mail_list(site_id: int = 0, status_: str = 'draft',
     # что на отправке, и только там, где панель её правда шлёт.
     panel = await mail_cold_panel_want(int(site_id), FAVORITE_MAIL_TABLE)
 
-    return {'result': [{**_answer(row),
-                        'subj': (mail_cold_panel_subject(str(row['body']))
-                                 if panel else '')}
-                       for row in rows or []],
+    result = [{**_answer(row),
+               'subj': (mail_cold_panel_subject(str(row['body']))
+                        if panel else '')}
+              for row in rows or []]
+
+    # ⚠ Почему карточка стоит — **правилами очереди** (`send_round.send_card_wait`),
+    # и только у черновиков: у ушедших и похороненных вопрос «почему ждёт»
+    # не стоит. Своя вторая копия правил здесь начала бы врать человеку
+    # под глазами — правку он читает именно на этой карточке.
+    waits = await send_card_wait(
+        int(site_id), FAVORITE_MAIL_TABLE,
+        [one for one in result if one['status'] == 'draft'])
+    for one in result:
+        one['wait'] = waits.get(int(one['id']), '')
+
+    return {'result': result,
             'page': page, 'pages': pages, 'total': total,
             'pool': await favorite_mail_pool_left(int(site_id)),
             'next_sec': favorite_mail_round_next(int(site_id)),
@@ -533,6 +549,13 @@ async def favorite_mail_threads(site_id: int = 0, profile_id: int = 0,
         '          UNION ALL'
         "          SELECT profile_id, uid, sent_at AS at, 'her' AS side"
         "            FROM favorite_mail WHERE status = 'sent'"
+        '          UNION ALL'
+        # ⚠ Письма живого человека на сайте — **её** строки разговора: пара,
+        # где из неё человек на сайте ответил сам, осталась бы в списке с
+        # пустой последней репликой и без этих писем в `letters`.
+        # (26.11.2026, `mail_human.py`.)
+        "          SELECT profile_id, uid, date_post AS at, 'her' AS side"
+        '            FROM mail_human'
         '       ) AS all_mail'
         '      WHERE at IS NOT NULL'
         '      GROUP BY profile_id, uid) AS talk'
@@ -783,6 +806,76 @@ async def favorite_mail_manual_post(payload: DatingFavoriteMailManual,
     return {'result': [await _row(one) for one in mail_ids]}
 
 
+class DatingFavoriteMailReply(BaseModel):
+    """Ответ избранному, написанный человеком под разговором — одному адресату.
+
+    ⚠ `profile_id` — **анкета пары**, чей разговор открыт в середине («она → он»),
+    а не та, что выбрана слева: письмо от той, чьими словами он читается.
+    """
+
+    profile_id: int = Field(..., gt=0,
+                            description='От кого (`profile.id`) — девушка этой пары')
+    uid: str = Field(..., min_length=1, max_length=64,
+                     description='Кому — номер её избранного на сайте')
+    body: str = Field(..., min_length=1, max_length=20000,
+                      description='Текст письма')
+    gallery_file_id: int = Field(0, ge=0, description='Один снимок из public её '
+                                 'галереи (`gallery_file.id`); ноль — без снимка')
+
+
+@router.post('/reply', include_in_schema=False)
+async def favorite_mail_reply(payload: DatingFavoriteMailReply,
+                              user: AuthUser = Depends(auth_required)) -> dict:
+    """Письмо избранному прямо из-под разговора: пишет руками, уносит сразу.
+
+    Returns:
+        dict: `status` — `sent` (ушло) или `draft` (осталось в пуле), `error` —
+            причина словами у неудачи, `mail_id` — номер строки пула.
+
+    Raises:
+        HTTPException: 409 — письмо **не легло вовсе**: адресат не её избранный
+            или закрылся, анкета не в сети, текст пустой или с меткой `[[…]]`,
+            снимок негоден. Причина словами, как у «Письма руками».
+
+    ## ⚠⚠ Обе половины одолжены: третьей дороги проверке и отправке нет
+
+    Кладёт письмо `favorite_mail_manual` — **своим вызовом**, со всеми своими
+    проверками (анкета в сети, адресат в её избранных и не закрылся, снимок,
+    метки). Страница про них не знает, и второй копии правил здесь нет: та же
+    беда, что с подбором адресатов, — две записи одного ответа расходятся молча.
+
+    Дальше письмо уходит `favorite_mail_send` — **той же функцией, что сидит за
+    кнопкой «отправить сейчас»** на карточке пула. Своя вторая дорога к сайту
+    разошлась бы ровно там, где дороже всего, — в `CheckId` и его десяти
+    секундах, в пределах пары и в записе исхода.
+
+    ## ⚠ Не ушло — не смерть письма, а `draft` в ответе
+
+    Отказ сайта `mail_send_fail` оставляет письмо в пуле ручным черновиком с
+    причиной (и `pool._keep` хранит его до её следующей смены) — работа не
+    потеряна. Поэтому ответ `draft` со словом «почему», а не `409`: человек
+    узнаёт, что письмо не ушло сразу, и видит его на карточке пула. `409` —
+    только за то, что письмо не легло.
+    """
+    try:
+        mail_ids = await favorite_mail_manual(int(payload.profile_id),
+                                              [str(payload.uid)], payload.body,
+                                              int(payload.gallery_file_id))
+    except DatingFavoriteMailManualError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+    try:
+        await favorite_mail_send(int(mail_ids[0]), user)
+    except HTTPException as e:
+        # ⚠ Любая неудача двери отправки — письмо уже лежит в пуле с причиной
+        # (`mail_send_fail` записал её туда сам); нам остаётся принести её
+        # человеку словами.
+        return {'status': 'draft', 'error': str(e.detail),
+                'mail_id': int(mail_ids[0])}
+
+    return {'status': 'sent', 'error': '', 'mail_id': int(mail_ids[0])}
+
+
 @router.post('/generate', include_in_schema=False)
 async def favorite_mail_generate(payload: DatingFavoriteMailGenerate,
                                         user: AuthUser = Depends(auth_required)):
@@ -971,6 +1064,9 @@ def _answer(row) -> dict:
     pool_pair_girl(got, card)
     got['sent_at'] = str(got['sent_at']) if got.get('sent_at') else ''
     got['created_at'] = str(got.get('created_at') or '')
+    # Время последней попытки — рядом: без него карточка в пуле молчала бы
+    # и про «не ушло» вчерашним вечером (`mail_send_try`).
+    got['try_at'] = str(got['try_at']) if got.get('try_at') else ''
     got['updated_at'] = str(got['updated_at']) if got.get('updated_at') \
         else ''
 

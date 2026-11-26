@@ -64,10 +64,11 @@ from src.dating.mail_send import (MAIL_SEND_DELAY_TABLES,
                                   MAIL_SEND_SHOT_TABLES,
                                   MAIL_SEND_TALK_TABLES,
                                   DatingMailSendError, DatingMailWaitError,
-                                  mail_send_fail, mail_send_one)
-from src.dating.mail_wait import (mail_wait_fresh_uids, mail_wait_girls,
-                                  mail_wait_girls_left, mail_wait_uids,
-                                  mail_wait_when)
+                                  mail_send_fail, mail_send_one, mail_send_try)
+from src.dating.mail_wait import (MAIL_WAIT_GIRL_MARKS, mail_wait_fresh_uids,
+                                  mail_wait_girls, mail_wait_girls_left,
+                                  mail_wait_left, mail_wait_skip,
+                                  mail_wait_uids, mail_wait_when)
 from src.dating.pool_pair import pool_mail_answered_where
 from src.dating.schedule import schedule_now
 from src.dating.site_setting import site_seconds, site_setting
@@ -284,6 +285,67 @@ async def send_why(site_id: int, table: str, offset_hours: int = 0) -> str:
 
 
 # ── Приватное ────────────────────────────────────────────────────────────────
+
+
+async def send_card_wait(site_id: int, table: str,
+                         rows: list[dict]) -> dict[int, str]:
+    """Почему каждая карточка пула стоит прямо сейчас — теми же правилами, что и очередь.
+
+    Args:
+        rows: строки пула: `id`, `profile_id`, `uid`.
+
+    Returns:
+        dict: `{id: причина}`; строк без причины в ответе нет.
+
+    ⚠⚠ **Причину спрашивают у тех же помощников, что и `_oldest`, — в этом весь
+    смысл.** Паузу анкеты и остуду читают из `mail_wait`, паузу пары — из
+    `_pairs_busy`, сеть — из того же `status`, что стоит в выборке. Заведи мы
+    второй копией то же правило для страницы, разошлись бы на первой же правке,
+    и карточка врала бы человеку о причине, по которой он её разглядывает.
+
+    Причина одна, первая совпавшая; порядок — от общего к частному: пауза
+    анкеты держит весь пул, остуда — адресата, пауза пары и вне сети —
+    частное.
+    """
+    if not rows or not any(one[1] == str(table) for one in _POOLS):
+        return {}
+
+    paused = {int(one) for one in mail_wait_girls(int(site_id), table)}
+    cooling = {str(one) for one in mail_wait_uids(int(site_id))}
+
+    # «до 00:00 UTC» — не текст, а конец суток: `mail_wait_girl_mark` ставит
+    # отметку ровно до него, так что срок у слова верный, без отдельного счёта.
+    girl_words = f'{MAIL_WAIT_GIRL_MARKS[0][1]} — до 00:00 UTC'
+
+    busy: dict = {}
+    offline: set[int] = set()
+    if table == 'favorite_mail':
+        from src.dating.favorite_mail import _pairs_busy
+
+        busy = await _pairs_busy(int(site_id))
+        offline = await _cards_offline(rows)
+
+    wait = {}
+    for row in rows:
+        profile_id = int(row.get('profile_id') or 0)
+        uid = str(row.get('uid') or '')
+        why = ''
+
+        if profile_id in paused:
+            why = girl_words
+        if not why and uid in cooling:
+            why = mail_wait_skip(mail_wait_left(int(site_id), uid))
+        if not why:
+            held = busy.get((profile_id, uid))
+            if held:
+                why = f'пауза пары ещё {mail_wait_when(int(held["left"]))}'
+        if not why and profile_id in offline:
+            why = 'анкета не в сети'
+
+        if why:
+            wait[int(row.get('id') or 0)] = why
+
+    return wait
 
 
 async def _nothing_to_send(site_id: int, table: str) -> str:
@@ -760,6 +822,15 @@ async def _oldest(site_id: int, table: str) -> dict | None:
         turn_order = 'turn.last_at IS NOT NULL, turn.last_at, '
         turn_args = (int(site_id),)
 
+    # ⚠⚠ **Непробованное — прежде пробованного, пробованное — по давности
+    # попытки.** `m.id` первым делал очередь очередью на одну карточку: письмо,
+    # которое временной причиной (не сведённой в паузу) не уходит, оставалось
+    # первым и билось в него каждый тик, не пуская соседей. Замер прода
+    # 26.11.2026: `favorite_mail` #2276 — повтор каждые 6 секунд. Отметку
+    # попытки ставит одна дверь `mail_send.mail_send_try`; `NULL` — не
+    # пробовали — идёт первым, как шло до правки.
+    try_order = 'm.try_at IS NOT NULL, m.try_at, '
+
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
@@ -771,7 +842,7 @@ async def _oldest(site_id: int, table: str) -> dict | None:
                 f'{reply_join}{turn_join}'
                 f" WHERE m.site_id = %s AND m.status = 'draft' AND m.error = ''"
                 f'   AND p.enabled = 1{online_only}{busy}{cool}{answered}'
-                f' ORDER BY {turn_order}m.id LIMIT 1',
+                f' ORDER BY {turn_order}{try_order}m.id LIMIT 1',
                 (*turn_args, int(site_id), *cooling))
             row = await db.fetchone()
     except Exception as e:
@@ -780,6 +851,27 @@ async def _oldest(site_id: int, table: str) -> dict | None:
         return None
 
     return dict(row) if row else None
+
+
+async def _cards_offline(rows: list[dict]) -> set[int]:
+    """Каких анкет из строк нет в сети. То же `p.status = 'online'`, что стоит
+    в выборке пула: круг офлайн-анкету не берёт, и ждать ей не у чего."""
+    ids = sorted({int(row.get('profile_id') or 0) for row in rows} - {0})
+    if not ids:
+        return set()
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT id FROM profile WHERE id IN (%s)'
+                " AND status <> 'online'" % ', '.join(['%s'] * len(ids)),
+                tuple(ids))
+
+            return {int(one['id']) for one in await db.fetchall() or []}
+    except Exception as e:
+        logger_info(f'[dating] сеть анкет карточек не спросилась: {e}')
+
+        return set()
 
 
 async def _send(letter: dict, table: str) -> str:
@@ -844,6 +936,11 @@ async def _send(letter: dict, table: str) -> str:
 
         return 'wait' if isinstance(e, DatingMailWaitError) else 'fail'
     except Exception as e:
+        # ⚠⚠ Отметка попытки — и здесь. Дверь `mail_send_fail` этот случай не
+        # видит (ошибка не нашего рода), а не отмеченное письмо поворачивалось
+        # бы первым и на следующем тике — та самая петля из одного письма, ради
+        # которой очередь и закрутили (26.11.2026).
+        await mail_send_try(letter, table)
         logger_info(f"[dating] {table} #{letter['id']} сорвалось: {e}")
 
         return 'fail'

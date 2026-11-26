@@ -125,6 +125,19 @@ async def mail_reply_make(site_id: int, limit: int = 0) -> dict:
     отвечает «ответ готов», занятие — «ответ пишется прямо сейчас». Одного
     второго мало: оно протухает по сроку, и письмо вернулось бы в отбор.
     """
+    # ⚠ **Сначала проверка отвеченных на сайте пар**, потом отбор писем:
+    # живая реплика человека обязана попасть соседу **до** того, как агент
+    # начнёт сочинять этой паре, — иначе он продолжит разговор, не зная, что
+    # его половину уже сказали. Срыв проверки не останавливает ответы:
+    # неотмеченная пара дойдёт следующим заходом (`mail_human.py`).
+    from src.dating.mail_human import mail_human_sweep
+
+    try:
+        await mail_human_sweep(site_id)
+    except Exception as e:
+        logger_info(f'[dating] проверка писем человека сайта #{site_id} '
+                    f'не состоялась: {e}')
+
     letters = await _to_answer(site_id)
     if not letters:
         return {'made': 0, 'skipped': 0, 'reasons': [], 'left': 0}
@@ -328,10 +341,21 @@ async def mail_reply_thread(profile_id: int, uid: str, keep: int = 0,
         ' COALESCE(g.file_id, \'\') AS file_id'
         ' FROM intention_mail m'
         + mail_shot_join('m')[1] +
-        " WHERE m.profile_id = %s AND m.uid = %s AND m.status = 'sent'")
+        " WHERE m.profile_id = %s AND m.uid = %s AND m.status = 'sent'"
+        ' UNION ALL'
+        # ⚠ **Письма живого человека — её сторона и её письма.** Их написал не
+        # агент и не шаблон, и без отдельного `kind` человек искал бы их в
+        # пулах. Вложенный снимок в ленте не показываем: он за панельной
+        # сессией, а нашей прокси-ручки для них нет — адрес лежит в базе
+        # (`mail_human.attachment`) и ждёт своей ручки.
+        " SELECT 'her' AS side, 'human' AS kind, body, date_post AS at, id,"
+        " 'sent' AS status, 0 AS pending,"
+        " '' AS attach, NULL AS attach_about, '' AS file_id"
+        ' FROM mail_human WHERE profile_id = %s AND uid = %s')
 
     args = [int(profile_id), str(uid), int(profile_id), str(uid),
-            int(profile_id), str(uid), int(profile_id), str(uid)]
+            int(profile_id), str(uid), int(profile_id), str(uid),
+            int(profile_id), str(uid)]
 
     if with_favorite:
         sql += (' UNION ALL'
@@ -682,6 +706,14 @@ async def _to_answer(site_id: int) -> list[dict]:
             ' JOIN site s ON s.site_id = m.site_id'
             ' WHERE m.site_id = %s AND s.reply_make_on = 1 AND p.enabled = 1'
             "   AND m.body <> '' AND r.id IS NULL"
+            '   AND m.is_replied <> 1'
+            # ⚠⚠ **Письмо, отвеченное на сайте, не наша работа.** Флаг сайта
+            # «отвечено» без нашей строки в пуле значит: ответ написал
+            # **живой человек** прямо на сайте (решение владельца 26.11.2026).
+            # Второй ответ — тот самый «две реплики подряд»; что именно сказал
+            # человек, разбирается `mail_human.py`, и ему же письмо уедет в
+            # историю агента. Строки с **нашим** ответом отпадают выше
+            # (`r.id IS NULL`) и тут не за чём.
             # ⚠⚠ **Занятое письмо не берём.** `r.id IS NULL` отвечает «ответ уже
             # лежит», а между «взяли в работу» и «лёг ответ» — минуты вызова
             # модели, в которые письмо выглядит нетронутым (`_claim`).

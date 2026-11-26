@@ -38,7 +38,7 @@ from src.dating.pool_pair import (pool_delivery_where,
                                          pool_mail_answered_where,
                                          pool_pair_girl, pool_pair_joins,
                                          pool_pair_select, pool_pick_where)
-from src.dating.send_round import send_why
+from src.dating.send_round import send_card_wait, send_why
 from src.dating.mailing import (MAILING_BATCH_DEFAULT,
                                        MAILING_BATCH_MAX,
                                        mailing_gaps, mailing_girls,
@@ -128,6 +128,10 @@ async def mailing_list(site_id: int = 0, status_: str = 'draft',
            # было вовсе, хотя оно лежало в базе.
            + pool_pair_select('m', own_photo=False) +
            ' m.body, m.status, m.error, m.sent_at, m.created_at,'
+           # ⚠ Время последней попытки: по нему страница рисует «последняя
+           # попытка HH:MM — не ушло» у карточки, что стоит в пуле (`try_at`,
+           # ставит `mail_send.mail_send_try`).
+           ' m.try_at,'
            ' p.login AS profile_login, p.profile AS profile_card,'
            ' t.name AS mail_name'
            # ⚠⚠ Снимок письма — **тем же куском**, что у трёх прочих пулов
@@ -175,10 +179,25 @@ async def mailing_list(site_id: int = 0, status_: str = 'draft',
     # «Тема» в окне врала бы о письме, у которого темы нет.
     panel = await mail_cold_panel_want(int(site_id), 'mailing')
 
-    return {'result': [{**_answer(row),
-                        'subj': (mail_cold_panel_subject(str(row['body']))
-                                 if panel else '')}
-                       for row in rows],
+    result = [{**_answer(row),
+               'subj': (mail_cold_panel_subject(str(row['body']))
+                        if panel else ''),
+               # ⚠ Время последней попытки — `_answer` собирает словарь по
+               # списку полей, и выбранный запросом столбец сам сюда не едет;
+               # строкой, как прочие метки времени.
+               'try_at': str(row.get('try_at') or '')}
+              for row in rows]
+
+    # ⚠ Почему карточка стоит — **правилами очереди**
+    # (`send_round.send_card_wait`), и только у черновиков: ушедшим и
+    # похороненным вопрос «почему ждёт» не стоит.
+    waits = await send_card_wait(
+        int(site_id), 'mailing',
+        [one for one in result if one['status'] == 'draft'])
+    for one in result:
+        one['wait'] = waits.get(int(one['id']), '')
+
+    return {'result': result,
             # ⚠ Почему полный пул не уходит — вместе со списком: «50 из 50» без
             # объяснения читается как поломка (`send_round.py`).
             'send_why': await send_why(int(site_id), 'mailing',
