@@ -775,6 +775,23 @@ class TestThePauseBelongsToTheGirl:
         finally:
             await auth_client.delete(f'/api/dating/profile/{other}')
 
+    async def test_her_site_limit_keeps_her_out(self, site, profile, post,
+                                                monkeypatch):
+        """⚠⚠ Сайт закрыл ей письма не-контактам до конца суток — очередь
+        избранных её не берёт, а не спрашивает сайт каждый заход заново.
+
+        Прод 26.11.2026: правило стояло только у рассылки, и 22 ручных письма
+        Diana получали отказ сайта раз в шесть секунд.
+        """
+        await self._favorites_on(0, monkeypatch)
+        await self._online(profile)
+        monkeypatch.setattr(round_, 'mail_wait_girls', lambda site_id: [int(profile)])
+        await _letter(profile, 'favorite_mail')
+
+        await send_round_run(0)
+
+        assert not post, 'анкета на пределе сайта всё равно писала избранному'
+
     async def test_a_long_silence_lets_her_write(self, site, profile, post,
                                                  monkeypatch):
         await self._favorites_on(4 * 3600, monkeypatch)

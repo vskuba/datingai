@@ -161,6 +161,10 @@ async def favorite_mail_list(site_id: int = 0, status_: str = 'draft',
     # избранных сайта, их не было вовсе: в «Доставке» человек оставался голым
     # номером. Порядок источников тот же, что у диалогов: контакт анкеты (свежее)
     # → карточка сайта → то, что записали при наборе.
+    # ⚠ Снимок письма — тем же куском, что у всех журналов писем
+    # (`mail_shot_join`): карточка пула показывает кадр, который уйдёт, как у
+    # рассылки. Без него ручное письмо со снимком выглядело в пуле текстовым.
+    shot_pick, shot_link = mail_shot_join('m')
     sql = ('SELECT m.id, m.site_id, m.profile_id, m.uid,'
            + pool_pair_select() +
            ' m.body, m.status, m.error, m.answer, m.sent_at, m.created_at,'
@@ -169,9 +173,10 @@ async def favorite_mail_list(site_id: int = 0, status_: str = 'draft',
            # `updated_at`. Без него красные строки журнала стояли без даты.
            ' m.updated_at,'
            ' p.login AS profile_login, p.profile AS profile_card'
+           + shot_pick +
            ' FROM favorite_mail m'
            ' LEFT JOIN profile p ON p.id = m.profile_id'
-           + pool_pair_joins() +
+           + pool_pair_joins() + shot_link +
            ' WHERE m.site_id = %s')
     args = [int(site_id)]
 

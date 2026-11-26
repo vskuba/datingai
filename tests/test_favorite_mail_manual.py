@@ -288,3 +288,24 @@ async def test_routes(auth_client, online_girl, someone):
     # Анкета не выбрана — спрашивать не о ком.
     empty = await auth_client.get('/api/dating/favorite-mail/recipients')
     assert empty.status_code == 200 and empty.json() == {'result': []}
+
+
+async def test_pool_card_carries_the_shot(auth_client, online_girl):
+    """Карточка пула показывает кадр письма, как у рассылки: список несёт
+    `gallery_file` — номер файла на Диске, по нему страница строит превью
+    (`mailShotThumb`). Без поля ручное письмо со снимком выглядело текстовым."""
+    from src.dating.favorite_mail import favorite_mail_manual
+
+    uid = f'man-{uuid.uuid4().hex[:8]}'
+    await _star(online_girl, uid)
+    shot = await _shot(online_girl, f'public/man-{uuid.uuid4().hex[:6]}.png')
+    [mail_id] = await favorite_mail_manual(online_girl, [uid], 'Hello there', shot)
+    file_id = (await _sql('SELECT file_id FROM gallery_file WHERE id = %s',
+                          (shot,)))[0][0]['file_id']
+
+    got = await auth_client.get('/api/dating/favorite-mail', params={
+        'site_id': TEST_STAND_SITE, 'profile_id': online_girl})
+    assert got.status_code == 200, got.text
+    [row] = [one for one in got.json()['result'] if one['id'] == mail_id]
+    assert row['gallery_file'] == file_id
+    assert row['gallery_path'].startswith('public/')

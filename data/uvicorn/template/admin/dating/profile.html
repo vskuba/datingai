@@ -10377,6 +10377,9 @@
             + `<span class="to">→ ${companionLink(one)}${liveDot(one)}`
             + '</span></span>'
             + `<span class="mail-card-body">${esc(one.body)}</span>`
+            // Кадр, который уйдёт этим письмом, — той же `mailShotThumb`, что у
+            // пула рассылки: нет снимка — узла нет вовсе.
+            + mailShotThumb(one)
             + (one.status === 'sent'
                 ? '<span class="mail-card-sent">отправлено</span>' : '')
             // ⚠ Причина неудачи живёт на карточке, а не только в уведомлении:
