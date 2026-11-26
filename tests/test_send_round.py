@@ -664,19 +664,21 @@ class TestReplyWaitsItsLength:
         assert 'ещё пишется' in said, said
 
 
-class TestThePauseBelongsToTheGirl:
-    """⚠⚠ Пауза между письмами — про анкету, а не про получателя, и держит её
-    **этот круг**, а не только набор пула.
+class TestThePauseBelongsToThePair:
+    """⚠⚠ Пауза между письмами — про **пару** «анкета + собеседник», и
+    держит её **этот круг**, а не только набор пула.
 
-    Настройка `favorite_mail_gap` значила «одному человеку не чаще раза в срок».
-    Про то, сколько за этот срок напишет одна девушка **разным** людям, правило
-    не говорило ничего — и круг, уносящий по письму в минуту, выпускал их подряд.
-    Живьём 21 сентября: четыре письма от Елены четверым за восемь минут (18:29,
-    18:30, 18:32, 18:37), и сайт ответил отказом.
+    История настройки `favorite_mail_gap`: сначала — «одному человеку не чаще
+    раза в срок»; после случая Елены (четыре письма четверым за восемь минут,
+    21.09, 18:29–18:37, и отказ сайта) — срок перенесён на отправительницу;
+    решением владельца 26.11.2026 срок вернулся к паре: писала этому — ждём,
+    пишет другому — идёт сразу. Цена — прыть одной анкеты по разным
+    мужчинам; владелец принял её осознанно, от залпа у одного держат
+    дневной предел пары и правило набора «одному человеку — одна анкета».
 
     ⚠ Проверять надо именно здесь. Черновики лежат готовыми, набор пула их уже
-    отпустил, и «одно письмо за срок» решается в последней точке — при выборе,
-    что унести следующим.
+    отпустил, и «чья очередь следующей» решается в последней точке —
+    при выборе, что унести.
     """
 
     async def _favorites_on(self, gap: int, monkeypatch) -> None:
@@ -719,8 +721,15 @@ class TestThePauseBelongsToTheGirl:
                              (int(profile_id),))
             await db.connection.commit()
 
-    async def _sent(self, profile_id: int, hours_ago: float) -> None:
-        """Её ушедшее письмо — то, от чего пауза отсчитывается."""
+    async def _sent(self, profile_id: int, hours_ago: float,
+                    uid: str = 'snd-favorite_mail') -> None:
+        """Её ушедшее письмо — то, от чего пауза отсчитывается.
+
+        ⚠ **По умолчанию — тому же человеку, что и черновик** (`_letter`
+        зовёт его `snd-favorite_mail`): пауза считается по паре, и письмо
+        постороннему человеку тесты про срок просто не держало бы —
+        пришлось бы переводить взгляд с правила на генератор uid.
+        """
         from mysql_.mysql_ import mysql_get_db_async
 
         async with mysql_get_db_async() as db:
@@ -729,13 +738,14 @@ class TestThePauseBelongsToTheGirl:
                 ' (site_id, profile_id, uid, name, body, status, sent_at)'
                 " VALUES (%s, %s, %s, 'X', 'hi', 'sent',"
                 ' NOW() - INTERVAL %s MINUTE)',
-                (SITE, int(profile_id), f'u{uuid.uuid4().hex[:8]}',
+                (SITE, int(profile_id), str(uid),
                  int(hours_ago * 60)))
             await db.connection.commit()
 
-    async def test_a_girl_who_just_wrote_is_skipped(self, site, profile, post,
-                                                    monkeypatch):
-        """Она написала минуту назад — второе письмо не уходит, хоть и готово."""
+    async def test_a_pair_that_just_wrote_is_skipped(self, site, profile, post,
+                                                     monkeypatch):
+        """Она писала этому мужчине минуту назад — второе письмо ему
+        не уходит, хоть и готово."""
         await self._favorites_on(4 * 3600, monkeypatch)
         await self._online(profile)
         await self._sent(profile, 0)
@@ -743,7 +753,25 @@ class TestThePauseBelongsToTheGirl:
 
         await send_round_run(0)
 
-        assert not post, 'письмо ушло вторым подряд от той же анкеты'
+        assert not post, 'письмо ушло вторым подряд той же пары'
+
+    async def test_the_same_girl_another_man_goes_now(self, site, profile,
+                                                      post, monkeypatch):
+        """⚠⚠ Суть правки 26.11.2026: писала одному — другому идёт сразу.
+
+        Прежнее правило (срок на отправительнице, сентябрь–ноябрь 2026)
+        запирало бы этот черновик на четыре часа — владелец развёрнул
+        правило: пауза у пары, а не у девушки сразу на всех.
+        """
+        await self._favorites_on(4 * 3600, monkeypatch)
+        await self._online(profile)
+        await self._sent(profile, 0, uid=f'other-{uuid.uuid4().hex[:8]}')
+        await _letter(profile, 'favorite_mail')
+
+        await send_round_run(0)
+
+        assert len(post) == 1, \
+            'пауза другой пары задержала письмо этому мужчине'
 
     async def test_another_girl_goes_instead(self, site, profile, post,
                                              auth_client, monkeypatch):

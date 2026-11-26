@@ -3,8 +3,8 @@
 ## ⚠⚠ Главное здесь — сторож согласия, а не проверка полей
 
 Занятий два, правил у них шестнадцать, и почти все невидимы: человек видит
-молчащую переписку и не знает, упёрлась ли пара в дневной предел получателя, не
-вышла ли пауза отправительницы, не закрылся ли человек или просто не идёт смена.
+молчащую переписку и не знает, упёрлась ли пара в свой суточный предел,
+не вышла ли пауза пары, не закрылся ли человек или просто не идёт смена.
 Окно отвечает на это — но ровно до тех пор, пока отвечает **теми же правилами**,
 что и круги.
 
@@ -318,10 +318,27 @@ class TestFavoriteBlockers:
         assert _has(got, 'favorite', 'последним говорил он')
 
     async def test_draft_already_waits(self, girl_make, fav_on):
-        """У анкеты уже лежит черновик — второй был бы вторым письмом подряд.
+        """У пары уже лежит черновик — второй был бы вторым письмом
+        подряд.
 
-        ⚠ Условие **по анкете**, а не по паре: черновик занимает ближайшую
-        очередь девушки целиком, кому бы он ни был написан.
+        ⚠ Условие **по паре**, как и пауза (решение владельца 26.11.2026):
+        черновик занимает очередь своей пары — набранное другому
+        мужчине ждёт её же, а не этой.
+        """
+        girl = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        await _fav_draft(girl, uid)
+
+        got = await mail_explain(girl, uid)
+
+        assert _has(got, 'favorite', 'уже лежит черновик')
+
+    async def test_draft_for_another_man_is_not_here(self, girl_make, fav_on):
+        """⚠ Черновик **другому** человеку этой паре не помеха.
+
+        Пока черновик считался по анкете, любой лежащий был помехой
+        всем её парам; с сроком на пару такое объяснение врало бы.
         """
         girl = await girl_make(online=True)
         uid = f'ex-{uuid.uuid4().hex[:10]}'
@@ -330,7 +347,8 @@ class TestFavoriteBlockers:
 
         got = await mail_explain(girl, uid)
 
-        assert _has(got, 'favorite', 'уже лежит черновик')
+        assert not _has(got, 'favorite', 'уже лежит черновик'), \
+            'черновик посторонней пары запирает эту'
 
     async def test_block_stops_favorite(self, girl_make, fav_on):
         """Запрет «не пишем» гасит приставание и называет примету."""
@@ -395,7 +413,27 @@ class TestFavoriteBlockers:
         assert _has(got, 'favorite', 'за сутки')
 
     async def test_girl_gap(self, girl_make, fav_on, online_feed):
-        """Пауза считает **отправительницу**: кому она писала — неважно."""
+        """Пауза считается **по паре**: писала этому — держит.
+
+        Прежная версия стереотипировала обратное («кому писала —
+        неважно», сентябрь–ноябрь 2026); решение владельца 26.11.2026
+        вернуло срок паре.
+        """
+        girl = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        online_feed([uid])
+        await _fav_sent(girl, uid, minutes_ago=5)
+
+        got = await mail_explain(girl, uid)
+
+        assert _has(got, 'favorite', 'пауза')
+
+    async def test_gap_of_another_pair_is_not_here(self, girl_make, fav_on,
+                                                   online_feed):
+        """⚠ Письмо **другому** человеку минуту назад этой паре не
+        помеха — окно обязано молчать о паузе.
+        """
         girl = await girl_make(online=True)
         uid = f'ex-{uuid.uuid4().hex[:10]}'
         await _star(girl, uid)
@@ -404,7 +442,8 @@ class TestFavoriteBlockers:
 
         got = await mail_explain(girl, uid)
 
-        assert _has(got, 'favorite', 'пауза')
+        assert not _has(got, 'favorite', 'пауза'), \
+            'пауза чужой пары показана помехой этой'
 
 
 class TestFavoriteNotBlockers:
@@ -431,8 +470,9 @@ class TestFavoriteNotBlockers:
     async def test_batch_rules_are_absent(self, girl_make, fav_on, online_feed):
         """Внутрисходовых правил в окне нет вовсе.
 
-        ⚠⚠ «Ему уже пишет другая анкета этим заходом» и «эта анкета уже написала
-        этим заходом» — про **заход**, а не про пару: к следующему заходу их нет.
+        ⚠⚠ «Ему уже пишет другая анкета этим заходом» и «она уже писала ему
+        этим заходом» — про **заход**, а не про срок пары: к следующему заходу
+        их нет.
         Назови их окно помехой, человек ждал бы снятия того, что уже снято.
         """
         girl = await girl_make(online=True)
@@ -471,7 +511,7 @@ class TestOrder:
         girl = await girl_make(online=True)
         uid = f'ex-{uuid.uuid4().hex[:10]}'
         online_feed([uid])
-        # Звёздочки нет — и при этом выбран дневной предел получателя.
+        # Звёздочки нет — и при этом выбран дневной предел пары.
         for _ in range(2):
             await _fav_sent(girl, uid, minutes_ago=600)
 
@@ -715,7 +755,7 @@ class TestWhatIsNext:
 #
 # ⚠⚠ **Отбор круга приставания знает не про все помехи окна.** `_quiet` — это
 # один запрос по всем парам сайта, и в нём живут пять правил: звёздочка, анкета
-# в сети, чьё последнее слово, черновик анкеты, запрет. Выключатель и смену
+# в сети, чьё последнее слово, черновик пары, запрет. Выключатель и смену
 # спрашивает круг **уровнем выше**, а «он в сети», остуду и оба предела — цикл
 # набора **после** запроса.
 #
@@ -727,8 +767,8 @@ _QUIET_BLIND = (
     'сейчас не смена',                  # шлюз круга
     'его нет в сети',                   # цикл набора, после запроса
     'предел входящих',                  # остуда, цикл набора
-    'за сутки уже ушло',                # дневной предел получателя, цикл
-    'она писала',                       # пауза отправительницы, цикл
+    'за сутки уже ушло',                # дневной предел пары, цикл
+    'она писала',                       # пауза пары, цикл
 )
 
 
@@ -802,9 +842,29 @@ class TestTheyAgree:
         assert uid not in mine
         assert _quiet_blockers(got)
 
-    async def test_girl_draft_is_skipped_by_both(self, girl_make, fav_on,
-                                                 online_feed):
-        """Черновик анкеты занимает её очередь: не берут оба."""
+    async def test_pair_draft_is_skipped_by_both(self, girl_make, fav_on,
+                                                  online_feed):
+        """Черновик пары занимает её очередь: не берут оба."""
+        from src.dating.favorite_mail import _quiet
+
+        girl = await girl_make(online=True)
+        uid = f'ex-{uuid.uuid4().hex[:10]}'
+        await _star(girl, uid)
+        await _fav_draft(girl, uid)
+        online_feed([uid])
+
+        got = await mail_explain(girl, uid)
+        mine = {str(one['uid']) for one in await _quiet(STAND_SITE, girl)}
+
+        assert uid not in mine
+        assert _quiet_blockers(got)
+
+    async def test_draft_for_another_man_passes_both(self, girl_make, fav_on,
+                                                     online_feed):
+        """⚠ Черновик другой пары не слепит отбор и не мешает окну:
+        берут оба. Без этого теста парность условия можно было бы
+        терять молча — прежний вид тоже был согласен.
+        """
         from src.dating.favorite_mail import _quiet
 
         girl = await girl_make(online=True)
@@ -816,8 +876,9 @@ class TestTheyAgree:
         got = await mail_explain(girl, uid)
         mine = {str(one['uid']) for one in await _quiet(STAND_SITE, girl)}
 
-        assert uid not in mine
-        assert _quiet_blockers(got)
+        assert uid in mine, 'отбор снова считает чужие черновики'
+        assert not _has(got, 'favorite', 'черновик'), \
+            'окно видит чужой черновик'
 
     async def test_ripe_reply_is_seen_by_both(self, girl, reply_on):
         """Письмо без ответа: круг берёт его, окно не находит помех.

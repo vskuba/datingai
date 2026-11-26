@@ -325,15 +325,15 @@ async def _favorite(site_id: int, profile_id: int, uid: str, pair: dict,
 
     ⚠⚠ **Порядок — тот же, что у круга**, от решённого человеком к преходящему:
     выключатель → смена → звёздочка → анкета в сети → чьё последнее слово →
-    черновик → запрет → он в сети → остуда → дневной предел получателя → пауза
-    отправительницы. Переставь их — и окно назовёт главной ту помеху, что пройдёт
+    черновик → запрет → он в сети → остуда → дневной предел пары → пауза
+    пары. Переставь их — и окно назовёт главной ту помеху, что пройдёт
     сама через минуту, а человек уйдёт ждать вместо того, чтобы поправить
     настройку.
 
     ⚠ **Двух внутрисходовых правил здесь нет намеренно**: «ему уже пишет другая
-    анкета этим заходом» и «эта анкета уже написала этим заходом» — про заход, а
-    не про пару. К следующему заходу их нет, и назови их окно помехой, человек
-    ждал бы снятия того, что уже снято.
+    анкета этим заходом» (`written`) и «уже писала ему этим заходом»
+    (`written_pairs`) — про заход, а не про срок пары. К следующему заходу их
+    нет, и назови их окно помехой, человек ждал бы снятия того, что уже снято.
 
     ⚠ Срок круга помехой тоже не считается: он мешает не паре, а всем сразу.
     Идёт своим полем `next_sec`.
@@ -346,9 +346,10 @@ async def _favorite(site_id: int, profile_id: int, uid: str, pair: dict,
     star = star_state in FAVORITE_STATES
     shift = await favorite_mail_shift_site(site_id, offset_hours)
     draft = await _draft(site_id, 'favorite_mail', profile_id, uid)
-    # ⚠ Черновик пары и черновик **анкеты** — разные вопросы: ближайшую очередь
-    # девушки занимает любой её черновик, кому бы он ни был написан.
-    girl_draft = await _girl_draft(profile_id)
+    # ⚠ Черновик **пары**, не анкеты: с паузой на пару (решение владельца
+    # 26.11.2026) черновик другому мужчине этой паре не помеха — она свободна и
+    # уйдёт своим кругом. То же условие, что в `favorite_mail._quiet`.
+    pair_draft = await _pair_draft(profile_id, uid)
     # ⚠ Число и вердикт по нему — из одного места (`favorite_mail`): свой
     # запрос здесь показывал бы человеку одно число, а предел считал по
     # другому, и разошлись бы они молча.
@@ -356,7 +357,12 @@ async def _favorite(site_id: int, profile_id: int, uid: str, pair: dict,
     person = await favorite_mail_person_soon(site_id, uid, per_day, profile_id)
     # ⚠ Срок и помеха — **одним чтением**: окно показывает оба, и спроси оно их
     # порознь, второй вопрос бросил бы жребий заново по новому письму.
-    gap, girl_soon = await favorite_mail_girl_wait(profile_id, gap_low, gap_high)
+    #
+    # ⚠ Имена в причину не едут: в этом окне обоих собеседников называет его
+    # заголовок, и «она писала 2 ч назад» читается про анкету заголовка — лишний
+    # поход в карточку за именем был бы платой за известное.
+    gap, girl_soon = await favorite_mail_girl_wait(profile_id, uid, gap_low,
+                                                   gap_high)
 
     blockers = []
     if not flags.get('favorite_mail_make_on'):
@@ -370,8 +376,8 @@ async def _favorite(site_id: int, profile_id: int, uid: str, pair: dict,
         blockers.append('анкета не в сети — письмо уходит от её имени')
     if str(last.get('side') or '') == 'him':
         blockers.append('последним говорил он — ответить должен круг ответов')
-    if girl_draft:
-        blockers.append('у этой анкеты уже лежит черновик приставания')
+    if pair_draft:
+        blockers.append('ему уже лежит черновик приставания')
     if pair.get('block_mark') is not None:
         blockers.append(f'паре запрещено писать: {pair["block_mark"]}')
     if not online.get('online'):
@@ -396,7 +402,7 @@ async def _favorite(site_id: int, profile_id: int, uid: str, pair: dict,
                                             FAVORITE_MAIL_ROUND_EVERY_SETTING)
                          or FAVORITE_MAIL_ROUND_EVERY_DEFAULT),
         'next_sec': next_sec,
-        # ⚠ Пауза отдаётся **выпавшей этой анкете**, а границы — рядом: окно
+        # ⚠ Пауза отдаётся **выпавшей этой паре**, а границы — рядом: окно
         # называет и то, сколько ждать ей, и то, из чего это число взялось.
         # Одно без другого читается как поломка — «пауза 5 часов» при
         # выставленных четырёх выглядит ошибкой, пока не видно «до 6».
@@ -475,23 +481,24 @@ async def _draft(site_id: int, table: str, profile_id: int, uid: str):
             'at': row['sent_at'] or row['created_at']}
 
 
-async def _girl_draft(profile_id: int) -> bool:
-    """Лежит ли у анкеты **любой** черновик приставания.
+async def _pair_draft(profile_id: int, uid: str) -> bool:
+    """Лежит ли у **пары** черновик приставания.
 
-    ⚠ По анкете, а не по паре: пауза считает отправительницу, и лежащий черновик
-    занимает её ближайшую очередь целиком — всё набранное сверх него пролежит до
-    вечера и протухнет. То же условие, что в `favorite_mail._quiet`.
+    ⚠ По паре, а не по анкете: с паузой на пару (решение владельца 26.11.2026)
+    черновик занимает очередь своей пары — набранное другому мужчине ждёт её же,
+    а не этого. То же условие, что в `favorite_mail._quiet`.
     """
     try:
         async with mysql_get_db_async() as db:
             await db.execute(
                 'SELECT 1 FROM favorite_mail'
-                " WHERE profile_id = %s AND status = 'draft' LIMIT 1",
-                (int(profile_id),))
+                " WHERE profile_id = %s AND uid = %s AND status = 'draft'"
+                ' LIMIT 1',
+                (int(profile_id), str(uid)))
 
             return bool(await db.fetchone())
     except Exception as e:
-        logger_info(f'[dating] черновики анкеты #{profile_id} не спросились: {e}')
+        logger_info(f'[dating] черновик пары #{profile_id} не спросился: {e}')
 
         return False
 
