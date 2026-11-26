@@ -577,14 +577,17 @@ async def _pairs(site_id: int) -> list[tuple[int, str]]:
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT DISTINCT m.profile_id, m.uid'
+            'SELECT m.profile_id, m.uid'
             ' FROM mail_in m'
             ' JOIN profile p ON p.id = m.profile_id AND p.enabled = 1'
             ' WHERE m.site_id = %s AND m.is_replied = 1'
             '   AND m.human_checked_at IS NULL'
             '   AND NOT EXISTS ('
             '       SELECT 1 FROM mail_reply r WHERE r.mail_in_id = m.id)'
-            ' ORDER BY m.uid LIMIT %s',
+            # ⚠ Свежие вперёд: заход берёт десяток пар, и по номеру
+            # собеседника сегодняшний ответ ждал бы очереди за сентябрьскими.
+            ' GROUP BY m.profile_id, m.uid'
+            ' ORDER BY MAX(m.date_post) DESC LIMIT %s',
             (int(site_id), MAIL_HUMAN_PAIRS))
         rows = await db.fetchall()
 

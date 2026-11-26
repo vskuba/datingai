@@ -209,6 +209,20 @@ async def _work(site: dict, minutes: int) -> dict | None:
     except Exception as e:
         logger_info(f'[dating] снимки писем сайта #{site_id} не описались: {e}')
 
+    # ⚠⚠ Ответы, написанные людьми на сайте, забираются **здесь**, а не в круге
+    # сочинения ответов: тот ходит только при поднятой «генерации ответов», а
+    # история нужна и без агента — на проде 26.11.2026 генерация у Ladadate
+    # снята, и ответ Ekaterina → Mark не подтягивался вовсе. Забор писем включён
+    # всегда, и признак «сайт отметил его письмо отвеченным» приезжает им же.
+    # Круг ответов зовёт ту же проверку перед сочинением — повтор безвреден:
+    # пара метится `human_checked_at`, второй заход её не трогает.
+    from src.dating.mail_human import mail_human_sweep
+
+    try:
+        await mail_human_sweep(site_id)
+    except Exception as e:
+        logger_info(f'[dating] ответы людей сайта #{site_id} не забрались: {e}')
+
     return {'sites': 1, 'profiles': seen, 'added': added, 'failed': failed}
 
 
