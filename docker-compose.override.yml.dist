@@ -80,7 +80,14 @@ services:
   dating_mysql:
     image: mysql:8.0
     container_name: dating_mysql
-    command: mysqld --sql-mode="NO_ENGINE_SUBSTITUTION"
+    # ⚠ Запись на диск ослаблена — **только локально**: выкладка этот файл
+    # удаляет, прод живёт базовым слоем. Сюита делает тысячи мелких коммитов, и
+    # каждый ждал fsync: группа `mail` шла 263 с, с флагами 114 с (замер
+    # 26.11.2026). Цена — до секунды последних записей при падении машины, для
+    # стенда разработки она ничего не стоит.
+    command: >-
+      mysqld --sql-mode="NO_ENGINE_SUBSTITUTION"
+      --innodb-flush-log-at-trx-commit=2 --sync-binlog=0
     # По той же причине, что у панели: без `!override` в локальный MySQL приехало
     # бы прод-окружение из базового слоя, и база поднялась бы с боевым паролем.
     env_file: !override
