@@ -315,6 +315,21 @@ class TestPull:
                          (int(profile['id']), HIM))
         assert got['human_checked_at'] is not None
 
+    async def test_each_answered_letter_gets_her_next(self, panel, profile):
+        """⚠⚠ Два его отвеченных письма — два её ответа: на каждое её первое
+        письмо после него. Mark → Ekaterina 26.11.2026 писал дважды, человек
+        ответил на оба, а правило «верхнее письмо» брало только второй ответ."""
+        await _pair(profile, at='2026-11-20 10:00:00')
+        await _pair(profile, at='2026-11-26 16:19:00')
+
+        made = await mod.mail_human_pull(SITE, profile['id'], HIM)
+
+        rows = await _rows('SELECT message_id FROM mail_human'
+                           ' WHERE profile_id = %s ORDER BY date_post',
+                           (int(profile['id']),))
+        assert made == 2
+        assert [int(one['message_id']) for one in rows] == [852239294, HER_FRESH]
+
     async def test_drops_twin_of_ours(self, panel, profile):
         """Наше письмо, вернувшееся из истории, — не письмо человека."""
         from mysql_.mysql_ import mysql_get_db_async

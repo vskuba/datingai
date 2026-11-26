@@ -143,7 +143,7 @@ async def mail_human_sweep(site_id: int) -> dict:
 
 
 async def mail_human_pull(site_id: int, profile_id: int, uid: str) -> int:
-    """Забирает первую страницу истории пары и берёт **её верхнее** письмо.
+    """Забирает страницу истории пары: на каждое его отвеченное письмо — её первое после него.
 
     Правило владельца от 27.11.2026: когда сайт говорит «отвечено», а нашего
     ответа нет, живой человек ответил **тем самым письмом девушки, что лежит
@@ -186,13 +186,15 @@ async def mail_human_pull(site_id: int, profile_id: int, uid: str) -> int:
         # человека — её письмо **новее** него; старее — разговор, который
         # прошлые проверки уже разобрали.
         await db.execute(
-            'SELECT MIN(m.date_post) AS oldest, MAX(m.name) AS man'
+            'SELECT m.date_post, m.name'
             ' FROM mail_in m'
             ' WHERE m.profile_id = %s AND m.uid = %s AND m.is_replied = 1'
+            '   AND m.human_checked_at IS NULL'
             '   AND NOT EXISTS ('
-            '       SELECT 1 FROM mail_reply r WHERE r.mail_in_id = m.id)',
+            '       SELECT 1 FROM mail_reply r WHERE r.mail_in_id = m.id)'
+            ' ORDER BY m.date_post',
             (int(profile_id), str(uid)))
-        edge = await db.fetchone() or {}
+        his = [dict(one) for one in (await db.fetchall() or [])]
 
     if not girl:
         raise ValueError(f'анкеты #{profile_id} нет в базе')
@@ -204,15 +206,14 @@ async def mail_human_pull(site_id: int, profile_id: int, uid: str) -> int:
         raise ValueError(f'анкета #{profile_id} без номера на сайте')
 
     girl_name = str(card.get('name') or '')
-    man_name = str(edge.get('man') or '')
+    man_name = next((str(one.get('name') or '') for one in reversed(his)
+                     if one.get('name')), '')
 
     # Его самое старое письмо без нашего ответа — **отсечка**: ответ человека
     # новее его. Время страницы по замеру — те же UTC (шапка модуля), поэтому
     # сверка строгая; время не разобрался — письмо **не берём**: без даты
     # сказать «новее» нельзя, а брать вслепую — выдать агенту уже виденное
     # прошлыми проверками как свежий ответ.
-    oldest = edge.get('oldest') if isinstance(edge.get('oldest'), datetime) \
-        else None
 
     raw = await panel_fetch_html(
         int(site_id), driver.HISTORY_PATH.format(uid=her_uid),
@@ -221,23 +222,34 @@ async def mail_human_pull(site_id: int, profile_id: int, uid: str) -> int:
 
     # ⚠ Пустая страница — **конец истории**, а не отказ: за последнюю панель
     # отвечает пустым списком, а не ошибкой. Писем нет — брать нечего.
-    top = next((one for one in letters
-                if one.get('side') == 'her' and str(one.get('body') or '')),
-               None)
+    # ⚠⚠ **На каждое его отвеченное письмо — её первое письмо после него.**
+    # Владелец сформулировал правило как «верхнее письмо на странице», и для
+    # одного неотвеченного письма это одно и то же. Но Mark → Ekaterina
+    # 26.11.2026 написал дважды (16:19 и 20:48 UTC), человек ответил на оба, и
+    # «верхнее» взяло только второй ответ — первый (19:06 по панели) пропал.
+    # ⚠ Сетка безопасности `_ours` остаётся: наш собственный текст, ушедший
+    # через сайт, возвращается истории тем же письмом — его человек не писал.
+    hers = sorted(
+        ((when, one) for one in letters
+         if one.get('side') == 'her' and str(one.get('body') or '')
+         for when in [_moment(one.get('at'))] if when),
+        key=lambda pair: pair[0])
+
+    picked = {}
+    for row in his:
+        sent = row.get('date_post')
+        if not isinstance(sent, datetime):
+            continue
+
+        answer = next((pair for pair in hers if pair[0] > sent), None)
+        if answer:
+            picked[int(answer[1].get('message_id') or 0)] = answer
 
     got = 0
 
-    if top:
-        when = _moment(top.get('at'))
-
-        # Правило «новее его письма»; без его письма в отсечке и сверять не
-        # с чем — берём верхнее как есть.
-        if not oldest or (when and when > oldest):
-            # ⚠ Сетка безопасности, не правило: наш собственный текст,
-            # ушедший через сайт, возвращается истории тем же верхним письмом
-            # — его человек не писал.
-            if not await _ours(profile_id, uid, top, when):
-                got = await _keep(site_id, profile_id, uid, top, when)
+    for when, letter in picked.values():
+        if not await _ours(profile_id, uid, letter, when):
+            got += await _keep(site_id, profile_id, uid, letter, when)
 
     # Только **успешный** обход: отметка ставится здесь, в конце, — сорванная
     # страница выше бросила выше и пару не тронула.
