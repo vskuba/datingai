@@ -66,10 +66,17 @@ from src.dating.mail_send import (MAIL_SEND_DELAY_TABLES,
                                   DatingMailSendError, DatingMailWaitError,
                                   mail_send_fail, mail_send_one)
 from src.dating.mail_wait import (mail_wait_fresh_uids, mail_wait_girls,
-                                  mail_wait_uids)
+                                  mail_wait_girls_left, mail_wait_uids,
+                                  mail_wait_when)
 from src.dating.pool_pair import pool_mail_answered_where
 from src.dating.schedule import schedule_now
 from src.dating.site_setting import site_seconds, site_setting
+
+# ⚠ Пулы, у которых анкета на суточном пределе сайта «письма не-контактам»
+# (`mail_wait.MAIL_WAIT_GIRL_KEY`) выпадает из очереди: оба пишут первыми, то есть
+# не-контактам. Один кортеж на отбор (`_oldest`) и на причину простоя
+# (`_girls_limit_wait`) — разойдись они, шапка объясняла бы не тот простой.
+SEND_GIRL_LIMIT_TABLES = ('mailing', 'favorite_mail')
 
 # Как часто круг просыпается. ⚠ Это **не** частота отправки: её задаёт каждый пул
 # своим сроком (`_POOLS`), а круг лишь смотрит, кому из них пора.
@@ -315,6 +322,10 @@ async def _nothing_to_send(site_id: int, table: str) -> str:
     if left:
         return left
 
+    left = await _girls_limit_wait(site_id, table)
+    if left:
+        return left
+
     # ⚠ **Пятая причина простоя: все письма пула — тем, кто уже ответил письмом.**
     # Такие рассылка не уносит вовсе (`_oldest`), а подметает их круг набора — то
     # есть раз в свой срок, не раньше. До уборки пул выглядит полным и живым, и без
@@ -389,6 +400,47 @@ async def _replies_wait(site_id: int, table: str = 'mail_reply') -> str:
         return ''
 
     return reply_delay_why(min(hold.values()))
+
+
+async def _girls_limit_wait(site_id: int, table: str) -> str:
+    """Все ли письма пула — от анкет на суточном пределе сайта. Пусто — не все.
+
+    ⚠ Спрашивает **тем же списком**, которым отбирает круг (`mail_wait_girls`):
+    ответ «почему стоим» обязан считаться тем же кодом, что решает за круг.
+    Заведено 26.11.2026: 22 ручных письма Diana стояли полным пулом, а шапка
+    молчала — причина была видна только в журнале воркера.
+    """
+    if str(table) not in SEND_GIRL_LIMIT_TABLES:
+        return ''
+
+    paused = mail_wait_girls(site_id)
+    if not paused:
+        return ''
+
+    holes = ', '.join(['%s'] * len(paused))
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                f'SELECT COUNT(*) AS free FROM {table}'
+                f" WHERE site_id = %s AND status = 'draft' AND error = ''"
+                f'   AND profile_id NOT IN ({holes})',
+                (int(site_id), *paused))
+            row = dict((await db.fetchone()) or {})
+    except Exception as e:
+        logger_info(f'[dating] пауза анкет по пределу сайта не спросилась: {e}')
+
+        return ''
+
+    if int(row.get('free') or 0):
+        return ''
+
+    left = mail_wait_girls_left(site_id)
+    when = f' — ещё {mail_wait_when(left)}' if left else ''
+
+    return (f'сайт закрыл анкетам пула письма не-контактам до конца суток '
+            f'({len(paused)} анк.): ждём сброса в 00:00 UTC{when}. '
+            f'Письма целы и уйдут сами')
 
 
 async def _cooling_wait(site_id: int, table: str) -> str:
@@ -669,7 +721,7 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     # брала то же письмо каждый заход — Diana 26.11.2026 получала отказ сайта
     # раз в шесть секунд на 22 ручных письмах. Ответы и обещания не трогаем:
     # они уходят тому, кто писал сам, то есть контакту.
-    if table in ('mailing', 'favorite_mail'):
+    if table in SEND_GIRL_LIMIT_TABLES:
         paused = mail_wait_girls(site_id)
         if paused:
             busy += ' AND m.profile_id NOT IN (%s)' % ', '.join(str(int(one)) for one in paused)

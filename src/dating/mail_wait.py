@@ -370,6 +370,36 @@ def mail_wait_girls(site_id: int) -> list[int]:
 
 
 
+def mail_wait_girls_left(site_id: int) -> int:
+    """Сколько секунд ещё стоит **самая долгая** пауза анкет по своему пределу.
+
+    Ноль — пауз нет или Redis не ответил. Срок берётся из той же отметки, что
+    ставит `mail_wait_girl_mark`: шапка пула называет его словами, и своя
+    арифметика «до полуночи» разошлась бы с отметкой на первой правке правила.
+    """
+    site_id = int(site_id or 0)
+    if not site_id:
+        return 0
+
+    now = time.time()
+
+    try:
+        conn = redis_conn_get()
+        rows = conn.zrangebyscore(MAIL_WAIT_GIRL_KEY.format(site_id=site_id),
+                                  now, '+inf', withscores=True)
+    except Exception as e:
+        logger_info(f'[dating] сроки пауз анкет не спросились: {e}')
+
+        return 0
+
+    return max((int(score - now) for _, score in rows or []), default=0)
+
+
+def mail_wait_when(left: int) -> str:
+    """Срок словами для шапки пула — то же правило, что у журнала (`_when`)."""
+    return _when(left)
+
+
 # ── Приватное ────────────────────────────────────────────────────────────────
 
 def _when(left: int) -> str:

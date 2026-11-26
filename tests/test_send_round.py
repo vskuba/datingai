@@ -820,6 +820,42 @@ class TestThePauseBelongsToThePair:
 
         assert not post, 'анкета на пределе сайта всё равно писала избранному'
 
+    async def test_the_pool_header_names_the_site_limit(self, site, profile,
+                                                       monkeypatch):
+        """Шапка пула называет предел сайта, а не молчит при полном пуле.
+
+        ⚠ Причина считается тем же списком, что отбор круга
+        (`mail_wait_girls`), и срок — из её отметки (`mail_wait_girls_left`).
+        """
+        await self._favorites_on(0, monkeypatch)
+        await self._online(profile)
+        monkeypatch.setattr(round_, 'mail_wait_girls', lambda site_id: [int(profile)])
+        monkeypatch.setattr(round_, 'mail_wait_girls_left', lambda site_id: 5 * 3600)
+        await _letter(profile, 'favorite_mail')
+
+        said = await send_why(SITE, 'favorite_mail', 0)
+
+        assert 'не-контактам' in said and '00:00 UTC' in said and '5 ч' in said, said
+
+    async def test_a_free_girl_hides_the_limit_reason(self, site, profile,
+                                                      auth_client, monkeypatch):
+        """Есть письмо от свободной анкеты — круг его унесёт, и про предел молчим."""
+        await self._favorites_on(0, monkeypatch)
+        other = (await auth_client.post('/api/dating/profile', json={
+            'site_id': LIVE_SITE,
+            'login': f'snd3-{uuid.uuid4().hex[:8]}@example.com',
+            'password': 'x'})).json()['result']
+        try:
+            await self._online(profile)
+            await self._online(other)
+            monkeypatch.setattr(round_, 'mail_wait_girls', lambda site_id: [int(profile)])
+            await _letter(profile, 'favorite_mail', uid='lim-1')
+            await _letter(other, 'favorite_mail', uid='lim-2')
+
+            assert 'не-контактам' not in await send_why(SITE, 'favorite_mail', 0)
+        finally:
+            await auth_client.delete(f'/api/dating/profile/{other}')
+
     async def test_a_long_silence_lets_her_write(self, site, profile, post,
                                                  monkeypatch):
         await self._favorites_on(4 * 3600, monkeypatch)
