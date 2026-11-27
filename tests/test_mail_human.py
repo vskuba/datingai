@@ -304,8 +304,8 @@ class TestPull:
         assert rows[0]['date_post'] == datetime(2026, 11, 26, 17, 6)
         assert rows[0]['attachment']
 
-        # ⚠ По правилу владельца страница **одна**, и письмо одно — верхнее
-        # её, новее его неотвеченного; глубже истории не листаем.
+        # ⚠ Страница дошла до его письма — второй не нужно. Письмо одно —
+        # её первое после его письма.
         assert len(panel) == 1
         assert panel[0]['path'] == f"usermessagehistory/{profile['profile_id']}"
         assert panel[0]['id2'] == HIM
@@ -329,6 +329,19 @@ class TestPull:
                            (int(profile['id']),))
         assert made == 2
         assert [int(one['message_id']) for one in rows] == [852239294, HER_FRESH]
+
+    async def test_pages_until_his_oldest(self, panel, profile):
+        """⚠⚠ Его письмо старше всей первой страницы — листаем дальше.
+
+        Mark → Ekaterina 26.11.2026: четыре его письма подряд, ответ на первое
+        лежал на второй странице истории. Кадр за первой страницей пуст —
+        пустая страница листание останавливает.
+        """
+        await _pair(profile, at='2026-01-01 10:00:00')
+
+        await mod.mail_human_pull(SITE, profile['id'], HIM)
+
+        assert [one['page'] for one in panel] == ['1', '2']
 
     async def test_drops_twin_of_ours(self, panel, profile):
         """Наше письмо, вернувшееся из истории, — не письмо человека."""

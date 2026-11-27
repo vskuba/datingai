@@ -88,6 +88,10 @@ MAIL_HUMAN_LEAD_MIN = 1
 # накопившегося, а не рабочее ограничение.
 MAIL_HUMAN_PAIRS = 10
 
+# Сколько страниц истории пары листаем за проверку: на странице пять писем, и
+# трёх хватает на очередь его писем подряд; глубже — поход к панели впустую.
+MAIL_HUMAN_PAGES = 3
+
 # Сколько строк докладываем соседу за заход. Тот же смысл, что у
 # `CHAT_HISTORY_SAID_MAX`: заход будится кругом часто, догонять нечем.
 MAIL_HUMAN_REPORT_MAX = 20
@@ -143,13 +147,13 @@ async def mail_human_sweep(site_id: int) -> dict:
 
 
 async def mail_human_pull(site_id: int, profile_id: int, uid: str) -> int:
-    """Забирает страницу истории пары: на каждое его отвеченное письмо — её первое после него.
+    """Забирает историю пары: на каждое его отвеченное письмо — её первое после него.
 
     Правило владельца от 27.11.2026: когда сайт говорит «отвечено», а нашего
-    ответа нет, живой человек ответил **тем самым письмом девушки, что лежит
-    на странице первым**, — свежее его письма, на которое отвечает. Дальше по
-    странице — переписка, которую разбирали прошлые проверки, и второй
-    страницы для этого правила не нужно вовсе.
+    ответа нет, живой человек ответил **первым письмом девушки после его
+    письма**. При одном его письме это верхнее письмо страницы; при очереди его
+    писем — по ответу на каждое, и ранние лежат глубже: страницы листаются до
+    его самого раннего непроверенного письма (`MAIL_HUMAN_PAGES`).
 
     Args:
         site_id: сайт-закладка.
@@ -215,10 +219,28 @@ async def mail_human_pull(site_id: int, profile_id: int, uid: str) -> int:
     # сказать «новее» нельзя, а брать вслепую — выдать агенту уже виденное
     # прошлыми проверками как свежий ответ.
 
-    raw = await panel_fetch_html(
-        int(site_id), driver.HISTORY_PATH.format(uid=her_uid),
-        {'id2': str(uid), 'page': '1'})
-    letters = driver.history_page(raw, her=girl_name, him=man_name)
+    # ⚠⚠ **Страниц бывает больше одной.** На странице истории пять писем, и
+    # когда он пишет очередью, ответ на его раннее письмо уезжает вглубь: Mark
+    # → Ekaterina 26.11.2026 — четыре его письма, ответ на первое (17:06 UTC)
+    # лежал на второй странице. Листаем, пока не дойдём до его самого раннего
+    # непроверенного письма, но не дальше `MAIL_HUMAN_PAGES`: каждая страница —
+    # поход к панели.
+    edge = min((one['date_post'] for one in his
+                if isinstance(one.get('date_post'), datetime)), default=None)
+    letters = []
+    for page in range(1, MAIL_HUMAN_PAGES + 1):
+        raw = await panel_fetch_html(
+            int(site_id), driver.HISTORY_PATH.format(uid=her_uid),
+            {'id2': str(uid), 'page': str(page)})
+        chunk = driver.history_page(raw, her=girl_name, him=man_name)
+        if not chunk:
+            break
+
+        letters.extend(chunk)
+        moments = [when for when in (_moment(one.get('at')) for one in chunk)
+                   if when]
+        if not edge or (moments and min(moments) <= edge):
+            break
 
     # ⚠ Пустая страница — **конец истории**, а не отказ: за последнюю панель
     # отвечает пустым списком, а не ошибкой. Писем нет — брать нечего.
