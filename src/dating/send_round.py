@@ -65,10 +65,11 @@ from src.dating.mail_send import (MAIL_SEND_DELAY_TABLES,
                                   MAIL_SEND_TALK_TABLES,
                                   DatingMailSendError, DatingMailWaitError,
                                   mail_send_fail, mail_send_one, mail_send_try)
-from src.dating.mail_wait import (MAIL_WAIT_GIRL_MARKS, mail_wait_fresh_uids,
+from src.dating.mail_wait import (MAIL_WAIT_GIRL_HEADER, mail_wait_fresh_uids,
                                   mail_wait_girls, mail_wait_girls_left,
-                                  mail_wait_left, mail_wait_skip,
-                                  mail_wait_uids, mail_wait_when)
+                                  mail_wait_girl_words, mail_wait_left,
+                                  mail_wait_skip, mail_wait_uids,
+                                  mail_wait_when)
 from src.dating.pool_pair import pool_mail_answered_where
 from src.dating.schedule import schedule_now
 from src.dating.site_setting import site_seconds, site_setting
@@ -310,12 +311,11 @@ async def send_card_wait(site_id: int, table: str,
     if not rows or not any(one[1] == str(table) for one in _POOLS):
         return {}
 
-    paused = {int(one) for one in mail_wait_girls(int(site_id), table)}
+    # Пауза анкеты — тем же списком, что держит её в силе, и причиной заодно:
+    # карточка и шапка пула говорят об одном отказе одними словами
+    # (`mail_wait_girl_words`), а не двумя записями одного правила.
+    paused = mail_wait_girl_words(int(site_id), str(table))
     cooling = {str(one) for one in mail_wait_uids(int(site_id))}
-
-    # «до 00:00 UTC» — не текст, а конец суток: `mail_wait_girl_mark` ставит
-    # отметку ровно до него, так что срок у слова верный, без отдельного счёта.
-    girl_words = f'{MAIL_WAIT_GIRL_MARKS[0][1]} — до 00:00 UTC'
 
     busy: dict = {}
     offline: set[int] = set()
@@ -329,10 +329,7 @@ async def send_card_wait(site_id: int, table: str,
     for row in rows:
         profile_id = int(row.get('profile_id') or 0)
         uid = str(row.get('uid') or '')
-        why = ''
-
-        if profile_id in paused:
-            why = girl_words
+        why = paused.get(profile_id, '')
         if not why and uid in cooling:
             why = mail_wait_skip(mail_wait_left(int(site_id), uid))
         if not why:
@@ -491,7 +488,7 @@ async def _girls_limit_wait(site_id: int, table: str) -> str:
     left = mail_wait_girls_left(site_id, table)
     when = f' — ещё {mail_wait_when(left)}' if left else ''
 
-    return (f'сайт закрыл анкетам пула письма не-контактам до конца суток '
+    return (f'{MAIL_WAIT_GIRL_HEADER} до конца суток '
             f'({len(paused)} анк. получили отказ в этом пуле): ждём сброса в 00:00 UTC{when}. '
             f'Письма целы и уйдут сами')
 

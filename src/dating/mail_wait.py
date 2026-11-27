@@ -413,6 +413,53 @@ def mail_wait_girls_left(site_id: int,
     return max((int(score - now) for _, score in rows or []), default=0)
 
 
+# Слова паузы анкеты — одни на карточку и на шапку пула, и живут они здесь,
+# рядом с отметкой, которая её ставит (`mail_wait_girl_mark`): раскидай мы
+# фразу по двум файлам, разошлись бы они на первой же правке. Различаются
+# числом — карточка говорит про одну анкету, шапка — про анкеты пула.
+MAIL_WAIT_GIRL_CHIP = 'сайт закрыл анкете письма не-контактам'
+MAIL_WAIT_GIRL_HEADER = 'сайт закрыл анкетам пула письма не-контактам'
+
+
+def mail_wait_girl_words(site_id: int,
+                         table: str = MAIL_WAIT_GIRL_DEFAULT) -> dict[int, str]:
+    """Почему черновики каждой стоящей анкеты ждут — `{номер анкеты: причина}`.
+
+    «сайт закрыл анкете письма не-контактам до HH:MM UTC». HH:MM — конец её
+    собственной отметки, тот же список, что читает `mail_wait_girls`: карточка
+    не держит свою арифметику «до полуночи», вторая копия правила разошлась
+    бы с отметкой на первой правке. Сбой Redis — пусто, как и везде в модуле.
+    """
+    site_id = int(site_id or 0)
+    if not site_id:
+        return {}
+
+    now = time.time()
+
+    try:
+        conn = redis_conn_get()
+        key = _girl_key(site_id, table)
+        conn.zremrangebyscore(key, '-inf', now)
+        rows = conn.zrangebyscore(key, now, '+inf', withscores=True)
+    except Exception as e:
+        logger_info(f'[dating] паузы анкет для карточек не спросились: {e}')
+
+        return {}
+
+    got = {}
+    for one, score in rows or []:
+        text = redis_text(one)
+        if not text.isdigit():
+            continue
+
+        # Час берётся из самой отметки: `mail_wait_girl_mark` ставит её ровно
+        # на конец суток UTC, и срок у слова верный без отдельного счёта.
+        got[int(text)] = (f"{MAIL_WAIT_GIRL_CHIP} до "
+                          f"{time.strftime('%H:%M', time.gmtime(float(score)))} UTC")
+
+    return got
+
+
 def mail_wait_when(left: int) -> str:
     """Срок словами для шапки пула — то же правило, что у журнала (`_when`)."""
     return _when(left)

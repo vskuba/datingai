@@ -41,7 +41,7 @@ from mysql_.mysql_ import mysql_get_db_async
 
 from src.dating import send_round as round_
 from src.dating.mail_send import DatingMailWaitError, mail_send_fail
-from src.dating.mail_wait import MAIL_WAIT_GIRL_MARKS, MAIL_WAIT_KEY
+from src.dating.mail_wait import MAIL_WAIT_GIRL_CHIP, MAIL_WAIT_KEY
 from src.dating.send_round import _oldest, send_card_wait, send_round_run
 
 pytestmark = pytest.mark.mail
@@ -304,14 +304,15 @@ class TestWaitReasons:
 
     async def test_a_girl_closed_to_noncontacts_is_named(self, no_wait,
                                                          monkeypatch):
-        monkeypatch.setattr(round_, 'mail_wait_girls',
-                            lambda site_id, table=None: [4242])
+        monkeypatch.setattr(
+            round_, 'mail_wait_girl_words',
+            lambda site_id, table=None: {4242: f'{MAIL_WAIT_GIRL_CHIP} до 00:00 UTC'})
 
         wait = await send_card_wait(SITE, 'favorite_mail',
                                     [{'id': 1, 'profile_id': 4242,
                                       'uid': 'u'}])
 
-        assert wait[1].startswith(MAIL_WAIT_GIRL_MARKS[0][1])
+        assert wait[1].startswith(MAIL_WAIT_GIRL_CHIP), wait[1]
         assert '00:00 UTC' in wait[1], 'срок паузы анкеты не назван'
 
     async def test_a_cooling_recipient_is_named(self, monkeypatch):
@@ -363,14 +364,15 @@ class TestWaitReasons:
                                                                    girl_make):
         """Девушка, закрытая пулом, не «ждёт офлайна»: общий повод первее частного."""
         girl = await girl_make('rot')
-        monkeypatch.setattr(round_, 'mail_wait_girls',
-                            lambda site_id, table=None: [girl])
+        monkeypatch.setattr(
+            round_, 'mail_wait_girl_words',
+            lambda site_id, table=None: {girl: f'{MAIL_WAIT_GIRL_CHIP} до 00:00 UTC'})
 
         wait = await send_card_wait(SITE, 'favorite_mail',
                                     [{'id': 7, 'profile_id': girl,
                                       'uid': 'u1'}])
 
-        assert wait[7] == (f'{MAIL_WAIT_GIRL_MARKS[0][1]} — до 00:00 UTC')
+        assert wait[7] == f'{MAIL_WAIT_GIRL_CHIP} до 00:00 UTC'
 
     async def test_a_letter_with_no_halt_has_no_reason(self, no_wait,
                                                        girl_make):

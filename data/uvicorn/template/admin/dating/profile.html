@@ -9291,7 +9291,13 @@
 
         const gone = Math.floor((Date.now() - mailReplyAt) / 1000);
 
-        document.querySelectorAll('.mail-card-wait').forEach(el => {
+        // ⚠⚠ Только **свои** чипы — с `data-ready`, те, что родил `replyWaitHtml`.
+        // Чип причины (`mailCardWait`, «ждёт: …») носит тот же класс, но срока
+        // не тикает: без этой оговорки тик по безымянному `dataset.ready`
+        // заменял его текст на «можно отправлять» — и карточка анкеты, закрытой
+        // сайтом до конца суток, выглядела отправляемой (причина лежала в
+        // `wait`, а до глаз не доходила).
+        document.querySelectorAll('.mail-card-wait[data-ready]').forEach(el => {
             const left = Number(el.dataset.ready || 0) - gone;
             // ⚠ Дойдя до нуля, строка **остаётся**: «можно отправлять» говорит,
             // что ответ ждёт очереди круга, а исчезнувшая строка читалась бы как
