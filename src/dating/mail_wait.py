@@ -63,6 +63,7 @@
 лестницы отказов входа (`site_api.py`).
 """
 
+import json
 import time
 
 from logging_.logging_ import logger_info
@@ -356,6 +357,14 @@ def mail_wait_girl_mark(site_id: int, profile_id: int, said: str,
         key = _girl_key(site_id, table)
         conn.zadd(key, {str(profile_id): now + wait})
         conn.expire(key, 86400 + 600)
+        # ⚠ Сырой ответ сайта и минута отказа — рядом с паузой: окно письма
+        # показывает их человеку (`mail_wait_girl_said`). Карточки, стоящие из-за
+        # паузы, сами к сайту не ходили, и своего ответа у них нет.
+        said_key = f'{key}:said'
+        conn.hset(said_key, str(profile_id), json.dumps(
+            {'at': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(now)),
+             'said': str(said or '')[:2000]}, ensure_ascii=False))
+        conn.expire(said_key, 86400 + 600)
     except Exception as e:
         logger_info(f'[dating] пауза анкеты #{profile_id} не записалась: {e}')
 
@@ -456,6 +465,42 @@ def mail_wait_girl_words(site_id: int,
         # на конец суток UTC, и срок у слова верный без отдельного счёта.
         got[int(text)] = (f"{MAIL_WAIT_GIRL_CHIP} до "
                           f"{time.strftime('%H:%M', time.gmtime(float(score)))} UTC")
+
+    return got
+
+
+def mail_wait_girl_said(site_id: int, table: str = MAIL_WAIT_GIRL_DEFAULT
+                        ) -> dict[int, dict]:
+    """Отказ сайта, поставивший анкету на паузу, — `{номер: {'at', 'said'}}`.
+
+    `at` — минута отказа в UTC (`YYYY-MM-DD HH:MM:SS`), `said` — ответ сайта
+    как есть. Только у анкет, чья пауза ещё идёт: прошедшая отметка о себе
+    не говорит. Сбой Redis — пусто, как и везде в модуле.
+    """
+    site_id = int(site_id or 0)
+    if not site_id:
+        return {}
+
+    live = mail_wait_girl_words(site_id, table)
+    if not live:
+        return {}
+
+    try:
+        rows = redis_conn_get().hgetall(f'{_girl_key(site_id, table)}:said') or {}
+    except Exception as e:
+        logger_info(f'[dating] отказы анкет для окна письма не спросились: {e}')
+
+        return {}
+
+    got = {}
+    for one, value in rows.items():
+        text = redis_text(one)
+        if not text.isdigit() or int(text) not in live:
+            continue
+        try:
+            got[int(text)] = dict(json.loads(redis_text(value)))
+        except (ValueError, TypeError):
+            continue
 
     return got
 

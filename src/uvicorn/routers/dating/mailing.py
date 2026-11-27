@@ -38,6 +38,7 @@ from src.dating.pool_pair import (pool_delivery_where,
                                          pool_mail_answered_where,
                                          pool_pair_girl, pool_pair_joins,
                                          pool_pair_select, pool_pick_where)
+from src.dating.mail_wait import mail_wait_girl_said
 from src.dating.send_round import (send_card_day_sent, send_card_wait,
                                    send_why)
 from src.dating.mailing import (MAILING_BATCH_DEFAULT,
@@ -197,6 +198,14 @@ async def mailing_list(site_id: int = 0, status_: str = 'draft',
         [one for one in result if one['status'] == 'draft'])
     for one in result:
         one['wait'] = waits.get(int(one['id']), '')
+
+    # ⚠ Отказ сайта, закрывший анкете письма, — сырым текстом и минутой: окно
+    # письма показывает его у карточки, которая сама к сайту не ходила.
+    girl_said = mail_wait_girl_said(int(site_id), 'mailing')
+    for one in result:
+        said = girl_said.get(int(one.get('profile_id') or 0)) if one['wait'] else None
+        one['wait_said'] = str((said or {}).get('said') or '')
+        one['wait_at'] = str((said or {}).get('at') or '')
 
     # ⚠ Что уже ушло из анкеты за 24 часа — рядом с причиной ожидания, в той же
     # подсказке карточки (`send_round.send_card_day_sent`): «ждёт» без ответа на

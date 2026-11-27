@@ -71,6 +71,12 @@ class _GirlsRedis:
     def expire(self, key, sec):
         return True
 
+    def hset(self, key, field, value):
+        self.keys.setdefault(key, {})[str(field)] = value
+
+    def hgetall(self, key):
+        return dict(self.keys.get(key, {}))
+
     def zremrangebyscore(self, key, low, high):
         for one in self._through(key, low, high):
             self.keys.get(key, {}).pop(one, None)
@@ -124,6 +130,18 @@ class TestTheWordComesFromTheMark:
         assert got[52].startswith(f'{MAIL_WAIT_GIRL_CHIP} до '), got[52]
         assert re.search(r'до \d\d:\d\d UTC$', got[52]), \
             'срок паузы назван не временем — второй копией правила'
+
+    def test_the_raw_refusal_is_kept_for_the_letter_window(self, girls):
+        # Окно письма показывает сырой ответ сайта и минуту отказа: карточка,
+        # стоящая из-за паузы, сама к сайту не ходила.
+        mail_wait_girl_mark(SITE, 52, NON_CONTACT, 'favorite_mail')
+
+        got = mw.mail_wait_girl_said(SITE, 'favorite_mail')
+
+        assert got[52]['said'] == NON_CONTACT
+        assert re.fullmatch(r'\d{4}-\d\d-\d\d \d\d:\d\d:\d\d', got[52]['at'])
+        assert mw.mail_wait_girl_said(SITE, 'mailing') == {}, \
+            'отказ одного пула приписан другому'
 
     def test_the_hours_are_the_mark_not_a_copy_of_midnight(self, girls):
         """Час — из score отметки, а не из слова «полночь»: сдвинешь отметку —
