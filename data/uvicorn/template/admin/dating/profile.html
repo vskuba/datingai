@@ -10046,6 +10046,13 @@
         fillSlot('fav-mail-pool-why', favMailSendWhy);
         fillSlot('fav-mail-pool-count',
             poolCount(favMailPool.length, saved.favorite_mail_pool_max));
+        // ⚠ Счёт и потолок — про **сайт** (очистка тоже уносит пул сайта), а
+        // карточки ниже отобраны по анкете: долю выбранной говорим подсказкой.
+        const countEl = slot('fav-mail-pool-count');
+        if (countEl) countEl.title = openId
+            ? 'Пул сайта целиком; у выбранной анкеты — '
+              + favMailPool.filter(one => Number(one.profile_id) === Number(openId)).length
+            : '';
 
         // От кого пойдут письма — словами: выбор анкеты в списке слева иначе
         // влиял бы на генерацию молча.
@@ -10157,7 +10164,23 @@
             return;
         }
 
-        box.innerHTML = favMailPool.map((one, index) => favMailCard(one, index)).join('');
+        // ⚠ Анкета — **фильтр**, как у колонки ответов рядом (`favReplyPoolPaint`):
+        // выбрана — только её карточки, нет — пул всего сайта. Пул общий на сайт
+        // (потолок и очистка — про сайт), поэтому отбираем при показе, а номер
+        // карточки остаётся номером в `favMailPool`: по нему её открывает щелчок.
+        const cards = favMailPool
+            .map((one, index) => [one, index])
+            .filter(([one]) => !openId || Number(one.profile_id) === Number(openId));
+
+        if (!cards.length) {
+            box.innerHTML = '<div class="mail-pool-empty">У выбранной анкеты писем'
+                + ' в пуле нет. Снимите выбор в списке слева — увидите пул всего'
+                + ` сайта (${favMailPool.length}).</div>`;
+
+            return;
+        }
+
+        box.innerHTML = cards.map(([one, index]) => favMailCard(one, index)).join('');
         favMailCardsBind(box);
     }
 
@@ -10545,18 +10568,27 @@
     // вторая копия правил под глазами человека разошлась бы на первой правке.
     // Час последней попытки — заодно: без него карточка молчала бы о повторе,
     // который круг уже делал (метка `try_at`, UTC; `timeShift` — в час панели).
-    function mailCardWait(row) {
+    // Почему черновик стоит — текстом, без разметки: его читают полоса карточки
+    // и окно письма (`favMailOpen`). ⚠ Одна функция на оба места, иначе окно
+    // разошлось бы с карточкой на первой правке.
+    function mailWaitWhy(row) {
         if (!row || row.status !== 'draft') return '';
 
         const why = [];
-        if (row.wait) why.push('ждёт: ' + esc(row.wait));
+        if (row.wait) why.push('ждёт: ' + row.wait);
         if (row.try_at) why.push('последняя попытка '
-            + esc(timeShift(row.try_at).slice(11, 16)) + ' — не ушло');
-        if (!why.length) return '';
+            + timeShift(row.try_at).slice(11, 16) + ' — не ушло');
+
+        return why.join(' · ');
+    }
+
+    function mailCardWait(row) {
+        const why = mailWaitWhy(row);
+        if (!why) return '';
 
         // ⚠ Тот же текст и в подсказке: полоса режется по ширине карточки, а
-        // причина длиннее неё. Части уже прошли `esc`, кавычки в них безопасны.
-        const text = why.join(' · ');
+        // причина длиннее неё. `esc` экранирует и кавычки — атрибут безопасен.
+        const text = esc(why);
 
         return `<span class="mail-card-wait" title="${text}">${text}</span>`;
     }
@@ -10661,6 +10693,11 @@
                 // же доводу, что и у сторон письма выше.
                 + letterFact('Состояние', letterState(one))
                 + letterFact('Почему', one.error, true)
+                // ⚠ Причина ожидания и кадр — те же, что на карточке пула: окно
+                // без них говорило «в пуле» и молчало, почему письмо стоит и
+                // что уйдёт вместе с ним.
+                + letterFact('Не уходит', mailWaitWhy(one), true)
+                + letterShot(one)
                 // ⚠⚠ **Текст показываем, но не даём править — никогда.** Письмо
                 // сочинил агент, и сосед записал сказанное к себе **внутри
                 // прогона**, то есть ещё до отправки. Исправь текст здесь — уйдёт
