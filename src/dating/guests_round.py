@@ -13,6 +13,12 @@
 тот же, что у кнопки на странице: `scenario_run` с логином анкеты; визиты
 кладёт дверь `guests_seen`.
 
+⚠ **Ленточным сайтам сценария нет вовсе.** Страницу гостей они отдают GET'ом
+под cookie анкеты (`site/site_feed.py`): на Step2Love каждый прогон был входом
+в панель агентства, и 26.11.2026 панель за это заблокировала нас, замолчав всех
+десять девушек. Спящую анкету при этом не снимает (её cookie мертвы) и в
+неудачу это не считает — см. `_http_guests`.
+
 ## ⚠⚠ Слот на анкету, а не на сайт
 
 Настройка отвечает «как часто обновлять **ленту гостей**», а ленту делает
@@ -45,6 +51,7 @@
 """
 
 from logging_.logging_ import logger_info
+from mysql_.mysql_ import mysql_get_db_async
 from src.rhapsody.rhapsody_api import (RhapsodyError,
                                        rhapsody_api_scenario_forget)
 
@@ -53,7 +60,9 @@ from src.dating.guests import (guests_feed_on, guests_seen,
 from src.dating.round import (round_mem_due, round_mem_mark, round_slot_due,
                               round_slot_mark, round_sites, round_sites_run)
 from src.dating.scenario import scenario_find, scenario_run
-from src.dating.site.site_registry import site_registry_guests
+from src.dating.site.site_feed import DatingSiteFeedError
+from src.dating.site.site_registry import (site_registry_feed,
+                                           site_registry_guests)
 from src.dating.site_presence import site_presence
 from src.dating.site_setting import site_seconds
 
@@ -178,10 +187,19 @@ async def guests_site_sweep(site_id: int, due_only: bool = True,
     # Драйвер сайта: он знает и имя сценария, и то, как из его ответа вынуть
     # человека с датой визита. У сайтов это разные страницы и разная вёрстка —
     # круг про это спрашивать не должен (см. `site/site_guests.py`).
-    driver = site_registry_guests(await site_presence(site_id))
+    presence = await site_presence(site_id)
+    driver = site_registry_guests(presence)
     name = driver.scenario_name()
-    scenario = await scenario_find(site_id, name)
-    if not scenario:
+
+    # ⚠⚠ Ленточный сайт читает страницу гостей GET'ом под cookie анкеты
+    # (`site/site_feed.py`): на Step2Love каждый прогон сценария был входом в
+    # панель агентства, и 26.11.2026 панель за это заблокировала нас. Таким
+    # сайтам сценарий не ищется и не гонится вовсе — `scenario=None` внутри
+    # `_profile_guests` и есть та HTTP-дорога.
+    feed_http = site_registry_feed(presence).by_http()
+    scenario = None if feed_http else await scenario_find(site_id, name)
+
+    if scenario is None and not feed_http:
         # смолчим минуту — но и повторять одну и ту же строку каждый тик
         # нельзя: «Журналы» утонут в ней. Раз в остуду на сайт — честно и не
         # шумно; анкеты при этом получают остуду, как от упавшего прогона.
@@ -236,12 +254,13 @@ async def guests_site_sweep(site_id: int, due_only: bool = True,
 
 # ── Приватное ────────────────────────────────────────────────────────────────
 
-async def _profile_guests(scenario: dict, driver, site_id: int,
+async def _profile_guests(scenario: dict | None, driver, site_id: int,
                           profile: dict) -> int | None:
-    """Гости одной анкеты: прогон под её входом и запись визитов.
+    """Гости одной анкеты: прогон под её входом — или GET под её cookie.
 
     Args:
-        scenario: найденный сценарий.
+        scenario: найденный сценарий; `None` — сайт ленточный, сценария у него
+            нет и не надо: страница читается под cookie анкеты (`site_feed.py`).
         driver: драйвер сайта — ему принадлежит разбор ответа прогона.
         site_id: сайт.
         profile: анкета (`id`, `login`, `proxy_id`).
@@ -250,6 +269,9 @@ async def _profile_guests(scenario: dict, driver, site_id: int,
         `None` — неудача (причина в журнале прогона и в этой строке), иначе
         число легших строк, возможно ноль.
     """
+    if scenario is None:
+        return await _http_guests(site_id, profile)
+
     try:
         # `keep_session=False`: вкладка нужна на один прогон — она стоит ~143 МБ
         # в пуле, общем с соседом, а анкет в заходе несколько.
@@ -284,6 +306,56 @@ async def _profile_guests(scenario: dict, driver, site_id: int,
     cap = await site_seconds(site_id, 'mailing_guests_max')
 
     return await guests_seen(site_id, int(profile['id']), rows[:cap])
+
+
+async def _http_guests(site_id: int, profile: dict) -> int | None:
+    """Гости одной анкеты GET'ом под её собственными cookie (`site_feed.py`).
+
+    Спящая анкета — **не неудача**: её кабинет мёртвым cookie не открывается,
+    но это её отдых, а не беда сайта. Ни остуды анкеты, ни остуды сайта: слот
+    поставится как обычно, а гости снятся в её смену, когда круг присутствия
+    скажет, что она снова в сети. Ошибкой это был бы стук в чужую дверь.
+
+    ⚠ Строку анкеты берём свою, полную: `guests_site_profiles` знает номер,
+    логин и выход, а cookie и статус — поле за полем, они нужны только здесь
+    и только ленточным сайтам.
+    """
+    one = await _profile_state(int(profile['id']))
+
+    if str(one.get('status') or '') != 'online':
+        # Спит — её гости сегодня не снимаются; см. заголовок.
+        return 0
+
+    try:
+        rows = await site_registry_feed(
+            await site_presence(site_id)).guests_rows(one)
+    except DatingSiteFeedError as e:
+        logger_info(f"[dating] гости анкеты #{profile['id']}: {e}")
+
+        return None
+
+    rows = _freshest_first(rows)
+
+    cap = await site_seconds(site_id, 'mailing_guests_max')
+
+    return await guests_seen(site_id, int(profile['id']), rows[:cap])
+
+
+async def _profile_state(profile_id: int) -> dict:
+    """Что нужно HTTP-дороге от анкеты: статус, cookie, выход наружу."""
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(
+                'SELECT id, site_id, login, status, proxy_id, proxy_url,'
+                ' proxy_ip, storage_state FROM profile WHERE id = %s',
+                (int(profile_id),))
+            row = await db.fetchone()
+    except Exception as e:
+        logger_info(f'[dating] состояние анкеты #{profile_id} не прочиталось: {e}')
+
+        return {}
+
+    return dict(row) if row else {}
 
 
 def _freshest_first(rows: list[dict]) -> list[dict]:

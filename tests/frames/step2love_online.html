@@ -1,0 +1,59 @@
+<!--
+  ⚠ Форма ВОССТАНОВЛЕНА по строкам `extract` сценарного прогона (TSV снят 27.11.2026
+  из журнала `scenario`), а не с живого сайта: живой страницы онлайна под рукой нет,
+  а живая лента требует учётки. При первом же снятии живой страницы — заменить
+  содержимое, не трогая тестов: им важен разбор, а не конкретные номера.
+
+  Каждый человек лежит в таблице ДВАЖДЫ — ячейка с фото и ячейка со значком
+  статуса; `td:has(p.gal_id)` сценарий брал обе, и `people_rows` склеивает
+  близнецов по номеру, оставляя первую строку. Поэтому здесь обе ячейки
+  содержат `p.gal_id` и `p.gal_name` — как на живой странице (в TSV у обоих
+  td лежат и номер, и имя).
+
+  Имена и номера обезличены по правилу папки.
+-->
+<html>
+<head><title>Online ladies</title></head>
+<body>
+<table class="grid">
+ <tbody>
+  <tr>
+   <td>
+    <p class="gal_id">(ID: 1834776)</p>
+    <p class="gal_name"><a href="/profile/1834776/">Steve</a></p>
+    <p class="gal_photo"><img src="/uploades/photos/default_1.gif" alt=""/></p>
+   </td>
+   <td>
+    <p class="gal_id">(ID: 1834776)</p>
+    <p class="gal_name"><a href="/profile/1834776/">Steve</a></p>
+    <p><img src="https://mystep2love.com/templates/mystep2love/vi/online.png" alt=""/></p>
+   </td>
+  </tr>
+  <tr>
+   <td>
+    <p class="gal_id">(ID: 2210884)</p>
+    <p class="gal_name"><a href="/profile/2210884/">Nina</a></p>
+    <p class="gal_photo"><img src="/uploades/photos/avatar_v2/2210884_1.jpeg" alt=""/></p>
+   </td>
+   <td>
+    <p class="gal_id">(ID: 2210884)</p>
+    <p class="gal_name"><a href="/profile/2210884/">Nina</a></p>
+    <p><img src="https://mystep2love.com/templates/mystep2love/vi/online.png" alt=""/></p>
+   </td>
+  </tr>
+  <tr>
+   <td>
+    <p class="gal_id">(ID: 3055127)</p>
+    <p class="gal_name"><a href="/profile/3055127/">Gerald</a></p>
+    <p class="gal_photo"><img src="/uploades/photos/default_1.gif" alt=""/></p>
+   </td>
+   <td>
+    <p class="gal_id">(ID: 3055127)</p>
+    <p class="gal_name"><a href="/profile/3055127/">Gerald</a></p>
+    <p><img src="https://mystep2love.com/templates/mystep2love/vi/online.png" alt=""/></p>
+   </td>
+  </tr>
+ </tbody>
+</table>
+</body>
+</html>

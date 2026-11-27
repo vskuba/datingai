@@ -100,7 +100,10 @@ from src.dating.people_api import (DatingPeopleApiError, people_api_kinds,
                                           people_api_rows)
 from src.dating.ready import password_pick
 from src.dating.scenario import scenario_run
+from src.dating.site.site_feed import DatingSiteFeedError
+from src.dating.site.site_registry import site_registry_feed
 from src.dating.site_api import site_api_has_token
+from src.dating.site_presence import site_presence
 from src.dating.site_setting import site_seconds, site_setting
 from src.rhapsody.rhapsody_api import (RhapsodyError, rhapsody_api_scenario_find,
                                        rhapsody_api_scenario_forget)
@@ -373,16 +376,23 @@ async def people_site_list(site_id: int, kind: str, fresh: bool = False,
 
     profile = await _panel_door(site_id, kind) or await _site_profile(site_id)
     via_api = True
+    feed = False
     if not profile:
         via_api = await _api_for(site_id, kind)
+        feed = kind == 'online' and await _feed_on(site_id)
+        if via_api:
+            profile = {}
         # Сценарному сайту спящая анкета не помеха: сценарий входит в панель сам.
-        profile = {} if via_api else await _site_sleeper(site_id)
+        # Ленточному (kind онлайн, `_feed_on`) — помеха: там вход не в панель, а
+        # под самой анкетой, и спящей двери нет.
+        elif not feed:
+            profile = await _site_sleeper(site_id)
 
     if not profile:
         # ⚠ Не «нет анкет», а «нет анкет **в сети**»: разница существенная —
         # первое чинят заведением учётки, второе проходит само, когда начнётся
         # смена. Отдаём прежний снимок, если он есть: он честнее пустоты.
-        why = ('ни одна анкета не в сети' if via_api
+        why = ('ни одна анкета не в сети' if via_api or feed
                else 'у сайта нет ни одной включённой анкеты с логином')
         if cached:
             return _answer(cached, cached=True,
@@ -469,7 +479,8 @@ async def people_snap_start(site_id: int) -> bool:
     Не заводится по трём причинам, и все они законные: съём уже идёт, выдержка
     между попытками не кончилась, у сайта нет анкет — заходить не под кем (на
     сценарном сайте это значит «нет ни одной включённой»: спящая годится,
-    `_site_sleeper`).
+    `_site_sleeper`; на ленточном GET'ом — «нет ни одной в сети»: снимок
+    остаётся прежним с пометкой, `_feed_on`).
 
     ⚠ **Не ждёт результата**, как и страница: съём это ~40 секунд живого браузера.
     Круг заводит его и идёт дальше; снимок появится в кэше сам.
@@ -480,8 +491,19 @@ async def people_snap_start(site_id: int) -> bool:
     """
     site_id = int(site_id)
     profile = await _panel_door(site_id, 'online') or await _site_profile(site_id)
-    if not profile and not await _api_for(site_id, 'online'):
-        profile = await _site_sleeper(site_id)
+    if not profile:
+        if await _feed_on(site_id):
+            # Лентному сайту спящая анкета не подмога: сценарий, который вошёл бы
+            # в панель сам, здесь не гонится вовсе, а GET живёт ровно на живом
+            # cookie. Ни одной анкеты в сети — держим снимок с пометкой, стучать
+            # некуда и незачем (`site/site_feed.py`).
+            _error_mark(_key('online', site_id=site_id),
+                        'ни одна анкета не в сети — лента не снялась')
+
+            return False
+
+        if not await _api_for(site_id, 'online'):
+            profile = await _site_sleeper(site_id)
     if not profile:
         return False
 
@@ -916,6 +938,16 @@ async def _panel_door(site_id: int, kind: str) -> dict:
     return {'id': 0, 'site_id': int(site_id), 'login': ''}
 
 
+async def _feed_on(site_id: int) -> bool:
+    """Сайт читает ленты GET'ом под cookie анкеты, а не сценарием?
+
+    Дверь, которой нет: на таком сайте ленте нужна анкета **в сети** — со
+    снятым кругом присутствия cookie, — а спящая или сценарий ей не заменят
+    ничего (`site/site_feed.py`, блокировка Step2Love 26.11.2026).
+    """
+    return site_registry_feed(await site_presence(int(site_id))).by_http()
+
+
 async def _site_profile(site_id: int) -> dict:
     """Анкета **в сети**, под которой снимаем список. Нет таких — пустой словарь.
 
@@ -948,12 +980,16 @@ async def _site_profile(site_id: int) -> dict:
     агентский (`password_pick` без этих полей отвечает «общий»), и это
     верно: список снимается от лица сайта, а не конкретной девушки.
 
+    ⚠ `storage_state` — поле **ленточной дороги**: GET под анкетой живёт на её
+    cookie (`site_session.py`), и без них анкета в сети ничего не стоит. Сценарной
+    дороге оно не нужно и не мешает: она из этой строки берёт только номер и логин.
+
     Спит весь сайт — на сценарных сайтах за лентой идём всё равно, дверью служит
     первая включённая анкета: `_site_sleeper`.
     """
     async with mysql_get_db_async() as db:
         await db.execute(
-            'SELECT id, site_id, login FROM profile '
+            'SELECT id, site_id, login, storage_state FROM profile '
             ' WHERE site_id = %s AND login <> %s'
             "   AND enabled = 1 AND status = 'online'"
             ' ORDER BY storage_state IS NULL, id LIMIT %s',
@@ -1080,6 +1116,10 @@ async def _snapshot(profile: dict, kind: str) -> list:
     такого сайта писала «не снялось» при живых звёздочках: 08.11.2026 две
     анкеты Step2Love добавили одного человека, сайт показывал обеим, панель — ни
     одной.
+
+    ⚠⚠ **Пятая дорога — лента GET'ом под cookie анкеты**, для сайтов, которым
+    вход в панель агентства дорог: Step2Love платил им на каждый прогон ленты и
+    был заблокирован 26.11.2026 (`site/site_feed.py`).
     """
     site_id = int(profile.get('site_id') or 0)
     if kind == 'favorite' and await favorite_driver(site_id):
@@ -1093,6 +1133,20 @@ async def _snapshot(profile: dict, kind: str) -> list:
             return await panel_online_rows(site_id)
         except DatingPanelFetchError as e:
             raise _PeopleFailure(str(e))
+
+    # ⚠⚠ Пятая дорога — лента под сессией анкеты, только для онлайна: сайтам,
+    # которым вход в панель агентства дорог. На Step2Love каждый прогон сценария
+    # «анкеты мужчин: список» был входом в панель, и 26.11.2026 агентство за это
+    # заблокировало нас, замолчав всех десять девушек (site/site_feed.py). Умеем
+    # читать GET'ом под живым cookie — сценария эти списки не просят и не найдутся.
+    if kind == 'online':
+        feed = site_registry_feed(await site_presence(site_id))
+
+        if feed.by_http():
+            try:
+                return await feed.online_rows(profile)
+            except DatingSiteFeedError as e:
+                raise _PeopleFailure(str(e))
 
     if await _api_for(site_id, kind):
         return await _api_rows(profile, kind, site_id)

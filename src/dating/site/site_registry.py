@@ -21,6 +21,8 @@ from src.dating.site.site_goldenbride import (DatingSiteChatGoldenbride,
 from src.dating.site.site_guests import DatingSiteGuests
 from src.dating.site.site_favorite import (DatingSiteFavorite,
                                            DatingSiteFavoriteStep2Love)
+from src.dating.site.site_feed import DatingSiteFeed
+from src.dating.site.site_feed_step2love import DatingSiteFeedStep2Love
 from src.dating.site.site_guests_step2love import DatingSiteGuestsStep2Love
 from src.dating.site.site_import import DatingSiteImport
 from src.dating.site.site_import_goldenbride import DatingSiteImportGoldenbride
@@ -121,6 +123,14 @@ DATING_SITE_GUESTS_DRIVERS = {
 # ставится сценарием»; в таблице только те, у кого своя дорога.
 DATING_SITE_FAVORITE_DRIVERS = {
     DatingSiteFavoriteStep2Love.name: DatingSiteFavoriteStep2Love,
+}
+
+# Восьмая таблица: ленты «Все онлайн» и «Гости» под сессией анкеты. ⚠ Умолчание
+# — базовый драйвер, то есть «ленты сняет сценарий»; в таблице только те сайты,
+# кому сценарный вход в панель агентству дорог (Step2Love: блокировка
+# 26.11.2026 — см. `site_feed.py`).
+DATING_SITE_FEED_DRIVERS = {
+    DatingSiteFeedStep2Love.name: DatingSiteFeedStep2Love,
 }
 
 DATING_SITE_DRIVER_DEFAULT = DatingSiteChatGoldenbride.name
@@ -239,6 +249,26 @@ def site_registry_favorite(presence: dict | None = None):
     name = str(presence.get('driver') or '').strip()
 
     return DATING_SITE_FAVORITE_DRIVERS.get(name, DatingSiteFavorite)(presence)
+
+
+def site_registry_feed(presence: dict | None = None) -> DatingSiteFeed:
+    """Чем сайт отдаёт ленты «Все онлайн» и «Гости»: сценарием или GET'ом.
+
+    Восьмая грань драйвера. ⚠⚠ Базовый отвечает «по HTTP не умею»
+    (`by_http() is False`), и обе ленты идут прежней дорогой — прогоном сценария
+    у соседа. Так работают все сайты до Step2Love, и ломать это ради
+    единообразия незачем: у них сценарии есть и работают.
+
+    ⚠ У Step2Love каждый такой прогон — вход в панель агентства, которым 26.11.2026
+    оно нас и заблокировало; его ленты читаются под cookie анкеты, и сценарий для
+    них не находится и не гонится вовсе (`site_feed.py`).
+    """
+    if not isinstance(presence, dict):
+        return DatingSiteFeed()
+
+    name = str(presence.get('driver') or '').strip()
+
+    return DATING_SITE_FEED_DRIVERS.get(name, DatingSiteFeed)(presence)
 
 
 def _driver_of(drivers: dict, presence: dict | None):
