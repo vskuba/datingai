@@ -10590,7 +10590,21 @@
         // причина длиннее неё. `esc` экранирует и кавычки — атрибут безопасен.
         const text = esc(why);
 
-        return `<span class="mail-card-wait" title="${text}">${text}</span>`;
+        // ⚠ Что уже ушло из этой анкеты за сутки — **только в подсказке**, не на
+        // полосе: полоса отвечает на «почему стоит», числа — контекст решения.
+        // Числа приносит список (`day_sent`, правило — `send_round.send_card_day_sent`):
+        // считать их здесь — вторая копия правила. Строка про ответы — только
+        // при непустом числе: «0 ответов» читалось бы случившимся событием.
+        // Перевод строки в подсказке — `&#10;`.
+        const day = row.day_sent || {};
+        const stats = '&#10;За 24 ч от анкеты:'
+            + '&#10;рассылка — ' + esc(Number(day.mailing) || 0)
+            + '&#10;фаворитам — ' + esc(Number(day.favorite_mail) || 0)
+            + (Number(day.mail_reply) > 0
+                ? '&#10;ответов на письма — ' + esc(Number(day.mail_reply))
+                : '');
+
+        return `<span class="mail-card-wait" title="${text}${stats}">${text}</span>`;
     }
 
     function favMailCard(one, index) {

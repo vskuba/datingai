@@ -345,6 +345,75 @@ async def send_card_wait(site_id: int, table: str,
     return wait
 
 
+async def send_card_day_sent(rows: list[dict]) -> dict[int, dict]:
+    """Что успело уйти из каждой анкеты за последние 24 часа — в подсказку карточки.
+
+    Args:
+        rows: строки пула: `profile_id`. ⚠ Спрашиваем **только про анкеты
+            вернувшейся страницы**, а не про весь сайт: список отдаёт несколько
+            сотен карточек, а анкет у сайта — десятки, и лишний охват здесь —
+            лишние строки UNION ради цифр, которые никто не увидел бы.
+
+    Returns:
+        dict: `{profile_id: {'mailing': N, 'favorite_mail': M, 'mail_reply': K}}`;
+            каждая анкета, про которую спрашивали, возвращается со всеми тремя
+            числами, нулями включительно, — странице нечего додумывать.
+
+    ⚠ **Что считать ушедшим — то же правило, что у `round_sent_day`:**
+    `status = 'sent'`, а время события — `sent_at`. Черновик не уходил, отказ не
+    дошел — для рассказа об анкете оба значат «не писала». Окно здесь сворачивает
+    не правило, а взгляд: 24 часа назад от текущего мгновения вместо местных
+    календарных суток — карточка отвечает на «что она уже написала», а не «сколько
+    выбрано из нормы», и норма считает отдельно, по `round_sent_day`.
+
+    ⚠ **Три таблицы одним `UNION`, а не три запроса.** Одна страница висит над
+    двумя списками — и тот же вопрос здесь задают обоим; три ожидания подряд
+    вместо одного человек чувствует глазами.
+
+    ⚠ `mailing` — единственная из трех таблиц без `updated_at`, и правило сюда
+    не дотягивается до неё: `sent_at` хватает всем, а запрос, вспомнивший
+    `updated_at`, умер бы на рассылке ошибкой неизвестного столбца.
+    """
+    ids = sorted({int(one.get('profile_id') or 0)
+                  for one in rows or []} - {0})
+    if not ids:
+        return {}
+
+    marks = ', '.join(['%s'] * len(ids))
+    gone = (' SELECT \'mailing\' AS kind, profile_id FROM mailing'
+            "   WHERE status = 'sent'"
+            '     AND sent_at >= NOW() - INTERVAL 24 HOUR'
+            f'     AND profile_id IN ({marks})'
+            ' UNION ALL'
+            " SELECT 'favorite_mail', profile_id FROM favorite_mail"
+            "   WHERE status = 'sent'"
+            '     AND sent_at >= NOW() - INTERVAL 24 HOUR'
+            f'     AND profile_id IN ({marks})'
+            ' UNION ALL'
+            " SELECT 'mail_reply', profile_id FROM mail_reply"
+            "   WHERE status = 'sent'"
+            '     AND sent_at >= NOW() - INTERVAL 24 HOUR'
+            f'     AND profile_id IN ({marks})')
+
+    stats = {one: {'mailing': 0, 'favorite_mail': 0, 'mail_reply': 0}
+             for one in ids}
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT kind, profile_id, COUNT(*) AS n FROM ('
+                             + gone + ') AS gone GROUP BY kind, profile_id',
+                             tuple(ids) * 3)
+
+            for row in (await db.fetchall()) or []:
+                stats[int(row['profile_id'])][str(row['kind'])] = int(row['n'])
+    except Exception as e:
+        # Цифры — пояснение к подсказке, а не ответ списка: ради них список
+        # не вправе краснеть.
+        logger_info(f'[dating] письма анкет за 24 часа не спросились: {e}')
+
+    return stats
+
+
 async def _nothing_to_send(site_id: int, table: str) -> str:
     """Почему очередь пуста: черновиков нет вовсе или все с прежней ошибкой."""
     try:

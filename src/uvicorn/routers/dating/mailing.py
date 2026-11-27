@@ -38,7 +38,8 @@ from src.dating.pool_pair import (pool_delivery_where,
                                          pool_mail_answered_where,
                                          pool_pair_girl, pool_pair_joins,
                                          pool_pair_select, pool_pick_where)
-from src.dating.send_round import send_card_wait, send_why
+from src.dating.send_round import (send_card_day_sent, send_card_wait,
+                                   send_why)
 from src.dating.mailing import (MAILING_BATCH_DEFAULT,
                                        MAILING_BATCH_MAX,
                                        mailing_gaps, mailing_girls,
@@ -196,6 +197,15 @@ async def mailing_list(site_id: int = 0, status_: str = 'draft',
         [one for one in result if one['status'] == 'draft'])
     for one in result:
         one['wait'] = waits.get(int(one['id']), '')
+
+    # ⚠ Что уже ушло из анкеты за 24 часа — рядом с причиной ожидания, в той же
+    # подсказке карточки (`send_round.send_card_day_sent`): «ждёт» без ответа на
+    # «много ли она уже написала» заставляло бы человека считать это самому по
+    # «Доставке». Считается **одним запросом по анкетам страницы**, а не на
+    # карточку; показывать или нет — решает чип, здесь поле есть у всех.
+    day = await send_card_day_sent(result)
+    for one in result:
+        one['day_sent'] = day.get(int(one.get('profile_id') or 0), {})
 
     return {'result': result,
             # ⚠ Почему полный пул не уходит — вместе со списком: «50 из 50» без

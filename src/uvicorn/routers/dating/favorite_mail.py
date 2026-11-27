@@ -22,7 +22,8 @@ from logging_.logging_ import logger_info
 from mysql_.mysql_ import mysql_get_db_async
 
 from src.auth.auth import AuthUser, auth_required
-from src.dating.send_round import send_card_wait, send_why
+from src.dating.send_round import (send_card_day_sent, send_card_wait,
+                                   send_why)
 from src.dating.favorite import (FAVORITE_STATES,
                                         FAVORITE_STATES_SQL)
 from src.dating.favorite_mail import (FAVORITE_MAIL_BATCH_DEFAULT,
@@ -255,6 +256,15 @@ async def favorite_mail_list(site_id: int = 0, status_: str = 'draft',
         [one for one in result if one['status'] == 'draft'])
     for one in result:
         one['wait'] = waits.get(int(one['id']), '')
+
+    # ⚠ Что уже ушло из анкеты за 24 часа — рядом с причиной ожидания, в той же
+    # подсказке карточки (`send_round.send_card_day_sent`): «ждёт» без ответа на
+    # «много ли она уже написала» заставляло бы человека считать это самому по
+    # «Доставке». Считается **одним запросом по анкетам страницы**, а не на
+    # карточку; показывать или нет — решает чип, здесь поле есть у всех.
+    day = await send_card_day_sent(result)
+    for one in result:
+        one['day_sent'] = day.get(int(one.get('profile_id') or 0), {})
 
     return {'result': result,
             'page': page, 'pages': pages, 'total': total,
