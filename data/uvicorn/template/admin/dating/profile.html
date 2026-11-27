@@ -10554,7 +10554,11 @@
             + esc(timeShift(row.try_at).slice(11, 16)) + ' — не ушло');
         if (!why.length) return '';
 
-        return `<span class="mail-card-wait">${why.join(' · ')}</span>`;
+        // ⚠ Тот же текст и в подсказке: полоса режется по ширине карточки, а
+        // причина длиннее неё. Части уже прошли `esc`, кавычки в них безопасны.
+        const text = why.join(' · ');
+
+        return `<span class="mail-card-wait" title="${text}">${text}</span>`;
     }
 
     function favMailCard(one, index) {
