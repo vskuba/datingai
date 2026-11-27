@@ -293,7 +293,7 @@ async def send_card_wait(site_id: int, table: str,
     """Почему каждая карточка пула стоит прямо сейчас — теми же правилами, что и очередь.
 
     Args:
-        rows: строки пула: `id`, `profile_id`, `uid`.
+        rows: строки пула: `id`, `profile_id`, `uid`, `try_at`.
 
     Returns:
         dict: `{id: причина}`; строк без причины в ответе нет.
@@ -329,7 +329,9 @@ async def send_card_wait(site_id: int, table: str,
     for row in rows:
         profile_id = int(row.get('profile_id') or 0)
         uid = str(row.get('uid') or '')
-        why = paused.get(profile_id, '')
+        # ⚠ Пауза анкеты — только пробованной карточке: непробованную очередь
+        # пропускает мимо паузы (`_oldest`), и «ждёт» здесь было бы неправдой.
+        why = paused.get(profile_id, '') if row.get('try_at') else ''
         if not why and uid in cooling:
             why = mail_wait_skip(mail_wait_left(int(site_id), uid))
         if not why:
@@ -543,7 +545,7 @@ async def _girls_limit_wait(site_id: int, table: str) -> str:
             await db.execute(
                 f'SELECT COUNT(*) AS free FROM {table}'
                 f" WHERE site_id = %s AND status = 'draft' AND error = ''"
-                f'   AND profile_id NOT IN ({holes})',
+                f'   AND (try_at IS NULL OR profile_id NOT IN ({holes}))',
                 (int(site_id), *paused))
             row = dict((await db.fetchone()) or {})
     except Exception as e:
@@ -842,9 +844,17 @@ async def _oldest(site_id: int, table: str) -> dict | None:
     # сайту ни одного письма избранным до полуночи. Читается для **всех** пулов:
     # ответу и обещанию такой отказ не приходит (они пишут контактам), а придёт —
     # пул не будет долбить сайт тем же письмом каждые пять секунд.
+    #
+    # ⚠⚠ **Пауза держит только пробованное** (правило владельца 28.11.2026):
+    # каждая карточка хоть раз предлагается сайту сама. Отказ пришёл другому
+    # письму той же анкеты, а это — например, контакту, которому предел
+    # не-контактов не мешает; «сайт не принимает» без единой своей попытки
+    # было бы неправдой. Непробованное (`try_at IS NULL`) идёт мимо паузы,
+    # своим отказом получает отметку попытки и встаёт под паузу дальше.
     paused = mail_wait_girls(site_id, table)
     if paused:
-        busy += ' AND m.profile_id NOT IN (%s)' % ', '.join(str(int(one)) for one in paused)
+        busy += (' AND (m.try_at IS NULL OR m.profile_id NOT IN (%s))'
+                 % ', '.join(str(int(one)) for one in paused))
     cool = (' AND m.uid NOT IN (%s)' % ', '.join(['%s'] * len(cooling))
             if cooling else '')
 

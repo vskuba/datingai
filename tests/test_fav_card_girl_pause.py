@@ -104,14 +104,19 @@ def girls(monkeypatch):
     return fake
 
 
-async def _letter(profile_id: int, uid: str) -> int:
-    """Черновик «приставания» напрямую: набор требует адресатов в сети."""
+async def _letter(profile_id: int, uid: str, tried: bool = False) -> int:
+    """Черновик «приставания» напрямую: набор требует адресатов в сети.
+
+    ⚠ `tried` — письмо уже предлагалось сайту: пауза анкеты держит только
+    пробованное (правило владельца 28.11.2026)."""
     async with mysql_get_db_async() as db:
         await db.execute(
             'INSERT INTO favorite_mail'
-            " (site_id, profile_id, uid, name, body, status, error)"
-            " VALUES (%s, %s, %s, 'Тест', 'Текст письма', 'draft', '')",
-            (SITE, profile_id, uid))
+            " (site_id, profile_id, uid, name, body, status, error, try_at)"
+            " VALUES (%s, %s, %s, 'Тест', 'Текст письма', 'draft', '', %s)",
+            (SITE, profile_id, uid,
+             time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(time.time() - 60))
+             if tried else None))
         await db.connection.commit()
         await db.execute('SELECT LAST_INSERT_ID() AS id')
 
@@ -194,12 +199,18 @@ class TestCardWaitAsksTheSameDoor:
 
         wait = await send_card_wait(SITE, 'favorite_mail',
                                     [{'id': 1, 'profile_id': paused_girl,
-                                      'uid': 'p1'},
+                                      'uid': 'p1', 'try_at': '2026-11-28 10:00:00'},
                                      {'id': 2, 'profile_id': free_girl,
-                                      'uid': 'f1'}])
+                                      'uid': 'f1'},
+                                     {'id': 3, 'profile_id': paused_girl,
+                                      'uid': 'p2', 'try_at': ''}])
 
         assert wait.get(1) == f'{MAIL_WAIT_GIRL_CHIP} до 00:00 UTC'
         assert 2 not in wait, 'свободной анкете приписана чужая пауза'
+        # ⚠⚠ Правило владельца 28.11.2026: карточка без своей попытки не
+        # «ждёт» чужого отказа — очередь пустит её к сайту хоть раз.
+        assert MAIL_WAIT_GIRL_CHIP not in wait.get(3, ''), \
+            'непробованной карточке приписан отказ, не ей данный'
 
 
 def _arm_girl_pause(profile_id: int, seconds: int = 7200) -> int:
@@ -249,7 +260,7 @@ class TestListCarriesTheChip:
             self, auth_client, girl_make):
         paused_girl = await girl_make('favh', online=True)
         free_girl = await girl_make('favh2', online=True)
-        held = await _letter(paused_girl, 'pause-1')
+        held = await _letter(paused_girl, 'pause-1', tried=True)
         free = await _letter(free_girl, 'free-1')
 
         until = _arm_girl_pause(paused_girl)

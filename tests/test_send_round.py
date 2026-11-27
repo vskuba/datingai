@@ -175,6 +175,12 @@ async def _letter(profile_id: int, table: str = 'mailing', **kw) -> int:
             field, value = ', mail_in_id', ', %s'
             args.append(int((await db.fetchone())['id']))
 
+        # ⚠ `tried` — письмо уже предлагалось сайту (`try_at`): пауза анкеты
+        # держит только пробованное, непробованное идёт хоть раз само.
+        if kw.get('tried'):
+            field += ', try_at'
+            value += ', NOW() - INTERVAL 1 MINUTE'
+
         await db.execute(
             f'INSERT INTO {table} (site_id, profile_id, uid, name, body, status,'
             f' error{field})'
@@ -814,11 +820,27 @@ class TestThePauseBelongsToThePair:
         await self._favorites_on(0, monkeypatch)
         await self._online(profile)
         monkeypatch.setattr(round_, 'mail_wait_girls', lambda site_id, table='mailing': [int(profile)])
-        await _letter(profile, 'favorite_mail')
+        await _letter(profile, 'favorite_mail', tried=True)
 
         await send_round_run(0)
 
         assert not post, 'анкета на пределе сайта всё равно писала избранному'
+
+    async def test_an_untried_card_goes_once_despite_the_pause(
+            self, site, profile, post, monkeypatch):
+        """⚠⚠ Правило владельца 28.11.2026: каждая карточка хоть раз пробует
+        сама. Отказ пришёл другому письму анкеты, а это может уйти — например,
+        контакту; «сайт не принимает» без своей попытки было бы неправдой."""
+        await self._favorites_on(0, monkeypatch)
+        await self._online(profile)
+        monkeypatch.setattr(round_, 'mail_wait_girls', lambda site_id, table='mailing': [int(profile)])
+        await _letter(profile, 'favorite_mail', uid='tried-1', tried=True)
+        fresh = await _letter(profile, 'favorite_mail', uid='fresh-1')
+
+        await send_round_run(0)
+
+        assert [one['id'] for one in post] == [fresh], \
+            'непробованная карточка стоит под чужим отказом, не попытавшись'
 
     async def test_a_mailing_refusal_does_not_hold_favorites(self, site, profile,
                                                             post, monkeypatch):
@@ -847,7 +869,7 @@ class TestThePauseBelongsToThePair:
         await self._online(profile)
         monkeypatch.setattr(round_, 'mail_wait_girls', lambda site_id, table='mailing': [int(profile)])
         monkeypatch.setattr(round_, 'mail_wait_girls_left', lambda site_id, table='mailing': 5 * 3600)
-        await _letter(profile, 'favorite_mail')
+        await _letter(profile, 'favorite_mail', tried=True)
 
         said = await send_why(SITE, 'favorite_mail', 0)
 
@@ -1142,7 +1164,7 @@ class TestAPausedGirlLeavesTheMailing:
             'password': 'x'})).json()['result']
         try:
             monkeypatch.setattr(round_, 'mail_wait_girls', lambda site_id, table='mailing': [int(profile)])
-            await _letter(profile, uid='girl-1')
+            await _letter(profile, uid='girl-1', tried=True)
             theirs = await _letter(other, uid='girl-2')
 
             await send_round_run(0)

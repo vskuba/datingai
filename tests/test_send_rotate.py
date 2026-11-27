@@ -310,7 +310,9 @@ class TestWaitReasons:
 
         wait = await send_card_wait(SITE, 'favorite_mail',
                                     [{'id': 1, 'profile_id': 4242,
-                                      'uid': 'u'}])
+                                      'uid': 'u',
+                                      # ⚠ пробованная: пауза держит только её
+                                      'try_at': '2026-11-28 10:00:00'}])
 
         assert wait[1].startswith(MAIL_WAIT_GIRL_CHIP), wait[1]
         assert '00:00 UTC' in wait[1], 'срок паузы анкеты не назван'
@@ -370,7 +372,8 @@ class TestWaitReasons:
 
         wait = await send_card_wait(SITE, 'favorite_mail',
                                     [{'id': 7, 'profile_id': girl,
-                                      'uid': 'u1'}])
+                                      'uid': 'u1',
+                                      'try_at': '2026-11-28 10:00:00'}])
 
         assert wait[7] == f'{MAIL_WAIT_GIRL_CHIP} до 00:00 UTC'
 
