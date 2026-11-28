@@ -46,8 +46,10 @@ from src.dating.mail_reply import (mail_reply_delivery,
                                           mail_reply_thread)
 from src.dating.intention_do import (intention_mail_delivery,
                                             intention_mail_delivery_scope)
+from src.dating.mail_reply_manual import (mail_reply_manual_put,
+                                          mail_reply_manual_target)
 from src.dating.mail_send import (DatingMailSendError, mail_send_fail,
-                                         mail_send_one)
+                                         mail_send_history, mail_send_one)
 from src.dating.mail_shot import (DatingMailShotError, mail_shot_join,
                                   mail_shot_ready)
 from src.dating.online import online_show
@@ -876,6 +878,14 @@ async def favorite_mail_reply(payload: DatingFavoriteMailReply,
     узнаёт, что письмо не ушло сразу, и видит его на карточке пула. `409` —
     только за то, что письмо не легло.
     """
+    # ⚠⚠ Сперва — **его неотвеченное письмо в панели** (правило владельца
+    # 28.11.2026): есть — текст уходит ответом на него формой панели, той же
+    # дверью, что у агента; нет — прежним письмом избранному
+    # (`mail_reply_manual.py`).
+    answered = await _reply_unanswered(payload, user)
+    if answered is not None:
+        return answered
+
     try:
         mail_ids = await favorite_mail_manual(int(payload.profile_id),
                                               [str(payload.uid)], payload.body,
@@ -1090,3 +1100,60 @@ def _answer(row) -> dict:
         else ''
 
     return got
+
+
+async def _reply_unanswered(payload: DatingFavoriteMailReply,
+                            user: AuthUser) -> dict | None:
+    """Ручной текст — ответом на его письмо, если панель его ждёт. `None` — не ждёт.
+
+    ⚠ Исход в той же форме, что у письма избранному (`sent`/`draft` + `error`),
+    и полем `kind = 'reply'`: страница рисует его тем же путём, а человек
+    узнаёт, что ушёл именно ответ.
+    """
+    profile = await pool_handle_sender(int(payload.profile_id), 'письма')
+    site_id = int(profile['site_id'])
+
+    try:
+        target = await mail_reply_manual_target(site_id, int(payload.profile_id),
+                                                str(payload.uid))
+    except DatingMailSendError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+    if not target:
+        return None
+
+    # ⚠ Форма ответа панели берёт **только текст**: снимок ушёл бы молча мимо, а
+    # отметился показанным (`mail_send_mark`). Честнее остановить и сказать.
+    if int(payload.gallery_file_id or 0):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='у него есть неотвеченное письмо — ответ уходит формой панели, '
+                   'а она принимает только текст. Уберите снимок и отправьте снова')
+
+    body = str(payload.body or '').strip()
+    if not body:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail='письмо пустое — отправлять нечего')
+    if '[[' in body:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail='в тексте осталась метка [[…]] — так письмо не уходит')
+
+    letter = await mail_reply_manual_put(site_id, int(payload.profile_id), target, body)
+    base = str(await site_setting(site_id, 'api_base')).strip()
+    password = str(await site_setting(site_id, 'api_password')).strip()
+
+    try:
+        await mail_send_one(letter, profile, base, password, 'mail_reply')
+    except DatingMailSendError as e:
+        await mail_send_fail(letter, e, table='mail_reply')
+        logger_info(f'[dating] ручной ответ #{letter["id"]} не ушёл: {e}')
+
+        return {'status': 'draft', 'error': str(e), 'mail_id': int(letter['id']),
+                'kind': 'reply'}
+
+    await mail_send_history(letter, 'mail_reply')
+    logger_info(f'[dating] ручной ответ #{letter["id"]} ушёл ответом на письмо '
+                f'#{target["id"]}')
+
+    return {'status': 'sent', 'error': '', 'mail_id': int(letter['id']),
+            'kind': 'reply'}
