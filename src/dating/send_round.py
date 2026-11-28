@@ -157,14 +157,12 @@ async def send_round_run(offset_hours: int = 0) -> dict:
     for site in sites:
         site_id = int(site['site_id'])
 
-        # ⚠ Смены общие с набором: шлём тогда же, когда готовим. Пустое
-        # расписание — «нет», а не «всегда»: правило одно на проект.
-        if not schedule_now(json_column_list(site['schedule']),
-                            minutes):
-            continue
-
         for flag, table, setting, _said in _POOLS:
             if not int(site[flag]):
+                continue
+
+            # ⚠⚠ Смены — **у каждого пула свои** (`_schedule_open`).
+            if not _schedule_open(site, table, minutes):
                 continue
 
             # ⚠ Темп у пула свой: ответ ждёт `reply_every`, а не рассылочные
@@ -264,9 +262,10 @@ async def send_why(site_id: int, table: str, offset_hours: int = 0) -> str:
         if not site or not int(site.get(flag) or 0):
             return f'отправка {said} выключена'
 
-        if not schedule_now(json_column_list(site['schedule']),
-                            datetime_day_minutes(offset_hours)):
-            return 'сейчас не смена: письма уходят по часам, заданным у сайта'
+        if not _schedule_open(site, table, datetime_day_minutes(offset_hours)):
+            where = ('«Фавориты → Приставание»' if table == 'favorite_mail'
+                     else '«Письма → Рассылка»')
+            return f'сейчас не смена: письма уходят по часам расписания {where}'
 
         if table == 'mailing':
             today, cap = await _today(site_id, offset_hours), await _max_day(site_id)
@@ -683,8 +682,30 @@ async def _sites() -> list[dict]:
              'chat_intention_do_on')
 
     return await round_sites(flags=flags, any_of=True,
-                             schedule='mailing_schedule', extra=flags,
+                             schedule='mailing_schedule',
+                             extra=flags + ('favorite_mail_schedule',),
                              what='отправке')
+
+
+def _schedule_open(site: dict, table: str, minutes: int) -> bool:
+    """Идёт ли сейчас смена **этого пула** — его собственным расписанием.
+
+    ⚠⚠ Правило владельца 28.11.2026: расписание рассылки — только рассылке,
+    расписание «Приставания» — и сочинению, и отправке писем избранным. До того
+    все пулы уходили по сменам рассылки: человек открывал «Приставание» ночью,
+    видел там смену и стоящий пул, а держало его чужое расписание.
+
+    ⚠ Ответам и обещаниям смен нет — как и у их наборов (`reply_round`,
+    `intention_round`): на письмо человека отвечаем в свой срок, обещание в
+    живом разговоре до утра не ждёт. Пустое расписание — «нет», а не «всегда»:
+    правило одно на проект.
+    """
+    column = {'mailing': 'schedule',
+              'favorite_mail': 'favorite_mail_schedule'}.get(str(table))
+    if not column:
+        return True
+
+    return schedule_now(json_column_list(site.get(column)), minutes)
 
 
 async def _oldest(site_id: int, table: str) -> dict | None:

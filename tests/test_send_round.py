@@ -713,8 +713,12 @@ class TestThePauseBelongsToThePair:
                             _fixed((int(gap), int(gap))))
 
         async with mysql_get_db_async() as db:
+            # ⚠ Смены у писем избранным свои (`send_round._schedule_open`) —
+            # круглые сутки, чтобы тесты паузы не молчали по расписанию.
             await db.execute('UPDATE site SET favorite_mail_send_on = 1,'
-                             ' is_gone = 0 WHERE site_id = %s', (SITE,))
+                             ' favorite_mail_schedule = %s,'
+                             ' is_gone = 0 WHERE site_id = %s',
+                             ('[{"from": "00:00", "to": "24:00"}]', SITE))
             await db.connection.commit()
 
     async def _online(self, profile_id: int) -> None:
@@ -1173,3 +1177,28 @@ class TestAPausedGirlLeavesTheMailing:
                 'анкета на паузе своего предела всё равно писала'
         finally:
             await auth_client.delete(f'/api/dating/profile/{other}')
+
+
+class TestEachPoolHasItsOwnSchedule:
+    """⚠⚠ Правило владельца 28.11.2026: расписание рассылки — только рассылке,
+    расписание «Приставания» — и сочинению, и отправке писем избранным."""
+
+    def test_the_door_reads_the_pool_schedule(self):
+        from src.dating.send_round import _schedule_open
+
+        night = '[{"from": "00:00", "to": "02:45"}, {"from": "08:00", "to": "24:00"}]'
+        all_day = '[{"from": "00:00", "to": "24:00"}]'
+        site = {'schedule': night, 'favorite_mail_schedule': all_day}
+        four_am = 4 * 60
+
+        assert not _schedule_open(site, 'mailing', four_am)
+        assert _schedule_open(site, 'favorite_mail', four_am), \
+            'письма избранным снова стоят по сменам рассылки'
+        assert _schedule_open({**site, 'favorite_mail_schedule': night},
+                              'favorite_mail', four_am) is False
+        assert _schedule_open({**site, 'favorite_mail_schedule': '[]'},
+                              'favorite_mail', 10 * 60) is False, \
+            'пустые смены стали «всегда»'
+        # Ответам и обещаниям смен нет.
+        assert _schedule_open(site, 'mail_reply', four_am)
+        assert _schedule_open(site, 'intention_mail', four_am)

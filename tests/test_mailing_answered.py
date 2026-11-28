@@ -278,8 +278,11 @@ class TestTheQueueSkipsHim:
         pestering = await _draft(girl, 'riano', 'favorite_mail')
 
         async with mysql_get_db_async() as db:
-            await db.execute('UPDATE site SET favorite_mail_send_on = 1'
-                             ' WHERE site_id = %s', (SITE,))
+            # ⚠ У писем избранным свои смены (`send_round._schedule_open`):
+            # рассылочное расписание их больше не держит и не пускает.
+            await db.execute('UPDATE site SET favorite_mail_send_on = 1,'
+                             ' favorite_mail_schedule = %s WHERE site_id = %s',
+                             ('[{"from": "00:00", "to": "24:00"}]', SITE))
             # ⚠ Письма избранным уходят только от анкеты в сети — своё правило
             # круга, и без него этот тест молчал бы по чужой причине.
             await db.execute("UPDATE profile SET status = 'online' WHERE id = %s",
