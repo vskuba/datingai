@@ -4410,6 +4410,11 @@
                        font: inherit; font-size: 11px; text-decoration: underline;
                        text-decoration-style: dotted; cursor: pointer; }
     .fav-manual-link:hover { color: #312e81; text-decoration-style: solid; }
+    .fav-manual-all-row { margin-top: 8px; }
+    .fav-manual-all { padding: 8px 18px; border: 1px solid #4338ca; border-radius: 6px;
+                      background: #4f46e5; color: #fff; font: inherit; font-size: 13px;
+                      font-weight: 600; cursor: pointer; }
+    .fav-manual-all:hover { background: #4338ca; }
 
     /* Кому письмо от этой анкеты **не ляжет** — красное кольцо вокруг лица в
        ленте «My favorites» («закрылся от неё», причина в подсказке под
@@ -10415,16 +10420,20 @@
         // Всех разом — те же люди, что в ленте над формой: её снимок уже в памяти.
         const all = favManualAll();
         const rest = all.filter(one => !favManualTo.some(to => to.uid === one.uid));
+        // ⚠ «Выбрать всех» — **большой кнопкой своей строкой**, а не ссылкой в
+        // подсказке (просьба владельца 28.11.2026): мелкая ссылка в конце фразы
+        // терялась, и адресатов набирали щелчком по каждому лицу.
         const allLink = rest.length
-            ? ' <button type="button" class="fav-manual-link" data-role="all">'
-              + (favManualTo.length ? `добавить остальных (${rest.length})`
-                                    : `выбрать всех (${all.length})`) + '</button>'
+            ? '<div class="fav-manual-all-row"><button type="button"'
+              + ' class="fav-manual-all" data-role="all">'
+              + (favManualTo.length ? `Добавить остальных (${rest.length})`
+                                    : `Выбрать всех (${all.length})`) + '</button></div>'
             : '';
 
         if (!favManualTo.length) {
             box.innerHTML = '<span class="sched-note">Нажмите на избранного в ленте'
-                + ' «My favorites» выше — он встанет сюда. Можно нескольких'
-                + (allLink ? ', или' + allLink : '.') + '</span>';
+                + ' «My favorites» выше — он встанет сюда. Можно нескольких.</span>'
+                + allLink;
         } else {
             box.innerHTML = favManualTo.map((one, at) =>
                 `<span class="sent-chip" title="${esc(one.uid)}">`
