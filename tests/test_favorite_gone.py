@@ -97,6 +97,16 @@ async def _star(girl: int, uid: str, state: str = FAVORITE_ALREADY) -> None:
         await db.connection.commit()
 
 
+async def _wrote(girl: int, uid: str) -> None:
+    """Его письмо анкете — то, что делает звезду фаворитом."""
+    async with mysql_get_db_async() as db:
+        await db.execute(
+            'INSERT INTO mail_in (site_id, profile_id, message_id, uid, name, body)'
+            " SELECT site_id, id, %s, %s, 'Him', 'Hello' FROM profile WHERE id = %s",
+            (int(uuid.uuid4().int % 900_000_000) + 1, uid, girl))
+        await db.connection.commit()
+
+
 async def _state(girl: int, uid: str) -> str:
     """Состояние пары в нашей таблице. Пусто — строки нет вовсе."""
     async with mysql_get_db_async() as db:
@@ -262,6 +272,7 @@ class TestTheVanishedGoOut:
         """
         girl, man = await _girl(), _uid()
         await _star(girl, man)
+        await _wrote(girl, man)
 
         await _sync(monkeypatch, girl)
         assert await _state(girl, man) == FAVORITE_GONE
@@ -270,6 +281,23 @@ class TestTheVanishedGoOut:
 
         assert await _state(girl, man) == FAVORITE_ALREADY, \
             'погашенная пара не возвращается — моргание сайта стало приговором'
+
+    async def test_a_star_without_a_word_from_him_is_not_a_favorite(self, monkeypatch):
+        """⚠⚠ Правило владельца 28.11.2026: фаворит — тот, кто хоть раз написал.
+
+        Звезда на сайте без единого его сообщения (наши инвайты и письма не в
+        счёт) сверкой не заводится и погашенную не зажигает: иначе пометка
+        `gone` у 120 неподтверждённых жила бы до первой сверки.
+        """
+        girl, silent, talker = await _girl(), _uid(), _uid()
+        await _star(girl, silent, FAVORITE_GONE)
+        await _wrote(girl, talker)
+
+        await _sync(monkeypatch, girl, silent, talker)
+
+        assert await _state(girl, silent) == FAVORITE_GONE, \
+            'сверка зажгла звезду того, кто ни разу не писал'
+        assert await _state(girl, talker) == FAVORITE_ALREADY
 
     async def test_the_gone_pair_loses_its_draft(self, monkeypatch):
         """Черновик приставания уходит вместе со звездой.

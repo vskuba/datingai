@@ -497,6 +497,14 @@ async def favorite_sync(profile: dict, base: str, password: str) -> int:
              if str((known.get(uid) or {}).get('state') or '')
              not in FAVORITE_STATES]
 
+    # ⚠⚠ **Звезда сайта ещё не фаворит** (правило владельца 28.11.2026):
+    # фаворит анкеты — тот, от кого ей пришло хоть одно сообщение, чатом или
+    # письмом; наши инвайты и письма не в счёт. Сверка 13.09.2026 переписала
+    # список сайта целиком, и 103 человека без единой реплики получали письма
+    # «Приставания» как затихший разговор. Неподтверждённых сверка не заводит
+    # и погашенных не зажигает — напишет, и круг избранных возьмёт его сам.
+    fresh = sorted(await _heard_from(int(profile['id']), fresh))
+
     for uid in fresh:
         await favorite_mark(int(profile['site_id']), int(profile['id']), uid,
                                    FAVORITE_ALREADY, '',
@@ -965,3 +973,29 @@ async def _run(profile: dict, uid: str, site_password: str,
             f"сценарий встал на шаге {run.get('step_no')}: {run.get('error')}")
 
     return run
+
+
+async def _heard_from(profile_id: int, uids: list) -> set:
+    """Кто из `uids` хоть раз написал анкете — письмом (`mail_in`) или в чат.
+
+    ⚠ Входящие чата — `message.direction = 'in'`, автор в `sender_uid`; наши
+    реплики и инвайты сюда не попадают по направлению.
+    """
+    uids = [str(one) for one in uids if str(one)]
+    if not uids:
+        return set()
+
+    holes = ', '.join(['%s'] * len(uids))
+
+    async with mysql_get_db_async() as db:
+        await db.execute(f'SELECT DISTINCT uid FROM mail_in'
+                         f' WHERE profile_id = %s AND uid IN ({holes})',
+                         (int(profile_id), *uids))
+        heard = {str(one['uid']) for one in await db.fetchall() or []}
+        await db.execute(f"SELECT DISTINCT sender_uid AS uid FROM message"
+                         f" WHERE profile_id = %s AND direction = 'in'"
+                         f'   AND sender_uid IN ({holes})',
+                         (int(profile_id), *uids))
+        heard |= {str(one['uid']) for one in await db.fetchall() or []}
+
+    return heard
