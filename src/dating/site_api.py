@@ -202,7 +202,16 @@ SITE_API_REASON_MEANING = {
 
 
 class DatingSiteApiError(RuntimeError):
-    """API сайта не ответило или ответило отказом. Текст годен для журнала анкеты."""
+    """API сайта не ответило или ответило отказом. Текст годен для журнала анкеты.
+
+    ⚠ `raw` — **сырой ответ сайта** (`HTTP 403: {тело}`), когда сайт ответил:
+    текст исключения — наш пересказ, а окно письма показывает его слова как
+    есть (`mail_send_fail` кладёт их в `answer`). Пусто — сайт не отвечал.
+    """
+
+    def __init__(self, message: str = '', raw: str = ''):
+        super().__init__(message)
+        self.raw = str(raw or '')
 
 
 async def site_api_call(profile: dict, base: str, password: str, path: str,
@@ -261,7 +270,7 @@ async def site_api_call(profile: dict, base: str, password: str, path: str,
         answer = await _request(client, base, path, token, payload, verb, profile, door)
 
     if answer.status_code >= 400:
-        raise DatingSiteApiError(_refusal(path, answer))
+        raise DatingSiteApiError(_refusal(path, answer), _raw(answer))
 
     return _body(path, answer)
 
@@ -577,7 +586,8 @@ async def _login(client: httpx.AsyncClient, profile: dict, base: str,
                             {'Login': login, 'Password': password}, 'POST',
                             profile, REQUEST_LOGIN)
     if answer.status_code >= 400:
-        raise DatingSiteApiError(_refusal(SITE_API_LOGIN_PATH, answer))
+        raise DatingSiteApiError(_refusal(SITE_API_LOGIN_PATH, answer),
+                                 _raw(answer))
 
     token = str(_body(SITE_API_LOGIN_PATH, answer).get('Token') or '')
     if not token:
@@ -662,6 +672,11 @@ def _body(path: str, answer: httpx.Response) -> dict:
         raise DatingSiteApiError(f'{path} → ответ не JSON: {answer.text[:150]}')
 
     return body if isinstance(body, dict) else {}
+
+
+def _raw(answer: httpx.Response) -> str:
+    """Сырой ответ сайта строкой: код и тело как есть, без пересказа."""
+    return f'HTTP {int(answer.status_code)}: {answer.text[:1500]}'
 
 
 def _refusal(path: str, answer: httpx.Response) -> str:

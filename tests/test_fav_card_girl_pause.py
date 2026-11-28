@@ -299,3 +299,47 @@ class TestThePageTickKeepsItsHandsOff:
         assert "'.mail-card-wait[data-ready]'" in body, \
             'тик снова лезет в чужие чипы и сотрёт «ждёт»'
         assert "'.mail-card-wait'" not in body
+
+
+class TestTheAttemptKeepsTheRawAnswer:
+    """Окно письма показывает **сырой ответ сайта** на последнюю попытку.
+
+    ⚠ Временная причина (`DatingMailWaitError`) в `error` не ложится, и до
+    правки 28.11.2026 у карточки было «последняя попытка 02:08 — не ушло» при
+    пустом «Ответ сайта»: что сайт сказал, не видел никто.
+    """
+
+    async def _answer(self, letter: int) -> str:
+        async with mysql_get_db_async() as db:
+            await db.execute('SELECT answer, error FROM favorite_mail WHERE id = %s',
+                             (letter,))
+            return dict(await db.fetchone())
+
+    async def test_a_wait_keeps_the_site_words(self, girl_make):
+        from src.dating.mail_send import DatingMailWaitError, mail_send_fail
+
+        girl = await girl_make('favraw')
+        letter = await _letter(girl, 'raw-1')
+        raw = 'HTTP 403: {"Error": "Daily limit", "Reason": "ERROR_X"}'
+
+        await mail_send_fail({'id': letter, 'profile_id': girl, 'uid': 'raw-1'},
+                             DatingMailWaitError('письмо ждёт', raw),
+                             'favorite_mail')
+
+        got = await self._answer(letter)
+        assert got['answer'] == raw, 'сырой ответ сайта не дошёл до строки'
+        assert got['error'] == '', 'временная причина похоронила письмо'
+
+    async def test_no_site_words_keep_the_previous(self, girl_make):
+        """До сайта не дошли — прежний ответ не затирается пустотой."""
+        from src.dating.mail_send import DatingMailWaitError, mail_send_fail
+
+        girl = await girl_make('favraw2')
+        letter = await _letter(girl, 'raw-2')
+        mark = {'id': letter, 'profile_id': girl, 'uid': 'raw-2'}
+
+        await mail_send_fail(mark, DatingMailWaitError('ждёт', 'HTTP 403: x'),
+                             'favorite_mail')
+        await mail_send_fail(mark, DatingMailWaitError('ждёт'), 'favorite_mail')
+
+        assert (await self._answer(letter))['answer'] == 'HTTP 403: x'

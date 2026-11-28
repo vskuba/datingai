@@ -247,7 +247,16 @@ def mail_sent_union(where: str, select: str = 'sent_at',
 
 
 class DatingMailSendError(RuntimeError):
-    """Письмо не ушло. Текст годен для страницы и для столбца `error`."""
+    """Письмо не ушло. Текст годен для страницы и для столбца `error`.
+
+    ⚠ `raw` — сырой ответ сайта на эту попытку (`DatingSiteApiError.raw`):
+    `mail_send_fail` кладёт его в `answer`, и окно письма показывает, что сайт
+    сказал на самом деле, а не только наш пересказ. Пусто — до сайта не дошли.
+    """
+
+    def __init__(self, message: str = '', raw: str = ''):
+        super().__init__(message)
+        self.raw = str(raw or '')
 
 
 class DatingMailWaitError(DatingMailSendError):
@@ -379,13 +388,14 @@ async def mail_send_one(letter: dict, profile: dict, base: str,
                                     table)
                 or mail_wait_mark(int(profile.get('site_id') or 0), uid, str(e)))
         if left:
-            raise DatingMailWaitError(mail_wait_words(str(e), left))
+            raise DatingMailWaitError(mail_wait_words(str(e), left), e.raw)
 
         # ⚠ Отказ приходит **и на этом шаге**: «можно ли писать этому человеку» —
         # ровно тот вопрос, на который сайт отвечает «он вас закрыл».
         await _deny_check(profile, letter, table, uid, str(e))
 
-        raise DatingMailSendError(f'сайт не дал разрешения на отправку: {e}')
+        raise DatingMailSendError(f'сайт не дал разрешения на отправку: {e}',
+                                  e.raw)
 
     check_id = str(check.get(MAIL_SEND_CHECK_FIELD) or '').strip()
     if not check_id:
@@ -409,11 +419,11 @@ async def mail_send_one(letter: dict, profile: dict, base: str,
                                     table)
                 or mail_wait_mark(int(profile.get('site_id') or 0), uid, str(e)))
         if left:
-            raise DatingMailWaitError(mail_wait_words(str(e), left))
+            raise DatingMailWaitError(mail_wait_words(str(e), left), e.raw)
 
         await _deny_check(profile, letter, table, uid, str(e))
 
-        raise DatingMailSendError(f'сайт не принял письмо: {e}')
+        raise DatingMailSendError(f'сайт не принял письмо: {e}', e.raw)
 
     # ⚠ Ответ сайта храним **как есть**, и у удачи тоже: «доставлено» — это наш
     # вывод из его слов, а не его слова. У инвайтов этот же разрыв уже стоил
@@ -500,6 +510,7 @@ async def mail_send_fail(letter: dict, error, table: str = 'mailing') -> None:
     очередь прежний вечный повтор (26.11.2026, `favorite_mail` #2276).
     """
     await mail_send_try(letter, table)
+    await _answer_keep(letter, error, table)
 
     if isinstance(error, DatingMailWaitError):
         # ⚠ Уровень `info`, а не `fail`: ничего не сломалось, письмо ждёт своего
@@ -960,3 +971,24 @@ def _attach_parts(attach) -> tuple:
         raise DatingMailSendError('у вложения нет имени файла')
 
     return name, bytes(raw)
+
+
+async def _answer_keep(letter: dict, error, table: str) -> None:
+    """Сырой ответ сайта на неудачную попытку — в `answer` строки пула.
+
+    ⚠ Окно письма показывает рядом «последняя попытка HH:MM — не ушло» и
+    «Ответ сайта»; без этой записи второе пустовало у каждой неудачи, а
+    временная причина (`DatingMailWaitError`) в `error` не ложится вовсе.
+    Пишем только услышанное от сайта: до сайта не дошли — прежний ответ цел.
+    """
+    raw = str(getattr(error, 'raw', '') or '')[:MAIL_SEND_ERROR_MAX]
+    if not raw or str(table) not in MAIL_SEND_TABLES:
+        return
+
+    try:
+        async with mysql_get_db_async() as db:
+            await db.execute(f'UPDATE {table} SET answer = %s WHERE id = %s',
+                             (raw, int(letter.get('id') or 0)))
+            await db.connection.commit()
+    except Exception as e:
+        logger_info(f'[dating] ответ сайта письму #{letter.get("id")} не записан: {e}')
